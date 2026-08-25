@@ -189,6 +189,7 @@ export function PromptPreviewScreen({
   model,
   onPackageSelect,
   playPresetTarget,
+  embedded = false,
 }: {
   client: PromptPreviewClient;
   packages: PromptPreviewPackage[];
@@ -197,6 +198,7 @@ export function PromptPreviewScreen({
   model: ModelConnectionLibraryView;
   onPackageSelect: (packageId: string) => void;
   playPresetTarget?: { presetId: string; revision: string };
+  embedded?: boolean;
 }): React.JSX.Element {
   const initialPackage =
     packages.find(({ localId }) => localId === initialPackageId) ??
@@ -276,24 +278,34 @@ export function PromptPreviewScreen({
 
   return (
     <section
-      className="prompt-preview-screen"
+      className={`prompt-preview-screen${embedded ? " embedded" : ""}`}
       aria-labelledby="prompt-preview-title"
     >
-      <header className="prompt-preview-header">
-        <div>
-          <p className="eyebrow">READ ONLY · REAL COMPILER</p>
-          <h2 id="prompt-preview-title">提示词预览</h2>
-          <p className="prompt-preview-lede">
-            用真实编译器检查全新上下文会发送什么：逻辑
-            role、Markdown、材料、工具、预算与 Provider 映射。
-          </p>
-        </div>
-        <div className="prompt-preview-readonly" aria-label="预览性质">
-          <span>只读检查</span>
-          <strong>0 次模型调用</strong>
-          <small>不会创建候选或写入权威状态</small>
-        </div>
-      </header>
+      {embedded ? (
+        <header className="prompt-preview-embedded-header">
+          <div>
+            <p className="eyebrow">READ ONLY · REAL COMPILER</p>
+            <h4 id="prompt-preview-title">全新上下文会发送什么</h4>
+          </div>
+          <p>真实编译，0 次模型调用，不会创建候选或写入权威状态。</p>
+        </header>
+      ) : (
+        <header className="prompt-preview-header">
+          <div>
+            <p className="eyebrow">READ ONLY · REAL COMPILER</p>
+            <h2 id="prompt-preview-title">提示词预览</h2>
+            <p className="prompt-preview-lede">
+              用真实编译器检查全新上下文会发送什么：逻辑
+              role、Markdown、材料、工具、预算与 Provider 映射。
+            </p>
+          </div>
+          <div className="prompt-preview-readonly" aria-label="预览性质">
+            <span>只读检查</span>
+            <strong>0 次模型调用</strong>
+            <small>不会创建候选或写入权威状态</small>
+          </div>
+        </header>
+      )}
 
       <div className="prompt-preview-setup">
         <section

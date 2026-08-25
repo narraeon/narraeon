@@ -753,7 +753,19 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             )
           }
           onDirtyChange={setPlayPresetDraftDirty}
-          onOpenPromptPreview={openPromptPreview}
+          renderPromptPreview={(target) => (
+            <PromptPreviewScreen
+              key={`${target.presetId}:${target.revision}`}
+              embedded
+              client={client}
+              packages={workspace.contentPackages}
+              initialPackageId={selected}
+              playPresets={workspace.playPresets}
+              model={workspace.model}
+              onPackageSelect={setSelected}
+              playPresetTarget={target}
+            />
+          )}
         />
       )}
       {screen === "model" && (

@@ -137,7 +137,7 @@ export async function createServer(input: {
         // inside its own sandboxed iframe. The inline allowance is required
         // for srcDoc templates; the host still exposes no Runtime capability
         // to that code and the product does not treat it as a hostile sandbox.
-        "default-src 'self'; script-src 'self' 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'",
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'",
       )
       .header("X-Content-Type-Options", "nosniff")
       .header("X-Frame-Options", "DENY");

@@ -117,6 +117,9 @@ test("进度轮询不写访问日志，调用链中断写出原始 Provider 原�
     },
   });
   expect(progress.statusCode).toBe(200);
+  expect(progress.headers["content-security-policy"]).toContain(
+    "style-src 'self' 'unsafe-inline'",
+  );
 
   const chainInspection = await server.inject({
     method: "POST",
