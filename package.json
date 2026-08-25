@@ -2,6 +2,7 @@
   "name": "narraeon",
   "version": "0.1.0",
   "description": "A local-first workspace for living worlds.",
+  "license": "Apache-2.0",
   "private": true,
   "type": "module",
   "engines": {
