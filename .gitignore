@@ -1,0 +1,18 @@
+node_modules/
+dist/
+playwright-report/
+test-results/
+.test-data/
+.env
+.env.*
+
+# Local Runtime data must never become source-controlled authority.
+.narraeon-data/
+
+# Local planning, research, and acceptance artifacts.
+/.scratch/
+/docs/acceptance/
+/docs/ai-host-continuity-assessment.md
+/docs/step-*.md
+/research/model-api-and-tool-strategy.md
+/METHODOLOGY.md

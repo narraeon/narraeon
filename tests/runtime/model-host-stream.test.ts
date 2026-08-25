@@ -1,0 +1,445 @@
+import { expect, test, vi } from "vitest";
+
+import { FileNativeModelHost } from "../../src/runtime/model/FileNativeModelAdapters.ts";
+import {
+  ModelHostOutcomeUnknownError,
+  type ModelHostDelta,
+  type ModelHostExchange,
+} from "../../src/runtime/model/ModelHost.ts";
+import {
+  createMinimalFileNativePreviewInput,
+  FileNativePromptCompiler,
+} from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
+import type { ModelProviderKind } from "../../src/protocol/modelConnections.ts";
+
+test("Chat Completions 游玩请求用 SSE 聚合正文、reasoning、工具与 usage", async () => {
+  const deltas: ModelHostDelta[] = [];
+  const fetch_ = vi.fn<typeof fetch>().mockResolvedValue(
+    sseResponse(
+      [
+        data({
+          id: "chat-stream-1",
+          choices: [
+            {
+              index: 0,
+              delta: { role: "assistant", reasoning_content: "分析" },
+            },
+          ],
+        }),
+        data({
+          id: "chat-stream-1",
+          choices: [{ index: 0, delta: { content: "门响了。" } }],
+        }),
+        data({
+          id: "chat-stream-1",
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: "call-stream-1",
+                    type: "function",
+                    function: {
+                      name: "context_read",
+                      arguments: '{"ref":',
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+        data({
+          id: "chat-stream-1",
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  { index: 0, function: { arguments: '"@scene"}' } },
+                ],
+              },
+              finish_reason: "tool_calls",
+            },
+          ],
+        }),
+        data({
+          choices: [],
+          usage: {
+            prompt_tokens: 120,
+            completion_tokens: 18,
+            total_tokens: 138,
+          },
+        }),
+        "data: [DONE]\n\n",
+      ],
+      true,
+    ),
+  );
+  const host = modelHost("chat_completions", fetch_);
+
+  const response = await host.exchange(exchange("chat_completions"), {
+    onDelta: (delta) => deltas.push(structuredClone(delta)),
+  });
+
+  expect(requestBody(fetch_)).toMatchObject({
+    stream: true,
+    stream_options: { include_usage: true },
+  });
+  expect(deltas).toEqual([
+    { kind: "reasoning", text: "分析" },
+    { kind: "text", text: "门响了。" },
+    { kind: "tool", text: '{"ref":' },
+    { kind: "tool", text: '"@scene"}' },
+  ]);
+  expect(response).toMatchObject({
+    text: "门响了。",
+    reasoningContent: "分析",
+    toolCalls: [
+      {
+        id: "call-stream-1",
+        name: "context_read",
+        arguments: { ref: "@scene" },
+      },
+    ],
+    usage: { inputTokens: 120, outputTokens: 18, totalTokens: 138 },
+    providerState: {
+      protocol: "chat_completions",
+      assistantMessage: {
+        role: "assistant",
+        content: "门响了。",
+        reasoning_content: "分析",
+        tool_calls: [
+          {
+            id: "call-stream-1",
+            type: "function",
+            function: {
+              name: "context_read",
+              arguments: '{"ref":"@scene"}',
+            },
+          },
+        ],
+      },
+    },
+  });
+});
+
+test("OpenAI Responses 游玩请求从 response.completed 取得完整 continuation", async () => {
+  const output = [
+    {
+      type: "reasoning",
+      id: "reasoning-stream-1",
+      encrypted_content: "opaque-reasoning",
+      summary: [],
+    },
+    {
+      type: "function_call",
+      id: "function-stream-1",
+      call_id: "call-responses-stream-1",
+      name: "context_read",
+      arguments: '{"ref":"@scene"}',
+    },
+    {
+      type: "message",
+      id: "message-stream-1",
+      role: "assistant",
+      status: "completed",
+      content: [{ type: "output_text", text: "风停了。" }],
+    },
+  ];
+  const completed = {
+    id: "response-stream-1",
+    status: "completed",
+    output,
+    usage: { input_tokens: 210, output_tokens: 34, total_tokens: 244 },
+  };
+  const deltas: ModelHostDelta[] = [];
+  const fetch_ = vi.fn<typeof fetch>().mockResolvedValue(
+    sseResponse(
+      [
+        namedData("response.reasoning_text.delta", {
+          type: "response.reasoning_text.delta",
+          delta: "检查",
+        }),
+        namedData("response.function_call_arguments.delta", {
+          type: "response.function_call_arguments.delta",
+          delta: '{"ref":"@scene"}',
+        }),
+        namedData("response.output_text.delta", {
+          type: "response.output_text.delta",
+          delta: "风停了。",
+        }),
+        namedData("response.completed", {
+          type: "response.completed",
+          response: completed,
+        }),
+      ],
+      true,
+    ),
+  );
+  const host = modelHost("openai_responses", fetch_);
+
+  const response = await host.exchange(exchange("openai_responses"), {
+    onDelta: (delta) => deltas.push(structuredClone(delta)),
+  });
+
+  expect(requestBody(fetch_)).toMatchObject({ stream: true, store: false });
+  expect(deltas).toEqual([
+    { kind: "reasoning", text: "检查" },
+    { kind: "tool", text: '{"ref":"@scene"}' },
+    { kind: "text", text: "风停了。" },
+  ]);
+  expect(response).toMatchObject({
+    text: "风停了。",
+    toolCalls: [
+      {
+        id: "call-responses-stream-1",
+        name: "context_read",
+        arguments: { ref: "@scene" },
+      },
+    ],
+    usage: { inputTokens: 210, outputTokens: 34, totalTokens: 244 },
+    providerState: {
+      protocol: "openai_responses",
+      responseId: "response-stream-1",
+      output,
+    },
+  });
+});
+
+test("Anthropic Messages 游玩请求用 SSE 保留 thinking 签名与完整 content blocks", async () => {
+  const deltas: ModelHostDelta[] = [];
+  const fetch_ = vi.fn<typeof fetch>().mockResolvedValue(
+    sseResponse(
+      [
+        namedData("message_start", {
+          type: "message_start",
+          message: {
+            id: "message-anthropic-stream-1",
+            role: "assistant",
+            model: "claude-test",
+            content: [],
+            usage: { input_tokens: 310, output_tokens: 1 },
+          },
+        }),
+        namedData("content_block_start", {
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "thinking", thinking: "", signature: "" },
+        }),
+        namedData("content_block_delta", {
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "thinking_delta", thinking: "先检查" },
+        }),
+        namedData("content_block_delta", {
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "signature_delta", signature: "opaque-signature" },
+        }),
+        namedData("content_block_stop", {
+          type: "content_block_stop",
+          index: 0,
+        }),
+        namedData("content_block_start", {
+          type: "content_block_start",
+          index: 1,
+          content_block: { type: "text", text: "" },
+        }),
+        namedData("content_block_delta", {
+          type: "content_block_delta",
+          index: 1,
+          delta: { type: "text_delta", text: "灯亮了。" },
+        }),
+        namedData("content_block_stop", {
+          type: "content_block_stop",
+          index: 1,
+        }),
+        namedData("content_block_start", {
+          type: "content_block_start",
+          index: 2,
+          content_block: {
+            type: "tool_use",
+            id: "tool-anthropic-stream-1",
+            name: "context_read",
+            input: {},
+          },
+        }),
+        namedData("content_block_delta", {
+          type: "content_block_delta",
+          index: 2,
+          delta: { type: "input_json_delta", partial_json: '{"ref":' },
+        }),
+        namedData("content_block_delta", {
+          type: "content_block_delta",
+          index: 2,
+          delta: { type: "input_json_delta", partial_json: '"@scene"}' },
+        }),
+        namedData("content_block_stop", {
+          type: "content_block_stop",
+          index: 2,
+        }),
+        namedData("message_delta", {
+          type: "message_delta",
+          delta: { stop_reason: "tool_use", stop_sequence: null },
+          usage: { output_tokens: 41 },
+        }),
+        namedData("message_stop", { type: "message_stop" }),
+      ],
+      true,
+    ),
+  );
+  const host = modelHost("anthropic_messages", fetch_);
+
+  const response = await host.exchange(exchange("anthropic_messages"), {
+    onDelta: (delta) => deltas.push(structuredClone(delta)),
+  });
+
+  expect(requestBody(fetch_)).toMatchObject({ stream: true });
+  expect(deltas).toEqual([
+    { kind: "reasoning", text: "先检查" },
+    { kind: "text", text: "灯亮了。" },
+    { kind: "tool", text: '{"ref":' },
+    { kind: "tool", text: '"@scene"}' },
+  ]);
+  expect(response).toMatchObject({
+    text: "灯亮了。",
+    reasoningContent: "先检查",
+    toolCalls: [
+      {
+        id: "tool-anthropic-stream-1",
+        name: "context_read",
+        arguments: { ref: "@scene" },
+      },
+    ],
+    usage: {
+      inputTokens: null,
+      uncachedInputTokens: 310,
+      outputTokens: 41,
+    },
+    providerState: {
+      protocol: "anthropic_messages",
+      responseId: "message-anthropic-stream-1",
+      model: "claude-test",
+      stopReason: "tool_use",
+      content: [
+        {
+          type: "thinking",
+          thinking: "先检查",
+          signature: "opaque-signature",
+        },
+        { type: "text", text: "灯亮了。" },
+        {
+          type: "tool_use",
+          id: "tool-anthropic-stream-1",
+          name: "context_read",
+          input: { ref: "@scene" },
+        },
+      ],
+    },
+  });
+});
+
+test.each([
+  ["chat_completions", data({ choices: [{ delta: { content: "未完成" } }] })],
+  [
+    "openai_responses",
+    namedData("response.output_text.delta", {
+      type: "response.output_text.delta",
+      delta: "未完成",
+    }),
+  ],
+  [
+    "anthropic_messages",
+    namedData("message_start", {
+      type: "message_start",
+      message: {
+        id: "truncated-anthropic",
+        role: "assistant",
+        model: "claude-test",
+        content: [],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+    }),
+  ],
+] as const)("%s 的 2xx SSE 中途结束归类为结果未知", async (provider, body) => {
+  const host = modelHost(
+    provider,
+    vi.fn<typeof fetch>().mockResolvedValue(sseResponse([body])),
+  );
+
+  await expect(host.exchange(exchange(provider))).rejects.toBeInstanceOf(
+    ModelHostOutcomeUnknownError,
+  );
+});
+
+function modelHost(provider: ModelProviderKind, fetch_: typeof fetch) {
+  return new FileNativeModelHost(
+    {
+      provider,
+      baseUrl: "https://provider.invalid/v1",
+      apiKey: "secret",
+      modelId: provider === "anthropic_messages" ? "claude-test" : "gpt-test",
+      contextWindowTokens: 32_000,
+      maxOutputTokens: 2_000,
+    },
+    fetch_,
+  );
+}
+
+function exchange(provider: ModelProviderKind): ModelHostExchange {
+  const bootstrap = new FileNativePromptCompiler().compileBootstrap(
+    createMinimalFileNativePreviewInput({
+      provider,
+      modelId: provider === "anthropic_messages" ? "claude-test" : "gpt-test",
+      contextWindowTokens: 32_000,
+      maxOutputTokens: 2_000,
+      playerInput: "检查流式游玩。",
+      playerInputPlacement: "bootstrap",
+    }),
+  );
+  return {
+    bootstrap,
+    tools: bootstrap.tools,
+    toolUniverse: bootstrap.toolUniverse,
+    allowedTools: bootstrap.tools.map(({ name }) => name),
+    toolStrategy: bootstrap.toolStrategy,
+    appended: [],
+    requestId: "adjudicate",
+    operationId: "stream-operation",
+    requestAttempt: 1,
+    exchange: 1,
+    maxOutputTokens: 2_000,
+  };
+}
+
+function sseResponse(frames: readonly string[], keepOpen = false): Response {
+  const bytes = new TextEncoder().encode(frames.join(""));
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(bytes);
+      if (!keepOpen) controller.close();
+    },
+  });
+  return new Response(body, {
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+  });
+}
+
+function data(value: unknown): string {
+  return `data: ${JSON.stringify(value)}\n\n`;
+}
+
+function namedData(event: string, value: unknown): string {
+  return `event: ${event}\ndata: ${JSON.stringify(value)}\n\n`;
+}
+
+function requestBody(fetch_: ReturnType<typeof vi.fn<typeof fetch>>) {
+  return JSON.parse(fetch_.mock.calls[0]?.[1]?.body as string) as Record<
+    string,
+    unknown
+  >;
+}
