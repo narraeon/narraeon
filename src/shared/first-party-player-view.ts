@@ -1,5 +1,9 @@
 import { defaultNarrationPrompt } from "./default-play-prompts.ts";
 import { defaultPresetHostFiles } from "./default-preset-host.ts";
+import {
+  defaultSettingImprovementPrompt,
+  defaultSettingImprovementPromptPath,
+} from "./default-setting-improvement-prompt.ts";
 
 /**
  * Ordinary, copyable player-view-backed panel assets.  The Runtime only
@@ -10,6 +14,8 @@ export const firstPartyStatusPanelPresetFiles: Record<string, string> = {
   "preset.yaml": `format: narraeon.play-preset/v1
 name: status-panel-recommended
 callChain: call-chain.yaml
+settingImprovement:
+  markdown: prompts/setting-improvement.md
 mounts: []
 playerViewPanels:
   - id: current_view
@@ -45,6 +51,7 @@ followups: []
 `,
   ...defaultPresetHostFiles,
   "prompts/narrate.md": defaultNarrationPrompt,
+  [defaultSettingImprovementPromptPath]: defaultSettingImprovementPrompt,
   "renderers/player-view-status.html": `<!doctype html>
 <html><head><meta charset="utf-8"><title>当前状态</title></head><body>
 <main id="player-view-panel-root" aria-label="当前状态"></main>

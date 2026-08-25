@@ -13,6 +13,10 @@ import {
 import { defaultNarrationPrompt } from "../../shared/default-play-prompts.ts";
 import { defaultPresetHostFiles } from "../../shared/default-preset-host.ts";
 import {
+  defaultSettingImprovementPrompt,
+  defaultSettingImprovementPromptPath,
+} from "../../shared/default-setting-improvement-prompt.ts";
+import {
   isPlayPresetPromptRole,
   type PlayPresetPromptRole,
 } from "../../shared/play-preset-prompt-roles.ts";
@@ -160,6 +164,8 @@ export interface PlayPresetDefinition {
   format: "narraeon.play-preset/v1";
   name: string;
   callChainPath: string;
+  /** Optional only so pre-feature v1 presets retain their prior semantics. */
+  settingImprovementPrompt?: PlayPresetPromptBlock;
   mounts: PlayPresetMount[];
   playerViewPanels: PlayPresetPlayerViewPanel[];
   extensionRefs: string[];
@@ -195,6 +201,7 @@ export function presetHostBinding(binding: PlayPresetBinding): {
 export interface PlayPresetStructuredEditor {
   name: string;
   callChainPath: string;
+  settingImprovementPrompt?: PlayPresetPromptBlock;
   mounts: PlayPresetMount[];
   playerViewPanels: PlayPresetPlayerViewPanel[];
   extensionRefs: string[];
@@ -300,6 +307,8 @@ export const defaultPlayPresetFiles: Record<string, string> = {
   "preset.yaml": `format: narraeon.play-preset/v1
 name: 系统推荐
 callChain: call-chain.yaml
+settingImprovement:
+  markdown: prompts/setting-improvement.md
 mounts: []
 extensions: []
 `,
@@ -310,7 +319,27 @@ followups: []
 `,
   ...defaultPresetHostFiles,
   "prompts/narrate.md": defaultNarrationPrompt,
+  [defaultSettingImprovementPromptPath]: defaultSettingImprovementPrompt,
 };
+
+/**
+ * Resolve the author-owned part of setting improvement from a frozen preset.
+ * Older v1 presets had no declaration; they keep the shipped behavior without
+ * their persisted file tree being silently rewritten.
+ */
+export function settingImprovementPromptForBinding(
+  binding: PlayPresetBinding,
+): string {
+  const reference = binding.definition.settingImprovementPrompt;
+  if (reference === undefined) return defaultSettingImprovementPrompt;
+  const prompt = binding.files[reference.path];
+  if (prompt === undefined || prompt.trim() === "")
+    throw new FileNativePlayPresetError(
+      "setting_improvement_prompt_missing",
+      `设定完善提示块不存在：${reference.path}`,
+    );
+  return prompt;
+}
 
 /** Stable built-in binding for direct Runtime seams without a local library. */
 export function builtinDefaultPlayPresetBinding(): PlayPresetBinding {
@@ -857,6 +886,13 @@ export function toPlayPresetStructuredEditor(
   return {
     name: definition.name,
     callChainPath: definition.callChainPath,
+    ...(definition.settingImprovementPrompt === undefined
+      ? {}
+      : {
+          settingImprovementPrompt: structuredClone(
+            definition.settingImprovementPrompt,
+          ),
+        }),
     mounts: structuredClone(definition.mounts),
     playerViewPanels: structuredClone(definition.playerViewPanels),
     extensionRefs: [...definition.extensionRefs],
@@ -899,6 +935,13 @@ export function applyPlayPresetStructuredEditor(
     );
   preset.set("name", input.name);
   preset.set("callChain", input.callChainPath);
+  if (input.settingImprovementPrompt === undefined)
+    preset.delete("settingImprovement");
+  else
+    preset.set("settingImprovement", {
+      role: input.settingImprovementPrompt.role,
+      markdown: input.settingImprovementPrompt.path,
+    });
   preset.set(
     "mounts",
     input.mounts.map(({ channel, mount }) => ({ channel, mount })),
@@ -1015,6 +1058,10 @@ export function parsePlayPresetStructuredEditor(
           path: "",
         };
   const narrativePrompts = rawNarrative.map(promptBlock);
+  const settingImprovementPrompt =
+    value.settingImprovementPrompt === undefined
+      ? undefined
+      : promptBlock(value.settingImprovementPrompt);
   const followups = rawFollowups.map((entry) => {
     if (!isRecord(entry))
       throw new FileNativePlayPresetError(
@@ -1047,6 +1094,12 @@ export function parsePlayPresetStructuredEditor(
   return {
     name: value.name,
     callChainPath: value.callChainPath,
+    ...(settingImprovementPrompt === undefined
+      ? {}
+      : {
+          settingImprovementPrompt:
+            settingImprovementPrompt as PlayPresetPromptBlock,
+        }),
     mounts,
     playerViewPanels: (value.playerViewPanels ??
       []) as PlayPresetPlayerViewPanel[],
@@ -1074,6 +1127,7 @@ export function parsePlayPresetFiles(
         "format",
         "name",
         "callChain",
+        "settingImprovement",
         "mounts",
         "playerViewPanels",
         "extensions",
@@ -1121,6 +1175,14 @@ export function parsePlayPresetFiles(
       "call-chain.yaml#narrative",
       true,
     );
+    const settingImprovementPrompt =
+      preset.settingImprovement === undefined
+        ? undefined
+        : parsePromptBlocks(
+            [preset.settingImprovement],
+            files,
+            "preset.yaml#settingImprovement",
+          )[0];
     const followups = parseFollowups(callChain.followups, files);
     const mounts = parseMounts(preset.mounts);
     const playerViewPanels = parsePlayerViewPanels(
@@ -1136,6 +1198,9 @@ export function parsePlayPresetFiles(
         format: "narraeon.play-preset/v1",
         name: name.trim(),
         callChainPath,
+        ...(settingImprovementPrompt === undefined
+          ? {}
+          : { settingImprovementPrompt }),
         mounts,
         playerViewPanels,
         extensionRefs,

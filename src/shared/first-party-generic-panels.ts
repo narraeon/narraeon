@@ -1,5 +1,9 @@
 import { defaultNarrationPrompt } from "./default-play-prompts.ts";
 import { defaultPresetHostFiles } from "./default-preset-host.ts";
+import {
+  defaultSettingImprovementPrompt,
+  defaultSettingImprovementPromptPath,
+} from "./default-setting-improvement-prompt.ts";
 
 /**
  * Ordinary copyable examples for the generic artifact seam.  Nothing in the
@@ -10,6 +14,8 @@ export const firstPartyGenericPanelsPresetFiles: Record<string, string> = {
   "preset.yaml": `format: narraeon.play-preset/v1
 name: generic-panels-recommended
 callChain: call-chain.yaml
+settingImprovement:
+  markdown: prompts/setting-improvement.md
 mounts:
   generic.markdown: story
   generic.html: sidebar
@@ -64,6 +70,7 @@ followups:
 `,
   ...defaultPresetHostFiles,
   "prompts/narrate.md": defaultNarrationPrompt,
+  [defaultSettingImprovementPromptPath]: defaultSettingImprovementPrompt,
   "prompts/panels.md": `# 通用面板
 
 核心叙事已经提交。只有面板能为当前局面提供额外价值时才生成它；没有合适内容时可以不生成。

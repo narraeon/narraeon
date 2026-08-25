@@ -7,6 +7,37 @@ import {
 } from "../../src/runtime/setting/DocumentCandidateSettingImprovement.ts";
 import { WorldDocumentStore } from "../../src/runtime/world/WorldDocumentStore.ts";
 
+test("设定完善采用预设作者提示，同时始终追加内置工具机械契约", async () => {
+  const requests: Parameters<SettingAuthorAdapter["next"]>[0][] = [];
+  const improvement = new DocumentCandidateSettingImprovement({
+    files: baseFiles(),
+    authorPrompt:
+      "# 我的设定方法\n\n自定义唯一标记：只完善城市场景的生活节奏。",
+    adapter: {
+      async next(request) {
+        await Promise.resolve();
+        requests.push(snapshotAuthorRequest(request));
+        return { role: "assistant", content: plan(), toolCalls: [] };
+      },
+    },
+    preview: (snapshot) => previewSnapshot(snapshot),
+  });
+
+  await improvement.start(planFirst("完善城市生活"));
+
+  expect(requests[0]?.messages[0]).toMatchObject({ role: "system" });
+  const system = requests[0]?.messages[0]?.content ?? "";
+  expect(system).toContain("自定义唯一标记");
+  expect(system).not.toContain("系统推荐的设定完善方法");
+  expect(system).toContain("Runtime 设定完善工具与机械契约");
+  expect(system).toContain("setting_write_file");
+  expect(requests[0]?.tools).toEqual([
+    "setting_list",
+    "setting_search",
+    "setting_read",
+  ]);
+});
+
 test("设定完善以 append-only 会话创建和修改文件原生候选并生成完整审阅", async () => {
   const requests: Parameters<SettingAuthorAdapter["next"]>[0][] = [];
   const adapter: SettingAuthorAdapter = {

@@ -110,6 +110,42 @@ test("start 模型 I/O 期间 discard 被拒绝，完成后会话仍可用", asy
   ).resolves.toMatchObject({ result: { discarded: true } });
 });
 
+test("start 冻结当前预设的设定完善提示，工具定义与说明仍由 Runtime 内置", async () => {
+  const { runtime, packageId } = await fixture();
+  const firstPrompt = "# 城市作者方法\n\n冻结标记：先完善街区的日常节奏。\n";
+  const secondPrompt = "# 山野作者方法\n\n切换标记：只写山林探索。\n";
+  await saveCurrentSettingPrompt(runtime, firstPrompt);
+
+  const providerBodies: Record<string, unknown>[] = [];
+  vi.stubGlobal(
+    "fetch",
+    (_input: string | URL | Request, init?: RequestInit) => {
+      if (typeof init?.body !== "string")
+        throw new Error("预期 provider request 使用 JSON 字符串 body");
+      providerBodies.push(JSON.parse(init.body) as Record<string, unknown>);
+      return Promise.resolve(planResponse());
+    },
+  );
+
+  await runtime.handle(startRequest(packageId, "frozen-preset"));
+  await saveCurrentSettingPrompt(runtime, secondPrompt);
+  await runtime.handle({
+    type: "setting-improvement.revise-plan",
+    improvementId: "frozen-preset",
+    feedback: "把节奏写得更具体。",
+  });
+
+  expect(providerBodies).toHaveLength(2);
+  for (const body of providerBodies) {
+    const serialized = JSON.stringify(body);
+    expect(serialized).toContain("冻结标记");
+    expect(serialized).not.toContain("切换标记");
+    expect(serialized).toContain("Runtime 设定完善工具与机械契约");
+    expect(serialized).toContain("setting_list");
+    expect(serialized).toContain("通过当前候选文档快照列出");
+  }
+});
+
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "narraeon-setting-lifecycle-"));
   roots.push(root);
@@ -136,6 +172,30 @@ async function fixture() {
     runtime,
     packageId: (created.result as { localId: string }).localId,
   };
+}
+
+async function saveCurrentSettingPrompt(
+  runtime: V1Runtime,
+  prompt: string,
+): Promise<void> {
+  const read = await runtime.handle({ type: "play.read" });
+  const library = read.result as {
+    currentPresetId: string;
+    presets: { id: string; name: string; files: Record<string, string> }[];
+  };
+  const preset = library.presets.find(
+    ({ id }) => id === library.currentPresetId,
+  );
+  if (preset === undefined) throw new Error("当前预设不存在");
+  const files = structuredClone(preset.files);
+  files["prompts/setting-improvement.md"] = prompt;
+  await runtime.handle({
+    type: "play.save",
+    presetId: preset.id,
+    name: preset.name,
+    files,
+  });
+  await runtime.handle({ type: "play.select", presetId: preset.id });
 }
 
 function startRequest(packageId: string, improvementId: string) {

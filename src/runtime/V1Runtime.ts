@@ -34,6 +34,7 @@ import {
   FileNativePlayPresetError,
   FileNativePlayPresetStore,
   presetHostBinding,
+  settingImprovementPromptForBinding,
   type PlayPresetBinding,
 } from "./play/FileNativePlayPresetStore.ts";
 import { buildPlayPresetWorkbenchSnapshot } from "./play/PlayPresetWorkbench.ts";
@@ -165,13 +166,15 @@ export class V1Runtime {
       case "setting-improvement.start": {
         if (this.#settingImprovements.has(request.improvementId))
           throw new Error("设定完善 ID 已存在");
-        const [package_, connection] = await Promise.all([
+        const [package_, connection, preset] = await Promise.all([
           this.#content.readCurrentTreeContentPackage(request.packageId),
           this.#models.bind(),
+          this.#playPresets.bindCurrent(),
         ]);
         const improvement = new DocumentCandidateSettingImprovement({
           files: package_.files,
           adapter: new FileNativeSettingAuthorProvider(connection),
+          authorPrompt: settingImprovementPromptForBinding(preset),
           preview: (snapshot) =>
             this.#compiler.preview({
               endpoint: { id: "setting-candidate", commit: "candidate" },

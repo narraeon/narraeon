@@ -668,7 +668,7 @@ label {
   display: grid;
   min-width: 0;
   max-width: 100%;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 0.35rem;
   margin-inline: 0;
   padding: 0.45rem 1.25rem;
@@ -1389,7 +1389,7 @@ label {
   }
 
   .play-preset-workspace-nav {
-    grid-template-columns: repeat(5, minmax(8.5rem, 1fr));
+    grid-template-columns: repeat(6, minmax(8.5rem, 1fr));
   }
 
   .play-preset-overview {
@@ -1462,7 +1462,7 @@ label {
   }
 
   .play-preset-workspace-nav {
-    grid-template-columns: repeat(5, 8.5rem);
+    grid-template-columns: repeat(6, 8.5rem);
     padding-inline: 1rem;
   }
 

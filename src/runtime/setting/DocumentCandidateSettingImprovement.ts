@@ -1,4 +1,5 @@
 import type { ContentTreeFile } from "../content/ContentTreeFile.ts";
+import { defaultSettingImprovementPrompt } from "../../shared/default-setting-improvement-prompt.ts";
 import {
   inspectContentPackageCurrentTree,
   type FileNativeContentInspection,
@@ -175,16 +176,14 @@ export const settingAuthorContractExamples = {
   playerViews: playerViewsExample,
 } as const;
 
-const authorContract = `# Runtime 设定完善契约
+const settingAuthorRuntimeContract = `# Runtime 设定完善工具与机械契约
 
 你只编辑固定内容包的隔离候选，不得修改运行中世界、历史、认知或权威提交。
-你面对的是已经存在的内容包当前树，不是默认从零创建的新设定。Runtime 可能把用户选定文件的完整原文直接注入为“当前设定文件”；这些原文已经完整读取，应作为已有事实和约束，不得忽略或当成要求重建世界的指令。
-计划优先路径中，先使用精确 list、原文字面 search 和精确 read 按需了解现有设定，再输出一份以“# 创作计划”开头的简洁可见计划，说明玩家想获得的体验、准备保留／调整／建立的内容、语气／边界和必要假设。不适用的循环、冲突、多幕结构或次要体验可以省略，不要为了填模板而发明；这个阶段不得写候选。setting_list 的 directory 使用 world 或 world/ 下目录；list／search／read 返回的 cursor 只属于产生它的固定候选快照和原查询条件。
+Runtime 可能把用户选定文件的完整原文直接注入为“当前设定文件”；这些原文已经完整读取，不需要再调用读取工具取得写授权。
+计划优先路径中，只能使用精确 list、原文字面 search 和精确 read 了解现有设定，再输出一份以“# 创作计划”开头的可见计划；这个阶段不得写候选。setting_list 的 directory 使用 world 或 world/ 下目录；list／search／read 返回的 cursor 只属于产生它的固定候选快照和原查询条件。
 用户可以明确跳过可见计划并直接生成候选。进入候选阶段后，才可使用 \`setting_write_file\`、\`setting_patch\`、\`setting_move\` 和终态工具。\`setting_write_file\` 的 path 只接受这几类：\`world/\` 下以 \`.yaml\` 或 \`.md\` 结尾的世界文档、\`control/frame.yaml\`、\`control/player-views.yaml\`、\`control/blocks/\` 下的 \`.md\`，以及根级 \`opening.md\`；其余路径一律拒绝。\`world/\` 下的目录和文件名可以用中文，\`control/blocks/\` 下的文件名不行——它只接受小写字母开头、由小写字母、数字、连字符、下划线组成的名字，例如 \`control/blocks/world-style.md\`。修改既有文件前必须完整读取它；用户直接注入的完整文件视为已读，你自己创建或修改过的文件同样视为已读，都不需要为了再次修改而重读。同一模型响应里的 \`setting_write_file\`、\`setting_patch\`、\`setting_move\` 会合成一次原子 revision：其中任何一个被拒，整批都不生效，未被拒的调用也要连同修复一起重发，不要以为它们已经写进去了。每次成功 revision 都会替换候选快照并使旧 cursor 失效，需要继续分页时重新发起查询。所有工具只能看到逻辑路径，不能取得宿主路径。
 内容包中的 world/ 文档会在创建世界时原样成为 state/。人物、地点、关键物品、规则和当前情境使用 YAML 或 Markdown；提示词框架、主持方法和玩家视图放在 control/。不要创建 schema、record 或 JSON 材料 DTO。
 根级 opening.md 是玩家进入新世界后立即看到的开场白，内容包必须有且只有一份。先用 setting_list 检查它：缺失时用 setting_write_file 创建；如果本次修改改变开局地点、在场人物、眼前局面、叙事语气或行动钩子，必须先用 setting_read 完整读取既有 opening.md，再用 setting_write_file 更新；不受影响时保留原文，不要为了展示工作量而改写。
-开场白是这部互动式小说的第一页，玩家读完它就要写下第一个行动。让环境、光线、声音、他人的动作和正在进行的事把场面铺开，用侧写交代气氛与关系，而不是罗列设定或逐条介绍人物。在场的人各自有手头正在做的事——世界在玩家到来之前已经在运转，不要把所有人定格成等待启动的布景。
-最后一句写某个人做的一件具体的事，或说的一句具体的话：他问了什么就把原话写出来，他把东西递过来就写他怎么递的。轮到玩家是他自己从这件事里得出的结论，不需要告诉他，所以结尾只写事件、不写场面的状态——“没人说话”“众人都看着你”“他等着你的回答”都不行，它们是把“该你了”翻译成场面语言，和直接问“你打算怎么做”是同一件事。也不要在结尾罗列他有哪些选项，那是主持人的声音，不属于这段小说。
 不得替玩家决定行动、台词或内心：此刻还没有任何玩家输入可以承接，写进去的每一个玩家动作都是凭空替他做主。开场白中会继续约束首次行动的事实，必须同时写入下面规则指定的世界文档，不能只存在于 opening.md。
 
 ## 这些设定将怎样被使用
@@ -370,6 +369,7 @@ export class SettingModelError extends Error {
 export class DocumentCandidateSettingImprovement {
   readonly #adapter: SettingAuthorAdapter;
   readonly #preview: (snapshot: WorldDocumentStore) => PromptPreview;
+  readonly #authorPrompt: string;
   readonly #baseFiles: ContentTreeFile[];
   readonly #baseSnapshot: WorldDocumentStore;
   #currentFiles: ContentTreeFile[];
@@ -396,6 +396,7 @@ export class DocumentCandidateSettingImprovement {
     files: readonly ContentTreeFile[];
     adapter: SettingAuthorAdapter;
     preview: (snapshot: WorldDocumentStore) => PromptPreview;
+    authorPrompt?: string;
   }) {
     this.#baseSnapshot = WorldDocumentStore.open({
       layout: "content_package",
@@ -406,6 +407,9 @@ export class DocumentCandidateSettingImprovement {
     this.#baseReads = freshReadAuthorizations(this.#baseSnapshot);
     this.#adapter = input.adapter;
     this.#preview = input.preview;
+    this.#authorPrompt = requiredAuthorPrompt(
+      input.authorPrompt ?? defaultSettingImprovementPrompt,
+    );
   }
 
   progress(): SettingImprovementProgress {
@@ -495,7 +499,10 @@ export class DocumentCandidateSettingImprovement {
     for (const file of injectedFiles)
       authorizeInjectedFile(this.#baseSnapshot, this.#baseReads, file);
     this.#messages = [
-      { role: "system", content: authorContract },
+      {
+        role: "system",
+        content: settingAuthorSystemPrompt(this.#authorPrompt),
+      },
       ...(injectedFiles.length === 0
         ? []
         : [{ role: "user" as const, content: injectedContext(injectedFiles) }]),
@@ -1677,6 +1684,19 @@ function assertVisiblePlan(markdown: string): void {
       "plan_invalid",
       "创作计划的首个围栏外一级标题必须以“创作计划”开头，且可见 Markdown 不得少于 40 字",
     );
+}
+
+function requiredAuthorPrompt(prompt: string): string {
+  const trimmed = prompt.trim();
+  if (trimmed.length === 0) throw new Error("设定完善作者提示词不能为空");
+  return trimmed;
+}
+
+function settingAuthorSystemPrompt(authorPrompt: string): string {
+  // The editable author semantics come first. The non-editable Runtime/tool
+  // contract is deliberately appended afterwards so a portable preset cannot
+  // replace the actual authority, tool descriptions or settlement protocol.
+  return `${authorPrompt}\n\n---\n\n${settingAuthorRuntimeContract}`;
 }
 
 function publicMessages(

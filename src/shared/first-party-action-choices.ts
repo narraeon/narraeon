@@ -1,5 +1,9 @@
 import { defaultNarrationPrompt } from "./default-play-prompts.ts";
 import { defaultPresetHostFiles } from "./default-preset-host.ts";
+import {
+  defaultSettingImprovementPrompt,
+  defaultSettingImprovementPromptPath,
+} from "./default-setting-improvement-prompt.ts";
 
 /**
  * An ordinary, portable play-preset asset.  Runtime treats this exactly like
@@ -10,6 +14,8 @@ export const firstPartyActionChoicesPresetFiles: Record<string, string> = {
   "preset.yaml": `format: narraeon.play-preset/v1
 name: action-choices-recommended
 callChain: call-chain.yaml
+settingImprovement:
+  markdown: prompts/setting-improvement.md
 mounts:
   player.options: composer_below
 extensions:
@@ -74,6 +80,7 @@ followups:
 `,
   ...defaultPresetHostFiles,
   "prompts/narrate.md": defaultNarrationPrompt,
+  [defaultSettingImprovementPromptPath]: defaultSettingImprovementPrompt,
   "prompts/options.md": `# 提交后下一步建议
 
 根据玩家刚刚看到的决策点，给出四种短而具体、彼此有实质差异的下一步建议。差异应体现在目标、方法、风险或态度上，而不是只替换近义词。

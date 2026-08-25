@@ -10,6 +10,10 @@ import { parse as parseYaml, parseDocument } from "yaml";
 
 import type { V1Request } from "../protocol/v1.ts";
 import {
+  defaultSettingImprovementPrompt,
+  defaultSettingImprovementPromptPath,
+} from "../shared/default-setting-improvement-prompt.ts";
+import {
   applyRegexPipeline,
   buildAppSrcDoc,
   buildDocumentSrcDoc,
@@ -189,6 +193,7 @@ interface PlayPresetPlayerViewPanel {
 interface PlayPresetStructuredEditor {
   name: string;
   callChainPath: string;
+  settingImprovementPrompt?: PlayPresetPromptRef;
   mounts: PlayPresetMount[];
   playerViewPanels: PlayPresetPlayerViewPanel[];
   extensionRefs: string[];
@@ -244,7 +249,12 @@ interface Feedback {
 }
 
 type PlayPresetWorkspaceView =
-  "call_chain" | "extensions" | "blocks" | "files" | "preview";
+  | "call_chain"
+  | "setting_improvement"
+  | "extensions"
+  | "blocks"
+  | "files"
+  | "preview";
 
 const playPresetWorkspaceViews: {
   id: PlayPresetWorkspaceView;
@@ -255,6 +265,11 @@ const playPresetWorkspaceViews: {
     id: "call_chain",
     label: "调用链",
     description: "叙事规则、后置请求与工具契约",
+  },
+  {
+    id: "setting_improvement",
+    label: "设定完善",
+    description: "AI 创作方法；工具契约保持内置",
   },
   {
     id: "extensions",
@@ -648,13 +663,13 @@ export function PlayPresetScreen({
           <p className="eyebrow">PLAY WORKBENCH · FILE NATIVE</p>
           <h2 id="play-preset-title">玩法预设</h2>
           <p className="play-preset-lede">
-            在同一处管理调用链的叙事规则、后置请求、界面产物与可信本地代码。
+            在同一处管理设定完善方法、主持规则、调用链、界面产物与可信本地代码。
           </p>
         </div>
         <div className="play-preset-header-fact">
-          <span>新调用链当前使用</span>
+          <span>新调用链与设定完善当前使用</span>
           <strong>{currentPreset?.name ?? "未选择"}</strong>
-          <small>已经开始的调用链继续使用冻结 revision</small>
+          <small>已经开始的模型会话继续使用冻结 revision</small>
         </div>
       </header>
 
@@ -1013,6 +1028,18 @@ export function PlayPresetScreen({
                   onError={setStructuredError}
                 />
               )}
+              {draft.structure !== undefined &&
+              workspaceView === "setting_improvement" ? (
+                <SettingImprovementPromptEditor
+                  structure={draft.structure}
+                  files={draft.files}
+                  onChange={updateStructure}
+                  onFileChange={updateFileAtPath}
+                  onCreateFile={(path, contents) =>
+                    updateFiles((files) => ({ ...files, [path]: contents }))
+                  }
+                />
+              ) : null}
               {workspaceView === "blocks" && (
                 <PresetBlockLibrary
                   files={draft.files}
@@ -1053,7 +1080,8 @@ export function PlayPresetScreen({
               ) : null}
               {draft.structure === undefined &&
               (workspaceView === "call_chain" ||
-                workspaceView === "extensions") ? (
+                workspaceView === "extensions" ||
+                workspaceView === "setting_improvement") ? (
                 <section
                   id={`play-preset-panel-${workspaceView}`}
                   className="play-preset-empty-view"
@@ -1202,6 +1230,108 @@ export function PlayPresetScreen({
           )}
         </div>
       </fieldset>
+    </section>
+  );
+}
+
+function SettingImprovementPromptEditor({
+  structure,
+  files,
+  onChange,
+  onFileChange,
+  onCreateFile,
+}: {
+  structure: PlayPresetStructuredEditor;
+  files: Record<string, string>;
+  onChange: (
+    update: (
+      structure: PlayPresetStructuredEditor,
+    ) => PlayPresetStructuredEditor,
+  ) => void;
+  onFileChange: (path: string, contents: string) => void;
+  onCreateFile: (path: string, contents: string) => void;
+}): React.JSX.Element {
+  const prompt = structure.settingImprovementPrompt;
+  return (
+    <section
+      id="play-preset-panel-setting_improvement"
+      className="play-preset-structured-editor"
+      role="tabpanel"
+      aria-labelledby="play-preset-tab-setting_improvement"
+    >
+      <header className="play-preset-workspace-heading">
+        <div>
+          <p className="play-preset-section-kicker">AI AUTHORING</p>
+          <h3>AI 设定完善</h3>
+        </div>
+        <p>
+          这份文字决定 AI
+          怎样理解、规划和创作内容包设定；每次开始完善时会冻结当前预设
+          revision。
+        </p>
+      </header>
+
+      <div className="play-preset-concept-note">
+        <strong>工具为什么不在这里？</strong>
+        <p>
+          Runtime 继续内置 setting_*
+          工具定义、参数、说明、只读／写入阶段边界和候选终态协议。预设只能编辑创作语义，不能替换这些机械契约。
+        </p>
+      </div>
+
+      {prompt === undefined ? (
+        <div className="play-preset-structured-section">
+          <div>
+            <h4>沿用系统推荐提示</h4>
+            <p>
+              这是一份功能加入前保存的 v1
+              预设。打开页面不会改写它；写入后才会产生新的预设 revision。
+            </p>
+          </div>
+          <textarea
+            aria-label="系统推荐设定完善提示词"
+            value={defaultSettingImprovementPrompt}
+            readOnly
+            spellCheck={false}
+          />
+          <button
+            type="button"
+            onClick={() => {
+              onCreateFile(
+                defaultSettingImprovementPromptPath,
+                files[defaultSettingImprovementPromptPath]?.trim()
+                  ? files[defaultSettingImprovementPromptPath]
+                  : defaultSettingImprovementPrompt,
+              );
+              onChange((current) => ({
+                ...current,
+                settingImprovementPrompt: {
+                  role: "author_instruction",
+                  path: defaultSettingImprovementPromptPath,
+                },
+              }));
+            }}
+          >
+            写入预设并编辑
+          </button>
+        </div>
+      ) : (
+        <div className="play-preset-structured-section">
+          <PromptReferenceEditor
+            label="设定完善创作提示"
+            path={prompt.path}
+            paths={promptFilePaths(files)}
+            files={files}
+            onPathChange={(path) =>
+              onChange((current) => ({
+                ...current,
+                settingImprovementPrompt: { ...prompt, path },
+              }))
+            }
+            onContentsChange={(contents) => onFileChange(prompt.path, contents)}
+          />
+        </div>
+      )}
     </section>
   );
 }
@@ -3055,7 +3185,7 @@ function describePresetFile(
       title: "预设入口",
       kind: "核心 YAML",
       description:
-        "连接调用链、界面显示位置、玩家视图面板和扩展资源；它回答“这份玩法由哪些部分组成”。",
+        "连接设定完善提示、调用链、界面显示位置、玩家视图面板和扩展资源；它回答“这份预设由哪些部分组成”。",
     };
   if (path === "call-chain.yaml")
     return {
@@ -3080,6 +3210,14 @@ function describePresetFile(
       kind: "主持规则",
       description:
         "跨世界成立的主持语义；是否发送给模型以及发送顺序由“提示内容”页控制。",
+    };
+  if (path === defaultSettingImprovementPromptPath)
+    return {
+      path,
+      title: markdownTitle(contents),
+      kind: "设定完善提示",
+      description:
+        "约束 AI 怎样理解、规划和创作内容包；工具定义、参数与说明仍由 Runtime 内置。",
     };
   if (path.startsWith("prompts/") && path.endsWith(".md"))
     return {

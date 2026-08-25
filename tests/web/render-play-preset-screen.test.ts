@@ -13,6 +13,10 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import type { V1Request } from "../../src/protocol/v1.ts";
 import { firstPartyActionChoicesPresetFiles } from "../../src/shared/first-party-action-choices.ts";
 import {
+  defaultSettingImprovementPrompt,
+  defaultSettingImprovementPromptPath,
+} from "../../src/shared/default-setting-improvement-prompt.ts";
+import {
   PlayPresetScreen,
   type PlayPresetScreenPreset,
 } from "../../src/web/PlayPresetScreen.tsx";
@@ -22,6 +26,10 @@ type Preset = PlayPresetScreenPreset & { validation: { status: "valid" } };
 const editorStructure: NonNullable<Preset["structure"]> = {
   name: "结构化玩法",
   callChainPath: "call-chain.yaml",
+  settingImprovementPrompt: {
+    role: "author_instruction",
+    path: defaultSettingImprovementPromptPath,
+  },
   mounts: [],
   playerViewPanels: [],
   extensionRefs: [],
@@ -171,7 +179,7 @@ describe("玩法预设工作台", () => {
     expect(screen.getByRole("heading", { name: "玩法预设" })).toBeTruthy();
   });
 
-  test("以五个任务区收纳流程、内容、文件和预览，管理操作不再独占分页", async () => {
+  test("以六个任务区收纳流程、设定提示、内容、文件和预览，管理操作不再独占分页", async () => {
     const base: Preset = {
       id: "organized",
       name: "清晰玩法",
@@ -364,6 +372,15 @@ describe("玩法预设工作台", () => {
     ).toContain("下一步建议");
     expect(screen.queryByText("提示块路径")).toBeNull();
 
+    fireEvent.click(screen.getByRole("tab", { name: /设定完善/u }));
+    expect(screen.getByText("工具为什么不在这里？")).toBeTruthy();
+    expect(
+      screen.getByLabelText<HTMLTextAreaElement>(
+        `编辑提示内容 ${defaultSettingImprovementPromptPath}`,
+      ).value,
+    ).toContain("系统推荐的设定完善方法");
+    expect(screen.getByText(/工具定义、参数、说明/u)).toBeTruthy();
+
     fireEvent.click(screen.getByRole("tab", { name: /界面扩展/u }));
     expect(screen.getByText("频道是什么？")).toBeTruthy();
     expect(screen.queryByLabelText("玩家视图面板 JSON")).toBeNull();
@@ -403,6 +420,107 @@ describe("玩法预设工作台", () => {
       screen.getByText("技术细节：频道、处理规则与产物协议").closest("details")
         ?.open,
     ).toBe(false);
+  });
+
+  test("旧预设只读显示系统回退，用户确认后才写入并编辑设定完善提示", async () => {
+    const files = structuredClone(firstPartyActionChoicesPresetFiles);
+    files["preset.yaml"] = files["preset.yaml"]!.replace(
+      "settingImprovement:\n  markdown: prompts/setting-improvement.md\n",
+      "",
+    );
+    delete files[defaultSettingImprovementPromptPath];
+    const legacyStructure = structuredClone(editorStructure);
+    delete legacyStructure.settingImprovementPrompt;
+    let current: Preset = {
+      id: "legacy-setting-prompt",
+      name: "旧预设",
+      revision: "rev-legacy",
+      files,
+      validation: { status: "valid" },
+      structure: legacyStructure,
+      enabled: true,
+      scriptsEnabled: false,
+    };
+    const requests: V1Request[] = [];
+    const dirtyChanged = vi.fn();
+    const client = {
+      request: vi.fn((request: V1Request) => {
+        requests.push(request);
+        if (request.type === "play.workbench.read")
+          return Promise.resolve({
+            id: current.id,
+            name: current.name,
+            revision: current.revision,
+            structure: current.structure,
+            artifactPreviews: [],
+            staticErrors: [],
+            trustedLocalCode: false,
+            scriptsEnabled: false,
+          });
+        if (request.type === "play.save") {
+          current = {
+            ...current,
+            files: request.files,
+            structure:
+              (request.structure as
+                NonNullable<Preset["structure"]> | undefined) ??
+              current.structure ??
+              legacyStructure,
+          };
+          return Promise.resolve({
+            currentPresetId: current.id,
+            preset: current,
+          });
+        }
+        if (request.type === "play.read")
+          return Promise.resolve({
+            currentPresetId: current.id,
+            presets: [current],
+          });
+        return Promise.reject(new Error(`unexpected ${request.type}`));
+      }),
+    } as unknown as { request<T = unknown>(request: V1Request): Promise<T> };
+
+    render(
+      createElement(PlayPresetScreen, {
+        client,
+        initialLibrary: { currentPresetId: current.id, presets: [current] },
+        onLibraryChange: vi.fn(),
+        onDirtyChange: dirtyChanged,
+      }),
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /设定完善/u }));
+    expect(
+      screen.getByLabelText<HTMLTextAreaElement>("系统推荐设定完善提示词")
+        .value,
+    ).toBe(defaultSettingImprovementPrompt);
+    expect(screen.getByText("已保存")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "写入预设并编辑" }));
+    const editor = screen.getByLabelText<HTMLTextAreaElement>(
+      `编辑提示内容 ${defaultSettingImprovementPromptPath}`,
+    );
+    fireEvent.change(editor, {
+      target: { value: "# 自定义设定方法\n\n只完善校园日常。\n" },
+    });
+    expect(screen.getByText("未保存修改")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+    await screen.findByText("玩法文件与结构化草稿已保存。");
+
+    const saved = requests.find(
+      (request): request is Extract<V1Request, { type: "play.save" }> =>
+        request.type === "play.save",
+    );
+    expect(saved?.files[defaultSettingImprovementPromptPath]).toContain(
+      "只完善校园日常",
+    );
+    expect(saved?.structure).toMatchObject({
+      settingImprovementPrompt: {
+        role: "author_instruction",
+        path: defaultSettingImprovementPromptPath,
+      },
+    });
+    expect(dirtyChanged).toHaveBeenCalledWith(true);
   });
 
   test("结构化编辑器可新增后置请求并通过 play.save 保存同一结构草稿", async () => {

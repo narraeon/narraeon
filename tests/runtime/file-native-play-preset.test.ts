@@ -13,6 +13,7 @@ import {
   applyPlayPresetStructuredEditor,
   parsePlayPresetFiles,
   parsePlayPresetStructuredEditor,
+  settingImprovementPromptForBinding,
   toPlayPresetStructuredEditor,
   validatePlayPresetFiles,
 } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
@@ -22,6 +23,10 @@ import {
 } from "../../src/runtime/play/PlayPresetWorkbench.ts";
 import { firstPartyActionChoicesPresetFiles } from "../../src/shared/first-party-action-choices.ts";
 import { firstPartyGenericPanelsPresetFiles } from "../../src/shared/first-party-generic-panels.ts";
+import {
+  defaultSettingImprovementPrompt,
+  defaultSettingImprovementPromptPath,
+} from "../../src/shared/default-setting-improvement-prompt.ts";
 import {
   createMinimalFileNativePreviewInput,
   FileNativePromptCompiler,
@@ -343,7 +348,7 @@ extensions:
     const preset = library.presets[0]!;
     expect(preset.validation).toEqual({ status: "valid" });
     expect(preset.revision).toMatch(/^rev-[0-9a-f]{64}$/u);
-    // 一份预设同时承载主持层（frame + 块库）与玩法层（叙事块、后置请求）。
+    // 一份预设同时承载主持层、玩法层和设定完善作者提示。
     // 文风块随预设一起发货，但要不要启用由 frame.yaml 决定。
     expect(Object.keys(preset.files).sort()).toEqual([
       "blocks/adjudication.md",
@@ -359,12 +364,20 @@ extensions:
       "frame.yaml",
       "preset.yaml",
       "prompts/narrate.md",
+      "prompts/setting-improvement.md",
     ]);
 
     const binding = await store.bindCurrent();
     expect(binding.revision).toBe(preset.revision);
     expect(binding.definition.narrativePrompts.map(({ path }) => path)).toEqual(
       ["prompts/narrate.md"],
+    );
+    expect(binding.definition.settingImprovementPrompt).toEqual({
+      role: "author_instruction",
+      path: defaultSettingImprovementPromptPath,
+    });
+    expect(settingImprovementPromptForBinding(binding)).toBe(
+      defaultSettingImprovementPrompt,
     );
     expect(binding.definition.followups).toEqual([]);
 
@@ -375,6 +388,59 @@ extensions:
     expect((await secondStore.list()).presets[0]?.revision).toBe(
       preset.revision,
     );
+  });
+
+  test("旧 v1 预设不被改写并回退到系统推荐设定完善提示", () => {
+    const files = structuredClone(defaultPlayPresetFiles);
+    files["preset.yaml"] = files["preset.yaml"]!.replace(
+      "settingImprovement:\n  markdown: prompts/setting-improvement.md\n",
+      "",
+    );
+    delete files[defaultSettingImprovementPromptPath];
+
+    const parsed = parsePlayPresetFiles(files);
+    if (parsed.kind !== "valid") throw parsed.error;
+    expect(parsed.definition.settingImprovementPrompt).toBeUndefined();
+    expect(Object.keys(files)).not.toContain(
+      defaultSettingImprovementPromptPath,
+    );
+    expect(
+      settingImprovementPromptForBinding({
+        id: "legacy",
+        name: "旧预设",
+        revision: "legacy-v1",
+        definition: parsed.definition,
+        files,
+        scriptsEnabled: true,
+      }),
+    ).toBe(defaultSettingImprovementPrompt);
+  });
+
+  test("设定完善提示引用可编辑，但 Runtime 工具定义不能写进预设结构", () => {
+    const custom = structuredClone(defaultPlayPresetFiles);
+    custom[defaultSettingImprovementPromptPath] =
+      "# 自定义创作方法\n\n只补足日常节奏。\n";
+    const parsed = parsePlayPresetFiles(custom);
+    if (parsed.kind !== "valid") throw parsed.error;
+    expect(
+      settingImprovementPromptForBinding({
+        id: "custom",
+        name: "自定义",
+        revision: "custom-v1",
+        definition: parsed.definition,
+        files: custom,
+        scriptsEnabled: true,
+      }),
+    ).toContain("只补足日常节奏");
+
+    custom["preset.yaml"] = custom["preset.yaml"]!.replace(
+      "  markdown: prompts/setting-improvement.md",
+      "  markdown: prompts/setting-improvement.md\n  toolDefinitions: []",
+    );
+    expect(parsePlayPresetFiles(custom)).toMatchObject({
+      kind: "invalid",
+      error: { code: "editable_mechanics_forbidden" },
+    });
   });
 
   test("Preview 复用真实编译器，展示 bootstrap、后置请求与 cache fingerprint", async () => {

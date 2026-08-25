@@ -17,6 +17,10 @@ import {
 } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
 import { firstPartyActionChoicesPresetFiles } from "../../src/shared/first-party-action-choices.ts";
 import { defaultNarrationPrompt } from "../../src/shared/default-play-prompts.ts";
+import {
+  defaultSettingImprovementPrompt,
+  defaultSettingImprovementPromptPath,
+} from "../../src/shared/default-setting-improvement-prompt.ts";
 import { firstPartyGenericPanelsPresetFiles } from "../../src/shared/first-party-generic-panels.ts";
 import { firstPartyStatusPanelPresetFiles } from "../../src/shared/first-party-player-view.ts";
 
@@ -39,6 +43,12 @@ describe("默认提示词职责", () => {
 
     for (const files of presets) {
       expect(files["prompts/narrate.md"]).toBe(defaultNarrationPrompt);
+      expect(files[defaultSettingImprovementPromptPath]).toBe(
+        defaultSettingImprovementPrompt,
+      );
+      expect(files["preset.yaml"]).toContain(
+        `markdown: ${defaultSettingImprovementPromptPath}`,
+      );
       expect(files).not.toHaveProperty("prompts/policy.md");
       expect(files["call-chain.yaml"]).not.toContain("prompts/policy.md");
     }
@@ -66,6 +76,10 @@ describe("默认提示词职责", () => {
     expect(defaultNarrationPrompt).toContain("本该由他决定");
     expect(defaultNarrationPrompt).toContain("不算替玩家决定");
     expect(defaultNarrationPrompt).not.toContain("第二人称");
+    expect(defaultSettingImprovementPrompt).toContain("系统推荐的设定完善方法");
+    expect(defaultSettingImprovementPrompt).toContain("互动式小说的第一页");
+    expect(defaultSettingImprovementPrompt).not.toContain("setting_write_file");
+    expect(defaultSettingImprovementPrompt).not.toContain("参数 schema");
     expect(
       firstPartyActionChoicesPresetFiles["prompts/options.md"],
     ).not.toContain("artifact_emit");
