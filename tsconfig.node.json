@@ -10,6 +10,8 @@
     "src/protocol/**/*.ts",
     "src/runtime/**/*.ts",
     "src/server/**/*.ts",
+    "src/cli/**/*.ts",
+    "tests/cli/**/*.ts",
     "tests/runtime/**/*.ts",
     "tests/server/**/*.ts",
     "tests/support/**/*.ts",

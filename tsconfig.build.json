@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.node.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "noEmit": false,
+    "outDir": "dist/node",
+    "rootDir": "src",
+    "rewriteRelativeImportExtensions": true,
+    "types": ["node"]
+  },
+  "include": [
+    "src/cli/**/*.ts",
+    "src/protocol/**/*.ts",
+    "src/runtime/**/*.ts",
+    "src/server/**/*.ts",
+    "src/shared/**/*.ts"
+  ]
+}

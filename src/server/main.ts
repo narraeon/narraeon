@@ -1,28 +1,28 @@
 import { resolve } from "node:path";
 
 import { resolveAppPaths } from "../runtime/config/appPaths.ts";
-import { createRuntime } from "./createRuntime.ts";
-import { createServer } from "./createServer.ts";
+import { parseWebPort, startWebServer } from "./startWebServer.ts";
 
-const port = parsePort(process.env.NARRAEON_PORT);
+const port = parseWebPort(process.env.NARRAEON_PORT);
 const paths = resolveAppPaths(process.env);
-const runtime = await createRuntime(paths);
-const server = await createServer({
-  runtime,
-  staticRoot: resolve("dist"),
+const server = await startWebServer({
+  paths,
+  staticRoot: resolve("dist/web"),
   port,
 });
 
-await server.listen({ host: "127.0.0.1", port });
+installGracefulShutdown(server);
 
-function parsePort(value: string | undefined): number {
-  if (value === undefined) {
-    return 4317;
-  }
-
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65_535) {
-    throw new Error(`NARRAEON_PORT 不是有效端口：${value}`);
-  }
-  return parsed;
+function installGracefulShutdown(server: { close(): Promise<void> }): void {
+  let closing = false;
+  const close = (): void => {
+    if (closing) return;
+    closing = true;
+    void server.close().catch((error: unknown) => {
+      console.error(error);
+      process.exitCode = 1;
+    });
+  };
+  process.once("SIGINT", close);
+  process.once("SIGTERM", close);
 }
