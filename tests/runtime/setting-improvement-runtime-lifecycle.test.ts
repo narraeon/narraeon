@@ -146,6 +146,51 @@ test("start 冻结当前预设的设定完善提示，工具定义与说明仍�
   }
 });
 
+test("候选完成后继续修改会为每个 Chat Completions tool call 保留 tool result", async () => {
+  const { runtime, packageId } = await fixture();
+  const providerBodies: ChatSettingRequest[] = [];
+  let exchange = 0;
+  vi.stubGlobal(
+    "fetch",
+    (_input: string | URL | Request, init?: RequestInit) => {
+      if (typeof init?.body !== "string")
+        throw new Error("预期 provider request 使用 JSON 字符串 body");
+      const body = JSON.parse(init.body) as ChatSettingRequest;
+      providerBodies.push(body);
+      const missing = missingToolResultIds(body.messages);
+      if (missing.length > 0) return Promise.resolve(toolProtocolError());
+      exchange += 1;
+      return Promise.resolve(candidateResponse(`exchange-${String(exchange)}`));
+    },
+  );
+
+  await runtime.handle({
+    type: "setting-improvement.start",
+    improvementId: "revisable-candidate",
+    packageId,
+    goal: "完善当前内容包的玩家体验",
+    mode: "direct_candidate",
+    contextPaths: [],
+  });
+  await expect(
+    runtime.handle({
+      type: "setting-improvement.revise-candidate",
+      improvementId: "revisable-candidate",
+      feedback: "继续补充可观察的日常细节。",
+    }),
+  ).resolves.toMatchObject({ result: { kind: "candidate" } });
+
+  expect(providerBodies).toHaveLength(2);
+  const revisionMessages = providerBodies[1]?.messages ?? [];
+  expect(missingToolResultIds(revisionMessages)).toEqual([]);
+  expect(revisionMessages).toContainEqual(
+    expect.objectContaining({
+      role: "tool",
+      tool_call_id: "finish-exchange-1",
+    }),
+  );
+});
+
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "narraeon-setting-lifecycle-"));
   roots.push(root);
@@ -215,6 +260,83 @@ function planResponse() {
   return new Response(
     `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\ndata: [DONE]\n\n`,
     { status: 200, headers: { "Content-Type": "text/event-stream" } },
+  );
+}
+
+interface ChatSettingRequest {
+  messages: ChatSettingMessage[];
+}
+
+interface ChatSettingMessage {
+  role: string;
+  tool_calls?: { id: string }[];
+  tool_call_id?: string;
+}
+
+function missingToolResultIds(messages: ChatSettingMessage[]): string[] {
+  const missing: string[] = [];
+  for (const [index, message] of messages.entries()) {
+    if (message.role !== "assistant" || message.tool_calls === undefined)
+      continue;
+    const pending = new Set(message.tool_calls.map(({ id }) => id));
+    let cursor = index + 1;
+    while (messages[cursor]?.role === "tool") {
+      const toolCallId = messages[cursor]?.tool_call_id;
+      if (toolCallId !== undefined) pending.delete(toolCallId);
+      cursor += 1;
+    }
+    missing.push(...pending);
+  }
+  return missing;
+}
+
+function candidateResponse(suffix: string): Response {
+  return new Response(
+    `data: ${JSON.stringify({
+      choices: [
+        {
+          delta: {
+            tool_calls: [
+              {
+                index: 0,
+                id: `preview-${suffix}`,
+                type: "function",
+                function: {
+                  name: "setting_preview_candidate",
+                  arguments: "{}",
+                },
+              },
+              {
+                index: 1,
+                id: `finish-${suffix}`,
+                type: "function",
+                function: {
+                  name: "setting_finish_candidate",
+                  arguments: "{}",
+                },
+              },
+            ],
+          },
+          finish_reason: "tool_calls",
+        },
+      ],
+    })}\n\ndata: [DONE]\n\n`,
+    { status: 200, headers: { "Content-Type": "text/event-stream" } },
+  );
+}
+
+function toolProtocolError(): Response {
+  return new Response(
+    JSON.stringify({
+      error: {
+        message:
+          "An assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'. (insufficient tool messages following tool_calls message)",
+        type: "invalid_request_error",
+        param: null,
+        code: "invalid_request_error",
+      },
+    }),
+    { status: 400 },
   );
 }
 

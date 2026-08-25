@@ -787,13 +787,16 @@ export class DocumentCandidateSettingImprovement {
           else if (previewedSnapshotId !== candidate.id)
             rejection =
               "setting_finish_candidate 未被接受。必须先调用 setting_preview_candidate 并让当前候选快照的整体自检通过，才能结束候选；同一轮内先自检再结束也可以。";
+          this.#messages.push({
+            role: "tool",
+            toolCallId: call.id,
+            content:
+              rejection === null
+                ? "# 候选终态已接受\n\nRuntime 已接受当前隔离候选供用户审阅；内容包尚未改变，只有用户整批应用后才会替换当前树。"
+                : `# Runtime 工具拒绝\n\n${rejection}`,
+          });
           if (rejection === null) finished = true;
           else {
-            this.#messages.push({
-              role: "tool",
-              toolCallId: call.id,
-              content: `# Runtime 工具拒绝\n\n${rejection}`,
-            });
             responseHadRepairError = true;
             repairs = this.#countRepair(repairs, "候选");
           }
