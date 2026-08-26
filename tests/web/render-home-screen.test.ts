@@ -1,10 +1,19 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
+import type { V1Request } from "../../src/protocol/v1.ts";
+import { App } from "../../src/web/App.tsx";
 import { HomeScreen } from "../../src/web/HomeScreen.tsx";
+import type { RuntimeClient } from "../../src/web/runtimeClient.ts";
 
 afterEach(cleanup);
 
@@ -47,6 +56,7 @@ describe("世界工作区主页", () => {
         onImportPackage,
         onOpenPackage,
         onOpenWorld,
+        onRenameWorld: vi.fn(),
         onDeleteWorld: vi.fn(),
       }),
     );
@@ -96,6 +106,7 @@ describe("世界工作区主页", () => {
         onImportPackage: vi.fn(),
         onOpenPackage: vi.fn(),
         onOpenWorld: vi.fn(),
+        onRenameWorld: vi.fn(),
         onDeleteWorld: vi.fn(),
       }),
     );
@@ -114,5 +125,123 @@ describe("世界工作区主页", () => {
       target: { files: [archive] },
     });
     expect(onImportArchiveChange).toHaveBeenCalledWith(archive);
+  });
+
+  test("在世界卡片上修改名称而不打开或删除世界", () => {
+    const onRenameWorld = vi.fn();
+    const onOpenWorld = vi.fn();
+    const onDeleteWorld = vi.fn();
+    render(
+      createElement(HomeScreen, {
+        contentPackages: [],
+        worlds: [{ worldId: "world-1", title: "雾港第一夜" }],
+        selectedPackageId: "",
+        modelConfigured: true,
+        activeModelName: "本地主持模型",
+        currentPresetName: "克制叙事",
+        importArchive: null,
+        importPending: false,
+        onImportArchiveChange: vi.fn(),
+        onEditContent: vi.fn(),
+        onCreateWorld: vi.fn(),
+        onOpenPreview: vi.fn(),
+        onCreatePackage: vi.fn(),
+        onImportPackage: vi.fn(),
+        onOpenPackage: vi.fn(),
+        onOpenWorld,
+        onRenameWorld,
+        onDeleteWorld,
+      }),
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "重命名世界：雾港第一夜" }),
+    );
+    fireEvent.change(screen.getByLabelText("世界名称"), {
+      target: { value: "  雾港第二夜  " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存世界名称" }));
+
+    expect(onRenameWorld).toHaveBeenCalledWith(
+      { worldId: "world-1", title: "雾港第一夜" },
+      "雾港第二夜",
+    );
+    expect(onOpenWorld).not.toHaveBeenCalled();
+    expect(onDeleteWorld).not.toHaveBeenCalled();
+  });
+
+  test("应用把世界卡片提交的新名称保存到 Runtime 并刷新工作区", async () => {
+    let worldTitle = "雾港第一夜";
+    const request = vi.fn(async (input: V1Request): Promise<unknown> => {
+      const resolvedInput = await Promise.resolve(input);
+      if (resolvedInput.type === "world.rename") {
+        worldTitle = resolvedInput.name;
+        return {
+          worldId: resolvedInput.worldId,
+          title: resolvedInput.name,
+          parentEndpoint: "genesis",
+        };
+      }
+      if (resolvedInput.type === "workspace.read")
+        return {
+          contentPackages: [],
+          playPresets: { currentPresetId: "", presets: [] },
+          worlds: [{ worldId: "world-1", title: worldTitle }],
+          storageNotices: [],
+          model: {
+            configured: false,
+            activeConnectionId: null,
+            connections: [],
+            presets: [],
+          },
+        };
+      if (resolvedInput.type === "world.read")
+        return {
+          worldId: resolvedInput.worldId,
+          head: "genesis",
+          state: [],
+          control: [],
+          history: [],
+          runtime: { type: "file_native_genesis" },
+          playerViews: { views: [], diagnostics: [] },
+          artifacts: [],
+          extensions: [],
+          committedMessages: [],
+          playCallChain: null,
+        };
+      if (resolvedInput.type === "artifacts.debug") return [];
+      throw new Error(`unexpected request: ${resolvedInput.type}`);
+    });
+    const client = { request } as unknown as RuntimeClient;
+    render(createElement(App, { client }));
+
+    await screen.findByRole("button", { name: "打开世界：雾港第一夜" });
+    fireEvent.click(
+      screen.getByRole("button", { name: "重命名世界：雾港第一夜" }),
+    );
+    fireEvent.change(screen.getByLabelText("世界名称"), {
+      target: { value: "雾港第二夜" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存世界名称" }));
+
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith({
+        type: "world.rename",
+        worldId: "world-1",
+        name: "雾港第二夜",
+      }),
+    );
+    await screen.findByRole("button", { name: "打开世界：雾港第二夜" });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "打开世界：雾港第二夜" }),
+    );
+    await screen.findByRole("heading", { name: "雾港第二夜" });
+    fireEvent.click(screen.getByRole("button", { name: "世界管理" }));
+    fireEvent.change(screen.getByLabelText("世界显示名称"), {
+      target: { value: "雾港第三夜" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存名称" }));
+    await screen.findByRole("heading", { name: "雾港第三夜" });
   });
 });

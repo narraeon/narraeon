@@ -352,6 +352,8 @@ export class V1Runtime {
       }
       case "world.creation-outcome":
         return this.#worlds.getCreationOutcome(request.operationId);
+      case "world.rename":
+        return this.#worlds.renameWorld(request.worldId, request.name);
       case "world.delete":
         return playCall(async () => {
           this.#playCallChains.forgetWorld(request.worldId);

@@ -104,6 +104,7 @@ export type V1Request =
       model: ModelBinding;
     }
   | { type: "world.read"; worldId: string }
+  | { type: "world.rename"; worldId: string; name: string }
   | { type: "world.delete"; worldId: string }
   | { type: "artifacts.read"; worldId: string; channel?: string }
   | { type: "artifacts.debug"; worldId: string; operationId?: string }
@@ -387,6 +388,7 @@ const requiredFields: Record<
     model: "object",
   },
   "world.read": { worldId: "string" },
+  "world.rename": { worldId: "string", name: "string" },
   "world.delete": { worldId: "string" },
   "artifacts.read": { worldId: "string" },
   "artifacts.debug": { worldId: "string" },
@@ -650,6 +652,7 @@ const requestTypes = new Set([
   "prompt.preview",
   "world.create",
   "world.read",
+  "world.rename",
   "world.delete",
   "artifacts.read",
   "artifacts.debug",

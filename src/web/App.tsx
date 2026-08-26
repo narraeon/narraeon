@@ -482,6 +482,16 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     setScreen("world");
   }
 
+  async function renameWorld(worldId: string, name: string): Promise<void> {
+    await client.request({
+      type: "world.rename",
+      worldId,
+      name,
+    });
+    await refresh();
+    setNotice(`世界已重命名为“${name}”。`);
+  }
+
   async function deleteWorld(world: {
     worldId: string;
     title: string;
@@ -539,6 +549,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         modelConfigured={workspace.model.configured}
         onBack={() => setScreen("home")}
         onConfigureModel={() => setScreen("model")}
+        onRenameWorld={(name) => renameWorld(worldId, name)}
         {...(initialWorldPlayerSubmission?.worldId === worldId
           ? { initialPlayerSubmission: initialWorldPlayerSubmission }
           : {})}
@@ -644,6 +655,9 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
           onImportPackage={() => void importPackage()}
           onOpenPackage={(packageId) => void openPackage(packageId)}
           onOpenWorld={openWorld}
+          onRenameWorld={(world, name) =>
+            void renameWorld(world.worldId, name).catch(report)
+          }
           onDeleteWorld={(world) => void deleteWorld(world)}
         />
       )}

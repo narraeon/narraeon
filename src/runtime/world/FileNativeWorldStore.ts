@@ -34,6 +34,7 @@ import {
 } from "./WorldOperationCoordinator.ts";
 
 const publicationFile = "publication.json";
+const localMetadataFile = "local.json";
 
 export class FileNativeWorldCreationError extends Error {
   readonly code:
@@ -80,6 +81,12 @@ interface Publication extends FileNativeWorldSummary {
   schemaVersion: 1;
   operationId: string;
   sourceFingerprint: string;
+}
+
+interface WorldLocalMetadata {
+  schemaVersion: 1;
+  worldId: string;
+  name: string;
 }
 
 interface Genesis {
@@ -203,11 +210,36 @@ export class FileNativeWorldStore {
       left.name.localeCompare(right.name),
     )) {
       if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
-      worlds.push(
-        toSummary(await readPublicationAt(join(this.#worldsRoot, entry.name))),
-      );
+      worlds.push(await readWorldSummaryAt(join(this.#worldsRoot, entry.name)));
     }
     return worlds;
+  }
+
+  async renameWorld(
+    worldId: string,
+    name: string,
+  ): Promise<FileNativeWorldSummary> {
+    assertIdentity(worldId, "世界 ID");
+    const trimmed = name.trim();
+    if (!validWorldName(trimmed))
+      throw new TypeError("世界名称必须是 1 到 160 个字符，且不含换行");
+    return this.operations.withWorldLocalMetadataMutation(worldId, async () => {
+      const root = join(this.#worldsRoot, worldId);
+      let publication: Publication;
+      try {
+        publication = await readPublicationAt(root);
+      } catch (error: unknown) {
+        if (isNodeError(error) && error.code === "ENOENT")
+          throw new FileNativeWorldNotFoundError({ cause: error });
+        throw error;
+      }
+      await publishJson(join(root, localMetadataFile), {
+        schemaVersion: 1,
+        worldId,
+        name: trimmed,
+      } satisfies WorldLocalMetadata);
+      return { ...toSummary(publication), title: trimmed };
+    });
   }
 
   /**
@@ -285,7 +317,11 @@ export class FileNativeWorldStore {
         );
       }
       const preview = this.#preview(boundInput, previous.worldId);
-      return { outcome: "created", world: toSummary(previous), preview };
+      return {
+        outcome: "created",
+        world: await this.#currentSummary(previous),
+        preview,
+      };
     }
 
     // Preview happens before any staging write, so a slot/overlap/budget failure
@@ -363,7 +399,11 @@ export class FileNativeWorldStore {
       const recovered = await this.#readPublication(input.operationId);
       if (recovered !== null) {
         if (recovered.sourceFingerprint === sourceFingerprint) {
-          return { outcome: "created", world: toSummary(recovered), preview };
+          return {
+            outcome: "created",
+            world: await this.#currentSummary(recovered),
+            preview,
+          };
         }
         throw new FileNativeWorldCreationError(
           "operation_conflict",
@@ -382,7 +422,7 @@ export class FileNativeWorldStore {
     const publication = await this.#readPublication(operationId);
     return publication === null
       ? { outcome: "not_created" }
-      : { outcome: "created", world: toSummary(publication) };
+      : { outcome: "created", world: await this.#currentSummary(publication) };
   }
 
   async readSurface(
@@ -859,10 +899,17 @@ export class FileNativeWorldStore {
           "operation_conflict",
           "同一派生 operation ID 已绑定另一份派生载荷",
         );
-      return { outcome: "derived", world: toSummary(previous) };
+      return {
+        outcome: "derived",
+        world: await this.#currentSummary(previous),
+      };
     }
     const sourceRoot = join(this.#worldsRoot, input.sourceWorldId);
     const sourcePublication = await readPublicationAt(sourceRoot);
+    const sourceSummary = await readWorldSummaryAt(
+      sourceRoot,
+      sourcePublication,
+    );
     const recovered = await this.recoverEndpoint(
       input.sourceWorldId,
       input.sourceHead,
@@ -928,7 +975,7 @@ export class FileNativeWorldStore {
       const publication: Publication = {
         schemaVersion: 1,
         worldId,
-        title: `${sourcePublication.title}（派生）`,
+        title: derivedWorldName(sourceSummary.title),
         parentEndpoint: "genesis",
         operationId: input.operationId,
         sourceFingerprint: fingerprint([
@@ -1507,6 +1554,13 @@ export class FileNativeWorldStore {
       );
     }
     return publication;
+  }
+
+  #currentSummary(publication: Publication): Promise<FileNativeWorldSummary> {
+    return readWorldSummaryAt(
+      join(this.#worldsRoot, publication.worldId),
+      publication,
+    );
   }
 
   #operationPath(operationId: string): string {
@@ -2419,6 +2473,20 @@ async function readPublicationAt(root: string): Promise<Publication> {
   return readJson<Publication>(join(root, publicationFile));
 }
 
+async function readWorldSummaryAt(
+  root: string,
+  publication?: Publication,
+): Promise<FileNativeWorldSummary> {
+  const published = publication ?? (await readPublicationAt(root));
+  const metadata = await readOptionalJson<unknown>(
+    join(root, localMetadataFile),
+  );
+  if (metadata === null) return toSummary(published);
+  if (!isWorldLocalMetadata(metadata) || metadata.worldId !== published.worldId)
+    throw new FileNativeWorldCreationError("world_corrupt", "世界本地外壳损坏");
+  return { ...toSummary(published), title: metadata.name };
+}
+
 async function readJson<T>(path: string): Promise<T> {
   return JSON.parse(await readFile(path, "utf8")) as T;
 }
@@ -2438,6 +2506,30 @@ function toSummary(publication: Publication): FileNativeWorldSummary {
     title: publication.title,
     parentEndpoint: publication.parentEndpoint,
   };
+}
+
+const worldNamePattern = /^[^\r\n]{1,160}$/u;
+
+function validWorldName(name: string): boolean {
+  return worldNamePattern.test(name);
+}
+
+function derivedWorldName(sourceName: string): string {
+  const suffix = "（派生）";
+  return `${Array.from(sourceName)
+    .slice(0, 160 - Array.from(suffix).length)
+    .join("")}${suffix}`;
+}
+
+function isWorldLocalMetadata(value: unknown): value is WorldLocalMetadata {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["schemaVersion", "worldId", "name"]) &&
+    value.schemaVersion === 1 &&
+    typeof value.worldId === "string" &&
+    typeof value.name === "string" &&
+    validWorldName(value.name)
+  );
 }
 
 function assertIdentity(value: string, label: string): void {

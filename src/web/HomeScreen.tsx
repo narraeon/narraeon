@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 interface HomeContentPackage {
   localId: string;
   displayName: string;
@@ -27,6 +29,7 @@ export function HomeScreen({
   onImportPackage,
   onOpenPackage,
   onOpenWorld,
+  onRenameWorld,
   onDeleteWorld,
 }: {
   contentPackages: HomeContentPackage[];
@@ -46,8 +49,11 @@ export function HomeScreen({
   onImportPackage: () => void;
   onOpenPackage: (packageId: string) => void;
   onOpenWorld: (worldId: string) => void;
+  onRenameWorld: (world: HomeWorld, name: string) => void;
   onDeleteWorld: (world: HomeWorld) => void;
 }): React.JSX.Element {
+  const [renamingWorldId, setRenamingWorldId] = useState<string | null>(null);
+  const [worldNameDraft, setWorldNameDraft] = useState("");
   const usablePackageCount = contentPackages.filter(
     ({ status }) => status === "usable",
   ).length;
@@ -89,15 +95,73 @@ export function HomeScreen({
                       进入世界 <span aria-hidden="true">→</span>
                     </span>
                   </button>
-                  <button
-                    className="home-world-delete"
-                    type="button"
-                    aria-label={`删除世界：${world.title}`}
-                    disabled={importPending}
-                    onClick={() => onDeleteWorld(world)}
-                  >
-                    删除
-                  </button>
+                  <div className="home-world-card-actions">
+                    <button
+                      className="home-world-rename"
+                      type="button"
+                      aria-label={`重命名世界：${world.title}`}
+                      disabled={importPending}
+                      onClick={() => {
+                        setRenamingWorldId(world.worldId);
+                        setWorldNameDraft(world.title);
+                      }}
+                    >
+                      重命名
+                    </button>
+                    <button
+                      className="home-world-delete"
+                      type="button"
+                      aria-label={`删除世界：${world.title}`}
+                      disabled={importPending}
+                      onClick={() => onDeleteWorld(world)}
+                    >
+                      删除
+                    </button>
+                  </div>
+                  {renamingWorldId === world.worldId ? (
+                    <form
+                      className="home-world-rename-form"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        const name = worldNameDraft.trim();
+                        if (name === "" || name === world.title) return;
+                        onRenameWorld(world, name);
+                        setRenamingWorldId(null);
+                      }}
+                    >
+                      <label>
+                        <span>世界名称</span>
+                        <input
+                          aria-label="世界名称"
+                          autoFocus
+                          maxLength={160}
+                          value={worldNameDraft}
+                          onChange={(event) =>
+                            setWorldNameDraft(event.currentTarget.value)
+                          }
+                        />
+                      </label>
+                      <div className="button-row">
+                        <button
+                          type="submit"
+                          aria-label="保存世界名称"
+                          disabled={
+                            worldNameDraft.trim() === "" ||
+                            worldNameDraft.trim() === world.title
+                          }
+                        >
+                          保存
+                        </button>
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          onClick={() => setRenamingWorldId(null)}
+                        >
+                          取消
+                        </button>
+                      </div>
+                    </form>
+                  ) : null}
                 </div>
               ))}
             </div>

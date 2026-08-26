@@ -369,6 +369,18 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await page.getByRole("button", { name: "新建世界" }).click();
   await page.getByRole("button", { name: "从当前内容包创建" }).click();
   await expect(page.getByRole("heading", { name: "宿舍世界" })).toBeVisible();
+  await page.getByRole("button", { name: "世界管理" }).click();
+  await page.getByLabel("世界显示名称").fill("夜训宿舍");
+  await page.getByRole("button", { name: "保存名称" }).click();
+  await expect(page.getByRole("status")).toContainText("世界名称已保存");
+  await expect(page.getByRole("heading", { name: "夜训宿舍" })).toBeVisible();
+  await page.getByRole("button", { name: "工作区", exact: true }).click();
+  await page.getByRole("button", { name: "重命名世界：夜训宿舍" }).click();
+  await page.getByRole("textbox", { name: "世界名称" }).fill("宿舍世界");
+  await page.getByRole("button", { name: "保存世界名称" }).click();
+  await page
+    .getByRole("button", { name: "打开世界：宿舍世界", exact: true })
+    .click();
   await expect(page.getByLabel("调用链记录")).toContainText(
     "宿舍门在你身后合上。秦龙穿着深蓝色运动背心，正等你商量晚间训练。",
   );

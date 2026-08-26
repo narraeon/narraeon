@@ -164,6 +164,7 @@ test("历史端点派生为物理闭包，保留文档身份并重写历史材�
     nextMaterials: [],
     stateChanges: [change(first, second)],
   });
+  await fixture.store.renameWorld(fixture.worldId, "雾港第一夜");
 
   const derived = await fixture.store.deriveWorld({
     operationId: "derive-1",
@@ -171,6 +172,7 @@ test("历史端点派生为物理闭包，保留文档身份并重写历史材�
     sourceHead: "commit:1",
     hostPresetId: "host-current",
   });
+  expect(derived.world.title).toBe("雾港第一夜（派生）");
   const endpoint = await fixture.store.recoverEndpoint(derived.world.worldId);
   expect(endpoint.head).toBe("genesis");
   expect(endpoint.state[0]?.contents).toContain("第一段状态");

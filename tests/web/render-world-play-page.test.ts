@@ -78,6 +78,23 @@ describe("世界游玩页面", () => {
     expect(screen.getByText(/情况: 秦龙正在整理球衣/u)).toBeTruthy();
   });
 
+  test("在世界管理页修改正在游玩的世界名称", async () => {
+    const onRenameWorld = vi.fn(() => Promise.resolve());
+    renderWorld(readOnlyClient(), undefined, { onRenameWorld });
+    await screen.findByRole("heading", { name: "宿舍世界" });
+
+    fireEvent.click(screen.getByRole("button", { name: "世界管理" }));
+    fireEvent.change(screen.getByLabelText("世界显示名称"), {
+      target: { value: "  雾港第二夜  " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存名称" }));
+
+    await waitFor(() =>
+      expect(onRenameWorld).toHaveBeenCalledWith("雾港第二夜"),
+    );
+    expect(await screen.findByText("世界名称已保存。")).toBeTruthy();
+  });
+
   test("全新上下文启动生产调用链并显示玩家、AI、工具与已提交变化", async () => {
     let chain: V1PlayCallChainView | null = null;
     const client = {
@@ -870,6 +887,7 @@ function renderWorld(
       exchangeId: string;
     };
     onInitialPlayerSubmissionConsumed?: () => void;
+    onRenameWorld?: (name: string) => Promise<void>;
   } = {},
 ) {
   return render(
@@ -880,6 +898,7 @@ function renderWorld(
       modelConfigured: true,
       onBack: vi.fn(),
       onConfigureModel: vi.fn(),
+      onRenameWorld: options.onRenameWorld ?? vi.fn(() => Promise.resolve()),
       onOpenWorld,
       ...options,
     }),

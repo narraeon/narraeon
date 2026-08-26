@@ -4889,6 +4889,27 @@ summary:focus-visible {
   align-items: center;
 }
 
+.world-name-card {
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 1fr) minmax(20rem, 0.8fr);
+  align-items: end;
+}
+
+.world-name-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 0.7rem;
+}
+
+.world-name-editor label {
+  display: grid;
+  gap: 0.4rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
 .derive-card > button {
   align-self: center;
 }
@@ -5142,6 +5163,11 @@ summary:focus-visible {
   .derive-card {
     grid-template-columns: 1fr;
   }
+
+  .world-name-card {
+    grid-column: auto;
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 42rem) {
@@ -5201,7 +5227,8 @@ summary:focus-visible {
   }
 
   .correction-fields,
-  .correction-diff-columns {
+  .correction-diff-columns,
+  .world-name-editor {
     grid-template-columns: 1fr;
   }
 
@@ -6352,19 +6379,38 @@ summary:focus-visible {
   display: grid;
 }
 
-.home-world-delete {
+.home-world-card-actions {
   position: absolute;
   z-index: 2;
   top: 0.55rem;
   right: 0.55rem;
+  display: flex;
+  gap: 0.35rem;
+}
+
+.home-world-card-actions button {
   padding: 0.2rem 0.6rem;
-  border: 1px solid rgb(255 152 137 / 46%);
   border-radius: 0.55rem;
-  color: #ffd6cf;
   font-size: 0.72rem;
   font-weight: 700;
-  background: rgb(52 14 11 / 76%);
   cursor: pointer;
+}
+
+.home-world-rename {
+  border: 1px solid rgb(158 229 209 / 40%);
+  color: var(--accent);
+  background: rgb(7 35 30 / 82%);
+}
+
+.home-world-rename:hover:not(:disabled) {
+  border-color: rgb(158 229 209 / 72%);
+  background: rgb(15 57 49 / 92%);
+}
+
+.home-world-delete {
+  border: 1px solid rgb(255 152 137 / 46%);
+  color: #ffd6cf;
+  background: rgb(52 14 11 / 76%);
 }
 
 .home-world-delete:hover:not(:disabled) {
@@ -6372,9 +6418,31 @@ summary:focus-visible {
   background: rgb(84 22 17 / 88%);
 }
 
-.home-world-delete:disabled {
+.home-world-card-actions button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.home-world-rename-form {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 0.55rem;
+  padding: 0.75rem;
+  border: 1px solid rgb(158 229 209 / 24%);
+  border-radius: 0.8rem;
+  background: rgb(4 15 13 / 66%);
+}
+
+.home-world-rename-form label {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.home-world-rename-form .button-row {
+  margin: 0;
 }
 
 .home-world-card {

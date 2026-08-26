@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { ContentWorkspace } from "../../src/runtime/content/ContentWorkspace.ts";
+import { V1Runtime } from "../../src/runtime/V1Runtime.ts";
 import { FileNativeWorldStore } from "../../src/runtime/world/FileNativeWorldStore.ts";
 import { WorldDocumentStore } from "../../src/runtime/world/WorldDocumentStore.ts";
 
@@ -317,6 +318,135 @@ describe("从内容包创建文件原生世界", () => {
     await expect(store.deleteWorld(first.world.worldId)).rejects.toMatchObject({
       name: "FileNativeWorldNotFoundError",
     });
+  });
+
+  test("重命名世界后重启仍保留显示名称，且不改变身份、端点和世界表面", async () => {
+    const root = await temporaryRoot();
+    const store = new FileNativeWorldStore(root);
+    const created = await store.createFromContentPackage(
+      input("package-1", files()),
+    );
+    if (created.outcome !== "created") throw new Error("world not created");
+    const beforeState = await store.readSurface(created.world.worldId, "state");
+    const beforeControl = await store.readSurface(
+      created.world.worldId,
+      "control",
+    );
+    const beforeHistory = await store.readSurface(
+      created.world.worldId,
+      "history",
+    );
+    const beforeHead = await store.currentHead(created.world.worldId);
+
+    await expect(
+      store.renameWorld(created.world.worldId, "  雾港第一夜  "),
+    ).resolves.toEqual({
+      worldId: created.world.worldId,
+      title: "雾港第一夜",
+      parentEndpoint: "genesis",
+    });
+
+    const reopened = new FileNativeWorldStore(root);
+    expect(await reopened.listWorlds()).toEqual([
+      {
+        worldId: created.world.worldId,
+        title: "雾港第一夜",
+        parentEndpoint: "genesis",
+      },
+    ]);
+    expect(await reopened.getCreationOutcome("create-op-1")).toEqual({
+      outcome: "created",
+      world: {
+        worldId: created.world.worldId,
+        title: "雾港第一夜",
+        parentEndpoint: "genesis",
+      },
+    });
+    expect(await reopened.currentHead(created.world.worldId)).toBe(beforeHead);
+    expect(await reopened.readSurface(created.world.worldId, "state")).toEqual(
+      beforeState,
+    );
+    expect(
+      await reopened.readSurface(created.world.worldId, "control"),
+    ).toEqual(beforeControl);
+    expect(
+      await reopened.readSurface(created.world.worldId, "history"),
+    ).toEqual(beforeHistory);
+  });
+
+  test("V1 Runtime 重命名世界并让工作区立即返回新名称", async () => {
+    const root = await temporaryRoot();
+    const store = new FileNativeWorldStore(root);
+    const created = await store.createFromContentPackage(
+      input("package-1", files()),
+    );
+    if (created.outcome !== "created") throw new Error("world not created");
+    const runtime = new V1Runtime({
+      dataRoot: root,
+      configRoot: join(root, "config"),
+    });
+    await runtime.initialize();
+
+    await expect(
+      runtime.handle({
+        type: "world.rename",
+        worldId: created.world.worldId,
+        name: "雾港第一夜",
+      }),
+    ).resolves.toMatchObject({
+      result: {
+        worldId: created.world.worldId,
+        title: "雾港第一夜",
+      },
+    });
+    await expect(
+      runtime.handle({ type: "workspace.read" }),
+    ).resolves.toMatchObject({
+      result: {
+        worlds: [
+          {
+            worldId: created.world.worldId,
+            title: "雾港第一夜",
+          },
+        ],
+      },
+    });
+  });
+
+  test("世界名称拒绝空白、换行和超长输入，既有名称继续可读", async () => {
+    const root = await temporaryRoot();
+    const store = new FileNativeWorldStore(root);
+    const created = await store.createFromContentPackage(
+      input("package-1", files()),
+    );
+    if (created.outcome !== "created") throw new Error("world not created");
+
+    for (const name of ["   ", "雾港\n第二夜", "界".repeat(161)])
+      await expect(
+        store.renameWorld(created.world.worldId, name),
+      ).rejects.toThrow("世界名称必须是 1 到 160 个字符，且不含换行");
+
+    expect(await store.listWorlds()).toEqual([created.world]);
+  });
+
+  test("派生世界沿用来源当前名称，并把默认名称限制在 160 个字符内", async () => {
+    const root = await temporaryRoot();
+    const store = new FileNativeWorldStore(root);
+    const created = await store.createFromContentPackage(
+      input("package-1", files()),
+    );
+    if (created.outcome !== "created") throw new Error("world not created");
+    await store.renameWorld(created.world.worldId, "界".repeat(160));
+
+    const derived = await store.deriveWorld({
+      operationId: "derive-long-name",
+      sourceWorldId: created.world.worldId,
+      sourceHead: "genesis",
+      hostPresetId: "host-1",
+    });
+
+    expect(derived.world.title).toBe(`${"界".repeat(156)}（派生）`);
+    expect(Array.from(derived.world.title)).toHaveLength(160);
   });
 });
 

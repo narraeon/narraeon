@@ -45,6 +45,7 @@ type PendingAction =
   | "correction-preview"
   | "correction-apply"
   | "correction-cancel"
+  | "rename"
   | "derive";
 
 interface WorldMessage {
@@ -108,6 +109,7 @@ export function WorldPage({
   modelConfigured,
   onBack,
   onConfigureModel,
+  onRenameWorld,
   onOpenWorld,
   initialPlayerSubmission,
   onInitialPlayerSubmissionConsumed,
@@ -118,6 +120,7 @@ export function WorldPage({
   modelConfigured: boolean;
   onBack: () => void;
   onConfigureModel: () => void;
+  onRenameWorld: (name: string) => Promise<void>;
   onOpenWorld: (
     worldId: string,
     initialPlayerSubmission?: WorldPlayerSubmission,
@@ -132,6 +135,12 @@ export function WorldPage({
   );
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const [worldNameDraft, setWorldNameDraft] = useState(worldTitle);
+  const [lastWorldTitle, setLastWorldTitle] = useState(worldTitle);
+  if (lastWorldTitle !== worldTitle) {
+    setLastWorldTitle(worldTitle);
+    setWorldNameDraft(worldTitle);
+  }
   const [playCallChain, setPlayCallChain] =
     useState<V1PlayCallChainView | null>(null);
   const [selectedDocument, setSelectedDocument] = useState("");
@@ -616,6 +625,21 @@ export function WorldPage({
     void submitPlayChain("append");
   }
 
+  async function renameCurrentWorld(): Promise<void> {
+    const name = worldNameDraft.trim();
+    if (name === "" || name === worldTitle) return;
+    setPending("rename");
+    setFeedback(null);
+    try {
+      await onRenameWorld(name);
+      setFeedback({ kind: "status", text: "世界名称已保存。" });
+    } catch (reason: unknown) {
+      setFeedback({ kind: "error", text: errorMessage(reason) });
+    } finally {
+      setPending(null);
+    }
+  }
+
   if (world === null)
     return (
       <main className="world-page world-page-loading">
@@ -977,8 +1001,47 @@ export function WorldPage({
           </header>
 
           <div className="world-manage-grid">
-            <article className="manage-card derive-card">
+            <article className="manage-card world-name-card">
               <span className="manage-card-number">01</span>
+              <div className="manage-card-copy">
+                <h3>世界名称</h3>
+                <p>
+                  这是工作区和世界页显示的名字；修改它不会改动故事、状态或历史。
+                </p>
+              </div>
+              <form
+                className="world-name-editor"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void renameCurrentWorld();
+                }}
+              >
+                <label>
+                  世界显示名称
+                  <input
+                    aria-label="世界显示名称"
+                    maxLength={160}
+                    value={worldNameDraft}
+                    onChange={(event) =>
+                      setWorldNameDraft(event.currentTarget.value)
+                    }
+                  />
+                </label>
+                <button
+                  type="submit"
+                  disabled={
+                    pending !== null ||
+                    worldNameDraft.trim() === "" ||
+                    worldNameDraft.trim() === worldTitle
+                  }
+                >
+                  {pending === "rename" ? "正在保存…" : "保存名称"}
+                </button>
+              </form>
+            </article>
+
+            <article className="manage-card derive-card">
+              <span className="manage-card-number">02</span>
               <div>
                 <h3>从此刻派生新世界</h3>
                 <p>
@@ -997,7 +1060,7 @@ export function WorldPage({
             </article>
 
             <article className="manage-card control-card">
-              <span className="manage-card-number">02</span>
+              <span className="manage-card-number">03</span>
               <div className="manage-card-copy">
                 <h3>世界控制</h3>
                 <p>
@@ -1056,7 +1119,7 @@ export function WorldPage({
             </article>
 
             <article className="manage-card correction-card">
-              <span className="manage-card-number">03</span>
+              <span className="manage-card-number">04</span>
               <div className="manage-card-copy">
                 <h3>连续性修正</h3>
                 <p>
@@ -1145,7 +1208,7 @@ export function WorldPage({
             </article>
 
             <article className="manage-card runtime-card">
-              <span className="manage-card-number">04</span>
+              <span className="manage-card-number">05</span>
               <div className="manage-card-copy">
                 <h3>运行详情</h3>
                 <p>用于排查本地恢复问题，不参与普通游玩。</p>

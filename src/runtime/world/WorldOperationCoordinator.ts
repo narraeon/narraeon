@@ -184,6 +184,14 @@ export class FileNativeWorldOperationCoordinator {
     });
   }
 
+  async withWorldLocalMetadataMutation<Value>(
+    worldId: string,
+    action: () => Promise<Value>,
+  ): Promise<Value> {
+    assertNonEmptyIdentity(worldId, "world ID");
+    return this.#withWorldLock(worldId, action);
+  }
+
   async withWorldAuthorityLock<Value>(
     worldId: string,
     action: () => Promise<Value>,
