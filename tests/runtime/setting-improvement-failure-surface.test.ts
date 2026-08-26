@@ -1,5 +1,10 @@
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { expect, test } from "vitest";
 
+import { FileNativeAiFailureLog } from "../../src/runtime/model/AiFailureLog.ts";
 import { FileNativePromptCompiler } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
 import {
   DocumentCandidateSettingImprovement,
@@ -53,6 +58,113 @@ test("计划标题按首个围栏外 h1 判定，格式错误以 user role 修�
   expect(result.kind).toBe("plan");
   if (result.kind !== "plan") throw new Error("预期返回创作计划");
   expect(result.markdown).toContain("# 创作计划：宿舍篇");
+});
+
+test("AI 输出格式检查未通过时保存原始交换和 reasoning", async () => {
+  const root = await mkdtemp(join(tmpdir(), "narraeon-setting-format-log-"));
+  try {
+    const invalid: AuthorResponse = {
+      role: "assistant",
+      content: "没有一级标题的计划正文。",
+      reasoningContent: "我误以为标题可以省略。",
+      toolCalls: [],
+      diagnostics: {
+        captureId: "setting-format-capture-1",
+        provider: "chat_completions",
+        endpoint: "https://provider.invalid/v1/chat/completions",
+        context: {
+          scope: "setting_improvement",
+          requestId: "setting_improvement",
+          operationId: "setting-format-log",
+          requestAttempt: 1,
+          exchange: 1,
+        },
+        request: {
+          method: "POST",
+          contentType: "application/json",
+          body: '{"messages":[{"role":"user","content":"生成计划"}]}',
+        },
+        response: {
+          status: 200,
+          statusText: "OK",
+          contentType: "text/event-stream",
+          body: 'data: {"reasoning_content":"我误以为标题可以省略。","content":"没有一级标题的计划正文。"}\n\n',
+          bodyComplete: true,
+        },
+        reasoning: "我误以为标题可以省略。",
+      },
+    };
+    const repaired: AuthorResponse = {
+      ...assistant(validPlan()),
+      diagnostics: {
+        captureId: "setting-format-capture-2",
+        provider: "chat_completions",
+        endpoint: "https://provider.invalid/v1/chat/completions",
+        context: {
+          scope: "setting_improvement",
+          requestId: "setting_improvement",
+          operationId: "setting-format-log",
+          requestAttempt: 1,
+          exchange: 2,
+        },
+        request: {
+          method: "POST",
+          contentType: "application/json",
+          body: '{"messages":[{"role":"user","content":"请按格式修复"}]}',
+        },
+        response: {
+          status: 200,
+          statusText: "OK",
+          contentType: "text/event-stream",
+          body: `data: ${JSON.stringify({ content: validPlan() })}\n\n`,
+          bodyComplete: true,
+        },
+      },
+    };
+    const adapter = new ScriptedAdapter([invalid, repaired]);
+    const logRoot = join(root, "ai-failures");
+    const improvement = new DocumentCandidateSettingImprovement({
+      files: baseFiles(),
+      adapter,
+      preview: previewSnapshot,
+      failureLog: new FileNativeAiFailureLog(logRoot),
+    });
+
+    await expect(improvement.start(planFirst())).resolves.toMatchObject({
+      kind: "plan",
+    });
+
+    const names = (await readdir(logRoot)).filter((value) =>
+      value.endsWith(".jsonl"),
+    );
+    expect(names).toHaveLength(1);
+    const entries = (await readFile(join(logRoot, names[0]!), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const failure = entries.find(({ type }) => type === "failure") as {
+      failures: { kind: string; message: string }[];
+    };
+    expect(failure.failures).toHaveLength(1);
+    expect(failure.failures[0]?.kind).toBe("format_validation");
+    expect(failure.failures[0]?.message).toContain("创作计划");
+    const exchanges = entries
+      .filter(({ type }) => type === "exchange")
+      .map(({ exchange }) => exchange) as {
+      response?: { body: string };
+      reasoning?: string;
+    }[];
+    expect(exchanges).toHaveLength(2);
+    expect(exchanges[0]?.response?.body).toContain("没有一级标题");
+    expect(exchanges[0]?.reasoning).toBe("我误以为标题可以省略。");
+    expect(exchanges[1]?.response?.body).toContain("# 创作计划");
+    expect(entries.at(-1)).toMatchObject({
+      type: "resolved",
+      message: "设定完善计划已在后续模型交换中通过格式检查。",
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("两条 revision 的第二条出错时只有它拿到诊断，另一条被告知去处", async () => {

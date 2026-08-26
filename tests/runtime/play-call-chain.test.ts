@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -16,6 +16,7 @@ import {
   type ModelHostBinding,
   type ModelHostExchange,
 } from "../../src/runtime/model/ModelHost.ts";
+import { FileNativeAiFailureLog } from "../../src/runtime/model/AiFailureLog.ts";
 import {
   defaultPlayPresetFiles,
   parsePlayPresetFiles,
@@ -786,6 +787,139 @@ test("空输入追加会从完整逻辑 transcript 继续生成，并把 Provide
     "秦龙先推开了门。",
     "他随后走进走廊。",
   ]);
+});
+
+test("AI 工具被 Runtime 拒绝时保存产生该调用的原始交换与 reasoning", async () => {
+  const { worlds, worldId, root } = await createWorld("play-tool-failure-log");
+  const logRoot = join(root, "logs", "ai-failures");
+  const modelHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        reasoningContent: "先直接修改一个没有读过的节点。",
+        toolCalls: [
+          {
+            id: "invalid-world-patch",
+            name: "world_patch",
+            arguments: { target: "@missing", edits: [] },
+          },
+        ],
+        diagnostics: {
+          captureId: "play-tool-failure-capture-1",
+          provider: "chat_completions",
+          endpoint: "https://provider.invalid/v1/chat/completions",
+          context: {
+            scope: "play_call_chain",
+            requestId: "play_call_chain",
+            operationId: "play-tool-failure-log-chain",
+            requestAttempt: 1,
+            exchange: 1,
+          },
+          request: {
+            method: "POST",
+            contentType: "application/json",
+            body: '{"messages":[{"role":"user","content":"打开门"}]}',
+          },
+          response: {
+            status: 200,
+            statusText: "OK",
+            contentType: "text/event-stream",
+            body: 'data: {"reasoning_content":"先直接修改一个没有读过的节点。"}\n\n',
+            bodyComplete: true,
+          },
+          reasoning: "先直接修改一个没有读过的节点。",
+        },
+      },
+      {
+        outcome: "response",
+        text: "我先重新查看当前记录。",
+        diagnostics: {
+          captureId: "play-tool-failure-capture-2",
+          provider: "chat_completions",
+          endpoint: "https://provider.invalid/v1/chat/completions",
+          context: {
+            scope: "play_call_chain",
+            requestId: "play_call_chain",
+            operationId: "play-tool-failure-log-chain",
+            requestAttempt: 1,
+            exchange: 2,
+          },
+          request: {
+            method: "POST",
+            contentType: "application/json",
+            body: '{"messages":[{"role":"tool","content":"参数错误"}]}',
+          },
+          response: {
+            status: 200,
+            statusText: "OK",
+            contentType: "text/event-stream",
+            body: 'data: {"content":"我先重新查看当前记录。"}\n\n',
+            bodyComplete: true,
+          },
+        },
+      },
+    ],
+  });
+  const chains = new PlayCallChain(
+    worlds,
+    new FileNativePromptCompiler(),
+    undefined,
+    new FileNativeAiFailureLog(logRoot),
+  );
+
+  const view = await chains.start({
+    worldId,
+    chainId: "play-tool-failure-log-chain",
+    exchangeId: "play-tool-failure-log-exchange",
+    playerText: "打开门。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+
+  expect(view.status).toBe("ready");
+  expect(view.events).toContainEqual(
+    expect.objectContaining({
+      kind: "tool_result",
+      callId: "invalid-world-patch",
+      ok: false,
+    }),
+  );
+  const names = (await readdir(logRoot)).filter((value) =>
+    value.endsWith(".jsonl"),
+  );
+  expect(names).toHaveLength(1);
+  const entries = (await readFile(join(logRoot, names[0]!), "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const failure = entries.find(({ type }) => type === "failure") as {
+    failures: { kind: string; details: unknown }[];
+  };
+  expect(failure.failures).toHaveLength(1);
+  expect(failure.failures[0]?.kind).toBe("tool_execution");
+  const details = failure.failures[0]?.details as {
+    calls: { id: string; ok: boolean }[];
+  };
+  expect(details.calls).toEqual([
+    expect.objectContaining({ id: "invalid-world-patch", ok: false }),
+  ]);
+  const exchanges = entries
+    .filter(({ type }) => type === "exchange")
+    .map(({ exchange }) => exchange) as {
+    request: { body: string };
+    reasoning?: string;
+  }[];
+  expect(exchanges).toHaveLength(2);
+  expect(exchanges[0]?.request.body).toContain("打开门");
+  expect(exchanges[0]?.reasoning).toBe("先直接修改一个没有读过的节点。");
+  expect(exchanges[1]?.request.body).toContain("参数错误");
+  expect(entries.at(-1)).toMatchObject({
+    type: "resolved",
+    message: "游玩调用链已在后续模型交换中恢复并完整结束。",
+  });
 });
 
 async function createWorld(label: string): Promise<{

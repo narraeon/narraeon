@@ -8,6 +8,11 @@ import type {
   ModelHostAppendItem,
   ModelHostToolCall,
 } from "../model/ModelHost.ts";
+import {
+  errorDescription,
+  type AiExchangeDiagnostics,
+  type AiFailureRecorder,
+} from "../model/AiFailureLog.ts";
 import type {
   PlayFollowupCompilation,
   PromptCompilation,
@@ -55,6 +60,7 @@ export interface PlayFollowupInput {
   /** Authority endpoint the main model exchange settled on. */
   head: string;
   maxOutputTokens: number;
+  failureLog?: AiFailureRecorder;
   observer?: PlayFollowupObserver;
   signal?: AbortSignal;
 }
@@ -132,6 +138,7 @@ async function runOne(
     maxArtifactBytes: followup.maxArtifactBytes,
     declarations: structuredClone(followup.artifacts),
   };
+  let responseDiagnostics: AiExchangeDiagnostics | undefined;
   try {
     await input.artifacts.beginRequestAttempt(requestContext);
     const response = await input.modelHost.exchange({
@@ -155,6 +162,9 @@ async function runOne(
       exchange: 1,
       maxOutputTokens: input.maxOutputTokens,
     });
+    responseDiagnostics = response.diagnostics;
+    if (response.diagnostics !== undefined)
+      await input.failureLog?.recordExchangeIfActive(response.diagnostics);
     outcome.text = response.text ?? "";
     if (response.reasoningContent !== undefined)
       outcome.reasoning = response.reasoningContent;
@@ -175,6 +185,18 @@ async function runOne(
         markdown: result.markdown,
       });
     }
+    const failedTools = outcome.toolCalls.filter(({ ok }) => !ok);
+    if (failedTools.length > 0 && response.diagnostics !== undefined)
+      await input.failureLog?.recordFailure({
+        exchange: response.diagnostics,
+        failures: [
+          {
+            kind: "tool_execution",
+            message: `后置请求 ${followup.id} 的产物工具未被接受。`,
+            details: { calls: structuredClone(failedTools) },
+          },
+        ],
+      });
     const missing = followup.artifacts
       .filter(({ required }) => required)
       .filter(
@@ -187,11 +209,38 @@ async function runOne(
       .map(({ name }) => name);
     if (missing.length > 0)
       outcome.failure = `后置请求 ${followup.id} 未提交必需产物：${missing.join("、")}`;
+    if (outcome.failure !== undefined && response.diagnostics !== undefined)
+      await input.failureLog?.recordFailure({
+        exchange: response.diagnostics,
+        failures: [
+          {
+            kind: "format_validation",
+            message: outcome.failure,
+            details: { missing },
+          },
+        ],
+      });
+    else if (failedTools.length === 0 && response.diagnostics !== undefined)
+      await input.failureLog?.resolve({
+        exchange: response.diagnostics,
+        message: `后置请求 ${followup.id} 已在后续模型交换中恢复。`,
+      });
   } catch (error: unknown) {
     outcome.failure =
       error instanceof Error
         ? error.message
         : `后置请求 ${followup.id} 执行失败。`;
+    if (responseDiagnostics !== undefined)
+      await input.failureLog?.recordFailure({
+        exchange: responseDiagnostics,
+        failures: [
+          {
+            kind: "runtime_post_processing",
+            message: outcome.failure,
+            error: errorDescription(error),
+          },
+        ],
+      });
   }
   return outcome;
 }

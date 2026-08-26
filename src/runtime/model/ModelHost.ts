@@ -2,6 +2,7 @@ import type { ModelProviderKind } from "../../protocol/modelConnections.ts";
 import type { ProviderExchangeState } from "./ProviderExchangeState.ts";
 import type { PromptCompilation } from "../prompt/FileNativePromptCompiler.ts";
 import type { RuntimeToolDefinitionStrategy } from "../prompt/FileNativeToolRegistry.ts";
+import type { AiExchangeDiagnostics } from "./AiFailureLog.ts";
 
 /**
  * Runtime's provider port for an append-only model operation.
@@ -111,6 +112,8 @@ export interface ModelHostResponse {
   providerState?: ProviderExchangeState;
   usage?: ModelHostUsage;
   toolCalls?: ModelHostToolCall[];
+  /** Ephemeral raw Provider exchange; callers persist it only after failures. */
+  diagnostics?: AiExchangeDiagnostics;
 }
 
 /**

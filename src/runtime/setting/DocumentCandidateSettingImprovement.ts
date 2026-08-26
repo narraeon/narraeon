@@ -6,6 +6,11 @@ import {
 } from "../content/FileNativeContentTree.ts";
 import type { PromptPreview } from "../prompt/FileNativePromptCompiler.ts";
 import type { ProviderExchangeState } from "../model/ProviderExchangeState.ts";
+import type {
+  AiExchangeDiagnostics,
+  AiFailureDescription,
+  AiFailureRecorder,
+} from "../model/AiFailureLog.ts";
 import {
   WorldDocumentStore,
   type WorldDocumentDescriptor,
@@ -61,8 +66,12 @@ export interface SettingAuthorAdapter {
     providerState?: ProviderExchangeState;
     toolCalls: SettingAuthorToolCall[];
     usage?: SettingAuthorUsage;
+    /** Ephemeral raw Provider exchange; never enters the author transcript. */
+    diagnostics?: AiExchangeDiagnostics;
   }>;
 }
+
+type SettingAuthorResponse = Awaited<ReturnType<SettingAuthorAdapter["next"]>>;
 
 export interface SettingCandidateDiff {
   path: string;
@@ -370,6 +379,7 @@ export class DocumentCandidateSettingImprovement {
   readonly #adapter: SettingAuthorAdapter;
   readonly #preview: (snapshot: WorldDocumentStore) => PromptPreview;
   readonly #authorPrompt: string;
+  readonly #failureLog: AiFailureRecorder | undefined;
   readonly #baseFiles: ContentTreeFile[];
   readonly #baseSnapshot: WorldDocumentStore;
   #currentFiles: ContentTreeFile[];
@@ -397,6 +407,7 @@ export class DocumentCandidateSettingImprovement {
     adapter: SettingAuthorAdapter;
     preview: (snapshot: WorldDocumentStore) => PromptPreview;
     authorPrompt?: string;
+    failureLog?: AiFailureRecorder;
   }) {
     this.#baseSnapshot = WorldDocumentStore.open({
       layout: "content_package",
@@ -407,6 +418,7 @@ export class DocumentCandidateSettingImprovement {
     this.#baseReads = freshReadAuthorizations(this.#baseSnapshot);
     this.#adapter = input.adapter;
     this.#preview = input.preview;
+    this.#failureLog = input.failureLog;
     this.#authorPrompt = requiredAuthorPrompt(
       input.authorPrompt ?? defaultSettingImprovementPrompt,
     );
@@ -483,6 +495,33 @@ export class DocumentCandidateSettingImprovement {
     this.#progress.updatedAt = Date.now();
   }
 
+  async #observeResponse(response: SettingAuthorResponse): Promise<void> {
+    if (response.diagnostics !== undefined)
+      await this.#failureLog?.recordExchangeIfActive(response.diagnostics);
+  }
+
+  async #recordResponseFailure(
+    response: SettingAuthorResponse,
+    failure: AiFailureDescription,
+  ): Promise<void> {
+    if (response.diagnostics !== undefined)
+      await this.#failureLog?.recordFailure({
+        exchange: response.diagnostics,
+        failures: [failure],
+      });
+  }
+
+  async #resolveResponseFailures(
+    response: SettingAuthorResponse,
+    message: string,
+  ): Promise<void> {
+    if (response.diagnostics !== undefined)
+      await this.#failureLog?.resolve({
+        exchange: response.diagnostics,
+        message,
+      });
+  }
+
   async start(
     input: SettingImprovementStartInput,
   ): Promise<SettingImprovementPlanResult | SettingImprovementCandidateResult> {
@@ -518,6 +557,7 @@ export class DocumentCandidateSettingImprovement {
     entry: "initial" | "revision" = "initial",
   ): Promise<SettingImprovementPlanResult> {
     let repairs = 0;
+    let lastResponse: SettingAuthorResponse | undefined;
     this.#beginPhase("planning");
     this.#messages.push({
       role: "user",
@@ -533,6 +573,8 @@ export class DocumentCandidateSettingImprovement {
         maxOutputTokens: planningOutputTokens,
         onDelta: (delta) => this.#recordDelta(delta),
       });
+      lastResponse = response;
+      await this.#observeResponse(response);
       this.#recordExchange(response.usage);
       this.#messages.push(assistantMessage(response));
       if (response.toolCalls.length === 0) {
@@ -540,6 +582,11 @@ export class DocumentCandidateSettingImprovement {
           assertVisiblePlan(response.content);
         } catch (error: unknown) {
           if (!(error instanceof SettingModelError)) throw error;
+          await this.#recordResponseFailure(response, {
+            kind: "format_validation",
+            message: error.message,
+            details: { phase: "planning", content: response.content },
+          });
           this.#messages.push({
             role: "user",
             content: renderSettingRepair(error.message),
@@ -549,6 +596,10 @@ export class DocumentCandidateSettingImprovement {
         }
         this.#state = "planned";
         this.#settlePhase(null);
+        await this.#resolveResponseFailures(
+          response,
+          "设定完善计划已在后续模型交换中通过格式检查。",
+        );
         return { kind: "plan", markdown: response.content };
       }
       for (const call of response.toolCalls) {
@@ -572,10 +623,27 @@ export class DocumentCandidateSettingImprovement {
           content: result.markdown,
         });
         this.#recordAction(call, result.ok);
-        if (!result.ok) repairs = this.#countRepair(repairs, "计划");
+        if (!result.ok) {
+          await this.#recordResponseFailure(response, {
+            kind: "tool_execution",
+            message: "设定完善计划阶段的 AI 工具调用未被接受。",
+            details: {
+              call: structuredClone(call),
+              result: result.markdown,
+            },
+          });
+          repairs = this.#countRepair(repairs, "计划");
+        }
       }
     }
-    throw new Error("设定完善计划超过最大只读工具轮次");
+    const message = "设定完善计划超过最大只读工具轮次";
+    if (lastResponse !== undefined)
+      await this.#recordResponseFailure(lastResponse, {
+        kind: "format_validation",
+        message,
+        details: { phase: "planning", maximumRounds: 64 },
+      });
+    throw new Error(message);
   }
 
   async confirmPlan(): Promise<SettingImprovementCandidateResult> {
@@ -667,6 +735,7 @@ export class DocumentCandidateSettingImprovement {
     );
     let repairs = 0;
     let failedChecks = 0;
+    let lastResponse: SettingAuthorResponse | undefined;
     this.#beginPhase("generating");
     this.#messages.push({
       role: "user",
@@ -684,9 +753,23 @@ export class DocumentCandidateSettingImprovement {
         maxOutputTokens: editingOutputTokens,
         onDelta: (delta) => this.#recordDelta(delta),
       });
+      lastResponse = response;
+      await this.#observeResponse(response);
       this.#recordExchange(response.usage);
       this.#messages.push(assistantMessage(response));
       if (response.toolCalls.length === 0) {
+        await this.#recordResponseFailure(response, {
+          kind: "format_validation",
+          message:
+            lastFailedCheck === null
+              ? "设定完善候选响应没有调用终态工具。"
+              : "设定完善候选响应没有修复未通过的机械检查。",
+          details: {
+            phase: "candidate",
+            content: response.content,
+            lastFailedCheck,
+          },
+        });
         this.#messages.push({
           role: "user",
           content: renderSettingRepair(
@@ -771,6 +854,15 @@ export class DocumentCandidateSettingImprovement {
                     ? failed.markdown
                     : renderSettingBatchRejected(revisionCalls, failureIndex),
               });
+            await this.#recordResponseFailure(response, {
+              kind: "tool_execution",
+              message: "设定完善候选的世界文档 revision 未被接受。",
+              details: {
+                calls: structuredClone(revisionCalls),
+                failureIndex,
+                result: failed.markdown,
+              },
+            });
             responseHadRepairError = true;
             repairs = this.#countRepair(repairs, "候选");
           }
@@ -797,6 +889,11 @@ export class DocumentCandidateSettingImprovement {
           });
           if (rejection === null) finished = true;
           else {
+            await this.#recordResponseFailure(response, {
+              kind: "tool_execution",
+              message: rejection,
+              details: { call: structuredClone(call) },
+            });
             responseHadRepairError = true;
             repairs = this.#countRepair(repairs, "候选");
           }
@@ -819,6 +916,14 @@ export class DocumentCandidateSettingImprovement {
             : summarizeSettingCheck(check.markdown);
           this.#recordAction(call, check.passed);
           if (!check.passed) {
+            await this.#recordResponseFailure(response, {
+              kind: "format_validation",
+              message: "设定完善候选未通过机械检查。",
+              details: {
+                call: structuredClone(call),
+                check: check.markdown,
+              },
+            });
             responseHadRepairError = true;
             failedChecks = this.#countFailedCheck(failedChecks);
           }
@@ -845,6 +950,14 @@ export class DocumentCandidateSettingImprovement {
         });
         this.#recordAction(call, result.ok);
         if (!result.ok) {
+          await this.#recordResponseFailure(response, {
+            kind: "tool_execution",
+            message: "设定完善候选的 AI 工具调用未被接受。",
+            details: {
+              call: structuredClone(call),
+              result: result.markdown,
+            },
+          });
           responseHadRepairError = true;
           repairs = this.#countRepair(repairs, "候选");
         }
@@ -867,9 +980,20 @@ export class DocumentCandidateSettingImprovement {
       this.#candidateReads = cloneReadAuthorizations(reads);
       this.#candidateWorldChanges = new Map(worldChanges);
       this.#state = "ready";
+      await this.#resolveResponseFailures(
+        response,
+        "设定完善候选已在后续模型交换中修复并通过完整自检。",
+      );
       return { kind: "candidate", files: cloneFiles(candidateFiles), review };
     }
-    throw new Error("设定完善超过最大工具轮次");
+    const message = "设定完善超过最大工具轮次";
+    if (lastResponse !== undefined)
+      await this.#recordResponseFailure(lastResponse, {
+        kind: "format_validation",
+        message,
+        details: { phase: "candidate", maximumRounds: 64 },
+      });
+    throw new Error(message);
   }
 
   currentFiles(): ContentTreeFile[] {

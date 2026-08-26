@@ -1,3 +1,5 @@
+import { join } from "node:path";
+
 import {
   maxPortableContentArchiveBase64Characters,
   maxPortableContentArchiveBytes,
@@ -54,6 +56,7 @@ import { FileNativePromptCompiler } from "./prompt/FileNativePromptCompiler.ts";
 import { DocumentCandidateSettingImprovement } from "./setting/DocumentCandidateSettingImprovement.ts";
 import { FileNativeWorldStore } from "./world/FileNativeWorldStore.ts";
 import { WorldDocumentStore } from "./world/WorldDocumentStore.ts";
+import { FileNativeAiFailureLog } from "./model/AiFailureLog.ts";
 
 export class V1Runtime {
   readonly #content: ContentWorkspace;
@@ -63,21 +66,31 @@ export class V1Runtime {
   readonly #models: ModelConnectionStore;
   readonly #corrections: FileNativeContinuityCorrection;
   readonly #playCallChains: PlayCallChain;
+  readonly #failureLog: FileNativeAiFailureLog | undefined;
   readonly #settingImprovements = new Map<
     string,
     { packageId: string; improvement: DocumentCandidateSettingImprovement }
   >();
   readonly #compiler = new FileNativePromptCompiler();
 
-  constructor(input: { dataRoot: string; configRoot: string }) {
+  constructor(input: {
+    dataRoot: string;
+    configRoot: string;
+    logRoot?: string;
+  }) {
     this.#content = new ContentWorkspace(input.dataRoot);
     this.#playPresets = new FileNativePlayPresetStore(input.configRoot);
     this.#worlds = new FileNativeWorldStore(input.dataRoot);
     this.#artifacts = new FileNativeArtifactStore(input.dataRoot);
+    this.#failureLog =
+      input.logRoot === undefined
+        ? undefined
+        : new FileNativeAiFailureLog(join(input.logRoot, "ai-failures"));
     this.#playCallChains = new PlayCallChain(
       this.#worlds,
       this.#compiler,
       this.#artifacts,
+      this.#failureLog,
     );
     this.#models = new ModelConnectionStore(input.configRoot);
     this.#corrections = new FileNativeContinuityCorrection(this.#worlds);
@@ -173,8 +186,16 @@ export class V1Runtime {
         ]);
         const improvement = new DocumentCandidateSettingImprovement({
           files: package_.files,
-          adapter: new FileNativeSettingAuthorProvider(connection),
+          adapter: new FileNativeSettingAuthorProvider(connection, fetch, {
+            ...(this.#failureLog === undefined
+              ? {}
+              : { failureLog: this.#failureLog }),
+            operationId: request.improvementId,
+          }),
           authorPrompt: settingImprovementPromptForBinding(preset),
+          ...(this.#failureLog === undefined
+            ? {}
+            : { failureLog: this.#failureLog }),
           preview: (snapshot) =>
             this.#compiler.preview({
               endpoint: { id: "setting-candidate", commit: "candidate" },
@@ -512,7 +533,11 @@ export class V1Runtime {
   }
 
   async #modelHost(): Promise<FileNativeModelHost> {
-    return new FileNativeModelHost(await this.#models.bind());
+    return new FileNativeModelHost(
+      await this.#models.bind(),
+      fetch,
+      this.#failureLog,
+    );
   }
 
   async #reconcileArtifacts(worldId: string): Promise<void> {

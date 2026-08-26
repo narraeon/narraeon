@@ -35,6 +35,7 @@ import {
   fingerprintControl,
   type PlayDocumentToolResult,
 } from "./PlayDocumentTools.ts";
+import type { AiFailureRecorder } from "../model/AiFailureLog.ts";
 
 const callChainToolNames = new Set([
   "context_list",
@@ -132,6 +133,7 @@ export class PlayCallChain {
   readonly #worlds: FileNativeWorldStore;
   readonly #compiler: FileNativePromptCompiler;
   readonly #artifacts: ArtifactStore | undefined;
+  readonly #failureLog: AiFailureRecorder | undefined;
   readonly #active = new Map<string, PlayCallChainSession>();
   readonly #worldChains = new Map<string, string>();
 
@@ -139,10 +141,12 @@ export class PlayCallChain {
     worlds: FileNativeWorldStore,
     compiler: FileNativePromptCompiler = new FileNativePromptCompiler(),
     artifacts?: ArtifactStore,
+    failureLog?: AiFailureRecorder,
   ) {
     this.#worlds = worlds;
     this.#compiler = compiler;
     this.#artifacts = artifacts;
+    this.#failureLog = failureLog;
   }
 
   async start(input: {
@@ -698,6 +702,8 @@ export class PlayCallChain {
             });
           },
         });
+        if (response.diagnostics !== undefined)
+          await this.#failureLog?.recordExchangeIfActive(response.diagnostics);
       } catch (error: unknown) {
         event.status = "interrupted";
         const message =
@@ -763,6 +769,29 @@ export class PlayCallChain {
           session.events.push(item.event);
         }
 
+        const failedTools = prepared.filter(({ result }) => !result.ok);
+        if (failedTools.length > 0 && response.diagnostics !== undefined)
+          await this.#failureLog?.recordFailure({
+            exchange: response.diagnostics,
+            failures: [
+              {
+                kind: "tool_execution",
+                message: "AI 调用的 Runtime 工具未被接受。",
+                details: {
+                  calls: failedTools.map(({ call, result, replayed }) => ({
+                    id: call.id,
+                    name: call.name,
+                    arguments: structuredClone(call.arguments),
+                    ok: result.ok,
+                    failureKind: result.failureKind,
+                    markdown: result.markdown,
+                    replayed,
+                  })),
+                },
+              },
+            ],
+          });
+
         const stateChanges = session.documents.stateChanges();
         const visibleText = (response.text ?? "").trim().length > 0;
         let committedHead: string | undefined;
@@ -811,6 +840,16 @@ export class PlayCallChain {
         if (calls.length === 0) {
           if (!visibleText) {
             const message = "模型没有返回文本或完整工具调用。";
+            if (response.diagnostics !== undefined)
+              await this.#failureLog?.recordFailure({
+                exchange: response.diagnostics,
+                failures: [
+                  {
+                    kind: "format_validation",
+                    message,
+                  },
+                ],
+              });
             session.events.push({
               id: session.nextEventId++,
               kind: "failure",
@@ -827,6 +866,12 @@ export class PlayCallChain {
           // is committed. Followups run here, while the chain still reads as
           // running, so the player only regains the composer once the panels
           // they are about to act on are in place.
+          if (response.diagnostics !== undefined)
+            await this.#failureLog?.resolve({
+              exchange: response.diagnostics,
+              message: "游玩调用链已在后续模型交换中恢复并完整结束。",
+              details: { parentHead: session.parentHead },
+            });
           await this.#runFollowups(session, modelHost, observer);
           session.status = "ready";
           await this.#persist(session);
@@ -842,6 +887,16 @@ export class PlayCallChain {
       } catch (error: unknown) {
         const message =
           error instanceof Error ? error.message : "调用链处理失败。";
+        if (response.diagnostics !== undefined)
+          await this.#failureLog?.recordFailure({
+            exchange: response.diagnostics,
+            failures: [
+              {
+                kind: "runtime_post_processing",
+                message,
+              },
+            ],
+          });
         session.events.push({
           id: session.nextEventId++,
           kind: "failure",
@@ -912,6 +967,9 @@ export class PlayCallChain {
         },
         head: session.parentHead,
         maxOutputTokens: modelHost.binding().maxOutputTokens,
+        ...(this.#failureLog === undefined
+          ? {}
+          : { failureLog: this.#failureLog }),
         observer: { onOutcome: record },
       });
     } catch (error: unknown) {

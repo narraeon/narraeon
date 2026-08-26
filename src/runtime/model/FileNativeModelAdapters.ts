@@ -24,6 +24,7 @@ import {
 import type {
   documentCandidateSettingTools,
   SettingAuthorAdapter,
+  SettingAuthorDelta,
   SettingAuthorMessage,
   SettingAuthorUsage,
 } from "../setting/DocumentCandidateSettingImprovement.ts";
@@ -42,6 +43,13 @@ import {
   defaultRuntimeToolDefinitionStrategy,
   type RuntimeToolDefinitionStrategy,
 } from "../prompt/FileNativeToolRegistry.ts";
+import {
+  AiExchangeCapture,
+  errorDescription,
+  type AiExchangeDiagnostics,
+  type AiFailureDescription,
+  type AiFailureRecorder,
+} from "./AiFailureLog.ts";
 
 export interface FileNativeModelConnection {
   provider: FileNativePromptInput["modelBinding"]["provider"];
@@ -55,13 +63,16 @@ export interface FileNativeModelConnection {
 export class FileNativeModelHost implements ModelHost {
   readonly #connection: FileNativeModelConnection;
   readonly #fetch: typeof fetch;
+  readonly #failureLog: AiFailureRecorder | undefined;
 
   constructor(
     connection: FileNativeModelConnection,
     fetchImplementation: typeof fetch = fetch,
+    failureLog?: AiFailureRecorder,
   ) {
     this.#connection = structuredClone(connection);
     this.#fetch = fetchImplementation;
+    this.#failureLog = failureLog;
   }
 
   binding(): ModelHostBinding {
@@ -126,6 +137,10 @@ export class FileNativeModelHost implements ModelHost {
       hasFrozenToolPolicy: hasFrozenToolPolicy(request),
       maxOutputTokens: request.maxOutputTokens,
       tracePrefix: "responses",
+      ...(this.#failureLog === undefined
+        ? {}
+        : { failureLog: this.#failureLog }),
+      diagnosticContext: modelDiagnosticContext(request),
       ...(onDelta === undefined ? {} : { onDelta }),
     });
   }
@@ -167,114 +182,133 @@ export class FileNativeModelHost implements ModelHost {
     };
     const bodyJson = JSON.stringify(body);
     await trace("chat_request", body);
-    const response = await dispatchProviderRequest(
-      this.#fetch,
-      providerUrl(this.#connection),
-      {
-        method: "POST",
-        headers: {
-          Accept: "text/event-stream",
-          Authorization: `Bearer ${this.#connection.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: bodyJson,
-      },
-      "Chat Completions",
+    const url = providerUrl(this.#connection);
+    const capture = providerCapture(
+      this.#failureLog,
+      this.#connection.provider,
+      url,
+      modelDiagnosticContext(request),
+      bodyJson,
     );
-    if (!response.ok) throw await providerError(response);
-    if (isProviderEventStream(response)) {
-      const streamed = await providerStreamResult(
-        response,
-        "Chat Completions",
-        (body) => aggregateChatModelStream(body, onDelta),
-      );
-      await trace("chat_response", streamed);
-      return {
-        ...(streamed.content === "" ? {} : { text: streamed.content }),
-        ...(streamed.reasoningContent === ""
-          ? {}
-          : { reasoningContent: streamed.reasoningContent }),
-        providerState: {
-          protocol: "chat_completions",
-          assistantMessage: cloneProviderValue(streamed.assistantMessage),
-        },
-        usage: normalizeChatUsage(streamed.usage),
-        toolCalls: streamed.toolCalls.map((call) => ({
-          id: call.id,
-          name: call.name,
-          arguments: parseArguments(call.arguments),
-        })),
-      };
-    }
-    const rawPayload = await providerJson(response, "Chat Completions");
-    if (
-      !isRecord(rawPayload) ||
-      !Array.isArray(rawPayload.choices) ||
-      !isRecord(rawPayload.choices[0]) ||
-      !isRecord(rawPayload.choices[0].message)
-    )
-      throw unknownProviderResponse("Chat Completions");
-    const payload = rawPayload as {
-      choices?: {
-        message?: {
-          content?: string | null;
-          reasoning_content?: string | null;
-          tool_calls?: {
-            id: string;
-            function: { name: string; arguments: string };
+    const diagnosticDelta = captureDelta(capture, onDelta);
+    return capturedProviderOperation(
+      this.#failureLog,
+      capture,
+      async (observe) => {
+        const response = observe(
+          await dispatchProviderRequest(
+            this.#fetch,
+            url,
+            {
+              method: "POST",
+              headers: {
+                Accept: "text/event-stream",
+                Authorization: `Bearer ${this.#connection.apiKey}`,
+                "Content-Type": "application/json",
+              },
+              body: bodyJson,
+            },
+            "Chat Completions",
+          ),
+        );
+        if (!response.ok) throw await providerError(response);
+        if (isProviderEventStream(response)) {
+          const streamed = await providerStreamResult(
+            response,
+            "Chat Completions",
+            (body) => aggregateChatModelStream(body, diagnosticDelta),
+          );
+          capture?.setReasoning(streamed.reasoningContent);
+          await trace("chat_response", streamed);
+          return {
+            ...(streamed.content === "" ? {} : { text: streamed.content }),
+            ...(streamed.reasoningContent === ""
+              ? {}
+              : { reasoningContent: streamed.reasoningContent }),
+            providerState: {
+              protocol: "chat_completions" as const,
+              assistantMessage: cloneProviderValue(streamed.assistantMessage),
+            },
+            usage: normalizeChatUsage(streamed.usage),
+            toolCalls: streamed.toolCalls.map((call) => ({
+              id: call.id,
+              name: call.name,
+              arguments: parseArguments(call.arguments),
+            })),
+          };
+        }
+        const rawPayload = await providerJson(response, "Chat Completions");
+        if (
+          !isRecord(rawPayload) ||
+          !Array.isArray(rawPayload.choices) ||
+          !isRecord(rawPayload.choices[0]) ||
+          !isRecord(rawPayload.choices[0].message)
+        )
+          throw unknownProviderResponse("Chat Completions");
+        const payload = rawPayload as {
+          choices?: {
+            message?: {
+              content?: string | null;
+              reasoning_content?: string | null;
+              tool_calls?: {
+                id: string;
+                function: { name: string; arguments: string };
+              }[];
+            };
           }[];
+          usage?: {
+            prompt_tokens?: number;
+            completion_tokens?: number;
+            total_tokens?: number;
+            prompt_tokens_details?: {
+              cached_tokens?: number;
+              cache_write_tokens?: number;
+            };
+            completion_tokens_details?: { reasoning_tokens?: number };
+          };
         };
-      }[];
-      usage?: {
-        prompt_tokens?: number;
-        completion_tokens?: number;
-        total_tokens?: number;
-        prompt_tokens_details?: {
-          cached_tokens?: number;
-          cache_write_tokens?: number;
+        await trace("chat_response", payload);
+        const message = payload.choices?.[0]?.message;
+        if (message === undefined)
+          throw unknownProviderResponse("Chat Completions");
+        if (
+          (message.content !== undefined &&
+            message.content !== null &&
+            typeof message.content !== "string") ||
+          (message.reasoning_content !== undefined &&
+            message.reasoning_content !== null &&
+            typeof message.reasoning_content !== "string") ||
+          (message.tool_calls !== undefined &&
+            (!Array.isArray(message.tool_calls) ||
+              message.tool_calls.some(
+                (call) =>
+                  !isRecord(call) ||
+                  typeof call.id !== "string" ||
+                  !isRecord(call.function) ||
+                  typeof call.function.name !== "string" ||
+                  typeof call.function.arguments !== "string",
+              )))
+        )
+          throw unknownProviderResponse("Chat Completions");
+        capture?.setReasoning(message.reasoning_content ?? undefined);
+        return {
+          ...(message.content == null ? {} : { text: message.content }),
+          ...(message.reasoning_content == null
+            ? {}
+            : { reasoningContent: message.reasoning_content }),
+          providerState: {
+            protocol: "chat_completions" as const,
+            assistantMessage: cloneProviderValue(message),
+          },
+          usage: normalizeChatUsage(payload.usage),
+          toolCalls: (message.tool_calls ?? []).map((call) => ({
+            id: call.id,
+            name: call.function.name,
+            arguments: parseArguments(call.function.arguments),
+          })),
         };
-        completion_tokens_details?: { reasoning_tokens?: number };
-      };
-    };
-    await trace("chat_response", payload);
-    const message = payload.choices?.[0]?.message;
-    if (message === undefined)
-      throw unknownProviderResponse("Chat Completions");
-    if (
-      (message.content !== undefined &&
-        message.content !== null &&
-        typeof message.content !== "string") ||
-      (message.reasoning_content !== undefined &&
-        message.reasoning_content !== null &&
-        typeof message.reasoning_content !== "string") ||
-      (message.tool_calls !== undefined &&
-        (!Array.isArray(message.tool_calls) ||
-          message.tool_calls.some(
-            (call) =>
-              !isRecord(call) ||
-              typeof call.id !== "string" ||
-              !isRecord(call.function) ||
-              typeof call.function.name !== "string" ||
-              typeof call.function.arguments !== "string",
-          )))
-    )
-      throw unknownProviderResponse("Chat Completions");
-    return {
-      ...(message.content == null ? {} : { text: message.content }),
-      ...(message.reasoning_content == null
-        ? {}
-        : { reasoningContent: message.reasoning_content }),
-      providerState: {
-        protocol: "chat_completions",
-        assistantMessage: cloneProviderValue(message),
       },
-      usage: normalizeChatUsage(payload.usage),
-      toolCalls: (message.tool_calls ?? []).map((call) => ({
-        id: call.id,
-        name: call.function.name,
-        arguments: parseArguments(call.function.arguments),
-      })),
-    };
+    );
   }
 
   async #anthropic(
@@ -305,122 +339,153 @@ export class FileNativeModelHost implements ModelHost {
     };
     const bodyJson = JSON.stringify(body);
     await trace("anthropic_request", body);
-    const response = await dispatchProviderRequest(
-      this.#fetch,
-      providerUrl(this.#connection),
-      {
-        method: "POST",
-        headers: {
-          Accept: "text/event-stream",
-          "anthropic-version": "2023-06-01",
-          "x-api-key": this.#connection.apiKey,
-          "Content-Type": "application/json",
-        },
-        body: bodyJson,
-      },
-      "Anthropic Messages",
+    const url = providerUrl(this.#connection);
+    const capture = providerCapture(
+      this.#failureLog,
+      this.#connection.provider,
+      url,
+      modelDiagnosticContext(request),
+      bodyJson,
     );
-    if (!response.ok) throw await providerError(response);
-    if (isProviderEventStream(response)) {
-      const streamed = await providerStreamResult(
-        response,
-        "Anthropic Messages",
-        (body) => aggregateAnthropicModelStream(body, onDelta),
-      );
-      await trace("anthropic_response", streamed);
-      return {
-        ...(streamed.text === "" ? {} : { text: streamed.text }),
-        ...(streamed.reasoningContent === ""
-          ? {}
-          : { reasoningContent: streamed.reasoningContent }),
-        toolCalls: streamed.toolCalls.map((call) => ({
-          id: call.id,
-          name: call.name,
-          arguments: structuredClone(call.arguments),
-        })),
-        providerState: {
-          protocol: "anthropic_messages",
-          content: cloneProviderValue(streamed.content),
-          ...(streamed.responseId === undefined
-            ? {}
-            : { responseId: streamed.responseId }),
-          ...(streamed.model === undefined ? {} : { model: streamed.model }),
-          ...(streamed.stopReason === undefined
-            ? {}
-            : { stopReason: streamed.stopReason }),
-        },
-        usage: normalizeAnthropicUsage(streamed.usage),
-      };
-    }
-    const rawPayload = await providerJson(response, "Anthropic Messages");
-    if (!isRecord(rawPayload) || !Array.isArray(rawPayload.content))
-      throw unknownProviderResponse("Anthropic Messages");
-    const payload = rawPayload as {
-      content?: (
-        | { type: "text"; text: string }
-        | { type: "tool_use"; id: string; name: string; input: unknown }
-        | Record<string, unknown>
-      )[];
-      id?: string;
-      model?: string;
-      stop_reason?: string | null;
-      usage?: {
-        input_tokens?: number;
-        output_tokens?: number;
-        cache_read_input_tokens?: number;
-        cache_creation_input_tokens?: number;
-      };
-    };
-    const content = payload.content!;
-    if (
-      content.some(
-        (item) =>
-          !isRecord(item) ||
-          typeof item.type !== "string" ||
-          (item.type === "text" && typeof item.text !== "string") ||
-          (item.type === "tool_use" &&
-            (typeof item.id !== "string" ||
-              typeof item.name !== "string" ||
-              !("input" in item))),
-      )
-    )
-      throw unknownProviderResponse("Anthropic Messages");
-    await trace("anthropic_response", payload);
-    return {
-      text: content
-        .filter(
-          (item): item is { type: "text"; text: string } =>
-            item.type === "text",
+    const diagnosticDelta = captureDelta(capture, onDelta);
+    return capturedProviderOperation(
+      this.#failureLog,
+      capture,
+      async (observe) => {
+        const response = observe(
+          await dispatchProviderRequest(
+            this.#fetch,
+            url,
+            {
+              method: "POST",
+              headers: {
+                Accept: "text/event-stream",
+                "anthropic-version": "2023-06-01",
+                "x-api-key": this.#connection.apiKey,
+                "Content-Type": "application/json",
+              },
+              body: bodyJson,
+            },
+            "Anthropic Messages",
+          ),
+        );
+        if (!response.ok) throw await providerError(response);
+        if (isProviderEventStream(response)) {
+          const streamed = await providerStreamResult(
+            response,
+            "Anthropic Messages",
+            (body) => aggregateAnthropicModelStream(body, diagnosticDelta),
+          );
+          capture?.setReasoning(streamed.reasoningContent);
+          await trace("anthropic_response", streamed);
+          return {
+            ...(streamed.text === "" ? {} : { text: streamed.text }),
+            ...(streamed.reasoningContent === ""
+              ? {}
+              : { reasoningContent: streamed.reasoningContent }),
+            toolCalls: streamed.toolCalls.map((call) => ({
+              id: call.id,
+              name: call.name,
+              arguments: structuredClone(call.arguments),
+            })),
+            providerState: {
+              protocol: "anthropic_messages" as const,
+              content: cloneProviderValue(streamed.content),
+              ...(streamed.responseId === undefined
+                ? {}
+                : { responseId: streamed.responseId }),
+              ...(streamed.model === undefined
+                ? {}
+                : { model: streamed.model }),
+              ...(streamed.stopReason === undefined
+                ? {}
+                : { stopReason: streamed.stopReason }),
+            },
+            usage: normalizeAnthropicUsage(streamed.usage),
+          };
+        }
+        const rawPayload = await providerJson(response, "Anthropic Messages");
+        if (!isRecord(rawPayload) || !Array.isArray(rawPayload.content))
+          throw unknownProviderResponse("Anthropic Messages");
+        const payload = rawPayload as {
+          content?: (
+            | { type: "text"; text: string }
+            | { type: "thinking"; thinking: string }
+            | { type: "tool_use"; id: string; name: string; input: unknown }
+            | Record<string, unknown>
+          )[];
+          id?: string;
+          model?: string;
+          stop_reason?: string | null;
+          usage?: {
+            input_tokens?: number;
+            output_tokens?: number;
+            cache_read_input_tokens?: number;
+            cache_creation_input_tokens?: number;
+          };
+        };
+        const content = payload.content!;
+        if (
+          content.some(
+            (item) =>
+              !isRecord(item) ||
+              typeof item.type !== "string" ||
+              (item.type === "text" && typeof item.text !== "string") ||
+              (item.type === "thinking" && typeof item.thinking !== "string") ||
+              (item.type === "tool_use" &&
+                (typeof item.id !== "string" ||
+                  typeof item.name !== "string" ||
+                  !("input" in item))),
+          )
         )
-        .map(({ text }) => text)
-        .join(""),
-      toolCalls: content
-        .filter(
-          (
-            item,
-          ): item is {
-            type: "tool_use";
-            id: string;
-            name: string;
-            input: unknown;
-          } => item.type === "tool_use",
-        )
-        .map((call) => ({
-          id: call.id,
-          name: call.name,
-          arguments: call.input,
-        })),
-      providerState: {
-        protocol: "anthropic_messages",
-        content: cloneProviderValue(content),
-        ...(payload.id === undefined ? {} : { responseId: payload.id }),
-        ...(payload.model === undefined ? {} : { model: payload.model }),
-        ...(payload.stop_reason === undefined
-          ? {}
-          : { stopReason: payload.stop_reason }),
+          throw unknownProviderResponse("Anthropic Messages");
+        await trace("anthropic_response", payload);
+        const reasoningContent = content
+          .filter(
+            (item): item is { type: "thinking"; thinking: string } =>
+              item.type === "thinking",
+          )
+          .map(({ thinking }) => thinking)
+          .join("");
+        capture?.setReasoning(reasoningContent);
+        return {
+          text: content
+            .filter(
+              (item): item is { type: "text"; text: string } =>
+                item.type === "text",
+            )
+            .map(({ text }) => text)
+            .join(""),
+          ...(reasoningContent === "" ? {} : { reasoningContent }),
+          toolCalls: content
+            .filter(
+              (
+                item,
+              ): item is {
+                type: "tool_use";
+                id: string;
+                name: string;
+                input: unknown;
+              } => item.type === "tool_use",
+            )
+            .map((call) => ({
+              id: call.id,
+              name: call.name,
+              arguments: call.input,
+            })),
+          providerState: {
+            protocol: "anthropic_messages" as const,
+            content: cloneProviderValue(content),
+            ...(payload.id === undefined ? {} : { responseId: payload.id }),
+            ...(payload.model === undefined ? {} : { model: payload.model }),
+            ...(payload.stop_reason === undefined
+              ? {}
+              : { stopReason: payload.stop_reason }),
+          },
+          usage: normalizeAnthropicUsage(payload.usage),
+        };
       },
-      usage: normalizeAnthropicUsage(payload.usage),
-    };
+    );
   }
 }
 
@@ -450,6 +515,96 @@ function modelHostTrace(request: ModelHostExchange) {
   };
 }
 
+function modelDiagnosticContext(
+  request: ModelHostExchange,
+): AiExchangeDiagnostics["context"] {
+  return {
+    scope:
+      request.requestId === "play_call_chain"
+        ? "play_call_chain"
+        : request.operationId?.includes(":followup:") === true
+          ? "play_followup"
+          : "model_host",
+    ...(request.requestId === undefined
+      ? {}
+      : { requestId: request.requestId }),
+    ...(request.operationId === undefined
+      ? {}
+      : { operationId: request.operationId }),
+    ...(request.requestAttempt === undefined
+      ? {}
+      : { requestAttempt: request.requestAttempt }),
+    ...(request.exchange === undefined ? {} : { exchange: request.exchange }),
+  };
+}
+
+function providerCapture(
+  failureLog: AiFailureRecorder | undefined,
+  provider: FileNativeModelConnection["provider"],
+  endpoint: URL,
+  context: AiExchangeDiagnostics["context"],
+  requestBody: string,
+): AiExchangeCapture | undefined {
+  return failureLog === undefined
+    ? undefined
+    : new AiExchangeCapture({ provider, endpoint, context, requestBody });
+}
+
+function captureDelta(
+  capture: AiExchangeCapture | undefined,
+  downstream: ModelHostDeltaSink | undefined,
+): ModelHostDeltaSink | undefined {
+  if (capture === undefined) return downstream;
+  return (delta) => {
+    if (delta.kind === "reasoning") capture.observeReasoning(delta.text);
+    downstream?.(delta);
+  };
+}
+
+function captureSettingDelta(
+  capture: AiExchangeCapture | undefined,
+  downstream: ((delta: SettingAuthorDelta) => void) | undefined,
+): ((delta: SettingAuthorDelta) => void) | undefined {
+  if (capture === undefined) return downstream;
+  return (delta) => {
+    if (delta.kind === "reasoning") capture.observeReasoning(delta.text);
+    downstream?.(delta);
+  };
+}
+
+async function capturedProviderOperation<Value extends object>(
+  failureLog: AiFailureRecorder | undefined,
+  capture: AiExchangeCapture | undefined,
+  operation: (
+    observeResponse: (response: Response) => Response,
+  ) => Promise<Value>,
+): Promise<Value & { diagnostics?: AiExchangeDiagnostics }> {
+  const observeResponse = (response: Response): Response =>
+    capture?.captureResponse(response) ?? response;
+  try {
+    const value = await operation(observeResponse);
+    if (capture === undefined) return value;
+    return { ...value, diagnostics: capture.snapshot() };
+  } catch (error: unknown) {
+    if (capture !== undefined && failureLog !== undefined) {
+      const exchange = capture.snapshot();
+      const failure: AiFailureDescription = {
+        kind:
+          exchange.response === undefined
+            ? "provider_transport"
+            : error instanceof ModelHostFailureError
+              ? "provider_rejection"
+              : "provider_response_format",
+        message:
+          error instanceof Error ? error.message : "Provider 请求处理失败。",
+        error: errorDescription(error),
+      };
+      await failureLog.recordFailure({ exchange, failures: [failure] });
+    }
+    throw error;
+  }
+}
+
 async function trace(kind: string, value: unknown): Promise<void> {
   const path = process.env.NARRAEON_PROVIDER_TRACE_PATH;
   if (path === undefined) return;
@@ -471,16 +626,35 @@ async function trace(kind: string, value: unknown): Promise<void> {
 export class FileNativeSettingAuthorProvider implements SettingAuthorAdapter {
   readonly #connection: FileNativeModelConnection;
   readonly #fetch: typeof fetch;
+  readonly #failureLog: AiFailureRecorder | undefined;
+  readonly #operationId: string | undefined;
+  #exchange = 0;
 
   constructor(
     connection: FileNativeModelConnection,
     fetchImplementation: typeof fetch = fetch,
+    diagnostics?: {
+      failureLog?: AiFailureRecorder;
+      operationId?: string;
+    },
   ) {
     this.#connection = structuredClone(connection);
     this.#fetch = fetchImplementation;
+    this.#failureLog = diagnostics?.failureLog;
+    this.#operationId = diagnostics?.operationId;
   }
 
   async next(request: Parameters<SettingAuthorAdapter["next"]>[0]) {
+    this.#exchange += 1;
+    const diagnosticContext: AiExchangeDiagnostics["context"] = {
+      scope: "setting_improvement",
+      requestId: "setting_improvement",
+      ...(this.#operationId === undefined
+        ? {}
+        : { operationId: this.#operationId }),
+      requestAttempt: 1,
+      exchange: this.#exchange,
+    };
     const tools = request.tools.map(settingToolDefinition);
     if (this.#connection.provider === "chat_completions") {
       const body = {
@@ -506,34 +680,53 @@ export class FileNativeSettingAuthorProvider implements SettingAuthorAdapter {
         stream_options: { include_usage: true },
       };
       await trace("setting_chat_request", body);
-      const response = await this.#fetch(providerUrl(this.#connection), {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.#connection.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(body),
-      });
-      if (!response.ok) throw await providerError(response);
-      if (response.body === null) throw new Error("创作响应缺少流式正文");
-      const streamed = await aggregateChatSettingStream(
-        response.body,
-        request.onDelta,
+      const bodyJson = JSON.stringify(body);
+      const url = providerUrl(this.#connection);
+      const capture = providerCapture(
+        this.#failureLog,
+        this.#connection.provider,
+        url,
+        diagnosticContext,
+        bodyJson,
       );
-      await trace("setting_chat_response", streamed);
-      return {
-        role: "assistant" as const,
-        content: streamed.content,
-        ...(streamed.reasoningContent === ""
-          ? {}
-          : { reasoningContent: streamed.reasoningContent }),
-        toolCalls: streamed.toolCalls.map((call) => ({
-          id: call.id,
-          name: call.name,
-          arguments: asArguments(parseArguments(call.arguments)),
-        })),
-        usage: settingAuthorUsage(normalizeChatUsage(streamed.usage)),
-      };
+      const diagnosticDelta = captureSettingDelta(capture, request.onDelta);
+      return capturedProviderOperation(
+        this.#failureLog,
+        capture,
+        async (observe) => {
+          const response = observe(
+            await this.#fetch(url, {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${this.#connection.apiKey}`,
+                "Content-Type": "application/json",
+              },
+              body: bodyJson,
+            }),
+          );
+          if (!response.ok) throw await providerError(response);
+          if (response.body === null) throw new Error("创作响应缺少流式正文");
+          const streamed = await aggregateChatSettingStream(
+            response.body,
+            diagnosticDelta,
+          );
+          capture?.setReasoning(streamed.reasoningContent);
+          await trace("setting_chat_response", streamed);
+          return {
+            role: "assistant" as const,
+            content: streamed.content,
+            ...(streamed.reasoningContent === ""
+              ? {}
+              : { reasoningContent: streamed.reasoningContent }),
+            toolCalls: streamed.toolCalls.map((call) => ({
+              id: call.id,
+              name: call.name,
+              arguments: asArguments(parseArguments(call.arguments)),
+            })),
+            usage: settingAuthorUsage(normalizeChatUsage(streamed.usage)),
+          };
+        },
+      );
     }
     if (this.#connection.provider === "openai_responses") {
       const response = await openAIResponsesRequest({
@@ -550,6 +743,10 @@ export class FileNativeSettingAuthorProvider implements SettingAuthorAdapter {
           this.#connection.maxOutputTokens,
         ),
         tracePrefix: "setting_responses",
+        ...(this.#failureLog === undefined
+          ? {}
+          : { failureLog: this.#failureLog }),
+        diagnosticContext,
         ...(request.onDelta === undefined ? {} : { onDelta: request.onDelta }),
       });
       return {
@@ -561,6 +758,9 @@ export class FileNativeSettingAuthorProvider implements SettingAuthorAdapter {
           arguments: asArguments(call.arguments),
         })),
         usage: settingAuthorUsage(response.usage),
+        ...(response.diagnostics === undefined
+          ? {}
+          : { diagnostics: response.diagnostics }),
       };
     }
     const system = request.messages
@@ -589,35 +789,54 @@ export class FileNativeSettingAuthorProvider implements SettingAuthorAdapter {
       stream: true,
     };
     await trace("setting_anthropic_request", body);
-    const response = await this.#fetch(providerUrl(this.#connection), {
-      method: "POST",
-      headers: {
-        "anthropic-version": "2023-06-01",
-        "x-api-key": this.#connection.apiKey,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    });
-    if (!response.ok) throw await providerError(response);
-    if (response.body === null) throw new Error("创作响应缺少流式正文");
-    const streamed = await aggregateAnthropicSettingStream(
-      response.body,
-      request.onDelta,
+    const bodyJson = JSON.stringify(body);
+    const url = providerUrl(this.#connection);
+    const capture = providerCapture(
+      this.#failureLog,
+      this.#connection.provider,
+      url,
+      diagnosticContext,
+      bodyJson,
     );
-    await trace("setting_anthropic_response", streamed);
-    return {
-      role: "assistant" as const,
-      content: streamed.content,
-      ...(streamed.reasoningContent === ""
-        ? {}
-        : { reasoningContent: streamed.reasoningContent }),
-      toolCalls: streamed.toolCalls.map((call) => ({
-        id: call.id,
-        name: call.name,
-        arguments: asArguments(parseArguments(call.arguments)),
-      })),
-      usage: settingAuthorUsage(normalizeAnthropicUsage(streamed.usage)),
-    };
+    const diagnosticDelta = captureSettingDelta(capture, request.onDelta);
+    return capturedProviderOperation(
+      this.#failureLog,
+      capture,
+      async (observe) => {
+        const response = observe(
+          await this.#fetch(url, {
+            method: "POST",
+            headers: {
+              "anthropic-version": "2023-06-01",
+              "x-api-key": this.#connection.apiKey,
+              "Content-Type": "application/json",
+            },
+            body: bodyJson,
+          }),
+        );
+        if (!response.ok) throw await providerError(response);
+        if (response.body === null) throw new Error("创作响应缺少流式正文");
+        const streamed = await aggregateAnthropicSettingStream(
+          response.body,
+          diagnosticDelta,
+        );
+        capture?.setReasoning(streamed.reasoningContent);
+        await trace("setting_anthropic_response", streamed);
+        return {
+          role: "assistant" as const,
+          content: streamed.content,
+          ...(streamed.reasoningContent === ""
+            ? {}
+            : { reasoningContent: streamed.reasoningContent }),
+          toolCalls: streamed.toolCalls.map((call) => ({
+            id: call.id,
+            name: call.name,
+            arguments: asArguments(parseArguments(call.arguments)),
+          })),
+          usage: settingAuthorUsage(normalizeAnthropicUsage(streamed.usage)),
+        };
+      },
+    );
   }
 }
 
@@ -1052,12 +1271,15 @@ async function openAIResponsesRequest(input: {
   hasFrozenToolPolicy?: boolean;
   maxOutputTokens: number;
   tracePrefix: string;
+  failureLog?: AiFailureRecorder;
+  diagnosticContext: AiExchangeDiagnostics["context"];
   onDelta?: ModelHostDeltaSink;
 }): Promise<{
   text?: string;
   usage?: ModelHostUsage;
   providerState: ProviderExchangeState;
   toolCalls?: ModelHostToolCall[];
+  diagnostics?: AiExchangeDiagnostics;
 }> {
   const allowedTools =
     input.allowedTools ?? input.tools.map((tool) => tool.name);
@@ -1095,87 +1317,104 @@ async function openAIResponsesRequest(input: {
   };
   await trace(`${input.tracePrefix}_request`, body);
   const bodyJson = JSON.stringify(body);
-  const response = await dispatchProviderRequest(
-    input.fetchImplementation,
-    providerUrl(input.connection),
-    {
-      method: "POST",
-      headers: {
-        Accept: "text/event-stream",
-        Authorization: `Bearer ${input.connection.apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: bodyJson,
-    },
-    "OpenAI Responses",
+  const url = providerUrl(input.connection);
+  const capture = providerCapture(
+    input.failureLog,
+    input.connection.provider,
+    url,
+    input.diagnosticContext,
+    bodyJson,
   );
-  if (!response.ok) throw await providerError(response);
-  const payload = isProviderEventStream(response)
-    ? await providerStreamResult(response, "Responses API", (body) =>
-        aggregateResponsesModelStream(body, input.onDelta),
-      )
-    : await providerJson(response, "Responses API");
-  await trace(`${input.tracePrefix}_response`, payload);
-  if (!isRecord(payload) || !Array.isArray(payload.output))
-    throw unknownProviderResponse("Responses API");
-  const output = cloneResponseOutput(payload.output);
-  if (
-    output.some(
-      (item) =>
-        !isRecord(item) ||
-        typeof item.type !== "string" ||
-        (item.type === "message" && !Array.isArray(item.content)) ||
-        (item.type === "function_call" &&
-          (typeof item.call_id !== "string" ||
-            typeof item.name !== "string" ||
-            typeof item.arguments !== "string")),
-    )
-  )
-    throw unknownProviderResponse("Responses API");
-  const text = output
-    .flatMap((item) => {
-      if (
-        !isRecord(item) ||
-        item.type !== "message" ||
-        !Array.isArray(item.content)
-      )
-        return [];
-      return item.content.flatMap((part) =>
-        isRecord(part) &&
-        part.type === "output_text" &&
-        typeof part.text === "string"
-          ? [part.text]
-          : [],
+  const diagnosticDelta = captureDelta(capture, input.onDelta);
+  return capturedProviderOperation(
+    input.failureLog,
+    capture,
+    async (observe) => {
+      const response = observe(
+        await dispatchProviderRequest(
+          input.fetchImplementation,
+          url,
+          {
+            method: "POST",
+            headers: {
+              Accept: "text/event-stream",
+              Authorization: `Bearer ${input.connection.apiKey}`,
+              "Content-Type": "application/json",
+            },
+            body: bodyJson,
+          },
+          "OpenAI Responses",
+        ),
       );
-    })
-    .join("");
-  const toolCalls = output.flatMap((item): ModelHostToolCall[] => {
-    if (
-      !isRecord(item) ||
-      item.type !== "function_call" ||
-      typeof item.call_id !== "string" ||
-      typeof item.name !== "string" ||
-      typeof item.arguments !== "string"
-    )
-      return [];
-    return [
-      {
-        id: item.call_id,
-        name: item.name,
-        arguments: parseArguments(item.arguments),
-      },
-    ];
-  });
-  return {
-    ...(text.length === 0 ? {} : { text }),
-    providerState: {
-      protocol: "openai_responses",
-      output,
-      ...(typeof payload.id === "string" ? { responseId: payload.id } : {}),
+      if (!response.ok) throw await providerError(response);
+      const payload = isProviderEventStream(response)
+        ? await providerStreamResult(response, "Responses API", (body) =>
+            aggregateResponsesModelStream(body, diagnosticDelta),
+          )
+        : await providerJson(response, "Responses API");
+      await trace(`${input.tracePrefix}_response`, payload);
+      if (!isRecord(payload) || !Array.isArray(payload.output))
+        throw unknownProviderResponse("Responses API");
+      const output = cloneResponseOutput(payload.output);
+      if (
+        output.some(
+          (item) =>
+            !isRecord(item) ||
+            typeof item.type !== "string" ||
+            (item.type === "message" && !Array.isArray(item.content)) ||
+            (item.type === "function_call" &&
+              (typeof item.call_id !== "string" ||
+                typeof item.name !== "string" ||
+                typeof item.arguments !== "string")),
+        )
+      )
+        throw unknownProviderResponse("Responses API");
+      const text = output
+        .flatMap((item) => {
+          if (
+            !isRecord(item) ||
+            item.type !== "message" ||
+            !Array.isArray(item.content)
+          )
+            return [];
+          return item.content.flatMap((part) =>
+            isRecord(part) &&
+            part.type === "output_text" &&
+            typeof part.text === "string"
+              ? [part.text]
+              : [],
+          );
+        })
+        .join("");
+      const toolCalls = output.flatMap((item): ModelHostToolCall[] => {
+        if (
+          !isRecord(item) ||
+          item.type !== "function_call" ||
+          typeof item.call_id !== "string" ||
+          typeof item.name !== "string" ||
+          typeof item.arguments !== "string"
+        )
+          return [];
+        return [
+          {
+            id: item.call_id,
+            name: item.name,
+            arguments: parseArguments(item.arguments),
+          },
+        ];
+      });
+      return {
+        ...(text.length === 0 ? {} : { text }),
+        providerState: {
+          protocol: "openai_responses" as const,
+          output,
+          ...(typeof payload.id === "string" ? { responseId: payload.id } : {}),
+        },
+        usage: normalizeResponsesUsage(payload.usage),
+        toolCalls,
+      };
     },
-    usage: normalizeResponsesUsage(payload.usage),
-    toolCalls,
-  };
+  );
 }
 
 function cloneResponseOutput(value: unknown): unknown[] {

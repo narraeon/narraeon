@@ -33,6 +33,14 @@ npx narraeon --help
 
 服务只监听 `127.0.0.1`，不会自动暴露到局域网。
 
+AI 请求发生 Provider／响应格式／Runtime 工具／候选自检错误时，Runtime 会在
+`NARRAEON_LOG_ROOT/ai-failures` 自动创建一份 JSONL 诊断记录。记录从首次错误的
+原始 Provider request 与 response 开始，继续追加同一操作后续的模型交换，直到
+游玩调用链、创作计划或设定候选恢复成功；Provider 实际返回的 reasoning／thinking
+也会原样保留。API key 和请求 header 不会写入，但提示词、世界内容、工具参数和
+思维过程可能包含私密信息，因此日志目录与文件分别使用仅当前用户可访问的权限。
+Provider 没有返回的隐藏思维过程不会被推断或补造。
+
 ## 仓库开发
 
 ```bash
