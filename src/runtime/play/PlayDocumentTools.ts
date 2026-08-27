@@ -391,20 +391,7 @@ function applyPlayCandidatePatch(
         worldDocumentRevisionFailureMessage(revised.diagnostics),
         "candidate",
       );
-    const changed = revised.changes[0];
-    const revisedTarget =
-      changed === undefined
-        ? target
-        : (documentDescriptorByRef(revised.snapshot, changed.shortRef) ??
-          target);
-    const diff = formatToolRevisionChanges(
-      revised.changes,
-      revisedTarget.title,
-      revisedTarget.shortRef,
-    );
-    if (Buffer.byteLength(diff, "utf8") > 256 * 1024) {
-      throw new PlayDocumentToolFailure("完整 before／after 超过工具结果预算");
-    }
+    const receipt = formatToolRevisionReceipt(revised.changes);
     const previousSnapshot = candidate.snapshot;
     acceptWorldStateRevision(candidate, revised);
     candidate.suppliedBytes += suppliedBytes;
@@ -421,7 +408,7 @@ function applyPlayCandidatePatch(
         authorizeRead(reads, candidate.snapshot.id, ref, locator);
     return {
       ok: true,
-      markdown: `# 世界候选已更新\n\n${diff}\n\n候选累计变化：${playCandidateStateChanges(candidate).length} 份文档。`,
+      markdown: receipt,
     };
   } catch (error: unknown) {
     if (error instanceof PlayDocumentToolFailure)
@@ -457,17 +444,13 @@ function editsAreAuthorized(
   });
 }
 
-function formatToolRevisionChanges(
+function formatToolRevisionReceipt(
   changes: readonly WorldDocumentRevisionChange[],
-  fallbackTitle: string,
-  fallbackRef: string,
 ): string {
-  if (changes.length === 0)
-    return `## 更新：${fallbackTitle} [@${fallbackRef}]\n\n文档原文保持不变。`;
+  if (changes.length === 0) return "# world_patch 成功\n\n文档未发生变化。";
   if (changes.length !== 1)
     throw new Error("world_patch revision 必须只影响目标文档");
-  const change = changes[0]!;
-  return `## 更新：${fallbackTitle} [@${change.shortRef}]\n\nBefore:\n> ${change.before?.contents.replace(/\n/gu, "\n> ") ?? "不存在"}\n\nAfter:\n> ${change.after.contents.replace(/\n/gu, "\n> ")}`;
+  return "# world_patch 成功\n\n文档已发生变化。";
 }
 
 function nextAvailableStatePath(

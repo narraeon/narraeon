@@ -114,6 +114,24 @@ test("模型自行交替文本与工具，每个完成响应立即推进世界�
     "tool_result",
     "assistant",
   ]);
+  const patchResult = first.events.find(
+    (
+      event,
+    ): event is Extract<
+      V1PlayCallChainView["events"][number],
+      { kind: "tool_result" }
+    > => event.kind === "tool_result" && event.callId === "patch-door",
+  );
+  expect(patchResult?.markdown).toBe(
+    "# world_patch 成功\n\n文档已发生变化。\n\n# Runtime 写入\n\n本次响应中的世界变化已写入端点 commit:2。",
+  );
+  expect(patchResult?.markdown).not.toContain("秦龙守在宿舍门边。");
+  expect(patchResult?.markdown).not.toContain("秦龙已经把宿舍门打开。");
+  expect(modelHost.requests[1]?.appended.at(-1)).toEqual({
+    kind: "tool",
+    toolCallId: "patch-door",
+    markdown: patchResult?.markdown,
+  });
   expect(modelHost.requests[0]?.tools.map(({ name }) => name)).toEqual([
     "context_list",
     "context_search",
@@ -181,6 +199,68 @@ test("模型自行交替文本与工具，每个完成响应立即推进世界�
     endpoint.state.find(({ path }) => path === "current-situation.yaml")
       ?.contents,
   ).toContain("秦龙已经把宿舍门打开。");
+});
+
+test("world_patch no-op 保留匹配的紧凑工具结果且不推进世界", async () => {
+  const { worlds, worldId } = await createWorld("play-chain-patch-no-op");
+  const modelHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "patch-same-situation",
+            name: "world_patch",
+            arguments: {
+              target: "@current-situation",
+              edits: [
+                {
+                  op: "replace",
+                  locator: { yaml: ["情况"] },
+                  value: "秦龙守在宿舍门边。",
+                },
+              ],
+            },
+          },
+        ],
+      },
+      { outcome: "response", text: "秦龙仍站在门边。" },
+    ],
+  });
+
+  const view = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "play-chain-patch-no-op-contract",
+    exchangeId: "play-chain-patch-no-op-exchange",
+    playerText: "我看向秦龙。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+
+  expect(view.parentHead).toBe("commit:2");
+  expect(
+    view.events.find(
+      (event) => event.kind === "assistant" && event.exchange === 1,
+    ),
+  ).not.toHaveProperty("committedHead");
+  const patchResult = view.events.find(
+    (
+      event,
+    ): event is Extract<
+      V1PlayCallChainView["events"][number],
+      { kind: "tool_result" }
+    > =>
+      event.kind === "tool_result" && event.callId === "patch-same-situation",
+  );
+  expect(patchResult?.markdown).toBe("# world_patch 成功\n\n文档未发生变化。");
+  expect(modelHost.requests[1]?.appended.at(-1)).toEqual({
+    kind: "tool",
+    toolCallId: "patch-same-situation",
+    markdown: patchResult?.markdown,
+  });
 });
 
 test("全新上下文只重建模型上下文，持久保留此前调用轨迹并允许从旧节点派生", async () => {

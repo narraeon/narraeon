@@ -165,7 +165,7 @@ function createToolDefinitions(): Record<
     },
     world_patch: {
       description:
-        '更新已精确读取的文档。target 必须使用 @短引用；文档 title、summary 或 aliases 过时时用 {op:"set_metadata",title,summary,aliases} 整组更新，未改项照抄读取结果。YAML edit 使用 locator:{yaml:["字段","子字段"]}，例如 {op:"replace",locator:{yaml:["情况"]},value:"新值"}。YAML value 需要引用整份文档时只能写 {$ref:"@短引用"}，短引用必须来自 Runtime 的 list、read 或 create 结果；不得自行编造文档 id。没有可用句柄时，根据语义使用普通文本，或先 world_create 后使用其返回的 @短引用。向已存在的 sequence 末尾加一项必须使用 append 并把 locator 指向该 sequence；add 只创建尚不存在的 map key 或 list index。Markdown locator 不包含文档 # 一级标题：{markdown:["职责"]} 精确指向 ## 职责，replace_section.markdown 必须从同级同名标题开始。修改 # 标题下、第一个 ## 前的文字用 replace_preamble（只传该段文字）；替换整个 Markdown 正文用 replace_body，且 markdown 必须保留原 # 一级标题。不要使用 path、JSON Pointer、set 或文件名。',
+        '更新已精确读取的文档。target 必须使用 @短引用；文档 title、summary 或 aliases 过时时用 {op:"set_metadata",title,summary,aliases} 整组更新，未改项照抄读取结果。YAML edit 使用 locator:{yaml:["字段","子字段"]}，例如 {op:"replace",locator:{yaml:["情况"]},value:"新值"}。YAML value 需要引用整份文档时只能写 {$ref:"@短引用"}，短引用必须来自 Runtime 的 list、read 或 create 结果；不得自行编造文档 id。没有可用句柄时，根据语义使用普通文本，或先 world_create 后使用其返回的 @短引用。向已存在的 sequence 末尾加一项必须使用 append 并把 locator 指向该 sequence；add 只创建尚不存在的 map key 或 list index。Markdown locator 不包含文档 # 一级标题：{markdown:["职责"]} 精确指向 ## 职责，replace_section.markdown 必须从同级同名标题开始。修改 # 标题下、第一个 ## 前的文字用 replace_preamble（只传该段文字）；替换整个 Markdown 正文用 replace_body，且 markdown 必须保留原 # 一级标题。成功结果只报告文档是否发生变化，不回显正文；只有后续决策依赖 Runtime 序列化后的精确正文时才重新 context_read。不要使用 path、JSON Pointer、set 或文件名。',
       inputSchema: object(
         {
           target: string,

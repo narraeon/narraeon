@@ -679,6 +679,9 @@ context:
     );
     expect(patch?.description).toContain("replace_body");
     expect(patch?.description).toContain("必须使用 append");
+    expect(patch?.description).toContain("成功结果只报告文档是否发生变化");
+    expect(patch?.description).toContain("不回显正文");
+    expect(patch?.description).toContain("才重新 context_read");
     expect(schema).toContain('"const":"history"');
     expect(schema).toContain('"required":["source","order"]');
     expect(list?.description).toContain("@dir-/");
