@@ -81,7 +81,8 @@ interface PersistedPlayCallChainContext {
   transcript: ModelHostAppendItem[];
   events: V1PlayCallChainEvent[];
   completedTools: CompletedToolCall[];
-  documentAuthorizationCheckpoints: PersistedDocumentAuthorizationCheckpoint[];
+  /** Absent on legacy V1 records created before authorizations were durable. */
+  documentAuthorizationCheckpoints?: PersistedDocumentAuthorizationCheckpoint[];
   changedDocuments: V1PlayCallChainView["changedDocuments"];
   nextMaterials: MaterialSelection[];
   nextEventId: number;
@@ -93,14 +94,23 @@ interface PersistedPlayCallChainContext {
 }
 
 interface PersistedPlayCallChain extends PersistedPlayCallChainContext {
-  schemaVersion: 2;
+  schemaVersion: 1;
   kind: "play_call_chain";
   worldId: string;
   /** Frozen model contexts retained only for display and historical forks. */
   previousContexts?: PersistedPlayCallChainContext[];
 }
 
+type ReadablePersistedPlayCallChain = Omit<
+  PersistedPlayCallChain,
+  "schemaVersion"
+> & {
+  /** Version 2 was briefly written with the same compatible representation. */
+  schemaVersion: 1 | 2;
+};
+
 interface PlayCallChainSession extends PersistedPlayCallChain {
+  documentAuthorizationCheckpoints: PersistedDocumentAuthorizationCheckpoint[];
   documents: FileNativePlayDocuments;
   history: { path: string; contents: string }[];
   completedToolMap: Map<string, CompletedToolCall>;
@@ -214,7 +224,7 @@ export class PlayCallChain {
     documents.bindBootstrap(bootstrap);
     const now = Date.now();
     const session: PlayCallChainSession = {
-      schemaVersion: 2,
+      schemaVersion: 1,
       kind: "play_call_chain",
       chainId: input.chainId,
       worldId: input.worldId,
@@ -540,21 +550,18 @@ export class PlayCallChain {
       else delete copy.committedHead;
       return copy;
     });
-    const sourceAuthorization = documentAuthorizationThroughEvents(
-      sourceContext,
-      input.sourceEvents,
-    );
     const derivedBinding = await this.#worlds.bindPlayCallChain(
       input.targetWorldId,
     );
     const derivedDocuments = restorePlayDocuments(
       derivedBinding.files,
-      sourceAuthorization.authorization,
+      sourceContext,
+      input.sourceEvents,
     );
     const authorizationEventId = Math.max(0, ...events.map(({ id }) => id));
     const now = Date.now();
     const derived: PersistedPlayCallChain = {
-      schemaVersion: 2,
+      schemaVersion: 1,
       kind: "play_call_chain",
       chainId: derivedChainId(
         sourceContext.chainId,
@@ -1087,11 +1094,15 @@ export class PlayCallChain {
       );
     const documents = restorePlayDocuments(
       binding.files,
-      documentAuthorizationThroughEvents(persisted, persisted.events)
-        .authorization,
+      persisted,
+      persisted.events,
     );
     const session: PlayCallChainSession = {
       ...structuredClone(persisted),
+      documentAuthorizationCheckpoints:
+        persisted.documentAuthorizationCheckpoints?.map((checkpoint) =>
+          structuredClone(checkpoint),
+        ) ?? [],
       nextMaterials: structuredClone(binding.additionalMaterials),
       documents,
       history: historyEntries(binding.history),
@@ -1123,7 +1134,7 @@ export class PlayCallChain {
     const value = await this.#worlds.readPlayCallChain<unknown>(worldId);
     if (value === null) return null;
     assertPersistedPlayCallChain(value, worldId);
-    return structuredClone(value);
+    return { ...structuredClone(value), schemaVersion: 1 };
   }
 
   async #persist(session: PlayCallChainSession): Promise<void> {
@@ -1282,11 +1293,17 @@ function mergeChangedDocuments(
 
 function restorePlayDocuments(
   files: Readonly<Record<string, string>>,
-  authorization: PlayDocumentAuthorizationCheckpoint,
+  context: Pick<
+    PersistedPlayCallChainContext,
+    "bootstrap" | "documentAuthorizationCheckpoints"
+  >,
+  events: readonly V1PlayCallChainEvent[],
 ): FileNativePlayDocuments {
   const documents = new FileNativePlayDocuments(files);
   try {
-    documents.restoreAuthorizationCheckpoint(authorization);
+    const checkpoint = documentAuthorizationThroughEvents(context, events);
+    if (checkpoint === undefined) documents.bindBootstrap(context.bootstrap);
+    else documents.restoreAuthorizationCheckpoint(checkpoint.authorization);
   } catch (error: unknown) {
     throw new PlayCallChainError(
       `调用链文档授权无法恢复：${
@@ -1322,17 +1339,18 @@ function documentAuthorizationThroughEvents(
     "documentAuthorizationCheckpoints"
   >,
   events: readonly V1PlayCallChainEvent[],
-): PersistedDocumentAuthorizationCheckpoint {
+): PersistedDocumentAuthorizationCheckpoint | undefined {
+  const checkpoints = context.documentAuthorizationCheckpoints;
+  if (checkpoints === undefined || checkpoints.length === 0) return undefined;
   const selectedEventIds = new Set(events.map(({ id }) => id));
-  const selected = context.documentAuthorizationCheckpoints.findLast(
+  const selected = checkpoints.findLast(
     ({ afterEventId }) =>
       afterEventId === 0 || selectedEventIds.has(afterEventId),
   );
-  if (selected === undefined)
-    throw new PlayCallChainError(
-      "所选调用链分叉点没有可恢复的文档授权 checkpoint。",
-    );
-  return structuredClone(selected);
+  // Legacy V1 records had no durable dynamic authorization. If the selected
+  // prefix predates their first lazily-written checkpoint, retain the exact
+  // old recovery behavior and rebuild only bootstrap authorization.
+  return selected === undefined ? undefined : structuredClone(selected);
 }
 
 function snapshotCurrentContext(
@@ -1542,10 +1560,10 @@ function operationId(chainId: string, key: string): string {
 function assertPersistedPlayCallChain(
   value: unknown,
   worldId: string,
-): asserts value is PersistedPlayCallChain {
+): asserts value is ReadablePersistedPlayCallChain {
   if (
     !isRecord(value) ||
-    value.schemaVersion !== 2 ||
+    (value.schemaVersion !== 1 && value.schemaVersion !== 2) ||
     value.kind !== "play_call_chain" ||
     value.worldId !== worldId ||
     !isPersistedPlayCallChainContext(value) ||
@@ -1594,10 +1612,11 @@ function isPersistedPlayCallChainContext(
     Array.isArray(value.transcript) &&
     Array.isArray(value.events) &&
     Array.isArray(value.completedTools) &&
-    isPersistedDocumentAuthorizationHistory(
-      value.documentAuthorizationCheckpoints,
-      value.events,
-    ) &&
+    (value.documentAuthorizationCheckpoints === undefined ||
+      isPersistedDocumentAuthorizationHistory(
+        value.documentAuthorizationCheckpoints,
+        value.events,
+      )) &&
     Array.isArray(value.changedDocuments) &&
     Array.isArray(value.nextMaterials) &&
     Number.isSafeInteger(value.nextEventId) &&
@@ -1613,8 +1632,7 @@ function isPersistedDocumentAuthorizationHistory(
   value: unknown,
   events: unknown[],
 ): value is PersistedDocumentAuthorizationCheckpoint[] {
-  if (!Array.isArray(value) || value.length < 1 || value.length > 100_000)
-    return false;
+  if (!Array.isArray(value) || value.length > 100_000) return false;
   const eventIds = new Set(
     events.flatMap((event) =>
       isRecord(event) && Number.isSafeInteger(event.id) && Number(event.id) > 0

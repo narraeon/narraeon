@@ -355,6 +355,96 @@ test("冷启动恢复 world_create 授予的写权限，后续无需重新读取
   ).toContain("状态: 冷启动后已更新");
 });
 
+test("旧 V1 调用链没有授权 checkpoint 时沿用 bootstrap 恢复并惰性补写", async () => {
+  const { worlds, worldId } = await createWorld(
+    "play-chain-legacy-authorization-recovery",
+  );
+  const initial = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "play-chain-legacy-authorization-recovery",
+    exchangeId: "play-chain-legacy-authorization-initial",
+    playerText: "先记下一步行动。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [{ outcome: "response", text: "旧调用链已经建立。" }],
+    }),
+  });
+  expect(initial.status).toBe("ready");
+
+  const legacy =
+    await worlds.readPlayCallChain<Record<string, unknown>>(worldId);
+  expect(legacy).not.toBeNull();
+  legacy!.schemaVersion = 1;
+  delete legacy!.documentAuthorizationCheckpoints;
+  await worlds.writePlayCallChain(worldId, legacy);
+
+  const recovered = await new PlayCallChain(worlds).append({
+    worldId,
+    chainId: initial.chainId,
+    exchangeId: "play-chain-legacy-authorization-resume",
+    playerText: "继续。",
+    modelHost: new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [
+        {
+          outcome: "response",
+          toolCalls: [
+            {
+              id: "patch-from-legacy-bootstrap",
+              name: "world_patch",
+              arguments: {
+                target: "@current-situation",
+                edits: [
+                  {
+                    op: "replace",
+                    locator: { yaml: ["情况"] },
+                    value: "旧记录冷启动后继续。",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+        { outcome: "response", text: "行动继续。" },
+      ],
+    }),
+  });
+
+  expect(recovered.events).toContainEqual(
+    expect.objectContaining({
+      kind: "tool_result",
+      callId: "patch-from-legacy-bootstrap",
+      ok: true,
+    }),
+  );
+  const checkpointed =
+    await worlds.readPlayCallChain<Record<string, unknown>>(worldId);
+  expect(checkpointed?.schemaVersion).toBe(1);
+  expect(checkpointed?.documentAuthorizationCheckpoints).toEqual(
+    expect.arrayContaining([expect.any(Object)]),
+  );
+
+  checkpointed!.schemaVersion = 2;
+  await worlds.writePlayCallChain(worldId, checkpointed);
+  await new PlayCallChain(worlds).append({
+    worldId,
+    chainId: initial.chainId,
+    exchangeId: "play-chain-transient-v2-resume",
+    playerText: "再继续。",
+    modelHost: new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [{ outcome: "response", text: "仍然沿用同一调用链。" }],
+    }),
+  });
+  expect(
+    (await worlds.readPlayCallChain<Record<string, unknown>>(worldId))
+      ?.schemaVersion,
+  ).toBe(1);
+});
+
 test("派生世界恢复所选分叉点的文档写授权，不携带分叉点之后的状态", async () => {
   const { worlds, worldId } = await createWorld(
     "play-chain-create-authorization-derived",
