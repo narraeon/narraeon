@@ -291,6 +291,41 @@ describe("文件原生 PromptCompiler", () => {
     expect(worldContext).not.toContain("只有二层展开才会看到这句");
   });
 
+  test("固定注入的人物恰好在场时只注入一次，离场后仍保持固定注入", () => {
+    const compiler = new FileNativePromptCompiler();
+    const source = input();
+    const files = snapshotRecord(source);
+    files["control/frame.yaml"] = files["control/frame.yaml"]!.replace(
+      "context:\n",
+      'context:\n  - slot: { kind: document, document: "@qinlong" }\n',
+    );
+    bindSnapshot(source, files);
+
+    const presentContext = compiler
+      .compileBootstrap(source)
+      .logicalMessages.find(({ role }) => role === "world_context")?.markdown;
+    expect(presentContext).toContain('$ref: "@qinlong"');
+    expect(
+      presentContext?.match(/白色运动背心，运动短裤，拖鞋/gu),
+    ).toHaveLength(1);
+
+    files["state/current-situation.yaml"] = files[
+      "state/current-situation.yaml"
+    ]!.replace("人物:\n  - $ref: character.qinlong", "人物: []").replace(
+      "情况: 秦龙正在整理球衣。",
+      "情况: 宿舍暂时无人。",
+    );
+    bindSnapshot(source, files);
+
+    const absentContext = compiler
+      .compileBootstrap(source)
+      .logicalMessages.find(({ role }) => role === "world_context")?.markdown;
+    expect(absentContext).not.toContain('$ref: "@qinlong"');
+    expect(absentContext?.match(/白色运动背心，运动短裤，拖鞋/gu)).toHaveLength(
+      1,
+    );
+  });
+
   test("reference_targets 即使零命中也如实报告固定来源节点已经完整查询", () => {
     const source = input();
     const files = snapshotRecord(source);
@@ -876,12 +911,12 @@ context:
       "required_slot_missing",
     ],
     [
-      "作者 slot 之间重复材料",
+      "作者 slot 之间范围重叠",
       {
         world: worldWithFiles((files) => {
           files["control/frame.yaml"] = files["control/frame.yaml"]!.replace(
             "  - slot: { kind: additional_materials }\n",
-            "  - slot: { kind: additional_materials }\n  - slot: { kind: document, document: situation.current }\n",
+            "  - slot: { kind: additional_materials }\n  - slot:\n      kind: node\n      document: situation.current\n      locator: { yaml: [情况] }\n",
           );
         }),
       },

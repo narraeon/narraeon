@@ -326,7 +326,7 @@ context:
 
 世界框架只保存主持政策和材料位置，不能直接写“当前在宿舍”“秦龙光膀子”等实际值。实际值只能从 `world`／复制后的 `state` slot 读取。
 
-`instructions` 和 `context` 都按数组从上到下拼进真实提示词。语义允许时，较稳定的主持规则、文档和目录索引放在前面；频繁变化的当前情境与当前附加材料放在后面。移动 slot 只改变注入顺序，不会合并文档或推断“相关材料”。
+`instructions` 和 `context` 都按数组从上到下拼进真实提示词。语义允许时，较稳定的主持规则、文档和目录索引放在前面；频繁变化的当前情境与当前附加材料放在后面。移动 slot 只改变注入顺序，不会推断“相关材料”。如果固定 `document` 与 `reference_targets` 等 slot 恰好选择了同一整份文档，编译器保留第一次出现的位置并只注入一次；这只合并提示材料，不会改变当前情境中的在场引用或其他世界状态。整份文档与其中节点等范围重叠仍会被拒绝。
 
 catalog 的 `directory` 是相对于 `world/`／`state/` 的真实目录路径，并且只匹配该目录的直接子文档。例如候选中的 `world/states/qinming.yaml` 会在创建世界时成为 `state/states/qinming.yaml`，两者都能与 `directory: states` 对应；根级文件 `world/state.qinming.yaml` 不能对应，因为文件名里的点不是目录分隔符。更深的 `world/states/group/qinming.yaml` 需要 `directory: states/group`。
 

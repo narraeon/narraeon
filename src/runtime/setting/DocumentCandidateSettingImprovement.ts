@@ -213,7 +213,7 @@ Runtime 可能把用户选定文件的完整原文直接注入为“当前设定
 
 ## control/frame.yaml 的拼接与路径关联
 
-- \`instructions\` 中的 Markdown 块按从上到下的顺序拼进 \`author_instruction\`；\`context\` 中的 slot 按从上到下的顺序拼进 \`world_context\`。移动条目只改变注入顺序，不会合并文件或推断语义。
+- \`instructions\` 中的 Markdown 块按从上到下的顺序拼进 \`author_instruction\`；\`context\` 中的 slot 按从上到下的顺序拼进 \`world_context\`。移动条目只改变注入顺序，不会推断语义。如果固定 \`document\` 与 \`reference_targets\` 等 slot 恰好选择了同一整份文档，编译器保留第一次出现的位置并只注入一次；这只合并提示材料，不会改变当前情境中的在场引用或其他世界状态。整份文档与其中节点等范围重叠仍会被拒绝。
 - 拼好的提示词按这个顺序送进模型，未变动的前缀可以命中缓存。当前情境会随权威提交变化，\`current_situation\` slot 已经排在后面承载它；你要做的是别让动态事实渗进前面的静态材料——用 \`document\` 或 \`node\` 固定注入正文的文档，以及 catalog 的 title 和 summary，都必须是稳定不变的。会持续改写的事实写进当前情境；确实需要额外的高频材料时另建文档，并把它的 slot 排在当前情境附近。
 - 候选里的 \`world/\` 会在创建世界时改名为 \`state/\`，其后的相对路径保持不变。例如 \`world/states/qinming.yaml\` 会成为 \`state/states/qinming.yaml\`。
 - \`catalog.directory: states\` 只匹配候选中 \`world/states/\` 下的直接子文档，也就是运行时 \`state/states/\` 下的直接子文档；它不按文档 id、ref、类型或文件名前缀匹配。特别是 \`world/state.qinming.yaml\` 位于 \`world/\` 根级，不能被 \`states\` catalog 关联；用 \`setting_move\` 把路径改为真实目录，不要复制一份并遗留错误文件。更深的 \`world/states/group/qinming.yaml\` 需要 \`directory: states/group\`。

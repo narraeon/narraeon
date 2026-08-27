@@ -1187,7 +1187,13 @@ function addDocumentSelection(
     return;
   }
   const key = `document:${document.descriptor.documentId}`;
-  if (dedupe && overlappingSelection(selected, key) !== null) return;
+  const overlapping = overlappingSelection(selected, key);
+  // Selecting the same complete document is idempotent. In particular, an
+  // author may keep a character document fixed in the frame while
+  // reference_targets independently selects that character whenever the
+  // current situation says they are present. Presence remains world state;
+  // it must not make a valid fixed material fail prompt compilation.
+  if (overlapping?.key === key || (dedupe && overlapping !== null)) return;
   selected.push({
     key,
     source: `slot:${slot}:@${document.descriptor.shortRef}`,
