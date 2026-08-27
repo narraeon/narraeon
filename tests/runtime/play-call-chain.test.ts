@@ -263,6 +263,236 @@ test("world_patch no-op 保留匹配的紧凑工具结果且不推进世界", as
   });
 });
 
+test("冷启动恢复 world_create 授予的写权限，后续无需重新读取即可 patch", async () => {
+  const { worlds, worldId } = await createWorld(
+    "play-chain-create-authorization-cold-recovery",
+  );
+  const interruptedHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "create-cold-character",
+            name: "world_create",
+            arguments: {
+              parent: "@dir-/",
+              codec: "yaml",
+              refHint: "cold-character",
+              title: "冷启动角色",
+              summary: "用于验证创建后写授权。",
+              aliases: [],
+              body: "状态: 初始\n",
+            },
+          },
+        ],
+      },
+      { outcome: "unknown", message: "创建后的下一次模型请求中断。" },
+    ],
+  });
+
+  const interrupted = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "play-chain-create-authorization-cold-recovery",
+    exchangeId: "play-chain-create-authorization-cold-recovery-player",
+    playerText: "记下一个新角色。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: interruptedHost,
+  });
+  expect(interrupted).toMatchObject({
+    status: "interrupted",
+    parentHead: "commit:2",
+  });
+
+  const recoveredHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "patch-cold-character",
+            name: "world_patch",
+            arguments: {
+              target: "@cold-character",
+              edits: [
+                {
+                  op: "replace",
+                  locator: { yaml: ["状态"] },
+                  value: "冷启动后已更新",
+                },
+              ],
+            },
+          },
+        ],
+      },
+      { outcome: "response", text: "新角色的记录已经更新。" },
+    ],
+  });
+  const recovered = await new PlayCallChain(worlds).append({
+    worldId,
+    chainId: interrupted.chainId,
+    exchangeId: "play-chain-create-authorization-cold-recovery-resume",
+    playerText: "",
+    modelHost: recoveredHost,
+  });
+
+  expect(recovered.status).toBe("ready");
+  expect(recovered.events).toContainEqual(
+    expect.objectContaining({
+      kind: "tool_result",
+      callId: "patch-cold-character",
+      ok: true,
+    }),
+  );
+  expect(
+    (await worlds.recoverEndpoint(worldId)).state.find(
+      ({ path }) => path === "cold-character.yaml",
+    )?.contents,
+  ).toContain("状态: 冷启动后已更新");
+});
+
+test("派生世界恢复所选分叉点的文档写授权，不携带分叉点之后的状态", async () => {
+  const { worlds, worldId } = await createWorld(
+    "play-chain-create-authorization-derived",
+  );
+  const sourceHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "create-derived-character",
+            name: "world_create",
+            arguments: {
+              parent: "@dir-/",
+              codec: "yaml",
+              refHint: "derived-character",
+              title: "派生角色",
+              summary: "用于验证分叉点写授权。",
+              aliases: [],
+              body: "状态: 初始\n",
+            },
+          },
+        ],
+      },
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "patch-source-derived-character",
+            name: "world_patch",
+            arguments: {
+              target: "@derived-character",
+              edits: [
+                {
+                  op: "replace",
+                  locator: { yaml: ["状态"] },
+                  value: "来源世界后续状态",
+                },
+              ],
+            },
+          },
+        ],
+      },
+      { outcome: "response", text: "来源世界继续向前。" },
+    ],
+  });
+  const sourceChains = new PlayCallChain(worlds);
+  const source = await sourceChains.start({
+    worldId,
+    chainId: "play-chain-create-authorization-derived-source",
+    exchangeId: "play-chain-create-authorization-derived-player",
+    playerText: "建立一份可以分叉的记录。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: sourceHost,
+  });
+  const createHead = source.events.find(
+    (
+      event,
+    ): event is Extract<
+      V1PlayCallChainView["events"][number],
+      { kind: "assistant" }
+    > => event.kind === "assistant" && event.exchange === 1,
+  )?.committedHead;
+  expect(createHead).toBe("commit:2");
+  expect(
+    (await worlds.recoverEndpoint(worldId)).state.find(
+      ({ path }) => path === "derived-character.yaml",
+    )?.contents,
+  ).toContain("状态: 来源世界后续状态");
+
+  const derived = await worlds.deriveWorld({
+    operationId: "derive-create-authorization-at-create-head",
+    sourceWorldId: worldId,
+    sourceHead: createHead!,
+    hostPresetId: "play-chain-host",
+  });
+  const derivedTrace = await sourceChains.forkToDerivedWorld({
+    sourceWorldId: worldId,
+    sourceHead: createHead!,
+    targetWorldId: derived.world.worldId,
+  });
+  expect(derivedTrace).not.toBeNull();
+
+  const derivedHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "patch-derived-branch-character",
+            name: "world_patch",
+            arguments: {
+              target: "@derived-character",
+              edits: [
+                {
+                  op: "replace",
+                  locator: { yaml: ["状态"] },
+                  value: "派生世界独立状态",
+                },
+              ],
+            },
+          },
+        ],
+      },
+      { outcome: "response", text: "派生世界从分叉点继续。" },
+    ],
+  });
+  const continued = await new PlayCallChain(worlds).append({
+    worldId: derived.world.worldId,
+    chainId: derivedTrace!.chainId,
+    exchangeId: "patch-derived-branch-with-restored-authorization",
+    playerText: "",
+    modelHost: derivedHost,
+  });
+
+  expect(continued.events).toContainEqual(
+    expect.objectContaining({
+      kind: "tool_result",
+      callId: "patch-derived-branch-character",
+      ok: true,
+    }),
+  );
+  expect(
+    (await worlds.recoverEndpoint(derived.world.worldId)).state.find(
+      ({ path }) => path === "derived-character.yaml",
+    )?.contents,
+  ).toContain("状态: 派生世界独立状态");
+  expect(
+    (await worlds.recoverEndpoint(derived.world.worldId)).state.find(
+      ({ path }) => path === "derived-character.yaml",
+    )?.contents,
+  ).not.toContain("来源世界后续状态");
+});
+
 test("全新上下文只重建模型上下文，持久保留此前调用轨迹并允许从旧节点派生", async () => {
   const { worlds, worldId, root } = await createWorld(
     "play-chain-fresh-display-history",
