@@ -453,7 +453,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(reasoning).not.toHaveAttribute("open", "");
   await expect(reasoning).toContainText("先核对当前人物位置和玩家行动。");
   await expect(callChain).toContainText("调用 world_patch");
-  await expect(callChain).toContainText("世界变化已写入端点");
+  await expect(callChain).toContainText("@current-situation 写入成功");
   await expect(
     callChain.getByText("调用 world_patch").locator("xpath=ancestor::details"),
   ).not.toHaveAttribute("open", "");
