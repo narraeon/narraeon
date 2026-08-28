@@ -124,11 +124,13 @@ export type V1Request =
       sourceHead: string;
     }
   | {
-      type: "play.chain.branch";
+      type: "play.chain.revise-player";
       operationId: string;
-      sourceWorldId: string;
-      sourceChainId: string;
-      sourceEventId: number;
+      worldId: string;
+      chainId: string;
+      eventId: number;
+      replacementExchangeId: string;
+      replacementText: string;
     }
   | {
       type: "play.chain.start";
@@ -402,11 +404,13 @@ const requiredFields: Record<
     sourceWorldId: "string",
     sourceHead: "string",
   },
-  "play.chain.branch": {
+  "play.chain.revise-player": {
     operationId: "string",
-    sourceWorldId: "string",
-    sourceChainId: "string",
-    sourceEventId: "number",
+    worldId: "string",
+    chainId: "string",
+    eventId: "number",
+    replacementExchangeId: "string",
+    replacementText: "string",
   },
   "play.chain.start": {
     worldId: "string",
@@ -662,7 +666,7 @@ const requestTypes = new Set([
   "world.control-draft.preview",
   "world.control-draft.apply",
   "world.derive",
-  "play.chain.branch",
+  "play.chain.revise-player",
   "play.chain.start",
   "play.chain.append",
   "play.chain.inspect",

@@ -23,7 +23,7 @@ import {
   type SettingImprovementPlanResult,
   type SettingImprovementProgress,
 } from "./SettingImprovementPanel.tsx";
-import { WorldPage, type WorldPlayerSubmission } from "./WorldPage.tsx";
+import { WorldPage } from "./WorldPage.tsx";
 
 interface Workspace {
   contentPackages: PackageSummary[];
@@ -96,8 +96,6 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     useState<SettingImprovementProgress | null>(null);
   const [improvementProgressNow, setImprovementProgressNow] = useState(0);
   const [worldId, setWorldId] = useState("");
-  const [initialWorldPlayerSubmission, setInitialWorldPlayerSubmission] =
-    useState<(WorldPlayerSubmission & { worldId: string }) | null>(null);
   const [notice, setNotice] = useState("正在读取工作区…");
 
   async function refresh(): Promise<void> {
@@ -477,7 +475,6 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   }
 
   function openWorld(id: string): void {
-    setInitialWorldPlayerSubmission(null);
     setWorldId(id);
     setScreen("world");
   }
@@ -550,19 +547,8 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         onBack={() => setScreen("home")}
         onConfigureModel={() => setScreen("model")}
         onRenameWorld={(name) => renameWorld(worldId, name)}
-        {...(initialWorldPlayerSubmission?.worldId === worldId
-          ? { initialPlayerSubmission: initialWorldPlayerSubmission }
-          : {})}
-        onInitialPlayerSubmissionConsumed={() =>
-          setInitialWorldPlayerSubmission(null)
-        }
-        onOpenWorld={async (nextWorldId, initialPlayerSubmission) => {
+        onOpenWorld={async (nextWorldId) => {
           await refresh();
-          setInitialWorldPlayerSubmission(
-            initialPlayerSubmission === undefined
-              ? null
-              : { worldId: nextWorldId, ...initialPlayerSubmission },
-          );
           setWorldId(nextWorldId);
         }}
       />

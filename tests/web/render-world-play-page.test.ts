@@ -112,7 +112,7 @@ describe("世界游玩页面", () => {
           );
           return Promise.resolve(chain as T);
         }
-        return Promise.reject(new Error(`意外请求：${request.type}`));
+        return Promise.reject(new Error("意外请求：" + request.type));
       }),
     };
 
@@ -659,7 +659,7 @@ describe("世界游玩页面", () => {
     ).toBeTruthy();
     expect(
       within(copiedPlayerMessage).getByRole("button", {
-        name: "从这里重新开始",
+        name: "创建分叉",
       }),
     ).toBeTruthy();
     expect(
@@ -690,22 +690,16 @@ describe("世界游玩页面", () => {
     });
   });
 
-  test("可以从调用链任意已提交消息节点派生并重新开始", async () => {
+  test("可以从调用链任意已提交消息节点创建分叉", async () => {
     const chain = playChainView(
       "play-chain-existing",
       "exchange-first",
       "我示意秦龙开门。",
     );
-    const onOpenWorld = vi.fn(
-      (
-        openedWorldId: string,
-        initial?: { playerText: string; exchangeId: string },
-      ) => {
-        void openedWorldId;
-        void initial;
-        return Promise.resolve();
-      },
-    );
+    const onOpenWorld = vi.fn((openedWorldId: string) => {
+      void openedWorldId;
+      return Promise.resolve();
+    });
     const client = {
       request: vi.fn(<T>(request: V1Request) => {
         if (request.type === "world.read")
@@ -721,7 +715,7 @@ describe("世界游玩页面", () => {
     await screen.findByText("秦龙推开门，让你先走。");
     fireEvent.click(
       within(screen.getByLabelText("模型调用链")).getAllByRole("button", {
-        name: "从这里重新开始",
+        name: "创建分叉",
       })[0]!,
     );
 
@@ -737,33 +731,61 @@ describe("世界游玩页面", () => {
     });
   });
 
-  test("可以修改历史玩家提交，并把修改稿交给父端点的新分支", async () => {
-    const chain = playChainView(
+  test("修改历史玩家提交会留在当前世界，并从修改稿自动继续", async () => {
+    let chain = playChainView(
       "play-chain-existing",
       "exchange-first",
       "我示意秦龙开门。",
     );
-    const onOpenWorld = vi.fn(
-      (
-        openedWorldId: string,
-        initial?: { playerText: string; exchangeId: string },
-      ) => {
-        void openedWorldId;
-        void initial;
-        return Promise.resolve();
-      },
-    );
+    const onOpenWorld = vi.fn(() => Promise.resolve());
     const client = {
       request: vi.fn(<T>(request: V1Request) => {
         if (request.type === "world.read")
           return Promise.resolve(worldView(chain) as T);
         if (request.type === "artifacts.debug") return Promise.resolve([] as T);
-        if (request.type === "play.chain.branch")
+        if (request.type === "play.chain.revise-player") {
+          chain = {
+            ...chain,
+            chainId: "play-chain-revised",
+            parentHead: "commit:4",
+            events: [
+              {
+                id: request.eventId,
+                kind: "player",
+                exchangeId: request.replacementExchangeId,
+                text: request.replacementText,
+                context: "fresh",
+                committedHead: "commit:4",
+              },
+            ],
+            changedDocuments: [],
+          };
           return Promise.resolve({
-            world: { worldId: "world-edited-branch" },
-            playCallChain: { ...chain, worldId: "world-edited-branch" },
+            outcome: "revised",
+            worldId: "world-one",
+            playCallChain: chain,
           } as T);
-        return Promise.resolve(chain as T);
+        }
+        if (request.type === "play.chain.append") {
+          chain = {
+            ...chain,
+            parentHead: "commit:5",
+            events: [
+              ...chain.events,
+              {
+                id: 2,
+                kind: "assistant",
+                text: "秦龙停下动作，等你重新决定。",
+                status: "completed",
+                exchange: 2,
+                attempt: 1,
+                committedHead: "commit:5",
+              },
+            ],
+          };
+          return Promise.resolve(chain as T);
+        }
+        return Promise.reject(new Error("意外请求：" + request.type));
       }),
     };
 
@@ -782,98 +804,34 @@ describe("世界游玩页面", () => {
     });
     fireEvent.click(
       within(playerMessage).getByRole("button", {
-        name: "保存并从这里继续",
+        name: "保存修改并继续",
       }),
     );
 
-    await waitFor(() => expect(onOpenWorld).toHaveBeenCalledTimes(1));
-    const [openedWorldId, initialSubmission] = onOpenWorld.mock.calls[0]!;
-    expect(openedWorldId).toBe("world-edited-branch");
-    expect(initialSubmission?.playerText).toBe("我请秦龙先别开门。");
-    expect(initialSubmission?.exchangeId).toMatch(/^play-exchange-/u);
+    expect(
+      await screen.findByText("秦龙停下动作，等你重新决定。"),
+    ).toBeTruthy();
+    expect(onOpenWorld).not.toHaveBeenCalled();
+    expect(screen.getByText("我请秦龙先别开门。")).toBeTruthy();
+    expect(screen.queryByText("我示意秦龙开门。")).toBeNull();
     expect(
       client.request.mock.calls
         .map(([request]) => request)
-        .find((request) => request.type === "play.chain.branch"),
+        .find((request) => request.type === "play.chain.revise-player"),
     ).toMatchObject({
-      sourceWorldId: "world-one",
-      sourceChainId: "play-chain-existing",
-      sourceEventId: 1,
-    });
-  });
-
-  test("打开修改分支后会自动提交修改稿并继续模型调用链", async () => {
-    let chain = playChainView(
-      "play-chain-edited-branch",
-      "exchange-original",
-      "我问秦龙几点集合。",
-    );
-    chain = {
-      ...chain,
       worldId: "world-one",
-      parentHead: "commit:2",
-      events: chain.events.slice(0, 1),
-      changedDocuments: [],
-    };
-    const consumed = vi.fn();
-    const client = {
-      request: vi.fn(<T>(request: V1Request) => {
-        if (request.type === "world.read")
-          return Promise.resolve(worldView(chain) as T);
-        if (request.type === "artifacts.debug") return Promise.resolve([] as T);
-        if (request.type === "play.chain.append") {
-          chain = {
-            ...chain,
-            parentHead: "commit:4",
-            events: [
-              ...chain.events,
-              {
-                id: 2,
-                kind: "player",
-                exchangeId: request.exchangeId,
-                text: request.playerText,
-                context: "append",
-                committedHead: "commit:3",
-              },
-              {
-                id: 3,
-                kind: "assistant",
-                text: "秦龙说那就七点四十五集合。",
-                status: "completed",
-                exchange: 2,
-                attempt: 1,
-                committedHead: "commit:4",
-              },
-            ],
-          };
-          return Promise.resolve(chain as T);
-        }
-        return Promise.reject(new Error(`意外请求：${request.type}`));
-      }),
-    };
-
-    renderWorld(client, undefined, {
-      initialPlayerSubmission: {
-        playerText: "那我们提前十五分钟集合。",
-        exchangeId: "exchange-edited-player",
-      },
-      onInitialPlayerSubmissionConsumed: consumed,
+      chainId: "play-chain-existing",
+      eventId: 1,
+      replacementText: "我请秦龙先别开门。",
     });
-
-    expect(await screen.findByText("秦龙说那就七点四十五集合。")).toBeTruthy();
-    expect(consumed).toHaveBeenCalledTimes(1);
-    expect(screen.getByLabelText<HTMLTextAreaElement>("你的行动").value).toBe(
-      "",
-    );
     expect(
       client.request.mock.calls
         .map(([request]) => request)
         .find((request) => request.type === "play.chain.append"),
     ).toMatchObject({
       worldId: "world-one",
-      chainId: "play-chain-edited-branch",
-      exchangeId: "exchange-edited-player",
-      playerText: "那我们提前十五分钟集合。",
+      chainId: "play-chain-revised",
+      playerText: "",
     });
   });
 });
@@ -882,16 +840,10 @@ function renderWorld(
   client: {
     request(request: V1Request): Promise<unknown>;
   },
-  onOpenWorld: (
-    worldId: string,
-    initial?: { playerText: string; exchangeId: string },
-  ) => Promise<void> = vi.fn(() => Promise.resolve()),
+  onOpenWorld: (worldId: string) => Promise<void> = vi.fn(() =>
+    Promise.resolve(),
+  ),
   options: {
-    initialPlayerSubmission?: {
-      playerText: string;
-      exchangeId: string;
-    };
-    onInitialPlayerSubmissionConsumed?: () => void;
     onRenameWorld?: (name: string) => Promise<void>;
   } = {},
 ) {

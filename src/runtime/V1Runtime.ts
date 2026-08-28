@@ -451,18 +451,18 @@ export class V1Runtime {
         await this.#reconcileResultArtifacts(result);
         return result;
       }
-      case "play.chain.branch": {
-        const preset = await this.#playPresets.bindCurrent();
+      case "play.chain.revise-player": {
         const result = await playCall(() =>
-          this.#playCallChains.branchBeforePlayer({
+          this.#playCallChains.revisePlayer({
             operationId: request.operationId,
-            sourceWorldId: request.sourceWorldId,
-            sourceChainId: request.sourceChainId,
-            sourceEventId: request.sourceEventId,
-            hostPresetId: preset.id,
+            worldId: request.worldId,
+            chainId: request.chainId,
+            eventId: request.eventId,
+            replacementExchangeId: request.replacementExchangeId,
+            replacementText: request.replacementText,
           }),
         );
-        await this.#reconcileResultArtifacts(result);
+        await this.#reconcileArtifacts(request.worldId);
         return result;
       }
       case "play.chain.start": {

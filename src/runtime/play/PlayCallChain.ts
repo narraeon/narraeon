@@ -21,7 +21,6 @@ import {
 } from "../prompt/FileNativePromptCompiler.ts";
 import type {
   FileNativeStateChange,
-  FileNativeWorldSummary,
   FileNativeWorldStore,
 } from "../world/FileNativeWorldStore.ts";
 import type { ArtifactStore } from "../artifact/FileNativeArtifactStore.ts";
@@ -410,29 +409,31 @@ export class PlayCallChain {
   }
 
   /**
-   * Creates an independent world immediately before one committed player
-   * message. The caller never has to infer the previous Authority head from
-   * display events, and the source world remains untouched.
+   * Revise one committed player message in place. Authority remains
+   * append-only: one timeline-revision commit restores the player's logical
+   * parent snapshot and appends the replacement text atomically.
    */
-  async branchBeforePlayer(input: {
+  async revisePlayer(input: {
     operationId: string;
-    sourceWorldId: string;
-    sourceChainId: string;
-    sourceEventId: number;
-    hostPresetId: string;
+    worldId: string;
+    chainId: string;
+    eventId: number;
+    replacementExchangeId: string;
+    replacementText: string;
   }): Promise<{
-    outcome: "derived";
-    world: FileNativeWorldSummary;
+    outcome: "revised";
+    worldId: string;
     playCallChain: V1PlayCallChainView;
   }> {
-    validateIdentity(input.operationId, "分支 operation ID");
-    validateIdentity(input.sourceWorldId, "来源世界 ID");
-    validateIdentity(input.sourceChainId, "来源调用链 ID");
-    validateIdentity(input.hostPresetId, "主持预设 ID");
-    if (!Number.isSafeInteger(input.sourceEventId) || input.sourceEventId < 1)
-      throw new PlayCallChainError("来源玩家事件 ID 无效。");
+    validateIdentity(input.operationId, "时间线修订 operation ID");
+    validateIdentity(input.worldId, "世界 ID");
+    validateIdentity(input.chainId, "调用链 ID");
+    validateIdentity(input.replacementExchangeId, "修改稿 exchange ID");
+    validatePlayerText(input.replacementText);
+    if (!Number.isSafeInteger(input.eventId) || input.eventId < 1)
+      throw new PlayCallChainError("玩家事件 ID 无效。");
 
-    const activeId = this.#worldChains.get(input.sourceWorldId);
+    const activeId = this.#worldChains.get(input.worldId);
     const active =
       activeId === undefined ? undefined : this.#active.get(activeId);
     if (active?.status === "running")
@@ -440,18 +441,50 @@ export class PlayCallChain {
         "模型请求仍在进行；返回后才能修改历史提交。",
       );
 
-    const source = await this.#readPersisted(input.sourceWorldId);
+    const source = await this.#readPersisted(input.worldId);
     if (source === null)
-      throw new PlayCallChainError("来源世界没有可分支的模型调用链。");
+      throw new PlayCallChainError("当前世界没有可修改的模型调用链。");
     const sourceContexts = persistedContexts(source);
+    const appliedEvent = sourceContexts
+      .flatMap(({ events }) => events)
+      .find(
+        (
+          event,
+        ): event is Extract<V1PlayCallChainEvent, { kind: "player" }> & {
+          committedHead: string;
+        } =>
+          event.kind === "player" &&
+          event.exchangeId === input.replacementExchangeId &&
+          event.committedHead !== undefined,
+      );
+    if (appliedEvent !== undefined) {
+      if (appliedEvent.text !== input.replacementText)
+        throw new PlayCallChainError(
+          "同一修改稿 exchange ID 已绑定另一份玩家原文。",
+        );
+      const authority = await this.#worlds.readAuthorityHistory(input.worldId);
+      const commit = authority.commits.find(
+        ({ head }) => head === appliedEvent.committedHead,
+      );
+      if (
+        commit?.operationId !== input.operationId ||
+        commit.mode !== "timeline_revision"
+      )
+        throw new PlayCallChainError("修改稿 exchange ID 已由另一项提交占用。");
+      return {
+        outcome: "revised",
+        worldId: input.worldId,
+        playCallChain: projectView(source),
+      };
+    }
     const selectedContextIndex = sourceContexts.findIndex(
-      ({ chainId }) => chainId === input.sourceChainId,
+      ({ chainId }) => chainId === input.chainId,
     );
     if (selectedContextIndex < 0)
-      throw new PlayCallChainError("来源模型上下文不存在。");
+      throw new PlayCallChainError("要修改的模型上下文不存在。");
     const sourceContext = sourceContexts[selectedContextIndex]!;
     const selectedEventIndex = sourceContext.events.findIndex(
-      (event) => event.id === input.sourceEventId,
+      (event) => event.id === input.eventId,
     );
     const selectedEvent = sourceContext.events[selectedEventIndex];
     if (
@@ -460,41 +493,185 @@ export class PlayCallChain {
       selectedEvent.committedHead === undefined
     )
       throw new PlayCallChainError("所选事件不是已提交的玩家消息。");
-    if (selectedEvent.committedHead === "genesis")
-      throw new PlayCallChainError(
-        "这条玩家消息已经成为派生世界起点；请回到仍保留其父端点的来源世界修改。",
-      );
 
-    let sourceHead = sourceContext.baselineHead;
-    for (const event of sourceContext.events.slice(0, selectedEventIndex))
+    return this.#applyPlayerRevision({
+      request: input,
+      source,
+      sourceContexts,
+      selectedContextIndex,
+      selectedEventIndex,
+      selectedEvent: {
+        ...selectedEvent,
+        committedHead: selectedEvent.committedHead,
+      },
+    });
+  }
+
+  async #applyPlayerRevision(input: {
+    request: {
+      operationId: string;
+      worldId: string;
+      chainId: string;
+      eventId: number;
+      replacementExchangeId: string;
+      replacementText: string;
+    };
+    source: PersistedPlayCallChain;
+    sourceContexts: PersistedPlayCallChainContext[];
+    selectedContextIndex: number;
+    selectedEventIndex: number;
+    selectedEvent: Extract<V1PlayCallChainEvent, { kind: "player" }> & {
+      committedHead: string;
+    };
+  }): Promise<{
+    outcome: "revised";
+    worldId: string;
+    playCallChain: V1PlayCallChainView;
+  }> {
+    const request = input.request;
+    const sourceContext = input.sourceContexts[input.selectedContextIndex]!;
+    let restoresHead = sourceContext.baselineHead;
+    for (const event of sourceContext.events.slice(0, input.selectedEventIndex))
       if (
         (event.kind === "player" || event.kind === "assistant") &&
         event.committedHead !== undefined
       )
-        sourceHead = event.committedHead;
+        restoresHead = event.committedHead;
 
-    const result = await this.#worlds.deriveWorld({
-      operationId: input.operationId,
-      sourceWorldId: input.sourceWorldId,
-      sourceHead,
-      hostPresetId: input.hostPresetId,
-      requestDiscriminator: `branch-${createHash("sha256")
+    const requestFingerprint =
+      "sha256:" +
+      createHash("sha256")
         .update(
-          `${input.sourceWorldId}\0${input.sourceChainId}\0${input.sourceEventId}`,
+          JSON.stringify({
+            schema: "narraeon.timeline-revision-request/v1",
+            chainId: request.chainId,
+            eventId: request.eventId,
+            selectedHead: input.selectedEvent.committedHead,
+            restoresHead,
+            replacementExchangeId: request.replacementExchangeId,
+            replacementText: request.replacementText,
+          }),
         )
-        .digest("hex")}`,
+        .digest("hex");
+    const outcome = await this.#worlds.reviseTimeline({
+      operationId: request.operationId,
+      worldId: request.worldId,
+      expectedCurrentHead: input.source.parentHead,
+      restoresHead,
+      replacesHead: input.selectedEvent.committedHead,
+      replacementText: request.replacementText,
+      requestFingerprint,
     });
-    const playCallChain = await this.#forkSelectionToDerivedWorld({
-      sourceContexts,
-      selectedContextIndex,
-      sourceEvents: structuredClone(
-        sourceContext.events.slice(0, selectedEventIndex),
+
+    const prefixEvents = structuredClone(
+      sourceContext.events.slice(0, input.selectedEventIndex),
+    );
+    const transcript = transcriptThroughEvents(
+      sourceContext.transcript,
+      prefixEvents,
+    );
+    transcript.push({ kind: "player", text: request.replacementText });
+    const events: V1PlayCallChainEvent[] = [
+      ...prefixEvents,
+      {
+        id: input.selectedEvent.id,
+        kind: "player",
+        exchangeId: request.replacementExchangeId,
+        text: request.replacementText,
+        context: input.selectedEvent.context,
+        committedHead: outcome.head,
+      },
+    ];
+    const completedKeys = completedToolKeys(prefixEvents);
+    const [baseline, selected, binding] = await Promise.all([
+      this.#worlds.recoverEndpoint(request.worldId, sourceContext.baselineHead),
+      this.#worlds.recoverEndpoint(request.worldId, restoresHead),
+      this.#worlds.bindPlayCallChain(request.worldId),
+    ]);
+    if (binding.parentHead !== outcome.head)
+      throw new PlayCallChainError(
+        "时间线修订已提交但当前世界物化尚未追上新端点。",
+      );
+    const documents = restorePlayDocuments(
+      binding.files,
+      sourceContext,
+      prefixEvents,
+    );
+    const revised: PersistedPlayCallChain = {
+      schemaVersion: 1,
+      kind: "play_call_chain",
+      chainId: derivedChainId(
+        sourceContext.chainId,
+        "timeline-revision:" + request.operationId,
+        request.worldId,
       ),
-      sourceHead,
-      targetWorldId: result.world.worldId,
-      branchIdentity: `before-player:${input.sourceChainId}:${input.sourceEventId}:${sourceHead}`,
-    });
-    return { ...result, playCallChain };
+      worldId: request.worldId,
+      previousContexts: input.sourceContexts
+        .slice(0, input.selectedContextIndex)
+        .map((context) => independentContextCopy(context)),
+      baselineHead: sourceContext.baselineHead,
+      baselineHistoryLength:
+        sourceContext.baselineHistoryLength ?? baseline.history.length,
+      parentHead: outcome.head,
+      playPreset: structuredClone(sourceContext.playPreset),
+      ...(sourceContext.followups === undefined
+        ? {}
+        : { followups: structuredClone(sourceContext.followups) }),
+      ...(sourceContext.playPresetScriptsEnabled === undefined
+        ? {}
+        : {
+            playPresetScriptsEnabled: sourceContext.playPresetScriptsEnabled,
+          }),
+      status: "ready",
+      canRetry: false,
+      bootstrap: structuredClone(sourceContext.bootstrap),
+      tools: structuredClone(sourceContext.tools),
+      transcript,
+      events,
+      completedTools: sourceContext.completedTools
+        .filter(({ key }) => completedKeys.has(key))
+        .map((item) => structuredClone(item)),
+      documentAuthorizationCheckpoints: authorizationCheckpointsThroughEvents(
+        sourceContext,
+        events,
+        documents.authorizationCheckpoint(),
+      ),
+      changedDocuments: changedDocumentsAtHead(
+        sourceContext.changedDocuments,
+        baseline.state,
+        selected.state,
+      ),
+      nextMaterials: structuredClone(binding.additionalMaterials),
+      nextEventId: Math.max(0, ...events.map(({ id }) => id)) + 1,
+      exchange: Math.max(
+        0,
+        ...prefixEvents
+          .filter(
+            (
+              event,
+            ): event is Extract<V1PlayCallChainEvent, { kind: "assistant" }> =>
+              event.kind === "assistant" && event.status === "completed",
+          )
+          .map(({ exchange }) => exchange),
+      ),
+      lastRequest: null,
+      lastRequestAttempt: 0,
+      lastFailure: null,
+      updatedAt: Date.now(),
+    };
+    await this.#worlds.writePlayCallChain(
+      request.worldId,
+      structuredClone(revised),
+    );
+    const activeId = this.#worldChains.get(request.worldId);
+    if (activeId !== undefined) this.#active.delete(activeId);
+    this.#active.delete(sourceContext.chainId);
+    this.#worldChains.delete(request.worldId);
+    return {
+      outcome: "revised",
+      worldId: request.worldId,
+      playCallChain: projectView(revised),
+    };
   }
 
   async #forkSelectionToDerivedWorld(input: {
@@ -513,7 +690,7 @@ export class PlayCallChain {
       (await this.#worlds.currentHead(input.targetWorldId)) !== input.sourceHead
     )
       throw new PlayCallChainError(
-        "派生世界 Authority 与所选历史端点不一致，不能写入调用链。",
+        "分叉世界 Authority 与所选历史端点不一致，不能写入调用链。",
       );
 
     const [baseline, selected] = await Promise.all([
@@ -1451,7 +1628,7 @@ function transcriptThroughEvents(
       const item = transcript[cursor];
       if (item?.kind !== "player" || item.text !== event.text)
         throw new PlayCallChainError(
-          "来源调用链事件与模型 transcript 不一致，不能安全派生。",
+          "来源调用链事件与模型 transcript 不一致，不能安全创建分叉。",
         );
       result.push(structuredClone(item));
       cursor += 1;
@@ -1472,7 +1649,7 @@ function transcriptThroughEvents(
       const item = transcript[cursor];
       if (item?.kind !== "assistant" || item.text !== event.text)
         throw new PlayCallChainError(
-          "来源调用链响应与模型 transcript 不一致，不能安全派生。",
+          "来源调用链响应与模型 transcript 不一致，不能安全创建分叉。",
         );
       result.push(structuredClone(item));
       cursor += 1;
@@ -1482,7 +1659,7 @@ function transcriptThroughEvents(
       const item = transcript[cursor];
       if (item?.kind !== "tool" || item.toolCallId !== event.callId)
         throw new PlayCallChainError(
-          "来源调用链工具结果与模型 transcript 不一致，不能安全派生。",
+          "来源调用链工具结果与模型 transcript 不一致，不能安全创建分叉。",
         );
       result.push(structuredClone(item));
       cursor += 1;

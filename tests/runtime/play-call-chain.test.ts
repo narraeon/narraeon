@@ -54,6 +54,23 @@ test("协议允许空的追加输入，用现有请求上下文触发续写", ()
   ).not.toThrow();
 });
 
+test("协议把玩家历史修改建模为当前世界的时间线修订", () => {
+  expect(() =>
+    parseV1Envelope({
+      protocol: "narraeon.runtime/v1",
+      request: {
+        type: "play.chain.revise-player",
+        operationId: "revise-player-1",
+        worldId: "world-1",
+        chainId: "chain-1",
+        eventId: 3,
+        replacementExchangeId: "exchange-replacement-1",
+        replacementText: "我改为留在门内。",
+      },
+    }),
+  ).not.toThrow();
+});
+
 test("模型自行交替文本与工具，每个完成响应立即推进世界并可追加上下文", async () => {
   const { worlds, worldId } = await createWorld("play-chain");
   const modelHost = new ScriptedModelHost({
@@ -904,20 +921,6 @@ test("从调用链节点派生会保留截至该节点的调用轨迹，并可�
     force: true,
   });
   const coldWorlds = new FileNativeWorldStore(root);
-  const retainedPlayer = playerTrace!.events[0]!;
-  const branchFromCopiedAncestor = await new PlayCallChain(
-    coldWorlds,
-  ).branchBeforePlayer({
-    operationId: "branch-from-copied-player",
-    sourceWorldId: playerBranch.world.worldId,
-    sourceChainId: playerTrace!.chainId,
-    sourceEventId: retainedPlayer.id,
-    hostPresetId: "play-chain-host",
-  });
-  expect(branchFromCopiedAncestor.playCallChain.events).toEqual([]);
-  expect(
-    await coldWorlds.currentHead(branchFromCopiedAncestor.world.worldId),
-  ).toBe("genesis");
 
   const regeneratedHost = new ScriptedModelHost({
     binding: modelBinding(),
@@ -954,7 +957,7 @@ test("从调用链节点派生会保留截至该节点的调用轨迹，并可�
   );
 });
 
-test("修改历史玩家提交会从其父端点派生，并只把修改稿提交到新世界", async () => {
+test("修改历史玩家提交会在同一世界追加时间线修订，并从修改稿继续调用链", async () => {
   const { worlds, worldId, root } = await createWorld("play-chain-edit-player");
   const sourceHost = new ScriptedModelHost({
     binding: modelBinding(),
@@ -992,58 +995,68 @@ test("修改历史玩家提交会从其父端点派生，并只把修改稿提�
     configRoot: join(root, "config"),
   });
   await runtime.initialize();
-  const branched = (
-    await runtime.handle({
-      type: "play.chain.branch",
-      operationId: "branch-before-edited-player",
-      sourceWorldId: worldId,
-      sourceChainId: source.chainId,
-      sourceEventId: editedEvent!.id,
-    })
-  ).result as {
-    world: { worldId: string };
+  const revisionRequest = {
+    type: "play.chain.revise-player" as const,
+    operationId: "revise-edited-player",
+    worldId,
+    chainId: source.chainId,
+    eventId: editedEvent!.id,
+    replacementExchangeId: "exchange-edited-replacement",
+    replacementText: "那我们提前十五分钟集合。",
+  };
+  const revised = (await runtime.handle(revisionRequest)).result as {
+    outcome: "revised";
+    worldId: string;
     playCallChain: V1PlayCallChainView;
   };
 
-  expect(branched.playCallChain).toMatchObject({
-    worldId: branched.world.worldId,
-    parentHead: "commit:2",
+  expect(revised).toMatchObject({ outcome: "revised", worldId });
+  expect(revised.playCallChain).toMatchObject({
+    worldId,
+    parentHead: "commit:5",
     status: "ready",
   });
+  expect(revised.playCallChain.chainId).not.toBe(source.chainId);
   expect(
-    branched.playCallChain.events
+    revised.playCallChain.events
       .filter((event) => event.kind === "player")
       .map(({ committedHead }) => committedHead),
-  ).toEqual(["commit:1"]);
+  ).toEqual(["commit:1", "commit:5"]);
   expect(
-    branched.playCallChain.events
+    revised.playCallChain.events
       .filter((event) => event.kind === "player")
       .map(({ text }) => text),
-  ).toEqual(["我问秦龙几点集合。"]);
+  ).toEqual(["我问秦龙几点集合。", "那我们提前十五分钟集合。"]);
   expect(
-    (await worlds.recoverEndpoint(branched.world.worldId)).history.map(
-      ({ exactText }) => exactText,
+    revised.playCallChain.events.some(
+      (event) =>
+        (event.kind === "player" || event.kind === "assistant") &&
+        (event.text === "那我提前五分钟下楼。" ||
+          event.text === "秦龙点头，说会提前五分钟下楼。"),
     ),
-  ).toEqual([
-    "门外传来三声短促的铃响。\n",
-    "我问秦龙几点集合。",
-    "秦龙说八点在宿舍楼下集合。",
-  ]);
+  ).toBe(false);
+  await expect(runtime.handle(revisionRequest)).resolves.toMatchObject({
+    result: {
+      outcome: "revised",
+      worldId,
+      playCallChain: { parentHead: "commit:5" },
+    },
+  });
 
   const replacementHost = new ScriptedModelHost({
     binding: modelBinding(),
     steps: [{ outcome: "response", text: "秦龙答应七点四十五就在楼下等你。" }],
   });
   await new PlayCallChain(worlds).append({
-    worldId: branched.world.worldId,
-    chainId: branched.playCallChain.chainId,
-    exchangeId: "exchange-edited-replacement",
-    playerText: "那我们提前十五分钟集合。",
+    worldId,
+    chainId: revised.playCallChain.chainId,
+    exchangeId: "dispatch-after-edited-replacement",
+    playerText: "",
     modelHost: replacementHost,
   });
 
   expect(
-    (await worlds.recoverEndpoint(branched.world.worldId)).history.map(
+    (await worlds.recoverEndpoint(worldId)).history.map(
       ({ exactText }) => exactText,
     ),
   ).toEqual([
@@ -1054,7 +1067,7 @@ test("修改历史玩家提交会从其父端点派生，并只把修改稿提�
     "秦龙答应七点四十五就在楼下等你。",
   ]);
   expect(
-    (await worlds.recoverEndpoint(worldId)).history.map(
+    (await worlds.recoverEndpoint(worldId, "commit:4")).history.map(
       ({ exactText }) => exactText,
     ),
   ).toEqual([
@@ -1064,29 +1077,26 @@ test("修改历史玩家提交会从其父端点派生，并只把修改稿提�
     "那我提前五分钟下楼。",
     "秦龙点头，说会提前五分钟下楼。",
   ]);
-
-  const firstPlayerEvent = source.events.find(
-    (event) =>
-      event.kind === "player" && event.exchangeId === "exchange-edit-first",
-  );
-  const firstBranch = (
-    await runtime.handle({
-      type: "play.chain.branch",
-      operationId: "branch-before-first-player",
-      sourceWorldId: worldId,
-      sourceChainId: source.chainId,
-      sourceEventId: firstPlayerEvent!.id,
-    })
-  ).result as {
-    world: { worldId: string };
-    playCallChain: V1PlayCallChainView;
-  };
-  expect(firstBranch.playCallChain.events).toEqual([]);
-  expect(
-    (await worlds.recoverEndpoint(firstBranch.world.worldId)).history.map(
-      ({ exactText }) => exactText,
-    ),
-  ).toEqual(["门外传来三声短促的铃响。\n"]);
+  expect(replacementHost.requests[0]?.appended).toEqual([
+    { kind: "player", text: "我问秦龙几点集合。" },
+    {
+      kind: "assistant",
+      text: "秦龙说八点在宿舍楼下集合。",
+      toolCalls: [],
+    },
+    { kind: "player", text: "那我们提前十五分钟集合。" },
+  ]);
+  const authority = await worlds.readAuthorityHistory(worldId);
+  expect(authority.commits).toHaveLength(6);
+  expect(authority.commits[4]).toMatchObject({
+    mode: "timeline_revision",
+    parentHead: "commit:4",
+    head: "commit:5",
+    timelineRevision: {
+      restoresHead: "commit:2",
+      replacesHead: "commit:3",
+    },
+  });
 });
 
 test("中断后留空追加会原样发送已保存的模型请求，不追加玩家指令或中断片段", async () => {

@@ -133,12 +133,26 @@ export interface FileNativeStateChange {
   canonicalNextBytes: string;
 }
 
+interface FileNativeImmutableStateFile {
+  path: string;
+  sha256: string;
+  canonicalBytes: string;
+}
+
+interface FileNativeTimelineRevision {
+  restoresHead: string;
+  replacesHead: string;
+  requestFingerprint: string;
+  replacementState: FileNativeImmutableStateFile[];
+  replacementHistory: Genesis["history"];
+}
+
 export interface FileNativePlayCommit {
   schemaVersion: 1;
   operationId: string;
   parentHead: string;
   head: string;
-  mode: "play" | "correction";
+  mode: "play" | "correction" | "timeline_revision";
   historyAppend: {
     messageId: string;
     role: "player" | "narrator";
@@ -148,6 +162,7 @@ export interface FileNativePlayCommit {
   nextAdditionalMaterials: MaterialSelection[];
   correctionTargets?: string[];
   corrects?: string;
+  timelineRevision?: FileNativeTimelineRevision;
 }
 
 interface FileNativePlayAuthority {
@@ -167,7 +182,7 @@ export type FileNativeOperationOutcome =
       head: string;
       historyAppend: { role: "player" | "narrator"; exactText: string }[];
       nextAdditionalMaterials: MaterialSelection[];
-      mode: "play" | "correction";
+      mode: "play" | "correction" | "timeline_revision";
     };
 
 export interface FileNativeRecoveredEndpoint {
@@ -693,9 +708,13 @@ export class FileNativeWorldStore {
           ) {
             const commit = publishedAuthority.commits[index]!;
             await materializePlayCommit(root, index + 1, {
+              mode: commit.mode,
               historyAppend: commit.historyAppend,
               nextMaterials: commit.nextAdditionalMaterials,
               stateChanges: commit.stateChanges ?? [],
+              ...(commit.timelineRevision === undefined
+                ? {}
+                : { timelineRevision: commit.timelineRevision }),
             });
             await publishJson(this.#operationOutcomePath(commit.operationId), {
               outcome: "committed",
@@ -826,20 +845,62 @@ export class FileNativeWorldStore {
     );
     let additionalMaterials: MaterialSelection[] = genesis.additionalMaterials;
     for (const commit of commits.slice(0, end)) {
-      for (const change of commit.stateChanges) {
-        const existing = state.get(change.relativePath);
-        const existingHash = existing === undefined ? null : sha256(existing);
-        if (existingHash !== change.expectedPreviousHash)
+      if (commit.mode === "timeline_revision") {
+        const revision = commit.timelineRevision;
+        if (revision === undefined)
           throw new FileNativeWorldCreationError(
             "world_corrupt",
-            `不可变提交链前置 hash 不一致：${change.relativePath}`,
+            "时间线修订提交缺少恢复快照",
           );
-        if (sha256(change.canonicalNextBytes) !== change.nextHash)
+        const restored = await this.recoverEndpoint(
+          worldId,
+          revision.restoresHead,
+        );
+        if (
+          !isDeepStrictEqual(
+            revision.replacementState,
+            immutableFiles(restored.state),
+          ) ||
+          !isDeepStrictEqual(revision.replacementHistory, restored.history) ||
+          !isDeepStrictEqual(
+            commit.nextAdditionalMaterials,
+            restored.additionalMaterials,
+          )
+        )
           throw new FileNativeWorldCreationError(
             "world_corrupt",
-            `不可变提交链 next hash 不一致：${change.relativePath}`,
+            "时间线修订恢复快照与所指向的逻辑父端点不一致",
           );
-        state.set(change.relativePath, change.canonicalNextBytes);
+        state.clear();
+        for (const file of revision.replacementState) {
+          if (sha256(file.canonicalBytes) !== file.sha256)
+            throw new FileNativeWorldCreationError(
+              "world_corrupt",
+              `时间线修订状态 hash 不一致：${file.path}`,
+            );
+          state.set(file.path, file.canonicalBytes);
+        }
+        history.splice(
+          0,
+          history.length,
+          ...structuredClone(revision.replacementHistory),
+        );
+      } else {
+        for (const change of commit.stateChanges) {
+          const existing = state.get(change.relativePath);
+          const existingHash = existing === undefined ? null : sha256(existing);
+          if (existingHash !== change.expectedPreviousHash)
+            throw new FileNativeWorldCreationError(
+              "world_corrupt",
+              `不可变提交链前置 hash 不一致：${change.relativePath}`,
+            );
+          if (sha256(change.canonicalNextBytes) !== change.nextHash)
+            throw new FileNativeWorldCreationError(
+              "world_corrupt",
+              `不可变提交链 next hash 不一致：${change.relativePath}`,
+            );
+          state.set(change.relativePath, change.canonicalNextBytes);
+        }
       }
       history.push(...structuredClone(commit.historyAppend));
       additionalMaterials = structuredClone(commit.nextAdditionalMaterials);
@@ -885,11 +946,11 @@ export class FileNativeWorldStore {
   async deriveWorld(
     input: FileNativeWorldDerivationInput,
   ): Promise<{ outcome: "derived"; world: FileNativeWorldSummary }> {
-    assertIdentity(input.operationId, "派生 operation ID");
+    assertIdentity(input.operationId, "分叉 operation ID");
     assertIdentity(input.sourceWorldId, "来源世界 ID");
     assertIdentity(input.hostPresetId, "主持预设 ID");
     if (input.requestDiscriminator !== undefined)
-      assertIdentity(input.requestDiscriminator, "派生请求区分符");
+      assertIdentity(input.requestDiscriminator, "分叉请求区分符");
     if (
       input.sourceHead !== "genesis" &&
       !/^commit:[1-9][0-9]*$/u.test(input.sourceHead)
@@ -911,7 +972,7 @@ export class FileNativeWorldStore {
       )
         throw new FileNativeWorldCreationError(
           "operation_conflict",
-          "同一派生 operation ID 已绑定另一份派生载荷",
+          "同一分叉 operation ID 已绑定另一份分叉载荷",
         );
       return {
         outcome: "derived",
@@ -933,7 +994,7 @@ export class FileNativeWorldStore {
       )
         throw new FileNativeWorldCreationError(
           "operation_conflict",
-          "已发布派生世界与 operation 载荷不一致",
+          "已发布分叉世界与 operation 载荷不一致",
         );
       await mkdir(this.#operationsRoot, { recursive: true, mode: 0o700 });
       await publishJson(operationPath, alreadyPublished);
@@ -1010,9 +1071,13 @@ export class FileNativeWorldStore {
           commit,
         );
         await materializePlayCommit(staging, index + 1, {
+          mode: commit.mode,
           historyAppend: commit.historyAppend,
           nextMaterials: commit.nextAdditionalMaterials,
           stateChanges: commit.stateChanges,
+          ...(commit.timelineRevision === undefined
+            ? {}
+            : { timelineRevision: commit.timelineRevision }),
         });
       }
       if (cloned.commits.length > 0)
@@ -1028,7 +1093,7 @@ export class FileNativeWorldStore {
       if (!isDeepStrictEqual(materializedState, selected.state))
         throw new FileNativeWorldCreationError(
           "world_corrupt",
-          "派生 Authority 前缀无法重建来源端点状态",
+          "分叉 Authority 前缀无法重建来源端点状态",
         );
       const publication: Publication = {
         schemaVersion: 1,
@@ -1064,7 +1129,7 @@ export class FileNativeWorldStore {
         )
           throw new FileNativeWorldCreationError(
             "operation_conflict",
-            "已发布派生世界与 operation 载荷不一致",
+            "已发布分叉世界与 operation 载荷不一致",
           );
         await publishJson(operationPath, published);
         return { outcome: "derived", world: toSummary(published) };
@@ -1187,6 +1252,109 @@ export class FileNativeWorldStore {
       : (direct ?? { outcome: "not_started" });
   }
 
+  /**
+   * Replace one committed player message on the world's active timeline
+   * without changing world identity or destructively rewriting Authority.
+   * The new immutable commit restores the selected player's logical parent
+   * snapshot and appends the replacement player text in one acceptance step.
+   */
+  async reviseTimeline(input: {
+    operationId: string;
+    worldId: string;
+    expectedCurrentHead: string;
+    restoresHead: string;
+    replacesHead: string;
+    replacementText: string;
+    requestFingerprint: string;
+  }): Promise<
+    Extract<
+      FileNativeOperationOutcome,
+      { outcome: "committed" | "committed_materialization_pending" }
+    >
+  > {
+    assertIdentity(input.operationId, "时间线修订 operation ID");
+    assertIdentity(input.worldId, "世界 ID");
+    if (
+      !/^(?:genesis|commit:[1-9][0-9]*)$/u.test(input.expectedCurrentHead) ||
+      !/^(?:genesis|commit:[1-9][0-9]*)$/u.test(input.restoresHead) ||
+      !/^commit:[1-9][0-9]*$/u.test(input.replacesHead)
+    )
+      throw new TypeError("时间线修订端点无效");
+    if (input.replacementText.trim() === "")
+      throw new TypeError("修改后的玩家提交不能为空");
+    if (!/^sha256:[a-f0-9]{64}$/u.test(input.requestFingerprint))
+      throw new TypeError("时间线修订请求指纹无效");
+
+    const existing = await this.getOperationOutcome(input.operationId);
+    if (isCommittedOutcome(existing)) {
+      const authority = await readAcceptedAuthority(
+        join(this.#worldsRoot, existing.worldId),
+      );
+      const commit = authority?.commits.find(
+        ({ operationId }) => operationId === input.operationId,
+      );
+      if (
+        existing.worldId !== input.worldId ||
+        commit?.mode !== "timeline_revision" ||
+        commit.timelineRevision?.restoresHead !== input.restoresHead ||
+        commit.timelineRevision.replacesHead !== input.replacesHead ||
+        commit.timelineRevision.requestFingerprint !==
+          input.requestFingerprint ||
+        !isDeepStrictEqual(
+          commit.historyAppend.map(({ role, exactText }) => ({
+            role,
+            exactText,
+          })),
+          [{ role: "player", exactText: input.replacementText }],
+        )
+      )
+        throw new FileNativeWorldCreationError(
+          "operation_conflict",
+          "同一时间线修订 operation ID 已绑定另一份请求",
+        );
+      return existing;
+    }
+
+    const root = join(this.#worldsRoot, input.worldId);
+    const [authority, replacement] = await Promise.all([
+      readAcceptedAuthority(root),
+      this.recoverEndpoint(input.worldId, input.restoresHead),
+    ]);
+    const replaced = authority?.commits.find(
+      ({ head }) => head === input.replacesHead,
+    );
+    const logicalParent =
+      replaced?.mode === "timeline_revision"
+        ? replaced.timelineRevision?.restoresHead
+        : replaced?.parentHead;
+    if (
+      replaced === undefined ||
+      !replaced.historyAppend.some(({ role }) => role === "player") ||
+      logicalParent !== input.restoresHead
+    )
+      throw new FileNativeWorldCreationError(
+        "operation_conflict",
+        "所选玩家提交与要恢复的逻辑父端点不一致",
+      );
+
+    return this.#commitHistoryChange({
+      operationId: input.operationId,
+      worldId: input.worldId,
+      parentHead: input.expectedCurrentHead,
+      historyAppend: [{ role: "player", exactText: input.replacementText }],
+      nextMaterials: structuredClone(replacement.additionalMaterials),
+      stateChanges: [],
+      mode: "timeline_revision",
+      timelineRevision: {
+        restoresHead: input.restoresHead,
+        replacesHead: input.replacesHead,
+        requestFingerprint: input.requestFingerprint,
+        replacementState: immutableFiles(replacement.state),
+        replacementHistory: structuredClone(replacement.history),
+      },
+    });
+  }
+
   async commitCorrection(input: {
     operationId: string;
     worldId: string;
@@ -1294,7 +1462,8 @@ export class FileNativeWorldStore {
     historyAppend: { role: "player" | "narrator"; exactText: string }[];
     nextMaterials: MaterialSelection[];
     stateChanges: FileNativeStateChange[];
-    mode: "play" | "correction";
+    mode: "play" | "correction" | "timeline_revision";
+    timelineRevision?: FileNativeTimelineRevision;
     operationReserved?: boolean;
   }): Promise<
     Extract<
@@ -1314,7 +1483,8 @@ export class FileNativeWorldStore {
       if (
         commit?.mode !== input.mode ||
         JSON.stringify(commit?.stateChanges) !==
-          JSON.stringify(input.stateChanges)
+          JSON.stringify(input.stateChanges) ||
+        !isDeepStrictEqual(commit?.timelineRevision, input.timelineRevision)
       )
         throw new FileNativeWorldCreationError(
           "operation_conflict",
@@ -1348,7 +1518,14 @@ export class FileNativeWorldStore {
             );
             if (
               knownCommit?.mode !== input.mode ||
-              !isDeepStrictEqual(knownCommit.stateChanges, input.stateChanges)
+              !isDeepStrictEqual(
+                knownCommit.stateChanges,
+                input.stateChanges,
+              ) ||
+              !isDeepStrictEqual(
+                knownCommit.timelineRevision,
+                input.timelineRevision,
+              )
             )
               throw new FileNativeWorldCreationError(
                 "operation_conflict",
@@ -1383,23 +1560,49 @@ export class FileNativeWorldStore {
           const candidateState = new Map(
             currentState.map((file) => [file.path, file.contents]),
           );
-          for (const change of input.stateChanges) {
-            assertRelativePath(change.relativePath);
-            const previous = candidateState.get(change.relativePath);
-            const previousHash =
-              previous === undefined
-                ? null
-                : `sha256:${createHash("sha256").update(previous).digest("hex")}`;
+          if (input.mode === "timeline_revision") {
             if (
-              previousHash !== change.expectedPreviousHash ||
-              `sha256:${createHash("sha256").update(change.canonicalNextBytes).digest("hex")}` !==
-                change.nextHash
+              input.timelineRevision === undefined ||
+              input.stateChanges.length !== 0
             )
               throw new FileNativeWorldCreationError(
                 "operation_conflict",
-                `状态变化 hash 冲突：${change.relativePath}`,
+                "时间线修订提交载荷无效",
               );
-            candidateState.set(change.relativePath, change.canonicalNextBytes);
+            candidateState.clear();
+            for (const file of input.timelineRevision.replacementState) {
+              assertRelativePath(file.path);
+              if (sha256(file.canonicalBytes) !== file.sha256)
+                throw new FileNativeWorldCreationError(
+                  "operation_conflict",
+                  `时间线修订状态 hash 冲突：${file.path}`,
+                );
+              candidateState.set(file.path, file.canonicalBytes);
+            }
+          } else {
+            if (input.timelineRevision !== undefined)
+              throw new FileNativeWorldCreationError(
+                "operation_conflict",
+                "普通提交不能携带时间线修订载荷",
+              );
+            for (const change of input.stateChanges) {
+              assertRelativePath(change.relativePath);
+              const previous = candidateState.get(change.relativePath);
+              const previousHash =
+                previous === undefined ? null : sha256(previous);
+              if (
+                previousHash !== change.expectedPreviousHash ||
+                sha256(change.canonicalNextBytes) !== change.nextHash
+              )
+                throw new FileNativeWorldCreationError(
+                  "operation_conflict",
+                  `状态变化 hash 冲突：${change.relativePath}`,
+                );
+              candidateState.set(
+                change.relativePath,
+                change.canonicalNextBytes,
+              );
+            }
           }
           const inspection = inspectContentPackageCurrentTree(
             [
@@ -1441,6 +1644,11 @@ export class FileNativeWorldStore {
                   corrects: input.parentHead,
                 }
               : {}),
+            ...(input.mode === "timeline_revision"
+              ? {
+                  timelineRevision: structuredClone(input.timelineRevision!),
+                }
+              : {}),
           } satisfies FileNativePlayCommit;
           crashAtFileNativeAuthorityEdge("before_commit_acceptance");
           await publishImmutableJson(
@@ -1473,9 +1681,13 @@ export class FileNativeWorldStore {
           );
           try {
             await materializePlayCommit(root, sequence, {
+              mode: commit.mode,
               historyAppend: commit.historyAppend,
               nextMaterials: input.nextMaterials,
               stateChanges: input.stateChanges,
+              ...(commit.timelineRevision === undefined
+                ? {}
+                : { timelineRevision: commit.timelineRevision }),
             });
             crashAtFileNativeAuthorityEdge("after_materialization");
             await publishJson(join(root, "runtime", "materialized-head.json"), {
@@ -1895,7 +2107,11 @@ function assertOperationOutcomeIntegrity(
       !value.historyAppend.every(isPlayHistoryAppendInput) ||
       !Array.isArray(value.nextAdditionalMaterials) ||
       !value.nextAdditionalMaterials.every(isAuthorityMaterialSelection) ||
-      !(value.mode === "play" || value.mode === "correction")
+      !(
+        value.mode === "play" ||
+        value.mode === "correction" ||
+        value.mode === "timeline_revision"
+      )
     )
       throw corruptOperationOutcome();
     return;
@@ -2184,18 +2400,35 @@ function assertFileNativePlayAuthority(
     throw new Error("play Authority 外形无效");
   const operationIds = new Set<string>();
   const heads = new Set<string>();
+  const commitsByHead = new Map<string, FileNativePlayCommit>();
   let parent = "genesis";
   for (const [index, commit] of value.commits.entries()) {
     assertFileNativePlayCommit(commit);
+    const revision = commit.timelineRevision;
+    const replaced =
+      revision === undefined
+        ? undefined
+        : commitsByHead.get(revision.replacesHead);
+    const replacedLogicalParent =
+      replaced?.mode === "timeline_revision"
+        ? replaced.timelineRevision!.restoresHead
+        : replaced?.parentHead;
     if (
       commit.parentHead !== parent ||
       commit.head !== `commit:${index + 1}` ||
       operationIds.has(commit.operationId) ||
-      heads.has(commit.head)
+      heads.has(commit.head) ||
+      (commit.mode === "timeline_revision" &&
+        ((revision!.restoresHead !== "genesis" &&
+          !heads.has(revision!.restoresHead)) ||
+          replaced === undefined ||
+          !replaced.historyAppend.some(({ role }) => role === "player") ||
+          replacedLogicalParent !== revision!.restoresHead))
     )
       throw new Error("play Authority commit 链无效");
     operationIds.add(commit.operationId);
     heads.add(commit.head);
+    commitsByHead.set(commit.head, commit);
     parent = commit.head;
   }
   if (value.head !== parent) throw new Error("play Authority head 无效");
@@ -2206,6 +2439,7 @@ function assertFileNativePlayCommit(
 ): asserts value is FileNativePlayCommit {
   if (!isRecord(value)) throw new Error("play commit 外形无效");
   const correction = value.mode === "correction";
+  const timelineRevision = value.mode === "timeline_revision";
   if (
     !hasExactKeys(value, [
       "schemaVersion",
@@ -2217,6 +2451,7 @@ function assertFileNativePlayCommit(
       "stateChanges",
       "nextAdditionalMaterials",
       ...(correction ? ["correctionTargets", "corrects"] : []),
+      ...(timelineRevision ? ["timelineRevision"] : []),
     ]) ||
     value.schemaVersion !== 1 ||
     typeof value.operationId !== "string" ||
@@ -2225,13 +2460,19 @@ function assertFileNativePlayCommit(
     !/^(?:genesis|commit:[1-9][0-9]*)$/u.test(value.parentHead) ||
     typeof value.head !== "string" ||
     !/^commit:[1-9][0-9]*$/u.test(value.head) ||
-    (value.mode !== "play" && value.mode !== "correction") ||
+    (value.mode !== "play" &&
+      value.mode !== "correction" &&
+      value.mode !== "timeline_revision") ||
     !Array.isArray(value.historyAppend) ||
     (correction
       ? value.historyAppend.length !== 0
-      : value.historyAppend.length === 0 &&
-        (!Array.isArray(value.stateChanges) ||
-          value.stateChanges.length === 0)) ||
+      : timelineRevision
+        ? value.historyAppend.length !== 1 ||
+          !isRecord(value.historyAppend[0]) ||
+          value.historyAppend[0].role !== "player"
+        : value.historyAppend.length === 0 &&
+          (!Array.isArray(value.stateChanges) ||
+            value.stateChanges.length === 0)) ||
     !value.historyAppend.every(isFileNativeHistoryMessage) ||
     !Array.isArray(value.stateChanges) ||
     !value.stateChanges.every(isFileNativeStateChange) ||
@@ -2249,6 +2490,52 @@ function assertFileNativePlayCommit(
       value.corrects !== value.parentHead)
   )
     throw new Error("correction commit 外形无效");
+  if (
+    timelineRevision &&
+    (value.stateChanges.length !== 0 ||
+      !isFileNativeTimelineRevision(value.timelineRevision))
+  )
+    throw new Error("timeline revision commit 外形无效");
+}
+
+function isFileNativeTimelineRevision(value: unknown): boolean {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "restoresHead",
+      "replacesHead",
+      "requestFingerprint",
+      "replacementState",
+      "replacementHistory",
+    ]) ||
+    typeof value.restoresHead !== "string" ||
+    !/^(?:genesis|commit:[1-9][0-9]*)$/u.test(value.restoresHead) ||
+    typeof value.replacesHead !== "string" ||
+    !/^commit:[1-9][0-9]*$/u.test(value.replacesHead) ||
+    typeof value.requestFingerprint !== "string" ||
+    !/^sha256:[a-f0-9]{64}$/u.test(value.requestFingerprint) ||
+    !Array.isArray(value.replacementState) ||
+    !Array.isArray(value.replacementHistory) ||
+    !value.replacementHistory.every(isFileNativeHistoryMessage)
+  )
+    return false;
+  for (const file of value.replacementState) {
+    if (
+      !isRecord(file) ||
+      !hasExactKeys(file, ["path", "sha256", "canonicalBytes"]) ||
+      typeof file.path !== "string" ||
+      typeof file.sha256 !== "string" ||
+      typeof file.canonicalBytes !== "string" ||
+      sha256(file.canonicalBytes) !== file.sha256
+    )
+      return false;
+    try {
+      assertRelativePath(file.path);
+    } catch {
+      return false;
+    }
+  }
+  return true;
 }
 
 function isFileNativeHistoryMessage(value: unknown): boolean {
@@ -2326,48 +2613,66 @@ async function materializePlayCommit(
   root: string,
   sequence: number,
   input: {
+    mode: FileNativePlayCommit["mode"];
     historyAppend: FileNativePlayCommit["historyAppend"];
     nextMaterials: MaterialSelection[];
     stateChanges: FileNativeStateChange[];
+    timelineRevision?: FileNativeTimelineRevision;
   },
 ): Promise<void> {
-  for (const change of input.stateChanges) {
-    assertRelativePath(change.relativePath);
-    const path = join(root, "state", change.relativePath);
-    let existing: string | null = null;
-    try {
-      existing = await readFile(path, "utf8");
-    } catch (error: unknown) {
-      if (!isNodeError(error) || error.code !== "ENOENT") throw error;
-    }
-    const existingHash =
-      existing === null
-        ? null
-        : `sha256:${createHash("sha256").update(existing).digest("hex")}`;
-    if (existingHash === change.nextHash) continue;
-    if (existingHash !== change.expectedPreviousHash)
+  if (input.mode === "timeline_revision") {
+    if (input.timelineRevision === undefined)
       throw new FileNativeWorldCreationError(
-        "inconsistent_materialization",
-        `世界状态物化冲突：${change.relativePath}`,
+        "world_corrupt",
+        "时间线修订提交缺少物化快照",
       );
-    await mkdir(dirname(path), { recursive: true });
-    const temporary = `${path}.${randomUUID()}.tmp`;
-    await writeFile(temporary, change.canonicalNextBytes, "utf8");
-    await syncFile(temporary);
-    await rename(temporary, path);
-    await syncDirectory(dirname(path));
+    await replaceMaterializedTree(
+      join(root, "state"),
+      input.timelineRevision.replacementState.map(
+        ({ path, canonicalBytes }) => ({ path, contents: canonicalBytes }),
+      ),
+    );
+  } else {
+    for (const change of input.stateChanges) {
+      assertRelativePath(change.relativePath);
+      const path = join(root, "state", change.relativePath);
+      let existing: string | null = null;
+      try {
+        existing = await readFile(path, "utf8");
+      } catch (error: unknown) {
+        if (!isNodeError(error) || error.code !== "ENOENT") throw error;
+      }
+      const existingHash = existing === null ? null : sha256(existing);
+      if (existingHash === change.nextHash) continue;
+      if (existingHash !== change.expectedPreviousHash)
+        throw new FileNativeWorldCreationError(
+          "inconsistent_materialization",
+          `世界状态物化冲突：${change.relativePath}`,
+        );
+      await publishText(path, change.canonicalNextBytes);
+    }
   }
   crashAtFileNativeAuthorityEdge("after_state_materialization");
   const historyRoot = join(root, "history");
   await mkdir(historyRoot, { recursive: true });
-  for (const [index, message] of input.historyAppend.entries())
-    await writeIdempotentText(
-      join(
-        historyRoot,
-        `${String(sequence).padStart(8, "0")}-${historyFileName(index + 1, message)}`,
-      ),
-      message.exactText,
+  if (input.mode === "timeline_revision") {
+    await replaceMaterializedTree(
+      historyRoot,
+      historySurfaceFiles([
+        ...input.timelineRevision!.replacementHistory,
+        ...input.historyAppend,
+      ]),
     );
+  } else {
+    for (const [index, message] of input.historyAppend.entries())
+      await writeIdempotentText(
+        join(
+          historyRoot,
+          `${String(sequence).padStart(8, "0")}-${historyFileName(index + 1, message)}`,
+        ),
+        message.exactText,
+      );
+  }
   const materialsPath = join(root, "runtime", "additional-materials.json");
   const nextMaterials = {
     head: `commit:${sequence}`,
@@ -2386,6 +2691,79 @@ async function materializePlayCommit(
     );
   if (JSON.stringify(existingMaterials) !== JSON.stringify(nextMaterials))
     await publishJson(materialsPath, nextMaterials);
+}
+
+async function replaceMaterializedTree(
+  root: string,
+  files: readonly ContentTreeFile[],
+): Promise<void> {
+  const next = new Map<string, string>();
+  for (const file of files) {
+    assertRelativePath(file.path);
+    if (next.has(file.path))
+      throw new FileNativeWorldCreationError(
+        "world_corrupt",
+        `时间线修订物化包含重复路径：${file.path}`,
+      );
+    next.set(file.path, file.contents);
+  }
+  const current = await readTree(root);
+  for (const [path, contents] of next) {
+    const existing = current.find((file) => file.path === path)?.contents;
+    if (existing !== contents) await publishText(join(root, path), contents);
+  }
+  for (const file of current) {
+    if (next.has(file.path)) continue;
+    const path = join(root, file.path);
+    await rm(path, { force: true });
+    await syncDirectory(dirname(path));
+  }
+}
+
+async function publishText(path: string, contents: string): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  await writeFile(temporary, contents, "utf8");
+  await syncFile(temporary);
+  await rename(temporary, path);
+  await syncDirectory(dirname(path));
+}
+
+function historySurfaceFiles(
+  messages: readonly Genesis["history"][number][],
+): ContentTreeFile[] {
+  return messages.map((message) => {
+    const genesis =
+      /\.message\.genesis(?:\.([1-9][0-9]*))?\.(player|narrator)$/u.exec(
+        message.messageId,
+      );
+    const committed =
+      /\.message\.([1-9][0-9]*)\.([1-9][0-9]*)\.(player|narrator)$/u.exec(
+        message.messageId,
+      );
+    const sequence =
+      genesis !== null ? 0 : Number.parseInt(committed?.[1] ?? "", 10);
+    const index =
+      genesis !== null
+        ? Number.parseInt(genesis[1] ?? "1", 10)
+        : Number.parseInt(committed?.[2] ?? "", 10);
+    const role = genesis?.[2] ?? committed?.[3];
+    if (
+      !Number.isSafeInteger(sequence) ||
+      sequence < 0 ||
+      !Number.isSafeInteger(index) ||
+      index < 1 ||
+      role !== message.role
+    )
+      throw new FileNativeWorldCreationError(
+        "world_corrupt",
+        `历史消息身份无法形成物化路径：${message.messageId}`,
+      );
+    return {
+      path: `${String(sequence).padStart(8, "0")}-${historyFileName(index, message)}`,
+      contents: message.exactText,
+    };
+  });
 }
 
 async function writeIdempotentText(
@@ -2487,6 +2865,16 @@ function cloneAuthorityPrefix(input: {
         input.sourceWorldId,
         input.targetWorldId,
       ),
+      ...(commit.timelineRevision === undefined
+        ? {}
+        : {
+            timelineRevision: {
+              ...structuredClone(commit.timelineRevision),
+              replacementHistory: rewriteHistory(
+                commit.timelineRevision.replacementHistory,
+              ),
+            },
+          }),
     })),
   };
 }
@@ -2503,7 +2891,7 @@ function rewriteMaterials(
       if (message === undefined)
         throw new FileNativeWorldCreationError(
           "world_corrupt",
-          `派生材料引用了无法重写的历史消息：${material.message}`,
+          `分叉材料引用了无法重写的历史消息：${material.message}`,
         );
       return { ...material, message };
     }
@@ -2653,7 +3041,7 @@ function validWorldName(name: string): boolean {
 }
 
 function derivedWorldName(sourceName: string): string {
-  const suffix = "（派生）";
+  const suffix = "（分叉）";
   return `${Array.from(sourceName)
     .slice(0, 160 - Array.from(suffix).length)
     .join("")}${suffix}`;

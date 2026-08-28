@@ -132,6 +132,154 @@ test("提交边界把无效候选归类为候选校验失败，而不是权威�
   ).resolves.toMatchObject({ head: "genesis" });
 });
 
+test("时间线修订在同一世界追加 Authority，并把当前投影恢复到玩家父端点后写入修改稿", async () => {
+  const fixture = await world();
+  const initial = initialSituation();
+  const first = initial.replace("安静", "第一段状态");
+  const second = first.replace("第一段状态", "第二段状态");
+
+  await fixture.store.commitPlayStep({
+    operationId: "timeline-player-1",
+    worldId: fixture.worldId,
+    parentHead: "genesis",
+    historyAppend: [{ role: "player", exactText: "第一句" }],
+    nextMaterials: [],
+    stateChanges: [],
+  });
+  await fixture.store.commitPlayStep({
+    operationId: "timeline-narrator-1",
+    worldId: fixture.worldId,
+    parentHead: "commit:1",
+    historyAppend: [{ role: "narrator", exactText: "第一答" }],
+    nextMaterials: [
+      {
+        kind: "history_message",
+        message: `${fixture.worldId}.message.1.1.player`,
+      },
+    ],
+    stateChanges: [change(initial, first)],
+  });
+  await fixture.store.commitPlayStep({
+    operationId: "timeline-player-2",
+    worldId: fixture.worldId,
+    parentHead: "commit:2",
+    historyAppend: [{ role: "player", exactText: "第二句" }],
+    nextMaterials: [],
+    stateChanges: [],
+  });
+  await fixture.store.commitPlayStep({
+    operationId: "timeline-narrator-2",
+    worldId: fixture.worldId,
+    parentHead: "commit:3",
+    historyAppend: [{ role: "narrator", exactText: "第二答" }],
+    nextMaterials: [],
+    stateChanges: [change(first, second)],
+  });
+  const oldTip = await fixture.store.recoverEndpoint(
+    fixture.worldId,
+    "commit:4",
+  );
+
+  const revised = await fixture.store.reviseTimeline({
+    operationId: "timeline-revision",
+    worldId: fixture.worldId,
+    expectedCurrentHead: "commit:4",
+    restoresHead: "commit:2",
+    replacesHead: "commit:3",
+    replacementText: "修改后的第二句",
+    requestFingerprint: hash("timeline-revision-request"),
+  });
+
+  expect(revised).toMatchObject({
+    outcome: "committed",
+    worldId: fixture.worldId,
+    parentHead: "commit:4",
+    head: "commit:5",
+    mode: "timeline_revision",
+    historyAppend: [{ role: "player", exactText: "修改后的第二句" }],
+  });
+  expect(await fixture.store.currentHead(fixture.worldId)).toBe("commit:5");
+  const authority = await fixture.store.readAuthorityHistory(fixture.worldId);
+  expect(authority.commits).toHaveLength(5);
+  expect(authority.commits[4]).toMatchObject({
+    parentHead: "commit:4",
+    head: "commit:5",
+    mode: "timeline_revision",
+    timelineRevision: {
+      restoresHead: "commit:2",
+      replacesHead: "commit:3",
+      requestFingerprint: hash("timeline-revision-request"),
+    },
+  });
+
+  const current = await fixture.store.recoverEndpoint(fixture.worldId);
+  expect(current.state[0]?.contents).toBe(first);
+  expect(current.history.map(({ exactText }) => exactText)).toEqual([
+    "房间安静下来，眼前的局面正等你回应。\n",
+    "第一句",
+    "第一答",
+    "修改后的第二句",
+  ]);
+  expect(current.additionalMaterials).toEqual([
+    {
+      kind: "history_message",
+      message: `${fixture.worldId}.message.1.1.player`,
+    },
+  ]);
+  await expect(
+    fixture.store.recoverEndpoint(fixture.worldId, "commit:4"),
+  ).resolves.toEqual(oldTip);
+  expect(
+    await fixture.store.readSurface(fixture.worldId, "history"),
+  ).toHaveLength(4);
+  expect(await fixture.store.readSurface(fixture.worldId, "state")).toEqual(
+    current.state,
+  );
+
+  await expect(
+    fixture.store.reviseTimeline({
+      operationId: "timeline-revision",
+      worldId: fixture.worldId,
+      expectedCurrentHead: "commit:5",
+      restoresHead: "commit:2",
+      replacesHead: "commit:3",
+      replacementText: "修改后的第二句",
+      requestFingerprint: hash("timeline-revision-request"),
+    }),
+  ).resolves.toEqual(revised);
+  await expect(
+    fixture.store.reviseTimeline({
+      operationId: "timeline-revision",
+      worldId: fixture.worldId,
+      expectedCurrentHead: "commit:5",
+      restoresHead: "commit:2",
+      replacesHead: "commit:3",
+      replacementText: "另一份修改稿",
+      requestFingerprint: hash("other-request"),
+    }),
+  ).rejects.toMatchObject({ code: "operation_conflict" });
+
+  const fork = await fixture.store.deriveWorld({
+    operationId: "fork-revised-timeline",
+    sourceWorldId: fixture.worldId,
+    sourceHead: "commit:5",
+    hostPresetId: "host-current",
+  });
+  const forked = await fixture.store.recoverEndpoint(fork.world.worldId);
+  expect(endpointSemantics(forked)).toEqual(endpointSemantics(current));
+  expect(forked.additionalMaterials).toEqual([
+    {
+      kind: "history_message",
+      message: `${fork.world.worldId}.message.1.1.player`,
+    },
+  ]);
+  expect(
+    JSON.stringify(
+      await fixture.store.readAuthorityHistory(fork.world.worldId),
+    ),
+  ).not.toContain(fixture.worldId);
+});
+
 test("历史端点派生会复制完整 Authority 前缀，并在来源删除后独立恢复与继续提交", async () => {
   const fixture = await world();
   const before = initialSituation();
@@ -180,7 +328,7 @@ test("历史端点派生会复制完整 Authority 前缀，并在来源删除后
     sourceHead: "commit:1",
     hostPresetId: "host-current",
   });
-  expect(derived.world.title).toBe("雾港第一夜（派生）");
+  expect(derived.world.title).toBe("雾港第一夜（分叉）");
   const derivedWorldId = derived.world.worldId;
   expect(await fixture.store.currentHead(derivedWorldId)).toBe("commit:1");
   expect(

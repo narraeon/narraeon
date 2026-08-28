@@ -58,7 +58,9 @@ test.afterAll(async () => {
   );
 });
 
-test("修改旧玩家提交会截断新分支并保留来源世界", async ({ page }) => {
+test("修改旧玩家提交会留在当前世界，创建分叉才生成独立世界", async ({
+  page,
+}) => {
   await page.goto("/");
   await runtime(page, {
     type: "model.save",
@@ -86,7 +88,7 @@ test("修改旧玩家提交会截断新分支并保留来源世界", async ({ pa
     packageId: package_.localId,
     files: contentFiles(),
   });
-  await runtime(page, {
+  const created = await runtime<{ world: { worldId: string } }>(page, {
     type: "world.create",
     operationId: "edit-history-player-world",
     packageId: package_.localId,
@@ -121,18 +123,26 @@ test("修改旧玩家提交会截断新分支并保留来源世界", async ({ pa
     .getByLabel("修改后的行动")
     .fill("那我们提前十五分钟集合。");
   responses.push("秦龙答应七点四十五就在楼下等你。");
-  await page.getByRole("button", { name: "保存并从这里继续" }).click();
+  await page.getByRole("button", { name: "保存修改并继续" }).click();
 
-  await expect(page.getByRole("heading", { name: /（派生）$/u })).toBeVisible();
-  const derivedTimeline = page.getByLabel("调用链记录");
-  await expect(derivedTimeline).not.toContainText("那我提前五分钟下楼。");
-  await expect(derivedTimeline).not.toContainText(
+  await expect(
+    page.getByRole("heading", { name: "当前情境", exact: true }),
+  ).toBeVisible();
+  const revisedTimeline = page.getByLabel("调用链记录");
+  await expect(revisedTimeline).not.toContainText("那我提前五分钟下楼。");
+  await expect(revisedTimeline).not.toContainText(
     "秦龙点头，说会提前五分钟下楼。",
   );
-  await expect(derivedTimeline).toContainText("那我们提前十五分钟集合。");
-  await expect(derivedTimeline).toContainText(
+  await expect(revisedTimeline).toContainText("那我们提前十五分钟集合。");
+  await expect(revisedTimeline).toContainText(
     "秦龙答应七点四十五就在楼下等你。",
   );
+  const workspaceAfterRevision = await runtime<{
+    worlds: { worldId: string; title: string }[];
+  }>(page, { type: "workspace.read" });
+  expect(workspaceAfterRevision.worlds).toEqual([
+    expect.objectContaining({ worldId: created.world.worldId }),
+  ]);
   const copiedPlayer = page
     .locator(".call-chain-player")
     .filter({ hasText: "我问秦龙几点集合。" });
@@ -140,20 +150,39 @@ test("修改旧玩家提交会截断新分支并保留来源世界", async ({ pa
     copiedPlayer.getByRole("button", { name: "修改" }),
   ).toBeVisible();
   await expect(
-    copiedPlayer.getByRole("button", { name: "从这里重新开始" }),
+    copiedPlayer.getByRole("button", { name: "创建分叉" }),
   ).toBeVisible();
   expect(providerRequests).toHaveLength(3);
   expect(providerRequests[2]).toContain("那我们提前十五分钟集合。");
   expect(providerRequests[2]).not.toContain("那我提前五分钟下楼。");
 
+  const revisedPlayer = page
+    .locator(".call-chain-player")
+    .filter({ hasText: "那我们提前十五分钟集合。" });
+  await revisedPlayer.getByRole("button", { name: "创建分叉" }).click();
+  await expect(
+    page.getByRole("heading", { name: "当前情境（分叉）" }),
+  ).toBeVisible();
+  const forkTimeline = page.getByLabel("调用链记录");
+  await expect(forkTimeline).toContainText("那我们提前十五分钟集合。");
+  await expect(forkTimeline).not.toContainText("那我提前五分钟下楼。");
+  const workspaceAfterFork = await runtime<{
+    worlds: { worldId: string; title: string }[];
+  }>(page, { type: "workspace.read" });
+  expect(workspaceAfterFork.worlds).toHaveLength(2);
+  expect(
+    workspaceAfterFork.worlds.some(
+      ({ worldId }) => worldId === created.world.worldId,
+    ),
+  ).toBe(true);
+
   await page.getByRole("button", { name: "工作区", exact: true }).click();
   await page
     .getByRole("button", { name: "打开世界：当前情境", exact: true })
     .click();
-  const sourceTimeline = page.getByLabel("调用链记录");
-  await expect(sourceTimeline).toContainText("那我提前五分钟下楼。");
-  await expect(sourceTimeline).toContainText("秦龙点头，说会提前五分钟下楼。");
-  await expect(sourceTimeline).not.toContainText("那我们提前十五分钟集合。");
+  const currentTimeline = page.getByLabel("调用链记录");
+  await expect(currentTimeline).toContainText("那我们提前十五分钟集合。");
+  await expect(currentTimeline).not.toContainText("那我提前五分钟下楼。");
 });
 
 async function runtime<T = unknown>(

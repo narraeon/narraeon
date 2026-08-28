@@ -46,6 +46,7 @@ type PendingAction =
   | "correction-apply"
   | "correction-cancel"
   | "rename"
+  | "revise"
   | "derive";
 
 interface WorldMessage {
@@ -97,11 +98,6 @@ interface WorldPageClient {
   ) => Promise<V1PlayCallChainView>;
 }
 
-export interface WorldPlayerSubmission {
-  playerText: string;
-  exchangeId: string;
-}
-
 export function WorldPage({
   client,
   worldId,
@@ -111,8 +107,6 @@ export function WorldPage({
   onConfigureModel,
   onRenameWorld,
   onOpenWorld,
-  initialPlayerSubmission,
-  onInitialPlayerSubmissionConsumed,
 }: {
   client: WorldPageClient;
   worldId: string;
@@ -121,18 +115,11 @@ export function WorldPage({
   onBack: () => void;
   onConfigureModel: () => void;
   onRenameWorld: (name: string) => Promise<void>;
-  onOpenWorld: (
-    worldId: string,
-    initialPlayerSubmission?: WorldPlayerSubmission,
-  ) => Promise<void>;
-  initialPlayerSubmission?: WorldPlayerSubmission;
-  onInitialPlayerSubmissionConsumed?: () => void;
+  onOpenWorld: (worldId: string) => Promise<void>;
 }): React.JSX.Element {
   const [world, setWorld] = useState<WorldReadView | null>(null);
   const [section, setSection] = useState<WorldSection>("play");
-  const [playerText, setPlayerText] = useState(
-    initialPlayerSubmission?.playerText ?? "",
-  );
+  const [playerText, setPlayerText] = useState("");
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [worldNameDraft, setWorldNameDraft] = useState(worldTitle);
@@ -160,10 +147,6 @@ export function WorldPage({
     {},
   );
   const historyEndRef = useRef<HTMLDivElement>(null);
-  const initialPlayerSubmissionRef = useRef(initialPlayerSubmission);
-  const initialPlayerSubmissionConsumedRef = useRef(
-    onInitialPlayerSubmissionConsumed,
-  );
 
   useEffect(() => {
     let active = true;
@@ -178,68 +161,6 @@ export function WorldPage({
         ]);
         if (!active) return;
         applyWorld({ ...next, artifactDebug }, false);
-
-        const initial = initialPlayerSubmissionRef.current;
-        if (initial === undefined) return;
-        if (!modelConfigured) {
-          setFeedback({
-            kind: "status",
-            text: "修改稿已放入输入框；配置模型后即可从这个分支继续。",
-          });
-          return;
-        }
-        if (next.playCallChain?.status !== "ready") {
-          setFeedback({
-            kind: "error",
-            text: "历史分支没有可追加的模型上下文；修改稿仍保留在输入框中。",
-          });
-          return;
-        }
-
-        initialPlayerSubmissionRef.current = undefined;
-        setPending("play-append");
-        setFeedback({
-          kind: "status",
-          text: "已舍弃所选提交及其后内容，正在把修改稿提交到独立分支…",
-        });
-        const result = await requestPlayCallChain(
-          client,
-          {
-            type: "play.chain.append",
-            worldId,
-            chainId: next.playCallChain.chainId,
-            exchangeId: initial.exchangeId,
-            playerText: initial.playerText,
-          },
-          (frame) => {
-            if (active) applyPlayCallChainFrame(frame, setPlayCallChain);
-          },
-        );
-        if (!active) return;
-        initialPlayerSubmissionConsumedRef.current?.();
-        setPlayCallChain(result);
-        setPlayerText("");
-        const [refreshed, refreshedArtifactDebug] = await Promise.all([
-          requestRuntime<WorldReadView>(client, {
-            type: "world.read",
-            worldId,
-          }),
-          requestArtifactDebug(client, worldId),
-        ]);
-        if (!active) return;
-        applyWorld(
-          { ...refreshed, artifactDebug: refreshedArtifactDebug },
-          true,
-        );
-        setFeedback({
-          kind: result.status === "interrupted" ? "error" : "status",
-          text:
-            result.status === "interrupted"
-              ? result.canRetry
-                ? "修改稿已提交，但模型请求中断；清空输入后点击追加上下文即可原样重发。"
-                : "修改稿已提交，但模型请求失败；请使用全新上下文继续。"
-              : "已从修改后的玩家提交继续；来源世界及原后续内容保持不变。",
-        });
       } catch (reason: unknown) {
         if (!active) return;
         setFeedback({ kind: "error", text: errorMessage(reason) });
@@ -251,7 +172,7 @@ export function WorldPage({
     return () => {
       active = false;
     };
-  }, [client, modelConfigured, worldId]);
+  }, [client, worldId]);
 
   useEffect(() => {
     const chainPending = pending === "play-fresh" || pending === "play-append";
@@ -585,9 +506,9 @@ export function WorldPage({
     }
   }
 
-  async function branchFromEditedPlayer(
-    sourceChainId: string,
-    sourceEventId: number,
+  async function reviseEditedPlayer(
+    chainId: string,
+    eventId: number,
     editedText: string,
   ): Promise<void> {
     if (world === null) return;
@@ -595,28 +516,66 @@ export function WorldPage({
       setFeedback({ kind: "error", text: "修改后的玩家提交不能为空。" });
       return;
     }
-    setPending("derive");
+    const replacementExchangeId = `play-exchange-${crypto.randomUUID()}`;
+    setPending("revise");
     setFeedback({
       kind: "status",
-      text: "正在从这条玩家提交之前建立独立分支…",
+      text: "正在当前世界中保存修改，并舍弃这条消息之后的当前时间线…",
     });
     try {
-      const branched = await requestRuntime<{
-        world: { worldId: string };
+      const revised = await requestRuntime<{
+        outcome: "revised";
+        worldId: string;
         playCallChain: V1PlayCallChainView;
       }>(client, {
-        type: "play.chain.branch",
-        operationId: `branch-player-${crypto.randomUUID()}`,
-        sourceWorldId: world.worldId,
-        sourceChainId,
-        sourceEventId,
+        type: "play.chain.revise-player",
+        operationId: `revise-player-${crypto.randomUUID()}`,
+        worldId: world.worldId,
+        chainId,
+        eventId,
+        replacementExchangeId,
+        replacementText: editedText,
       });
-      await onOpenWorld(branched.world.worldId, {
-        playerText: editedText,
-        exchangeId: `play-exchange-${crypto.randomUUID()}`,
+      setPlayCallChain(revised.playCallChain);
+      await refreshWorld();
+      if (!modelConfigured) {
+        setFeedback({
+          kind: "status",
+          text: "修改已保存在当前世界；配置模型后点击“追加上下文”即可继续生成。",
+        });
+        return;
+      }
+
+      setPending("play-append");
+      setFeedback({
+        kind: "status",
+        text: "修改已保存，正在从修改稿继续生成…",
+      });
+      const continued = await requestPlayCallChain(
+        client,
+        {
+          type: "play.chain.append",
+          worldId: world.worldId,
+          chainId: revised.playCallChain.chainId,
+          exchangeId: `play-exchange-${crypto.randomUUID()}`,
+          playerText: "",
+        },
+        (frame) => applyPlayCallChainFrame(frame, setPlayCallChain),
+      );
+      setPlayCallChain(continued);
+      await refreshWorld();
+      setFeedback({
+        kind: continued.status === "interrupted" ? "error" : "status",
+        text:
+          continued.status === "interrupted"
+            ? continued.canRetry
+              ? "修改已保存，但模型请求中断；点击“追加上下文”即可原样重发。"
+              : "修改已保存，但模型请求失败；请使用全新上下文继续。"
+            : "修改已保存在当前世界，并已从修改稿继续。",
       });
     } catch (reason: unknown) {
       setFeedback({ kind: "error", text: errorMessage(reason) });
+    } finally {
       setPending(null);
     }
   }
@@ -776,7 +735,7 @@ export function WorldPage({
                           restartDisabled={pending !== null}
                           onRestartFrom={(head) => void deriveWorld(head)}
                           onEditPlayer={(eventId, editedText) =>
-                            void branchFromEditedPlayer(
+                            void reviseEditedPlayer(
                               context.chainId,
                               eventId,
                               editedText,
@@ -1043,7 +1002,7 @@ export function WorldPage({
             <article className="manage-card derive-card">
               <span className="manage-card-number">02</span>
               <div>
-                <h3>从此刻派生新世界</h3>
+                <h3>从此刻创建分叉</h3>
                 <p>
                   复制当前状态和截至此刻的已提交叙事，得到一个完全独立的新世界。
                 </p>
@@ -1055,7 +1014,7 @@ export function WorldPage({
                 }
                 onClick={() => void deriveWorld(world.head)}
               >
-                {pending === "derive" ? "正在派生…" : "派生新世界"}
+                {pending === "derive" ? "正在创建…" : "创建分叉"}
               </button>
             </article>
 
@@ -1263,7 +1222,7 @@ function Transcript({
                   disabled={restartDisabled}
                   onClick={() => onRestartFrom(message.head!)}
                 >
-                  从这里重新开始
+                  创建分叉
                 </button>
               )}
             </header>
@@ -1322,7 +1281,11 @@ function CallChain({
       <ol className="call-chain-events">
         {chain.events.map((event) => (
           <CallChainEvent
-            key={event.id}
+            key={
+              event.kind === "player"
+                ? `${event.id}:${event.exchangeId}`
+                : event.id
+            }
             event={event}
             restartDisabled={restartDisabled}
             onRestartFrom={onRestartFrom}
@@ -1389,7 +1352,7 @@ function CallChainEvent({
                   disabled={restartDisabled}
                   onClick={() => onRestartFrom(event.committedHead!)}
                 >
-                  从这里重新开始
+                  创建分叉
                 </button>
               </span>
             )}
@@ -1409,7 +1372,8 @@ function CallChainEvent({
                 />
               </label>
               <p>
-                将创建独立世界；这条原提交及其后的消息只会从新分支中舍弃，来源世界保持不变。
+                修改会直接保存在当前世界；这条原提交及其后的内容会离开当前时间线，但旧
+                Authority 记录仍可恢复。
               </p>
               <div className="button-row">
                 <button
@@ -1417,7 +1381,7 @@ function CallChainEvent({
                   disabled={restartDisabled || editedText.trim().length === 0}
                   onClick={() => onEditPlayer(event.id, editedText)}
                 >
-                  保存并从这里继续
+                  保存修改并继续
                 </button>
                 <button
                   type="button"
@@ -1450,7 +1414,7 @@ function CallChainEvent({
                 disabled={restartDisabled}
                 onClick={() => onRestartFrom(event.committedHead!)}
               >
-                从这里重新开始
+                创建分叉
               </button>
             )}
           </header>

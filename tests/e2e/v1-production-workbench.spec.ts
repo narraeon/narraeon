@@ -534,11 +534,9 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   const playerBranchPoint = page
     .locator(".call-chain-player")
     .filter({ hasText: "那我们提前在哪里集合？" });
-  await playerBranchPoint
-    .getByRole("button", { name: "从这里重新开始" })
-    .click();
+  await playerBranchPoint.getByRole("button", { name: "创建分叉" }).click();
   await expect(
-    page.getByRole("heading", { name: "宿舍世界（派生）" }),
+    page.getByRole("heading", { name: "宿舍世界（分叉）" }),
   ).toBeVisible();
   const derivedTimeline = page.getByLabel("调用链记录");
   await expect(derivedTimeline).toContainText("模型思维链");
@@ -559,9 +557,9 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     .click();
   await page.getByRole("button", { name: "世界管理" }).click();
 
-  await page.getByRole("button", { name: "派生新世界" }).click();
+  await page.getByRole("button", { name: "创建分叉" }).click();
   await expect(
-    page.getByRole("heading", { name: "宿舍世界（派生）" }),
+    page.getByRole("heading", { name: "宿舍世界（分叉）" }),
   ).toBeVisible();
 });
 
