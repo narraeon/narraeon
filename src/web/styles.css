@@ -3933,7 +3933,7 @@ summary:focus-visible {
   width: min(96rem, calc(100% - 2rem));
   min-height: 100dvh;
   margin: 0 auto;
-  padding: 1.25rem 0 2.5rem;
+  padding: 0.75rem 0 1.5rem;
 }
 
 .world-page-loading {
@@ -3955,8 +3955,8 @@ summary:focus-visible {
       0.5fr
     );
   align-items: center;
-  gap: 1.5rem;
-  padding: 0.5rem 0 1.25rem;
+  gap: 1rem;
+  padding: 0.25rem 0 0.75rem;
 }
 
 .world-back-button {
@@ -3973,7 +3973,7 @@ summary:focus-visible {
   margin: 0;
   overflow-wrap: anywhere;
   font-family: Georgia, "Noto Serif SC", serif;
-  font-size: clamp(2rem, 4vw, 3.35rem);
+  font-size: clamp(1.75rem, 3vw, 2.65rem);
   font-weight: 500;
   line-height: 1.08;
 }
@@ -4010,8 +4010,8 @@ summary:focus-visible {
   display: flex;
   justify-content: center;
   gap: 0.25rem;
-  margin-bottom: 1rem;
-  padding: 0.5rem;
+  margin-bottom: 0.75rem;
+  padding: 0.35rem;
   border: 1px solid var(--border);
   border-radius: 999px;
   background: rgb(4 15 13 / 88%);
@@ -4020,8 +4020,8 @@ summary:focus-visible {
 }
 
 .world-section-tabs button {
-  min-width: 8rem;
-  padding: 0.62rem 1rem;
+  min-width: 7.25rem;
+  padding: 0.5rem 0.9rem;
   border-color: transparent;
 }
 
@@ -4049,9 +4049,9 @@ summary:focus-visible {
 
 .world-play-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(17rem, 20rem);
+  grid-template-columns: minmax(0, 1fr) minmax(14rem, 17rem);
   align-items: start;
-  gap: 1rem;
+  gap: 0.75rem;
 }
 
 .story-workspace,
@@ -4069,8 +4069,9 @@ summary:focus-visible {
 
 .story-workspace {
   display: grid;
-  grid-template-rows: auto minmax(20rem, 1fr) auto;
-  min-height: calc(100dvh - 10.5rem);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  height: calc(100dvh - 10rem);
+  min-height: 35rem;
   overflow: hidden;
 }
 
@@ -4079,13 +4080,21 @@ summary:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  padding: 1.1rem 1.35rem;
+  min-height: 2.75rem;
+  padding: 0.55rem 1.25rem;
   border-bottom: 1px solid var(--border);
   background: linear-gradient(180deg, rgb(18 48 42 / 44%), transparent);
 }
 
-.story-heading h2,
-.player-view-rail > header h2,
+.story-heading h2 {
+  margin: 0;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
 .world-browser h2,
 .world-history-page h2,
 .world-manage-page h2 {
@@ -4094,8 +4103,6 @@ summary:focus-visible {
   font-weight: 500;
 }
 
-.story-heading .eyebrow,
-.player-view-rail > header .eyebrow,
 .world-browser .eyebrow,
 .world-history-page .eyebrow,
 .world-manage-page .eyebrow {
@@ -4103,12 +4110,12 @@ summary:focus-visible {
 }
 
 .session-badge {
-  padding: 0.35rem 0.7rem;
+  padding: 0.25rem 0.55rem;
   border: 1px solid rgb(239 194 117 / 38%);
   border-radius: 999px;
   color: #f5d79e;
   background: rgb(105 72 24 / 20%);
-  font-size: 0.76rem;
+  font-size: 0.68rem;
   font-weight: 750;
 }
 
@@ -4119,9 +4126,8 @@ summary:focus-visible {
 }
 
 .story-transcript {
-  min-height: 24rem;
-  max-height: calc(100dvh - 27rem);
-  padding: clamp(1.25rem, 3vw, 2.5rem);
+  min-height: 0;
+  padding: clamp(1.5rem, 3vw, 3rem);
   overflow-y: auto;
   scroll-behavior: smooth;
   scrollbar-color: rgb(158 229 209 / 32%) transparent;
@@ -4168,8 +4174,8 @@ summary:focus-visible {
 
 .narrative-list {
   display: grid;
-  gap: 1.35rem;
-  max-width: 54rem;
+  gap: 1.6rem;
+  max-width: 58rem;
   margin: 0 auto;
   padding: 0;
   list-style: none;
@@ -4180,8 +4186,8 @@ summary:focus-visible {
 }
 
 .narrative-list article {
-  max-width: min(46rem, 88%);
-  padding: 0.95rem 1.1rem;
+  max-width: min(52rem, 94%);
+  padding: 1.15rem 1.3rem;
   border: 1px solid var(--border);
   border-radius: 0.25rem 1rem 1rem;
   background: rgb(13 39 34 / 74%);
@@ -4227,15 +4233,21 @@ summary:focus-visible {
 .narrative-list article p {
   margin: 0;
   font-family: Georgia, "Noto Serif SC", serif;
-  font-size: 1.02rem;
-  line-height: 1.75;
+  font-size: clamp(1.1rem, 0.35vw + 1rem, 1.22rem);
+  line-height: 1.85;
   white-space: pre-wrap;
+}
+
+.narrative-list .player-message article p {
+  font-family: inherit;
+  font-size: 0.98rem;
+  line-height: 1.65;
 }
 
 .play-composer {
   display: grid;
   gap: 0.75rem;
-  padding: 1rem 1.25rem 1.25rem;
+  padding: 0.75rem 1.25rem 0.9rem;
   border-top: 1px solid var(--border);
   background: rgb(4 15 13 / 72%);
 }
@@ -4271,7 +4283,7 @@ summary:focus-visible {
 }
 
 .composer-field textarea {
-  min-height: 6.5rem;
+  min-height: 4.5rem;
   border-radius: 0.9rem;
   background: rgb(9 27 24 / 92%);
   line-height: 1.65;
@@ -4350,8 +4362,8 @@ summary:focus-visible {
 
 .play-call-chain {
   display: grid;
-  gap: 1rem;
-  max-width: 54rem;
+  gap: 0.75rem;
+  max-width: 58rem;
   margin: 1.35rem auto 0;
   padding-top: 1.35rem;
   border-top: 1px solid rgb(158 229 209 / 20%);
@@ -4359,26 +4371,14 @@ summary:focus-visible {
 
 .play-call-chain-heading {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
+  align-items: center;
+  min-height: 1rem;
 }
 
-.play-call-chain-heading > div {
-  display: grid;
-  gap: 0.18rem;
-}
-
-.play-call-chain-heading span,
-.play-call-chain-heading code {
+.play-call-chain-heading span {
   color: var(--muted);
-  font-size: 0.72rem;
-}
-
-.play-call-chain-heading code {
-  max-width: 45%;
-  overflow-wrap: anywhere;
-  text-align: right;
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
 }
 
 .call-chain-events {
@@ -4482,6 +4482,24 @@ summary:focus-visible {
   border-style: dashed;
 }
 
+.call-chain-assistant article {
+  padding: clamp(1.15rem, 2vw, 1.5rem);
+  border-color: rgb(158 229 209 / 30%);
+  background: linear-gradient(145deg, rgb(16 43 38 / 82%), rgb(8 25 22 / 68%));
+}
+
+.call-chain-assistant article > header {
+  opacity: 0.8;
+}
+
+.call-chain-assistant article > p {
+  margin-top: 0.7rem;
+  color: #f3f8f6;
+  font-family: Georgia, "Noto Serif SC", serif;
+  font-size: clamp(1.1rem, 0.35vw + 1rem, 1.22rem);
+  line-height: 1.85;
+}
+
 .call-chain-assistant.is-interrupted article,
 .call-chain-failure {
   border-color: rgb(255 152 137 / 38%);
@@ -4555,16 +4573,12 @@ summary:focus-visible {
   position: sticky;
   top: 4.8rem;
   max-height: calc(100dvh - 6rem);
-  padding: 1rem;
+  padding: 0.75rem;
   overflow-y: auto;
 }
 
-.player-view-rail > header {
-  padding: 0.25rem 0.25rem 0.8rem;
-}
-
 .player-view-card {
-  padding: 0.9rem;
+  padding: 0.75rem;
   border: 1px solid var(--border);
   border-radius: 0.9rem;
   background: linear-gradient(145deg, rgb(18 48 42 / 72%), rgb(7 21 19 / 35%));
@@ -4575,10 +4589,12 @@ summary:focus-visible {
 }
 
 .player-view-card h3 {
-  margin: 0 0 0.8rem;
-  font-family: Georgia, "Noto Serif SC", serif;
-  font-size: 1.05rem;
-  font-weight: 500;
+  margin: 0 0 0.55rem;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
 }
 
 .player-view-card > dl,
@@ -5088,7 +5104,7 @@ summary:focus-visible {
 
 @media (max-width: 72rem) {
   .world-play-layout {
-    grid-template-columns: minmax(0, 1fr) minmax(15rem, 17rem);
+    grid-template-columns: minmax(0, 1fr) minmax(13rem, 15rem);
   }
 
   .world-page-header {
@@ -5126,19 +5142,17 @@ summary:focus-visible {
     grid-row: 1;
   }
 
-  .player-view-rail > header {
-    display: none;
-  }
-
   .player-view-card + .player-view-card {
     margin-top: 0.5rem;
   }
 
   .story-workspace {
+    height: auto;
     min-height: 42rem;
   }
 
   .story-transcript {
+    min-height: 18rem;
     max-height: none;
   }
 

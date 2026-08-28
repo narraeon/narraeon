@@ -693,10 +693,7 @@ export function WorldPage({
               }
             >
               <header className="story-heading">
-                <div>
-                  <p className="eyebrow">STORY</p>
-                  <h2>调用链</h2>
-                </div>
+                <h2>故事</h2>
                 {playCallChain?.status === "running" ? (
                   <span className="session-badge">模型响应中</span>
                 ) : playCallChain?.status === "interrupted" ? (
@@ -788,7 +785,7 @@ export function WorldPage({
                   <span className="visually-hidden">你的行动</span>
                   <textarea
                     aria-label="你的行动"
-                    rows={4}
+                    rows={2}
                     placeholder="描述你的行动；也可以留空并追加，让 AI 沿现有上下文续写…"
                     value={playerText}
                     disabled={
@@ -832,10 +829,7 @@ export function WorldPage({
             </article>
 
             <aside className="player-view-rail" aria-label="玩家视图">
-              <header>
-                <p className="eyebrow">NOW</p>
-                <h2>此刻</h2>
-              </header>
+              <h2 className="visually-hidden">当前情景</h2>
               <ArtifactExtensionMount mount="sidebar" />
               {playerViewFallback.views.length === 0 ? (
                 playerViewFallback.coveredViewIds.size > 0 ? null : (
@@ -1269,13 +1263,10 @@ function CallChain({
   return (
     <section className="play-call-chain" aria-label="模型调用链">
       <header className="play-call-chain-heading">
-        <div>
-          <strong>模型调用链</strong>
-          <span>
-            {chain.playPreset.name} ·{" "}
-            {callChainStatusLabel(chain.status, current)}
-          </span>
-        </div>
+        <span>
+          {chain.playPreset.name} ·{" "}
+          {callChainStatusLabel(chain.status, current)}
+        </span>
       </header>
 
       <ol className="call-chain-events">

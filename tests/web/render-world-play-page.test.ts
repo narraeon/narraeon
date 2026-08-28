@@ -63,6 +63,8 @@ describe("世界游玩页面", () => {
     expect(
       await screen.findByRole("heading", { name: "宿舍世界" }),
     ).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "故事" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "调用链" })).toBeNull();
     expect(screen.getByText("我问几点训练。")).toBeTruthy();
     expect(screen.getByText("秦龙说晚上八点。")).toBeTruthy();
     expect(screen.getByText("白色运动背心")).toBeTruthy();
