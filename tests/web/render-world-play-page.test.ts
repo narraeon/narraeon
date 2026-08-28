@@ -606,7 +606,7 @@ describe("世界游玩页面", () => {
       worldId: "world-one",
       baselineHead: "genesis",
       baselineHistoryLength: 3,
-      parentHead: "genesis",
+      parentHead: "commit:1",
       events: [
         {
           id: 1,
@@ -614,7 +614,7 @@ describe("世界游玩页面", () => {
           exchangeId: "exchange-derived-player",
           text: "我示意秦龙开门。",
           context: "fresh",
-          committedHead: "genesis",
+          committedHead: "commit:1",
         },
       ],
       changedDocuments: [],
@@ -629,7 +629,7 @@ describe("世界游玩页面", () => {
         if (request.type === "play.chain.append") {
           chain = {
             ...chain,
-            parentHead: "commit:1",
+            parentHead: "commit:2",
             events: [
               ...chain.events,
               {
@@ -639,7 +639,7 @@ describe("世界游玩页面", () => {
                 status: "completed",
                 exchange: 1,
                 attempt: 1,
-                committedHead: "commit:1",
+                committedHead: "commit:2",
               },
             ],
           };
@@ -651,6 +651,17 @@ describe("世界游玩页面", () => {
 
     renderWorld(client);
     await screen.findByText("我示意秦龙开门。");
+    const copiedPlayerMessage = screen
+      .getByText("我示意秦龙开门。")
+      .closest<HTMLElement>(".call-chain-player")!;
+    expect(
+      within(copiedPlayerMessage).getByRole("button", { name: "修改" }),
+    ).toBeTruthy();
+    expect(
+      within(copiedPlayerMessage).getByRole("button", {
+        name: "从这里重新开始",
+      }),
+    ).toBeTruthy();
     expect(
       screen.getByText("宿舍门在你身后合上，秦龙等你先开口。"),
     ).toBeTruthy();
@@ -800,14 +811,8 @@ describe("世界游玩页面", () => {
     chain = {
       ...chain,
       worldId: "world-one",
-      parentHead: "genesis",
-      events: chain.events
-        .slice(0, 1)
-        .map((event) =>
-          event.kind === "player"
-            ? { ...event, committedHead: "genesis" }
-            : event,
-        ),
+      parentHead: "commit:2",
+      events: chain.events.slice(0, 1),
       changedDocuments: [],
     };
     const consumed = vi.fn();
@@ -819,7 +824,7 @@ describe("世界游玩页面", () => {
         if (request.type === "play.chain.append") {
           chain = {
             ...chain,
-            parentHead: "commit:2",
+            parentHead: "commit:4",
             events: [
               ...chain.events,
               {
@@ -828,7 +833,7 @@ describe("世界游玩页面", () => {
                 exchangeId: request.exchangeId,
                 text: request.playerText,
                 context: "append",
-                committedHead: "commit:1",
+                committedHead: "commit:3",
               },
               {
                 id: 3,
@@ -837,7 +842,7 @@ describe("世界游玩页面", () => {
                 status: "completed",
                 exchange: 2,
                 attempt: 1,
-                committedHead: "commit:2",
+                committedHead: "commit:4",
               },
             ],
           };

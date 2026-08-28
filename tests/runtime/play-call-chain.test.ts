@@ -689,6 +689,31 @@ test("全新上下文只重建模型上下文，持久保留此前调用轨迹�
   expect(branchTrace?.events).toContainEqual(
     expect.objectContaining({ kind: "tool_call", name: "context_list" }),
   );
+
+  const fullBranch = (
+    await runtime.handle({
+      type: "world.derive",
+      operationId: "derive-with-previous-fresh-context",
+      sourceWorldId: worldId,
+      sourceHead: second.parentHead,
+    })
+  ).result as { world: { worldId: string } };
+  const fullBranchTrace = (
+    await runtime.handle({
+      type: "play.chain.inspect",
+      worldId: fullBranch.world.worldId,
+    })
+  ).result as V1PlayCallChainView | null;
+  const committedHeads = (events: V1PlayCallChainView["events"]) =>
+    events
+      .filter((event) => event.kind === "player" || event.kind === "assistant")
+      .map(({ committedHead }) => committedHead);
+  expect(committedHeads(fullBranchTrace!.previousContexts[0]!.events)).toEqual(
+    committedHeads(withHistory.previousContexts[0]!.events),
+  );
+  expect(committedHeads(fullBranchTrace!.events)).toEqual(
+    committedHeads(withHistory.events),
+  );
 });
 
 test("从调用链节点派生会保留截至该节点的调用轨迹，并可在玩家节点空输入重新生成", async () => {
@@ -761,7 +786,7 @@ test("从调用链节点派生会保留截至该节点的调用轨迹，并可�
 
   expect(completedTrace).toMatchObject({
     worldId: completedBranch.world.worldId,
-    parentHead: "genesis",
+    parentHead: source.parentHead,
     status: "ready",
   });
   expect(completedTrace?.chainId).not.toBe(source.chainId);
@@ -815,6 +840,12 @@ test("从调用链节点派生会保留截至该节点的调用轨迹，并可�
     "tool_call",
     "tool_result",
   ]);
+  expect(toolTrace?.parentHead).toBe(toolResponseHead);
+  expect(
+    toolTrace?.events
+      .filter((event) => event.kind === "player" || event.kind === "assistant")
+      .map(({ committedHead }) => committedHead),
+  ).toEqual(["commit:1", "commit:2"]);
   const continuedToolHost = new ScriptedModelHost({
     binding: modelBinding(),
     steps: [{ outcome: "response", text: "秦龙把门彻底推开。" }],
@@ -846,23 +877,53 @@ test("从调用链节点派生会保留截至该节点的调用轨迹，并可�
   ).result as V1PlayCallChainView | null;
   expect(playerTrace).toMatchObject({
     worldId: playerBranch.world.worldId,
-    parentHead: "genesis",
+    parentHead: playerHead,
     status: "ready",
     events: [
       expect.objectContaining({
         kind: "player",
         text: "我示意秦龙开门。",
-        committedHead: "genesis",
+        committedHead: playerHead,
       }),
     ],
   });
   expect(playerTrace?.events).toHaveLength(1);
+  const persistedPlayerBranch = await worlds.readPlayCallChain<
+    Record<string, unknown>
+  >(playerBranch.world.worldId);
+  expect(persistedPlayerBranch).not.toHaveProperty("derivedFrom");
+  expect(persistedPlayerBranch).not.toHaveProperty("branchedBeforePlayer");
+  expect(
+    await readUtf8Tree(
+      join(root, "worlds-file-native", playerBranch.world.worldId),
+    ),
+  ).not.toContain(worldId);
+
+  await rm(join(root, "worlds-file-native", worldId), {
+    recursive: true,
+    force: true,
+  });
+  const coldWorlds = new FileNativeWorldStore(root);
+  const retainedPlayer = playerTrace!.events[0]!;
+  const branchFromCopiedAncestor = await new PlayCallChain(
+    coldWorlds,
+  ).branchBeforePlayer({
+    operationId: "branch-from-copied-player",
+    sourceWorldId: playerBranch.world.worldId,
+    sourceChainId: playerTrace!.chainId,
+    sourceEventId: retainedPlayer.id,
+    hostPresetId: "play-chain-host",
+  });
+  expect(branchFromCopiedAncestor.playCallChain.events).toEqual([]);
+  expect(
+    await coldWorlds.currentHead(branchFromCopiedAncestor.world.worldId),
+  ).toBe("genesis");
 
   const regeneratedHost = new ScriptedModelHost({
     binding: modelBinding(),
     steps: [{ outcome: "response", text: "秦龙重新考虑后，直接拉开了门。" }],
   });
-  const regenerated = await new PlayCallChain(worlds).append({
+  const regenerated = await new PlayCallChain(coldWorlds).append({
     worldId: playerBranch.world.worldId,
     chainId: playerTrace!.chainId,
     exchangeId: "regenerate-from-player",
@@ -874,7 +935,7 @@ test("从调用链节点派生会保留截至该节点的调用轨迹，并可�
     { kind: "player", text: "我示意秦龙开门。" },
   ]);
   expect(
-    (await worlds.recoverEndpoint(playerBranch.world.worldId)).history.map(
+    (await coldWorlds.recoverEndpoint(playerBranch.world.worldId)).history.map(
       ({ exactText }) => exactText,
     ),
   ).toEqual([
@@ -888,7 +949,9 @@ test("从调用链节点派生会保留截至该节点的调用轨迹，并可�
     sourceWorldId: worldId,
     sourceHead: playerHead!,
   });
-  expect(await worlds.currentHead(playerBranch.world.worldId)).toBe("commit:1");
+  expect(await coldWorlds.currentHead(playerBranch.world.worldId)).toBe(
+    "commit:2",
+  );
 });
 
 test("修改历史玩家提交会从其父端点派生，并只把修改稿提交到新世界", async () => {
@@ -944,9 +1007,14 @@ test("修改历史玩家提交会从其父端点派生，并只把修改稿提�
 
   expect(branched.playCallChain).toMatchObject({
     worldId: branched.world.worldId,
-    parentHead: "genesis",
+    parentHead: "commit:2",
     status: "ready",
   });
+  expect(
+    branched.playCallChain.events
+      .filter((event) => event.kind === "player")
+      .map(({ committedHead }) => committedHead),
+  ).toEqual(["commit:1"]);
   expect(
     branched.playCallChain.events
       .filter((event) => event.kind === "player")
@@ -1689,4 +1757,15 @@ function followupEntry(
         required: true
         maxEmits: 1
 `;
+}
+
+async function readUtf8Tree(root: string): Promise<string> {
+  const entries = await readdir(root, { withFileTypes: true });
+  const contents = await Promise.all(
+    entries.map((entry) => {
+      const path = join(root, entry.name);
+      return entry.isDirectory() ? readUtf8Tree(path) : readFile(path, "utf8");
+    }),
+  );
+  return contents.join("\n");
 }

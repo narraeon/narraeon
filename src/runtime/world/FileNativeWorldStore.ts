@@ -103,6 +103,9 @@ interface Genesis {
     exactText: string;
   }[];
   additionalMaterials: MaterialSelection[];
+}
+
+interface LegacyDerivationGenesis extends Genesis {
   derivedFrom?: { worldId: string; head: string };
   hostPresetId?: string;
 }
@@ -182,6 +185,15 @@ export interface FileNativeRecoveredEndpoint {
 export type FileNativeDerivationOutcome =
   | { outcome: "derived"; world: FileNativeWorldSummary }
   | { outcome: "not_derived" | "in_progress" };
+
+interface FileNativeWorldDerivationInput {
+  operationId: string;
+  sourceWorldId: string;
+  sourceHead: string;
+  hostPresetId: string;
+  /** Additional idempotency identity for a higher-level branch request. */
+  requestDiscriminator?: string;
+}
 
 export class FileNativeWorldStore {
   readonly #worldsRoot: string;
@@ -870,30 +882,32 @@ export class FileNativeWorldStore {
     }
   }
 
-  async deriveWorld(input: {
-    operationId: string;
-    sourceWorldId: string;
-    sourceHead: string;
-    hostPresetId: string;
-  }): Promise<{ outcome: "derived"; world: FileNativeWorldSummary }> {
+  async deriveWorld(
+    input: FileNativeWorldDerivationInput,
+  ): Promise<{ outcome: "derived"; world: FileNativeWorldSummary }> {
     assertIdentity(input.operationId, "派生 operation ID");
     assertIdentity(input.sourceWorldId, "来源世界 ID");
     assertIdentity(input.hostPresetId, "主持预设 ID");
+    if (input.requestDiscriminator !== undefined)
+      assertIdentity(input.requestDiscriminator, "派生请求区分符");
     if (
       input.sourceHead !== "genesis" &&
       !/^commit:[1-9][0-9]*$/u.test(input.sourceHead)
     )
       throw new TypeError("来源端点无效");
     const operationPath = this.#derivationOperationPath(input.operationId);
+    const requestFingerprint = derivationRequestFingerprint(input);
+    const worldId = `world-${operationDigest(`derive:${input.operationId}`).slice(0, 24)}`;
+    const finalRoot = join(this.#worldsRoot, worldId);
     const previous = await readOptionalJson<Publication>(operationPath);
     if (previous !== null) {
-      const genesis = await readJson<Genesis>(
-        join(this.#worldsRoot, previous.worldId, "runtime", "genesis.json"),
-      );
       if (
-        genesis.derivedFrom?.worldId !== input.sourceWorldId ||
-        genesis.derivedFrom.head !== input.sourceHead ||
-        genesis.hostPresetId !== input.hostPresetId
+        !(await derivationPublicationMatches(
+          join(this.#worldsRoot, previous.worldId),
+          previous,
+          input,
+          requestFingerprint,
+        ))
       )
         throw new FileNativeWorldCreationError(
           "operation_conflict",
@@ -904,48 +918,69 @@ export class FileNativeWorldStore {
         world: await this.#currentSummary(previous),
       };
     }
+
+    const alreadyPublished = await readOptionalJson<Publication>(
+      join(finalRoot, publicationFile),
+    );
+    if (alreadyPublished !== null) {
+      if (
+        !(await derivationPublicationMatches(
+          finalRoot,
+          alreadyPublished,
+          input,
+          requestFingerprint,
+        ))
+      )
+        throw new FileNativeWorldCreationError(
+          "operation_conflict",
+          "已发布派生世界与 operation 载荷不一致",
+        );
+      await mkdir(this.#operationsRoot, { recursive: true, mode: 0o700 });
+      await publishJson(operationPath, alreadyPublished);
+      return {
+        outcome: "derived",
+        world: await this.#currentSummary(alreadyPublished),
+      };
+    }
+
     const sourceRoot = join(this.#worldsRoot, input.sourceWorldId);
     const sourcePublication = await readPublicationAt(sourceRoot);
     const sourceSummary = await readWorldSummaryAt(
       sourceRoot,
       sourcePublication,
     );
-    const recovered = await this.recoverEndpoint(
-      input.sourceWorldId,
-      input.sourceHead,
-    );
-    const control = await readTree(join(sourceRoot, "control"));
-    const worldId = `world-${operationDigest(`derive:${input.operationId}`).slice(0, 24)}`;
+    const [sourceGenesis, selected, sourceAuthority, control] =
+      await Promise.all([
+        this.recoverEndpoint(input.sourceWorldId, "genesis"),
+        this.recoverEndpoint(input.sourceWorldId, input.sourceHead),
+        readAcceptedAuthority(sourceRoot),
+        readTree(join(sourceRoot, "control")),
+      ]);
+    const cloned = cloneAuthorityPrefix({
+      sourceWorldId: input.sourceWorldId,
+      sourceHead: input.sourceHead,
+      targetWorldId: worldId,
+      sourceGenesis,
+      sourceAuthority,
+    });
     const staging = join(
       this.#worldsRoot,
       `.staging-${worldId}-${randomUUID()}`,
     );
-    const finalRoot = join(this.#worldsRoot, worldId);
     await mkdir(this.#worldsRoot, { recursive: true, mode: 0o700 });
     await mkdir(this.#operationsRoot, { recursive: true, mode: 0o700 });
-    const messageIds = new Map(
-      recovered.history.map(({ messageId }, index) => [
-        messageId,
-        `${worldId}.message.${index + 1}`,
-      ]),
-    );
-    const rewrittenHistory = recovered.history.map((message) => ({
-      ...message,
-      messageId: messageIds.get(message.messageId)!,
-    }));
-    const materials = rewriteMaterials(
-      recovered.additionalMaterials,
-      messageIds,
-      worldId,
-    );
     try {
-      await writeSurface(staging, "state", recovered.state);
+      await writeSurface(staging, "state", sourceGenesis.state);
       await writeSurface(staging, "control", control);
       await mkdir(join(staging, "history"), { recursive: true });
       await mkdir(join(staging, "runtime"), { recursive: true });
-      for (const [index, message] of rewrittenHistory.entries())
+      for (const [index, message] of cloned.genesisHistory.entries())
         await writeIdempotentText(
-          join(staging, "history", historyFileName(index + 1, message)),
+          join(
+            staging,
+            "history",
+            `00000000-${historyFileName(index + 1, message)}`,
+          ),
           message.exactText,
         );
       const genesis: Genesis = {
@@ -954,34 +989,54 @@ export class FileNativeWorldStore {
         worldId,
         operationId: input.operationId,
         parentEndpoint: "genesis",
-        state: immutableFiles(recovered.state),
+        state: immutableFiles(sourceGenesis.state),
         control: immutableFiles(control),
-        history: rewrittenHistory,
-        additionalMaterials: materials,
-        derivedFrom: { worldId: input.sourceWorldId, head: input.sourceHead },
-        hostPresetId: input.hostPresetId,
+        history: cloned.genesisHistory,
+        additionalMaterials: cloned.genesisMaterials,
       };
       await writeJson(join(staging, "runtime", "genesis.json"), genesis);
-      await publishJson(join(staging, "runtime", "materialized-head.json"), {
+      await writeJson(join(staging, "runtime", "additional-materials.json"), {
         head: "genesis",
+        items: cloned.genesisMaterials,
       });
-      await publishJson(join(staging, "runtime", "additional-materials.json"), {
-        head: "genesis",
-        items: materials,
+      for (const [index, commit] of cloned.commits.entries()) {
+        await publishImmutableJson(
+          join(
+            staging,
+            "runtime",
+            "play-commits",
+            `${createHash("sha256").update(JSON.stringify(commit)).digest("hex")}.json`,
+          ),
+          commit,
+        );
+        await materializePlayCommit(staging, index + 1, {
+          historyAppend: commit.historyAppend,
+          nextMaterials: commit.nextAdditionalMaterials,
+          stateChanges: commit.stateChanges,
+        });
+      }
+      if (cloned.commits.length > 0)
+        await writeJson(join(staging, "runtime", "play-authority.json"), {
+          schemaVersion: 1,
+          head: input.sourceHead,
+          commits: cloned.commits,
+        } satisfies FileNativePlayAuthority);
+      await writeJson(join(staging, "runtime", "materialized-head.json"), {
+        head: input.sourceHead,
       });
-      await publishJson(join(staging, "runtime", "derived-history.json"), {
-        messages: rewrittenHistory,
-      });
+      const materializedState = await readTree(join(staging, "state"));
+      if (!isDeepStrictEqual(materializedState, selected.state))
+        throw new FileNativeWorldCreationError(
+          "world_corrupt",
+          "派生 Authority 前缀无法重建来源端点状态",
+        );
       const publication: Publication = {
         schemaVersion: 1,
         worldId,
         title: derivedWorldName(sourceSummary.title),
         parentEndpoint: "genesis",
         operationId: input.operationId,
-        sourceFingerprint: fingerprint([
-          ...recovered.state,
-          ...control.map((file) => ({ ...file, path: `control/${file.path}` })),
-        ]),
+        sourceFingerprint: requestFingerprint,
       };
       await writeJson(join(staging, publicationFile), publication);
       await durableTree(staging);
@@ -999,13 +1054,13 @@ export class FileNativeWorldStore {
         join(finalRoot, publicationFile),
       );
       if (published !== null) {
-        const genesis = await readJson<Genesis>(
-          join(finalRoot, "runtime", "genesis.json"),
-        );
         if (
-          genesis.derivedFrom?.worldId !== input.sourceWorldId ||
-          genesis.derivedFrom.head !== input.sourceHead ||
-          genesis.hostPresetId !== input.hostPresetId
+          !(await derivationPublicationMatches(
+            finalRoot,
+            published,
+            input,
+            requestFingerprint,
+          ))
         )
           throw new FileNativeWorldCreationError(
             "operation_conflict",
@@ -2361,10 +2416,86 @@ function historyFileName(
   return `${String(index).padStart(2, "0")}-${message.role}-${operationDigest(message.messageId).slice(0, 12)}.md`;
 }
 
+function cloneAuthorityPrefix(input: {
+  sourceWorldId: string;
+  sourceHead: string;
+  targetWorldId: string;
+  sourceGenesis: FileNativeRecoveredEndpoint;
+  sourceAuthority: FileNativePlayAuthority | null;
+}): {
+  genesisHistory: Genesis["history"];
+  genesisMaterials: MaterialSelection[];
+  commits: FileNativePlayCommit[];
+} {
+  const end =
+    input.sourceHead === "genesis"
+      ? 0
+      : (input.sourceAuthority?.commits.findIndex(
+          ({ head }) => head === input.sourceHead,
+        ) ?? -1) + 1;
+  if (input.sourceHead !== "genesis" && end === 0)
+    throw new FileNativeWorldCreationError(
+      "world_corrupt",
+      `无法复制不存在的来源 Authority 端点：${input.sourceHead}`,
+    );
+  const sourceCommits = input.sourceAuthority?.commits.slice(0, end) ?? [];
+  const messageIds = new Map<string, string>();
+  const bindMessageId = (source: string, target: string) => {
+    if (messageIds.has(source))
+      throw new FileNativeWorldCreationError(
+        "world_corrupt",
+        `来源 Authority 存在重复历史消息身份：${source}`,
+      );
+    messageIds.set(source, target);
+  };
+  for (const [index, message] of input.sourceGenesis.history.entries())
+    bindMessageId(
+      message.messageId,
+      index === 0 && message.role === "narrator"
+        ? `${input.targetWorldId}.message.genesis.narrator`
+        : `${input.targetWorldId}.message.genesis.${index + 1}.${message.role}`,
+    );
+  for (const [commitIndex, commit] of sourceCommits.entries())
+    for (const [messageIndex, message] of commit.historyAppend.entries())
+      bindMessageId(
+        message.messageId,
+        `${input.targetWorldId}.message.${commitIndex + 1}.${messageIndex + 1}.${message.role}`,
+      );
+
+  const rewriteHistory = (
+    history: readonly Genesis["history"][number][],
+  ): Genesis["history"] =>
+    history.map((message) => ({
+      ...structuredClone(message),
+      messageId: messageIds.get(message.messageId)!,
+    }));
+  return {
+    genesisHistory: rewriteHistory(input.sourceGenesis.history),
+    genesisMaterials: rewriteMaterials(
+      input.sourceGenesis.additionalMaterials,
+      messageIds,
+      input.sourceWorldId,
+      input.targetWorldId,
+    ),
+    commits: sourceCommits.map((commit) => ({
+      ...structuredClone(commit),
+      operationId: `clone-${operationDigest(`${input.targetWorldId}\0${commit.head}`).slice(0, 56)}`,
+      historyAppend: rewriteHistory(commit.historyAppend),
+      nextAdditionalMaterials: rewriteMaterials(
+        commit.nextAdditionalMaterials,
+        messageIds,
+        input.sourceWorldId,
+        input.targetWorldId,
+      ),
+    })),
+  };
+}
+
 function rewriteMaterials(
   materials: readonly MaterialSelection[],
   messageIds: ReadonlyMap<string, string>,
-  worldId: string,
+  sourceWorldId: string,
+  targetWorldId: string,
 ): MaterialSelection[] {
   return materials.map((material) => {
     if (material.kind === "history_message") {
@@ -2376,8 +2507,15 @@ function rewriteMaterials(
         );
       return { ...material, message };
     }
-    if (material.kind === "history_commit")
-      return { ...material, commit: `${worldId}.${material.commit}` };
+    if (material.kind === "history_commit") {
+      const sourcePrefix = `${sourceWorldId}.`;
+      return {
+        ...material,
+        commit: material.commit.startsWith(sourcePrefix)
+          ? `${targetWorldId}.${material.commit.slice(sourcePrefix.length)}`
+          : material.commit,
+      };
+    }
     return structuredClone(material);
   });
 }
@@ -2519,6 +2657,43 @@ function derivedWorldName(sourceName: string): string {
   return `${Array.from(sourceName)
     .slice(0, 160 - Array.from(suffix).length)
     .join("")}${suffix}`;
+}
+
+function derivationRequestFingerprint(
+  input: FileNativeWorldDerivationInput,
+): string {
+  return sha256(
+    JSON.stringify({
+      schema: "narraeon.file-native-derivation-request/v2",
+      sourceWorldId: input.sourceWorldId,
+      sourceHead: input.sourceHead,
+      hostPresetId: input.hostPresetId,
+      requestDiscriminator: input.requestDiscriminator ?? null,
+    }),
+  );
+}
+
+async function derivationPublicationMatches(
+  worldRoot: string,
+  publication: Publication,
+  input: FileNativeWorldDerivationInput,
+  requestFingerprint: string,
+): Promise<boolean> {
+  if (publication.operationId !== input.operationId) return false;
+  if (publication.sourceFingerprint === requestFingerprint) return true;
+
+  // V1 briefly persisted raw provenance inside genesis. It remains readable
+  // only so a previously published operation can finish an idempotent retry;
+  // newly derived worlds never write or consult this relationship.
+  const legacy = await readOptionalJson<LegacyDerivationGenesis>(
+    join(worldRoot, "runtime", "genesis.json"),
+  );
+  return (
+    legacy?.derivedFrom?.worldId === input.sourceWorldId &&
+    legacy.derivedFrom.head === input.sourceHead &&
+    legacy.hostPresetId === input.hostPresetId &&
+    input.requestDiscriminator === undefined
+  );
 }
 
 function isWorldLocalMetadata(value: unknown): value is WorldLocalMetadata {

@@ -400,7 +400,6 @@ export class PlayCallChain {
       input.sourceHead,
     )!;
     return this.#forkSelectionToDerivedWorld({
-      sourceWorldId: input.sourceWorldId,
       sourceContexts,
       selectedContextIndex,
       sourceEvents,
@@ -479,9 +478,13 @@ export class PlayCallChain {
       sourceWorldId: input.sourceWorldId,
       sourceHead,
       hostPresetId: input.hostPresetId,
+      requestDiscriminator: `branch-${createHash("sha256")
+        .update(
+          `${input.sourceWorldId}\0${input.sourceChainId}\0${input.sourceEventId}`,
+        )
+        .digest("hex")}`,
     });
     const playCallChain = await this.#forkSelectionToDerivedWorld({
-      sourceWorldId: input.sourceWorldId,
       sourceContexts,
       selectedContextIndex,
       sourceEvents: structuredClone(
@@ -490,66 +493,42 @@ export class PlayCallChain {
       sourceHead,
       targetWorldId: result.world.worldId,
       branchIdentity: `before-player:${input.sourceChainId}:${input.sourceEventId}:${sourceHead}`,
-      branchedBeforePlayer: {
-        worldId: input.sourceWorldId,
-        chainId: input.sourceChainId,
-        eventId: input.sourceEventId,
-      },
     });
     return { ...result, playCallChain };
   }
 
   async #forkSelectionToDerivedWorld(input: {
-    sourceWorldId: string;
     sourceContexts: PersistedPlayCallChainContext[];
     selectedContextIndex: number;
     sourceEvents: V1PlayCallChainEvent[];
     sourceHead: string;
     targetWorldId: string;
     branchIdentity: string;
-    branchedBeforePlayer?: {
-      worldId: string;
-      chainId: string;
-      eventId: number;
-    };
   }): Promise<V1PlayCallChainView> {
     const existing = await this.#readPersisted(input.targetWorldId);
-    if (existing !== null) {
-      if (
-        input.branchedBeforePlayer !== undefined &&
-        !samePlayerBranch(
-          existing.branchedBeforePlayer,
-          input.branchedBeforePlayer,
-        )
-      )
-        throw new PlayCallChainError("派生世界已经绑定另一条历史玩家提交。");
-      return projectView(existing);
-    }
+    if (existing !== null) return projectView(existing);
 
     const sourceContext = input.sourceContexts[input.selectedContextIndex]!;
-    if ((await this.#worlds.currentHead(input.targetWorldId)) !== "genesis")
-      throw new PlayCallChainError("派生世界已经推进，不能再补写来源调用链。");
+    if (
+      (await this.#worlds.currentHead(input.targetWorldId)) !== input.sourceHead
+    )
+      throw new PlayCallChainError(
+        "派生世界 Authority 与所选历史端点不一致，不能写入调用链。",
+      );
 
     const [baseline, selected] = await Promise.all([
       this.#worlds.recoverEndpoint(
-        input.sourceWorldId,
+        input.targetWorldId,
         sourceContext.baselineHead,
       ),
-      this.#worlds.recoverEndpoint(input.sourceWorldId, input.sourceHead),
+      this.#worlds.recoverEndpoint(input.targetWorldId, input.sourceHead),
     ]);
     const transcript = transcriptThroughEvents(
       sourceContext.transcript,
       input.sourceEvents,
     );
     const completedKeys = completedToolKeys(input.sourceEvents);
-    const events = input.sourceEvents.map((event) => {
-      const copy = structuredClone(event);
-      if (copy.kind !== "player" && copy.kind !== "assistant") return copy;
-      if (copy.committedHead === input.sourceHead)
-        copy.committedHead = "genesis";
-      else delete copy.committedHead;
-      return copy;
-    });
+    const events = structuredClone(input.sourceEvents);
     const derivedBinding = await this.#worlds.bindPlayCallChain(
       input.targetWorldId,
     );
@@ -558,7 +537,6 @@ export class PlayCallChain {
       sourceContext,
       input.sourceEvents,
     );
-    const authorizationEventId = Math.max(0, ...events.map(({ id }) => id));
     const now = Date.now();
     const derived: PersistedPlayCallChain = {
       schemaVersion: 1,
@@ -571,22 +549,20 @@ export class PlayCallChain {
       worldId: input.targetWorldId,
       previousContexts: input.sourceContexts
         .slice(0, input.selectedContextIndex)
-        .map((context) => historicalContextForDerivedWorld(context)),
-      baselineHead: "genesis",
+        .map((context) => independentContextCopy(context)),
+      baselineHead: sourceContext.baselineHead,
       baselineHistoryLength:
         sourceContext.baselineHistoryLength ?? baseline.history.length,
-      parentHead: "genesis",
-      derivedFrom: {
-        worldId: input.sourceWorldId,
-        chainId: sourceContext.chainId,
-        head: input.sourceHead,
-      },
-      ...(input.branchedBeforePlayer === undefined
+      parentHead: input.sourceHead,
+      playPreset: structuredClone(sourceContext.playPreset),
+      ...(sourceContext.followups === undefined
+        ? {}
+        : { followups: structuredClone(sourceContext.followups) }),
+      ...(sourceContext.playPresetScriptsEnabled === undefined
         ? {}
         : {
-            branchedBeforePlayer: structuredClone(input.branchedBeforePlayer),
+            playPresetScriptsEnabled: sourceContext.playPresetScriptsEnabled,
           }),
-      playPreset: structuredClone(sourceContext.playPreset),
       status: "ready",
       canRetry: false,
       bootstrap: structuredClone(sourceContext.bootstrap),
@@ -596,18 +572,17 @@ export class PlayCallChain {
       completedTools: sourceContext.completedTools
         .filter(({ key }) => completedKeys.has(key))
         .map((item) => structuredClone(item)),
-      documentAuthorizationCheckpoints: [
-        {
-          afterEventId: authorizationEventId,
-          authorization: derivedDocuments.authorizationCheckpoint(),
-        },
-      ],
+      documentAuthorizationCheckpoints: authorizationCheckpointsThroughEvents(
+        sourceContext,
+        events,
+        derivedDocuments.authorizationCheckpoint(),
+      ),
       changedDocuments: changedDocumentsAtHead(
         sourceContext.changedDocuments,
         baseline.state,
         selected.state,
       ),
-      nextMaterials: [],
+      nextMaterials: structuredClone(derivedBinding.additionalMaterials),
       nextEventId: Math.max(0, ...events.map(({ id }) => id)) + 1,
       exchange: Math.max(
         0,
@@ -1386,14 +1361,33 @@ function persistedContexts(
   ];
 }
 
-function historicalContextForDerivedWorld(
+function independentContextCopy(
   source: PersistedPlayCallChainContext,
 ): PersistedPlayCallChainContext {
   const context = structuredClone(source);
-  for (const event of context.events)
-    if (event.kind === "player" || event.kind === "assistant")
-      delete event.committedHead;
+  delete context.derivedFrom;
+  delete context.branchedBeforePlayer;
   return context;
+}
+
+function authorizationCheckpointsThroughEvents(
+  context: PersistedPlayCallChainContext,
+  events: readonly V1PlayCallChainEvent[],
+  fallback: PlayDocumentAuthorizationCheckpoint,
+): PersistedDocumentAuthorizationCheckpoint[] {
+  const eventIds = new Set(events.map(({ id }) => id));
+  const selected = (context.documentAuthorizationCheckpoints ?? [])
+    .filter(
+      ({ afterEventId }) => afterEventId === 0 || eventIds.has(afterEventId),
+    )
+    .map((checkpoint) => structuredClone(checkpoint));
+  if (selected.length > 0) return selected;
+  return [
+    {
+      afterEventId: Math.max(0, ...events.map(({ id }) => id)),
+      authorization: structuredClone(fallback),
+    },
+  ];
 }
 
 function projectContext(
@@ -1534,17 +1528,6 @@ function derivedChainId(
     .update(`${sourceChainId}\0${branchIdentity}\0${targetWorldId}`)
     .digest("hex")
     .slice(0, 40)}`;
-}
-
-function samePlayerBranch(
-  left: { worldId: string; chainId: string; eventId: number } | undefined,
-  right: { worldId: string; chainId: string; eventId: number },
-): boolean {
-  return (
-    left?.worldId === right.worldId &&
-    left.chainId === right.chainId &&
-    left.eventId === right.eventId
-  );
 }
 
 function historyEntries(

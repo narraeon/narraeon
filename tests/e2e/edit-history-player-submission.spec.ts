@@ -133,6 +133,15 @@ test("修改旧玩家提交会截断新分支并保留来源世界", async ({ pa
   await expect(derivedTimeline).toContainText(
     "秦龙答应七点四十五就在楼下等你。",
   );
+  const copiedPlayer = page
+    .locator(".call-chain-player")
+    .filter({ hasText: "我问秦龙几点集合。" });
+  await expect(
+    copiedPlayer.getByRole("button", { name: "修改" }),
+  ).toBeVisible();
+  await expect(
+    copiedPlayer.getByRole("button", { name: "从这里重新开始" }),
+  ).toBeVisible();
   expect(providerRequests).toHaveLength(3);
   expect(providerRequests[2]).toContain("那我们提前十五分钟集合。");
   expect(providerRequests[2]).not.toContain("那我提前五分钟下楼。");

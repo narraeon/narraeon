@@ -132,7 +132,7 @@ test("提交边界把无效候选归类为候选校验失败，而不是权威�
   ).resolves.toMatchObject({ head: "genesis" });
 });
 
-test("历史端点派生为物理闭包，保留文档身份并重写历史材料引用", async () => {
+test("历史端点派生会复制完整 Authority 前缀，并在来源删除后独立恢复与继续提交", async () => {
   const fixture = await world();
   const before = initialSituation();
   const first = before.replace("安静", "第一段状态");
@@ -165,6 +165,14 @@ test("历史端点派生为物理闭包，保留文档身份并重写历史材�
     stateChanges: [change(first, second)],
   });
   await fixture.store.renameWorld(fixture.worldId, "雾港第一夜");
+  const sourceGenesis = await fixture.store.recoverEndpoint(
+    fixture.worldId,
+    "genesis",
+  );
+  const sourceFirst = await fixture.store.recoverEndpoint(
+    fixture.worldId,
+    "commit:1",
+  );
 
   const derived = await fixture.store.deriveWorld({
     operationId: "derive-1",
@@ -173,30 +181,117 @@ test("历史端点派生为物理闭包，保留文档身份并重写历史材�
     hostPresetId: "host-current",
   });
   expect(derived.world.title).toBe("雾港第一夜（派生）");
-  const endpoint = await fixture.store.recoverEndpoint(derived.world.worldId);
-  expect(endpoint.head).toBe("genesis");
-  expect(endpoint.state[0]?.contents).toContain("第一段状态");
-  expect(endpoint.state[0]?.contents).not.toContain("第二段状态");
-  expect(endpoint.state[0]?.contents).toContain("id: situation.current");
-  expect(endpoint.history.map(({ exactText }) => exactText)).toEqual([
-    "房间安静下来，眼前的局面正等你回应。\n",
-    "第一句",
-    "第一答",
-  ]);
-  expect(endpoint.additionalMaterials).toEqual([
+  const derivedWorldId = derived.world.worldId;
+  expect(await fixture.store.currentHead(derivedWorldId)).toBe("commit:1");
+  expect(
+    (await fixture.store.readAuthorityHistory(derivedWorldId)).commits,
+  ).toMatchObject([
     {
-      kind: "history_message",
-      message: `${derived.world.worldId}.message.2`,
+      parentHead: "genesis",
+      head: "commit:1",
+      historyAppend: [
+        {
+          messageId: `${derivedWorldId}.message.1.1.player`,
+          role: "player",
+          exactText: "第一句",
+        },
+        {
+          messageId: `${derivedWorldId}.message.1.2.narrator`,
+          role: "narrator",
+          exactText: "第一答",
+        },
+      ],
     },
   ]);
+  expect(
+    (await fixture.store.readAuthorityHistory(derivedWorldId)).commits[0]
+      ?.operationId,
+  ).not.toBe("play-1");
+
+  const derivedGenesis = await fixture.store.recoverEndpoint(
+    derivedWorldId,
+    "genesis",
+  );
+  const derivedFirst = await fixture.store.recoverEndpoint(
+    derivedWorldId,
+    "commit:1",
+  );
+  expect(endpointSemantics(derivedGenesis)).toEqual(
+    endpointSemantics(sourceGenesis),
+  );
+  expect(endpointSemantics(derivedFirst)).toEqual(
+    endpointSemantics(sourceFirst),
+  );
+  expect(derivedFirst.state[0]?.contents).not.toContain("第二段状态");
+  expect(derivedFirst.additionalMaterials).toEqual([
+    {
+      kind: "history_message",
+      message: `${derivedWorldId}.message.1.1.player`,
+    },
+  ]);
+  const derivedRuntime = await fixture.store.readSurface(
+    derivedWorldId,
+    "runtime",
+  );
+  expect(derivedRuntime).not.toHaveProperty("derivedFrom");
+  expect(derivedRuntime).not.toHaveProperty("hostPresetId");
+  expect(JSON.stringify(derivedRuntime)).not.toContain(fixture.worldId);
 
   await rm(join(fixture.root, "worlds-file-native", fixture.worldId), {
     recursive: true,
     force: true,
   });
+  const coldStore = new FileNativeWorldStore(fixture.root);
   await expect(
-    fixture.store.recoverEndpoint(derived.world.worldId),
-  ).resolves.toEqual(endpoint);
+    coldStore.deriveWorld({
+      operationId: "derive-1",
+      sourceWorldId: fixture.worldId,
+      sourceHead: "commit:1",
+      hostPresetId: "host-current",
+    }),
+  ).resolves.toEqual(derived);
+  await expect(
+    coldStore.deriveWorld({
+      operationId: "derive-1",
+      sourceWorldId: fixture.worldId,
+      sourceHead: "genesis",
+      hostPresetId: "host-current",
+    }),
+  ).rejects.toMatchObject({ code: "operation_conflict" });
+  await expect(
+    coldStore.recoverEndpoint(derivedWorldId, "genesis"),
+  ).resolves.toEqual(derivedGenesis);
+  await expect(
+    coldStore.recoverEndpoint(derivedWorldId, "commit:1"),
+  ).resolves.toEqual(derivedFirst);
+
+  const child = await coldStore.deriveWorld({
+    operationId: "derive-child",
+    sourceWorldId: derivedWorldId,
+    sourceHead: "commit:1",
+    hostPresetId: "host-current",
+  });
+  expect(await coldStore.currentHead(child.world.worldId)).toBe("commit:1");
+
+  const targetSecond = first.replace("第一段状态", "派生世界第二段状态");
+  await coldStore.commitPlayStep({
+    operationId: "derived-play-2",
+    worldId: derivedWorldId,
+    parentHead: "commit:1",
+    historyAppend: [
+      { role: "player", exactText: "派生世界第二句" },
+      { role: "narrator", exactText: "派生世界第二答" },
+    ],
+    nextMaterials: [],
+    stateChanges: [change(first, targetSecond)],
+  });
+  expect(await coldStore.currentHead(derivedWorldId)).toBe("commit:2");
+  expect(
+    (await coldStore.recoverEndpoint(derivedWorldId, "commit:1")).history,
+  ).toEqual(derivedFirst.history);
+  expect(
+    (await coldStore.recoverEndpoint(derivedWorldId)).state[0]?.contents,
+  ).toContain("派生世界第二段状态");
 });
 
 test.runIf(process.platform === "linux")(
@@ -285,6 +380,21 @@ function change(before: string, after: string) {
 
 function hash(value: string) {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
+}
+
+function endpointSemantics(endpoint: {
+  head: string;
+  state: { path: string; contents: string }[];
+  history: { role: "player" | "narrator"; exactText: string }[];
+}) {
+  return {
+    head: endpoint.head,
+    state: endpoint.state,
+    history: endpoint.history.map(({ role, exactText }) => ({
+      role,
+      exactText,
+    })),
+  };
 }
 
 async function crashWorker(edge: string) {
