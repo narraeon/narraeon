@@ -847,22 +847,27 @@ export class PlayCallChain {
           if (stateChanges.length > 0) {
             session.documents.acceptCommittedState();
             mergeChangedDocuments(session, stateChanges);
-            for (const item of prepared) {
-              if (
-                item.result.ok &&
-                (item.call.name === "world_patch" ||
-                  item.call.name === "world_create")
-              ) {
-                const suffix = `\n\n# Runtime 写入\n\n本次响应中的世界变化已写入端点 ${committed.head}。`;
-                item.result.markdown += suffix;
-                item.event.markdown += suffix;
-                item.transcript.markdown += suffix;
-                const completed = workingTools.get(item.key);
-                if (completed !== undefined)
-                  completed.result = structuredClone(item.result);
-              }
-            }
           }
+        }
+
+        const committedWriteRefs = new Set(
+          stateChanges.map(({ stableShortRef }) => stableShortRef),
+        );
+        for (const item of prepared) {
+          const candidateWrite = item.result.candidateWrite;
+          if (!item.result.ok || candidateWrite === undefined) continue;
+          const markdown =
+            candidateWrite.changed &&
+            committedWriteRefs.has(candidateWrite.shortRef)
+              ? `@${candidateWrite.shortRef} 写入成功`
+              : `@${candidateWrite.shortRef} 无变化`;
+          item.result.markdown = markdown;
+          delete item.result.candidateWrite;
+          item.event.markdown = markdown;
+          item.transcript.markdown = markdown;
+          const completed = workingTools.get(item.key);
+          if (completed !== undefined)
+            completed.result = structuredClone(item.result);
         }
 
         if (calls.length > 0 || visibleText)

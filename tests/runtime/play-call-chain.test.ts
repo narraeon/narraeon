@@ -122,9 +122,7 @@ test("模型自行交替文本与工具，每个完成响应立即推进世界�
       { kind: "tool_result" }
     > => event.kind === "tool_result" && event.callId === "patch-door",
   );
-  expect(patchResult?.markdown).toBe(
-    "# world_patch 成功\n\n文档已发生变化。\n\n# Runtime 写入\n\n本次响应中的世界变化已写入端点 commit:2。",
-  );
+  expect(patchResult?.markdown).toBe("@current-situation 写入成功");
   expect(patchResult?.markdown).not.toContain("秦龙守在宿舍门边。");
   expect(patchResult?.markdown).not.toContain("秦龙已经把宿舍门打开。");
   expect(modelHost.requests[1]?.appended.at(-1)).toEqual({
@@ -255,7 +253,7 @@ test("world_patch no-op 保留匹配的紧凑工具结果且不推进世界", as
     > =>
       event.kind === "tool_result" && event.callId === "patch-same-situation",
   );
-  expect(patchResult?.markdown).toBe("# world_patch 成功\n\n文档未发生变化。");
+  expect(patchResult?.markdown).toBe("@current-situation 无变化");
   expect(modelHost.requests[1]?.appended.at(-1)).toEqual({
     kind: "tool",
     toolCallId: "patch-same-situation",
@@ -305,6 +303,11 @@ test("冷启动恢复 world_create 授予的写权限，后续无需重新读取
   expect(interrupted).toMatchObject({
     status: "interrupted",
     parentHead: "commit:2",
+  });
+  expect(interruptedHost.requests[1]?.appended.at(-1)).toEqual({
+    kind: "tool",
+    toolCallId: "create-cold-character",
+    markdown: "@cold-character 写入成功",
   });
 
   const recoveredHost = new ScriptedModelHost({

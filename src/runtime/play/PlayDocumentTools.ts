@@ -34,6 +34,11 @@ import {
 
 export interface PlayDocumentToolResult extends ContextToolResult {
   nextMaterials?: MaterialSelection[];
+  /** Internal receipt settled by PlayCallChain only after Authority commits. */
+  candidateWrite?: {
+    shortRef: string;
+    changed: boolean;
+  };
 }
 
 /**
@@ -470,7 +475,8 @@ function applyPlayCandidatePatch(
         worldDocumentRevisionFailureMessage(revised.diagnostics),
         "candidate",
       );
-    const receipt = formatToolRevisionReceipt(revised.changes);
+    const changed = revised.changes.length > 0;
+    const receipt = formatToolRevisionReceipt(target.shortRef, revised.changes);
     const previousSnapshot = candidate.snapshot;
     acceptWorldStateRevision(candidate, revised);
     candidate.suppliedBytes += suppliedBytes;
@@ -488,6 +494,7 @@ function applyPlayCandidatePatch(
     return {
       ok: true,
       markdown: receipt,
+      candidateWrite: { shortRef: target.shortRef, changed },
     };
   } catch (error: unknown) {
     if (error instanceof PlayDocumentToolFailure)
@@ -524,12 +531,12 @@ function editsAreAuthorized(
 }
 
 function formatToolRevisionReceipt(
+  shortRef: string,
   changes: readonly WorldDocumentRevisionChange[],
 ): string {
-  if (changes.length === 0) return "# world_patch 成功\n\n文档未发生变化。";
-  if (changes.length !== 1)
+  if (changes.length > 1)
     throw new Error("world_patch revision 必须只影响目标文档");
-  return "# world_patch 成功\n\n文档已发生变化。";
+  return changes.length === 1 ? `@${shortRef} 等待写入` : `@${shortRef} 无变化`;
 }
 
 function nextAvailableStatePath(
@@ -665,7 +672,8 @@ function applyPlayCandidateCreate(
     candidate.suppliedBytes += suppliedBytes;
     return {
       ok: true,
-      markdown: `# 已创建候选文档\n\n- 名称：${String(args.title)}\n- 引用：@${created.shortRef}\n- codec：${String(args.codec).toUpperCase()}\n\n后续工具调用请使用 \`@${created.shortRef}\`。该文档仍是未提交候选。`,
+      markdown: `@${created.shortRef} 等待写入`,
+      candidateWrite: { shortRef: created.shortRef, changed: true },
     };
   } catch (error: unknown) {
     if (error instanceof PlayDocumentToolFailure)
