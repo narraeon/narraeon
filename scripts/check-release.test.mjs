@@ -130,3 +130,16 @@ test("passes release tarballs to npm as explicit filesystem paths", () => {
     );
   }
 });
+
+test("keeps npm publishing on the token-free OIDC path", () => {
+  assert.doesNotMatch(
+    publishWorkflow,
+    /NPM_BOOTSTRAP_TOKEN|NODE_AUTH_TOKEN|_authToken/u,
+    "the post-bootstrap workflow must not retain an npm write-token path",
+  );
+  assert.equal(
+    publishWorkflow.match(/^\s+id-token:\s+write\s*$/gmu)?.length,
+    1,
+    "only the publish job should be allowed to mint an OIDC identity token",
+  );
+});

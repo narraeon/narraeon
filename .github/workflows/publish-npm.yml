@@ -126,19 +126,6 @@ jobs:
           name: npm-package
           path: release-artifact
 
-      - name: Configure the one-time first-publish token when present
-        env:
-          NPM_BOOTSTRAP_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}
-        run: |
-          if [[ -n "$NPM_BOOTSTRAP_TOKEN" ]]; then
-            npm config set \
-              "//registry.npmjs.org/:_authToken=$NPM_BOOTSTRAP_TOKEN" \
-              --location=user
-            echo "Using the one-time npm bootstrap token. Remove it after this release."
-          else
-            echo "No bootstrap token configured; npm will use trusted publishing (OIDC)."
-          fi
-
       - name: Publish to npm
         run: |
           shopt -s nullglob
@@ -150,10 +137,3 @@ jobs:
           npm publish "${packages[0]}" \
             --registry=https://registry.npmjs.org/ \
             --tag "${{ needs.validate.outputs.dist_tag }}"
-
-      - name: Remove bootstrap credentials from the runner
-        if: always()
-        run: >-
-          npm config delete
-          //registry.npmjs.org/:_authToken
-          --location=user

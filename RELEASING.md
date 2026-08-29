@@ -17,38 +17,28 @@ runs the complete release gate, and publishes the package version from
 - `.github/workflows/publish-npm.yml` is the exact workflow filename registered
   with npm Trusted Publishing.
 
-## One-time first publication
+## Trusted publishing
 
-npm Trusted Publishing can only be configured after a package already exists.
-The first release therefore uses a short-lived bootstrap token once; every
-later release uses GitHub OIDC without a stored write token.
+The one-time bootstrap publication of `narraeon@0.1.0` is complete. Its npm
+token was revoked and the `NPM_BOOTSTRAP_TOKEN` GitHub secret was deleted. Do
+not recreate either credential: every automated release now publishes only
+through npm Trusted Publishing and GitHub OIDC.
 
-1. Merge and push the release workflow to `main` before creating the Release.
-2. On npmjs.com, create a short-expiry granular access token that can create and
-   publish public packages. Enable the publishing/2FA bypass required for CI.
-3. Add it as the `NPM_BOOTSTRAP_TOKEN` GitHub Actions repository secret. To keep
-   the token out of shell history, run `gh secret set NPM_BOOTSTRAP_TOKEN` and
-   paste it at the prompt.
-4. Confirm the package version and run the local gate below.
-5. Publish a GitHub Release whose tag is exactly `v<package version>` and whose
-   target is a commit in `main`. The workflow will create the first npm package.
-6. In the new package's npm settings, configure a GitHub Actions Trusted
-   Publisher with these exact values:
-   - organization or user: `narraeon`
-   - repository: `narraeon`
-   - workflow filename: `publish-npm.yml`
-   - environment: leave empty
-   - allowed action: `npm publish`
-7. Delete the GitHub secret with
-   `gh secret delete NPM_BOOTSTRAP_TOKEN`, revoke the npm bootstrap token, and
-   set npm publishing access to require 2FA and disallow tokens.
+The npm package settings must contain a GitHub Actions Trusted Publisher with
+these exact values:
 
-The repository can remain private and still use OIDC publishing, but npm cannot
-generate provenance for a package built from a private repository. A public npm
-package also exposes repository, homepage, and issue links that private-repo
-users cannot open. Decide repository visibility before the first public release.
+- organization or user: `narraeon`
+- repository: `narraeon`
+- workflow filename: `publish-npm.yml`
+- environment: leave empty
+- allowed action: `npm publish`
 
-## Every later release
+The package publishing-access setting should require 2FA and disallow tokens.
+That restriction does not block the configured Trusted Publisher. The public
+repository and public npm package allow npm to generate provenance linking each
+published artifact to its source commit and workflow run.
+
+## Every release
 
 1. Update `version` in both `package.json` and `package-lock.json`. For example,
    `npm version patch --no-git-tag-version` updates both without creating a tag.
@@ -75,8 +65,13 @@ users cannot open. Decide repository visibility before the first public release.
    ```bash
    npm view narraeon version --registry=https://registry.npmjs.org/
    npm view narraeon dist-tags --json --registry=https://registry.npmjs.org/
-   npm view narraeon@<version> dist.integrity --registry=https://registry.npmjs.org/
+   npm view narraeon@<version> dist --json --registry=https://registry.npmjs.org/
    ```
+
+   An OIDC publication from this public repository must include
+   `dist.attestations.provenance`. Verify the provenance links to the expected
+   source commit and `publish-npm.yml`, and run `npm audit signatures` from a
+   consumer project that installs the exact published version.
 
 If a workflow fails before `npm publish`, fix the cause and rerun the job. If
 npm already accepted the version, do not rerun it as a new artifact; bump the
