@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { verifyRelease } from "./check-release.mjs";
+
+const publishWorkflow = await readFile(
+  new URL("../.github/workflows/publish-npm.yml", import.meta.url),
+  "utf8",
+);
 
 const manifest = {
   name: "narraeon",
@@ -104,4 +110,23 @@ test("rejects invalid SemVer and publish configuration drift", () => {
       }),
     /exports must be an empty object/u,
   );
+});
+
+test("passes release tarballs to npm as explicit filesystem paths", () => {
+  const tarballGlobs = [
+    ...publishWorkflow.matchAll(/^\s*packages=\((?<specifier>[^)]+)\)\s*$/gmu),
+  ].map((match) => match.groups?.specifier);
+
+  assert.equal(
+    tarballGlobs.length,
+    2,
+    "validate and publish must each select exactly one tarball",
+  );
+  for (const tarballGlob of tarballGlobs) {
+    assert.match(
+      tarballGlob ?? "",
+      /^(?:\.\.?\/|\/|"\$(?:GITHUB_WORKSPACE|PWD)"\/)/u,
+      "npm publish requires an explicit local path, not an owner/repository-like specifier",
+    );
+  }
 });

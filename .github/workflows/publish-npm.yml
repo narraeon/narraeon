@@ -85,7 +85,7 @@ jobs:
       - name: Dry-run the release tarball publication
         run: |
           shopt -s nullglob
-          packages=(release-artifact/*.tgz)
+          packages=(./release-artifact/*.tgz)
           [[ ${#packages[@]} -eq 1 ]] || {
             echo "Expected exactly one release tarball." >&2
             exit 1
@@ -142,7 +142,7 @@ jobs:
       - name: Publish to npm
         run: |
           shopt -s nullglob
-          packages=(release-artifact/*.tgz)
+          packages=(./release-artifact/*.tgz)
           [[ ${#packages[@]} -eq 1 ]] || {
             echo "Expected exactly one validated release tarball." >&2
             exit 1
