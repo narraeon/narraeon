@@ -17,8 +17,8 @@ describe("文件原生连续性修正界面", () => {
           candidateVersion: 3,
           diffs: [
             {
-              documentId: "character.qinlong",
-              path: "characters/qinlong.yaml",
+              documentId: "character.alex",
+              path: "characters/alex.yaml",
               beforeHash: "sha256:before",
               afterHash: "sha256:after",
               before: "衣着: 白色背心",
@@ -27,9 +27,9 @@ describe("文件原生连续性修正界面", () => {
           ],
           materials: {
             before: [],
-            after: [{ kind: "document", document: "character.qinlong" }],
+            after: [{ kind: "document", document: "character.alex" }],
           },
-          nextPromptMarkdown: "# 下一次真实请求\n\n当前情境",
+          nextPromptMarkdown: "# Next real request\n\nCurrent situation",
         },
         onApply: apply,
         onCancel: cancel,
@@ -40,7 +40,7 @@ describe("文件原生连续性修正界面", () => {
     expect(screen.getByText("衣着: 白色背心")).toBeTruthy();
     expect(screen.getByText("衣着: 蓝色训练外套")).toBeTruthy();
     expect(screen.getByText(/sha256:before/u)).toBeTruthy();
-    expect(screen.getByText(/下一次真实请求/u)).toBeTruthy();
+    expect(screen.getByText(/Next real request/u)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "应用这笔修正" }));
     fireEvent.click(screen.getByRole("button", { name: "放弃修正草稿" }));
     expect(apply).toHaveBeenCalledOnce();

@@ -43,7 +43,9 @@ export function acceptWorldStateRevision(
 ): WorldDocumentRevisionResult {
   if (!revised.ok || revised.snapshotStatus !== "usable") return revised;
   if (revised.sourceSnapshotId !== candidate.snapshot.id)
-    throw new Error("revision 结果不属于当前候选快照");
+    throw new Error(
+      "The revision result does not belong to the current candidate snapshot",
+    );
 
   candidate.snapshot = revised.snapshot;
   candidate.files = revisionFileRecord(revised.snapshot);
@@ -77,11 +79,15 @@ export function fileNativeStateChanges(
   candidate: WorldStateRevision,
 ): FileNativeStateChange[] {
   if (candidate.snapshot.status !== "usable")
-    throw new Error("只有 usable world state revision 可以形成提交载荷");
+    throw new Error(
+      "Only a usable world-state revision can produce a commit payload",
+    );
   return worldStateRevisionChanges(candidate).map((change) => {
     const prefix = "state/";
     if (!change.after.logicalPath.startsWith(prefix))
-      throw new Error("世界 state revision 返回了布局外路径");
+      throw new Error(
+        "The world-state revision returned a path outside the layout",
+      );
     return {
       kind: change.before === null ? "create" : "replace",
       documentId: change.documentId,
@@ -99,7 +105,8 @@ export function worldDocumentRevisionFailureMessage(
   diagnostics: readonly { readonly message: string }[],
 ): string {
   return (
-    diagnostics.map(({ message }) => message).join("；") || "revision 无效"
+    diagnostics.map(({ message }) => message).join("; ") ||
+    "The revision is invalid"
   );
 }
 
@@ -109,7 +116,9 @@ function revisionFileRecord(
   return Object.fromEntries(
     snapshot.files.map((file) => {
       if (file.encoding !== undefined)
-        throw new Error("世界 state revision 不接受二进制候选文件");
+        throw new Error(
+          "World-state revisions do not accept binary candidate files",
+        );
       return [file.path, file.contents];
     }),
   );

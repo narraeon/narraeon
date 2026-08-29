@@ -23,15 +23,15 @@ test.each([
 ] as const)("%s 对追加提示使用编译器拥有的逻辑 role 署名", async (provider) => {
   const responseBody =
     provider === "chat_completions"
-      ? { choices: [{ message: { content: "完成", tool_calls: [] } }] }
+      ? { choices: [{ message: { content: "Complete", tool_calls: [] } }] }
       : provider === "anthropic_messages"
-        ? { content: [{ type: "text", text: "完成" }] }
+        ? { content: [{ type: "text", text: "Complete" }] }
         : {
             output: [
               {
                 type: "message",
                 role: "assistant",
-                content: [{ type: "output_text", text: "完成" }],
+                content: [{ type: "output_text", text: "Complete" }],
               },
             ],
           };
@@ -57,7 +57,7 @@ test.each([
       modelId: "delta-role-test",
       contextWindowTokens: 32_000,
       maxOutputTokens: 2_000,
-      playerInput: "检查追加提示署名。",
+      playerInput: "Check appended prompt attribution.",
       playerInputPlacement: "bootstrap",
     }),
   );
@@ -71,8 +71,8 @@ test.each([
         logicalMessages: [
           {
             role: "author_instruction",
-            blocks: [{ source: "author:test", markdown: "作者正文" }],
-            markdown: "作者正文",
+            blocks: [{ source: "author:test", markdown: "Author text" }],
+            markdown: "Author text",
           },
         ],
       },
@@ -83,7 +83,7 @@ test.each([
   const serialized = JSON.stringify(
     JSON.parse(fetch_.mock.calls[0]?.[1]?.body as string),
   );
-  expect(serialized).toContain("# 作者提示");
+  expect(serialized).toContain("# Author instruction");
 });
 
 test("OpenAI Responses 使用扁平工具定义并逐次原样重放 output items", async () => {
@@ -115,7 +115,9 @@ test("OpenAI Responses 使用扁平工具定义并逐次原样重放 output item
               type: "message",
               id: "message-2",
               role: "assistant",
-              content: [{ type: "output_text", text: "继续裁决。" }],
+              content: [
+                { type: "output_text", text: "Continue adjudicating." },
+              ],
             },
           ],
         }),
@@ -139,7 +141,7 @@ test("OpenAI Responses 使用扁平工具定义并逐次原样重放 output item
       modelId: "gpt-test",
       contextWindowTokens: 32_000,
       maxOutputTokens: 2_000,
-      playerInput: "检查 Responses。",
+      playerInput: "Check Responses.",
       playerInputPlacement: "bootstrap",
     }),
   );
@@ -172,7 +174,7 @@ test("OpenAI Responses 使用扁平工具定义并逐次原样重放 output item
   );
   expect(firstRequest.store).toBe(false);
   expect(firstRequest.include).toEqual(["reasoning.encrypted_content"]);
-  expect(JSON.stringify(firstRequest).split("检查 Responses。")).toHaveLength(
+  expect(JSON.stringify(firstRequest).split("Check Responses.")).toHaveLength(
     2,
   );
   expect(firstRequest.tools[0]).toMatchObject({
@@ -194,12 +196,12 @@ test("OpenAI Responses 使用扁平工具定义并逐次原样重放 output item
       {
         kind: "tool",
         toolCallId: "call-1",
-        markdown: "# 精确读取\n\n当前情境原文",
+        markdown: "# Exact read\n\nCurrent-situation source",
       },
     ],
     maxOutputTokens: 2_000,
   });
-  expect(second.text).toBe("继续裁决。");
+  expect(second.text).toBe("Continue adjudicating.");
   const secondRequest = JSON.parse(
     fetch_.mock.calls[1]?.[1]?.body as string,
   ) as { input: unknown[] };
@@ -208,7 +210,7 @@ test("OpenAI Responses 使用扁平工具定义并逐次原样重放 output item
     {
       type: "function_call_output",
       call_id: "call-1",
-      output: "# 精确读取\n\n当前情境原文",
+      output: "# Exact read\n\nCurrent-situation source",
     },
   ]);
 });
@@ -258,7 +260,7 @@ test("OpenAI Responses 冻结全集并用 native allowed subset，usage 与 encr
             {
               type: "message",
               role: "assistant",
-              content: [{ type: "output_text", text: "已读取。" }],
+              content: [{ type: "output_text", text: "Read complete." }],
             },
           ],
           usage: { input_tokens: 160, output_tokens: 4, total_tokens: 164 },
@@ -283,7 +285,7 @@ test("OpenAI Responses 冻结全集并用 native allowed subset，usage 与 encr
       modelId: "gpt-test",
       contextWindowTokens: 32_000,
       maxOutputTokens: 2_000,
-      playerInput: "检查冻结全集。",
+      playerInput: "Check the frozen tool universe.",
       playerInputPlacement: "bootstrap",
     }),
   );
@@ -348,7 +350,7 @@ test("OpenAI Responses 冻结全集并用 native allowed subset，usage 与 encr
       {
         kind: "tool",
         toolCallId: "call-private",
-        markdown: "# 读取结果\n\n私有续传测试",
+        markdown: "# Read result\n\nPrivate continuation test",
       },
     ],
   });
@@ -369,7 +371,7 @@ test("OpenAI Responses 冻结全集并用 native allowed subset，usage 与 encr
     {
       type: "function_call_output",
       call_id: "call-private",
-      output: "# 读取结果\n\n私有续传测试",
+      output: "# Read result\n\nPrivate continuation test",
     },
   ]);
 });
@@ -382,7 +384,7 @@ test("OpenAI Responses 设定完善保留 provider output 并回送工具结果"
           {
             type: "message",
             role: "assistant",
-            content: [{ type: "output_text", text: "完成" }],
+            content: [{ type: "output_text", text: "Complete" }],
           },
         ],
       }),
@@ -410,8 +412,8 @@ test("OpenAI Responses 设定完善保留 provider output 并回送工具结果"
   ];
   const output = await adapter.next({
     messages: [
-      { role: "system", content: "只编辑候选" },
-      { role: "user", content: "完善设定" },
+      { role: "system", content: "Edit only the candidate" },
+      { role: "user", content: "Improve the setting" },
       {
         role: "assistant",
         content: "",
@@ -430,14 +432,14 @@ test("OpenAI Responses 设定完善保留 provider output 并回送工具结果"
       {
         role: "tool",
         toolCallId: "setting-read-1",
-        content: "# 文件原文",
+        content: "# File source",
       },
     ],
     tools: documentCandidateSettingTools,
     maxOutputTokens: 1_024,
   });
   expect(output).toMatchObject({
-    content: "完成",
+    content: "Complete",
     providerState: { protocol: "openai_responses" },
   });
   const body = JSON.parse(fetch_.mock.calls[0]?.[1]?.body as string) as {
@@ -450,7 +452,7 @@ test("OpenAI Responses 设定完善保留 provider output 并回送工具结果"
       {
         type: "function_call_output",
         call_id: "setting-read-1",
-        output: "# 文件原文",
+        output: "# File source",
       },
     ]),
   );
@@ -497,7 +499,7 @@ test("Chat Completions 保留 reasoning_content、usage 与原始 assistant mess
     .mockResolvedValueOnce(
       new Response(
         JSON.stringify({
-          choices: [{ message: { content: "继续。", tool_calls: [] } }],
+          choices: [{ message: { content: "Continue.", tool_calls: [] } }],
         }),
         { status: 200 },
       ),
@@ -519,7 +521,7 @@ test("Chat Completions 保留 reasoning_content、usage 与原始 assistant mess
       modelId: "chat-model",
       contextWindowTokens: 32_000,
       maxOutputTokens: 2_000,
-      playerInput: "检查 Chat 续传。",
+      playerInput: "Check Chat continuation.",
       playerInputPlacement: "bootstrap",
     }),
   );
@@ -563,7 +565,7 @@ test("Chat Completions 保留 reasoning_content、usage 与原始 assistant mess
           : { providerState: first.providerState }),
         toolCalls: first.toolCalls ?? [],
       },
-      { kind: "tool", toolCallId: "chat-read", markdown: "读取结果" },
+      { kind: "tool", toolCallId: "chat-read", markdown: "Read result" },
     ],
   });
   const secondBody = JSON.parse(fetch_.mock.calls[1]?.[1]?.body as string) as {
@@ -606,7 +608,7 @@ test("Anthropic Messages 保留 thinking/redacted/signature block、usage 与原
     .mockResolvedValueOnce(
       new Response(
         JSON.stringify({
-          content: [{ type: "text", text: "继续。" }],
+          content: [{ type: "text", text: "Continue." }],
           usage: { input_tokens: 80, output_tokens: 3 },
         }),
         { status: 200 },
@@ -629,7 +631,7 @@ test("Anthropic Messages 保留 thinking/redacted/signature block、usage 与原
       modelId: "claude-test",
       contextWindowTokens: 32_000,
       maxOutputTokens: 2_000,
-      playerInput: "检查 Anthropic 续传。",
+      playerInput: "Check Anthropic continuation.",
       playerInputPlacement: "bootstrap",
     }),
   );
@@ -681,7 +683,7 @@ test("Anthropic Messages 保留 thinking/redacted/signature block、usage 与原
       {
         kind: "tool",
         toolCallId: "anthropic-read",
-        markdown: "读取结果",
+        markdown: "Read result",
       },
     ],
   });
@@ -705,13 +707,13 @@ test.each([
           output: [
             {
               type: "message",
-              content: [{ type: "output_text", text: "无工具" }],
+              content: [{ type: "output_text", text: "No tools" }],
             },
           ],
         }
       : provider === "chat_completions"
-        ? { choices: [{ message: { content: "无工具" } }] }
-        : { content: [{ type: "text", text: "无工具" }] };
+        ? { choices: [{ message: { content: "No tools" } }] }
+        : { content: [{ type: "text", text: "No tools" }] };
   const fetch_ = vi
     .fn<typeof fetch>()
     .mockResolvedValue(
@@ -734,7 +736,7 @@ test.each([
       modelId: "none-model",
       contextWindowTokens: 32_000,
       maxOutputTokens: 2_000,
-      playerInput: "空 allowlist。",
+      playerInput: "Empty allowlist.",
       playerInputPlacement: "bootstrap",
     }),
   );
@@ -791,7 +793,7 @@ test("Anthropic runtime_gate 在空/非空 allowlist 间保持稳定全集 defin
       modelId: "claude-test",
       contextWindowTokens: 32_000,
       maxOutputTokens: 2_000,
-      playerInput: "检查 Anthropic tool gate。",
+      playerInput: "Check the Anthropic tool gate.",
       playerInputPlacement: "bootstrap",
     }),
   );
@@ -832,7 +834,7 @@ test.each([
     modelId: "classification-model",
     contextWindowTokens: 32_000,
     maxOutputTokens: 2_000,
-    playerInput: "分类测试。",
+    playerInput: "Classification test.",
     playerInputPlacement: "bootstrap",
   });
   const bootstrap = new FileNativePromptCompiler().compileBootstrap(input);
@@ -933,7 +935,7 @@ test.each([
       modelId: "malformed-chat-model",
       contextWindowTokens: 32_000,
       maxOutputTokens: 2_000,
-      playerInput: "检查畸形响应。",
+      playerInput: "Check a malformed response.",
       playerInputPlacement: "bootstrap",
     });
     const bootstrap = new FileNativePromptCompiler().compileBootstrap(input);
@@ -1032,7 +1034,7 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
       modelId: "model",
       contextWindowTokens: 32_000,
       maxOutputTokens: 2_000,
-      playerInput: "检查请求。",
+      playerInput: "Check the request.",
       playerInputPlacement: "bootstrap",
     });
     const bootstrap = new FileNativePromptCompiler().compileBootstrap(input);
@@ -1045,8 +1047,10 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
           logicalMessages: [
             {
               role: "author_instruction",
-              blocks: [{ source: "author:next", markdown: "继续裁决。" }],
-              markdown: "继续裁决。",
+              blocks: [
+                { source: "author:next", markdown: "Continue adjudicating." },
+              ],
+              markdown: "Continue adjudicating.",
             },
           ],
         },
@@ -1063,7 +1067,7 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
     const init = fetch_.mock.calls[0]?.[1];
     const body = JSON.parse(init?.body as string) as Record<string, unknown>;
     const serialized = JSON.stringify(body);
-    expect(serialized).toContain("继续裁决。");
+    expect(serialized).toContain("Continue adjudicating.");
     expect(serialized).toContain("world_patch");
     expect(body.tool_choice).toBe(
       provider === "chat_completions" ? "auto" : undefined,
@@ -1092,15 +1096,15 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
         {
           kind: "tool",
           toolCallId: "read-1",
-          markdown: "# 精确读取\n\n原始结果",
+          markdown: "# Exact read\n\nOriginal result",
         },
         {
           kind: "prompt_delta",
           logicalMessages: [
             {
               role: "author_instruction",
-              blocks: [{ source: "author:next", markdown: "下一步" }],
-              markdown: "下一步",
+              blocks: [{ source: "author:next", markdown: "Next step" }],
+              markdown: "Next step",
             },
           ],
         },
@@ -1112,8 +1116,8 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
     ) as unknown;
     const secondSerialized = JSON.stringify(second);
     expect(secondSerialized).toContain("context_read");
-    expect(secondSerialized).toContain("原始结果");
-    expect(secondSerialized).toContain("下一步");
+    expect(secondSerialized).toContain("Original result");
+    expect(secondSerialized).toContain("Next step");
   },
 );
 
@@ -1127,8 +1131,8 @@ test.each([
   async (provider, playerInputPlacement) => {
     const responseBody =
       provider === "chat_completions"
-        ? { choices: [{ message: { content: "可见回复" } }] }
-        : { content: [{ type: "text", text: "可见回复" }] };
+        ? { choices: [{ message: { content: "Visible response" } }] }
+        : { content: [{ type: "text", text: "Visible response" }] };
     const fetch_ = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify(responseBody), {
         status: 200,
@@ -1146,8 +1150,10 @@ test.each([
       },
       fetch_,
     );
-    const opening = "唯一开场原文：铜铃在紧闭的门后响了第三次。";
-    const player = "唯一玩家原文：我先侧耳听门后的动静。";
+    const opening =
+      "Unique opening source: The brass bell rings behind the closed door for the third time.";
+    const player =
+      "Unique player source: I listen carefully for movement behind the door.";
     const input = createMinimalFileNativePreviewInput({
       provider,
       modelId: "model",
@@ -1209,7 +1215,7 @@ test("Chat Completions 续传 reasoning_content，空工具数组不进入请求
           {
             message: {
               content: null,
-              reasoning_content: "继续思考",
+              reasoning_content: "Continue reasoning",
               tool_calls: [
                 {
                   id: "bad",
@@ -1240,7 +1246,7 @@ test("Chat Completions 续传 reasoning_content，空工具数组不进入请求
       modelId: "thinking-model",
       contextWindowTokens: 32_000,
       maxOutputTokens: 2_000,
-      playerInput: "检查续传。",
+      playerInput: "Check continuation.",
       playerInputPlacement: "bootstrap",
     }),
   );
@@ -1250,8 +1256,8 @@ test("Chat Completions 续传 reasoning_content，空工具数组不进入请求
     appended: [
       {
         kind: "assistant",
-        text: "上轮可见文本",
-        reasoningContent: "上轮思考",
+        text: "Previous-turn visible text",
+        reasoningContent: "Previous-turn reasoning",
         toolCalls: [],
       },
     ],
@@ -1261,11 +1267,11 @@ test("Chat Completions 续传 reasoning_content，空工具数组不进入请求
     messages: { reasoning_content?: string; tool_calls?: unknown[] }[];
   };
   expect(request.messages.at(-1)).toMatchObject({
-    reasoning_content: "上轮思考",
+    reasoning_content: "Previous-turn reasoning",
   });
   expect(request.messages.at(-1)).not.toHaveProperty("tool_calls");
   expect(output).toMatchObject({
-    reasoningContent: "继续思考",
+    reasoningContent: "Continue reasoning",
     toolCalls: [
       {
         id: "bad",
@@ -1281,8 +1287,8 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
   async (provider) => {
     const responseBody =
       provider === "chat_completions"
-        ? { choices: [{ message: { content: "继续。" } }] }
-        : { content: [{ type: "text", text: "继续。" }] };
+        ? { choices: [{ message: { content: "Continue." } }] }
+        : { content: [{ type: "text", text: "Continue." }] };
     const fetch_ = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify(responseBody), {
         status: 200,
@@ -1306,7 +1312,7 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
         modelId: "model",
         contextWindowTokens: 32_000,
         maxOutputTokens: 2_000,
-        playerInput: "连续首句唯一标记",
+        playerInput: "Unique continuous-opening marker",
         playerInputPlacement: "append",
       }),
     );
@@ -1322,7 +1328,7 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
       toolUniverse: bootstrap.toolUniverse,
       allowedTools: continuousPlayTools.map(({ name }) => name),
       toolStrategy: bootstrap.toolStrategy,
-      appended: [{ kind: "player", text: "连续首句唯一标记" }],
+      appended: [{ kind: "player", text: "Unique continuous-opening marker" }],
       requestId: "continuous_play",
       operationId: "continuous-first-message",
       requestAttempt: 1,
@@ -1330,7 +1336,9 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
     });
 
     const serialized = fetch_.mock.calls[0]?.[1]?.body as string;
-    expect(serialized.split("连续首句唯一标记")).toHaveLength(2);
+    expect(serialized.split("Unique continuous-opening marker")).toHaveLength(
+      2,
+    );
     const body = JSON.parse(serialized) as {
       tools: { function?: { name: string }; name?: string }[];
       tool_choice?: unknown;
@@ -1362,7 +1370,8 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
 test.each(["chat_completions", "anthropic_messages"] as const)(
   "%s 连续追加按原顺序重放持久逻辑 transcript 与 Provider state",
   async (provider) => {
-    const narrator = "唯一已确认主持原文：秦龙朝楼梯口偏了偏头。";
+    const narrator =
+      "Unique committed narrator source: Alex tilts his head toward the stairs.";
     const response = (text: string) =>
       provider === "chat_completions"
         ? { choices: [{ message: { content: text } }] }
@@ -1376,7 +1385,7 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
         }),
       )
       .mockResolvedValueOnce(
-        new Response(JSON.stringify(response("第二条回复。")), {
+        new Response(JSON.stringify(response("Second response.")), {
           status: 200,
           headers: { "content-type": "application/json" },
         }),
@@ -1392,8 +1401,10 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
       },
       fetch_,
     );
-    const firstPlayer = "唯一第一条玩家原文：我贴着门边等他示意。";
-    const secondPlayer = "唯一第二条玩家原文：我示意他继续说。";
+    const firstPlayer =
+      "Unique first player source: I wait beside the door for his signal.";
+    const secondPlayer =
+      "Unique second player source: I signal for him to continue.";
     const bootstrap = new FileNativePromptCompiler().compileBootstrap(
       createMinimalFileNativePreviewInput({
         provider,
@@ -1425,7 +1436,9 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
       appended: [{ kind: "player", text: firstPlayer }],
     });
     if (first.providerState === undefined)
-      throw new Error("生产 Adapter 没有返回可持久化的 Provider state");
+      throw new Error(
+        "The production Adapter did not return persistable Provider state",
+      );
     const transcript: ModelHostAppendItem[] = [
       { kind: "player", text: firstPlayer },
       {
@@ -1455,8 +1468,8 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
   async (provider) => {
     const responseBody =
       provider === "chat_completions"
-        ? { choices: [{ message: { content: "完成", tool_calls: [] } }] }
-        : { content: [{ type: "text", text: "完成" }] };
+        ? { choices: [{ message: { content: "Complete", tool_calls: [] } }] }
+        : { content: [{ type: "text", text: "Complete" }] };
     const fetch_ = vi.fn<typeof fetch>().mockImplementation(() =>
       Promise.resolve(
         new Response(JSON.stringify(responseBody), {
@@ -1478,11 +1491,11 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
     );
     await adapter.next({
       messages: [
-        { role: "user", content: "完善设定" },
+        { role: "user", content: "Improve the setting" },
         {
           role: "assistant",
           content: "",
-          reasoningContent: "先读取",
+          reasoningContent: "Read first",
           toolCalls: [
             {
               id: "setting-read-1",
@@ -1494,7 +1507,7 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
         {
           role: "tool",
           toolCallId: "setting-read-1",
-          content: "# 文件原文",
+          content: "# File source",
         },
       ],
       tools: documentCandidateSettingTools,
@@ -1506,7 +1519,7 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
     const serialized = JSON.stringify(body);
     expect(serialized).toContain("setting-read-1");
     expect(serialized).toContain("setting_read");
-    expect(serialized).toContain("# 文件原文");
+    expect(serialized).toContain("# File source");
     expect(serialized).toContain('"additionalProperties":false');
     for (const field of [
       "path",
@@ -1529,8 +1542,16 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
   async (provider) => {
     const responseBody =
       provider === "chat_completions"
-        ? { choices: [{ message: { content: "# 创作计划\n\n简洁计划" } }] }
-        : { content: [{ type: "text", text: "# 创作计划\n\n简洁计划" }] };
+        ? {
+            choices: [
+              { message: { content: "# Creation plan\n\nConcise plan" } },
+            ],
+          }
+        : {
+            content: [
+              { type: "text", text: "# Creation plan\n\nConcise plan" },
+            ],
+          };
     const fetch_ = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify(responseBody), {
         status: 200,
@@ -1551,8 +1572,8 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
 
     await adapter.next({
       messages: [
-        { role: "system", content: "# 固定创作契约" },
-        { role: "user", content: "创建一个小世界" },
+        { role: "system", content: "# Fixed authoring contract" },
+        { role: "user", content: "Create a small world" },
       ],
       tools: [],
       maxOutputTokens: 4_096,
@@ -1569,12 +1590,12 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
     if (provider === "chat_completions") {
       expect(body.messages[0]).toMatchObject({
         role: "system",
-        content: "# 固定创作契约",
+        content: "# Fixed authoring contract",
       });
     } else {
-      expect(body.system).toBe("# 固定创作契约");
+      expect(body.system).toBe("# Fixed authoring contract");
       expect(body.messages).toEqual([
-        { role: "user", content: "创建一个小世界" },
+        { role: "user", content: "Create a small world" },
       ]);
     }
   },

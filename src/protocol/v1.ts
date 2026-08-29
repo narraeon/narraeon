@@ -3,6 +3,7 @@ import type {
   ModelProviderKind,
   SaveModelConnectionInput,
 } from "./modelConnections.ts";
+import type { AppLocale } from "./appPreferences.ts";
 import { maxPortableContentArchiveBase64Characters } from "./contentTree.ts";
 
 export interface ContentTreeFile {
@@ -29,6 +30,8 @@ export interface V1Envelope {
 
 export type V1Request =
   | { type: "workspace.read" }
+  | { type: "preferences.read" }
+  | { type: "preferences.save"; locale: AppLocale }
   | { type: "model.read" }
   | {
       type: "model.save";
@@ -321,14 +324,17 @@ export function parseV1Envelope(value: unknown): V1Envelope {
   if (!isRecord(value) || value.protocol !== v1Protocol)
     throw new V1ProtocolError(
       "incompatible_data",
-      "请求必须使用当前 narraeon.runtime/v1 协议",
+      "Requests must use the current narraeon.runtime/v1 protocol",
     );
   if (!isRecord(value.request) || typeof value.request.type !== "string")
-    throw new V1ProtocolError("invalid_request", "V1 请求缺少 request.type");
+    throw new V1ProtocolError(
+      "invalid_request",
+      "V1 request is missing request.type",
+    );
   if (!requestTypes.has(value.request.type))
     throw new V1ProtocolError(
       "invalid_request",
-      `当前 V1 不支持命令：${value.request.type}`,
+      `V1 does not support command: ${value.request.type}`,
     );
   validateRequestFields(value.request);
   return value as unknown as V1Envelope;
@@ -338,6 +344,7 @@ const requiredFields: Record<
   string,
   Record<string, "string" | "number" | "boolean" | "object" | "array">
 > = {
+  "preferences.save": { locale: "string" },
   "model.save": { connection: "object" },
   "model.select": { connectionId: "string" },
   "model.delete": { connectionId: "string" },
@@ -462,9 +469,18 @@ function validateRequestFields(request: Record<string, unknown>): void {
     if (!valid || (kind === "string" && value === "" && !allowsEmptyString))
       throw new V1ProtocolError(
         "invalid_request",
-        `${String(request.type)}.${field} 字段无效`,
+        `${String(request.type)}.${field} is invalid`,
       );
   }
+  if (
+    request.type === "preferences.save" &&
+    request.locale !== "en" &&
+    request.locale !== "zh-CN"
+  )
+    throw new V1ProtocolError(
+      "invalid_request",
+      "preferences.save.locale must be en or zh-CN",
+    );
   if (request.type === "content.import") {
     const archiveBase64 = request.archiveBase64 as string;
     if (
@@ -476,7 +492,7 @@ function validateRequestFields(request: Record<string, unknown>): void {
     )
       throw new V1ProtocolError(
         "invalid_request",
-        "content.import.archiveBase64 不是受支持的内容包 ZIP",
+        "content.import.archiveBase64 is not a supported content-package ZIP",
       );
     const unexpectedFields = Object.keys(request).filter(
       (field) => field !== "type" && field !== "archiveBase64",
@@ -484,7 +500,7 @@ function validateRequestFields(request: Record<string, unknown>): void {
     if (unexpectedFields.length > 0)
       throw new V1ProtocolError(
         "invalid_request",
-        `content.import 包含不支持的字段：${unexpectedFields.join("、")}`,
+        `content.import contains unsupported fields: ${unexpectedFields.join(", ")}`,
       );
     return;
   }
@@ -492,7 +508,7 @@ function validateRequestFields(request: Record<string, unknown>): void {
     if (typeof request.playPresetId !== "string" || request.playPresetId === "")
       throw new V1ProtocolError(
         "invalid_request",
-        "prompt.preview.playPresetId 字段无效",
+        "prompt.preview.playPresetId is invalid",
       );
   }
   if (
@@ -503,7 +519,7 @@ function validateRequestFields(request: Record<string, unknown>): void {
   )
     throw new V1ProtocolError(
       "invalid_request",
-      "prompt.preview.playPresetRevision 字段无效",
+      "prompt.preview.playPresetRevision is invalid",
     );
   if (
     request.type === "prompt.preview" &&
@@ -512,7 +528,7 @@ function validateRequestFields(request: Record<string, unknown>): void {
   )
     throw new V1ProtocolError(
       "invalid_request",
-      "prompt.preview.playPresetRevision 必须和 playPresetId 一起提供",
+      "prompt.preview.playPresetRevision must be provided with playPresetId",
     );
   if (request.type === "play.create" && request.files !== undefined) {
     if (
@@ -523,7 +539,7 @@ function validateRequestFields(request: Record<string, unknown>): void {
     )
       throw new V1ProtocolError(
         "invalid_request",
-        "play.create.files 必须是 Record<string,string>",
+        "play.create.files must be Record<string,string>",
       );
   }
   if (
@@ -534,7 +550,7 @@ function validateRequestFields(request: Record<string, unknown>): void {
   )
     throw new V1ProtocolError(
       "invalid_request",
-      "play.save.files 必须是 Record<string,string>",
+      "play.save.files must be Record<string,string>",
     );
   if (
     request.type === "play.save" &&
@@ -543,7 +559,7 @@ function validateRequestFields(request: Record<string, unknown>): void {
   )
     throw new V1ProtocolError(
       "invalid_request",
-      "play.save.structure 必须是结构化 map",
+      "play.save.structure must be a structured map",
     );
   if (request.type === "play.workbench.read") {
     if (
@@ -552,7 +568,7 @@ function validateRequestFields(request: Record<string, unknown>): void {
     )
       throw new V1ProtocolError(
         "invalid_request",
-        "play.workbench.read.presetId 字段无效",
+        "play.workbench.read.presetId is invalid",
       );
     if (
       request.revision !== undefined &&
@@ -560,12 +576,12 @@ function validateRequestFields(request: Record<string, unknown>): void {
     )
       throw new V1ProtocolError(
         "invalid_request",
-        "play.workbench.read.revision 字段无效",
+        "play.workbench.read.revision is invalid",
       );
     if (request.revision !== undefined && request.presetId === undefined)
       throw new V1ProtocolError(
         "invalid_request",
-        "play.workbench.read.revision 必须和 presetId 一起提供",
+        "play.workbench.read.revision must be provided with presetId",
       );
   }
   if (request.type === "play.import") {
@@ -580,7 +596,7 @@ function validateRequestFields(request: Record<string, unknown>): void {
     )
       throw new V1ProtocolError(
         "invalid_request",
-        "play.import.files 字段无效",
+        "play.import.files is invalid",
       );
   }
   if (
@@ -591,7 +607,7 @@ function validateRequestFields(request: Record<string, unknown>): void {
   )
     throw new V1ProtocolError(
       "invalid_request",
-      `${request.type}.channel 字段无效`,
+      `${request.type}.channel is invalid`,
     );
   if (
     request.type === "artifacts.debug" &&
@@ -600,13 +616,13 @@ function validateRequestFields(request: Record<string, unknown>): void {
   )
     throw new V1ProtocolError(
       "invalid_request",
-      "artifacts.debug.operationId 字段无效",
+      "artifacts.debug.operationId is invalid",
     );
   if (request.type !== "setting-improvement.start") return;
   if (request.mode !== "plan_first" && request.mode !== "direct_candidate")
     throw new V1ProtocolError(
       "invalid_request",
-      "setting-improvement.start.mode 字段无效",
+      "setting-improvement.start.mode is invalid",
     );
   if (
     !(request.contextPaths as unknown[]).every(
@@ -615,12 +631,14 @@ function validateRequestFields(request: Record<string, unknown>): void {
   )
     throw new V1ProtocolError(
       "invalid_request",
-      "setting-improvement.start.contextPaths 字段无效",
+      "setting-improvement.start.contextPaths is invalid",
     );
 }
 
 const requestTypes = new Set([
   "workspace.read",
+  "preferences.read",
+  "preferences.save",
   "model.read",
   "model.save",
   "model.select",

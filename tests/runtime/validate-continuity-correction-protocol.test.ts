@@ -10,7 +10,7 @@ test("V1 correction replace carries the fixed candidate version and write-before
         type: "correction.replace",
         candidateId: "candidate-1",
         expectedVersion: 2,
-        target: "@qinlong",
+        target: "@alex",
         expectedHash: `sha256:${"a".repeat(64)}`,
         contents: "完整文档原文\n",
       },
@@ -19,7 +19,7 @@ test("V1 correction replace carries the fixed candidate version and write-before
     type: "correction.replace",
     candidateId: "candidate-1",
     expectedVersion: 2,
-    target: "@qinlong",
+    target: "@alex",
     expectedHash: `sha256:${"a".repeat(64)}`,
     contents: "完整文档原文\n",
   });

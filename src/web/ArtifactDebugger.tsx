@@ -1,3 +1,4 @@
+import { uiText } from "./i18n.ts";
 import {
   applyRegexPipeline,
   payloadToText,
@@ -70,20 +71,20 @@ export function ArtifactDebugger({
     <section
       className="artifact-debugger"
       data-artifact-debugger="true"
-      aria-label="产物调试器"
+      aria-label={uiText("产物调试器")}
     >
       <header>
         <p className="eyebrow">EXTENSION DEBUG</p>
-        <h2>产物调试器</h2>
+        <h2>{uiText("产物调试器")}</h2>
       </header>
       {extensions.length === 0 ? null : (
         <section
           className="artifact-extension-statuses"
           data-artifact-extension-statuses="true"
           data-testid="artifact-extension-statuses"
-          aria-label="扩展状态"
+          aria-label={uiText("扩展状态")}
         >
-          <h3>扩展状态</h3>
+          <h3>{uiText("扩展状态")}</h3>
           {extensions.map((extension) => (
             <article
               className="artifact-extension-status"
@@ -93,12 +94,14 @@ export function ArtifactDebugger({
             >
               <strong>{extension.status}</strong>
               <span>
-                {extension.coreCommitted ? "核心已提交" : "核心未提交"}
+                {extension.coreCommitted
+                  ? uiText("核心已提交")
+                  : uiText("核心未提交")}
               </span>
               <span>
-                已完成请求：
+                {uiText("已完成请求：")}
                 {extension.completedRequests.length === 0
-                  ? "无"
+                  ? uiText("无")
                   : extension.completedRequests.join("、")}
               </span>
               {extension.head === undefined ? null : (
@@ -115,13 +118,16 @@ export function ArtifactDebugger({
         <section
           className="player-view-panel-debug"
           data-player-view-panel-debug="true"
-          aria-label="玩家视图面板诊断"
+          aria-label={uiText("玩家视图面板诊断")}
         >
-          <h3>玩家视图面板</h3>
+          <h3>{uiText("玩家视图面板")}</h3>
           {playerViewPanels.map((panel) => (
             <article key={panel.panelId}>
               <strong>{panel.panelId}</strong>
-              <span>已提交玩家视图投影 · head：{panel.head}</span>
+              <span>
+                {uiText("已提交玩家视图投影 · head：")}
+                {panel.head}
+              </span>
               <span>
                 source：{panel.source.viewId} · current preset {panel.preset.id}
                 /{panel.preset.revision}
@@ -138,7 +144,7 @@ export function ArtifactDebugger({
               0 ? null : (
                 <details>
                   <summary>
-                    bridge 事件（
+                    {uiText("bridge 事件（")}
                     {bridgeEvents[`player-view:${panel.panelId}`]!.length}）
                   </summary>
                   <ul>
@@ -187,16 +193,16 @@ function ArtifactDebugEntry({
         {record.key === undefined ? "" : ` / ${record.key}`}
       </summary>
       <dl>
-        <dt>来源</dt>
+        <dt>{uiText("来源")}</dt>
         <dd>
           {record.operationId} / {record.requestId} / attempt{" "}
           {record.requestAttempt}
         </dd>
-        <dt>世界端点</dt>
+        <dt>{uiText("世界端点")}</dt>
         <dd>
-          {record.parentHead} → {record.newHead ?? "未提交"}
+          {record.parentHead} → {record.newHead ?? uiText("未提交")}
         </dd>
-        <dt>保存／投影</dt>
+        <dt>{uiText("保存／投影")}</dt>
         <dd>
           {record.save} / {record.projection}
         </dd>
@@ -204,7 +210,7 @@ function ArtifactDebugEntry({
         <dd>{record.payloadBytes}</dd>
         <dt>renderer revision</dt>
         <dd>{record.frontend.renderer?.revision ?? "built-in"}</dd>
-        <dt>renderer 状态</dt>
+        <dt>{uiText("renderer 状态")}</dt>
         <dd>
           {record.frontend.status} / {record.frontend.fallback}
           {record.frontend.diagnostic === undefined
@@ -216,9 +222,11 @@ function ArtifactDebugEntry({
       </dl>
       <p>raw payload</p>
       <pre>{payloadToText(record.payload, record.contentType)}</pre>
-      <p>最终内容</p>
+      <p>{uiText("最终内容")}</p>
       <pre>{pipeline.final}</pre>
-      <p>regex steps（structured_payload 以规范化 JSON 文本为输入）</p>
+      <p>
+        {uiText("regex steps（structured_payload 以规范化 JSON 文本为输入）")}
+      </p>
       <pre>{JSON.stringify(pipeline.steps, null, 2)}</pre>
       {bridgeEvents.length === 0 ? null : (
         <>

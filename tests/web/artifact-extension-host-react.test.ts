@@ -263,7 +263,7 @@ describe("ArtifactExtensionHost React lifetime", () => {
     expect(instanceId).toBeTruthy();
     expect(nonce).toBeTruthy();
     const child = frame.contentWindow;
-    if (child === null) throw new Error("测试 iframe 缺少 contentWindow");
+    if (child === null) throw new Error("The test iframe has no contentWindow");
     const postMessage = vi.spyOn(child, "postMessage");
     act(() => {
       window.dispatchEvent(

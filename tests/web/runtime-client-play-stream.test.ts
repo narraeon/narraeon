@@ -11,7 +11,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 test("RuntimeClient 按 NDJSON 增量消费调用链流并返回最终快照", async () => {
   const running = chainView("running", "");
-  const completed = chainView("ready", "秦龙推开了门。");
+  const completed = chainView("ready", "Alex推开了门。");
   const lines = [
     {
       protocol: v1Protocol,
@@ -33,7 +33,7 @@ test("RuntimeClient 按 NDJSON 增量消费调用链流并返回最终快照", a
         kind: "assistant_delta",
         eventId: 2,
         deltaKind: "text",
-        text: "秦龙推",
+        text: "Alex推",
         updatedAt: 2,
       },
     },
@@ -73,7 +73,7 @@ test("RuntimeClient 按 NDJSON 增量消费调用链流并返回最终快照", a
       worldId: "world-one",
       chainId: "chain-one",
       exchangeId: "exchange-one",
-      playerText: "我示意秦龙开门。",
+      playerText: "I signal Alex to open the door.",
     },
     (frame) => frames.push(frame),
   );
@@ -113,7 +113,7 @@ function chainView(
         id: 1,
         kind: "player",
         exchangeId: "exchange-one",
-        text: "我示意秦龙开门。",
+        text: "I signal Alex to open the door.",
         context: "fresh",
         committedHead: "commit:1",
       },

@@ -10,6 +10,10 @@ import {
   type V1Request,
   type V1Response,
 } from "../protocol/v1.ts";
+import {
+  defaultAppLocale,
+  type AppLocale,
+} from "../protocol/appPreferences.ts";
 import type {
   PlayerViewDiagnostic,
   RenderedPlayerView,
@@ -57,6 +61,7 @@ import { DocumentCandidateSettingImprovement } from "./setting/DocumentCandidate
 import { FileNativeWorldStore } from "./world/FileNativeWorldStore.ts";
 import { WorldDocumentStore } from "./world/WorldDocumentStore.ts";
 import { FileNativeAiFailureLog } from "./model/AiFailureLog.ts";
+import { AppPreferencesStore } from "./config/AppPreferencesStore.ts";
 
 export class V1Runtime {
   readonly #content: ContentWorkspace;
@@ -67,19 +72,26 @@ export class V1Runtime {
   readonly #corrections: FileNativeContinuityCorrection;
   readonly #playCallChains: PlayCallChain;
   readonly #failureLog: FileNativeAiFailureLog | undefined;
+  readonly #preferences: AppPreferencesStore;
   readonly #settingImprovements = new Map<
     string,
     { packageId: string; improvement: DocumentCandidateSettingImprovement }
   >();
   readonly #compiler = new FileNativePromptCompiler();
+  #locale: AppLocale = defaultAppLocale;
 
   constructor(input: {
     dataRoot: string;
     configRoot: string;
     logRoot?: string;
   }) {
-    this.#content = new ContentWorkspace(input.dataRoot);
-    this.#playPresets = new FileNativePlayPresetStore(input.configRoot);
+    this.#preferences = new AppPreferencesStore(input.configRoot);
+    this.#content = new ContentWorkspace(input.dataRoot, {
+      locale: () => this.#locale,
+    });
+    this.#playPresets = new FileNativePlayPresetStore(input.configRoot, {
+      locale: () => this.#locale,
+    });
     this.#worlds = new FileNativeWorldStore(input.dataRoot);
     this.#artifacts = new FileNativeArtifactStore(input.dataRoot);
     this.#failureLog =
@@ -97,6 +109,8 @@ export class V1Runtime {
   }
 
   async initialize(): Promise<void> {
+    this.#locale = (await this.#preferences.view()).locale;
+    this.#compiler.setLocale(this.#locale);
     await this.#playPresets.initialize();
   }
 
@@ -115,12 +129,22 @@ export class V1Runtime {
     switch (request.type) {
       case "workspace.read":
         return {
+          preferences: await this.#preferences.view(),
           contentPackages: await this.#content.listCurrentTreeContentPackages(),
           playPresets: await this.#playPresets.list(),
           model: await this.#models.view(),
           worlds: await this.#worlds.listWorlds(),
           storageNotices: this.#storageNotices(),
         };
+      case "preferences.read":
+        return this.#preferences.view();
+      case "preferences.save": {
+        const preferences = await this.#preferences.save(request.locale);
+        this.#locale = preferences.locale;
+        this.#compiler.setLocale(this.#locale);
+        await this.#playPresets.syncBuiltinDefaultLocale();
+        return preferences;
+      }
       case "model.read":
         return this.#models.view();
       case "model.save":
@@ -178,7 +202,7 @@ export class V1Runtime {
       }
       case "setting-improvement.start": {
         if (this.#settingImprovements.has(request.improvementId))
-          throw new Error("设定完善 ID 已存在");
+          throw new Error("Setting-improvement ID already exists");
         const [package_, connection, preset] = await Promise.all([
           this.#content.readCurrentTreeContentPackage(request.packageId),
           this.#models.bind(),
@@ -191,8 +215,13 @@ export class V1Runtime {
               ? {}
               : { failureLog: this.#failureLog }),
             operationId: request.improvementId,
+            locale: this.#locale,
           }),
-          authorPrompt: settingImprovementPromptForBinding(preset),
+          authorPrompt: settingImprovementPromptForBinding(
+            preset,
+            this.#locale,
+          ),
+          locale: this.#locale,
           ...(this.#failureLog === undefined
             ? {}
             : { failureLog: this.#failureLog }),
@@ -209,12 +238,15 @@ export class V1Runtime {
                 "setting-candidate",
               ),
               playerInputPlacement: "bootstrap",
-              playerInput: "预览设定候选。",
+              playerInput:
+                this.#locale === "zh-CN"
+                  ? "预览设定候选。"
+                  : "Preview the setting candidate.",
               modelBinding: new FileNativeModelHost(connection).binding(),
             }),
         });
         if (this.#settingImprovements.has(request.improvementId))
-          throw new Error("设定完善 ID 已存在");
+          throw new Error("Setting-improvement ID already exists");
         this.#settingImprovements.set(request.improvementId, {
           packageId: request.packageId,
           improvement,
@@ -428,11 +460,23 @@ export class V1Runtime {
       case "world.control-draft.save":
         return this.#worlds.saveControlDraft(request.worldId, request.files);
       case "world.control-draft.preview": {
-        const prompt = await this.#promptBinding();
+        const prompt = {
+          ...(await this.#promptBinding()),
+          playerInput:
+            this.#locale === "zh-CN"
+              ? "预览世界控制。"
+              : "Preview world control.",
+        };
         return this.#worlds.previewControlDraft(request.worldId, prompt);
       }
       case "world.control-draft.apply": {
-        const prompt = await this.#promptBinding();
+        const prompt = {
+          ...(await this.#promptBinding()),
+          playerInput:
+            this.#locale === "zh-CN"
+              ? "预览世界控制。"
+              : "Preview world control.",
+        };
         return this.#worlds.applyControlDraft(request.worldId, prompt);
       }
       case "world.derive": {
@@ -684,7 +728,8 @@ export class V1Runtime {
 
   #settingImprovement(improvementId: string) {
     const active = this.#settingImprovements.get(improvementId);
-    if (active === undefined) throw new Error("设定完善会话不存在");
+    if (active === undefined)
+      throw new Error("Setting-improvement session does not exist");
     return active;
   }
 
@@ -723,8 +768,8 @@ export class V1Runtime {
     const recovery = this.#playPresets.recovery;
     if (recovery !== null)
       notices.push({
-        surface: "玩法预设库",
-        message: `玩法预设库无法读取（${recovery.message}），已重建默认库；原文件保留在 ${recovery.quarantinedPath}`,
+        surface: "Play-preset library",
+        message: `The play-preset library could not be read (${recovery.message}). A default library was rebuilt; the original file remains at ${recovery.quarantinedPath}`,
       });
     return notices;
   }
@@ -763,7 +808,7 @@ function decodePortableContentArchive(archiveBase64: string): Buffer {
 function invalidContentArchiveUpload(): V1ProtocolError {
   return new V1ProtocolError(
     "invalid_request",
-    "content.import.archiveBase64 不是受支持的内容包 ZIP",
+    "content.import.archiveBase64 is not a supported content-package ZIP",
   );
 }
 
@@ -777,7 +822,7 @@ function previewWorld(
   });
   if (inspection.opening !== "valid")
     throw new Error(
-      `真实首轮提示词预览需要可用的 opening.md：${inspection.issues
+      `A real first-turn Prompt Preview requires a usable opening.md: ${inspection.issues
         .filter(
           ({ code }) =>
             code === "missing_opening" || code === "invalid_opening",
@@ -789,7 +834,9 @@ function previewWorld(
     ({ path, encoding }) => path === "opening.md" && encoding === undefined,
   );
   if (opening === undefined)
-    throw new Error("真实首轮提示词预览无法读取 opening.md");
+    throw new Error(
+      "A real first-turn Prompt Preview could not read opening.md",
+    );
   return {
     controlFingerprint,
     documentSnapshot: snapshot,

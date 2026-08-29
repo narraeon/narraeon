@@ -16,5 +16,5 @@ export function findToolResult(
         typeof item.markdown === "string"
       )
         return item.markdown;
-  throw new Error(`缺少工具结果：${toolCallId}`);
+  throw new Error(`Missing tool result: ${toolCallId}`);
 }

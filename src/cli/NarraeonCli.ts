@@ -56,12 +56,12 @@ export async function runNarraeonCli(
   const inspect = input.inspectServer ?? inspectLocalWebServer;
   const inspection = await inspect(url);
   if (inspection === "narraeon") {
-    output(`Narraeon 已在运行：${url}\n`);
+    output(`Narraeon is already running: ${url}\n`);
     await openBrowser(command, url, input.openUrl, errorOutput);
     return { kind: "reused", url };
   }
   if (inspection === "occupied")
-    throw new Error(`端口 ${String(command.port)} 已被其他服务占用`);
+    throw new Error(`Port ${String(command.port)} is already in use`);
 
   const start = input.startServer ?? startWebServer;
   let server: StoppableServer;
@@ -73,12 +73,12 @@ export async function runNarraeonCli(
     });
   } catch (error: unknown) {
     if (hasErrorCode(error, "EADDRINUSE"))
-      throw new Error(`端口 ${String(command.port)} 已被其他服务占用`, {
+      throw new Error(`Port ${String(command.port)} is already in use`, {
         cause: error,
       });
     throw error;
   }
-  output(`Narraeon 已启动：${url}\n`);
+  output(`Narraeon started: ${url}\n`);
   await openBrowser(command, url, input.openUrl, errorOutput);
   return { kind: "started", url, server };
 }
@@ -139,7 +139,7 @@ function parseCliCommand(
     return null;
   if (parsed.positionals.length !== 1 || parsed.positionals[0] !== "web")
     throw new NarraeonCliUsageError(
-      `未知命令：${parsed.positionals.join(" ") || "（空）"}`,
+      `Unknown command: ${parsed.positionals.join(" ") || "(empty)"}`,
     );
   let port: number;
   try {
@@ -186,7 +186,7 @@ async function openBrowser(
     await openUrl(url);
   } catch (error: unknown) {
     writeError(
-      `无法自动打开浏览器，请手动访问 ${url}：${errorMessage(error)}\n`,
+      `Could not open a browser automatically. Open ${url} manually: ${errorMessage(error)}\n`,
     );
   }
 }
@@ -212,13 +212,13 @@ function errorMessage(value: unknown): string {
   return value instanceof Error ? value.message : String(value);
 }
 
-export const cliHelp = `Narraeon（叙典）
+export const cliHelp = `Narraeon
 
-用法：
-  narraeon web [--port <端口>] [--no-open]
+Usage:
+  narraeon web [--port <port>] [--no-open]
 
-选项：
-  -p, --port <端口>  本地 Web 端口，默认 4317
-      --no-open       启动后不自动打开浏览器
-  -h, --help          显示帮助
+Options:
+  -p, --port <port>  Local web port (default: 4317)
+      --no-open      Do not open a browser after startup
+  -h, --help         Show help
 `;

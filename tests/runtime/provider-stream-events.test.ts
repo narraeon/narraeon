@@ -37,9 +37,9 @@ test("CRLF 与无空格字段都能解析", async () => {
 });
 
 test("被 chunk 切开的多字节字符不会解码成替换字符", async () => {
-  const encoded = new TextEncoder().encode("data: 秦龙\n\n");
+  const encoded = new TextEncoder().encode("data: Alex\n\n");
   const events = await collectBytes([encoded.slice(0, 8), encoded.slice(8)]);
-  expect(events).toEqual([{ event: null, data: "秦龙" }]);
+  expect(events).toEqual([{ event: null, data: "Alex" }]);
 });
 
 test("流末尾缺少空行时最后一个事件仍会产出", async () => {

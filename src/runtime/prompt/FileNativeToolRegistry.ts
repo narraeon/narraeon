@@ -1,4 +1,8 @@
 import type { ModelProviderKind } from "../../protocol/modelConnections.ts";
+import {
+  defaultAppLocale,
+  type AppLocale,
+} from "../../protocol/appPreferences.ts";
 
 /**
  * Runtime-owned prompt tool registry.
@@ -48,11 +52,6 @@ export function defaultRuntimeToolDefinitionStrategy(
     : "runtime_gate";
 }
 
-const toolDefinitions: Record<
-  RegisteredRuntimeToolName,
-  { description: string; inputSchema: object }
-> = createToolDefinitions();
-
 /** Canonical Runtime-owned order for a set of registered names. */
 export function canonicalRuntimeToolNames(
   names: readonly RegisteredRuntimeToolName[],
@@ -70,7 +69,9 @@ export function isRegisteredRuntimeToolName(
 /** Expand author names to the one Runtime schema/description registry. */
 export function runtimeToolsForNames(
   names: readonly RegisteredRuntimeToolName[],
+  locale: AppLocale = defaultAppLocale,
 ): RuntimePromptTool[] {
+  const toolDefinitions = createToolDefinitions(locale);
   return names.map((name) => ({
     name,
     description: toolDefinitions[name].description,
@@ -78,10 +79,13 @@ export function runtimeToolsForNames(
   }));
 }
 
-function createToolDefinitions(): Record<
+function createToolDefinitions(
+  locale: AppLocale,
+): Record<
   RegisteredRuntimeToolName,
   { description: string; inputSchema: object }
 > {
+  const descriptions = toolDescriptions[locale];
   const object = (
     properties: Record<string, object>,
     required: string[],
@@ -110,8 +114,7 @@ function createToolDefinitions(): Record<
     { description: string; inputSchema: object }
   > = {
     context_list: {
-      description:
-        '列出 Runtime 已知句柄。状态目录形状固定为 {source:"state", parent:"@dir-/"}，继续下级时 parent 只能使用结果返回的 @dir-*；历史形状固定为 {source:"history", order:"newest_first"}。两种形状互斥，不要同时传 parent 和 order。',
+      description: descriptions.context_list,
       inputSchema: {
         type: "object",
         oneOf: [
@@ -137,8 +140,7 @@ function createToolDefinitions(): Record<
       },
     },
     context_search: {
-      description:
-        "在 state 或 history 的原文字面中搜索。0 命中只表示给定文本没有字面命中，不证明世界事实不存在；玩家可见叙事不得复述搜索过程。within 只能使用 Runtime 已返回的 @文档或 @dir-* 句柄。",
+      description: descriptions.context_search,
       inputSchema: object(
         {
           source: { enum: ["state", "history"] },
@@ -152,8 +154,7 @@ function createToolDefinitions(): Record<
       ),
     },
     context_read: {
-      description:
-        "精确读取 Runtime 先前返回的 @文档、@节点或 @history-message-* 句柄。整文档结果中的读取标题、分页线、元信息边界和正文边界不属于源文；元信息只能用 set_metadata 整组更新，中间的可写正文用 locator 更新。YAML 正文不含 $document 技术头，Markdown 正文从文档 # 一级标题开始。不要传文件路径、自然语言名称或自行拼造的 world/...。",
+      description: descriptions.context_read,
       inputSchema: object(
         {
           ref: string,
@@ -164,8 +165,7 @@ function createToolDefinitions(): Record<
       ),
     },
     world_patch: {
-      description:
-        '更新已精确读取的文档。target 必须使用 @短引用；文档 title、summary 或 aliases 过时时用 {op:"set_metadata",title,summary,aliases} 整组更新，未改项照抄读取结果。YAML edit 使用 locator:{yaml:["字段","子字段"]}，例如 {op:"replace",locator:{yaml:["情况"]},value:"新值"}。YAML value 需要引用整份文档时只能写 {$ref:"@短引用"}，短引用必须来自 Runtime 的 list、read 或 create 结果；不得自行编造文档 id。没有可用句柄时，根据语义使用普通文本，或先 world_create 后使用其返回的 @短引用。向已存在的 sequence 末尾加一项必须使用 append 并把 locator 指向该 sequence；add 只创建尚不存在的 map key 或 list index。Markdown locator 不包含文档 # 一级标题：{markdown:["职责"]} 精确指向 ## 职责，replace_section.markdown 必须从同级同名标题开始。修改 # 标题下、第一个 ## 前的文字用 replace_preamble（只传该段文字）；替换整个 Markdown 正文用 replace_body，且 markdown 必须保留原 # 一级标题。成功结果只报告文档是否发生变化，不回显正文；只有后续决策依赖 Runtime 序列化后的精确正文时才重新 context_read。不要使用 path、JSON Pointer、set 或文件名。',
+      description: descriptions.world_patch,
       inputSchema: object(
         {
           target: string,
@@ -231,8 +231,7 @@ function createToolDefinitions(): Record<
       ),
     },
     world_create: {
-      description:
-        '在 Runtime 返回的状态目录中创建文档。parent 必须是 context_list 返回的 @dir-*，例如 @dir-/characters；根目录使用 @dir-/。refHint 是小写 ASCII 短引用，不要传 world/ 路径。YAML body 需要引用整份文档时只能写 {$ref:"@短引用"}，且短引用必须来自 Runtime 的 list、read 或 create 结果；不得自行编造文档 id。',
+      description: descriptions.world_create,
       inputSchema: object(
         {
           parent: string,
@@ -251,8 +250,7 @@ function createToolDefinitions(): Record<
       ),
     },
     artifact_emit: {
-      description:
-        "提交本次后置请求预先声明的产物。只能传 output name 与 payload；频道、key、内容类型、renderer、保存策略和权威含义由 Runtime contract 固定。",
+      description: descriptions.artifact_emit,
       inputSchema: object(
         {
           output: { type: "string", minLength: 1, maxLength: 128 },
@@ -262,8 +260,7 @@ function createToolDefinitions(): Record<
       ),
     },
     artifact_clear: {
-      description:
-        "清除本次后置请求预先声明且允许 clear 的产物投影；不能选择频道、key 或其他输出契约。",
+      description: descriptions.artifact_clear,
       inputSchema: object(
         { output: { type: "string", minLength: 1, maxLength: 128 } },
         ["output"],
@@ -272,3 +269,41 @@ function createToolDefinitions(): Record<
   };
   return definitions;
 }
+
+const toolDescriptions: Record<
+  AppLocale,
+  Record<RegisteredRuntimeToolName, string>
+> = {
+  en: {
+    context_list:
+      'List handles known to Runtime. State-directory requests have the fixed shape {source:"state", parent:"@dir-/"}; when descending, parent must be an @dir-* handle returned by a prior result. History requests have the fixed shape {source:"history", order:"newest_first"}. The two shapes are mutually exclusive: never send parent and order together.',
+    context_search:
+      "Search literal source text in state or history. Zero matches means only that the supplied text had no literal match; it does not prove that a world fact does not exist. Player-visible narrative must not recount the search process. within accepts only an @document or @dir-* handle returned by Runtime.",
+    context_read:
+      "Precisely read an @document, @node, or @history-message-* handle previously returned by Runtime. Read headings, page markers, metadata boundaries, and body boundaries in a whole-document result are not source text. Update metadata only as one set_metadata operation and update the writable body between the boundaries with locators. YAML bodies omit the $document technical header; Markdown bodies begin at the document's level-one heading. Never pass file paths, natural-language names, or an invented world/... value.",
+    world_patch:
+      'Update a document that has been read precisely. target must be an @short-ref. When title, summary, or aliases are stale, update all three with {op:"set_metadata",title,summary,aliases}, copying unchanged values from the read result. A YAML edit uses locator:{yaml:["field","child"]}, for example {op:"replace",locator:{yaml:["status"]},value:"new value"}. A YAML value may reference a whole document only as {$ref:"@short-ref"}; the short reference must come from a Runtime list, read, or create result. Never invent a document id. If no handle is available, use ordinary text when semantically correct or call world_create first and use its returned @short-ref. To add an item to the end of an existing sequence, use append with the locator pointing to that sequence; add creates only a map key or list index that does not exist. A Markdown locator excludes the document level-one heading: {markdown:["Responsibilities"]} points exactly to ## Responsibilities, and replace_section.markdown must begin with the same heading at the same level. Use replace_preamble for text after the level-one heading and before the first level-two heading; send only that text. Use replace_body to replace the whole Markdown body and retain the original level-one heading. Success reports only whether the document changed and does not echo the body. Call context_read again only when a later decision depends on Runtime\'s exact serialized body. Do not use path, JSON Pointer, set, or a file name.',
+    world_create:
+      'Create a document inside a state directory returned by Runtime. parent must be an @dir-* handle returned by context_list, such as @dir-/characters; use @dir-/ for the root. refHint is a lowercase ASCII short-reference hint, not a world/ path. A YAML body may reference a whole document only as {$ref:"@short-ref"}, and the short reference must come from a Runtime list, read, or create result. Never invent a document id.',
+    artifact_emit:
+      "Submit an artifact declared in advance for this follow-up request. Supply only the output name and payload; Runtime fixes the channel, key, content type, renderer, retention policy, and authority meaning in the contract.",
+    artifact_clear:
+      "Clear the projection of an artifact that this follow-up declared in advance and explicitly allows to be cleared. The call cannot choose a channel, key, or any other output contract.",
+  },
+  "zh-CN": {
+    context_list:
+      '列出 Runtime 已知句柄。状态目录形状固定为 {source:"state", parent:"@dir-/"}，继续下级时 parent 只能使用结果返回的 @dir-*；历史形状固定为 {source:"history", order:"newest_first"}。两种形状互斥，不要同时传 parent 和 order。',
+    context_search:
+      "在 state 或 history 的原文字面中搜索。0 命中只表示给定文本没有字面命中，不证明世界事实不存在；玩家可见叙事不得复述搜索过程。within 只能使用 Runtime 已返回的 @文档或 @dir-* 句柄。",
+    context_read:
+      "精确读取 Runtime 先前返回的 @文档、@节点或 @history-message-* 句柄。整文档结果中的读取标题、分页线、元信息边界和正文边界不属于源文；元信息只能用 set_metadata 整组更新，中间的可写正文用 locator 更新。YAML 正文不含 $document 技术头，Markdown 正文从文档 # 一级标题开始。不要传文件路径、自然语言名称或自行拼造的 world/...。",
+    world_patch:
+      '更新已精确读取的文档。target 必须使用 @短引用；文档 title、summary 或 aliases 过时时用 {op:"set_metadata",title,summary,aliases} 整组更新，未改项照抄读取结果。YAML edit 使用 locator:{yaml:["字段","子字段"]}，例如 {op:"replace",locator:{yaml:["情况"]},value:"新值"}。YAML value 需要引用整份文档时只能写 {$ref:"@短引用"}，短引用必须来自 Runtime 的 list、read 或 create 结果；不得自行编造文档 id。没有可用句柄时，根据语义使用普通文本，或先 world_create 后使用其返回的 @短引用。向已存在的 sequence 末尾加一项必须使用 append 并把 locator 指向该 sequence；add 只创建尚不存在的 map key 或 list index。Markdown locator 不包含文档 # 一级标题：{markdown:["职责"]} 精确指向 ## 职责，replace_section.markdown 必须从同级同名标题开始。修改 # 标题下、第一个 ## 前的文字用 replace_preamble（只传该段文字）；替换整个 Markdown 正文用 replace_body，且 markdown 必须保留原 # 一级标题。成功结果只报告文档是否发生变化，不回显正文；只有后续决策依赖 Runtime 序列化后的精确正文时才重新 context_read。不要使用 path、JSON Pointer、set 或文件名。',
+    world_create:
+      '在 Runtime 返回的状态目录中创建文档。parent 必须是 context_list 返回的 @dir-*，例如 @dir-/characters；根目录使用 @dir-/。refHint 是小写 ASCII 短引用，不要传 world/ 路径。YAML body 需要引用整份文档时只能写 {$ref:"@短引用"}，且短引用必须来自 Runtime 的 list、read 或 create 结果；不得自行编造文档 id。',
+    artifact_emit:
+      "提交本次后置请求预先声明的产物。只能传 output name 与 payload；频道、key、内容类型、renderer、保存策略和权威含义由 Runtime contract 固定。",
+    artifact_clear:
+      "清除本次后置请求预先声明且允许 clear 的产物投影；不能选择频道、key 或其他输出契约。",
+  },
+};

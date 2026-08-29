@@ -23,7 +23,7 @@ test("计划可以按反馈重出，历史保留在同一会话里", async () =>
         return assistant(
           round === 1
             ? validPlan()
-            : `${validPlan()}\n\n第二版：改为聚焦社团线。`,
+            : `${validPlan()}\n\nSecond version: focus on the club storyline.`,
         );
       },
     },
@@ -31,14 +31,16 @@ test("计划可以按反馈重出，历史保留在同一会话里", async () =>
   });
 
   await improvement.start(planFirst());
-  const revised = await improvement.revisePlan("方向偏了，改成聚焦社团线。");
+  const revised = await improvement.revisePlan(
+    "Change direction and focus on the club storyline.",
+  );
 
-  expect(revised.markdown).toContain("第二版");
+  expect(revised.markdown).toContain("Second version");
   expect(requests).toHaveLength(2);
   const second = (requests[1] ?? []).join("\n");
-  // 反馈与首版计划都在，同一条会话继续往下走。
-  expect(second).toContain("方向偏了，改成聚焦社团线。");
-  expect(second).toContain("# 创作计划：宿舍篇");
+  // Feedback and the first plan remain in the same continuing session.
+  expect(second).toContain("Change direction and focus on the club storyline.");
+  expect(second).toContain("# Creation plan: Dorm world");
   expect((requests[1] ?? []).length).toBeGreaterThan(
     (requests[0] ?? []).length,
   );
@@ -54,28 +56,28 @@ test("候选修改从上一次候选继续，已落地的改动仍在", async ()
         round += 1;
         if (round === 1) return assistant(validPlan());
         if (round === 2)
-          return assistant("先建人物。", [
-            write("w1", "world/characters/awu.yaml", "awu", "阿雾", "在场"),
+          return assistant("Create a character first.", [
+            write("w1", "world/characters/mia.yaml", "mia", "Mia", "present"),
             previewCall("p1"),
           ]);
-        if (round === 3) return assistant("结束。", [finishCall("f1")]);
+        if (round === 3) return assistant("Finish.", [finishCall("f1")]);
         if (round === 4) {
-          // 修改请求必须把现有候选交回来继续。
+          // Revision continues from the existing candidate instead of rebuilding it.
           expect(request.messages.at(-1)?.content).toContain(
-            "当前候选就是上一次生成结束时的状态",
+            "The current candidate is exactly the state from the end of the previous generation",
           );
-          return assistant("再建一个人物。", [
+          return assistant("Create another character.", [
             write(
               "w2",
-              "world/characters/leigang.yaml",
-              "leigang",
-              "雷刚",
-              "在场",
+              "world/characters/casey.yaml",
+              "casey",
+              "Casey",
+              "present",
             ),
             previewCall("p2"),
           ]);
         }
-        return assistant("结束。", [finishCall("f2")]);
+        return assistant("Finish.", [finishCall("f2")]);
       },
     },
     preview: previewSnapshot,
@@ -83,16 +85,16 @@ test("候选修改从上一次候选继续，已落地的改动仍在", async ()
 
   await improvement.start(planFirst());
   await improvement.confirmPlan();
-  const revised = await improvement.reviseCandidate("再加一个室友。");
+  const revised = await improvement.reviseCandidate("Add another roommate.");
 
   const paths = revised.files.map(({ path }) => path);
-  expect(paths).toContain("world/characters/awu.yaml");
-  expect(paths).toContain("world/characters/leigang.yaml");
-  // 两次改动都出现在同一份 diff 里，而不是第二次把第一次冲掉。
+  expect(paths).toContain("world/characters/mia.yaml");
+  expect(paths).toContain("world/characters/casey.yaml");
+  // Both edits remain in one diff; the second does not replace the first.
   expect(revised.review.diff.map(({ path }) => path)).toEqual(
     expect.arrayContaining([
-      "world/characters/awu.yaml",
-      "world/characters/leigang.yaml",
+      "world/characters/mia.yaml",
+      "world/characters/casey.yaml",
     ]),
   );
 });
@@ -107,11 +109,11 @@ test("修改失败后回到可修改状态，候选没有被破坏", async () =>
         round += 1;
         if (round === 1) return assistant(validPlan());
         if (round === 2)
-          return assistant("建人物。", [
-            write("w1", "world/characters/awu.yaml", "awu", "阿雾", "在场"),
+          return assistant("Create a character.", [
+            write("w1", "world/characters/mia.yaml", "mia", "Mia", "present"),
             previewCall("p1"),
           ]);
-        if (round === 3) return assistant("结束。", [finishCall("f1")]);
+        if (round === 3) return assistant("Finish.", [finishCall("f1")]);
         throw new Error("provider unavailable");
       },
     },
@@ -120,11 +122,11 @@ test("修改失败后回到可修改状态，候选没有被破坏", async () =>
 
   await improvement.start(planFirst());
   const before = await improvement.confirmPlan();
-  await expect(improvement.reviseCandidate("再改改")).rejects.toThrow(
+  await expect(improvement.reviseCandidate("Revise again.")).rejects.toThrow(
     "provider unavailable",
   );
 
-  // 仍可继续修改或直接应用，之前的候选原样保留。
+  // The previous candidate remains available for another revision or apply.
   expect(improvement.progress().phase).toBe("settled");
   await improvement.apply((files) => {
     expect(files.map(({ path }) => path)).toEqual(
@@ -150,7 +152,7 @@ test.each([
   await improvement.start(planFirst());
 
   await expect(improvement.revisePlan(feedback)).rejects.toThrow(
-    "修改意见不能为空",
+    "Revision feedback cannot be empty",
   );
 });
 
@@ -166,12 +168,12 @@ test("没有计划或候选时不能修改", async () => {
     preview: previewSnapshot,
   });
 
-  await expect(improvement.revisePlan("改一下")).rejects.toThrow(
-    "没有可修改的创作计划",
+  await expect(improvement.revisePlan("Revise it.")).rejects.toThrow(
+    "There is no creation plan to revise",
   );
   await improvement.start(planFirst());
-  await expect(improvement.reviseCandidate("改一下")).rejects.toThrow(
-    "没有可修改的候选",
+  await expect(improvement.reviseCandidate("Revise it.")).rejects.toThrow(
+    "There is no candidate to revise",
   );
 });
 
@@ -187,7 +189,7 @@ function write(
     name: "setting_write_file",
     arguments: {
       path,
-      contents: `$document:\n  id: x\n  ref: ${ref}\n  title: ${title}\n  summary: ${title}的自然语言设定。\n  aliases: []\n状态: ${state}\n`,
+      contents: `$document:\n  id: x\n  ref: ${ref}\n  title: ${title}\n  summary: A natural-language setting for ${title}.\n  aliases: []\nstatus: ${state}\n`,
     },
   };
 }
@@ -209,29 +211,30 @@ function finishCall(id: string): SettingAuthorToolCall {
 
 function planFirst() {
   return {
-    goal: "完善宿舍世界的人物关系",
+    goal: "Improve relationships in the dorm world",
     contextPaths: [],
     mode: "plan_first" as const,
   };
 }
 
 function validPlan(): string {
-  return "# 创作计划：宿舍篇\n\n保留已有人物、当前情境和玩家行动权，只补充关系的可观察表现与开局钩子，并在应用前通过完整候选自检。";
+  return "# Creation plan: Dorm world\n\nPreserve existing characters, the current situation, and player agency. Add only observable relationship behavior and an opening hook, then run the complete candidate check before applying.";
 }
 
 function baseFiles() {
   return [
     {
       path: "opening.md",
-      contents: "宿舍门在你面前合上。秦龙抱着球衣，等你先开口。\n",
+      contents:
+        "The dormitory door closes in front of you. Alex holds a jersey and waits.\n",
     },
     {
-      path: "world/characters/qinlong.yaml",
-      contents: `$document:\n  id: character.qinlong\n  ref: qinlong\n  title: 秦龙\n  summary: 篮球队前锋的当前状态与关系。\n  aliases: []\n关系: {}\n`,
+      path: "world/characters/alex.yaml",
+      contents: `$document:\n  id: character.alex\n  ref: alex\n  title: Alex\n  summary: The basketball forward's current state and relationships.\n  aliases: []\nrelationships: {}\n`,
     },
     {
       path: "world/current-situation.yaml",
-      contents: `$document:\n  id: situation.current\n  ref: current\n  title: 当前情境\n  summary: 宿舍中正在发生的局面。\n  aliases: []\n人物:\n  - $ref: character.qinlong\n`,
+      contents: `$document:\n  id: situation.current\n  ref: current\n  title: Current situation\n  summary: The situation unfolding in the dormitory.\n  aliases: []\ncharacters:\n  - $ref: character.alex\n`,
     },
     {
       path: "control/frame.yaml",
@@ -239,7 +242,8 @@ function baseFiles() {
     },
     {
       path: "control/blocks/world.md",
-      contents: "# 世界主持规则\n\n持续结果写回自然所有者。\n",
+      contents:
+        "# World hosting rules\n\nWrite durable results back to their natural owners.\n",
     },
     {
       path: "control/player-views.yaml",
@@ -260,7 +264,10 @@ function previewSnapshot(snapshot: WorldDocumentStore) {
     world: {
       controlFingerprint: "candidate",
       documentSnapshot: snapshot,
-      history: { "candidate.message.genesis.narrator": "宿舍门在你面前合上。" },
+      history: {
+        "candidate.message.genesis.narrator":
+          "The dormitory door closes in front of you.",
+      },
       additionalMaterials: [
         {
           kind: "history_message",
@@ -269,7 +276,7 @@ function previewSnapshot(snapshot: WorldDocumentStore) {
       ],
     },
     playerInputPlacement: "bootstrap",
-    playerInput: "预览",
+    playerInput: "Preview",
     modelBinding: {
       provider: "chat_completions",
       modelId: "test",

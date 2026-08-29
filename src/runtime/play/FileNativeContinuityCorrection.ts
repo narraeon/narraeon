@@ -101,14 +101,14 @@ export class FileNativeContinuityCorrection {
       if (error instanceof WorldOperationBusyError)
         throw new FileNativeWorldCreationError(
           "operation_conflict",
-          "该世界已有持久状态 operation 正在执行",
+          "A durable-state operation is already running for this world",
         );
       throw error;
     }
     if (claimed.kind === "busy")
       throw new FileNativeWorldCreationError(
         "operation_conflict",
-        "该世界已有持久状态 operation 正在执行",
+        "A durable-state operation is already running for this world",
       );
     const binding = claimed.value;
     if (binding === null) {
@@ -117,7 +117,7 @@ export class FileNativeContinuityCorrection {
         input.operationId,
       );
       throw new Error(
-        `correction operation 已存在，不能复用：${previous.outcome}`,
+        `The correction operation already exists and cannot be reused: ${previous.outcome}`,
       );
     }
     let revision: ReturnType<typeof beginWorldStateRevision>;
@@ -135,7 +135,9 @@ export class FileNativeContinuityCorrection {
       this.#worlds.releaseControl(input.worldId, input.operationId);
       await this.#worlds.failOperation(input.operationId, "failed");
       await this.#worlds.operations.releaseCorrectionWorld(claimed.handle);
-      throw new Error("修正候选的世界 state 快照不可用");
+      throw new Error(
+        "The correction candidate's world-state snapshot is unavailable",
+      );
     }
     const claimHeartbeat = setInterval(() => {
       void this.#worlds.operations
@@ -172,7 +174,9 @@ export class FileNativeContinuityCorrection {
     const document = readCompleteDocument(candidate.snapshot, handle);
     const contents = candidate.files[document.logicalPath];
     if (contents === undefined)
-      throw new Error(`修正文档 ${handle} 没有对应的候选原文`);
+      throw new Error(
+        `Correction document ${handle} has no corresponding candidate source`,
+      );
     const hash = sha256(contents);
     candidate.reads.set(document.documentId, {
       snapshotId: candidate.snapshot.id,
@@ -197,7 +201,9 @@ export class FileNativeContinuityCorrection {
   }): { version: number } {
     const candidate = this.#atVersion(input.candidateId, input.expectedVersion);
     if (candidate.mode !== "documents")
-      throw new Error("只替换材料清单的修正不能修改世界文档");
+      throw new Error(
+        "A material-list-only correction cannot modify world documents",
+      );
     const target = this.#writableDocument(
       candidate,
       input.target,
@@ -220,7 +226,9 @@ export class FileNativeContinuityCorrection {
   }): { version: number } {
     const candidate = this.#atVersion(input.candidateId, input.expectedVersion);
     if (candidate.mode !== "documents")
-      throw new Error("只替换材料清单的修正不能修改世界文档");
+      throw new Error(
+        "A material-list-only correction cannot modify world documents",
+      );
     const target = this.#writableDocument(
       candidate,
       input.target,
@@ -242,7 +250,9 @@ export class FileNativeContinuityCorrection {
   }): { version: number } {
     const candidate = this.#atVersion(input.candidateId, input.expectedVersion);
     if (candidate.mode !== "materials")
-      throw new Error("文档修正不能同时替换附加材料清单");
+      throw new Error(
+        "A document correction cannot also replace the additional-materials list",
+      );
     const nextMaterials = validateMaterialList(input.nextMaterials);
     this.#compile(candidate, input.prompt, nextMaterials);
     candidate.materials = structuredClone(nextMaterials);
@@ -280,9 +290,9 @@ export class FileNativeContinuityCorrection {
       diffs: worldStateRevisionChanges(candidate).map((change) => ({
         documentId: change.documentId,
         path: change.after.logicalPath.slice("state/".length),
-        beforeHash: change.before?.mechanicalHash ?? "不存在",
+        beforeHash: change.before?.mechanicalHash ?? "missing",
         afterHash: change.after.mechanicalHash,
-        before: change.before?.contents ?? "不存在",
+        before: change.before?.contents ?? "missing",
         after: change.after.contents,
       })),
       materials: {
@@ -304,9 +314,11 @@ export class FileNativeContinuityCorrection {
   > {
     const candidate = this.#atVersion(input.candidateId, input.expectedVersion);
     if (candidate.previewedVersion !== candidate.version)
-      throw new Error("必须先预览当前候选版本才能应用修正");
+      throw new Error(
+        "Preview the current candidate version before applying a correction",
+      );
     if (candidate.snapshot.status !== "usable")
-      throw new Error("只有 usable revision 可以提交修正");
+      throw new Error("Only a usable revision can commit a correction");
     try {
       return await this.#worlds.commitCorrection({
         operationId: candidate.operationId,
@@ -369,13 +381,15 @@ export class FileNativeContinuityCorrection {
 
   #candidate(id: string): Candidate {
     const candidate = this.#candidates.get(id);
-    if (candidate === undefined) throw new Error("修正候选不存在或已经结束");
+    if (candidate === undefined)
+      throw new Error("The correction candidate does not exist or has ended");
     return candidate;
   }
 
   #atVersion(id: string, expected: number): Candidate {
     const candidate = this.#candidate(id);
-    if (candidate.version !== expected) throw new Error("修正候选版本已变化");
+    if (candidate.version !== expected)
+      throw new Error("The correction candidate version has changed");
     return candidate;
   }
 
@@ -390,10 +404,12 @@ export class FileNativeContinuityCorrection {
       read?.snapshotId !== candidate.snapshot.id ||
       read.hash !== expectedHash
     )
-      throw new Error("修正文档必须先完整读取，并携带相同的写前 hash");
+      throw new Error(
+        "A correction document must be read in full first and carry the same pre-write hash",
+      );
     const contents = candidate.files[document.logicalPath];
     if (contents === undefined || sha256(contents) !== expectedHash)
-      throw new Error("修正文档写前 hash 已变化");
+      throw new Error("The correction document's pre-write hash has changed");
     return document;
   }
 
@@ -442,13 +458,15 @@ function readCompleteDocument(
         );
       }
       if (result.kind !== "read_document")
-        throw new Error("修正文档精确读取返回了错误的查询结果");
+        throw new Error(
+          "The correction document's exact read returned the wrong query result",
+        );
       descriptor = result.document;
       cursor = result.page.nextCursor;
     } while (cursor !== null);
     if (descriptor !== null) return descriptor;
   }
-  throw new Error(`修正文档 ${handle} 不存在`);
+  throw new Error(`Correction document ${handle} does not exist`);
 }
 
 function fingerprintControl(files: Record<string, string>): string {

@@ -601,7 +601,8 @@ export class WorldDocumentStore {
       )
         return this.#revisionFailure(null, {
           code: "query_invalid",
-          message: "revise 需要 1 到 64 条 command 的封闭候选批次",
+          message:
+            "revise requires a closed candidate batch of 1 to 64 commands",
         });
 
       const working: RevisionWorkingFile[] = this.files.map((file) => ({
@@ -614,7 +615,7 @@ export class WorldDocumentStore {
         if (!isRecord(command) || typeof command.kind !== "string")
           return this.#revisionFailure(commandIndex, {
             code: "query_invalid",
-            message: "revise command 必须是带 kind 的封闭对象",
+            message: "A revise command must be a closed object with kind",
           });
         const current = WorldDocumentStore.open({
           layout: this.layout,
@@ -660,13 +661,13 @@ export class WorldDocumentStore {
             return this.#revisionFailure(commandIndex, {
               code: "query_invalid",
               message:
-                "create command 参数、临时名字、逻辑路径、codec 或文档元信息无效",
+                "Create-command arguments, temporary name, logical path, codec, or document metadata are invalid",
             });
           if (working.some(({ file }) => file.path === command.logicalPath))
             return this.#revisionFailure(commandIndex, {
               code: "logical_path_duplicate",
               logicalPath: command.logicalPath,
-              message: "create 目标逻辑路径已经存在",
+              message: "Create target logical path already exists",
             });
           const createLogicalPath = command.logicalPath;
           const occupiedRefs = new Set(
@@ -720,7 +721,8 @@ export class WorldDocumentStore {
               return this.#revisionFailure(commandIndex, {
                 code: "yaml_invalid",
                 logicalPath: command.logicalPath,
-                message: "create YAML body 必须是不含 $document 的安全 map",
+                message:
+                  "Create YAML body must be a safe map without $document",
               });
             contents = stringify(
               { ...header, ...body.value },
@@ -739,7 +741,7 @@ export class WorldDocumentStore {
           if (this.layout === "world_state")
             return this.#revisionFailure(commandIndex, {
               code: "query_invalid",
-              message: "世界 state revision 不支持 move",
+              message: "World state revision does not support move",
             });
           if (
             !hasOnlyKeys(command, ["kind", "document", "toLogicalPath"]) ||
@@ -747,7 +749,7 @@ export class WorldDocumentStore {
           )
             return this.#revisionFailure(commandIndex, {
               code: "query_invalid",
-              message: "move command 需要目标和新的逻辑路径",
+              message: "A move command requires a target and new logical path",
             });
           const target = this.#resolveRevisionTarget(
             current,
@@ -767,7 +769,8 @@ export class WorldDocumentStore {
               code: "logical_path_invalid",
               logicalPath: command.toLogicalPath,
               documentId: target.entry.descriptor.documentId,
-              message: "move 目标必须是 world/ 内保持原 codec 的安全逻辑路径",
+              message:
+                "Move target must be a safe logical path under world/ with the original codec",
             });
           if (
             working.some(
@@ -780,7 +783,7 @@ export class WorldDocumentStore {
               code: "logical_path_duplicate",
               logicalPath: command.toLogicalPath,
               documentId: target.entry.descriptor.documentId,
-              message: "move 目标逻辑路径已经存在",
+              message: "Move target logical path already exists",
             });
           target.working.file.path = command.toLogicalPath;
           target.working.lastCommandIndex = commandIndex;
@@ -792,7 +795,8 @@ export class WorldDocumentStore {
           )
             return this.#revisionFailure(commandIndex, {
               code: "query_invalid",
-              message: "replace command 需要目标和完整 UTF-8 文档原文",
+              message:
+                "A replace command requires a target and complete UTF-8 document source",
             });
           const target = this.#resolveRevisionReplaceTarget(
             current,
@@ -823,7 +827,8 @@ export class WorldDocumentStore {
             return this.#revisionFailure(commandIndex, {
               code: "document_header_invalid",
               logicalPath: touchedPath,
-              message: "replace 必须产生具有可用身份的世界文档",
+              message:
+                "Replace must produce a world document with a usable identity",
             });
           const identityProblems: WorldDocumentDiagnostic[] = [];
           if (
@@ -834,7 +839,7 @@ export class WorldDocumentStore {
               code: "document_identity_invalid",
               logicalPath: touchedPath,
               documentId: nextDescriptor.documentId,
-              message: "合法文档的 replace 不能改变文档身份",
+              message: "Replacing a valid document cannot change its identity",
             });
           if (
             previousDescriptor !== undefined &&
@@ -844,7 +849,8 @@ export class WorldDocumentStore {
               code: "document_short_ref_invalid",
               logicalPath: touchedPath,
               documentId: nextDescriptor.documentId,
-              message: "合法文档的 replace 不能改变短引用",
+              message:
+                "Replacing a valid document cannot change its short reference",
             });
           if (identityProblems.length > 0)
             return this.#revisionFailure(commandIndex, identityProblems);
@@ -856,7 +862,8 @@ export class WorldDocumentStore {
           )
             return this.#revisionFailure(commandIndex, {
               code: "query_invalid",
-              message: "write command 需要逻辑路径和完整 UTF-8 文档原文",
+              message:
+                "A write command requires a logical path and complete UTF-8 document source",
             });
           const writePath = command.logicalPath;
           const codec = documentCodec(writePath);
@@ -867,7 +874,7 @@ export class WorldDocumentStore {
             return this.#revisionFailure(commandIndex, {
               code: "logical_path_invalid",
               logicalPath: writePath,
-              message: `write 目标必须是 ${this.logicalRoot}/ 内以 .yaml 或 .md 结尾的安全逻辑路径`,
+              message: `Write target must be a safe logical path under ${this.logicalRoot}/ ending in .yaml or .md`,
             });
           const existing = working.find(({ file }) => file.path === writePath);
           const previous = current.#entries.find(
@@ -935,7 +942,7 @@ export class WorldDocumentStore {
                 code: "yaml_invalid",
                 logicalPath: writePath,
                 documentId,
-                message: "write YAML 正文必须是不含 $document 的安全 map",
+                message: "Write YAML body must be a safe map without $document",
               });
             contents = stringify(
               { ...header, ...body.value },
@@ -964,7 +971,8 @@ export class WorldDocumentStore {
           )
             return this.#revisionFailure(commandIndex, {
               code: "query_invalid",
-              message: "patch command 需要目标和 1 到 32 个封闭 edit",
+              message:
+                "A patch command requires a target and 1 to 32 closed edits",
             });
           const target = this.#resolveRevisionTarget(
             current,
@@ -1000,7 +1008,7 @@ export class WorldDocumentStore {
                   code: "query_invalid",
                   logicalPath: target.entry.file.path,
                   documentId: target.entry.descriptor.documentId,
-                  message: "patch edit 必须是带 op 的封闭对象",
+                  message: "A patch edit must be a closed object with op",
                 });
               if (edit.op === "set_metadata") {
                 if (!hasOnlyKeys(edit, ["op", "title", "summary", "aliases"]))
@@ -1009,14 +1017,14 @@ export class WorldDocumentStore {
                     logicalPath: target.entry.file.path,
                     documentId: target.entry.descriptor.documentId,
                     message:
-                      "set_metadata 只接受 op、title、summary 和 aliases",
+                      "set_metadata accepts only op, title, summary, and aliases",
                   });
                 if (!validDocumentMetadata(edit))
                   return this.#revisionFailure(commandIndex, {
                     code: "document_header_invalid",
                     logicalPath: target.entry.file.path,
                     documentId: target.entry.descriptor.documentId,
-                    message: `set_metadata 参数无效：${documentMetadataProblems(edit).join("；")}`,
+                    message: `set_metadata arguments are invalid: ${documentMetadataProblems(edit).join("; ")}`,
                   });
                 document.setIn(["$document", "title"], edit.title);
                 document.setIn(["$document", "summary"], edit.summary);
@@ -1039,7 +1047,8 @@ export class WorldDocumentStore {
                         ),
                       }
                     : {}),
-                  message: "YAML edit 需要技术头之外的精确 locator",
+                  message:
+                    "A YAML edit requires an exact locator outside the technical header",
                 });
               const locator = [...edit.locator.yaml];
               if (locator.length === 0) {
@@ -1052,7 +1061,7 @@ export class WorldDocumentStore {
                     logicalPath: target.entry.file.path,
                     documentId: target.entry.descriptor.documentId,
                     locator: { yaml: [] },
-                    message: "整个 YAML 正文只支持 add 或 replace",
+                    message: "A whole YAML body supports only add or replace",
                   });
                 const value = this.#resolveRevisionYamlValue(
                   edit.value,
@@ -1079,7 +1088,8 @@ export class WorldDocumentStore {
                     logicalPath: target.entry.file.path,
                     documentId: target.entry.descriptor.documentId,
                     locator: { yaml: [] },
-                    message: "整个 YAML 正文必须是不含 $document 的 map",
+                    message:
+                      "A whole YAML body must be a map without $document",
                   });
                 const currentValue: unknown = document.toJS({
                   maxAliasCount: 0,
@@ -1092,7 +1102,7 @@ export class WorldDocumentStore {
                     code: "document_header_invalid",
                     logicalPath: target.entry.file.path,
                     documentId: target.entry.descriptor.documentId,
-                    message: "YAML 技术头无法保持",
+                    message: "YAML technical header could not be preserved",
                   });
                 if (
                   edit.op === "add" &&
@@ -1103,7 +1113,8 @@ export class WorldDocumentStore {
                     logicalPath: target.entry.file.path,
                     documentId: target.entry.descriptor.documentId,
                     locator: { yaml: [] },
-                    message: "YAML add 整个正文要求当前正文为空",
+                    message:
+                      "Adding a whole YAML body requires the current body to be empty",
                   });
                 document = parseDocument(
                   stringify(
@@ -1122,7 +1133,7 @@ export class WorldDocumentStore {
                     logicalPath: target.entry.file.path,
                     documentId: target.entry.descriptor.documentId,
                     locator: { yaml: locator },
-                    message: "YAML remove 目标必须存在",
+                    message: "YAML remove target must exist",
                   });
                 document.deleteIn(locator);
                 continue;
@@ -1133,7 +1144,7 @@ export class WorldDocumentStore {
                   logicalPath: target.entry.file.path,
                   documentId: target.entry.descriptor.documentId,
                   locator: { yaml: locator },
-                  message: "YAML value edit 参数无效",
+                  message: "YAML value-edit arguments are invalid",
                 });
               let valueLocator = locator;
               if (edit.op === "append") {
@@ -1144,7 +1155,7 @@ export class WorldDocumentStore {
                     logicalPath: target.entry.file.path,
                     documentId: target.entry.descriptor.documentId,
                     locator: { yaml: locator },
-                    message: "YAML append 目标必须是 sequence",
+                    message: "YAML append target must be a sequence",
                   });
                 valueLocator = [...locator, sequence.items.length];
               }
@@ -1180,7 +1191,7 @@ export class WorldDocumentStore {
                     documentId: target.entry.descriptor.documentId,
                     locator: { yaml: locator },
                     message:
-                      "YAML add 目标必须不存在且父 map 或 sequence 必须存在",
+                      "YAML add target must not exist, and its parent map or sequence must exist",
                   });
                 document.setIn(locator, value.value);
               } else if (edit.op === "replace") {
@@ -1190,7 +1201,7 @@ export class WorldDocumentStore {
                     logicalPath: target.entry.file.path,
                     documentId: target.entry.descriptor.documentId,
                     locator: { yaml: locator },
-                    message: "YAML replace 目标必须存在",
+                    message: "YAML replace target must exist",
                   });
                 document.setIn(locator, value.value);
               } else document.addIn(locator, value.value);
@@ -1206,7 +1217,8 @@ export class WorldDocumentStore {
         } else
           return this.#revisionFailure(commandIndex, {
             code: "query_invalid",
-            message: "世界文档候选批次不支持该 command kind",
+            message:
+              "World-document candidate batch does not support this command kind",
           });
 
         const candidate = WorldDocumentStore.open({
@@ -1252,7 +1264,9 @@ export class WorldDocumentStore {
             ({ file: candidate }) => candidate.path === file.path,
           )?.descriptor;
           if (descriptor === undefined)
-            throw new Error("usable candidate 缺少最终世界文档身份");
+            throw new Error(
+              "Usable candidate is missing its final world-document identity",
+            );
           return freeze({
             documentId: descriptor.documentId,
             shortRef: descriptor.shortRef,
@@ -1289,7 +1303,7 @@ export class WorldDocumentStore {
     } catch {
       return this.#revisionFailure(activeCommandIndex, {
         code: "query_invalid",
-        message: "revise command 无法作为安全的封闭输入解释",
+        message: "Revise command cannot be interpreted as safe closed input",
       });
     }
   }
@@ -1347,7 +1361,8 @@ export class WorldDocumentStore {
                 temporary.length === 0
                   ? "document_not_found"
                   : "document_ambiguous",
-              message: "候选批次临时名字没有唯一指向批内已创建文档",
+              message:
+                "Candidate-batch temporary name does not uniquely identify a document created in the batch",
             }),
           ]),
         };
@@ -1362,7 +1377,7 @@ export class WorldDocumentStore {
           diagnostic({
             code: "document_header_invalid",
             logicalPath: resolved.entry.file.path,
-            message: "候选批次目标没有可用文档身份",
+            message: "Candidate-batch target has no usable document identity",
           }),
         ]),
       };
@@ -1376,7 +1391,7 @@ export class WorldDocumentStore {
             code: "document_ambiguous",
             logicalPath: resolved.entry.file.path,
             documentId: resolved.entry.descriptor.documentId,
-            message: "目标在完整候选文件集中不唯一",
+            message: "Target is not unique in the complete candidate file set",
           }),
         ]),
       };
@@ -1419,7 +1434,8 @@ export class WorldDocumentStore {
                 ? "document_not_found"
                 : "document_ambiguous",
             logicalPath: target.logicalPath,
-            message: "replace 逻辑路径没有唯一指向候选世界文档",
+            message:
+              "Replace logical path does not uniquely identify a candidate world document",
           }),
         ]),
       };
@@ -1452,7 +1468,8 @@ export class WorldDocumentStore {
           diagnostic({
             code: "yaml_invalid",
             locator: { yaml: [...locator] },
-            message: "候选 YAML value 必须是无循环的 JSON 型安全值",
+            message:
+              "Candidate YAML value must be an acyclic JSON-shaped safe value",
           }),
         ]),
       };
@@ -1484,7 +1501,7 @@ export class WorldDocumentStore {
           diagnostic({
             code: "yaml_invalid",
             locator: { yaml: [...locator] },
-            message: "候选 YAML map 必须是普通对象",
+            message: "Candidate YAML map must be a plain object",
           }),
         ]),
       };
@@ -1501,8 +1518,8 @@ export class WorldDocumentStore {
               locator: { yaml: [...locator] },
               message:
                 options.referenceInput === "explicit_short_ref_only"
-                  ? "$ref 必须使用 Runtime 返回的 @短引用，且引用对象不能包含其他字段"
-                  : "$ref 对象不能包含其他字段",
+                  ? "$ref must use an @short-ref returned by Runtime, and the reference object cannot contain other fields"
+                  : "A $ref object cannot contain other fields",
             }),
           ]),
         };
@@ -1514,7 +1531,8 @@ export class WorldDocumentStore {
                 diagnostic({
                   code: "document_reference_invalid",
                   locator: { yaml: [...locator] },
-                  message: "$ref 必须是文档身份或明确文档选择器",
+                  message:
+                    "$ref must be a document identity or explicit document selector",
                 }),
               ]),
             };
@@ -1585,7 +1603,7 @@ export class WorldDocumentStore {
               ? "document_not_found"
               : "logical_path_duplicate",
           logicalPath,
-          message: "command 必须产生唯一目标世界文档",
+          message: "Command must produce one unique target world document",
         }),
       ]);
     const entry = entries[0]!;
@@ -1607,7 +1625,8 @@ export class WorldDocumentStore {
       return this.#failure(null, null, [
         diagnostic({
           code: "query_invalid",
-          message: "WorldDocumentStore.query 只接受封闭的查询请求",
+          message:
+            "WorldDocumentStore.query accepts only closed query requests",
         }),
       ]);
     if (request.kind === "catalog") return this.#catalog(request);
@@ -1617,7 +1636,7 @@ export class WorldDocumentStore {
     return this.#failure(null, null, [
       diagnostic({
         code: "query_invalid",
-        message: "WorldDocumentStore.query 只接受封闭的查询请求",
+        message: "WorldDocumentStore.query accepts only closed query requests",
       }),
     ]);
   }
@@ -1629,7 +1648,7 @@ export class WorldDocumentStore {
       return this.#failure("catalog", request, [
         diagnostic({
           code: "query_invalid",
-          message: "catalog 包含未声明的查询条件",
+          message: "Catalog contains undeclared query conditions",
         }),
       ]);
     const directory = request.directory ?? "";
@@ -1643,7 +1662,8 @@ export class WorldDocumentStore {
       return this.#failure("catalog", request, [
         diagnostic({
           code: "query_invalid",
-          message: "catalog directory 必须位于布局根内，limit 必须为 1 到 100",
+          message:
+            "Catalog directory must be within the layout root, and limit must be 1 to 100",
         }),
       ]);
     const relativePrefix = directory === "" ? "" : `${directory}/`;
@@ -1739,7 +1759,7 @@ export class WorldDocumentStore {
       return this.#failure("literal_search", request, [
         diagnostic({
           code: "query_invalid",
-          message: "literal_search 包含未声明的查询条件",
+          message: "literal_search contains undeclared query conditions",
         }),
       ]);
     const caseSensitive = request.caseSensitive ?? false;
@@ -1758,7 +1778,7 @@ export class WorldDocumentStore {
         diagnostic({
           code: "query_invalid",
           message:
-            "literal_search 需要 1 到 256 字符的字面量和 1 到 100 的 limit",
+            "literal_search requires a 1-to-256-character literal and a limit from 1 to 100",
         }),
       ]);
     let candidates: readonly InternalDocumentEntry[] = this.#entries;
@@ -1771,7 +1791,7 @@ export class WorldDocumentStore {
         return this.#failure("literal_search", request, [
           diagnostic({
             code: "query_invalid",
-            message: "literal_search within 必须是封闭的查询范围",
+            message: "literal_search within must be a closed query scope",
           }),
         ]);
       if (
@@ -1786,7 +1806,8 @@ export class WorldDocumentStore {
           return this.#failure("literal_search", request, [
             diagnostic({
               code: "query_invalid",
-              message: "literal_search directory 必须是布局根内的逻辑目录",
+              message:
+                "literal_search directory must be a logical directory within the layout root",
             }),
           ]);
         const relativePrefix =
@@ -1820,7 +1841,8 @@ export class WorldDocumentStore {
         return this.#failure("literal_search", request, [
           diagnostic({
             code: "query_invalid",
-            message: "literal_search within 必须只声明 directory 或 document",
+            message:
+              "literal_search within must declare only directory or document",
           }),
         ]);
     }
@@ -1830,7 +1852,7 @@ export class WorldDocumentStore {
       return this.#failure("literal_search", request, [
         diagnostic({
           code: "query_invalid",
-          message: "literal_search normalization 后不得为空",
+          message: "literal_search cannot be empty after normalization",
         }),
       ]);
     const excluded = candidates.filter(
@@ -1866,7 +1888,8 @@ export class WorldDocumentStore {
             return this.#failure("literal_search", request, [
               diagnostic({
                 code: "capacity_exceeded",
-                message: "字面搜索命中超过单次快照查询容量",
+                message:
+                  "Literal-search matches exceed the capacity of one snapshot query",
               }),
             ]);
           const match = {
@@ -1967,7 +1990,7 @@ export class WorldDocumentStore {
       return this.#failure("read_document", request, [
         diagnostic({
           code: "query_invalid",
-          message: "read_document 包含未声明的查询条件",
+          message: "read_document contains undeclared query conditions",
         }),
       ]);
     const maxBytes = request.maxBytes ?? 8192;
@@ -1975,7 +1998,7 @@ export class WorldDocumentStore {
       return this.#failure("read_document", request, [
         diagnostic({
           code: "query_invalid",
-          message: "read_document maxBytes 必须为 4 到 65536",
+          message: "read_document maxBytes must be 4 to 65536",
         }),
       ]);
     const resolved = this.#resolveSelector(request.document);
@@ -1996,7 +2019,7 @@ export class WorldDocumentStore {
             code: "document_header_invalid",
             logicalPath: resolved.entry.file.path,
             documentId: resolved.entry.descriptor!.documentId,
-            message: "世界文档缺少可读取的正文范围",
+            message: "World document has no readable body range",
           }),
         ],
         resolved.entry.descriptor,
@@ -2055,14 +2078,14 @@ export class WorldDocumentStore {
       return this.#failure("select_node", request, [
         diagnostic({
           code: "query_invalid",
-          message: "select_node 包含未声明的查询条件",
+          message: "select_node contains undeclared query conditions",
         }),
       ]);
     if (!isRecord(request.locator))
       return this.#failure("select_node", request, [
         diagnostic({
           code: "query_invalid",
-          message: "select_node 必须声明一个封闭的 locator",
+          message: "select_node must declare one closed locator",
         }),
       ]);
     const resolved = this.#resolveSelector(request.document);
@@ -2118,7 +2141,8 @@ export class WorldDocumentStore {
               documentId: entry.descriptor!.documentId,
               locator: publicLocator,
               range: node.range,
-              message: "精确节点投影超过单次查询容量",
+              message:
+                "Exact-node projection exceeds the capacity of one query",
             }),
           ],
           entry.descriptor,
@@ -2167,7 +2191,8 @@ export class WorldDocumentStore {
               documentId: entry.descriptor!.documentId,
               locator: publicLocator,
               range: heading.range,
-              message: "精确节点投影超过单次查询容量",
+              message:
+                "Exact-node projection exceeds the capacity of one query",
             }),
           ],
           entry.descriptor,
@@ -2255,7 +2280,8 @@ export class WorldDocumentStore {
             ? {}
             : { documentId: entry.descriptor.documentId }),
           locator,
-          message: "逻辑节点 locator 无法唯一解析到目标 codec",
+          message:
+            "Logical-node locator cannot be resolved uniquely for the target codec",
         }),
       ],
       entry.descriptor,
@@ -2273,7 +2299,8 @@ export class WorldDocumentStore {
         diagnostics: freeze([
           diagnostic({
             code: "query_invalid",
-            message: "文档选择器必须只声明 documentId、shortRef 或 logicalPath",
+            message:
+              "A document selector must declare only documentId, shortRef, or logicalPath",
           }),
         ]),
       };
@@ -2304,7 +2331,7 @@ export class WorldDocumentStore {
         diagnostics: freeze([
           diagnostic({
             code: "query_invalid",
-            message: "文档选择器值必须是非空字符串",
+            message: "Document-selector value must be a non-empty string",
           }),
         ]),
       };
@@ -2313,7 +2340,7 @@ export class WorldDocumentStore {
         diagnostics: freeze([
           diagnostic({
             code: "document_not_found",
-            message: "快照中不存在目标世界文档",
+            message: "Target world document does not exist in the snapshot",
           }),
         ]),
       };
@@ -2322,7 +2349,7 @@ export class WorldDocumentStore {
         diagnostics: freeze([
           diagnostic({
             code: "document_ambiguous",
-            message: "目标世界文档在快照中不唯一",
+            message: "Target world document is not unique in the snapshot",
           }),
           ...matches.flatMap(({ diagnostics }) => diagnostics),
         ]),
@@ -2418,7 +2445,8 @@ export class WorldDocumentStore {
     return this.#failure(requestKind, scope, [
       diagnostic({
         code: "cursor_invalid",
-        message: "cursor 与当前快照或全部查询条件不匹配",
+        message:
+          "Cursor does not match the current snapshot or all query conditions",
       }),
     ]);
   }
@@ -2454,7 +2482,8 @@ export class WorldDocumentStore {
         diagnostic({
           code: "logical_path_invalid",
           logicalPath: file.path,
-          message: "世界文档逻辑路径必须留在布局根内",
+          message:
+            "World-document logical path must remain within the layout root",
         }),
       );
       return entry;
@@ -2465,7 +2494,7 @@ export class WorldDocumentStore {
           code: "world_document_binary",
           logicalPath: file.path,
           range: sourceRange(file.contents, 0, file.contents.length),
-          message: "世界文档只接受 UTF-8 YAML 或 Markdown 原文",
+          message: "World documents accept only UTF-8 YAML or Markdown source",
         }),
       );
       return entry;
@@ -2477,7 +2506,7 @@ export class WorldDocumentStore {
           code: "world_document_codec_unsupported",
           logicalPath: file.path,
           range: sourceRange(file.contents, 0, file.contents.length),
-          message: "世界文档只接受 .yaml、.yml 或 .md codec",
+          message: "World documents accept only .yaml, .yml, or .md codecs",
         }),
       );
       return entry;
@@ -2488,7 +2517,7 @@ export class WorldDocumentStore {
           code: "capacity_exceeded",
           logicalPath: file.path,
           range: sourceRange(file.contents, 0, file.contents.length),
-          message: "单份世界文档不得超过 4 MiB",
+          message: "One world document cannot exceed 4 MiB",
         }),
       );
       return entry;
@@ -2512,7 +2541,8 @@ export class WorldDocumentStore {
               0,
               entry.file.contents.length,
             ),
-            message: "固定文件集中存在重复世界文档逻辑路径",
+            message:
+              "The fixed file set contains duplicate world-document logical paths",
           }),
         );
     }
@@ -2540,7 +2570,7 @@ export class WorldDocumentStore {
             ...(entry.headerRanges?.documentId === undefined
               ? {}
               : { range: entry.headerRanges.documentId }),
-            message: "文档身份在快照内必须唯一",
+            message: "Document identity must be unique within the snapshot",
           }),
         );
     }
@@ -2558,7 +2588,8 @@ export class WorldDocumentStore {
             ...(entry.headerRanges?.shortRef === undefined
               ? {}
               : { range: entry.headerRanges.shortRef }),
-            message: "文档短引用在快照内必须唯一",
+            message:
+              "Document short reference must be unique within the snapshot",
           }),
         );
     }
@@ -2591,7 +2622,8 @@ export class WorldDocumentStore {
               : { documentId: entry.descriptor.documentId }),
             locator: reference.locator,
             range: reference.range,
-            message: "显式 $ref 必须唯一指向快照中的整份文档身份",
+            message:
+              "An explicit $ref must uniquely identify a whole document in the snapshot",
           }),
         );
       }
@@ -2630,7 +2662,7 @@ function inspectMarkdownDocument(entry: InternalDocumentEntry): void {
         code: "markdown_invalid",
         logicalPath: entry.file.path,
         range: sourceRange(source, 0, Math.min(source.length, 3)),
-        message: "Markdown 必须以 $document front matter 开始",
+        message: "Markdown must begin with $document front matter",
       }),
     );
     return;
@@ -2642,7 +2674,7 @@ function inspectMarkdownDocument(entry: InternalDocumentEntry): void {
         code: "markdown_invalid",
         logicalPath: entry.file.path,
         range: sourceRange(source, 0, Math.min(source.length, 3)),
-        message: "Markdown front matter 未闭合",
+        message: "Markdown front matter is not closed",
       }),
     );
     return;
@@ -2680,7 +2712,8 @@ function inspectMarkdownDocument(entry: InternalDocumentEntry): void {
         documentId: header.descriptor.documentId,
         range:
           headings[0]?.range ?? sourceRange(source, bodyStart, source.length),
-        message: "Markdown 必须有与技术标题相同的唯一 h1，且标题层级不得跳级",
+        message:
+          "Markdown must have one h1 matching the technical title, and heading levels cannot be skipped",
       }),
     );
 
@@ -2704,7 +2737,7 @@ function inspectMarkdownDocument(entry: InternalDocumentEntry): void {
           documentId: header.descriptor.documentId,
           locator: { markdown: locator },
           range: heading.range,
-          message: "Markdown 标题路径在文档内必须唯一",
+          message: "Markdown heading paths must be unique within the document",
         }),
       );
     else seen.set(key, heading.range);
@@ -2748,7 +2781,8 @@ function parseRevisionYamlBodySource(
         diagnostic({
           code: "yaml_invalid",
           logicalPath,
-          message: "create YAML body 不能包含 $document 技术头",
+          message:
+            "Create YAML body cannot include a $document technical header",
         }),
       ]),
     };
@@ -2822,7 +2856,7 @@ function parseWriteDocumentSource(
           code: "document_header_invalid",
           logicalPath,
           message:
-            "新建文档的 write 原文必须以 $document 技术头开始；覆盖既有文档时可以省略它来沿用原有 title、summary 和 aliases",
+            "Write source for a new document must begin with a $document technical header; replacing an existing document may omit it to preserve title, summary, and aliases",
         }),
       ]),
     };
@@ -2833,7 +2867,7 @@ function parseWriteDocumentSource(
         diagnostic({
           code: "document_header_invalid",
           logicalPath,
-          message: `$document 技术头无效：${documentMetadataProblems(normalized).join("；")}`,
+          message: `$document technical header is invalid: ${documentMetadataProblems(normalized).join("; ")}`,
         }),
       ]),
     };
@@ -2849,7 +2883,7 @@ function parseWriteDocumentSource(
         diagnostic({
           code: "document_short_ref_invalid",
           logicalPath,
-          message: `$document.ref 必须是 2 到 32 个字符、只含小写字母数字和连字符的短引用，实际收到 ${describeValue(ref)}`,
+          message: `$document.ref must be a 2-to-32-character short reference containing only lowercase letters, digits, and hyphens; received ${describeValue(ref)}`,
         }),
       ]),
     };
@@ -2883,7 +2917,7 @@ function parseRestrictedYaml(
           baseOffset + forbidden.end,
         ),
         message:
-          "YAML 使用了禁止的 tag、anchor、alias、merge、多文档或非法换行",
+          "YAML uses a forbidden tag, anchor, alias, merge, multiple documents, or invalid line break",
       }),
     );
     return null;
@@ -2904,7 +2938,7 @@ function parseRestrictedYaml(
             baseOffset + problem.pos[0],
             baseOffset + problem.pos[1],
           ),
-          message: "YAML 不是安全的单文档 YAML 1.2 core map",
+          message: "YAML is not a safe single-document YAML 1.2 core map",
         }),
       );
     return null;
@@ -2919,7 +2953,7 @@ function parseRestrictedYaml(
           baseOffset,
           baseOffset + source.length,
         ),
-        message: "YAML 顶层必须是 map",
+        message: "Top-level YAML must be a map",
       }),
     );
     return null;
@@ -2933,7 +2967,7 @@ function parseRestrictedYaml(
         code: "capacity_exceeded",
         logicalPath: entry.file.path,
         range: nodeRange(entry.file.contents, document.contents, baseOffset),
-        message: "YAML 深度或节点数超过世界文档容量",
+        message: "YAML depth or node count exceeds world-document capacity",
       }),
     );
   if (shape.invalidNumber)
@@ -2942,7 +2976,7 @@ function parseRestrictedYaml(
         code: "yaml_invalid",
         logicalPath: entry.file.path,
         range: nodeRange(entry.file.contents, document.contents, baseOffset),
-        message: "YAML 数值必须是有限数",
+        message: "YAML numbers must be finite",
       }),
     );
   return {
@@ -2968,7 +3002,7 @@ function readHeader(
         code: "document_header_invalid",
         logicalPath: entry.file.path,
         range: nodeRange(entry.file.contents, parsed.root, parsed.baseOffset),
-        message: "$document 必须是文档第一项",
+        message: "$document must be the first document entry",
       }),
     );
     return null;
@@ -3012,7 +3046,8 @@ function readHeader(
                 parsed.baseOffset,
               ),
             }),
-        message: "$document.id 必须是稳定的小写世界内身份",
+        message:
+          "$document.id must be a stable lowercase identity within the world",
       }),
     );
   }
@@ -3036,7 +3071,7 @@ function readHeader(
                 parsed.baseOffset,
               ),
             }),
-        message: "$document.ref 必须是稳定的小写短引用",
+        message: "$document.ref must be a stable lowercase short reference",
       }),
     );
   }
@@ -3063,7 +3098,7 @@ function readHeader(
           : {}),
         range: nodeRange(entry.file.contents, header, parsed.baseOffset),
         message:
-          "$document 必须且只能包含合法的 id、ref、title、summary 和 aliases",
+          "$document must contain only valid id, ref, title, summary, and aliases",
       }),
     );
     return null;
@@ -3164,7 +3199,7 @@ function inspectYamlReferences(
               ? {}
               : { documentId: entry.descriptor.documentId }),
             range: nodeRange(entry.file.contents, pair.key, 0),
-            message: "YAML map key 必须是字符串",
+            message: "YAML map keys must be strings",
           }),
         );
         continue;
@@ -3203,7 +3238,7 @@ function projectExplicitReferenceValues(
               end,
               projection:
                 descriptor === undefined
-                  ? "（无效文档引用）"
+                  ? "(invalid document reference)"
                   : `@${descriptor.shortRef}`,
             },
           ]
@@ -3515,7 +3550,7 @@ function patchRevisionMarkdown(
         diagnostics: [
           diagnostic({
             code: "query_invalid",
-            message: "Markdown patch edit 必须是带 op 的封闭对象",
+            message: "A Markdown patch edit must be a closed object with op",
           }),
         ],
       };
@@ -3529,8 +3564,8 @@ function patchRevisionMarkdown(
             diagnostic({
               code: "document_header_invalid",
               message: hasOnlyKeys(edit, ["op", "title", "summary", "aliases"])
-                ? `set_metadata 参数无效：${documentMetadataProblems(edit).join("；")}`
-                : "set_metadata 只接受 op、title、summary 和 aliases",
+                ? `set_metadata arguments are invalid: ${documentMetadataProblems(edit).join("; ")}`
+                : "set_metadata accepts only op, title, summary, and aliases",
             }),
           ],
         };
@@ -3546,7 +3581,7 @@ function patchRevisionMarkdown(
           diagnostics: [
             diagnostic({
               code: "markdown_invalid",
-              message: "Markdown 正文缺少可更新的 h1",
+              message: "Markdown body is missing an updateable h1",
             }),
           ],
         };
@@ -3563,7 +3598,7 @@ function patchRevisionMarkdown(
           diagnostics: [
             diagnostic({
               code: "query_invalid",
-              message: "Markdown body edit 需要 markdown 原文",
+              message: "A Markdown body edit requires markdown source",
             }),
           ],
         };
@@ -3583,7 +3618,7 @@ function patchRevisionMarkdown(
           diagnostics: [
             diagnostic({
               code: "markdown_invalid",
-              message: "Markdown 正文缺少可更新的 h1",
+              message: "Markdown body is missing an updateable h1",
             }),
           ],
         };
@@ -3615,7 +3650,7 @@ function patchRevisionMarkdown(
                   ),
                 }
               : {}),
-            message: "Markdown patch 需要精确标题 locator",
+            message: "A Markdown patch requires an exact heading locator",
           }),
         ],
       };
@@ -3629,7 +3664,7 @@ function patchRevisionMarkdown(
             diagnostic({
               code: "query_invalid",
               locator,
-              message: "remove_section 包含未声明参数",
+              message: "remove_section contains undeclared arguments",
             }),
           ],
         };
@@ -3646,7 +3681,7 @@ function patchRevisionMarkdown(
             diagnostic({
               code: "query_invalid",
               locator,
-              message: "rename_section 需要合法的新标题",
+              message: "rename_section requires a valid new heading",
             }),
           ],
         };
@@ -3662,7 +3697,8 @@ function patchRevisionMarkdown(
           diagnostic({
             code: "query_invalid",
             locator,
-            message: "Markdown section edit 需要完整 Markdown 区块",
+            message:
+              "A Markdown section edit requires a complete Markdown block",
           }),
         ],
       };
@@ -3686,7 +3722,8 @@ function patchRevisionMarkdown(
             diagnostic({
               code: "locator_invalid",
               locator,
-              message: "replace_section 首标题必须保持原精确标题路径",
+              message:
+                "replace_section first heading must preserve the exact original heading path",
             }),
           ],
         };
@@ -3703,7 +3740,8 @@ function patchRevisionMarkdown(
             diagnostic({
               code: "locator_invalid",
               locator,
-              message: "add_section 必须加入低一级标题的完整区块",
+              message:
+                "add_section must add a complete block with a heading one level lower",
             }),
           ],
         };
@@ -3724,7 +3762,7 @@ function markdownEnvelope(source: string):
       diagnostics: [
         diagnostic({
           code: "markdown_invalid",
-          message: "Markdown 必须以技术 front matter 开始",
+          message: "Markdown must begin with technical front matter",
         }),
       ],
     };
@@ -3734,7 +3772,7 @@ function markdownEnvelope(source: string):
       diagnostics: [
         diagnostic({
           code: "markdown_invalid",
-          message: "Markdown 技术 front matter 未闭合",
+          message: "Markdown technical front matter is not closed",
         }),
       ],
     };
@@ -3748,7 +3786,7 @@ function markdownEnvelope(source: string):
       diagnostics: [
         diagnostic({
           code: "yaml_invalid",
-          message: "Markdown 技术 front matter 无法安全解析",
+          message: "Markdown technical front matter could not be parsed safely",
         }),
       ],
     };
@@ -3795,7 +3833,7 @@ function markdownRevisionSection(
           code:
             matches.length === 0 ? "locator_not_found" : "locator_ambiguous",
           locator: publicLocator,
-          message: "Markdown 标题路径无法唯一定位",
+          message: "Markdown heading path cannot be located uniquely",
         }),
       ],
     };
@@ -3988,19 +4026,21 @@ function documentMetadataProblems(value: {
   problems.push(...boundedTextProblems("summary", value.summary, 240));
   if (!Array.isArray(value.aliases))
     problems.push(
-      `aliases 必须是数组，实际收到 ${describeValue(value.aliases)}`,
+      `aliases must be an array; received ${describeValue(value.aliases)}`,
     );
   else if (value.aliases.length > 16)
-    problems.push(`aliases 最多 16 项，实际 ${value.aliases.length} 项`);
+    problems.push(
+      `aliases may contain at most 16 items; received ${value.aliases.length}`,
+    );
   else
     for (const [index, alias] of value.aliases.entries()) {
       if (typeof alias !== "string")
         problems.push(
-          `aliases 第 ${index + 1} 项必须是字符串，实际收到 ${describeValue(alias)}`,
+          `aliases item ${index + 1} must be a string; received ${describeValue(alias)}`,
         );
       else if ([...alias].length < 1 || [...alias].length > 64)
         problems.push(
-          `aliases 第 ${index + 1} 项必须是 1 到 64 个字符，实际 ${[...alias].length} 个`,
+          `aliases item ${index + 1} must contain 1 to 64 characters; received ${[...alias].length}`,
         );
     }
   return problems;
@@ -4012,11 +4052,11 @@ function boundedTextProblems(
   limit: number,
 ): string[] {
   if (typeof value !== "string")
-    return [`${field} 必须是字符串，实际收到 ${describeValue(value)}`];
+    return [`${field} must be a string; received ${describeValue(value)}`];
   const length = [...value].length;
-  if (length < 1) return [`${field} 不能为空`];
+  if (length < 1) return [`${field} cannot be empty`];
   return length > limit
-    ? [`${field} 最多 ${limit} 个字符，实际 ${length} 个`]
+    ? [`${field} may contain at most ${limit} characters; received ${length}`]
     : [];
 }
 
@@ -4034,10 +4074,10 @@ function normalizeAliases(value: unknown): unknown {
 }
 
 function describeValue(value: unknown): string {
-  if (value === undefined) return "缺失";
+  if (value === undefined) return "missing";
   if (value === null) return "null";
-  if (Array.isArray(value)) return `数组（${value.length} 项）`;
-  if (typeof value === "object") return "对象";
+  if (Array.isArray(value)) return `array (${value.length} items)`;
+  if (typeof value === "object") return "object";
   return `${typeof value} ${JSON.stringify(value)}`;
 }
 

@@ -11,6 +11,7 @@
     "src/protocol/**/*.ts",
     "src/web/**/*.ts",
     "src/web/**/*.tsx",
+    "tests/setup.ts",
     "tests/web/**/*.ts"
   ]
 }

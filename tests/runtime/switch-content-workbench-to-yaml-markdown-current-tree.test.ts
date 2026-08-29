@@ -43,7 +43,8 @@ describe("YAML/Markdown 内容包当前树", () => {
     const frame = detail.files.find(
       ({ path }) => path === "control/frame.yaml",
     )?.contents;
-    if (frame === undefined) throw new Error("新内容包缺少 control/frame.yaml");
+    if (frame === undefined)
+      throw new Error("New content package is missing control/frame.yaml");
     expect(frame).toContain(
       "kind: catalog, directory: characters, maxEntries: 24, required: false",
     );
@@ -52,14 +53,14 @@ describe("YAML/Markdown 内容包当前树", () => {
     );
     expect(
       detail.files.find(({ path }) => path === "opening.md")?.contents,
-    ).toMatch(/你|面前|此刻/u);
+    ).toMatch(/You|before you|threshold/u);
   });
 
   test("安全但不完整的业务树可导入、诊断、修复并作为独立同名副本导出", async () => {
     const root = await temporaryRoot();
     const source = createZip([
       {
-        path: "world/characters/qinlong.yaml",
+        path: "world/characters/alex.yaml",
         contents: character(),
       },
     ]);
@@ -81,13 +82,14 @@ describe("YAML/Markdown 内容包当前树", () => {
 
     const completeFiles = [
       { path: "opening.md", contents: opening() },
-      { path: "world/characters/qinlong.yaml", contents: character() },
+      { path: "world/characters/alex.yaml", contents: character() },
       { path: "world/current-situation.yaml", contents: currentSituation() },
       { path: "world/rules/cultivation.md", contents: cultivation() },
       { path: "control/frame.yaml", contents: frame() },
       {
         path: "control/blocks/world.md",
-        contents: "# 世界主持规则\n\n持续结果写回自然所有者。\n",
+        contents:
+          "# World Narration Rules\n\nWrite durable outcomes back to their natural owner.\n",
       },
       { path: "control/player-views.yaml", contents: playerView() },
     ];
@@ -122,7 +124,7 @@ describe("YAML/Markdown 内容包当前树", () => {
     const workspace = new ContentWorkspace(join(root, "data"));
     const archive = createZip([
       { path: "opening.md", contents: opening() },
-      { path: "world/characters/qinlong.yaml", contents: character() },
+      { path: "world/characters/alex.yaml", contents: character() },
       {
         path: "world/current-situation.yaml",
         contents: currentSituation(),
@@ -131,7 +133,8 @@ describe("YAML/Markdown 内容包当前树", () => {
       { path: "control/frame.yaml", contents: frame() },
       {
         path: "control/blocks/world.md",
-        contents: "# 世界主持规则\n\n持续结果写回自然所有者。\n",
+        contents:
+          "# World Narration Rules\n\nWrite durable outcomes back to their natural owner.\n",
       },
       { path: "control/player-views.yaml", contents: playerView() },
       { path: "assets/map.bin", contents: Buffer.from([0xff, 0xfe]) },
@@ -197,7 +200,7 @@ describe("YAML/Markdown 内容包当前树", () => {
           encoding: "base64",
         },
       ]),
-    ).rejects.toThrow(/世界文档.*UTF-8/u);
+    ).rejects.toThrow(/World documents.*UTF-8/u);
     expect(
       (await workspace.readCurrentTreeContentPackage(created.localId)).files,
     ).toEqual(before.files);
@@ -219,7 +222,10 @@ describe("YAML/Markdown 内容包当前树", () => {
         contents: currentSituation("missing.person"),
       },
       { path: "control/frame.yaml", contents: frame() },
-      { path: "control/blocks/world.md", contents: "# 世界主持规则\n" },
+      {
+        path: "control/blocks/world.md",
+        contents: "# World Narration Rules\n",
+      },
       { path: "control/player-views.yaml", contents: playerView() },
     ]);
 
@@ -242,12 +248,15 @@ describe("YAML/Markdown 内容包当前树", () => {
     const candidateFiles = [
       { path: "opening.md", contents: opening() },
       {
-        path: "world/characters/qinlong.yaml",
+        path: "world/characters/alex.yaml",
         contents: characterWithUnexpectedHeaderField(),
       },
       { path: "world/current-situation.yaml", contents: currentSituation() },
       { path: "control/frame.yaml", contents: frame() },
-      { path: "control/blocks/world.md", contents: "# 世界主持规则\n" },
+      {
+        path: "control/blocks/world.md",
+        contents: "# World Narration Rules\n",
+      },
       { path: "control/player-views.yaml", contents: playerView() },
       { path: "notes/verbatim.txt", contents: "  opaque 原文\r\n" },
     ];
@@ -261,12 +270,12 @@ describe("YAML/Markdown 内容包当前树", () => {
     );
     expect(snapshotIssue).toMatchObject({
       code: "invalid_document_header",
-      path: "world/characters/qinlong.yaml",
+      path: "world/characters/alex.yaml",
     });
     expect(snapshotIssue?.worldDocumentDiagnostic).toMatchObject({
       code: "document_header_invalid",
-      logicalPath: "world/characters/qinlong.yaml",
-      documentId: "character.qinlong",
+      logicalPath: "world/characters/alex.yaml",
+      documentId: "character.alex",
     });
     expect(snapshotIssue?.worldDocumentDiagnostic?.range?.start.line).toBe(2);
 
@@ -298,12 +307,14 @@ describe("YAML/Markdown 内容包当前树", () => {
     }
     await expect(
       workspace.exportCurrentTreeContentPackage(imported.localId),
-    ).rejects.toThrow(/只有完整有效的内容包才能导出/u);
+    ).rejects.toThrow(
+      /Only a complete, valid content package can be exported/u,
+    );
 
     const repaired = await workspace.replaceCurrentTreeContentPackage(
       imported.localId,
       candidateFiles.map((file) =>
-        file.path === "world/characters/qinlong.yaml"
+        file.path === "world/characters/alex.yaml"
           ? { ...file, contents: character() }
           : file,
       ),
@@ -361,10 +372,13 @@ describe("YAML/Markdown 内容包当前树", () => {
     const workspace = new ContentWorkspace("/unused");
     const inspection = workspace.inspectCurrentTreeContentPackage([
       ...openingFiles,
-      { path: "world/characters/qinlong.yaml", contents: character() },
+      { path: "world/characters/alex.yaml", contents: character() },
       { path: "world/current-situation.yaml", contents: currentSituation() },
       { path: "control/frame.yaml", contents: frame() },
-      { path: "control/blocks/world.md", contents: "# 世界主持规则\n" },
+      {
+        path: "control/blocks/world.md",
+        contents: "# World Narration Rules\n",
+      },
       { path: "control/player-views.yaml", contents: playerView() },
     ]);
 
@@ -388,7 +402,7 @@ describe("YAML/Markdown 内容包当前树", () => {
     );
     expect(renamed.displayName).toBe("雾港来信");
 
-    // 名字存在本地外壳里，所以内容文件一个字节都不该动。
+    // The name lives in the local shell, so content bytes must not change.
     const after = await workspace.readCurrentTreeContentPackage(
       created.localId,
     );
@@ -400,7 +414,7 @@ describe("YAML/Markdown 内容包当前树", () => {
       )?.displayName,
     ).toBe("雾港来信");
 
-    // 改写当前情境的 title 不再抢走内容包的名字。
+    // Changing the current-situation title does not replace the package name.
     await workspace.replaceCurrentTreeContentPackage(created.localId, [
       ...after.files.filter(
         ({ path }) => path !== "world/current-situation.yaml",
@@ -420,10 +434,10 @@ describe("YAML/Markdown 内容包当前树", () => {
 
     await expect(
       workspace.renameCurrentTreeContentPackage(created.localId, "   "),
-    ).rejects.toThrow(/名称/u);
+    ).rejects.toThrow(/content-package name/u);
     await expect(
       workspace.renameCurrentTreeContentPackage(created.localId, "坏\n名字"),
-    ).rejects.toThrow(/名称/u);
+    ).rejects.toThrow(/content-package name/u);
   });
 });
 
@@ -434,22 +448,22 @@ async function temporaryRoot(): Promise<string> {
 }
 
 function character(): string {
-  return `$document:\n  id: character.qinlong\n  ref: qinlong\n  title: 秦龙\n  summary: 篮球队前锋，直率护短。\n  aliases: [老秦]\n衣着: 白色运动背心\n修为: 菠萝\n关系:\n  启铭:\n    好感度: 150\n`;
+  return `$document:\n  id: character.alex\n  ref: alex\n  title: Alex\n  summary: 篮球队前锋，直率护短。\n  aliases: [Al]\n衣着: 白色运动背心\n修为: 菠萝\n关系:\n  Sam:\n    好感度: 150\n`;
 }
 
 function characterWithUnexpectedHeaderField(): string {
-  return `$document:\n  id: character.qinlong\n  ref: qinlong\n  title: 秦龙\n  summary: 篮球队前锋，直率护短。\n  aliases: [老秦]\n  internalVersion: 7\n衣着: 白色运动背心\n`;
+  return `$document:\n  id: character.alex\n  ref: alex\n  title: Alex\n  summary: 篮球队前锋，直率护短。\n  aliases: [Al]\n  internalVersion: 7\n衣着: 白色运动背心\n`;
 }
 
 function opening(): string {
-  return "宿舍门在你面前砰地合上。秦龙抱着球衣看向你，等你先开口。\n";
+  return "宿舍门在你面前砰地合上。Alex抱着球衣看向你，等你先开口。\n";
 }
 
 function openValues(): string {
   return `$document:\n  id: character.open-values\n  ref: open-values\n  title: 开放值\n  summary: 用于证明 Runtime 不解释世界语义。\n  aliases: []\n修为: 菠萝\n好感度: 150\n关系: 随作者自然表达\n`;
 }
 
-function currentSituation(target = "character.qinlong"): string {
+function currentSituation(target = "character.alex"): string {
   return `$document:\n  id: situation.current\n  ref: current-situation\n  title: 当前情境\n  summary: 宿舍里的当前局面。\n  aliases: []\n人物:\n  - $ref: ${target}\n情况: 正在整理球衣。\n`;
 }
 
@@ -462,5 +476,5 @@ function frame(): string {
 }
 
 function playerView(): string {
-  return `format: narraeon.player-views/v1\nviews:\n  - id: status\n    title: 当前状态\n    items:\n      - id: clothes\n        label: 衣着\n        select: { document: character.qinlong, locator: { yaml: [衣着] } }\n`;
+  return `format: narraeon.player-views/v1\nviews:\n  - id: status\n    title: 当前状态\n    items:\n      - id: clothes\n        label: 衣着\n        select: { document: character.alex, locator: { yaml: [衣着] } }\n`;
 }

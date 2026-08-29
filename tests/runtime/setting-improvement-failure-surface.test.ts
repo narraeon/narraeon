@@ -40,15 +40,15 @@ class ScriptedAdapter implements SettingAuthorAdapter {
 test("计划标题按首个围栏外 h1 判定，格式错误以 user role 修复", async () => {
   const adapter = new ScriptedAdapter([
     assistant(
-      "```markdown\n# 创作计划\n```\n# 其他标题\n\n这份文本虽然足够长，但首个真实一级标题不符合创作计划契约。",
+      "```markdown\n# Creation plan\n```\n# Other heading\n\nThis text is long enough, but its first real level-one heading violates the creation-plan contract.",
     ),
     (request) => {
       expect(request.messages.at(-1)).toMatchObject({
         role: "user",
       });
-      expect(request.messages.at(-1)?.content).toContain("创作计划");
+      expect(request.messages.at(-1)?.content).toContain("Creation plan");
       return assistant(
-        "```markdown\n# 其他伪标题\n```\n# 创作计划：宿舍篇\n\n保留现有人物与世界约束，只完善玩家要求的关系与开场钩子，并在候选中做完整自检。",
+        "```markdown\n# False heading\n```\n# Creation plan: Dorm story\n\nPreserve the existing characters and world constraints. Improve only the requested relationships and opening hook, then run the complete candidate check.",
       );
     },
   ]);
@@ -56,8 +56,8 @@ test("计划标题按首个围栏外 h1 判定，格式错误以 user role 修�
 
   const result = await improvement.start(planFirst());
   expect(result.kind).toBe("plan");
-  if (result.kind !== "plan") throw new Error("预期返回创作计划");
-  expect(result.markdown).toContain("# 创作计划：宿舍篇");
+  if (result.kind !== "plan") throw new Error("Expected a creation plan");
+  expect(result.markdown).toContain("# Creation plan: Dorm story");
 });
 
 test("AI 输出格式检查未通过时保存原始交换和 reasoning", async () => {
@@ -65,8 +65,8 @@ test("AI 输出格式检查未通过时保存原始交换和 reasoning", async (
   try {
     const invalid: AuthorResponse = {
       role: "assistant",
-      content: "没有一级标题的计划正文。",
-      reasoningContent: "我误以为标题可以省略。",
+      content: "Plan text without a level-one heading.",
+      reasoningContent: "I mistakenly thought the heading could be omitted.",
       toolCalls: [],
       diagnostics: {
         captureId: "setting-format-capture-1",
@@ -82,16 +82,16 @@ test("AI 输出格式检查未通过时保存原始交换和 reasoning", async (
         request: {
           method: "POST",
           contentType: "application/json",
-          body: '{"messages":[{"role":"user","content":"生成计划"}]}',
+          body: '{"messages":[{"role":"user","content":"Generate a plan"}]}',
         },
         response: {
           status: 200,
           statusText: "OK",
           contentType: "text/event-stream",
-          body: 'data: {"reasoning_content":"我误以为标题可以省略。","content":"没有一级标题的计划正文。"}\n\n',
+          body: 'data: {"reasoning_content":"I mistakenly thought the heading could be omitted.","content":"Plan text without a level-one heading."}\n\n',
           bodyComplete: true,
         },
-        reasoning: "我误以为标题可以省略。",
+        reasoning: "I mistakenly thought the heading could be omitted.",
       },
     };
     const repaired: AuthorResponse = {
@@ -110,7 +110,7 @@ test("AI 输出格式检查未通过时保存原始交换和 reasoning", async (
         request: {
           method: "POST",
           contentType: "application/json",
-          body: '{"messages":[{"role":"user","content":"请按格式修复"}]}',
+          body: '{"messages":[{"role":"user","content":"Repair the format"}]}',
         },
         response: {
           status: 200,
@@ -147,7 +147,7 @@ test("AI 输出格式检查未通过时保存原始交换和 reasoning", async (
     };
     expect(failure.failures).toHaveLength(1);
     expect(failure.failures[0]?.kind).toBe("format_validation");
-    expect(failure.failures[0]?.message).toContain("创作计划");
+    expect(failure.failures[0]?.message).toContain("Creation plan");
     const exchanges = entries
       .filter(({ type }) => type === "exchange")
       .map(({ exchange }) => exchange) as {
@@ -155,12 +155,17 @@ test("AI 输出格式检查未通过时保存原始交换和 reasoning", async (
       reasoning?: string;
     }[];
     expect(exchanges).toHaveLength(2);
-    expect(exchanges[0]?.response?.body).toContain("没有一级标题");
-    expect(exchanges[0]?.reasoning).toBe("我误以为标题可以省略。");
-    expect(exchanges[1]?.response?.body).toContain("# 创作计划");
+    expect(exchanges[0]?.response?.body).toContain(
+      "without a level-one heading",
+    );
+    expect(exchanges[0]?.reasoning).toBe(
+      "I mistakenly thought the heading could be omitted.",
+    );
+    expect(exchanges[1]?.response?.body).toContain("# Creation plan");
     expect(entries.at(-1)).toMatchObject({
       type: "resolved",
-      message: "设定完善计划已在后续模型交换中通过格式检查。",
+      message:
+        "The setting-improvement plan passed format validation in a later model exchange.",
     });
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -175,7 +180,7 @@ test("两条 revision 的第二条出错时只有它拿到诊断，另一条被�
       arguments: {
         path: "world/characters/first.yaml",
         contents:
-          "$document:\n  id: x\n  ref: first\n  title: 第一份\n  summary: 这是本轮整批不应落地的第一份文档。\n  aliases: []\n状态: 待定\n",
+          "$document:\n  id: x\n  ref: first\n  title: First character\n  summary: The first document in a batch that must not be applied.\n  aliases: []\nstatus: pending\n",
       },
     },
     {
@@ -183,13 +188,13 @@ test("两条 revision 的第二条出错时只有它拿到诊断，另一条被�
       name: "setting_write_file",
       arguments: {
         path: "world/characters/second.yaml",
-        contents: "状态: 缺少技术头\n",
+        contents: "status: missing technical header\n",
       },
     },
   ];
   const adapter = new ScriptedAdapter([
     assistant(validPlan()),
-    assistant("尝试整批创建。", revisions),
+    assistant("Create the batch.", revisions),
     (request) => {
       const results = request.messages.filter(
         ({ role, toolCallId }) =>
@@ -197,16 +202,18 @@ test("两条 revision 的第二条出错时只有它拿到诊断，另一条被�
           (toolCallId === "create-valid" || toolCallId === "create-invalid"),
       );
       expect(results).toHaveLength(2);
-      // 出错的是第 2 条：只有它带诊断，第 1 条只被告知整批未生效与去处。
+      // Only call 2 carries diagnostics; call 1 only learns that the batch failed.
       const [first, second] = results;
-      expect(second?.content).toContain("$document 技术头");
-      expect(first?.content).toContain("本次调用本身没有问题");
-      expect(first?.content).toContain("本批次第 2 个调用（共 2 个）");
+      expect(second?.content).toContain("$document technical header");
+      expect(first?.content).toContain("This call was valid");
+      expect(first?.content).toContain("Call 2 of 2");
       expect(first?.content).toContain("world/characters/second.yaml");
-      expect(first?.content).not.toContain("$document 技术头");
-      return assistant("检查未变的候选。", [previewCall("preview")]);
+      expect(first?.content).not.toContain("$document technical header");
+      return assistant("Check the unchanged candidate.", [
+        previewCall("preview"),
+      ]);
     },
-    assistant("完成。", [finishCall("finish")]),
+    assistant("Finish.", [finishCall("finish")]),
   ]);
   const improvement = createImprovement(adapter);
   await improvement.start(planFirst());
@@ -225,30 +232,32 @@ test("整批成功时每个调用只拿到自己那条命令的结果", async ()
       name: "setting_write_file",
       arguments: {
         path: `world/characters/${ref}.yaml`,
-        contents: `$document:\n  id: x\n  ref: ${ref}\n  title: 人物${String(index)}\n  summary: 第 ${String(index)} 个批量创建的人物。\n  aliases: []\n状态: 在场\n`,
+        contents: `$document:\n  id: x\n  ref: ${ref}\n  title: Character ${String(index)}\n  summary: Character ${String(index)} created in this batch.\n  aliases: []\nstatus: present\n`,
       },
     }),
   );
   const adapter = new ScriptedAdapter([
     assistant(validPlan()),
-    assistant("整批创建。", writes),
+    assistant("Create the batch.", writes),
     (request) => {
       const results = writes.map((call) =>
         request.messages.find(({ toolCallId }) => toolCallId === call.id),
       );
       for (const [index, ref] of ["alpha", "beta", "gamma"].entries()) {
         const content = results[index]?.content ?? "";
-        expect(content).toContain(`创建 @${ref}`);
-        expect(content).toContain("同批次另有 2 份文档一并提交");
-        // 不再把整批清单复制给每个调用。
+        expect(content).toContain(`Created @${ref}`);
+        expect(content).toContain(
+          "2 other document(s) in the same batch were committed together",
+        );
+        // Each call receives only its own result, not a copy of the batch list.
         for (const other of ["alpha", "beta", "gamma"].filter(
           (name) => name !== ref,
         ))
-          expect(content).not.toContain(`创建 @${other}`);
+          expect(content).not.toContain(`Created @${other}`);
       }
-      return assistant("自检。", [previewCall("preview")]);
+      return assistant("Check the candidate.", [previewCall("preview")]);
     },
-    assistant("完成。", [finishCall("finish")]),
+    assistant("Finish.", [finishCall("finish")]),
   ]);
   const improvement = createImprovement(adapter);
   await improvement.start(planFirst());
@@ -261,15 +270,15 @@ test("整批成功时每个调用只拿到自己那条命令的结果", async ()
 test("读取授权快照身份不匹配会原样中断候选循环", async () => {
   const adapter = new ScriptedAdapter([
     assistant(validPlan()),
-    assistant("尝试修改。", [
+    assistant("Try the update.", [
       {
         id: "stale-authorization",
         name: "setting_patch",
         arguments: {
-          document: "@qinlong",
+          document: "@alex",
           op: "replace",
-          locator: ["关系"],
-          value: { 玩家: "熟悉" },
+          locator: ["relationships"],
+          value: { player: "familiar" },
         },
       },
     ]),
@@ -281,7 +290,7 @@ test("读取授权快照身份不匹配会原样中断候选循环", async () =>
   process.env.NARRAEON_INTERNAL_TEST_STALE_SETTING_READ_AUTHORIZATION = "1";
   try {
     await expect(improvement.confirmPlan()).rejects.toThrow(
-      "世界文档读取授权不属于当前候选快照",
+      "World-document read authorization does not belong to the current candidate snapshot",
     );
   } finally {
     if (previous === undefined)
@@ -295,11 +304,11 @@ test("读取授权快照身份不匹配会原样中断候选循环", async () =>
   expect(improvement.currentFiles()).toEqual(baseFiles());
 });
 
-test("已预览的候选遇到非法查询后，同响应 finish 被拒绝且下一轮才能结束", async () => {
+test("已Preview的候选遇到非法查询后，同响应 finish 被拒绝且下一轮才能结束", async () => {
   const adapter = new ScriptedAdapter([
     assistant(validPlan()),
-    assistant("先自检。", [previewCall("preview")]),
-    assistant("读取后结束。", [
+    assistant("Check first.", [previewCall("preview")]),
+    assistant("Read and then finish.", [
       {
         id: "invalid-read",
         name: "setting_read",
@@ -311,13 +320,13 @@ test("已预览的候选遇到非法查询后，同响应 finish 被拒绝且下
       expect(
         request.messages.find(({ toolCallId }) => toolCallId === "invalid-read")
           ?.content,
-      ).toContain("WorldDocumentStore 查询未接受");
+      ).toContain("WorldDocumentStore query rejected");
       expect(
         request.messages.find(
           ({ toolCallId }) => toolCallId === "finish-too-soon",
         )?.content,
-      ).toContain("本响应中有未处理的错误");
-      return assistant("修复后结束。", [finishCall("finish-repaired")]);
+      ).toContain("This response contains an unresolved error");
+      return assistant("Finish after repair.", [finishCall("finish-repaired")]);
     },
   ]);
   const improvement = createImprovement(adapter);
@@ -331,14 +340,14 @@ test("已预览的候选遇到非法查询后，同响应 finish 被拒绝且下
 test("非法 revision 与未知工具出现在 finish 前时都阻止同响应结束", async () => {
   const adapter = new ScriptedAdapter([
     assistant(validPlan()),
-    assistant("先自检。", [previewCall("preview")]),
-    assistant("非法 revision 后尝试结束。", [
+    assistant("Check first.", [previewCall("preview")]),
+    assistant("Try to finish after an invalid revision.", [
       {
         id: "invalid-revision",
         name: "setting_write_file",
         arguments: {
           path: "world/characters/invalid.yaml",
-          contents: "状态: 缺少技术头\n",
+          contents: "status: missing technical header\n",
         },
       },
       finishCall("finish-after-revision"),
@@ -348,13 +357,13 @@ test("非法 revision 与未知工具出现在 finish 前时都阻止同响应�
         request.messages.find(
           ({ toolCallId }) => toolCallId === "invalid-revision",
         )?.content,
-      ).toContain("$document 技术头");
+      ).toContain("$document technical header");
       expect(
         request.messages.find(
           ({ toolCallId }) => toolCallId === "finish-after-revision",
         )?.content,
-      ).toContain("本响应中有未处理的错误");
-      return assistant("未知工具后尝试结束。", [
+      ).toContain("This response contains an unresolved error");
+      return assistant("Try to finish after an unknown tool.", [
         { id: "unknown-before-finish", name: "setting_unknown", arguments: {} },
         finishCall("finish-after-unknown"),
       ]);
@@ -364,13 +373,13 @@ test("非法 revision 与未知工具出现在 finish 前时都阻止同响应�
         request.messages.find(
           ({ toolCallId }) => toolCallId === "unknown-before-finish",
         )?.content,
-      ).toContain("不支持的设定完善工具");
+      ).toContain("Unsupported setting-improvement tool");
       expect(
         request.messages.find(
           ({ toolCallId }) => toolCallId === "finish-after-unknown",
         )?.content,
-      ).toContain("本响应中有未处理的错误");
-      return assistant("修复后结束。", [finishCall("finish-repaired")]);
+      ).toContain("This response contains an unresolved error");
+      return assistant("Finish after repair.", [finishCall("finish-repaired")]);
     },
   ]);
   const improvement = createImprovement(adapter);
@@ -401,7 +410,7 @@ test("list、search、read 的参数错与查询失败都会挡住同响应 fini
     {
       id: "search-query",
       name: "setting_search",
-      arguments: { query: "不存在", within: "@missing" },
+      arguments: { query: "missing", within: "@missing" },
     },
     { id: "read-args", name: "setting_read", arguments: {} },
     {
@@ -412,8 +421,8 @@ test("list、search、read 的参数错与查询失败都会挡住同响应 fini
   ];
   const adapter = new ScriptedAdapter([
     assistant(validPlan()),
-    assistant("先自检。", [previewCall("preview")]),
-    assistant("错误查询后尝试结束。", [
+    assistant("Check first.", [previewCall("preview")]),
+    assistant("Try to finish after invalid queries.", [
       ...rejectedCalls,
       finishCall("finish-after-query-errors"),
     ]),
@@ -423,14 +432,18 @@ test("list、search、read 的参数错与查询失败都会挡住同响应 fini
           ({ toolCallId }) => toolCallId === call.id,
         );
         expect(message).toMatchObject({ role: "tool", toolCallId: call.id });
-        expect(message?.content).toMatch(/参数错误|查询未接受/u);
+        expect(message?.content).toMatch(
+          /Runtime argument error|query rejected/u,
+        );
       }
       expect(
         request.messages.find(
           ({ toolCallId }) => toolCallId === "finish-after-query-errors",
         )?.content,
-      ).toContain("本响应中有未处理的错误");
-      return assistant("修复后结束。", [finishCall("finish-query-repaired")]);
+      ).toContain("This response contains an unresolved error");
+      return assistant("Finish after repair.", [
+        finishCall("finish-query-repaired"),
+      ]);
     },
   ]);
   const improvement = createImprovement(adapter);
@@ -447,10 +460,10 @@ test("revision 形状错、整批读取授权错、finish 位置错和未知工�
       id: "unauthorized-character",
       name: "setting_patch",
       arguments: {
-        document: "@qinlong",
+        document: "@alex",
         op: "replace",
-        locator: ["关系"],
-        value: { 玩家: "熟悉" },
+        locator: ["relationships"],
+        value: { player: "familiar" },
       },
     },
     {
@@ -459,21 +472,21 @@ test("revision 形状错、整批读取授权错、finish 位置错和未知工�
       arguments: {
         document: "@current",
         op: "replace",
-        locator: ["人物"],
-        value: [{ $ref: "character.qinlong" }],
+        locator: ["characters"],
+        value: [{ $ref: "character.alex" }],
       },
     },
   ];
   const adapter = new ScriptedAdapter([
     assistant(validPlan()),
-    assistant("先尝试不存在的 locator。", [
+    assistant("Try a missing locator first.", [
       {
         id: "revision-rejected",
         name: "setting_patch",
         arguments: {
-          document: "@qinlong",
+          document: "@alex",
           op: "replace",
-          locator: ["不存在"],
+          locator: ["missing"],
           value: "x",
         },
       },
@@ -483,8 +496,8 @@ test("revision 形状错、整批读取授权错、finish 位置错和未知工�
         request.messages.find(
           ({ toolCallId }) => toolCallId === "revision-rejected",
         )?.content,
-      ).toContain("revision 未接受");
-      return assistant("尝试未授权的整批修改。", unauthorized);
+      ).toContain("revision was rejected");
+      return assistant("Try the unauthorized batch.", unauthorized);
     },
     (request) => {
       const results = unauthorized.map((call) =>
@@ -493,10 +506,14 @@ test("revision 形状错、整批读取授权错、finish 位置错和未知工�
       expect(results).toHaveLength(2);
       expect(results.every((message) => message?.role === "tool")).toBe(true);
       expect(new Set(results.map((message) => message?.content)).size).toBe(1);
-      expect(results[0]?.content).toContain("必须先完整读取该文档");
-      return assistant("检查未变的候选。", [previewCall("preview")]);
+      expect(results[0]?.content).toContain(
+        "Read @alex completely before changing it",
+      );
+      return assistant("Check the unchanged candidate.", [
+        previewCall("preview"),
+      ]);
     },
-    assistant("终态工具位置错且还有未知工具。", [
+    assistant("Place the final-state tool incorrectly with an unknown tool.", [
       finishCall("finish-not-last"),
       { id: "unknown", name: "setting_unknown", arguments: {} },
     ]),
@@ -505,12 +522,12 @@ test("revision 形状错、整批读取授权错、finish 位置错和未知工�
         request.messages.find(
           ({ toolCallId }) => toolCallId === "finish-not-last",
         )?.content,
-      ).toContain("必须最后调用");
+      ).toContain("must be called last");
       expect(
         request.messages.find(({ toolCallId }) => toolCallId === "unknown")
           ?.content,
-      ).toContain("不支持的设定完善工具");
-      return assistant("修复后结束。", [finishCall("finish")]);
+      ).toContain("Unsupported setting-improvement tool");
+      return assistant("Finish after repair.", [finishCall("finish")]);
     },
   ]);
   const improvement = createImprovement(adapter);
@@ -524,7 +541,7 @@ test("revision 形状错、整批读取授权错、finish 位置错和未知工�
 test("安全路径与必需字符串参数错误都是可修复工具结果", async () => {
   const adapter = new ScriptedAdapter([
     assistant(validPlan()),
-    assistant("尝试写入。", [
+    assistant("Try to write.", [
       {
         id: "unsafe-path",
         name: "setting_write_file",
@@ -540,15 +557,15 @@ test("安全路径与必需字符串参数错误都是可修复工具结果", as
       expect(
         request.messages.find(({ toolCallId }) => toolCallId === "unsafe-path")
           ?.content,
-      ).toContain("候选路径不安全");
+      ).toContain("Unsafe candidate path");
       expect(
         request.messages.find(
           ({ toolCallId }) => toolCallId === "empty-contents",
         )?.content,
-      ).toContain("必须是非空字符串");
-      return assistant("自检。", [previewCall("preview")]);
+      ).toContain("must be a non-empty string");
+      return assistant("Check the candidate.", [previewCall("preview")]);
     },
-    assistant("结束。", [finishCall("finish")]),
+    assistant("Finish.", [finishCall("finish")]),
   ]);
   const improvement = createImprovement(adapter);
   await improvement.start(planFirst());
@@ -562,7 +579,7 @@ test("计划与候选的修复计数各自允许 8 次，第 9 次才失败", as
   const planAdapter = new ScriptedAdapter([
     ...Array.from({ length: 8 }, () =>
       assistant(
-        "## 创作计划\n\n格式错误但文本长度足够，这一轮应该被当作可修复计划错误。",
+        "## Creation plan\n\nThe format is invalid but the text is long enough, so this round is a repairable plan error.",
       ),
     ),
     assistant(validPlan()),
@@ -574,21 +591,21 @@ test("计划与候选的修复计数各自允许 8 次，第 9 次才失败", as
   const ninthPlanAdapter = new ScriptedAdapter(
     Array.from({ length: 9 }, () =>
       assistant(
-        "#创作计划\n\n没有空格的伪标题在第九次必须触发修复上限。这里补足长度避免只命中长度条件。",
+        "#Creation plan\n\nThis false heading has no space and must hit the repair limit on round nine. Extra text keeps the failure about format, not length.",
       ),
     ),
   );
   await expect(
     createImprovement(ninthPlanAdapter).start(planFirst()),
-  ).rejects.toThrow(/计划.*可修复.*上限/u);
+  ).rejects.toThrow(/plan phase exceeded its repair limit/u);
 
   const candidateAdapter = new ScriptedAdapter([
     assistant(validPlan()),
     ...Array.from({ length: 8 }, () =>
-      assistant("这是不带工具的候选阶段纯文本回复。"),
+      assistant("This candidate-phase response has no tool call."),
     ),
-    assistant("自检。", [previewCall("preview")]),
-    assistant("完成。", [finishCall("finish")]),
+    assistant("Check the candidate.", [previewCall("preview")]),
+    assistant("Finish.", [finishCall("finish")]),
   ]);
   const candidate = createImprovement(candidateAdapter);
   await candidate.start(planFirst());
@@ -599,15 +616,15 @@ test("计划与候选的修复计数各自允许 8 次，第 9 次才失败", as
   const independentAdapter = new ScriptedAdapter([
     ...Array.from({ length: 8 }, () =>
       assistant(
-        "## 创作计划\n\n计划错误消耗了计划阶段的额度，但不应该影响后续候选阶段的独立计数器。",
+        "## Creation plan\n\nPlan errors consume the planning budget but must not affect the candidate phase's independent repair counter.",
       ),
     ),
     assistant(validPlan()),
     ...Array.from({ length: 8 }, () =>
-      assistant("候选阶段的不合规纯文本回复。"),
+      assistant("Invalid candidate-phase plain-text response."),
     ),
-    assistant("自检。", [previewCall("independent-preview")]),
-    assistant("完成。", [finishCall("independent-finish")]),
+    assistant("Check the candidate.", [previewCall("independent-preview")]),
+    assistant("Finish.", [finishCall("independent-finish")]),
   ]);
   const independent = createImprovement(independentAdapter);
   await independent.start(planFirst());
@@ -617,10 +634,13 @@ test("计划与候选的修复计数各自允许 8 次，第 9 次才失败", as
 });
 
 test.each([
-  ["候选纯文本", () => assistant("没有任何工具调用的候选回复。")],
   [
-    "finish 缺少当前预览",
-    () => assistant("结束。", [finishCall("finish-without-preview")]),
+    "candidate plain text",
+    () => assistant("Candidate response with no tool call."),
+  ],
+  [
+    "finish 缺少当前Preview",
+    () => assistant("Finish.", [finishCall("finish-without-preview")]),
   ],
 ] as const)("%s 第 8 次仍可修复，第 9 次触发上限", async (_, response) => {
   const adapter = new ScriptedAdapter([
@@ -637,7 +657,7 @@ test.each([
   await improvement.start(planFirst());
 
   await expect(improvement.confirmPlan()).rejects.toThrow(
-    /候选.*可修复.*上限/u,
+    /candidate phase exceeded its repair limit/u,
   );
   expect(adapter.requests).toHaveLength(10);
 });
@@ -646,7 +666,7 @@ test("自检未通过走独立预算，第 16 次仍可修复，第 17 次才中
   const adapter = new ScriptedAdapter([
     assistant(validPlan()),
     ...Array.from({ length: 17 }, () =>
-      assistant("自检。", [previewCall("preview-failure")]),
+      assistant("Check the candidate.", [previewCall("preview-failure")]),
     ),
   ]);
   const improvement = new DocumentCandidateSettingImprovement({
@@ -659,7 +679,7 @@ test("自检未通过走独立预算，第 16 次仍可修复，第 17 次才中
   await improvement.start(planFirst());
 
   await expect(improvement.confirmPlan()).rejects.toThrow(
-    /自检未通过次数过多/u,
+    /candidate failed too many checks/u,
   );
   expect(adapter.requests).toHaveLength(18);
 });
@@ -668,7 +688,7 @@ test("进行中的 start、confirm 和 apply 都拒绝 discard，且失败后恢
   const startGate = deferred<AuthorResponse>();
   const starting = createImprovement({ next: () => startGate.promise });
   const startPromise = starting.start(planFirst());
-  expect(() => starting.discard()).toThrow(/进行中/u);
+  expect(() => starting.discard()).toThrow(/operation is running/u);
   startGate.resolve(assistant(validPlan()));
   await startPromise;
 
@@ -679,19 +699,23 @@ test("进行中的 start、confirm 和 apply 都拒绝 discard，且失败后恢
       candidateRound += 1;
       if (candidateRound === 1) return assistant(validPlan());
       if (candidateRound === 2) return confirmGate.promise;
-      return assistant("完成。", [finishCall("finish-confirm")]);
+      return assistant("Finish.", [finishCall("finish-confirm")]);
     },
   });
   await confirming.start(planFirst());
   const confirmPromise = confirming.confirmPlan();
-  await expect(confirming.confirmPlan()).rejects.toThrow(/正在确认|可确认/u);
-  expect(() => confirming.discard()).toThrow(/进行中/u);
-  confirmGate.resolve(assistant("自检。", [previewCall("preview-confirm")]));
+  await expect(confirming.confirmPlan()).rejects.toThrow(
+    /There is no creation plan to confirm/u,
+  );
+  expect(() => confirming.discard()).toThrow(/operation is running/u);
+  confirmGate.resolve(
+    assistant("Check the candidate.", [previewCall("preview-confirm")]),
+  );
   await confirmPromise;
 
   const applyGate = deferred<void>();
   const applying = confirming.apply(() => applyGate.promise);
-  expect(() => confirming.discard()).toThrow(/进行中/u);
+  expect(() => confirming.discard()).toThrow(/operation is running/u);
   applyGate.reject(new Error("replace failed"));
   await expect(applying).rejects.toThrow("replace failed");
   await expect(confirming.apply(() => undefined)).resolves.toBeUndefined();
@@ -707,7 +731,7 @@ test("confirm 硬失败后回到 planned，且重试请求不含上次工具交�
       round += 1;
       if (round === 1) return assistant(validPlan());
       if (round === 2)
-        return assistant("读取。", [
+        return assistant("Read.", [
           {
             id: "failed-attempt-read",
             name: "setting_read",
@@ -719,9 +743,11 @@ test("confirm 硬失败后回到 planned，且重试请求不含上次工具交�
         expect(JSON.stringify(request.messages)).not.toContain(
           "failed-attempt-read",
         );
-        return assistant("自检。", [previewCall("retry-preview")]);
+        return assistant("Check the candidate.", [
+          previewCall("retry-preview"),
+        ]);
       }
-      return assistant("完成。", [finishCall("retry-finish")]);
+      return assistant("Finish.", [finishCall("retry-finish")]);
     },
   });
   await improvement.start(planFirst());
@@ -733,7 +759,7 @@ test("confirm 硬失败后回到 planned，且重试请求不含上次工具交�
   });
 });
 
-// onDelta 是回调，不属于可快照的请求内容。
+// onDelta is a callback and is not part of the serializable request snapshot.
 function snapshotAuthorRequest(
   request: Parameters<SettingAuthorAdapter["next"]>[0],
 ) {
@@ -767,29 +793,30 @@ function finishCall(id: string): SettingAuthorToolCall {
 
 function planFirst() {
   return {
-    goal: "完善宿舍世界的人物关系",
+    goal: "Improve relationships in the dorm world",
     contextPaths: [],
     mode: "plan_first" as const,
   };
 }
 
 function validPlan(): string {
-  return "# 创作计划：宿舍篇\n\n保留已有人物、当前情境和玩家行动权，只补充关系的可观察表现与开局钩子，并在应用前通过完整候选自检。";
+  return "# Creation plan: Dorm world\n\nPreserve existing characters, the current situation, and player agency. Add only observable relationship behavior and an opening hook, then run the complete candidate check before applying.";
 }
 
 function baseFiles() {
   return [
     {
       path: "opening.md",
-      contents: "宿舍门在你面前合上。秦龙抱着球衣，等你先开口。\n",
+      contents:
+        "The dormitory door closes in front of you. Alex holds a jersey and waits.\n",
     },
     {
-      path: "world/characters/qinlong.yaml",
-      contents: `$document:\n  id: character.qinlong\n  ref: qinlong\n  title: 秦龙\n  summary: 篮球队前锋的当前状态与关系。\n  aliases: []\n关系: {}\n`,
+      path: "world/characters/alex.yaml",
+      contents: `$document:\n  id: character.alex\n  ref: alex\n  title: Alex\n  summary: The basketball forward's current state and relationships.\n  aliases: []\nrelationships: {}\n`,
     },
     {
       path: "world/current-situation.yaml",
-      contents: `$document:\n  id: situation.current\n  ref: current\n  title: 当前情境\n  summary: 宿舍中正在发生的局面。\n  aliases: []\n人物:\n  - $ref: character.qinlong\n`,
+      contents: `$document:\n  id: situation.current\n  ref: current\n  title: Current situation\n  summary: The situation unfolding in the dormitory.\n  aliases: []\ncharacters:\n  - $ref: character.alex\n`,
     },
     {
       path: "control/frame.yaml",
@@ -797,7 +824,8 @@ function baseFiles() {
     },
     {
       path: "control/blocks/world.md",
-      contents: "# 世界主持规则\n\n持续结果写回自然所有者。\n",
+      contents:
+        "# World hosting rules\n\nWrite durable results back to their natural owners.\n",
     },
     {
       path: "control/player-views.yaml",
@@ -819,7 +847,8 @@ function previewSnapshot(snapshot: WorldDocumentStore) {
       controlFingerprint: "candidate",
       documentSnapshot: snapshot,
       history: {
-        "candidate.message.genesis.narrator": "宿舍门在你面前合上。",
+        "candidate.message.genesis.narrator":
+          "The dormitory door closes in front of you.",
       },
       additionalMaterials: [
         {
@@ -829,7 +858,7 @@ function previewSnapshot(snapshot: WorldDocumentStore) {
       ],
     },
     playerInputPlacement: "bootstrap",
-    playerInput: "预览",
+    playerInput: "Preview",
     modelBinding: {
       provider: "chat_completions",
       modelId: "test",

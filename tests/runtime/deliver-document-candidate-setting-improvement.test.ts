@@ -12,7 +12,7 @@ test("设定完善采用预设作者提示，同时始终追加内置工具机�
   const improvement = new DocumentCandidateSettingImprovement({
     files: baseFiles(),
     authorPrompt:
-      "# 我的设定方法\n\n自定义唯一标记：只完善城市场景的生活节奏。",
+      "# My setting method\n\nUnique custom marker: improve only the rhythm of city life.",
     adapter: {
       async next(request) {
         await Promise.resolve();
@@ -23,13 +23,15 @@ test("设定完善采用预设作者提示，同时始终追加内置工具机�
     preview: (snapshot) => previewSnapshot(snapshot),
   });
 
-  await improvement.start(planFirst("完善城市生活"));
+  await improvement.start(planFirst("Improve city life"));
 
   expect(requests[0]?.messages[0]).toMatchObject({ role: "system" });
   const system = requests[0]?.messages[0]?.content ?? "";
-  expect(system).toContain("自定义唯一标记");
-  expect(system).not.toContain("系统推荐的设定完善方法");
-  expect(system).toContain("Runtime 设定完善工具与机械契约");
+  expect(system).toContain("Unique custom marker");
+  expect(system).not.toContain("Recommended setting-improvement method");
+  expect(system).toContain(
+    "Runtime setting-improvement tools and mechanical contract",
+  );
   expect(system).toContain("setting_write_file");
   expect(requests[0]?.tools).toEqual([
     "setting_list",
@@ -50,7 +52,7 @@ test("设定完善以 append-only 会话创建和修改文件原生候选并生�
       if (requests.length === 3)
         return {
           role: "assistant",
-          content: "运行完整候选自检。",
+          content: "Run the complete candidate check.",
           toolCalls: [
             {
               id: "preview-complete-candidate",
@@ -62,14 +64,14 @@ test("设定完善以 append-only 会话创建和修改文件原生候选并生�
       if (requests.length === 4)
         return {
           role: "assistant",
-          content: "候选已完成。",
+          content: "Candidate complete.",
           toolCalls: [
             { id: "finish", name: "setting_finish_candidate", arguments: {} },
           ],
         };
       return {
         role: "assistant",
-        content: "候选已完成。",
+        content: "Candidate complete.",
         toolCalls: [
           {
             id: "read-opening",
@@ -87,19 +89,19 @@ test("设定完善以 append-only 会话创建和修改文件原生候选并生�
             arguments: { path: "world/rules/cultivation.md" },
           },
           {
-            id: "read-qinlong",
+            id: "read-alex",
             name: "setting_read",
-            arguments: { path: "world/characters/qinlong.yaml" },
+            arguments: { path: "world/characters/alex.yaml" },
           },
           {
             id: "create-character",
             name: "setting_write_file",
             arguments: {
-              path: "world/characters/awu.yaml",
+              path: "world/characters/mia.yaml",
               contents: yamlSource({
-                ref: "awu",
-                title: "阿雾",
-                summary: "阿雾的自然语言设定。",
+                ref: "mia",
+                title: "Mia",
+                summary: "Mia的自然语言设定。",
                 body: "对澄的态度: 好奇\n",
               }),
             },
@@ -121,9 +123,9 @@ test("设定完善以 append-only 会话创建和修改文件原生候选并生�
             id: "patch-character",
             name: "setting_patch",
             arguments: {
-              document: "character.qinlong",
+              document: "character.alex",
               op: "add",
-              locator: ["关系", "阿雾"],
+              locator: ["关系", "Mia"],
               value: { 态度: "戒备但愿意合作", 信任: 150 },
             },
           },
@@ -133,7 +135,7 @@ test("设定完善以 append-only 会话创建和修改文件原生候选并生�
             arguments: {
               path: "control/blocks/world.md",
               contents:
-                "# 世界主持规则\n\n关系变化通过行为表达；持续结果写回自然所有者。\n",
+                "# World Narration Rules\n\nExpress relationship changes through behavior; write durable outcomes back to their natural owner.\n",
             },
           },
         ],
@@ -147,23 +149,23 @@ test("设定完善以 append-only 会话创建和修改文件原生候选并生�
   });
 
   const planned = await improvement.start(
-    planFirst("增加阿雾并扩展人物关系和修炼规则"),
+    planFirst("Add Mia and expand relationships and progression rules"),
   );
   expect(planned.kind).toBe("plan");
   const ready = await improvement.confirmPlan();
   expect(ready.kind).toBe("candidate");
-  if (ready.kind !== "candidate") throw new Error("候选未完成");
+  if (ready.kind !== "candidate") throw new Error("Candidate did not complete");
   expect(ready.review.status).toBe("usable");
   expect(ready.review.diff.map(({ path }) => path)).toEqual([
     "control/blocks/world.md",
     "opening.md",
-    "world/characters/awu.yaml",
-    "world/characters/qinlong.yaml",
+    "world/characters/alex.yaml",
+    "world/characters/mia.yaml",
     "world/rules/cultivation.md",
   ]);
   expect(ready.review.preview.compilation.logicalMessages.length).toBe(4);
   expect(
-    ready.files.find(({ path }) => path.endsWith("qinlong.yaml"))?.contents,
+    ready.files.find(({ path }) => path.endsWith("alex.yaml"))?.contents,
   ).toContain("# 保留作者注释");
   expect(requests[1]?.messages.slice(-3)).toEqual([
     expect.objectContaining({ role: "user" }),
@@ -173,7 +175,10 @@ test("设定完善以 append-only 会话创建和修改文件原生候选并生�
   expect(
     requests[1]?.messages.some(
       ({ role, content }) =>
-        role === "user" && content.includes("增加阿雾并扩展人物关系和修炼规则"),
+        role === "user" &&
+        content.includes(
+          "Add Mia and expand relationships and progression rules",
+        ),
     ),
   ).toBe(true);
   expect(requests[0]).toMatchObject({
@@ -181,41 +186,54 @@ test("设定完善以 append-only 会话创建和修改文件原生候选并生�
     maxOutputTokens: 16_384,
   });
   expect(requests[0]?.messages[0]).toMatchObject({ role: "system" });
-  expect(requests[0]?.messages[0]?.content).toContain("最小合法格式");
+  expect(requests[0]?.messages[0]?.content).toContain("Minimal valid formats");
   expect(requests[0]?.messages[0]?.content).toContain(
-    "愿望、意图、尝试、计划、可能性、预测",
+    "Wishes, intentions, attempts, plans, possibilities, predictions",
   );
-  expect(requests[0]?.messages[0]?.content).toContain("这些设定将怎样被使用");
   expect(requests[0]?.messages[0]?.content).toContain(
-    "通用的裁决与状态维护判据由主持预设提供",
+    "How the setting is used",
+  );
+  expect(requests[0]?.messages[0]?.content).toContain(
+    "The host preset supplies general adjudication and state-maintenance criteria",
   );
   expect(requests[0]?.messages[0]?.content).not.toMatch(
-    /人物文档|地点文档|物品文档/u,
+    /character document|location document|item document/u,
   );
   expect(requests[0]?.messages[0]?.content).toContain("opening.md");
-  expect(requests[0]?.messages[0]?.content).toContain("完整读取");
-  expect(requests[0]?.messages[0]?.content).toContain("不受影响时保留");
-  // 开场白与游玩调用链的叙事共用一套文体：小说质感、世界已在运转、决策点由场面
-  // 推出来而不是由叙述者点名。玩家此刻还没有输入可承接，所以代演一概不许。
-  expect(requests[0]?.messages[0]?.content).toContain("互动式小说的第一页");
   expect(requests[0]?.messages[0]?.content).toContain(
-    "不要把所有人定格成等待启动的布景",
+    "completely before changing it",
   );
-  expect(requests[0]?.messages[0]?.content).toContain("那是主持人的声音");
   expect(requests[0]?.messages[0]?.content).toContain(
-    "最后一句写某个人做的一件具体的事",
+    "Preserve an unaffected opening",
   );
-  expect(requests[0]?.messages[0]?.content).toContain("他等着你的回答");
+  // The opening and play call chain share an interactive-novel voice: the
+  // world is already moving, and the scene presents choices without puppeting
+  // a player who has not supplied an action yet.
   expect(requests[0]?.messages[0]?.content).toContain(
-    "不得替玩家决定行动、台词或内心",
+    "first page of this interactive novel",
   );
-  // 新建文档的 id 是 Runtime 分配的随机值，作者无从预测；回执只回报它能用来
-  // 寻址的 @短引用。
+  expect(requests[0]?.messages[0]?.content).toContain(
+    "do not freeze the cast as scenery waiting to be activated",
+  );
+  expect(requests[0]?.messages[0]?.content).toContain(
+    "that is the host's voice",
+  );
+  expect(requests[0]?.messages[0]?.content).toContain(
+    "Make the last sentence a specific action someone takes",
+  );
+  expect(requests[0]?.messages[0]?.content).toContain(
+    "they wait for your answer",
+  );
+  expect(requests[0]?.messages[0]?.content).toContain(
+    "Do not decide the player's action, dialogue, or inner thoughts",
+  );
+  // Runtime assigns an unpredictable ID to a new document; its receipt exposes
+  // only the @short-ref the author can use for addressing.
   expect(
     requests[2]?.messages.find(
       ({ toolCallId }) => toolCallId === "create-character",
     )?.content,
-  ).toContain("- 创建 @awu · world/characters/awu.yaml");
+  ).toContain("- Created @mia · world/characters/mia.yaml");
   expect(requests[1]?.tools).toContain("setting_write_file");
   expect(requests[1]?.tools).toContain("setting_patch");
   expect(requests[1]?.maxOutputTokens).toBe(16_384);
@@ -232,11 +250,11 @@ test("设定完善以 append-only 会话创建和修改文件原生候选并生�
 
 test("计划阶段可只读当前树，且用户选定文件会直接注入首个请求", async () => {
   const injectedSentinel = "直接注入唯一标记：青铜月照耀旧王都";
-  const toolReadSentinel = "只读工具唯一标记：秦龙保留旧誓言";
+  const toolReadSentinel = "只读工具唯一标记：Alex保留旧誓言";
   const files = baseFiles().map((file) => {
     if (file.path === "opening.md")
       return { ...file, contents: `${file.contents}${injectedSentinel}\n` };
-    if (file.path === "world/characters/qinlong.yaml")
+    if (file.path === "world/characters/alex.yaml")
       return {
         ...file,
         contents: `${file.contents}备注: ${toolReadSentinel}\n`,
@@ -256,9 +274,9 @@ test("计划阶段可只读当前树，且用户选定文件会直接注入首�
             content: "",
             toolCalls: [
               {
-                id: "read-qinlong",
+                id: "read-alex",
                 name: "setting_read",
-                arguments: { path: "world/characters/qinlong.yaml" },
+                arguments: { path: "world/characters/alex.yaml" },
               },
             ],
           };
@@ -269,7 +287,10 @@ test("计划阶段可只读当前树，且用户选定文件会直接注入首�
   });
 
   const result = await improvement.start(
-    planFirst("基于旧王都和秦龙的现状完善关系", ["opening.md"]),
+    planFirst(
+      "Improve relationships using the old capital and Alex current state",
+      ["opening.md"],
+    ),
   );
 
   expect(result.kind).toBe("plan");
@@ -283,7 +304,7 @@ test("计划阶段可只读当前树，且用户选定文件会直接注入首�
   expect(JSON.stringify(requests[1])).toContain(toolReadSentinel);
   expect(requests[1]?.messages.at(-1)).toMatchObject({
     role: "tool",
-    toolCallId: "read-qinlong",
+    toolCallId: "read-alex",
   });
 });
 
@@ -306,20 +327,20 @@ test("计划阶段通过固定 WorldDocumentStore 快照列出、搜索和读取
                 arguments: { directory: "world/characters", limit: 10 },
               },
               {
-                id: "search-qinlong",
+                id: "search-alex",
                 name: "setting_search",
                 arguments: {
-                  query: "秦龙",
+                  query: "Alex",
                   within: "world/characters",
                   caseSensitive: true,
                   limit: 10,
                 },
               },
               {
-                id: "read-qinlong",
+                id: "read-alex",
                 name: "setting_read",
                 arguments: {
-                  path: "world/characters/qinlong.yaml",
+                  path: "world/characters/alex.yaml",
                   maxBytes: 65_536,
                 },
               },
@@ -331,21 +352,23 @@ test("计划阶段通过固定 WorldDocumentStore 快照列出、搜索和读取
     preview: (snapshot) => previewSnapshot(snapshot),
   });
 
-  await improvement.start(planFirst("先精确了解秦龙，再制定计划"));
+  await improvement.start(
+    planFirst("Understand Alex precisely before making a plan"),
+  );
 
   const toolMessages = requests[1]?.messages.filter(
     ({ role }) => role === "tool",
   );
-  expect(toolMessages?.[0]?.content).toContain("范围：world · characters");
-  expect(toolMessages?.[0]?.content).toContain("world/characters/qinlong.yaml");
-  expect(toolMessages?.[1]?.content).toContain("原始命中");
-  expect(toolMessages?.[1]?.content).toContain("第 4 行");
-  expect(toolMessages?.[2]?.content).toContain("# 精确读取 @qinlong");
-  expect(toolMessages?.[2]?.content).toContain("范围：world · @qinlong");
-  // 文档身份是 Runtime 内部值，模型一律用 @短引用寻址；回显 id 会诱导作者把
-  // 它写进 $ref 和 control 文件，而新建文档的 id 根本不是它能预测的。
-  expect(toolMessages?.[2]?.content).not.toContain("id: character.qinlong");
-  expect(toolMessages?.[2]?.content).not.toContain("id：character.qinlong");
+  expect(toolMessages?.[0]?.content).toContain("Scope: world · characters");
+  expect(toolMessages?.[0]?.content).toContain("world/characters/alex.yaml");
+  expect(toolMessages?.[1]?.content).toContain("Exact match");
+  expect(toolMessages?.[1]?.content).toContain("line 4");
+  expect(toolMessages?.[2]?.content).toContain("# Exact read @alex");
+  expect(toolMessages?.[2]?.content).toContain("Scope: world · @alex");
+  // Document IDs are Runtime-private. Echoing them would encourage the author
+  // to place unpredictable identities in $ref values and control files.
+  expect(toolMessages?.[2]?.content).not.toContain("id: character.alex");
+  expect(toolMessages?.[2]?.content).not.toContain("id：character.alex");
 });
 
 test("AI 能看到 catalog 的真实路径关联诊断并在结束候选前自行修复", async () => {
@@ -361,17 +384,18 @@ test("AI 能看到 catalog 的真实路径关联诊断并在结束候选前自�
         if (requests.length === 2)
           return {
             role: "assistant",
-            content: "先建立状态文档和目录关联并运行候选自检。",
+            content:
+              "Create the state document and directory association, then run the candidate check.",
             toolCalls: [
               {
                 id: "create-wrong-path",
                 name: "setting_write_file",
                 arguments: {
-                  path: "world/state.qinming.yaml",
+                  path: "world/state.sam.yaml",
                   contents: yamlSource({
-                    ref: "qinming-status",
-                    title: "启铭的当前状态",
-                    summary: "启铭的体力与法力。",
+                    ref: "sam-status",
+                    title: "Sam的当前状态",
+                    summary: "Sam的体力与法力。",
                     body: "体力: 80\n法力: 40\n",
                   }),
                 },
@@ -407,23 +431,24 @@ context:
             toolCallId: "preview-wrong-association",
           });
           expect(diagnostic?.content).toMatch(
-            /states.*world\/states\/<文件>\.(?:yaml|yml|md).*直接子文档/u,
+            /states.*direct children.*world\/states\/<file>\.yaml/u,
           );
           return {
             role: "assistant",
-            content: "已按诊断移动到 catalog 对应的真实目录并再次自检。",
+            content:
+              "Moved to the catalog actual directory as diagnosed, then checked again.",
             toolCalls: [
               {
                 id: "read-wrong-path",
                 name: "setting_read",
-                arguments: { path: "world/state.qinming.yaml" },
+                arguments: { path: "world/state.sam.yaml" },
               },
               {
                 id: "move-to-correct-path",
                 name: "setting_move",
                 arguments: {
-                  from: "world/state.qinming.yaml",
-                  to: "world/states/qinming.yaml",
+                  from: "world/state.sam.yaml",
+                  to: "world/states/sam.yaml",
                 },
               },
               {
@@ -439,10 +464,12 @@ context:
           role: "tool",
           toolCallId: "preview-correct-association",
         });
-        expect(successfulPreview?.content).toContain("# 候选自检通过");
+        expect(successfulPreview?.content).toContain(
+          "# Candidate check passed",
+        );
         return {
           role: "assistant",
-          content: "最终候选已通过自检。",
+          content: "The final candidate passed its check.",
           toolCalls: [
             { id: "finish", name: "setting_finish_candidate", arguments: {} },
           ],
@@ -452,30 +479,26 @@ context:
     preview: (snapshot) => previewSnapshot(snapshot),
   });
 
-  await improvement.start(planFirst("把启铭的动态体力和法力拆到状态目录"));
+  await improvement.start(
+    planFirst("Move Sam dynamic stamina and magic into the state directory"),
+  );
   const result = await improvement.confirmPlan();
 
   expect(result.files).toContainEqual(
-    expect.objectContaining({ path: "world/states/qinming.yaml" }),
+    expect.objectContaining({ path: "world/states/sam.yaml" }),
   );
   expect(result.files).not.toContainEqual(
-    expect.objectContaining({ path: "world/state.qinming.yaml" }),
+    expect.objectContaining({ path: "world/state.sam.yaml" }),
   );
   expect(result.review.diff.map(({ path, kind }) => ({ path, kind }))).toEqual([
     { path: "control/frame.yaml", kind: "modify" },
-    { path: "world/states/qinming.yaml", kind: "create" },
+    { path: "world/states/sam.yaml", kind: "create" },
   ]);
   expect(requests).toHaveLength(4);
-  expect(requests[0]?.messages[0]?.content).toContain(
-    "world/states/qinming.yaml",
-  );
-  expect(requests[0]?.messages[0]?.content).toContain(
-    "state/states/qinming.yaml",
-  );
-  expect(requests[0]?.messages[0]?.content).toContain(
-    "world/state.qinming.yaml",
-  );
-  expect(requests[0]?.messages[0]?.content).toContain("从上到下");
+  expect(requests[0]?.messages[0]?.content).toContain("world/states/alex.yaml");
+  expect(requests[0]?.messages[0]?.content).toContain("state/states/alex.yaml");
+  expect(requests[0]?.messages[0]?.content).toContain("world/state.alex.yaml");
+  expect(requests[0]?.messages[0]?.content).toContain("from top to bottom");
   expect(requests[1]?.tools).toContain("setting_preview_candidate");
   expect(requests[1]?.tools).toContain("setting_move");
 });
@@ -493,26 +516,27 @@ test("创建 world 文档通过 revision 分配身份并消解短引用冲突", 
         if (round === 2)
           return {
             role: "assistant",
-            content: "创建阿雾文档并检查完整候选。",
+            content:
+              "Create the Mia document and check the complete candidate.",
             toolCalls: [
               {
-                id: "create-awu",
+                id: "create-mia",
                 name: "setting_write_file",
                 arguments: {
-                  path: "world/characters/awu.yaml",
+                  path: "world/characters/mia.yaml",
                   contents: yamlSource({
-                    ref: "qinlong",
-                    title: "阿雾",
+                    ref: "alex",
+                    title: "Mia",
                     summary: "在雨夜来到宿舍的陌生人。",
-                    body: "关系:\n  秦龙: 戒备\n",
+                    body: "关系:\n  Alex: 戒备\n",
                   }),
                 },
               },
               {
-                id: "patch-created-awu",
+                id: "patch-created-mia",
                 name: "setting_patch",
                 arguments: {
-                  document: "world/characters/awu.yaml",
+                  document: "world/characters/mia.yaml",
                   op: "add",
                   locator: ["状态"],
                   value: "等待接触",
@@ -525,10 +549,12 @@ test("创建 world 文档通过 revision 分配身份并消解短引用冲突", 
               },
             ],
           };
-        expect(request.messages.at(-1)?.content).toContain("# 候选自检通过");
+        expect(request.messages.at(-1)?.content).toContain(
+          "# Candidate check passed",
+        );
         return {
           role: "assistant",
-          content: "候选完成。",
+          content: "Candidate complete.",
           toolCalls: [
             {
               id: "finish-created",
@@ -542,7 +568,7 @@ test("创建 world 文档通过 revision 分配身份并消解短引用冲突", 
     preview: (snapshot) => previewSnapshot(snapshot),
   });
 
-  await improvement.start(planFirst("增加阿雾"));
+  await improvement.start(planFirst("Add Mia"));
   const result = await improvement.confirmPlan();
   const snapshot = WorldDocumentStore.open({
     layout: "content_package",
@@ -550,21 +576,22 @@ test("创建 world 文档通过 revision 分配身份并消解短引用冲突", 
   });
   const created = snapshot.query({
     kind: "read_document",
-    document: { logicalPath: "world/characters/awu.yaml" },
+    document: { logicalPath: "world/characters/mia.yaml" },
     maxBytes: 65_536,
   });
 
   expect(created.kind).toBe("read_document");
-  if (created.kind !== "read_document") throw new Error("新文档不可读取");
+  if (created.kind !== "read_document")
+    throw new Error("The new document cannot be read");
   expect(created.document.documentId).toMatch(/^doc\.[0-9a-f]{32}$/u);
-  expect(created.document.shortRef).toBe("qinlong-2");
-  expect(created.body).toContain("秦龙: 戒备");
+  expect(created.document.shortRef).toBe("alex-2");
+  expect(created.body).toContain("Alex: 戒备");
   expect(created.body).toContain("状态: 等待接触");
 });
 
 test("有序 revision 批次允许 move 后按新路径 replace 已完整读取的文档", async () => {
-  const from = "world/characters/qinlong.yaml";
-  const to = "world/people/qinlong.yaml";
+  const from = "world/characters/alex.yaml";
+  const to = "world/people/alex.yaml";
   let round = 0;
   const improvement = new DocumentCandidateSettingImprovement({
     files: baseFiles(),
@@ -577,7 +604,8 @@ test("有序 revision 批次允许 move 后按新路径 replace 已完整读取�
         if (round === 2)
           return {
             role: "assistant",
-            content: "按顺序移动并替换秦龙文档，然后检查候选。",
+            content:
+              "Move and replace the Alex document in order, then check the candidate.",
             toolCalls: [
               {
                 id: "read-before-move-replace",
@@ -595,9 +623,9 @@ test("有序 revision 批次允许 move 后按新路径 replace 已完整读取�
                 arguments: {
                   path: to,
                   contents: character(
-                    "character.qinlong",
-                    "qinlong",
-                    "秦龙",
+                    "character.alex",
+                    "alex",
+                    "Alex",
                     "关系: {}\n衣着: 深蓝色运动背心",
                   ),
                 },
@@ -611,7 +639,7 @@ test("有序 revision 批次允许 move 后按新路径 replace 已完整读取�
           };
         return {
           role: "assistant",
-          content: "候选完成。",
+          content: "Candidate complete.",
           toolCalls: [
             {
               id: "finish-after-move-replace",
@@ -625,7 +653,7 @@ test("有序 revision 批次允许 move 后按新路径 replace 已完整读取�
     preview: (snapshot) => previewSnapshot(snapshot),
   });
 
-  await improvement.start(planFirst("移动并更新秦龙文档"));
+  await improvement.start(planFirst("Move and update the Alex document"));
   const result = await improvement.confirmPlan();
 
   expect(result.files).not.toContainEqual(
@@ -641,7 +669,7 @@ test("有序 revision 批次允许 move 后按新路径 replace 已完整读取�
 });
 
 test("用户直接注入的损坏 world 文档可按同一快照授权整份 replace 修复", async () => {
-  const damagedPath = "world/characters/qinlong.yaml";
+  const damagedPath = "world/characters/alex.yaml";
   const damagedFiles = baseFiles().map((file) =>
     file.path === damagedPath ? { ...file, contents: "not: [valid\n" } : file,
   );
@@ -659,7 +687,7 @@ test("用户直接注入的损坏 world 文档可按同一快照授权整份 rep
         if (round === 2)
           return {
             role: "assistant",
-            content: "用完整原文修复损坏文档。",
+            content: "Repair the damaged document with complete source.",
             toolCalls: [
               {
                 id: "repair-damaged",
@@ -667,9 +695,9 @@ test("用户直接注入的损坏 world 文档可按同一快照授权整份 rep
                 arguments: {
                   path: damagedPath,
                   contents: character(
-                    "character.qinlong",
-                    "qinlong",
-                    "秦龙",
+                    "character.alex",
+                    "alex",
+                    "Alex",
                     "关系: {}",
                   ),
                 },
@@ -681,10 +709,12 @@ test("用户直接注入的损坏 world 文档可按同一快照授权整份 rep
               },
             ],
           };
-        expect(request.messages.at(-1)?.content).toContain("# 候选自检通过");
+        expect(request.messages.at(-1)?.content).toContain(
+          "# Candidate check passed",
+        );
         return {
           role: "assistant",
-          content: "修复完成。",
+          content: "Repair complete.",
           toolCalls: [
             {
               id: "finish-repaired",
@@ -699,7 +729,7 @@ test("用户直接注入的损坏 world 文档可按同一快照授权整份 rep
   });
 
   await improvement.start(
-    planFirst("修复秦龙文档", ["world/characters/qinlong.yaml"]),
+    planFirst("Repair the Alex document", ["world/characters/alex.yaml"]),
   );
   const result = await improvement.confirmPlan();
 
@@ -709,7 +739,7 @@ test("用户直接注入的损坏 world 文档可按同一快照授权整份 rep
   ]);
   expect(
     result.files.find(({ path }) => path === damagedPath)?.contents,
-  ).toContain("id: character.qinlong");
+  ).toContain("id: character.alex");
 });
 
 test("revision 替换候选快照后拒绝旧 cursor，并要求重新建立读取授权", async () => {
@@ -726,12 +756,12 @@ test("revision 替换候选快照后拒绝旧 cursor，并要求重新建立读�
         if (round === 2)
           return {
             role: "assistant",
-            content: "先读取并取得目录 cursor。",
+            content: "Read first and obtain a directory cursor.",
             toolCalls: [
               {
                 id: "read-before-patch",
                 name: "setting_read",
-                arguments: { path: "world/characters/qinlong.yaml" },
+                arguments: { path: "world/characters/alex.yaml" },
               },
               {
                 id: "list-before-patch",
@@ -745,17 +775,17 @@ test("revision 替换候选快照后拒绝旧 cursor，并要求重新建立读�
             ({ toolCallId }) => toolCallId === "list-before-patch",
           )?.content;
           previousCursor =
-            /下一页 cursor：(\S+)/u.exec(listing ?? "")?.[1] ?? "";
+            /Next-page cursor: (\S+)/u.exec(listing ?? "")?.[1] ?? "";
           expect(previousCursor).not.toBe("");
           return {
             role: "assistant",
-            content: "修改秦龙。",
+            content: "Update Alex.",
             toolCalls: [
               {
-                id: "patch-qinlong",
+                id: "patch-alex",
                 name: "setting_patch",
                 arguments: {
-                  document: "@qinlong",
+                  document: "@alex",
                   op: "add",
                   locator: ["衣着"],
                   value: "深蓝色运动背心",
@@ -767,7 +797,7 @@ test("revision 替换候选快照后拒绝旧 cursor，并要求重新建立读�
         if (round === 4)
           return {
             role: "assistant",
-            content: "验证旧 cursor 已失效。",
+            content: "Verify that the old cursor is invalid.",
             toolCalls: [
               {
                 id: "reuse-old-cursor",
@@ -784,7 +814,7 @@ test("revision 替换候选快照后拒绝旧 cursor，并要求重新建立读�
           expect(request.messages.at(-1)?.content).toContain("cursor_invalid");
           return {
             role: "assistant",
-            content: "重新自检。",
+            content: "Run the check again.",
             toolCalls: [
               {
                 id: "preview-after-cursor",
@@ -796,7 +826,7 @@ test("revision 替换候选快照后拒绝旧 cursor，并要求重新建立读�
         }
         return {
           role: "assistant",
-          content: "完成。",
+          content: "Done.",
           toolCalls: [
             {
               id: "finish-after-cursor",
@@ -810,11 +840,11 @@ test("revision 替换候选快照后拒绝旧 cursor，并要求重新建立读�
     preview: (snapshot) => previewSnapshot(snapshot),
   });
 
-  await improvement.start(planFirst("调整秦龙衣着"));
+  await improvement.start(planFirst("Adjust Alex clothing"));
   const result = await improvement.confirmPlan();
 
   expect(
-    result.files.find(({ path }) => path.endsWith("qinlong.yaml"))?.contents,
+    result.files.find(({ path }) => path.endsWith("alex.yaml"))?.contents,
   ).toContain("衣着: 深蓝色运动背心");
 });
 
@@ -831,18 +861,18 @@ test("revision 后可以继续修改同一份文档而不必重读", async () =>
         if (round === 2)
           return {
             role: "assistant",
-            content: "先读后改。",
+            content: "Read before changing.",
             toolCalls: [
               {
                 id: "read-once",
                 name: "setting_read",
-                arguments: { path: "world/characters/qinlong.yaml" },
+                arguments: { path: "world/characters/alex.yaml" },
               },
               {
                 id: "patch-once",
                 name: "setting_patch",
                 arguments: {
-                  document: "@qinlong",
+                  document: "@alex",
                   op: "add",
                   locator: ["衣着"],
                   value: "白色球衣",
@@ -853,13 +883,13 @@ test("revision 后可以继续修改同一份文档而不必重读", async () =>
         if (round === 3)
           return {
             role: "assistant",
-            content: "不重新读取，继续修改。",
+            content: "Continue changing without another read.",
             toolCalls: [
               {
                 id: "patch-twice",
                 name: "setting_patch",
                 arguments: {
-                  document: "@qinlong",
+                  document: "@alex",
                   op: "replace",
                   locator: ["衣着"],
                   value: "黑色球衣",
@@ -872,10 +902,10 @@ test("revision 后可以继续修改同一份文档而不必重读", async () =>
             request.messages.find(
               ({ toolCallId }) => toolCallId === "patch-twice",
             )?.content,
-          ).toContain("revision 已接受");
+          ).toContain("revision accepted");
           return {
             role: "assistant",
-            content: "检查候选。",
+            content: "Check the candidate.",
             toolCalls: [
               {
                 id: "preview-after-patch",
@@ -887,7 +917,7 @@ test("revision 后可以继续修改同一份文档而不必重读", async () =>
         }
         return {
           role: "assistant",
-          content: "完成。",
+          content: "Done.",
           toolCalls: [
             {
               id: "finish-after-read",
@@ -901,10 +931,10 @@ test("revision 后可以继续修改同一份文档而不必重读", async () =>
     preview: (snapshot) => previewSnapshot(snapshot),
   });
 
-  await improvement.start(planFirst("连续调整秦龙衣着"));
+  await improvement.start(planFirst("Adjust Alex clothing repeatedly"));
   const result = await improvement.confirmPlan();
   expect(
-    result.files.find(({ path }) => path.endsWith("qinlong.yaml"))?.contents,
+    result.files.find(({ path }) => path.endsWith("alex.yaml"))?.contents,
   ).toContain("衣着: 黑色球衣");
   expect(improvement.currentFiles()).toEqual(baseFiles());
 });
@@ -922,7 +952,7 @@ test("修改世界文档后写 opening.md 不需要重新读取", async () => {
         if (round === 2)
           return {
             role: "assistant",
-            content: "先读开场白和人物。",
+            content: "Read the opening and character first.",
             toolCalls: [
               {
                 id: "read-opening",
@@ -930,22 +960,22 @@ test("修改世界文档后写 opening.md 不需要重新读取", async () => {
                 arguments: { path: "opening.md" },
               },
               {
-                id: "read-qinlong",
+                id: "read-alex",
                 name: "setting_read",
-                arguments: { path: "world/characters/qinlong.yaml" },
+                arguments: { path: "world/characters/alex.yaml" },
               },
             ],
           };
         if (round === 3)
           return {
             role: "assistant",
-            content: "先改人物，再据此同步开场白。",
+            content: "Update the character, then synchronize the opening.",
             toolCalls: [
               {
-                id: "patch-qinlong",
+                id: "patch-alex",
                 name: "setting_patch",
                 arguments: {
-                  document: "@qinlong",
+                  document: "@alex",
                   op: "add",
                   locator: ["衣着"],
                   value: "白色球衣",
@@ -963,10 +993,10 @@ test("修改世界文档后写 opening.md 不需要重新读取", async () => {
             request.messages.find(
               ({ toolCallId }) => toolCallId === "write-opening",
             )?.content,
-          ).toContain("已在隔离候选写入 opening.md");
+          ).toContain("Updated opening.md in the isolated candidate");
           return {
             role: "assistant",
-            content: "自检。",
+            content: "Run the check.",
             toolCalls: [
               {
                 id: "preview-after-opening",
@@ -978,7 +1008,7 @@ test("修改世界文档后写 opening.md 不需要重新读取", async () => {
         }
         return {
           role: "assistant",
-          content: "完成。",
+          content: "Done.",
           toolCalls: [
             {
               id: "finish-after-opening",
@@ -992,14 +1022,16 @@ test("修改世界文档后写 opening.md 不需要重新读取", async () => {
     preview: (snapshot) => previewSnapshot(snapshot),
   });
 
-  await improvement.start(planFirst("调整秦龙衣着并同步开场白"));
+  await improvement.start(
+    planFirst("Adjust Alex clothing and synchronize the opening"),
+  );
   const result = await improvement.confirmPlan();
 
   expect(result.files.find(({ path }) => path === "opening.md")?.contents).toBe(
     updatedOpening(),
   );
   expect(
-    result.files.find(({ path }) => path.endsWith("qinlong.yaml"))?.contents,
+    result.files.find(({ path }) => path.endsWith("alex.yaml"))?.contents,
   ).toContain("衣着: 白色球衣");
 });
 
@@ -1017,7 +1049,7 @@ test("读出 Markdown 正文后可以原样改好写回，不必自己拼技术�
         if (round === 2)
           return {
             role: "assistant",
-            content: "先读规则。",
+            content: "Read the rules first.",
             toolCalls: [
               {
                 id: "read-rule",
@@ -1027,15 +1059,18 @@ test("读出 Markdown 正文后可以原样改好写回，不必自己拼技术�
             ],
           };
         if (round === 3) {
-          // 作者把上一轮读到的正文原样改好写回，没有 $document front matter。
+          // The author edits the writable body from the previous read without
+          // reconstructing the $document front matter.
           const body = request.messages
             .find(({ toolCallId }) => toolCallId === "read-rule")
-            ?.content.split("[可写正文开始；locator 相对于这里]\n")[1]
-            ?.split("\n[可写正文")[0];
+            ?.content.split(
+              "[Writable body starts; locators are relative to this point]\n",
+            )[1]
+            ?.split("\n[Writable body")[0];
           expect(body).toBe("# 修炼规则\n\n境界由故事解释。");
           return {
             role: "assistant",
-            content: "改好写回。",
+            content: "Write the corrected source back.",
             toolCalls: [
               {
                 id: "write-rule",
@@ -1053,10 +1088,10 @@ test("读出 Markdown 正文后可以原样改好写回，不必自己拼技术�
             request.messages.find(
               ({ toolCallId }) => toolCallId === "write-rule",
             )?.content,
-          ).toContain("revision 已接受");
+          ).toContain("revision accepted");
           return {
             role: "assistant",
-            content: "自检。",
+            content: "Run the check.",
             toolCalls: [
               {
                 id: "preview-rule",
@@ -1068,7 +1103,7 @@ test("读出 Markdown 正文后可以原样改好写回，不必自己拼技术�
         }
         return {
           role: "assistant",
-          content: "完成。",
+          content: "Done.",
           toolCalls: [
             {
               id: "finish-rule",
@@ -1082,7 +1117,9 @@ test("读出 Markdown 正文后可以原样改好写回，不必自己拼技术�
     preview: (snapshot) => previewSnapshot(snapshot),
   });
 
-  await improvement.start(planFirst("调整修炼规则的解释口径"));
+  await improvement.start(
+    planFirst("Adjust how the progression rules are explained"),
+  );
   const result = await improvement.confirmPlan();
 
   const rule = result.files.find(({ path }) => path === rulePath)?.contents;
@@ -1103,7 +1140,7 @@ test("同一轮内先自检再结束候选会被接受", async () => {
           return { role: "assistant", content: plan(), toolCalls: [] };
         return {
           role: "assistant",
-          content: "自检后立即结束。",
+          content: "Finish immediately after the check.",
           toolCalls: [
             {
               id: "preview-same-response",
@@ -1122,7 +1159,9 @@ test("同一轮内先自检再结束候选会被接受", async () => {
     preview: (snapshot) => previewSnapshot(snapshot),
   });
 
-  await improvement.start(planFirst("不做修改直接确认当前设定"));
+  await improvement.start(
+    planFirst("Confirm the current setting without changes"),
+  );
 
   await expect(improvement.confirmPlan()).resolves.toMatchObject({
     kind: "candidate",
@@ -1145,7 +1184,7 @@ test("候选自检和真实 Prompt Preview 复用会话内当前文档快照", a
         if (round === 2)
           return {
             role: "assistant",
-            content: "检查固定候选。",
+            content: "Check the fixed candidate.",
             toolCalls: [
               {
                 id: "preview-fixed-snapshot",
@@ -1156,7 +1195,7 @@ test("候选自检和真实 Prompt Preview 复用会话内当前文档快照", a
           };
         return {
           role: "assistant",
-          content: "完成。",
+          content: "Done.",
           toolCalls: [
             {
               id: "finish-fixed-snapshot",
@@ -1174,7 +1213,7 @@ test("候选自检和真实 Prompt Preview 复用会话内当前文档快照", a
     },
   });
 
-  await improvement.start(planFirst("只检查当前候选"));
+  await improvement.start(planFirst("Inspect only the current candidate"));
   await improvement.confirmPlan();
 
   expect(receivedSnapshot).toBe(true);
@@ -1194,7 +1233,7 @@ test("未等待 setting_preview_candidate 整体通过时不能完成候选", as
         if (round === 2)
           return {
             role: "assistant",
-            content: "直接结束。",
+            content: "Finish directly.",
             toolCalls: [
               {
                 id: "finish-too-early",
@@ -1205,11 +1244,11 @@ test("未等待 setting_preview_candidate 整体通过时不能完成候选", as
           };
         if (round === 3) {
           expect(request.messages.at(-1)?.content).toMatch(
-            /未被接受.*setting_preview_candidate/u,
+            /rejected.*setting_preview_candidate/u,
           );
           return {
             role: "assistant",
-            content: "先运行真实预览。",
+            content: "Run the real preview first.",
             toolCalls: [
               {
                 id: "preview-before-finish",
@@ -1219,10 +1258,12 @@ test("未等待 setting_preview_candidate 整体通过时不能完成候选", as
             ],
           };
         }
-        expect(request.messages.at(-1)?.content).toContain("# 候选自检通过");
+        expect(request.messages.at(-1)?.content).toContain(
+          "# Candidate check passed",
+        );
         return {
           role: "assistant",
-          content: "现在完成。",
+          content: "Finish now.",
           toolCalls: [
             {
               id: "finish-after-preview",
@@ -1236,7 +1277,7 @@ test("未等待 setting_preview_candidate 整体通过时不能完成候选", as
     preview: (snapshot) => previewSnapshot(snapshot),
   });
 
-  await improvement.start(planFirst("验证候选"));
+  await improvement.start(planFirst("Validate the candidate"));
   const result = await improvement.confirmPlan();
 
   expect(result.kind).toBe("candidate");
@@ -1257,7 +1298,9 @@ test("计划阶段拒绝写工具，直接模式则跳过计划并生成完整�
             role: "tool",
             toolCallId: "forbidden-write",
           });
-          expect(request.messages.at(-1)?.content).toContain("计划阶段只允许");
+          expect(request.messages.at(-1)?.content).toContain(
+            "planning phase allows only",
+          );
           return { role: "assistant", content: plan(), toolCalls: [] };
         }
         return {
@@ -1268,7 +1311,7 @@ test("计划阶段拒绝写工具，直接模式则跳过计划并生成完整�
               id: "forbidden-write",
               name: "setting_write_file",
               arguments: {
-                path: "world/characters/qinlong.yaml",
+                path: "world/characters/alex.yaml",
                 contents: "不应写入",
               },
             },
@@ -1278,7 +1321,9 @@ test("计划阶段拒绝写工具，直接模式则跳过计划并生成完整�
     },
     preview: (snapshot) => previewSnapshot(snapshot),
   });
-  await expect(planning.start(planFirst("只制定计划"))).resolves.toMatchObject({
+  await expect(
+    planning.start(planFirst("Create only a plan")),
+  ).resolves.toMatchObject({
     kind: "plan",
   });
   expect(planning.currentFiles()).toEqual(original);
@@ -1293,7 +1338,7 @@ test("计划阶段拒绝写工具，直接模式则跳过计划并生成完整�
         if (requests.length === 1)
           return {
             role: "assistant",
-            content: "更新开场白。",
+            content: "Update the opening.",
             toolCalls: [
               { id: "list", name: "setting_list", arguments: {} },
               {
@@ -1306,7 +1351,7 @@ test("计划阶段拒绝写工具，直接模式则跳过计划并生成完整�
         if (requests.length === 2)
           return {
             role: "assistant",
-            content: "检查候选。",
+            content: "Check the candidate.",
             toolCalls: [
               {
                 id: "preview-direct",
@@ -1317,7 +1362,7 @@ test("计划阶段拒绝写工具，直接模式则跳过计划并生成完整�
           };
         return {
           role: "assistant",
-          content: "候选已完成。",
+          content: "Candidate complete.",
           toolCalls: [
             { id: "finish", name: "setting_finish_candidate", arguments: {} },
           ],
@@ -1328,21 +1373,26 @@ test("计划阶段拒绝写工具，直接模式则跳过计划并生成完整�
   });
 
   const result = await direct.start({
-    goal: "无需计划，直接检查并生成候选",
+    goal: "Skip planning, inspect, and generate a candidate directly",
     contextPaths: ["opening.md"],
     mode: "direct_candidate",
   });
 
   expect(result.kind).toBe("candidate");
-  if (result.kind !== "candidate") throw new Error("直接候选未生成");
+  if (result.kind !== "candidate")
+    throw new Error("Direct candidate was not generated");
   expect(requests).toHaveLength(3);
   expect(requests[0]?.tools).toContain("setting_write_file");
   expect(JSON.stringify(requests[0])).toContain(opening().trim());
-  expect(JSON.stringify(requests[0])).toContain("跳过可见创作计划");
+  expect(JSON.stringify(requests[0])).toContain(
+    "skipped the visible creation plan",
+  );
   expect(result.review.diff).toContainEqual(
     expect.objectContaining({ path: "opening.md", kind: "modify" }),
   );
-  await expect(direct.confirmPlan()).rejects.toThrow(/没有可确认的创作计划/u);
+  await expect(direct.confirmPlan()).rejects.toThrow(
+    /There is no creation plan to confirm/u,
+  );
 });
 
 test("直接注入只接受固定当前树中的文本文件", async () => {
@@ -1360,14 +1410,16 @@ test("直接注入只接受固定当前树中的文本文件", async () => {
   });
 
   await expect(
-    improvement.start(planFirst("读取不存在的文件", ["world/missing.yaml"])),
-  ).rejects.toThrow(/注入文件不存在/u);
+    improvement.start(planFirst("Read a missing file", ["world/missing.yaml"])),
+  ).rejects.toThrow(/Injected file does not exist/u);
   await expect(
-    improvement.start(planFirst("拒绝重复选择", ["opening.md", "opening.md"])),
-  ).rejects.toThrow(/注入文件路径重复/u);
+    improvement.start(
+      planFirst("Reject duplicate selection", ["opening.md", "opening.md"]),
+    ),
+  ).rejects.toThrow(/Duplicate injected file path/u);
   await expect(
-    improvement.start(planFirst("拒绝不安全路径", ["../opening.md"])),
-  ).rejects.toThrow(/路径不安全/u);
+    improvement.start(planFirst("Reject an unsafe path", ["../opening.md"])),
+  ).rejects.toThrow(/Unsafe candidate path/u);
   expect(providerCalls).toBe(0);
 
   const binary = new DocumentCandidateSettingImprovement({
@@ -1383,12 +1435,12 @@ test("直接注入只接受固定当前树中的文本文件", async () => {
       },
     },
     preview: () => {
-      throw new Error("不应生成预览");
+      throw new Error("Preview should not be generated");
     },
   });
   await expect(
-    binary.start(planFirst("拒绝二进制上下文", ["assets/map.png"])),
-  ).rejects.toThrow(/二进制文件不能直接注入/u);
+    binary.start(planFirst("Reject binary context", ["assets/map.png"])),
+  ).rejects.toThrow(/binary file cannot be injected into a model prompt/u);
   expect(providerCalls).toBe(0);
 });
 
@@ -1416,7 +1468,7 @@ test("既有开场白必须完整读取后才能更新，缺失时可直接创�
     ],
   ];
   const improvement = improvementWithCalls(baseFiles(), calls);
-  await improvement.start(planFirst("调整开场局面"));
+  await improvement.start(planFirst("Adjust the opening situation"));
   const repaired = await improvement.confirmPlan();
   expect(
     repaired.files.find(({ path }) => path === "opening.md")?.contents,
@@ -1435,7 +1487,7 @@ test("既有开场白必须完整读取后才能更新，缺失时可直接创�
       ],
     ],
   );
-  await missing.start(planFirst("补全开场白"));
+  await missing.start(planFirst("Complete the opening"));
   const created = await missing.confirmPlan();
   expect(created.files).toContainEqual({
     path: "opening.md",
@@ -1446,8 +1498,10 @@ test("既有开场白必须完整读取后才能更新，缺失时可直接创�
     baseFiles().filter(({ path }) => path !== "opening.md"),
     [[{ id: "finish", name: "setting_finish_candidate", arguments: {} }]],
   );
-  await unfinished.start(planFirst("不要遗漏开场白"));
-  await expect(unfinished.confirmPlan()).rejects.toThrow(/候选.*可修复.*上限/u);
+  await unfinished.start(planFirst("Do not omit the opening"));
+  await expect(unfinished.confirmPlan()).rejects.toThrow(
+    /candidate phase exceeded its repair limit/u,
+  );
 });
 
 test("工具或 Preview 失败与放弃都不会污染固定目标", async () => {
@@ -1462,10 +1516,12 @@ test("工具或 Preview 失败与放弃都不会污染固定目标", async () =>
         if (round === 1)
           return { role: "assistant", content: plan(), toolCalls: [] };
         if (round === 3) {
-          expect(request.messages.at(-1)?.content).toContain("候选路径不安全");
+          expect(request.messages.at(-1)?.content).toContain(
+            "Unsafe candidate path",
+          );
           return {
             role: "assistant",
-            content: "运行候选预览。",
+            content: "Run the candidate preview.",
             toolCalls: [
               {
                 id: "preview-failed-candidate",
@@ -1477,13 +1533,13 @@ test("工具或 Preview 失败与放弃都不会污染固定目标", async () =>
         }
         if (round === 4) {
           expect(request.messages.at(-1)?.content).toContain(
-            "真实 Prompt Preview 编译失败",
+            "The real Prompt Preview failed to compile",
           );
           throw new Error("provider unavailable");
         }
         return {
           role: "assistant",
-          content: "错误候选",
+          content: "Invalid candidate",
           toolCalls: [
             {
               id: "bad",
@@ -1498,7 +1554,7 @@ test("工具或 Preview 失败与放弃都不会污染固定目标", async () =>
       throw new Error("preview failed");
     },
   });
-  await improvement.start(planFirst("修改设定"));
+  await improvement.start(planFirst("Change the setting"));
   await expect(improvement.confirmPlan()).rejects.toThrow(
     "provider unavailable",
   );
@@ -1520,7 +1576,7 @@ test("真实 Prompt Preview 失败后必须重新自检，成功后才可完成"
         if (round === 2)
           return {
             role: "assistant",
-            content: "运行预览。",
+            content: "Run the preview.",
             toolCalls: [
               {
                 id: "preview-fails",
@@ -1531,11 +1587,11 @@ test("真实 Prompt Preview 失败后必须重新自检，成功后才可完成"
           };
         if (round === 3) {
           expect(request.messages.at(-1)?.content).toContain(
-            "真实 Prompt Preview 编译失败",
+            "The real Prompt Preview failed to compile",
           );
           return {
             role: "assistant",
-            content: "重新运行预览。",
+            content: "Run the preview again.",
             toolCalls: [
               {
                 id: "preview-recovers",
@@ -1545,10 +1601,12 @@ test("真实 Prompt Preview 失败后必须重新自检，成功后才可完成"
             ],
           };
         }
-        expect(request.messages.at(-1)?.content).toContain("# 候选自检通过");
+        expect(request.messages.at(-1)?.content).toContain(
+          "# Candidate check passed",
+        );
         return {
           role: "assistant",
-          content: "完成。",
+          content: "Done.",
           toolCalls: [
             {
               id: "finish-after-recovery",
@@ -1566,7 +1624,7 @@ test("真实 Prompt Preview 失败后必须重新自检，成功后才可完成"
     },
   });
 
-  await improvement.start(planFirst("验证预览恢复"));
+  await improvement.start(planFirst("Verify preview recovery"));
   const result = await improvement.confirmPlan();
 
   expect(result.review.status).toBe("usable");
@@ -1589,7 +1647,7 @@ test("control 写入可创建缺失文件且 YAML patch 接受 Runtime 短引用
         if (candidateRound === 2)
           return {
             role: "assistant",
-            content: "检查候选。",
+            content: "Check the candidate.",
             toolCalls: [
               {
                 id: "preview-control",
@@ -1601,7 +1659,7 @@ test("control 写入可创建缺失文件且 YAML patch 接受 Runtime 短引用
         if (candidateRound === 3)
           return {
             role: "assistant",
-            content: "完成。",
+            content: "Done.",
             toolCalls: [
               {
                 id: "finish-control",
@@ -1612,18 +1670,18 @@ test("control 写入可创建缺失文件且 YAML patch 接受 Runtime 短引用
           };
         return {
           role: "assistant",
-          content: "完成",
+          content: "Done",
           toolCalls: [
             {
-              id: "read-qinlong",
+              id: "read-alex",
               name: "setting_read",
-              arguments: { path: "world/characters/qinlong.yaml" },
+              arguments: { path: "world/characters/alex.yaml" },
             },
             {
               id: "patch-ref",
               name: "setting_patch",
               arguments: {
-                document: "@qinlong",
+                document: "@alex",
                 op: "add",
                 locator: ["衣着"],
                 value: "黑色运动背心",
@@ -1634,7 +1692,8 @@ test("control 写入可创建缺失文件且 YAML patch 接受 Runtime 短引用
               name: "setting_write_file",
               arguments: {
                 path: "control/blocks/world.md",
-                contents: "# 世界主持规则\n\n持续结果写回自然所有者。\n",
+                contents:
+                  "# World Narration Rules\n\nWrite durable outcomes back to their natural owner.\n",
               },
             },
           ],
@@ -1644,18 +1703,18 @@ test("control 写入可创建缺失文件且 YAML patch 接受 Runtime 短引用
     preview: (snapshot) => previewSnapshot(snapshot),
   });
 
-  await improvement.start(planFirst("修复候选并调整秦龙衣着"));
+  await improvement.start(planFirst("修复候选并Adjust Alex clothing"));
   const result = await improvement.confirmPlan();
 
   expect(
-    result.files.find(({ path }) => path.endsWith("qinlong.yaml"))?.contents,
+    result.files.find(({ path }) => path.endsWith("alex.yaml"))?.contents,
   ).toContain("衣着: 黑色运动背心");
   expect(result.files).toContainEqual(
     expect.objectContaining({ path: "control/blocks/world.md" }),
   );
 });
 
-// onDelta 是回调，不属于可快照的请求内容。
+// onDelta is a callback and is not part of the snapshot-safe request content.
 function snapshotAuthorRequest(
   request: Parameters<SettingAuthorAdapter["next"]>[0],
 ) {
@@ -1665,7 +1724,7 @@ function snapshotAuthorRequest(
 }
 
 function plan(): string {
-  return `# 创作计划\n\n## 主要体验\n人物关系推进\n## 次要体验\n修炼探索\n## 反复游玩循环\n互动、反馈、持续变化\n## 焦点\n人物选择\n## 节奏\n慢热\n## 冲突\n信任差异\n## 信息结构\n通过行为披露\n## 语气边界\n克制，不替玩家行动\n## 明确排除项\n不引入数值 schema`;
+  return `# Creation plan\n\n## Primary experience\nDevelop character relationships\n## Secondary experience\nExplore progression\n## Repeatable play loop\nInteraction, feedback, and persistent change\n## Focus\nCharacter choices\n## Pace\nA gradual build\n## Conflict\nDifferences in trust\n## Information structure\nReveal through behavior\n## Voice boundaries\nRestrained; never decide the player's actions\n## Explicit exclusions\nDo not introduce a numeric schema`;
 }
 
 function baseFiles() {
@@ -1675,8 +1734,8 @@ function baseFiles() {
       contents: opening(),
     },
     {
-      path: "world/characters/qinlong.yaml",
-      contents: character("character.qinlong", "qinlong", "秦龙", "关系: {}"),
+      path: "world/characters/alex.yaml",
+      contents: character("character.alex", "alex", "Alex", "关系: {}"),
     },
     {
       path: "world/current-situation.yaml",
@@ -1684,7 +1743,7 @@ function baseFiles() {
         "situation.current",
         "current",
         "当前情境",
-        "人物:\n  - $ref: character.qinlong",
+        "人物:\n  - $ref: character.alex",
       ),
     },
     {
@@ -1697,11 +1756,12 @@ function baseFiles() {
     },
     {
       path: "control/blocks/world.md",
-      contents: "# 世界主持规则\n\n持续结果写回自然所有者。\n",
+      contents:
+        "# World Narration Rules\n\nWrite durable outcomes back to their natural owner.\n",
     },
     {
       path: "control/player-views.yaml",
-      contents: `format: narraeon.player-views/v1\nviews:\n  - id: relations\n    title: 人物关系\n    items:\n      - id: qinlong-relations\n        label: 秦龙的关系\n        select: { document: character.qinlong, locator: { yaml: [关系] } }\n`,
+      contents: `format: narraeon.player-views/v1\nviews:\n  - id: relations\n    title: 人物关系\n    items:\n      - id: alex-relations\n        label: Alex的关系\n        select: { document: character.alex, locator: { yaml: [关系] } }\n`,
     },
   ];
 }
@@ -1758,7 +1818,7 @@ function previewSnapshot(snapshot: WorldDocumentStore) {
       ],
     },
     playerInputPlacement: "bootstrap",
-    playerInput: "预览",
+    playerInput: "Preview",
     modelBinding: {
       provider: "chat_completions",
       modelId: "test",
@@ -1788,14 +1848,18 @@ function improvementWithCalls(
         }
         const batch = batches.shift();
         if (batch !== undefined)
-          return { role: "assistant", content: "完成", toolCalls: batch };
+          return { role: "assistant", content: "Done", toolCalls: batch };
         const lastToolResult = request.messages.at(-1)?.content ?? "";
-        if (lastToolResult.includes("# 候选自检未通过"))
-          return { role: "assistant", content: "无法完成", toolCalls: [] };
-        if (lastToolResult.includes("# 候选自检通过"))
+        if (lastToolResult.includes("# Candidate check failed"))
           return {
             role: "assistant",
-            content: "完成",
+            content: "Unable to finish",
+            toolCalls: [],
+          };
+        if (lastToolResult.includes("# Candidate check passed"))
+          return {
+            role: "assistant",
+            content: "Done",
             toolCalls: [
               {
                 id: "auto-finish",
@@ -1806,7 +1870,7 @@ function improvementWithCalls(
           };
         return {
           role: "assistant",
-          content: "检查候选",
+          content: "Check the candidate",
           toolCalls: [
             {
               id: "auto-preview",
@@ -1826,11 +1890,11 @@ function planFirst(goal: string, contextPaths: string[] = []) {
 }
 
 function opening(): string {
-  return "宿舍门在你面前合上。秦龙抱着球衣，等你先开口。\n";
+  return "宿舍门在你面前合上。Alex抱着球衣，等你先开口。\n";
 }
 
 function updatedOpening(): string {
-  return "雨声压住走廊里的脚步。阿雾站在宿舍门边，秦龙放下球衣，两人都在等你的反应。\n";
+  return "雨声压住走廊里的脚步。Mia站在宿舍门边，Alex放下球衣，两人都在等你的反应。\n";
 }
 
 function openingText(

@@ -21,12 +21,12 @@ test("候选生成中展示轮次、计数、token 与当前写入路径", () =>
         toolCalls: 47,
         failedChecks: 2,
         usage: { inputTokens: 128_400, outputTokens: 9200 },
-        writing: "world/characters/awu.yaml",
+        writing: "world/characters/mia.yaml",
         recentActions: [
-          { tool: "setting_patch", target: "@qinlong", ok: true },
+          { tool: "setting_patch", target: "@alex", ok: true },
           {
             tool: "setting_write_file",
-            target: "world/characters/awu.yaml",
+            target: "world/characters/mia.yaml",
             ok: true,
           },
         ],
@@ -40,9 +40,9 @@ test("候选生成中展示轮次、计数、token 与当前写入路径", () =>
   expect(screen.getByText("47")).toBeTruthy();
   expect(screen.getByText("2")).toBeTruthy();
   expect(screen.getByText("↑128.4k ↓9.2k")).toBeTruthy();
-  // 当前写入路径与最近动作各出现一次。
-  expect(screen.getAllByText("world/characters/awu.yaml")).toHaveLength(2);
-  expect(screen.getByText("@qinlong")).toBeTruthy();
+  // The current write path and recent action each appear once.
+  expect(screen.getAllByText("world/characters/mia.yaml")).toHaveLength(2);
+  expect(screen.getByText("@alex")).toBeTruthy();
   expect(screen.getByText("8 秒前更新")).toBeTruthy();
 });
 
@@ -57,8 +57,8 @@ test("模型正在输出时显示已收字数与正文尾巴，不报停滞", ()
           reasoningChars: 800,
           textChars: 1400,
           toolChars: 0,
-          tail: "秦龙把球衣叠好，抬头看你。",
-          // 已经输出两分钟，但一秒前刚收到片段：这是在工作，不是卡住。
+          tail: "Alex把球衣叠好，抬头看你。",
+          // Streaming began two minutes ago, but a fragment arrived one second ago.
           receivedAt: 1_000_119_000,
         },
       }),
@@ -67,7 +67,7 @@ test("模型正在输出时显示已收字数与正文尾巴，不报停滞", ()
   );
 
   expect(screen.getByText("正在输出 2.2k 字")).toBeTruthy();
-  expect(screen.getByText(/秦龙把球衣叠好，抬头看你。/u)).toBeTruthy();
+  expect(screen.getByText(/Alex把球衣叠好，抬头看你。/u)).toBeTruthy();
   expect(screen.getByText("正文")).toBeTruthy();
   expect(screen.queryByText(/可能已经卡住/u)).toBeNull();
 });
@@ -176,7 +176,7 @@ function common() {
     hasUnsavedFileDraft: false,
     contextPaths: [],
     contextLocked: true,
-    goal: "补足人物关系",
+    goal: "Develop the character relationships",
     plan: null,
     candidate: null,
     onGoalChange: vi.fn(),

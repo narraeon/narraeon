@@ -12,7 +12,7 @@ import {
 const plan = {
   kind: "plan" as const,
   markdown:
-    "# 创作计划\n\n## 主要体验\n让人物关系推动日常故事。\n\n## 明确排除项\n不预写未来剧情。",
+    "# Creation plan\n\n## Main experience\nLet relationships drive everyday stories.\n\n## Explicit exclusions\nDo not prewrite future plot.",
 };
 
 afterEach(cleanup);
@@ -32,15 +32,15 @@ describe("AI 设定完善界面", () => {
       currentFiles: [
         {
           path: "opening.md",
-          contents: "宿舍门在你身后合上。秦龙抬眼看向你。",
+          contents: "宿舍门在你身后合上。Alex抬眼看向你。",
         },
         {
           path: "world/current-situation.yaml",
-          contents: "title: 当前情境\n情况: 秦龙正在整理球衣。",
+          contents: "title: 当前情境\n情况: Alex正在整理球衣。",
         },
         {
-          path: "world/characters/qinlong.yaml",
-          contents: "title: 秦龙\n衣着: 白色运动背心",
+          path: "world/characters/alex.yaml",
+          contents: "title: Alex\n衣着: 白色运动背心",
         },
         {
           path: "control/frame.yaml",
@@ -81,7 +81,7 @@ describe("AI 设定完善界面", () => {
     expect(onContextPathsChange).toHaveBeenCalledWith(["opening.md"]);
     fireEvent.click(
       screen.getByRole("button", {
-        name: /world\/characters\/qinlong\.yaml/u,
+        name: /world\/characters\/alex\.yaml/u,
       }),
     );
     expect(screen.getByText(/白色运动背心/u)).toBeTruthy();
@@ -109,7 +109,7 @@ describe("AI 设定完善界面", () => {
         ...common,
         contextPaths: ["opening.md"],
         phase: "idle",
-        goal: "完善人物关系",
+        goal: "Improve the character relationships",
         plan: null,
         candidate: null,
       }),
@@ -124,7 +124,7 @@ describe("AI 设定完善界面", () => {
         ...common,
         hasUnsavedFileDraft: true,
         phase: "idle",
-        goal: "完善人物关系",
+        goal: "Improve the character relationships",
         plan: null,
         candidate: null,
       }),
@@ -140,15 +140,19 @@ describe("AI 设定完善界面", () => {
       createElement(SettingImprovementPanel, {
         ...common,
         phase: "planned",
-        goal: "完善人物关系",
+        goal: "Improve the character relationships",
         plan,
         candidate: null,
       }),
     );
-    expect(screen.getByRole("heading", { name: "创作计划" })).toBeTruthy();
-    expect(screen.getByText("让人物关系推动日常故事。")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Creation plan" })).toBeTruthy();
+    expect(
+      screen.getByText("Let relationships drive everyday stories."),
+    ).toBeTruthy();
     expect(screen.getByText("创作目标已提交")).toBeTruthy();
-    expect(screen.getByText("完善人物关系")).toBeTruthy();
+    expect(
+      screen.getByText("Improve the character relationships"),
+    ).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "确认计划并生成候选" }));
     expect(onConfirm).toHaveBeenCalledOnce();
 
@@ -156,7 +160,7 @@ describe("AI 设定完善界面", () => {
       createElement(SettingImprovementPanel, {
         ...common,
         phase: "ready",
-        goal: "完善人物关系",
+        goal: "Improve the character relationships",
         plan,
         candidate: candidate(),
       }),
@@ -165,7 +169,7 @@ describe("AI 设定完善界面", () => {
       screen.getByRole("heading", { name: "审阅候选，再决定是否应用" }),
     ).toBeTruthy();
     expect(
-      screen.getAllByText("world/characters/qinlong.yaml").length,
+      screen.getAllByText("world/characters/alex.yaml").length,
     ).toBeGreaterThan(0);
     expect(screen.getByText(/旧关系/u)).toBeTruthy();
     expect(screen.getByText(/新关系/u)).toBeTruthy();
@@ -186,7 +190,7 @@ describe("AI 设定完善界面", () => {
         contextPaths: [],
         contextLocked: true,
         phase: "ready",
-        goal: "直接补齐缺口",
+        goal: "Fill the gaps directly",
         plan: null,
         candidate: candidate(),
         progress: null,
@@ -221,11 +225,11 @@ function candidate(): SettingImprovementCandidateResult {
         {
           path: "opening.md",
           kind: "modify",
-          before: "秦龙抬眼看向你。",
-          after: "阿雾和秦龙同时看向你，等你回应。",
+          before: "Alex抬眼看向你。",
+          after: "Mia和Alex同时看向你，等你回应。",
         },
         {
-          path: "world/characters/qinlong.yaml",
+          path: "world/characters/alex.yaml",
           kind: "modify",
           before: "关系: 旧关系",
           after: "关系: 新关系",
@@ -243,15 +247,20 @@ function candidate(): SettingImprovementCandidateResult {
           logicalMessages: [
             {
               role: "world_context",
-              markdown: "# 当前世界\n\n关系已经更新。",
-              blocks: [{ source: "world", markdown: "关系已经更新。" }],
+              markdown: "# Current world\n\nRelationships have been updated.",
+              blocks: [
+                {
+                  source: "world",
+                  markdown: "Relationships have been updated.",
+                },
+              ],
             },
           ],
-          provider: { messages: [{ role: "user", content: "当前世界" }] },
+          provider: { messages: [{ role: "user", content: "Current world" }] },
           tools: [
             {
               name: "context_read",
-              description: "读取文档",
+              description: "Read a document",
               inputSchema: { type: "object" },
             },
           ],

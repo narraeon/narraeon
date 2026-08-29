@@ -20,14 +20,17 @@ afterEach(async () => {
 test("从 genesis 与不可变提交恢复同一端点，并用同一 commit 幂等修复物化", async () => {
   const fixture = await world();
   const before = initialSituation();
-  const after = before.replace("安静", "奖杯已经交给秦龙");
+  const after = before.replace("安静", "奖杯已经交给Alex");
   const committed = await fixture.store.commitPlayStep({
     operationId: "play-1",
     worldId: fixture.worldId,
     parentHead: "genesis",
     historyAppend: [
-      { role: "player", exactText: "我把奖杯交给秦龙。" },
-      { role: "narrator", exactText: "秦龙接过奖杯，认真道谢。" },
+      { role: "player", exactText: "I hand the trophy to Alex." },
+      {
+        role: "narrator",
+        exactText: "Alex accepts the trophy and thanks me sincerely.",
+      },
     ],
     nextMaterials: [],
     stateChanges: [change(before, after)],
@@ -40,13 +43,17 @@ test("从 genesis 与不可变提交恢复同一端点，并用同一 commit 幂
     history: [
       {
         role: "narrator",
-        exactText: "房间安静下来，眼前的局面正等你回应。\n",
+        exactText:
+          "The room falls quiet, leaving the present situation for your response.\n",
       },
-      { role: "player", exactText: "我把奖杯交给秦龙。" },
-      { role: "narrator", exactText: "秦龙接过奖杯，认真道谢。" },
+      { role: "player", exactText: "I hand the trophy to Alex." },
+      {
+        role: "narrator",
+        exactText: "Alex accepts the trophy and thanks me sincerely.",
+      },
     ],
   });
-  expect(recovered.state[0]?.contents).toContain("奖杯已经交给秦龙");
+  expect(recovered.state[0]?.contents).toContain("奖杯已经交给Alex");
 
   const worldRoot = join(fixture.root, "worlds-file-native", fixture.worldId);
   await writeFile(join(worldRoot, "state/current-situation.yaml"), before);
@@ -93,8 +100,8 @@ test("Authority 接受后的确定物化冲突必须抛出，不得伪装为普�
       worldId: fixture.worldId,
       parentHead: "genesis",
       historyAppend: [
-        { role: "player", exactText: "我确认房间里的变化。" },
-        { role: "narrator", exactText: "你确认了眼前的变化。" },
+        { role: "player", exactText: "I inspect the changes in the room." },
+        { role: "narrator", exactText: "You confirm the changes before you." },
       ],
       nextMaterials: [],
       stateChanges: [],
@@ -116,8 +123,8 @@ test("提交边界把无效候选归类为候选校验失败，而不是权威�
       worldId: fixture.worldId,
       parentHead: "genesis",
       historyAppend: [
-        { role: "player", exactText: "我去食堂。" },
-        { role: "narrator", exactText: "你到了食堂。" },
+        { role: "player", exactText: "I go to the cafeteria." },
+        { role: "narrator", exactText: "You arrive at the cafeteria." },
       ],
       nextMaterials: [],
       stateChanges: [change(before, after)],
@@ -126,7 +133,9 @@ test("提交边界把无效候选归类为候选校验失败，而不是权威�
   expect(error).toMatchObject({ code: "candidate_validation_failed" });
   expect(error).toBeInstanceOf(Error);
   if (error instanceof Error)
-    expect(error.message).toContain("显式 $ref 指向不存在的文档");
+    expect(error.message).toContain(
+      "An explicit $ref points to a missing document, or the target identity is not unique in the snapshot",
+    );
   await expect(
     fixture.store.recoverEndpoint(fixture.worldId),
   ).resolves.toMatchObject({ head: "genesis" });
@@ -142,7 +151,7 @@ test("时间线修订在同一世界追加 Authority，并把当前投影恢复�
     operationId: "timeline-player-1",
     worldId: fixture.worldId,
     parentHead: "genesis",
-    historyAppend: [{ role: "player", exactText: "第一句" }],
+    historyAppend: [{ role: "player", exactText: "First player message" }],
     nextMaterials: [],
     stateChanges: [],
   });
@@ -150,7 +159,7 @@ test("时间线修订在同一世界追加 Authority，并把当前投影恢复�
     operationId: "timeline-narrator-1",
     worldId: fixture.worldId,
     parentHead: "commit:1",
-    historyAppend: [{ role: "narrator", exactText: "第一答" }],
+    historyAppend: [{ role: "narrator", exactText: "First narrator response" }],
     nextMaterials: [
       {
         kind: "history_message",
@@ -163,7 +172,7 @@ test("时间线修订在同一世界追加 Authority，并把当前投影恢复�
     operationId: "timeline-player-2",
     worldId: fixture.worldId,
     parentHead: "commit:2",
-    historyAppend: [{ role: "player", exactText: "第二句" }],
+    historyAppend: [{ role: "player", exactText: "Second player message" }],
     nextMaterials: [],
     stateChanges: [],
   });
@@ -171,7 +180,9 @@ test("时间线修订在同一世界追加 Authority，并把当前投影恢复�
     operationId: "timeline-narrator-2",
     worldId: fixture.worldId,
     parentHead: "commit:3",
-    historyAppend: [{ role: "narrator", exactText: "第二答" }],
+    historyAppend: [
+      { role: "narrator", exactText: "Second narrator response" },
+    ],
     nextMaterials: [],
     stateChanges: [change(first, second)],
   });
@@ -186,7 +197,7 @@ test("时间线修订在同一世界追加 Authority，并把当前投影恢复�
     expectedCurrentHead: "commit:4",
     restoresHead: "commit:2",
     replacesHead: "commit:3",
-    replacementText: "修改后的第二句",
+    replacementText: "Revised second player message",
     requestFingerprint: hash("timeline-revision-request"),
   });
 
@@ -196,7 +207,9 @@ test("时间线修订在同一世界追加 Authority，并把当前投影恢复�
     parentHead: "commit:4",
     head: "commit:5",
     mode: "timeline_revision",
-    historyAppend: [{ role: "player", exactText: "修改后的第二句" }],
+    historyAppend: [
+      { role: "player", exactText: "Revised second player message" },
+    ],
   });
   expect(await fixture.store.currentHead(fixture.worldId)).toBe("commit:5");
   const authority = await fixture.store.readAuthorityHistory(fixture.worldId);
@@ -215,10 +228,10 @@ test("时间线修订在同一世界追加 Authority，并把当前投影恢复�
   const current = await fixture.store.recoverEndpoint(fixture.worldId);
   expect(current.state[0]?.contents).toBe(first);
   expect(current.history.map(({ exactText }) => exactText)).toEqual([
-    "房间安静下来，眼前的局面正等你回应。\n",
-    "第一句",
-    "第一答",
-    "修改后的第二句",
+    "The room falls quiet, leaving the present situation for your response.\n",
+    "First player message",
+    "First narrator response",
+    "Revised second player message",
   ]);
   expect(current.additionalMaterials).toEqual([
     {
@@ -243,7 +256,7 @@ test("时间线修订在同一世界追加 Authority，并把当前投影恢复�
       expectedCurrentHead: "commit:5",
       restoresHead: "commit:2",
       replacesHead: "commit:3",
-      replacementText: "修改后的第二句",
+      replacementText: "Revised second player message",
       requestFingerprint: hash("timeline-revision-request"),
     }),
   ).resolves.toEqual(revised);
@@ -289,8 +302,8 @@ test("历史端点派生会复制完整 Authority 前缀，并在来源删除后
     worldId: fixture.worldId,
     parentHead: "genesis",
     historyAppend: [
-      { role: "player", exactText: "第一句" },
-      { role: "narrator", exactText: "第一答" },
+      { role: "player", exactText: "First player message" },
+      { role: "narrator", exactText: "First narrator response" },
     ],
     nextMaterials: [
       {
@@ -306,8 +319,8 @@ test("历史端点派生会复制完整 Authority 前缀，并在来源删除后
     worldId: fixture.worldId,
     parentHead: "commit:1",
     historyAppend: [
-      { role: "player", exactText: "第二句" },
-      { role: "narrator", exactText: "第二答" },
+      { role: "player", exactText: "Second player message" },
+      { role: "narrator", exactText: "Second narrator response" },
     ],
     nextMaterials: [],
     stateChanges: [change(first, second)],
@@ -328,7 +341,7 @@ test("历史端点派生会复制完整 Authority 前缀，并在来源删除后
     sourceHead: "commit:1",
     hostPresetId: "host-current",
   });
-  expect(derived.world.title).toBe("雾港第一夜（分叉）");
+  expect(derived.world.title).toBe("雾港第一夜 (fork)");
   const derivedWorldId = derived.world.worldId;
   expect(await fixture.store.currentHead(derivedWorldId)).toBe("commit:1");
   expect(
@@ -341,12 +354,12 @@ test("历史端点派生会复制完整 Authority 前缀，并在来源删除后
         {
           messageId: `${derivedWorldId}.message.1.1.player`,
           role: "player",
-          exactText: "第一句",
+          exactText: "First player message",
         },
         {
           messageId: `${derivedWorldId}.message.1.2.narrator`,
           role: "narrator",
-          exactText: "第一答",
+          exactText: "First narrator response",
         },
       ],
     },
@@ -427,8 +440,8 @@ test("历史端点派生会复制完整 Authority 前缀，并在来源删除后
     worldId: derivedWorldId,
     parentHead: "commit:1",
     historyAppend: [
-      { role: "player", exactText: "派生世界第二句" },
-      { role: "narrator", exactText: "派生世界第二答" },
+      { role: "player", exactText: "Derived-world second player message" },
+      { role: "narrator", exactText: "Derived-world second narrator response" },
     ],
     nextMaterials: [],
     stateChanges: [change(first, targetSecond)],
@@ -477,14 +490,15 @@ async function world() {
     packageFiles: [
       {
         path: "opening.md",
-        contents: "房间安静下来，眼前的局面正等你回应。\n",
+        contents:
+          "The room falls quiet, leaving the present situation for your response.\n",
       },
       { path: "world/current-situation.yaml", contents: initialSituation() },
       {
         path: "control/frame.yaml",
         contents: `format: narraeon.world-frame/v1\nbindings:\n  currentSituation: situation.current\ninstructions:\n  - markdown: blocks/world.md\ncontext:\n  - slot: { kind: current_situation }\n  - slot: { kind: additional_materials }\n`,
       },
-      { path: "control/blocks/world.md", contents: "# 世界规则\n" },
+      { path: "control/blocks/world.md", contents: "# World Rules\n" },
       {
         path: "control/player-views.yaml",
         contents: "format: narraeon.player-views/v1\nviews: []\n",
@@ -495,7 +509,7 @@ async function world() {
         hostPresetId: "host",
         files: {
           "frame.yaml": `format: narraeon.host-frame/v1\nroles:\n  runtime_system:\n    - builtin: runtime.play-contract\n    - builtin: runtime.tool-contract\n    - builtin: runtime.operation-contract\n  author_instruction:\n    - markdown: blocks/style.md\n    - include: world.instructions\n  world_context:\n    - builtin: runtime.coverage\n    - include: world.context\n`,
-          "blocks/style.md": "# 风格\n",
+          "blocks/style.md": "# Style\n",
         },
       },
       modelBinding: {

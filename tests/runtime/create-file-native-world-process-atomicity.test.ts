@@ -44,12 +44,14 @@ describe.runIf(process.platform === "linux")(
       const store = new FileNativeWorldStore(fixture.root);
       const outcome = await store.getCreationOutcome("create-op-1");
       expect(outcome).toMatchObject({ outcome: "created" });
-      if (outcome.outcome !== "created") throw new Error("世界没有恢复");
+      if (outcome.outcome !== "created")
+        throw new Error("The world was not recovered");
       await expect(
         store.readSurface(outcome.world.worldId, "history"),
       ).resolves.toEqual([
         expect.objectContaining({
-          contents: "房间安静下来，眼前的局面正等你回应。\n",
+          contents:
+            "The room falls quiet, leaving the present situation for your response.\n",
         }),
       ]);
     });
@@ -86,7 +88,8 @@ function input() {
     packageFiles: [
       {
         path: "opening.md",
-        contents: "房间安静下来，眼前的局面正等你回应。\n",
+        contents:
+          "The room falls quiet, leaving the present situation for your response.\n",
       },
       {
         path: "world/current-situation.yaml",
@@ -96,7 +99,7 @@ function input() {
         path: "control/frame.yaml",
         contents: `format: narraeon.world-frame/v1\nbindings:\n  currentSituation: situation.current\ninstructions:\n  - markdown: blocks/world.md\ncontext:\n  - slot: { kind: current_situation }\n  - slot: { kind: additional_materials }\n`,
       },
-      { path: "control/blocks/world.md", contents: "# 世界规则\n" },
+      { path: "control/blocks/world.md", contents: "# World Rules\n" },
       {
         path: "control/player-views.yaml",
         contents:
@@ -108,7 +111,7 @@ function input() {
         hostPresetId: "host-1",
         files: {
           "frame.yaml": `format: narraeon.host-frame/v1\nroles:\n  runtime_system:\n    - builtin: runtime.play-contract\n    - builtin: runtime.tool-contract\n    - builtin: runtime.operation-contract\n  author_instruction:\n    - markdown: blocks/style.md\n    - include: world.instructions\n  world_context:\n    - builtin: runtime.coverage\n    - include: world.context\n`,
-          "blocks/style.md": "# 风格\n",
+          "blocks/style.md": "# Style\n",
         },
       },
       modelBinding: {

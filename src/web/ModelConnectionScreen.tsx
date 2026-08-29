@@ -1,3 +1,4 @@
+import { uiText } from "./i18n.ts";
 import { useEffect, useMemo, useState } from "react";
 
 import type {
@@ -20,17 +21,19 @@ interface ConnectionForm {
   maxOutputTokens: string;
 }
 
-const emptyForm: ConnectionForm = {
-  connectionId: null,
-  name: "默认模型",
-  presetId: "custom",
-  provider: "chat_completions",
-  baseUrl: "",
-  apiKey: "",
-  modelId: "",
-  contextWindowTokens: "128000",
-  maxOutputTokens: "16000",
-};
+function emptyConnectionForm(): ConnectionForm {
+  return {
+    connectionId: null,
+    name: uiText("默认模型"),
+    presetId: "custom",
+    provider: "chat_completions",
+    baseUrl: "",
+    apiKey: "",
+    modelId: "",
+    contextWindowTokens: "128000",
+    maxOutputTokens: "16000",
+  };
+}
 
 export function ModelConnectionScreen({
   client,
@@ -49,7 +52,9 @@ export function ModelConnectionScreen({
     ({ id }) => id === library.activeConnectionId,
   );
   const [form, setForm] = useState<ConnectionForm>(() =>
-    initiallyActive === undefined ? emptyForm : formFor(initiallyActive),
+    initiallyActive === undefined
+      ? emptyConnectionForm()
+      : formFor(initiallyActive),
   );
   const [models, setModels] = useState<string[]>([]);
   const [pending, setPending] = useState<string | null>(null);
@@ -98,7 +103,7 @@ export function ModelConnectionScreen({
             provider: preset.provider,
             baseUrl: preset.baseUrl,
             name:
-              form.connectionId === null || form.name === "默认模型"
+              form.connectionId === null || form.name === uiText("默认模型")
                 ? preset.name
                 : form.name,
           },
@@ -114,7 +119,7 @@ export function ModelConnectionScreen({
   }
 
   function startNew(): void {
-    setForm(emptyForm);
+    setForm(emptyConnectionForm());
     setModels([]);
     setDirty(false);
     onNotice("");
@@ -147,7 +152,7 @@ export function ModelConnectionScreen({
         ({ id }) => id === next.activeConnectionId,
       );
       if (saved !== undefined) edit(saved);
-      onNotice("模型连接已保存并启用；后续请求只使用当前配置。");
+      onNotice(uiText("模型连接已保存并启用；后续请求只使用当前配置。"));
     } catch (error: unknown) {
       onNotice(errorMessage(error));
     } finally {
@@ -164,7 +169,7 @@ export function ModelConnectionScreen({
         connectionId,
       });
       onLibraryChange(next);
-      onNotice("已切换当前模型配置；Runtime 不会自动故障转移。");
+      onNotice(uiText("已切换当前模型配置；Runtime 不会自动故障转移。"));
     } catch (error: unknown) {
       onNotice(errorMessage(error));
     } finally {
@@ -182,7 +187,7 @@ export function ModelConnectionScreen({
       });
       onLibraryChange(next);
       if (form.connectionId === connectionId) startNew();
-      onNotice("模型配置已从本机删除。");
+      onNotice(uiText("模型配置已从本机删除。"));
     } catch (error: unknown) {
       onNotice(errorMessage(error));
     } finally {
@@ -204,7 +209,11 @@ export function ModelConnectionScreen({
         ...(form.apiKey.length === 0 ? {} : { apiKey: form.apiKey }),
       });
       setModels(result.models);
-      onNotice(`已从当前端点拉取 ${result.models.length} 个模型 ID。`);
+      onNotice(
+        uiText("已从当前端点拉取 {count} 个模型 ID。", {
+          count: result.models.length,
+        }),
+      );
     } catch (error: unknown) {
       onNotice(errorMessage(error));
     } finally {
@@ -217,16 +226,17 @@ export function ModelConnectionScreen({
       <header className="config-header">
         <div>
           <p className="eyebrow">WORKSPACE SETTING</p>
-          <h2 id="model-title">模型连接</h2>
+          <h2 id="model-title">{uiText("模型连接")}</h2>
           <p className="field-note">
-            保存多份本机配置并明确切换。API Key 不会返回浏览器；切换失败时
-            Runtime 不会悄悄改用另一份配置。
+            {uiText(
+              "保存多份本机配置并明确切换。API Key 不会返回浏览器；切换失败时 Runtime 不会悄悄改用另一份配置。",
+            )}
           </p>
         </div>
         <div className="model-active-summary">
-          <span>当前配置</span>
-          <strong>{active?.name ?? "尚未启用"}</strong>
-          <small>{active?.modelId ?? "先保存一份可用连接"}</small>
+          <span>{uiText("当前配置")}</span>
+          <strong>{active?.name ?? uiText("尚未启用")}</strong>
+          <small>{active?.modelId ?? uiText("先保存一份可用连接")}</small>
         </div>
       </header>
 
@@ -236,7 +246,11 @@ export function ModelConnectionScreen({
           onSubmit={(event) => void save(event)}
         >
           <div className="section-heading-row">
-            <h3>{form.connectionId === null ? "新建配置" : "编辑配置"}</h3>
+            <h3>
+              {form.connectionId === null
+                ? uiText("新建配置")
+                : uiText("编辑配置")}
+            </h3>
             {form.connectionId !== null && (
               <button
                 className="secondary-button"
@@ -244,12 +258,12 @@ export function ModelConnectionScreen({
                 onClick={startNew}
                 type="button"
               >
-                新建另一份
+                {uiText("新建另一份")}
               </button>
             )}
           </div>
 
-          <label htmlFor="model-preset">提供商</label>
+          <label htmlFor="model-preset">{uiText("提供商")}</label>
           <select
             id="model-preset"
             value={form.presetId}
@@ -264,7 +278,7 @@ export function ModelConnectionScreen({
             ))}
           </select>
 
-          <label htmlFor="model-name">配置名称</label>
+          <label htmlFor="model-name">{uiText("配置名称")}</label>
           <input
             id="model-name"
             maxLength={160}
@@ -273,7 +287,7 @@ export function ModelConnectionScreen({
             onChange={(event) => change({ name: event.target.value })}
           />
 
-          <label htmlFor="model-provider">协议适配器</label>
+          <label htmlFor="model-provider">{uiText("协议适配器")}</label>
           <select
             id="model-provider"
             value={form.provider}
@@ -307,8 +321,9 @@ export function ModelConnectionScreen({
           />
           {selectedPreset?.id !== "custom" && (
             <p className="field-note">
-              已填入 {selectedPreset?.name}{" "}
-              的内置端点；手动修改后按自定义端点保存。
+              {uiText("已填入")}
+              {selectedPreset?.name}{" "}
+              {uiText("的内置端点；手动修改后按自定义端点保存。")}
             </p>
           )}
 
@@ -322,23 +337,23 @@ export function ModelConnectionScreen({
             value={form.apiKey}
             placeholder={
               form.connectionId === null
-                ? "新配置必填"
+                ? uiText("新配置必填")
                 : credentialsMustBeEntered
-                  ? "端点或协议已改变，必须重新填写"
-                  : "留空以保留当前端点的现有凭据"
+                  ? uiText("端点或协议已改变，必须重新填写")
+                  : uiText("留空以保留当前端点的现有凭据")
             }
             onChange={(event) => change({ apiKey: event.target.value }, true)}
           />
           <p className="field-note">
-            旧凭据只会为同一协议和端点保留，不会静默转发到新端点。
+            {uiText("旧凭据只会为同一协议和端点保留，不会静默转发到新端点。")}
           </p>
 
           <div className="model-picker-row">
             <div>
-              <label htmlFor="model-id">模型 ID</label>
+              <label htmlFor="model-id">{uiText("模型 ID")}</label>
               <input
                 id="model-id"
-                aria-label="模型 ID"
+                aria-label={uiText("模型 ID")}
                 list="provider-models"
                 maxLength={512}
                 required
@@ -361,16 +376,20 @@ export function ModelConnectionScreen({
               onClick={() => void pullModels()}
               type="button"
             >
-              {pending === "models" ? "正在拉取…" : "从端点拉取模型"}
+              {pending === "models"
+                ? uiText("正在拉取…")
+                : uiText("从端点拉取模型")}
             </button>
           </div>
           {models.length > 0 && (
-            <p className="field-note">可在模型 ID 输入框中选择已拉取结果。</p>
+            <p className="field-note">
+              {uiText("可在模型 ID 输入框中选择已拉取结果。")}
+            </p>
           )}
 
           <div className="two-column-fields">
             <label>
-              真实 context window
+              {uiText("真实 context window")}
               <input
                 min={4096}
                 max={16_777_216}
@@ -384,7 +403,7 @@ export function ModelConnectionScreen({
               />
             </label>
             <label>
-              最大输出 tokens
+              {uiText("最大输出 tokens")}
               <input
                 min={256}
                 max={16_777_215}
@@ -401,7 +420,9 @@ export function ModelConnectionScreen({
 
           <div className="form-actions">
             <button disabled={pending !== null} type="submit">
-              {pending === "save" ? "正在保存…" : "保存模型连接并启用"}
+              {pending === "save"
+                ? uiText("正在保存…")
+                : uiText("保存模型连接并启用")}
             </button>
             {dirty && form.connectionId !== null && (
               <button
@@ -415,7 +436,7 @@ export function ModelConnectionScreen({
                 }}
                 type="button"
               >
-                放弃修改
+                {uiText("放弃修改")}
               </button>
             )}
             {dirty && form.connectionId === null && (
@@ -425,19 +446,21 @@ export function ModelConnectionScreen({
                 onClick={startNew}
                 type="button"
               >
-                重置新配置
+                {uiText("重置新配置")}
               </button>
             )}
           </div>
         </form>
 
-        <section className="config-list" aria-label="已保存模型配置">
+        <section className="config-list" aria-label={uiText("已保存模型配置")}>
           <div className="section-heading-row">
-            <h3>已保存配置</h3>
-            <span>{library.connections.length} 份</span>
+            <h3>{uiText("已保存配置")}</h3>
+            <span>
+              {library.connections.length} {uiText("份")}
+            </span>
           </div>
           {library.connections.length === 0 && (
-            <p className="panel-card">尚未保存模型配置。</p>
+            <p className="panel-card">{uiText("尚未保存模型配置。")}</p>
           )}
           {library.connections.map((connection) => {
             const isActive = connection.id === library.activeConnectionId;
@@ -453,27 +476,33 @@ export function ModelConnectionScreen({
                     </p>
                     <h3>{connection.name}</h3>
                   </div>
-                  {isActive && <span className="active-config">当前使用</span>}
+                  {isActive && (
+                    <span className="active-config">{uiText("当前使用")}</span>
+                  )}
                 </div>
                 <dl>
                   <div>
-                    <dt>模型</dt>
+                    <dt>{uiText("模型")}</dt>
                     <dd>{connection.modelId}</dd>
                   </div>
                   <div>
-                    <dt>端点</dt>
+                    <dt>{uiText("端点")}</dt>
                     <dd>{connection.baseUrl}</dd>
                   </div>
                   <div>
-                    <dt>窗口 / 输出</dt>
+                    <dt>{uiText("窗口 / 输出")}</dt>
                     <dd>
                       {connection.contextWindowTokens.toLocaleString()} /{" "}
                       {connection.maxOutputTokens.toLocaleString()}
                     </dd>
                   </div>
                   <div>
-                    <dt>凭据</dt>
-                    <dd>{connection.hasApiKey ? "已保存在本机" : "未配置"}</dd>
+                    <dt>{uiText("凭据")}</dt>
+                    <dd>
+                      {connection.hasApiKey
+                        ? uiText("已保存在本机")
+                        : uiText("未配置")}
+                    </dd>
                   </div>
                 </dl>
                 <div className="form-actions">
@@ -483,7 +512,9 @@ export function ModelConnectionScreen({
                       onClick={() => void select(connection.id)}
                       type="button"
                     >
-                      {pending === connection.id ? "正在切换…" : "切换到此配置"}
+                      {pending === connection.id
+                        ? uiText("正在切换…")
+                        : uiText("切换到此配置")}
                     </button>
                   )}
                   <button
@@ -496,7 +527,9 @@ export function ModelConnectionScreen({
                     onClick={() => edit(connection)}
                     type="button"
                   >
-                    {form.connectionId === connection.id ? "正在编辑" : "编辑"}
+                    {form.connectionId === connection.id
+                      ? uiText("正在编辑")
+                      : uiText("编辑")}
                   </button>
                   <button
                     className="danger-button"
@@ -509,13 +542,13 @@ export function ModelConnectionScreen({
                     type="button"
                   >
                     {pending === `delete:${connection.id}`
-                      ? "正在删除…"
-                      : "删除"}
+                      ? uiText("正在删除…")
+                      : uiText("删除")}
                   </button>
                 </div>
                 {isActive && library.connections.length > 1 && (
                   <p className="field-note">
-                    先切换到另一份配置，才能删除当前配置。
+                    {uiText("先切换到另一份配置，才能删除当前配置。")}
                   </p>
                 )}
               </article>
@@ -553,7 +586,7 @@ function formFor(connection: ModelConnectionView): ConnectionForm {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "模型配置操作失败";
+  return error instanceof Error ? error.message : uiText("模型配置操作失败");
 }
 
 function comparableUrl(value: string): string {

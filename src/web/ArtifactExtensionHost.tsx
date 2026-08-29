@@ -1,3 +1,4 @@
+import { uiText } from "./i18n.ts";
 /* eslint-disable react-refresh/only-export-components */
 
 import {
@@ -234,7 +235,7 @@ export function applyRegexPipeline(input: {
       steps: [],
       fallback: true,
       failure: "fallback",
-      error: "artifact 内容超过宿主渲染上限",
+      error: uiText("artifact 内容超过宿主渲染上限"),
     };
   if (input.rules.length > maxRules)
     return {
@@ -243,7 +244,7 @@ export function applyRegexPipeline(input: {
       steps: [],
       fallback: true,
       failure: "fallback",
-      error: "正则规则数量超过宿主上限",
+      error: uiText("正则规则数量超过宿主上限"),
     };
   const rules = [...input.rules].sort(
     (left, right) => left.order - right.order,
@@ -276,7 +277,7 @@ export function applyRegexPipeline(input: {
           output: current,
           matches: 0,
           status: "skipped",
-          error: "markdown_html 规则只作用于 Markdown 转换后的 HTML",
+          error: uiText("markdown_html 规则只作用于 Markdown 转换后的 HTML"),
         });
         continue;
       }
@@ -292,17 +293,17 @@ export function applyRegexPipeline(input: {
         return replacementText(rule.replace, args, current);
       });
       if (transformations > maxTransformations)
-        throw new Error("正则转换次数超过宿主上限");
+        throw new Error(uiText("正则转换次数超过宿主上限"));
       if (new TextEncoder().encode(next).byteLength > maxOutputBytes)
-        throw new Error("正则输出超过宿主字节上限");
+        throw new Error(uiText("正则输出超过宿主字节上限"));
       if (rule.scope === "markdown_html" && next.length > maxDomCharacters)
-        throw new Error("Markdown HTML DOM 大小超过宿主上限");
+        throw new Error(uiText("Markdown HTML DOM 大小超过宿主上限"));
       if (rule.scope === "raw_text") {
         raw = next;
         if (!markdownTouched && input.contentType === "text/markdown") {
           markdownHtml = markdownToHtml(raw);
           if (markdownHtml.length > maxDomCharacters)
-            throw new Error("Markdown HTML DOM 大小超过宿主上限");
+            throw new Error(uiText("Markdown HTML DOM 大小超过宿主上限"));
         }
       } else if (rule.scope === "structured_payload") structured = next;
       else {
@@ -318,7 +319,8 @@ export function applyRegexPipeline(input: {
         status: "applied",
       });
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : "正则执行失败";
+      const message =
+        error instanceof Error ? error.message : uiText("正则执行失败");
       if (rule.errorPolicy === "skip") {
         steps.push({
           order: rule.order,
@@ -371,9 +373,9 @@ export function applyRegexPipeline(input: {
     fallback: failure !== "none",
     failure,
     ...(failure === "fallback"
-      ? { error: "正则规则失败，实例显示 raw artifact（可恢复）" }
+      ? { error: uiText("正则规则失败，实例显示 raw artifact（可恢复）") }
       : failure === "fail"
-        ? { error: "正则规则失败，实例进入错误状态并显示 raw artifact" }
+        ? { error: uiText("正则规则失败，实例进入错误状态并显示 raw artifact") }
         : {}),
   };
 }
@@ -410,7 +412,9 @@ export function buildDocumentTemplateSrcDoc(input: {
   const contentMarker = "<!-- narraeon:content -->";
   const payloadMarker = "<!-- narraeon:payload -->";
   if (countOccurrences(input.template, contentMarker) !== 1)
-    throw new Error("document renderer 必须包含唯一 narraeon:content marker");
+    throw new Error(
+      uiText("document renderer 必须包含唯一 narraeon:content marker"),
+    );
   const contentMarkup =
     input.contentType === "text/html"
       ? input.content
@@ -450,7 +454,7 @@ export function buildAppSrcDoc(input: {
   ).replace(/</gu, "\\u003c");
   const instance = JSON.stringify(input.instanceId);
   const nonce = JSON.stringify(input.nonce);
-  const bootstrap = `<script>(function(){var send=function(message){parent.postMessage(message,"*")};window.addEventListener("error",function(event){send({namespace:"${extensionBridgeNamespace}",type:"bridge.event",instanceId:${instance},nonce:${nonce},event:"diagnostic",payload:{message:String(event.message||"扩展脚本错误")}})});window.addEventListener("unhandledrejection",function(event){send({namespace:"${extensionBridgeNamespace}",type:"bridge.event",instanceId:${instance},nonce:${nonce},event:"diagnostic",payload:{message:String(event.reason||"扩展 Promise 错误")}})})})();</script>`;
+  const bootstrap = `<script>(function(){var send=function(message){parent.postMessage(message,"*")};window.addEventListener("error",function(event){send({namespace:"${extensionBridgeNamespace}",type:"bridge.event",instanceId:${instance},nonce:${nonce},event:"diagnostic",payload:{message:String(event.message||"Extension script error")}})});window.addEventListener("unhandledrejection",function(event){send({namespace:"${extensionBridgeNamespace}",type:"bridge.event",instanceId:${instance},nonce:${nonce},event:"diagnostic",payload:{message:String(event.reason||"Extension Promise error")}})})})();</script>`;
   const metadata = `<meta name="narraeon-extension" content="local-trusted"><script>document.documentElement.dataset.narraeonInstance=${instance};document.documentElement.dataset.narraeonNonce=${nonce};window.__NARRAEON_ASSETS__=${assetMetadata};</script>`;
   const injected = `${bootstrap}${metadata}`;
   const ready = `<script>parent.postMessage({namespace:"${extensionBridgeNamespace}",type:"bridge.ready",instanceId:${instance},nonce:${nonce}},"*");</script>`;
@@ -763,7 +767,9 @@ export function ArtifactExtensionMount({
 }): React.JSX.Element {
   const context = useContext(ArtifactExtensionContext);
   if (context === null)
-    throw new Error("ArtifactExtensionMount 必须位于 ArtifactExtensionHost 内");
+    throw new Error(
+      uiText("ArtifactExtensionMount 必须位于 ArtifactExtensionHost 内"),
+    );
   const entries = context.byMount.get(mount) ?? [];
   return (
     <div
@@ -893,7 +899,10 @@ function ArtifactExtensionInstance({
     } catch (reason: unknown) {
       return {
         srcDoc: "",
-        error: reason instanceof Error ? reason.message : "文档 renderer 无效",
+        error:
+          reason instanceof Error
+            ? reason.message
+            : uiText("文档 renderer 无效"),
       };
     }
   }, [
@@ -977,7 +986,7 @@ function ArtifactExtensionInstance({
         onError(
           typeof payload.message === "string"
             ? payload.message
-            : "扩展报告了未知诊断",
+            : uiText("扩展报告了未知诊断"),
         );
         return;
       }
@@ -1013,12 +1022,16 @@ function ArtifactExtensionInstance({
         });
       } else if (event.data.command === "composer.set_draft") {
         if (interactionDisabled) {
-          respondError(event, event.data, "当前调用链正在提交，暂不能修改草稿");
+          respondError(
+            event,
+            event.data,
+            uiText("当前调用链正在提交，暂不能修改草稿"),
+          );
         } else if (typeof payload.text !== "string") {
           respondError(
             event,
             event.data,
-            "composer.set_draft.text 必须是字符串",
+            uiText("composer.set_draft.text 必须是字符串"),
           );
         } else {
           onSetComposerDraft(payload.text);
@@ -1034,7 +1047,7 @@ function ArtifactExtensionInstance({
         onError(
           typeof payload.message === "string"
             ? payload.message
-            : "扩展报告了未知诊断",
+            : uiText("扩展报告了未知诊断"),
         );
       }
     }
@@ -1084,18 +1097,18 @@ function ArtifactExtensionInstance({
             {instanceError ??
               pipeline.error ??
               artifact.frontend.diagnostic ??
-              "扩展资源不可用，显示 raw artifact。"}
+              uiText("扩展资源不可用，显示 raw artifact。")}
           </p>
           <pre>{pipeline.original}</pre>
           <button type="button" onClick={disabled ? onEnable : onDisable}>
-            {disabled ? "恢复此扩展" : "停用此扩展"}
+            {disabled ? uiText("恢复此扩展") : uiText("停用此扩展")}
           </button>
         </div>
       ) : (
         <>
           {artifact.frontend.trustedLocalCode ? (
             <small className="artifact-extension-trusted-label">
-              本地可信代码
+              {uiText("本地可信代码")}
             </small>
           ) : null}
           <iframe
@@ -1106,20 +1119,20 @@ function ArtifactExtensionInstance({
             sandbox={artifact.frontend.trustedLocalCode ? "allow-scripts" : ""}
             srcDoc={srcDoc}
             onLoad={handleFrameLoad}
-            onError={() => onError("扩展 iframe 加载失败")}
+            onError={() => onError(uiText("扩展 iframe 加载失败"))}
           />
         </>
       )}
       {artifact.frontend.mount === "debug" ? (
         <details className="artifact-extension-debug">
-          <summary>产物诊断</summary>
+          <summary>{uiText("产物诊断")}</summary>
           <dl>
-            <dt>来源</dt>
+            <dt>{uiText("来源")}</dt>
             <dd>
               {artifact.operationId} / {artifact.requestId} / attempt{" "}
               {artifact.requestAttempt}
             </dd>
-            <dt>保存／投影</dt>
+            <dt>{uiText("保存／投影")}</dt>
             <dd>
               {artifact.save} / {artifact.projection}
             </dd>
@@ -1137,7 +1150,10 @@ function ArtifactExtensionInstance({
       ) : null}
       {events.length === 0 ? null : (
         <details className="artifact-extension-events">
-          <summary>bridge 事件（{events.length}）</summary>
+          <summary>
+            {uiText("bridge 事件（")}
+            {events.length}）
+          </summary>
           <ul>
             {events.map((event, index) => (
               <li key={`${event}-${index}`}>{event}</li>

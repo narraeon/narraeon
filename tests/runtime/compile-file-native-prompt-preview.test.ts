@@ -11,13 +11,13 @@ import { WorldDocumentStore } from "../../src/runtime/world/WorldDocumentStore.t
 
 test("主持块分别约束玩家代理权与默认叙事视角", () => {
   expect(defaultPresetHostFiles["blocks/adjudication.md"]).toContain(
-    "哪些必须由玩家决定",
+    "What the player must decide",
   );
   expect(defaultPresetHostFiles["blocks/adjudication.md"]).toContain(
-    "意图、尝试、准备或预测，不等于目标已经达成",
+    "intention, attempt, preparation, or prediction does not mean the goal has been achieved",
   );
   expect(defaultPresetHostFiles["blocks/style.md"]).toContain(
-    "玩家可见叙事以第二人称“你”称呼玩家角色",
+    "Address the player character as “you”",
   );
 });
 
@@ -42,7 +42,8 @@ context:
   - slot: { kind: catalog, directory: characters, maxEntries: 24 }
   - slot: { kind: additional_materials }
 `,
-    "control/blocks/world-style.md": "# 世界规则\n\n持续结果写回自然所有者。\n",
+    "control/blocks/world-style.md":
+      "# World Rules\n\nWrite durable outcomes back to their natural owner.\n",
     "state/current-situation.yaml": `$document:
   id: situation.current
   ref: current-situation
@@ -51,15 +52,15 @@ context:
   aliases: []
 地点: 男生宿舍 302
 人物:
-  - $ref: character.qinlong
-情况: 秦龙正在整理球衣。
+  - $ref: character.alex
+情况: Alex正在整理球衣。
 `,
-    "state/characters/qinlong.yaml": `$document:
-  id: character.qinlong
-  ref: qinlong
-  title: 秦龙
+    "state/characters/alex.yaml": `$document:
+  id: character.alex
+  ref: alex
+  title: Alex
   summary: 篮球队前锋，直率护短。
-  aliases: [老秦]
+  aliases: [Al]
 衣着: 白色运动背心，运动短裤，拖鞋
 `,
     "state/rules/cultivation.md": `---
@@ -95,7 +96,8 @@ roles:
     - builtin: runtime.coverage
     - include: world.context
 `,
-        "blocks/style.md": "# 主持风格\n\n克制、具体，不替玩家行动。\n",
+        "blocks/style.md":
+          "# Host style\n\nBe restrained and specific. Do not act for the player.\n",
       },
     },
     world: {
@@ -116,7 +118,7 @@ roles:
       ],
     },
     playerInputPlacement: "bootstrap",
-    playerInput: "我问秦龙今晚是否训练。",
+    playerInput: "I ask Alex whether we are training tonight.",
     modelBinding: {
       provider: "chat_completions",
       modelId: "test-model",
@@ -174,14 +176,14 @@ describe("文件原生 PromptCompiler", () => {
     source.world.documentSnapshot = snapshot;
     files["state/current-situation.yaml"] = files[
       "state/current-situation.yaml"
-    ]!.replace("秦龙正在整理球衣", "调用方稍后改成了另一局面");
+    ]!.replace("Alex正在整理球衣", "调用方稍后改成了另一局面");
 
     const compiled = new FileNativePromptCompiler().compileBootstrap(source);
     const markdown = compiled.logicalMessages
       .map((message) => message.markdown)
       .join("\n");
 
-    expect(markdown).toContain("秦龙正在整理球衣");
+    expect(markdown).toContain("Alex正在整理球衣");
     expect(markdown).not.toContain("调用方稍后改成了另一局面");
   });
 
@@ -239,10 +241,10 @@ describe("文件原生 PromptCompiler", () => {
       "directory: characters, maxEntries: 24",
       "directory: characters, maxEntries: 1",
     );
-    files["state/characters/zhaosi.yaml"] = `$document:
-  id: character.zhaosi
-  ref: zhaosi
-  title: 赵四
+    files["state/characters/casey.yaml"] = `$document:
+  id: character.casey
+  ref: casey
+  title: Casey
   summary: 篮球队的替补后卫。
   aliases: []
 衣着: 蓝色训练服
@@ -261,16 +263,20 @@ describe("文件原生 PromptCompiler", () => {
       complete: false,
       continuation: "context_list",
     });
-    expect(worldContext).toContain("显示 1/2。");
-    expect(worldContext).toContain("`未完整` 表示这一项的覆盖没有得到证明");
-    expect(worldContext).toContain("`paged_catalog` 表示确实还有条目没有列出");
+    expect(worldContext).toContain("Showing 1/2.");
+    expect(worldContext).toContain(
+      "`incomplete` means coverage was not proven",
+    );
+    expect(worldContext).toContain(
+      "`paged_catalog` means additional entries definitely were not listed",
+    );
   });
 
   test("reference_targets 只展开所选节点的一层显式引用", () => {
     const source = input();
     const files = snapshotRecord(source);
-    files["state/characters/qinlong.yaml"] = `${files[
-      "state/characters/qinlong.yaml"
+    files["state/characters/alex.yaml"] = `${files[
+      "state/characters/alex.yaml"
     ]!.trim()}\n所在地点: { $ref: place.cafeteria }\n`;
     files["state/locations/cafeteria.yaml"] = `$document:
   id: place.cafeteria
@@ -297,22 +303,22 @@ describe("文件原生 PromptCompiler", () => {
     const files = snapshotRecord(source);
     files["control/frame.yaml"] = files["control/frame.yaml"]!.replace(
       "context:\n",
-      'context:\n  - slot: { kind: document, document: "@qinlong" }\n',
+      'context:\n  - slot: { kind: document, document: "@alex" }\n',
     );
     bindSnapshot(source, files);
 
     const presentContext = compiler
       .compileBootstrap(source)
       .logicalMessages.find(({ role }) => role === "world_context")?.markdown;
-    expect(presentContext).toContain('$ref: "@qinlong"');
+    expect(presentContext).toContain('$ref: "@alex"');
     expect(
       presentContext?.match(/白色运动背心，运动短裤，拖鞋/gu),
     ).toHaveLength(1);
 
     files["state/current-situation.yaml"] = files[
       "state/current-situation.yaml"
-    ]!.replace("人物:\n  - $ref: character.qinlong", "人物: []").replace(
-      "情况: 秦龙正在整理球衣。",
+    ]!.replace("人物:\n  - $ref: character.alex", "人物: []").replace(
+      "情况: Alex正在整理球衣。",
       "情况: 宿舍暂时无人。",
     );
     bindSnapshot(source, files);
@@ -320,7 +326,7 @@ describe("文件原生 PromptCompiler", () => {
     const absentContext = compiler
       .compileBootstrap(source)
       .logicalMessages.find(({ role }) => role === "world_context")?.markdown;
-    expect(absentContext).not.toContain('$ref: "@qinlong"');
+    expect(absentContext).not.toContain('$ref: "@alex"');
     expect(absentContext?.match(/白色运动背心，运动短裤，拖鞋/gu)).toHaveLength(
       1,
     );
@@ -331,7 +337,7 @@ describe("文件原生 PromptCompiler", () => {
     const files = snapshotRecord(source);
     files["state/current-situation.yaml"] = files[
       "state/current-situation.yaml"
-    ]!.replace("  - $ref: character.qinlong", "  []");
+    ]!.replace("  - $ref: character.alex", "  []");
     bindSnapshot(source, files);
 
     const compiled = new FileNativePromptCompiler().compileBootstrap(source);
@@ -363,8 +369,8 @@ context:
       maxEntries: 12
       required: false
 `;
-    files["state/characters/qinlong.yaml"] = `${files[
-      "state/characters/qinlong.yaml"
+    files["state/characters/alex.yaml"] = `${files[
+      "state/characters/alex.yaml"
     ]!.trim()}\n失效关联: { $ref: character.missing }\n`;
     bindSnapshot(source, files);
 
@@ -375,12 +381,12 @@ context:
 
     expect(compiled.coverage).toContainEqual({
       slot: "reference_targets",
-      source: "@qinlong",
+      source: "@alex",
       status: "optional_missing",
       complete: false,
       continuation: "context_list",
     });
-    expect(worldContext).not.toContain("character.qinlong");
+    expect(worldContext).not.toContain("character.alex");
   });
 
   test("可选节点失败时从 module 结果报告短引用和精确 locator", () => {
@@ -452,9 +458,9 @@ context:
 
     expect(missing.map(({ source: coverageSource }) => coverageSource)).toEqual(
       [
-        "（文档不可用）",
-        "（文档不可用） · yaml:状态",
-        '（文档不可用）#yaml:["人物"]',
+        "(document unavailable)",
+        "(document unavailable) · yaml:状态",
+        '(document unavailable)#yaml:["人物"]',
       ],
     );
     expect(worldContext).not.toContain("secret.internal");
@@ -466,8 +472,8 @@ context:
     files["state/current-situation.yaml"] = files[
       "state/current-situation.yaml"
     ]!.replace(
-      "  - $ref: character.qinlong",
-      "  - 身份: 室友\n    指向: { $ref: character.qinlong }",
+      "  - $ref: character.alex",
+      "  - 身份: 室友\n    指向: { $ref: character.alex }",
     );
     bindSnapshot(source, files);
 
@@ -476,8 +482,8 @@ context:
       .logicalMessages.find(({ role }) => role === "world_context")?.markdown;
 
     expect(worldContext).toContain("身份: 室友");
-    expect(worldContext).toContain('$ref: "@qinlong"');
-    expect(worldContext).not.toContain("character.qinlong");
+    expect(worldContext).toContain('$ref: "@alex"');
+    expect(worldContext).not.toContain("character.alex");
   });
 
   test("大于精确节点上限的有效 YAML 整文档仍可从固定快照编译", () => {
@@ -527,7 +533,7 @@ context:
     );
   });
 
-  test("同一个真实编译结果同时驱动逻辑预览和 system/user provider 请求", () => {
+  test("同一个真实编译结果同时驱动逻辑Preview和 system/user provider 请求", () => {
     const compiler = new FileNativePromptCompiler();
     const preview = compiler.preview(input());
     const compiled = compiler.compileBootstrap(input());
@@ -550,7 +556,7 @@ context:
     ).toBe(true);
     expect(
       compiled.logicalMessages.map(({ markdown }) => markdown).join("\n"),
-    ).toContain("## 秦龙 [ref: @qinlong · YAML]");
+    ).toContain("## Alex [ref: @alex · YAML]");
     expect(compiled.coverage.map(({ status }) => status)).toEqual([
       "resolved",
       "resolved",
@@ -562,9 +568,13 @@ context:
     const runtimeSystem = compiled.logicalMessages.find(
       ({ role }) => role === "runtime_system",
     )?.markdown;
-    expect(runtimeSystem).toContain("只有 Runtime 能把一次操作正式写入世界");
-    expect(runtimeSystem).toContain("可编辑的主持、世界和玩法提示决定故事语义");
-    expect(runtimeSystem).toContain("Runtime 调用链规则");
+    expect(runtimeSystem).toContain(
+      "Only Runtime can formally write an operation into the world",
+    );
+    expect(runtimeSystem).toContain(
+      "Editable host, world, and play prompts determine story semantics",
+    );
+    expect(runtimeSystem).toContain("Runtime call-chain rules");
     expect(compiled.budget).toMatchObject({
       estimator: "disabled",
       status: "not_checked",
@@ -588,8 +598,8 @@ context:
 地点:
   $ref: doc.opaque-location-id
 人物:
-  - $ref: character.qinlong
-情况: 秦龙正在打饭。
+  - $ref: character.alex
+情况: Alex正在打饭。
 `;
     files["state/locations/cafeteria.yaml"] = `$document:
   id: doc.opaque-location-id
@@ -612,7 +622,7 @@ context:
     expect(prompt).toContain('$ref: "@cafeteria"');
     expect(prompt).not.toContain("[ref: @opaque-location-id]");
     expect(blockSources).toContain("slot:current_situation:@current-situation");
-    expect(blockSources).toContain("slot:reference_targets:@qinlong");
+    expect(blockSources).toContain("slot:reference_targets:@alex");
     expect(blockSources).toContain(
       "slot:additional_materials:@cultivation:markdown:金丹",
     );
@@ -644,7 +654,10 @@ context:
 
   test("append 输入不嵌入 bootstrap 且冻结完整工具全集", () => {
     const compiled = new FileNativePromptCompiler().compileBootstrap(
-      input({ playerInputPlacement: "append", playerInput: "只应追加一次" }),
+      input({
+        playerInputPlacement: "append",
+        playerInput: "Append only once",
+      }),
     );
 
     expect(compiled.logicalMessages.map(({ role }) => role)).toEqual([
@@ -652,8 +665,8 @@ context:
       "author_instruction",
       "world_context",
     ]);
-    expect(JSON.stringify(compiled.provider)).not.toContain("只应追加一次");
-    // 工具全集由 Runtime 固定，不按玩家输入位置切分。
+    expect(JSON.stringify(compiled.provider)).not.toContain("Append only once");
+    // Runtime fixes the complete tool set; player-input position does not split it.
     expect(compiled.tools.map(({ name }) => name)).toEqual([
       "context_list",
       "context_search",
@@ -669,11 +682,17 @@ context:
     const compiler = new FileNativePromptCompiler();
     const preset = builtinDefaultPlayPresetBinding();
     const embedded = compiler.compilePlayPreset(
-      input({ playerInputPlacement: "bootstrap", playerInput: "内嵌玩家原文" }),
+      input({
+        playerInputPlacement: "bootstrap",
+        playerInput: "Embedded player text",
+      }),
       preset,
     ).bootstrap;
     const appended = compiler.compilePlayPreset(
-      input({ playerInputPlacement: "append", playerInput: "追加玩家原文" }),
+      input({
+        playerInputPlacement: "append",
+        playerInput: "Appended player text",
+      }),
       preset,
     ).bootstrap;
 
@@ -684,7 +703,9 @@ context:
     expect(appended.cache.stablePrefixFingerprint).toBe(
       embedded.cache.stablePrefixFingerprint,
     );
-    expect(JSON.stringify(appended.provider)).not.toContain("追加玩家原文");
+    expect(JSON.stringify(appended.provider)).not.toContain(
+      "Appended player text",
+    );
   });
 
   test("context_list schema 机械区分状态目录与历史顺序", () => {
@@ -699,28 +720,30 @@ context:
 
     const patch = compiled.tools.find(({ name }) => name === "world_patch");
     expect(patch?.description).toContain(
-      "Markdown locator 不包含文档 # 一级标题",
+      "A Markdown locator excludes the document level-one heading",
     );
     expect(patch?.description).toContain("set_metadata");
-    expect(patch?.description).toContain('{$ref:"@短引用"}');
-    expect(patch?.description).toContain("不得自行编造文档 id");
-    expect(patch?.description).toContain("普通文本");
+    expect(patch?.description).toContain('{$ref:"@short-ref"}');
+    expect(patch?.description).toContain("Never invent a document id");
+    expect(patch?.description).toContain("ordinary text");
     expect(patch?.description).toContain("world_create");
     const create = compiled.tools.find(({ name }) => name === "world_create");
-    expect(create?.description).toContain('{$ref:"@短引用"}');
-    expect(create?.description).toContain("不得自行编造文档 id");
+    expect(create?.description).toContain('{$ref:"@short-ref"}');
+    expect(create?.description).toContain("Never invent a document id");
     expect(compiled.logicalMessages[0]?.markdown).toContain(
-      "只有 Runtime 能把一次操作正式写入世界",
+      "Only Runtime can formally write an operation into the world",
     );
     expect(patch?.description).toContain("replace_body");
-    expect(patch?.description).toContain("必须使用 append");
-    expect(patch?.description).toContain("成功结果只报告文档是否发生变化");
-    expect(patch?.description).toContain("不回显正文");
-    expect(patch?.description).toContain("才重新 context_read");
+    expect(patch?.description).toContain("use append");
+    expect(patch?.description).toContain(
+      "Success reports only whether the document changed",
+    );
+    expect(patch?.description).toContain("does not echo the body");
+    expect(patch?.description).toContain("Call context_read again only when");
     expect(schema).toContain('"const":"history"');
     expect(schema).toContain('"required":["source","order"]');
     expect(list?.description).toContain("@dir-/");
-    expect(list?.description).toContain("互斥");
+    expect(list?.description).toContain("mutually exclusive");
   });
 
   test("发给模型的输出上限就是 Provider 配置，Runtime 不计算预留", async () => {
@@ -770,7 +793,7 @@ context:
     });
   });
 
-  test("预览不改写输入或权威状态", () => {
+  test("Preview不改写输入或权威状态", () => {
     const compiler = new FileNativePromptCompiler();
     const source = input();
     const before = structuredClone({
@@ -797,10 +820,10 @@ context:
   - slot: { kind: catalog, directory: states, maxEntries: 24 }
   - slot: { kind: additional_materials }
 `;
-    files["state/state.qinming.yaml"] = `$document:
-  id: status.qinming-root
-  ref: qinming-root
-  title: 启铭的根级状态
+    files["state/state.sam.yaml"] = `$document:
+  id: status.sam-root
+  ref: sam-root
+  title: Sam的根级状态
   summary: 文件名带点，但不在 states 目录中。
   aliases: []
 体力: 80
@@ -813,12 +836,12 @@ context:
       }),
     );
 
-    delete files["state/state.qinming.yaml"];
-    files["state/states/qinming.yaml"] = `$document:
-  id: status.qinming
-  ref: qinming-status
-  title: 启铭的当前状态
-  summary: 启铭频繁变化的体力与法力。
+    delete files["state/state.sam.yaml"];
+    files["state/states/sam.yaml"] = `$document:
+  id: status.sam
+  ref: sam-status
+  title: Sam的当前状态
+  summary: Sam频繁变化的体力与法力。
   aliases: []
 体力: 80
 法力: 40
@@ -836,9 +859,9 @@ context:
     expect(
       resolved.logicalMessages.find(({ role }) => role === "world_context")
         ?.markdown,
-    ).toContain("启铭的当前状态 [ref: @qinming-status]");
+    ).toContain("Sam的当前状态 [ref: @sam-status]");
 
-    delete files["state/states/qinming.yaml"];
+    delete files["state/states/sam.yaml"];
     files["control/frame.yaml"] = files["control/frame.yaml"].replace(
       "maxEntries: 24 }",
       "maxEntries: 24, required: false }",
@@ -856,15 +879,15 @@ context:
       ({ role }) => role === "world_context",
     )?.markdown;
     expect(optionalWorldContext).toContain(
-      "`optional_missing` 的位置可能什么都没注入",
+      "An `optional_missing` location may have injected nothing",
     );
-    expect(optionalWorldContext).toContain("也可能已经注入了一部分");
+    expect(optionalWorldContext).toContain("it may have injected only part");
 
-    files["state/states/qinming.yaml"] = `$document:
-  id: status.qinming
-  ref: qinming-status
-  title: 启铭的当前状态
-  summary: 启铭频繁变化的体力与法力。
+    files["state/states/sam.yaml"] = `$document:
+  id: status.sam
+  ref: sam-status
+  title: Sam的当前状态
+  summary: Sam频繁变化的体力与法力。
   aliases: []
 体力: 80
 法力: 40
@@ -882,10 +905,8 @@ context:
     const mixedWorldContext = mixed.logicalMessages.find(
       ({ role }) => role === "world_context",
     )?.markdown;
-    expect(mixedWorldContext).toContain(
-      "启铭的当前状态 [ref: @qinming-status]",
-    );
-    expect(mixedWorldContext).toContain("也可能已经注入了一部分");
+    expect(mixedWorldContext).toContain("Sam的当前状态 [ref: @sam-status]");
+    expect(mixedWorldContext).toContain("it may have injected only part");
   });
 
   test.each([
@@ -946,21 +967,23 @@ context:
       .compileBootstrap(source)
       .logicalMessages.find(({ role }) => role === "world_context")?.markdown;
     expect(worldContext).toMatch(
-      /^- current_situation: @current-situation · resolved · 完整 · 已注入全文$/mu,
+      /^- current_situation: @current-situation · resolved · complete · full text injected$/mu,
     );
     expect(worldContext).toMatch(
-      /^- reference_targets: @qinlong · resolved · 完整 · 已注入全文$/mu,
+      /^- reference_targets: @alex · resolved · complete · full text injected$/mu,
     );
     expect(worldContext).toMatch(
-      /^- node: @cultivation · markdown:金丹 · resolved · 完整 · 已注入节点$/mu,
+      /^- node: @cultivation · markdown:金丹 · resolved · complete · node injected$/mu,
     );
-    // 带写入授权的条目不再被标成"可继续 context_read"。
+    // Entries with write authorization no longer invite another context_read.
     expect(worldContext).not.toMatch(
-      /^- (current_situation|document|node): .*可继续 context_read$/mu,
+      /^- (current_situation|document|node): .*continue with context_read$/mu,
     );
-    expect(worldContext).toContain("`context_read` 会返回同样的正文");
-    // 注入的正文就是可写形式，抬头标出 codec，模型不必为了确认 locator 先读一次。
-    expect(worldContext).toContain("每份材料的标题都标出了它的 codec");
+    expect(worldContext).toContain("`context_read` would return the same body");
+    // Injected text is already writable; headings expose the codec needed for locators.
+    expect(worldContext).toContain(
+      "Each material heading identifies its codec",
+    );
     expect(worldContext).toContain(
       "## 当前情境 [ref: @current-situation · YAML]",
     );
@@ -978,12 +1001,12 @@ context:
       "  - slot: { kind: history, recent: 2 }\n  - slot: { kind: additional_materials }\n",
     );
     bindSnapshot(source, files);
-    // Runtime 按 Authority 顺序构造 history record，编译器保持该顺序。
+    // Runtime builds history records in Authority order, which the compiler preserves.
     source.world.history = {
       "history-message-00000001-01-narrator-aaa": "最早的一段，不该被带上。",
       "history-message-00000002-01-player-bbb": "我把充电线收进背包。",
       "history-message-00000003-01-narrator-ccc":
-        "秦龙把那根缠成麻花的充电线拎起来晃了晃。",
+        "Alex把那根缠成麻花的充电线拎起来晃了晃。",
     };
     const compiled = compiler.compileBootstrap(source);
     const worldContext = compiled.logicalMessages.find(
@@ -997,7 +1020,7 @@ context:
       compiled.coverage.filter(({ slot }) => slot === "history"),
     ).toHaveLength(2);
 
-    // 模型若把同一条历史又选进清单，按已注入去重，不会重复占正文。
+    // Re-selecting an injected history entry is deduplicated from the body.
     const withDuplicate = compiler.compileBootstrap({
       ...source,
       world: {
@@ -1050,8 +1073,8 @@ context:
     expect(worldContext).not.toContain("第九组");
     expect(worldContext).not.toContain(worldId);
     expect(worldContext).not.toContain("message.15");
-    expect(worldContext).toContain("## 玩家原文");
-    expect(worldContext).toContain("## 主持叙事");
+    expect(worldContext).toContain("## Player input");
+    expect(worldContext).toContain("## Host narrative");
   });
 
   test("只有 genesis 开场白时 history slot 如实报告为空且不重复注入开场白", () => {
@@ -1077,7 +1100,7 @@ context:
     const compiled = compiler.compileBootstrap(source);
     expect(compiled.coverage).toContainEqual({
       slot: "history",
-      source: "最近 2 条",
+      source: "most recent 2",
       status: "resolved",
       complete: true,
       continuation: null,
@@ -1088,9 +1111,13 @@ context:
     expect(worldContext).not.toContain(
       "这段开场白不能作为 recent history 再注入。",
     );
-    expect(worldContext).toContain("最近已提交对话");
-    expect(worldContext).toContain("当前世界没有更早的玩家原文或主持叙事");
-    expect(worldContext).toContain("无需为寻找上一条记录调用历史检索工具");
+    expect(worldContext).toContain("Recent committed conversation");
+    expect(worldContext).toContain(
+      "this world has no earlier player input or host narrative",
+    );
+    expect(worldContext).toContain(
+      "Do not call history tools merely to look for a previous message",
+    );
   });
 
   test("模型选中已被 slot 注入的材料时去重而不是让整轮失败", () => {
@@ -1114,8 +1141,8 @@ context:
     const worldContext = compiled.logicalMessages.find(
       ({ role }) => role === "world_context",
     )?.markdown;
-    expect(worldContext).toContain("秦龙正在整理球衣。");
-    expect(worldContext?.match(/秦龙正在整理球衣。/gu)).toHaveLength(1);
+    expect(worldContext).toContain("Alex正在整理球衣。");
+    expect(worldContext?.match(/Alex正在整理球衣。/gu)).toHaveLength(1);
     expect(
       compiled.coverage.filter(({ slot }) => slot === "current_situation"),
     ).toHaveLength(1);

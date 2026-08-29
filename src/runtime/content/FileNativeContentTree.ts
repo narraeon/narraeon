@@ -64,7 +64,7 @@ export function isContentPackageWorldDocumentPath(path: string): boolean {
 }
 
 export function worldDocumentTextRequirement(path: string): string {
-  return `世界文档必须是 UTF-8 YAML 或 Markdown 原文：${path}`;
+  return `World documents must contain UTF-8 YAML or Markdown source: ${path}`;
 }
 
 export function inspectContentPackageCurrentTree(
@@ -81,7 +81,9 @@ export function inspectContentPackageCurrentTree(
       files,
     });
   if (worldDocumentSnapshot.layout !== "content_package")
-    throw new Error("内容包检查只接受 content_package 文档快照");
+    throw new Error(
+      "Content-package inspection accepts only content_package document snapshots",
+    );
   const snapshotFiles = worldDocumentSnapshot.files;
   const issues: FileNativeContentIssue[] = [];
   const documents = worldDocumentSnapshotDocuments(worldDocumentSnapshot);
@@ -100,7 +102,7 @@ export function inspectContentPackageCurrentTree(
         issues,
         "missing_opening",
         "opening.md",
-        "内容包缺少根级 opening.md 开场白",
+        "The content package is missing a root-level opening.md introduction",
       );
   } else if (openingFiles.length > 1) {
     opening = "invalid";
@@ -108,7 +110,7 @@ export function inspectContentPackageCurrentTree(
       issues,
       "invalid_opening",
       "opening.md",
-      "内容包只能包含一份根级 opening.md",
+      "A content package may contain only one root-level opening.md file",
     );
   } else {
     const openingFile = openingFiles[0]!;
@@ -124,7 +126,7 @@ export function inspectContentPackageCurrentTree(
         issues,
         "invalid_opening",
         "opening.md",
-        "开场白必须是非空、格式完整且不超过 64 KiB 的 UTF-8 文本",
+        "The introduction must be non-empty, well-formed UTF-8 text no larger than 64 KiB",
       );
     } else opening = "valid";
   }
@@ -137,7 +139,7 @@ export function inspectContentPackageCurrentTree(
         issues,
         "unsupported_content_file",
         file.path,
-        "当前内容包不接受 manifest、七字段 JSON、schema、record 或 revision 文件",
+        "The current content package does not accept manifest, seven-field JSON, schema, record, or revision files",
       );
     }
   }
@@ -162,13 +164,13 @@ export function inspectContentPackageCurrentTree(
       issues,
       "missing_world_frame",
       "control/frame.yaml",
-      "内容包缺少世界提示框架",
+      "The content package is missing its world prompt frame",
     );
     issue(
       issues,
       "missing_current_situation",
       "control/frame.yaml",
-      "内容包尚未绑定当前情境文档",
+      "The content package has not bound a current-situation document",
     );
   } else {
     const frame = parseRestrictedYaml(
@@ -197,7 +199,7 @@ export function inspectContentPackageCurrentTree(
           issues,
           "missing_current_situation",
           "control/frame.yaml",
-          "世界框架必须绑定一份存在的当前情境文档",
+          "The world frame must bind an existing current-situation document",
         );
       }
       validateFrameMarkdownFiles(frame, textFiles, issues);
@@ -208,7 +210,7 @@ export function inspectContentPackageCurrentTree(
         issues,
         "invalid_world_frame",
         "control/frame.yaml",
-        "世界框架 format 必须是 narraeon.world-frame/v1",
+        "The world-frame format must be narraeon.world-frame/v1",
       );
     }
   }
@@ -221,7 +223,7 @@ export function inspectContentPackageCurrentTree(
       issues,
       "missing_player_view",
       "control/player-views.yaml",
-      "内容包缺少玩家视图控制文件",
+      "The content package is missing its player-view control file",
     );
   } else {
     const player = parseRestrictedYaml(
@@ -232,7 +234,7 @@ export function inspectContentPackageCurrentTree(
     const formatProblems =
       isRecord(player) && player.format === "narraeon.player-views/v1"
         ? playerViewProblems(player.views, index)
-        : ["文件必须以 format: narraeon.player-views/v1 开头"];
+        : ["The file must begin with format: narraeon.player-views/v1"];
     if (formatProblems.length === 0) {
       playerView = "valid";
     } else {
@@ -254,7 +256,7 @@ export function inspectContentPackageCurrentTree(
           issues,
           "invalid_player_view",
           "control/player-views.yaml",
-          `另有 ${formatProblems.length - maxReportedPlayerViewProblems} 处玩家视图问题未列出`,
+          `${formatProblems.length - maxReportedPlayerViewProblems} more player-view issues were omitted`,
         );
     }
   }
@@ -262,7 +264,7 @@ export function inspectContentPackageCurrentTree(
   const displayName =
     documents.find(({ id }) => id === "situation.current")?.title ??
     documents[0]?.title ??
-    "未命名内容包";
+    "Untitled content package";
   return {
     status: issues.length === 0 ? "usable" : "needs_repair",
     displayName,
@@ -293,7 +295,9 @@ function worldDocumentSnapshotDocuments(
         cursor,
       });
       if (!result.ok || result.kind !== "catalog") {
-        throw new Error("WorldDocumentStore catalog 查询违反内部快照契约");
+        throw new Error(
+          "The WorldDocumentStore catalog query violated the internal snapshot contract",
+        );
       }
       for (const entry of result.entries) {
         if (entry.kind === "directory") {
@@ -373,7 +377,7 @@ function worldDocumentIssue(
     path: diagnostic.logicalPath ?? "world",
     message:
       diagnostic.code === "document_reference_invalid"
-        ? "显式 $ref 指向不存在的文档，或目标身份在快照内不唯一"
+        ? "An explicit $ref points to a missing document, or the target identity is not unique in the snapshot"
         : diagnostic.message,
     ...(diagnostic.documentId === undefined
       ? {}
@@ -429,33 +433,37 @@ function playerViewProblems(
   value: unknown,
   index: ContentDocumentIndex,
 ): string[] {
-  if (!Array.isArray(value)) return ["views 必须是视图列表"];
+  if (!Array.isArray(value)) return ["views must be a list of views"];
   const problems: string[] = [];
   for (const [viewIndex, view] of value.entries()) {
-    const at = `第 ${viewIndex + 1} 个视图`;
+    const at = `View ${viewIndex + 1} `;
     if (!isRecord(view)) {
-      problems.push(`${at}必须是对象`);
+      problems.push(`${at}must be an object`);
       continue;
     }
     const unknownKeys = Object.keys(view).filter(
       (key) => !["id", "title", "items"].includes(key),
     );
     if (unknownKeys.length > 0)
-      problems.push(`${at}不接受字段 ${unknownKeys.join("、")}`);
-    if (typeof view.id !== "string") problems.push(`${at}缺少字符串 id`);
-    if (typeof view.title !== "string") problems.push(`${at}缺少字符串 title`);
-    const named = typeof view.id === "string" ? `视图 ${view.id} ` : `${at}`;
+      problems.push(`${at}does not accept fields ${unknownKeys.join(", ")}`);
+    if (typeof view.id !== "string")
+      problems.push(`${at}is missing a string id`);
+    if (typeof view.title !== "string")
+      problems.push(`${at}is missing a string title`);
+    const named = typeof view.id === "string" ? `View ${view.id} ` : at;
     if (!Array.isArray(view.items)) {
-      problems.push(`${named}的 items 必须是数组`);
+      problems.push(`${named}items must be an array`);
       continue;
     }
     if (view.items.length > 128)
-      problems.push(`${named}最多 128 个条目，实际 ${view.items.length} 个`);
+      problems.push(
+        `${named}may contain at most 128 items; found ${view.items.length}`,
+      );
     for (const [itemIndex, item] of view.items.entries())
       problems.push(
         ...playerViewItemProblems(
           item,
-          `${named}的第 ${itemIndex + 1} 个条目`,
+          `${named}item ${itemIndex + 1} `,
           index,
         ),
       );
@@ -468,23 +476,23 @@ function playerViewItemProblems(
   at: string,
   index: ContentDocumentIndex,
 ): string[] {
-  if (!isRecord(item)) return [`${at}必须是对象`];
-  if (typeof item.id !== "string") return [`${at}缺少字符串 id`];
-  if (typeof item.label !== "string") return [`${at}缺少字符串 label`];
-  if (!isRecord(item.select)) return [`${at}缺少 select 对象`];
+  if (!isRecord(item)) return [`${at}must be an object`];
+  if (typeof item.id !== "string") return [`${at}is missing a string id`];
+  if (typeof item.label !== "string") return [`${at}is missing a string label`];
+  if (!isRecord(item.select)) return [`${at}is missing a select object`];
   if (typeof item.select.document !== "string")
-    return [`${at}的 select.document 必须是 @短引用或文档 id 字符串`];
+    return [`${at}select.document must be an @short-ref or document ID string`];
   const { locator } = item.select;
   if (locator === undefined) return [];
   if (!isRecord(locator) || Object.keys(locator).length !== 1)
-    return [`${at}的 locator 必须恰好声明 yaml 或 markdown 之一`];
+    return [`${at}locator must declare exactly one of yaml or markdown`];
   const document = index.resolve(item.select.document);
   if (Array.isArray(locator.yaml)) {
     if (!locator.yaml.every((part) => typeof part === "string"))
-      return [`${at}的 yaml locator 必须全部是字符串 map-key`];
+      return [`${at}yaml locator entries must all be string map keys`];
     return document !== undefined && document.codec !== "yaml"
       ? [
-          `${at}对 ${document.codec} 文档 ${item.select.document} 使用了 yaml locator`,
+          `${at}uses a yaml locator for ${document.codec} document ${item.select.document}`,
         ]
       : [];
   }
@@ -494,14 +502,16 @@ function playerViewItemProblems(
         (part) => typeof part === "string" && part.length > 0,
       )
     )
-      return [`${at}的 markdown locator 必须全部是非空标题字符串`];
+      return [
+        `${at}markdown locator entries must all be non-empty heading strings`,
+      ];
     return document !== undefined && document.codec !== "markdown"
       ? [
-          `${at}对 ${document.codec} 文档 ${item.select.document} 使用了 markdown locator`,
+          `${at}uses a markdown locator for ${document.codec} document ${item.select.document}`,
         ]
       : [];
   }
-  return [`${at}的 locator 必须是 yaml 或 markdown 数组`];
+  return [`${at}locator must be a yaml or markdown array`];
 }
 
 function parseRestrictedYaml(
@@ -520,7 +530,7 @@ function parseRestrictedYaml(
       issues,
       "unsafe_yaml",
       path,
-      "YAML 使用了禁止的 tag、anchor、alias、merge、多文档或非法换行",
+      "YAML uses a forbidden tag, anchor, alias, merge, multi-document stream, or invalid line break",
     );
     return undefined;
   }
@@ -534,7 +544,7 @@ function parseRestrictedYaml(
       issues,
       "unsafe_yaml",
       path,
-      "YAML 不是安全的单文档 YAML 1.2 core map",
+      "YAML is not a safe single-document YAML 1.2 core map",
     );
     return undefined;
   }
@@ -544,7 +554,7 @@ function parseRestrictedYaml(
       issues,
       "unsafe_yaml",
       path,
-      "YAML 顶层必须是 map，且深度和节点数不得超过限制",
+      "The YAML root must be a map whose depth and node count stay within the limits",
     );
     return undefined;
   }
@@ -572,7 +582,7 @@ function validateFrameMarkdownFiles(
         issues,
         "invalid_world_frame",
         "control/frame.yaml",
-        "世界框架引用的 Markdown 块不存在或越过 control 目录",
+        "A Markdown block referenced by the world frame is missing or escapes the control directory",
       );
     }
   }
@@ -589,7 +599,7 @@ function validateFrameContext(
       issues,
       "invalid_world_frame",
       "control/frame.yaml",
-      "世界框架 context 必须是 slot 列表",
+      "World-frame context must be a list of slots",
     );
     return;
   }
@@ -605,7 +615,7 @@ function validateFrameContext(
         issues,
         "invalid_world_frame",
         "control/frame.yaml",
-        "context 每项必须只包含一个合法 slot",
+        "Each context entry must contain exactly one valid slot",
       );
       continue;
     }
@@ -627,7 +637,7 @@ function validateFrameContext(
         issues,
         "invalid_world_frame",
         "control/frame.yaml",
-        `世界框架包含未知 slot kind：${entry.slot.kind}；可用的是 ${Object.keys(allowedKeys).join("、")}`,
+        `The world frame contains unknown slot kind ${entry.slot.kind}; available kinds are ${Object.keys(allowedKeys).join(", ")}`,
       );
       continue;
     }
@@ -641,7 +651,7 @@ function validateFrameContext(
         issues,
         "invalid_world_frame",
         "control/frame.yaml",
-        `slot ${entry.slot.kind} 不接受参数 ${unknownKeys.join("、")}；它只接受 ${allowed.join("、")}`,
+        `Slot ${entry.slot.kind} does not accept parameters ${unknownKeys.join(", ")}; it accepts only ${allowed.join(", ")}`,
       );
       continue;
     }
@@ -650,7 +660,7 @@ function validateFrameContext(
         issues,
         "invalid_world_frame",
         "control/frame.yaml",
-        `世界框架 slot 参数无效：${entry.slot.kind}`,
+        `Invalid world-frame slot parameters: ${entry.slot.kind}`,
       );
       continue;
     }
@@ -668,7 +678,7 @@ function validateFrameContext(
         issues,
         "invalid_world_frame",
         "control/frame.yaml",
-        `必需 catalog ${directory} 未关联任何文档；它只匹配 world/${directory}/<文件>.yaml、.yml 或 .md 形式的直接子文档，文件名中的点不表示目录`,
+        `Required catalog ${directory} has no associated documents; it matches only direct children named world/${directory}/<file>.yaml, .yml, or .md, and dots in file names do not create directories`,
       );
       continue;
     }
@@ -680,7 +690,7 @@ function validateFrameContext(
         issues,
         "invalid_world_frame",
         "control/frame.yaml",
-        `世界框架必须恰好包含一个 ${required} slot`,
+        `The world frame must contain exactly one ${required} slot`,
       );
   }
 }

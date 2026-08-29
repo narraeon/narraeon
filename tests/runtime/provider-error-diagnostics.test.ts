@@ -39,7 +39,7 @@ test("Provider 明确拒绝会把状态和响应正文写入诊断 trace", async
         modelId: "diagnostic-model",
         contextWindowTokens: 32_000,
         maxOutputTokens: 2_000,
-        playerInput: "继续。",
+        playerInput: "Continue.",
         playerInputPlacement: "bootstrap",
       }),
     );
@@ -52,7 +52,7 @@ test("Provider 明确拒绝会把状态和响应正文写入诊断 trace", async
         maxOutputTokens: 2_000,
       }),
     ).rejects.toThrow(
-      /Provider 请求失败：400 \{"error":"invalid assistant message"\}/u,
+      /Provider request failed: 400 \{"error":"invalid assistant message"\}/u,
     );
 
     const entries = (await readFile(tracePath, "utf8"))

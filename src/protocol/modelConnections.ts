@@ -11,7 +11,7 @@ export interface ModelProviderPreset {
 export const modelProviderPresets = [
   {
     id: "custom",
-    name: "自定义端点",
+    name: "Custom endpoint",
     provider: "chat_completions",
     baseUrl: "",
   },
@@ -53,25 +53,25 @@ export const modelProviderPresets = [
   },
   {
     id: "glm",
-    name: "智谱 GLM",
+    name: "Zhipu GLM",
     provider: "chat_completions",
     baseUrl: "https://open.bigmodel.cn/api/paas/v4",
   },
   {
     id: "glm-code",
-    name: "智谱 GLM Coding",
+    name: "Zhipu GLM Coding",
     provider: "chat_completions",
     baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
   },
   {
     id: "qwen",
-    name: "通义千问",
+    name: "Alibaba Qwen",
     provider: "chat_completions",
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
   },
   {
     id: "qwen-plan",
-    name: "通义千问 Token Plan",
+    name: "Alibaba Qwen Token Plan",
     provider: "chat_completions",
     baseUrl:
       "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
@@ -90,19 +90,19 @@ export const modelProviderPresets = [
   },
   {
     id: "volcengine",
-    name: "火山方舟",
+    name: "Volcano Engine Ark",
     provider: "chat_completions",
     baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
   },
   {
     id: "hunyuan",
-    name: "腾讯混元",
+    name: "Tencent Hunyuan",
     provider: "chat_completions",
     baseUrl: "https://api.hunyuan.cloud.tencent.com/v1",
   },
   {
     id: "siliconflow",
-    name: "硅基流动",
+    name: "SiliconFlow",
     provider: "chat_completions",
     baseUrl: "https://api.siliconflow.cn/v1",
   },

@@ -9,10 +9,10 @@ let providerUrl = "";
 const disconnectProviderResponse = Symbol("disconnect-provider-response");
 const responses: (object | typeof disconnectProviderResponse)[] = [];
 const providerRequests: string[] = [];
-/** 拖慢 Provider SSE 帧，用于观察浏览器收到的真实增量。 */
+/** Delay Provider SSE frames so the browser's real increments remain observable. */
 let providerDelayMs = 0;
 
-test.setTimeout(60_000);
+test.setTimeout(120_000);
 
 test.beforeAll(async () => {
   await Promise.all(
@@ -42,7 +42,7 @@ test.beforeAll(async () => {
         response.destroy();
         return;
       }
-      // 所有模型路径都按请求自身的 stream 标志返回 SSE。
+      // Every model path returns SSE according to the request's stream flag.
       if (payload !== undefined && body.includes('"stream":true')) {
         response.writeHead(200, { "content-type": "text/event-stream" });
         const frames = sseFrames(payload);
@@ -50,7 +50,7 @@ test.beforeAll(async () => {
           response.end(frames.join(""));
           return;
         }
-        // 逐帧发送，模拟模型持续输出但尚未结束的那段时间。
+        // Send frame by frame to simulate an in-progress model response.
         let index = 0;
         const pump = (): void => {
           if (index >= frames.length) {
@@ -81,7 +81,7 @@ test.beforeAll(async () => {
   );
   const address = provider.address();
   if (address === null || typeof address === "string")
-    throw new Error("模拟 Provider 未获得端口");
+    throw new Error("The simulated Provider did not receive a port");
   providerUrl = `http://127.0.0.1:${address.port}/v1`;
 });
 
@@ -98,16 +98,19 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
 }) => {
   const damagedPath = "world/characters/damaged.yaml";
   await page.goto("/");
+  await page.locator(".workspace-locale-picker select").selectOption("zh-CN");
   await expect(page.getByRole("heading", { name: "世界工作区" })).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel("界面语言")).toHaveValue("zh-CN");
   for (const name of ["内容编辑", "预设", "新建世界", "提示词预览"])
     await expect(page.getByRole("button", { name })).toBeVisible();
 
   await page.getByLabel("内容包 ZIP 文件").setInputFiles({
-    name: "宿舍世界.zip",
+    name: "dormitory-world.zip",
     mimeType: "application/zip",
     buffer: createZip(files()),
   });
-  await expect(page.getByText(/宿舍世界\.zip/u)).toBeVisible();
+  await expect(page.getByText(/dormitory-world\.zip/u)).toBeVisible();
   await page.getByRole("button", { name: "导入 ZIP" }).click();
   await expect(page.getByRole("status")).toContainText(
     "ZIP 内容包已导入为新的本地身份",
@@ -194,7 +197,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
       tool("setting_write_file", {
         path: damagedPath,
         contents:
-          "$document:\n  id: character.damaged\n  ref: damaged\n  title: 待修复人物\n  summary: 已由隔离候选修复的人物文档。\n  aliases: []\n状态: 已修复\n",
+          "$document:\n  id: character.damaged\n  ref: damaged\n  title: Damaged Character\n  summary: Character document repaired in the isolated candidate.\n  aliases: []\nstatus: repaired\n",
       }),
       tool("setting_preview_candidate", {}),
     ]),
@@ -208,7 +211,9 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     .getByRole("button", { name: /world\/characters\/damaged\.yaml/u })
     .click();
   await currentSetting.getByLabel(`注入 ${damagedPath}`).check();
-  await page.getByLabel("设定完善目标").fill("修复用户选定的损坏人物文档");
+  await page
+    .getByLabel("设定完善目标")
+    .fill("Repair the damaged character document selected by the user.");
   await page.getByRole("button", { name: "跳过计划，直接生成候选" }).click();
   await expect(page.getByRole("status")).toContainText("候选已通过机械检查");
   await expect(page.locator(".setting-diff-list")).toContainText(damagedPath);
@@ -219,43 +224,43 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     chatText(plan()),
     chatTools([
       tool("setting_read", { path: "world/current-situation.yaml" }),
-      tool("setting_read", { path: "world/characters/qinlong.yaml" }),
+      tool("setting_read", { path: "world/characters/alex.yaml" }),
       tool("setting_write_file", {
         path: "world/notes/training.yaml",
         contents:
-          "$document:\n  id: 由 Runtime 决定\n  ref: training\n  title: 今晚训练\n  summary: 秦龙今晚训练的安排。\n  aliases: []\n地点: 校篮球场\n",
+          "$document:\n  id: Assigned by Runtime\n  ref: training\n  title: Tonight's Training\n  summary: Alex's training plans for tonight.\n  aliases: []\nlocation: Campus basketball court\n",
       }),
       tool("setting_patch", {
         document: "world/notes/training.yaml",
         op: "add",
-        locator: ["时间"],
-        value: "晚上八点",
+        locator: ["time"],
+        value: "8:00 p.m.",
       }),
       tool("setting_move", {
         from: "world/notes/training.yaml",
         to: "world/events/training.yaml",
       }),
       tool("setting_patch", {
-        document: "@qinlong",
+        document: "@alex",
         op: "replace",
-        locator: ["衣着"],
-        value: "深蓝色运动背心",
+        locator: ["clothes"],
+        value: "Dark blue athletic tank top",
       }),
       tool("setting_write_file", {
         path: "world/current-situation.yaml",
         contents:
-          "$document:\n  id: situation.current\n  ref: current\n  title: 宿舍世界\n  summary: 宿舍里的当前局面。\n  aliases: []\n情况: 秦龙收好球衣，准备讨论晚间训练。\n",
+          "$document:\n  id: situation.current\n  ref: current\n  title: Dormitory World\n  summary: The current situation in the dormitory.\n  aliases: []\nsituation: Alex has put away the jersey and is ready to discuss tonight's training.\n",
       }),
       tool("setting_read", { path: "opening.md" }),
       tool("setting_write_file", {
         path: "opening.md",
         contents:
-          "宿舍门在你身后合上。秦龙穿着深蓝色运动背心，正等你商量晚间训练。\n",
+          "The dormitory door closes behind you. Alex, wearing a dark blue athletic tank top, waits to discuss tonight's training.\n",
       }),
       tool("setting_write_file", {
         path: "control/blocks/world.md",
         contents:
-          "# 世界主持规则\n\n持续结果写回自然所有者；训练安排按人物选择推进。\n",
+          "# World Narration Rules\n\nWrite persistent outcomes back to their natural owner; advance training plans according to character choices.\n",
       }),
       tool("setting_preview_candidate", {}),
     ]),
@@ -264,18 +269,26 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await page.getByRole("button", { name: "AI 完善" }).click();
   await expect(currentSetting).toContainText("opening.md");
   await currentSetting.getByRole("button", { name: /opening\.md/u }).click();
-  await expect(currentSetting).toContainText("宿舍门在你身后合上");
+  await expect(currentSetting).toContainText(
+    "The dormitory door closes behind you",
+  );
   await expect(currentSetting).toContainText("world/current-situation.yaml");
   await currentSetting
     .getByRole("button", { name: /world\/current-situation\.yaml/u })
     .click();
-  await expect(currentSetting).toContainText("秦龙正在整理球衣");
+  await expect(currentSetting).toContainText("Alex is organizing a jersey");
   await currentSetting.getByLabel("注入 world/current-situation.yaml").check();
-  await page.getByLabel("设定完善目标").fill("保持宿舍体验并检查当前文件计划");
+  await page
+    .getByLabel("设定完善目标")
+    .fill(
+      "Preserve the dormitory experience and review the current file plan.",
+    );
   await page.getByRole("button", { name: "生成可见创作计划" }).click();
   await expect(page.getByRole("status")).toContainText("创作计划已生成");
   const planningRequest = providerRequest();
-  expect(JSON.stringify(planningRequest)).toContain("秦龙正在整理球衣");
+  expect(JSON.stringify(planningRequest)).toContain(
+    "Alex is organizing a jersey",
+  );
   expect(JSON.stringify(planningRequest)).toContain("用户选定的当前设定文件");
   expect(toolNames(planningRequest)).toEqual([
     "setting_list",
@@ -298,7 +311,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(page.getByText("真实提示词预览")).toBeVisible();
   await page.getByText("查看逻辑消息正文").click();
   await expect(page.locator(".setting-prompt-preview")).toContainText(
-    "秦龙穿着深蓝色运动背心",
+    "Alex, wearing a dark blue athletic tank top",
   );
   await page.getByRole("button", { name: "整批应用候选" }).click();
   await expect(page.getByRole("status")).toContainText("候选已整批应用");
@@ -321,15 +334,17 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     ]),
     chatTools([tool("setting_finish_candidate", {})]),
   );
-  await page.getByLabel("设定完善目标").fill("直接检查当前树并生成候选");
+  await page
+    .getByLabel("设定完善目标")
+    .fill("Inspect the current tree directly and generate a candidate.");
   providerDelayMs = 1200;
   await page.getByRole("button", { name: "跳过计划，直接生成候选" }).click();
-  // 生成仍在进行时，进度必须已经在动：轮次来自服务端的实时投影，不是骨架。
+  // Progress must move while generation is active; rounds come from live server projection.
   const runProgress = page.getByLabel("本次生成进度");
   await expect(runProgress).toContainText("正在生成候选");
   await expect(runProgress).toContainText(/第 \d+ \/ 64 轮/u);
-  // 首轮尚未结束、模型仍在逐帧输出时，显示的是已收字数而非"多久没反应"——
-  // 这个数字只可能来自服务端的实时增量，证明投影确实随流在动。
+  // While the first round is still streaming, the UI shows received characters
+  // rather than inactivity. This number can only come from live server increments.
   await expect(runProgress).toContainText(/正在输出 \S+ 字/u);
   providerDelayMs = 0;
   await expect(page.getByRole("status")).toContainText("候选已通过机械检查");
@@ -345,7 +360,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await page.getByRole("button", { name: "提示词预览" }).click();
   await expect(page.getByRole("heading", { name: "提示词预览" })).toBeVisible();
   await expect(page.getByText("0 次模型调用")).toBeVisible();
-  await page.getByLabel("预览玩家输入").fill("我观察秦龙正在做什么。");
+  await page.getByLabel("预览玩家输入").fill("I observe what Alex is doing.");
   await page.getByRole("button", { name: "生成真实预览" }).click();
   await expect(page.getByRole("heading", { name: "编译通过" })).toBeVisible();
   await expect(page.getByRole("list", { name: "逻辑消息顺序" })).toContainText(
@@ -368,21 +383,27 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await page.getByRole("button", { name: "返回工作区" }).click();
   await page.getByRole("button", { name: "新建世界" }).click();
   await page.getByRole("button", { name: "从当前内容包创建" }).click();
-  await expect(page.getByRole("heading", { name: "宿舍世界" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Dormitory World" }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "世界管理" }).click();
-  await page.getByLabel("世界显示名称").fill("夜训宿舍");
+  await page.getByLabel("世界显示名称").fill("Night Training Dormitory");
   await page.getByRole("button", { name: "保存名称" }).click();
   await expect(page.getByRole("status")).toContainText("世界名称已保存");
-  await expect(page.getByRole("heading", { name: "夜训宿舍" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Night Training Dormitory" }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "工作区", exact: true }).click();
-  await page.getByRole("button", { name: "重命名世界：夜训宿舍" }).click();
-  await page.getByRole("textbox", { name: "世界名称" }).fill("宿舍世界");
+  await page
+    .getByRole("button", { name: "重命名世界：Night Training Dormitory" })
+    .click();
+  await page.getByRole("textbox", { name: "世界名称" }).fill("Dormitory World");
   await page.getByRole("button", { name: "保存世界名称" }).click();
   await page
-    .getByRole("button", { name: "打开世界：宿舍世界", exact: true })
+    .getByRole("button", { name: "打开世界：Dormitory World", exact: true })
     .click();
   await expect(page.getByLabel("调用链记录")).toContainText(
-    "宿舍门在你身后合上。秦龙穿着深蓝色运动背心，正等你商量晚间训练。",
+    "The dormitory door closes behind you. Alex, wearing a dark blue athletic tank top, waits to discuss tonight's training.",
   );
   await expect(page.getByLabel("你的行动")).toBeVisible();
   for (const mount of [
@@ -398,7 +419,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     ).toBeAttached();
   await expect(
     page.getByRole("complementary", { name: "玩家视图" }),
-  ).toContainText("深蓝色运动背心");
+  ).toContainText("Dark blue athletic tank top");
   await page.getByRole("button", { name: "当前文档" }).click();
   await expect(
     page.getByRole("button", { name: /current-situation\.yaml/u }),
@@ -412,16 +433,22 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
         edits: [
           {
             op: "replace",
-            locator: { yaml: ["情况"] },
-            value: "秦龙收好球衣，正等你确认训练安排。",
+            locator: { yaml: ["situation"] },
+            value:
+              "Alex has put away the jersey and is waiting for you to confirm the training plan.",
           },
         ],
       }),
     ]),
-    chatText("秦龙点头，继续整理球衣。", "先核对当前人物位置和玩家行动。"),
+    chatText(
+      "Alex nods and continues folding the jersey.",
+      "First verify the character's current location and the player's action.",
+    ),
   );
   providerDelayMs = 200;
-  await page.getByLabel("你的行动").fill("我问秦龙晚上是否训练。");
+  await page
+    .getByLabel("你的行动")
+    .fill("I ask Alex whether we are training tonight.");
   await page.getByRole("button", { name: "全新上下文" }).click();
   const callChain = page.getByLabel("模型调用链");
   await expect(callChain).toContainText("模型响应中");
@@ -433,15 +460,17 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   expect(scrollRange).toBeGreaterThan(0);
   await expect(
     callChain.locator(".call-chain-assistant.is-streaming", {
-      hasText: "秦龙点头",
+      hasText: "Alex nods",
     }),
   ).toBeVisible();
   expect(await transcript.evaluate((element) => element.scrollTop)).toBe(0);
   providerDelayMs = 0;
-  await expect(page.getByText("秦龙点头，继续整理球衣。")).toBeVisible();
+  await expect(
+    page.getByText("Alex nods and continues folding the jersey."),
+  ).toBeVisible();
   await expect(
     page.getByText(
-      "宿舍门在你身后合上。秦龙穿着深蓝色运动背心，正等你商量晚间训练。",
+      "The dormitory door closes behind you. Alex, wearing a dark blue athletic tank top, waits to discuss tonight's training.",
     ),
   ).toBeVisible();
   await expect(
@@ -451,9 +480,11 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     .getByText("模型思维链")
     .locator("xpath=ancestor::details");
   await expect(reasoning).not.toHaveAttribute("open", "");
-  await expect(reasoning).toContainText("先核对当前人物位置和玩家行动。");
+  await expect(reasoning).toContainText(
+    "First verify the character's current location and the player's action.",
+  );
   await expect(callChain).toContainText("调用 world_patch");
-  await expect(callChain).toContainText("@current-situation 写入成功");
+  await expect(callChain).toContainText("@current-situation write succeeded");
   await expect(
     callChain.getByText("调用 world_patch").locator("xpath=ancestor::details"),
   ).not.toHaveAttribute("open", "");
@@ -466,18 +497,25 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   );
 
   responses.push(
-    chatText("秦龙把训练时间记在了手机里。", "这是新的模型上下文。"),
+    chatText(
+      "Alex saves the training time on the phone.",
+      "This is a fresh model context.",
+    ),
   );
-  await page.getByLabel("你的行动").fill("我让秦龙把时间记下来。");
+  await page.getByLabel("你的行动").fill("I ask Alex to write down the time.");
   await page.getByRole("button", { name: "全新上下文" }).click();
-  await expect(page.getByText("秦龙把训练时间记在了手机里。")).toBeVisible();
+  await expect(
+    page.getByText("Alex saves the training time on the phone."),
+  ).toBeVisible();
   const contextsAfterFresh = page.getByLabel("模型调用链");
   await expect(contextsAfterFresh).toHaveCount(2);
   await expect(contextsAfterFresh.nth(0)).toContainText(
-    "先核对当前人物位置和玩家行动。",
+    "First verify the character's current location and the player's action.",
   );
   await expect(contextsAfterFresh.nth(0)).toContainText("调用 world_patch");
-  await expect(contextsAfterFresh.nth(1)).toContainText("这是新的模型上下文。");
+  await expect(contextsAfterFresh.nth(1)).toContainText(
+    "This is a fresh model context.",
+  );
   await expect(
     page.getByRole("separator", { name: "全新上下文从这里开始" }),
   ).toHaveCount(2);
@@ -489,41 +527,46 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     freshRequest.messages?.filter(({ role }) => role === "tool"),
   ).toHaveLength(0);
 
-  responses.push(chatText("我们八点去球场。"));
-  await page.getByLabel("你的行动").fill("那我们几点出发？");
+  responses.push(chatText("We are heading to the court at eight."));
+  await page.getByLabel("你的行动").fill("What time are we leaving?");
   await page.getByRole("button", { name: "追加上下文" }).click();
-  await expect(page.getByText("我们八点去球场。")).toBeVisible();
+  await expect(
+    page.getByText("We are heading to the court at eight."),
+  ).toBeVisible();
 
   responses.push(
     disconnectProviderResponse,
-    chatText("秦龙补充说七点半在楼下集合。"),
+    chatText("Alex adds that everyone will meet downstairs at 7:30."),
   );
-  await page.getByLabel("你的行动").fill("那我们提前在哪里集合？");
+  await page.getByLabel("你的行动").fill("Where should we meet beforehand?");
   const interruptedRequestIndex = providerRequests.length;
   await page.getByRole("button", { name: "追加上下文" }).click();
   await expect(
     page.getByRole("alert").filter({ hasText: "保持输入框为空" }),
   ).toBeVisible();
   await expect(
-    page.getByText("那我们提前在哪里集合？", { exact: true }),
+    page.getByText("Where should we meet beforehand?", { exact: true }),
   ).toHaveCount(1);
   await page.getByRole("button", { name: "追加上下文" }).click();
-  await expect(page.getByText("秦龙补充说七点半在楼下集合。")).toBeVisible();
+  await expect(
+    page.getByText("Alex adds that everyone will meet downstairs at 7:30."),
+  ).toBeVisible();
   expect(providerRequests[interruptedRequestIndex + 1]).toBe(
     providerRequests[interruptedRequestIndex],
   );
   await expect(
-    page.getByText("那我们提前在哪里集合？", { exact: true }),
+    page.getByText("Where should we meet beforehand?", { exact: true }),
   ).toHaveCount(1);
 
   await page.getByRole("button", { name: "世界管理" }).click();
-  await page.getByLabel("修正后的新值").fill("蓝色训练外套");
+  await page.getByLabel("YAML 路径").fill("clothes");
+  await page.getByLabel("修正后的新值").fill("Blue training jacket");
   await page.getByRole("button", { name: "预览整笔修正" }).click();
   await page.getByRole("button", { name: "应用这笔修正" }).click();
   await page.getByRole("button", { name: "游玩" }).click();
   await expect(
     page.getByRole("complementary", { name: "玩家视图" }),
-  ).toContainText("蓝色训练外套");
+  ).toContainText("Blue training jacket");
 
   await page.getByRole("button", { name: "世界管理" }).click();
   await page.getByRole("button", { name: "预览世界控制" }).click();
@@ -533,33 +576,37 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await page.getByRole("button", { name: "游玩" }).click();
   const playerBranchPoint = page
     .locator(".call-chain-player")
-    .filter({ hasText: "那我们提前在哪里集合？" });
+    .filter({ hasText: "Where should we meet beforehand?" });
   await playerBranchPoint.getByRole("button", { name: "创建分叉" }).click();
   await expect(
-    page.getByRole("heading", { name: "宿舍世界（分叉）" }),
+    page.getByRole("heading", { name: "Dormitory World (fork)" }),
   ).toBeVisible();
   const derivedTimeline = page.getByLabel("调用链记录");
   await expect(derivedTimeline).toContainText("模型思维链");
   await expect(derivedTimeline).toContainText("调用 world_patch");
-  await expect(derivedTimeline).toContainText("那我们提前在哪里集合？");
+  await expect(derivedTimeline).toContainText(
+    "Where should we meet beforehand?",
+  );
   await expect(page.getByLabel("你的行动")).toHaveValue("");
   await expect(page.getByRole("button", { name: "全新上下文" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "追加上下文" })).toBeEnabled();
-  responses.push(chatText("秦龙重新想了想，说七点二十在宿舍楼下集合。"));
+  responses.push(
+    chatText("Alex reconsiders and says to meet downstairs at 7:20."),
+  );
   await page.getByRole("button", { name: "追加上下文" }).click();
   await expect(
-    page.getByText("秦龙重新想了想，说七点二十在宿舍楼下集合。"),
+    page.getByText("Alex reconsiders and says to meet downstairs at 7:20."),
   ).toBeVisible();
 
   await page.getByRole("button", { name: "工作区", exact: true }).click();
   await page
-    .getByRole("button", { name: "打开世界：宿舍世界", exact: true })
+    .getByRole("button", { name: "打开世界：Dormitory World", exact: true })
     .click();
   await page.getByRole("button", { name: "世界管理" }).click();
 
   await page.getByRole("button", { name: "创建分叉" }).click();
   await expect(
-    page.getByRole("heading", { name: "宿舍世界（分叉）" }),
+    page.getByRole("heading", { name: "Dormitory World (fork)" }),
   ).toBeVisible();
 });
 
@@ -583,7 +630,7 @@ function chatTools(toolCalls: object[]) {
   return { choices: [{ message: { content: null, tool_calls: toolCalls } }] };
 }
 
-/** 把非流式的 chat 响应改写成等价的 SSE 增量帧。 */
+/** Rewrite a non-streaming chat response as equivalent SSE delta frames. */
 function sseFrames(payload: object): string[] {
   const message = (
     payload as {
@@ -659,41 +706,42 @@ function toolNames(request: ReturnType<typeof providerRequest>): string[] {
 function plan(): string {
   return `# 创作计划
 
-## 主要体验
-宿舍人物连续性
-## 次要体验
-篮球训练
-## 反复游玩循环
-交谈、行动、状态反馈
-## 焦点
-人物选择
-## 节奏
-自然
-## 冲突
-日常分歧
-## 信息结构
-按需披露
-## 语气边界
-不代理玩家
-## 明确排除项
-不增加 schema`;
+## Primary Experience
+Dormitory character continuity
+## Secondary Experience
+Basketball training
+## Repeatable Play Loop
+Conversation, action, and state feedback
+## Focus
+Character choices
+## Pacing
+Natural
+## Conflict
+Everyday disagreements
+## Information Structure
+Reveal details as needed
+## Tone Boundary
+Do not act for the player
+## Explicit Exclusions
+Do not add schema`;
 }
 
 function files() {
   return [
     {
       path: "opening.md",
-      contents: "宿舍门在你身后合上。秦龙抱着球衣看过来，等你先开口。\n",
+      contents:
+        "The dormitory door closes behind you. Alex looks over with a jersey in hand and waits for you to speak first.\n",
     },
     {
       path: "world/current-situation.yaml",
       contents:
-        "$document:\n  id: situation.current\n  ref: current-situation\n  title: 宿舍世界\n  summary: 宿舍里的当前局面。\n  aliases: []\n情况: 秦龙正在整理球衣。\n",
+        "$document:\n  id: situation.current\n  ref: current-situation\n  title: Dormitory World\n  summary: The current situation in the dormitory.\n  aliases: []\nsituation: Alex is organizing a jersey.\n",
     },
     {
-      path: "world/characters/qinlong.yaml",
+      path: "world/characters/alex.yaml",
       contents:
-        "$document:\n  id: character.qinlong\n  ref: qinlong\n  title: 秦龙\n  summary: 直率的篮球队前锋。\n  aliases: []\n衣着: 白色运动背心\n修为: 菠萝\n好感度: 150\n",
+        "$document:\n  id: character.alex\n  ref: alex\n  title: Alex\n  summary: A straightforward basketball forward.\n  aliases: []\nclothes: White athletic tank top\nrank: Pineapple\naffinity: 150\n",
     },
     {
       path: "control/frame.yaml",
@@ -702,12 +750,13 @@ function files() {
     },
     {
       path: "control/blocks/world.md",
-      contents: "# 世界主持规则\n\n持续结果写回自然所有者。\n",
+      contents:
+        "# World Narration Rules\n\nWrite persistent outcomes back to their natural owner.\n",
     },
     {
       path: "control/player-views.yaml",
       contents:
-        "format: narraeon.player-views/v1\nviews:\n  - id: status\n    title: 当前状态\n    items:\n      - id: clothes\n        label: 衣着\n        select: { document: character.qinlong, locator: { yaml: [衣着] } }\n",
+        "format: narraeon.player-views/v1\nviews:\n  - id: status\n    title: Current Status\n    items:\n      - id: clothes\n        label: Clothes\n        select: { document: character.alex, locator: { yaml: [clothes] } }\n",
     },
   ];
 }

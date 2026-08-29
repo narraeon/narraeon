@@ -6,19 +6,21 @@ import { settingAuthorContractExamples } from "../../src/runtime/setting/Documen
 test("slot 多带参数时报出参数名而不是 kind，避免作者去删整个 slot", () => {
   const messages = controlIssues({
     "control/frame.yaml": frame(
-      "  - slot: { kind: document, document: character.qinlong, maxEntries: 4 }",
+      "  - slot: { kind: document, document: character.alex, maxEntries: 4 }",
     ),
   });
 
   expect(messages).toContain(
-    "slot document 不接受参数 maxEntries；它只接受 kind、document、required",
+    "Slot document does not accept parameters maxEntries; it accepts only kind, document, required",
   );
-  // 旧消息把 kind 当成问题所在，读起来像是这个 slot 不存在。
-  expect(messages.join("\n")).not.toContain("未知 slot 或参数：document");
+  // The old message named the kind, which made a valid slot look nonexistent.
+  expect(messages.join("\n")).not.toContain(
+    "Unknown slot or parameter: document",
+  );
 });
 
-// 自检存在的意义是预测真实 Prompt Preview。history_message 曾经只在这里合法，
-// 于是候选能通过自检，却在它本该预测的编译步骤失败。
+// Self-check must predict the real Prompt Preview. history_message used to be
+// valid only here, so candidates passed self-check and failed compilation.
 test("自检拒绝提示编译器不支持的 history_message slot", () => {
   const messages = controlIssues({
     "control/frame.yaml": frame(
@@ -27,16 +29,18 @@ test("自检拒绝提示编译器不支持的 history_message slot", () => {
   });
 
   expect(messages.join("\n")).toContain(
-    "世界框架包含未知 slot kind：history_message",
+    "The world frame contains unknown slot kind history_message",
   );
 });
 
 test("真正未知的 kind 会被列出可用取值", () => {
   const messages = controlIssues({
-    "control/frame.yaml": frame("  - slot: { kind: 随便写的 }"),
+    "control/frame.yaml": frame("  - slot: { kind: made_up }"),
   });
 
-  expect(messages.join("\n")).toContain("世界框架包含未知 slot kind：随便写的");
+  expect(messages.join("\n")).toContain(
+    "The world frame contains unknown slot kind made_up",
+  );
   expect(messages.join("\n")).toContain("catalog");
 });
 
@@ -45,23 +49,23 @@ test("玩家视图逐条指出哪个视图、哪个条目、哪里不对", () =>
     "control/player-views.yaml": `format: narraeon.player-views/v1
 views:
   - id: relations
-    title: 人物关系
-    extra: 不该有的字段
+    title: Relationships
+    extra: unexpected
     items:
       - id: no-label
-        select: { document: character.qinlong }
+        select: { document: character.alex }
       - id: wrong-codec
-        label: 修炼规则
+        label: Training rules
         select:
           document: rule.cultivation
-          locator: { yaml: [境界] }
+          locator: { yaml: [level] }
 `,
   });
 
-  expect(messages).toContain("第 1 个视图不接受字段 extra");
-  expect(messages).toContain("视图 relations 的第 1 个条目缺少字符串 label");
+  expect(messages).toContain("View 1 does not accept fields extra");
+  expect(messages).toContain("View relations item 1 is missing a string label");
   expect(messages).toContain(
-    "视图 relations 的第 2 个条目对 markdown 文档 rule.cultivation 使用了 yaml locator",
+    "View relations item 2 uses a yaml locator for markdown document rule.cultivation",
   );
 });
 
@@ -70,43 +74,45 @@ test("指向不存在文档的选择器不再被说成必须存在文档", () =>
     "control/player-views.yaml": `format: narraeon.player-views/v1
 views:
   - id: ghost
-    title: 幽灵
+    title: Ghost
     items:
       - id: missing
-        label: 不存在的文档
-        select: { document: character.nobody, locator: { yaml: [状态] } }
+        label: Missing document
+        select: { document: character.nobody, locator: { yaml: [status] } }
 `,
   });
 
-  // 实现对不存在的文档是放行的，诊断不该反过来指责作者。
-  expect(messages.filter((line) => line.includes("幽灵"))).toEqual([]);
-  expect(messages.join("\n")).not.toContain("存在文档");
+  // Missing documents are allowed here; diagnostics must not contradict that.
+  expect(messages.filter((line) => line.includes("Ghost"))).toEqual([]);
+  expect(messages.join("\n")).not.toContain("existing document");
 });
 
 test("问题过多时截断并说明还有多少处未列出", () => {
   const items = Array.from(
     { length: 12 },
     (_, index) =>
-      `      - id: item-${String(index)}\n        label: 缺少 select`,
+      `      - id: item-${String(index)}\n        label: Missing select`,
   ).join("\n");
   const messages = controlIssues({
     "control/player-views.yaml": `format: narraeon.player-views/v1
 views:
   - id: many
-    title: 很多问题
+    title: Many issues
     items:
 ${items}
 `,
   });
 
   expect(
-    messages.filter((line) => line.includes("缺少 select 对象")),
+    messages.filter((line) => line.includes("is missing a select object")),
   ).toHaveLength(8);
-  expect(messages.join("\n")).toContain("另有 4 处玩家视图问题未列出");
+  expect(messages.join("\n")).toContain(
+    "4 more player-view issues were omitted",
+  );
 });
 
-// 提示编译器一直用 @短引用 或 id 解析 slot 的 document，而作者只见得到短引用。
-// 自检层曾经只认 id，把能正常编译运行的 frame 判成错误。
+// Prompt compilation resolves document slots by @short-ref or ID. The author
+// sees short refs, so self-check must accept the same identifiers.
 test("frame 用 @短引用 指向文档，与提示编译器一致", () => {
   expect(
     controlIssues({
@@ -119,7 +125,7 @@ context:
   - slot: { kind: current_situation }
   - slot: { kind: additional_materials }
   - slot: { kind: document, document: "@cultivation" }
-  - slot: { kind: node, document: "@qinlong", locator: { yaml: [关系] } }
+  - slot: { kind: node, document: "@alex", locator: { yaml: [relationships] } }
 `,
     }),
   ).toEqual([]);
@@ -142,8 +148,8 @@ test("@ 是 YAML 保留字符，漏引号的短引用整份文件都不安全", 
   expect(messages).toContain("unsafe_yaml");
 });
 
-// 作者只能从契约范例学会这两份控制文件的形状；范例一旦偏离校验器，
-// 作者就会照着写出自检必然拒绝的候选。
+// These contract examples teach both control-file shapes, so they must satisfy
+// the same validator the generated candidate will face.
 test("作者契约给出的 frame 与玩家视图范例本身通过校验", () => {
   expect(
     controlIssues({
@@ -187,23 +193,24 @@ ${slot}
 
 function baseFiles() {
   return [
-    { path: "opening.md", contents: "宿舍门在你面前合上。\n" },
+    { path: "opening.md", contents: "The dormitory door closes behind you.\n" },
     {
-      path: "world/characters/qinlong.yaml",
-      contents: `$document:\n  id: character.qinlong\n  ref: qinlong\n  title: 秦龙\n  summary: 篮球队前锋。\n  aliases: []\n关系: {}\n`,
+      path: "world/characters/alex.yaml",
+      contents: `$document:\n  id: character.alex\n  ref: alex\n  title: Alex\n  summary: A basketball forward.\n  aliases: []\nrelationships: {}\n`,
     },
     {
       path: "world/rules/cultivation.md",
-      contents: `---\n$document:\n  id: rule.cultivation\n  ref: cultivation\n  title: 修炼规则\n  summary: 自然语言规则。\n  aliases: []\n---\n# 修炼规则\n\n境界由故事解释。\n`,
+      contents: `---\n$document:\n  id: rule.cultivation\n  ref: cultivation\n  title: Training rules\n  summary: Rules expressed in natural language.\n  aliases: []\n---\n# Training rules\n\nThe story explains each level.\n`,
     },
     {
       path: "world/current-situation.yaml",
-      contents: `$document:\n  id: situation.current\n  ref: current-situation\n  title: 当前情境\n  summary: 宿舍中的局面。\n  aliases: []\n人物:\n  - $ref: character.qinlong\n`,
+      contents: `$document:\n  id: situation.current\n  ref: current-situation\n  title: Current situation\n  summary: The situation in the dormitory.\n  aliases: []\ncharacters:\n  - $ref: character.alex\n`,
     },
     { path: "control/frame.yaml", contents: frame("") },
     {
       path: "control/blocks/world.md",
-      contents: "# 世界主持规则\n\n持续结果写回自然所有者。\n",
+      contents:
+        "# World hosting rules\n\nWrite durable results back to their natural owners.\n",
     },
     {
       path: "control/player-views.yaml",

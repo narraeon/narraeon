@@ -57,7 +57,7 @@ export class FileNativeWorldCreationError extends Error {
 
 export class FileNativeWorldNotFoundError extends Error {
   constructor(options?: ErrorOptions) {
-    super("世界不存在", options);
+    super("World does not exist", options);
     this.name = "FileNativeWorldNotFoundError";
   }
 }
@@ -246,10 +246,12 @@ export class FileNativeWorldStore {
     worldId: string,
     name: string,
   ): Promise<FileNativeWorldSummary> {
-    assertIdentity(worldId, "世界 ID");
+    assertIdentity(worldId, "World ID");
     const trimmed = name.trim();
     if (!validWorldName(trimmed))
-      throw new TypeError("世界名称必须是 1 到 160 个字符，且不含换行");
+      throw new TypeError(
+        "World name must contain 1 to 160 characters and no line breaks",
+      );
     return this.operations.withWorldLocalMetadataMutation(worldId, async () => {
       const root = join(this.#worldsRoot, worldId);
       let publication: Publication;
@@ -275,7 +277,7 @@ export class FileNativeWorldStore {
    * correction operation. Expired claims do not block cleanup.
    */
   async deleteWorld(worldId: string): Promise<{ deleted: true }> {
-    assertIdentity(worldId, "世界 ID");
+    assertIdentity(worldId, "World ID");
     const root = join(this.#worldsRoot, worldId);
     try {
       await readPublicationAt(root);
@@ -299,12 +301,12 @@ export class FileNativeWorldStore {
     preview: PromptPreview;
   }> {
     assertIdentity(input.operationId, "operation ID");
-    assertIdentity(input.sourcePackageId, "内容包本地身份");
+    assertIdentity(input.sourcePackageId, "Content-package local identity");
     const inspection = inspectContentPackageCurrentTree(input.packageFiles);
     if (inspection.status !== "usable") {
       throw new FileNativeWorldCreationError(
         "content_package_needs_repair",
-        `只有校验完整通过的内容包可以创建世界：${inspection.issues
+        `Only a content package that passes all validation can create a world: ${inspection.issues
           .map(({ message }) => message)
           .join("；")}`,
       );
@@ -340,7 +342,7 @@ export class FileNativeWorldStore {
       if (previous.sourceFingerprint !== sourceFingerprint) {
         throw new FileNativeWorldCreationError(
           "operation_conflict",
-          "同一 operation ID 已绑定另一份创建载荷",
+          "The same operation ID is bound to a different creation payload",
         );
       }
       const preview = this.#preview(boundInput, previous.worldId);
@@ -434,7 +436,7 @@ export class FileNativeWorldStore {
         }
         throw new FileNativeWorldCreationError(
           "operation_conflict",
-          "同一 operation ID 已绑定另一份创建载荷",
+          "The same operation ID is bound to a different creation payload",
           { cause: error },
         );
       }
@@ -464,7 +466,7 @@ export class FileNativeWorldStore {
     worldId: string,
     surface: "state" | "control" | "history" | "runtime",
   ): Promise<ContentTreeFile[] | (Genesis & { historyEntries: number })> {
-    assertIdentity(worldId, "世界 ID");
+    assertIdentity(worldId, "World ID");
     const root = join(this.#worldsRoot, worldId);
     await readPublicationAt(root);
     if (surface === "runtime") {
@@ -500,14 +502,14 @@ export class FileNativeWorldStore {
   }
 
   async currentHead(worldId: string): Promise<string> {
-    assertIdentity(worldId, "世界 ID");
+    assertIdentity(worldId, "World ID");
     const root = join(this.#worldsRoot, worldId);
     await readPublicationAt(root);
     return (await readAcceptedAuthority(root))?.head ?? "genesis";
   }
 
   async currentHeadOperationId(worldId: string): Promise<string | null> {
-    assertIdentity(worldId, "世界 ID");
+    assertIdentity(worldId, "World ID");
     const root = join(this.#worldsRoot, worldId);
     await readPublicationAt(root);
     return (
@@ -519,7 +521,7 @@ export class FileNativeWorldStore {
     worldId: string,
     files: readonly ContentTreeFile[],
   ): Promise<{ fingerprint: string }> {
-    assertIdentity(worldId, "世界 ID");
+    assertIdentity(worldId, "World ID");
     const root = join(this.#worldsRoot, worldId);
     await readPublicationAt(root);
     for (const file of files) assertRelativePath(file.path);
@@ -547,7 +549,7 @@ export class FileNativeWorldStore {
     if (rendered.diagnostics.length > 0)
       throw new FileNativeWorldCreationError(
         "content_package_needs_repair",
-        `控制草稿中的玩家视图无法应用：${rendered.diagnostics.map(({ message }) => message).join("；")}`,
+        `Player views in the control draft cannot be applied: ${rendered.diagnostics.map(({ message }) => message).join("; ")}`,
       );
     return this.#promptCompiler.preview({
       endpoint: { id: `${worldId}:current`, commit: "current" },
@@ -570,7 +572,7 @@ export class FileNativeWorldStore {
         additionalMaterials: [],
       },
       playerInputPlacement: "bootstrap",
-      playerInput: prompt.playerInput ?? "预览世界控制。",
+      playerInput: prompt.playerInput ?? "Preview world control.",
       modelBinding: prompt.modelBinding,
     });
   }
@@ -588,7 +590,7 @@ export class FileNativeWorldStore {
           if ((this.#activeControlUsers.get(worldId)?.size ?? 0) > 0)
             throw new FileNativeWorldCreationError(
               "operation_conflict",
-              "该世界控制已被运行中的 attempt 冻结",
+              "World control is frozen by a running attempt",
             );
           const preview = await this.previewControlDraft(worldId, prompt);
           const root = join(this.#worldsRoot, worldId);
@@ -619,14 +621,14 @@ export class FileNativeWorldStore {
       if (error instanceof WorldOperationBusyError)
         throw new FileNativeWorldCreationError(
           "operation_conflict",
-          "该世界控制已被运行中的游玩调用链冻结",
+          "World control is frozen by a running play call chain",
         );
       throw error;
     }
   }
 
   freezeControl(worldId: string, operationId: string): void {
-    assertIdentity(worldId, "世界 ID");
+    assertIdentity(worldId, "World ID");
     assertIdentity(operationId, "operation ID");
     const users = this.#activeControlUsers.get(worldId) ?? new Set<string>();
     users.add(operationId);
@@ -642,7 +644,7 @@ export class FileNativeWorldStore {
   async #readControlDraft(
     worldId: string,
   ): Promise<{ state: ContentTreeFile[]; draft: ContentTreeFile[] }> {
-    assertIdentity(worldId, "世界 ID");
+    assertIdentity(worldId, "World ID");
     const root = join(this.#worldsRoot, worldId);
     await readPublicationAt(root);
     const [state, draft] = await Promise.all([
@@ -652,14 +654,14 @@ export class FileNativeWorldStore {
     if (draft.length === 0)
       throw new FileNativeWorldCreationError(
         "content_package_needs_repair",
-        "尚未保存世界控制草稿",
+        "World-control draft has not been saved",
       );
     return { state, draft };
   }
 
   /** Bind the current Authority endpoint for a model-directed play call chain. */
   async bindPlayCallChain(worldId: string): Promise<FileNativePlayBinding> {
-    assertIdentity(worldId, "世界 ID");
+    assertIdentity(worldId, "World ID");
     const root = join(this.#worldsRoot, worldId);
     try {
       await readPublicationAt(root);
@@ -675,8 +677,8 @@ export class FileNativeWorldStore {
         throw new FileNativeWorldCreationError(
           "world_corrupt",
           worldRoot.isDirectory()
-            ? "世界 publication 缺失"
-            : "世界存储根不是目录",
+            ? "World publication is missing"
+            : "World storage root is not a directory",
           { cause: error },
         );
       }
@@ -697,7 +699,7 @@ export class FileNativeWorldStore {
             if (found < 0)
               throw new FileNativeWorldCreationError(
                 "world_corrupt",
-                "世界 materialized head 不属于权威提交链",
+                "World materialized head does not belong to the authority commit chain",
               );
             materializedIndex = found + 1;
           }
@@ -766,7 +768,7 @@ export class FileNativeWorldStore {
       if (error instanceof WorldOperationBusyError)
         throw new FileNativeWorldCreationError(
           "operation_conflict",
-          "世界 Authority 正在由另一项持久操作更新",
+          "World Authority is being updated by another durable operation",
         );
       throw error;
     }
@@ -803,7 +805,7 @@ export class FileNativeWorldStore {
     )
       throw new FileNativeWorldCreationError(
         "world_corrupt",
-        "待释放的 operation reservation 外形无效",
+        "Operation reservation to release has an invalid shape",
       );
     await rm(path, { force: true });
     await syncDirectory(this.#operationsRoot);
@@ -813,7 +815,7 @@ export class FileNativeWorldStore {
     worldId: string,
     head?: string,
   ): Promise<FileNativeRecoveredEndpoint> {
-    assertIdentity(worldId, "世界 ID");
+    assertIdentity(worldId, "World ID");
     const root = join(this.#worldsRoot, worldId);
     await readPublicationAt(root);
     const genesis = await readJson<Genesis>(
@@ -823,7 +825,7 @@ export class FileNativeWorldStore {
       if (sha256(file.canonicalBytes) !== file.sha256)
         throw new FileNativeWorldCreationError(
           "world_corrupt",
-          `genesis 文件 hash 不一致：${file.path}`,
+          `Genesis file hash does not match: ${file.path}`,
         );
     const authority = await readAcceptedAuthority(root);
     const target = head ?? authority?.head ?? "genesis";
@@ -835,7 +837,7 @@ export class FileNativeWorldStore {
     if (target !== "genesis" && end === 0)
       throw new FileNativeWorldCreationError(
         "world_corrupt",
-        `无法从不可变权威链重建端点：${target}`,
+        `Cannot rebuild endpoint from immutable authority chain: ${target}`,
       );
     const state = new Map(
       genesis.state.map((file) => [file.path, file.canonicalBytes]),
@@ -850,7 +852,7 @@ export class FileNativeWorldStore {
         if (revision === undefined)
           throw new FileNativeWorldCreationError(
             "world_corrupt",
-            "时间线修订提交缺少恢复快照",
+            "Timeline-revision commit is missing its recovery snapshot",
           );
         const restored = await this.recoverEndpoint(
           worldId,
@@ -869,14 +871,14 @@ export class FileNativeWorldStore {
         )
           throw new FileNativeWorldCreationError(
             "world_corrupt",
-            "时间线修订恢复快照与所指向的逻辑父端点不一致",
+            "Timeline-revision recovery snapshot does not match its logical parent endpoint",
           );
         state.clear();
         for (const file of revision.replacementState) {
           if (sha256(file.canonicalBytes) !== file.sha256)
             throw new FileNativeWorldCreationError(
               "world_corrupt",
-              `时间线修订状态 hash 不一致：${file.path}`,
+              `Timeline-revision state hash does not match: ${file.path}`,
             );
           state.set(file.path, file.canonicalBytes);
         }
@@ -892,12 +894,12 @@ export class FileNativeWorldStore {
           if (existingHash !== change.expectedPreviousHash)
             throw new FileNativeWorldCreationError(
               "world_corrupt",
-              `不可变提交链前置 hash 不一致：${change.relativePath}`,
+              `Immutable commit-chain previous hash does not match: ${change.relativePath}`,
             );
           if (sha256(change.canonicalNextBytes) !== change.nextHash)
             throw new FileNativeWorldCreationError(
               "world_corrupt",
-              `不可变提交链 next hash 不一致：${change.relativePath}`,
+              `Immutable commit-chain next hash does not match: ${change.relativePath}`,
             );
           state.set(change.relativePath, change.canonicalNextBytes);
         }
@@ -919,7 +921,7 @@ export class FileNativeWorldStore {
   async repairMaterialization(
     worldId: string,
   ): Promise<FileNativeOperationOutcome> {
-    assertIdentity(worldId, "世界 ID");
+    assertIdentity(worldId, "World ID");
     try {
       const operationId = await this.operations.withExclusiveWorldStateMutation(
         worldId,
@@ -937,7 +939,7 @@ export class FileNativeWorldStore {
       if (error instanceof WorldOperationBusyError)
         throw new FileNativeWorldCreationError(
           "operation_conflict",
-          "该世界已有持久状态 operation，暂不能修复物化",
+          "This world has a durable state operation and cannot repair materialization yet",
         );
       throw error;
     }
@@ -946,16 +948,16 @@ export class FileNativeWorldStore {
   async deriveWorld(
     input: FileNativeWorldDerivationInput,
   ): Promise<{ outcome: "derived"; world: FileNativeWorldSummary }> {
-    assertIdentity(input.operationId, "分叉 operation ID");
-    assertIdentity(input.sourceWorldId, "来源世界 ID");
-    assertIdentity(input.hostPresetId, "主持预设 ID");
+    assertIdentity(input.operationId, "Fork operation ID");
+    assertIdentity(input.sourceWorldId, "Source world ID");
+    assertIdentity(input.hostPresetId, "Host-preset ID");
     if (input.requestDiscriminator !== undefined)
-      assertIdentity(input.requestDiscriminator, "分叉请求区分符");
+      assertIdentity(input.requestDiscriminator, "Fork request discriminator");
     if (
       input.sourceHead !== "genesis" &&
       !/^commit:[1-9][0-9]*$/u.test(input.sourceHead)
     )
-      throw new TypeError("来源端点无效");
+      throw new TypeError("Source endpoint is invalid");
     const operationPath = this.#derivationOperationPath(input.operationId);
     const requestFingerprint = derivationRequestFingerprint(input);
     const worldId = `world-${operationDigest(`derive:${input.operationId}`).slice(0, 24)}`;
@@ -972,7 +974,7 @@ export class FileNativeWorldStore {
       )
         throw new FileNativeWorldCreationError(
           "operation_conflict",
-          "同一分叉 operation ID 已绑定另一份分叉载荷",
+          "The same fork operation ID is bound to a different fork payload",
         );
       return {
         outcome: "derived",
@@ -994,7 +996,7 @@ export class FileNativeWorldStore {
       )
         throw new FileNativeWorldCreationError(
           "operation_conflict",
-          "已发布分叉世界与 operation 载荷不一致",
+          "Published fork world does not match the operation payload",
         );
       await mkdir(this.#operationsRoot, { recursive: true, mode: 0o700 });
       await publishJson(operationPath, alreadyPublished);
@@ -1093,7 +1095,7 @@ export class FileNativeWorldStore {
       if (!isDeepStrictEqual(materializedState, selected.state))
         throw new FileNativeWorldCreationError(
           "world_corrupt",
-          "分叉 Authority 前缀无法重建来源端点状态",
+          "Fork Authority prefix cannot rebuild the source endpoint state",
         );
       const publication: Publication = {
         schemaVersion: 1,
@@ -1129,7 +1131,7 @@ export class FileNativeWorldStore {
         )
           throw new FileNativeWorldCreationError(
             "operation_conflict",
-            "已发布分叉世界与 operation 载荷不一致",
+            "Published fork world does not match the operation payload",
           );
         await publishJson(operationPath, published);
         return { outcome: "derived", world: toSummary(published) };
@@ -1171,7 +1173,7 @@ export class FileNativeWorldStore {
       if (error instanceof FileNativeWorldCreationError) throw error;
       throw new FileNativeWorldCreationError(
         "world_corrupt",
-        "Authority operation outcome 结构无效",
+        "Authority operation outcome has an invalid structure",
         error instanceof Error ? { cause: error } : undefined,
       );
     }
@@ -1272,18 +1274,18 @@ export class FileNativeWorldStore {
       { outcome: "committed" | "committed_materialization_pending" }
     >
   > {
-    assertIdentity(input.operationId, "时间线修订 operation ID");
-    assertIdentity(input.worldId, "世界 ID");
+    assertIdentity(input.operationId, "Timeline-revision operation ID");
+    assertIdentity(input.worldId, "World ID");
     if (
       !/^(?:genesis|commit:[1-9][0-9]*)$/u.test(input.expectedCurrentHead) ||
       !/^(?:genesis|commit:[1-9][0-9]*)$/u.test(input.restoresHead) ||
       !/^commit:[1-9][0-9]*$/u.test(input.replacesHead)
     )
-      throw new TypeError("时间线修订端点无效");
+      throw new TypeError("Timeline-revision endpoint is invalid");
     if (input.replacementText.trim() === "")
-      throw new TypeError("修改后的玩家提交不能为空");
+      throw new TypeError("Edited player message cannot be empty");
     if (!/^sha256:[a-f0-9]{64}$/u.test(input.requestFingerprint))
-      throw new TypeError("时间线修订请求指纹无效");
+      throw new TypeError("Timeline-revision request fingerprint is invalid");
 
     const existing = await this.getOperationOutcome(input.operationId);
     if (isCommittedOutcome(existing)) {
@@ -1310,7 +1312,7 @@ export class FileNativeWorldStore {
       )
         throw new FileNativeWorldCreationError(
           "operation_conflict",
-          "同一时间线修订 operation ID 已绑定另一份请求",
+          "The same timeline-revision operation ID is bound to a different request",
         );
       return existing;
     }
@@ -1334,7 +1336,7 @@ export class FileNativeWorldStore {
     )
       throw new FileNativeWorldCreationError(
         "operation_conflict",
-        "所选玩家提交与要恢复的逻辑父端点不一致",
+        "Selected player message does not match the logical parent endpoint to restore",
       );
 
     return this.#commitHistoryChange({
@@ -1400,7 +1402,7 @@ export class FileNativeWorldStore {
       if (error instanceof WorldOperationBusyError)
         throw new FileNativeWorldCreationError(
           "operation_conflict",
-          "该世界已有持久状态 operation 正在执行",
+          "This world already has a durable state operation in progress",
         );
       throw error;
     }
@@ -1425,7 +1427,9 @@ export class FileNativeWorldStore {
     >
   > {
     if (input.historyAppend.length === 0 && input.stateChanges.length === 0)
-      throw new TypeError("调用链提交不能同时缺少叙事与状态变化");
+      throw new TypeError(
+        "A call-chain commit cannot omit both narrative and state changes",
+      );
     return this.#commitHistoryChange({
       ...input,
       mode: "play",
@@ -1433,14 +1437,14 @@ export class FileNativeWorldStore {
   }
 
   async readPlayCallChain<T>(worldId: string): Promise<T | null> {
-    assertIdentity(worldId, "世界 ID");
+    assertIdentity(worldId, "World ID");
     return readOptionalJson<T>(
       join(this.#worldsRoot, worldId, "runtime", "play-call-chain.json"),
     );
   }
 
   async writePlayCallChain(worldId: string, value: unknown): Promise<void> {
-    assertIdentity(worldId, "世界 ID");
+    assertIdentity(worldId, "World ID");
     await publishJson(
       join(this.#worldsRoot, worldId, "runtime", "play-call-chain.json"),
       value,
@@ -1448,7 +1452,7 @@ export class FileNativeWorldStore {
   }
 
   async removePlayCallChain(worldId: string): Promise<void> {
-    assertIdentity(worldId, "世界 ID");
+    assertIdentity(worldId, "World ID");
     await rm(
       join(this.#worldsRoot, worldId, "runtime", "play-call-chain.json"),
       { force: true },
@@ -1488,7 +1492,7 @@ export class FileNativeWorldStore {
       )
         throw new FileNativeWorldCreationError(
           "operation_conflict",
-          "同一 play operation ID 已绑定另一份完整提交载荷",
+          "The same play operation ID is bound to a different complete commit payload",
         );
       return existing;
     }
@@ -1498,7 +1502,7 @@ export class FileNativeWorldStore {
     )
       throw new FileNativeWorldCreationError(
         "operation_conflict",
-        "同一 play operation ID 已由另一项持久操作占用",
+        "The same play operation ID is occupied by another durable operation",
       );
     const root = join(this.#worldsRoot, input.worldId);
     try {
@@ -1529,7 +1533,7 @@ export class FileNativeWorldStore {
             )
               throw new FileNativeWorldCreationError(
                 "operation_conflict",
-                "同一 play operation ID 已绑定另一份完整提交载荷",
+                "The same play operation ID is bound to a different complete commit payload",
               );
             return concurrent;
           }
@@ -1542,7 +1546,7 @@ export class FileNativeWorldStore {
           if (authority.head !== input.parentHead) {
             throw new FileNativeWorldCreationError(
               "operation_conflict",
-              "游玩操作的父端点已变化",
+              "The parent endpoint of the play operation has changed",
             );
           }
           const materialized = await readOptionalJson<{ head: string }>(
@@ -1551,7 +1555,7 @@ export class FileNativeWorldStore {
           if ((materialized?.head ?? "genesis") !== authority.head)
             throw new FileNativeWorldCreationError(
               "operation_conflict",
-              "世界存在已接受但尚未修复的物化，禁止新的竞争写操作",
+              "The world has accepted but unrepaired materialization; new competing writes are forbidden",
             );
           const [currentState, currentControl] = await Promise.all([
             readTree(join(root, "state")),
@@ -1567,7 +1571,7 @@ export class FileNativeWorldStore {
             )
               throw new FileNativeWorldCreationError(
                 "operation_conflict",
-                "时间线修订提交载荷无效",
+                "Timeline-revision commit payload is invalid",
               );
             candidateState.clear();
             for (const file of input.timelineRevision.replacementState) {
@@ -1575,7 +1579,7 @@ export class FileNativeWorldStore {
               if (sha256(file.canonicalBytes) !== file.sha256)
                 throw new FileNativeWorldCreationError(
                   "operation_conflict",
-                  `时间线修订状态 hash 冲突：${file.path}`,
+                  `Timeline-revision state hash conflicts: ${file.path}`,
                 );
               candidateState.set(file.path, file.canonicalBytes);
             }
@@ -1583,7 +1587,7 @@ export class FileNativeWorldStore {
             if (input.timelineRevision !== undefined)
               throw new FileNativeWorldCreationError(
                 "operation_conflict",
-                "普通提交不能携带时间线修订载荷",
+                "A regular commit cannot carry a timeline-revision payload",
               );
             for (const change of input.stateChanges) {
               assertRelativePath(change.relativePath);
@@ -1596,7 +1600,7 @@ export class FileNativeWorldStore {
               )
                 throw new FileNativeWorldCreationError(
                   "operation_conflict",
-                  `状态变化 hash 冲突：${change.relativePath}`,
+                  `State-change hash conflicts: ${change.relativePath}`,
                 );
               candidateState.set(
                 change.relativePath,
@@ -1620,7 +1624,7 @@ export class FileNativeWorldStore {
           if (inspection.status !== "usable")
             throw new FileNativeWorldCreationError(
               "candidate_validation_failed",
-              `候选世界未通过机械校验：${inspection.issues.map(({ message }) => message).join("；")}`,
+              `Candidate world failed mechanical validation: ${inspection.issues.map(({ message }) => message).join("; ")}`,
             );
           const sequence = authority.commits.length + 1;
           const head = `commit:${sequence}`;
@@ -1714,7 +1718,7 @@ export class FileNativeWorldStore {
       if (error instanceof WorldOperationBusyError)
         throw new FileNativeWorldCreationError(
           "operation_conflict",
-          "世界 Authority 提交正在由另一进程串行化",
+          "World Authority commit is being serialized by another process",
         );
       throw error;
     }
@@ -1723,7 +1727,7 @@ export class FileNativeWorldStore {
   async readAuthorityHistory(
     worldId: string,
   ): Promise<{ head: string; commits: FileNativePlayCommit[] }> {
-    assertIdentity(worldId, "世界 ID");
+    assertIdentity(worldId, "World ID");
     const root = join(this.#worldsRoot, worldId);
     await readPublicationAt(root);
     const authority = await readAcceptedAuthority(root);
@@ -1766,7 +1770,7 @@ export class FileNativeWorldStore {
     if (endpoint !== "genesis" && commit === undefined)
       throw new FileNativeWorldCreationError(
         "world_corrupt",
-        `历史端点不存在：${endpoint}`,
+        `Historical endpoint does not exist: ${endpoint}`,
       );
     return {
       endpoint,
@@ -1802,7 +1806,7 @@ export class FileNativeWorldStore {
         if (publication.operationId !== operationId) {
           throw new FileNativeWorldCreationError(
             "operation_conflict",
-            "确定性世界身份已被另一创建 operation 占用",
+            "Deterministic world identity is occupied by another creation operation",
           );
         }
         await mkdir(this.#operationsRoot, { recursive: true, mode: 0o700 });
@@ -1817,7 +1821,7 @@ export class FileNativeWorldStore {
     if (JSON.stringify(worldPublication) !== JSON.stringify(publication)) {
       throw new FileNativeWorldCreationError(
         "world_corrupt",
-        "创建 operation 与世界发布记录不一致",
+        "Creation operation does not match the world publication record",
       );
     }
     return publication;
@@ -1875,7 +1879,7 @@ export class FileNativeWorldStore {
       playerInputPlacement: "bootstrap",
       playerInput:
         input.prompt.playerInput ??
-        "（预览占位：玩家创建世界后的第一条真实行动）",
+        "(Preview placeholder: the player's first real action after creating the world)",
       modelBinding: input.prompt.modelBinding,
     });
   }
@@ -1894,7 +1898,7 @@ function openingText(files: readonly ContentTreeFile[]): string {
   if (opening === undefined)
     throw new FileNativeWorldCreationError(
       "content_package_needs_repair",
-      "内容包缺少可用的 opening.md",
+      "Content package is missing a usable opening.md",
     );
   return opening.contents;
 }
@@ -1927,7 +1931,7 @@ function assertEquivalentWorldDocumentSnapshots(
   if (worldState.status !== "usable") {
     throw new FileNativeWorldCreationError(
       "content_package_needs_repair",
-      `复制后的 state 世界文档快照未通过校验：${worldState.diagnostics
+      `Copied state world-document snapshot failed validation: ${worldState.diagnostics
         .map(({ message }) => message)
         .join("；")}`,
     );
@@ -1957,7 +1961,7 @@ function assertEquivalentWorldDocumentSnapshots(
   if (mismatch) {
     throw new FileNativeWorldCreationError(
       "content_package_needs_repair",
-      "复制后的 state 世界文档身份、短引用或 codec 与内容包快照不一致",
+      "Copied state world-document identity, short reference, or codec does not match the content-package snapshot",
     );
   }
 }
@@ -2128,7 +2132,7 @@ function projectOperationOutcome(
 function corruptOperationOutcome(): FileNativeWorldCreationError {
   return new FileNativeWorldCreationError(
     "world_corrupt",
-    "Authority operation outcome 结构或 operation 身份无效",
+    "Authority operation outcome structure or operation identity is invalid",
   );
 }
 
@@ -2184,7 +2188,7 @@ async function assertPendingMaterializationCompatible(
     )
       throw new FileNativeWorldCreationError(
         "inconsistent_materialization",
-        `世界状态物化冲突：${change.relativePath}`,
+        `World-state materialization conflict: ${change.relativePath}`,
       );
   }
   for (const [index, message] of commit.historyAppend.entries()) {
@@ -2198,7 +2202,7 @@ async function assertPendingMaterializationCompatible(
     if (existing !== null && existing !== message.exactText)
       throw new FileNativeWorldCreationError(
         "inconsistent_materialization",
-        "历史消息物化内容冲突",
+        "History-message materialization content conflict",
       );
   }
   const existingMaterials = await readOptionalJson<{
@@ -2211,7 +2215,7 @@ async function assertPendingMaterializationCompatible(
   )
     throw new FileNativeWorldCreationError(
       "inconsistent_materialization",
-      "同一端点的附加材料清单内容冲突",
+      "Additional-material list content conflicts at the same endpoint",
     );
 }
 
@@ -2295,7 +2299,7 @@ async function publishImmutableJson(
       if ((await readFile(path, "utf8")) !== contents)
         throw new FileNativeWorldCreationError(
           "operation_conflict",
-          "不可变 play commit 文件发生冲突",
+          "Immutable play-commit file conflicts",
         );
       return false;
     }
@@ -2325,7 +2329,7 @@ async function readAcceptedAuthority(
           if (name !== canonicalName)
             throw new FileNativeWorldCreationError(
               "world_corrupt",
-              "不可变 commit 与持久路径身份不匹配",
+              "Immutable commit does not match the durable path identity",
             );
           return commit;
         }),
@@ -2339,7 +2343,7 @@ async function readAcceptedAuthority(
         if (matches.length !== 1)
           throw new FileNativeWorldCreationError(
             "world_corrupt",
-            "不可变 commit 无法重建唯一权威链",
+            "Immutable commits cannot rebuild one unique authority chain",
           );
         const next = matches[0]!;
         commits.push(next);
@@ -2364,7 +2368,7 @@ async function readAcceptedAuthority(
       ).catch((error: unknown) => {
         throw new FileNativeWorldCreationError(
           "world_corrupt",
-          `已接受端点缺少不可变 commit：${recorded.head}`,
+          `Accepted endpoint is missing an immutable commit: ${recorded.head}`,
           { cause: error },
         );
       });
@@ -2372,7 +2376,7 @@ async function readAcceptedAuthority(
       if (JSON.stringify(immutable) !== JSON.stringify(recorded))
         throw new FileNativeWorldCreationError(
           "world_corrupt",
-          `已接受端点与不可变 commit 不一致：${recorded.head}`,
+          `Accepted endpoint does not match its immutable commit: ${recorded.head}`,
         );
       commits.push(immutable);
     }
@@ -2381,7 +2385,7 @@ async function readAcceptedAuthority(
     if (error instanceof FileNativeWorldCreationError) throw error;
     throw new FileNativeWorldCreationError(
       "world_corrupt",
-      "play Authority 持久数据损坏",
+      "Play Authority durable data is corrupt",
       { cause: error },
     );
   }
@@ -2397,7 +2401,7 @@ function assertFileNativePlayAuthority(
     typeof value.head !== "string" ||
     !Array.isArray(value.commits)
   )
-    throw new Error("play Authority 外形无效");
+    throw new Error("Play Authority has an invalid shape");
   const operationIds = new Set<string>();
   const heads = new Set<string>();
   const commitsByHead = new Map<string, FileNativePlayCommit>();
@@ -2425,19 +2429,19 @@ function assertFileNativePlayAuthority(
           !replaced.historyAppend.some(({ role }) => role === "player") ||
           replacedLogicalParent !== revision!.restoresHead))
     )
-      throw new Error("play Authority commit 链无效");
+      throw new Error("Play Authority commit chain is invalid");
     operationIds.add(commit.operationId);
     heads.add(commit.head);
     commitsByHead.set(commit.head, commit);
     parent = commit.head;
   }
-  if (value.head !== parent) throw new Error("play Authority head 无效");
+  if (value.head !== parent) throw new Error("Play Authority head is invalid");
 }
 
 function assertFileNativePlayCommit(
   value: unknown,
 ): asserts value is FileNativePlayCommit {
-  if (!isRecord(value)) throw new Error("play commit 外形无效");
+  if (!isRecord(value)) throw new Error("Play commit has an invalid shape");
   const correction = value.mode === "correction";
   const timelineRevision = value.mode === "timeline_revision";
   if (
@@ -2479,7 +2483,7 @@ function assertFileNativePlayCommit(
     !Array.isArray(value.nextAdditionalMaterials) ||
     !value.nextAdditionalMaterials.every(isAuthorityMaterialSelection)
   )
-    throw new Error("play commit 外形无效");
+    throw new Error("Play commit has an invalid shape");
   if (
     correction &&
     (!Array.isArray(value.correctionTargets) ||
@@ -2489,13 +2493,13 @@ function assertFileNativePlayCommit(
       typeof value.corrects !== "string" ||
       value.corrects !== value.parentHead)
   )
-    throw new Error("correction commit 外形无效");
+    throw new Error("Correction commit has an invalid shape");
   if (
     timelineRevision &&
     (value.stateChanges.length !== 0 ||
       !isFileNativeTimelineRevision(value.timelineRevision))
   )
-    throw new Error("timeline revision commit 外形无效");
+    throw new Error("Timeline-revision commit has an invalid shape");
 }
 
 function isFileNativeTimelineRevision(value: unknown): boolean {
@@ -2624,7 +2628,7 @@ async function materializePlayCommit(
     if (input.timelineRevision === undefined)
       throw new FileNativeWorldCreationError(
         "world_corrupt",
-        "时间线修订提交缺少物化快照",
+        "Timeline-revision commit is missing its materialization snapshot",
       );
     await replaceMaterializedTree(
       join(root, "state"),
@@ -2647,7 +2651,7 @@ async function materializePlayCommit(
       if (existingHash !== change.expectedPreviousHash)
         throw new FileNativeWorldCreationError(
           "inconsistent_materialization",
-          `世界状态物化冲突：${change.relativePath}`,
+          `World-state materialization conflict: ${change.relativePath}`,
         );
       await publishText(path, change.canonicalNextBytes);
     }
@@ -2687,7 +2691,7 @@ async function materializePlayCommit(
   )
     throw new FileNativeWorldCreationError(
       "inconsistent_materialization",
-      "同一端点的附加材料清单内容冲突",
+      "Additional-material list content conflicts at the same endpoint",
     );
   if (JSON.stringify(existingMaterials) !== JSON.stringify(nextMaterials))
     await publishJson(materialsPath, nextMaterials);
@@ -2703,7 +2707,7 @@ async function replaceMaterializedTree(
     if (next.has(file.path))
       throw new FileNativeWorldCreationError(
         "world_corrupt",
-        `时间线修订物化包含重复路径：${file.path}`,
+        `Timeline-revision materialization contains a duplicate path: ${file.path}`,
       );
     next.set(file.path, file.contents);
   }
@@ -2757,7 +2761,7 @@ function historySurfaceFiles(
     )
       throw new FileNativeWorldCreationError(
         "world_corrupt",
-        `历史消息身份无法形成物化路径：${message.messageId}`,
+        `History-message identity cannot form a materialization path: ${message.messageId}`,
       );
     return {
       path: `${String(sequence).padStart(8, "0")}-${historyFileName(index, message)}`,
@@ -2775,7 +2779,7 @@ async function writeIdempotentText(
     if (existing !== contents)
       throw new FileNativeWorldCreationError(
         "inconsistent_materialization",
-        "历史消息物化内容冲突",
+        "History-message materialization content conflict",
       );
   } catch (error: unknown) {
     if (!isNodeError(error) || error.code !== "ENOENT") throw error;
@@ -2814,7 +2818,7 @@ function cloneAuthorityPrefix(input: {
   if (input.sourceHead !== "genesis" && end === 0)
     throw new FileNativeWorldCreationError(
       "world_corrupt",
-      `无法复制不存在的来源 Authority 端点：${input.sourceHead}`,
+      `Cannot copy a nonexistent source Authority endpoint: ${input.sourceHead}`,
     );
   const sourceCommits = input.sourceAuthority?.commits.slice(0, end) ?? [];
   const messageIds = new Map<string, string>();
@@ -2822,7 +2826,7 @@ function cloneAuthorityPrefix(input: {
     if (messageIds.has(source))
       throw new FileNativeWorldCreationError(
         "world_corrupt",
-        `来源 Authority 存在重复历史消息身份：${source}`,
+        `Source Authority contains a duplicate history-message identity: ${source}`,
       );
     messageIds.set(source, target);
   };
@@ -2891,7 +2895,7 @@ function rewriteMaterials(
       if (message === undefined)
         throw new FileNativeWorldCreationError(
           "world_corrupt",
-          `分叉材料引用了无法重写的历史消息：${material.message}`,
+          `Fork material references a history message that cannot be remapped: ${material.message}`,
         );
       return { ...material, message };
     }
@@ -2940,7 +2944,7 @@ function assertSameOperationOutcome(
   ) {
     throw new FileNativeWorldCreationError(
       "operation_conflict",
-      "同一 play operation ID 已绑定另一份提交载荷",
+      "The same play operation ID is bound to a different commit payload",
     );
   }
 }
@@ -3009,7 +3013,10 @@ async function readWorldSummaryAt(
   );
   if (metadata === null) return toSummary(published);
   if (!isWorldLocalMetadata(metadata) || metadata.worldId !== published.worldId)
-    throw new FileNativeWorldCreationError("world_corrupt", "世界本地外壳损坏");
+    throw new FileNativeWorldCreationError(
+      "world_corrupt",
+      "Local world shell is corrupt",
+    );
   return { ...toSummary(published), title: metadata.name };
 }
 
@@ -3041,7 +3048,7 @@ function validWorldName(name: string): boolean {
 }
 
 function derivedWorldName(sourceName: string): string {
-  const suffix = "（分叉）";
+  const suffix = " (fork)";
   return `${Array.from(sourceName)
     .slice(0, 160 - Array.from(suffix).length)
     .join("")}${suffix}`;
@@ -3097,7 +3104,7 @@ function isWorldLocalMetadata(value: unknown): value is WorldLocalMetadata {
 
 function assertIdentity(value: string, label: string): void {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/u.test(value)) {
-    throw new TypeError(`${label} 无效`);
+    throw new TypeError(`${label} is invalid`);
   }
 }
 
@@ -3108,7 +3115,7 @@ function assertRelativePath(path: string): void {
     path.includes("\\") ||
     path.split("/").some((part) => part === "" || part === "." || part === "..")
   ) {
-    throw new TypeError("世界文件路径无效");
+    throw new TypeError("World file path is invalid");
   }
 }
 

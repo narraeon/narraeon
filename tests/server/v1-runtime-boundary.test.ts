@@ -42,7 +42,7 @@ function playChainView(
         id: 1,
         kind: "player",
         exchangeId: "exchange-one",
-        text: "我示意秦龙开门。",
+        text: "I signal Alex to open the door.",
         context: "fresh",
         committedHead: "commit:1",
       },
@@ -143,7 +143,7 @@ test("进度轮询不写访问日志，调用链中断写出原始 Provider 原�
         worldId: "world-one",
         chainId: "chain-one",
         exchangeId: "exchange-one",
-        playerText: "继续。",
+        playerText: "Continue.",
       },
     },
   });
@@ -176,20 +176,20 @@ test("生产 HTTP 边界把 Provider 文本增量作为 NDJSON 调用链流直�
   await mkdir(staticRoot, { recursive: true });
   await writeFile(join(staticRoot, "index.html"), "<!doctype html>");
   const running = playChainView("running", "");
-  const completed = playChainView("ready", "秦龙推开了门。");
+  const completed = playChainView("ready", "Alex opens the door.");
   const runtime = {
     handle(_request: V1Request, observer?: PlayCallChainObserver) {
       observer?.onSnapshot?.(running);
       observer?.onAssistantDelta?.({
         eventId: 2,
         kind: "reasoning",
-        text: "先确认门口",
+        text: "Check the doorway first",
         updatedAt: 2,
       });
       observer?.onAssistantDelta?.({
         eventId: 2,
         kind: "text",
-        text: "秦龙推",
+        text: "Alex pushes",
         updatedAt: 2,
       });
       return Promise.resolve({ protocol: v1Protocol, result: completed });
@@ -217,7 +217,7 @@ test("生产 HTTP 边界把 Provider 文本增量作为 NDJSON 调用链流直�
         worldId: "world-one",
         chainId: "chain-one",
         exchangeId: "exchange-one",
-        playerText: "我示意秦龙开门。",
+        playerText: "I signal Alex to open the door.",
       },
     },
   });
@@ -264,8 +264,8 @@ test("生产 HTTP 边界只接受显式 runtime/v1 envelope 并返回当前工�
     origin: "http://127.0.0.1:4317",
   };
 
-  // 同源检查是这个本地边界唯一的门禁：没有 Origin 或来自别处的请求一律拒绝，
-  // 而带对 Origin 的请求不需要任何随进程变化的令牌，重启服务不会作废已打开的页面。
+  // Same-origin checking is the only gate at this local boundary. Requests
+  // without the correct Origin are rejected, and restarts do not invalidate pages.
   for (const origin of [undefined, "http://evil.example"]) {
     const rejected = await server.inject({
       method: "POST",
@@ -327,7 +327,7 @@ test("生产 HTTP 边界只接受显式 runtime/v1 envelope 并返回当前工�
     },
   });
 
-  // 进度查询要过协议校验并落到会话查找上，而不是被当成未知请求类型拒绝。
+  // Progress queries pass protocol validation and reach session lookup.
   const unknownProgress = await server.inject({
     method: "POST",
     url: "/api/runtime/v1",
@@ -413,7 +413,7 @@ test("生产 HTTP 边界只接受显式 runtime/v1 envelope 并返回当前工�
   expect(invalidArchive.json()).toMatchObject({
     error: { code: "invalid_request" },
   });
-  expect(invalidArchive.body).toContain("zip");
+  expect(invalidArchive.body).toContain("ZIP");
 
   const unsupportedTree = await server.inject({
     method: "POST",

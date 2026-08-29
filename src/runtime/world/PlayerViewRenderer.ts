@@ -55,7 +55,10 @@ export class PlayerViewRenderer {
       return {
         views: [],
         diagnostics: [
-          { code: "invalid_control", message: "玩家视图控制文件格式无效" },
+          {
+            code: "invalid_control",
+            message: "The player-view control file has an invalid format",
+          },
         ],
       };
     }
@@ -70,7 +73,7 @@ export class PlayerViewRenderer {
       ) {
         diagnostics.push({
           code: "invalid_control",
-          message: "玩家视图声明无效",
+          message: "The player-view declaration is invalid",
         });
         continue;
       }
@@ -86,7 +89,7 @@ export class PlayerViewRenderer {
           diagnostics.push({
             code: "capacity_exceeded",
             viewId: view.id,
-            message: `界面容量已满：单个视图最多 ${maxItemsPerView} 个项目`,
+            message: `UI capacity reached: a view may contain at most ${maxItemsPerView} items`,
           });
           break;
         }
@@ -114,7 +117,8 @@ export class PlayerViewRenderer {
             code: "capacity_exceeded",
             viewId: view.id,
             itemId: resolved.item.id,
-            message: "界面容量已满：已在完整节点边界停止显示",
+            message:
+              "UI capacity reached: rendering stopped at a complete node boundary",
           });
           break;
         }
@@ -141,7 +145,7 @@ function resolveItem(
     return {
       ok: false,
       code: "invalid_control",
-      message: "玩家视图 item 格式无效",
+      message: "The player-view item has an invalid format",
     };
 
   const itemId = item.id;
@@ -175,7 +179,7 @@ function resolveItem(
       ok: false,
       code: "invalid_control",
       itemId,
-      message: "locator 格式无效",
+      message: "The locator has an invalid format",
     };
 
   const selected = snapshot.query({
@@ -190,7 +194,7 @@ function resolveItem(
       ok: false,
       code: "unresolved_selector",
       itemId,
-      message: "精确 selector 当前无法解析",
+      message: "The exact selector cannot currently be resolved",
     };
   return {
     ok: true,
@@ -235,13 +239,13 @@ function resolveWholeDocument(
     return {
       ok: false,
       code: "unresolved_selector",
-      message: "精确 selector 当前无法解析",
+      message: "The exact selector cannot currently be resolved",
     };
   if (expectedCodec !== undefined && read.codec !== expectedCodec)
     return {
       ok: false,
       code: "unresolved_selector",
-      message: "selector codec 与目标文档不匹配",
+      message: "The selector codec does not match the target document",
     };
   if (read.codec === "markdown")
     return readWholeMarkdown(snapshot, selector, handle, read);
@@ -267,7 +271,7 @@ function readWholeMarkdown(
       return {
         ok: false,
         code: "unresolved_selector",
-        message: "精确 selector 当前无法解析",
+        message: "The exact selector cannot currently be resolved",
       };
     const nextPage = snapshot.query({
       kind: "read_document",
@@ -280,7 +284,7 @@ function readWholeMarkdown(
       return {
         ok: false,
         code: "unresolved_selector",
-        message: "精确 selector 当前无法解析",
+        message: "The exact selector cannot currently be resolved",
       };
     chunks.push(nextPage.body);
     page = nextPage;
@@ -309,7 +313,7 @@ function selectYamlRoot(
     return {
       ok: false,
       code: "unresolved_selector",
-      message: "精确 selector 当前无法解析",
+      message: "The exact selector cannot currently be resolved",
     };
   return { ok: true, value: selectedNodeValue(selected) };
 }
@@ -333,30 +337,30 @@ function selectionFailure(
     return {
       ok: false,
       code: "capacity_exceeded",
-      message: "界面容量已满：选中节点超过查询容量",
+      message: "UI capacity reached: selected nodes exceed query capacity",
     };
   if (codes.has("document_not_found"))
     return {
       ok: false,
       code: "unresolved_selector",
-      message: `文档不存在：${handle}`,
+      message: `Document not found: ${handle}`,
     };
   if (codes.has("document_reference_invalid"))
     return {
       ok: false,
       code: "unresolved_selector",
-      message: "显式文档引用当前无法解析",
+      message: "The explicit document reference cannot currently be resolved",
     };
   if (codes.has("locator_invalid"))
     return {
       ok: false,
       code: "unresolved_selector",
-      message: "selector codec 与目标文档不匹配",
+      message: "The selector codec does not match the target document",
     };
   return {
     ok: false,
     code: "unresolved_selector",
-    message: "精确 selector 当前无法解析",
+    message: "The exact selector cannot currently be resolved",
   };
 }
 
@@ -378,7 +382,7 @@ function isWholeMarkdownLocator(value: unknown): boolean {
 }
 
 function projectPlayerValue(value: WorldDocumentValue, depth = 0): unknown {
-  if (depth > maxRenderedDepth) return "[界面深度已满]";
+  if (depth > maxRenderedDepth) return "[UI depth limit reached]";
   if (isWorldDocumentValueArray(value))
     return value.map((entry) => projectPlayerValue(entry, depth + 1));
   if (!isRecord(value)) return value;

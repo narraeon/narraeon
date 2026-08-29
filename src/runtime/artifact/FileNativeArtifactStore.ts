@@ -303,7 +303,7 @@ export class FileNativeArtifactStore implements ArtifactStore {
     const existing = await this.#readOperation(context.operationId);
     if (existing !== null && !sameContext(existing.context, context))
       throw new ArtifactStoreInvariantError(
-        "artifact operation 已绑定另一份冻结载荷",
+        "Artifact operation is bound to a different frozen payload",
       );
     // A direct orchestrator/store caller must not rely on a later UI read to
     // invalidate artifacts bound to the parent head. This call is safe on a
@@ -361,7 +361,7 @@ export class FileNativeArtifactStore implements ArtifactStore {
           ...priorOperation,
           artifactProjectionStatus: "superseded",
           extensionStatus: "superseded",
-          message: "该扩展已被新 operation 取代",
+          message: "This extension was superseded by a newer operation",
         };
         if (JSON.stringify(next) !== JSON.stringify(priorOperation))
           await this.#writeOperation(next);
@@ -380,11 +380,11 @@ export class FileNativeArtifactStore implements ArtifactStore {
     const operation = await this.#readOperation(context.operationId);
     if (operation === null)
       throw new ArtifactStoreInvariantError(
-        "artifact request attempt 缺少 operation checkpoint",
+        "Artifact request attempt is missing an operation checkpoint",
       );
     if (!sameContext(operation.context, context))
       throw new ArtifactStoreInvariantError(
-        "artifact request attempt 与冻结 operation 不匹配",
+        "Artifact request attempt does not match the frozen operation",
       );
     if (
       operation.status === "core_failed" ||
@@ -447,7 +447,7 @@ export class FileNativeArtifactStore implements ArtifactStore {
   ): Promise<void> {
     if (worldId.trim() === "" || head.trim() === "")
       throw new ArtifactStoreInvariantError(
-        "artifact head reconciliation 参数无效",
+        "Artifact head-reconciliation arguments are invalid",
       );
     const operations = await this.#operationsForWorld(worldId);
     const effective = await this.#effectiveRecords(worldId);
@@ -494,7 +494,7 @@ export class FileNativeArtifactStore implements ArtifactStore {
         ...(isOpenExtension(operation)
           ? {
               extensionStatus: "superseded" as const,
-              message: "该扩展已被新 head 取代",
+              message: "This extension was superseded by a newer head",
             }
           : {}),
       };
@@ -513,24 +513,24 @@ export class FileNativeArtifactStore implements ArtifactStore {
     assertRequestContext(input.context);
     const declaration = findDeclaration(input.context, input.output);
     if (declaration === null)
-      return artifactFailure(`未声明产物 output：${input.output}`);
+      return artifactFailure(`Undeclared artifact output: ${input.output}`);
     const payload = normalizePayload(declaration, input.payload);
     if (!payload.ok) return artifactFailure(payload.message);
     if (input.toolCallId.trim() === "")
-      return artifactFailure("tool-call ID 不能为空");
+      return artifactFailure("Tool-call ID cannot be empty");
     const operation = await this.#readOperation(input.context.operationId);
     if (operation === null)
       throw new ArtifactStoreInvariantError(
-        "artifact emit 缺少 operation checkpoint",
+        "Artifact emit is missing an operation checkpoint",
       );
     if (!sameContext(operation.context, input.context))
       throw new ArtifactStoreInvariantError(
-        "artifact emit 与冻结 operation 不匹配",
+        "Artifact emit does not match the frozen operation",
       );
     const currentAttempt = operation.requestAttempts[input.context.requestId];
     if (currentAttempt === undefined)
       throw new ArtifactStoreInvariantError(
-        "artifact emit request attempt 尚未登记",
+        "Artifact emit request attempt is not registered",
       );
     const fingerprint = payloadFingerprint(input.output, payload.value);
     const callFingerprint = artifactCallFingerprint(
@@ -544,7 +544,9 @@ export class FileNativeArtifactStore implements ArtifactStore {
     );
     if (previousByCall !== undefined) {
       if (previousByCall.callFingerprint !== callFingerprint)
-        return artifactFailure("同一 artifact tool-call ID 已绑定另一组参数");
+        return artifactFailure(
+          "The same artifact tool-call ID is bound to different arguments",
+        );
       await this.#repairRecordPublication(
         previousByCall,
         operation,
@@ -554,7 +556,7 @@ export class FileNativeArtifactStore implements ArtifactStore {
         ok: true,
         idempotent: true,
         recordId: previousByCall.recordId,
-        markdown: `# Runtime 产物已存在\n\noutput=${input.output}`,
+        markdown: `# Runtime artifact already exists\n\noutput=${input.output}`,
       };
     }
     const previousEvent = (await this.#events(input.context.worldId)).find(
@@ -563,7 +565,9 @@ export class FileNativeArtifactStore implements ArtifactStore {
         event.toolCallId === input.toolCallId,
     );
     if (previousEvent !== undefined)
-      return artifactFailure("同一 artifact tool-call ID 已绑定另一种工具调用");
+      return artifactFailure(
+        "The same artifact tool-call ID is bound to a different tool call",
+      );
     const staleAttempt = currentAttempt !== input.context.requestAttempt;
     const sameOutput = prior.filter(
       (record) =>
@@ -572,10 +576,10 @@ export class FileNativeArtifactStore implements ArtifactStore {
         record.output === input.output,
     );
     if (sameOutput.length >= declaration.maxEmits)
-      return artifactFailure(`产物 ${input.output} 已达到 maxEmits`);
+      return artifactFailure(`Artifact ${input.output} has reached maxEmits`);
     const payloadBytes = byteLength(payload.value, declaration.contentType);
     if (payloadBytes > maxPayloadBytes)
-      return artifactFailure("产物超过 4 MiB 上限");
+      return artifactFailure("Artifact exceeds the 4 MiB limit");
     const totalBytes = prior
       .filter(
         (record) =>
@@ -588,7 +592,9 @@ export class FileNativeArtifactStore implements ArtifactStore {
         0,
       );
     if (totalBytes + payloadBytes > input.context.maxArtifactBytes)
-      return artifactFailure("后置请求产物超过 maxArtifactBytes");
+      return artifactFailure(
+        "Follow-up request artifacts exceed maxArtifactBytes",
+      );
     const record = await this.#newRecord(
       input,
       declaration,
@@ -669,7 +675,7 @@ export class FileNativeArtifactStore implements ArtifactStore {
     return {
       ok: true,
       recordId: record.recordId,
-      markdown: `# Runtime 产物已接收\n\noutput=${input.output}`,
+      markdown: `# Runtime artifact accepted\n\noutput=${input.output}`,
     };
   }
 
@@ -743,22 +749,22 @@ export class FileNativeArtifactStore implements ArtifactStore {
     assertRequestContext(input.context);
     const declaration = findDeclaration(input.context, input.output);
     if (declaration === null)
-      return artifactFailure(`未声明产物 output：${input.output}`);
+      return artifactFailure(`Undeclared artifact output: ${input.output}`);
     if (input.toolCallId.trim() === "")
-      return artifactFailure("tool-call ID 不能为空");
+      return artifactFailure("Tool-call ID cannot be empty");
     const operation = await this.#readOperation(input.context.operationId);
     if (operation === null)
       throw new ArtifactStoreInvariantError(
-        "artifact clear 缺少 operation checkpoint",
+        "Artifact clear is missing an operation checkpoint",
       );
     if (!sameContext(operation.context, input.context))
       throw new ArtifactStoreInvariantError(
-        "artifact clear 与冻结 operation 不匹配",
+        "Artifact clear does not match the frozen operation",
       );
     const currentAttempt = operation.requestAttempts[input.context.requestId];
     if (currentAttempt === undefined)
       throw new ArtifactStoreInvariantError(
-        "artifact clear request attempt 尚未登记",
+        "Artifact clear request attempt is not registered",
       );
     const clearFingerprint = artifactCallFingerprint(
       "artifact_clear",
@@ -770,7 +776,9 @@ export class FileNativeArtifactStore implements ArtifactStore {
       (record) => record.toolCallId === input.toolCallId,
     );
     if (prior !== undefined)
-      return artifactFailure("同一 artifact tool-call ID 已绑定另一种工具调用");
+      return artifactFailure(
+        "The same artifact tool-call ID is bound to a different tool call",
+      );
     const priorCall = (await this.#events(input.context.worldId)).find(
       (event) =>
         event.operationId === input.context.operationId &&
@@ -778,11 +786,13 @@ export class FileNativeArtifactStore implements ArtifactStore {
     );
     if (priorCall !== undefined) {
       if (priorCall.callFingerprint !== clearFingerprint)
-        return artifactFailure("同一 artifact tool-call ID 已绑定另一组参数");
+        return artifactFailure(
+          "The same artifact tool-call ID is bound to different arguments",
+        );
       return {
         ok: true,
         idempotent: true,
-        markdown: `# Runtime 产物清除已确认\n\noutput=${input.output}`,
+        markdown: `# Runtime artifact clear confirmed\n\noutput=${input.output}`,
       };
     }
     const staleAttempt = currentAttempt !== input.context.requestAttempt;
@@ -808,7 +818,7 @@ export class FileNativeArtifactStore implements ArtifactStore {
       await this.#appendEventOnce(event);
       return {
         ok: true,
-        markdown: `# Runtime 产物清除已忽略\n\noutput=${input.output}`,
+        markdown: `# Runtime artifact clear ignored\n\noutput=${input.output}`,
       };
     }
     const event: ArtifactEvent = {
@@ -831,7 +841,7 @@ export class FileNativeArtifactStore implements ArtifactStore {
     await this.#appendEventOnce(event);
     return {
       ok: true,
-      markdown: `# Runtime 产物清除已确认\n\noutput=${input.output}`,
+      markdown: `# Runtime artifact clear confirmed\n\noutput=${input.output}`,
     };
   }
 
@@ -850,31 +860,31 @@ export class FileNativeArtifactStore implements ArtifactStore {
   ): Promise<void> {
     assertContext(context);
     if (head.trim() === "")
-      throw new ArtifactStoreInvariantError("核心提交 head 无效");
+      throw new ArtifactStoreInvariantError("Core commit head is invalid");
     const operation = await this.#readOperation(context.operationId);
     if (operation === null)
       throw new ArtifactStoreInvariantError(
-        "核心提交缺少 artifact operation checkpoint",
+        "Core commit is missing an artifact-operation checkpoint",
       );
     if (!sameContext(operation.context, context))
       throw new ArtifactStoreInvariantError(
-        "artifact operation 已绑定另一份冻结载荷",
+        "Artifact operation is bound to a different frozen payload",
       );
     if (operation.status === "completed") {
       if (operation.head !== head)
         throw new ArtifactStoreInvariantError(
-          "已完成 artifact operation 的核心 head 冲突",
+          "Completed artifact operation has a conflicting core head",
         );
       return;
     }
     if (operation.status === "core_failed")
       throw new ArtifactStoreInvariantError(
-        "核心失败的 artifact operation 不能再次提交",
+        "An artifact operation whose core failed cannot be committed again",
       );
     if (operation.status === "core_committed") {
       if (operation.head !== head)
         throw new ArtifactStoreInvariantError(
-          "已提交 artifact operation 的核心 head 冲突",
+          "Committed artifact operation has a conflicting core head",
         );
       await this.#activateCommittedRecords(operation, context, head);
       return;
@@ -883,7 +893,7 @@ export class FileNativeArtifactStore implements ArtifactStore {
       operation.status === "core_materialization_pending";
     if (recoveredFromMaterializationPending && operation.head !== head)
       throw new ArtifactStoreInvariantError(
-        "待物化 artifact operation 的核心 head 冲突",
+        "Artifact operation awaiting materialization has a conflicting core head",
       );
     await this.reconcileHead(context.worldId, head, context.operationId);
     const committed: ArtifactOperationFile = {
@@ -919,14 +929,16 @@ export class FileNativeArtifactStore implements ArtifactStore {
   ): Promise<ArtifactExtensionSummary> {
     const operation = await this.#readOperation(context.operationId);
     if (operation === null)
-      throw new ArtifactStoreInvariantError("待物化 artifact operation 不存在");
+      throw new ArtifactStoreInvariantError(
+        "Artifact operation awaiting materialization does not exist",
+      );
     if (!sameContext(operation.context, context))
       throw new ArtifactStoreInvariantError(
-        "待物化 artifact operation 与冻结 operation 不匹配",
+        "Artifact operation awaiting materialization does not match the frozen operation",
       );
     if (operation.status === "core_failed")
       throw new ArtifactStoreInvariantError(
-        "核心失败的 artifact operation 不能等待物化",
+        "An artifact operation whose core failed cannot await materialization",
       );
     if (
       operation.status === "core_committed" ||
@@ -938,7 +950,7 @@ export class FileNativeArtifactStore implements ArtifactStore {
       operation.head !== head
     )
       throw new ArtifactStoreInvariantError(
-        "待物化 artifact operation 的核心 head 冲突",
+        "Artifact operation awaiting materialization has a conflicting core head",
       );
     const pending: ArtifactOperationFile = {
       ...operation,
@@ -970,7 +982,7 @@ export class FileNativeArtifactStore implements ArtifactStore {
         continue;
       if (boundHead !== null && boundHead !== head)
         throw new ArtifactStoreInvariantError(
-          "artifact record 已绑定另一份核心 head",
+          "Artifact record is bound to a different core head",
         );
       if (boundHead !== head)
         await this.#appendRecordEvent(record, {
@@ -1033,11 +1045,11 @@ export class FileNativeArtifactStore implements ArtifactStore {
     const operation = await this.#readOperation(context.operationId);
     if (operation === null)
       throw new ArtifactStoreInvariantError(
-        "artifact extension 缺少 operation checkpoint",
+        "Artifact extension is missing an operation checkpoint",
       );
     if (!sameContext(operation.context, context))
       throw new ArtifactStoreInvariantError(
-        "artifact extension 与冻结 operation 不匹配",
+        "Artifact extension does not match the frozen operation",
       );
     if (
       operation.status !== "core_committed" ||
@@ -1080,7 +1092,7 @@ export class FileNativeArtifactStore implements ArtifactStore {
       return summary(operation);
     if (operation.status !== "core_committed")
       throw new ArtifactStoreInvariantError(
-        "核心尚未提交，不能完成 artifact extension",
+        "Artifact extension cannot complete before the core is committed",
       );
     const records = await this.#recordsForOperation(operationId);
     for (const record of records)
@@ -1147,7 +1159,7 @@ export class FileNativeArtifactStore implements ArtifactStore {
       return summary(operation);
     if (operation.status !== "core_committed")
       throw new ArtifactStoreInvariantError(
-        "核心尚未提交，不能失败 artifact extension",
+        "Artifact extension cannot fail before the core is committed",
       );
     const records = await this.#recordsForOperation(operationId);
     for (const record of records)
@@ -1215,7 +1227,7 @@ export class FileNativeArtifactStore implements ArtifactStore {
         operationId,
         status: "recovery_required",
         completedRequests: [],
-        message: "未找到可恢复的扩展 checkpoint",
+        message: "No recoverable extension checkpoint was found",
         coreCommitted: false,
       };
     if (operation.status === "running") return summary(operation);
@@ -1227,7 +1239,8 @@ export class FileNativeArtifactStore implements ArtifactStore {
     const next = {
       ...operation,
       extensionStatus: "recovery_required" as const,
-      message: "扩展派发状态不能安全重放；需要显式人工恢复原 request attempt",
+      message:
+        "Extension dispatch state cannot be replayed safely; the original request attempt requires explicit manual recovery",
     };
     await this.#writeOperation(next);
     return summary(next);
@@ -1473,11 +1486,11 @@ export class FileNativeArtifactStore implements ArtifactStore {
         assertRawRecord(parsed);
         if (name !== artifactSequenceFileName(parsed.sequence))
           throw new ArtifactStoreCorruptionError(
-            "artifact raw record 文件名与 sequence 不匹配",
+            "Artifact raw-record file name does not match its sequence",
           );
         if (parsed.worldId !== worldId)
           throw new ArtifactStoreCorruptionError(
-            "artifact raw record 与 world 路径不匹配",
+            "Artifact raw record does not match the world path",
           );
         raw.push(parsed);
       }
@@ -1492,9 +1505,13 @@ export class FileNativeArtifactStore implements ArtifactStore {
     const sequences = new Set<number>();
     for (const record of raw) {
       if (recordIds.has(record.recordId))
-        throw new ArtifactStoreCorruptionError("artifact raw record ID 重复");
+        throw new ArtifactStoreCorruptionError(
+          "Artifact raw-record ID is duplicated",
+        );
       if (sequences.has(record.sequence))
-        throw new ArtifactStoreCorruptionError("artifact world sequence 重复");
+        throw new ArtifactStoreCorruptionError(
+          "Artifact world sequence is duplicated",
+        );
       recordIds.add(record.recordId);
       sequences.add(record.sequence);
     }
@@ -1518,24 +1535,26 @@ export class FileNativeArtifactStore implements ArtifactStore {
           record.playPresetScriptsEnabled
       )
         throw new ArtifactStoreCorruptionError(
-          "artifact raw record 与 operation 身份不匹配",
+          "Artifact raw record does not match the operation identity",
         );
     }
     const events = await this.#events(worldId);
     for (const event of events) {
       if (sequences.has(event.sequence))
-        throw new ArtifactStoreCorruptionError("artifact world sequence 重复");
+        throw new ArtifactStoreCorruptionError(
+          "Artifact world sequence is duplicated",
+        );
       sequences.add(event.sequence);
       const eventOperation = operationStates.get(event.operationId);
       if (eventOperation === undefined)
         throw new ArtifactStoreCorruptionError(
-          "artifact projection event operation 不存在",
+          "Artifact projection-event operation does not exist",
         );
       if (event.recordId !== undefined) {
         const record = raw.find(({ recordId }) => recordId === event.recordId);
         if (record?.operationId !== event.operationId)
           throw new ArtifactStoreCorruptionError(
-            "artifact projection event 与 record 身份不匹配",
+            "Artifact projection event does not match the record identity",
           );
       }
       if (event.kind === "activate" && event.recordId !== undefined) {
@@ -1551,7 +1570,7 @@ export class FileNativeArtifactStore implements ArtifactStore {
           eventOperation.head !== event.head
         )
           throw new ArtifactStoreCorruptionError(
-            "artifact bind_head event 与 operation 核心 head 不匹配",
+            "Artifact bind_head event does not match the operation core head",
           );
         const current = state.get(event.recordId);
         if (current !== undefined) current.head = event.head ?? null;
@@ -1619,7 +1638,7 @@ export class FileNativeArtifactStore implements ArtifactStore {
         assertEvent(event);
         if (name !== artifactSequenceFileName(event.sequence))
           throw new ArtifactStoreCorruptionError(
-            "artifact projection event 文件名与 sequence 不匹配",
+            "Artifact projection-event file name does not match its sequence",
           );
         result.push(event);
       }
@@ -1659,10 +1678,12 @@ export class FileNativeArtifactStore implements ArtifactStore {
         assertOperation(operation);
         if (name !== `${identityHash(operation.context.operationId)}.json`)
           throw new ArtifactStoreCorruptionError(
-            "artifact operation 与文件路径身份不匹配",
+            "Artifact operation does not match the file-path identity",
           );
         if (byId.has(operation.context.operationId))
-          throw new ArtifactStoreCorruptionError("artifact operation ID 重复");
+          throw new ArtifactStoreCorruptionError(
+            "Artifact operation ID is duplicated",
+          );
         if (operation.context.worldId === worldId)
           byId.set(operation.context.operationId, structuredClone(operation));
       }
@@ -1691,7 +1712,7 @@ export class FileNativeArtifactStore implements ArtifactStore {
             name !== artifactSequenceFileName(value)
           )
             throw new ArtifactStoreCorruptionError(
-              "artifact sequence 文件名无效",
+              "Artifact sequence file name is invalid",
             );
           maximum = Math.max(maximum, value);
         }
@@ -1727,7 +1748,7 @@ export class FileNativeArtifactStore implements ArtifactStore {
       assertOperation(operation);
       if (operation.context.operationId !== operationId)
         throw new ArtifactStoreCorruptionError(
-          "artifact operation 与请求身份不匹配",
+          "Artifact operation does not match the request identity",
         );
       return operation;
     } catch (error: unknown) {
@@ -1825,7 +1846,7 @@ async function withArtifactWorldLock<T>(
     const handle = heartbeatHandle;
     if (handle === undefined)
       throw new ArtifactStoreInvariantError(
-        "artifact world lock heartbeat 尚未初始化",
+        "Artifact world-lock heartbeat is not initialized",
       );
     timer = setTimeout(() => {
       const now = new Date();
@@ -1887,7 +1908,7 @@ async function readArtifactLockOwner(
     !isNonEmptyString(value.processIdentity)
   )
     throw new ArtifactStoreCorruptionError(
-      "artifact world mutation lock owner 损坏",
+      "Artifact world-mutation lock owner is corrupt",
     );
   return value as unknown as ArtifactLockOwner;
 }
@@ -2037,7 +2058,7 @@ function parseArtifactJson<Value>(bytes: string, label: string): Value {
     return JSON.parse(bytes) as Value;
   } catch (error: unknown) {
     throw new ArtifactStoreCorruptionError(
-      `${label} JSON 损坏`,
+      `${label} JSON is corrupt`,
       error instanceof Error ? { cause: error } : undefined,
     );
   }
@@ -2077,19 +2098,19 @@ function normalizePayload(
     if (typeof input !== "string")
       return {
         ok: false,
-        message: `${declaration.name} 的 ${declaration.contentType} payload 必须是字符串`,
+        message: `${declaration.name} ${declaration.contentType} payload must be a string`,
       };
     return { ok: true, value: input };
   }
   if (!isJsonValue(input))
     return {
       ok: false,
-      message: "JSON artifact payload 必须是合法 JSON value",
+      message: "JSON artifact payload must be a valid JSON value",
     };
   try {
     JSON.stringify(input);
   } catch {
-    return { ok: false, message: "JSON artifact payload 无法序列化" };
+    return { ok: false, message: "JSON artifact payload cannot be serialized" };
   }
   const contract = validatePlayPresetArtifactPayload(
     declaration.payloadContract,
@@ -2184,7 +2205,7 @@ function sameEventIdentity(left: ArtifactEvent, right: ArtifactEvent): boolean {
 }
 
 function artifactFailure(message: string): ArtifactToolResult {
-  return { ok: false, markdown: `# Runtime 产物拒绝\n\n${message}` };
+  return { ok: false, markdown: `# Runtime artifact rejected\n\n${message}` };
 }
 
 function isOpenExtension(operation: ArtifactOperationFile): boolean {
@@ -2293,7 +2314,7 @@ function assertContext(context: ArtifactOperationContext): void {
     ])
   )
     throw new ArtifactStoreInvariantError(
-      "artifact operation context 结构无效",
+      "Artifact operation context has an invalid structure",
     );
   for (const [key, value] of Object.entries({
     worldId: context.worldId,
@@ -2303,10 +2324,10 @@ function assertContext(context: ArtifactOperationContext): void {
     playPresetRevision: context.playPresetRevision,
   }))
     if (typeof value !== "string" || value.trim() === "")
-      throw new ArtifactStoreInvariantError(`artifact ${key} 无效`);
+      throw new ArtifactStoreInvariantError(`Artifact ${key} is invalid`);
   if (typeof context.playPresetScriptsEnabled !== "boolean")
     throw new ArtifactStoreInvariantError(
-      "artifact playPresetScriptsEnabled 无效",
+      "Artifact playPresetScriptsEnabled is invalid",
     );
 }
 
@@ -2329,10 +2350,12 @@ function assertRequestContext(context: ArtifactRequestContext): void {
     context.requestId.trim() === "" ||
     !Number.isInteger(context.requestAttempt)
   )
-    throw new ArtifactStoreInvariantError("artifact request attempt 无效");
+    throw new ArtifactStoreInvariantError(
+      "Artifact request attempt is invalid",
+    );
   if (context.requestAttempt < 1 || context.maxArtifactBytes < 0)
     throw new ArtifactStoreInvariantError(
-      "artifact request attempt budget 无效",
+      "Artifact request-attempt budget is invalid",
     );
 }
 
@@ -2429,19 +2452,21 @@ function assertRawRecord(record: ArtifactRawRecord): void {
       : record.key !== undefined) ||
     record.status !== "pending"
   )
-    throw new ArtifactStoreCorruptionError("artifact raw record 损坏");
+    throw new ArtifactStoreCorruptionError("Artifact raw record is corrupt");
   if (!isJsonValue(record.payload))
-    throw new ArtifactStoreCorruptionError("artifact payload 不是 JSON value");
+    throw new ArtifactStoreCorruptionError(
+      "Artifact payload is not a JSON value",
+    );
   if (
     record.payloadFingerprint !==
     payloadFingerprint(record.output, record.payload)
   )
     throw new ArtifactStoreCorruptionError(
-      "artifact payload fingerprint 不匹配",
+      "Artifact payload fingerprint does not match",
     );
   if (record.recordFingerprint !== rawRecordFingerprint(record))
     throw new ArtifactStoreCorruptionError(
-      "artifact raw record fingerprint 不匹配",
+      "Artifact raw-record fingerprint does not match",
     );
 }
 
@@ -2511,7 +2536,9 @@ function assertOperation(operation: ArtifactOperationFile): void {
         attempt >= 1,
     )
   )
-    throw new ArtifactStoreCorruptionError("artifact operation state 损坏");
+    throw new ArtifactStoreCorruptionError(
+      "Artifact operation state is corrupt",
+    );
 }
 
 function validArtifactOperationState(
@@ -2570,7 +2597,9 @@ function assertEvent(event: ArtifactEvent): void {
     event.sequence < 1 ||
     !isNonEmptyString(event.operationId)
   )
-    throw new ArtifactStoreCorruptionError("artifact projection event 损坏");
+    throw new ArtifactStoreCorruptionError(
+      "Artifact projection event is corrupt",
+    );
   const requestPair =
     event.requestId === undefined && event.requestAttempt === undefined
       ? true
@@ -2587,7 +2616,9 @@ function assertEvent(event: ArtifactEvent): void {
       !isNonEmptyString(event.recordId) ||
       !requestPair
     )
-      throw new ArtifactStoreCorruptionError("artifact projection event 损坏");
+      throw new ArtifactStoreCorruptionError(
+        "Artifact projection event is corrupt",
+      );
     return;
   }
   if (event.kind === "bind_head") {
@@ -2603,7 +2634,9 @@ function assertEvent(event: ArtifactEvent): void {
       !isNonEmptyString(event.recordId) ||
       !isNonEmptyString(event.head)
     )
-      throw new ArtifactStoreCorruptionError("artifact projection event 损坏");
+      throw new ArtifactStoreCorruptionError(
+        "Artifact projection event is corrupt",
+      );
     return;
   }
   if (event.kind === "supersede") {
@@ -2624,7 +2657,9 @@ function assertEvent(event: ArtifactEvent): void {
       !isNonEmptyString(event.reason) ||
       !requestPair
     )
-      throw new ArtifactStoreCorruptionError("artifact projection event 损坏");
+      throw new ArtifactStoreCorruptionError(
+        "Artifact projection event is corrupt",
+      );
     return;
   }
   if (event.kind === "clear" || event.kind === "ignored_call") {
@@ -2658,10 +2693,14 @@ function assertEvent(event: ArtifactEvent): void {
       Number(event.requestAttempt) < 1 ||
       (event.key !== undefined && !isNonEmptyString(event.key))
     )
-      throw new ArtifactStoreCorruptionError("artifact projection event 损坏");
+      throw new ArtifactStoreCorruptionError(
+        "Artifact projection event is corrupt",
+      );
     return;
   }
-  throw new ArtifactStoreCorruptionError("artifact projection event 损坏");
+  throw new ArtifactStoreCorruptionError(
+    "Artifact projection event is corrupt",
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -1,17 +1,27 @@
-import { defaultNarrationPrompt } from "./default-play-prompts.ts";
-import { defaultPresetHostFiles } from "./default-preset-host.ts";
+import type { AppLocale } from "../protocol/appPreferences.ts";
+import { defaultNarrationPromptForLocale } from "./default-play-prompts.ts";
+import { defaultPresetHostFilesForLocale } from "./default-preset-host.ts";
 import {
-  defaultSettingImprovementPrompt,
+  defaultSettingImprovementPromptForLocale,
   defaultSettingImprovementPromptPath,
 } from "./default-setting-improvement-prompt.ts";
 
 /**
- * Ordinary, copyable player-view-backed panel assets.  The Runtime only
- * understands the generic playerViewPanels contract; this file is a sample
- * author preset, not a privileged status implementation.
+ * Ordinary, copyable player-view panel assets. Runtime understands only the
+ * generic playerViewPanels contract; this is not a privileged status system.
  */
-export const firstPartyStatusPanelPresetFiles: Record<string, string> = {
-  "preset.yaml": `format: narraeon.play-preset/v1
+export function firstPartyStatusPanelPresetFilesForLocale(
+  locale: AppLocale,
+): Record<string, string> {
+  const currentStatus = locale === "zh-CN" ? "当前状态" : "Current status";
+  const playerView = locale === "zh-CN" ? "玩家视图" : "Player view";
+  const emptyMessage =
+    locale === "zh-CN" ? "当前没有可显示内容。" : "Nothing to display yet.";
+  const emptyPrefix = locale === "zh-CN" ? "暂无项目：" : "No items: ";
+  const diagnosticsSuffix =
+    locale === "zh-CN" ? " 项视图诊断" : " player-view diagnostics";
+  return {
+    "preset.yaml": `format: narraeon.play-preset/v1
 name: status-panel-recommended
 callChain: call-chain.yaml
 settingImprovement:
@@ -33,31 +43,32 @@ playerViewPanels:
     assets:
       - assets/player-view-status.css
     config:
-      title: 当前状态
+      title: ${currentStatus}
       layout: stack
       theme: parchment
       empty: message
-      emptyMessage: 当前没有可显示内容。
+      emptyMessage: ${emptyMessage}
       groups: []
 extensions:
   - renderers/player-view-status.html
   - scripts/player-view-status.js
   - assets/player-view-status.css
 `,
-  "call-chain.yaml": `format: narraeon.play-call-chain/v1
+    "call-chain.yaml": `format: narraeon.play-call-chain/v1
 narrative:
   - markdown: prompts/narrate.md
 followups: []
 `,
-  ...defaultPresetHostFiles,
-  "prompts/narrate.md": defaultNarrationPrompt,
-  [defaultSettingImprovementPromptPath]: defaultSettingImprovementPrompt,
-  "renderers/player-view-status.html": `<!doctype html>
-<html><head><meta charset="utf-8"><title>当前状态</title></head><body>
-<main id="player-view-panel-root" aria-label="当前状态"></main>
+    ...defaultPresetHostFilesForLocale(locale),
+    "prompts/narrate.md": defaultNarrationPromptForLocale(locale),
+    [defaultSettingImprovementPromptPath]:
+      defaultSettingImprovementPromptForLocale(locale),
+    "renderers/player-view-status.html": `<!doctype html>
+<html><head><meta charset="utf-8"><title>${currentStatus}</title></head><body>
+<main id="player-view-panel-root" aria-label="${currentStatus}"></main>
 </body></html>
 `,
-  "scripts/player-view-status.js": `(function () {
+    "scripts/player-view-status.js": `(function () {
   var root = document.getElementById("player-view-panel-root");
   var styleSource = window.__NARRAEON_ASSETS__ && window.__NARRAEON_ASSETS__["assets/player-view-status.css"];
   if (typeof styleSource === "string") {
@@ -92,7 +103,7 @@ followups: []
     root.dataset.layout = config.layout || "stack";
     root.dataset.emptyState = config.empty || "message";
     var heading = document.createElement("h3");
-    heading.textContent = payload.title || payload.viewId || "玩家视图";
+    heading.textContent = payload.title || payload.viewId || ${JSON.stringify(playerView)};
     root.append(heading);
     var items = Array.isArray(payload.items) ? payload.items : [];
     if (items.length === 0) {
@@ -102,8 +113,8 @@ followups: []
           ? "player-view-empty player-view-empty-value"
           : "player-view-empty player-view-empty-message";
         empty.textContent = config.empty === "show"
-          ? "暂无项目：" + (config.emptyMessage || "当前没有可显示内容。")
-          : (config.emptyMessage || "当前没有可显示内容。");
+          ? ${JSON.stringify(emptyPrefix)} + (config.emptyMessage || ${JSON.stringify(emptyMessage)})
+          : (config.emptyMessage || ${JSON.stringify(emptyMessage)});
         root.append(empty);
       }
     } else {
@@ -144,7 +155,7 @@ followups: []
     if (diagnostics.length > 0) {
       var details = document.createElement("details");
       var summary = document.createElement("summary");
-      summary.textContent = diagnostics.length + " 项视图诊断";
+      summary.textContent = diagnostics.length + ${JSON.stringify(diagnosticsSuffix)};
       details.append(summary);
       var diagnosticList = document.createElement("ul");
       diagnostics.forEach(function (diagnostic) {
@@ -162,7 +173,7 @@ followups: []
   });
 }());
 `,
-  "assets/player-view-status.css": `body { margin: 0; font: 14px/1.45 system-ui, sans-serif; color: #202020; }
+    "assets/player-view-status.css": `body { margin: 0; font: 14px/1.45 system-ui, sans-serif; color: #202020; }
 #player-view-panel-root { display: grid; gap: .5rem; }
 #player-view-panel-root[data-theme="parchment"] { color: #4a382b; background: #fffaf1; padding: .75rem; border-radius: .65rem; }
 #player-view-panel-root dl { display: grid; gap: .45rem; margin: 0; }
@@ -173,4 +184,8 @@ followups: []
 #player-view-panel-root ul, #player-view-panel-root dl dl { margin: .25rem 0 0 1rem; padding-left: 1rem; }
 .player-view-empty { color: #6c6259; }
 `,
-};
+  };
+}
+
+export const firstPartyStatusPanelPresetFiles =
+  firstPartyStatusPanelPresetFilesForLocale("en");

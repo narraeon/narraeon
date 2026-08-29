@@ -17,18 +17,18 @@ afterEach(async () => {
   );
 });
 
-test("文档修正先读后 patch、预览并追加 correction commit", async () => {
+test("文档修正先读后 patch、Preview并追加 correction commit", async () => {
   const { root, store, corrections, worldId } = await world();
   const started = await corrections.begin({
     worldId,
     operationId: "correction-document",
     mode: "documents",
   });
-  const read = corrections.readDocument(started.candidateId, "@qinlong");
+  const read = corrections.readDocument(started.candidateId, "@alex");
   const patched = corrections.patchDocument({
     candidateId: started.candidateId,
     expectedVersion: started.version,
-    target: "@qinlong",
+    target: "@alex",
     expectedHash: read.hash,
     edits: [
       {
@@ -45,7 +45,7 @@ test("文档修正先读后 patch、预览并追加 correction commit", async ()
   });
   expect(preview.parentHead).toBe("genesis");
   expect(preview.diffs[0]).toMatchObject({
-    documentId: "character.qinlong",
+    documentId: "character.alex",
     beforeHash: read.hash,
   });
   expect(preview.diffs[0]?.after).toContain("蓝色训练外套");
@@ -70,7 +70,7 @@ test("文档修正先读后 patch、预览并追加 correction commit", async ()
   ]);
   expect(
     (await store.bindPlayCallChain(worldId)).files[
-      "state/characters/qinlong.yaml"
+      "state/characters/alex.yaml"
     ],
   ).toContain("蓝色训练外套");
   expect(
@@ -78,7 +78,7 @@ test("文档修正先读后 patch、预览并追加 correction commit", async ()
   ).toBe("蓝色训练外套");
   expect(
     (await store.readAuthorityEndpoint(worldId, "genesis")).state.find(
-      ({ path }) => path === "characters/qinlong.yaml",
+      ({ path }) => path === "characters/alex.yaml",
     )?.contents,
   ).toContain("白色背心");
 
@@ -87,7 +87,7 @@ test("文档修正先读后 patch、预览并追加 correction commit", async ()
     mode: "correction",
     parentHead: "genesis",
     head: "commit:1",
-    correctionTargets: ["character.qinlong"],
+    correctionTargets: ["character.alex"],
   });
   await expect(
     store.commitCorrection({
@@ -111,12 +111,12 @@ test("文档修正先读后 patch、预览并追加 correction commit", async ()
   const recovered = new FileNativeWorldStore(root);
   expect(
     (await recovered.bindPlayCallChain(worldId)).files[
-      "state/characters/qinlong.yaml"
+      "state/characters/alex.yaml"
     ],
   ).toContain("蓝色训练外套");
   expect(
     (await recovered.readAuthorityEndpoint(worldId, "genesis")).state.find(
-      ({ path }) => path === "characters/qinlong.yaml",
+      ({ path }) => path === "characters/alex.yaml",
     )?.contents,
   ).toContain("白色背心");
 });
@@ -128,13 +128,13 @@ test("文档修正通过同一 revision 身份与 hash 规则替换完整文档"
     operationId: "correction-replace-document",
     mode: "documents",
   });
-  const read = corrections.readDocument(started.candidateId, "@qinlong");
+  const read = corrections.readDocument(started.candidateId, "@alex");
   const contents = read.contents.replace("衣着: 白色背心", "衣着: 黑色风衣");
 
   const replaced = corrections.replaceDocument({
     candidateId: started.candidateId,
     expectedVersion: started.version,
-    target: "@qinlong",
+    target: "@alex",
     expectedHash: read.hash,
     contents,
   });
@@ -146,8 +146,8 @@ test("文档修正通过同一 revision 身份与 hash 规则替换完整文档"
 
   expect(preview.diffs).toEqual([
     expect.objectContaining({
-      documentId: "character.qinlong",
-      path: "characters/qinlong.yaml",
+      documentId: "character.alex",
+      path: "characters/alex.yaml",
       beforeHash: read.hash,
       before: read.contents,
       after: contents,
@@ -159,7 +159,7 @@ test("文档修正通过同一 revision 身份与 hash 规则替换完整文档"
   });
   expect(
     (await store.bindPlayCallChain(worldId)).files[
-      "state/characters/qinlong.yaml"
+      "state/characters/alex.yaml"
     ],
   ).toBe(contents);
 });
@@ -211,7 +211,7 @@ test("修正读取授权绑定当前 revision 快照，候选变化后必须重�
     operationId: "correction-stale-read",
     mode: "documents",
   });
-  const qinlong = corrections.readDocument(started.candidateId, "@qinlong");
+  const alex = corrections.readDocument(started.candidateId, "@alex");
   const staleLore = corrections.readDocument(
     started.candidateId,
     "@world-lore",
@@ -219,8 +219,8 @@ test("修正读取授权绑定当前 revision 快照，候选变化后必须重�
   const changed = corrections.patchDocument({
     candidateId: started.candidateId,
     expectedVersion: started.version,
-    target: "@qinlong",
-    expectedHash: qinlong.hash,
+    target: "@alex",
+    expectedHash: alex.hash,
     edits: [{ op: "replace", locator: { yaml: ["衣着"] }, value: "训练服" }],
   });
 
@@ -232,7 +232,7 @@ test("修正读取授权绑定当前 revision 快照，候选变化后必须重�
       expectedHash: staleLore.hash,
       edits: [{ op: "replace_body", markdown: "# 世界掌故\n\n新正文。" }],
     }),
-  ).toThrow(/必须先完整读取/u);
+  ).toThrow(/must be read in full first/u);
   const currentLore = corrections.readDocument(
     started.candidateId,
     "@world-lore",
@@ -254,13 +254,13 @@ test("修正 revision 机械失败不推进版本也不留下部分候选", asyn
     operationId: "correction-atomic-failure",
     mode: "documents",
   });
-  const read = corrections.readDocument(started.candidateId, "@qinlong");
+  const read = corrections.readDocument(started.candidateId, "@alex");
 
   expect(() =>
     corrections.patchDocument({
       candidateId: started.candidateId,
       expectedVersion: started.version,
-      target: "@qinlong",
+      target: "@alex",
       expectedHash: read.hash,
       edits: [
         {
@@ -270,7 +270,7 @@ test("修正 revision 机械失败不推进版本也不留下部分候选", asyn
         },
       ],
     }),
-  ).toThrow(/replace 目标必须存在/u);
+  ).toThrow(/YAML replace target must exist/u);
   expect(
     corrections.preview({
       candidateId: started.candidateId,
@@ -281,7 +281,7 @@ test("修正 revision 机械失败不推进版本也不留下部分候选", asyn
   await corrections.cancel(started.candidateId, started.version);
   expect(
     (await store.bindPlayCallChain(worldId)).files[
-      "state/characters/qinlong.yaml"
+      "state/characters/alex.yaml"
     ],
   ).toBe(read.contents);
 });
@@ -297,11 +297,11 @@ test("材料清单修正整份替换，不能夹带文档变化，取消不留�
     corrections.patchDocument({
       candidateId: started.candidateId,
       expectedVersion: started.version,
-      target: "@qinlong",
+      target: "@alex",
       expectedHash: "sha256:wrong",
       edits: [],
     }),
-  ).toThrow(/不能修改世界文档/u);
+  ).toThrow(/cannot modify world documents/u);
   for (const { value: invalid } of invalidMaterialLists)
     expect(() =>
       corrections.replaceMaterials({
@@ -310,11 +310,11 @@ test("材料清单修正整份替换，不能夹带文档变化，取消不留�
         nextMaterials: invalid as MaterialSelection[],
         prompt: prompt(),
       }),
-    ).toThrow(/材料清单.*schema/u);
+    ).toThrow(/additional-materials list schema/u);
   const replaced = corrections.replaceMaterials({
     candidateId: started.candidateId,
     expectedVersion: started.version,
-    nextMaterials: [{ kind: "document", document: "character.qinlong" }],
+    nextMaterials: [{ kind: "document", document: "character.alex" }],
     prompt: prompt(),
   });
   await corrections.cancel(started.candidateId, replaced.version);
@@ -333,11 +333,11 @@ test("陈旧候选版本、同世界并发候选和 operation 复用均被拒绝
     operationId: "correction-first",
     mode: "documents",
   });
-  const read = corrections.readDocument(first.candidateId, "@qinlong");
+  const read = corrections.readDocument(first.candidateId, "@alex");
   const changed = corrections.patchDocument({
     candidateId: first.candidateId,
     expectedVersion: first.version,
-    target: "@qinlong",
+    target: "@alex",
     expectedHash: read.hash,
     edits: [{ op: "replace", locator: { yaml: ["衣着"] }, value: "黑色外套" }],
   });
@@ -347,7 +347,7 @@ test("陈旧候选版本、同世界并发候选和 operation 复用均被拒绝
       expectedVersion: first.version,
       prompt: prompt(),
     }),
-  ).toThrow(/候选版本已变化/u);
+  ).toThrow(/candidate version has changed/u);
 
   await expect(
     new FileNativeContinuityCorrection(new FileNativeWorldStore(root)).begin({
@@ -397,7 +397,7 @@ test("陈旧候选版本、同世界并发候选和 operation 复用均被拒绝
       operationId: "correction-competing",
       mode: "materials",
     }),
-  ).rejects.toThrow(/不能复用/u);
+  ).rejects.toThrow(/cannot be reused/u);
 });
 
 test("候选初始化失败会释放 operation reservation", async () => {
@@ -465,7 +465,8 @@ test("并发使用同一 operation ID 只能原子保留一个修正候选", asy
       parentHead: string;
     }> => result.status === "fulfilled",
   );
-  if (fulfilled === undefined) throw new Error("缺少成功创建的修正候选");
+  if (fulfilled === undefined)
+    throw new Error("Expected one correction candidate to be created");
   await corrections.cancel(
     fulfilled.value.candidateId,
     fulfilled.value.version,
@@ -536,8 +537,8 @@ function files(): ContentTreeFile[] {
       contents: `$document:\n  id: situation.current\n  ref: current\n  title: 当前情境\n  summary: 当前局面。\n  aliases: []\n情况: 安静\n`,
     },
     {
-      path: "world/characters/qinlong.yaml",
-      contents: `$document:\n  id: character.qinlong\n  ref: qinlong\n  title: 秦龙\n  summary: 篮球队前锋。\n  aliases: []\n衣着: 白色背心\n`,
+      path: "world/characters/alex.yaml",
+      contents: `$document:\n  id: character.alex\n  ref: alex\n  title: Alex\n  summary: 篮球队前锋。\n  aliases: []\n衣着: 白色背心\n`,
     },
     {
       path: "world/rules/lore.md",
@@ -549,11 +550,12 @@ function files(): ContentTreeFile[] {
     },
     {
       path: "control/blocks/world.md",
-      contents: "# 世界规则\n\n持续结果写回自然所有者。\n",
+      contents:
+        "# World Rules\n\nWrite durable outcomes back to their natural owner.\n",
     },
     {
       path: "control/player-views.yaml",
-      contents: `format: narraeon.player-views/v1\nviews:\n  - id: status\n    title: 当前状态\n    items:\n      - id: clothes\n        label: 衣着\n        select: { document: character.qinlong, locator: { yaml: [衣着] } }\n`,
+      contents: `format: narraeon.player-views/v1\nviews:\n  - id: status\n    title: 当前状态\n    items:\n      - id: clothes\n        label: 衣着\n        select: { document: character.alex, locator: { yaml: [衣着] } }\n`,
     },
   ];
 }

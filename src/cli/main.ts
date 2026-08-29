@@ -21,7 +21,7 @@ try {
   });
   if (result.kind === "started") installGracefulShutdown(result.server);
 } catch (error: unknown) {
-  process.stderr.write(`Narraeon 启动失败：${errorMessage(error)}\n`);
+  process.stderr.write(`Narraeon failed to start: ${errorMessage(error)}\n`);
   if (error instanceof NarraeonCliUsageError)
     process.stderr.write(`\n${cliHelp}`);
   process.exitCode = 1;
@@ -33,7 +33,7 @@ function installGracefulShutdown(server: StoppableServer): void {
     if (closing) return;
     closing = true;
     void server.close().catch((error: unknown) => {
-      process.stderr.write(`Narraeon 停止失败：${errorMessage(error)}\n`);
+      process.stderr.write(`Narraeon failed to stop: ${errorMessage(error)}\n`);
       process.exitCode = 1;
     });
   };

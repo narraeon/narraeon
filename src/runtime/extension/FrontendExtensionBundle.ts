@@ -81,7 +81,7 @@ export function projectArtifactForFrontend(
   if (binding === null)
     return missingBundle(
       preset,
-      "冻结玩法预设 revision 不可用，不能用 current revision 冒充",
+      "The frozen play-preset revision is unavailable and cannot be replaced with the current revision",
       failure,
     );
   if (
@@ -90,7 +90,7 @@ export function projectArtifactForFrontend(
   )
     return missingBundle(
       preset,
-      "玩法预设绑定与 artifact 冻结身份不匹配",
+      "The play-preset binding does not match the artifact's frozen identity",
       "invalid_revision",
     );
 
@@ -102,7 +102,10 @@ export function projectArtifactForFrontend(
   );
   if (declaration === undefined)
     return {
-      ...missingBundle(preset, "冻结 revision 中找不到 artifact declaration"),
+      ...missingBundle(
+        preset,
+        "The artifact declaration is missing from the frozen revision",
+      ),
       status: "missing_declaration",
     };
 
@@ -110,7 +113,7 @@ export function projectArtifactForFrontend(
     return {
       ...missingBundle(
         preset,
-        "raw artifact contract 与冻结 declaration 不一致",
+        "The raw artifact contract does not match the frozen declaration",
         "invalid_revision",
       ),
       status: "invalid_revision",
@@ -125,7 +128,7 @@ export function projectArtifactForFrontend(
       ? parsePlayPresetRegexAsset(
           frozenBinding.files[declaration.regex] ??
             (() => {
-              throw new Error("冻结 regex 资源不存在");
+              throw new Error("The frozen regex resource does not exist");
             })(),
           declaration.regex,
         )
@@ -149,7 +152,11 @@ export function projectArtifactForFrontend(
     };
   } catch {
     return {
-      ...missingBundle(preset, "冻结扩展资源无效", "invalid_revision"),
+      ...missingBundle(
+        preset,
+        "The frozen extension resource is invalid",
+        "invalid_revision",
+      ),
       status: "invalid_revision",
     };
   }
@@ -174,7 +181,7 @@ export function projectPlayerViewPanelForFrontend(
     return {
       ...missingBundle(
         preset,
-        "当前玩法预设 revision 不可用，玩家视图面板不能套用其他 revision",
+        "The current play-preset revision is unavailable, and player-view panels cannot use another revision",
         failure,
       ),
       source: "player_view",
@@ -185,7 +192,7 @@ export function projectPlayerViewPanelForFrontend(
       ? parsePlayPresetRegexAsset(
           binding.files[panel.regex] ??
             (() => {
-              throw new Error("冻结 regex 资源不存在");
+              throw new Error("The frozen regex resource does not exist");
             })(),
           panel.regex,
         )
@@ -219,7 +226,9 @@ export function projectPlayerViewPanelForFrontend(
     return {
       ...missingBundle(
         preset,
-        error instanceof Error ? error.message : "冻结玩家视图面板资源无效",
+        error instanceof Error
+          ? error.message
+          : "The frozen player-view panel resource is invalid",
         "invalid_revision",
       ),
       source: "player_view",
@@ -282,16 +291,18 @@ function resolveRenderer(
     ? binding.files[declaration.renderer]
     : undefined;
   if (declaration.renderer !== undefined && rendererSource === undefined)
-    throw new Error("冻结 renderer 资源不存在");
+    throw new Error("The frozen renderer resource does not exist");
   const scriptSources = (declaration.scripts ?? []).map((path) => {
     const source = binding.files[path];
-    if (source === undefined) throw new Error("冻结 script 资源不存在");
+    if (source === undefined)
+      throw new Error("The frozen script resource does not exist");
     return source;
   });
   const scripts = binding.scriptsEnabled ? scriptSources : [];
   const assets = (declaration.assets ?? []).map((path) => {
     const source = binding.files[path];
-    if (source === undefined) throw new Error("冻结 asset 资源不存在");
+    if (source === undefined)
+      throw new Error("The frozen asset resource does not exist");
     // This is a frozen, author-visible logical asset id, not a machine path.
     // Keeping the preset-relative declaration key stable lets app renderers
     // refer to `window.__NARRAEON_ASSETS__[id]` across exchanges/revisions.
@@ -323,16 +334,18 @@ function resolvePlayerViewRenderer(
     ? binding.files[panel.renderer]
     : undefined;
   if (panel.renderer !== undefined && rendererSource === undefined)
-    throw new Error("冻结玩家视图 renderer 资源不存在");
+    throw new Error("The frozen player-view renderer resource does not exist");
   const scriptSources = (panel.scripts ?? []).map((path) => {
     const source = binding.files[path];
-    if (source === undefined) throw new Error("冻结玩家视图 script 资源不存在");
+    if (source === undefined)
+      throw new Error("The frozen player-view script resource does not exist");
     return source;
   });
   const scripts = binding.scriptsEnabled ? scriptSources : [];
   const assets = (panel.assets ?? []).map((path) => {
     const source = binding.files[path];
-    if (source === undefined) throw new Error("冻结玩家视图 asset 资源不存在");
+    if (source === undefined)
+      throw new Error("The frozen player-view asset resource does not exist");
     return { id: path, source };
   });
   if (

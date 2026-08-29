@@ -78,7 +78,7 @@ test("ScriptedModelHost 记录真实 exchange 并返回确定性 Provider 状态
       {
         outcome: "response",
         continuation: "available",
-        text: "继续。",
+        text: "Continue.",
         toolCalls: [],
       },
     ],
@@ -89,7 +89,7 @@ test("ScriptedModelHost 记录真实 exchange 并返回确定性 Provider 状态
 
   expect(host.binding()).toEqual(binding);
   expect(host.requests).toEqual([request]);
-  expect(response.text).toBe("继续。");
+  expect(response.text).toBe("Continue.");
   expect(response.providerState?.protocol).toBe("chat_completions");
   expect(host.requests[0]?.maxOutputTokens).toBe(request.maxOutputTokens);
 });
@@ -119,7 +119,7 @@ function exchange(): ModelHostExchange {
       modelId: binding.modelId,
       contextWindowTokens: binding.contextWindowTokens,
       maxOutputTokens: binding.maxOutputTokens,
-      playerInput: "我推开门。",
+      playerInput: "I push the door open.",
       playerInputPlacement: "bootstrap",
     }),
   );

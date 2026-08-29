@@ -56,7 +56,9 @@ test("保存多份模型配置、显式切换并且不向浏览器返回 API Key
 
   const selected = await store.select(firstId);
   expect(selected.activeConnectionId).toBe(firstId);
-  await expect(store.delete(firstId)).rejects.toThrow("请先切换到另一份");
+  await expect(store.delete(firstId)).rejects.toThrow(
+    "Switch to another model configuration before deleting the current one",
+  );
   await expect(store.bind()).resolves.toMatchObject({
     provider: "openai_responses",
     apiKey: "openai-secret",
@@ -134,7 +136,9 @@ test("模型列表使用当前端点的正确凭据且不把旧凭据带到已�
       provider: "chat_completions",
       baseUrl: "https://other.invalid/v1",
     }),
-  ).rejects.toThrow("重新填写 API Key");
+  ).rejects.toThrow(
+    "The endpoint or protocol changed; enter the API key again before fetching models",
+  );
   expect(fetch_).toHaveBeenCalledTimes(1);
 });
 
@@ -163,7 +167,7 @@ test("编辑配置时不会把旧端点凭据静默带到新端点", async () =>
       contextWindowTokens: 32_000,
       maxOutputTokens: 2_000,
     }),
-  ).rejects.toThrow("旧凭据不会转发到新端点");
+  ).rejects.toThrow("old credentials are never forwarded to a new endpoint");
   await expect(
     store.save({
       connectionId,
@@ -218,7 +222,7 @@ test("内置提供商不能静默绑定到另一端点，自定义端点仍可�
       contextWindowTokens: 32_000,
       maxOutputTokens: 2_000,
     }),
-  ).rejects.toThrow("请选择“自定义端点”");
+  ).rejects.toThrow("select Custom endpoint for a custom configuration");
   await expect(
     store.save({
       name: "显式自定义",
@@ -258,7 +262,7 @@ test("Prompt Preview 只采用 Runtime 当前配置，不信任浏览器提交�
   const preview = await runtime.handle({
     type: "prompt.preview",
     packageId,
-    playerInput: "检查绑定。",
+    playerInput: "Check the binding.",
     model: {
       provider: "chat_completions",
       modelId: "browser-forged-model",

@@ -1,3 +1,4 @@
+import { getWebLocale, uiText } from "./i18n.ts";
 import { useMemo, useState } from "react";
 
 import type { ContentTreeFile } from "../protocol/v1.ts";
@@ -155,63 +156,77 @@ export function ContentTreeEditor({
     <section className="panel-card content-tree-editor">
       <header className="section-heading-row content-tree-heading">
         <div>
-          <h3>内容包当前树</h3>
+          <h3>{uiText("内容包当前树")}</h3>
           <p className="field-note">
-            逐份编辑 YAML／Markdown；整批保存时才原子替换已保存版本。
+            {uiText(
+              "逐份编辑 YAML／Markdown；整批保存时才原子替换已保存版本。",
+            )}
           </p>
         </div>
-        <div className="content-tree-state" aria-label="内容包编辑状态">
+        <div
+          className="content-tree-state"
+          aria-label={uiText("内容包编辑状态")}
+        >
           <span className={`package-status ${status}`}>
-            已保存版本：{status === "usable" ? "可用" : "需要修复"}
+            {uiText("已保存版本：")}
+            {status === "usable" ? uiText("可用") : uiText("需要修复")}
           </span>
           <span className={dirty ? "draft-state dirty" : "draft-state"}>
-            {dirty ? "有未保存修改" : "草稿与已保存版本一致"}
+            {dirty ? uiText("有未保存修改") : uiText("草稿与已保存版本一致")}
           </span>
         </div>
       </header>
 
-      <dl className="content-tree-counts" aria-label="内容包文件统计">
+      <dl className="content-tree-counts" aria-label={uiText("内容包文件统计")}>
         <div>
-          <dt>全部文件</dt>
+          <dt>{uiText("全部文件")}</dt>
           <dd>{files.length}</dd>
         </div>
         <div>
-          <dt>开场白</dt>
+          <dt>{uiText("开场白")}</dt>
           <dd>{openingCount}</dd>
         </div>
         <div>
-          <dt>世界内容</dt>
+          <dt>{uiText("世界内容")}</dt>
           <dd>{worldCount}</dd>
         </div>
         <div>
-          <dt>控制文件</dt>
+          <dt>{uiText("控制文件")}</dt>
           <dd>{controlCount}</dd>
         </div>
       </dl>
 
       <div className="content-file-workspace">
-        <aside className="content-file-sidebar" aria-label="内容包文件">
+        <aside
+          className="content-file-sidebar"
+          aria-label={uiText("内容包文件")}
+        >
           <header>
             <div>
-              <span className="content-editor-kicker">当前草稿</span>
-              <h4>文件</h4>
+              <span className="content-editor-kicker">
+                {uiText("当前草稿")}
+              </span>
+              <h4>{uiText("文件")}</h4>
             </div>
             <span>
               {visibleFiles.length} / {files.length}
             </span>
           </header>
           <label className="content-file-filter">
-            筛选文件
+            {uiText("筛选文件")}
             <input
               type="search"
               value={query}
-              placeholder="人物、地点或文件名"
+              placeholder={uiText("人物、地点或文件名")}
               onChange={(event) => setQuery(event.target.value)}
             />
           </label>
-          <nav className="content-file-list" aria-label="内容包文件树">
+          <nav
+            className="content-file-list"
+            aria-label={uiText("内容包文件树")}
+          >
             {visibleFiles.length === 0 ? (
-              <p>没有匹配的文件。</p>
+              <p>{uiText("没有匹配的文件。")}</p>
             ) : (
               fileGroups.map(({ id, label }) => {
                 const groupFiles = groupedFiles.get(id) ?? [];
@@ -219,7 +234,7 @@ export function ContentTreeEditor({
                 return (
                   <section key={id} aria-labelledby={`content-group-${id}`}>
                     <h5 id={`content-group-${id}`}>
-                      {label}
+                      {uiText(label)}
                       <span>{groupFiles.length}</span>
                     </h5>
                     <ul>
@@ -236,7 +251,9 @@ export function ContentTreeEditor({
                                   ? "selected-content-file"
                                   : ""
                               }
-                              aria-label={`打开 ${file.path}`}
+                              aria-label={uiText("打开 {path}", {
+                                path: file.path,
+                              })}
                               aria-pressed={file.path === selectedPath}
                               title={file.path}
                               onClick={() => setRequestedPath(file.path)}
@@ -264,10 +281,10 @@ export function ContentTreeEditor({
             )}
           </nav>
           <details className="content-new-file">
-            <summary>新建文件</summary>
+            <summary>{uiText("新建文件")}</summary>
             <div>
               <label>
-                新文件路径
+                {uiText("新文件路径")}
                 <input
                   value={newPath}
                   placeholder="world/characters/name.yaml"
@@ -281,14 +298,16 @@ export function ContentTreeEditor({
                 <p role="alert">{newPathError}</p>
               )}
               <p>
-                新文件先加入本地草稿；Runtime 会在整批保存时检查路径与内容。
+                {uiText(
+                  "新文件先加入本地草稿；Runtime 会在整批保存时检查路径与内容。",
+                )}
               </p>
               <button
                 type="button"
                 disabled={newPathError.length > 0}
                 onClick={addFile}
               >
-                加入草稿
+                {uiText("加入草稿")}
               </button>
             </div>
           </details>
@@ -298,15 +317,17 @@ export function ContentTreeEditor({
           className="content-file-editor"
           aria-label={
             selectedFile === undefined
-              ? "文件编辑器"
-              : `文件编辑器：${selectedFile.path}`
+              ? uiText("文件编辑器")
+              : uiText("文件编辑器：{path}", { path: selectedFile.path })
           }
         >
           {selectedFile === undefined ? (
             <div className="content-editor-empty">
               <span aria-hidden="true">＋</span>
-              <h4>当前草稿没有文件</h4>
-              <p>从左侧新建第一份文件，或返回工作区导入已有内容包。</p>
+              <h4>{uiText("当前草稿没有文件")}</h4>
+              <p>
+                {uiText("从左侧新建第一份文件，或返回工作区导入已有内容包。")}
+              </p>
             </div>
           ) : (
             <>
@@ -322,12 +343,12 @@ export function ContentTreeEditor({
                   className="danger-button content-remove-file"
                   onClick={removeSelected}
                 >
-                  从草稿移除
+                  {uiText("从草稿移除")}
                 </button>
               </header>
               <div className="content-path-editor">
                 <label>
-                  文件路径
+                  {uiText("文件路径")}
                   <input
                     value={pathDraft}
                     onChange={(event) =>
@@ -347,15 +368,17 @@ export function ContentTreeEditor({
                   }
                   onClick={renameSelected}
                 >
-                  应用新路径
+                  {uiText("应用新路径")}
                 </button>
               </div>
               {pathError.length > 0 && <p role="alert">{pathError}</p>}
               {selectedFile.encoding === "base64" ? (
                 <div className="content-binary-note" role="note">
-                  <strong>二进制资源不在文本编辑器展开</strong>
+                  <strong>{uiText("二进制资源不在文本编辑器展开")}</strong>
                   <span>
-                    当前 Base64 内容会原样保留；如需替换资源，请重新导入内容包。
+                    {uiText(
+                      "当前 Base64 内容会原样保留；如需替换资源，请重新导入内容包。",
+                    )}
                   </span>
                 </div>
               ) : selectedFile.path === "control/frame.yaml" ? (
@@ -369,15 +392,17 @@ export function ContentTreeEditor({
               ) : (
                 <label className="content-source-editor">
                   <span>
-                    文件内容
-                    <small>Ctrl / ⌘ + S 整批保存</small>
+                    {uiText("文件内容")}
+                    <small>{uiText("Ctrl / ⌘ + S 整批保存")}</small>
                   </span>
                   <textarea
                     rows={27}
                     spellCheck={false}
                     value={selectedFile.contents}
                     placeholder={editorPlaceholder(selectedFile.path)}
-                    aria-label={`编辑 ${selectedFile.path}`}
+                    aria-label={uiText("编辑 {path}", {
+                      path: selectedFile.path,
+                    })}
                     onChange={(event) => replaceSelected(event.target.value)}
                     onKeyDown={(event) => {
                       if (
@@ -395,9 +420,14 @@ export function ContentTreeEditor({
                 <span>{fileKind(selectedFile)}</span>
                 {selectedFile.encoding === undefined && (
                   <>
-                    <span>{lineCount(selectedFile.contents)} 行</span>
                     <span>
-                      {selectedFile.contents.length.toLocaleString()} 字符
+                      {lineCount(selectedFile.contents)} {uiText("行")}
+                    </span>
+                    <span>
+                      {selectedFile.contents.length.toLocaleString(
+                        getWebLocale(),
+                      )}{" "}
+                      {uiText("字符")}
                     </span>
                   </>
                 )}
@@ -407,7 +437,9 @@ export function ContentTreeEditor({
                   className="content-selected-diagnostics"
                   aria-labelledby="selected-file-diagnostics-title"
                 >
-                  <h5 id="selected-file-diagnostics-title">已保存版本诊断</h5>
+                  <h5 id="selected-file-diagnostics-title">
+                    {uiText("已保存版本诊断")}
+                  </h5>
                   <ul>
                     {selectedIssues.map((issue, index) => (
                       <li key={`${issue.code}-${issue.path}-${index}`}>
@@ -424,8 +456,16 @@ export function ContentTreeEditor({
 
       {issues.length > 0 && (
         <details className="content-package-diagnostics" open={!dirty}>
-          <summary>已保存版本有 {issues.length} 项需要修复</summary>
-          {dirty && <p>诊断对应上一次保存；整批保存后会按新草稿重新检查。</p>}
+          <summary>
+            {uiText("已保存版本有 {count} 项需要修复", {
+              count: issues.length,
+            })}
+          </summary>
+          {dirty && (
+            <p>
+              {uiText("诊断对应上一次保存；整批保存后会按新草稿重新检查。")}
+            </p>
+          )}
           <ul>
             {issues.map((issue, index) => (
               <li key={`${issue.code}-${issue.path}-${index}`}>
@@ -440,12 +480,16 @@ export function ContentTreeEditor({
       <footer className="content-tree-actions">
         <div className="content-save-boundary">
           <div>
-            <strong>{dirty ? "草稿尚未保存" : "当前树已保存"}</strong>
-            <span>保存会把整棵草稿作为一个候选原子替换，不会逐文件提交。</span>
+            <strong>
+              {dirty ? uiText("草稿尚未保存") : uiText("当前树已保存")}
+            </strong>
+            <span>
+              {uiText("保存会把整棵草稿作为一个候选原子替换，不会逐文件提交。")}
+            </span>
           </div>
           <div className="button-row">
             <button type="button" disabled={!dirty} onClick={onSave}>
-              整批保存
+              {uiText("整批保存")}
             </button>
             <button
               type="button"
@@ -453,15 +497,17 @@ export function ContentTreeEditor({
               disabled={!dirty}
               onClick={onReset}
             >
-              放弃未保存修改
+              {uiText("放弃未保存修改")}
             </button>
           </div>
         </div>
         <details className="content-package-actions">
-          <summary>内容包操作</summary>
-          {dirty && <p>请先整批保存或放弃当前草稿，再操作已保存内容包。</p>}
+          <summary>{uiText("内容包操作")}</summary>
+          {dirty && (
+            <p>{uiText("请先整批保存或放弃当前草稿，再操作已保存内容包。")}</p>
+          )}
           <label className="content-package-rename">
-            <span>内容包名称</span>
+            <span>{uiText("内容包名称")}</span>
             <input
               value={nameDraft}
               disabled={dirty}
@@ -480,7 +526,7 @@ export function ContentTreeEditor({
               }
               onClick={() => onRename(nameDraft.trim())}
             >
-              重命名
+              {uiText("重命名")}
             </button>
             <button
               type="button"
@@ -488,7 +534,7 @@ export function ContentTreeEditor({
               disabled={dirty}
               onClick={onCopy}
             >
-              复制为新本地身份
+              {uiText("复制为新本地身份")}
             </button>
             <button
               type="button"
@@ -496,7 +542,7 @@ export function ContentTreeEditor({
               disabled={dirty}
               onClick={onExport}
             >
-              导出 ZIP
+              {uiText("导出 ZIP")}
             </button>
             <button
               type="button"
@@ -504,7 +550,7 @@ export function ContentTreeEditor({
               disabled={dirty}
               onClick={onDelete}
             >
-              删除内容包
+              {uiText("删除内容包")}
             </button>
           </div>
         </details>
@@ -519,30 +565,30 @@ function validateDraftPath(
   files: readonly ContentTreeFile[],
 ): string {
   const path = rawPath.trim();
-  if (path.length === 0) return "请输入文件路径。";
+  if (path.length === 0) return uiText("请输入文件路径。");
   if (
     path.startsWith("/") ||
     /^[a-z]:[\\/]/iu.test(path) ||
     path.includes("\\") ||
     path.includes("\0")
   )
-    return "路径必须是使用 / 的内容包相对路径。";
+    return uiText("路径必须是使用 / 的内容包相对路径。");
   const segments = path.split("/");
   if (
     segments.some(
       (segment) => segment.length === 0 || segment === "." || segment === "..",
     )
   )
-    return "路径不能包含空目录、. 或 ..。";
+    return uiText("路径不能包含空目录、. 或 ..。");
   if (/\.json$/iu.test(path))
-    return "当前文件原生 V1 不接受 manifest 或 JSON 内容文件。";
+    return uiText("当前文件原生 V1 不接受 manifest 或 JSON 内容文件。");
   const portablePath = path.normalize("NFC").toLocaleLowerCase("en-US");
   const duplicate = files.some(
     (file) =>
       file.path !== currentPath &&
       file.path.normalize("NFC").toLocaleLowerCase("en-US") === portablePath,
   );
-  if (duplicate) return "当前草稿中已经存在同一路径。";
+  if (duplicate) return uiText("当前草稿中已经存在同一路径。");
   return "";
 }
 
@@ -593,20 +639,27 @@ function fileKind(file: ContentTreeFile): string {
 }
 
 function describeFile(file: ContentTreeFile): string {
-  if (file.encoding === "base64") return "二进制资源";
-  if (file.path === "opening.md") return "玩家首次行动前看到的开场白";
-  if (file.path.startsWith("world/")) return "会复制为世界状态的设定文档";
-  if (file.path.startsWith("control/")) return "会复制为世界控制的作者资产";
-  return "内容包文本资源";
+  if (file.encoding === "base64") return uiText("二进制资源");
+  if (file.path === "opening.md") return uiText("玩家首次行动前看到的开场白");
+  if (file.path.startsWith("world/"))
+    return uiText("会复制为世界状态的设定文档");
+  if (file.path.startsWith("control/"))
+    return uiText("会复制为世界控制的作者资产");
+  return uiText("内容包文本资源");
 }
 
 function editorPlaceholder(path: string): string {
-  if (path === "opening.md") return "写下玩家首次行动前立即看到的局面……";
+  if (path === "opening.md")
+    return uiText("写下玩家首次行动前立即看到的局面……");
   if (path.startsWith("world/") && /\.ya?ml$/iu.test(path))
-    return "$document:\n  id: character.example\n  ref: example\n  title: 示例人物\n  summary: 一句话稳定简介。\n  aliases: []\n";
+    return uiText(
+      "$document:\n  id: character.example\n  ref: example\n  title: 示例人物\n  summary: 一句话稳定简介。\n  aliases: []\n",
+    );
   if (path.startsWith("world/") && /\.md$/iu.test(path))
-    return "---\n$document:\n  id: rule.example\n  ref: example\n  title: 示例规则\n  summary: 一句话稳定简介。\n  aliases: []\n---\n\n# 示例规则\n";
-  return "输入 UTF-8 文本内容……";
+    return uiText(
+      "---\n$document:\n  id: rule.example\n  ref: example\n  title: 示例规则\n  summary: 一句话稳定简介。\n  aliases: []\n---\n\n# 示例规则\n",
+    );
+  return uiText("输入 UTF-8 文本内容……");
 }
 
 function lineCount(contents: string): number {

@@ -27,7 +27,10 @@ try {
   const jsonStart = pack.stdout.lastIndexOf("\n[");
   const manifestJson = pack.stdout.slice(jsonStart === -1 ? 0 : jsonStart + 1);
   const [manifest] = JSON.parse(manifestJson);
-  assert(manifest !== undefined, "npm pack 没有返回产物清单");
+  assert(
+    manifest !== undefined,
+    "npm pack did not return an artifact manifest",
+  );
   const packagePaths = new Set(manifest.files.map(({ path }) => path));
   for (const required of [
     "LICENSE",
@@ -36,13 +39,13 @@ try {
     "dist/node/cli/main.js",
     "dist/web/index.html",
   ])
-    assert(packagePaths.has(required), `发布包缺少 ${required}`);
+    assert(packagePaths.has(required), `The package is missing ${required}`);
   for (const path of packagePaths)
     assert(
       !/^(?:src|tests|scripts|\.narraeon-data)(?:\/|$)|^\.env(?:\.|$)/u.test(
         path,
       ),
-      `发布包包含不应发布的路径：${path}`,
+      `The package contains an unexpected path: ${path}`,
     );
 
   const consumerRoot = join(temporaryRoot, "consumer");
@@ -64,19 +67,22 @@ try {
   );
   assert(
     installedPackage.bin?.narraeon === "dist/node/cli/main.js",
-    "安装包没有声明唯一 narraeon bin",
+    "The package does not declare exactly one narraeon bin",
   );
   await stat(join(consumerRoot, "node_modules", ".bin", "narraeon"));
   const installedCli = join(installedPackageRoot, "dist/node/cli/main.js");
   const firstLine = (await readFile(installedCli, "utf8")).split("\n", 1)[0];
-  assert(firstLine === "#!/usr/bin/env node", "发布版 CLI 缺少 Node shebang");
+  assert(
+    firstLine === "#!/usr/bin/env node",
+    "The packaged CLI lacks the Node shebang",
+  );
   const help = await execute(npmCommand, ["exec", "--", "narraeon", "--help"], {
     cwd: consumerRoot,
     env: { ...process.env, TMPDIR: "/tmp" },
   });
   assert(
     help.stdout.includes("narraeon web"),
-    "npm exec 无法调用 narraeon bin",
+    "npm exec could not invoke the narraeon bin",
   );
 
   const port = await availablePort();
@@ -102,10 +108,10 @@ try {
   await waitForHealth(child, port, () => output);
 
   const page = await fetch(`http://127.0.0.1:${String(port)}/`);
-  assert(page.ok, `发布包首页返回 ${String(page.status)}`);
+  assert(page.ok, `The packaged home page returned ${String(page.status)}`);
   assert(
     (await page.text()).includes('<div id="root"></div>'),
-    "发布包没有提供 Vite 页面",
+    "The package did not serve the Vite page",
   );
 
   const reused = await execute(
@@ -113,9 +119,12 @@ try {
     [installedCli, "web", "--port", String(port), "--no-open"],
     { cwd: consumerRoot, env: environment },
   );
-  assert(reused.stdout.includes("Narraeon 已在运行"), "第二次调用没有复用服务");
+  assert(
+    reused.stdout.includes("Narraeon is already running"),
+    "The second invocation did not reuse the service",
+  );
   process.stdout.write(
-    `发布包冒烟测试通过：${manifest.filename} · ${String(manifest.entryCount)} files · ${String(manifest.size)} bytes\n`,
+    `Package smoke test passed: ${manifest.filename} · ${String(manifest.entryCount)} files · ${String(manifest.size)} bytes\n`,
   );
 } finally {
   await stopChild(child);
@@ -134,7 +143,7 @@ function availablePort() {
       const address = server.address();
       if (address === null || typeof address === "string") {
         server.close();
-        rejectPort(new Error("无法分配发布包测试端口"));
+        rejectPort(new Error("Could not allocate a package-test port"));
         return;
       }
       server.close((error) => {
@@ -149,14 +158,14 @@ async function waitForHealth(process_, port, output) {
   const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
     if (process_.exitCode !== null)
-      throw new Error(`发布版 CLI 提前退出：${output()}`);
+      throw new Error(`The packaged CLI exited before startup: ${output()}`);
     try {
       const response = await fetch(`http://127.0.0.1:${String(port)}/health`);
       if (response.ok) {
         const payload = await response.json();
         assert(
           payload.protocol === "narraeon.runtime/v1",
-          "发布包 health 协议不匹配",
+          "The packaged health protocol does not match",
         );
         return;
       }
@@ -165,7 +174,9 @@ async function waitForHealth(process_, port, output) {
     }
     await delay(50);
   }
-  throw new Error(`等待发布版 CLI 启动超时：${output()}`);
+  throw new Error(
+    `Timed out waiting for the packaged CLI to start: ${output()}`,
+  );
 }
 
 async function stopChild(process_) {

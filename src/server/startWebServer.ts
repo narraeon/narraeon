@@ -39,6 +39,6 @@ export function parseWebPort(
   if (value === undefined) return defaultWebPort;
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65_535)
-    throw new Error(`${source} 不是有效端口：${value}`);
+    throw new Error(`${source} is not a valid port: ${value}`);
   return parsed;
 }

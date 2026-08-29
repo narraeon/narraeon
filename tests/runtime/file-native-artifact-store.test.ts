@@ -161,7 +161,7 @@ describe("FileNativeArtifactStore", () => {
         new FileNativeArtifactStore(root).readExtension(
           fixture.operation.operationId,
         ),
-      ).rejects.toThrow(/artifact operation state 损坏/u);
+      ).rejects.toThrow(/Artifact operation state is corrupt/u);
     }
   });
 
@@ -194,7 +194,7 @@ describe("FileNativeArtifactStore", () => {
     await writeFile(rawPath, JSON.stringify(raw), "utf8");
     await expect(
       new FileNativeArtifactStore(root).readDebug("world-1"),
-    ).rejects.toThrow(/artifact raw record 损坏/u);
+    ).rejects.toThrow(/Artifact raw record is corrupt/u);
 
     const cleanRoot = await mkdtemp(
       join(tmpdir(), "narraeon-artifact-strict-event-"),
@@ -223,7 +223,7 @@ describe("FileNativeArtifactStore", () => {
     await writeFile(eventPath, JSON.stringify(event), "utf8");
     await expect(
       new FileNativeArtifactStore(cleanRoot).readDebug("world-1"),
-    ).rejects.toThrow(/artifact projection event 损坏/u);
+    ).rejects.toThrow(/Artifact projection event is corrupt/u);
   });
 
   test("bind_head event 必须与冻结 operation 的核心 head 一致", async () => {
@@ -255,7 +255,7 @@ describe("FileNativeArtifactStore", () => {
     await writeFile(bindPath, JSON.stringify(bind), "utf8");
     await expect(
       new FileNativeArtifactStore(root).readActiveProjection("world-1"),
-    ).rejects.toThrow(/bind_head.*核心 head/u);
+    ).rejects.toThrow(/bind_head.*operation core head/u);
   });
 
   test("冷读取把 operation 与 raw/event 文件名绑定到内容身份", async () => {
@@ -276,7 +276,7 @@ describe("FileNativeArtifactStore", () => {
     );
     await expect(
       new FileNativeArtifactStore(root).readExtension(copiedOperationId),
-    ).rejects.toThrow(/operation.*身份/u);
+    ).rejects.toThrow(/operation.*identity/u);
 
     const worldHash = createHash("sha256")
       .update(fixture.operation.worldId, "utf8")
@@ -294,7 +294,7 @@ describe("FileNativeArtifactStore", () => {
     );
     await expect(
       new FileNativeArtifactStore(root).readDebug(fixture.operation.worldId),
-    ).rejects.toThrow(/sequence.*(?:路径|文件名)|(?:路径|文件名).*sequence/u);
+    ).rejects.toThrow(/file name.*sequence/u);
   });
 
   test("operation 缺失后 emit/clear fail loud 且不写 raw/event", async () => {
@@ -309,20 +309,22 @@ describe("FileNativeArtifactStore", () => {
         payload: "must not persist",
         toolCallId: "missing-emit",
       }),
-    ).rejects.toThrow(/缺少 operation checkpoint/u);
+    ).rejects.toThrow(/missing an operation checkpoint/u);
     await expect(
       fixture.store.clear({
         context: fixture.request,
         output: "panel",
         toolCallId: "missing-clear",
       }),
-    ).rejects.toThrow(/缺少 operation checkpoint/u);
+    ).rejects.toThrow(/missing an operation checkpoint/u);
     await expect(
       fixture.store.markCoreCommitted(fixture.operation, "commit:1"),
-    ).rejects.toThrow(/核心提交缺少 artifact operation checkpoint/u);
+    ).rejects.toThrow(
+      /Core commit is missing an artifact-operation checkpoint/u,
+    );
     await expect(
       fixture.store.beginExtension(fixture.operation),
-    ).rejects.toThrow(/extension 缺少 operation checkpoint/u);
+    ).rejects.toThrow(/extension is missing an operation checkpoint/u);
     const worldHash = createHash("sha256")
       .update(fixture.operation.worldId, "utf8")
       .digest("hex");
@@ -1342,7 +1344,9 @@ describe("FileNativeArtifactStore", () => {
     ).toEqual(expect.objectContaining({ status: "completed" }));
     await expect(
       current.store.markCoreCommitted(current.operation, "commit:2"),
-    ).rejects.toThrow("head 冲突");
+    ).rejects.toThrow(
+      "Completed artifact operation has a conflicting core head",
+    );
     await current.store.markCoreCommitted(current.operation, "commit:1");
     const cold = new FileNativeArtifactStore(root);
     expect(await cold.readExtension(current.operation.operationId)).toEqual(

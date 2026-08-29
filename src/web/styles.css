@@ -6252,6 +6252,26 @@ summary:focus-visible {
   gap: 0.65rem;
 }
 
+.workspace-locale-picker {
+  display: grid;
+  gap: 0.25rem;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.workspace-locale-picker select {
+  min-width: 8.5rem;
+  padding: 0.68rem 2rem 0.68rem 0.75rem;
+  border-color: var(--border);
+  border-radius: 0.75rem;
+  color: var(--text);
+  background: var(--panel);
+  font: inherit;
+  letter-spacing: 0;
+}
+
 .workspace-model-button {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);

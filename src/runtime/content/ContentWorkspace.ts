@@ -3,6 +3,10 @@ import { inflateRawSync } from "node:zlib";
 
 import { portableContentTreePathKey } from "../../protocol/contentTree.ts";
 import {
+  defaultAppLocale,
+  type AppLocale,
+} from "../../protocol/appPreferences.ts";
+import {
   defaultContentWorkspaceLimits,
   maximumPortableContentArchiveBytes,
   type ContentWorkspaceLimits,
@@ -74,6 +78,7 @@ export class ContentWorkspace {
   readonly #limits: ContentWorkspaceLimits;
   readonly #beforePortableContentExport:
     (() => void | Promise<void>) | undefined;
+  readonly #locale: () => AppLocale;
   #mutationTail: Promise<void> = Promise.resolve();
 
   constructor(
@@ -82,9 +87,11 @@ export class ContentWorkspace {
       limits?: Partial<ContentWorkspaceLimits>;
       currentTree?: Omit<CurrentTreeContentLibraryOptions, "limits">;
       beforePortableContentExport?: () => void | Promise<void>;
+      locale?: () => AppLocale;
     } = {},
   ) {
     this.#limits = normalizeLimits(options.limits);
+    this.#locale = options.locale ?? (() => defaultAppLocale);
     this.#beforePortableContentExport = options.beforePortableContentExport;
     this.#currentTreeLibrary = new CurrentTreeContentLibrary(dataRoot, {
       limits: this.#limits,
@@ -94,7 +101,7 @@ export class ContentWorkspace {
 
   createCurrentTreeContentPackage() {
     return this.#currentTreeLibrary.createPackage(
-      minimalFileNativeContentScaffold(),
+      minimalFileNativeContentScaffold(this.#locale()),
     );
   }
 
@@ -183,7 +190,7 @@ export class ContentWorkspace {
       const package_ = await this.#currentTreeLibrary.readPackage(localId);
       if (package_.status !== "usable") {
         throw new InvalidContentTreeError(
-          "只有完整有效的内容包才能导出；请先修复全部校验问题",
+          "Only a complete, valid content package can be exported; fix every validation issue first",
         );
       }
       await this.#beforePortableContentExport?.();
@@ -219,16 +226,19 @@ export class ContentWorkspace {
  * and extends the tree without first having to reconstruct hidden control
  * formats from diagnostics.
  */
-export function minimalFileNativeContentScaffold(): ContentTreeFile[] {
-  return [
-    {
-      path: "opening.md",
-      contents: `你站在一个尚待创作的世界入口，眼前的地点、人物与局面仍等待作者补全。风从没有名字的方向吹过来，一个还没有面孔的人正朝你走近，脚步声一下比一下清楚，最后停在你面前。
+export function minimalFileNativeContentScaffold(
+  locale: AppLocale = defaultAppLocale,
+): ContentTreeFile[] {
+  if (locale === "zh-CN") {
+    return [
+      {
+        path: "opening.md",
+        contents: `你站在一个尚待创作的世界入口，眼前的地点、人物与局面仍等待作者补全。风从没有名字的方向吹过来，一个还没有面孔的人正朝你走近，脚步声一下比一下清楚，最后停在你面前。
 `,
-    },
-    {
-      path: "world/current-situation.yaml",
-      contents: `$document:
+      },
+      {
+        path: "world/current-situation.yaml",
+        contents: `$document:
   id: situation.current
   ref: current-situation
   title: 待创作世界
@@ -239,27 +249,14 @@ export function minimalFileNativeContentScaffold(): ContentTreeFile[] {
 正在发生: 未设定
 短期连续性: []
 `,
-    },
-    {
-      path: "control/frame.yaml",
-      contents: `format: narraeon.world-frame/v1
-bindings:
-  currentSituation: situation.current
-instructions:
-  - markdown: blocks/world.md
-context:
-  - slot: { kind: catalog, directory: characters, maxEntries: 24, required: false }
-  - slot: { kind: catalog, directory: locations, maxEntries: 24, required: false }
-  - slot: { kind: catalog, directory: items, maxEntries: 24, required: false }
-  - slot: { kind: catalog, directory: rules, maxEntries: 24, required: false }
-  - slot: { kind: current_situation }
-  - slot: { kind: history, recent: 2 }
-  - slot: { kind: additional_materials }
-`,
-    },
-    {
-      path: "control/blocks/world.md",
-      contents: `<!-- 本文件只写这个世界特有的规则。通用裁决与状态维护判据由主持预设提供，每条游玩调用链都会加载，不要在这里重复。 -->
+      },
+      {
+        path: "control/frame.yaml",
+        contents: defaultWorldFrame,
+      },
+      {
+        path: "control/blocks/world.md",
+        contents: `<!-- 本文件只写这个世界特有的规则。通用裁决与状态维护判据由主持预设提供，每条游玩调用链都会加载，不要在这里重复。 -->
 
 # 本世界的题材与专属规则
 
@@ -275,15 +272,81 @@ context:
 
 （待创作：只有这个世界成立的语义规则，例如修为顺序、关系或货币的含义。若该规则已是独立世界文档，这里只需指出该去看哪一份。）
 `,
+      },
+      {
+        path: "control/player-views.yaml",
+        contents: defaultPlayerViews,
+      },
+    ];
+  }
+  return [
+    {
+      path: "opening.md",
+      contents: `You stand at the threshold of a world still waiting to be written. Its places, people, and immediate circumstances remain for the author to define. Wind blows from a direction without a name. A faceless figure approaches, each footstep clearer than the last, then stops before you.
+`,
+    },
+    {
+      path: "world/current-situation.yaml",
+      contents: `$document:
+  id: situation.current
+  ref: current-situation
+  title: Unwritten world
+  summary: The short-term situation happening now that must not be forgotten next.
+  aliases: []
+location: Not set
+present: []
+in_progress: Not set
+short_term_continuity: []
+`,
+    },
+    {
+      path: "control/frame.yaml",
+      contents: defaultWorldFrame,
+    },
+    {
+      path: "control/blocks/world.md",
+      contents: `<!-- Keep only rules unique to this world in this file. The host preset supplies general adjudication and state-maintenance criteria to every play call chain; do not repeat them here. -->
+
+# This world's genre and special rules
+
+## Genre and boundaries
+
+(To be written: this world's genre, tone, and what may or should not happen.)
+
+## World documents and where changes belong
+
+(To be written: which document types this world has and where each kind of result belongs. For example, "write changes to a character's rank in the Rank field of that character's document." Use the general criteria for anything not listed here.)
+
+## Special rules
+
+(To be written: semantic rules unique to this world, such as rank order or the meaning of relationships and currency. If a rule already has its own world document, only point to that document here.)
+`,
     },
     {
       path: "control/player-views.yaml",
-      contents: `format: narraeon.player-views/v1
-views: []
-`,
+      contents: defaultPlayerViews,
     },
   ];
 }
+
+const defaultWorldFrame = `format: narraeon.world-frame/v1
+bindings:
+  currentSituation: situation.current
+instructions:
+  - markdown: blocks/world.md
+context:
+  - slot: { kind: catalog, directory: characters, maxEntries: 24, required: false }
+  - slot: { kind: catalog, directory: locations, maxEntries: 24, required: false }
+  - slot: { kind: catalog, directory: items, maxEntries: 24, required: false }
+  - slot: { kind: catalog, directory: rules, maxEntries: 24, required: false }
+  - slot: { kind: current_situation }
+  - slot: { kind: history, recent: 2 }
+  - slot: { kind: additional_materials }
+`;
+
+const defaultPlayerViews = `format: narraeon.player-views/v1
+views: []
+`;
 
 function readPortableContentArchive(
   archive: Buffer,
@@ -294,7 +357,7 @@ function readPortableContentArchive(
   if (archive.byteLength > maximumPortableContentArchiveBytes(limits)) {
     throw new ContentPackageImportError(
       "limit_exceeded",
-      "zip 内容包自身大小超过安全上限",
+      "The ZIP content package exceeds the safe size limit",
     );
   }
   try {
@@ -307,7 +370,7 @@ function readPortableContentArchive(
     }
     throw new ContentPackageImportError(
       "invalid_zip",
-      "zip 内容包结构无效或已损坏",
+      "The ZIP content package is invalid or damaged",
     );
   }
 }
@@ -318,7 +381,7 @@ function parseZipArchive(
 ): PackageFile[] {
   const endRecords = findZipEndRecords(archive);
   if (endRecords.length !== 1) {
-    throw invalidZip("zip 包含 ambiguous EOCD");
+    throw invalidZip("The ZIP archive contains an ambiguous EOCD record");
   }
   return parseZipArchiveAtEnd(archive, limits, endRecords[0]!);
 }
@@ -383,7 +446,7 @@ function portableArchiveBaseName(displayName: string): string {
     .replaceAll(/[^\p{L}\p{N}._-]+/gu, "-")
     .replaceAll(/^[.-]+|[.-]+$/gu, "")
     .slice(0, 80);
-  return normalized.length === 0 ? "内容包" : normalized;
+  return normalized.length === 0 ? "content-package" : normalized;
 }
 
 function parseZipArchiveAtEnd(
@@ -398,18 +461,18 @@ function parseZipArchiveAtEnd(
   const centralBytes = archive.readUInt32LE(endOffset + 12);
   const centralOffset = archive.readUInt32LE(endOffset + 16);
   if (diskNumber !== 0 || centralDisk !== 0 || diskEntries !== totalEntries) {
-    throw invalidZip("不支持多磁盘 zip 内容包");
+    throw invalidZip("Multi-disk ZIP content packages are not supported");
   }
   if (
     totalEntries === 0xffff ||
     centralBytes === 0xffffffff ||
     centralOffset === 0xffffffff
   ) {
-    throw invalidZip("V1 不支持 ZIP64 内容包");
+    throw invalidZip("V1 does not support ZIP64 content packages");
   }
   const centralEnd = centralOffset + centralBytes;
   if (centralEnd > endOffset || centralEnd < centralOffset) {
-    throw invalidZip("zip 中央目录越界");
+    throw invalidZip("The ZIP central directory is out of bounds");
   }
 
   const files: PackageFile[] = [];
@@ -418,9 +481,14 @@ function parseZipArchiveAtEnd(
   let cursor = centralOffset;
   let totalBytes = 0;
   for (let index = 0; index < totalEntries; index += 1) {
-    assertBufferRange(archive, cursor, 46, "zip 中央目录条目不完整");
+    assertBufferRange(
+      archive,
+      cursor,
+      46,
+      "The ZIP central-directory entry is incomplete",
+    );
     if (archive.readUInt32LE(cursor) !== 0x02014b50) {
-      throw invalidZip("zip 中央目录签名无效");
+      throw invalidZip("The ZIP central-directory signature is invalid");
     }
     const flags = archive.readUInt16LE(cursor + 8);
     const method = archive.readUInt16LE(cursor + 10);
@@ -434,9 +502,16 @@ function parseZipArchiveAtEnd(
     const externalAttributes = archive.readUInt32LE(cursor + 38);
     const localOffset = archive.readUInt32LE(cursor + 42);
     const recordBytes = 46 + pathBytes + extraBytes + commentBytes;
-    assertBufferRange(archive, cursor, recordBytes, "zip 中央目录条目越界");
+    assertBufferRange(
+      archive,
+      cursor,
+      recordBytes,
+      "The ZIP central-directory entry is out of bounds",
+    );
     if (cursor + recordBytes > centralEnd) {
-      throw invalidZip("zip 中央目录条目超出声明范围");
+      throw invalidZip(
+        "A ZIP central-directory entry exceeds its declared range",
+      );
     }
     const rawPath = decodeZipPath(
       archive.subarray(cursor + 46, cursor + 46 + pathBytes),
@@ -446,18 +521,22 @@ function parseZipArchiveAtEnd(
     if (normalizedPathKeys.has(normalizedPathKey)) {
       throw new ContentPackageImportError(
         "unsafe_path",
-        `zip 内容包包含重复规范化路径：${normalizedPath}`,
+        `The ZIP content package contains a duplicate normalized path: ${normalizedPath}`,
       );
     }
     normalizedPathKeys.add(normalizedPathKey);
     if (startDisk !== 0) {
-      throw invalidZip("zip 条目引用了其他磁盘");
+      throw invalidZip("A ZIP entry refers to another disk");
     }
     if ((flags & 0x2041) !== 0) {
-      throw invalidZip("zip 内容包不得包含加密条目");
+      throw invalidZip(
+        "ZIP content packages must not contain encrypted entries",
+      );
     }
     if (method !== 0 && method !== 8) {
-      throw invalidZip(`zip 条目使用不支持的压缩方法：${normalizedPath}`);
+      throw invalidZip(
+        `A ZIP entry uses an unsupported compression method: ${normalizedPath}`,
+      );
     }
 
     const unixMode = externalAttributes >>> 16;
@@ -470,24 +549,26 @@ function parseZipArchiveAtEnd(
     if ((externalAttributes & 0x08) !== 0) {
       throw new ContentPackageImportError(
         "unsupported_file_type",
-        `zip 内容包不得包含卷标条目：${normalizedPath}`,
+        `ZIP content packages must not contain volume-label entries: ${normalizedPath}`,
       );
     }
     if (unixType === 0xa000) {
       throw new ContentPackageImportError(
         "unsupported_file_type",
-        `zip 内容包不得包含符号链接：${normalizedPath}`,
+        `ZIP content packages must not contain symbolic links: ${normalizedPath}`,
       );
     }
     if (unixType !== 0 && unixType !== 0x4000 && unixType !== 0x8000) {
       throw new ContentPackageImportError(
         "unsupported_file_type",
-        `zip 内容包不得包含特殊文件：${normalizedPath}`,
+        `ZIP content packages must not contain special files: ${normalizedPath}`,
       );
     }
     if (isDirectory) {
       if (compressedBytes !== 0 || uncompressedBytes !== 0) {
-        throw invalidZip(`zip 目录条目不得携带内容：${normalizedPath}`);
+        throw invalidZip(
+          `ZIP directory entries must not contain data: ${normalizedPath}`,
+        );
       }
       cursor += recordBytes;
       continue;
@@ -496,26 +577,31 @@ function parseZipArchiveAtEnd(
     if (files.length + 1 > limits.maxFiles) {
       throw new ContentPackageImportError(
         "limit_exceeded",
-        "内容包文件数量超过上限",
+        "The content package exceeds the file-count limit",
       );
     }
     if (uncompressedBytes > limits.maxFileBytes) {
       throw new ContentPackageImportError(
         "limit_exceeded",
-        `内容包单文件大小超过上限：${normalizedPath}`,
+        `A content-package file exceeds the size limit: ${normalizedPath}`,
       );
     }
     totalBytes += uncompressedBytes;
     if (totalBytes > limits.maxTotalBytes) {
       throw new ContentPackageImportError(
         "limit_exceeded",
-        "内容包总解包大小超过上限",
+        "The content package exceeds the total extracted-size limit",
       );
     }
 
-    assertBufferRange(archive, localOffset, 30, "zip 本地条目不完整");
+    assertBufferRange(
+      archive,
+      localOffset,
+      30,
+      "The ZIP local entry is incomplete",
+    );
     if (archive.readUInt32LE(localOffset) !== 0x04034b50) {
-      throw invalidZip("zip 本地条目签名无效");
+      throw invalidZip("The ZIP local-entry signature is invalid");
     }
     const localFlags = archive.readUInt16LE(localOffset + 6);
     const localMethod = archive.readUInt16LE(localOffset + 8);
@@ -527,10 +613,10 @@ function parseZipArchiveAtEnd(
       archive,
       localOffset,
       30 + localPathBytes + localExtraBytes + compressedBytes,
-      "zip 本地条目数据越界",
+      "The ZIP local-entry data is out of bounds",
     );
     if (dataEnd > centralOffset) {
-      throw invalidZip("zip 本地条目覆盖中央目录");
+      throw invalidZip("A ZIP local entry overlaps the central directory");
     }
     if (
       localFlags !== flags ||
@@ -539,21 +625,25 @@ function parseZipArchiveAtEnd(
         archive.subarray(localOffset + 30, localOffset + 30 + localPathBytes),
       ) !== rawPath
     ) {
-      throw invalidZip("zip 本地条目与中央目录不一致");
+      throw invalidZip(
+        "A ZIP local entry does not match the central directory",
+      );
     }
     if (
       dataRanges.some(
         (range) => localOffset < range.end && dataEnd > range.start,
       )
     ) {
-      throw invalidZip("zip 条目数据范围重叠");
+      throw invalidZip("ZIP entry data ranges overlap");
     }
     dataRanges.push({ start: localOffset, end: dataEnd });
     const compressed = archive.subarray(dataStart, dataEnd);
     let contents: Buffer;
     if (method === 0) {
       if (compressedBytes !== uncompressedBytes) {
-        throw invalidZip(`zip store 条目大小不一致：${normalizedPath}`);
+        throw invalidZip(
+          `A stored ZIP entry has an inconsistent size: ${normalizedPath}`,
+        );
       }
       contents = Buffer.from(compressed);
     } else {
@@ -562,20 +652,26 @@ function parseZipArchiveAtEnd(
           maxOutputLength: limits.maxFileBytes + 1,
         });
       } catch {
-        throw invalidZip(`zip deflate 条目无法解压：${normalizedPath}`);
+        throw invalidZip(
+          `A deflated ZIP entry cannot be decompressed: ${normalizedPath}`,
+        );
       }
     }
     if (
       contents.byteLength !== uncompressedBytes ||
       crc32(contents) !== expectedCrc
     ) {
-      throw invalidZip(`zip 条目大小或 CRC 校验失败：${normalizedPath}`);
+      throw invalidZip(
+        `A ZIP entry failed its size or CRC check: ${normalizedPath}`,
+      );
     }
     files.push({ path: normalizedPath, contents });
     cursor += recordBytes;
   }
   if (cursor !== centralEnd) {
-    throw invalidZip("zip 中央目录大小与条目不一致");
+    throw invalidZip(
+      "The ZIP central-directory size does not match its entries",
+    );
   }
   return files;
 }
@@ -583,7 +679,7 @@ function parseZipArchiveAtEnd(
 function findZipEndRecords(archive: Buffer): number[] {
   const minimumEndBytes = 22;
   if (archive.byteLength < minimumEndBytes) {
-    throw invalidZip("zip 文件过短");
+    throw invalidZip("The ZIP file is too short");
   }
   const earliest = Math.max(0, archive.byteLength - 65_557);
   const candidates: number[] = [];
@@ -604,7 +700,7 @@ function findZipEndRecords(archive: Buffer): number[] {
     }
   }
   if (candidates.length === 0) {
-    throw invalidZip("zip 缺少中央目录结束记录");
+    throw invalidZip("The ZIP file has no end-of-central-directory record");
   }
   return candidates;
 }
@@ -613,7 +709,7 @@ function decodeZipPath(contents: Buffer): string {
   try {
     return zipPathUtf8Decoder.decode(contents);
   } catch {
-    throw invalidZip("zip 条目路径不是合法 UTF-8");
+    throw invalidZip("A ZIP entry path is not valid UTF-8");
   }
 }
 
@@ -685,14 +781,14 @@ function normalizePackagePath(input: string): string {
   ) {
     throw new ContentPackageImportError(
       "unsafe_path",
-      "内容包路径必须是非空相对路径",
+      "A content-package path must be a non-empty relative path",
     );
   }
   const segments = input.replaceAll("\\", "/").split("/");
   if (segments.some((segment) => segment === "..")) {
     throw new ContentPackageImportError(
       "unsafe_path",
-      "内容包路径不得包含父级穿越",
+      "A content-package path must not traverse to a parent directory",
     );
   }
   const normalizedSegments = segments
@@ -701,7 +797,7 @@ function normalizePackagePath(input: string): string {
   if (normalizedSegments.length === 0) {
     throw new ContentPackageImportError(
       "unsafe_path",
-      "内容包路径规范化后不能为空",
+      "A normalized content-package path must not be empty",
     );
   }
   for (const segment of normalizedSegments) {
@@ -711,7 +807,7 @@ function normalizePackagePath(input: string): string {
   if (Buffer.byteLength(normalized, "utf8") > 4_096) {
     throw new ContentPackageImportError(
       "unsafe_path",
-      "内容包路径长度超过安全上限",
+      "A content-package path exceeds the safe length limit",
     );
   }
   return normalized;
@@ -726,7 +822,7 @@ function assertPortablePathSegment(segment: string): void {
   ) {
     throw new ContentPackageImportError(
       "unsafe_path",
-      "内容包路径包含跨平台不安全的名称",
+      "A content-package path contains a name that is unsafe across platforms",
     );
   }
   const baseName = segment.split(".", 1)[0]?.toUpperCase();
@@ -736,7 +832,7 @@ function assertPortablePathSegment(segment: string): void {
   ) {
     throw new ContentPackageImportError(
       "unsafe_path",
-      "内容包路径使用了保留设备名",
+      "A content-package path uses a reserved device name",
     );
   }
 }
@@ -759,11 +855,11 @@ function normalizeLimits(
   const limits = { ...defaultLimits, ...input };
   for (const [name, value] of Object.entries(limits)) {
     if (!Number.isSafeInteger(value) || value <= 0) {
-      throw new TypeError(`${name} 必须是正安全整数`);
+      throw new TypeError(`${name} must be a positive safe integer`);
     }
   }
   if (limits.maxFileBytes > limits.maxTotalBytes) {
-    throw new TypeError("maxFileBytes 不得超过 maxTotalBytes");
+    throw new TypeError("maxFileBytes must not exceed maxTotalBytes");
   }
   return limits;
 }

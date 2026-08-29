@@ -5,7 +5,7 @@ import { FileNativeWorldStore } from "../../../src/runtime/world/FileNativeWorld
 
 const [, , dataRoot, inputPath, crashEdge = "none"] = process.argv;
 if (dataRoot === undefined || inputPath === undefined) {
-  throw new Error("缺少文件原生世界创建进程测试参数");
+  throw new Error("Missing file-native world-creation process test arguments");
 }
 if (crashEdge !== "none") {
   process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_FILE_NATIVE_WORLD_CREATION_EDGE =

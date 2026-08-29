@@ -177,7 +177,7 @@ export class PlayCallChain {
     modelHost: ModelHost;
     observer?: PlayCallChainObserver;
   }): Promise<V1PlayCallChainView> {
-    validateIdentity(input.chainId, "调用链 ID");
+    validateIdentity(input.chainId, "call-chain ID");
     validateIdentity(input.exchangeId, "exchange ID");
     validatePlayerText(input.playerText);
 
@@ -195,7 +195,9 @@ export class PlayCallChain {
     const active =
       activeId === undefined ? undefined : this.#active.get(activeId);
     if (active?.status === "running")
-      throw new PlayCallChainError("这个世界的模型请求仍在进行。");
+      throw new PlayCallChainError(
+        "A model request is still running for this world.",
+      );
 
     const binding = await this.#worlds.bindPlayCallChain(input.worldId);
     const documents = new FileNativePlayDocuments(binding.files);
@@ -298,11 +300,11 @@ export class PlayCallChain {
     await this.#assertCurrentHead(session);
     if (input.playerText.trim().length === 0) {
       if (session.status === "running")
-        throw new PlayCallChainError("模型请求仍在进行。");
+        throw new PlayCallChainError("A model request is still running.");
       if (session.status === "interrupted") {
         if (!session.canRetry || session.lastRequest === null)
           throw new PlayCallChainError(
-            "调用链处理失败，当前没有可继续的模型上下文。",
+            "Call-chain processing failed, and there is no model context to continue.",
           );
         return this.#dispatch(
           session,
@@ -333,8 +335,8 @@ export class PlayCallChain {
     if (session.status !== "ready")
       throw new PlayCallChainError(
         session.canRetry
-          ? "调用链存在未完整返回的模型请求；请清空输入后追加续写，或使用全新上下文。"
-          : "调用链已中断；请使用全新上下文。",
+          ? "The call chain has an incomplete model response; clear the input and append a continuation, or use a fresh context."
+          : "The call chain was interrupted; use a fresh context.",
       );
     return this.#submitPlayer(
       session,
@@ -363,8 +365,8 @@ export class PlayCallChain {
       if (streaming !== undefined) streaming.status = "interrupted";
       const canRetry = persisted.lastRequest !== null;
       const message = canRetry
-        ? "服务在模型请求完成前中断；可以原样重发该请求。"
-        : "服务在模型请求派发前中断；请使用全新上下文。";
+        ? "The service stopped before the model request completed; the same request can be retried."
+        : "The service stopped before dispatching the model request; use a fresh context.";
       persisted.events.push({
         id: persisted.nextEventId++,
         kind: "failure",
@@ -425,25 +427,27 @@ export class PlayCallChain {
     worldId: string;
     playCallChain: V1PlayCallChainView;
   }> {
-    validateIdentity(input.operationId, "时间线修订 operation ID");
-    validateIdentity(input.worldId, "世界 ID");
-    validateIdentity(input.chainId, "调用链 ID");
-    validateIdentity(input.replacementExchangeId, "修改稿 exchange ID");
+    validateIdentity(input.operationId, "timeline-revision operation ID");
+    validateIdentity(input.worldId, "world ID");
+    validateIdentity(input.chainId, "call-chain ID");
+    validateIdentity(input.replacementExchangeId, "replacement exchange ID");
     validatePlayerText(input.replacementText);
     if (!Number.isSafeInteger(input.eventId) || input.eventId < 1)
-      throw new PlayCallChainError("玩家事件 ID 无效。");
+      throw new PlayCallChainError("The player-event ID is invalid.");
 
     const activeId = this.#worldChains.get(input.worldId);
     const active =
       activeId === undefined ? undefined : this.#active.get(activeId);
     if (active?.status === "running")
       throw new PlayCallChainError(
-        "模型请求仍在进行；返回后才能修改历史提交。",
+        "A model request is still running; wait for it to return before revising committed history.",
       );
 
     const source = await this.#readPersisted(input.worldId);
     if (source === null)
-      throw new PlayCallChainError("当前世界没有可修改的模型调用链。");
+      throw new PlayCallChainError(
+        "The current world has no model call chain to revise.",
+      );
     const sourceContexts = persistedContexts(source);
     const appliedEvent = sourceContexts
       .flatMap(({ events }) => events)
@@ -460,7 +464,7 @@ export class PlayCallChain {
     if (appliedEvent !== undefined) {
       if (appliedEvent.text !== input.replacementText)
         throw new PlayCallChainError(
-          "同一修改稿 exchange ID 已绑定另一份玩家原文。",
+          "The same replacement exchange ID is already bound to different player text.",
         );
       const authority = await this.#worlds.readAuthorityHistory(input.worldId);
       const commit = authority.commits.find(
@@ -470,7 +474,9 @@ export class PlayCallChain {
         commit?.operationId !== input.operationId ||
         commit.mode !== "timeline_revision"
       )
-        throw new PlayCallChainError("修改稿 exchange ID 已由另一项提交占用。");
+        throw new PlayCallChainError(
+          "The replacement exchange ID is already used by another commit.",
+        );
       return {
         outcome: "revised",
         worldId: input.worldId,
@@ -481,7 +487,9 @@ export class PlayCallChain {
       ({ chainId }) => chainId === input.chainId,
     );
     if (selectedContextIndex < 0)
-      throw new PlayCallChainError("要修改的模型上下文不存在。");
+      throw new PlayCallChainError(
+        "The model context to revise does not exist.",
+      );
     const sourceContext = sourceContexts[selectedContextIndex]!;
     const selectedEventIndex = sourceContext.events.findIndex(
       (event) => event.id === input.eventId,
@@ -492,7 +500,9 @@ export class PlayCallChain {
       selectedEvent?.kind !== "player" ||
       selectedEvent.committedHead === undefined
     )
-      throw new PlayCallChainError("所选事件不是已提交的玩家消息。");
+      throw new PlayCallChainError(
+        "The selected event is not a committed player message.",
+      );
 
     return this.#applyPlayerRevision({
       request: input,
@@ -590,7 +600,7 @@ export class PlayCallChain {
     ]);
     if (binding.parentHead !== outcome.head)
       throw new PlayCallChainError(
-        "时间线修订已提交但当前世界物化尚未追上新端点。",
+        "The timeline revision was committed, but current-world materialization has not reached the new endpoint.",
       );
     const documents = restorePlayDocuments(
       binding.files,
@@ -690,7 +700,7 @@ export class PlayCallChain {
       (await this.#worlds.currentHead(input.targetWorldId)) !== input.sourceHead
     )
       throw new PlayCallChainError(
-        "分叉世界 Authority 与所选历史端点不一致，不能写入调用链。",
+        "The forked world's Authority does not match the selected history endpoint, so the call chain cannot be written.",
       );
 
     const [baseline, selected] = await Promise.all([
@@ -789,7 +799,9 @@ export class PlayCallChain {
     const active =
       activeId === undefined ? undefined : this.#active.get(activeId);
     if (active?.status === "running")
-      throw new PlayCallChainError("模型请求仍在进行；返回后才能删除世界。");
+      throw new PlayCallChainError(
+        "A model request is still running; wait for it to return before deleting the world.",
+      );
     if (activeId !== undefined) this.#active.delete(activeId);
     this.#worldChains.delete(worldId);
   }
@@ -805,7 +817,9 @@ export class PlayCallChain {
     if (duplicatePlayerExchange(session, exchangeId, playerText, context))
       return projectView(session);
     if (session.status === "running")
-      throw new PlayCallChainError("调用链正在等待模型返回。");
+      throw new PlayCallChainError(
+        "The call chain is waiting for the model to return.",
+      );
 
     session.status = "running";
     session.lastFailure = null;
@@ -818,7 +832,9 @@ export class PlayCallChain {
       });
     } catch (error: unknown) {
       const message =
-        error instanceof Error ? error.message : "玩家原文写入失败。";
+        error instanceof Error
+          ? error.message
+          : "Failed to write the original player text.";
       session.events.push({
         id: session.nextEventId++,
         kind: "failure",
@@ -898,7 +914,9 @@ export class PlayCallChain {
       } catch (error: unknown) {
         event.status = "interrupted";
         const message =
-          error instanceof Error ? error.message : "模型请求中断。";
+          error instanceof Error
+            ? error.message
+            : "The model request was interrupted.";
         session.events.push({
           id: session.nextEventId++,
           kind: "failure",
@@ -967,7 +985,7 @@ export class PlayCallChain {
             failures: [
               {
                 kind: "tool_execution",
-                message: "AI 调用的 Runtime 工具未被接受。",
+                message: "A Runtime tool call from the model was rejected.",
                 details: {
                   calls: failedTools.map(({ call, result, replayed }) => ({
                     id: call.id,
@@ -1011,8 +1029,8 @@ export class PlayCallChain {
           const markdown =
             candidateWrite.changed &&
             committedWriteRefs.has(candidateWrite.shortRef)
-              ? `@${candidateWrite.shortRef} 写入成功`
-              : `@${candidateWrite.shortRef} 无变化`;
+              ? `@${candidateWrite.shortRef} write succeeded`
+              : `@${candidateWrite.shortRef} unchanged`;
           item.result.markdown = markdown;
           delete item.result.candidateWrite;
           item.event.markdown = markdown;
@@ -1038,7 +1056,8 @@ export class PlayCallChain {
 
         if (calls.length === 0) {
           if (!visibleText) {
-            const message = "模型没有返回文本或完整工具调用。";
+            const message =
+              "The model returned neither text nor a complete tool call.";
             if (response.diagnostics !== undefined)
               await this.#failureLog?.recordFailure({
                 exchange: response.diagnostics,
@@ -1068,7 +1087,8 @@ export class PlayCallChain {
           if (response.diagnostics !== undefined)
             await this.#failureLog?.resolve({
               exchange: response.diagnostics,
-              message: "游玩调用链已在后续模型交换中恢复并完整结束。",
+              message:
+                "The play call chain recovered during a later model exchange and completed.",
               details: { parentHead: session.parentHead },
             });
           await this.#runFollowups(session, modelHost, observer);
@@ -1085,7 +1105,9 @@ export class PlayCallChain {
         attempt = 1;
       } catch (error: unknown) {
         const message =
-          error instanceof Error ? error.message : "调用链处理失败。";
+          error instanceof Error
+            ? error.message
+            : "Call-chain processing failed.";
         if (response.diagnostics !== undefined)
           await this.#failureLog?.recordFailure({
             exchange: response.diagnostics,
@@ -1177,8 +1199,8 @@ export class PlayCallChain {
         kind: "failure",
         message:
           error instanceof Error
-            ? `后置请求失败：${error.message}`
-            : "后置请求失败。",
+            ? `Follow-up request failed: ${error.message}`
+            : "The follow-up request failed.",
       });
       touch(session);
     }
@@ -1215,22 +1237,26 @@ export class PlayCallChain {
     worldId: string,
     chainId: string,
   ): Promise<PlayCallChainSession> {
-    validateIdentity(chainId, "调用链 ID");
+    validateIdentity(chainId, "call-chain ID");
     const active = this.#active.get(chainId);
     if (active !== undefined) {
       if (active.worldId !== worldId)
-        throw new PlayCallChainError("调用链不属于这个世界。");
+        throw new PlayCallChainError(
+          "The call chain does not belong to this world.",
+        );
       return active;
     }
     const persisted = await this.#readPersisted(worldId);
     if (persisted?.chainId !== chainId)
-      throw new PlayCallChainError("调用链不存在；请从最新世界状态开始。");
+      throw new PlayCallChainError(
+        "The call chain does not exist; start from the latest world state.",
+      );
     if (persisted.status === "running") {
       persisted.status = "interrupted";
       persisted.canRetry = persisted.lastRequest !== null;
       persisted.lastFailure = persisted.canRetry
-        ? "服务在模型请求完成前中断；可以原样重发该请求。"
-        : "服务在模型请求派发前中断；请使用全新上下文。";
+        ? "The service stopped before the model request completed; the same request can be retried."
+        : "The service stopped before dispatching the model request; use a fresh context.";
       const streaming = persisted.events.findLast(
         (
           event,
@@ -1247,7 +1273,7 @@ export class PlayCallChain {
     const binding = await this.#worlds.bindPlayCallChain(worldId);
     if (binding.parentHead !== persisted.parentHead)
       throw new PlayCallChainError(
-        "调用链记录与当前世界端点不同；请使用全新上下文。",
+        "The call-chain record differs from the current world endpoint; use a fresh context.",
       );
     const documents = restorePlayDocuments(
       binding.files,
@@ -1281,7 +1307,7 @@ export class PlayCallChain {
       (await this.#worlds.currentHead(session.worldId)) !== session.parentHead
     )
       throw new PlayCallChainError(
-        "当前世界已由另一项操作推进；请使用全新上下文。",
+        "Another operation has advanced the current world; use a fresh context.",
       );
   }
 
@@ -1364,13 +1390,13 @@ function prepareTool(
             ok: false,
             failureKind: "protocol",
             markdown:
-              "# Runtime 工具拒绝\n\n同一 tool-call ID 已绑定另一组工具名称或参数。",
+              "# Runtime tool rejected\n\nThe same tool-call ID is already bound to another tool name or argument set.",
           };
   } else if (!callChainToolNames.has(call.name)) {
     result = {
       ok: false,
       failureKind: "protocol",
-      markdown: `# Runtime 工具拒绝\n\n当前调用链没有提供 ${call.name}。`,
+      markdown: `# Runtime tool rejected\n\nThe current call chain does not provide ${call.name}.`,
     };
   } else {
     try {
@@ -1379,7 +1405,7 @@ function prepareTool(
       result = {
         ok: false,
         failureKind: "protocol",
-        markdown: `# Runtime 工具失败\n\n${error instanceof Error ? error.message : "工具执行失败。"}`,
+        markdown: `# Runtime tool failed\n\n${error instanceof Error ? error.message : "Tool execution failed."}`,
       };
     }
     working.set(key, {
@@ -1425,7 +1451,7 @@ function duplicatePlayerExchange(
   if (existing === undefined) return false;
   if (existing.text !== playerText || existing.context !== context)
     throw new PlayCallChainError(
-      "同一 exchange ID 已绑定另一份玩家原文或上下文方式。",
+      "The same exchange ID is already bound to different player text or a different context mode.",
     );
   return true;
 }
@@ -1463,8 +1489,8 @@ function restorePlayDocuments(
     else documents.restoreAuthorizationCheckpoint(checkpoint.authorization);
   } catch (error: unknown) {
     throw new PlayCallChainError(
-      `调用链文档授权无法恢复：${
-        error instanceof Error ? error.message : "checkpoint 无效"
+      `Call-chain document authorization could not be restored: ${
+        error instanceof Error ? error.message : "invalid checkpoint"
       }。`,
     );
   }
@@ -1483,7 +1509,9 @@ function recordDocumentAuthorizationCheckpoint(
   )
     return;
   if (previous !== undefined && afterEventId <= previous.afterEventId)
-    throw new PlayCallChainError("调用链文档授权 checkpoint 顺序无效。");
+    throw new PlayCallChainError(
+      "Call-chain document authorization checkpoints are out of order.",
+    );
   session.documentAuthorizationCheckpoints.push({
     afterEventId,
     authorization,
@@ -1628,7 +1656,7 @@ function transcriptThroughEvents(
       const item = transcript[cursor];
       if (item?.kind !== "player" || item.text !== event.text)
         throw new PlayCallChainError(
-          "来源调用链事件与模型 transcript 不一致，不能安全创建分叉。",
+          "Source call-chain events do not match the model transcript, so a fork cannot be created safely.",
         );
       result.push(structuredClone(item));
       cursor += 1;
@@ -1649,7 +1677,7 @@ function transcriptThroughEvents(
       const item = transcript[cursor];
       if (item?.kind !== "assistant" || item.text !== event.text)
         throw new PlayCallChainError(
-          "来源调用链响应与模型 transcript 不一致，不能安全创建分叉。",
+          "Source call-chain responses do not match the model transcript, so a fork cannot be created safely.",
         );
       result.push(structuredClone(item));
       cursor += 1;
@@ -1659,7 +1687,7 @@ function transcriptThroughEvents(
       const item = transcript[cursor];
       if (item?.kind !== "tool" || item.toolCallId !== event.callId)
         throw new PlayCallChainError(
-          "来源调用链工具结果与模型 transcript 不一致，不能安全创建分叉。",
+          "Source call-chain tool results do not match the model transcript, so a fork cannot be created safely.",
         );
       result.push(structuredClone(item));
       cursor += 1;
@@ -1738,7 +1766,9 @@ function assertPersistedPlayCallChain(
           (context) => !isPersistedPlayCallChainContext(context),
         )))
   )
-    throw new PlayCallChainError("调用链持久记录不符合当前格式，无法读取。");
+    throw new PlayCallChainError(
+      "The persisted call-chain record does not match the current format and cannot be read.",
+    );
 }
 
 function isPersistedPlayCallChainContext(
@@ -1827,12 +1857,12 @@ function isPersistedDocumentAuthorizationHistory(
 
 function validateIdentity(value: string, label: string): void {
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/u.test(value))
-    throw new PlayCallChainError(`${label} 无效。`);
+    throw new PlayCallChainError(`${label} is invalid.`);
 }
 
 function validatePlayerText(value: string): void {
   if (value.trim().length === 0)
-    throw new PlayCallChainError("玩家原文不能为空。");
+    throw new PlayCallChainError("Player text must not be empty.");
 }
 
 function touch(session: Pick<PersistedPlayCallChain, "updatedAt">): void {

@@ -76,10 +76,13 @@ test("同 ID 并发 start 即使同时停在依赖加载窗口也只建立一条
   );
   const rejected = outcomes.find(({ status }) => status === "rejected");
   expect(rejected?.status).toBe("rejected");
-  if (rejected?.status !== "rejected") throw new Error("预期有一个失败请求");
+  if (rejected?.status !== "rejected")
+    throw new Error("Expected one rejected request");
   const reason: unknown = rejected.reason;
   expect(reason).toBeInstanceOf(Error);
-  expect((reason as Error).message).toBe("设定完善 ID 已存在");
+  expect((reason as Error).message).toBe(
+    "Setting-improvement ID already exists",
+  );
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
 
@@ -99,7 +102,7 @@ test("start 模型 I/O 期间 discard 被拒绝，完成后会话仍可用", asy
       type: "setting-improvement.discard",
       improvementId: "starting-id",
     }),
-  ).rejects.toThrow(/进行中/u);
+  ).rejects.toThrow(/operation is running/u);
   providerGate.resolve(planResponse());
   await expect(starting).resolves.toMatchObject({ result: { kind: "plan" } });
   await expect(
@@ -112,8 +115,10 @@ test("start 模型 I/O 期间 discard 被拒绝，完成后会话仍可用", asy
 
 test("start 冻结当前预设的设定完善提示，工具定义与说明仍由 Runtime 内置", async () => {
   const { runtime, packageId } = await fixture();
-  const firstPrompt = "# 城市作者方法\n\n冻结标记：先完善街区的日常节奏。\n";
-  const secondPrompt = "# 山野作者方法\n\n切换标记：只写山林探索。\n";
+  const firstPrompt =
+    "# City authoring method\n\nFrozen marker: improve the neighborhood's daily rhythm first.\n";
+  const secondPrompt =
+    "# Wilderness authoring method\n\nSwitched marker: write only woodland exploration.\n";
   await saveCurrentSettingPrompt(runtime, firstPrompt);
 
   const providerBodies: Record<string, unknown>[] = [];
@@ -121,7 +126,9 @@ test("start 冻结当前预设的设定完善提示，工具定义与说明仍�
     "fetch",
     (_input: string | URL | Request, init?: RequestInit) => {
       if (typeof init?.body !== "string")
-        throw new Error("预期 provider request 使用 JSON 字符串 body");
+        throw new Error(
+          "Expected the provider request body to be a JSON string",
+        );
       providerBodies.push(JSON.parse(init.body) as Record<string, unknown>);
       return Promise.resolve(planResponse());
     },
@@ -132,17 +139,19 @@ test("start 冻结当前预设的设定完善提示，工具定义与说明仍�
   await runtime.handle({
     type: "setting-improvement.revise-plan",
     improvementId: "frozen-preset",
-    feedback: "把节奏写得更具体。",
+    feedback: "Make the rhythm more specific.",
   });
 
   expect(providerBodies).toHaveLength(2);
   for (const body of providerBodies) {
     const serialized = JSON.stringify(body);
-    expect(serialized).toContain("冻结标记");
-    expect(serialized).not.toContain("切换标记");
-    expect(serialized).toContain("Runtime 设定完善工具与机械契约");
+    expect(serialized).toContain("Frozen marker");
+    expect(serialized).not.toContain("Switched marker");
+    expect(serialized).toContain(
+      "Runtime setting-improvement tools and mechanical contract",
+    );
     expect(serialized).toContain("setting_list");
-    expect(serialized).toContain("通过当前候选文档快照列出");
+    expect(serialized).toContain("current candidate-document snapshot");
   }
 });
 
@@ -154,7 +163,9 @@ test("候选完成后继续修改会为每个 Chat Completions tool call 保留 
     "fetch",
     (_input: string | URL | Request, init?: RequestInit) => {
       if (typeof init?.body !== "string")
-        throw new Error("预期 provider request 使用 JSON 字符串 body");
+        throw new Error(
+          "Expected the provider request body to be a JSON string",
+        );
       const body = JSON.parse(init.body) as ChatSettingRequest;
       providerBodies.push(body);
       const missing = missingToolResultIds(body.messages);
@@ -168,7 +179,7 @@ test("候选完成后继续修改会为每个 Chat Completions tool call 保留 
     type: "setting-improvement.start",
     improvementId: "revisable-candidate",
     packageId,
-    goal: "完善当前内容包的玩家体验",
+    goal: "Improve the player experience in the current content package",
     mode: "direct_candidate",
     contextPaths: [],
   });
@@ -176,7 +187,7 @@ test("候选完成后继续修改会为每个 Chat Completions tool call 保留 
     runtime.handle({
       type: "setting-improvement.revise-candidate",
       improvementId: "revisable-candidate",
-      feedback: "继续补充可观察的日常细节。",
+      feedback: "Add more observable everyday detail.",
     }),
   ).resolves.toMatchObject({ result: { kind: "candidate" } });
 
@@ -231,7 +242,7 @@ async function saveCurrentSettingPrompt(
   const preset = library.presets.find(
     ({ id }) => id === library.currentPresetId,
   );
-  if (preset === undefined) throw new Error("当前预设不存在");
+  if (preset === undefined) throw new Error("Current preset does not exist");
   const files = structuredClone(preset.files);
   files["prompts/setting-improvement.md"] = prompt;
   await runtime.handle({
@@ -248,7 +259,7 @@ function startRequest(packageId: string, improvementId: string) {
     type: "setting-improvement.start" as const,
     improvementId,
     packageId,
-    goal: "完善当前内容包的玩家体验",
+    goal: "Improve the player experience in the current content package",
     mode: "plan_first" as const,
     contextPaths: [],
   };
@@ -256,7 +267,7 @@ function startRequest(packageId: string, improvementId: string) {
 
 function planResponse() {
   const content =
-    "# 创作计划\n\n保留当前内容树的世界约束与玩家行动权，只完善目标指定的体验、文档摘要与开场钩子，候选仍需通过 Runtime 整体自检。";
+    "# Creation plan\n\nPreserve the current tree's world constraints and player agency. Improve only the requested experience, document summaries, and opening hook, then pass the full Runtime candidate check.";
   return new Response(
     `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\ndata: [DONE]\n\n`,
     { status: 200, headers: { "Content-Type": "text/event-stream" } },

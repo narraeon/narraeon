@@ -138,17 +138,21 @@ export class FileNativePlayDocuments {
     checkpoint: PlayDocumentAuthorizationCheckpoint,
   ): void {
     if (!isPlayDocumentAuthorizationCheckpoint(checkpoint))
-      throw new TypeError("游玩文档授权 checkpoint 格式无效");
+      throw new TypeError(
+        "The play-document authorization checkpoint has an invalid format",
+      );
     if (
       checkpoint.stateFingerprint !==
       fingerprintStateFiles(this.#candidate.files)
     )
-      throw new TypeError("游玩文档授权 checkpoint 与当前 state 不匹配");
+      throw new TypeError(
+        "The play-document authorization checkpoint does not match the current state",
+      );
     const documents = new Map<string, AuthorizedLocator[] | null>();
     for (const { shortRef, locators } of checkpoint.documents) {
       if (documentDescriptorByRef(this.#candidate.snapshot, shortRef) === null)
         throw new TypeError(
-          `游玩文档授权 checkpoint 引用了不存在的 @${shortRef}`,
+          `The play-document authorization checkpoint refers to missing @${shortRef}`,
         );
       const restoredLocators = locators?.map((locator) => {
         const selected = this.#candidate.snapshot.query({
@@ -158,7 +162,7 @@ export class FileNativePlayDocuments {
         });
         if (selected.kind !== "select_node" || !selected.ok)
           throw new TypeError(
-            `游玩文档授权 checkpoint 引用了 @${shortRef} 中不存在的节点`,
+            `The play-document authorization checkpoint refers to a missing node in @${shortRef}`,
           );
         return structuredClone(selected.node.locator);
       });
@@ -260,7 +264,9 @@ export class FileNativePlayDocuments {
         this.#reads,
         call.arguments,
       );
-    return toolFailure(`当前文档上下文不接受 ${call.name}`);
+    return toolFailure(
+      `The current document context does not accept ${call.name}`,
+    );
   }
 
   stateChanges(): FileNativeStateChange[] {
@@ -441,10 +447,10 @@ function applyPlayCandidatePatch(
     args.edits.length < 1 ||
     args.edits.length > 32
   )
-    return toolFailure("world_patch 需要 target 和 1 到 32 个 edits。");
+    return toolFailure("world_patch requires a target and 1 to 32 edits.");
   const ref = args.target.replace(/^@/u, "");
   const target = documentDescriptorByRef(candidate.snapshot, ref);
-  if (target === null) return toolFailure(`目标 @${ref} 不存在。`);
+  if (target === null) return toolFailure(`Target @${ref} does not exist.`);
   const retainedAuthorization = reads.documents.get(ref);
   if (
     reads.snapshotId !== candidate.snapshot.id ||
@@ -452,14 +458,16 @@ function applyPlayCandidatePatch(
     !editsAreAuthorized(retainedAuthorization, args.edits)
   )
     return toolFailure(
-      `必须先精确读取 @${ref} 或 bootstrap 完整提供该文档，才能写入。`,
+      `Read @${ref} exactly, or receive the complete document in bootstrap, before writing it.`,
     );
   try {
     const suppliedBytes = Buffer.byteLength(JSON.stringify(args.edits), "utf8");
     if (suppliedBytes > 64 * 1024)
-      throw new PlayDocumentToolFailure("单次 patch 正文超过 64 KiB");
+      throw new PlayDocumentToolFailure("A single patch body exceeds 64 KiB");
     if (candidate.suppliedBytes + suppliedBytes > 256 * 1024)
-      throw new PlayDocumentToolFailure("本次模型操作累计新正文超过 256 KiB");
+      throw new PlayDocumentToolFailure(
+        "New body content for this model operation exceeds 256 KiB in total",
+      );
     assertToolReferenceHandles(args.edits);
     const revised = candidate.snapshot.revise({
       commands: [
@@ -535,8 +543,12 @@ function formatToolRevisionReceipt(
   changes: readonly WorldDocumentRevisionChange[],
 ): string {
   if (changes.length > 1)
-    throw new Error("world_patch revision 必须只影响目标文档");
-  return changes.length === 1 ? `@${shortRef} 等待写入` : `@${shortRef} 无变化`;
+    throw new Error(
+      "A world_patch revision must affect only its target document",
+    );
+  return changes.length === 1
+    ? `@${shortRef} pending write`
+    : `@${shortRef} unchanged`;
 }
 
 function nextAvailableStatePath(
@@ -561,7 +573,9 @@ function assertToolReferenceHandles(
 ): void {
   if (value === null || typeof value !== "object") return;
   if (seen.has(value))
-    throw new PlayDocumentToolFailure("工具参数不能包含循环引用");
+    throw new PlayDocumentToolFailure(
+      "Tool arguments must not contain circular references",
+    );
   seen.add(value);
   if (Array.isArray(value)) {
     for (const item of value) assertToolReferenceHandles(item, seen);
@@ -569,7 +583,9 @@ function assertToolReferenceHandles(
     return;
   }
   if (!record(value))
-    throw new PlayDocumentToolFailure("工具参数只能包含普通对象");
+    throw new PlayDocumentToolFailure(
+      "Tool arguments may contain only plain objects",
+    );
   if (
     Object.hasOwn(value, "$ref") &&
     (Object.keys(value).length !== 1 ||
@@ -577,7 +593,7 @@ function assertToolReferenceHandles(
       !value.$ref.startsWith("@"))
   )
     throw new PlayDocumentToolFailure(
-      "$ref 必须使用 Runtime 返回的 @短引用，且引用对象不能包含其他字段",
+      "$ref must use an @short-ref returned by the Runtime, and a reference object cannot contain other fields",
     );
   for (const item of Object.values(value))
     assertToolReferenceHandles(item, seen);
@@ -607,12 +623,14 @@ function applyPlayCandidateCreate(
       !args.aliases.every((alias) => typeof alias === "string") ||
       typeof args.body !== "string"
     )
-      throw new PlayDocumentToolFailure("world_create 参数无效");
+      throw new PlayDocumentToolFailure("world_create arguments are invalid");
     const suppliedBytes = Buffer.byteLength(args.body, "utf8");
     if (suppliedBytes > 64 * 1024)
-      throw new PlayDocumentToolFailure("world_create body 超过 64 KiB");
+      throw new PlayDocumentToolFailure("The world_create body exceeds 64 KiB");
     if (candidate.suppliedBytes + suppliedBytes > 256 * 1024)
-      throw new PlayDocumentToolFailure("本次模型操作累计新正文超过 256 KiB");
+      throw new PlayDocumentToolFailure(
+        "New body content for this model operation exceeds 256 KiB in total",
+      );
     const path = nextAvailableStatePath(
       candidate,
       parentDirectory,
@@ -654,7 +672,9 @@ function applyPlayCandidateCreate(
       );
     const created = revised.changes.find(({ before }) => before === null);
     if (created === undefined)
-      throw new Error("world_create revision 没有返回新建文档变化");
+      throw new Error(
+        "The world_create revision did not return a newly created document change",
+      );
     const previousSnapshot = candidate.snapshot;
     acceptWorldStateRevision(candidate, revised);
     carryWriteAuthorizations(
@@ -672,7 +692,7 @@ function applyPlayCandidateCreate(
     candidate.suppliedBytes += suppliedBytes;
     return {
       ok: true,
-      markdown: `@${created.shortRef} 等待写入`,
+      markdown: `@${created.shortRef} pending write`,
       candidateWrite: { shortRef: created.shortRef, changed: true },
     };
   } catch (error: unknown) {
@@ -731,7 +751,7 @@ function toolFailure(
 ): PlayDocumentToolResult {
   return {
     ok: false,
-    markdown: `# Runtime 工具拒绝\n\n${message}`,
+    markdown: `# Runtime tool rejected\n\n${message}`,
     failureKind,
   };
 }
@@ -812,7 +832,7 @@ function executeContextSearch(
     return {
       ok: false,
       markdown:
-        "# Runtime 参数错误\n\ncontext_search 只接受 query 字面量以及严格的 source、within、caseSensitive、limit、cursor；不接受语义过滤器。",
+        "# Runtime argument error\n\ncontext_search accepts only a literal query and strict source, within, caseSensitive, limit, and cursor arguments; semantic filters are not accepted.",
     };
   const caseSensitive = args.caseSensitive === true;
   const query = args.query;
@@ -820,7 +840,7 @@ function executeContextSearch(
   if (!Number.isInteger(limit) || limit < 1 || limit > 50)
     return {
       ok: false,
-      markdown: "# Runtime 参数错误\n\nlimit 必须为 1 到 50。",
+      markdown: "# Runtime argument error\n\nlimit must be between 1 and 50.",
     };
   if (args.source === "state")
     return searchState(snapshot, {
@@ -861,19 +881,20 @@ function executeContextSearch(
   if (offset === null)
     return {
       ok: false,
-      markdown: "# Runtime 参数错误\n\ncursor 与搜索条件或端点不匹配。",
+      markdown:
+        "# Runtime argument error\n\nThe cursor does not match the search criteria or endpoint.",
     };
   const hits = allHits.slice(offset, offset + limit);
   const complete = offset + hits.length >= allHits.length;
   const renderedHits = hits
     .map(
       ([ref, text]) =>
-        `- @${ref}\n  原始命中片段：\n${quoteMarkdown(snippet(text, query), "  ")}`,
+        `- @${ref}\n  Exact-match excerpt:\n${quoteMarkdown(snippet(text, query), "  ")}`,
     )
     .join("\n");
   return {
     ok: true,
-    markdown: `# 字面搜索\n\n范围：history${args.within === undefined ? "" : ` · ${args.within}`}\nnormalization：${caseSensitive ? "原文" : "NFKC + 大小写折叠"}\n命中总数：${allHits.length}\n${renderedHits || "0 个字面命中不证明世界中不存在该事实。"}\n\n---\n本页：${offset}..${offset + hits.length} / ${allHits.length} 个命中\n完整：${complete ? "是" : "否"}${complete ? "" : `\n下一页 cursor：${cursorFor(scope, offset + hits.length)}`}`,
+    markdown: `# Literal search\n\nScope: history${args.within === undefined ? "" : ` · ${args.within}`}\nNormalization: ${caseSensitive ? "original text" : "NFKC + case folding"}\nTotal matches: ${allHits.length}\n${renderedHits || "Zero literal matches do not prove that the fact is absent from the world."}\n\n---\nThis page: ${offset}..${offset + hits.length} / ${allHits.length} matches\nComplete: ${complete ? "yes" : "no"}${complete ? "" : `\nNext-page cursor: ${cursorFor(scope, offset + hits.length)}`}`,
   };
 }
 
@@ -892,7 +913,7 @@ function searchState(
     return {
       ok: false,
       markdown:
-        "# Runtime 参数错误\n\nstate 搜索范围必须是 Runtime 返回的 @dir-* 或 @文档短引用。",
+        "# Runtime argument error\n\nA state search scope must be an @dir-* or document @short-ref returned by the Runtime.",
     };
   const result = snapshot.query({
     kind: "literal_search",
@@ -907,14 +928,14 @@ function searchState(
   const renderedHits = result.matches
     .map(
       ({ document, referenceProjection, range }) =>
-        `- @${document.shortRef} · ${document.title} · 第 ${range.start.line} 行第 ${range.start.column} 列\n  原始命中：${JSON.stringify(referenceProjection.text)}\n  原始命中片段（机械引用显示为 @短引用）：\n${quoteMarkdown(referenceProjection.excerpt, "  ")}`,
+        `- @${document.shortRef} · ${document.title} · line ${range.start.line}, column ${range.start.column}\n  Exact match: ${JSON.stringify(referenceProjection.text)}\n  Exact-match excerpt (mechanical references appear as @short-refs):\n${quoteMarkdown(referenceProjection.excerpt, "  ")}`,
     )
     .join("\n");
   const scope =
     input.within === undefined ? "state" : `state · ${input.within}`;
   return {
     ok: true,
-    markdown: `# 字面搜索\n\n范围：${scope}\nnormalization：${input.caseSensitive ? "原文" : "NFKC + 大小写折叠"}\n覆盖：${result.coverage.status === "complete" ? "完整" : `部分（排除 ${result.coverage.excludedDocuments} 份损坏文档）`}\n命中总数：${result.page.total}\n${renderedHits || "0 个字面命中不证明世界中不存在该事实。"}\n\n---\n本页：${result.page.start}..${result.page.end} / ${result.page.total} 个命中\n完整：${result.page.complete ? "是" : "否"}${result.page.nextCursor === null ? "" : `\n下一页 cursor：${result.page.nextCursor}`}`,
+    markdown: `# Literal search\n\nScope: ${scope}\nNormalization: ${input.caseSensitive ? "original text" : "NFKC + case folding"}\nCoverage: ${result.coverage.status === "complete" ? "complete" : `partial (${result.coverage.excludedDocuments} damaged documents excluded)`}\nTotal matches: ${result.page.total}\n${renderedHits || "Zero literal matches do not prove that the fact is absent from the world."}\n\n---\nThis page: ${result.page.start}..${result.page.end} / ${result.page.total} matches\nComplete: ${result.page.complete ? "yes" : "no"}${result.page.nextCursor === null ? "" : `\nNext-page cursor: ${result.page.nextCursor}`}`,
   };
 }
 
@@ -980,7 +1001,7 @@ function executeContextList(
     return {
       ok: false,
       markdown:
-        '# Runtime 参数错误\n\n状态目录使用 {source:"state", parent:"@dir-/"}；历史使用 {source:"history", order:"newest_first"}。',
+        '# Runtime argument error\n\nUse {source:"state", parent:"@dir-/"} for state directories and {source:"history", order:"newest_first"} for history.',
     };
   const allowedKeys = ["source", "parent", "order", "cursor", "limit"];
   const invalidStateShape =
@@ -1002,13 +1023,13 @@ function executeContextList(
     return {
       ok: false,
       markdown:
-        "# Runtime 参数错误\n\nstate 必须使用 Runtime 返回的 @dir-* parent 且不能带 order；history 必须带 newest_first 或 oldest_first order 且不能带 parent。",
+        "# Runtime argument error\n\nstate must use an @dir-* parent returned by the Runtime and omit order; history must use newest_first or oldest_first order and omit parent.",
     };
   const limit = typeof args.limit === "number" ? args.limit : 20;
   if (!Number.isInteger(limit) || limit < 1 || limit > 100)
     return {
       ok: false,
-      markdown: "# Runtime 参数错误\n\nlimit 必须为 1 到 100。",
+      markdown: "# Runtime argument error\n\nlimit must be between 1 and 100.",
     };
   if (args.source === "state") {
     const parent = args.parent as string;
@@ -1029,14 +1050,15 @@ function executeContextList(
         const relative = entry.logicalPath.slice(
           `${snapshot.logicalRoot}/`.length,
         );
-        return `- 目录 ${stateDirectoryHandle(relative)}`;
+        return `- Directory ${stateDirectoryHandle(relative)}`;
       }
-      if (entry.document === undefined) return "- 损坏文档（当前不可寻址）";
-      return `- 文档 @${entry.document.shortRef} · ${entry.document.title} · ${entry.document.codec.toUpperCase()} · ${entry.document.summary}${entry.status === "damaged" ? " · 待修复" : ""}`;
+      if (entry.document === undefined)
+        return "- Damaged document (currently not addressable)";
+      return `- Document @${entry.document.shortRef} · ${entry.document.title} · ${entry.document.codec.toUpperCase()} · ${entry.document.summary}${entry.status === "damaged" ? " · needs repair" : ""}`;
     });
     return {
       ok: true,
-      markdown: `# 目录列表\n\n范围：state · ${parent}\n覆盖：${result.coverage.status === "complete" ? "完整" : "部分"}\n${entries.join("\n") || "（空）"}\n\n---\n本页：${result.page.start}..${result.page.end} / ${result.page.total} 项\n完整：${result.page.complete ? "是" : "否"}${result.page.nextCursor === null ? "" : `\n下一页 cursor：${result.page.nextCursor}`}`,
+      markdown: `# Directory listing\n\nScope: state · ${parent}\nCoverage: ${result.coverage.status === "complete" ? "complete" : "partial"}\n${entries.join("\n") || "(empty)"}\n\n---\nThis page: ${result.page.start}..${result.page.end} / ${result.page.total} items\nComplete: ${result.page.complete ? "yes" : "no"}${result.page.nextCursor === null ? "" : `\nNext-page cursor: ${result.page.nextCursor}`}`,
     };
   }
 
@@ -1048,7 +1070,7 @@ function executeContextList(
     )
     .map(
       ({ path, contents }) =>
-        `- @${historyRef(path)}，${Buffer.byteLength(contents, "utf8")} bytes`,
+        `- @${historyRef(path)}, ${Buffer.byteLength(contents, "utf8")} bytes`,
     );
   const scope = JSON.stringify({
     kind: "list",
@@ -1060,13 +1082,14 @@ function executeContextList(
   if (offset === null)
     return {
       ok: false,
-      markdown: "# Runtime 参数错误\n\ncursor 与列表条件或端点不匹配。",
+      markdown:
+        "# Runtime argument error\n\nThe cursor does not match the listing criteria or endpoint.",
     };
   const page = entries.slice(offset, offset + limit);
   const complete = offset + page.length >= entries.length;
   return {
     ok: true,
-    markdown: `# 目录列表\n\n范围：history · ${String(args.order)}\n${page.join("\n") || "（空）"}\n\n---\n本页：${offset}..${offset + page.length} / ${entries.length} 项\n完整：${complete ? "是" : "否"}${complete ? "" : `\n下一页 cursor：${cursorFor(scope, offset + page.length)}`}`,
+    markdown: `# Directory listing\n\nScope: history · ${String(args.order)}\n${page.join("\n") || "(empty)"}\n\n---\nThis page: ${offset}..${offset + page.length} / ${entries.length} items\nComplete: ${complete ? "yes" : "no"}${complete ? "" : `\nNext-page cursor: ${cursorFor(scope, offset + page.length)}`}`,
   };
 }
 
@@ -1084,13 +1107,15 @@ function executeContextRead(
   )
     return {
       ok: false,
-      markdown: "# Runtime 参数错误\n\n需要 list/search 返回的稳定 ref。",
+      markdown:
+        "# Runtime argument error\n\nA stable ref returned by list or search is required.",
     };
   const maxBytes = typeof args.maxBytes === "number" ? args.maxBytes : 8192;
   if (!Number.isInteger(maxBytes) || maxBytes < 4 || maxBytes > 8192)
     return {
       ok: false,
-      markdown: "# Runtime 参数错误\n\nmaxBytes 必须为 4 到 8192。",
+      markdown:
+        "# Runtime argument error\n\nmaxBytes must be between 4 and 8192.",
     };
   const historyRefValue = args.ref.replace(/^@/u, "");
   const historyEntry = history.find(
@@ -1109,7 +1134,7 @@ function executeContextRead(
     return {
       ok: false,
       markdown:
-        "# Runtime 参数错误\n\nstate 精确读取需要 @文档短引用或其 #/逻辑节点。",
+        "# Runtime argument error\n\nAn exact state read requires a document @short-ref or one of its #/logical nodes.",
     };
   const resolved = snapshot.query({
     kind: "read_document",
@@ -1161,7 +1186,7 @@ function readMarkdownDocument(
   if (result.kind !== "read_document") return unexpectedStateQueryResult();
   return {
     ok: true,
-    markdown: `# 精确读取 @${document.shortRef}\n\n${renderDocumentMetadata(document)}\n[可写正文开始；locator 相对于这里]\n${result.body.trimEnd()}\n[可写正文${result.page.complete ? "结束" : "继续"}]\n\n---\n范围：state · @${document.shortRef}\n本页：${result.page.start}..${result.page.end} / ${result.page.total} bytes\n完整：${result.page.complete ? "是" : "否"}${result.page.nextCursor === null ? "" : `\n下一页 cursor：${result.page.nextCursor}`}`,
+    markdown: `# Exact read @${document.shortRef}\n\n${renderDocumentMetadata(document)}\n[Writable body starts; locators are relative to this point]\n${result.body.trimEnd()}\n[Writable body ${result.page.complete ? "ends" : "continues"}]\n\n---\nScope: state · @${document.shortRef}\nThis page: ${result.page.start}..${result.page.end} / ${result.page.total} bytes\nComplete: ${result.page.complete ? "yes" : "no"}${result.page.nextCursor === null ? "" : `\nNext-page cursor: ${result.page.nextCursor}`}`,
     readAuthorization: {
       snapshotId: snapshot.id,
       readKey: readAuthorizationKey(document.shortRef, null, maxBytes),
@@ -1200,7 +1225,7 @@ function readProjectedNode(
         }).trimEnd()
       : result.node.markdown.trimEnd();
   const text = wholeDocument
-    ? `${renderDocumentMetadata(document)}\n[可写正文开始；locator 相对于这里]\n${body}\n[可写正文结束]\n`
+    ? `${renderDocumentMetadata(document)}\n[Writable body starts; locators are relative to this point]\n${body}\n[Writable body ends]\n`
     : `# ${document.title} · ${renderLocator(result.node.locator)} [${requestedHandle}]\n\n${body}\n`;
   return pagedStateProjection(
     snapshot,
@@ -1222,7 +1247,7 @@ function renderDocumentMetadata(document: WorldDocumentDescriptor): string {
     },
     { indent: 2, lineWidth: 0 },
   ).trimEnd();
-  return `[文档元信息：非正文；需要改动时用 set_metadata 整组更新]\n${metadata}`;
+  return `[Document metadata: not body content; use set_metadata to replace the entire group]\n${metadata}`;
 }
 
 function toolWorldDocumentValue(value: WorldDocumentValue): unknown {
@@ -1262,14 +1287,15 @@ function pagedStateProjection(
   if (offset === null || offset > bytes.length)
     return {
       ok: false,
-      markdown: "# Runtime 参数错误\n\ncursor 与当前快照或全部查询条件不匹配。",
+      markdown:
+        "# Runtime argument error\n\nThe cursor does not match the current snapshot or complete query criteria.",
     };
   const end = safeUtf8ReadEnd(bytes, offset, maxBytes);
   const complete = end === bytes.length;
   const page = bytes.subarray(offset, end).toString("utf8");
   return {
     ok: true,
-    markdown: `# 精确读取 ${handle}\n\n${page}\n\n---\n范围：state · ${handle}\n本页：${offset}..${end} / ${bytes.length} bytes\n完整：${complete ? "是" : "否"}${complete ? "" : `\n下一页 cursor：${stateProjectionCursorFor(snapshot, scope, end)}`}`,
+    markdown: `# Exact read ${handle}\n\n${page}\n\n---\nScope: state · ${handle}\nThis page: ${offset}..${end} / ${bytes.length} bytes\nComplete: ${complete ? "yes" : "no"}${complete ? "" : `\nNext-page cursor: ${stateProjectionCursorFor(snapshot, scope, end)}`}`,
     readAuthorization: {
       snapshotId: snapshot.id,
       readKey: readAuthorizationKey(shortRef, locator, maxBytes),
@@ -1385,14 +1411,15 @@ function renderStateQueryFailure(
 ): ContextToolResult {
   return {
     ok: false,
-    markdown: `# Runtime 参数错误\n\n${result.diagnostics.map(({ code, message }) => `${code}：${message}`).join("\n")}`,
+    markdown: `# Runtime argument error\n\n${result.diagnostics.map(({ code, message }) => `${code}: ${message}`).join("\n")}`,
   };
 }
 
 function unexpectedStateQueryResult(): ContextToolResult {
   return {
     ok: false,
-    markdown: "# Runtime 工具拒绝\n\n世界文档查询返回了不匹配的结果类型。",
+    markdown:
+      "# Runtime tool rejected\n\nThe world-document query returned an incompatible result type.",
   };
 }
 
@@ -1449,14 +1476,15 @@ function pagedRead(
   if (offset === null)
     return {
       ok: false,
-      markdown: "# Runtime 参数错误\n\ncursor 与当前读取不匹配。",
+      markdown:
+        "# Runtime argument error\n\nThe cursor does not match the current read.",
     };
   const bytes = Buffer.from(text, "utf8");
   const end = safeUtf8ReadEnd(bytes, offset, maxBytes);
   const page = bytes.subarray(offset, end).toString("utf8");
   return {
     ok: true,
-    markdown: `# 精确读取 @${ref}\n\n${page}\n\n---\n来源：@${ref}\n本页：${offset}..${end} bytes\n完整：${end === bytes.length ? "是" : "否"}\n${end === bytes.length ? "" : `下一页 cursor：${cursorFor(scope, end)}`}`,
+    markdown: `# Exact read @${ref}\n\n${page}\n\n---\nSource: @${ref}\nThis page: ${offset}..${end} bytes\nComplete: ${end === bytes.length ? "yes" : "no"}\n${end === bytes.length ? "" : `Next-page cursor: ${cursorFor(scope, end)}`}`,
   };
 }
 
@@ -1510,7 +1538,7 @@ export function parseNarrative(args: unknown): string {
   )
     throw new PromptCompilationError(
       "narrative_invalid",
-      "叙事必须为 1 到 24000 个 Unicode 字符",
+      "Narrative text must contain 1 to 24,000 Unicode characters",
     );
   return args.text;
 }

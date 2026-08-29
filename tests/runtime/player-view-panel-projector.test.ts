@@ -162,20 +162,22 @@ describe("player-view-backed panel projector", () => {
       expect.objectContaining({
         code: "unresolved_selector",
         viewId: "missing_view",
-        message: "精确 player view 当前无法解析：missing_view",
+        message:
+          "The exact player view cannot currently be resolved: missing_view",
       }),
       expect.objectContaining({
         code: "unresolved_selector",
         viewId: "missing_view",
         itemId: "missing_item",
-        message: "精确 selector 当前无法解析：missing_view/missing_item",
+        message:
+          "The exact selector cannot currently be resolved: missing_view/missing_item",
       }),
       expect.objectContaining({
         code: "unresolved_selector",
         viewId: "missing_view",
         itemId: "group_item",
         message:
-          "玩家视图分组引用的 item 当前无法解析：missing_view/group_item",
+          "An item referenced by the player-view group cannot currently be resolved: missing_view/group_item",
       }),
     ]);
   });

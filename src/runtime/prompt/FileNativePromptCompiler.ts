@@ -2,6 +2,10 @@ import { parseDocument, stringify } from "yaml";
 
 import type { ModelProviderKind } from "../../protocol/modelConnections.ts";
 import {
+  defaultAppLocale,
+  type AppLocale,
+} from "../../protocol/appPreferences.ts";
+import {
   WorldDocumentStore,
   type WorldDocumentDescriptor,
   type WorldDocumentLocator,
@@ -198,25 +202,58 @@ export class PromptCompilationError extends Error {
   }
 }
 
-const runtimeContract = `# Runtime 权限边界
+const runtimeContracts: Record<
+  AppLocale,
+  {
+    play: string;
+    tools: string;
+    operation: string;
+    shell: string;
+  }
+> = {
+  en: {
+    play: `# Runtime authority boundary
+
+- Only Runtime can formally write an operation into the world. Model text and tool calls cannot bypass Runtime to commit results directly.
+- The current play preset declares narrative rules, call-chain tools, and follow-up artifacts. Any capability it does not declare is unavailable.
+- Editable host, world, and play prompts determine story semantics, player agency, point of view, and style. Runtime checks only files, references, authority, and atomic commits; it does not judge the story for the author.`,
+    tools: `# Runtime tool contract
+
+- Use only tools attached to the current request. Read results state their scope, cursor, and completeness. Directories must use @dir-* handles returned by Runtime; documents and history must use @handles returned by Runtime. Never substitute a world/ path or natural-language name for a handle.
+- A document marked \`full text injected\` in the material-coverage report already appears byte-for-byte in the request and already carries write authorization. Do not read it again merely to confirm structure, check fields, or “be safe”: context_read would return the same bytes and waste a round trip. Read only when you need material the report says is not covered.
+- Zero literal-search matches do not prove that a fact does not exist. Tools, directories, documents, archives, searches, matches, handles, Runtime, and failure processes are private adjudication details. Player-visible narrative must not mention internal phrases such as “nothing was found.” When information is insufficient, preserve uncertainty inside the world instead of inventing an internal process.
+- World-write tools change only an uncommitted working copy. Their changes are not official world facts until Runtime accepts and completes the commit.`,
+    operation: `# Runtime call-chain rules
+
+- The model may output player-visible text directly, call attached read or world-write tools, and then continue from tool results.
+- Obey only the real tool definitions attached to this request. A tool that is not defined cannot be called.
+- Runtime performs state commits and saves follow-up artifacts. Tool exchanges and internal processing must never appear in player-visible content.`,
+    shell: `# Runtime play boundary
+
+The model may output player-visible text directly, call attached read or world-write tools as needed, or continue after receiving tool results. Runtime executes only real tool definitions, file validation, and authority commits. This block does not define story content, point of view, style, player agency, or state semantics.`,
+  },
+  "zh-CN": {
+    play: `# Runtime 权限边界
 
 - 只有 Runtime 能把一次操作正式写入世界。模型的文字或工具调用都不能绕过 Runtime 直接提交结果。
 - 当前玩法文件声明叙事规则、调用链工具和后置产物；未声明的能力一律不可用。
-- 可编辑的主持、世界和玩法提示决定故事语义、玩家代理权、人称与文风；Runtime 只检查文件、引用、权限和原子提交，不替作者判断剧情。`;
-const runtimeToolContract = `# Runtime 工具契约
+- 可编辑的主持、世界和玩法提示决定故事语义、玩家代理权、人称与文风；Runtime 只检查文件、引用、权限和原子提交，不替作者判断剧情。`,
+    tools: `# Runtime 工具契约
 
 - 只使用请求随附的工具；读取结果会明确范围、cursor 与完整性。目录只能使用 Runtime 返回的 @dir-*，文档和历史只能使用 Runtime 返回的 @句柄，不要把 world/路径或自然语言名称冒充句柄。
 - 材料覆盖报告标为 \`已注入全文\` 的文档，其完整原文已经逐字在本次请求里，写入资格同样已经具备。不要为确认结构、核对字段或"保险起见"重读它：context_read 只会原样返回你已经看到的字节，白费一次往返。只有需要报告未覆盖的内容时才读。
 - 字面搜索 0 命中不证明事实不存在。工具、目录、文档、档案、检索、命中、句柄、Runtime 及失败过程只供私下裁决；玩家可见叙事不得出现“没搜到／没找到资料”等内部措辞。信息不足时保持世界内的不确定性，不编造内部过程。
-- 世界写入工具只修改尚未提交的工作副本；Runtime 接受并完成提交前，这些修改都不是正式世界事实。`;
-const runtimeOperationContract = `# Runtime 调用链规则
+- 世界写入工具只修改尚未提交的工作副本；Runtime 接受并完成提交前，这些修改都不是正式世界事实。`,
+    operation: `# Runtime 调用链规则
 
 - 模型可以直接输出玩家可见文本，或调用本次请求随附的读取和世界写入工具，再根据工具结果继续。
 - 只服从当前请求的真实工具定义；没有定义的工具不可调用。
-- 状态提交与后置产物保存由 Runtime 执行。工具交换与内部处理过程不得混入玩家可见内容。`;
-const playRuntimeShell = `# Runtime 游玩边界
+- 状态提交与后置产物保存由 Runtime 执行。工具交换与内部处理过程不得混入玩家可见内容。`,
+    shell: `# Runtime 游玩边界
 
-模型可以根据当前需要直接输出玩家可见文本、调用请求随附的读取或世界写入工具，或在取得工具结果后继续。Runtime 只执行真实工具定义、文件校验和权威提交；本段不规定故事、人称、文风、玩家代理权或状态语义。`;
+模型可以根据当前需要直接输出玩家可见文本、调用请求随附的读取或世界写入工具，或在取得工具结果后继续。Runtime 只执行真实工具定义、文件校验和权威提交；本段不规定故事、人称、文风、玩家代理权或状态语义。`,
+  },
+};
 
 const playCallChainToolNames = new Set<RegisteredRuntimeToolName>([
   "context_list",
@@ -230,9 +267,20 @@ export type FileNativeToolName = RegisteredRuntimeToolName;
 
 export class FileNativePromptCompiler {
   readonly #toolStrategyOverride: RuntimeToolDefinitionStrategy | undefined;
+  #locale: AppLocale;
 
-  constructor(options: { toolStrategy?: RuntimeToolDefinitionStrategy } = {}) {
+  constructor(
+    options: {
+      toolStrategy?: RuntimeToolDefinitionStrategy;
+      locale?: AppLocale;
+    } = {},
+  ) {
     this.#toolStrategyOverride = options.toolStrategy;
+    this.#locale = options.locale ?? defaultAppLocale;
+  }
+
+  setLocale(locale: AppLocale): void {
+    this.#locale = locale;
   }
 
   renderWorldDocument(
@@ -280,6 +328,7 @@ export class FileNativePromptCompiler {
       worldFrame,
       documentSnapshot,
       coverage,
+      this.#locale,
     );
     const hostRoles = compileHostRoles(
       effectiveInput.hostBinding.files,
@@ -287,6 +336,7 @@ export class FileNativePromptCompiler {
       instructions,
       context,
       coverage,
+      this.#locale,
     );
     const blocks = {
       ...hostRoles,
@@ -296,7 +346,7 @@ export class FileNativePromptCompiler {
           : [
               {
                 source: "player:input",
-                markdown: `# 玩家原文\n\n${effectiveInput.playerInput.trim()}`,
+                markdown: `${this.#locale === "zh-CN" ? "# 玩家原文" : "# Player input"}\n\n${effectiveInput.playerInput.trim()}`,
               },
             ],
     } satisfies Record<
@@ -311,7 +361,10 @@ export class FileNativePromptCompiler {
         markdown: joinBlocks(blocks[role]),
       }));
     scanRuntimeLeakage(logicalMessages);
-    const tools = runtimeToolsForNames(registeredRuntimeToolNames);
+    const tools = runtimeToolsForNames(
+      registeredRuntimeToolNames,
+      this.#locale,
+    );
     const toolStrategy =
       this.#toolStrategyOverride ??
       defaultRuntimeToolDefinitionStrategy(
@@ -415,7 +468,7 @@ export class FileNativePromptCompiler {
       bootstrap,
       toolUniverse: structuredClone(toolUniverse),
       toolStrategy: presetCompilation.toolStrategy,
-      followups: compileFollowups(binding),
+      followups: compileFollowups(binding, this.#locale),
     };
   }
 
@@ -429,7 +482,12 @@ export class FileNativePromptCompiler {
     binding: PlayPresetBinding,
   ): PlayPresetCompilation {
     const bootstrap = this.compilePlayBootstrap(input);
-    return compilePlayPresetCompilation(input, bootstrap, binding);
+    return compilePlayPresetCompilation(
+      input,
+      bootstrap,
+      binding,
+      this.#locale,
+    );
   }
 
   /**
@@ -445,7 +503,10 @@ export class FileNativePromptCompiler {
       const blocks = message.blocks.filter(
         ({ source }) => !source.startsWith("runtime:builtin/"),
       );
-      blocks.push({ source: "runtime:play-shell", markdown: playRuntimeShell });
+      blocks.push({
+        source: "runtime:play-shell",
+        markdown: runtimeContracts[this.#locale].shell,
+      });
       return { role: message.role, blocks, markdown: joinBlocks(blocks) };
     });
     const provider = mapProvider(input.modelBinding.provider, logicalMessages);
@@ -481,13 +542,14 @@ export class FileNativePromptCompiler {
  */
 function compileFollowups(
   binding: PlayPresetBinding,
+  locale: AppLocale,
 ): PlayFollowupCompilation[] {
   return binding.definition.followups.map((followup) => {
     const markdown = binding.definition.files[followup.prompt.path];
     if (markdown === undefined || markdown.trim() === "")
       throw new PromptCompilationError(
         "play_preset_prompt_missing",
-        `后置请求提示块不存在：${followup.prompt.path}`,
+        `Follow-up prompt block does not exist: ${followup.prompt.path}`,
       );
     const blocks = [
       {
@@ -496,7 +558,7 @@ function compileFollowups(
       },
       {
         source: `runtime:followup/${followup.id}`,
-        markdown: followupRuntimeContract(followup),
+        markdown: followupRuntimeContract(followup, locale),
       },
     ];
     return {
@@ -509,7 +571,7 @@ function compileFollowups(
           markdown: joinBlocks(blocks),
         },
       ],
-      tools: runtimeToolsForNames(followupToolNames),
+      tools: runtimeToolsForNames(followupToolNames, locale),
       allowedTools: [...followupToolNames],
       artifacts: structuredClone(followup.artifacts),
       maxArtifactBytes: followup.maxArtifactBytes,
@@ -530,17 +592,28 @@ const followupToolNames = [
  */
 function followupRuntimeContract(
   followup: PlayPresetFollowupDefinition,
+  locale: AppLocale,
 ): string {
-  return `# Runtime 后置请求规则
+  const none = locale === "zh-CN" ? "（无）" : "(none)";
+  const header =
+    locale === "zh-CN"
+      ? `# Runtime 后置请求规则
 
 核心叙事与世界状态已经提交，本次请求不写世界、不产生叙事、不影响已提交的结果。它只发出一次，没有后续往返。
 
-只能提交下面声明的产物；模型选择 output name 并提供 payload，其余字段由 Runtime 固定。
+只能提交下面声明的产物；模型选择 output name 并提供 payload，其余字段由 Runtime 固定。`
+      : `# Runtime follow-up request rules
+
+The core narrative and world state have already been committed. This request does not write the world, produce narrative, or alter committed results. It is dispatched once and has no later round trip.
+
+Only the artifacts declared below may be submitted. The model chooses an output name and supplies its payload; Runtime fixes every other field.`;
+
+  return `${header}
 
 ${followup.artifacts
   .map(
     (artifact) =>
-      `- output=${artifact.name}; channel=${artifact.channel}; key=${artifact.key ?? "（无）"}; contentType=${artifact.contentType}; renderer=${artifact.renderer ?? "builtin"}@${artifact.rendererRevision ?? "v1"}; save=${artifact.save}; projection=${artifact.strategy}; invalidation=${artifact.invalidation}; required=${artifact.required ? "yes" : "no"}; maxEmits=${artifact.maxEmits}${
+      `- output=${artifact.name}; channel=${artifact.channel}; key=${artifact.key ?? none}; contentType=${artifact.contentType}; renderer=${artifact.renderer ?? "builtin"}@${artifact.rendererRevision ?? "v1"}; save=${artifact.save}; projection=${artifact.strategy}; invalidation=${artifact.invalidation}; required=${artifact.required ? "yes" : "no"}; maxEmits=${artifact.maxEmits}${
         artifact.payloadContract === undefined
           ? ""
           : `; payloadContract=${payloadContractSummary(artifact.payloadContract)}`
@@ -563,7 +636,7 @@ function playCallChainNarrativeGuidance(
     if (markdown === undefined)
       throw new PromptCompilationError(
         "play_preset_prompt_missing",
-        `玩法预设叙事提示块不存在：${prompt.path}`,
+        `Play-preset narrative prompt block does not exist: ${prompt.path}`,
       );
     return { source: `play:${prompt.path}`, markdown: markdown.trim() };
   });
@@ -578,7 +651,7 @@ function playCallChainNarrativeGuidance(
   if (!found)
     throw new PromptCompilationError(
       "host_frame_invalid",
-      "游玩调用链缺少 author_instruction，无法注入玩法叙事规则",
+      "The play call chain has no author_instruction role for narrative guidance",
     );
   scanRuntimeLeakage(result);
   return result;
@@ -670,8 +743,12 @@ function compilePlayPresetCompilation(
   input: Pick<FileNativePromptInput, "modelBinding">,
   bootstrap: PromptCompilation,
   binding: PlayPresetBinding,
+  locale: AppLocale,
 ): PlayPresetCompilation {
-  const toolUniverse = fileNativeToolsForNames(registeredRuntimeToolNames);
+  const toolUniverse = fileNativeToolsForNames(
+    registeredRuntimeToolNames,
+    locale,
+  );
   const toolStrategy = bootstrap.toolStrategy;
   const stableMessages = bootstrap.logicalMessages.filter(
     ({ role }) => role !== "player_input",
@@ -694,7 +771,7 @@ function compilePlayPresetCompilation(
     bootstrap: sessionBootstrap,
     toolUniverse,
     toolStrategy,
-    followups: compileFollowups(binding),
+    followups: compileFollowups(binding, locale),
   };
 }
 
@@ -719,13 +796,14 @@ function cloneLogicalMessages(
 export function renderPromptDeltaMessage(
   role: string,
   markdown: string,
+  locale: AppLocale = defaultAppLocale,
 ): string {
   if (role !== "author_instruction")
     throw new PromptCompilationError(
       "prompt_delta_role_invalid",
-      `Runtime 构造了非法追加 role：${role}`,
+      `Runtime constructed an invalid appended role: ${role}`,
     );
-  return `# 作者提示\n\n${markdown}`;
+  return `${locale === "zh-CN" ? "# 作者提示" : "# Author instruction"}\n\n${markdown}`;
 }
 
 function payloadContractSummary(
@@ -753,7 +831,9 @@ export function createMinimalFileNativePreviewInput(input: {
   maxOutputTokens: number;
   playerInput: string;
   playerInputPlacement: FileNativePromptInput["playerInputPlacement"];
+  locale?: AppLocale;
 }): FileNativePromptInput {
+  const locale = input.locale ?? defaultAppLocale;
   const worldFiles = {
     "control/frame.yaml": `format: narraeon.world-frame/v1
 bindings:
@@ -766,25 +846,27 @@ context:
   - slot: { kind: additional_materials }
 `,
     "control/blocks/world-style.md":
-      "# 世界状态规则\n\n只保存已经发生且下一次行动不能忽略的结果；人物变化写入对应人物，眼前未结束的局面写入当前情境。\n",
+      locale === "zh-CN"
+        ? "# 世界状态规则\n\n只保存已经发生且下一次行动不能忽略的结果；人物变化写入对应人物，眼前未结束的局面写入当前情境。\n"
+        : "# World-state rules\n\nSave only results that have happened and cannot be ignored at the next action. Write character changes to the corresponding character and unfinished immediate circumstances to the current situation.\n",
     "state/current-situation.yaml": `$document:
   id: situation.current
   ref: current-situation
-  title: 当前情境
-  summary: 宿舍里的当前局面。
+  title: ${locale === "zh-CN" ? "当前情境" : "Current situation"}
+  summary: ${locale === "zh-CN" ? "宿舍里的当前局面。" : "The current situation in the dorm room."}
   aliases: []
-地点: 男生宿舍 302
-人物:
-  - $ref: character.qinlong
-情况: 秦龙正在整理球衣。
+${locale === "zh-CN" ? "地点" : "location"}: ${locale === "zh-CN" ? "男生宿舍 302" : "Dorm room 302"}
+${locale === "zh-CN" ? "人物" : "characters"}:
+  - $ref: character.alex
+${locale === "zh-CN" ? "情况" : "situation"}: ${locale === "zh-CN" ? "Alex 正在整理球衣。" : "Alex is folding a jersey."}
 `,
-    "state/characters/qinlong.yaml": `$document:
-  id: character.qinlong
-  ref: qinlong
-  title: 秦龙
-  summary: 篮球队前锋，直率护短。
+    "state/characters/alex.yaml": `$document:
+  id: character.alex
+  ref: alex
+  title: Alex
+  summary: ${locale === "zh-CN" ? "篮球队前锋，直率护短。" : "A direct, loyal basketball forward."}
   aliases: []
-衣着: 白色运动背心，运动短裤，拖鞋
+${locale === "zh-CN" ? "衣着" : "clothing"}: ${locale === "zh-CN" ? "白色运动背心，运动短裤，拖鞋" : "White athletic top, shorts, and sandals"}
 `,
   };
   return {
@@ -805,7 +887,10 @@ roles:
     - builtin: runtime.coverage
     - include: world.context
 `,
-        "blocks/style.md": "# 主持风格\n\n克制、具体，不替玩家行动。\n",
+        "blocks/style.md":
+          locale === "zh-CN"
+            ? "# 主持风格\n\n克制、具体，不替玩家行动。\n"
+            : "# Hosting style\n\nBe restrained and specific, and never act on the player's behalf.\n",
       },
     },
     world: {
@@ -832,7 +917,7 @@ function validateModel(model: FileNativePromptInput["modelBinding"]): void {
   ) {
     throw new PromptCompilationError(
       "model_context_window_invalid",
-      "模型必须提供有效的 contextWindowTokens",
+      "The model must provide a valid contextWindowTokens value",
     );
   }
   if (
@@ -841,7 +926,7 @@ function validateModel(model: FileNativePromptInput["modelBinding"]): void {
   ) {
     throw new PromptCompilationError(
       "model_max_output_invalid",
-      "模型必须提供有效的 maxOutputTokens",
+      "The model must provide a valid maxOutputTokens value",
     );
   }
 }
@@ -893,9 +978,14 @@ function descriptorQueryTarget(
 function modelVisibleDocumentSource(
   target: DocumentQueryTarget,
   failure?: WorldDocumentQueryFailure,
+  locale: AppLocale = defaultAppLocale,
 ): string {
   if (failure?.document !== undefined) return `@${failure.document.shortRef}`;
-  return target.source.startsWith("@") ? target.source : "（文档不可用）";
+  return target.source.startsWith("@")
+    ? target.source
+    : locale === "zh-CN"
+      ? "（文档不可用）"
+      : "(document unavailable)";
 }
 
 function locatorCoverageKey(locator: WorldDocumentLocator): string {
@@ -923,7 +1013,7 @@ function readCompleteDocument(
     if (result.kind !== "read_document")
       throw new PromptCompilationError(
         "world_document_query_failed",
-        "世界文档快照返回了错误的整文档查询类型",
+        "World-document snapshot returned the wrong whole-document query type",
       );
     descriptor ??= result.document;
     codec ??= result.codec;
@@ -933,7 +1023,7 @@ function readCompleteDocument(
     )
       throw new PromptCompilationError(
         "world_document_query_failed",
-        "整文档分页在同一快照内改变了目标",
+        "Whole-document pagination changed targets within one snapshot",
       );
     body += result.body;
     cursor = result.page.nextCursor;
@@ -941,7 +1031,7 @@ function readCompleteDocument(
   if (descriptor === null || codec === null)
     throw new PromptCompilationError(
       "world_document_query_failed",
-      "整文档查询没有返回目标",
+      "Whole-document query did not return a target",
     );
   return { kind: "complete_document", descriptor, codec, body };
 }
@@ -959,7 +1049,7 @@ function selectSnapshotNode(
   if (result.kind === "error" || result.kind === "select_node") return result;
   throw new PromptCompilationError(
     "world_document_query_failed",
-    "世界文档快照返回了错误的节点查询类型",
+    "World-document snapshot returned the wrong node-query type",
   );
 }
 
@@ -984,7 +1074,7 @@ function renderSnapshotDocument(
   if (selected.kind !== "select_node" || selected.node.codec !== "yaml")
     throw new PromptCompilationError(
       "world_document_query_failed",
-      "YAML 整文档没有返回 YAML 根节点投影",
+      "Whole YAML document did not return a YAML root-node projection",
     );
   return {
     kind: "rendered_document",
@@ -1012,7 +1102,7 @@ function renderYamlDocument(
   if (!isRecord(value))
     throw new PromptCompilationError(
       "world_document_query_failed",
-      "YAML 世界文档根节点必须是 map",
+      "YAML world-document root node must be a map",
     );
   return `## ${descriptor.title} [ref: @${descriptor.shortRef} · YAML]\n\n> ${descriptor.summary}\n\n${renderWorldYamlSource(value)}`;
 }
@@ -1052,7 +1142,7 @@ function throwQueryFailure(
 ): never {
   throw new PromptCompilationError(
     "world_document_query_failed",
-    `世界文档快照无法完成 ${operation} 查询`,
+    `World-document snapshot could not complete the ${operation} query`,
     {
       requestKind: failure.requestKind,
       snapshotStatus: failure.snapshotStatus,
@@ -1072,12 +1162,13 @@ function resolveContext(
   worldFrame: Record<string, unknown>,
   snapshot: FileNativeWorldDocumentSnapshot,
   coverage: PromptCompilation["coverage"],
+  locale: AppLocale,
 ): { source: string; markdown: string }[] {
   const context = worldFrame.context;
   if (!Array.isArray(context))
     throw new PromptCompilationError(
       "world_frame_invalid",
-      "world frame.context 必须是数组",
+      "world frame.context must be an array",
     );
   const selected: { key: string; source: string; markdown: string }[] = [];
   const currentSituation = isRecord(worldFrame.bindings)
@@ -1092,7 +1183,7 @@ function resolveContext(
     if (slot === null || typeof slot.kind !== "string")
       throw new PromptCompilationError(
         "world_frame_invalid",
-        "context 条目必须是 slot",
+        "A context entry must be a slot",
       );
     if (slot.kind === "current_situation")
       addDocumentSelection(
@@ -1102,13 +1193,21 @@ function resolveContext(
         snapshot,
         selected,
         coverage,
+        false,
+        locale,
       );
     else if (slot.kind === "reference_targets")
-      resolveReferenceTargets(slot, snapshot, selected, coverage);
+      resolveReferenceTargets(slot, snapshot, selected, coverage, locale);
     else if (slot.kind === "catalog")
-      resolveCatalog(slot, snapshot, selected, coverage);
+      resolveCatalog(slot, snapshot, selected, coverage, locale);
     else if (slot.kind === "history")
-      resolveRecentHistory(slot, input.world.history ?? {}, selected, coverage);
+      resolveRecentHistory(
+        slot,
+        input.world.history ?? {},
+        selected,
+        coverage,
+        locale,
+      );
     else if (slot.kind === "additional_materials")
       additionalMaterialsAt ??= {
         selected: selected.length,
@@ -1122,6 +1221,8 @@ function resolveContext(
         snapshot,
         selected,
         coverage,
+        false,
+        locale,
       );
     else if (slot.kind === "node")
       addNodeSelection(
@@ -1132,11 +1233,13 @@ function resolveContext(
         snapshot,
         selected,
         coverage,
+        false,
+        locale,
       );
     else
       throw new PromptCompilationError(
         "world_frame_invalid",
-        `不支持的 slot：${slot.kind}`,
+        `Unsupported slot: ${slot.kind}`,
       );
   }
   assertNoOverlap(selected);
@@ -1149,6 +1252,7 @@ function resolveContext(
       input.world.history ?? {},
       withMaterials,
       materialCoverage,
+      locale,
     );
     selected.splice(
       additionalMaterialsAt.selected,
@@ -1168,18 +1272,19 @@ function addDocumentSelection(
   selected: SelectedMaterial[],
   coverage: PromptCompilation["coverage"],
   dedupe = false,
+  locale: AppLocale = defaultAppLocale,
 ): void {
   const document = renderSnapshotDocument(snapshot, target.selector);
   if (document.kind === "error") {
     if (required)
       throw new PromptCompilationError(
         "required_slot_missing",
-        `必需 slot ${slot} 的文档无法从固定快照读取：${target.source}`,
+        `Document for required slot ${slot} could not be read from the fixed snapshot: ${target.source}`,
         document.diagnostics,
       );
     coverage.push({
       slot,
-      source: modelVisibleDocumentSource(target, document),
+      source: modelVisibleDocumentSource(target, document, locale),
       status: "optional_missing",
       complete: false,
       continuation: "context_list",
@@ -1217,6 +1322,7 @@ function resolveReferenceTargets(
   snapshot: FileNativeWorldDocumentSnapshot,
   selected: SelectedMaterial[],
   coverage: PromptCompilation["coverage"],
+  locale: AppLocale,
 ): void {
   const from = isRecord(slot.from) ? slot.from : {};
   const sourceTarget = parseDocumentQueryTarget(stringOrEmpty(from.document));
@@ -1242,7 +1348,7 @@ function resolveReferenceTargets(
     if (required)
       throw new PromptCompilationError(
         "required_slot_missing",
-        "reference_targets 来源无法从固定快照精确选择",
+        "reference_targets source could not be selected exactly from the fixed snapshot",
         result?.kind === "error" ? result.diagnostics : null,
       );
     coverage.push({
@@ -1250,6 +1356,7 @@ function resolveReferenceTargets(
       source: `${modelVisibleDocumentSource(
         sourceTarget,
         result?.kind === "error" ? result : undefined,
+        locale,
       )}#yaml:${locatorCoverage}`,
       status: "optional_missing",
       complete: false,
@@ -1266,7 +1373,7 @@ function resolveReferenceTargets(
   )
     throw new PromptCompilationError(
       "slot_limit_exceeded",
-      "reference_targets 超过明确上限",
+      "reference_targets exceeds its explicit limit",
     );
   coverage.push({
     slot: "reference_targets",
@@ -1283,6 +1390,8 @@ function resolveReferenceTargets(
       snapshot,
       selected,
       coverage,
+      false,
+      locale,
     );
 }
 
@@ -1291,18 +1400,19 @@ function resolveCatalog(
   snapshot: FileNativeWorldDocumentSnapshot,
   selected: SelectedMaterial[],
   coverage: PromptCompilation["coverage"],
+  locale: AppLocale,
 ): void {
   const directory = stringOrEmpty(slot.directory);
   const max = Number(slot.maxEntries ?? 0);
   if (!validCatalogDirectory(directory))
     throw new PromptCompilationError(
       "world_frame_invalid",
-      "catalog.directory 必须是相对于世界文档根的安全目录路径",
+      "catalog.directory must be a safe directory path relative to the world-document root",
     );
   if (!Number.isInteger(max) || max < 1 || max > 100)
     throw new PromptCompilationError(
       "world_frame_invalid",
-      "catalog.maxEntries 无效",
+      "catalog.maxEntries is invalid",
     );
   const matches: WorldDocumentDescriptor[] = [];
   const damaged: string[] = [];
@@ -1318,7 +1428,7 @@ function resolveCatalog(
     if (result.kind !== "catalog")
       throw new PromptCompilationError(
         "world_document_query_failed",
-        "世界文档快照返回了错误的目录查询类型",
+        "World-document snapshot returned the wrong directory-query type",
       );
     for (const entry of result.entries) {
       if (entry.kind !== "document") continue;
@@ -1331,7 +1441,7 @@ function resolveCatalog(
   if ((matches.length === 0 || damaged.length > 0) && slot.required !== false)
     throw new PromptCompilationError(
       "required_slot_missing",
-      `必需 catalog ${directory} 没有完整关联可查询的直接子文档`,
+      `Required catalog ${directory} does not completely associate its queryable direct child documents`,
       {
         slot: "catalog",
         directory,
@@ -1341,7 +1451,10 @@ function resolveCatalog(
       },
     );
   const page = matches.slice(0, max);
-  const markdown = `# ${directory} 目录\n\n${page.map((document) => `- ${document.title} [ref: @${document.shortRef}] — ${document.summary}`).join("\n") || "（空）"}\n\n显示 ${page.length}/${matches.length}。`;
+  const markdown =
+    locale === "zh-CN"
+      ? `# ${directory} 目录\n\n${page.map((document) => `- ${document.title} [ref: @${document.shortRef}] — ${document.summary}`).join("\n") || "（空）"}\n\n显示 ${page.length}/${matches.length}。`
+      : `# ${directory} catalog\n\n${page.map((document) => `- ${document.title} [ref: @${document.shortRef}] — ${document.summary}`).join("\n") || "(empty)"}\n\nShowing ${page.length}/${matches.length}.`;
   selected.push({
     key: `catalog:${directory}`,
     source: `slot:catalog:${directory}`,
@@ -1382,12 +1495,13 @@ function resolveRecentHistory(
   history: Record<string, string>,
   selected: SelectedMaterial[],
   coverage: PromptCompilation["coverage"],
+  locale: AppLocale,
 ): void {
   const recent = Number(slot.recent ?? 2);
   if (!Number.isInteger(recent) || recent < 1 || recent > 32)
     throw new PromptCompilationError(
       "world_frame_invalid",
-      "history slot 的 recent 必须是 1 到 32 的整数",
+      "history slot recent must be an integer from 1 to 32",
     );
   // FileNativeWorldStore builds this record from the recovered Authority array
   // in commit order. Its keys are semantic message IDs, not sortable file
@@ -1402,11 +1516,14 @@ function resolveRecentHistory(
       key: "history:empty",
       source: "slot:history:empty",
       markdown:
-        "# 最近已提交对话\n\n（空：当前世界没有更早的玩家原文或主持叙事；无需为寻找上一条记录调用历史检索工具。）",
+        locale === "zh-CN"
+          ? "# 最近已提交对话\n\n（空：当前世界没有更早的玩家原文或主持叙事；无需为寻找上一条记录调用历史检索工具。）"
+          : "# Recent committed conversation\n\n(Empty: this world has no earlier player input or host narrative. Do not call history tools merely to look for a previous message.)",
     });
     coverage.push({
       slot: "history",
-      source: `最近 ${recent} 条`,
+      source:
+        locale === "zh-CN" ? `最近 ${recent} 条` : `most recent ${recent}`,
       status: "resolved",
       complete: true,
       continuation: null,
@@ -1419,11 +1536,14 @@ function resolveRecentHistory(
     selected.push({
       key,
       source: `slot:history:${ref}`,
-      markdown: renderHistoryMessage(ref, text),
+      markdown: renderHistoryMessage(ref, text, locale),
     });
     coverage.push({
       slot: "history",
-      source: `${historyMessageLabel(ref)}（最近记录 ${index + 1}/${chosen.length}）`,
+      source:
+        locale === "zh-CN"
+          ? `${historyMessageLabel(ref, locale)}（最近记录 ${index + 1}/${chosen.length}）`
+          : `${historyMessageLabel(ref, locale)} (recent ${index + 1}/${chosen.length})`,
       status: "resolved",
       complete: true,
       continuation: "context_list",
@@ -1437,11 +1557,12 @@ function resolveAdditionalMaterials(
   history: Record<string, string>,
   selected: SelectedMaterial[],
   coverage: PromptCompilation["coverage"],
+  locale: AppLocale,
 ): void {
   if (materials.length > 32)
     throw new PromptCompilationError(
       "material_limit_exceeded",
-      "附加材料超过 32 项",
+      "Additional material exceeds 32 items",
     );
   for (const material of materials) {
     // The model picks this list, and it cannot see which documents a context
@@ -1456,6 +1577,7 @@ function resolveAdditionalMaterials(
         selected,
         coverage,
         true,
+        locale,
       );
     else if (material.kind === "node")
       addNodeSelection(
@@ -1467,6 +1589,7 @@ function resolveAdditionalMaterials(
         selected,
         coverage,
         true,
+        locale,
       );
     else {
       const ref =
@@ -1485,7 +1608,7 @@ function resolveAdditionalMaterials(
       if (matches.length === 0)
         throw new PromptCompilationError(
           "required_slot_missing",
-          `附加历史材料不存在：${ref}`,
+          `Additional history material does not exist: ${ref}`,
         );
       const key = `${material.kind}:${ref}`;
       if (overlappingSelection(selected, key) !== null) continue;
@@ -1493,15 +1616,17 @@ function resolveAdditionalMaterials(
         key,
         source: `slot:additional_materials:${ref}`,
         markdown: matches
-          .map(([key, text]) => renderHistoryMessage(key, text))
+          .map(([key, text]) => renderHistoryMessage(key, text, locale))
           .join("\n\n"),
       });
       coverage.push({
         slot: "additional_materials",
         source:
           matches.length === 1
-            ? historyMessageLabel(matches[0]![0])
-            : `已选历史提交（${matches.length} 条）`,
+            ? historyMessageLabel(matches[0]![0], locale)
+            : locale === "zh-CN"
+              ? `已选历史提交（${matches.length} 条）`
+              : `selected history commit (${matches.length} messages)`,
         status: "resolved",
         complete: true,
         continuation: "context_list",
@@ -1510,17 +1635,22 @@ function resolveAdditionalMaterials(
   }
 }
 
-function renderHistoryMessage(ref: string, text: string): string {
-  return `## ${historyMessageLabel(ref)}\n\n${text.trim()}`;
+function renderHistoryMessage(
+  ref: string,
+  text: string,
+  locale: AppLocale,
+): string {
+  return `## ${historyMessageLabel(ref, locale)}\n\n${text.trim()}`;
 }
 
-function historyMessageLabel(ref: string): string {
-  if (ref.endsWith(".message.genesis.narrator")) return "开场白";
+function historyMessageLabel(ref: string, locale: AppLocale): string {
+  if (ref.endsWith(".message.genesis.narrator"))
+    return locale === "zh-CN" ? "开场白" : "Opening";
   if (/(?:\.message\.[^.]+(?:\.[0-9]+)?\.|-)(player)(?:-|$)/u.test(ref))
-    return "玩家原文";
+    return locale === "zh-CN" ? "玩家原文" : "Player input";
   if (/(?:\.message\.[^.]+(?:\.[0-9]+)?\.|-)(narrator)(?:-|$)/u.test(ref))
-    return "主持叙事";
-  return "已提交消息";
+    return locale === "zh-CN" ? "主持叙事" : "Host narrative";
+  return locale === "zh-CN" ? "已提交消息" : "Committed message";
 }
 
 function addNodeSelection(
@@ -1532,13 +1662,14 @@ function addNodeSelection(
   selected: SelectedMaterial[],
   coverage: PromptCompilation["coverage"],
   dedupe = false,
+  locale: AppLocale = defaultAppLocale,
 ): void {
   let exactLocator: WorldDocumentLocator | null = null;
   if (isRecord(locator) && Array.isArray(locator.yaml)) {
     if (locator.yaml.some((segment) => typeof segment !== "string"))
       throw new PromptCompilationError(
         "persistent_locator_invalid",
-        "世界框架和附加材料的持久 YAML locator 不允许列表下标",
+        "Persistent YAML locators in world frames and additional material cannot use list indexes",
       );
     exactLocator = { yaml: locator.yaml };
   } else if (
@@ -1555,7 +1686,7 @@ function addNodeSelection(
     if (required)
       throw new PromptCompilationError(
         "required_slot_missing",
-        `逻辑 locator 无法从固定快照选择：${target.source}`,
+        `Logical locator could not be selected from the fixed snapshot: ${target.source}`,
         result?.kind === "error" ? result.diagnostics : null,
       );
     coverage.push({
@@ -1565,10 +1696,12 @@ function addNodeSelection(
           ? modelVisibleDocumentSource(
               target,
               result?.kind === "error" ? result : undefined,
+              locale,
             )
           : `${modelVisibleDocumentSource(
               target,
               result?.kind === "error" ? result : undefined,
+              locale,
             )} · ${locatorCoverageKey(exactLocator)}`,
       status: "optional_missing",
       complete: false,
@@ -1580,17 +1713,17 @@ function addNodeSelection(
   let markdown: string;
   if (result.node.codec === "yaml" && "yaml" in result.node.locator) {
     pathKey = locatorCoverageKey(result.node.locator);
-    markdown = `## ${result.document.title} [ref: @${result.document.shortRef} · YAML] · 节点 ${result.node.locator.yaml.join(" / ")}\n\n${renderWorldYamlSource(result.node.value)}`;
+    markdown = `## ${result.document.title} [ref: @${result.document.shortRef} · YAML] · ${locale === "zh-CN" ? "节点" : "node"} ${result.node.locator.yaml.join(" / ")}\n\n${renderWorldYamlSource(result.node.value)}`;
   } else if (
     result.node.codec === "markdown" &&
     "markdown" in result.node.locator
   ) {
     pathKey = locatorCoverageKey(result.node.locator);
-    markdown = `## ${result.document.title} [ref: @${result.document.shortRef} · Markdown] · 节点 ${result.node.locator.markdown.join(" / ")}\n\n${result.node.markdown.trim()}`;
+    markdown = `## ${result.document.title} [ref: @${result.document.shortRef} · Markdown] · ${locale === "zh-CN" ? "节点" : "node"} ${result.node.locator.markdown.join(" / ")}\n\n${result.node.markdown.trim()}`;
   } else {
     throw new PromptCompilationError(
       "world_document_query_failed",
-      "精确节点结果的 codec 与 locator 不一致",
+      "Exact-node result codec does not match its locator",
     );
   }
   const key = `node:${result.document.documentId}:${pathKey}`;
@@ -1616,8 +1749,9 @@ function addNodeSelection(
 /** Expand an author allowlist through the Runtime-owned registry. */
 export function fileNativeToolsForNames(
   names: readonly FileNativeToolName[],
+  locale: AppLocale = defaultAppLocale,
 ): PromptCompilation["tools"] {
-  return runtimeToolsForNames(names);
+  return runtimeToolsForNames(names, locale);
 }
 
 function keysOverlap(a: string, b: string): boolean {
@@ -1652,7 +1786,7 @@ function assertNoOverlap(selected: SelectedMaterial[]): void {
       if (keysOverlap(a.key, b.key))
         throw new PromptCompilationError(
           "material_overlap",
-          `材料重叠：${a.source} 与 ${b.source}`,
+          `Material overlap: ${a.source} and ${b.source}`,
         );
     }
   }
@@ -1685,18 +1819,18 @@ function readWorldInstructions(
   if (!Array.isArray(frame.instructions))
     throw new PromptCompilationError(
       "world_frame_invalid",
-      "world frame.instructions 必须是数组",
+      "world frame.instructions must be an array",
     );
   return frame.instructions.map((entry) => {
     if (!isRecord(entry) || typeof entry.markdown !== "string")
       throw new PromptCompilationError(
         "world_frame_invalid",
-        "instruction 必须引用 Markdown 块",
+        "A world instruction must reference a Markdown block",
       );
     const path = `control/${entry.markdown}`;
     return {
       source: `world:${path}`,
-      markdown: readMarkdown(files, path, "世界提示块"),
+      markdown: readMarkdown(files, path, "world prompt block"),
     };
   });
 }
@@ -1707,6 +1841,7 @@ function compileHostRoles(
   worldInstructions: { source: string; markdown: string }[],
   worldContext: { source: string; markdown: string }[],
   coverage: PromptCompilation["coverage"],
+  locale: AppLocale,
 ): Record<
   Exclude<LogicalRole, "player_input">,
   { source: string; markdown: string }[]
@@ -1714,7 +1849,7 @@ function compileHostRoles(
   if (!isRecord(frame.roles))
     throw new PromptCompilationError(
       "host_frame_invalid",
-      "host frame.roles 必须明确编排三个逻辑 role",
+      "host frame.roles must explicitly arrange all three logical roles",
     );
   const roles = frame.roles;
   const expectedRoles = [
@@ -1728,7 +1863,7 @@ function compileHostRoles(
   ) {
     throw new PromptCompilationError(
       "host_frame_invalid",
-      "host frame.roles 必须且只能包含 runtime_system、author_instruction、world_context",
+      "host frame.roles must contain only runtime_system, author_instruction, and world_context",
     );
   }
   const result = Object.fromEntries(
@@ -1738,13 +1873,13 @@ function compileHostRoles(
         if (!isRecord(entry))
           throw new PromptCompilationError(
             "host_frame_invalid",
-            `${role} 条目无效`,
+            `${role} contains an invalid entry`,
           );
         if (role === "runtime_system" && Object.keys(entry).length === 1) {
           const builtin = {
-            "runtime.play-contract": runtimeContract,
-            "runtime.tool-contract": runtimeToolContract,
-            "runtime.operation-contract": runtimeOperationContract,
+            "runtime.play-contract": runtimeContracts[locale].play,
+            "runtime.tool-contract": runtimeContracts[locale].tools,
+            "runtime.operation-contract": runtimeContracts[locale].operation,
           }[String(entry.builtin)];
           if (builtin !== undefined)
             return [
@@ -1762,7 +1897,7 @@ function compileHostRoles(
           return [
             {
               source: "runtime:builtin/runtime.coverage",
-              markdown: renderCoverage(coverage),
+              markdown: renderCoverage(coverage, locale),
             },
           ];
         if (
@@ -1773,7 +1908,11 @@ function compileHostRoles(
           return [
             {
               source: `host:${entry.markdown}`,
-              markdown: readMarkdown(files, entry.markdown, "主持预设块"),
+              markdown: readMarkdown(
+                files,
+                entry.markdown,
+                "host preset block",
+              ),
             },
           ];
         }
@@ -1791,7 +1930,7 @@ function compileHostRoles(
           return worldContext;
         throw new PromptCompilationError(
           "host_frame_invalid",
-          `${role} 中存在越权、未知或错位的编排条目`,
+          `${role} contains an unauthorized, unknown, or misplaced arrangement entry`,
         );
       }),
     ]),
@@ -1823,24 +1962,38 @@ function compileHostRoles(
   )
     throw new PromptCompilationError(
       "host_frame_invalid",
-      "三个 Runtime contract、runtime.coverage 与两个 world include 必须各恰好出现一次",
+      "The three Runtime contracts, runtime.coverage, and both world includes must each appear exactly once",
     );
   return result;
 }
 
-function renderCoverage(coverage: PromptCompilation["coverage"]): string {
-  return `# 材料覆盖报告
+function renderCoverage(
+  coverage: PromptCompilation["coverage"],
+  locale: AppLocale,
+): string {
+  const introduction =
+    locale === "zh-CN"
+      ? `# 材料覆盖报告
 
 下列条目说明本次请求注入了哪些材料，以及可以用哪个工具取得更多。\`未完整\` 表示这一项的覆盖没有得到证明，不表示一定还有内容：\`optional_missing\` 的位置可能什么都没注入（目录为空、或内容存在但未被选中），也可能已经注入了一部分（目录里还有无法解析的条目）；\`paged_catalog\` 表示确实还有条目没有列出。任何一种都不能用来推断世界上是否存在某件事；需要确认时用条目末尾列出的工具查。
 
 \`已注入全文\` 表示该文档的完整正文已经出现在下方世界材料里，并且已经具备写入资格：直接对它调用写入工具即可，\`context_read\` 会返回同样的正文。\`已注入节点\` 表示只注入并授权了标出的那个节点，改动该节点之外的位置才需要先读。
 
-每份材料的标题都标出了它的 codec：\`· YAML\` 的用 \`{yaml: [键, ...]}\` 定位，正文就是它的 YAML 原文，键名和层级照写即可；\`· Markdown\` 的用 \`{markdown: [标题, ...]}\` 定位，路径是正文里的标题层级。文档 id 一律投影成 \`@短引用\`，写回时照原样保留。
+每份材料的标题都标出了它的 codec：\`· YAML\` 的用 \`{yaml: [键, ...]}\` 定位，正文就是它的 YAML 原文，键名和层级照写即可；\`· Markdown\` 的用 \`{markdown: [标题, ...]}\` 定位，路径是正文里的标题层级。文档 id 一律投影成 \`@短引用\`，写回时照原样保留。`
+      : `# Material coverage report
+
+The entries below state which material this request injected and which tool can retrieve more. \`incomplete\` means coverage was not proven, not that more content necessarily exists. An \`optional_missing\` location may have injected nothing because a directory is empty or material exists but was not selected, or it may have injected only part because the directory contains entries that could not be parsed. \`paged_catalog\` means additional entries definitely were not listed. None of these states proves whether a world fact exists. Use the tool named at the end of the entry when confirmation is needed.
+
+\`full text injected\` means the complete document body already appears below and write authorization is already available. Call a write tool directly; \`context_read\` would return the same body. \`node injected\` means only the named node was injected and authorized. Read first only when changing something outside that node.
+
+Each material heading identifies its codec. For \`· YAML\`, use \`{yaml: [key, ...]}\`; the body is the YAML source, so preserve its keys and hierarchy. For \`· Markdown\`, use \`{markdown: [heading, ...]}\`; the path follows the body's heading hierarchy. Document ids are always projected as \`@short-refs\`; preserve those handles exactly when writing.`;
+
+  return `${introduction}
 
 ${coverage
   .map(
     (entry) =>
-      `- ${entry.slot}: ${entry.source} · ${entry.status} · ${entry.complete ? "完整" : "未完整"}${coverageWriteHint(entry)}`,
+      `- ${entry.slot}: ${entry.source} · ${entry.status} · ${entry.complete ? (locale === "zh-CN" ? "完整" : "complete") : locale === "zh-CN" ? "未完整" : "incomplete"}${coverageWriteHint(entry, locale)}`,
   )
   .join("\n")}`;
 }
@@ -1852,6 +2005,7 @@ ${coverage
  */
 function coverageWriteHint(
   entry: PromptCompilation["coverage"][number],
+  locale: AppLocale,
 ): string {
   const authorization = entry.readAuthorization;
   if (
@@ -1859,8 +2013,18 @@ function coverageWriteHint(
     entry.complete &&
     authorization !== undefined
   )
-    return authorization.locator === null ? " · 已注入全文" : " · 已注入节点";
-  return entry.continuation === null ? "" : ` · 可继续 ${entry.continuation}`;
+    return authorization.locator === null
+      ? locale === "zh-CN"
+        ? " · 已注入全文"
+        : " · full text injected"
+      : locale === "zh-CN"
+        ? " · 已注入节点"
+        : " · node injected";
+  return entry.continuation === null
+    ? ""
+    : locale === "zh-CN"
+      ? ` · 可继续 ${entry.continuation}`
+      : ` · continue with ${entry.continuation}`;
 }
 
 function mapProvider(
@@ -1944,7 +2108,7 @@ export function scanRuntimeLeakage(
       if (field !== undefined)
         throw new PromptCompilationError(
           "internal_field_leakage",
-          `Runtime 生成块泄漏内部字段：${field}`,
+          `Runtime-generated block leaks internal field: ${field}`,
         );
       if (
         /(?:[A-Za-z]:[\\/]|\/(?:home|Users|mnt|tmp|var|workspace|private|opt|root|etc)\/)/u.test(
@@ -1953,7 +2117,7 @@ export function scanRuntimeLeakage(
       )
         throw new PromptCompilationError(
           "internal_path_leakage",
-          "Runtime 生成块泄漏绝对路径",
+          "Runtime-generated block leaks an absolute path",
         );
     }
   }
@@ -1964,7 +2128,10 @@ function readYamlRecord(
   label: string,
 ): Record<string, unknown> {
   if (source === undefined || source.trim() === "")
-    throw new PromptCompilationError("required_slot_missing", `${label} 缺失`);
+    throw new PromptCompilationError(
+      "required_slot_missing",
+      `${label} is missing`,
+    );
   if (
     /(^|\s)[&*!][^\s,\]}]+/mu.test(source) ||
     /^\s*<<\s*:/mu.test(source) ||
@@ -1973,7 +2140,7 @@ function readYamlRecord(
   )
     throw new PromptCompilationError(
       "unsafe_yaml",
-      `${label} 使用了受限 YAML 禁止的 anchor、alias、tag、merge 或多文档语法`,
+      `${label} uses anchors, aliases, tags, merges, or multi-document syntax forbidden by restricted YAML`,
     );
   const document = parseDocument(source, {
     schema: "core",
@@ -1983,12 +2150,15 @@ function readYamlRecord(
   if (document.errors.length > 0 || document.warnings.length > 0)
     throw new PromptCompilationError(
       "unsafe_yaml",
-      `${label} 不是安全的受限 YAML`,
+      `${label} is not safe restricted YAML`,
       [...document.errors, ...document.warnings].map(({ message }) => message),
     );
   const value: unknown = document.toJS({ maxAliasCount: 0 });
   if (!isRecord(value))
-    throw new PromptCompilationError("unsafe_yaml", `${label} 顶层必须是 map`);
+    throw new PromptCompilationError(
+      "unsafe_yaml",
+      `${label} top level must be a map`,
+    );
   return value;
 }
 
@@ -2000,7 +2170,7 @@ function requireFormat(
   if (record.format !== format)
     throw new PromptCompilationError(
       "frame_format_invalid",
-      `${label} format 必须是 ${format}`,
+      `${label} format must be ${format}`,
     );
 }
 
@@ -2013,7 +2183,7 @@ function readMarkdown(
   if (value === undefined || value.trim() === "")
     throw new PromptCompilationError(
       "required_slot_missing",
-      `${label}不存在：${path}`,
+      `${label} does not exist: ${path}`,
     );
   return value.trim();
 }

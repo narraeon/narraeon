@@ -79,11 +79,14 @@ export function buildPlayPresetWorkbenchSnapshot(
       if (declaration.regex !== undefined) {
         try {
           const source = binding.files[declaration.regex];
-          if (source === undefined) throw new Error("regex 资源不存在");
+          if (source === undefined)
+            throw new Error("The regex resource does not exist");
           regex = parsePlayPresetRegexAsset(source, declaration.regex);
         } catch (error: unknown) {
           const message =
-            error instanceof Error ? error.message : "regex 资源无效";
+            error instanceof Error
+              ? error.message
+              : "The regex resource is invalid";
           diagnostics.push(message);
           staticErrors.push({
             code: "regex_invalid",
@@ -100,15 +103,15 @@ export function buildPlayPresetWorkbenchSnapshot(
         declaration.contentType === "application/json"
           ? JSON.stringify(rawPayload, null, 2)
           : declaration.contentType === "text/markdown"
-            ? "# 示例后置请求产物\n\n这是工作台的本地预览样例。"
+            ? "# Example follow-up artifact\n\nThis is a local workbench preview sample."
             : declaration.contentType === "text/html"
-              ? "<p>这是工作台的本地 HTML 样例。</p>"
-              : "这是工作台的本地文本样例。";
+              ? "<p>This is a local HTML workbench sample.</p>"
+              : "This is a local text workbench sample.";
       let renderer: PlayPresetWorkbenchRendererPreview | undefined;
       if (declaration.renderer !== undefined) {
         const source = binding.files[declaration.renderer];
         if (source === undefined) {
-          const message = `renderer 资源不存在：${declaration.renderer}`;
+          const message = `Renderer resource does not exist: ${declaration.renderer}`;
           diagnostics.push(message);
           staticErrors.push({
             code: "renderer_missing",
@@ -119,10 +122,10 @@ export function buildPlayPresetWorkbenchSnapshot(
           const scriptSources = (declaration.scripts ?? []).flatMap((path) => {
             const script = binding.files[path];
             if (script === undefined) {
-              diagnostics.push(`script 资源不存在：${path}`);
+              diagnostics.push(`Script resource does not exist: ${path}`);
               staticErrors.push({
                 code: "script_missing",
-                message: `script 资源不存在：${path}`,
+                message: `Script resource does not exist: ${path}`,
                 location: path,
               });
               return [];
@@ -132,10 +135,10 @@ export function buildPlayPresetWorkbenchSnapshot(
           const assetSources = (declaration.assets ?? []).flatMap((path) => {
             const asset = binding.files[path];
             if (asset === undefined) {
-              diagnostics.push(`asset 资源不存在：${path}`);
+              diagnostics.push(`Asset resource does not exist: ${path}`);
               staticErrors.push({
                 code: "asset_missing",
-                message: `asset 资源不存在：${path}`,
+                message: `Asset resource does not exist: ${path}`,
                 location: path,
               });
               return [];
@@ -177,8 +180,8 @@ export function buildPlayPresetWorkbenchSnapshot(
           invalidation: declaration.invalidation,
           description:
             declaration.invalidation === "never"
-              ? "声明为 never；预览只展示策略，不自动清除。"
-              : "clear 是显式投影事件，不会修改 raw payload。",
+              ? "Declared as never; the preview displays the policy without clearing automatically."
+              : "clear is an explicit projection event and does not modify the raw payload.",
         },
         simulation: simulateArtifactProjection(declaration),
         diagnostics,
@@ -220,10 +223,10 @@ export function simulateArtifactProjection(
             : "superseded",
       reason:
         invalidation === "never"
-          ? "never：没有自动失效事件，emit 后保持 active。"
+          ? "never: no automatic invalidation event; remains active after emit."
           : invalidation === "explicit_clear"
-            ? "explicit_clear：触发 clear 后变为 cleared。"
-            : `${invalidation}：触发生命周期事件后变为 superseded。`,
+            ? "explicit_clear: becomes cleared after a clear event."
+            : `${invalidation}: becomes superseded after the lifecycle event.`,
     },
   };
 }
@@ -234,10 +237,11 @@ function samplePayload(
 ): unknown {
   if (contract === undefined) {
     if (contentType === "text/html")
-      return "<p>这是工作台的本地 HTML 样例。</p>";
+      return "<p>This is a local HTML workbench sample.</p>";
     if (contentType === "text/markdown")
-      return "# 示例后置请求产物\n\n这是工作台的本地预览样例。";
-    if (contentType === "text/plain") return "这是工作台的本地文本样例。";
+      return "# Example follow-up artifact\n\nThis is a local workbench preview sample.";
+    if (contentType === "text/plain")
+      return "This is a local text workbench sample.";
     return { sample: "workbench" };
   }
   switch (contract.type) {
@@ -250,7 +254,7 @@ function samplePayload(
     case "array":
       return [samplePayload(contract.items)];
     case "string":
-      return "示例文本";
+      return "Example text";
     case "number":
     case "integer":
       return 1;

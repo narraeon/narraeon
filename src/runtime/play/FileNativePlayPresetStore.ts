@@ -10,10 +10,14 @@ import {
   portableContentTreePathKey,
   type PortableContentTreeLimits,
 } from "../../protocol/contentTree.ts";
-import { defaultNarrationPrompt } from "../../shared/default-play-prompts.ts";
-import { defaultPresetHostFiles } from "../../shared/default-preset-host.ts";
 import {
-  defaultSettingImprovementPrompt,
+  defaultAppLocale,
+  type AppLocale,
+} from "../../protocol/appPreferences.ts";
+import { defaultNarrationPromptForLocale } from "../../shared/default-play-prompts.ts";
+import { defaultPresetHostFilesForLocale } from "../../shared/default-preset-host.ts";
+import {
+  defaultSettingImprovementPromptForLocale,
   defaultSettingImprovementPromptPath,
 } from "../../shared/default-setting-improvement-prompt.ts";
 import {
@@ -258,7 +262,8 @@ export function isPlayPresetBinding(
     value.name === "default" &&
     value.revision === "builtin-default-v1" &&
     value.scriptsEnabled === true &&
-    isDeepStrictEqual(files, defaultPlayPresetFiles);
+    (isDeepStrictEqual(files, defaultPlayPresetFilesForLocale("en")) ||
+      isDeepStrictEqual(files, defaultPlayPresetFilesForLocale("zh-CN")));
   return (
     parsed.kind === "valid" &&
     isDeepStrictEqual(value.definition, parsed.definition) &&
@@ -303,24 +308,32 @@ export class FileNativePlayPresetError extends Error {
   }
 }
 
-export const defaultPlayPresetFiles: Record<string, string> = {
-  "preset.yaml": `format: narraeon.play-preset/v1
-name: 系统推荐
+export function defaultPlayPresetFilesForLocale(
+  locale: AppLocale,
+): Record<string, string> {
+  return {
+    "preset.yaml": `format: narraeon.play-preset/v1
+name: ${locale === "zh-CN" ? "系统推荐" : "System recommended"}
 callChain: call-chain.yaml
 settingImprovement:
   markdown: prompts/setting-improvement.md
 mounts: []
 extensions: []
 `,
-  "call-chain.yaml": `format: narraeon.play-call-chain/v1
+    "call-chain.yaml": `format: narraeon.play-call-chain/v1
 narrative:
   - markdown: prompts/narrate.md
 followups: []
 `,
-  ...defaultPresetHostFiles,
-  "prompts/narrate.md": defaultNarrationPrompt,
-  [defaultSettingImprovementPromptPath]: defaultSettingImprovementPrompt,
-};
+    ...defaultPresetHostFilesForLocale(locale),
+    "prompts/narrate.md": defaultNarrationPromptForLocale(locale),
+    [defaultSettingImprovementPromptPath]:
+      defaultSettingImprovementPromptForLocale(locale),
+  };
+}
+
+export const defaultPlayPresetFiles =
+  defaultPlayPresetFilesForLocale(defaultAppLocale);
 
 /**
  * Resolve the author-owned part of setting improvement from a frozen preset.
@@ -329,21 +342,25 @@ followups: []
  */
 export function settingImprovementPromptForBinding(
   binding: PlayPresetBinding,
+  locale: AppLocale = defaultAppLocale,
 ): string {
   const reference = binding.definition.settingImprovementPrompt;
-  if (reference === undefined) return defaultSettingImprovementPrompt;
+  if (reference === undefined)
+    return defaultSettingImprovementPromptForLocale(locale);
   const prompt = binding.files[reference.path];
   if (prompt === undefined || prompt.trim() === "")
     throw new FileNativePlayPresetError(
       "setting_improvement_prompt_missing",
-      `设定完善提示块不存在：${reference.path}`,
+      `Setting-improvement prompt block does not exist: ${reference.path}`,
     );
   return prompt;
 }
 
 /** Stable built-in binding for direct Runtime seams without a local library. */
-export function builtinDefaultPlayPresetBinding(): PlayPresetBinding {
-  const files = cloneFiles(defaultPlayPresetFiles);
+export function builtinDefaultPlayPresetBinding(
+  locale: AppLocale = defaultAppLocale,
+): PlayPresetBinding {
+  const files = cloneFiles(defaultPlayPresetFilesForLocale(locale));
   const parsed = parsePlayPresetFiles(files);
   if (parsed.kind !== "valid") throw parsed.error;
   return {
@@ -364,6 +381,8 @@ interface StoredPreset {
   draftRevision?: string;
   enabled: boolean;
   scriptsEnabled: boolean;
+  /** Runtime-owned seed that may track the selected application locale. */
+  builtinDefault?: true;
 }
 
 interface StoredDocument {
@@ -389,6 +408,7 @@ export class FileNativePlayPresetStore {
   readonly #path: string;
   readonly #root: string;
   readonly #limits: PortableContentTreeLimits;
+  readonly #locale: () => AppLocale;
   #tail: Promise<void> = Promise.resolve();
   /**
    * Set when an unreadable library was moved aside on load. Surfaced as a
@@ -398,7 +418,10 @@ export class FileNativePlayPresetStore {
 
   constructor(
     root: string,
-    options: { limits?: Partial<PortableContentTreeLimits> } = {},
+    options: {
+      limits?: Partial<PortableContentTreeLimits>;
+      locale?: () => AppLocale;
+    } = {},
   ) {
     this.#root = root;
     this.#path = join(root, "file-native-play-presets.json");
@@ -406,11 +429,27 @@ export class FileNativePlayPresetStore {
       ...defaultLimits,
       ...options.limits,
     };
+    this.#locale = options.locale ?? (() => defaultAppLocale);
   }
 
   async initialize(): Promise<void> {
     await this.#change(async () => {
-      await this.#read();
+      const document = await this.#read();
+      const migrated = this.#markLegacyBuiltinDefault(document);
+      const synchronized = this.#synchronizeBuiltinDefault(document);
+      if (migrated || synchronized) await this.#write(document);
+    });
+  }
+
+  /**
+   * Update only the Runtime-owned seed preset. User-created, copied, imported,
+   * renamed, or edited presets remain byte-for-byte unchanged.
+   */
+  async syncBuiltinDefaultLocale(): Promise<void> {
+    await this.#change(async () => {
+      const document = await this.#read();
+      if (this.#synchronizeBuiltinDefault(document))
+        await this.#write(document);
     });
   }
 
@@ -426,11 +465,15 @@ export class FileNativePlayPresetStore {
 
   async create(
     name: string,
-    files: Record<string, string> = defaultPlayPresetFiles,
+    files?: Record<string, string>,
   ): Promise<{ currentPresetId: string; preset: FileNativePlayPresetView }> {
     return this.#change(async () => {
       const document = await this.#read();
-      const stored = this.#stored(randomUUID(), name, files);
+      const stored = this.#stored(
+        randomUUID(),
+        name,
+        files ?? defaultPlayPresetFilesForLocale(this.#locale()),
+      );
       document.presets.push(stored);
       await this.#write(document);
       return {
@@ -450,7 +493,7 @@ export class FileNativePlayPresetStore {
       if (files === undefined)
         throw new FileNativePlayPresetError(
           "store_invalid",
-          "玩法预设 revision 缺失",
+          "Play-preset revision is missing",
         );
       const stored = this.#stored(randomUUID(), source.name, files);
       stored.scriptsEnabled = source.scriptsEnabled;
@@ -473,6 +516,7 @@ export class FileNativePlayPresetStore {
     return this.#change(async () => {
       const document = await this.#read();
       const stored = findStored(document, input.presetId);
+      delete stored.builtinDefault;
       let files = cloneFiles(input.files);
       if (input.structure !== undefined) {
         files = applyPlayPresetStructuredEditor(
@@ -502,14 +546,14 @@ export class FileNativePlayPresetStore {
       if (!stored.enabled)
         throw new FileNativePlayPresetError(
           "preset_disabled",
-          "已停用的玩法预设不能成为当前选择",
+          "A disabled play preset cannot become the current selection",
         );
       const preset = this.#view(stored);
       const candidateValidation = preset.draft?.validation ?? preset.validation;
       if (candidateValidation.status === "invalid")
         throw new FileNativePlayPresetError(
           "invalid_play_preset",
-          `草稿不能应用：${candidateValidation.message}`,
+          `Draft cannot be applied: ${candidateValidation.message}`,
         );
       if (stored.draftRevision !== undefined) {
         stored.currentRevision = stored.draftRevision;
@@ -528,7 +572,7 @@ export class FileNativePlayPresetStore {
     if (!stored.enabled)
       throw new FileNativePlayPresetError(
         "preset_disabled",
-        "当前玩法预设已停用，请先启用或选择其他玩法",
+        "The current play preset is disabled; enable it or choose another preset",
       );
     return this.bindRevision(document.currentPresetId);
   }
@@ -549,7 +593,7 @@ export class FileNativePlayPresetStore {
     if (files === undefined)
       throw new FileNativePlayPresetError(
         "revision_not_found",
-        "没有找到指定玩法预设 revision",
+        "The requested play-preset revision was not found",
       );
     const parsed = parsePlayPresetFiles(files, this.#limits);
     if (parsed.kind === "invalid")
@@ -574,6 +618,7 @@ export class FileNativePlayPresetStore {
     return this.#change(async () => {
       const document = await this.#read();
       const stored = findStored(document, id);
+      delete stored.builtinDefault;
       stored.name = normalizeName(name);
       await this.#write(document);
       return {
@@ -598,7 +643,7 @@ export class FileNativePlayPresetStore {
         if (fallback === undefined) {
           throw new FileNativePlayPresetError(
             "cannot_disable_current_preset",
-            "不能停用唯一的当前玩法预设；请先选择其他可用预设",
+            "The only current play preset cannot be disabled; select another enabled preset first",
           );
         }
         document.currentPresetId = fallback.id;
@@ -747,7 +792,10 @@ export class FileNativePlayPresetStore {
       const quarantined = await this.#quarantine();
       this.recovery = {
         quarantinedPath: quarantined,
-        message: error instanceof Error ? error.message : "玩法预设库无法解析",
+        message:
+          error instanceof Error
+            ? error.message
+            : "The play-preset library could not be parsed",
       };
       const document = this.#defaultDocument();
       await this.#write(document);
@@ -772,13 +820,58 @@ export class FileNativePlayPresetStore {
     const stored = this.#stored(
       randomUUID(),
       "default",
-      defaultPlayPresetFiles,
+      defaultPlayPresetFilesForLocale(this.#locale()),
     );
+    stored.builtinDefault = true;
     return {
       schemaVersion: 1,
       currentPresetId: stored.id,
       presets: [stored],
     };
+  }
+
+  #markLegacyBuiltinDefault(document: StoredDocument): boolean {
+    if (document.presets.length !== 1) return false;
+    const [preset] = document.presets;
+    if (
+      preset === undefined ||
+      preset.builtinDefault === true ||
+      preset.name !== "default" ||
+      preset.draftRevision !== undefined
+    )
+      return false;
+    const files = preset.revisions[preset.currentRevision];
+    if (
+      files === undefined ||
+      (!isDeepStrictEqual(files, defaultPlayPresetFilesForLocale("en")) &&
+        !isDeepStrictEqual(files, defaultPlayPresetFilesForLocale("zh-CN")))
+    )
+      return false;
+    preset.builtinDefault = true;
+    return true;
+  }
+
+  #synchronizeBuiltinDefault(document: StoredDocument): boolean {
+    const preset = document.presets.find(
+      ({ builtinDefault }) => builtinDefault === true,
+    );
+    if (preset === undefined || preset.draftRevision !== undefined)
+      return false;
+    const current = preset.revisions[preset.currentRevision];
+    if (
+      current === undefined ||
+      (!isDeepStrictEqual(current, defaultPlayPresetFilesForLocale("en")) &&
+        !isDeepStrictEqual(current, defaultPlayPresetFilesForLocale("zh-CN")))
+    ) {
+      delete preset.builtinDefault;
+      return true;
+    }
+    const desired = defaultPlayPresetFilesForLocale(this.#locale());
+    const revision = revisionForFiles(desired, this.#limits);
+    if (preset.currentRevision === revision) return false;
+    preset.revisions[revision] = cloneFiles(desired);
+    preset.currentRevision = revision;
+    return true;
   }
 
   #stored(
@@ -804,7 +897,7 @@ export class FileNativePlayPresetStore {
     if (files === undefined)
       throw new FileNativePlayPresetError(
         "store_invalid",
-        "玩法预设当前 revision 不存在",
+        "The current play-preset revision does not exist",
       );
     const validation = validatePlayPresetFiles(files, this.#limits);
     const view: FileNativePlayPresetView = {
@@ -826,7 +919,7 @@ export class FileNativePlayPresetStore {
       if (draftFiles === undefined)
         throw new FileNativePlayPresetError(
           "store_invalid",
-          "玩法预设草稿 revision 不存在",
+          "The play-preset draft revision does not exist",
         );
       view.draft = {
         revision: stored.draftRevision,
@@ -874,7 +967,8 @@ export function validatePlayPresetFiles(
     return {
       status: "invalid",
       code: "play_preset_invalid",
-      message: error instanceof Error ? error.message : "玩法预设无效",
+      message:
+        error instanceof Error ? error.message : "Play preset is invalid",
       location: "preset.yaml",
     };
   }
@@ -916,7 +1010,7 @@ export function applyPlayPresetStructuredEditor(
   if (presetSource === undefined || callChainSource === undefined)
     throw new FileNativePlayPresetError(
       "structured_editor_missing_file",
-      "结构化编辑找不到 preset.yaml 或 call-chain.yaml",
+      "Structured editing could not find preset.yaml or call-chain.yaml",
     );
   const preset = parseDocument(presetSource, {
     schema: "core",
@@ -931,7 +1025,7 @@ export function applyPlayPresetStructuredEditor(
   if (preset.errors.length > 0 || callChain.errors.length > 0)
     throw new FileNativePlayPresetError(
       "structured_editor_yaml_invalid",
-      "结构化编辑只能应用到可解析的 preset/call-chain YAML",
+      "Structured editing can be applied only to parseable preset/call-chain YAML",
     );
   preset.set("name", input.name);
   preset.set("callChain", input.callChainPath);
@@ -982,7 +1076,7 @@ export function parsePlayPresetStructuredEditor(
   if (!isRecord(value))
     throw new FileNativePlayPresetError(
       "structured_editor_invalid",
-      "结构化玩法编辑必须是 map",
+      "Structured play editing must be a map",
     );
   const strings = (key: string): string[] => {
     const entries = value[key];
@@ -992,7 +1086,7 @@ export function parsePlayPresetStructuredEditor(
     )
       throw new FileNativePlayPresetError(
         "structured_editor_invalid",
-        `结构化玩法编辑 ${key} 必须是字符串数组`,
+        `Structured play field ${key} must be an array of strings`,
       );
     return (entries as string[]).map((entry) => entry.trim());
   };
@@ -1006,12 +1100,12 @@ export function parsePlayPresetStructuredEditor(
   )
     throw new FileNativePlayPresetError(
       "structured_editor_invalid",
-      "结构化玩法编辑必须包含 narrativePrompts、followups 和 mounts 数组",
+      "Structured play editing must include narrativePrompts, followups, and mounts arrays",
     );
   if (typeof value.name !== "string" || typeof value.callChainPath !== "string")
     throw new FileNativePlayPresetError(
       "structured_editor_invalid",
-      "结构化玩法编辑 name/callChainPath 无效",
+      "Structured play name/callChainPath is invalid",
     );
   if (
     !namePattern.test(value.name.trim()) ||
@@ -1020,7 +1114,7 @@ export function parsePlayPresetStructuredEditor(
   )
     throw new FileNativePlayPresetError(
       "structured_editor_invalid",
-      "结构化玩法编辑 name/callChainPath 无效",
+      "Structured play name/callChainPath is invalid",
     );
   const mounts = rawMounts.map((entry) => {
     if (
@@ -1038,7 +1132,7 @@ export function parsePlayPresetStructuredEditor(
     )
       throw new FileNativePlayPresetError(
         "structured_editor_invalid",
-        "结构化玩法编辑 mount 无效",
+        "Structured play mount is invalid",
       );
     return {
       channel: entry.channel.trim(),
@@ -1048,7 +1142,7 @@ export function parsePlayPresetStructuredEditor(
   if (new Set(mounts.map(({ channel }) => channel)).size !== mounts.length)
     throw new FileNativePlayPresetError(
       "structured_editor_invalid",
-      "结构化玩法编辑 mount channel 不能重复",
+      "Structured play mount channels cannot be duplicated",
     );
   const promptBlock = (entry: unknown): { role: unknown; path: unknown } =>
     isRecord(entry)
@@ -1066,7 +1160,7 @@ export function parsePlayPresetStructuredEditor(
     if (!isRecord(entry))
       throw new FileNativePlayPresetError(
         "structured_editor_invalid",
-        "结构化玩法编辑 followup 无效",
+        "Structured play followup is invalid",
       );
     return {
       ...entry,
@@ -1080,7 +1174,7 @@ export function parsePlayPresetStructuredEditor(
   )
     throw new FileNativePlayPresetError(
       "structured_editor_invalid",
-      "结构化玩法编辑后置请求 id 无效或重复",
+      "Structured play follow-up id is invalid or duplicated",
     );
   if (
     value.playerViewPanels !== undefined &&
@@ -1089,7 +1183,7 @@ export function parsePlayPresetStructuredEditor(
   )
     throw new FileNativePlayPresetError(
       "structured_editor_invalid",
-      "结构化玩法编辑 playerViewPanels 必须是 map 数组",
+      "Structured play playerViewPanels must be an array of maps",
     );
   return {
     name: value.name,
@@ -1138,20 +1232,20 @@ export function parsePlayPresetFiles(
     if (callChainPath !== "call-chain.yaml")
       invalid(
         "call_chain_path_invalid",
-        "入口 callChain 必须是 call-chain.yaml",
+        "Entry callChain must be call-chain.yaml",
         "preset.yaml",
       );
     if (preset.format !== "narraeon.play-preset/v1")
       invalid(
         "preset_format_invalid",
-        "preset.yaml format 必须是 narraeon.play-preset/v1",
+        "preset.yaml format must be narraeon.play-preset/v1",
         "preset.yaml",
       );
     const name = stringValue(preset.name);
     if (!namePattern.test(name.trim()) || name.includes(String.fromCharCode(0)))
       invalid(
         "invalid_name",
-        "玩法预设名称必须为 1 至 160 个字符",
+        "Play-preset name must contain 1 to 160 characters",
         "preset.yaml",
       );
     const callChain = readYaml(files, callChainPath, "call-chain.yaml");
@@ -1164,7 +1258,7 @@ export function parsePlayPresetFiles(
     if (callChain.format !== "narraeon.play-call-chain/v1")
       invalid(
         "call_chain_format_invalid",
-        "call-chain.yaml format 必须是 narraeon.play-call-chain/v1",
+        "call-chain.yaml format must be narraeon.play-call-chain/v1",
         callChainPath,
       );
     // The host preset already carries the general narrative criteria, so a
@@ -1216,7 +1310,7 @@ export function parsePlayPresetFiles(
       kind: "invalid",
       error: new FileNativePlayPresetError(
         "play_preset_invalid",
-        error instanceof Error ? error.message : "玩法预设无效",
+        error instanceof Error ? error.message : "Play preset is invalid",
       ),
     };
   }
@@ -1230,13 +1324,17 @@ function parsePromptBlocks(
 ): PlayPresetPromptBlock[] {
   if (allowEmpty && (value === undefined || value === null)) return [];
   if (!Array.isArray(value) || (value.length === 0 && !allowEmpty))
-    invalid("prompts_missing", "必须引用至少一个 Markdown 提示块", location);
+    invalid(
+      "prompts_missing",
+      "At least one Markdown prompt block is required",
+      location,
+    );
   return (value as unknown[]).map((raw, index) => {
     const promptLocation = `${location}#prompts[${index}]`;
     if (!isRecord(raw))
       invalid(
         "prompt_ref_invalid",
-        "提示块引用必须是包含 markdown 的 map",
+        "A prompt-block reference must be a map containing markdown",
         promptLocation,
       );
     const entry = raw;
@@ -1247,19 +1345,19 @@ function parsePromptBlocks(
     if (!isPlayPresetPromptRole(role))
       invalid(
         "prompt_role_invalid",
-        "玩法提示块只能使用 author_instruction role",
+        "A play prompt block may use only the author_instruction role",
         promptLocation,
       );
     const path = stringValue(entry.markdown).trim();
     if (!/^prompts\/[A-Za-z0-9][A-Za-z0-9._-]*\.md$/u.test(path))
       invalid(
         "prompt_path_invalid",
-        "提示块必须引用 prompts/*.md",
+        "A prompt block must reference prompts/*.md",
         promptLocation,
       );
     const body = files[path];
     if (body === undefined || body.trim() === "")
-      invalid("prompt_missing", `提示块不存在：${path}`, path);
+      invalid("prompt_missing", `Prompt block does not exist: ${path}`, path);
     return { role, path };
   });
 }
@@ -1276,19 +1374,23 @@ function parseFollowups(
   if (!Array.isArray(value))
     invalid(
       "followups_invalid",
-      "callChain.followups 必须是数组",
+      "callChain.followups must be an array",
       "call-chain.yaml",
     );
   if (value.length > maxPlayPresetFollowups)
     invalid(
       "followups_invalid",
-      `callChain.followups 不能超过 ${maxPlayPresetFollowups} 项`,
+      `callChain.followups cannot exceed ${maxPlayPresetFollowups} items`,
       "call-chain.yaml",
     );
   const followups = (value as unknown[]).map((raw, index) => {
     const location = `call-chain.yaml#followups[${index}]`;
     if (!isRecord(raw))
-      invalid("followup_invalid", "后置请求必须是 map", location);
+      invalid(
+        "followup_invalid",
+        "A follow-up request must be a map",
+        location,
+      );
     const id = stringValue(raw.id).trim();
     assertKnownKeys(
       raw,
@@ -1299,23 +1401,27 @@ function parseFollowups(
     if (!/^[a-z][a-z0-9_-]{1,63}$/u.test(id))
       invalid(
         "followup_id_invalid",
-        "后置请求 id 必须是稳定的小写 ASCII 标识",
+        "A follow-up request id must be a stable lowercase ASCII identifier",
         location,
       );
     if (!namePattern.test(displayName))
-      invalid("followup_name_invalid", "后置请求显示名无效", location);
+      invalid(
+        "followup_name_invalid",
+        "Follow-up request display name is invalid",
+        location,
+      );
     const prompts = parsePromptBlocks([raw.prompt], files, location);
     if (prompts.length !== 1)
       invalid(
         "followup_prompt_invalid",
-        "后置请求必须且只能声明一个提示块",
+        "A follow-up request must declare exactly one prompt block",
         location,
       );
     const artifacts = parseArtifacts(raw.artifacts ?? [], files, location);
     if (artifacts.length === 0)
       invalid(
         "followup_artifact_missing",
-        "后置请求必须声明至少一项产物；不产出任何东西的请求没有意义",
+        "A follow-up request must declare at least one artifact",
         location,
       );
     if (
@@ -1324,7 +1430,11 @@ function parseFollowups(
           artifact.strategy === "upsert" && artifact.key === undefined,
       )
     )
-      invalid("upsert_key_missing", "upsert 频道必须声明 key", location);
+      invalid(
+        "upsert_key_missing",
+        "An upsert channel must declare a key",
+        location,
+      );
     return {
       id,
       displayName,
@@ -1334,7 +1444,11 @@ function parseFollowups(
     } satisfies PlayPresetFollowupDefinition;
   });
   if (new Set(followups.map(({ id }) => id)).size !== followups.length)
-    invalid("duplicate_followup_id", "后置请求 id 重复", "call-chain.yaml");
+    invalid(
+      "duplicate_followup_id",
+      "Follow-up request id is duplicated",
+      "call-chain.yaml",
+    );
   // One channel has one projection meaning. Two followups writing the same
   // channel with different strategies would make the visible set depend on
   // dispatch order, which followups deliberately do not have.
@@ -1345,7 +1459,7 @@ function parseFollowups(
       if (known !== undefined && known !== strategy)
         invalid(
           "channel_strategy_conflict",
-          `同一频道不能声明冲突的投影策略：${channel}`,
+          `One channel cannot declare conflicting projection policies: ${channel}`,
           "call-chain.yaml",
         );
       strategies.set(channel, strategy);
@@ -1363,7 +1477,7 @@ function parseMaxArtifactBytes(value: unknown, location: string): number {
   )
     invalid(
       "followup_bytes_invalid",
-      `maxArtifactBytes 必须是 1 到 ${maxArtifactBytesCeiling} 之间的整数`,
+      `maxArtifactBytes must be an integer from 1 to ${maxArtifactBytesCeiling}`,
       location,
     );
   return value;
@@ -1376,12 +1490,20 @@ function parseArtifacts(
 ): PlayPresetArtifactDeclaration[] {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value))
-    invalid("artifacts_invalid", "后置请求 artifacts 必须是数组", location);
+    invalid(
+      "artifacts_invalid",
+      "Follow-up request artifacts must be an array",
+      location,
+    );
   const names = new Set<string>();
   return (value as unknown[]).map((raw, index) => {
     const artifactLocation = `${location}#artifacts[${index}]`;
     if (!isRecord(raw))
-      invalid("artifact_invalid", "产物声明必须是 map", artifactLocation);
+      invalid(
+        "artifact_invalid",
+        "An artifact declaration must be a map",
+        artifactLocation,
+      );
     assertKnownKeys(
       raw,
       [
@@ -1408,13 +1530,13 @@ function parseArtifacts(
     if (!/^[a-z][a-z0-9._/-]{1,127}$/u.test(name))
       invalid(
         "artifact_output_name_invalid",
-        "产物必须声明稳定的小写 output name",
+        "An artifact must declare a stable lowercase output name",
         artifactLocation,
       );
     if (names.has(name))
       invalid(
         "duplicate_artifact_output_name",
-        `产物 name 重复：${name}`,
+        `Artifact name is duplicated: ${name}`,
         artifactLocation,
       );
     names.add(name);
@@ -1422,7 +1544,7 @@ function parseArtifacts(
     if (!/^[a-z][a-z0-9._/-]{1,127}$/u.test(channel))
       invalid(
         "channel_invalid",
-        "产物 channel 必须是稳定的小写地址",
+        "Artifact channel must be a stable lowercase address",
         artifactLocation,
       );
     const strategy = raw.strategy;
@@ -1433,7 +1555,7 @@ function parseArtifacts(
     )
       invalid(
         "channel_strategy_invalid",
-        "产物 channel 策略无效",
+        "Artifact channel policy is invalid",
         artifactLocation,
       );
     const contentType = raw.contentType ?? "text/plain";
@@ -1448,7 +1570,7 @@ function parseArtifacts(
     )
       invalid(
         "artifact_content_type_invalid",
-        "产物 contentType 无效",
+        "Artifact contentType is invalid",
         artifactLocation,
       );
     const save = raw.save ?? "operation";
@@ -1456,7 +1578,11 @@ function parseArtifacts(
       typeof save !== "string" ||
       !["none", "operation", "commit"].includes(save)
     )
-      invalid("artifact_save_invalid", "产物保存策略无效", artifactLocation);
+      invalid(
+        "artifact_save_invalid",
+        "Artifact retention policy is invalid",
+        artifactLocation,
+      );
     const renderer =
       raw.renderer === undefined ? undefined : stringValue(raw.renderer).trim();
     if (
@@ -1465,11 +1591,15 @@ function parseArtifacts(
     )
       invalid(
         "renderer_path_invalid",
-        "renderer 必须引用 renderers/*.html",
+        "renderer must reference renderers/*.html",
         artifactLocation,
       );
     if (renderer !== undefined && files[renderer] === undefined)
-      invalid("renderer_missing", `renderer 不存在：${renderer}`, renderer);
+      invalid(
+        "renderer_missing",
+        `Renderer does not exist: ${renderer}`,
+        renderer,
+      );
     const rendererRevision =
       raw.rendererRevision === undefined
         ? undefined
@@ -1477,26 +1607,26 @@ function parseArtifacts(
     if (renderer !== undefined && !rendererRevision)
       invalid(
         "renderer_revision_missing",
-        "renderer 必须同时声明内容 revision",
+        "renderer must also declare a content revision",
         artifactLocation,
       );
     if (renderer === undefined && rendererRevision !== undefined)
       invalid(
         "renderer_revision_without_path",
-        "rendererRevision 不能脱离 renderer path",
+        "rendererRevision cannot be declared without a renderer path",
         artifactLocation,
       );
     const rendererModeValue = raw.rendererMode ?? "document";
     if (rendererModeValue !== "document" && rendererModeValue !== "app")
       invalid(
         "renderer_mode_invalid",
-        "rendererMode 必须是 document 或 app",
+        "rendererMode must be document or app",
         artifactLocation,
       );
     if (rendererModeValue === "app" && renderer === undefined)
       invalid(
         "renderer_mode_renderer_missing",
-        "app renderer 必须声明自定义 renderer",
+        "An app renderer must declare a custom renderer",
         artifactLocation,
       );
     const regex =
@@ -1507,11 +1637,15 @@ function parseArtifacts(
     )
       invalid(
         "regex_path_invalid",
-        "regex 必须引用 regex/*.yaml",
+        "regex must reference regex/*.yaml",
         artifactLocation,
       );
     if (regex !== undefined && files[regex] === undefined)
-      invalid("regex_missing", `regex 资源不存在：${regex}`, regex);
+      invalid(
+        "regex_missing",
+        `Regex resource does not exist: ${regex}`,
+        regex,
+      );
     const scripts = parseExtensionPaths(
       raw.scripts,
       /^scripts\/[A-Za-z0-9][A-Za-z0-9._-]*\.js$/u,
@@ -1530,7 +1664,11 @@ function parseArtifacts(
     );
     const key = raw.key === undefined ? undefined : stringValue(raw.key).trim();
     if (key !== undefined && !/^[a-z][a-z0-9._/-]{0,127}$/u.test(key))
-      invalid("artifact_key_invalid", "产物 key 无效", artifactLocation);
+      invalid(
+        "artifact_key_invalid",
+        "Artifact key is invalid",
+        artifactLocation,
+      );
     const invalidationValue =
       raw.invalidation ??
       (save === "commit"
@@ -1550,21 +1688,21 @@ function parseArtifacts(
     )
       invalid(
         "artifact_invalidation_invalid",
-        "产物 invalidation policy 无效",
+        "Artifact invalidation policy is invalid",
         artifactLocation,
       );
     const required = raw.required ?? false;
     if (typeof required !== "boolean")
       invalid(
         "artifact_required_invalid",
-        "产物 required 必须是布尔值",
+        "Artifact required must be a boolean",
         artifactLocation,
       );
     const maxEmits = finiteInteger(raw.maxEmits ?? 1);
     if (maxEmits === null || maxEmits < 1 || maxEmits > 128)
       invalid(
         "artifact_emit_budget_invalid",
-        "产物 maxEmits 必须是 1 到 128 的有界整数",
+        "Artifact maxEmits must be a bounded integer from 1 to 128",
         artifactLocation,
       );
     const payloadContract = parseArtifactPayloadContract(
@@ -1574,7 +1712,7 @@ function parseArtifacts(
     if (payloadContract !== undefined && contentType !== "application/json")
       invalid(
         "artifact_payload_contract_type_invalid",
-        "结构化 payload contract 只能用于 application/json 产物",
+        "A structured payload contract can be used only with an application/json artifact",
         artifactLocation,
       );
     return {
@@ -1609,19 +1747,19 @@ function parseArtifactPayloadContract(
   if (depth > 32)
     invalid(
       "artifact_payload_contract_too_deep",
-      "payloadContract 嵌套深度超过 32 层",
+      "payloadContract nesting exceeds 32 levels",
       location,
     );
   if (state.nodes > 512)
     invalid(
       "artifact_payload_contract_too_complex",
-      "payloadContract 节点数超过 512",
+      "payloadContract contains more than 512 nodes",
       location,
     );
   if (!isRecord(value))
     invalid(
       "artifact_payload_contract_invalid",
-      "payloadContract 必须是 map",
+      "payloadContract must be a map",
       location,
     );
   const type = value.type;
@@ -1636,7 +1774,7 @@ function parseArtifactPayloadContract(
   )
     invalid(
       "artifact_payload_contract_type_invalid",
-      "payloadContract.type 无效",
+      "payloadContract.type is invalid",
       location,
     );
   const propertiesValue = value.properties;
@@ -1645,7 +1783,7 @@ function parseArtifactPayloadContract(
     if (!isRecord(propertiesValue))
       invalid(
         "artifact_payload_contract_properties_invalid",
-        "payloadContract.properties 必须是 map",
+        "payloadContract.properties must be a map",
         location,
       );
     properties = {};
@@ -1653,7 +1791,7 @@ function parseArtifactPayloadContract(
       if (!/^[a-zA-Z][a-zA-Z0-9_.-]{0,63}$/u.test(key))
         invalid(
           "artifact_payload_contract_property_invalid",
-          `payloadContract 属性名无效：${key}`,
+          `payloadContract property name is invalid: ${key}`,
           location,
         );
       properties[key] = parseArtifactPayloadContract(
@@ -1673,7 +1811,7 @@ function parseArtifactPayloadContract(
     )
       invalid(
         "artifact_payload_contract_required_invalid",
-        "payloadContract.required 必须是字符串数组",
+        "payloadContract.required must be an array of strings",
         location,
       );
     required = (requiredValue as string[]).map((entry) => entry.trim());
@@ -1683,7 +1821,7 @@ function parseArtifactPayloadContract(
     )
       invalid(
         "artifact_payload_contract_required_invalid",
-        "payloadContract.required 不能有空值或重复字段",
+        "payloadContract.required cannot contain empty or duplicate fields",
         location,
       );
     if (
@@ -1692,7 +1830,7 @@ function parseArtifactPayloadContract(
     )
       invalid(
         "artifact_payload_contract_required_invalid",
-        "payloadContract.required 必须引用 properties 中的字段",
+        "payloadContract.required must reference fields in properties",
         location,
       );
   }
@@ -1709,19 +1847,19 @@ function parseArtifactPayloadContract(
   if (type === "object" && properties === undefined)
     invalid(
       "artifact_payload_contract_properties_invalid",
-      "object payloadContract 必须声明 properties",
+      "An object payloadContract must declare properties",
       location,
     );
   if (type === "array" && items === undefined)
     invalid(
       "artifact_payload_contract_items_invalid",
-      "array payloadContract 必须声明 items",
+      "An array payloadContract must declare items",
       location,
     );
   if (type !== "object" && (properties !== undefined || required !== undefined))
     invalid(
       "artifact_payload_contract_shape_invalid",
-      "只有 object payloadContract 可以声明 properties/required",
+      "Only an object payloadContract may declare properties/required",
       location,
     );
   if (
@@ -1733,7 +1871,7 @@ function parseArtifactPayloadContract(
   )
     invalid(
       "artifact_payload_contract_shape_invalid",
-      "只有 array payloadContract 可以声明 items/minItems/maxItems/uniqueBy",
+      "Only an array payloadContract may declare items/minItems/maxItems/uniqueBy",
       location,
     );
   const minItems = boundedContractInteger(value.minItems, location, "minItems");
@@ -1752,7 +1890,7 @@ function parseArtifactPayloadContract(
   if (minItems !== undefined && maxItems !== undefined && minItems > maxItems)
     invalid(
       "artifact_payload_contract_bounds_invalid",
-      "payloadContract.minItems 不能大于 maxItems",
+      "payloadContract.minItems cannot exceed maxItems",
       location,
     );
   if (
@@ -1762,39 +1900,39 @@ function parseArtifactPayloadContract(
   )
     invalid(
       "artifact_payload_contract_bounds_invalid",
-      "payloadContract.minLength 不能大于 maxLength",
+      "payloadContract.minLength cannot exceed maxLength",
       location,
     );
   if (type !== "string" && (minLength !== undefined || maxLength !== undefined))
     invalid(
       "artifact_payload_contract_shape_invalid",
-      "只有 string payloadContract 可以声明长度边界",
+      "Only a string payloadContract may declare length bounds",
       location,
     );
   if (value.uniqueBy !== undefined) {
     if (typeof value.uniqueBy !== "string" || value.uniqueBy.trim() === "")
       invalid(
         "artifact_payload_contract_unique_invalid",
-        "payloadContract.uniqueBy 必须是非空字段名",
+        "payloadContract.uniqueBy must be a non-empty field name",
         location,
       );
     if (type !== "array" || items?.type !== "object")
       invalid(
         "artifact_payload_contract_unique_invalid",
-        "payloadContract.uniqueBy 只能用于 object item 的 array",
+        "payloadContract.uniqueBy can be used only for an array of object items",
         location,
       );
     if (items.properties?.[value.uniqueBy.trim()] === undefined)
       invalid(
         "artifact_payload_contract_unique_invalid",
-        "payloadContract.uniqueBy 必须引用 item properties 字段",
+        "payloadContract.uniqueBy must reference an item properties field",
         location,
       );
   }
   if (value.additionalProperties !== undefined && type !== "object")
     invalid(
       "artifact_payload_contract_shape_invalid",
-      "只有 object payloadContract 可以声明 additionalProperties",
+      "Only an object payloadContract may declare additionalProperties",
       location,
     );
   return {
@@ -1834,7 +1972,7 @@ function boundedContractInteger(
   )
     invalid(
       "artifact_payload_contract_bounds_invalid",
-      `payloadContract.${field} 必须是有界非负整数`,
+      `payloadContract.${field} must be a bounded non-negative integer`,
       location,
     );
   return value as number;
@@ -1844,7 +1982,7 @@ function booleanValue(value: unknown, location: string): boolean {
   if (typeof value !== "boolean")
     invalid(
       "artifact_payload_contract_boolean_invalid",
-      "payloadContract.additionalProperties 必须是布尔值",
+      "payloadContract.additionalProperties must be a boolean",
       location,
     );
   return value;
@@ -1862,17 +2000,25 @@ function parseMounts(value: unknown): PlayPresetMount[] {
       ? Object.entries(value).map(([channel, mount]) => ({ channel, mount }))
       : [];
   if (!Array.isArray(value) && !isRecord(value))
-    invalid("mounts_invalid", "preset.mounts 必须是 map 或数组", "preset.yaml");
+    invalid(
+      "mounts_invalid",
+      "preset.mounts must be a map or array",
+      "preset.yaml",
+    );
   const channels = new Set<string>();
   return entries.map(({ channel, mount }, index) => {
     const location = `preset.yaml#mounts[${index}]`;
     const normalizedChannel = stringValue(channel).trim();
     if (!/^[a-z][a-z0-9._/-]{1,127}$/u.test(normalizedChannel))
-      invalid("mount_channel_invalid", "频道 mount 的 channel 无效", location);
+      invalid(
+        "mount_channel_invalid",
+        "Channel mount channel is invalid",
+        location,
+      );
     if (channels.has(normalizedChannel))
       invalid(
         "duplicate_mount_channel",
-        `频道 mount 不能重复：${normalizedChannel}`,
+        `Channel mount is duplicated: ${normalizedChannel}`,
         location,
       );
     channels.add(normalizedChannel);
@@ -1888,7 +2034,7 @@ function parseMounts(value: unknown): PlayPresetMount[] {
     )
       invalid(
         "mount_invalid",
-        "频道 mount 必须使用受支持的标准挂载点",
+        "A channel mount must use a supported standard mount point",
         location,
       );
     return {
@@ -1906,7 +2052,7 @@ function parsePlayerViewPanels(
   if (!Array.isArray(value))
     invalid(
       "player_view_panels_invalid",
-      "preset.playerViewPanels 必须是数组",
+      "preset.playerViewPanels must be an array",
       "preset.yaml",
     );
   const ids = new Set<string>();
@@ -1914,7 +2060,11 @@ function parsePlayerViewPanels(
   return (value as unknown[]).map((raw, index) => {
     const location = `preset.yaml#playerViewPanels[${index}]`;
     if (!isRecord(raw))
-      invalid("player_view_panel_invalid", "玩家视图面板必须是 map", location);
+      invalid(
+        "player_view_panel_invalid",
+        "A player-view panel must be a map",
+        location,
+      );
     assertKnownKeys(
       raw,
       [
@@ -1937,13 +2087,13 @@ function parsePlayerViewPanels(
     if (!/^[a-z][a-z0-9._/-]{1,127}$/u.test(id))
       invalid(
         "player_view_panel_id_invalid",
-        "玩家视图面板 id 必须是稳定的小写标识",
+        "A player-view panel id must be a stable lowercase identifier",
         location,
       );
     if (ids.has(id))
       invalid(
         "duplicate_player_view_panel_id",
-        `玩家视图面板 id 重复：${id}`,
+        `Player-view panel id is duplicated: ${id}`,
         location,
       );
     ids.add(id);
@@ -1952,7 +2102,7 @@ function parsePlayerViewPanels(
     if (!isRecord(sourceValue) || sourceValue.kind !== "player_view")
       invalid(
         "player_view_panel_source_invalid",
-        "玩家视图面板 source 必须声明 kind: player_view",
+        "A player-view panel source must declare kind: player_view",
         location,
       );
     assertKnownKeys(sourceValue, ["kind", "view", "itemIds"], location);
@@ -1960,7 +2110,7 @@ function parsePlayerViewPanels(
     if (!/^[a-z][a-z0-9._/-]{1,127}$/u.test(view))
       invalid(
         "player_view_panel_view_invalid",
-        "玩家视图面板必须引用稳定的 view id",
+        "A player-view panel must reference a stable view id",
         location,
       );
     const rawItemIds = sourceValue.itemIds;
@@ -1977,14 +2127,14 @@ function parsePlayerViewPanels(
       )
         invalid(
           "player_view_panel_items_invalid",
-          "玩家视图面板 itemIds 必须是有界稳定 id 数组",
+          "Player-view panel itemIds must be a bounded array of stable ids",
           location,
         );
       itemIds = (rawItemIds as string[]).map((item) => item.trim());
       if (new Set(itemIds).size !== itemIds.length)
         invalid(
           "duplicate_player_view_panel_item",
-          "玩家视图面板 itemIds 不能重复",
+          "Player-view panel itemIds cannot be duplicated",
           location,
         );
     }
@@ -1993,21 +2143,21 @@ function parsePlayerViewPanels(
     if (!/^[a-z][a-z0-9._/-]{1,127}$/u.test(channel))
       invalid(
         "player_view_panel_channel_invalid",
-        "玩家视图面板 channel 必须是稳定的小写地址",
+        "A player-view panel channel must be a stable lowercase address",
         location,
       );
     const key = stringValue(raw.key).trim();
     if (!/^[a-z][a-z0-9._/-]{0,127}$/u.test(key))
       invalid(
         "player_view_panel_key_invalid",
-        "玩家视图面板 upsert 必须声明稳定 key",
+        "A player-view panel upsert must declare a stable key",
         location,
       );
     const channelKey = `${channel}\0${key}`;
     if (channelKeys.has(channelKey))
       invalid(
         "duplicate_player_view_panel_key",
-        `玩家视图面板 channel/key 不能重复：${channel}/${key}`,
+        `Player-view panel channel/key cannot be duplicated: ${channel}/${key}`,
         location,
       );
     channelKeys.add(channelKey);
@@ -2024,7 +2174,7 @@ function parsePlayerViewPanels(
     )
       invalid(
         "player_view_panel_mount_invalid",
-        "玩家视图面板 mount 必须使用受支持的标准挂载点",
+        "A player-view panel mount must use a supported standard mount point",
         location,
       );
 
@@ -2036,13 +2186,13 @@ function parsePlayerViewPanels(
     )
       invalid(
         "player_view_panel_renderer_invalid",
-        "玩家视图面板 renderer 必须引用 renderers/*.html",
+        "A player-view panel renderer must reference renderers/*.html",
         location,
       );
     if (renderer !== undefined && files[renderer] === undefined)
       invalid(
         "player_view_panel_renderer_missing",
-        `renderer 不存在：${renderer}`,
+        `Renderer does not exist: ${renderer}`,
         renderer,
       );
     const rendererRevision =
@@ -2052,13 +2202,13 @@ function parsePlayerViewPanels(
     if (renderer !== undefined && !rendererRevision)
       invalid(
         "player_view_panel_renderer_revision_missing",
-        "玩家视图面板 renderer 必须同时声明内容 revision",
+        "A player-view panel renderer must also declare a content revision",
         location,
       );
     if (renderer === undefined && rendererRevision !== undefined)
       invalid(
         "player_view_panel_renderer_revision_without_path",
-        "rendererRevision 不能脱离 renderer path",
+        "rendererRevision cannot be declared without a renderer path",
         location,
       );
     const rendererModeValue =
@@ -2066,13 +2216,13 @@ function parsePlayerViewPanels(
     if (rendererModeValue !== "document" && rendererModeValue !== "app")
       invalid(
         "player_view_panel_renderer_mode_invalid",
-        "玩家视图面板 rendererMode 必须是 document 或 app",
+        "Player-view panel rendererMode must be document or app",
         location,
       );
     if (rendererModeValue === "app" && renderer === undefined)
       invalid(
         "player_view_panel_renderer_missing",
-        "app 玩家视图面板必须声明 renderer",
+        "An app player-view panel must declare a renderer",
         location,
       );
     const regex =
@@ -2083,13 +2233,13 @@ function parsePlayerViewPanels(
     )
       invalid(
         "player_view_panel_regex_invalid",
-        "玩家视图面板 regex 必须引用 regex/*.yaml",
+        "Player-view panel regex must reference regex/*.yaml",
         location,
       );
     if (regex !== undefined && files[regex] === undefined)
       invalid(
         "player_view_panel_regex_missing",
-        `regex 不存在：${regex}`,
+        `Regex does not exist: ${regex}`,
         regex,
       );
     const scripts = parseExtensionPaths(
@@ -2115,7 +2265,7 @@ function parsePlayerViewPanels(
         if (group.itemIds.some((itemId) => !sourceItemIds.has(itemId)))
           invalid(
             "player_view_panel_group_outside_source",
-            "玩家视图面板 group itemIds 必须位于 source.itemIds 范围内",
+            "Player-view panel group itemIds must be within source.itemIds",
             location,
           );
     }
@@ -2147,7 +2297,7 @@ function parsePlayerViewPanelConfig(
   if (value !== undefined && !isRecord(value))
     invalid(
       "player_view_panel_config_invalid",
-      "玩家视图面板 config 必须是 map",
+      "Player-view panel config must be a map",
       location,
     );
   const config = value ?? {};
@@ -2161,14 +2311,14 @@ function parsePlayerViewPanelConfig(
   if (title !== undefined && !namePattern.test(title))
     invalid(
       "player_view_panel_title_invalid",
-      "玩家视图面板 title 无效",
+      "Player-view panel title is invalid",
       location,
     );
   const layout = config.layout ?? "stack";
   if (layout !== "stack" && layout !== "grid")
     invalid(
       "player_view_panel_layout_invalid",
-      "玩家视图面板 layout 必须是 stack 或 grid",
+      "Player-view panel layout must be stack or grid",
       location,
     );
   const theme =
@@ -2176,31 +2326,31 @@ function parsePlayerViewPanelConfig(
   if (!/^[a-z][a-z0-9._/-]{0,63}$/u.test(theme))
     invalid(
       "player_view_panel_theme_invalid",
-      "玩家视图面板 theme 必须是稳定标识",
+      "Player-view panel theme must be a stable identifier",
       location,
     );
   const empty = config.empty ?? "message";
   if (empty !== "hide" && empty !== "message" && empty !== "show")
     invalid(
       "player_view_panel_empty_invalid",
-      "玩家视图面板 empty 必须是 hide、message 或 show",
+      "Player-view panel empty must be hide, message, or show",
       location,
     );
   const emptyMessage =
     config.emptyMessage === undefined
-      ? "当前没有可显示内容。"
+      ? "There is no content to display."
       : stringValue(config.emptyMessage);
   if (emptyMessage.length > 256)
     invalid(
       "player_view_panel_empty_message_invalid",
-      "玩家视图面板 emptyMessage 过长",
+      "Player-view panel emptyMessage is too long",
       location,
     );
   const rawGroups = config.groups;
   if (rawGroups !== undefined && !Array.isArray(rawGroups))
     invalid(
       "player_view_panel_groups_invalid",
-      "玩家视图面板 groups 必须是数组",
+      "Player-view panel groups must be an array",
       location,
     );
   const groups: PlayPresetPlayerViewPanelGroup[] = [];
@@ -2210,7 +2360,7 @@ function parsePlayerViewPanelConfig(
     if (!isRecord(rawGroup))
       invalid(
         "player_view_panel_group_invalid",
-        "玩家视图面板 group 必须是 map",
+        "A player-view panel group must be a map",
         groupLocation,
       );
     assertKnownKeys(rawGroup, ["id", "label", "itemIds"], groupLocation);
@@ -2219,13 +2369,13 @@ function parsePlayerViewPanelConfig(
     if (!/^[a-z][a-z0-9._/-]{1,63}$/u.test(id) || !namePattern.test(label))
       invalid(
         "player_view_panel_group_invalid",
-        "玩家视图面板 group id/label 无效",
+        "Player-view panel group id/label is invalid",
         groupLocation,
       );
     if (groupIds.has(id))
       invalid(
         "duplicate_player_view_panel_group",
-        `玩家视图面板 group 重复：${id}`,
+        `Player-view panel group is duplicated: ${id}`,
         groupLocation,
       );
     groupIds.add(id);
@@ -2241,14 +2391,14 @@ function parsePlayerViewPanelConfig(
     )
       invalid(
         "player_view_panel_group_items_invalid",
-        "玩家视图面板 group itemIds 无效",
+        "Player-view panel group itemIds are invalid",
         groupLocation,
       );
     const itemIds = (rawItems as string[]).map((item) => item.trim());
     if (new Set(itemIds).size !== itemIds.length)
       invalid(
         "duplicate_player_view_panel_group_item",
-        "玩家视图面板 group itemIds 不能重复",
+        "Player-view panel group itemIds cannot be duplicated",
         groupLocation,
       );
     groups.push({ id, label, itemIds });
@@ -2276,7 +2426,7 @@ function validatePanelChannels(
     if (artifactChannels.has(panel.channel))
       invalid(
         "player_view_panel_channel_conflict",
-        `玩家视图面板 channel 不能与后置产物共用：${panel.channel}`,
+        `A player-view panel channel cannot be shared with a follow-up artifact: ${panel.channel}`,
         "preset.yaml",
       );
 }
@@ -2291,24 +2441,36 @@ function parseExtensionPaths(
 ): string[] | undefined {
   if (value === undefined) return undefined;
   if (!Array.isArray(value))
-    invalid(`${kind}_refs_invalid`, `${kind} 必须是资源路径数组`, location);
+    invalid(
+      `${kind}_refs_invalid`,
+      `${kind} must be an array of resource paths`,
+      location,
+    );
   if (value.length > max)
     invalid(
       `${kind}_refs_too_many`,
-      `${kind} 数量超过 ${max} 条上限`,
+      `${kind} count exceeds the limit of ${max}`,
       location,
     );
   const paths = (value as unknown[]).map((raw, index) => {
     const path = stringValue(raw).trim();
     const itemLocation = `${location}#${kind}s[${index}]`;
     if (!pattern.test(path))
-      invalid(`${kind}_path_invalid`, `${kind} 路径无效`, itemLocation);
+      invalid(`${kind}_path_invalid`, `${kind} path is invalid`, itemLocation);
     if (files[path] === undefined)
-      invalid(`${kind}_missing`, `${kind} 资源不存在：${path}`, path);
+      invalid(
+        `${kind}_missing`,
+        `${kind} resource does not exist: ${path}`,
+        path,
+      );
     return path;
   });
   if (new Set(paths).size !== paths.length)
-    invalid(`${kind}_duplicate`, `${kind} 资源不能重复`, location);
+    invalid(
+      `${kind}_duplicate`,
+      `${kind} resources cannot be duplicated`,
+      location,
+    );
   return paths;
 }
 
@@ -2321,7 +2483,7 @@ function validatePresetReferences(
   if (!Array.isArray(extensions))
     invalid(
       "extensions_invalid",
-      "preset.extensions 必须是引用数组",
+      "preset.extensions must be an array of references",
       "preset.yaml",
     );
   const paths: string[] = [];
@@ -2335,13 +2497,21 @@ function validatePresetReferences(
     )
       invalid(
         "extension_ref_invalid",
-        "扩展引用必须是 regex、renderer、script 或 asset 路径",
+        "An extension reference must be a regex, renderer, script, or asset path",
         "preset.yaml",
       );
     if (files[path] === undefined)
-      invalid("extension_ref_missing", `扩展资源不存在：${path}`, path);
+      invalid(
+        "extension_ref_missing",
+        `Extension resource does not exist: ${path}`,
+        path,
+      );
     if (paths.includes(path))
-      invalid("duplicate_extension_ref", `扩展资源引用重复：${path}`, path);
+      invalid(
+        "duplicate_extension_ref",
+        `Extension resource reference is duplicated: ${path}`,
+        path,
+      );
     paths.push(path);
     if (path.startsWith("regex/")) validateRegexAsset(files[path], path);
   }
@@ -2358,7 +2528,11 @@ export function parsePlayPresetRegexAsset(
     strict: true,
   });
   if (document.errors.length > 0 || document.warnings.length > 0)
-    invalid("regex_asset_invalid", `正则资源 YAML 无效：${path}`, path);
+    invalid(
+      "regex_asset_invalid",
+      `Regex-resource YAML is invalid: ${path}`,
+      path,
+    );
   const value: unknown = document.toJS({ maxAliasCount: 0 });
   const rules = Array.isArray(value)
     ? value
@@ -2368,14 +2542,14 @@ export function parsePlayPresetRegexAsset(
   if (rules === null || rules.length > 256)
     invalid(
       "regex_rules_invalid",
-      `正则资源必须包含不超过 256 条规则：${path}`,
+      `A regex resource may contain at most 256 rules: ${path}`,
       path,
     );
   const orders = new Set<number>();
   const parsed = rules.map((raw, index): PlayPresetRegexRule => {
     const location = `${path}#rules[${index}]`;
     if (!isRecord(raw))
-      invalid("regex_rule_invalid", "正则规则必须是 map", location);
+      invalid("regex_rule_invalid", "A regex rule must be a map", location);
     assertKnownKeys(
       raw,
       [
@@ -2393,11 +2567,15 @@ export function parsePlayPresetRegexAsset(
     if (!Number.isSafeInteger(order) || (order as number) < 0)
       invalid(
         "regex_order_invalid",
-        "正则规则必须声明非负整数 order",
+        "A regex rule must declare a non-negative integer order",
         location,
       );
     if (orders.has(order as number))
-      invalid("regex_order_duplicate", "正则规则 order 不能重复", location);
+      invalid(
+        "regex_order_duplicate",
+        "Regex rule order cannot be duplicated",
+        location,
+      );
     orders.add(order as number);
     const scope = raw.scope;
     if (
@@ -2407,7 +2585,7 @@ export function parsePlayPresetRegexAsset(
     )
       invalid(
         "regex_scope_invalid",
-        "正则规则必须声明 raw_text、markdown_html 或 structured_payload scope",
+        "A regex rule must declare raw_text, markdown_html, or structured_payload scope",
         location,
       );
     const pattern = raw.pattern;
@@ -2418,26 +2596,34 @@ export function parsePlayPresetRegexAsset(
     )
       invalid(
         "regex_pattern_invalid",
-        "正则 pattern 必须是有界非空字符串",
+        "Regex pattern must be a bounded non-empty string",
         location,
       );
     const flags = raw.flags === undefined ? "" : raw.flags;
     if (typeof flags !== "string" || flags.length > 16)
-      invalid("regex_flags_invalid", "正则 flags 无效", location);
+      invalid("regex_flags_invalid", "Regex flags are invalid", location);
     try {
       new RegExp(pattern, flags);
     } catch {
-      invalid("regex_pattern_invalid", "正则 pattern 无法编译", location);
+      invalid(
+        "regex_pattern_invalid",
+        "Regex pattern could not be compiled",
+        location,
+      );
     }
     if (typeof raw.replace !== "string")
-      invalid("regex_replace_invalid", "正则 replace 必须是文本", location);
+      invalid("regex_replace_invalid", "Regex replace must be text", location);
     const maxMatches = raw.maxMatches ?? 1;
     if (
       !Number.isSafeInteger(maxMatches) ||
       (maxMatches as number) < 1 ||
       (maxMatches as number) > 1_024
     )
-      invalid("regex_limit_invalid", "正则替换次数必须是有界正整数", location);
+      invalid(
+        "regex_limit_invalid",
+        "Regex replacement count must be a bounded positive integer",
+        location,
+      );
     const errorPolicy = raw.errorPolicy;
     if (
       errorPolicy !== "fallback" &&
@@ -2446,7 +2632,7 @@ export function parsePlayPresetRegexAsset(
     )
       invalid(
         "regex_error_policy_invalid",
-        "正则规则必须声明 fallback、skip 或 fail errorPolicy",
+        "A regex rule must declare fallback, skip, or fail errorPolicy",
         location,
       );
     return {
@@ -2483,7 +2669,7 @@ function validateArtifactExtensionReferences(
         if (!refs.has(path))
           invalid(
             "artifact_extension_ref_missing",
-            `产物资源必须同时列入 preset.extensions：${path}`,
+            `Artifact resource must also be listed in preset.extensions: ${path}`,
             path,
           );
     }
@@ -2505,7 +2691,7 @@ function assertNoEditableMechanics(value: unknown, location: string): void {
     )
       invalid(
         "editable_mechanics_forbidden",
-        `玩法预设不能保存 Runtime 工具 schema 或结果：${key}`,
+        `A play preset cannot store Runtime tool schemas or results: ${key}`,
         location,
       );
     assertNoEditableMechanics(child, `${location}.${key}`);
@@ -2522,7 +2708,7 @@ function assertKnownKeys(
   if (unknown !== undefined)
     invalid(
       "unsupported_field",
-      `当前玩法格式不支持字段：${unknown}`,
+      `The current play format does not support field: ${unknown}`,
       location,
     );
 }
@@ -2533,7 +2719,11 @@ function validateFileTree(
 ): void {
   const entries = Object.entries(files);
   if (entries.length > limits.maxFiles)
-    invalid("too_many_files", "玩法预设文件数超过安全上限", "preset.yaml");
+    invalid(
+      "too_many_files",
+      "Play-preset file count exceeds the safety limit",
+      "preset.yaml",
+    );
   let total = 0;
   const keys = new Set<string>();
   for (const [path, contents] of entries) {
@@ -2541,24 +2731,32 @@ function validateFileTree(
     if (typeof contents !== "string")
       invalid(
         "text_encoding_invalid",
-        `玩法预设文件必须是 UTF-8 文本：${path}`,
+        `A play-preset file must be UTF-8 text: ${path}`,
         path,
       );
     if (Buffer.from(contents, "utf8").toString("utf8") !== contents)
       invalid(
         "text_encoding_invalid",
-        `玩法预设文件不是有效 UTF-8 文本：${path}`,
+        `A play-preset file is not valid UTF-8 text: ${path}`,
         path,
       );
     const bytes = Buffer.byteLength(contents, "utf8");
     if (bytes > limits.maxFileBytes)
-      invalid("file_too_large", `玩法预设文件过大：${path}`, path);
+      invalid("file_too_large", `Play-preset file is too large: ${path}`, path);
     total += bytes;
     if (total > limits.maxTotalBytes)
-      invalid("total_too_large", "玩法预设总大小超过安全上限", "preset.yaml");
+      invalid(
+        "total_too_large",
+        "Total play-preset size exceeds the safety limit",
+        "preset.yaml",
+      );
     const key = portableContentTreePathKey(path);
     if (keys.has(key))
-      invalid("duplicate_path", `玩法预设路径重复：${path}`, path);
+      invalid(
+        "duplicate_path",
+        `Play-preset path is duplicated: ${path}`,
+        path,
+      );
     keys.add(key);
   }
 }
@@ -2573,15 +2771,19 @@ function validateFileTree(
  */
 function assertRequiredPresetFiles(files: Record<string, string>): void {
   if (files["preset.yaml"] === undefined)
-    invalid("preset_missing", "玩法预设缺少 preset.yaml", "preset.yaml");
+    invalid(
+      "preset_missing",
+      "Play preset is missing preset.yaml",
+      "preset.yaml",
+    );
   if (files["call-chain.yaml"] === undefined)
     invalid(
       "call_chain_missing",
-      "玩法预设缺少 call-chain.yaml",
+      "Play preset is missing call-chain.yaml",
       "call-chain.yaml",
     );
   if (files["frame.yaml"] === undefined)
-    invalid("frame_missing", "预设缺少 frame.yaml", "frame.yaml");
+    invalid("frame_missing", "Preset is missing frame.yaml", "frame.yaml");
 }
 
 function validatePath(path: string): void {
@@ -2597,7 +2799,7 @@ function validatePath(path: string): void {
   )
     invalid(
       "path_invalid",
-      `玩法预设路径不安全：${path}`,
+      `Play-preset path is unsafe: ${path}`,
       path || "preset.yaml",
     );
   if (
@@ -2608,7 +2810,7 @@ function validatePath(path: string): void {
       path,
     )
   )
-    invalid("path_invalid", `预设不支持该文件路径：${path}`, path);
+    invalid("path_invalid", `Preset does not support file path: ${path}`, path);
 }
 
 function readYaml(
@@ -2618,7 +2820,11 @@ function readYaml(
 ): Record<string, unknown> {
   const source = files[path];
   if (source === undefined || source.trim() === "")
-    invalid("required_file_missing", `玩法预设文件不存在：${path}`, location);
+    invalid(
+      "required_file_missing",
+      `Play-preset file does not exist: ${path}`,
+      location,
+    );
   if (
     /(^|\s)[&*!][^\s,\]}]+/mu.test(source) ||
     /^\s*<<\s*:/mu.test(source) ||
@@ -2627,7 +2833,7 @@ function readYaml(
   )
     invalid(
       "unsafe_yaml",
-      `玩法预设 YAML 使用了受限 codec 禁止的语法：${path}`,
+      `Play-preset YAML uses syntax forbidden by the restricted codec: ${path}`,
       location,
     );
   const document = parseDocument(source, {
@@ -2636,12 +2842,12 @@ function readYaml(
     strict: true,
   });
   if (document.errors.length > 0 || document.warnings.length > 0)
-    invalid("unsafe_yaml", `玩法预设 YAML 无效：${path}`, location);
+    invalid("unsafe_yaml", `Play-preset YAML is invalid: ${path}`, location);
   const value: unknown = document.toJS({ maxAliasCount: 0 });
   if (!isRecord(value))
     invalid(
       "yaml_shape_invalid",
-      `玩法预设 YAML 顶层必须是 map：${path}`,
+      `Top-level play-preset YAML must be a map: ${path}`,
       location,
     );
   return value;
@@ -2676,11 +2882,15 @@ function toFileMap(
     if (file.encoding !== undefined)
       invalid(
         "text_encoding_invalid",
-        `玩法预设只接受 UTF-8 文本：${file.path}`,
+        `Play presets accept only UTF-8 text: ${file.path}`,
         file.path,
       );
     if (files[file.path] !== undefined)
-      invalid("duplicate_path", `玩法预设路径重复：${file.path}`, file.path);
+      invalid(
+        "duplicate_path",
+        `Play-preset path is duplicated: ${file.path}`,
+        file.path,
+      );
     files[file.path] = file.contents;
   }
   validateFileTree(files, limits);
@@ -2702,7 +2912,7 @@ function parseStoredDocument(
   )
     throw new FileNativePlayPresetError(
       "store_invalid",
-      "文件原生玩法预设库无效",
+      "File-native play-preset library is invalid",
     );
   const ids = new Set<string>();
   const presets = value.presets.map((raw) => {
@@ -2718,7 +2928,7 @@ function parseStoredDocument(
           "enabled",
           "scriptsEnabled",
         ],
-        ["draftRevision"],
+        ["draftRevision", "builtinDefault"],
       ) ||
       typeof raw.id !== "string" ||
       typeof raw.name !== "string" ||
@@ -2731,23 +2941,24 @@ function parseStoredDocument(
       raw.name !== raw.name.trim() ||
       raw.name.includes(String.fromCharCode(0)) ||
       typeof raw.enabled !== "boolean" ||
-      typeof raw.scriptsEnabled !== "boolean"
+      typeof raw.scriptsEnabled !== "boolean" ||
+      (raw.builtinDefault !== undefined && raw.builtinDefault !== true)
     )
       throw new FileNativePlayPresetError(
         "store_invalid",
-        "文件原生玩法预设记录无效",
+        "File-native play-preset record is invalid",
       );
     if (ids.has(raw.id))
       throw new FileNativePlayPresetError(
         "store_invalid",
-        "文件原生玩法预设身份重复",
+        "File-native play-preset identity is duplicated",
       );
     ids.add(raw.id);
     const revisions: Record<string, Record<string, string>> = {};
     if (Object.keys(raw.revisions).length === 0)
       throw new FileNativePlayPresetError(
         "store_invalid",
-        "玩法预设没有 revision 快照",
+        "Play preset has no revision snapshot",
       );
     for (const [revision, files] of Object.entries(raw.revisions)) {
       if (
@@ -2758,7 +2969,7 @@ function parseStoredDocument(
       )
         throw new FileNativePlayPresetError(
           "store_invalid",
-          "玩法预设 revision 快照无效",
+          "Play-preset revision snapshot is invalid",
         );
       const clone = cloneFiles(files as Record<string, string>);
       let expectedRevision: string;
@@ -2767,13 +2978,13 @@ function parseStoredDocument(
       } catch {
         throw new FileNativePlayPresetError(
           "store_invalid",
-          "玩法预设 revision 文件树无效",
+          "Play-preset revision file tree is invalid",
         );
       }
       if (expectedRevision !== revision)
         throw new FileNativePlayPresetError(
           "store_invalid",
-          "玩法预设 revision 内容 hash 不匹配",
+          "Play-preset revision content hash does not match",
         );
       if (
         revision !== raw.draftRevision &&
@@ -2781,14 +2992,14 @@ function parseStoredDocument(
       )
         throw new FileNativePlayPresetError(
           "store_invalid",
-          "玩法预设 revision 不符合当前格式",
+          "Play-preset revision does not match the current format",
         );
       revisions[revision] = clone;
     }
     if (revisions[raw.currentRevision] === undefined)
       throw new FileNativePlayPresetError(
         "store_invalid",
-        "玩法预设当前 revision 缺失",
+        "Current play-preset revision is missing",
       );
     if (
       raw.draftRevision !== undefined &&
@@ -2799,7 +3010,7 @@ function parseStoredDocument(
     )
       throw new FileNativePlayPresetError(
         "store_invalid",
-        "玩法预设草稿 revision 无效",
+        "Play-preset draft revision is invalid",
       );
     return {
       id: raw.id,
@@ -2808,6 +3019,7 @@ function parseStoredDocument(
       revisions,
       enabled: raw.enabled,
       scriptsEnabled: raw.scriptsEnabled,
+      ...(raw.builtinDefault === true ? { builtinDefault: true as const } : {}),
       ...(raw.draftRevision === undefined
         ? {}
         : { draftRevision: raw.draftRevision }),
@@ -2815,11 +3027,14 @@ function parseStoredDocument(
   });
   const current = presets.find(({ id }) => id === value.currentPresetId);
   if (current === undefined)
-    throw new FileNativePlayPresetError("store_invalid", "当前玩法预设不存在");
+    throw new FileNativePlayPresetError(
+      "store_invalid",
+      "Current play preset does not exist",
+    );
   if (!current.enabled)
     throw new FileNativePlayPresetError(
       "store_invalid",
-      "当前玩法预设不能是已停用身份",
+      "Current play preset cannot be a disabled identity",
     );
   return { schemaVersion: 1, currentPresetId: value.currentPresetId, presets };
 }
@@ -2827,7 +3042,10 @@ function parseStoredDocument(
 function findStored(document: StoredDocument, id: string): StoredPreset {
   const preset = document.presets.find(({ id: candidate }) => candidate === id);
   if (preset === undefined)
-    throw new FileNativePlayPresetError("not_found", "没有找到指定玩法预设");
+    throw new FileNativePlayPresetError(
+      "not_found",
+      "Requested play preset was not found",
+    );
   return preset;
 }
 
@@ -2836,7 +3054,7 @@ function normalizeName(raw: string): string {
   if (!namePattern.test(name) || name.includes(String.fromCharCode(0)))
     throw new FileNativePlayPresetError(
       "invalid_name",
-      "玩法预设名称必须为 1 至 160 个字符",
+      "Play-preset name must contain 1 to 160 characters",
     );
   return name;
 }
@@ -2873,7 +3091,7 @@ export function validatePlayPresetArtifactPayload(
   if (!isJsonValueValue(value))
     return {
       ok: false,
-      message: "JSON artifact payload 必须是合法 JSON value",
+      message: "JSON artifact payload must be a valid JSON value",
     };
   return validatePayloadNode(contract, value, "$", 0);
 }
@@ -2885,7 +3103,7 @@ function validatePayloadNode(
   depth: number,
 ): { ok: true } | { ok: false; message: string } {
   if (depth > 32)
-    return { ok: false, message: `${path} payload 嵌套超过 32 层` };
+    return { ok: false, message: `${path} payload nesting exceeds 32 levels` };
   const actual =
     value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
   const typeMatches =
@@ -2897,7 +3115,7 @@ function validatePayloadNode(
   if (!typeMatches)
     return {
       ok: false,
-      message: `${path} payload 类型应为 ${contract.type}，实际为 ${actual}`,
+      message: `${path} payload type must be ${contract.type}; received ${actual}`,
     };
   if (contract.maxBytes !== undefined) {
     const encoded = JSON.stringify(value);
@@ -2907,7 +3125,7 @@ function validatePayloadNode(
     )
       return {
         ok: false,
-        message: `${path} payload 超过声明的 ${contract.maxBytes} bytes 上限`,
+        message: `${path} payload exceeds its declared ${contract.maxBytes}-byte limit`,
       };
   }
   if (contract.type === "string") {
@@ -2918,7 +3136,7 @@ function validatePayloadNode(
     )
       return {
         ok: false,
-        message: `${path} 文本长度小于 ${contract.minLength}`,
+        message: `${path} text length is less than ${contract.minLength}`,
       };
     if (
       contract.maxLength !== undefined &&
@@ -2926,7 +3144,7 @@ function validatePayloadNode(
     )
       return {
         ok: false,
-        message: `${path} 文本长度超过 ${contract.maxLength}`,
+        message: `${path} text length exceeds ${contract.maxLength}`,
       };
   }
   if (contract.type === "array") {
@@ -2934,12 +3152,12 @@ function validatePayloadNode(
     if (contract.minItems !== undefined && entries.length < contract.minItems)
       return {
         ok: false,
-        message: `${path} 条目数量少于 ${contract.minItems}`,
+        message: `${path} has fewer than ${contract.minItems} items`,
       };
     if (contract.maxItems !== undefined && entries.length > contract.maxItems)
       return {
         ok: false,
-        message: `${path} 条目数量超过 ${contract.maxItems}`,
+        message: `${path} has more than ${contract.maxItems} items`,
       };
     const seen = new Set<string>();
     for (const [index, entry] of entries.entries()) {
@@ -2961,13 +3179,13 @@ function validatePayloadNode(
         )
           return {
             ok: false,
-            message: `${path}[${index}].${contract.uniqueBy} 必须是可唯一化的标量`,
+            message: `${path}[${index}].${contract.uniqueBy} must be a uniquely comparable scalar`,
           };
         const key = JSON.stringify(unique);
         if (seen.has(key))
           return {
             ok: false,
-            message: `${path} 的 ${contract.uniqueBy} 不能重复`,
+            message: `${path} ${contract.uniqueBy} values cannot be duplicated`,
           };
         seen.add(key);
       }
@@ -2978,11 +3196,14 @@ function validatePayloadNode(
     const properties = contract.properties ?? {};
     for (const required of contract.required ?? [])
       if (!(required in object))
-        return { ok: false, message: `${path}.${required} 是必需字段` };
+        return { ok: false, message: `${path}.${required} is required` };
     if (contract.additionalProperties === false)
       for (const key of Object.keys(object))
         if (!(key in properties))
-          return { ok: false, message: `${path}.${key} 不是声明字段` };
+          return {
+            ok: false,
+            message: `${path}.${key} is not a declared field`,
+          };
     for (const [key, child] of Object.entries(properties)) {
       if (!(key in object)) continue;
       const result = validatePayloadNode(

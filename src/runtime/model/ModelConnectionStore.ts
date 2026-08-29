@@ -38,7 +38,7 @@ interface ModelConnectionDocument {
 
 export class ModelConnectionUnavailableError extends Error {
   constructor() {
-    super("尚未启用 V1 模型连接");
+    super("No V1 model connection is enabled");
     this.name = "ModelConnectionUnavailableError";
   }
 }
@@ -71,7 +71,7 @@ export class ModelConnectionStore {
               ({ id }) => id === input.connectionId,
             );
       if (input.connectionId !== undefined && index < 0)
-        throw new Error("没有找到要编辑的模型配置");
+        throw new Error("The model configuration to edit was not found");
       const existing = index < 0 ? undefined : document.connections[index];
       const saved: StoredModelConnection = {
         id: existing?.id ?? randomUUID(),
@@ -89,7 +89,7 @@ export class ModelConnectionStore {
     return this.#mutate(async () => {
       const document = await this.#readDocument();
       if (!document.connections.some(({ id }) => id === connectionId))
-        throw new Error("没有找到要启用的模型配置");
+        throw new Error("The model configuration to enable was not found");
       document.activeConnectionId = connectionId;
       await this.#writeDocument(document);
       return this.#viewDocument(document);
@@ -102,12 +102,15 @@ export class ModelConnectionStore {
       const index = document.connections.findIndex(
         ({ id }) => id === connectionId,
       );
-      if (index < 0) throw new Error("没有找到要删除的模型配置");
+      if (index < 0)
+        throw new Error("The model configuration to delete was not found");
       if (
         document.activeConnectionId === connectionId &&
         document.connections.length > 1
       )
-        throw new Error("请先切换到另一份模型配置，再删除当前配置");
+        throw new Error(
+          "Switch to another model configuration before deleting the current one",
+        );
       document.connections.splice(index, 1);
       if (document.activeConnectionId === connectionId)
         document.activeConnectionId = null;
@@ -139,12 +142,16 @@ export class ModelConnectionStore {
       const stored = (await this.#readDocument()).connections.find(
         ({ id }) => id === input.connectionId,
       );
-      if (stored === undefined) throw new Error("没有找到模型配置");
+      if (stored === undefined)
+        throw new Error("Model configuration not found");
       if (stored.provider !== provider || stored.baseUrl !== baseUrl)
-        throw new Error("端点或协议已改变；请重新填写 API Key 后再拉取模型");
+        throw new Error(
+          "The endpoint or protocol changed; enter the API key again before fetching models",
+        );
       apiKey = stored.apiKey;
     }
-    if (apiKey === undefined) throw new Error("拉取模型列表需要 API Key");
+    if (apiKey === undefined)
+      throw new Error("Fetching the model list requires an API key");
 
     const url = providerUrl(baseUrl, "models");
     if (provider === "anthropic_messages")
@@ -163,18 +170,18 @@ export class ModelConnectionStore {
     if (!response.ok) throw await providerListError(response);
     const declaredLength = Number(response.headers.get("content-length"));
     if (Number.isFinite(declaredLength) && declaredLength > maxModelListBytes)
-      throw new Error("Provider 模型列表响应超过 1 MiB 上限");
+      throw new Error("Provider model-list response exceeds the 1 MiB limit");
     const source = await response.text();
     if (Buffer.byteLength(source, "utf8") > maxModelListBytes)
-      throw new Error("Provider 模型列表响应超过 1 MiB 上限");
+      throw new Error("Provider model-list response exceeds the 1 MiB limit");
     let payload: unknown;
     try {
       payload = JSON.parse(source) as unknown;
     } catch {
-      throw new Error("Provider 模型列表不是合法 JSON");
+      throw new Error("Provider model-list response is not valid JSON");
     }
     if (!isRecord(payload) || !Array.isArray(payload.data))
-      throw new Error("Provider 模型列表缺少 data 数组");
+      throw new Error("Provider model-list response is missing the data array");
     const models = [
       ...new Set(
         payload.data.flatMap((item) => {
@@ -187,7 +194,7 @@ export class ModelConnectionStore {
       .sort((left, right) => left.localeCompare(right))
       .slice(0, 2_000);
     if (models.length === 0)
-      throw new Error("Provider 模型列表没有可用的模型 ID");
+      throw new Error("Provider model list has no usable model IDs");
     return { models };
   }
 
@@ -217,7 +224,10 @@ export class ModelConnectionStore {
   async #readDocument(): Promise<ModelConnectionDocument> {
     try {
       const info = await stat(this.#path);
-      if (!info.isFile()) throw new Error("模型连接配置路径不是普通文件");
+      if (!info.isFile())
+        throw new Error(
+          "Model-connection configuration path is not a regular file",
+        );
       verifyPrivateMode(info.mode);
       return validateDocument(JSON.parse(await readFile(this.#path, "utf8")));
     } catch (error: unknown) {
@@ -255,13 +265,13 @@ function normalizeSaveInput(
   input: SaveModelConnectionInput,
   existing: StoredModelConnection | undefined,
 ): Omit<StoredModelConnection, "id"> {
-  const name = requiredTrimmed(input.name, "配置名称", 160);
+  const name = requiredTrimmed(input.name, "Configuration name", 160);
   const presetId = validatePresetId(input.presetId);
   const provider = validateProvider(input.provider);
   const baseUrl = normalizeBaseUrl(
     requiredTrimmed(input.baseUrl, "Base URL", 4096),
   );
-  const modelId = requiredTrimmed(input.modelId, "模型 ID", 512);
+  const modelId = requiredTrimmed(input.modelId, "Model ID", 512);
   const explicitApiKey = normalizeOptionalApiKey(input.apiKey);
   const apiKey =
     explicitApiKey ??
@@ -271,8 +281,8 @@ function normalizeSaveInput(
   if (apiKey === undefined)
     throw new Error(
       existing === undefined
-        ? "新模型配置必须填写 API Key"
-        : "端点或协议已改变；必须重新填写 API Key，旧凭据不会转发到新端点",
+        ? "A new model configuration requires an API key"
+        : "The endpoint or protocol changed; enter the API key again because old credentials are never forwarded to a new endpoint",
     );
   validateTokenLimits(input.contextWindowTokens, input.maxOutputTokens);
   validatePresetBinding(presetId, provider, baseUrl);
@@ -297,15 +307,17 @@ function validateDocument(value: unknown): ModelConnectionDocument {
     !Array.isArray(value.connections) ||
     value.connections.length > 64
   )
-    throw new Error("模型连接配置文件不符合固定数据格式");
+    throw new Error(
+      "Model-connection configuration file does not match its fixed schema",
+    );
   const connections = value.connections.map(validateStoredConnection);
   if (new Set(connections.map(({ id }) => id)).size !== connections.length)
-    throw new Error("模型连接配置含有重复 ID");
+    throw new Error("Model-connection configuration contains duplicate IDs");
   if (
     value.activeConnectionId !== null &&
     !connections.some(({ id }) => id === value.activeConnectionId)
   )
-    throw new Error("启用的模型连接不存在");
+    throw new Error("The enabled model connection does not exist");
   return {
     schemaVersion: 1,
     activeConnectionId: value.activeConnectionId,
@@ -314,14 +326,14 @@ function validateDocument(value: unknown): ModelConnectionDocument {
 }
 
 function validateStoredConnection(value: unknown): StoredModelConnection {
-  if (!isRecord(value)) throw new Error("模型连接必须是对象");
-  const id = requiredTrimmed(value.id, "模型连接 ID", 160);
-  const name = requiredTrimmed(value.name, "配置名称", 160);
+  if (!isRecord(value)) throw new Error("Model connection must be an object");
+  const id = requiredTrimmed(value.id, "Model connection ID", 160);
+  const name = requiredTrimmed(value.name, "Configuration name", 160);
   const presetId = validatePresetId(value.presetId);
   const provider = validateProvider(value.provider);
   const baseUrl = normalizeBaseUrl(requiredTrimmed(value.baseUrl, "Base URL"));
   const apiKey = requiredTrimmed(value.apiKey, "API Key", 16_384);
-  const modelId = requiredTrimmed(value.modelId, "模型 ID", 512);
+  const modelId = requiredTrimmed(value.modelId, "Model ID", 512);
   validateTokenLimits(value.contextWindowTokens, value.maxOutputTokens);
   validatePresetBinding(presetId, provider, baseUrl);
   return {
@@ -370,7 +382,7 @@ function validateProvider(value: unknown): ModelProviderKind {
     value !== "openai_responses" &&
     value !== "anthropic_messages"
   )
-    throw new Error("模型连接协议无效");
+    throw new Error("Model-connection protocol is invalid");
   return value;
 }
 
@@ -379,7 +391,7 @@ function validatePresetId(value: unknown): ModelProviderPresetId {
     typeof value !== "string" ||
     !modelProviderPresets.some(({ id }) => id === value)
   )
-    throw new Error("模型提供商预设无效");
+    throw new Error("Model-provider preset is invalid");
   return value as ModelProviderPresetId;
 }
 
@@ -394,7 +406,9 @@ function validatePresetBinding(
     (preset.provider !== provider ||
       normalizeBaseUrl(preset.baseUrl) !== baseUrl)
   )
-    throw new Error("内置提供商的端点或协议不匹配；自定义时请选择“自定义端点”");
+    throw new Error(
+      "The endpoint or protocol does not match the built-in provider; select Custom endpoint for a custom configuration",
+    );
 }
 
 function normalizeBaseUrl(value: string): string {
@@ -402,7 +416,7 @@ function normalizeBaseUrl(value: string): string {
   try {
     url = new URL(value);
   } catch {
-    throw new Error("Base URL 必须是绝对 URL");
+    throw new Error("Base URL must be absolute");
   }
   if (
     (url.protocol !== "https:" && url.protocol !== "http:") ||
@@ -411,7 +425,9 @@ function normalizeBaseUrl(value: string): string {
     url.search.length > 0 ||
     url.hash.length > 0
   )
-    throw new Error("Base URL 只允许无凭据、query 和 fragment 的 HTTP(S) 地址");
+    throw new Error(
+      "Base URL must be an HTTP(S) address without credentials, query, or fragment",
+    );
   url.pathname = url.pathname.replace(/\/+$/u, "");
   return url.toString().replace(/\/$/u, "");
 }
@@ -422,7 +438,7 @@ function normalizeOptionalApiKey(value: unknown): string | undefined {
 }
 
 function requiredTrimmed(value: unknown, label: string, max = 4096): string {
-  if (typeof value !== "string") throw new Error(`${label} 必须是字符串`);
+  if (typeof value !== "string") throw new Error(`${label} must be a string`);
   const normalized = value.trim();
   if (
     normalized.length === 0 ||
@@ -430,7 +446,7 @@ function requiredTrimmed(value: unknown, label: string, max = 4096): string {
     normalized.includes("\r") ||
     normalized.includes("\n")
   )
-    throw new Error(`${label} 无效`);
+    throw new Error(`${label} is invalid`);
   return normalized;
 }
 
@@ -443,7 +459,7 @@ function validateTokenLimits(context: unknown, output: unknown): void {
     (output as number) < 256 ||
     (output as number) >= (context as number)
   )
-    throw new Error("模型真实 context window 或最大输出无效");
+    throw new Error("Actual model context window or maximum output is invalid");
 }
 
 function providerUrl(baseUrl: string, resource: "models"): URL {
@@ -456,12 +472,14 @@ function providerUrl(baseUrl: string, resource: "models"): URL {
 
 async function providerListError(response: Response): Promise<Error> {
   const text = (await response.text()).slice(0, 4096);
-  return new Error(`拉取模型列表失败：${response.status} ${text}`);
+  return new Error(`Failed to fetch model list: ${response.status} ${text}`);
 }
 
 function verifyPrivateMode(mode: number): void {
   if ((mode & 0o077) !== 0)
-    throw new Error("模型连接配置文件权限过宽，必须只允许当前用户读取");
+    throw new Error(
+      "Model-connection configuration permissions are too broad; only the current user may read it",
+    );
 }
 
 function isMissingFile(error: unknown): boolean {

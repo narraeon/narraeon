@@ -11,22 +11,22 @@ test("拼接正文与思维链增量，并按顺序报出", async () => {
   const deltas: SettingAuthorDelta[] = [];
   const result = await aggregate(
     [
-      chunk({ reasoning_content: "先想" }),
-      chunk({ reasoning_content: "一下。" }),
-      chunk({ content: "秦龙" }),
-      chunk({ content: "抱着球衣。" }),
+      chunk({ reasoning_content: "Think " }),
+      chunk({ reasoning_content: "first." }),
+      chunk({ content: "Alex" }),
+      chunk({ content: " is holding a jersey." }),
       "data: [DONE]\n\n",
     ],
     (delta) => deltas.push(delta),
   );
 
-  expect(result.reasoningContent).toBe("先想一下。");
-  expect(result.content).toBe("秦龙抱着球衣。");
+  expect(result.reasoningContent).toBe("Think first.");
+  expect(result.content).toBe("Alex is holding a jersey.");
   expect(deltas).toEqual([
-    { kind: "reasoning", text: "先想" },
-    { kind: "reasoning", text: "一下。" },
-    { kind: "text", text: "秦龙" },
-    { kind: "text", text: "抱着球衣。" },
+    { kind: "reasoning", text: "Think " },
+    { kind: "reasoning", text: "first." },
+    { kind: "text", text: "Alex" },
+    { kind: "text", text: " is holding a jersey." },
   ]);
 });
 
@@ -78,7 +78,7 @@ test("多个工具调用按 index 排序，交错到达也不串行", async () =
 
 test("include_usage 的末尾用量帧被采集", async () => {
   const result = await aggregate([
-    chunk({ content: "好。" }),
+    chunk({ content: "Okay." }),
     'data: {"choices":[],"usage":{"prompt_tokens":120,"completion_tokens":8}}\n\n',
     "data: [DONE]\n\n",
   ]);
@@ -89,12 +89,16 @@ test("include_usage 的末尾用量帧被采集", async () => {
 test("心跳注释与空 delta 不产生增量", async () => {
   const deltas: SettingAuthorDelta[] = [];
   const result = await aggregate(
-    [": keep-alive\n\n", chunk({ content: "" }), chunk({ content: "在。" })],
+    [
+      ": keep-alive\n\n",
+      chunk({ content: "" }),
+      chunk({ content: "Present." }),
+    ],
     (delta) => deltas.push(delta),
   );
 
-  expect(result.content).toBe("在。");
-  expect(deltas).toEqual([{ kind: "text", text: "在。" }]);
+  expect(result.content).toBe("Present.");
+  expect(deltas).toEqual([{ kind: "text", text: "Present." }]);
 });
 
 test("anthropic：拼接 thinking 与 text，并按 index 拼 tool 的 partial_json", async () => {
@@ -113,7 +117,7 @@ test("anthropic：拼接 thinking 与 text，并按 index 拼 tool 的 partial_j
       anthropic("content_block_delta", {
         type: "content_block_delta",
         index: 0,
-        delta: { type: "thinking_delta", thinking: "先想想。" },
+        delta: { type: "thinking_delta", thinking: "Think it through." },
       }),
       anthropic("content_block_start", {
         type: "content_block_start",
@@ -142,7 +146,7 @@ test("anthropic：拼接 thinking 与 text，并按 index 拼 tool 的 partial_j
     (delta) => deltas.push(delta),
   );
 
-  expect(result.reasoningContent).toBe("先想想。");
+  expect(result.reasoningContent).toBe("Think it through.");
   expect(result.toolCalls).toEqual([
     {
       id: "toolu_1",
@@ -164,12 +168,12 @@ test("anthropic：没有对应 tool 块的 partial_json 被忽略而不是崩溃
     anthropic("content_block_delta", {
       type: "content_block_delta",
       index: 0,
-      delta: { type: "text_delta", text: "好。" },
+      delta: { type: "text_delta", text: "Okay." },
     }),
   ]);
 
   expect(result.toolCalls).toEqual([]);
-  expect(result.content).toBe("好。");
+  expect(result.content).toBe("Okay.");
 });
 
 function anthropic(event: string, payload: unknown): string {

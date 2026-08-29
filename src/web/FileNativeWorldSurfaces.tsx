@@ -1,3 +1,4 @@
+import { uiText } from "./i18n.ts";
 export interface FileNativeSurfaceFile {
   path: string;
   contents: string;
@@ -22,18 +23,22 @@ export function FileNativeWorldSurfaces({
 }): React.JSX.Element {
   return (
     <main>
-      <h1>世界文件</h1>
-      <Surface title="当前 state 文档" files={state} />
+      <h1>{uiText("世界文件")}</h1>
+      <Surface title={uiText("当前 state 文档")} files={state} />
       <Surface title="control" files={control} />
-      <Surface title="history" files={history} empty="尚无已提交叙事" />
+      <Surface
+        title="history"
+        files={history}
+        empty={uiText("尚无已提交叙事")}
+      />
       <section aria-labelledby="runtime-surface">
-        <h2 id="runtime-surface">Runtime 诊断</h2>
+        <h2 id="runtime-surface">{uiText("Runtime 诊断")}</h2>
         <dl>
-          <dt>父端点</dt>
+          <dt>{uiText("父端点")}</dt>
           <dd>{runtime.parentEndpoint}</dd>
-          <dt>创建 operation</dt>
+          <dt>{uiText("创建 operation")}</dt>
           <dd>{runtime.operationId}</dd>
-          <dt>历史条目</dt>
+          <dt>{uiText("历史条目")}</dt>
           <dd>{runtime.historyEntries}</dd>
         </dl>
       </section>
@@ -44,7 +49,7 @@ export function FileNativeWorldSurfaces({
 function Surface({
   title,
   files,
-  empty = "没有文件",
+  empty = uiText("没有文件"),
 }: {
   title: string;
   files: readonly FileNativeSurfaceFile[];

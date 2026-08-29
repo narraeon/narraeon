@@ -66,16 +66,16 @@ describe("内容包手动编辑界面", () => {
 
     fireEvent.click(screen.getByText("新建文件", { exact: true }));
     fireEvent.change(screen.getByLabelText("新文件路径"), {
-      target: { value: "world/characters/qinlong.yaml" },
+      target: { value: "world/characters/alex.yaml" },
     });
     fireEvent.click(screen.getByRole("button", { name: "加入草稿" }));
     expect(
-      screen.getByLabelText("编辑 world/characters/qinlong.yaml"),
+      screen.getByLabelText("编辑 world/characters/alex.yaml"),
     ).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "从草稿移除" }));
     expect(
       screen.queryByRole("button", {
-        name: "打开 world/characters/qinlong.yaml",
+        name: "打开 world/characters/alex.yaml",
       }),
     ).toBeNull();
 

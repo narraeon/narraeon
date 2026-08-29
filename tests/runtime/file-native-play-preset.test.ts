@@ -5,9 +5,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { V1Runtime } from "../../src/runtime/V1Runtime.ts";
+import type { AppLocale } from "../../src/protocol/appPreferences.ts";
 import { parseV1Envelope } from "../../src/protocol/v1.ts";
 import {
   defaultPlayPresetFiles,
+  defaultPlayPresetFilesForLocale,
   FileNativePlayPresetStore,
   maxPlayPresetFollowups,
   applyPlayPresetStructuredEditor,
@@ -43,13 +45,49 @@ afterEach(async () => {
 });
 
 describe("文件原生玩法预设", () => {
+  test("only the Runtime-owned default preset follows the saved locale", async () => {
+    const root = await mkdtemp(join(tmpdir(), "narraeon-play-locale-"));
+    roots.push(root);
+    let locale: AppLocale = "en";
+    const store = new FileNativePlayPresetStore(root, {
+      locale: () => locale,
+    });
+    await store.initialize();
+
+    const original = (await store.list()).presets[0]!;
+    expect(original.files).toEqual(defaultPlayPresetFilesForLocale("en"));
+    const copied = await store.copy(original.id);
+
+    locale = "zh-CN";
+    await store.syncBuiltinDefaultLocale();
+    let library = await store.list();
+    expect(library.presets.find(({ id }) => id === original.id)?.files).toEqual(
+      defaultPlayPresetFilesForLocale("zh-CN"),
+    );
+    expect(
+      library.presets.find(({ id }) => id === copied.preset.id)?.files,
+    ).toEqual(defaultPlayPresetFilesForLocale("en"));
+
+    await store.save({
+      presetId: original.id,
+      name: original.name,
+      files: defaultPlayPresetFilesForLocale("zh-CN"),
+    });
+    locale = "en";
+    await store.syncBuiltinDefaultLocale();
+    library = await store.list();
+    expect(library.presets.find(({ id }) => id === original.id)?.files).toEqual(
+      defaultPlayPresetFilesForLocale("zh-CN"),
+    );
+  });
+
   test("提示块只接受作者 role，追加消息使用稳定署名", () => {
-    expect(renderPromptDeltaMessage("author_instruction", "作者正文")).toBe(
-      "# 作者提示\n\n作者正文",
+    expect(renderPromptDeltaMessage("author_instruction", "Author text")).toBe(
+      "# Author instruction\n\nAuthor text",
     );
-    expect(() => renderPromptDeltaMessage("world_context", "伪造材料")).toThrow(
-      /非法追加 role/u,
-    );
+    expect(() =>
+      renderPromptDeltaMessage("world_context", "Fake material"),
+    ).toThrow(/invalid appended role/u);
 
     const invalid = structuredClone(defaultPlayPresetFiles);
     invalid["call-chain.yaml"] = invalid["call-chain.yaml"]!.replace(
@@ -60,7 +98,7 @@ describe("文件原生玩法预设", () => {
       kind: "invalid",
       error: {
         code: "prompt_role_invalid",
-        message: "玩法提示块只能使用 author_instruction role",
+        message: "A play prompt block may use only the author_instruction role",
       },
     });
   });
@@ -126,7 +164,7 @@ describe("文件原生玩法预设", () => {
     await store.setEnabled(other.preset.id, false);
     await store.delete(current.id);
     const library = await store.list();
-    // 剩下的那份是停用的，所以库被重建成一份可用的默认预设。
+    // The only remaining preset is disabled, so the store rebuilds a usable default.
     expect(library.presets).toHaveLength(1);
     expect(library.presets[0]!.enabled).toBe(true);
     expect(library.currentPresetId).toBe(library.presets[0]!.id);
@@ -152,7 +190,7 @@ describe("文件原生玩法预设", () => {
       "prompts/narrate.md",
     ]);
 
-    // 合法编辑：改显示名后往返一次仍然有效。
+    // A valid display-name edit remains valid after a round trip.
     structure.followups[0]!.displayName = "结构化修改";
     const nextFiles = applyPlayPresetStructuredEditor(
       binding.files,
@@ -164,7 +202,7 @@ describe("文件原生玩法预设", () => {
     if (reparsed.kind === "valid")
       expect(reparsed.definition.followups[0]?.displayName).toBe("结构化修改");
 
-    // 坏结构：引用不存在的提示块，保存后只成为不可选择的 draft。
+    // A missing prompt reference is retained only as an unselectable draft.
     const broken = toPlayPresetStructuredEditor(binding.definition);
     broken.followups[0]!.prompt = {
       role: "author_instruction",
@@ -181,7 +219,7 @@ describe("文件原生玩法预设", () => {
     )!;
     expect(listed.validation.status).toBe("valid");
     expect(listed.draft?.validation.status).toBe("invalid");
-    // 冻结绑定不受坏草稿影响。
+    // The frozen binding is unaffected by the invalid draft.
     expect((await store.bindCurrent()).revision).toBe(binding.revision);
     await expect(store.select(created.preset.id)).rejects.toMatchObject({
       code: "invalid_play_preset",
@@ -237,7 +275,7 @@ describe("文件原生玩法预设", () => {
     const store = new FileNativePlayPresetStore(root);
     await store.initialize();
     const created = await store.create(
-      "模板预览",
+      "模板Preview",
       firstPartyActionChoicesPresetFiles,
     );
     const snapshot = buildPlayPresetWorkbenchSnapshot(
@@ -348,8 +386,8 @@ extensions:
     const preset = library.presets[0]!;
     expect(preset.validation).toEqual({ status: "valid" });
     expect(preset.revision).toMatch(/^rev-[0-9a-f]{64}$/u);
-    // 一份预设同时承载主持层、玩法层和设定完善作者提示。
-    // 文风块随预设一起发货，但要不要启用由 frame.yaml 决定。
+    // One preset carries host, play, and setting-improvement author prompts.
+    // Style blocks ship with it, while frame.yaml decides whether they are enabled.
     expect(Object.keys(preset.files).sort()).toEqual([
       "blocks/adjudication.md",
       "blocks/state.md",
@@ -449,7 +487,7 @@ extensions:
     const store = new FileNativePlayPresetStore(root);
     await store.initialize();
     const created = await store.create(
-      "预览用玩法",
+      "Preview用玩法",
       firstPartyActionChoicesPresetFiles,
     );
     await store.select(created.preset.id);
@@ -459,7 +497,7 @@ extensions:
       modelId: "play-preview-model",
       contextWindowTokens: 128_000,
       maxOutputTokens: 16_000,
-      playerInput: "我试着推开门。",
+      playerInput: "I try to push the door open.",
       playerInputPlacement: "append",
     });
 
@@ -469,7 +507,7 @@ extensions:
     );
     expect(preview.playPreset?.id).toBe(binding.id);
     expect(preview.playPreset?.revision).toBe(binding.revision);
-    // 主链拿到稳定工具全集。
+    // The main chain receives the stable complete tool set.
     expect(preview.playPreset?.toolUniverse.map(({ name }) => name)).toEqual([
       "context_list",
       "context_search",
@@ -516,7 +554,7 @@ extensions:
         modelId: "options-preview-model",
         contextWindowTokens: 128_000,
         maxOutputTokens: 16_000,
-        playerInput: "检查建议玩法。",
+        playerInput: "Check the recommended play flow.",
         playerInputPlacement: "bootstrap",
       }),
       binding,
@@ -551,14 +589,14 @@ extensions:
       modelId: "cache-boundary-model",
       contextWindowTokens: 128_000,
       maxOutputTokens: 16_000,
-      playerInput: "同一语义正文。",
+      playerInput: "Body text with the same semantics.",
       playerInputPlacement: "append",
     });
     const full = new FileNativePromptCompiler().compilePlayPreset(
       input,
       binding,
     );
-    // 预设不再声明 toolUniverse：主链工具由 Runtime 固定。
+    // Presets no longer declare toolUniverse; Runtime fixes main-chain tools.
     expect(full.toolUniverse.map(({ name }) => name)).toEqual([
       "context_list",
       "context_search",
@@ -570,11 +608,12 @@ extensions:
     ]);
 
     const shorterFiles = structuredClone(defaultPlayPresetFiles);
-    shorterFiles["prompts/narrate.md"] = "# 叙事\n\n短得多的作者正文。\n";
+    shorterFiles["prompts/narrate.md"] =
+      "# Narrative\n\nA much shorter author instruction.\n";
     const shorter = parsePlayPresetFiles(shorterFiles);
     expect(shorter.kind).toBe("valid");
     if (shorter.kind !== "valid") return;
-    // 叙事正文进入调用链 bootstrap，所以改它会改变稳定前缀指纹。
+    // Narrative prose enters call-chain bootstrap, so editing it changes the stable prefix.
     const compiler = new FileNativePromptCompiler();
     const chainFull = compiler.compilePlayCallChain(input, binding);
     const chainShorter = compiler.compilePlayCallChain(input, {
@@ -596,7 +635,7 @@ extensions:
   test("任意作者正文不触发 Runtime 机械字段泄漏扫描", async () => {
     const files = structuredClone(defaultPlayPresetFiles);
     files["prompts/narrate.md"] =
-      "作者可以讨论 cache、operation、revision 和 /tmp/author/example；这些都是语义正文。";
+      "Authors may discuss cache, operation, revision, and /tmp/author/example as semantic prose.";
     expect(validatePlayPresetFiles(files)).toEqual({ status: "valid" });
     const root = await mkdtemp(join(tmpdir(), "narraeon-play-author-text-"));
     roots.push(root);
@@ -609,7 +648,7 @@ extensions:
         modelId: "author-text-model",
         contextWindowTokens: 128_000,
         maxOutputTokens: 16_000,
-        playerInput: "检查作者正文。",
+        playerInput: "Check the author text.",
         playerInputPlacement: "append",
       }),
       await store.bindRevision(created.preset.id),
@@ -669,7 +708,7 @@ extensions:
     await runtime.handle({
       type: "model.save",
       connection: {
-        name: "预览模型",
+        name: "Preview模型",
         presetId: "custom",
         provider: "openai_responses",
         baseUrl: "https://provider.invalid/v1",
@@ -695,7 +734,7 @@ extensions:
     const preview = await runtime.handle({
       type: "prompt.preview",
       packageId,
-      playerInput: "检查调用链提示。",
+      playerInput: "Check the call-chain prompt.",
       model: {
         provider: "chat_completions",
         modelId: "browser-value-is-ignored",
@@ -719,14 +758,16 @@ extensions:
         ],
       },
       initialAppend: {
-        logical: { kind: "player", text: "检查调用链提示。" },
-        provider: { role: "user", content: "检查调用链提示。" },
+        logical: { kind: "player", text: "Check the call-chain prompt." },
+        provider: { role: "user", content: "Check the call-chain prompt." },
       },
     });
     const previewText = JSON.stringify(preview.result);
     expect(previewText).not.toContain("player_input");
     expect(previewText).not.toContain("message.genesis.narrator");
-    expect(previewText).toContain("最后一句写某个人做的一件具体的事");
+    expect(previewText).toContain(
+      "Make the final sentence a specific action someone takes",
+    );
     const copied = await runtime.handle({
       type: "play.copy",
       presetId: library.playPresets.currentPresetId,
@@ -756,7 +797,7 @@ extensions:
     const draftPreview = await runtime.handle({
       type: "prompt.preview",
       packageId,
-      playerInput: "检查未应用 draft revision。",
+      playerInput: "Check an unapplied draft revision.",
       model: {
         provider: "chat_completions",
         modelId: "browser-value-is-ignored",
@@ -872,8 +913,8 @@ extensions:
       >;
       mutate(document);
       await writeFile(path, `${JSON.stringify(document)}\n`, "utf8");
-      // 篡改过的库不会被当作有效数据接受，但也不再让服务无法启动：
-      // 它被挪到一旁并记录下来，用户仍能打开工作区处理。
+      // A tampered library is rejected as data but no longer prevents startup.
+      // It is quarantined and reported so the workspace remains available.
       const recovered = new FileNativePlayPresetStore(root);
       await recovered.initialize();
       expect(recovered.recovery, label).not.toBeNull();
@@ -897,12 +938,12 @@ extensions:
     };
     const preset = document.presets[0]!;
     preset.revisions[preset.currentRevision]!["prompts/adjudicate.md"] =
-      "磁盘篡改";
+      "disk tampering";
     await writeFile(path, `${JSON.stringify(document)}\n`, "utf8");
     const afterTamper = new FileNativePlayPresetStore(root);
     await afterTamper.initialize();
-    expect(afterTamper.recovery?.message).toMatch(/revision|hash|无效/u);
-    // 篡改后的内容没有进入可用库。
+    expect(afterTamper.recovery?.message).toMatch(/revision|hash|invalid/u);
+    // Tampered content never enters the usable library.
     const tamperedLibrary = await afterTamper.list();
     expect(
       JSON.stringify(tamperedLibrary.presets.map(({ files }) => files)),
@@ -1130,7 +1171,7 @@ followups:
     });
   });
 
-  test("预设不估算上下文，固定 Provider 配置仍保留在预览绑定", async () => {
+  test("预设不估算上下文，固定 Provider 配置仍保留在Preview绑定", async () => {
     const root = await mkdtemp(join(tmpdir(), "narraeon-play-budget-"));
     roots.push(root);
     const store = new FileNativePlayPresetStore(root);
@@ -1145,7 +1186,7 @@ followups:
         modelId: "budget-model",
         contextWindowTokens: 64_000,
         maxOutputTokens: 8_000,
-        playerInput: "检查预算。",
+        playerInput: "Check the budget.",
         playerInputPlacement: "append",
       }),
       await store.bindRevision(created.preset.id),
@@ -1182,7 +1223,7 @@ narrative:
 followups:${body}`,
     });
 
-    // 重复 id
+    // Duplicate id.
     expect(
       validatePlayPresetFiles(
         withFollowups(
@@ -1191,14 +1232,14 @@ followups:${body}`,
       ),
     ).toMatchObject({ status: "invalid", code: "duplicate_followup_id" });
 
-    // 提示块不存在
+    // Missing prompt block.
     const missingPrompt = withFollowups(followupBlock("panel", "chan.a"));
     missingPrompt["call-chain.yaml"] = missingPrompt[
       "call-chain.yaml"
     ]!.replace("prompts/narrate.md", "prompts/missing.md");
     expect(validatePlayPresetFiles(missingPrompt).status).toBe("invalid");
 
-    // 不产出任何产物的后置请求没有意义
+    // A follow-up with no artifacts is meaningless.
     const noArtifacts = withFollowups(`
   - id: panel
     displayName: 空面板
@@ -1210,7 +1251,7 @@ followups:${body}`,
       code: "followup_artifact_missing",
     });
 
-    // 叙事提示块缺失
+    // Missing narrative prompt block.
     const noNarrative = {
       ...defaultPlayPresetFiles,
       "call-chain.yaml":
@@ -1218,7 +1259,7 @@ followups:${body}`,
     };
     expect(validatePlayPresetFiles(noNarrative).status).toBe("valid");
 
-    // 同一频道上冲突的投影策略
+    // Conflicting projection strategies on one channel.
     const conflict = withFollowups(
       `${followupBlock("first", "panel.same")}${followupBlock("second", "panel.same").replace("strategy: replace", "strategy: append")}`,
     );
@@ -1264,7 +1305,7 @@ ${extra}`,
       status: "valid",
     });
 
-    // 同一后置请求里重名的 output
+    // Duplicate output names in one follow-up.
     const duplicate = withArtifact(`      - name: outline
         channel: debug.other
         strategy: append
@@ -1276,7 +1317,7 @@ ${extra}`,
 `);
     expect(validatePlayPresetFiles(duplicate).status).toBe("invalid");
 
-    // renderer 必须同时声明 revision
+    // A renderer must declare its revision.
     const rendererWithoutRevision: Record<string, string> = {
       ...withArtifact(""),
       "renderers/panel.html": "<p>panel</p>",
@@ -1291,7 +1332,7 @@ ${extra}`,
       "invalid",
     );
 
-    // maxEmits 必须有界
+    // maxEmits must be bounded.
     const unbounded: Record<string, string> = { ...withArtifact("") };
     unbounded["call-chain.yaml"] = unbounded["call-chain.yaml"]!.replace(
       "maxEmits: 1",
@@ -1421,7 +1462,7 @@ describe("无法解析的预设库不阻断启动", () => {
         status: "valid",
       });
 
-      // 原始字节没有被覆盖，而是挪到一旁并可报告。
+      // Original bytes are quarantined rather than overwritten and remain reportable.
       expect(store.recovery, label).not.toBeNull();
       expect(await readFile(store.recovery!.quarantinedPath, "utf8")).toBe(
         body,

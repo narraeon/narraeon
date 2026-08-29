@@ -101,7 +101,7 @@ const ajv = new Ajv({ allErrors: true, strict: true });
 const validateListSchema = ajv.compile(materialListSchema);
 
 export function validateMaterialList(value: unknown): MaterialSelection[] {
-  assertSchema(validateListSchema, value, "附加材料清单 schema");
+  assertSchema(validateListSchema, value, "additional-materials list schema");
   return structuredClone(value) as MaterialSelection[];
 }
 
@@ -112,17 +112,17 @@ function assertSchema(
 ): void {
   if (validate(value)) return;
   throw new MaterialSelectionValidationError(
-    `${contract} 不接受该输入：${renderErrors(validate.errors)}`,
+    `${contract} rejected the input: ${renderErrors(validate.errors)}`,
   );
 }
 
 function renderErrors(errors: ErrorObject[] | null | undefined): string {
   if (errors === null || errors === undefined || errors.length === 0)
-    return "形状无效";
+    return "invalid shape";
   return errors
     .map(
       ({ instancePath, message }) =>
-        `${instancePath || "/"} ${message ?? "无效"}`,
+        `${instancePath || "/"} ${message ?? "is invalid"}`,
     )
     .join("；");
 }

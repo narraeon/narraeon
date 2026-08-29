@@ -88,15 +88,21 @@ test("模型自行交替文本与工具，每个完成响应立即推进世界�
                 {
                   op: "replace",
                   locator: { yaml: ["情况"] },
-                  value: "秦龙已经把宿舍门打开。",
+                  value: "Alex已经把宿舍门打开。",
                 },
               ],
             },
           },
         ],
       },
-      { outcome: "response", text: "秦龙推开门，侧身示意你先走。" },
-      { outcome: "response", text: "走廊里的感应灯随脚步依次亮起。" },
+      {
+        outcome: "response",
+        text: "Alex opens the door and gestures for you to go first.",
+      },
+      {
+        outcome: "response",
+        text: "The corridor lights come on one by one with each step.",
+      },
     ],
   });
   const chains = new PlayCallChain(worlds);
@@ -105,7 +111,7 @@ test("模型自行交替文本与工具，每个完成响应立即推进世界�
     worldId,
     chainId: "play-chain-contract",
     exchangeId: "exchange-first",
-    playerText: "我示意秦龙开门。",
+    playerText: "I signal Alex to open the door.",
     hostBinding: hostBinding(),
     playPreset: playPreset(),
     modelBinding: modelBinding(),
@@ -139,9 +145,9 @@ test("模型自行交替文本与工具，每个完成响应立即推进世界�
       { kind: "tool_result" }
     > => event.kind === "tool_result" && event.callId === "patch-door",
   );
-  expect(patchResult?.markdown).toBe("@current-situation 写入成功");
-  expect(patchResult?.markdown).not.toContain("秦龙守在宿舍门边。");
-  expect(patchResult?.markdown).not.toContain("秦龙已经把宿舍门打开。");
+  expect(patchResult?.markdown).toBe("@current-situation write succeeded");
+  expect(patchResult?.markdown).not.toContain("Alex守在宿舍门边。");
+  expect(patchResult?.markdown).not.toContain("Alex已经把宿舍门打开。");
   expect(modelHost.requests[1]?.appended.at(-1)).toEqual({
     kind: "tool",
     toolCallId: "patch-door",
@@ -158,7 +164,7 @@ test("模型自行交替文本与工具，每个完成响应立即推进世界�
     modelBinding().maxOutputTokens,
   );
   expect(modelHost.requests[0]?.appended).toEqual([
-    { kind: "player", text: "我示意秦龙开门。" },
+    { kind: "player", text: "I signal Alex to open the door." },
   ]);
   expect(
     modelHost.requests[0]?.bootstrap.logicalMessages.some(
@@ -169,34 +175,36 @@ test("模型自行交替文本与工具，每个完成响应立即推进世界�
     "门外传来三声短促的铃响。",
   );
   expect(JSON.stringify(modelHost.requests[0]?.bootstrap)).toContain(
-    "当前世界没有更早的玩家原文或主持叙事",
+    "this world has no earlier player input or host narrative",
   );
   const authorPrompt = modelHost.requests[0]?.bootstrap.logicalMessages
     .filter(({ role }) => role === "author_instruction")
     .map(({ markdown }) => markdown)
     .join("\n");
-  // 玩法叙事块作为普通作者指令进入 bootstrap。
-  expect(authorPrompt).toContain("最后一句写某个人做的一件具体的事");
+  // The play narrative block enters bootstrap as an ordinary author instruction.
+  expect(authorPrompt).toContain(
+    "Make the final sentence a specific action someone takes",
+  );
 
   const continued = await chains.append({
     worldId,
     chainId: first.chainId,
     exchangeId: "exchange-second",
-    playerText: "我走进走廊。",
+    playerText: "I walk into the corridor.",
     modelHost,
   });
 
   expect(continued).toMatchObject({ status: "ready", parentHead: "commit:5" });
   expect(modelHost.requests.at(-1)?.appended.at(-1)).toEqual({
     kind: "player",
-    text: "我走进走廊。",
+    text: "I walk into the corridor.",
   });
   const requestCount = modelHost.requests.length;
   const duplicateAppend = await chains.append({
     worldId,
     chainId: first.chainId,
     exchangeId: "exchange-second",
-    playerText: "我走进走廊。",
+    playerText: "I walk into the corridor.",
     modelHost,
   });
   expect(duplicateAppend.parentHead).toBe("commit:5");
@@ -205,15 +213,15 @@ test("模型自行交替文本与工具，每个完成响应立即推进世界�
   const endpoint = await worlds.recoverEndpoint(worldId);
   expect(endpoint.history.map(({ exactText }) => exactText)).toEqual([
     "门外传来三声短促的铃响。\n",
-    "我示意秦龙开门。",
-    "秦龙推开门，侧身示意你先走。",
-    "我走进走廊。",
-    "走廊里的感应灯随脚步依次亮起。",
+    "I signal Alex to open the door.",
+    "Alex opens the door and gestures for you to go first.",
+    "I walk into the corridor.",
+    "The corridor lights come on one by one with each step.",
   ]);
   expect(
     endpoint.state.find(({ path }) => path === "current-situation.yaml")
       ?.contents,
-  ).toContain("秦龙已经把宿舍门打开。");
+  ).toContain("Alex已经把宿舍门打开。");
 });
 
 test("world_patch no-op 保留匹配的紧凑工具结果且不推进世界", async () => {
@@ -233,14 +241,14 @@ test("world_patch no-op 保留匹配的紧凑工具结果且不推进世界", as
                 {
                   op: "replace",
                   locator: { yaml: ["情况"] },
-                  value: "秦龙守在宿舍门边。",
+                  value: "Alex守在宿舍门边。",
                 },
               ],
             },
           },
         ],
       },
-      { outcome: "response", text: "秦龙仍站在门边。" },
+      { outcome: "response", text: "Alex remains by the door." },
     ],
   });
 
@@ -248,7 +256,7 @@ test("world_patch no-op 保留匹配的紧凑工具结果且不推进世界", as
     worldId,
     chainId: "play-chain-patch-no-op-contract",
     exchangeId: "play-chain-patch-no-op-exchange",
-    playerText: "我看向秦龙。",
+    playerText: "I look at Alex.",
     hostBinding: hostBinding(),
     playPreset: playPreset(),
     modelBinding: modelBinding(),
@@ -270,7 +278,7 @@ test("world_patch no-op 保留匹配的紧凑工具结果且不推进世界", as
     > =>
       event.kind === "tool_result" && event.callId === "patch-same-situation",
   );
-  expect(patchResult?.markdown).toBe("@current-situation 无变化");
+  expect(patchResult?.markdown).toBe("@current-situation unchanged");
   expect(modelHost.requests[1]?.appended.at(-1)).toEqual({
     kind: "tool",
     toolCallId: "patch-same-situation",
@@ -311,7 +319,7 @@ test("冷启动恢复 world_create 授予的写权限，后续无需重新读取
     worldId,
     chainId: "play-chain-create-authorization-cold-recovery",
     exchangeId: "play-chain-create-authorization-cold-recovery-player",
-    playerText: "记下一个新角色。",
+    playerText: "Record a new character.",
     hostBinding: hostBinding(),
     playPreset: playPreset(),
     modelBinding: modelBinding(),
@@ -324,7 +332,7 @@ test("冷启动恢复 world_create 授予的写权限，后续无需重新读取
   expect(interruptedHost.requests[1]?.appended.at(-1)).toEqual({
     kind: "tool",
     toolCallId: "create-cold-character",
-    markdown: "@cold-character 写入成功",
+    markdown: "@cold-character write succeeded",
   });
 
   const recoveredHost = new ScriptedModelHost({
@@ -349,7 +357,10 @@ test("冷启动恢复 world_create 授予的写权限，后续无需重新读取
           },
         ],
       },
-      { outcome: "response", text: "新角色的记录已经更新。" },
+      {
+        outcome: "response",
+        text: "The new character record has been updated.",
+      },
     ],
   });
   const recovered = await new PlayCallChain(worlds).append({
@@ -383,13 +394,18 @@ test("旧 V1 调用链没有授权 checkpoint 时沿用 bootstrap 恢复并惰�
     worldId,
     chainId: "play-chain-legacy-authorization-recovery",
     exchangeId: "play-chain-legacy-authorization-initial",
-    playerText: "先记下一步行动。",
+    playerText: "Record the next action first.",
     hostBinding: hostBinding(),
     playPreset: playPreset(),
     modelBinding: modelBinding(),
     modelHost: new ScriptedModelHost({
       binding: modelBinding(),
-      steps: [{ outcome: "response", text: "旧调用链已经建立。" }],
+      steps: [
+        {
+          outcome: "response",
+          text: "The previous call chain is established.",
+        },
+      ],
     }),
   });
   expect(initial.status).toBe("ready");
@@ -405,7 +421,7 @@ test("旧 V1 调用链没有授权 checkpoint 时沿用 bootstrap 恢复并惰�
     worldId,
     chainId: initial.chainId,
     exchangeId: "play-chain-legacy-authorization-resume",
-    playerText: "继续。",
+    playerText: "Continue.",
     modelHost: new ScriptedModelHost({
       binding: modelBinding(),
       steps: [
@@ -421,14 +437,14 @@ test("旧 V1 调用链没有授权 checkpoint 时沿用 bootstrap 恢复并惰�
                   {
                     op: "replace",
                     locator: { yaml: ["情况"] },
-                    value: "旧记录冷启动后继续。",
+                    value: "旧记录冷启动后Continue.",
                   },
                 ],
               },
             },
           ],
         },
-        { outcome: "response", text: "行动继续。" },
+        { outcome: "response", text: "The action continues." },
       ],
     }),
   });
@@ -453,10 +469,12 @@ test("旧 V1 调用链没有授权 checkpoint 时沿用 bootstrap 恢复并惰�
     worldId,
     chainId: initial.chainId,
     exchangeId: "play-chain-transient-v2-resume",
-    playerText: "再继续。",
+    playerText: "Continue again.",
     modelHost: new ScriptedModelHost({
       binding: modelBinding(),
-      steps: [{ outcome: "response", text: "仍然沿用同一调用链。" }],
+      steps: [
+        { outcome: "response", text: "Continue with the same call chain." },
+      ],
     }),
   });
   expect(
@@ -509,7 +527,7 @@ test("派生世界恢复所选分叉点的文档写授权，不携带分叉点�
           },
         ],
       },
-      { outcome: "response", text: "来源世界继续向前。" },
+      { outcome: "response", text: "The source world continues forward." },
     ],
   });
   const sourceChains = new PlayCallChain(worlds);
@@ -517,7 +535,7 @@ test("派生世界恢复所选分叉点的文档写授权，不携带分叉点�
     worldId,
     chainId: "play-chain-create-authorization-derived-source",
     exchangeId: "play-chain-create-authorization-derived-player",
-    playerText: "建立一份可以分叉的记录。",
+    playerText: "Create a record that can be forked.",
     hostBinding: hostBinding(),
     playPreset: playPreset(),
     modelBinding: modelBinding(),
@@ -573,7 +591,10 @@ test("派生世界恢复所选分叉点的文档写授权，不携带分叉点�
           },
         ],
       },
-      { outcome: "response", text: "派生世界从分叉点继续。" },
+      {
+        outcome: "response",
+        text: "The derived world continues from the branch point.",
+      },
     ],
   });
   const continued = await new PlayCallChain(worlds).append({
@@ -612,7 +633,7 @@ test("全新上下文只重建模型上下文，持久保留此前调用轨迹�
     steps: [
       {
         outcome: "response",
-        reasoningContent: "旧上下文思维链。",
+        reasoningContent: "Earlier-context reasoning.",
         toolCalls: [
           {
             id: "old-context-list",
@@ -621,7 +642,10 @@ test("全新上下文只重建模型上下文，持久保留此前调用轨迹�
           },
         ],
       },
-      { outcome: "response", text: "旧上下文的可见叙事。" },
+      {
+        outcome: "response",
+        text: "Visible narrative from the earlier context.",
+      },
     ],
   });
   const chains = new PlayCallChain(worlds);
@@ -629,7 +653,7 @@ test("全新上下文只重建模型上下文，持久保留此前调用轨迹�
     worldId,
     chainId: "play-chain-old-context",
     exchangeId: "exchange-old-context",
-    playerText: "旧上下文玩家输入。",
+    playerText: "Player input for the old context.",
     hostBinding: hostBinding(),
     playPreset: playPreset(),
     modelBinding: modelBinding(),
@@ -644,13 +668,15 @@ test("全新上下文只重建模型上下文，持久保留此前调用轨迹�
 
   const secondHost = new ScriptedModelHost({
     binding: modelBinding(),
-    steps: [{ outcome: "response", text: "新上下文的可见叙事。" }],
+    steps: [
+      { outcome: "response", text: "Visible narrative from the new context." },
+    ],
   });
   const second = await chains.start({
     worldId,
     chainId: "play-chain-new-context",
     exchangeId: "exchange-new-context",
-    playerText: "新上下文玩家输入。",
+    playerText: "Player input for the new context.",
     hostBinding: hostBinding(),
     playPreset: playPreset(),
     modelBinding: modelBinding(),
@@ -659,13 +685,13 @@ test("全新上下文只重建模型上下文，持久保留此前调用轨迹�
   const withHistory = second;
 
   expect(secondHost.requests[0]?.appended).toEqual([
-    { kind: "player", text: "新上下文玩家输入。" },
+    { kind: "player", text: "Player input for the new context." },
   ]);
   expect(withHistory.previousContexts).toHaveLength(1);
   expect(withHistory.previousContexts?.[0]?.events).toContainEqual(
     expect.objectContaining({
       kind: "assistant",
-      reasoning: "旧上下文思维链。",
+      reasoning: "Earlier-context reasoning.",
     }),
   );
   expect(withHistory.previousContexts?.[0]?.events).toContainEqual(
@@ -700,7 +726,7 @@ test("全新上下文只重建模型上下文，持久保留此前调用轨迹�
   expect(branchTrace?.events).toContainEqual(
     expect.objectContaining({
       kind: "assistant",
-      reasoning: "旧上下文思维链。",
+      reasoning: "Earlier-context reasoning.",
     }),
   );
   expect(branchTrace?.events).toContainEqual(
@@ -740,7 +766,7 @@ test("从调用链节点派生会保留截至该节点的调用轨迹，并可�
     steps: [
       {
         outcome: "response",
-        reasoningContent: "先确认宿舍门的当前状态。",
+        reasoningContent: "First confirm the dormitory door's current state.",
         toolCalls: [
           {
             id: "patch-derived-door",
@@ -751,7 +777,7 @@ test("从调用链节点派生会保留截至该节点的调用轨迹，并可�
                 {
                   op: "replace",
                   locator: { yaml: ["情况"] },
-                  value: "秦龙已经把宿舍门打开。",
+                  value: "Alex已经把宿舍门打开。",
                 },
               ],
             },
@@ -760,8 +786,9 @@ test("从调用链节点派生会保留截至该节点的调用轨迹，并可�
       },
       {
         outcome: "response",
-        text: "秦龙推开门，侧身示意你先走。",
-        reasoningContent: "状态已经更新，现在给出可见叙事。",
+        text: "Alex opens the door and gestures for you to go first.",
+        reasoningContent:
+          "The state is updated; now provide visible narrative.",
       },
     ],
   });
@@ -770,7 +797,7 @@ test("从调用链节点派生会保留截至该节点的调用轨迹，并可�
     worldId,
     chainId: "play-chain-derive-source",
     exchangeId: "exchange-source-player",
-    playerText: "我示意秦龙开门。",
+    playerText: "I signal Alex to open the door.",
     hostBinding: hostBinding(),
     playPreset: playPreset(),
     modelBinding: modelBinding(),
@@ -810,7 +837,7 @@ test("从调用链节点派生会保留截至该节点的调用轨迹，并可�
   expect(completedTrace?.events).toContainEqual(
     expect.objectContaining({
       kind: "assistant",
-      reasoning: "先确认宿舍门的当前状态。",
+      reasoning: "First confirm the dormitory door's current state.",
     }),
   );
   expect(completedTrace?.events).toContainEqual(
@@ -834,7 +861,7 @@ test("从调用链节点派生会保留截至该节点的调用轨迹，并可�
       { kind: "assistant" }
     > =>
       event.kind === "assistant" &&
-      event.reasoning === "先确认宿舍门的当前状态。",
+      event.reasoning === "First confirm the dormitory door's current state.",
   )?.committedHead;
   expect(toolResponseHead).toBe("commit:2");
   const toolBranch = (
@@ -865,7 +892,7 @@ test("从调用链节点派生会保留截至该节点的调用轨迹，并可�
   ).toEqual(["commit:1", "commit:2"]);
   const continuedToolHost = new ScriptedModelHost({
     binding: modelBinding(),
-    steps: [{ outcome: "response", text: "秦龙把门彻底推开。" }],
+    steps: [{ outcome: "response", text: "Alex pushes the door fully open." }],
   });
   await new PlayCallChain(worlds).append({
     worldId: toolBranch.world.worldId,
@@ -899,7 +926,7 @@ test("从调用链节点派生会保留截至该节点的调用轨迹，并可�
     events: [
       expect.objectContaining({
         kind: "player",
-        text: "我示意秦龙开门。",
+        text: "I signal Alex to open the door.",
         committedHead: playerHead,
       }),
     ],
@@ -924,7 +951,12 @@ test("从调用链节点派生会保留截至该节点的调用轨迹，并可�
 
   const regeneratedHost = new ScriptedModelHost({
     binding: modelBinding(),
-    steps: [{ outcome: "response", text: "秦龙重新考虑后，直接拉开了门。" }],
+    steps: [
+      {
+        outcome: "response",
+        text: "After reconsidering, Alex pulls the door open.",
+      },
+    ],
   });
   const regenerated = await new PlayCallChain(coldWorlds).append({
     worldId: playerBranch.world.worldId,
@@ -935,7 +967,7 @@ test("从调用链节点派生会保留截至该节点的调用轨迹，并可�
   });
   expect(regenerated.status).toBe("ready");
   expect(regeneratedHost.requests[0]?.appended).toEqual([
-    { kind: "player", text: "我示意秦龙开门。" },
+    { kind: "player", text: "I signal Alex to open the door." },
   ]);
   expect(
     (await coldWorlds.recoverEndpoint(playerBranch.world.worldId)).history.map(
@@ -943,8 +975,8 @@ test("从调用链节点派生会保留截至该节点的调用轨迹，并可�
     ),
   ).toEqual([
     "门外传来三声短促的铃响。\n",
-    "我示意秦龙开门。",
-    "秦龙重新考虑后，直接拉开了门。",
+    "I signal Alex to open the door.",
+    "After reconsidering, Alex pulls the door open.",
   ]);
   await runtime.handle({
     type: "world.derive",
@@ -962,8 +994,11 @@ test("修改历史玩家提交会在同一世界追加时间线修订，并从�
   const sourceHost = new ScriptedModelHost({
     binding: modelBinding(),
     steps: [
-      { outcome: "response", text: "秦龙说八点在宿舍楼下集合。" },
-      { outcome: "response", text: "秦龙点头，说会提前五分钟下楼。" },
+      { outcome: "response", text: "Alex says to meet downstairs at eight." },
+      {
+        outcome: "response",
+        text: "Alex nods and says he will arrive five minutes early.",
+      },
     ],
   });
   const sourceChains = new PlayCallChain(worlds);
@@ -971,7 +1006,7 @@ test("修改历史玩家提交会在同一世界追加时间线修订，并从�
     worldId,
     chainId: "play-chain-edit-source",
     exchangeId: "exchange-edit-first",
-    playerText: "我问秦龙几点集合。",
+    playerText: "I ask Alex when we are meeting.",
     hostBinding: hostBinding(),
     playPreset: playPreset(),
     modelBinding: modelBinding(),
@@ -981,7 +1016,7 @@ test("修改历史玩家提交会在同一世界追加时间线修订，并从�
     worldId,
     chainId: "play-chain-edit-source",
     exchangeId: "exchange-edit-second",
-    playerText: "那我提前五分钟下楼。",
+    playerText: "Then I will go downstairs five minutes early.",
     modelHost: sourceHost,
   });
   const editedEvent = source.events.find(
@@ -1002,7 +1037,7 @@ test("修改历史玩家提交会在同一世界追加时间线修订，并从�
     chainId: source.chainId,
     eventId: editedEvent!.id,
     replacementExchangeId: "exchange-edited-replacement",
-    replacementText: "那我们提前十五分钟集合。",
+    replacementText: "Then let's meet fifteen minutes early.",
   };
   const revised = (await runtime.handle(revisionRequest)).result as {
     outcome: "revised";
@@ -1026,13 +1061,17 @@ test("修改历史玩家提交会在同一世界追加时间线修订，并从�
     revised.playCallChain.events
       .filter((event) => event.kind === "player")
       .map(({ text }) => text),
-  ).toEqual(["我问秦龙几点集合。", "那我们提前十五分钟集合。"]);
+  ).toEqual([
+    "I ask Alex when we are meeting.",
+    "Then let's meet fifteen minutes early.",
+  ]);
   expect(
     revised.playCallChain.events.some(
       (event) =>
         (event.kind === "player" || event.kind === "assistant") &&
-        (event.text === "那我提前五分钟下楼。" ||
-          event.text === "秦龙点头，说会提前五分钟下楼。"),
+        (event.text === "Then I will go downstairs five minutes early." ||
+          event.text ===
+            "Alex nods and says he will arrive five minutes early."),
     ),
   ).toBe(false);
   await expect(runtime.handle(revisionRequest)).resolves.toMatchObject({
@@ -1045,7 +1084,12 @@ test("修改历史玩家提交会在同一世界追加时间线修订，并从�
 
   const replacementHost = new ScriptedModelHost({
     binding: modelBinding(),
-    steps: [{ outcome: "response", text: "秦龙答应七点四十五就在楼下等你。" }],
+    steps: [
+      {
+        outcome: "response",
+        text: "Alex agrees to wait downstairs at seven forty-five.",
+      },
+    ],
   });
   await new PlayCallChain(worlds).append({
     worldId,
@@ -1061,10 +1105,10 @@ test("修改历史玩家提交会在同一世界追加时间线修订，并从�
     ),
   ).toEqual([
     "门外传来三声短促的铃响。\n",
-    "我问秦龙几点集合。",
-    "秦龙说八点在宿舍楼下集合。",
-    "那我们提前十五分钟集合。",
-    "秦龙答应七点四十五就在楼下等你。",
+    "I ask Alex when we are meeting.",
+    "Alex says to meet downstairs at eight.",
+    "Then let's meet fifteen minutes early.",
+    "Alex agrees to wait downstairs at seven forty-five.",
   ]);
   expect(
     (await worlds.recoverEndpoint(worldId, "commit:4")).history.map(
@@ -1072,19 +1116,19 @@ test("修改历史玩家提交会在同一世界追加时间线修订，并从�
     ),
   ).toEqual([
     "门外传来三声短促的铃响。\n",
-    "我问秦龙几点集合。",
-    "秦龙说八点在宿舍楼下集合。",
-    "那我提前五分钟下楼。",
-    "秦龙点头，说会提前五分钟下楼。",
+    "I ask Alex when we are meeting.",
+    "Alex says to meet downstairs at eight.",
+    "Then I will go downstairs five minutes early.",
+    "Alex nods and says he will arrive five minutes early.",
   ]);
   expect(replacementHost.requests[0]?.appended).toEqual([
-    { kind: "player", text: "我问秦龙几点集合。" },
+    { kind: "player", text: "I ask Alex when we are meeting." },
     {
       kind: "assistant",
-      text: "秦龙说八点在宿舍楼下集合。",
+      text: "Alex says to meet downstairs at eight.",
       toolCalls: [],
     },
-    { kind: "player", text: "那我们提前十五分钟集合。" },
+    { kind: "player", text: "Then let's meet fifteen minutes early." },
   ]);
   const authority = await worlds.readAuthorityHistory(worldId);
   expect(authority.commits).toHaveLength(6);
@@ -1109,14 +1153,20 @@ test("中断后留空追加会原样发送已保存的模型请求，不追加�
       requests.push(structuredClone(request));
       attempt += 1;
       if (attempt === 1) {
-        observer?.onDelta?.({ kind: "reasoning", text: "先确认门是否能打开" });
-        observer?.onDelta?.({ kind: "text", text: "秦龙刚把门推开一半" });
+        observer?.onDelta?.({
+          kind: "reasoning",
+          text: "First confirm whether the door can open",
+        });
+        observer?.onDelta?.({
+          kind: "text",
+          text: "Alex has pushed the door halfway open",
+        });
         return Promise.reject(
           new ModelHostOutcomeUnknownError("Provider 流在半途断开。"),
         );
       }
       return Promise.resolve({
-        text: "秦龙把门完全推开，走廊的冷风灌了进来。",
+        text: "Alex pushes the door fully open, and cold corridor air rushes in.",
       });
     },
   };
@@ -1126,7 +1176,7 @@ test("中断后留空追加会原样发送已保存的模型请求，不追加�
     worldId,
     chainId: "play-chain-retry-contract",
     exchangeId: "exchange-retry",
-    playerText: "我让秦龙打开门。",
+    playerText: "I ask Alex to open the door.",
     hostBinding: hostBinding(),
     playPreset: playPreset(),
     modelBinding: modelBinding(),
@@ -1141,8 +1191,8 @@ test("中断后留空追加会原样发送已保存的模型请求，不追加�
   expect(interrupted.events).toContainEqual(
     expect.objectContaining({
       kind: "assistant",
-      text: "秦龙刚把门推开一半",
-      reasoning: "先确认门是否能打开",
+      text: "Alex has pushed the door halfway open",
+      reasoning: "First confirm whether the door can open",
       status: "interrupted",
     }),
   );
@@ -1156,7 +1206,7 @@ test("中断后留空追加会原样发送已保存的模型请求，不追加�
   expect(recovered?.events).toContainEqual(
     expect.objectContaining({
       kind: "assistant",
-      reasoning: "先确认门是否能打开",
+      reasoning: "First confirm whether the door can open",
       status: "interrupted",
     }),
   );
@@ -1181,11 +1231,11 @@ test("中断后留空追加会原样发送已保存的模型请求，不追加�
   const endpoint = await worlds.recoverEndpoint(worldId);
   expect(endpoint.history.map(({ exactText }) => exactText)).toEqual([
     "门外传来三声短促的铃响。\n",
-    "我让秦龙打开门。",
-    "秦龙把门完全推开，走廊的冷风灌了进来。",
+    "I ask Alex to open the door.",
+    "Alex pushes the door fully open, and cold corridor air rushes in.",
   ]);
   expect(endpoint.history.map(({ exactText }) => exactText)).not.toContain(
-    "秦龙刚把门推开一半",
+    "Alex has pushed the door halfway open",
   );
 });
 
@@ -1196,16 +1246,16 @@ test("空输入追加会从完整逻辑 transcript 继续生成，并把 Provide
     steps: [
       {
         outcome: "response",
-        text: "秦龙先推开了门。",
-        reasoningContent: "先确认门口没有障碍。",
+        text: "Alex opens the door first.",
+        reasoningContent: "First confirm that the doorway is clear.",
         deltas: [
-          { kind: "reasoning", text: "先确认门口" },
-          { kind: "reasoning", text: "没有障碍。" },
-          { kind: "text", text: "秦龙先" },
-          { kind: "text", text: "推开了门。" },
+          { kind: "reasoning", text: "First confirm the doorway " },
+          { kind: "reasoning", text: "is clear." },
+          { kind: "text", text: "Alex opens " },
+          { kind: "text", text: "the door first." },
         ],
       },
-      { outcome: "response", text: "他随后走进走廊。" },
+      { outcome: "response", text: "He then walks into the corridor." },
     ],
   });
   const deltas: string[] = [];
@@ -1215,7 +1265,7 @@ test("空输入追加会从完整逻辑 transcript 继续生成，并把 Provide
     worldId,
     chainId: "play-chain-empty-continue-contract",
     exchangeId: "exchange-first",
-    playerText: "我示意秦龙开门。",
+    playerText: "I signal Alex to open the door.",
     hostBinding: hostBinding(),
     playPreset: playPreset(),
     modelBinding: modelBinding(),
@@ -1227,13 +1277,13 @@ test("空输入追加会从完整逻辑 transcript 继续生成，并把 Provide
       },
     },
   });
-  expect(deltas).toEqual(["秦龙先", "推开了门。"]);
+  expect(deltas).toEqual(["Alex opens ", "the door first."]);
 
-  expect(reasoningDeltas).toEqual(["先确认门口", "没有障碍。"]);
+  expect(reasoningDeltas).toEqual(["First confirm the doorway ", "is clear."]);
   expect(first.events).toContainEqual(
     expect.objectContaining({
       kind: "assistant",
-      reasoning: "先确认门口没有障碍。",
+      reasoning: "First confirm that the doorway is clear.",
     }),
   );
 
@@ -1250,11 +1300,11 @@ test("空输入追加会从完整逻辑 transcript 继续生成，并把 Provide
     1,
   );
   expect(modelHost.requests[1]?.appended).toEqual([
-    { kind: "player", text: "我示意秦龙开门。" },
+    { kind: "player", text: "I signal Alex to open the door." },
     {
       kind: "assistant",
-      text: "秦龙先推开了门。",
-      reasoningContent: "先确认门口没有障碍。",
+      text: "Alex opens the door first.",
+      reasoningContent: "First confirm that the doorway is clear.",
       toolCalls: [],
     },
   ]);
@@ -1264,9 +1314,9 @@ test("空输入追加会从完整逻辑 transcript 继续生成，并把 Provide
     ),
   ).toEqual([
     "门外传来三声短促的铃响。\n",
-    "我示意秦龙开门。",
-    "秦龙先推开了门。",
-    "他随后走进走廊。",
+    "I signal Alex to open the door.",
+    "Alex opens the door first.",
+    "He then walks into the corridor.",
   ]);
 });
 
@@ -1278,7 +1328,7 @@ test("AI 工具被 Runtime 拒绝时保存产生该调用的原始交换与 reas
     steps: [
       {
         outcome: "response",
-        reasoningContent: "先直接修改一个没有读过的节点。",
+        reasoningContent: "First patch a node that has not been read.",
         toolCalls: [
           {
             id: "invalid-world-patch",
@@ -1306,15 +1356,15 @@ test("AI 工具被 Runtime 拒绝时保存产生该调用的原始交换与 reas
             status: 200,
             statusText: "OK",
             contentType: "text/event-stream",
-            body: 'data: {"reasoning_content":"先直接修改一个没有读过的节点。"}\n\n',
+            body: 'data: {"reasoning_content":"First patch a node that has not been read."}\n\n',
             bodyComplete: true,
           },
-          reasoning: "先直接修改一个没有读过的节点。",
+          reasoning: "First patch a node that has not been read.",
         },
       },
       {
         outcome: "response",
-        text: "我先重新查看当前记录。",
+        text: "I will inspect the current record again first.",
         diagnostics: {
           captureId: "play-tool-failure-capture-2",
           provider: "chat_completions",
@@ -1335,7 +1385,7 @@ test("AI 工具被 Runtime 拒绝时保存产生该调用的原始交换与 reas
             status: 200,
             statusText: "OK",
             contentType: "text/event-stream",
-            body: 'data: {"content":"我先重新查看当前记录。"}\n\n',
+            body: 'data: {"content":"I will inspect the current record again first."}\n\n',
             bodyComplete: true,
           },
         },
@@ -1353,7 +1403,7 @@ test("AI 工具被 Runtime 拒绝时保存产生该调用的原始交换与 reas
     worldId,
     chainId: "play-tool-failure-log-chain",
     exchangeId: "play-tool-failure-log-exchange",
-    playerText: "打开门。",
+    playerText: "Open the door.",
     hostBinding: hostBinding(),
     playPreset: playPreset(),
     modelBinding: modelBinding(),
@@ -1395,11 +1445,14 @@ test("AI 工具被 Runtime 拒绝时保存产生该调用的原始交换与 reas
   }[];
   expect(exchanges).toHaveLength(2);
   expect(exchanges[0]?.request.body).toContain("打开门");
-  expect(exchanges[0]?.reasoning).toBe("先直接修改一个没有读过的节点。");
+  expect(exchanges[0]?.reasoning).toBe(
+    "First patch a node that has not been read.",
+  );
   expect(exchanges[1]?.request.body).toContain("参数错误");
   expect(entries.at(-1)).toMatchObject({
     type: "resolved",
-    message: "游玩调用链已在后续模型交换中恢复并完整结束。",
+    message:
+      "The play call chain recovered during a later model exchange and completed.",
   });
 });
 
@@ -1452,7 +1505,8 @@ roles:
     - builtin: runtime.coverage
     - include: world.context
 `,
-      "blocks/style.md": "# 风格\n\n克制、具体，不替玩家行动。\n",
+      "blocks/style.md":
+        "# Host style\n\nBe restrained and specific. Do not act for the player.\n",
     },
   };
 }
@@ -1479,7 +1533,7 @@ function worldFiles(): ContentTreeFile[] {
   title: 当前情境
   summary: 宿舍门边的局面。
   aliases: []
-情况: 秦龙守在宿舍门边。
+情况: Alex守在宿舍门边。
 `,
     },
     {
@@ -1497,7 +1551,8 @@ context:
     },
     {
       path: "control/blocks/world.md",
-      contents: "# 世界规则\n\n持续结果写回自然所有者。\n",
+      contents:
+        "# World Rules\n\nWrite durable outcomes back to their natural owner.\n",
     },
     {
       path: "control/player-views.yaml",
@@ -1512,10 +1567,10 @@ test("后置请求在整轮结束后各跑一次，共享同一主链前缀且�
   const modelHost = new ScriptedModelHost({
     binding: modelBinding(),
     steps: [
-      { outcome: "response", text: "秦龙把门推开，风灌了进来。" },
+      { outcome: "response", text: "Alex opens the door, and wind rushes in." },
       {
         outcome: "response",
-        text: "面板已生成。",
+        text: "The panel is ready.",
         toolCalls: [
           {
             id: "emit-status",
@@ -1526,7 +1581,7 @@ test("后置请求在整轮结束后各跑一次，共享同一主链前缀且�
       },
       {
         outcome: "response",
-        text: "选项已生成。",
+        text: "Options generated.",
         toolCalls: [
           {
             id: "emit-options",
@@ -1547,7 +1602,7 @@ test("后置请求在整轮结束后各跑一次，共享同一主链前缀且�
     worldId,
     chainId: "play-chain-followup-contract",
     exchangeId: "exchange-first",
-    playerText: "我示意秦龙开门。",
+    playerText: "I signal Alex to open the door.",
     hostBinding: hostBinding(),
     playPreset: followupPlayPreset(),
     modelBinding: modelBinding(),
@@ -1557,13 +1612,13 @@ test("后置请求在整轮结束后各跑一次，共享同一主链前缀且�
   expect(view.status).toBe("ready");
   expect(modelHost.requests).toHaveLength(3);
 
-  // 主链只有第一次请求；后两次是后置请求，它们的前缀必须逐字等于主链
-  // 结束时的 transcript，彼此都看不到对方的提示或输出。
+  // Only the first request belongs to the main chain. Both follow-ups must use
+  // the exact transcript at main-chain completion and cannot see each other.
   const mainPrefix = [
-    { kind: "player", text: "我示意秦龙开门。" },
+    { kind: "player", text: "I signal Alex to open the door." },
     {
       kind: "assistant",
-      text: "秦龙把门推开，风灌了进来。",
+      text: "Alex opens the door, and wind rushes in.",
       toolCalls: [],
     },
   ];
@@ -1575,9 +1630,11 @@ test("后置请求在整轮结束后各跑一次，共享同一主链前缀且�
   expect(optionsRequest.appended).toHaveLength(3);
   expect(optionsRequest.appended[2]).not.toEqual(statusRequest.appended[2]);
   expect(JSON.stringify(optionsRequest.appended)).not.toContain("status_bar");
-  expect(JSON.stringify(statusRequest.appended)).not.toContain("面板已生成");
+  expect(JSON.stringify(statusRequest.appended)).not.toContain(
+    "The panel is ready",
+  );
 
-  // 后置请求只拿到产物工具，主链的读写工具一件都不给。
+  // Follow-ups receive artifact tools only, never main-chain read/write tools.
   expect(statusRequest.allowedTools).toEqual([
     "artifact_emit",
     "artifact_clear",
@@ -1587,7 +1644,7 @@ test("后置请求在整轮结束后各跑一次，共享同一主链前缀且�
     "artifact_clear",
   ]);
 
-  // 轨迹里可见，但没有推进世界权威。
+  // The trace is visible without advancing world authority.
   expect(view.events.filter(({ kind }) => kind === "followup")).toMatchObject([
     { followupId: "status", toolCalls: [{ name: "artifact_emit", ok: true }] },
     { followupId: "options", toolCalls: [{ name: "artifact_emit", ok: true }] },
@@ -1599,25 +1656,26 @@ test("后置请求在整轮结束后各跑一次，共享同一主链前缀且�
     ),
   ).toEqual([
     "门外传来三声短促的铃响。\n",
-    "我示意秦龙开门。",
-    "秦龙把门推开，风灌了进来。",
+    "I signal Alex to open the door.",
+    "Alex opens the door, and wind rushes in.",
   ]);
 
-  // 产物已激活并绑定到当前端点。
+  // The artifact is active and bound to the current endpoint.
   const projection = await artifacts.readActiveProjection(worldId);
   expect(projection.map(({ output }) => output).sort()).toEqual([
     "options",
     "status_bar",
   ]);
 
-  // 下一次玩家输入直接接在叙事之后，主链里没有后置请求的任何痕迹。
+  // The next player input follows the narrative directly; follow-ups leave no
+  // trace in main-chain context.
   const nextHost = new ScriptedModelHost({
     binding: modelBinding(),
     steps: [
-      { outcome: "response", text: "你跟着他走进走廊。" },
+      { outcome: "response", text: "You follow him into the corridor." },
       {
         outcome: "response",
-        text: "面板已刷新。",
+        text: "The panel was refreshed.",
         toolCalls: [
           {
             id: "emit-status-2",
@@ -1628,7 +1686,7 @@ test("后置请求在整轮结束后各跑一次，共享同一主链前缀且�
       },
       {
         outcome: "response",
-        text: "选项已刷新。",
+        text: "Options refreshed.",
         toolCalls: [
           {
             id: "emit-options-2",
@@ -1643,15 +1701,16 @@ test("后置请求在整轮结束后各跑一次，共享同一主链前缀且�
     worldId,
     chainId: view.chainId,
     exchangeId: "exchange-second",
-    playerText: "我跟上去。",
+    playerText: "I follow.",
     modelHost: nextHost,
   });
   expect(nextHost.requests[0]!.appended).toEqual([
     ...mainPrefix,
-    { kind: "player", text: "我跟上去。" },
+    { kind: "player", text: "I follow." },
   ]);
 
-  // 每个已结算 exchange 使用新 operation，之前的面板会被取代而不是堆叠。
+  // Each settled exchange uses a new operation, replacing the previous panel
+  // instead of accumulating another one.
   const refreshed = await artifacts.readActiveProjection(worldId);
   expect(refreshed).toHaveLength(2);
   expect(refreshed.map(({ payload }) => payload)).toEqual(
@@ -1667,9 +1726,9 @@ test("后置请求失败不影响已提交的主链，玩家仍可继续", async
   const modelHost = new ScriptedModelHost({
     binding: modelBinding(),
     steps: [
-      { outcome: "response", text: "秦龙把门推开。" },
-      // 必需产物没有提交。
-      { outcome: "response", text: "我这轮不发面板。" },
+      { outcome: "response", text: "Alex opens the door." },
+      // The required artifact was not committed.
+      { outcome: "response", text: "I will not emit a panel this turn." },
       { outcome: "failure", message: "provider 拒绝了这次后置请求。" },
     ],
   });
@@ -1683,7 +1742,7 @@ test("后置请求失败不影响已提交的主链，玩家仍可继续", async
     worldId,
     chainId: "play-chain-followup-fail-contract",
     exchangeId: "exchange-first",
-    playerText: "我示意秦龙开门。",
+    playerText: "I signal Alex to open the door.",
     hostBinding: hostBinding(),
     playPreset: followupPlayPreset(),
     modelBinding: modelBinding(),
@@ -1707,8 +1766,8 @@ test("后置请求失败不影响已提交的主链，玩家仍可继续", async
     ),
   ).toEqual([
     "门外传来三声短促的铃响。\n",
-    "我示意秦龙开门。",
-    "秦龙把门推开。",
+    "I signal Alex to open the door.",
+    "Alex opens the door.",
   ]);
 });
 
@@ -1733,8 +1792,9 @@ ${followupEntry("status", "状态栏", "status_bar", "panel.status")}${followupE
     "options",
     "player.options",
   )}`;
-  files["prompts/status.md"] = "# 状态栏\n\n输出当前状态。\n";
-  files["prompts/options.md"] = "# 行动选项\n\n给出下一步可选行动。\n";
+  files["prompts/status.md"] = "# Status panel\n\nOutput the current status.\n";
+  files["prompts/options.md"] =
+    "# Action options\n\nSuggest possible next actions.\n";
   const parsed = parsePlayPresetFiles(files);
   if (parsed.kind !== "valid") throw parsed.error;
   return {

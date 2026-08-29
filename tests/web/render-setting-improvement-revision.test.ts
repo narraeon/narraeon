@@ -10,7 +10,7 @@ afterEach(cleanup);
 
 const plan = {
   kind: "plan" as const,
-  markdown: "# 创作计划\n\n补充人物关系与开局钩子。",
+  markdown: "# Creation plan\n\nExpand relationships and the opening hook.",
 };
 
 test("计划阶段可以写意见让 AI 重出计划，不必放弃重来", () => {
@@ -25,11 +25,15 @@ test("计划阶段可以写意见让 AI 重出计划，不必放弃重来", () =
   );
 
   const box = screen.getByLabelText("让 AI 调整计划");
-  fireEvent.change(box, { target: { value: "  改成聚焦社团线。  " } });
+  fireEvent.change(box, {
+    target: { value: "  Focus the plan on the club storyline.  " },
+  });
   fireEvent.click(screen.getByRole("button", { name: "按意见重出计划" }));
 
-  // 前后空白被去掉，会话继续而不是重开。
-  expect(onRevisePlan).toHaveBeenCalledWith("改成聚焦社团线。");
+  // Surrounding whitespace is trimmed and the existing session continues.
+  expect(onRevisePlan).toHaveBeenCalledWith(
+    "Focus the plan on the club storyline.",
+  );
 });
 
 test("候选阶段可以写意见让 AI 接着改", () => {
@@ -45,11 +49,13 @@ test("候选阶段可以写意见让 AI 接着改", () => {
   );
 
   fireEvent.change(screen.getByLabelText("让 AI 继续改这份候选"), {
-    target: { value: "秦龙的动机再具体一点。" },
+    target: { value: "Make Alex's motivation more specific." },
   });
   fireEvent.click(screen.getByRole("button", { name: "按意见继续修改" }));
 
-  expect(onReviseCandidate).toHaveBeenCalledWith("秦龙的动机再具体一点。");
+  expect(onReviseCandidate).toHaveBeenCalledWith(
+    "Make Alex's motivation more specific.",
+  );
 });
 
 test("意见为空时提交按钮不可用", () => {
@@ -79,10 +85,10 @@ function candidate() {
       status: "usable" as const,
       diff: [
         {
-          path: "world/characters/qinlong.yaml",
+          path: "world/characters/alex.yaml",
           kind: "modify" as const,
           before: "关系: {}\n",
-          after: "关系:\n  启铭: 熟悉\n",
+          after: "关系:\n  Sam: 熟悉\n",
         },
       ],
       diagnostics: [],
@@ -132,7 +138,7 @@ function common() {
     hasUnsavedFileDraft: false,
     contextPaths: [],
     contextLocked: true,
-    goal: "补足人物关系",
+    goal: "Develop the character relationships",
     plan: null,
     candidate: null,
     progress: null,

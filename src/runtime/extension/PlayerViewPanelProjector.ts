@@ -88,21 +88,21 @@ function projectPanel(
   if (view === undefined)
     addUnresolved(
       undefined,
-      `精确 player view 当前无法解析：${panel.source.view}`,
+      `The exact player view cannot currently be resolved: ${panel.source.view}`,
     );
   const selectedItemIds = new Set(items.map(({ id }) => id));
   for (const itemId of panel.source.itemIds ?? [])
     if (!selectedItemIds.has(itemId))
       addUnresolved(
         itemId,
-        `精确 selector 当前无法解析：${panel.source.view}/${itemId}`,
+        `The exact selector cannot currently be resolved: ${panel.source.view}/${itemId}`,
       );
   for (const group of panel.config.groups)
     for (const itemId of group.itemIds)
       if (!selectedItemIds.has(itemId))
         addUnresolved(
           itemId,
-          `玩家视图分组引用的 item 当前无法解析：${panel.source.view}/${itemId}`,
+          `An item referenced by the player-view group cannot currently be resolved: ${panel.source.view}/${itemId}`,
         );
   const frontend = projectPlayerViewPanelForFrontend(panel, input.binding);
   const payload: ArtifactPayload = {
@@ -170,7 +170,7 @@ function selectItems(
 }
 
 function toArtifactPayload(value: unknown, depth = 0): ArtifactPayload {
-  if (depth > 16) return "[界面深度已满]";
+  if (depth > 16) return "[UI depth limit reached]";
   if (
     value === null ||
     typeof value === "string" ||
@@ -187,7 +187,7 @@ function toArtifactPayload(value: unknown, depth = 0): ArtifactPayload {
         toArtifactPayload(child, depth + 1),
       ]),
     );
-  return "[无法显示]";
+  return "[Unable to display]";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

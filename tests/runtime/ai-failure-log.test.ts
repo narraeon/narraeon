@@ -31,7 +31,10 @@ test("Provider 流格式失败会自动保存原始 request、response 与已返
       choices: [
         {
           index: 0,
-          delta: { role: "assistant", reasoning_content: "先核对工具参数。" },
+          delta: {
+            role: "assistant",
+            reasoning_content: "Check the tool arguments first.",
+          },
         },
       ],
     })}\n\n`,
@@ -61,7 +64,7 @@ test("Provider 流格式失败会自动保存原始 request、response 与已返
       modelId: "failure-log-model",
       contextWindowTokens: 32_000,
       maxOutputTokens: 2_000,
-      playerInput: "检查失败日志。",
+      playerInput: "Check the failure log.",
       playerInputPlacement: "bootstrap",
     }),
   );
@@ -77,7 +80,9 @@ test("Provider 流格式失败会自动保存原始 request、response 与已返
       exchange: 3,
       maxOutputTokens: 2_000,
     }),
-  ).rejects.toThrow("流式响应无法确认");
+  ).rejects.toThrow(
+    "Chat Completions was dispatched but its streaming response could not be confirmed",
+  );
 
   const entries = await readOnlyFailure(logRoot);
   expect(entries[0]).toMatchObject({
@@ -102,7 +107,7 @@ test("Provider 流格式失败会自动保存原始 request、response 与已返
         contentType: "text/event-stream",
         body: rawResponse,
       },
-      reasoning: "先核对工具参数。",
+      reasoning: "Check the tool arguments first.",
     },
   });
   expect(entries[2]).toMatchObject({
@@ -110,7 +115,8 @@ test("Provider 流格式失败会自动保存原始 request、response 与已返
     failures: [
       {
         kind: "provider_response_format",
-        message: "Chat Completions 已派发但流式响应无法确认",
+        message:
+          "Chat Completions was dispatched but its streaming response could not be confirmed",
       },
     ],
   });
@@ -121,7 +127,7 @@ test("Provider 流格式失败会自动保存原始 request、response 与已返
       }
     ).exchange.request.body,
   ) as { messages: unknown };
-  expect(JSON.stringify(request.messages)).toContain("检查失败日志。");
+  expect(JSON.stringify(request.messages)).toContain("Check the failure log.");
   const serialized = JSON.stringify(entries);
   expect(serialized).not.toContain("top-secret-api-key");
   expect(serialized).not.toContain("must-not-be-logged");

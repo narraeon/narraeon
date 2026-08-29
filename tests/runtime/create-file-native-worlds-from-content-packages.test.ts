@@ -39,7 +39,7 @@ describe("从内容包创建文件原生世界", () => {
     expect(created.world.parentEndpoint).toBe("genesis");
     expect(await store.readSurface(created.world.worldId, "state")).toEqual([
       expect.objectContaining({
-        path: "characters/qinlong.yaml",
+        path: "characters/alex.yaml",
         contents: character(),
       }),
       expect.objectContaining({
@@ -95,22 +95,22 @@ describe("从内容包创建文件原生世界", () => {
     const previewPlayer = created.preview.compilation.logicalMessages.find(
       ({ role }) => role === "player_input",
     )?.markdown;
-    expect(previewPlayer).toContain("预览占位");
-    expect(previewPlayer).not.toContain("开始这个世界");
+    expect(previewPlayer).toContain("Preview placeholder");
+    expect(previewPlayer).not.toContain("Start this world");
 
     await workspace.replaceCurrentTreeContentPackage(package_.localId, [
       ...files().filter(
         ({ path }) =>
-          path !== "world/characters/qinlong.yaml" && path !== "opening.md",
+          path !== "world/characters/alex.yaml" && path !== "opening.md",
       ),
-      { path: "world/characters/qinlong.yaml", contents: character("已修改") },
+      { path: "world/characters/alex.yaml", contents: character("已修改") },
       { path: "opening.md", contents: "这是后来修改的开场白。\n" },
     ]);
     expect(
       await store.readSurface(created.world.worldId, "state"),
     ).toContainEqual(
       expect.objectContaining({
-        path: "characters/qinlong.yaml",
+        path: "characters/alex.yaml",
         contents: character(),
       }),
     );
@@ -156,7 +156,7 @@ describe("从内容包创建文件原生世界", () => {
     packageFiles.find(({ path }) => path === "opening.md")!.contents =
       "调用方稍后改写的开场白。\n";
     packageFiles.find(
-      ({ path }) => path === "world/characters/qinlong.yaml",
+      ({ path }) => path === "world/characters/alex.yaml",
     )!.contents = character("调用方稍后改写的衣着");
     packageFiles.find(
       ({ path }) => path === "control/blocks/world.md",
@@ -168,14 +168,14 @@ describe("从内容包创建文件原生世界", () => {
     const history = await store.readSurface(created.world.worldId, "history");
     expect(state).toContainEqual(
       expect.objectContaining({
-        path: "characters/qinlong.yaml",
+        path: "characters/alex.yaml",
         contents: character(),
       }),
     );
     expect(control).toContainEqual(
       expect.objectContaining({
         path: "blocks/world.md",
-        contents: "# 世界主持规则\n",
+        contents: "# World Narration Rules\n",
       }),
     );
     expect(history[0]?.contents).toBe(opening());
@@ -188,16 +188,16 @@ describe("从内容包创建文件原生世界", () => {
     expect(
       stateSnapshot.query({
         kind: "read_document",
-        document: { documentId: "character.qinlong" },
+        document: { documentId: "character.alex" },
         maxBytes: 65_536,
       }),
     ).toMatchObject({
       ok: true,
       snapshotStatus: "usable",
       document: {
-        documentId: "character.qinlong",
-        shortRef: "qinlong",
-        logicalPath: "state/characters/qinlong.yaml",
+        documentId: "character.alex",
+        shortRef: "alex",
+        logicalPath: "state/characters/alex.yaml",
       },
     });
   });
@@ -267,10 +267,10 @@ describe("从内容包创建文件原生世界", () => {
         ...source,
         packageFiles: [
           ...files().filter(
-            ({ path }) => path !== "world/characters/qinlong.yaml",
+            ({ path }) => path !== "world/characters/alex.yaml",
           ),
           {
-            path: "world/characters/qinlong.yaml",
+            path: "world/characters/alex.yaml",
             contents: character("冲突载荷"),
           },
         ],
@@ -303,7 +303,7 @@ describe("从内容包创建文件原生世界", () => {
       { deleted: true },
     );
 
-    // 只有目标世界消失，另一个世界的表面仍然可读。
+    // Only the target world disappears; the other world's surfaces remain readable.
     expect((await store.listWorlds()).map(({ worldId }) => worldId)).toEqual([
       second.world.worldId,
     ]);
@@ -314,7 +314,7 @@ describe("从内容包创建文件原生世界", () => {
       store.readSurface(first.world.worldId, "state"),
     ).rejects.toThrow();
 
-    // 删掉之后再删同一个世界，报的是不存在而不是静默成功。
+    // Deleting the same world again reports absence instead of succeeding silently.
     await expect(store.deleteWorld(first.world.worldId)).rejects.toMatchObject({
       name: "FileNativeWorldNotFoundError",
     });
@@ -424,7 +424,9 @@ describe("从内容包创建文件原生世界", () => {
     for (const name of ["   ", "雾港\n第二夜", "界".repeat(161)])
       await expect(
         store.renameWorld(created.world.worldId, name),
-      ).rejects.toThrow("世界名称必须是 1 到 160 个字符，且不含换行");
+      ).rejects.toThrow(
+        "World name must contain 1 to 160 characters and no line breaks",
+      );
 
     expect(await store.listWorlds()).toEqual([created.world]);
   });
@@ -445,7 +447,7 @@ describe("从内容包创建文件原生世界", () => {
       hostPresetId: "host-1",
     });
 
-    expect(derived.world.title).toBe(`${"界".repeat(156)}（分叉）`);
+    expect(derived.world.title).toBe(`${"界".repeat(153)} (fork)`);
     expect(Array.from(derived.world.title)).toHaveLength(160);
   });
 });
@@ -463,7 +465,7 @@ function input(
         hostPresetId: "host-1",
         files: {
           "frame.yaml": hostFrame(),
-          "blocks/style.md": "# 主持风格\n\n克制、具体。\n",
+          "blocks/style.md": "# Host style\n\nRestrained and specific.\n",
         },
       },
       modelBinding: {
@@ -485,24 +487,24 @@ async function temporaryRoot(): Promise<string> {
 function files() {
   return [
     { path: "opening.md", contents: opening() },
-    { path: "world/characters/qinlong.yaml", contents: character() },
+    { path: "world/characters/alex.yaml", contents: character() },
     { path: "world/current-situation.yaml", contents: currentSituation() },
     { path: "control/frame.yaml", contents: frame() },
-    { path: "control/blocks/world.md", contents: "# 世界主持规则\n" },
+    { path: "control/blocks/world.md", contents: "# World Narration Rules\n" },
     { path: "control/player-views.yaml", contents: playerView() },
   ];
 }
 
 function opening(): string {
-  return "宿舍门在你身后合上。秦龙抱着球衣看向你，等你先开口。\n";
+  return "宿舍门在你身后合上。Alex抱着球衣看向你，等你先开口。\n";
 }
 
 function character(note?: string): string {
-  return `$document:\n  id: character.qinlong\n  ref: qinlong\n  title: 秦龙\n  summary: 篮球队前锋。\n  aliases: []\n衣着: ${note ?? "白色运动背心"}\n`;
+  return `$document:\n  id: character.alex\n  ref: alex\n  title: Alex\n  summary: 篮球队前锋。\n  aliases: []\n衣着: ${note ?? "白色运动背心"}\n`;
 }
 
 function currentSituation(): string {
-  return `$document:\n  id: situation.current\n  ref: current-situation\n  title: 当前情境\n  summary: 宿舍里的当前局面。\n  aliases: []\n人物:\n  - $ref: character.qinlong\n`;
+  return `$document:\n  id: situation.current\n  ref: current-situation\n  title: 当前情境\n  summary: 宿舍里的当前局面。\n  aliases: []\n人物:\n  - $ref: character.alex\n`;
 }
 
 function frame(): string {
@@ -510,7 +512,7 @@ function frame(): string {
 }
 
 function playerView(): string {
-  return `format: narraeon.player-views/v1\nviews:\n  - id: status\n    title: 当前状态\n    items:\n      - id: clothes\n        label: 衣着\n        select: { document: character.qinlong, locator: { yaml: [衣着] } }\n`;
+  return `format: narraeon.player-views/v1\nviews:\n  - id: status\n    title: 当前状态\n    items:\n      - id: clothes\n        label: 衣着\n        select: { document: character.alex, locator: { yaml: [衣着] } }\n`;
 }
 
 function hostFrame(): string {

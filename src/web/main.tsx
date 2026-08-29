@@ -7,7 +7,7 @@ import "./styles.css";
 
 const root = document.querySelector("#root");
 if (root === null) {
-  throw new Error("页面缺少应用挂载点");
+  throw new Error("The page is missing the application mount point");
 }
 
 const runtimeClient = new RuntimeClient();

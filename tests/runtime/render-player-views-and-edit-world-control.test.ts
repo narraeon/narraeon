@@ -14,20 +14,20 @@ import { WorldDocumentStore } from "../../src/runtime/world/WorldDocumentStore.t
 
 function worldState(): Record<string, string> {
   return {
-    "characters/qinlong.yaml": `$document:
-  id: character.qinlong
-  ref: qinlong
-  title: 秦龙
+    "characters/alex.yaml": `$document:
+  id: character.alex
+  ref: alex
+  title: Alex
   summary: 篮球队前锋。
   aliases: []
 衣着: 白色背心
 关系:
-  赵虎:
+  Jordan:
     好感: 75
     标签: [队友, 室友]
 装备:
   - 名称: 球鞋
-    主人: { $ref: character.qinlong }
+    主人: { $ref: character.alex }
 未展示: 不应被局部 selector 猜测加入
 `,
     "rules/cultivation.md": `---
@@ -54,17 +54,17 @@ views:
     title: 当前状态
     items:
       - id: whole-character
-        label: 秦龙
-        select: { document: character.qinlong }
+        label: Alex
+        select: { document: character.alex }
       - id: clothes
         label: 衣着
-        select: { document: character.qinlong, locator: { yaml: [衣着] } }
+        select: { document: character.alex, locator: { yaml: [衣着] } }
       - id: relations
         label: 关系
-        select: { document: character.qinlong, locator: { yaml: [关系] } }
+        select: { document: character.alex, locator: { yaml: [关系] } }
       - id: equipment
         label: 装备
-        select: { document: character.qinlong, locator: { yaml: [装备] } }
+        select: { document: character.alex, locator: { yaml: [装备] } }
       - id: rule
         label: 金丹
         select: { document: rule.cultivation, locator: { markdown: [金丹] } }
@@ -98,25 +98,25 @@ describe("玩家视图读取当前文件树", () => {
     expect(result.views[0]?.items.map(({ value }) => value)).toEqual([
       {
         衣着: "白色背心",
-        关系: { 赵虎: { 好感: 75, 标签: ["队友", "室友"] } },
+        关系: { Jordan: { 好感: 75, 标签: ["队友", "室友"] } },
         装备: [
           {
             名称: "球鞋",
             主人: {
-              $ref: "character.qinlong",
-              title: "秦龙",
-              ref: "qinlong",
+              $ref: "character.alex",
+              title: "Alex",
+              ref: "alex",
             },
           },
         ],
         未展示: "不应被局部 selector 猜测加入",
       },
       "白色背心",
-      { 赵虎: { 好感: 75, 标签: ["队友", "室友"] } },
+      { Jordan: { 好感: 75, 标签: ["队友", "室友"] } },
       [
         {
           名称: "球鞋",
-          主人: { $ref: "character.qinlong", title: "秦龙", ref: "qinlong" },
+          主人: { $ref: "character.alex", title: "Alex", ref: "alex" },
         },
       ],
       "## 金丹\n\n金丹之后才可尝试元婴。",
@@ -124,8 +124,8 @@ describe("玩家视图读取当前文件树", () => {
     ]);
   });
 
-  // 文档身份是 Runtime 分配的随机值，作者只见得到 @短引用；提示编译器一直
-  // 接受短引用，只有玩家视图不认，写了就静默空白。
+  // Runtime assigns random document identities while authors see only short
+  // @references. The prompt compiler accepts them, and player views must too.
   test("select.document 接受 @短引用，与提示编译器一致", () => {
     const result = new PlayerViewRenderer().render(
       input({
@@ -136,7 +136,7 @@ views:
     items:
       - id: clothes
         label: 衣着
-        select: { document: "@qinlong", locator: { yaml: [衣着] } }
+        select: { document: "@alex", locator: { yaml: [衣着] } }
       - id: jindan
         label: 金丹
         select: { document: "@cultivation", locator: { markdown: [金丹] } }
@@ -169,16 +169,14 @@ views:
     expect(result.diagnostics).toEqual([
       expect.objectContaining({
         code: "unresolved_selector",
-        message: "文档不存在：@nobody",
+        message: "Document not found: @nobody",
       }),
     ]);
   });
 
   test("容器动态子节点自然出现，失效 selector 明确诊断且不阻断其他项", () => {
     const state = worldState();
-    state["characters/qinlong.yaml"] = state[
-      "characters/qinlong.yaml"
-    ]!.replace(
+    state["characters/alex.yaml"] = state["characters/alex.yaml"]!.replace(
       "    标签: [队友, 室友]",
       "    标签: [队友, 室友]\n    最近承诺: 晚上训练",
     ).replace("衣着: 白色背心", "服装: 白色背心");
@@ -188,7 +186,7 @@ views:
       ({ id }) => id === "relations",
     )?.value;
     expect(relations).toMatchObject({
-      赵虎: { 最近承诺: "晚上训练" },
+      Jordan: { 最近承诺: "晚上训练" },
     });
     expect(relations).not.toHaveProperty("服装");
     expect(relations).not.toHaveProperty("未展示");
@@ -253,7 +251,7 @@ views:
         select: { document: rule.cultivation, locator: { markdown: [] } }
       - id: clothes
         label: 衣着
-        select: { document: character.qinlong, locator: { yaml: [衣着] } }
+        select: { document: character.alex, locator: { yaml: [衣着] } }
 `;
 
     const result = new PlayerViewRenderer().render(input({ state, control }));
@@ -271,9 +269,10 @@ views:
 
   test("缺失引用、codec 不匹配、locator 和文档失效都返回稳定 unresolved 诊断", () => {
     const state = worldState();
-    state["characters/qinlong.yaml"] = state[
-      "characters/qinlong.yaml"
-    ]!.replace("character.qinlong }", "character.missing }");
+    state["characters/alex.yaml"] = state["characters/alex.yaml"]!.replace(
+      "character.alex }",
+      "character.missing }",
+    );
     const control = `format: narraeon.player-views/v1
 views:
   - id: status
@@ -281,19 +280,19 @@ views:
     items:
       - id: relations
         label: 关系
-        select: { document: character.qinlong, locator: { yaml: [关系] } }
+        select: { document: character.alex, locator: { yaml: [关系] } }
       - id: dangling
         label: 装备
-        select: { document: character.qinlong, locator: { yaml: [装备] } }
+        select: { document: character.alex, locator: { yaml: [装备] } }
       - id: wrong-codec
         label: 错误 codec
-        select: { document: character.qinlong, locator: { markdown: [衣着] } }
+        select: { document: character.alex, locator: { markdown: [衣着] } }
       - id: empty-markdown-wrong-codec
         label: 空 Markdown locator 错误 codec
-        select: { document: character.qinlong, locator: { markdown: [] } }
+        select: { document: character.alex, locator: { markdown: [] } }
       - id: missing-node
         label: 缺失节点
-        select: { document: character.qinlong, locator: { yaml: [不存在] } }
+        select: { document: character.alex, locator: { yaml: [不存在] } }
       - id: missing-document
         label: 缺失文档
         select: { document: character.unknown, locator: { yaml: [衣着] } }
@@ -305,7 +304,7 @@ views:
       {
         id: "relations",
         label: "关系",
-        value: { 赵虎: { 好感: 75, 标签: ["队友", "室友"] } },
+        value: { Jordan: { 好感: 75, 标签: ["队友", "室友"] } },
       },
     ]);
     expect(result.diagnostics).toEqual([
@@ -313,31 +312,31 @@ views:
         code: "unresolved_selector",
         viewId: "status",
         itemId: "dangling",
-        message: "显式文档引用当前无法解析",
+        message: "The explicit document reference cannot currently be resolved",
       },
       {
         code: "unresolved_selector",
         viewId: "status",
         itemId: "wrong-codec",
-        message: "selector codec 与目标文档不匹配",
+        message: "The selector codec does not match the target document",
       },
       {
         code: "unresolved_selector",
         viewId: "status",
         itemId: "empty-markdown-wrong-codec",
-        message: "selector codec 与目标文档不匹配",
+        message: "The selector codec does not match the target document",
       },
       {
         code: "unresolved_selector",
         viewId: "status",
         itemId: "missing-node",
-        message: "精确 selector 当前无法解析",
+        message: "The exact selector cannot currently be resolved",
       },
       {
         code: "unresolved_selector",
         viewId: "status",
         itemId: "missing-document",
-        message: "文档不存在：character.unknown",
+        message: "Document not found: character.unknown",
       },
     ]);
   });
@@ -348,8 +347,8 @@ views:
       { length: 18 },
       (_, index) => `${"  ".repeat(index + 1)}第${index + 1}层:`,
     ).join("\n");
-    state["characters/qinlong.yaml"] =
-      `${state["characters/qinlong.yaml"]!}深层:\n${nested}\n${"  ".repeat(19)}值: 到达\n巨大: ${"x".repeat(70 * 1024)}\n`;
+    state["characters/alex.yaml"] =
+      `${state["characters/alex.yaml"]!}深层:\n${nested}\n${"  ".repeat(19)}值: 到达\n巨大: ${"x".repeat(70 * 1024)}\n`;
     state["rules/cultivation.md"] = state["rules/cultivation.md"]!.replace(
       "金丹之后才可尝试元婴。",
       "长篇规则。".repeat(24 * 1024),
@@ -358,7 +357,7 @@ views:
       { length: 129 },
       (_, index) => `      - id: item-${index}
         label: 项目 ${index}
-        select: { document: character.qinlong, locator: { yaml: [衣着] } }`,
+        select: { document: character.alex, locator: { yaml: [衣着] } }`,
     ).join("\n");
     const control = `format: narraeon.player-views/v1
 views:
@@ -367,7 +366,7 @@ views:
     items:
       - id: deep
         label: 深层
-        select: { document: character.qinlong, locator: { yaml: [深层] } }
+        select: { document: character.alex, locator: { yaml: [深层] } }
   - id: count
     title: 数量
     items:
@@ -377,10 +376,10 @@ ${repeatedItems}
     items:
       - id: huge
         label: 巨大
-        select: { document: character.qinlong, locator: { yaml: [巨大] } }
+        select: { document: character.alex, locator: { yaml: [巨大] } }
       - id: after-huge
         label: 不应继续
-        select: { document: character.qinlong, locator: { yaml: [衣着] } }
+        select: { document: character.alex, locator: { yaml: [衣着] } }
   - id: markdown-bytes
     title: Markdown 大小
     items:
@@ -389,14 +388,14 @@ ${repeatedItems}
         select: { document: rule.cultivation, locator: { markdown: [] } }
       - id: after-markdown
         label: 不应继续
-        select: { document: character.qinlong, locator: { yaml: [衣着] } }
+        select: { document: character.alex, locator: { yaml: [衣着] } }
 `;
 
     const result = new PlayerViewRenderer().render(input({ state, control }));
 
     expect(
       JSON.stringify(result.views.find(({ id }) => id === "depth")),
-    ).toContain("[界面深度已满]");
+    ).toContain("[UI depth limit reached]");
     expect(result.views.find(({ id }) => id === "count")?.items).toHaveLength(
       128,
     );
@@ -439,7 +438,7 @@ describe("世界外控制草稿", () => {
         path: path.slice("control/".length),
         contents:
           path === "control/blocks/world.md"
-            ? "# 世界主持规则\n\n以后保持简洁。\n"
+            ? "# World Narration Rules\n\nKeep future narration concise.\n"
             : contents,
       }));
     await store.saveControlDraft(created.world.worldId, draft);
@@ -451,12 +450,12 @@ describe("世界外控制草稿", () => {
       preview.compilation.logicalMessages
         .map(({ markdown }) => markdown)
         .join("\n"),
-    ).toContain("以后保持简洁");
+    ).toContain("Keep future narration concise.");
     expect(
       (await store.readSurface(created.world.worldId, "control")).find(
         ({ path }) => path === "blocks/world.md",
       )?.contents,
-    ).toContain("持续结果");
+    ).toContain("Write durable outcomes back to their natural owner.");
 
     store.freezeControl(created.world.worldId, "play-1");
     await expect(
@@ -468,7 +467,7 @@ describe("世界外控制草稿", () => {
       (await store.readSurface(created.world.worldId, "control")).find(
         ({ path }) => path === "blocks/world.md",
       )?.contents,
-    ).toContain("以后保持简洁");
+    ).toContain("Keep future narration concise.");
     expect(await store.renderPlayerViews(created.world.worldId)).toMatchObject({
       views: [
         {
@@ -501,8 +500,8 @@ test("玩家视图按精确 Authority head 渲染，不读取落后的 materiali
     worldId,
     parentHead: "genesis",
     historyAppend: [
-      { role: "player", exactText: "我改变了情况。" },
-      { role: "narrator", exactText: "情况已经改变。" },
+      { role: "player", exactText: "I change the situation." },
+      { role: "narrator", exactText: "The situation has changed." },
     ],
     nextMaterials: [],
     stateChanges: [
@@ -572,7 +571,11 @@ function hash(value: string): string {
 
 function packageFiles() {
   return [
-    { path: "opening.md", contents: "房间安静下来，眼前的局面正等你回应。\n" },
+    {
+      path: "opening.md",
+      contents:
+        "The room falls quiet, leaving the present situation for your response.\n",
+    },
     {
       path: "world/current.yaml",
       contents: `$document:\n  id: situation.current\n  ref: current\n  title: 当前情境\n  summary: 当前局面。\n  aliases: []\n情况: 安静\n`,
@@ -583,7 +586,8 @@ function packageFiles() {
     },
     {
       path: "control/blocks/world.md",
-      contents: "# 世界主持规则\n\n持续结果写回自然所有者。\n",
+      contents:
+        "# World Narration Rules\n\nWrite durable outcomes back to their natural owner.\n",
     },
     {
       path: "control/player-views.yaml",

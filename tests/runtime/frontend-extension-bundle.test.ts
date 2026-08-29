@@ -29,7 +29,7 @@ followups:
         required: false
         maxEmits: 1
 `,
-    "prompts/panels.md": "# 面板\n\n生成面板。\n",
+    "prompts/panels.md": "# Panel\n\nGenerate the panel.\n",
     "regex/panel.yaml": `rules:
   - order: 1
     scope: raw_text

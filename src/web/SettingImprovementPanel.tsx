@@ -1,3 +1,4 @@
+import { getWebLocale, uiText } from "./i18n.ts";
 import { useMemo, useState, type ReactNode } from "react";
 
 import type {
@@ -161,7 +162,7 @@ function SettingReviseBox({
         rows={3}
         value={feedback}
         disabled={busy}
-        placeholder="例如：秦龙的动机再具体一点，别改开场白。"
+        placeholder={uiText("例如：秦龙的动机再具体一点，别改开场白。")}
         onChange={(event) => setFeedback(event.target.value)}
       />
       <button
@@ -220,36 +221,43 @@ function SettingRunProgress({
     <section
       className="setting-run-progress"
       aria-live="polite"
-      aria-label="本次生成进度"
+      aria-label={uiText("本次生成进度")}
     >
       <div className="setting-run-headline">
         <strong>
-          {phase === "planning" ? "正在生成创作计划" : "正在生成候选"}
+          {phase === "planning"
+            ? uiText("正在生成创作计划")
+            : uiText("正在生成候选")}
         </strong>
         <span className="setting-run-round">
-          第 {progress?.round ?? 0} / {progress?.maxRounds ?? 64} 轮
+          {uiText("第 {round} / {maxRounds} 轮", {
+            round: progress?.round ?? 0,
+            maxRounds: progress?.maxRounds ?? 64,
+          })}
         </span>
         <span
           className={`setting-run-age${stalled ? " setting-run-age-stalled" : ""}`}
         >
           {age === null
-            ? "正在建立连接…"
+            ? uiText("正在建立连接…")
             : streaming !== null
-              ? `正在输出 ${formatTokens(streamedChars)} 字`
-              : `${age} 秒前更新`}
+              ? uiText("正在输出 {count} 字", {
+                  count: formatTokens(streamedChars),
+                })
+              : uiText("{seconds} 秒前更新", { seconds: age })}
         </span>
       </div>
       <dl className="setting-run-counters">
         <div>
-          <dt>工具调用</dt>
+          <dt>{uiText("工具调用")}</dt>
           <dd>{progress?.toolCalls ?? 0}</dd>
         </div>
         <div>
-          <dt>自检未通过</dt>
+          <dt>{uiText("自检未通过")}</dt>
           <dd>{progress?.failedChecks ?? 0}</dd>
         </div>
         <div>
-          <dt>协议错误</dt>
+          <dt>{uiText("协议错误")}</dt>
           <dd>{progress?.repairs ?? 0}</dd>
         </div>
         <div>
@@ -262,7 +270,8 @@ function SettingRunProgress({
       </dl>
       {progress?.writing != null && (
         <p className="setting-run-writing">
-          正在写 <code>{progress.writing}</code>
+          {uiText("正在写")}
+          <code>{progress.writing}</code>
         </p>
       )}
       {progress != null && progress.recentActions.length > 0 && (
@@ -275,7 +284,9 @@ function SettingRunProgress({
                 key={`${String(index)}-${action.tool}-${action.target ?? ""}`}
                 className={action.ok ? undefined : "setting-run-action-failed"}
               >
-                <span>{settingToolLabels[action.tool] ?? action.tool}</span>
+                <span>
+                  {uiText(settingToolLabels[action.tool] ?? action.tool)}
+                </span>
                 {action.target != null && <code>{action.target}</code>}
                 <span aria-hidden="true">{action.ok ? "✓" : "✗"}</span>
               </li>
@@ -285,17 +296,22 @@ function SettingRunProgress({
       {streaming !== null && streaming.tail !== "" && (
         <p className="setting-run-tail">
           <span className="setting-run-tail-kicker">
-            {streaming.textChars === 0 ? "思考中" : "正文"}
+            {streaming.textChars === 0 ? uiText("思考中") : uiText("正文")}
           </span>
           {streaming.tail}
         </p>
       )}
       {progress?.lastCheck != null && (
-        <p className="setting-run-check">最近自检：{progress.lastCheck}</p>
+        <p className="setting-run-check">
+          {uiText("最近自检：")}
+          {progress.lastCheck}
+        </p>
       )}
       {stalled && (
         <p className="setting-run-stalled-note" role="note">
-          已有 {silence} 秒没有收到任何输出，模型调用可能已经卡住。
+          {uiText("已有 {seconds} 秒没有收到任何输出，模型调用可能已经卡住。", {
+            seconds: silence,
+          })}
         </p>
       )}
     </section>
@@ -355,18 +371,23 @@ export function SettingImprovementPanel({
       <header className="setting-improvement-header">
         <div>
           <p className="eyebrow">CONTENT PACKAGE · AI AUTHORING</p>
-          <h2 id="setting-improvement-title">AI 设定完善</h2>
+          <h2 id="setting-improvement-title">{uiText("AI 设定完善")}</h2>
           <p className="setting-improvement-intro">
-            AI
-            会基于当前树完善设定：可以先只读现有文件并确认计划，也可以直接生成隔离候选。
-            只有最后整批应用才会替换当前内容包；已有世界不会改变。
+            {uiText(
+              "AI 会基于当前树完善设定：可以先只读现有文件并确认计划，也可以直接生成隔离候选。 只有最后整批应用才会替换当前内容包；已有世界不会改变。",
+            )}
           </p>
         </div>
-        <div className="setting-package-context" aria-label="当前内容包">
-          <span>正在完善</span>
+        <div
+          className="setting-package-context"
+          aria-label={uiText("当前内容包")}
+        >
+          <span>{uiText("正在完善")}</span>
           <strong>{packageName}</strong>
           <span className={`package-status ${packageStatus}`}>
-            {packageStatus === "usable" ? "可用于创建世界" : "需要修复"}
+            {packageStatus === "usable"
+              ? uiText("可用于创建世界")
+              : uiText("需要修复")}
           </span>
         </div>
       </header>
@@ -380,11 +401,11 @@ export function SettingImprovementPanel({
           onContextPathsChange={onContextPathsChange}
         />
         <div className="setting-authoring-flow">
-          <ol className="setting-stepper" aria-label="设定完善进度">
+          <ol className="setting-stepper" aria-label={uiText("设定完善进度")}>
             {[
-              [1, "描述目标", "说清想获得的体验"],
-              [2, "可选计划", "只读现有设定后确认方向"],
-              [3, "审阅并应用", "核对完整差异与提示词"],
+              [1, uiText("描述目标"), uiText("说清想获得的体验")],
+              [2, uiText("可选计划"), uiText("只读现有设定后确认方向")],
+              [3, uiText("审阅并应用"), uiText("核对完整差异与提示词")],
             ].map(([number, title, description]) => {
               const step = Number(number);
               const state =
@@ -421,22 +442,24 @@ export function SettingImprovementPanel({
 
           {contextLocked && (
             <p className="setting-session-lock" role="note">
-              当前创作会话及直接注入文件已固定。应用或放弃前，手动编辑、上下文选择和内容包切换会暂时停用。
+              {uiText(
+                "当前创作会话及直接注入文件已固定。应用或放弃前，手动编辑、上下文选择和内容包切换会暂时停用。",
+              )}
             </p>
           )}
 
           {!modelConfigured && (
             <div className="setting-callout" role="note">
               <div>
-                <strong>需要先连接模型</strong>
-                <p>创作计划和候选文件都由当前模型生成。</p>
+                <strong>{uiText("需要先连接模型")}</strong>
+                <p>{uiText("创作计划和候选文件都由当前模型生成。")}</p>
               </div>
               <button
                 type="button"
                 disabled={hasUnsavedFileDraft}
                 onClick={onConfigureModel}
               >
-                配置模型连接
+                {uiText("配置模型连接")}
               </button>
             </div>
           )}
@@ -448,36 +471,47 @@ export function SettingImprovementPanel({
             >
               <div className="setting-step-heading">
                 <div>
-                  <span className="setting-step-kicker">第 1 步</span>
-                  <h3 id="setting-goal-title">这次想把设定完善成什么样？</h3>
+                  <span className="setting-step-kicker">
+                    {uiText("第 1 步")}
+                  </span>
+                  <h3 id="setting-goal-title">
+                    {uiText("这次想把设定完善成什么样？")}
+                  </h3>
                 </div>
               </div>
               <p
                 id="setting-goal-help"
                 className="field-note setting-goal-help"
               >
-                写玩家最终会感受到什么、哪里薄弱、哪些内容不要改。无需描述文件名或技术格式。
+                {uiText(
+                  "写玩家最终会感受到什么、哪里薄弱、哪些内容不要改。无需描述文件名或技术格式。",
+                )}
               </p>
               <textarea
-                aria-label="设定完善目标"
+                aria-label={uiText("设定完善目标")}
                 aria-describedby="setting-goal-help"
                 rows={7}
                 value={goal}
                 readOnly={busy}
-                placeholder="例如：我想让学院生活更有日常节奏。补足室友之间的目标与矛盾，保留轻松基调，不增加数值化好感度，也不要预写未来剧情。"
+                placeholder={uiText(
+                  "例如：我想让学院生活更有日常节奏。补足室友之间的目标与矛盾，保留轻松基调，不增加数值化好感度，也不要预写未来剧情。",
+                )}
                 onChange={(event) => onGoalChange(event.target.value)}
               />
               {!busy && (
-                <div className="setting-goal-examples" aria-label="目标示例">
-                  <span>可以这样写：</span>
+                <div
+                  className="setting-goal-examples"
+                  aria-label={uiText("目标示例")}
+                >
+                  <span>{uiText("可以这样写：")}</span>
                   {goalExamples.map((example) => (
                     <button
                       type="button"
                       className="setting-example-button"
                       key={example}
-                      onClick={() => onGoalChange(example)}
+                      onClick={() => onGoalChange(uiText(example))}
                     >
-                      {example}
+                      {uiText(example)}
                     </button>
                   ))}
                 </div>
@@ -495,8 +529,8 @@ export function SettingImprovementPanel({
                     onClick={() => onStart("plan_first")}
                   >
                     {phase === "planning"
-                      ? "正在生成创作计划…"
-                      : "生成可见创作计划"}
+                      ? uiText("正在生成创作计划…")
+                      : uiText("生成可见创作计划")}
                   </button>
                   <button
                     type="button"
@@ -510,12 +544,14 @@ export function SettingImprovementPanel({
                     onClick={() => onStart("direct_candidate")}
                   >
                     {phase === "generating"
-                      ? "正在直接生成候选…"
-                      : "跳过计划，直接生成候选"}
+                      ? uiText("正在直接生成候选…")
+                      : uiText("跳过计划，直接生成候选")}
                   </button>
                 </div>
                 <span>
-                  计划阶段只能读取；直接生成也仍需在最后审阅并整批应用。
+                  {uiText(
+                    "计划阶段只能读取；直接生成也仍需在最后审阅并整批应用。",
+                  )}
                 </span>
               </div>
             </section>
@@ -523,11 +559,13 @@ export function SettingImprovementPanel({
             <details className="setting-completed-step">
               <summary>
                 <span>
-                  <span className="setting-step-kicker">第 1 步</span>
-                  <strong>创作目标已提交</strong>
+                  <span className="setting-step-kicker">
+                    {uiText("第 1 步")}
+                  </span>
+                  <strong>{uiText("创作目标已提交")}</strong>
                 </span>
                 <span className="state-label state-label-latest">
-                  方向已提交
+                  {uiText("方向已提交")}
                 </span>
               </summary>
               <p className="setting-completed-copy">{goal}</p>
@@ -541,20 +579,25 @@ export function SettingImprovementPanel({
             >
               <div className="setting-step-heading">
                 <div>
-                  <span className="setting-step-kicker">第 2 步</span>
-                  <h3 id="setting-plan-title">确认 AI 理解的创作方向</h3>
+                  <span className="setting-step-kicker">
+                    {uiText("第 2 步")}
+                  </span>
+                  <h3 id="setting-plan-title">
+                    {uiText("确认 AI 理解的创作方向")}
+                  </h3>
                 </div>
               </div>
               <p className="field-note">
-                这里仍然只是计划。AI
-                已可只读当前树，但确认前不能修改；若方向不对，放弃后修改目标。
+                {uiText(
+                  "这里仍然只是计划。AI 已可只读当前树，但确认前不能修改；若方向不对，放弃后修改目标。",
+                )}
               </p>
               <PlanDocument markdown={plan.markdown} />
               <div className="setting-decision-row">
                 <button type="button" disabled={busy} onClick={onConfirm}>
                   {phase === "generating"
-                    ? "正在生成并检查候选…"
-                    : "确认计划并生成候选"}
+                    ? uiText("正在生成并检查候选…")
+                    : uiText("确认计划并生成候选")}
                 </button>
                 <button
                   type="button"
@@ -562,14 +605,18 @@ export function SettingImprovementPanel({
                   disabled={busy}
                   onClick={onDiscard}
                 >
-                  放弃整批候选
+                  {uiText("放弃整批候选")}
                 </button>
               </div>
               <SettingReviseBox
-                label="让 AI 调整计划"
-                hint="方向不对时不必放弃重来：写下要改什么，AI 会在同一次会话里重出完整计划。"
+                label={uiText("让 AI 调整计划")}
+                hint={uiText(
+                  "方向不对时不必放弃重来：写下要改什么，AI 会在同一次会话里重出完整计划。",
+                )}
                 action={
-                  phase === "planning" ? "正在重新规划…" : "按意见重出计划"
+                  phase === "planning"
+                    ? uiText("正在重新规划…")
+                    : uiText("按意见重出计划")
                 }
                 busy={busy}
                 onRevise={onRevisePlan}
@@ -581,10 +628,14 @@ export function SettingImprovementPanel({
             <details className="setting-completed-step">
               <summary>
                 <span>
-                  <span className="setting-step-kicker">第 2 步</span>
-                  <strong>创作计划已确认</strong>
+                  <span className="setting-step-kicker">
+                    {uiText("第 2 步")}
+                  </span>
+                  <strong>{uiText("创作计划已确认")}</strong>
                 </span>
-                <span className="state-label state-label-latest">已确认</span>
+                <span className="state-label state-label-latest">
+                  {uiText("已确认")}
+                </span>
               </summary>
               <PlanDocument markdown={plan.markdown} />
             </details>
@@ -592,10 +643,14 @@ export function SettingImprovementPanel({
 
           {plan === null && candidate !== null && (
             <div className="setting-skipped-plan" role="note">
-              <span className="setting-step-kicker">第 2 步 · 可选</span>
-              <strong>已跳过可见计划</strong>
+              <span className="setting-step-kicker">
+                {uiText("第 2 步 · 可选")}
+              </span>
+              <strong>{uiText("已跳过可见计划")}</strong>
               <span>
-                本次按你的目标直接生成候选，仍需审阅完整差异后才能应用。
+                {uiText(
+                  "本次按你的目标直接生成候选，仍需审阅完整差异后才能应用。",
+                )}
               </span>
             </div>
           )}
@@ -677,31 +732,40 @@ function CurrentSettingBrowser({
     >
       <header>
         <div>
-          <span className="setting-step-kicker">AI 的起点</span>
-          <h3 id="setting-current-title">当前设定</h3>
+          <span className="setting-step-kicker">{uiText("AI 的起点")}</span>
+          <h3 id="setting-current-title">{uiText("当前设定")}</h3>
         </div>
-        <span className="state-label">{files.length} 个文件</span>
+        <span className="state-label">
+          {files.length} {uiText("个文件")}
+        </span>
       </header>
       <p className="setting-current-intro">
-        计划阶段可通过只读工具查看整棵已保存当前树；勾选的文本文件会额外完整注入首个模型请求。
+        {uiText(
+          "计划阶段可通过只读工具查看整棵已保存当前树；勾选的文本文件会额外完整注入首个模型请求。",
+        )}
       </p>
       {hasUnsavedFileDraft && (
         <div className="setting-unsaved-warning" role="note">
-          <strong>手动编辑尚未保存</strong>
-          <span>这些修改不会进入 AI 候选；请先返回手动编辑并整批保存。</span>
+          <strong>{uiText("手动编辑尚未保存")}</strong>
+          <span>
+            {uiText("这些修改不会进入 AI 候选；请先返回手动编辑并整批保存。")}
+          </span>
         </div>
       )}
-      <dl className="setting-current-counts" aria-label="当前设定文件统计">
+      <dl
+        className="setting-current-counts"
+        aria-label={uiText("当前设定文件统计")}
+      >
         <div>
-          <dt>开场白</dt>
+          <dt>{uiText("开场白")}</dt>
           <dd>{openingFiles}</dd>
         </div>
         <div>
-          <dt>世界内容</dt>
+          <dt>{uiText("世界内容")}</dt>
           <dd>{worldFiles}</dd>
         </div>
         <div>
-          <dt>控制文件</dt>
+          <dt>{uiText("控制文件")}</dt>
           <dd>{controlFiles}</dd>
         </div>
       </dl>
@@ -710,10 +774,16 @@ function CurrentSettingBrowser({
         aria-labelledby="setting-context-selection-title"
       >
         <div>
-          <h4 id="setting-context-selection-title">直接注入给 AI</h4>
-          <span>{contextPaths.length} 个文件</span>
+          <h4 id="setting-context-selection-title">
+            {uiText("直接注入给 AI")}
+          </h4>
+          <span>
+            {contextPaths.length} {uiText("个文件")}
+          </span>
         </div>
-        <p>适合指定本次完善必须先看到的核心人物、规则或当前情境。</p>
+        <p>
+          {uiText("适合指定本次完善必须先看到的核心人物、规则或当前情境。")}
+        </p>
         <div className="setting-context-actions">
           <button
             type="button"
@@ -721,7 +791,7 @@ function CurrentSettingBrowser({
             disabled={contextLocked || injectablePaths.length === 0}
             onClick={() => onContextPathsChange(injectablePaths)}
           >
-            全选文本文件
+            {uiText("全选文本文件")}
           </button>
           <button
             type="button"
@@ -729,26 +799,31 @@ function CurrentSettingBrowser({
             disabled={contextLocked || contextPaths.length === 0}
             onClick={() => onContextPathsChange([])}
           >
-            清空注入
+            {uiText("清空注入")}
           </button>
         </div>
       </section>
       {files.length === 0 ? (
-        <p className="setting-empty-state">当前内容包还没有文件。</p>
+        <p className="setting-empty-state">
+          {uiText("当前内容包还没有文件。")}
+        </p>
       ) : (
         <>
           <label className="setting-file-filter">
-            筛选文件
+            {uiText("筛选文件")}
             <input
               type="search"
               value={query}
-              placeholder="例如 characters 或 frame"
+              placeholder={uiText("例如 characters 或 frame")}
               onChange={(event) => setQuery(event.target.value)}
             />
           </label>
-          <nav className="setting-current-file-list" aria-label="当前设定文件">
+          <nav
+            className="setting-current-file-list"
+            aria-label={uiText("当前设定文件")}
+          >
             {filteredFiles.length === 0 ? (
-              <p>没有匹配的文件。</p>
+              <p>{uiText("没有匹配的文件。")}</p>
             ) : (
               <ul>
                 {filteredFiles.map((file) => (
@@ -766,17 +841,19 @@ function CurrentSettingBrowser({
                     >
                       <span aria-hidden="true">
                         {file.path === "opening.md"
-                          ? "开场"
+                          ? uiText("开场")
                           : file.path.startsWith("world/")
-                            ? "世界"
-                            : "控制"}
+                            ? uiText("世界")
+                            : uiText("控制")}
                       </span>
                       <code>{file.path}</code>
                     </button>
                     <label className="setting-context-checkbox">
                       <input
                         type="checkbox"
-                        aria-label={`注入 ${file.path}`}
+                        aria-label={uiText("注入 {path}", {
+                          path: file.path,
+                        })}
                         checked={selectedContextPaths.has(file.path)}
                         disabled={contextLocked || file.encoding === "base64"}
                         onChange={(event) =>
@@ -784,7 +861,9 @@ function CurrentSettingBrowser({
                         }
                       />
                       <span>
-                        {file.encoding === "base64" ? "二进制" : "注入"}
+                        {file.encoding === "base64"
+                          ? uiText("二进制")
+                          : uiText("注入")}
                       </span>
                     </label>
                   </li>
@@ -799,7 +878,7 @@ function CurrentSettingBrowser({
             >
               <h4 id="setting-current-file-title">{selectedFile.path}</h4>
               {selectedFile.encoding === "base64" ? (
-                <p>这是二进制资源，内容不在此处展开。</p>
+                <p>{uiText("这是二进制资源，内容不在此处展开。")}</p>
               ) : (
                 <pre>{selectedFile.contents}</pre>
               )}
@@ -915,29 +994,33 @@ function CandidateReview({
     >
       <div className="setting-step-heading">
         <div>
-          <span className="setting-step-kicker">第 3 步</span>
-          <h3 id="setting-review-title">审阅候选，再决定是否应用</h3>
+          <span className="setting-step-kicker">{uiText("第 3 步")}</span>
+          <h3 id="setting-review-title">
+            {uiText("审阅候选，再决定是否应用")}
+          </h3>
         </div>
         <span className={`review-status review-status-${review.status}`}>
-          {review.status === "usable" ? "机械检查通过" : "候选需要修复"}
+          {review.status === "usable"
+            ? uiText("机械检查通过")
+            : uiText("候选需要修复")}
         </span>
       </div>
 
-      <dl className="setting-review-summary" aria-label="候选摘要">
+      <dl className="setting-review-summary" aria-label={uiText("候选摘要")}>
         <div>
-          <dt>文件变化</dt>
+          <dt>{uiText("文件变化")}</dt>
           <dd>{review.diff.length}</dd>
         </div>
         <div>
-          <dt>新建</dt>
+          <dt>{uiText("新建")}</dt>
           <dd>{counts.create}</dd>
         </div>
         <div>
-          <dt>修改</dt>
+          <dt>{uiText("修改")}</dt>
           <dd>{counts.modify}</dd>
         </div>
         <div>
-          <dt>删除</dt>
+          <dt>{uiText("删除")}</dt>
           <dd>{counts.delete}</dd>
         </div>
       </dl>
@@ -947,7 +1030,7 @@ function CandidateReview({
           className="setting-diagnostics"
           aria-labelledby="setting-diagnostics-title"
         >
-          <h4 id="setting-diagnostics-title">机械检查诊断</h4>
+          <h4 id="setting-diagnostics-title">{uiText("机械检查诊断")}</h4>
           <ul>
             {review.diagnostics.map((diagnostic) => (
               <li key={`${diagnostic.code}-${diagnostic.path}`}>
@@ -965,12 +1048,16 @@ function CandidateReview({
       >
         <div className="setting-subsection-heading">
           <div>
-            <h4 id="setting-diff-title">完整文件差异</h4>
-            <p>逐个展开检查；这里显示的就是整批应用将替换的内容。</p>
+            <h4 id="setting-diff-title">{uiText("完整文件差异")}</h4>
+            <p>
+              {uiText("逐个展开检查；这里显示的就是整批应用将替换的内容。")}
+            </p>
           </div>
         </div>
         {review.diff.length === 0 ? (
-          <p className="setting-empty-state">AI 没有改动任何文件。</p>
+          <p className="setting-empty-state">
+            {uiText("AI 没有改动任何文件。")}
+          </p>
         ) : (
           review.diff.map((diff, index) => (
             <details
@@ -987,13 +1074,13 @@ function CandidateReview({
               <div className="setting-diff-columns">
                 {diff.before !== null && (
                   <section>
-                    <h5>应用前</h5>
+                    <h5>{uiText("应用前")}</h5>
                     <pre>{diff.before}</pre>
                   </section>
                 )}
                 {diff.after !== null && (
                   <section>
-                    <h5>应用后</h5>
+                    <h5>{uiText("应用后")}</h5>
                     <pre>{diff.after}</pre>
                   </section>
                 )}
@@ -1007,9 +1094,11 @@ function CandidateReview({
 
       <div className="setting-apply-boundary">
         <div>
-          <strong>这是一次整批替换</strong>
+          <strong>{uiText("这是一次整批替换")}</strong>
           <p>
-            不能只勾选部分文件。放弃会丢弃整个隔离候选，当前内容包保持不变。
+            {uiText(
+              "不能只勾选部分文件。放弃会丢弃整个隔离候选，当前内容包保持不变。",
+            )}
           </p>
         </div>
         <div className="setting-decision-row">
@@ -1018,7 +1107,9 @@ function CandidateReview({
             disabled={busy || review.status !== "usable"}
             onClick={onApply}
           >
-            {phase === "applying" ? "正在整批应用…" : "整批应用候选"}
+            {phase === "applying"
+              ? uiText("正在整批应用…")
+              : uiText("整批应用候选")}
           </button>
           <button
             type="button"
@@ -1026,13 +1117,21 @@ function CandidateReview({
             disabled={busy}
             onClick={onDiscard}
           >
-            {phase === "discarding" ? "正在放弃…" : "放弃整批候选"}
+            {phase === "discarding"
+              ? uiText("正在放弃…")
+              : uiText("放弃整批候选")}
           </button>
         </div>
         <SettingReviseBox
-          label="让 AI 继续改这份候选"
-          hint="只有一两处不满意时不必整批放弃：写下要改什么，AI 会在当前候选上接着改，已经对的部分保留。"
-          action={phase === "generating" ? "正在修改候选…" : "按意见继续修改"}
+          label={uiText("让 AI 继续改这份候选")}
+          hint={uiText(
+            "只有一两处不满意时不必整批放弃：写下要改什么，AI 会在当前候选上接着改，已经对的部分保留。",
+          )}
+          action={
+            phase === "generating"
+              ? uiText("正在修改候选…")
+              : uiText("按意见继续修改")
+          }
           busy={busy}
           onRevise={onReviseCandidate}
         />
@@ -1054,31 +1153,35 @@ function PromptPreview({
     >
       <div className="setting-subsection-heading">
         <div>
-          <h4 id="setting-preview-title">真实提示词预览</h4>
-          <p>候选已通过和真实请求同源的编译检查。</p>
+          <h4 id="setting-preview-title">{uiText("真实提示词预览")}</h4>
+          <p>{uiText("候选已通过和真实请求同源的编译检查。")}</p>
         </div>
         <span className="review-status review-status-usable">
-          无内部字段泄漏
+          {uiText("无内部字段泄漏")}
         </span>
       </div>
       <dl className="setting-preview-summary">
         <div>
-          <dt>模型</dt>
+          <dt>{uiText("模型")}</dt>
           <dd>{preview.diagnosticBinding.modelId}</dd>
         </div>
         <div>
-          <dt>逻辑消息</dt>
+          <dt>{uiText("逻辑消息")}</dt>
           <dd>{preview.compilation.logicalMessages.length}</dd>
         </div>
         <div>
-          <dt>工具</dt>
+          <dt>{uiText("工具")}</dt>
           <dd>{preview.compilation.tools.length}</dd>
         </div>
         <div>
-          <dt>{budget.estimator === "disabled" ? "上下文检查" : "预算"}</dt>
+          <dt>
+            {budget.estimator === "disabled"
+              ? uiText("上下文检查")
+              : uiText("预算")}
+          </dt>
           <dd>
             {budget.estimator === "disabled"
-              ? "由 Provider 判断"
+              ? uiText("由 Provider 判断")
               : `${formatNumber(budget.requiredTokens)} / ${formatNumber(budget.contextWindowTokens)} tokens`}
           </dd>
         </div>
@@ -1086,7 +1189,7 @@ function PromptPreview({
 
       <div className="setting-preview-details">
         <details>
-          <summary>查看逻辑消息正文</summary>
+          <summary>{uiText("查看逻辑消息正文")}</summary>
           <ol className="setting-message-list">
             {preview.compilation.logicalMessages.map((message, index) => (
               <li key={`${message.role}-${index}`}>
@@ -1102,14 +1205,14 @@ function PromptPreview({
           </ol>
         </details>
         <details>
-          <summary>查看材料覆盖与预算</summary>
+          <summary>{uiText("查看材料覆盖与预算")}</summary>
           <div className="table-scroll">
             <table>
               <thead>
                 <tr>
                   <th>Slot</th>
-                  <th>来源</th>
-                  <th>状态</th>
+                  <th>{uiText("来源")}</th>
+                  <th>{uiText("状态")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -1132,11 +1235,11 @@ function PromptPreview({
           </pre>
         </details>
         <details>
-          <summary>查看真实工具定义</summary>
+          <summary>{uiText("查看真实工具定义")}</summary>
           <pre>{JSON.stringify(preview.compilation.tools, null, 2)}</pre>
         </details>
         <details>
-          <summary>查看最终 Provider 请求结构</summary>
+          <summary>{uiText("查看最终 Provider 请求结构")}</summary>
           <pre>{JSON.stringify(preview.compilation.provider, null, 2)}</pre>
         </details>
       </div>
@@ -1145,11 +1248,11 @@ function PromptPreview({
 }
 
 function diffLabel(kind: SettingCandidateDiff["kind"]): string {
-  if (kind === "create") return "新建";
-  if (kind === "delete") return "删除";
-  return "修改";
+  if (kind === "create") return uiText("新建");
+  if (kind === "delete") return uiText("删除");
+  return uiText("修改");
 }
 
 function formatNumber(value: number): string {
-  return new Intl.NumberFormat("zh-CN").format(value);
+  return new Intl.NumberFormat(getWebLocale()).format(value);
 }

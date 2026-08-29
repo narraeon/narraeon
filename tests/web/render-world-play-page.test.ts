@@ -65,8 +65,10 @@ describe("世界游玩页面", () => {
     ).toBeTruthy();
     expect(screen.getByRole("heading", { name: "故事" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "调用链" })).toBeNull();
-    expect(screen.getByText("我问几点训练。")).toBeTruthy();
-    expect(screen.getByText("秦龙说晚上八点。")).toBeTruthy();
+    expect(screen.getByText("I ask what time practice starts.")).toBeTruthy();
+    expect(
+      screen.getByText("Alex says practice starts at eight tonight."),
+    ).toBeTruthy();
     expect(screen.getByText("白色运动背心")).toBeTruthy();
     expect(screen.queryByText(/file_native_genesis/u)).toBeNull();
     expect(screen.getByRole("button", { name: "全新上下文" })).toBeTruthy();
@@ -77,7 +79,7 @@ describe("世界游玩页面", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "当前文档" }));
     expect(screen.getByRole("heading", { name: "宿舍里的夜晚" })).toBeTruthy();
-    expect(screen.getByText(/情况: 秦龙正在整理球衣/u)).toBeTruthy();
+    expect(screen.getByText(/情况: Alex正在整理球衣/u)).toBeTruthy();
   });
 
   test("在世界管理页修改正在游玩的世界名称", async () => {
@@ -114,26 +116,34 @@ describe("世界游玩页面", () => {
           );
           return Promise.resolve(chain as T);
         }
-        return Promise.reject(new Error("意外请求：" + request.type));
+        return Promise.reject(new Error("Unexpected request: " + request.type));
       }),
     };
 
     renderWorld(client);
     await screen.findByRole("heading", { name: "宿舍世界" });
     fireEvent.change(screen.getByLabelText("你的行动"), {
-      target: { value: "我示意秦龙开门。" },
+      target: { value: "I signal Alex to open the door." },
     });
     fireEvent.click(screen.getByRole("button", { name: "全新上下文" }));
 
-    expect(await screen.findByText("秦龙推开门，让你先走。")).toBeTruthy();
     expect(
-      screen.getByText("宿舍门在你身后合上，秦龙等你先开口。"),
+      await screen.findByText("Alex opens the door and lets you go first."),
     ).toBeTruthy();
-    expect(screen.getByText("秦龙说晚上八点。")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "The dormitory door closes behind you, and Alex waits for you to speak.",
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByText("Alex says practice starts at eight tonight."),
+    ).toBeTruthy();
     expect(
       screen.getByRole("separator", { name: "全新上下文从这里开始" }),
     ).toBeTruthy();
-    expect(screen.getAllByText("我示意秦龙开门。")).toHaveLength(1);
+    expect(screen.getAllByText("I signal Alex to open the door.")).toHaveLength(
+      1,
+    );
     expect(screen.getByText("调用 world_patch")).toBeTruthy();
     expect(screen.getByText("world_patch 返回")).toBeTruthy();
     expect(screen.getByText("调用 world_patch").closest("details")?.open).toBe(
@@ -156,7 +166,7 @@ describe("世界游玩页面", () => {
       );
     expect(start).toMatchObject({
       worldId: "world-one",
-      playerText: "我示意秦龙开门。",
+      playerText: "I signal Alex to open the door.",
     });
     expect(start?.chainId).toMatch(/^play-chain-/u);
     expect(start?.exchangeId).toMatch(/^play-exchange-/u);
@@ -166,7 +176,7 @@ describe("世界游玩页面", () => {
     let chain = playChainView(
       "play-chain-old",
       "exchange-old",
-      "旧上下文玩家输入。",
+      "Player input for the old context.",
     );
     chain = {
       ...chain,
@@ -174,8 +184,9 @@ describe("世界游玩页面", () => {
         event.kind === "assistant"
           ? {
               ...event,
-              text: "旧上下文的可见叙事。",
-              reasoning: "旧上下文思维链，应继续显示。",
+              text: "Visible narration from the old context.",
+              reasoning:
+                "Earlier-context reasoning that should remain visible.",
             }
           : event.kind === "tool_call" || event.kind === "tool_result"
             ? { ...event, name: "context_search" }
@@ -203,27 +214,39 @@ describe("世界游玩页面", () => {
           };
           return Promise.resolve(chain as T);
         }
-        return Promise.reject(new Error(`意外请求：${request.type}`));
+        return Promise.reject(new Error(`Unexpected request: ${request.type}`));
       }),
     };
 
     renderWorld(client);
     expect(
-      await screen.findByText("旧上下文思维链，应继续显示。"),
+      await screen.findByText(
+        "Earlier-context reasoning that should remain visible.",
+      ),
     ).toBeTruthy();
     expect(screen.getByText("调用 context_search")).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText("你的行动"), {
-      target: { value: "从新上下文继续。" },
+      target: { value: "Continue from the fresh context." },
     });
     fireEvent.click(screen.getByRole("button", { name: "全新上下文" }));
 
-    expect(await screen.findByText("秦龙推开门，让你先走。")).toBeTruthy();
-    expect(screen.getByText("旧上下文思维链，应继续显示。")).toBeTruthy();
+    expect(
+      await screen.findByText("Alex opens the door and lets you go first."),
+    ).toBeTruthy();
+    expect(
+      screen.getByText("Earlier-context reasoning that should remain visible."),
+    ).toBeTruthy();
     expect(screen.getByText("调用 context_search")).toBeTruthy();
-    expect(screen.getAllByText("旧上下文玩家输入。")).toHaveLength(1);
-    expect(screen.getAllByText("旧上下文的可见叙事。")).toHaveLength(1);
-    expect(screen.getAllByText("从新上下文继续。")).toHaveLength(1);
+    expect(
+      screen.getAllByText("Player input for the old context."),
+    ).toHaveLength(1);
+    expect(
+      screen.getAllByText("Visible narration from the old context."),
+    ).toHaveLength(1);
+    expect(
+      screen.getAllByText("Continue from the fresh context."),
+    ).toHaveLength(1);
     expect(
       screen.getAllByRole("separator", {
         name: "全新上下文从这里开始",
@@ -248,18 +271,18 @@ describe("世界游玩页面", () => {
           );
           return Promise.resolve(chain as T);
         }
-        return Promise.reject(new Error(`意外请求：${request.type}`));
+        return Promise.reject(new Error(`Unexpected request: ${request.type}`));
       }),
     };
 
     renderWorld(client);
     await screen.findByRole("heading", { name: "宿舍世界" });
     fireEvent.change(screen.getByLabelText("你的行动"), {
-      target: { value: "我推开宿舍门。" },
+      target: { value: "I open the dormitory door." },
     });
     fireEvent.click(screen.getByRole("button", { name: "追加上下文" }));
 
-    await screen.findByText("秦龙推开门，让你先走。");
+    await screen.findByText("Alex opens the door and lets you go first.");
     expect(
       client.request.mock.calls.some(
         ([request]) => request.type === "play.chain.start",
@@ -282,7 +305,7 @@ describe("世界游玩页面", () => {
         if (request.type === "artifacts.debug") return Promise.resolve([] as T);
         if (request.type === "play.chain.inspect")
           return Promise.resolve(chain as T);
-        return Promise.reject(new Error(`意外请求：${request.type}`));
+        return Promise.reject(new Error(`Unexpected request: ${request.type}`));
       }),
       async streamPlayCallChain(
         request: Extract<
@@ -322,14 +345,14 @@ describe("世界游玩页面", () => {
           kind: "assistant_delta",
           eventId: 2,
           deltaKind: "reasoning",
-          text: "先确认门口没有障碍。",
+          text: "First confirm that the doorway is clear.",
           updatedAt: 2,
         });
         onFrame({
           kind: "assistant_delta",
           eventId: 2,
           deltaKind: "text",
-          text: "秦龙正在推门",
+          text: "Alex is opening the door",
           updatedAt: 2,
         });
         await new Promise<void>((resolve) => {
@@ -348,19 +371,23 @@ describe("世界游玩页面", () => {
     renderWorld(client);
     await screen.findByRole("heading", { name: "宿舍世界" });
     fireEvent.change(screen.getByLabelText("你的行动"), {
-      target: { value: "我示意秦龙开门。" },
+      target: { value: "I signal Alex to open the door." },
     });
     fireEvent.click(screen.getByRole("button", { name: "全新上下文" }));
 
-    expect(await screen.findByText("秦龙正在推门")).toBeTruthy();
+    expect(await screen.findByText("Alex is opening the door")).toBeTruthy();
     expect(screen.getByText("接收中 · 第 1 次派发")).toBeTruthy();
     const reasoning = screen
       .getByText("模型思维链")
       .closest<HTMLDetailsElement>("details");
     expect(reasoning?.open).toBe(false);
-    expect(screen.getByText("先确认门口没有障碍。")).toBeTruthy();
+    expect(
+      screen.getByText("First confirm that the doorway is clear."),
+    ).toBeTruthy();
     act(() => finishStream?.());
-    expect(await screen.findByText("秦龙推开门，让你先走。")).toBeTruthy();
+    expect(
+      await screen.findByText("Alex opens the door and lets you go first."),
+    ).toBeTruthy();
   });
 
   test("模型流式输出只更新内容，不反复把页面定位到底部", async () => {
@@ -383,7 +410,7 @@ describe("世界游玩页面", () => {
         if (request.type === "artifacts.debug") return Promise.resolve([] as T);
         if (request.type === "play.chain.inspect")
           return Promise.resolve(chain as T);
-        return Promise.reject(new Error(`意外请求：${request.type}`));
+        return Promise.reject(new Error(`Unexpected request: ${request.type}`));
       }),
       async streamPlayCallChain(
         request: Extract<
@@ -438,7 +465,7 @@ describe("世界游玩页面", () => {
       await screen.findByRole("heading", { name: "宿舍世界" });
       scrollIntoView.mockClear();
       fireEvent.change(screen.getByLabelText("你的行动"), {
-        target: { value: "我示意秦龙开门。" },
+        target: { value: "I signal Alex to open the door." },
       });
       fireEvent.click(screen.getByRole("button", { name: "全新上下文" }));
       await waitFor(() => expect(emitFrame).toBeTypeOf("function"));
@@ -450,12 +477,12 @@ describe("世界游玩页面", () => {
           kind: "assistant_delta",
           eventId: 2,
           deltaKind: "text",
-          text: "秦龙正在推门",
+          text: "Alex is opening the door",
           updatedAt: 2,
         }),
       );
 
-      expect(screen.getByText("秦龙正在推门")).toBeTruthy();
+      expect(screen.getByText("Alex is opening the door")).toBeTruthy();
       expect(scrollIntoView).not.toHaveBeenCalled();
     } finally {
       await act(async () => {
@@ -478,7 +505,7 @@ describe("世界游玩页面", () => {
     let chain = playChainView(
       "play-chain-existing",
       "exchange-first",
-      "我示意秦龙开门。",
+      "I signal Alex to open the door.",
     );
     const client = {
       request: vi.fn(<T>(request: V1Request) => {
@@ -503,7 +530,7 @@ describe("世界游玩页面", () => {
               {
                 id: 7,
                 kind: "assistant",
-                text: "走廊里的灯依次亮起。",
+                text: "The corridor lights come on one by one.",
                 status: "completed",
                 exchange: 3,
                 attempt: 1,
@@ -515,18 +542,20 @@ describe("世界游玩页面", () => {
           };
           return Promise.resolve(chain as T);
         }
-        return Promise.reject(new Error(`意外请求：${request.type}`));
+        return Promise.reject(new Error(`Unexpected request: ${request.type}`));
       }),
     };
 
     renderWorld(client);
-    await screen.findByText("秦龙推开门，让你先走。");
+    await screen.findByText("Alex opens the door and lets you go first.");
     fireEvent.change(screen.getByLabelText("你的行动"), {
-      target: { value: "我走进走廊。" },
+      target: { value: "I walk into the corridor." },
     });
     fireEvent.click(screen.getByRole("button", { name: "追加上下文" }));
 
-    expect(await screen.findByText("走廊里的灯依次亮起。")).toBeTruthy();
+    expect(
+      await screen.findByText("The corridor lights come on one by one."),
+    ).toBeTruthy();
     const append = client.request.mock.calls
       .map(([request]) => request)
       .find(
@@ -538,7 +567,7 @@ describe("世界游玩页面", () => {
     expect(append).toMatchObject({
       worldId: "world-one",
       chainId: "play-chain-existing",
-      playerText: "我走进走廊。",
+      playerText: "I walk into the corridor.",
     });
     expect(append?.exchangeId).toMatch(/^play-exchange-/u);
   });
@@ -564,7 +593,7 @@ describe("世界游玩页面", () => {
               {
                 id: 4,
                 kind: "assistant",
-                text: "秦龙把门完全推开。",
+                text: "Alex pushes the door fully open.",
                 status: "completed",
                 exchange: 1,
                 attempt: 2,
@@ -575,17 +604,23 @@ describe("世界游玩页面", () => {
           };
           return Promise.resolve(chain as T);
         }
-        return Promise.reject(new Error(`意外请求：${request.type}`));
+        return Promise.reject(new Error(`Unexpected request: ${request.type}`));
       }),
     };
 
     renderWorld(client);
-    expect(await screen.findByText("秦龙刚把门推开一半")).toBeTruthy();
+    expect(
+      await screen.findByText("Alex has opened the door halfway"),
+    ).toBeTruthy();
     expect(screen.getByText(/保持输入框为空并点击“追加上下文”/u)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "追加上下文" }));
 
-    expect(await screen.findByText("秦龙把门完全推开。")).toBeTruthy();
-    expect(screen.getAllByText("我示意秦龙开门。")).toHaveLength(1);
+    expect(
+      await screen.findByText("Alex pushes the door fully open."),
+    ).toBeTruthy();
+    expect(screen.getAllByText("I signal Alex to open the door.")).toHaveLength(
+      1,
+    );
     const continuation = client.request.mock.calls
       .map(([request]) => request)
       .find((request) => request.type === "play.chain.append");
@@ -603,7 +638,7 @@ describe("世界游玩页面", () => {
       ...playChainView(
         "play-chain-derived-player",
         "exchange-derived-player",
-        "我示意秦龙开门。",
+        "I signal Alex to open the door.",
       ),
       worldId: "world-one",
       baselineHead: "genesis",
@@ -614,7 +649,7 @@ describe("世界游玩页面", () => {
           id: 1,
           kind: "player",
           exchangeId: "exchange-derived-player",
-          text: "我示意秦龙开门。",
+          text: "I signal Alex to open the door.",
           context: "fresh",
           committedHead: "commit:1",
         },
@@ -637,7 +672,7 @@ describe("世界游玩页面", () => {
               {
                 id: 2,
                 kind: "assistant",
-                text: "秦龙重新考虑后，直接拉开了门。",
+                text: "Alex reconsiders and pulls the door open.",
                 status: "completed",
                 exchange: 1,
                 attempt: 1,
@@ -647,14 +682,14 @@ describe("世界游玩页面", () => {
           };
           return Promise.resolve(chain as T);
         }
-        return Promise.reject(new Error(`意外请求：${request.type}`));
+        return Promise.reject(new Error(`Unexpected request: ${request.type}`));
       }),
     };
 
     renderWorld(client);
-    await screen.findByText("我示意秦龙开门。");
+    await screen.findByText("I signal Alex to open the door.");
     const copiedPlayerMessage = screen
-      .getByText("我示意秦龙开门。")
+      .getByText("I signal Alex to open the door.")
       .closest<HTMLElement>(".call-chain-player")!;
     expect(
       within(copiedPlayerMessage).getByRole("button", { name: "修改" }),
@@ -665,9 +700,13 @@ describe("世界游玩页面", () => {
       }),
     ).toBeTruthy();
     expect(
-      screen.getByText("宿舍门在你身后合上，秦龙等你先开口。"),
+      screen.getByText(
+        "The dormitory door closes behind you, and Alex waits for you to speak.",
+      ),
     ).toBeTruthy();
-    expect(screen.getAllByText("我示意秦龙开门。")).toHaveLength(1);
+    expect(screen.getAllByText("I signal Alex to open the door.")).toHaveLength(
+      1,
+    );
     expect(
       screen.getByRole<HTMLButtonElement>("button", { name: "全新上下文" })
         .disabled,
@@ -679,7 +718,7 @@ describe("世界游玩页面", () => {
     fireEvent.click(screen.getByRole("button", { name: "追加上下文" }));
 
     expect(
-      await screen.findByText("秦龙重新考虑后，直接拉开了门。"),
+      await screen.findByText("Alex reconsiders and pulls the door open."),
     ).toBeTruthy();
     expect(
       client.request.mock.calls
@@ -696,7 +735,7 @@ describe("世界游玩页面", () => {
     const chain = playChainView(
       "play-chain-existing",
       "exchange-first",
-      "我示意秦龙开门。",
+      "I signal Alex to open the door.",
     );
     const onOpenWorld = vi.fn((openedWorldId: string) => {
       void openedWorldId;
@@ -714,7 +753,7 @@ describe("世界游玩页面", () => {
     };
 
     renderWorld(client, onOpenWorld);
-    await screen.findByText("秦龙推开门，让你先走。");
+    await screen.findByText("Alex opens the door and lets you go first.");
     fireEvent.click(
       within(screen.getByLabelText("模型调用链")).getAllByRole("button", {
         name: "创建分叉",
@@ -737,7 +776,7 @@ describe("世界游玩页面", () => {
     let chain = playChainView(
       "play-chain-existing",
       "exchange-first",
-      "我示意秦龙开门。",
+      "I signal Alex to open the door.",
     );
     const onOpenWorld = vi.fn(() => Promise.resolve());
     const client = {
@@ -777,7 +816,7 @@ describe("世界游玩页面", () => {
               {
                 id: 2,
                 kind: "assistant",
-                text: "秦龙停下动作，等你重新决定。",
+                text: "Alex stops and waits for you to reconsider.",
                 status: "completed",
                 exchange: 2,
                 attempt: 1,
@@ -787,22 +826,24 @@ describe("世界游玩页面", () => {
           };
           return Promise.resolve(chain as T);
         }
-        return Promise.reject(new Error("意外请求：" + request.type));
+        return Promise.reject(new Error("Unexpected request: " + request.type));
       }),
     };
 
     renderWorld(client, onOpenWorld);
-    await screen.findByText("我示意秦龙开门。");
+    await screen.findByText("I signal Alex to open the door.");
     const playerMessage = screen
-      .getByText("我示意秦龙开门。")
+      .getByText("I signal Alex to open the door.")
       .closest<HTMLElement>(".call-chain-player")!;
     fireEvent.click(
       within(playerMessage).getByRole("button", { name: "修改" }),
     );
     const editor = within(playerMessage).getByLabelText("修改后的行动");
-    expect((editor as HTMLTextAreaElement).value).toBe("我示意秦龙开门。");
+    expect((editor as HTMLTextAreaElement).value).toBe(
+      "I signal Alex to open the door.",
+    );
     fireEvent.change(editor, {
-      target: { value: "我请秦龙先别开门。" },
+      target: { value: "I ask Alex not to open the door yet." },
     });
     fireEvent.click(
       within(playerMessage).getByRole("button", {
@@ -811,11 +852,13 @@ describe("世界游玩页面", () => {
     );
 
     expect(
-      await screen.findByText("秦龙停下动作，等你重新决定。"),
+      await screen.findByText("Alex stops and waits for you to reconsider."),
     ).toBeTruthy();
     expect(onOpenWorld).not.toHaveBeenCalled();
-    expect(screen.getByText("我请秦龙先别开门。")).toBeTruthy();
-    expect(screen.queryByText("我示意秦龙开门。")).toBeNull();
+    expect(
+      screen.getByText("I ask Alex not to open the door yet."),
+    ).toBeTruthy();
+    expect(screen.queryByText("I signal Alex to open the door.")).toBeNull();
     expect(
       client.request.mock.calls
         .map(([request]) => request)
@@ -824,7 +867,7 @@ describe("世界游玩页面", () => {
       worldId: "world-one",
       chainId: "play-chain-existing",
       eventId: 1,
-      replacementText: "我请秦龙先别开门。",
+      replacementText: "I ask Alex not to open the door yet.",
     });
     expect(
       client.request.mock.calls
@@ -878,17 +921,18 @@ function worldView(playCallChain: V1PlayCallChainView | null) {
   const committedMessages = [
     {
       role: "narrator" as const,
-      exactText: "宿舍门在你身后合上，秦龙等你先开口。",
+      exactText:
+        "The dormitory door closes behind you, and Alex waits for you to speak.",
       head: "genesis",
     },
     {
       role: "player" as const,
-      exactText: "我问几点训练。",
+      exactText: "I ask what time practice starts.",
       head: "commit:0",
     },
     {
       role: "narrator" as const,
-      exactText: "秦龙说晚上八点。",
+      exactText: "Alex says practice starts at eight tonight.",
       head: "commit:1",
     },
     ...committedChainMessages(playCallChain),
@@ -900,7 +944,7 @@ function worldView(playCallChain: V1PlayCallChainView | null) {
       {
         path: "current-situation.yaml",
         contents:
-          "$document:\n  id: situation.current\n  ref: current-situation\n  title: 宿舍里的夜晚\n  summary: 宿舍里的当前局面。\n  aliases: []\n情况: 秦龙正在整理球衣\n",
+          "$document:\n  id: situation.current\n  ref: current-situation\n  title: 宿舍里的夜晚\n  summary: 宿舍里的当前局面。\n  aliases: []\n情况: Alex正在整理球衣\n",
       },
     ],
     control: [
@@ -1000,14 +1044,14 @@ function playChainView(
         callId: "patch-one",
         name: "world_patch",
         ok: true,
-        markdown: "# 世界变化已提交",
+        markdown: "# World changes committed",
         replayed: false,
       },
       {
         id: 4,
         kind: "assistant",
-        text: "秦龙推开门，让你先走。",
-        reasoning: "先确认门口没有障碍。",
+        text: "Alex opens the door and lets you go first.",
+        reasoning: "First confirm that the doorway is clear.",
         status: "completed",
         exchange: 2,
         attempt: 1,
@@ -1045,22 +1089,26 @@ function interruptedChainView(): V1PlayCallChainView {
         id: 1,
         kind: "player",
         exchangeId: "exchange-first",
-        text: "我示意秦龙开门。",
+        text: "I signal Alex to open the door.",
         context: "fresh",
         committedHead: "commit:2",
       },
       {
         id: 2,
         kind: "assistant",
-        text: "秦龙刚把门推开一半",
+        text: "Alex has opened the door halfway",
         status: "interrupted",
         exchange: 1,
         attempt: 1,
       },
-      { id: 3, kind: "failure", message: "Provider 流在半途断开。" },
+      {
+        id: 3,
+        kind: "failure",
+        message: "The Provider stream disconnected midway.",
+      },
     ],
     changedDocuments: [],
-    lastFailure: "Provider 流在半途断开。",
+    lastFailure: "The Provider stream disconnected midway.",
     updatedAt: 1,
   };
 }

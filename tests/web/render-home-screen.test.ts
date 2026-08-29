@@ -184,6 +184,7 @@ describe("世界工作区主页", () => {
       }
       if (resolvedInput.type === "workspace.read")
         return {
+          preferences: { locale: "zh-CN" },
           contentPackages: [],
           playPresets: { currentPresetId: "", presets: [] },
           worlds: [{ worldId: "world-1", title: worldTitle }],
@@ -243,5 +244,50 @@ describe("世界工作区主页", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "保存名称" }));
     await screen.findByRole("heading", { name: "雾港第三夜" });
+  });
+
+  test("应用保存界面语言并在重新加载后继续使用", async () => {
+    let locale: "en" | "zh-CN" = "en";
+    const request = vi.fn(async (input: V1Request): Promise<unknown> => {
+      const resolvedInput = await Promise.resolve(input);
+      if (resolvedInput.type === "preferences.save") {
+        locale = resolvedInput.locale;
+        return { locale };
+      }
+      if (resolvedInput.type === "workspace.read")
+        return {
+          preferences: { locale },
+          contentPackages: [],
+          playPresets: { currentPresetId: "", presets: [] },
+          worlds: [],
+          storageNotices: [],
+          model: {
+            configured: false,
+            activeConnectionId: null,
+            connections: [],
+            presets: [],
+          },
+        };
+      throw new Error(`unexpected request: ${resolvedInput.type}`);
+    });
+    const client = { request } as unknown as RuntimeClient;
+    const first = render(createElement(App, { client }));
+
+    await screen.findByRole("heading", { name: "World workspace" });
+    fireEvent.change(screen.getByLabelText("Interface language"), {
+      target: { value: "zh-CN" },
+    });
+    await screen.findByRole("heading", { name: "世界工作区" });
+    expect(request).toHaveBeenCalledWith({
+      type: "preferences.save",
+      locale: "zh-CN",
+    });
+
+    first.unmount();
+    render(createElement(App, { client }));
+    await screen.findByRole("heading", { name: "世界工作区" });
+    expect(screen.getByLabelText<HTMLSelectElement>("界面语言").value).toBe(
+      "zh-CN",
+    );
   });
 });

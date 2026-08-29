@@ -36,13 +36,13 @@ export class RuntimeClient {
     };
     if (!response.ok)
       throw new RuntimeRequestError(
-        payload.error?.message ?? `Runtime 请求失败：${response.status}`,
+        payload.error?.message ?? `Runtime request failed: ${response.status}`,
         {
           protocolCode: payload.error?.code,
         },
       );
     if (payload.protocol !== v1Protocol)
-      throw new Error("Runtime 返回了不兼容协议");
+      throw new Error("The Runtime returned an incompatible protocol");
     return payload.result as T;
   }
 
@@ -66,11 +66,13 @@ export class RuntimeClient {
         error?: { message?: string };
       };
       throw new RuntimeRequestError(
-        payload.error?.message ?? `Runtime 请求失败：${response.status}`,
+        payload.error?.message ?? `Runtime request failed: ${response.status}`,
       );
     }
     if (response.body === null)
-      throw new RuntimeRequestError("Runtime 没有返回调用链流");
+      throw new RuntimeRequestError(
+        "The Runtime did not return a call-chain stream",
+      );
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -100,7 +102,9 @@ export class RuntimeClient {
         final = trailing.value;
     }
     if (final === null)
-      throw new RuntimeRequestError("Runtime 调用链流在最终快照前结束");
+      throw new RuntimeRequestError(
+        "The Runtime call-chain stream ended before the final snapshot",
+      );
     return final;
   }
 }
@@ -113,13 +117,19 @@ function parsePlayCallChainStreamLine(
   try {
     payload = JSON.parse(line);
   } catch {
-    throw new RuntimeRequestError("Runtime 调用链流包含无效 JSON");
+    throw new RuntimeRequestError(
+      "The Runtime call-chain stream contains invalid JSON",
+    );
   }
   if (!isRecord(payload) || payload.protocol !== v1Protocol)
-    throw new RuntimeRequestError("Runtime 返回了不兼容的调用链流");
+    throw new RuntimeRequestError(
+      "The Runtime returned an incompatible call-chain stream",
+    );
   const frame = payload.frame;
   if (!isRecord(frame) || typeof frame.kind !== "string")
-    throw new RuntimeRequestError("Runtime 调用链流缺少 frame");
+    throw new RuntimeRequestError(
+      "The Runtime call-chain stream is missing a frame",
+    );
   return frame as unknown as V1PlayCallChainStreamFrame;
 }
 

@@ -52,7 +52,7 @@ describe("提示词预览界面", () => {
     expect(screen.getByText("不作为模型历史注入")).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText("预览玩家输入"), {
-      target: { value: "我问秦龙晚上是否训练。" },
+      target: { value: "I ask Alex whether we are training tonight." },
     });
     fireEvent.click(screen.getByRole("button", { name: "生成真实预览" }));
 
@@ -61,7 +61,7 @@ describe("提示词预览界面", () => {
       {
         type: "prompt.preview",
         packageId: "package-dormitory",
-        playerInput: "我问秦龙晚上是否训练。",
+        playerInput: "I ask Alex whether we are training tonight.",
         model: {
           provider: "chat_completions",
           modelId: "trace-model",
@@ -81,14 +81,16 @@ describe("提示词预览界面", () => {
     expect(screen.getByText("最终 Markdown 正文")).toBeTruthy();
     expect(
       document.querySelector(".prompt-message-body pre")?.textContent,
-    ).toBe("# Runtime 契约\n\n只通过工具提出候选。");
+    ).toBe("# Runtime contract\n\nPropose candidates only through tools.");
 
     const initialAppend = screen
       .getByRole("heading", { name: "首条玩家追加" })
       .closest("section");
     expect(initialAppend).not.toBeNull();
     expect(
-      within(initialAppend!).getByText("我问秦龙晚上是否训练。"),
+      within(initialAppend!).getByText(
+        "I ask Alex whether we are training tonight.",
+      ),
     ).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /材料与工具/u }));
@@ -217,31 +219,32 @@ function previewFixture(): PromptPreviewData {
   const messages = [
     {
       role: "runtime_system" as const,
-      markdown: "# Runtime 契约\n\n只通过工具提出候选。",
+      markdown: "# Runtime contract\n\nPropose candidates only through tools.",
       blocks: [
         {
           source: "runtime:play-contract",
-          markdown: "# Runtime 契约\n\n只通过工具提出候选。",
+          markdown:
+            "# Runtime contract\n\nPropose candidates only through tools.",
         },
       ],
     },
     {
       role: "author_instruction" as const,
-      markdown: "# 主持风格\n\n具体、克制。",
+      markdown: "# Host style\n\nBe specific and restrained.",
       blocks: [
         {
           source: "host:blocks/style.md",
-          markdown: "# 主持风格\n\n具体、克制。",
+          markdown: "# Host style\n\nBe specific and restrained.",
         },
       ],
     },
     {
       role: "world_context" as const,
-      markdown: "# 当前情境\n\n秦龙正在整理球衣。",
+      markdown: "# Current situation\n\nAlex is folding a jersey.",
       blocks: [
         {
           source: "slot:current_situation:situation.current",
-          markdown: "# 当前情境\n\n秦龙正在整理球衣。",
+          markdown: "# Current situation\n\nAlex is folding a jersey.",
         },
       ],
     },
@@ -272,17 +275,17 @@ function previewFixture(): PromptPreviewData {
       tools: [
         {
           name: "context_list",
-          description: "列出 Runtime 已知句柄。",
+          description: "List handles known to Runtime.",
           inputSchema: { type: "object" },
         },
         {
           name: "context_read",
-          description: "精确读取 Runtime 返回的句柄。",
+          description: "Read a handle returned by Runtime precisely.",
           inputSchema: { type: "object" },
         },
         {
           name: "world_patch",
-          description: "更新世界状态。",
+          description: "Update world state.",
           inputSchema: { type: "object" },
         },
       ],
@@ -321,8 +324,14 @@ function previewFixture(): PromptPreviewData {
       },
     },
     initialAppend: {
-      logical: { kind: "player", text: "我问秦龙晚上是否训练。" },
-      provider: { role: "user", content: "我问秦龙晚上是否训练。" },
+      logical: {
+        kind: "player",
+        text: "I ask Alex whether we are training tonight.",
+      },
+      provider: {
+        role: "user",
+        content: "I ask Alex whether we are training tonight.",
+      },
     },
     leakage: {
       status: "clean",

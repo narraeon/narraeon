@@ -80,7 +80,7 @@ export async function createServer(input: {
   logStream?: Writable;
 }): Promise<FastifyInstance> {
   if (!Number.isInteger(input.port) || input.port < 1 || input.port > 65_535)
-    throw new Error(`本地 Web 端口无效：${input.port}`);
+    throw new Error(`Invalid local web port: ${input.port}`);
   const server = Fastify({
     logController: new RuntimeLogController(),
     logger:
@@ -253,7 +253,9 @@ function sendPlayCallChainStream(
     .handle(runtimeRequest, observer)
     .then((response) => {
       if (!isPlayCallChainView(response.result))
-        throw new Error("Runtime 流式调用没有返回调用链快照");
+        throw new Error(
+          "The Runtime stream did not return a call-chain snapshot",
+        );
       send({ kind: "snapshot", value: response.result, final: true });
       if (
         response.result.status === "interrupted" &&
@@ -269,7 +271,7 @@ function sendPlayCallChainStream(
     })
     .catch((error: unknown) => {
       const message =
-        error instanceof Error ? error.message : "Runtime 流式调用失败";
+        error instanceof Error ? error.message : "Runtime streaming failed";
       request.log.error(
         { err: error, runtimeRequestType: runtimeRequest.type },
         "play call stream failed",
@@ -298,6 +300,9 @@ function isPlayCallChainView(value: unknown): value is V1PlayCallChainView {
 function forbidden(reply: FastifyReply): FastifyReply {
   return reply.status(403).send({
     protocol: "narraeon.runtime/v1",
-    error: { code: "forbidden_request", message: "本地 Web 请求未获授权" },
+    error: {
+      code: "forbidden_request",
+      message: "Local web request is not authorized",
+    },
   });
 }

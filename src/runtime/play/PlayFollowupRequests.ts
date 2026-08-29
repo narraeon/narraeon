@@ -95,7 +95,7 @@ export async function runPlayFollowupRequests(
 
   for (const followup of input.followups) {
     if (input.signal?.aborted === true) {
-      failure ??= "后置请求已取消。";
+      failure ??= "The follow-up request was cancelled.";
       break;
     }
     const outcome = await runOne(input, followup, prefix);
@@ -192,7 +192,7 @@ async function runOne(
         failures: [
           {
             kind: "tool_execution",
-            message: `后置请求 ${followup.id} 的产物工具未被接受。`,
+            message: `The artifact tool for follow-up request ${followup.id} was rejected.`,
             details: { calls: structuredClone(failedTools) },
           },
         ],
@@ -208,7 +208,7 @@ async function runOne(
       )
       .map(({ name }) => name);
     if (missing.length > 0)
-      outcome.failure = `后置请求 ${followup.id} 未提交必需产物：${missing.join("、")}`;
+      outcome.failure = `Follow-up request ${followup.id} did not submit required artifacts: ${missing.join(", ")}`;
     if (outcome.failure !== undefined && response.diagnostics !== undefined)
       await input.failureLog?.recordFailure({
         exchange: response.diagnostics,
@@ -223,13 +223,13 @@ async function runOne(
     else if (failedTools.length === 0 && response.diagnostics !== undefined)
       await input.failureLog?.resolve({
         exchange: response.diagnostics,
-        message: `后置请求 ${followup.id} 已在后续模型交换中恢复。`,
+        message: `Follow-up request ${followup.id} recovered during a later model exchange.`,
       });
   } catch (error: unknown) {
     outcome.failure =
       error instanceof Error
         ? error.message
-        : `后置请求 ${followup.id} 执行失败。`;
+        : `Follow-up request ${followup.id} failed.`;
     if (responseDiagnostics !== undefined)
       await input.failureLog?.recordFailure({
         exchange: responseDiagnostics,
@@ -258,7 +258,7 @@ async function executeArtifactCall(
   if (call.name !== "artifact_emit" && call.name !== "artifact_clear")
     return {
       ok: false,
-      markdown: `# Runtime 工具拒绝\n\n后置请求没有提供 ${call.name}。`,
+      markdown: `# Runtime tool rejected\n\nThe follow-up request did not provide ${call.name}.`,
     };
   const args = call.arguments;
   if (
@@ -269,7 +269,8 @@ async function executeArtifactCall(
   )
     return {
       ok: false,
-      markdown: "# Runtime 参数错误\n\nartifact 工具需要 output name。",
+      markdown:
+        "# Runtime argument error\n\nThe artifact tool requires an output name.",
     };
   const output = (args as { output: string }).output;
   return call.name === "artifact_emit"

@@ -1,3 +1,4 @@
+import { uiText } from "./i18n.ts";
 import {
   Fragment,
   useEffect,
@@ -141,7 +142,7 @@ export function WorldPage({
   const [correctionPreview, setCorrectionPreview] =
     useState<CorrectionPreviewView | null>(null);
   const [correctionDocument, setCorrectionDocument] = useState("");
-  const [correctionPath, setCorrectionPath] = useState("衣着");
+  const [correctionPath, setCorrectionPath] = useState(uiText("衣着"));
   const [correctionValue, setCorrectionValue] = useState("");
   const [bridgeEvents, setBridgeEvents] = useState<Record<string, string[]>>(
     {},
@@ -289,12 +290,12 @@ export function WorldPage({
     setFeedback({
       kind: "status",
       text: fresh
-        ? "正在从当前世界重新拼接上下文…"
+        ? uiText("正在从当前世界重新拼接上下文…")
         : hasPlayerText
-          ? "正在把玩家输入追加到现有上下文…"
+          ? uiText("正在把玩家输入追加到现有上下文…")
           : playCallChain.status === "interrupted"
-            ? "正在原样发送上次未完成的模型请求…"
-            : "正在沿现有上下文继续生成…",
+            ? uiText("正在原样发送上次未完成的模型请求…")
+            : uiText("正在沿现有上下文继续生成…"),
     });
     try {
       const request = fresh
@@ -323,11 +324,13 @@ export function WorldPage({
         text:
           next.status === "interrupted"
             ? next.canRetry
-              ? "模型请求中断；清空输入后点击追加上下文即可原样发送上次请求。"
-              : "调用链处理失败；旧请求不能重发，请使用全新上下文。"
+              ? uiText(
+                  "模型请求中断；清空输入后点击追加上下文即可原样发送上次请求。",
+                )
+              : uiText("调用链处理失败；旧请求不能重发，请使用全新上下文。")
             : !fresh && !hasPlayerText
-              ? "AI 已沿现有上下文继续生成，没有追加玩家指令。"
-              : "调用链已返回；模型完成的叙事和世界变化已经分别提交。",
+              ? uiText("AI 已沿现有上下文继续生成，没有追加玩家指令。")
+              : uiText("调用链已返回；模型完成的叙事和世界变化已经分别提交。"),
       });
     } catch (reason: unknown) {
       const inspected = await requestRuntime<V1PlayCallChainView | null>(
@@ -357,7 +360,7 @@ export function WorldPage({
       setControlPreview(preview);
       setFeedback({
         kind: "status",
-        text: "控制草稿已通过真实提示词预览；确认后才会整批应用。",
+        text: uiText("控制草稿已通过真实提示词预览；确认后才会整批应用。"),
       });
     } catch (reason: unknown) {
       setControlPreview(null);
@@ -373,7 +376,7 @@ export function WorldPage({
     try {
       await client.request({ type: "world.control-draft.apply", worldId });
       await refreshWorld(false);
-      setFeedback({ kind: "status", text: "世界控制已整批应用。" });
+      setFeedback({ kind: "status", text: uiText("世界控制已整批应用。") });
     } catch (reason: unknown) {
       setFeedback({ kind: "error", text: errorMessage(reason) });
     } finally {
@@ -428,7 +431,7 @@ export function WorldPage({
       setCorrectionPreview(preview);
       setFeedback({
         kind: "status",
-        text: "修正草稿已预览；应用前世界状态没有变化。",
+        text: uiText("修正草稿已预览；应用前世界状态没有变化。"),
       });
     } catch (reason: unknown) {
       setFeedback({ kind: "error", text: errorMessage(reason) });
@@ -451,7 +454,7 @@ export function WorldPage({
       await refreshWorld();
       setFeedback({
         kind: "status",
-        text: "连续性修正已作为一笔新提交应用，旧历史保持不变。",
+        text: uiText("连续性修正已作为一笔新提交应用，旧历史保持不变。"),
       });
     } catch (reason: unknown) {
       setFeedback({ kind: "error", text: errorMessage(reason) });
@@ -476,7 +479,7 @@ export function WorldPage({
       setCorrectionPreview(null);
       setFeedback({
         kind: "status",
-        text: "修正草稿已放弃，世界端点没有推进。",
+        text: uiText("修正草稿已放弃，世界端点没有推进。"),
       });
     } catch (reason: unknown) {
       setFeedback({ kind: "error", text: errorMessage(reason) });
@@ -513,14 +516,17 @@ export function WorldPage({
   ): Promise<void> {
     if (world === null) return;
     if (editedText.trim().length === 0) {
-      setFeedback({ kind: "error", text: "修改后的玩家提交不能为空。" });
+      setFeedback({
+        kind: "error",
+        text: uiText("修改后的玩家提交不能为空。"),
+      });
       return;
     }
     const replacementExchangeId = `play-exchange-${crypto.randomUUID()}`;
     setPending("revise");
     setFeedback({
       kind: "status",
-      text: "正在当前世界中保存修改，并舍弃这条消息之后的当前时间线…",
+      text: uiText("正在当前世界中保存修改，并舍弃这条消息之后的当前时间线…"),
     });
     try {
       const revised = await requestRuntime<{
@@ -541,7 +547,9 @@ export function WorldPage({
       if (!modelConfigured) {
         setFeedback({
           kind: "status",
-          text: "修改已保存在当前世界；配置模型后点击“追加上下文”即可继续生成。",
+          text: uiText(
+            "修改已保存在当前世界；配置模型后点击“追加上下文”即可继续生成。",
+          ),
         });
         return;
       }
@@ -549,7 +557,7 @@ export function WorldPage({
       setPending("play-append");
       setFeedback({
         kind: "status",
-        text: "修改已保存，正在从修改稿继续生成…",
+        text: uiText("修改已保存，正在从修改稿继续生成…"),
       });
       const continued = await requestPlayCallChain(
         client,
@@ -569,9 +577,11 @@ export function WorldPage({
         text:
           continued.status === "interrupted"
             ? continued.canRetry
-              ? "修改已保存，但模型请求中断；点击“追加上下文”即可原样重发。"
-              : "修改已保存，但模型请求失败；请使用全新上下文继续。"
-            : "修改已保存在当前世界，并已从修改稿继续。",
+              ? uiText(
+                  "修改已保存，但模型请求中断；点击“追加上下文”即可原样重发。",
+                )
+              : uiText("修改已保存，但模型请求失败；请使用全新上下文继续。")
+            : uiText("修改已保存在当前世界，并已从修改稿继续。"),
       });
     } catch (reason: unknown) {
       setFeedback({ kind: "error", text: errorMessage(reason) });
@@ -591,7 +601,7 @@ export function WorldPage({
     setFeedback(null);
     try {
       await onRenameWorld(name);
-      setFeedback({ kind: "status", text: "世界名称已保存。" });
+      setFeedback({ kind: "status", text: uiText("世界名称已保存。") });
     } catch (reason: unknown) {
       setFeedback({ kind: "error", text: errorMessage(reason) });
     } finally {
@@ -603,12 +613,12 @@ export function WorldPage({
     return (
       <main className="world-page world-page-loading">
         <button className="world-back-button secondary-button" onClick={onBack}>
-          ← 返回工作区
+          {uiText("← 返回工作区")}
         </button>
         {feedback?.kind === "error" ? (
           <p role="alert">{feedback.text}</p>
         ) : (
-          <p role="status">正在打开世界…</p>
+          <p role="status">{uiText("正在打开世界…")}</p>
         )}
       </main>
     );
@@ -617,35 +627,37 @@ export function WorldPage({
     <main className="world-page">
       <header className="world-page-header">
         <button className="world-back-button secondary-button" onClick={onBack}>
-          <span aria-hidden="true">←</span> 工作区
+          <span aria-hidden="true">←</span> {uiText("工作区")}
         </button>
         <div className="world-title-block">
-          <p className="eyebrow">正在游玩的世界</p>
+          <p className="eyebrow">{uiText("正在游玩的世界")}</p>
           <h1>{worldTitle}</h1>
         </div>
-        <div className="world-header-summary" aria-label="世界概况">
-          <span>{committedMessages.length} 条已提交消息</span>
+        <div className="world-header-summary" aria-label={uiText("世界概况")}>
+          <span>
+            {committedMessages.length} {uiText("条已提交消息")}
+          </span>
           <span
             className={
               playCallChain?.status === "running" ? "is-live" : "is-saved"
             }
           >
             {playCallChain?.status === "running"
-              ? "模型调用中"
+              ? uiText("模型调用中")
               : playCallChain?.status === "interrupted"
-                ? "调用链已中断"
-                : "世界已保存"}
+                ? uiText("调用链已中断")
+                : uiText("世界已保存")}
           </span>
         </div>
       </header>
 
-      <nav className="world-section-tabs" aria-label="世界页面">
+      <nav className="world-section-tabs" aria-label={uiText("世界页面")}>
         {(
           [
-            ["play", "游玩"],
-            ["documents", "当前文档"],
-            ["history", "已提交叙事"],
-            ["manage", "世界管理"],
+            ["play", uiText("游玩")],
+            ["documents", uiText("当前文档")],
+            ["history", uiText("已提交叙事")],
+            ["manage", uiText("世界管理")],
           ] as const
         ).map(([value, label]) => (
           <button
@@ -685,7 +697,10 @@ export function WorldPage({
             }))
           }
         >
-          <section className="world-play-layout" aria-label="世界游玩">
+          <section
+            className="world-play-layout"
+            aria-label={uiText("世界游玩")}
+          >
             <article
               className="story-workspace"
               aria-busy={
@@ -693,17 +708,20 @@ export function WorldPage({
               }
             >
               <header className="story-heading">
-                <h2>故事</h2>
+                <h2>{uiText("故事")}</h2>
                 {playCallChain?.status === "running" ? (
-                  <span className="session-badge">模型响应中</span>
+                  <span className="session-badge">{uiText("模型响应中")}</span>
                 ) : playCallChain?.status === "interrupted" ? (
                   <span className="session-badge call-chain-badge">
-                    调用链已中断
+                    {uiText("调用链已中断")}
                   </span>
                 ) : null}
               </header>
 
-              <div className="story-transcript" aria-label="调用链记录">
+              <div
+                className="story-transcript"
+                aria-label={uiText("调用链记录")}
+              >
                 <ArtifactExtensionMount mount="story" />
                 {playCallChain !== null ? (
                   <>
@@ -722,9 +740,9 @@ export function WorldPage({
                         <div
                           className="story-context-boundary"
                           role="separator"
-                          aria-label="全新上下文从这里开始"
+                          aria-label={uiText("全新上下文从这里开始")}
                         >
-                          <span>全新上下文从这里开始</span>
+                          <span>{uiText("全新上下文从这里开始")}</span>
                         </div>
                         <CallChain
                           chain={context}
@@ -745,8 +763,8 @@ export function WorldPage({
                 ) : committedMessages.length === 0 ? (
                   <div className="story-empty-state">
                     <span aria-hidden="true">✦</span>
-                    <h3>故事还没有开始</h3>
-                    <p>描述你的行动，从当前世界开始一条调用链。</p>
+                    <h3>{uiText("故事还没有开始")}</h3>
+                    <p>{uiText("描述你的行动，从当前世界开始一条调用链。")}</p>
                   </div>
                 ) : (
                   <Transcript
@@ -764,9 +782,9 @@ export function WorldPage({
               <footer className="play-composer">
                 {!modelConfigured && (
                   <div className="model-required-callout">
-                    <p>需要先配置模型连接才能游玩。</p>
+                    <p>{uiText("需要先配置模型连接才能游玩。")}</p>
                     <button type="button" onClick={onConfigureModel}>
-                      配置模型
+                      {uiText("配置模型")}
                     </button>
                   </div>
                 )}
@@ -776,17 +794,20 @@ export function WorldPage({
                   <div className="play-retry-note" role="alert">
                     <span aria-hidden="true">!</span>
                     <p>
-                      上次模型请求没有完整返回。保持输入框为空并点击“追加上下文”，
-                      就会原样发送已保存的请求；不会追加玩家指令，中断片段也不会进入模型上下文。
+                      {uiText(
+                        "上次模型请求没有完整返回。保持输入框为空并点击“追加上下文”，就会原样发送已保存的请求；不会追加玩家指令，中断片段也不会进入模型上下文。",
+                      )}
                     </p>
                   </div>
                 )}
                 <label className="composer-field">
-                  <span className="visually-hidden">你的行动</span>
+                  <span className="visually-hidden">{uiText("你的行动")}</span>
                   <textarea
-                    aria-label="你的行动"
+                    aria-label={uiText("你的行动")}
                     rows={2}
-                    placeholder="描述你的行动；也可以留空并追加，让 AI 沿现有上下文续写…"
+                    placeholder={uiText(
+                      "描述你的行动；也可以留空并追加，让 AI 沿现有上下文续写…",
+                    )}
                     value={playerText}
                     disabled={
                       pending !== null ||
@@ -807,35 +828,43 @@ export function WorldPage({
                 </label>
                 <ArtifactExtensionMount mount="composer_below" />
                 <div className="composer-actions">
-                  <p>Ctrl / ⌘ + Enter 追加；没有上下文时自动全新开始</p>
+                  <p>
+                    {uiText("Ctrl / ⌘ + Enter 追加；没有上下文时自动全新开始")}
+                  </p>
                   <div className="button-row">
                     <button
                       type="button"
                       disabled={!canStartFresh || !modelConfigured}
                       onClick={() => void submitPlayChain("fresh")}
                     >
-                      {pending === "play-fresh" ? "正在开始…" : "全新上下文"}
+                      {pending === "play-fresh"
+                        ? uiText("正在开始…")
+                        : uiText("全新上下文")}
                     </button>
                     <button
                       type="button"
                       disabled={!canAppend || !modelConfigured}
                       onClick={() => void submitPlayChain("append")}
                     >
-                      {pending === "play-append" ? "正在追加…" : "追加上下文"}
+                      {pending === "play-append"
+                        ? uiText("正在追加…")
+                        : uiText("追加上下文")}
                     </button>
                   </div>
                 </div>
               </footer>
             </article>
 
-            <aside className="player-view-rail" aria-label="玩家视图">
-              <h2 className="visually-hidden">当前情景</h2>
+            <aside className="player-view-rail" aria-label={uiText("玩家视图")}>
+              <h2 className="visually-hidden">{uiText("当前情景")}</h2>
               <ArtifactExtensionMount mount="sidebar" />
               {playerViewFallback.views.length === 0 ? (
                 playerViewFallback.coveredViewIds.size > 0 ? null : (
                   <div className="player-view-empty">
-                    <p>这个世界还没有配置常驻玩家视图。</p>
-                    <small>你仍然可以正常游玩；未显示不代表秘密。</small>
+                    <p>{uiText("这个世界还没有配置常驻玩家视图。")}</p>
+                    <small>
+                      {uiText("你仍然可以正常游玩；未显示不代表秘密。")}
+                    </small>
                   </div>
                 )
               ) : (
@@ -846,7 +875,8 @@ export function WorldPage({
               {playerViewFallback.diagnostics.length === 0 ? null : (
                 <details className="player-view-diagnostics">
                   <summary>
-                    {playerViewFallback.diagnostics.length} 项视图诊断
+                    {playerViewFallback.diagnostics.length}{" "}
+                    {uiText("项视图诊断")}
                   </summary>
                   <ul>
                     {playerViewFallback.diagnostics.map((diagnostic, index) => (
@@ -875,8 +905,10 @@ export function WorldPage({
           <aside className="world-browser-index">
             <div>
               <p className="eyebrow">CURRENT STATE</p>
-              <h2 id="documents-heading">当前文档</h2>
-              <p>{documents.length} 份世界状态文件</p>
+              <h2 id="documents-heading">{uiText("当前文档")}</h2>
+              <p>
+                {documents.length} {uiText("份世界状态文件")}
+              </p>
             </div>
             <ul>
               {documentOptions.map((document) => (
@@ -899,7 +931,7 @@ export function WorldPage({
           </aside>
           <article className="world-document-reader">
             {currentDocument === undefined ? (
-              <p>当前世界没有状态文档。</p>
+              <p>{uiText("当前世界没有状态文档。")}</p>
             ) : (
               <>
                 <header>
@@ -924,12 +956,14 @@ export function WorldPage({
           <header>
             <div>
               <p className="eyebrow">COMMITTED NARRATIVE</p>
-              <h2 id="history-heading">已提交叙事</h2>
+              <h2 id="history-heading">{uiText("已提交叙事")}</h2>
             </div>
-            <p>这里只显示已经进入世界权威的玩家与主持原文。</p>
+            <p>{uiText("这里只显示已经进入世界权威的玩家与主持原文。")}</p>
           </header>
           {committedMessages.length === 0 ? (
-            <div className="history-empty-state">尚无已提交叙事。</div>
+            <div className="history-empty-state">
+              {uiText("尚无已提交叙事。")}
+            </div>
           ) : (
             <Transcript
               messages={committedMessages.map((message) => ({
@@ -948,18 +982,22 @@ export function WorldPage({
           <header className="world-manage-heading">
             <div>
               <p className="eyebrow">WORLD MANAGEMENT</p>
-              <h2 id="manage-heading">世界管理</h2>
+              <h2 id="manage-heading">{uiText("世界管理")}</h2>
             </div>
-            <p>这些操作位于故事之外；它们不会被普通游玩 AI 擅自执行。</p>
+            <p>
+              {uiText("这些操作位于故事之外；它们不会被普通游玩 AI 擅自执行。")}
+            </p>
           </header>
 
           <div className="world-manage-grid">
             <article className="manage-card world-name-card">
               <span className="manage-card-number">01</span>
               <div className="manage-card-copy">
-                <h3>世界名称</h3>
+                <h3>{uiText("世界名称")}</h3>
                 <p>
-                  这是工作区和世界页显示的名字；修改它不会改动故事、状态或历史。
+                  {uiText(
+                    "这是工作区和世界页显示的名字；修改它不会改动故事、状态或历史。",
+                  )}
                 </p>
               </div>
               <form
@@ -970,9 +1008,9 @@ export function WorldPage({
                 }}
               >
                 <label>
-                  世界显示名称
+                  {uiText("世界显示名称")}
                   <input
-                    aria-label="世界显示名称"
+                    aria-label={uiText("世界显示名称")}
                     maxLength={160}
                     value={worldNameDraft}
                     onChange={(event) =>
@@ -988,7 +1026,9 @@ export function WorldPage({
                     worldNameDraft.trim() === worldTitle
                   }
                 >
-                  {pending === "rename" ? "正在保存…" : "保存名称"}
+                  {pending === "rename"
+                    ? uiText("正在保存…")
+                    : uiText("保存名称")}
                 </button>
               </form>
             </article>
@@ -996,9 +1036,11 @@ export function WorldPage({
             <article className="manage-card derive-card">
               <span className="manage-card-number">02</span>
               <div>
-                <h3>从此刻创建分叉</h3>
+                <h3>{uiText("从此刻创建分叉")}</h3>
                 <p>
-                  复制当前状态和截至此刻的已提交叙事，得到一个完全独立的新世界。
+                  {uiText(
+                    "复制当前状态和截至此刻的已提交叙事，得到一个完全独立的新世界。",
+                  )}
                 </p>
               </div>
               <button
@@ -1008,30 +1050,36 @@ export function WorldPage({
                 }
                 onClick={() => void deriveWorld(world.head)}
               >
-                {pending === "derive" ? "正在创建…" : "创建分叉"}
+                {pending === "derive"
+                  ? uiText("正在创建…")
+                  : uiText("创建分叉")}
               </button>
             </article>
 
             <article className="manage-card control-card">
               <span className="manage-card-number">03</span>
               <div className="manage-card-copy">
-                <h3>世界控制</h3>
+                <h3>{uiText("世界控制")}</h3>
                 <p>
-                  编辑主持框架和玩家视图。草稿必须先通过真实提示词预览，再整批应用。
+                  {uiText(
+                    "编辑主持框架和玩家视图。草稿必须先通过真实提示词预览，再整批应用。",
+                  )}
                 </p>
               </div>
               <span className="control-draft-state">
-                {controlDirty ? "有尚未预览的修改" : "当前已应用控制"}
+                {controlDirty
+                  ? uiText("有尚未预览的修改")
+                  : uiText("当前已应用控制")}
               </span>
               {playCallChain?.status !== "running" ? null : (
                 <p className="manage-warning">
-                  模型调用尚未返回；完成或中断后才能应用新控制。
+                  {uiText("模型调用尚未返回；完成或中断后才能应用新控制。")}
                 </p>
               )}
               <label>
-                世界控制文件（JSON）
+                {uiText("世界控制文件（JSON）")}
                 <textarea
-                  aria-label="世界控制文件"
+                  aria-label={uiText("世界控制文件")}
                   rows={18}
                   value={controlFiles}
                   onChange={(event) => {
@@ -1047,7 +1095,9 @@ export function WorldPage({
                   disabled={pending !== null || !modelConfigured}
                   onClick={() => void previewControl()}
                 >
-                  {pending === "control-preview" ? "正在预览…" : "预览世界控制"}
+                  {pending === "control-preview"
+                    ? uiText("正在预览…")
+                    : uiText("预览世界控制")}
                 </button>
                 <button
                   type="button"
@@ -1059,13 +1109,13 @@ export function WorldPage({
                   onClick={() => void applyControl()}
                 >
                   {pending === "control-apply"
-                    ? "正在应用…"
-                    : "整批应用世界控制"}
+                    ? uiText("正在应用…")
+                    : uiText("整批应用世界控制")}
                 </button>
               </div>
               {controlPreview === null ? null : (
                 <details className="technical-details">
-                  <summary>查看真实提示词预览结果</summary>
+                  <summary>{uiText("查看真实提示词预览结果")}</summary>
                   <pre>{JSON.stringify(controlPreview, null, 2)}</pre>
                 </details>
               )}
@@ -1074,18 +1124,20 @@ export function WorldPage({
             <article className="manage-card correction-card">
               <span className="manage-card-number">04</span>
               <div className="manage-card-copy">
-                <h3>连续性修正</h3>
+                <h3>{uiText("连续性修正")}</h3>
                 <p>
-                  在故事之外修正当前文档。修正会追加一笔新提交，不会改写旧叙事。
+                  {uiText(
+                    "在故事之外修正当前文档。修正会追加一笔新提交，不会改写旧叙事。",
+                  )}
                 </p>
               </div>
               {correctionPreview === null ? (
                 <>
                   <div className="correction-fields">
                     <label>
-                      要修正的文档
+                      {uiText("要修正的文档")}
                       <select
-                        aria-label="要修正的文档"
+                        aria-label={uiText("要修正的文档")}
                         value={correctionDocument}
                         onChange={(event) =>
                           setCorrectionDocument(event.target.value)
@@ -1099,10 +1151,10 @@ export function WorldPage({
                       </select>
                     </label>
                     <label>
-                      YAML 路径
+                      {uiText("YAML 路径")}
                       <input
-                        aria-label="YAML 路径"
-                        placeholder="例如：衣着 或 关系.秦龙.好感"
+                        aria-label={uiText("YAML 路径")}
+                        placeholder={uiText("例如：衣着 或 关系.秦龙.好感")}
                         value={correctionPath}
                         onChange={(event) =>
                           setCorrectionPath(event.target.value)
@@ -1110,9 +1162,9 @@ export function WorldPage({
                       />
                     </label>
                     <label>
-                      新值
+                      {uiText("新值")}
                       <textarea
-                        aria-label="修正后的新值"
+                        aria-label={uiText("修正后的新值")}
                         rows={3}
                         value={correctionValue}
                         onChange={(event) =>
@@ -1135,8 +1187,8 @@ export function WorldPage({
                       onClick={() => void previewCorrection()}
                     >
                       {pending === "correction-preview"
-                        ? "正在预览…"
-                        : "预览整笔修正"}
+                        ? uiText("正在预览…")
+                        : uiText("预览整笔修正")}
                     </button>
                     {correction === null ? null : (
                       <button
@@ -1145,7 +1197,7 @@ export function WorldPage({
                         disabled={pending !== null}
                         onClick={() => void cancelCorrection()}
                       >
-                        取消修正草稿
+                        {uiText("取消修正草稿")}
                       </button>
                     )}
                   </div>
@@ -1163,21 +1215,21 @@ export function WorldPage({
             <article className="manage-card runtime-card">
               <span className="manage-card-number">05</span>
               <div className="manage-card-copy">
-                <h3>运行详情</h3>
-                <p>用于排查本地恢复问题，不参与普通游玩。</p>
+                <h3>{uiText("运行详情")}</h3>
+                <p>{uiText("用于排查本地恢复问题，不参与普通游玩。")}</p>
               </div>
               <dl className="runtime-summary">
                 <div>
-                  <dt>当前端点</dt>
+                  <dt>{uiText("当前端点")}</dt>
                   <dd>{world.head}</dd>
                 </div>
                 <div>
-                  <dt>世界 ID</dt>
+                  <dt>{uiText("世界 ID")}</dt>
                   <dd>{world.worldId}</dd>
                 </div>
               </dl>
               <details className="technical-details">
-                <summary>查看 Runtime 原始诊断</summary>
+                <summary>{uiText("查看 Runtime 原始诊断")}</summary>
                 <pre>{JSON.stringify(world.runtime, null, 2)}</pre>
               </details>
             </article>
@@ -1206,8 +1258,10 @@ function Transcript({
         >
           <article>
             <header>
-              <strong>{message.role === "player" ? "你" : "主持"}</strong>
-              {message.pending ? <span>未结算</span> : null}
+              <strong>
+                {message.role === "player" ? uiText("你") : uiText("主持")}
+              </strong>
+              {message.pending ? <span>{uiText("未结算")}</span> : null}
               {message.head === undefined ||
               onRestartFrom === undefined ? null : (
                 <button
@@ -1216,7 +1270,7 @@ function Transcript({
                   disabled={restartDisabled}
                   onClick={() => onRestartFrom(message.head!)}
                 >
-                  创建分叉
+                  {uiText("创建分叉")}
                 </button>
               )}
             </header>
@@ -1261,7 +1315,7 @@ function CallChain({
   onEditPlayer: (eventId: number, editedText: string) => void;
 }): React.JSX.Element {
   return (
-    <section className="play-call-chain" aria-label="模型调用链">
+    <section className="play-call-chain" aria-label={uiText("模型调用链")}>
       <header className="play-call-chain-heading">
         <span>
           {chain.playPreset.name} ·{" "}
@@ -1286,15 +1340,15 @@ function CallChain({
       </ol>
 
       <footer className="call-chain-summary">
-        <strong>本上下文已提交的世界变化</strong>
+        <strong>{uiText("本上下文已提交的世界变化")}</strong>
         {chain.changedDocuments.length === 0 ? (
-          <span>没有文档变化</span>
+          <span>{uiText("没有文档变化")}</span>
         ) : (
           <ul>
             {chain.changedDocuments.map((change) => (
               <li key={`${change.kind}:${change.path}`}>
-                {change.kind === "create" ? "新建" : "更新"} {change.ref} ·{" "}
-                {change.path}
+                {change.kind === "create" ? uiText("新建") : uiText("更新")}{" "}
+                {change.ref} · {change.path}
               </li>
             ))}
           </ul>
@@ -1321,9 +1375,11 @@ function CallChainEvent({
       <li className="call-chain-player">
         <article>
           <header>
-            <strong>玩家</strong>
+            <strong>{uiText("玩家")}</strong>
             <span>
-              {event.context === "fresh" ? "全新上下文" : "追加上下文"}
+              {event.context === "fresh"
+                ? uiText("全新上下文")
+                : uiText("追加上下文")}
             </span>
             {event.committedHead === undefined ? null : (
               <span className="history-message-actions">
@@ -1334,7 +1390,7 @@ function CallChainEvent({
                     disabled={restartDisabled}
                     onClick={() => setEditedText(event.text)}
                   >
-                    修改
+                    {uiText("修改")}
                   </button>
                 )}
                 <button
@@ -1343,7 +1399,7 @@ function CallChainEvent({
                   disabled={restartDisabled}
                   onClick={() => onRestartFrom(event.committedHead!)}
                 >
-                  创建分叉
+                  {uiText("创建分叉")}
                 </button>
               </span>
             )}
@@ -1353,9 +1409,9 @@ function CallChainEvent({
           ) : (
             <div className="history-player-edit">
               <label>
-                <span>修改后的行动</span>
+                <span>{uiText("修改后的行动")}</span>
                 <textarea
-                  aria-label="修改后的行动"
+                  aria-label={uiText("修改后的行动")}
                   rows={3}
                   value={editedText}
                   disabled={restartDisabled}
@@ -1363,8 +1419,9 @@ function CallChainEvent({
                 />
               </label>
               <p>
-                修改会直接保存在当前世界；这条原提交及其后的内容会离开当前时间线，但旧
-                Authority 记录仍可恢复。
+                {uiText(
+                  "修改会直接保存在当前世界；这条原提交及其后的内容会离开当前时间线，但旧 Authority 记录仍可恢复。",
+                )}
               </p>
               <div className="button-row">
                 <button
@@ -1372,7 +1429,7 @@ function CallChainEvent({
                   disabled={restartDisabled || editedText.trim().length === 0}
                   onClick={() => onEditPlayer(event.id, editedText)}
                 >
-                  保存修改并继续
+                  {uiText("保存修改并继续")}
                 </button>
                 <button
                   type="button"
@@ -1380,7 +1437,7 @@ function CallChainEvent({
                   disabled={restartDisabled}
                   onClick={() => setEditedText(null)}
                 >
-                  取消
+                  {uiText("取消")}
                 </button>
               </div>
             </div>
@@ -1393,10 +1450,12 @@ function CallChainEvent({
       <li className={`call-chain-assistant is-${event.status}`}>
         <article>
           <header>
-            <strong>AI 响应</strong>
+            <strong>{uiText("AI 响应")}</strong>
             <span>
-              {callChainAssistantStatusLabel(event.status)} · 第 {event.attempt}{" "}
-              次派发
+              {uiText("{status} · 第 {attempt} 次派发", {
+                status: callChainAssistantStatusLabel(event.status),
+                attempt: event.attempt,
+              })}
             </span>
             {event.committedHead === undefined ? null : (
               <button
@@ -1405,7 +1464,7 @@ function CallChainEvent({
                 disabled={restartDisabled}
                 onClick={() => onRestartFrom(event.committedHead!)}
               >
-                创建分叉
+                {uiText("创建分叉")}
               </button>
             )}
           </header>
@@ -1413,8 +1472,8 @@ function CallChainEvent({
           event.reasoning.length === 0 ? null : (
             <details className="call-chain-reasoning">
               <summary>
-                <strong>模型思维链</strong>
-                <span>默认折叠</span>
+                <strong>{uiText("模型思维链")}</strong>
+                <span>{uiText("默认折叠")}</span>
               </summary>
               <pre>{event.reasoning}</pre>
             </details>
@@ -1423,19 +1482,20 @@ function CallChainEvent({
             {event.text.length > 0
               ? event.text
               : event.status === "streaming"
-                ? "正在接收模型输出…"
-                : "（本次响应没有文本）"}
+                ? uiText("正在接收模型输出…")
+                : uiText("（本次响应没有文本）")}
           </p>
           {event.toolFragment === undefined ? null : (
             <details>
-              <summary>正在接收的工具调用片段</summary>
+              <summary>{uiText("正在接收的工具调用片段")}</summary>
               <pre>{event.toolFragment}</pre>
             </details>
           )}
           {event.usage === undefined ? null : (
             <small>
-              Provider usage：输入 {event.usage.inputTokens ?? "unavailable"} ·
-              输出 {event.usage.outputTokens ?? "unavailable"}
+              {uiText("Provider usage：输入")}
+              {event.usage.inputTokens ?? "unavailable"} {uiText("· 输出")}
+              {event.usage.outputTokens ?? "unavailable"}
             </small>
           )}
         </article>
@@ -1446,8 +1506,10 @@ function CallChainEvent({
       <li className="call-chain-tool">
         <details>
           <summary>
-            <strong>调用 {event.name}</strong>
-            <span>{event.replayed ? "复用同 ID 结果" : event.callId}</span>
+            <strong>{uiText("调用 {tool}", { tool: event.name })}</strong>
+            <span>
+              {event.replayed ? uiText("复用同 ID 结果") : event.callId}
+            </span>
           </summary>
           <pre>{safeJson(event.arguments)}</pre>
         </details>
@@ -1460,8 +1522,10 @@ function CallChainEvent({
       >
         <details>
           <summary>
-            <strong>{event.name} 返回</strong>
-            <span>{event.ok ? "成功" : "拒绝／失败"}</span>
+            <strong>
+              {event.name} {uiText("返回")}
+            </strong>
+            <span>{event.ok ? uiText("成功") : uiText("拒绝／失败")}</span>
           </summary>
           <pre>{event.markdown}</pre>
         </details>
@@ -1476,20 +1540,25 @@ function CallChainEvent({
       >
         <details>
           <summary>
-            <strong>后置请求 · {event.displayName}</strong>
+            <strong>
+              {uiText("后置请求 ·")}
+              {event.displayName}
+            </strong>
             <span>
               {event.failure === undefined
-                ? `${event.toolCalls.filter(({ ok }) => ok).length} 项产物`
-                : "未完成"}
+                ? uiText("{count} 项产物", {
+                    count: event.toolCalls.filter(({ ok }) => ok).length,
+                  })
+                : uiText("未完成")}
             </span>
           </summary>
-          {/* 后置请求不进主链：它只解释界面上的面板从哪来。 */}
+          {/* Follow-ups stay outside the main chain and only explain panel provenance. */}
           {event.failure !== undefined && <p role="alert">{event.failure}</p>}
           {event.text.trim() !== "" && <pre>{event.text}</pre>}
           {event.toolCalls.map((call) => (
             <div key={call.callId}>
               <strong>
-                {call.name} · {call.ok ? "成功" : "拒绝／失败"}
+                {call.name} · {call.ok ? uiText("成功") : uiText("拒绝／失败")}
               </strong>
               <pre>{safeJson(call.arguments)}</pre>
               <pre>{call.markdown}</pre>
@@ -1497,8 +1566,9 @@ function CallChainEvent({
           ))}
           {event.usage !== undefined && (
             <small>
-              Provider usage：输入 {event.usage.inputTokens ?? "unavailable"} ·
-              输出 {event.usage.outputTokens ?? "unavailable"}
+              {uiText("Provider usage：输入")}
+              {event.usage.inputTokens ?? "unavailable"} {uiText("· 输出")}
+              {event.usage.outputTokens ?? "unavailable"}
             </small>
           )}
         </details>
@@ -1506,7 +1576,7 @@ function CallChainEvent({
     );
   return (
     <li className="call-chain-failure" role="alert">
-      <strong>调用链中断</strong>
+      <strong>{uiText("调用链中断")}</strong>
       <p>{event.message}</p>
     </li>
   );
@@ -1516,24 +1586,24 @@ function callChainStatusLabel(
   status: V1PlayCallChainContextView["status"],
   current: boolean,
 ): string {
-  if (status === "running") return "模型响应中";
-  if (status === "interrupted") return "调用链已中断";
-  return current ? "等待玩家追加" : "上下文已结束";
+  if (status === "running") return uiText("模型响应中");
+  if (status === "interrupted") return uiText("调用链已中断");
+  return current ? uiText("等待玩家追加") : uiText("上下文已结束");
 }
 
 function callChainAssistantStatusLabel(
   status: Extract<V1PlayCallChainEvent, { kind: "assistant" }>["status"],
 ): string {
-  if (status === "streaming") return "接收中";
-  if (status === "interrupted") return "中断片段";
-  return "已完成";
+  if (status === "streaming") return uiText("接收中");
+  if (status === "interrupted") return uiText("中断片段");
+  return uiText("已完成");
 }
 
 function safeJson(value: unknown): string {
   try {
     return JSON.stringify(value, null, 2);
   } catch {
-    return "[参数无法序列化]";
+    return uiText("[参数无法序列化]");
   }
 }
 
@@ -1546,7 +1616,9 @@ function PlayerViewCard({
     <article className="player-view-card">
       <h3>{view.title}</h3>
       {view.items.length === 0 ? (
-        <p className="player-view-empty-value">当前没有可显示项目。</p>
+        <p className="player-view-empty-value">
+          {uiText("当前没有可显示项目。")}
+        </p>
       ) : (
         <dl>
           {view.items.map((item) => (
@@ -1606,7 +1678,7 @@ function PlayerValue({ value }: { value: unknown }): React.JSX.Element {
   if (typeof value === "bigint") return <span>{value.toString()}</span>;
   if (typeof value === "symbol")
     return <span>{value.description ?? "Symbol"}</span>;
-  return <span className="empty-value">[无法显示]</span>;
+  return <span className="empty-value">{uiText("[无法显示]")}</span>;
 }
 
 function documentOption(file: ContentTreeFile): DocumentOption {
@@ -1630,7 +1702,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function errorMessage(reason: unknown): string {
-  return reason instanceof Error ? reason.message : "操作失败";
+  return reason instanceof Error ? reason.message : uiText("操作失败");
 }
 
 function requestRuntime<T>(

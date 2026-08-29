@@ -95,7 +95,7 @@ export interface CurrentTreeContentPackageOperationLease {
 
 export class CurrentTreeContentPackageNotFoundError extends Error {
   constructor() {
-    super("没有找到指定内容包");
+    super("The requested content package was not found");
     this.name = "CurrentTreeContentPackageNotFoundError";
   }
 }
@@ -109,7 +109,7 @@ export class CurrentTreeContentLibraryError extends Error {
 
 export class CurrentTreeContentPackageBusyError extends CurrentTreeContentLibraryError {
   constructor() {
-    super("另一个源内容包保存或模型 operation 正在进行");
+    super("Another source-package save or model operation is still running");
     this.name = "CurrentTreeContentPackageBusyError";
   }
 }
@@ -200,9 +200,12 @@ export class CurrentTreeContentLibrary {
           await syncDirectory(this.#packagesRoot);
         } catch (error: unknown) {
           if (isAbortError(error)) throw error;
-          throw new CurrentTreeContentLibraryError("无法原子删除内容包", {
-            cause: error,
-          });
+          throw new CurrentTreeContentLibraryError(
+            "Unable to delete the content package atomically",
+            {
+              cause: error,
+            },
+          );
         }
         await rm(tombstonePath, { force: true, recursive: true }).catch(
           () => undefined,
@@ -221,16 +224,21 @@ export class CurrentTreeContentLibrary {
       if (isNodeErrorCode(error, "ENOENT")) {
         return [];
       }
-      throw new CurrentTreeContentLibraryError("无法列出内容包", {
-        cause: error,
-      });
+      throw new CurrentTreeContentLibraryError(
+        "Unable to list content packages",
+        {
+          cause: error,
+        },
+      );
     }
     const packages: EditableContentPackageSummary[] = [];
     for (const entry of entries.sort((left, right) =>
       compareStrings(left.name, right.name),
     )) {
       if (!entry.isDirectory() || !localIdPattern.test(entry.name)) {
-        throw new CurrentTreeContentLibraryError("内容包库包含无法识别的条目");
+        throw new CurrentTreeContentLibraryError(
+          "The content-package library contains an unrecognized entry",
+        );
       }
       const detail = await this.readPackage(entry.name);
       packages.push(packageSummary(detail));
@@ -243,26 +251,36 @@ export class CurrentTreeContentLibrary {
     const metadata = await readJsonFile(
       join(packageRoot, localMetadataFileName),
       () => new CurrentTreeContentPackageNotFoundError(),
-      "内容包本地外壳损坏",
+      "The local content-package envelope is damaged",
     );
     if (!isStoredMetadata(metadata) || metadata.localId !== localId) {
-      throw new CurrentTreeContentLibraryError("内容包本地外壳损坏");
+      throw new CurrentTreeContentLibraryError(
+        "The local content-package envelope is damaged",
+      );
     }
     const storedTree = await readJsonFile(
       join(packageRoot, currentTreeFileName),
-      () => new CurrentTreeContentLibraryError("内容包缺少当前树"),
-      "内容包当前树损坏",
+      () =>
+        new CurrentTreeContentLibraryError(
+          "The content package has no current tree",
+        ),
+      "The content package's current tree is damaged",
     );
     if (!isStoredCurrentTree(storedTree)) {
-      throw new CurrentTreeContentLibraryError("内容包当前树损坏");
+      throw new CurrentTreeContentLibraryError(
+        "The content package's current tree is damaged",
+      );
     }
     let files: ContentTreeFile[];
     try {
       files = normalizeCurrentContentTreeFiles(storedTree.files, this.#limits);
     } catch (error: unknown) {
-      throw new CurrentTreeContentLibraryError("内容包当前树损坏", {
-        cause: error,
-      });
+      throw new CurrentTreeContentLibraryError(
+        "The content package's current tree is damaged",
+        {
+          cause: error,
+        },
+      );
     }
     return detail(
       localId,
@@ -286,7 +304,7 @@ export class CurrentTreeContentLibrary {
       const trimmed = name.trim();
       if (!validPackageName(trimmed))
         throw new CurrentTreeContentLibraryError(
-          "内容包名称必须是 1 到 160 个字符，且不含换行",
+          "A content-package name must contain 1 to 160 characters and no line breaks",
         );
       const lease = await this.acquireOperationLease(localId, {
         wait: options.waitForLease !== false,
@@ -297,10 +315,12 @@ export class CurrentTreeContentLibrary {
         const metadata = await readJsonFile(
           join(packageRoot, localMetadataFileName),
           () => new CurrentTreeContentPackageNotFoundError(),
-          "内容包本地外壳损坏",
+          "The local content-package envelope is damaged",
         );
         if (!isStoredMetadata(metadata) || metadata.localId !== localId)
-          throw new CurrentTreeContentLibraryError("内容包本地外壳损坏");
+          throw new CurrentTreeContentLibraryError(
+            "The local content-package envelope is damaged",
+          );
         const temporaryPath = join(packageRoot, `.local-${randomUUID()}.tmp`);
         try {
           await writeDurableNewFile(
@@ -385,9 +405,12 @@ export class CurrentTreeContentLibrary {
     } catch (error: unknown) {
       await handle?.close().catch(() => undefined);
       if (error instanceof CurrentTreeContentPackageBusyError) throw error;
-      throw new CurrentTreeContentLibraryError("无法取得源内容包保存 owner", {
-        cause: error instanceof Error ? error : undefined,
-      });
+      throw new CurrentTreeContentLibraryError(
+        "Unable to acquire the source-package save owner",
+        {
+          cause: error instanceof Error ? error : undefined,
+        },
+      );
     } finally {
       await unlink(temporaryPath).catch(() => undefined);
     }
@@ -469,7 +492,7 @@ export class CurrentTreeContentLibrary {
       }
       if (rollbackFailure !== undefined) {
         throw new CurrentTreeContentLibraryError(
-          "无法恢复修改前的内容包当前树",
+          "Unable to restore the content package's previous current tree",
           {
             cause:
               rollbackFailure instanceof Error ? rollbackFailure : undefined,
@@ -480,7 +503,9 @@ export class CurrentTreeContentLibrary {
         throw error;
       }
       throw new CurrentTreeContentLibraryError(
-        error instanceof Error ? error.message : "无法原子替换内容包当前树",
+        error instanceof Error
+          ? error.message
+          : "Unable to replace the content package's current tree atomically",
         { cause: error },
       );
     }
@@ -532,9 +557,12 @@ export class CurrentTreeContentLibrary {
         () => undefined,
       );
       if (isAbortError(error)) throw error;
-      throw new CurrentTreeContentLibraryError("无法原子发布内容包", {
-        cause: error,
-      });
+      throw new CurrentTreeContentLibraryError(
+        "Unable to publish the content package atomically",
+        {
+          cause: error,
+        },
+      );
     }
     return detail(
       localId,
@@ -694,7 +722,9 @@ export function normalizeCurrentContentTreeFiles(
   limits: ContentWorkspaceLimits = defaultLimits,
 ): ContentTreeFile[] {
   if (files.length > limits.maxFiles) {
-    throw new InvalidContentTreeError("内容包文件数量超过上限");
+    throw new InvalidContentTreeError(
+      "The content package exceeds the file-count limit",
+    );
   }
   const normalized: ContentTreeFile[] = [];
   const portableKeys = new Set<string>();
@@ -707,7 +737,9 @@ export function normalizeCurrentContentTreeFiles(
       typeof file.contents !== "string" ||
       (file.encoding !== undefined && file.encoding !== "base64")
     ) {
-      throw new InvalidContentTreeError("内容包文件必须包含路径和文本内容");
+      throw new InvalidContentTreeError(
+        "Every content-package file must contain a path and text content",
+      );
     }
     const path = normalizeContentTreePath(file.path);
     if (
@@ -719,12 +751,14 @@ export function normalizeCurrentContentTreeFiles(
     const leaf = basename(path).toLocaleLowerCase("en-US");
     if (leaf === "manifest.json" || leaf.endsWith(".package.json")) {
       throw new InvalidContentTreeError(
-        `当前内容树不允许 manifest 文件：${path}`,
+        `The current content tree does not allow manifest files: ${path}`,
       );
     }
     const portableKey = portableContentTreePathKey(path);
     if (portableKeys.has(portableKey)) {
-      throw new InvalidContentTreeError(`内容树包含重复规范化路径：${path}`);
+      throw new InvalidContentTreeError(
+        `The content tree contains a duplicate normalized path: ${path}`,
+      );
     }
     portableKeys.add(portableKey);
     const bytes =
@@ -732,11 +766,15 @@ export function normalizeCurrentContentTreeFiles(
         ? decodeCanonicalBase64(file.contents, path).byteLength
         : Buffer.byteLength(file.contents, "utf8");
     if (bytes > limits.maxFileBytes) {
-      throw new InvalidContentTreeError(`内容包单文件大小超过上限：${path}`);
+      throw new InvalidContentTreeError(
+        `A content-package file exceeds the size limit: ${path}`,
+      );
     }
     totalBytes += bytes;
     if (totalBytes > limits.maxTotalBytes) {
-      throw new InvalidContentTreeError("内容包总大小超过上限");
+      throw new InvalidContentTreeError(
+        "The content package exceeds the total-size limit",
+      );
     }
     normalized.push({
       path,
@@ -757,13 +795,13 @@ function decodeCanonicalBase64(contents: string, path: string): Buffer {
     )
   ) {
     throw new InvalidContentTreeError(
-      `内容包二进制资源不是规范 Base64：${path}`,
+      `A binary content-package asset is not canonical Base64: ${path}`,
     );
   }
   const decoded = Buffer.from(contents, "base64");
   if (decoded.toString("base64") !== contents) {
     throw new InvalidContentTreeError(
-      `内容包二进制资源不是规范 Base64：${path}`,
+      `A binary content-package asset is not canonical Base64: ${path}`,
     );
   }
   return decoded;
@@ -778,7 +816,7 @@ function normalizeContentTreePath(value: string): string {
     isAbsolute(value) ||
     win32.isAbsolute(value)
   ) {
-    throw new InvalidContentTreeError(`内容树路径无效：${value}`);
+    throw new InvalidContentTreeError(`Invalid content-tree path: ${value}`);
   }
   const normalized = posix.normalize(value.normalize("NFC"));
   const segments = normalized.split("/");
@@ -796,7 +834,7 @@ function normalizeContentTreePath(value: string): string {
         containsControlCharacter(segment),
     )
   ) {
-    throw new InvalidContentTreeError(`内容树路径无效：${value}`);
+    throw new InvalidContentTreeError(`Invalid content-tree path: ${value}`);
   }
   return normalized;
 }
@@ -814,11 +852,11 @@ function normalizeLimits(
   const limits = { ...defaultLimits, ...input };
   for (const [name, value] of Object.entries(limits)) {
     if (!Number.isSafeInteger(value) || value <= 0) {
-      throw new TypeError(`${name} 必须是正安全整数`);
+      throw new TypeError(`${name} must be a positive safe integer`);
     }
   }
   if (limits.maxFileBytes > limits.maxTotalBytes) {
-    throw new TypeError("maxFileBytes 不得超过 maxTotalBytes");
+    throw new TypeError("maxFileBytes must not exceed maxTotalBytes");
   }
   return limits;
 }

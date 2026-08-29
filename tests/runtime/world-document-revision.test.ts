@@ -84,11 +84,11 @@ describe("WorldDocumentStore atomic candidate batch Interface", () => {
       layout: "world_state",
       files: [
         {
-          path: "state/characters/qinlong.yaml",
+          path: "state/characters/alex.yaml",
           contents: yamlDocument({
-            id: "character.qinlong",
-            ref: "qinlong",
-            title: "秦龙",
+            id: "character.alex",
+            ref: "alex",
+            title: "Alex",
             body: "衣着: 白色运动背心\n",
           }),
         },
@@ -104,9 +104,9 @@ describe("WorldDocumentStore atomic candidate batch Interface", () => {
           codec: "yaml",
           refHint: "champion-trophy",
           title: "冠军奖杯",
-          summary: "秦龙珍视的冠军奖杯。",
+          summary: "Alex珍视的冠军奖杯。",
           aliases: ["奖杯"],
-          body: '归属:\n  $ref: "@qinlong"\n状态: 放在书桌上\n',
+          body: '归属:\n  $ref: "@alex"\n状态: 放在书桌上\n',
         },
       ],
     });
@@ -122,7 +122,7 @@ describe("WorldDocumentStore atomic candidate batch Interface", () => {
     ).toMatchObject({
       kind: "select_node",
       ok: true,
-      node: { value: { target: { shortRef: "qinlong" } } },
+      node: { value: { target: { shortRef: "alex" } } },
     });
 
     expect(
@@ -137,7 +137,7 @@ describe("WorldDocumentStore atomic candidate batch Interface", () => {
             title: "不应创建的文档",
             summary: "原始工具正文不能携带世界内部文档身份。",
             aliases: [],
-            body: "归属:\n  $ref: character.qinlong\n",
+            body: "归属:\n  $ref: character.alex\n",
           },
         ],
       }),
@@ -1353,11 +1353,11 @@ describe("WorldDocumentStore write revision command", () => {
       files: [
         { path: "opening.md", contents: "雨停在门槛外。\n" },
         {
-          path: "world/characters/qinlong.yaml",
+          path: "world/characters/alex.yaml",
           contents: yamlDocument({
-            id: "character.qinlong",
-            ref: "qinlong",
-            title: "秦龙",
+            id: "character.alex",
+            ref: "alex",
+            title: "Alex",
             body: "衣着: 白色球衣\n",
           }),
         },
@@ -1399,11 +1399,11 @@ describe("WorldDocumentStore write revision command", () => {
       commands: [
         {
           kind: "write",
-          logicalPath: "world/characters/qinlong.yaml",
+          logicalPath: "world/characters/alex.yaml",
           contents: yamlDocument({
             id: "character.someone-else",
             ref: "someoneelse",
-            title: "秦龙",
+            title: "Alex",
             body: "衣着: 黑色球衣\n",
           }),
         },
@@ -1412,12 +1412,12 @@ describe("WorldDocumentStore write revision command", () => {
 
     if (!revised.ok) throw new Error("write revision unexpectedly failed");
     expect(revised.changes[0]).toMatchObject({
-      documentId: "character.qinlong",
-      shortRef: "qinlong",
+      documentId: "character.alex",
+      shortRef: "alex",
     });
     const contents = revised.changes[0]?.after.contents ?? "";
-    expect(contents).toContain("id: character.qinlong");
-    expect(contents).toContain("ref: qinlong");
+    expect(contents).toContain("id: character.alex");
+    expect(contents).toContain("ref: alex");
     expect(contents).toContain("衣着: 黑色球衣");
     expect(contents).not.toContain("someone-else");
   });
@@ -1452,7 +1452,7 @@ describe("WorldDocumentStore write revision command", () => {
       layout: "content_package",
       files: [
         {
-          path: "world/characters/qinlong.yaml",
+          path: "world/characters/alex.yaml",
           contents: "not: [valid\n",
         },
         {
@@ -1461,7 +1461,7 @@ describe("WorldDocumentStore write revision command", () => {
             id: "situation.current",
             ref: "current",
             title: "当前情境",
-            body: "人物:\n  - $ref: character.qinlong\n",
+            body: "人物:\n  - $ref: character.alex\n",
           }),
         },
       ],
@@ -1471,11 +1471,11 @@ describe("WorldDocumentStore write revision command", () => {
       commands: [
         {
           kind: "write",
-          logicalPath: "world/characters/qinlong.yaml",
+          logicalPath: "world/characters/alex.yaml",
           contents: yamlDocument({
-            id: "character.qinlong",
-            ref: "qinlong",
-            title: "秦龙",
+            id: "character.alex",
+            ref: "alex",
+            title: "Alex",
             body: "关系: {}\n",
           }),
         },
@@ -1484,8 +1484,8 @@ describe("WorldDocumentStore write revision command", () => {
 
     if (!revised.ok) throw new Error("write revision unexpectedly failed");
     expect(revised.changes[0]).toMatchObject({
-      documentId: "character.qinlong",
-      shortRef: "qinlong",
+      documentId: "character.alex",
+      shortRef: "alex",
     });
     expect(revised.snapshot.status).toBe("usable");
   });
@@ -1498,7 +1498,7 @@ describe("WorldDocumentStore write revision command", () => {
           logicalPath: "world/characters/other.yaml",
           contents: yamlDocument({
             id: "x",
-            ref: "qinlong",
+            ref: "alex",
             title: "另一个人",
             body: "衣着: 长衫\n",
           }),
@@ -1507,7 +1507,7 @@ describe("WorldDocumentStore write revision command", () => {
     });
 
     if (!revised.ok) throw new Error("write revision unexpectedly failed");
-    expect(revised.changes[0]?.shortRef).toBe("qinlong-2");
+    expect(revised.changes[0]?.shortRef).toBe("alex-2");
   });
 
   test("写入的原文可以照抄既有的文档 id 引用，也可以用 @短引用", () => {
@@ -1515,11 +1515,11 @@ describe("WorldDocumentStore write revision command", () => {
       layout: "content_package",
       files: [
         {
-          path: "world/characters/qinlong.yaml",
+          path: "world/characters/alex.yaml",
           contents: yamlDocument({
-            id: "character.qinlong",
-            ref: "qinlong",
-            title: "秦龙",
+            id: "character.alex",
+            ref: "alex",
+            title: "Alex",
             body: "关系: {}\n",
           }),
         },
@@ -1529,7 +1529,7 @@ describe("WorldDocumentStore write revision command", () => {
             id: "situation.current",
             ref: "current",
             title: "当前情境",
-            body: "人物:\n  - $ref: character.qinlong\n",
+            body: "人物:\n  - $ref: character.alex\n",
           }),
         },
       ],
@@ -1544,7 +1544,7 @@ describe("WorldDocumentStore write revision command", () => {
             id: "situation.current",
             ref: "current",
             title: "当前情境",
-            body: '地点: 宿舍\n人物:\n  - $ref: character.qinlong\n在场:\n  - $ref: "@qinlong"\n',
+            body: '地点: 宿舍\n人物:\n  - $ref: character.alex\n在场:\n  - $ref: "@alex"\n',
           }),
         },
       ],
@@ -1553,12 +1553,12 @@ describe("WorldDocumentStore write revision command", () => {
     if (!revised.ok) throw new Error("write revision unexpectedly failed");
     const contents = revised.changes[0]?.after.contents ?? "";
     expect(contents).toContain("地点: 宿舍");
-    expect(contents).toContain("$ref: character.qinlong");
+    expect(contents).toContain("$ref: character.alex");
     expect(revised.snapshot.status).toBe("usable");
   });
 
   test.each([
-    ["YAML", "world/characters/qinlong.yaml", "衣着: 黑色球衣\n", "黑色球衣"],
+    ["YAML", "world/characters/alex.yaml", "衣着: 黑色球衣\n", "黑色球衣"],
     [
       "Markdown",
       "world/rules/cultivation.md",
@@ -1572,11 +1572,11 @@ describe("WorldDocumentStore write revision command", () => {
         layout: "content_package",
         files: [
           {
-            path: "world/characters/qinlong.yaml",
+            path: "world/characters/alex.yaml",
             contents: yamlDocument({
-              id: "character.qinlong",
-              ref: "qinlong",
-              title: "秦龙",
+              id: "character.alex",
+              ref: "alex",
+              title: "Alex",
               body: "衣着: 白色球衣\n",
             }),
           },
@@ -1601,9 +1601,7 @@ describe("WorldDocumentStore write revision command", () => {
       expect(after).toContain(expected);
       expect(after).toContain("$document");
       expect(revised.changes[0]?.documentId).toBe(
-        logicalPath.endsWith(".yaml")
-          ? "character.qinlong"
-          : "rule.cultivation",
+        logicalPath.endsWith(".yaml") ? "character.alex" : "rule.cultivation",
       );
       expect(revised.snapshot.status).toBe("usable");
     },
@@ -1647,22 +1645,22 @@ describe("WorldDocumentStore write revision command", () => {
     [
       "summary 超长",
       header({ summary: "很".repeat(241) }),
-      "summary 最多 240 个字符，实际 241 个",
+      "summary may contain at most 240 characters; received 241",
     ],
     [
       "title 不是字符串",
       header({ title: "[]" }),
-      "title 必须是字符串，实际收到 数组（0 项）",
+      "title must be a string; received array (0 items)",
     ],
     [
       "aliases 不是数组",
       header({ aliases: "男生宿舍" }),
-      "aliases 必须是数组，实际收到 string",
+      'aliases must be an array; received string "男生宿舍"',
     ],
     [
       "别名含空串",
       header({ aliases: '["", 宿舍]' }),
-      "aliases 第 1 项必须是 1 到 64 个字符，实际 0 个",
+      "aliases item 1 must contain 1 to 64 characters; received 0",
     ],
   ])("元信息诊断指出具体是哪一项：%s", (_, contents, expected) => {
     const revised = existing().revise({
@@ -1775,7 +1773,7 @@ describe("WorldDocumentStore write revision command", () => {
   });
 });
 
-/** 一份除被覆盖字段外都合法的 $document 头，用于单点验证元信息诊断。 */
+/** A valid $document header whose selected field can be overridden for focused metadata diagnostics. */
 function header(
   overrides: { title?: string; summary?: string; aliases?: string } = {},
 ): string {

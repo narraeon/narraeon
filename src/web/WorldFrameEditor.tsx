@@ -1,3 +1,4 @@
+import { uiText } from "./i18n.ts";
 import { useMemo, useState } from "react";
 import { parse, stringify } from "yaml";
 
@@ -238,30 +239,39 @@ export function WorldFrameEditor({
     >
       <header className="world-frame-editor-header">
         <div>
-          <span className="content-editor-kicker">可视化编排</span>
-          <h5 id="world-frame-editor-title">世界提示框架</h5>
+          <span className="content-editor-kicker">{uiText("可视化编排")}</span>
+          <h5 id="world-frame-editor-title">{uiText("世界提示框架")}</h5>
           <p>
-            安排世界专属指令与确定性材料位置；这里不保存人物、地点或当前事实。
+            {uiText(
+              "安排世界专属指令与确定性材料位置；这里不保存人物、地点或当前事实。",
+            )}
           </p>
         </div>
-        <div className="world-frame-status" aria-label="世界提示框架草稿状态">
+        <div
+          className="world-frame-status"
+          aria-label={uiText("世界提示框架草稿状态")}
+        >
           <span
             className={frame?.format === worldFrameFormat ? "valid" : "invalid"}
           >
-            {frame?.format === worldFrameFormat ? "V1 格式" : "格式待修复"}
+            {frame?.format === worldFrameFormat
+              ? uiText("V1 格式")
+              : uiText("格式待修复")}
           </span>
           <span className={visualReady ? "valid" : "invalid"}>
-            {visualReady ? "可视化已同步" : "仅可编辑 YAML"}
+            {visualReady ? uiText("可视化已同步") : uiText("仅可编辑 YAML")}
           </span>
         </div>
       </header>
 
       {frame === null ? (
         <div className="world-frame-parse-error" role="alert">
-          <strong>当前 YAML 暂时无法可视化</strong>
+          <strong>{uiText("当前 YAML 暂时无法可视化")}</strong>
           <p>{parsed.error}</p>
           <span>
-            下面的高级编辑器会原样保留草稿；修复后可视化页面会自动恢复。
+            {uiText(
+              "下面的高级编辑器会原样保留草稿；修复后可视化页面会自动恢复。",
+            )}
           </span>
         </div>
       ) : (
@@ -269,8 +279,11 @@ export function WorldFrameEditor({
           {frame.format !== worldFrameFormat && (
             <div className="world-frame-repair-callout" role="note">
               <div>
-                <strong>format 不是当前世界框架版本</strong>
-                <span>Runtime 只接受 {worldFrameFormat}。</span>
+                <strong>{uiText("format 不是当前世界框架版本")}</strong>
+                <span>
+                  {uiText("Runtime 只接受")}
+                  {worldFrameFormat}。
+                </span>
               </div>
               <button
                 type="button"
@@ -281,28 +294,35 @@ export function WorldFrameEditor({
                   })
                 }
               >
-                修复为 V1 格式
+                {uiText("修复为 V1 格式")}
               </button>
             </div>
           )}
 
-          <div className="world-frame-flow" aria-label="世界提示框架流程">
+          <div
+            className="world-frame-flow"
+            aria-label={uiText("世界提示框架流程")}
+          >
             <div>
-              <span>Markdown 提示块</span>
-              <strong>{instructions?.length ?? "?"} 份世界指令</strong>
+              <span>{uiText("Markdown 提示块")}</span>
+              <strong>
+                {instructions?.length ?? "?"} {uiText("份世界指令")}
+              </strong>
             </div>
             <span aria-hidden="true">→</span>
             <div>
-              <span>进入逻辑 role</span>
+              <span>{uiText("进入逻辑 role")}</span>
               <strong>author_instruction</strong>
             </div>
             <div>
-              <span>精确文档与目录</span>
-              <strong>{contextEntries?.length ?? "?"} 个材料插槽</strong>
+              <span>{uiText("精确文档与目录")}</span>
+              <strong>
+                {contextEntries?.length ?? "?"} {uiText("个材料插槽")}
+              </strong>
             </div>
             <span aria-hidden="true">→</span>
             <div>
-              <span>进入逻辑 role</span>
+              <span>{uiText("进入逻辑 role")}</span>
               <strong>world_context</strong>
             </div>
           </div>
@@ -313,8 +333,8 @@ export function WorldFrameEditor({
           >
             <header>
               <div>
-                <span>01 · 权威绑定</span>
-                <h6 id="world-frame-binding-title">当前情境绑定</h6>
+                <span>{uiText("01 · 权威绑定")}</span>
+                <h6 id="world-frame-binding-title">{uiText("当前情境绑定")}</h6>
               </div>
               <span
                 className={
@@ -323,15 +343,18 @@ export function WorldFrameEditor({
                     : "world-frame-section-state valid"
                 }
               >
-                {currentSituationDocument === undefined ? "未解析" : "已解析"}
+                {currentSituationDocument === undefined
+                  ? uiText("未解析")
+                  : uiText("已解析")}
               </span>
             </header>
             <p>
-              `current_situation`
-              插槽会从这里读取唯一当前情境文档，不按文件名或标题猜测。
+              {uiText(
+                "`current_situation` 插槽会从这里读取唯一当前情境文档，不按文件名或标题猜测。",
+              )}
             </p>
             <label>
-              当前情境文档
+              {uiText("当前情境文档")}
               <select
                 value={
                   currentSituationDocument === undefined
@@ -345,11 +368,12 @@ export function WorldFrameEditor({
                   });
                 }}
               >
-                <option value="">选择一份世界文档</option>
+                <option value="">{uiText("选择一份世界文档")}</option>
                 {currentSituation.length > 0 &&
                   findDocument(documents, currentSituation) === undefined && (
                     <option value={currentSituation}>
-                      {currentSituation}（当前未解析）
+                      {currentSituation}
+                      {uiText("（当前未解析）")}
                     </option>
                   )}
                 {documents.map((document) => (
@@ -368,16 +392,19 @@ export function WorldFrameEditor({
           >
             <header>
               <div>
-                <span>02 · 世界专属指令</span>
-                <h6 id="world-frame-instructions-title">提示块顺序</h6>
+                <span>{uiText("02 · 世界专属指令")}</span>
+                <h6 id="world-frame-instructions-title">
+                  {uiText("提示块顺序")}
+                </h6>
               </div>
               <span className="world-frame-section-state">
-                {instructions?.length ?? 0} 个块
+                {instructions?.length ?? 0} {uiText("个块")}
               </span>
             </header>
             <p>
-              这些 Markdown
-              块按顺序进入主持预设预留的世界指令位置；正文仍在独立文件中编辑。
+              {uiText(
+                "这些 Markdown 块按顺序进入主持预设预留的世界指令位置；正文仍在独立文件中编辑。",
+              )}
             </p>
             {instructions === null ? (
               <MalformedFrameSection
@@ -392,7 +419,7 @@ export function WorldFrameEditor({
               <>
                 <ol
                   className="world-frame-order-list"
-                  aria-label="世界指令顺序"
+                  aria-label={uiText("世界指令顺序")}
                 >
                   {instructions.map((instruction, index) => {
                     const block = markdownBlocks.find(
@@ -407,14 +434,16 @@ export function WorldFrameEditor({
                         <div>
                           <strong>{title}</strong>
                           <code>{instruction.markdown}</code>
-                          {block === undefined && <span>引用的文件不存在</span>}
+                          {block === undefined && (
+                            <span>{uiText("引用的文件不存在")}</span>
+                          )}
                         </div>
                         <div className="world-frame-order-actions">
-                          <span>调整顺序</span>
+                          <span>{uiText("调整顺序")}</span>
                           <button
                             type="button"
                             className="secondary-button"
-                            aria-label={`上移 ${title}`}
+                            aria-label={uiText("上移 {title}", { title })}
                             disabled={index === 0}
                             onClick={() =>
                               updateInstructions(
@@ -422,12 +451,12 @@ export function WorldFrameEditor({
                               )
                             }
                           >
-                            <span aria-hidden="true">↑</span> 上移
+                            <span aria-hidden="true">↑</span> {uiText("上移")}
                           </button>
                           <button
                             type="button"
                             className="secondary-button"
-                            aria-label={`下移 ${title}`}
+                            aria-label={uiText("下移 {title}", { title })}
                             disabled={index === instructions.length - 1}
                             onClick={() =>
                               updateInstructions(
@@ -435,12 +464,12 @@ export function WorldFrameEditor({
                               )
                             }
                           >
-                            <span aria-hidden="true">↓</span> 下移
+                            <span aria-hidden="true">↓</span> {uiText("下移")}
                           </button>
                           <button
                             type="button"
                             className="secondary-button"
-                            aria-label={`移除指令 ${title}`}
+                            aria-label={uiText("移除指令 {title}", { title })}
                             onClick={() =>
                               updateInstructions(
                                 instructions.filter(
@@ -449,7 +478,7 @@ export function WorldFrameEditor({
                               )
                             }
                           >
-                            移除
+                            {uiText("移除")}
                           </button>
                         </div>
                       </li>
@@ -457,11 +486,13 @@ export function WorldFrameEditor({
                   })}
                 </ol>
                 {instructions.length === 0 && (
-                  <p className="world-frame-empty">尚未加入世界提示块。</p>
+                  <p className="world-frame-empty">
+                    {uiText("尚未加入世界提示块。")}
+                  </p>
                 )}
                 <div className="world-frame-add-row">
                   <label>
-                    要加入的 Markdown 块
+                    {uiText("要加入的 Markdown 块")}
                     <select
                       value={instructionToAdd}
                       onChange={(event) =>
@@ -469,7 +500,9 @@ export function WorldFrameEditor({
                       }
                     >
                       {unlinkedBlocks.length === 0 ? (
-                        <option value="">没有可加入的未引用块</option>
+                        <option value="">
+                          {uiText("没有可加入的未引用块")}
+                        </option>
                       ) : (
                         unlinkedBlocks.map((block) => (
                           <option key={block.path} value={block.path}>
@@ -491,7 +524,7 @@ export function WorldFrameEditor({
                       setNewInstructionPath("");
                     }}
                   >
-                    加入指令顺序
+                    {uiText("加入指令顺序")}
                   </button>
                 </div>
               </>
@@ -504,23 +537,28 @@ export function WorldFrameEditor({
           >
             <header>
               <div>
-                <span>03 · 确定性材料</span>
-                <h6 id="world-frame-context-title">上下文材料顺序</h6>
+                <span>{uiText("03 · 确定性材料")}</span>
+                <h6 id="world-frame-context-title">
+                  {uiText("上下文材料顺序")}
+                </h6>
               </div>
               <span className="world-frame-section-state">
-                {contextEntries?.length ?? 0} 个插槽
+                {contextEntries?.length ?? 0} {uiText("个插槽")}
               </span>
             </header>
             <p>
-              Runtime 只按这些精确位置取材。顺序会进入真实
-              prompt，但不会推断“相关人物”或“重要历史”。
+              {uiText(
+                "Runtime 只按这些精确位置取材。顺序会进入真实 prompt，但不会推断“相关人物”或“重要历史”。",
+              )}
             </p>
             <div className="world-frame-reorder-guide" role="note">
               <span aria-hidden="true">↕</span>
               <div>
-                <strong>从上到下就是实际注入顺序</strong>
+                <strong>{uiText("从上到下就是实际注入顺序")}</strong>
                 <span>
-                  每张卡片右上角都有“上移 / 下移”；移动后序号会立即更新。
+                  {uiText(
+                    "每张卡片右上角都有“上移 / 下移”；移动后序号会立即更新。",
+                  )}
                 </span>
               </div>
             </div>
@@ -539,10 +577,11 @@ export function WorldFrameEditor({
                   additionalMaterialSlots !== 1) && (
                   <div className="world-frame-required-slots" role="note">
                     <div>
-                      <strong>必需插槽还未成对</strong>
+                      <strong>{uiText("必需插槽还未成对")}</strong>
                       <span>
-                        当前情境 {currentSituationSlots} 个 · 附加材料{" "}
-                        {additionalMaterialSlots} 个
+                        {uiText("当前情境")}
+                        {currentSituationSlots} {uiText("个 · 附加材料")}{" "}
+                        {additionalMaterialSlots} {uiText("个")}
                       </span>
                     </div>
                     <div>
@@ -552,7 +591,7 @@ export function WorldFrameEditor({
                           className="secondary-button"
                           onClick={() => addRequiredSlot("current_situation")}
                         >
-                          补上当前情境
+                          {uiText("补上当前情境")}
                         </button>
                       )}
                       {additionalMaterialSlots === 0 && (
@@ -563,7 +602,7 @@ export function WorldFrameEditor({
                             addRequiredSlot("additional_materials")
                           }
                         >
-                          补上附加材料
+                          {uiText("补上附加材料")}
                         </button>
                       )}
                     </div>
@@ -571,7 +610,7 @@ export function WorldFrameEditor({
                 )}
                 <ol
                   className="world-frame-slot-list"
-                  aria-label="上下文材料顺序"
+                  aria-label={uiText("上下文材料顺序")}
                 >
                   {contextEntries.map((entry, index) => (
                     <li key={`${entry.slot.kind}-${index}`}>
@@ -607,7 +646,7 @@ export function WorldFrameEditor({
                 </ol>
                 <div className="world-frame-add-slot">
                   <label>
-                    新增材料类型
+                    {uiText("新增材料类型")}
                     <select
                       value={newSlotKind}
                       onChange={(event) =>
@@ -618,7 +657,7 @@ export function WorldFrameEditor({
                     >
                       {optionalSlotKinds.map((item) => (
                         <option key={item.kind} value={item.kind}>
-                          {item.label} — {item.detail}
+                          {uiText(item.label)} — {uiText(item.detail)}
                         </option>
                       ))}
                     </select>
@@ -634,7 +673,7 @@ export function WorldFrameEditor({
                     disabled={newSlotUnavailableReason !== null}
                     onClick={addOptionalSlot}
                   >
-                    新增材料插槽
+                    {uiText("新增材料插槽")}
                   </button>
                 </div>
               </>
@@ -644,15 +683,16 @@ export function WorldFrameEditor({
       )}
 
       <details className="world-frame-source" open={frame === null}>
-        <summary>高级：直接编辑 frame.yaml</summary>
+        <summary>{uiText("高级：直接编辑 frame.yaml")}</summary>
         <p>
-          可视化修改会把 YAML
-          重新整理为稳定格式；需要修复未知字段或保留当前原文时可在这里编辑。
+          {uiText(
+            "可视化修改会把 YAML 重新整理为稳定格式；需要修复未知字段或保留当前原文时可在这里编辑。",
+          )}
         </p>
         <textarea
           rows={18}
           spellCheck={false}
-          aria-label="直接编辑 control/frame.yaml"
+          aria-label={uiText("直接编辑 control/frame.yaml")}
           value={contents}
           onChange={(event) => onChange(event.currentTarget.value)}
         />
@@ -705,38 +745,38 @@ function FrameSlotCard({
           {String(ordinal).padStart(2, "0")}
         </span>
         <div>
-          <strong>{definition.title}</strong>
+          <strong>{uiText(definition.title)}</strong>
           <code>{slot.kind}</code>
-          <p>{definition.detail}</p>
+          <p>{uiText(definition.detail)}</p>
         </div>
         <div className="world-frame-order-actions">
-          <span>调整注入顺序</span>
+          <span>{uiText("调整注入顺序")}</span>
           <button
             type="button"
             className="secondary-button"
-            aria-label={`上移材料 ${ordinal}`}
+            aria-label={uiText("上移材料 {index}", { index: ordinal })}
             disabled={first}
             onClick={() => onMove(ordinal - 2)}
           >
-            <span aria-hidden="true">↑</span> 上移
+            <span aria-hidden="true">↑</span> {uiText("上移")}
           </button>
           <button
             type="button"
             className="secondary-button"
-            aria-label={`下移材料 ${ordinal}`}
+            aria-label={uiText("下移材料 {index}", { index: ordinal })}
             disabled={last}
             onClick={() => onMove(ordinal)}
           >
-            <span aria-hidden="true">↓</span> 下移
+            <span aria-hidden="true">↓</span> {uiText("下移")}
           </button>
           <button
             type="button"
             className="secondary-button"
             disabled={!canRemove}
-            aria-label={`移除材料 ${ordinal}`}
+            aria-label={uiText("移除材料 {index}", { index: ordinal })}
             onClick={onRemove}
           >
-            移除
+            {uiText("移除")}
           </button>
         </div>
       </header>
@@ -744,7 +784,7 @@ function FrameSlotCard({
       {slot.kind === "document" && (
         <div className="world-frame-slot-fields">
           <DocumentField
-            label={`文档 ${ordinal}`}
+            label={uiText("文档 {index}", { index: ordinal })}
             value={documentHandleValue}
             documents={documents}
             onChange={(document) => onChange({ ...slot, document })}
@@ -756,7 +796,7 @@ function FrameSlotCard({
       {slot.kind === "node" && (
         <div className="world-frame-slot-fields">
           <DocumentField
-            label={`文档 ${ordinal}`}
+            label={uiText("文档 {index}", { index: ordinal })}
             value={documentHandleValue}
             documents={documents}
             onChange={(document) => {
@@ -769,7 +809,7 @@ function FrameSlotCard({
             }}
           />
           <LocatorField
-            label={`${locator.kind === "yaml" ? "YAML 路径" : "Markdown 标题路径"} ${ordinal}`}
+            label={`${locator.kind === "yaml" ? uiText("YAML 路径") : uiText("Markdown 标题路径")} ${ordinal}`}
             locator={locator}
             onChange={(next) => onChange({ ...slot, locator: next })}
           />
@@ -780,10 +820,10 @@ function FrameSlotCard({
       {slot.kind === "reference_targets" && (
         <div className="world-frame-slot-fields">
           <DocumentField
-            label={`来源 YAML 文件 ${ordinal}`}
+            label={uiText("来源 YAML 文件 {index}", { index: ordinal })}
             value={fromDocument}
             documents={documents.filter(({ codec }) => codec === "yaml")}
-            emptyLabel="选择实际 YAML 文件"
+            emptyLabel={uiText("选择实际 YAML 文件")}
             onChange={(document) => {
               const resolved = findDocument(documents, document);
               const selected =
@@ -798,8 +838,12 @@ function FrameSlotCard({
             }}
           />
           <ReferenceLocatorField
-            label={`从 YAML 哪个字段读取 $ref（插槽 ${ordinal}）`}
-            manualLabel={`手动 YAML 字段路径（插槽 ${ordinal}）`}
+            label={uiText("从 YAML 哪个字段读取 $ref（插槽 {index}）", {
+              index: ordinal,
+            })}
+            manualLabel={uiText("手动 YAML 字段路径（插槽 {index}）", {
+              index: ordinal,
+            })}
             document={selectedFromDocument}
             locator={fromLocator}
             onChange={(locatorValue) =>
@@ -810,7 +854,7 @@ function FrameSlotCard({
             }
           />
           <NumberField
-            label={`最多目标数 ${ordinal}`}
+            label={uiText("最多目标数 {index}", { index: ordinal })}
             value={slot.maxEntries}
             minimum={1}
             maximum={64}
@@ -823,13 +867,13 @@ function FrameSlotCard({
       {slot.kind === "catalog" && (
         <div className="world-frame-slot-fields">
           <DirectoryField
-            label={`目录 ${ordinal}`}
+            label={uiText("目录 {index}", { index: ordinal })}
             value={stringValue(slot.directory)}
             directories={directories}
             onChange={(directory) => onChange({ ...slot, directory })}
           />
           <NumberField
-            label={`最多目录项 ${ordinal}`}
+            label={uiText("最多目录项 {index}", { index: ordinal })}
             value={slot.maxEntries}
             minimum={1}
             maximum={100}
@@ -841,7 +885,7 @@ function FrameSlotCard({
       {slot.kind === "history" && (
         <div className="world-frame-slot-fields">
           <NumberField
-            label={`带上最近几条 ${ordinal}`}
+            label={uiText("带上最近几条 {index}", { index: ordinal })}
             value={slot.recent ?? 2}
             minimum={1}
             maximum={32}
@@ -853,7 +897,8 @@ function FrameSlotCard({
       {slot.kind === "history_message" && (
         <div className="world-frame-slot-fields">
           <label>
-            历史消息句柄 {ordinal}
+            {uiText("历史消息句柄")}
+            {ordinal}
             <input
               value={stringValue(slot.message)}
               onChange={(event) =>
@@ -878,7 +923,7 @@ function DocumentField({
   label,
   value,
   documents,
-  emptyLabel = "选择实际文档文件",
+  emptyLabel = uiText("选择实际文档文件"),
   onChange,
 }: {
   label: string;
@@ -901,7 +946,10 @@ function DocumentField({
       >
         <option value="">{emptyLabel}</option>
         {value.length > 0 && findDocument(documents, value) === undefined && (
-          <option value={value}>{value}（当前未解析）</option>
+          <option value={value}>
+            {value}
+            {uiText("（当前未解析）")}
+          </option>
         )}
         {documents.map((document) => (
           <option key={document.path} value={documentHandle(document)}>
@@ -911,8 +959,11 @@ function DocumentField({
       </select>
       <small className="world-frame-association-note">
         {selected === undefined
-          ? "只列出内容包中带可识别 $document 技术头的实际文件。"
-          : `实际关联 ${selected.path}；frame.yaml 保存 @短引用：${documentHandle(selected)}`}
+          ? uiText("只列出内容包中带可识别 $document 技术头的实际文件。")
+          : uiText("实际关联 {path}；frame.yaml 保存 @短引用：{handle}", {
+              path: selected.path,
+              handle: documentHandle(selected),
+            })}
       </small>
     </label>
   );
@@ -938,20 +989,27 @@ function DirectoryField({
         value={value}
         onChange={(event) => onChange(event.currentTarget.value)}
       >
-        <option value="">选择实际世界目录</option>
+        <option value="">{uiText("选择实际世界目录")}</option>
         {value.length > 0 && selected === undefined && (
-          <option value={value}>{value}（当前没有可关联文档）</option>
+          <option value={value}>
+            {value}
+            {uiText("（当前没有可关联文档）")}
+          </option>
         )}
         {directories.map((directory) => (
           <option key={directory.directory} value={directory.directory}>
-            world/{directory.directory}/ — {directory.documentCount} 份文档
+            world/{directory.directory}/ — {directory.documentCount}{" "}
+            {uiText("份文档")}
           </option>
         ))}
       </select>
       <small className="world-frame-association-note">
         {selected === undefined
-          ? "只列出当前内容包内确实包含可识别文档的目录。"
-          : `实际关联 world/${selected.directory}/；创建世界后对应 state/${selected.directory}/。`}
+          ? uiText("只列出当前内容包内确实包含可识别文档的目录。")
+          : uiText(
+              "实际关联 world/{directory}/；创建世界后对应 state/{directory}/。",
+              { directory: selected.directory },
+            )}
       </small>
     </label>
   );
@@ -995,12 +1053,14 @@ function ReferenceLocatorField({
           }}
         >
           {document === undefined ? (
-            <option value={currentKey}>先选择来源 YAML 文件</option>
+            <option value={currentKey}>{uiText("先选择来源 YAML 文件")}</option>
           ) : (
             <>
               {!currentIsResolved && (
                 <option value={currentKey}>
-                  当前手动路径：{formatYamlPath(locator.path)}（未解析）
+                  {uiText("当前手动路径：")}
+                  {formatYamlPath(locator.path)}
+                  {uiText("（未解析）")}
                 </option>
               )}
               {options.map((option) => (
@@ -1009,10 +1069,11 @@ function ReferenceLocatorField({
                   value={yamlLocatorKey(option.path)}
                 >
                   {formatYamlPath(option.path)} —{" "}
-                  {option.nodeKind === "list" ? "列表" : "对象"} ·{" "}
+                  {option.nodeKind === "list" ? uiText("列表") : uiText("对象")}{" "}
+                  ·{" "}
                   {option.referenceCount > 0
-                    ? option.referenceCount + " 个 $ref"
-                    : "当前无 $ref"}
+                    ? option.referenceCount + uiText(" 个 $ref")
+                    : uiText("当前无 $ref")}
                 </option>
               ))}
             </>
@@ -1020,17 +1081,17 @@ function ReferenceLocatorField({
         </select>
         <small className="world-frame-association-note">
           {document === undefined
-            ? "选择 YAML 文件后，这里会解析其中可持久定位的对象和列表。"
+            ? uiText("选择 YAML 文件后，这里会解析其中可持久定位的对象和列表。")
             : document.path +
-              " 已解析 " +
+              uiText(" 已解析 ") +
               options.length +
-              " 个可选节点，其中 " +
+              uiText(" 个可选节点，其中 ") +
               referencedNodes +
-              " 个当前包含 $ref。"}
+              uiText(" 个当前包含 $ref。")}
         </small>
       </label>
       <details className="world-frame-locator-advanced">
-        <summary>高级：手动填写字段路径</summary>
+        <summary>{uiText("高级：手动填写字段路径")}</summary>
         <LocatorField
           label={manualLabel}
           locator={{ kind: "yaml", path: locator.path }}
@@ -1056,7 +1117,7 @@ function LocatorField({
       <textarea
         rows={3}
         value={locator.path.join("\n")}
-        placeholder="每行一个层级；留空表示文档根"
+        placeholder={uiText("每行一个层级；留空表示文档根")}
         onChange={(event) =>
           onChange({
             [locator.kind]: event.currentTarget.value
@@ -1083,7 +1144,7 @@ function RequiredField({
     <label className="world-frame-required-field">
       <input
         type="checkbox"
-        aria-label={`缺失时阻止请求 ${ordinal}`}
+        aria-label={uiText("缺失时阻止请求 {index}", { index: ordinal })}
         checked={slot.required !== false}
         onChange={(event) => {
           const next = { ...slot };
@@ -1093,8 +1154,8 @@ function RequiredField({
         }}
       />
       <span>
-        <strong>缺失时阻止请求</strong>
-        <small>关闭后，目标暂时不存在时会明确略过。</small>
+        <strong>{uiText("缺失时阻止请求")}</strong>
+        <small>{uiText("关闭后，目标暂时不存在时会明确略过。")}</small>
       </span>
     </label>
   );
@@ -1137,11 +1198,16 @@ function MalformedFrameSection({
   return (
     <div className="world-frame-malformed" role="alert">
       <div>
-        <strong>{name} 不是可视化编辑器支持的列表形状</strong>
-        <span>可在高级 YAML 中修复，或明确重置为空列表后重新编排。</span>
+        <strong>
+          {name} {uiText("不是可视化编辑器支持的列表形状")}
+        </strong>
+        <span>
+          {uiText("可在高级 YAML 中修复，或明确重置为空列表后重新编排。")}
+        </span>
       </div>
       <button type="button" className="secondary-button" onClick={onReset}>
-        重置 {name}
+        {uiText("重置")}
+        {name}
       </button>
     </div>
   );
@@ -1151,15 +1217,15 @@ function readWorldFrame(source: string): ParsedFrame {
   try {
     const value: unknown = parse(source);
     if (!isRecord(value))
-      return { value: null, error: "frame.yaml 顶层必须是 YAML map。" };
+      return { value: null, error: uiText("frame.yaml 顶层必须是 YAML map。") };
     return { value, error: null };
   } catch (error: unknown) {
     return {
       value: null,
       error:
         error instanceof Error
-          ? `YAML 无法解析：${error.message}`
-          : "YAML 无法解析。",
+          ? uiText("YAML 无法解析：{message}", { message: error.message })
+          : uiText("YAML 无法解析。"),
     };
   }
 }
@@ -1398,7 +1464,7 @@ function yamlLocatorKey(path: readonly string[]): string {
 }
 
 function formatYamlPath(path: readonly string[]): string {
-  return path.length === 0 ? "整份 YAML" : path.join(" › ");
+  return path.length === 0 ? uiText("整份 YAML") : path.join(" › ");
 }
 
 function optionalSlotUnavailableReason(
@@ -1407,14 +1473,14 @@ function optionalSlotUnavailableReason(
   directories: readonly DirectoryOption[],
 ): string | null {
   if (kind === "catalog" && directories.length === 0)
-    return "先在 world/ 的子目录中创建带 $document 技术头的文档。";
+    return uiText("先在 world/ 的子目录中创建带 $document 技术头的文档。");
   if (
     kind === "reference_targets" &&
     !documents.some(({ codec }) => codec === "yaml")
   )
-    return "先创建一份带 $document 技术头的 YAML 世界文档。";
+    return uiText("先创建一份带 $document 技术头的 YAML 世界文档。");
   if ((kind === "document" || kind === "node") && documents.length === 0)
-    return "先创建一份带 $document 技术头的世界文档。";
+    return uiText("先创建一份带 $document 技术头的世界文档。");
   return null;
 }
 
@@ -1442,43 +1508,46 @@ function readLocator(
 function slotDefinition(kind: string): { title: string; detail: string } {
   const definitions: Record<string, { title: string; detail: string }> = {
     current_situation: {
-      title: "当前情境",
-      detail: "从上方绑定读取紧接着的叙事不能忘记的短期局面。",
+      title: uiText("当前情境"),
+      detail: uiText("从上方绑定读取紧接着的叙事不能忘记的短期局面。"),
     },
     additional_materials: {
-      title: "附加材料",
-      detail: "展开当前端点为全新上下文保存的完整精确材料清单。",
+      title: uiText("附加材料"),
+      detail: uiText("展开当前端点为全新上下文保存的完整精确材料清单。"),
     },
     document: {
-      title: "整份文档",
-      detail: "精确加入一份世界文档。",
+      title: uiText("整份文档"),
+      detail: uiText("精确加入一份世界文档。"),
     },
     node: {
-      title: "文档局部节点",
-      detail: "精确加入 YAML 路径或 Markdown 标题子树。",
+      title: uiText("文档局部节点"),
+      detail: uiText("精确加入 YAML 路径或 Markdown 标题子树。"),
     },
     catalog: {
-      title: "有界目录",
-      detail: "列出一级目录中的标题、简介和短引用，不展开正文。",
+      title: uiText("有界目录"),
+      detail: uiText("列出一级目录中的标题、简介和短引用，不展开正文。"),
     },
     reference_targets: {
-      title: "显式引用目标",
-      detail: "读取 YAML 节点中的 $ref，并加入一层目标文档。",
+      title: uiText("显式引用目标"),
+      detail: uiText("读取 YAML 节点中的 $ref，并加入一层目标文档。"),
     },
     history: {
-      title: "最近叙事",
-      detail:
+      title: uiText("最近叙事"),
+      detail: uiText(
         "带上最近几条已提交玩家／主持原文；没有此前叙事时会明确标为空，调用链据此延续未写入文档的细节。",
+      ),
     },
     history_message: {
-      title: "精确历史消息",
-      detail: "按 Runtime 句柄加入一条已提交叙事。",
+      title: uiText("精确历史消息"),
+      detail: uiText("按 Runtime 句柄加入一条已提交叙事。"),
     },
   };
   return (
     definitions[kind] ?? {
-      title: "未知插槽",
-      detail: "当前可视化编辑器不识别此类型；可移动、移除或在 YAML 中修复。",
+      title: uiText("未知插槽"),
+      detail: uiText(
+        "当前可视化编辑器不识别此类型；可移动、移除或在 YAML 中修复。",
+      ),
     }
   );
 }

@@ -2,12 +2,14 @@ import { useEffect, useState } from "react";
 
 import { maxPortableContentArchiveBytes } from "../protocol/contentTree.ts";
 import type { ModelConnectionLibraryView } from "../protocol/modelConnections.ts";
+import type { AppLocale, AppPreferences } from "../protocol/appPreferences.ts";
 import type {
   ContentTreeFile,
   SettingImprovementStartMode,
 } from "../protocol/v1.ts";
-import { firstPartyPlayPresetTemplates } from "../shared/first-party-play-preset-templates.ts";
+import { firstPartyPlayPresetTemplatesForLocale } from "../shared/first-party-play-preset-templates.ts";
 import type { RuntimeClient } from "./runtimeClient.ts";
+import { setWebLocale, uiText } from "./i18n.ts";
 import {
   ContentTreeEditor,
   type ContentTreeIssue,
@@ -26,6 +28,7 @@ import {
 import { WorldPage } from "./WorldPage.tsx";
 
 interface Workspace {
+  preferences: AppPreferences;
   contentPackages: PackageSummary[];
   playPresets: PlayPresetLibrary;
   worlds: { worldId: string; title: string }[];
@@ -96,10 +99,12 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     useState<SettingImprovementProgress | null>(null);
   const [improvementProgressNow, setImprovementProgressNow] = useState(0);
   const [worldId, setWorldId] = useState("");
-  const [notice, setNotice] = useState("正在读取工作区…");
+  const [notice, setNotice] = useState(uiText("正在读取工作区…"));
+  const [localeSaving, setLocaleSaving] = useState(false);
 
   async function refresh(): Promise<void> {
     const next = await client.request<Workspace>({ type: "workspace.read" });
+    setWebLocale(next.preferences.locale);
     setWorkspace(next);
     setSelected((current) =>
       next.contentPackages.some(({ localId }) => localId === current)
@@ -127,7 +132,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         });
         if (active) setImprovementProgress(next);
       } catch {
-        // 轮询失败不打断正在进行的生成，也不覆盖已有进度。
+        // A failed poll does not interrupt generation or replace known progress.
       } finally {
         if (active) setImprovementProgressNow(Date.now());
       }
@@ -146,18 +151,39 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       .request<Workspace>({ type: "workspace.read" })
       .then((next) => {
         if (!active) return;
+        setWebLocale(next.preferences.locale);
         setWorkspace(next);
         setSelected(next.contentPackages[0]?.localId ?? "");
         setNotice("");
       })
       .catch((error: unknown) => {
         if (active)
-          setNotice(error instanceof Error ? error.message : "工作区读取失败");
+          setNotice(
+            error instanceof Error ? error.message : uiText("工作区读取失败"),
+          );
       });
     return () => {
       active = false;
     };
   }, [client]);
+
+  async function saveLocale(locale: AppLocale): Promise<void> {
+    if (workspace === null || localeSaving) return;
+    setLocaleSaving(true);
+    try {
+      const preferences = await client.request<AppPreferences>({
+        type: "preferences.save",
+        locale,
+      });
+      setWebLocale(preferences.locale);
+      await refresh();
+      setNotice(uiText("界面语言已保存。"));
+    } catch (error: unknown) {
+      report(error);
+    } finally {
+      setLocaleSaving(false);
+    }
+  }
 
   async function openPackage(
     packageId: string,
@@ -194,7 +220,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       setCurrentPackageFiles(saved.files.map((file) => ({ ...file })));
       setFilesDirty(false);
       await refresh();
-      setNotice("内容包当前树已整批保存。");
+      setNotice(uiText("内容包当前树已整批保存。"));
     } catch (error: unknown) {
       report(error);
     }
@@ -232,7 +258,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         name,
       });
       await refresh();
-      setNotice("内容包已重命名。");
+      setNotice(uiText("内容包已重命名。"));
     } catch (error: unknown) {
       report(error);
     }
@@ -241,7 +267,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   async function importPackage(): Promise<void> {
     if (importArchive === null || importPending) return;
     if (importArchive.size > maxPortableContentArchiveBytes) {
-      setNotice("内容包 ZIP 自身大小超过安全上限。");
+      setNotice(uiText("内容包 ZIP 自身大小超过安全上限。"));
       return;
     }
     setImportPending(true);
@@ -254,7 +280,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       setImportArchive(null);
       await refresh();
       await openPackage(imported.localId);
-      setNotice("ZIP 内容包已导入为新的本地身份。");
+      setNotice(uiText("ZIP 内容包已导入为新的本地身份。"));
     } catch (error: unknown) {
       report(error);
     } finally {
@@ -288,7 +314,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     mode: SettingImprovementStartMode,
   ): Promise<void> {
     if (filesDirty) {
-      setNotice("请先保存手动编辑，再开始 AI 设定完善。");
+      setNotice(uiText("请先保存手动编辑，再开始 AI 设定完善。"));
       return;
     }
     const id = `improvement-${crypto.randomUUID()}`;
@@ -311,11 +337,11 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       if (outcome.kind === "plan") {
         setImprovementPlan(outcome);
         setImprovementPhase("planned");
-        setNotice("创作计划已生成；计划阶段只读取了当前设定。");
+        setNotice(uiText("创作计划已生成；计划阶段只读取了当前设定。"));
       } else {
         setImprovementCandidate(outcome);
         setImprovementPhase("ready");
-        setNotice("候选已通过机械检查；可整批应用或放弃。");
+        setNotice(uiText("候选已通过机械检查；可整批应用或放弃。"));
       }
     } catch (error: unknown) {
       setImprovementId("");
@@ -336,7 +362,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       );
       setImprovementCandidate(candidate);
       setImprovementPhase("ready");
-      setNotice("候选已通过机械检查；可整批应用或放弃。");
+      setNotice(uiText("候选已通过机械检查；可整批应用或放弃。"));
     } catch (error: unknown) {
       setImprovementPhase("planned");
       report(error);
@@ -354,7 +380,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       });
       setImprovementPlan(plan);
       setImprovementPhase("planned");
-      setNotice("已按你的意见重出创作计划。");
+      setNotice(uiText("已按你的意见重出创作计划。"));
     } catch (error: unknown) {
       setImprovementPhase("planned");
       report(error);
@@ -374,7 +400,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       );
       setImprovementCandidate(candidate);
       setImprovementPhase("ready");
-      setNotice("候选已按你的意见修改并重新通过机械检查。");
+      setNotice(uiText("候选已按你的意见修改并重新通过机械检查。"));
     } catch (error: unknown) {
       setImprovementPhase("ready");
       report(error);
@@ -396,7 +422,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       setImprovementPhase("idle");
       await refresh();
       await openPackage(selected, "improve");
-      setNotice("设定候选已整批应用。");
+      setNotice(uiText("设定候选已整批应用。"));
     } catch (error: unknown) {
       setImprovementPhase("ready");
       report(error);
@@ -415,7 +441,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       setImprovementPlan(null);
       setImprovementCandidate(null);
       setImprovementPhase("idle");
-      setNotice("设定候选已放弃，当前树未改变。");
+      setNotice(uiText("设定候选已放弃，当前树未改变。"));
     } catch (error: unknown) {
       setImprovementPhase(previousPhase);
       report(error);
@@ -429,7 +455,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     setPromptPreviewPlayPreset(target ?? null);
     if (workspace?.model.configured !== true) {
       setScreen("model");
-      setNotice("请先保存并启用一份模型配置。");
+      setNotice(uiText("请先保存并启用一份模型配置。"));
       return;
     }
     setScreen("preview");
@@ -438,7 +464,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   async function createWorld(): Promise<void> {
     if (workspace?.model.configured !== true) {
       setScreen("model");
-      setNotice("请先保存并启用一份模型配置。");
+      setNotice(uiText("请先保存并启用一份模型配置。"));
       return;
     }
     try {
@@ -486,7 +512,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       name,
     });
     await refresh();
-    setNotice(`世界已重命名为“${name}”。`);
+    setNotice(uiText("世界已重命名为“{name}”。", { name }));
   }
 
   async function deleteWorld(world: {
@@ -495,21 +521,24 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   }): Promise<void> {
     if (
       !globalThis.confirm(
-        `删除世界“${world.title}”？它的全部提交、历史和存档都会从本机移除，且无法撤销。`,
+        uiText(
+          "删除世界“{title}”？它的全部提交、历史和存档都会从本机移除，且无法撤销。",
+          { title: world.title },
+        ),
       )
     )
       return;
     try {
       await client.request({ type: "world.delete", worldId: world.worldId });
       await refresh();
-      setNotice("世界已从本机删除。");
+      setNotice(uiText("世界已从本机删除。"));
     } catch (error: unknown) {
       report(error);
     }
   }
 
   function report(error: unknown): void {
-    setNotice(error instanceof Error ? error.message : "操作失败");
+    setNotice(error instanceof Error ? error.message : uiText("操作失败"));
   }
 
   if (workspace === null)
@@ -542,7 +571,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         key={worldId}
         client={client}
         worldId={worldId}
-        worldTitle={selectedWorld?.title ?? "未命名世界"}
+        worldTitle={selectedWorld?.title ?? uiText("未命名世界")}
         modelConfigured={workspace.model.configured}
         onBack={() => setScreen("home")}
         onConfigureModel={() => setScreen("model")}
@@ -558,18 +587,32 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     <main className="workspace-shell">
       <header className="workspace-header">
         <div>
-          <p className="eyebrow">Narraeon · 叙典 · 本地优先</p>
-          <h1>世界工作区</h1>
+          <p className="eyebrow">{uiText("Narraeon · 叙典 · 本地优先")}</p>
+          <h1>{uiText("世界工作区")}</h1>
           {screen === "home" && (
             <p className="workspace-header-copy">
-              创作内容包，连接 AI 主持，让每个世界独立演化。
+              {uiText("创作内容包，连接 AI 主持，让每个世界独立演化。")}
             </p>
           )}
         </div>
         <div className="workspace-header-actions">
+          <label className="workspace-locale-picker">
+            <span>{uiText("界面语言")}</span>
+            <select
+              aria-label={uiText("界面语言")}
+              value={workspace.preferences.locale}
+              disabled={localeSaving}
+              onChange={(event) =>
+                void saveLocale(event.target.value as AppLocale)
+              }
+            >
+              <option value="en">English</option>
+              <option value="zh-CN">{uiText("简体中文")}</option>
+            </select>
+          </label>
           <button
             className="workspace-model-button secondary-button"
-            aria-label="模型连接"
+            aria-label={uiText("模型连接")}
             disabled={
               filesDirty ||
               improvementActive ||
@@ -584,8 +627,8 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
               aria-hidden="true"
             />
             <span>
-              <small>模型连接</small>
-              <strong>{activeModel?.name ?? "尚未配置"}</strong>
+              <small>{uiText("模型连接")}</small>
+              <strong>{activeModel?.name ?? uiText("尚未配置")}</strong>
             </span>
           </button>
           {screen !== "home" && (
@@ -600,7 +643,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
               }
               onClick={() => setScreen("home")}
             >
-              返回工作区
+              {uiText("返回工作区")}
             </button>
           )}
         </div>
@@ -656,10 +699,13 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             <div>
               <p className="eyebrow">CONTENT PACKAGE</p>
               <h2 id="content-workbench-title">
-                {selectedPackage?.displayName ?? "内容包"}
+                {selectedPackage?.displayName ?? uiText("内容包")}
               </h2>
             </div>
-            <div className="content-mode-switch" aria-label="内容包编辑方式">
+            <div
+              className="content-mode-switch"
+              aria-label={uiText("内容包编辑方式")}
+            >
               <button
                 type="button"
                 className={
@@ -669,7 +715,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
                 disabled={improvementActive}
                 onClick={() => setContentMode("files")}
               >
-                手动编辑
+                {uiText("手动编辑")}
               </button>
               <button
                 type="button"
@@ -681,7 +727,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
                 aria-pressed={contentMode === "improve"}
                 onClick={() => setContentMode("improve")}
               >
-                AI 完善
+                {uiText("AI 完善")}
               </button>
             </div>
           </header>
@@ -704,7 +750,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
               onReset={() => {
                 setFiles(currentPackageFiles.map((file) => ({ ...file })));
                 setFilesDirty(false);
-                setNotice("已放弃未保存修改；内容包当前树未改变。");
+                setNotice(uiText("已放弃未保存修改；内容包当前树未改变。"));
               }}
               onCopy={() => void contentCommand("content.copy")}
               onExport={() => void exportPackage()}
@@ -746,7 +792,9 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         <PlayPresetScreen
           client={client}
           initialLibrary={workspace.playPresets}
-          recommendedTemplates={firstPartyPlayPresetTemplates}
+          recommendedTemplates={firstPartyPlayPresetTemplatesForLocale(
+            workspace.preferences.locale,
+          )}
           onLibraryChange={(playPresets) =>
             setWorkspace((current) =>
               current === null ? current : { ...current, playPresets },
@@ -783,7 +831,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       )}
       {screen === "create" && (
         <section className="panel-card">
-          <h2>新建世界</h2>
+          <h2>{uiText("新建世界")}</h2>
           <select
             value={selected}
             onChange={(event) => setSelected(event.target.value)}
@@ -795,7 +843,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             ))}
           </select>
           <button disabled={!selected} onClick={() => void createWorld()}>
-            从当前内容包创建
+            {uiText("从当前内容包创建")}
           </button>
         </section>
       )}
@@ -820,20 +868,24 @@ async function readFileAsBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.addEventListener("error", () =>
-      reject(reader.error ?? new Error("无法读取内容包 ZIP")),
+      reject(
+        reader.error ?? new Error("Unable to read the content package ZIP"),
+      ),
     );
     reader.addEventListener("abort", () =>
-      reject(new Error("内容包 ZIP 读取已取消")),
+      reject(new Error("Reading the content package ZIP was cancelled")),
     );
     reader.addEventListener("load", () => {
       if (typeof reader.result !== "string") {
-        reject(new Error("内容包 ZIP 读取结果无效"));
+        reject(new Error("The content package ZIP read result is invalid"));
         return;
       }
       const marker = ";base64,";
       const markerIndex = reader.result.indexOf(marker);
       if (markerIndex < 0) {
-        reject(new Error("内容包 ZIP 无法编码为上传数据"));
+        reject(
+          new Error("The content package ZIP could not be encoded for upload"),
+        );
         return;
       }
       resolve(reader.result.slice(markerIndex + marker.length));

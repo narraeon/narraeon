@@ -39,7 +39,7 @@ export class RuntimeServerPool {
     const deadline = Date.now() + 10_000;
     while (Date.now() < deadline) {
       if (child.exitCode !== null) {
-        throw new Error(`Runtime 启动前退出：${output}`);
+        throw new Error(`Runtime exited before startup: ${output}`);
       }
       try {
         const response = await fetch(`http://127.0.0.1:${port}/health`);
@@ -50,7 +50,7 @@ export class RuntimeServerPool {
       await delay(50);
     }
     await this.stop(child);
-    throw new Error(`等待 Runtime 启动超时：${output}`);
+    throw new Error(`Timed out waiting for Runtime startup: ${output}`);
   }
 
   async stop(child: ChildProcess): Promise<void> {

@@ -191,7 +191,7 @@ describe("WorldDocumentStore open/query Interface", () => {
 
     const catalog = snapshot.query({ kind: "catalog", directory: "" });
     if (catalog.kind !== "catalog" || !catalog.ok)
-      throw new Error("目录查询意外失败");
+      throw new Error("Directory query failed unexpectedly");
     expect(catalog.entries).toContainEqual(
       expect.objectContaining({
         logicalPath: "world/valid.yaml",
@@ -624,7 +624,7 @@ describe("WorldDocumentStore open/query Interface", () => {
       within: { document: { shortRef: "hero" } },
     });
     if (titleSearch.kind !== "literal_search" || !titleSearch.ok)
-      throw new Error("元信息字面搜索失败");
+      throw new Error("Metadata literal search failed");
     expect(
       titleSearch.matches.some(
         ({ text, range }) =>
@@ -676,7 +676,7 @@ describe("WorldDocumentStore open/query Interface", () => {
 
     const firstCatalog = snapshot.query({ kind: "catalog", limit: 1 });
     if (firstCatalog.kind !== "catalog" || !firstCatalog.ok)
-      throw new Error("首个目录页失败");
+      throw new Error("The first directory page failed");
     expect(firstCatalog.page).toMatchObject({
       start: 0,
       end: 1,
@@ -733,7 +733,7 @@ describe("WorldDocumentStore open/query Interface", () => {
       limit: 1,
     });
     if (firstSearch.kind !== "literal_search" || !firstSearch.ok)
-      throw new Error("首个搜索页失败");
+      throw new Error("The first search page failed");
     expect(firstSearch.page).toMatchObject({
       start: 0,
       end: 1,
@@ -758,7 +758,7 @@ describe("WorldDocumentStore open/query Interface", () => {
       maxBytes: 16,
     });
     if (firstRead.kind !== "read_document" || !firstRead.ok)
-      throw new Error("首个读取页失败");
+      throw new Error("The first read page failed");
     expect(firstRead.page).toMatchObject({
       start: 0,
       complete: false,
@@ -843,7 +843,7 @@ describe("WorldDocumentStore open/query Interface", () => {
       diagnostics: [expect.objectContaining({ code: "locator_not_found" })],
     });
     if (missingLocator.kind !== "error")
-      throw new Error("缺失 locator 应返回结构化失败");
+      throw new Error("A missing locator should return a structured failure");
     expect(missingLocator.document?.shortRef).toBe("hero");
 
     const extraFieldRequest = { kind: "catalog", limit: 10, semantic: true };

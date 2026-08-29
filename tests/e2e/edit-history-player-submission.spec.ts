@@ -46,7 +46,7 @@ test.beforeAll(async () => {
   );
   const address = provider.address();
   if (address === null || typeof address === "string")
-    throw new Error("历史提交编辑 fixture Provider 未获得端口");
+    throw new Error("The history-edit fixture Provider did not receive a port");
   providerUrl = `http://127.0.0.1:${address.port}/v1`;
 });
 
@@ -62,10 +62,11 @@ test("修改旧玩家提交会留在当前世界，创建分叉才生成独立�
   page,
 }) => {
   await page.goto("/");
+  await page.locator(".workspace-locale-picker select").selectOption("zh-CN");
   await runtime(page, {
     type: "model.save",
     connection: {
-      name: "历史分支 fixture",
+      name: "History branch fixture",
       presetId: "custom",
       provider: "chat_completions",
       baseUrl: providerUrl,
@@ -81,7 +82,7 @@ test("修改旧玩家提交会留在当前世界，创建分叉才生成独立�
   await runtime(page, {
     type: "content.rename",
     packageId: package_.localId,
-    name: "历史分支世界",
+    name: "History branch world",
   });
   await runtime(page, {
     type: "content.replace",
@@ -102,40 +103,50 @@ test("修改旧玩家提交会留在当前世界，创建分叉才生成独立�
 
   await page.reload();
   await page
-    .getByRole("button", { name: "打开世界：当前情境", exact: true })
+    .getByRole("button", { name: "打开世界：Current Situation", exact: true })
     .click();
 
-  responses.push("秦龙说八点在宿舍楼下集合。");
-  await page.getByLabel("你的行动").fill("我问秦龙几点集合。");
+  responses.push("Alex says to meet downstairs at eight.");
+  await page.getByLabel("你的行动").fill("I ask Alex when we are meeting.");
   await page.getByRole("button", { name: "全新上下文" }).click();
-  await expect(page.getByText("秦龙说八点在宿舍楼下集合。")).toBeVisible();
+  await expect(
+    page.getByText("Alex says to meet downstairs at eight."),
+  ).toBeVisible();
 
-  responses.push("秦龙点头，说会提前五分钟下楼。");
-  await page.getByLabel("你的行动").fill("那我提前五分钟下楼。");
+  responses.push("Alex nods and says he will arrive five minutes early.");
+  await page
+    .getByLabel("你的行动")
+    .fill("Then I will go downstairs five minutes early.");
   await page.getByRole("button", { name: "追加上下文" }).click();
-  await expect(page.getByText("秦龙点头，说会提前五分钟下楼。")).toBeVisible();
+  await expect(
+    page.getByText("Alex nods and says he will arrive five minutes early."),
+  ).toBeVisible();
 
   const editedPlayer = page
     .locator(".call-chain-player")
-    .filter({ hasText: "那我提前五分钟下楼。" });
+    .filter({ hasText: "Then I will go downstairs five minutes early." });
   await editedPlayer.getByRole("button", { name: "修改" }).click();
   await editedPlayer
     .getByLabel("修改后的行动")
-    .fill("那我们提前十五分钟集合。");
-  responses.push("秦龙答应七点四十五就在楼下等你。");
+    .fill("Then let's meet fifteen minutes early.");
+  responses.push("Alex agrees to wait downstairs at seven forty-five.");
   await page.getByRole("button", { name: "保存修改并继续" }).click();
 
   await expect(
-    page.getByRole("heading", { name: "当前情境", exact: true }),
+    page.getByRole("heading", { name: "Current Situation", exact: true }),
   ).toBeVisible();
   const revisedTimeline = page.getByLabel("调用链记录");
-  await expect(revisedTimeline).not.toContainText("那我提前五分钟下楼。");
   await expect(revisedTimeline).not.toContainText(
-    "秦龙点头，说会提前五分钟下楼。",
+    "Then I will go downstairs five minutes early.",
   );
-  await expect(revisedTimeline).toContainText("那我们提前十五分钟集合。");
+  await expect(revisedTimeline).not.toContainText(
+    "Alex nods and says he will arrive five minutes early.",
+  );
   await expect(revisedTimeline).toContainText(
-    "秦龙答应七点四十五就在楼下等你。",
+    "Then let's meet fifteen minutes early.",
+  );
+  await expect(revisedTimeline).toContainText(
+    "Alex agrees to wait downstairs at seven forty-five.",
   );
   const workspaceAfterRevision = await runtime<{
     worlds: { worldId: string; title: string }[];
@@ -145,7 +156,7 @@ test("修改旧玩家提交会留在当前世界，创建分叉才生成独立�
   ]);
   const copiedPlayer = page
     .locator(".call-chain-player")
-    .filter({ hasText: "我问秦龙几点集合。" });
+    .filter({ hasText: "I ask Alex when we are meeting." });
   await expect(
     copiedPlayer.getByRole("button", { name: "修改" }),
   ).toBeVisible();
@@ -153,19 +164,27 @@ test("修改旧玩家提交会留在当前世界，创建分叉才生成独立�
     copiedPlayer.getByRole("button", { name: "创建分叉" }),
   ).toBeVisible();
   expect(providerRequests).toHaveLength(3);
-  expect(providerRequests[2]).toContain("那我们提前十五分钟集合。");
-  expect(providerRequests[2]).not.toContain("那我提前五分钟下楼。");
+  expect(providerRequests[2]).toContain(
+    "Then let's meet fifteen minutes early.",
+  );
+  expect(providerRequests[2]).not.toContain(
+    "Then I will go downstairs five minutes early.",
+  );
 
   const revisedPlayer = page
     .locator(".call-chain-player")
-    .filter({ hasText: "那我们提前十五分钟集合。" });
+    .filter({ hasText: "Then let's meet fifteen minutes early." });
   await revisedPlayer.getByRole("button", { name: "创建分叉" }).click();
   await expect(
-    page.getByRole("heading", { name: "当前情境（分叉）" }),
+    page.getByRole("heading", { name: "Current Situation (fork)" }),
   ).toBeVisible();
   const forkTimeline = page.getByLabel("调用链记录");
-  await expect(forkTimeline).toContainText("那我们提前十五分钟集合。");
-  await expect(forkTimeline).not.toContainText("那我提前五分钟下楼。");
+  await expect(forkTimeline).toContainText(
+    "Then let's meet fifteen minutes early.",
+  );
+  await expect(forkTimeline).not.toContainText(
+    "Then I will go downstairs five minutes early.",
+  );
   const workspaceAfterFork = await runtime<{
     worlds: { worldId: string; title: string }[];
   }>(page, { type: "workspace.read" });
@@ -178,11 +197,15 @@ test("修改旧玩家提交会留在当前世界，创建分叉才生成独立�
 
   await page.getByRole("button", { name: "工作区", exact: true }).click();
   await page
-    .getByRole("button", { name: "打开世界：当前情境", exact: true })
+    .getByRole("button", { name: "打开世界：Current Situation", exact: true })
     .click();
   const currentTimeline = page.getByLabel("调用链记录");
-  await expect(currentTimeline).toContainText("那我们提前十五分钟集合。");
-  await expect(currentTimeline).not.toContainText("那我提前五分钟下楼。");
+  await expect(currentTimeline).toContainText(
+    "Then let's meet fifteen minutes early.",
+  );
+  await expect(currentTimeline).not.toContainText(
+    "Then I will go downstairs five minutes early.",
+  );
 });
 
 async function runtime<T = unknown>(
@@ -211,12 +234,13 @@ function contentFiles() {
   return [
     {
       path: "opening.md",
-      contents: "宿舍门在你身后合上。秦龙正等你先开口。\n",
+      contents:
+        "The dormitory door closes behind you, and Alex waits for you to speak.\n",
     },
     {
       path: "world/current-situation.yaml",
       contents:
-        "$document:\n  id: situation.current\n  ref: current-situation\n  title: 当前情境\n  summary: 宿舍里的当前局面。\n  aliases: []\n情况: 秦龙正在整理球衣。\n",
+        "$document:\n  id: situation.current\n  ref: current-situation\n  title: Current Situation\n  summary: The current situation in the dormitory.\n  aliases: []\nSituation: Alex is folding a jersey.\n",
     },
     {
       path: "control/frame.yaml",
@@ -225,7 +249,8 @@ function contentFiles() {
     },
     {
       path: "control/blocks/world.md",
-      contents: "# 世界规则\n\n保持事实一致，不代理玩家行动。\n",
+      contents:
+        "# World rules\n\nKeep facts consistent and do not act for the player.\n",
     },
     {
       path: "control/player-views.yaml",

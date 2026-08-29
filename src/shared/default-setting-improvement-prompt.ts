@@ -1,3 +1,5 @@
+import type { AppLocale } from "../protocol/appPreferences.ts";
+
 /**
  * Canonical author-owned guidance for AI-assisted setting improvement.
  *
@@ -9,7 +11,7 @@
 export const defaultSettingImprovementPromptPath =
   "prompts/setting-improvement.md";
 
-export const defaultSettingImprovementPrompt = `# 系统推荐的设定完善方法
+export const defaultSettingImprovementPromptZhCN = `# 系统推荐的设定完善方法
 
 把本次目标理解为对已有内容包设定的完善，而不是默认从零重建一个新世界。用户直接注入的当前文件是已经成立的事实和约束；其他文件也应按需读取。保留仍然成立的内容，只修改目标真正涉及的部分。
 
@@ -40,3 +42,46 @@ export const defaultSettingImprovementPrompt = `# 系统推荐的设定完善方
 
 静态提示材料应尽量稳定；会随游玩持续改写的事实放进当前情境或其他自然承载它的世界文档。只有确实需要固定注入正文的材料才长期占用提示词位置。
 `;
+
+export const defaultSettingImprovementPromptEn = `# Recommended setting-improvement method
+
+Treat the current goal as an improvement to an existing content-package setting, not as an instruction to rebuild a new world from scratch. Files injected directly by the user are established facts and constraints; read other files as needed. Preserve anything that still holds and change only what the goal actually affects.
+
+## Understand first, then create
+
+When a visible plan is requested, keep it concise: state the main experience the player wants, what will be preserved, adjusted, or established, the tone and boundaries, and only the assumptions that are genuinely necessary. Omit loops, conflicts, multi-act structures, or secondary experiences that do not apply. Do not invent material just to fill a template.
+
+Express the setting through human-readable world documents. Organize characters, places, key items, rules, and the current situation around their natural owners. Put hosting methods, genre boundaries, and world-specific creative requirements in the world prompt frame. Do not disguise wishes, predictions, or planned future branches as facts that have already occurred when the world is created.
+
+## Opening
+
+The opening is the first page of this interactive novel; after reading it, the player will write their first action. Establish the scene through the environment, light, sound, other characters' actions, and events already in progress. Imply mood and relationships through detail instead of listing lore or introducing characters one by one. Everyone present should already be occupied with something: the world was moving before the player arrived, so do not freeze the cast as scenery waiting to be activated.
+
+Make the last sentence a specific action someone takes or a specific line they say. If someone asks a question, write the actual question; if they hand something over, show how they do it. The player can infer that it is their turn, so end with an event rather than a statement about the scene. Do not end with “no one speaks,” “everyone looks at you,” or “they wait for your answer.” Do not list choices at the end; that is the host's voice, not part of the novel.
+
+Do not decide the player's action, dialogue, or inner thoughts: there is no player input yet to support them. Any fact in the opening that will constrain the first action must also be written to the world document that naturally owns it; it cannot exist only in the opening.
+
+## World facts and durable state
+
+- World documents contain only facts and stable rules that already hold when the world is created. Wishes, intentions, attempts, plans, possibilities, predictions, planned turns, and future branches are not established facts.
+- Write each durable piece of information to its natural owner first. Ordinary temporary objects do not need their own documents; promote an object only when it must be independently referenced, transferred, or tracked through its lifecycle.
+- The current situation contains only what remains true after the opening action and immediate reactions finish: the present location, characters still present, events still in progress, and the few constraints whose omission would immediately conflict with the first action. It is not a background summary, event log, or list of future branches.
+- Catalog summaries must be informative enough for the host to decide whether to read the full body, rather than saying only “information about X.” Titles and summaries must remain accurate after the body changes.
+
+## World prompt frame
+
+The host preset already provides cross-world rules for prose, player agency, adjudication, and state maintenance. The content package's world prompt frame contains only world-specific material: genre boundaries, distinctive style, the document types available in this world, where each kind of result belongs, and any special rules. Do not repeat the general criteria or explain how Runtime orchestrates tools.
+
+Keep static prompt material as stable as possible. Facts that will change repeatedly during play belong in the current situation or another world document that naturally owns them. Reserve permanent prompt space only for material whose full text truly must be injected every time.
+`;
+
+export const defaultSettingImprovementPrompt =
+  defaultSettingImprovementPromptEn;
+
+export function defaultSettingImprovementPromptForLocale(
+  locale: AppLocale,
+): string {
+  return locale === "zh-CN"
+    ? defaultSettingImprovementPromptZhCN
+    : defaultSettingImprovementPromptEn;
+}

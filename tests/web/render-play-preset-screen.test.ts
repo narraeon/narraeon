@@ -13,8 +13,8 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import type { V1Request } from "../../src/protocol/v1.ts";
 import { firstPartyActionChoicesPresetFiles } from "../../src/shared/first-party-action-choices.ts";
 import {
-  defaultSettingImprovementPrompt,
   defaultSettingImprovementPromptPath,
+  defaultSettingImprovementPromptZhCN,
 } from "../../src/shared/default-setting-improvement-prompt.ts";
 import {
   PlayPresetScreen,
@@ -179,7 +179,7 @@ describe("玩法预设工作台", () => {
     expect(screen.getByRole("heading", { name: "玩法预设" })).toBeTruthy();
   });
 
-  test("以六个任务区收纳流程、设定提示、内容、文件和预览，管理操作不再独占分页", async () => {
+  test("以六个任务区收纳流程、设定提示、内容、文件和Preview，管理操作不再独占分页", async () => {
     const base: Preset = {
       id: "organized",
       name: "清晰玩法",
@@ -280,7 +280,7 @@ describe("玩法预设工作台", () => {
     ).not.toContain('type: "bridge.ready"');
   });
 
-  test("常用配置直接显示提示内容、解释频道与核心 YAML，并在原页嵌入预览", async () => {
+  test("常用配置直接显示提示内容、解释频道与核心 YAML，并在原页嵌入Preview", async () => {
     const structure = structuredClone(editorStructure);
     structure.mounts = [{ channel: "player.options", mount: "composer_below" }];
     structure.extensionRefs = [
@@ -354,8 +354,8 @@ describe("玩法预设工作台", () => {
         renderPromptPreview: ({ revision }: { revision: string }) =>
           createElement(
             "div",
-            { "aria-label": "嵌入的真实提示词预览" },
-            `原页预览 ${revision}`,
+            { "aria-label": "嵌入的真实提示词Preview" },
+            `原页Preview ${revision}`,
           ),
       }),
     );
@@ -364,12 +364,12 @@ describe("玩法预设工作台", () => {
       screen.getByLabelText<HTMLTextAreaElement>(
         "编辑提示内容 prompts/narrate.md",
       ).value,
-    ).toContain("可见叙事");
+    ).toContain("Player-visible narrative");
     expect(
       screen.getByLabelText<HTMLTextAreaElement>(
         "编辑提示内容 prompts/options.md",
       ).value,
-    ).toContain("下一步建议");
+    ).toContain("Next-step ideas");
     expect(screen.queryByText("提示块路径")).toBeNull();
 
     fireEvent.click(screen.getByRole("tab", { name: /设定完善/u }));
@@ -378,7 +378,7 @@ describe("玩法预设工作台", () => {
       screen.getByLabelText<HTMLTextAreaElement>(
         `编辑提示内容 ${defaultSettingImprovementPromptPath}`,
       ).value,
-    ).toContain("系统推荐的设定完善方法");
+    ).toContain("Recommended setting-improvement method");
     expect(screen.getByText(/工具定义、参数、说明/u)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("tab", { name: /界面扩展/u }));
@@ -396,7 +396,7 @@ describe("玩法预设工作台", () => {
       screen.getByLabelText<HTMLTextAreaElement>(
         "编辑提示块内容 blocks/style.md",
       ).value,
-    ).toContain("互动式小说");
+    ).toContain("interactive novel");
 
     fireEvent.click(screen.getByRole("tab", { name: /高级文件/u }));
     const yamlGuide = screen.getByLabelText("三个核心 YAML 文件的用途");
@@ -410,8 +410,8 @@ describe("玩法预设工作台", () => {
     ).toBe("preset.yaml");
 
     fireEvent.click(screen.getByRole("tab", { name: /产物预览/u }));
-    expect(screen.getByLabelText("嵌入的真实提示词预览").textContent).toBe(
-      "原页预览 rev-readable",
+    expect(screen.getByLabelText("嵌入的真实提示词Preview").textContent).toBe(
+      "原页Preview rev-readable",
     );
     expect(
       await screen.findByRole("heading", { name: "页面上的效果" }),
@@ -493,7 +493,7 @@ describe("玩法预设工作台", () => {
     expect(
       screen.getByLabelText<HTMLTextAreaElement>("系统推荐设定完善提示词")
         .value,
-    ).toBe(defaultSettingImprovementPrompt);
+    ).toBe(defaultSettingImprovementPromptZhCN);
     expect(screen.getByText("已保存")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "写入预设并编辑" }));
@@ -670,17 +670,17 @@ describe("玩法预设工作台", () => {
       }),
     );
     pending.get("first:rev-first")?.(
-      workbenchSnapshot(first.id, first.revision, "旧预览"),
+      workbenchSnapshot(first.id, first.revision, "旧Preview"),
     );
     await Promise.resolve();
-    expect(screen.queryByText("旧预览")).toBeNull();
+    expect(screen.queryByText("旧Preview")).toBeNull();
     pending.get("second:rev-second")?.(
-      workbenchSnapshot(second.id, second.revision, "第二玩法预览"),
+      workbenchSnapshot(second.id, second.revision, "第二玩法Preview"),
     );
     await waitFor(() =>
       expect(
         screen.getByRole("list", { name: "工作台静态错误" }).textContent,
-      ).toContain("第二玩法预览"),
+      ).toContain("第二玩法Preview"),
     );
   });
 
@@ -704,7 +704,7 @@ describe("玩法预设工作台", () => {
         requests.push(request);
         if (request.type === "play.workbench.read")
           return Promise.resolve(
-            workbenchSnapshot(base.id, base.revision, "预览"),
+            workbenchSnapshot(base.id, base.revision, "Preview"),
           );
         if (request.type === "play.save") {
           current = {

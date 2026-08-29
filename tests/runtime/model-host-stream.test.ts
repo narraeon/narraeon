@@ -22,13 +22,13 @@ test("Chat Completions 游玩请求用 SSE 聚合正文、reasoning、工具与 
           choices: [
             {
               index: 0,
-              delta: { role: "assistant", reasoning_content: "分析" },
+              delta: { role: "assistant", reasoning_content: "Analysis" },
             },
           ],
         }),
         data({
           id: "chat-stream-1",
-          choices: [{ index: 0, delta: { content: "门响了。" } }],
+          choices: [{ index: 0, delta: { content: "The door creaks." } }],
         }),
         data({
           id: "chat-stream-1",
@@ -89,14 +89,14 @@ test("Chat Completions 游玩请求用 SSE 聚合正文、reasoning、工具与 
     stream_options: { include_usage: true },
   });
   expect(deltas).toEqual([
-    { kind: "reasoning", text: "分析" },
-    { kind: "text", text: "门响了。" },
+    { kind: "reasoning", text: "Analysis" },
+    { kind: "text", text: "The door creaks." },
     { kind: "tool", text: '{"ref":' },
     { kind: "tool", text: '"@scene"}' },
   ]);
   expect(response).toMatchObject({
-    text: "门响了。",
-    reasoningContent: "分析",
+    text: "The door creaks.",
+    reasoningContent: "Analysis",
     toolCalls: [
       {
         id: "call-stream-1",
@@ -109,8 +109,8 @@ test("Chat Completions 游玩请求用 SSE 聚合正文、reasoning、工具与 
       protocol: "chat_completions",
       assistantMessage: {
         role: "assistant",
-        content: "门响了。",
-        reasoning_content: "分析",
+        content: "The door creaks.",
+        reasoning_content: "Analysis",
         tool_calls: [
           {
             id: "call-stream-1",
@@ -146,7 +146,7 @@ test("OpenAI Responses 游玩请求从 response.completed 取得完整 continuat
       id: "message-stream-1",
       role: "assistant",
       status: "completed",
-      content: [{ type: "output_text", text: "风停了。" }],
+      content: [{ type: "output_text", text: "The wind stops." }],
     },
   ];
   const completed = {
@@ -161,7 +161,7 @@ test("OpenAI Responses 游玩请求从 response.completed 取得完整 continuat
       [
         namedData("response.reasoning_text.delta", {
           type: "response.reasoning_text.delta",
-          delta: "检查",
+          delta: "Check",
         }),
         namedData("response.function_call_arguments.delta", {
           type: "response.function_call_arguments.delta",
@@ -169,7 +169,7 @@ test("OpenAI Responses 游玩请求从 response.completed 取得完整 continuat
         }),
         namedData("response.output_text.delta", {
           type: "response.output_text.delta",
-          delta: "风停了。",
+          delta: "The wind stops.",
         }),
         namedData("response.completed", {
           type: "response.completed",
@@ -187,12 +187,12 @@ test("OpenAI Responses 游玩请求从 response.completed 取得完整 continuat
 
   expect(requestBody(fetch_)).toMatchObject({ stream: true, store: false });
   expect(deltas).toEqual([
-    { kind: "reasoning", text: "检查" },
+    { kind: "reasoning", text: "Check" },
     { kind: "tool", text: '{"ref":"@scene"}' },
-    { kind: "text", text: "风停了。" },
+    { kind: "text", text: "The wind stops." },
   ]);
   expect(response).toMatchObject({
-    text: "风停了。",
+    text: "The wind stops.",
     toolCalls: [
       {
         id: "call-responses-stream-1",
@@ -232,7 +232,7 @@ test("Anthropic Messages 游玩请求用 SSE 保留 thinking 签名与完整 con
         namedData("content_block_delta", {
           type: "content_block_delta",
           index: 0,
-          delta: { type: "thinking_delta", thinking: "先检查" },
+          delta: { type: "thinking_delta", thinking: "Check first" },
         }),
         namedData("content_block_delta", {
           type: "content_block_delta",
@@ -251,7 +251,7 @@ test("Anthropic Messages 游玩请求用 SSE 保留 thinking 签名与完整 con
         namedData("content_block_delta", {
           type: "content_block_delta",
           index: 1,
-          delta: { type: "text_delta", text: "灯亮了。" },
+          delta: { type: "text_delta", text: "The light comes on." },
         }),
         namedData("content_block_stop", {
           type: "content_block_stop",
@@ -299,14 +299,14 @@ test("Anthropic Messages 游玩请求用 SSE 保留 thinking 签名与完整 con
 
   expect(requestBody(fetch_)).toMatchObject({ stream: true });
   expect(deltas).toEqual([
-    { kind: "reasoning", text: "先检查" },
-    { kind: "text", text: "灯亮了。" },
+    { kind: "reasoning", text: "Check first" },
+    { kind: "text", text: "The light comes on." },
     { kind: "tool", text: '{"ref":' },
     { kind: "tool", text: '"@scene"}' },
   ]);
   expect(response).toMatchObject({
-    text: "灯亮了。",
-    reasoningContent: "先检查",
+    text: "The light comes on.",
+    reasoningContent: "Check first",
     toolCalls: [
       {
         id: "tool-anthropic-stream-1",
@@ -327,10 +327,10 @@ test("Anthropic Messages 游玩请求用 SSE 保留 thinking 签名与完整 con
       content: [
         {
           type: "thinking",
-          thinking: "先检查",
+          thinking: "Check first",
           signature: "opaque-signature",
         },
-        { type: "text", text: "灯亮了。" },
+        { type: "text", text: "The light comes on." },
         {
           type: "tool_use",
           id: "tool-anthropic-stream-1",
@@ -343,12 +343,15 @@ test("Anthropic Messages 游玩请求用 SSE 保留 thinking 签名与完整 con
 });
 
 test.each([
-  ["chat_completions", data({ choices: [{ delta: { content: "未完成" } }] })],
+  [
+    "chat_completions",
+    data({ choices: [{ delta: { content: "Incomplete" } }] }),
+  ],
   [
     "openai_responses",
     namedData("response.output_text.delta", {
       type: "response.output_text.delta",
-      delta: "未完成",
+      delta: "Incomplete",
     }),
   ],
   [
@@ -396,7 +399,7 @@ function exchange(provider: ModelProviderKind): ModelHostExchange {
       modelId: provider === "anthropic_messages" ? "claude-test" : "gpt-test",
       contextWindowTokens: 32_000,
       maxOutputTokens: 2_000,
-      playerInput: "检查流式游玩。",
+      playerInput: "Check streaming play.",
       playerInputPlacement: "bootstrap",
     }),
   );

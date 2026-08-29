@@ -63,7 +63,7 @@ export function createZip(
     ? options.comment
     : Buffer.from(options.comment ?? "", "utf8");
   if (comment.byteLength > 65_535) {
-    throw new RangeError("zip fixture comment 超过 65535 字节");
+    throw new RangeError("ZIP fixture comment exceeds 65,535 bytes");
   }
   end.writeUInt16LE(comment.byteLength, 20);
   return Buffer.concat([...localRecords, centralDirectory, end, comment]);

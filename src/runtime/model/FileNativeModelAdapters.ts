@@ -2,6 +2,11 @@ import { createHash } from "node:crypto";
 import { appendFile, chmod, mkdir, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 
+import {
+  defaultAppLocale,
+  type AppLocale,
+} from "../../protocol/appPreferences.ts";
+
 import type {
   ModelHost,
   ModelHostAppendItem,
@@ -596,7 +601,9 @@ async function capturedProviderOperation<Value extends object>(
               ? "provider_rejection"
               : "provider_response_format",
         message:
-          error instanceof Error ? error.message : "Provider 请求处理失败。",
+          error instanceof Error
+            ? error.message
+            : "Provider request processing failed.",
         error: errorDescription(error),
       };
       await failureLog.recordFailure({ exchange, failures: [failure] });
@@ -628,6 +635,7 @@ export class FileNativeSettingAuthorProvider implements SettingAuthorAdapter {
   readonly #fetch: typeof fetch;
   readonly #failureLog: AiFailureRecorder | undefined;
   readonly #operationId: string | undefined;
+  readonly #locale: AppLocale;
   #exchange = 0;
 
   constructor(
@@ -636,12 +644,14 @@ export class FileNativeSettingAuthorProvider implements SettingAuthorAdapter {
     diagnostics?: {
       failureLog?: AiFailureRecorder;
       operationId?: string;
+      locale?: AppLocale;
     },
   ) {
     this.#connection = structuredClone(connection);
     this.#fetch = fetchImplementation;
     this.#failureLog = diagnostics?.failureLog;
     this.#operationId = diagnostics?.operationId;
+    this.#locale = diagnostics?.locale ?? defaultAppLocale;
   }
 
   async next(request: Parameters<SettingAuthorAdapter["next"]>[0]) {
@@ -655,7 +665,9 @@ export class FileNativeSettingAuthorProvider implements SettingAuthorAdapter {
       requestAttempt: 1,
       exchange: this.#exchange,
     };
-    const tools = request.tools.map(settingToolDefinition);
+    const tools = request.tools.map((name) =>
+      settingToolDefinition(name, this.#locale),
+    );
     if (this.#connection.provider === "chat_completions") {
       const body = {
         model: this.#connection.modelId,
@@ -705,7 +717,10 @@ export class FileNativeSettingAuthorProvider implements SettingAuthorAdapter {
             }),
           );
           if (!response.ok) throw await providerError(response);
-          if (response.body === null) throw new Error("创作响应缺少流式正文");
+          if (response.body === null)
+            throw new Error(
+              "The authoring response is missing a streaming body",
+            );
           const streamed = await aggregateChatSettingStream(
             response.body,
             diagnosticDelta,
@@ -815,7 +830,8 @@ export class FileNativeSettingAuthorProvider implements SettingAuthorAdapter {
           }),
         );
         if (!response.ok) throw await providerError(response);
-        if (response.body === null) throw new Error("创作响应缺少流式正文");
+        if (response.body === null)
+          throw new Error("The authoring response is missing a streaming body");
         const streamed = await aggregateAnthropicSettingStream(
           response.body,
           diagnosticDelta,
@@ -854,7 +870,9 @@ function settingAuthorUsage(
 
 function settingToolDefinition(
   name: (typeof documentCandidateSettingTools)[number],
+  locale: AppLocale = defaultAppLocale,
 ) {
+  const descriptions = settingToolDescriptions[locale];
   const schema = (properties: Record<string, object>, required: string[]) => ({
     type: "object",
     additionalProperties: false,
@@ -867,8 +885,7 @@ function settingToolDefinition(
   const limit = { type: "integer", minimum: 1, maximum: 100 };
   const definitions = {
     setting_list: {
-      description:
-        "通过当前候选文档快照列出 world 或 world/ 子目录；根目录同时显示 opening／control 等专用文件。分页 cursor 只能用于产生它的同一候选快照和相同查询。",
+      description: descriptions.setting_list,
       schema: schema(
         {
           // World document paths accept any segment that is not "."/".."; an
@@ -885,8 +902,7 @@ function settingToolDefinition(
       ),
     },
     setting_search: {
-      description:
-        "通过当前候选文档快照原文字面搜索 world 文档；within 可取 world/ 目录、world/ 文档路径、@短引用或文档身份。",
+      description: descriptions.setting_search,
       schema: schema(
         {
           query: { type: "string", minLength: 1, maxLength: 256 },
@@ -899,8 +915,7 @@ function settingToolDefinition(
       ),
     },
     setting_read: {
-      description:
-        "通过当前候选文档快照按 world/ 路径、@短引用或文档身份精确读取世界文档正文；opening／control 使用精确路径专用读取。只有读完全部分页才获得写授权，此后不因其他修改失效。",
+      description: descriptions.setting_read,
       schema: schema(
         {
           path,
@@ -911,13 +926,11 @@ function settingToolDefinition(
       ),
     },
     setting_write_file: {
-      description:
-        "创建或整份写入一个候选文件，path 一律是完整逻辑路径：world/ 下的 .yaml 或 .md 世界文档、control/frame.yaml、control/player-views.yaml、control/blocks/*.md，或根级 opening.md。新建世界文档写完整原文并带 $document 技术头；覆盖既有世界文档可以省略 $document，直接写回 setting_read 返回的正文，Runtime 会沿用原有 title、summary 和 aliases。id 和 ref 始终由 Runtime 决定——新建时分配，覆盖时保留原值，你写什么都不会报错。既有 world 文档和既有 opening.md 必须先完整读取。",
+      description: descriptions.setting_write_file,
       schema: schema({ path, contents: text }, ["path", "contents"]),
     },
     setting_patch: {
-      description:
-        '通过 revision 按文档 ID、@短引用或 world/ 逻辑路径 patch 一个 YAML map 节点；op 必须明确选择 add（新增）或 replace（替换），locator 是稳定 map-key 数组，例如 ["关系","对玩家","信任"]。既有文档必须已完整读取。Markdown 文档请用 setting_write_file 整份重写。',
+      description: descriptions.setting_patch,
       schema: schema(
         {
           document: text,
@@ -933,18 +946,15 @@ function settingToolDefinition(
       ),
     },
     setting_move: {
-      description:
-        "通过 revision 把已完整读取的 world 文档移动到新的 world/ 逻辑路径；用于修复 catalog 目录关联，保留文档内容和身份。",
+      description: descriptions.setting_move,
       schema: schema({ from: text, to: path }, ["from", "to"]),
     },
     setting_preview_candidate: {
-      description:
-        "对当前隔离候选运行内容树机械检查和真实 Prompt Preview，并返回路径关联、slot、引用和材料覆盖诊断；所有最终修改后调用，通过后才可结束候选。未通过属于正常迭代，修复后重新调用即可。",
+      description: descriptions.setting_preview_candidate,
       schema: schema({}, []),
     },
     setting_finish_candidate: {
-      description:
-        "setting_preview_candidate 已对最终修改返回自检通过后调用，可以紧接在同一模型响应的自检之后；必须是当前响应的最后一个调用，且不得携带参数。",
+      description: descriptions.setting_finish_candidate,
       schema: schema({}, []),
     },
   } satisfies Record<
@@ -953,6 +963,48 @@ function settingToolDefinition(
   >;
   return { name, ...definitions[name] };
 }
+
+const settingToolDescriptions: Record<
+  AppLocale,
+  Record<(typeof documentCandidateSettingTools)[number], string>
+> = {
+  en: {
+    setting_list:
+      "List the world root or a world/ subdirectory from the current candidate-document snapshot. The root also lists specialized opening and control files. A pagination cursor is valid only for the same query against the candidate snapshot that produced it.",
+    setting_search:
+      "Search literal source text in world documents from the current candidate snapshot. within may be a world/ directory, world/ document path, @short-ref, or document identity.",
+    setting_read:
+      "Precisely read a world-document body from the current candidate snapshot by world/ path, @short-ref, or document identity. Read opening and control files through their exact dedicated paths. Write authorization is granted only after every page has been read; later candidate changes do not revoke it.",
+    setting_write_file:
+      "Create or replace one complete candidate file. path is always a full logical path: a .yaml or .md world document under world/, control/frame.yaml, control/player-views.yaml, control/blocks/*.md, or the root opening.md. A new world document must include a complete body with its $document technical header. When replacing an existing world document, you may omit $document and write back the body returned by setting_read; Runtime preserves the existing title, summary, and aliases. Runtime always decides id and ref: it allocates them for a new document and preserves them for an existing one, regardless of values you supply. Existing world documents and an existing opening.md must be read completely before replacement.",
+    setting_patch:
+      'Patch one YAML map node by document id, @short-ref, or world/ logical path and revision. op must explicitly be add or replace. locator is a stable array of map keys, for example ["relationships","player","trust"]. The existing document must already have been read completely. Rewrite Markdown documents in full with setting_write_file.',
+    setting_move:
+      "Move a completely read world document to a new world/ logical path by revision. Use this to repair catalog-directory association while preserving document content and identity.",
+    setting_preview_candidate:
+      "Run mechanical content-tree checks and the real Prompt Preview against the isolated candidate, returning diagnostics for path association, slots, references, and material coverage. Call this after all final changes; the candidate may finish only after it passes. A failed preview is a normal iteration: repair the diagnostics and call it again.",
+    setting_finish_candidate:
+      "Call only after setting_preview_candidate has passed for the final changes. It may immediately follow the passing preview in the same model response. It must be the last call in that response and takes no arguments.",
+  },
+  "zh-CN": {
+    setting_list:
+      "通过当前候选文档快照列出 world 或 world/ 子目录；根目录同时显示 opening／control 等专用文件。分页 cursor 只能用于产生它的同一候选快照和相同查询。",
+    setting_search:
+      "通过当前候选文档快照原文字面搜索 world 文档；within 可取 world/ 目录、world/ 文档路径、@短引用或文档身份。",
+    setting_read:
+      "通过当前候选文档快照按 world/ 路径、@短引用或文档身份精确读取世界文档正文；opening／control 使用精确路径专用读取。只有读完全部分页才获得写授权，此后不因其他修改失效。",
+    setting_write_file:
+      "创建或整份写入一个候选文件，path 一律是完整逻辑路径：world/ 下的 .yaml 或 .md 世界文档、control/frame.yaml、control/player-views.yaml、control/blocks/*.md，或根级 opening.md。新建世界文档写完整原文并带 $document 技术头；覆盖既有世界文档可以省略 $document，直接写回 setting_read 返回的正文，Runtime 会沿用原有 title、summary 和 aliases。id 和 ref 始终由 Runtime 决定——新建时分配，覆盖时保留原值，你写什么都不会报错。既有 world 文档和既有 opening.md 必须先完整读取。",
+    setting_patch:
+      '通过 revision 按文档 ID、@短引用或 world/ 逻辑路径 patch 一个 YAML map 节点；op 必须明确选择 add（新增）或 replace（替换），locator 是稳定 map-key 数组，例如 ["关系","对玩家","信任"]。既有文档必须已完整读取。Markdown 文档请用 setting_write_file 整份重写。',
+    setting_move:
+      "通过 revision 把已完整读取的 world 文档移动到新的 world/ 逻辑路径；用于修复 catalog 目录关联，保留文档内容和身份。",
+    setting_preview_candidate:
+      "对当前隔离候选运行内容树机械检查和真实 Prompt Preview，并返回路径关联、slot、引用和材料覆盖诊断；所有最终修改后调用，通过后才可结束候选。未通过属于正常迭代，修复后重新调用即可。",
+    setting_finish_candidate:
+      "setting_preview_candidate 已对最终修改返回自检通过后调用，可以紧接在同一模型响应的自检之后；必须是当前响应的最后一个调用，且不得携带参数。",
+  },
+};
 
 function items(request: ModelHostExchange): ModelHostAppendItem[] {
   return request.appended;
@@ -1141,7 +1193,7 @@ async function providerError(response: Response): Promise<Error> {
     body: text,
   });
   return new ModelHostFailureError(
-    `Provider 请求失败：${response.status} ${text}`,
+    `Provider request failed: ${response.status} ${text}`,
   );
 }
 
@@ -1418,7 +1470,8 @@ async function openAIResponsesRequest(input: {
 }
 
 function cloneResponseOutput(value: unknown): unknown[] {
-  if (!Array.isArray(value)) throw new Error("Responses output 必须是数组");
+  if (!Array.isArray(value))
+    throw new Error("Responses output must be an array");
   const source = JSON.stringify(value);
   return JSON.parse(source) as unknown[];
 }
@@ -1599,7 +1652,7 @@ async function parseProviderJson(
   try {
     return JSON.parse(source) as unknown;
   } catch {
-    throw new Error(`${label} 响应不是合法 JSON`);
+    throw new Error(`${label} response is not valid JSON`);
   }
 }
 
@@ -1610,9 +1663,12 @@ async function providerJson(
   try {
     return await parseProviderJson(response, label);
   } catch (error: unknown) {
-    throw new ModelHostOutcomeUnknownError(`${label} 已派发但响应无法确认`, {
-      cause: error,
-    });
+    throw new ModelHostOutcomeUnknownError(
+      `${label} was dispatched but its response could not be confirmed`,
+      {
+        cause: error,
+      },
+    );
   }
 }
 
@@ -1631,7 +1687,9 @@ async function providerStreamResult<Value>(
   read: (body: ReadableStream<Uint8Array>) => Promise<Value>,
 ): Promise<Value> {
   if (response.body === null)
-    throw new ModelHostOutcomeUnknownError(`${label} 已派发但流式响应缺少正文`);
+    throw new ModelHostOutcomeUnknownError(
+      `${label} was dispatched but its streaming response has no body`,
+    );
   try {
     return await read(response.body);
   } catch (error: unknown) {
@@ -1641,7 +1699,7 @@ async function providerStreamResult<Value>(
     )
       throw error;
     throw new ModelHostOutcomeUnknownError(
-      `${label} 已派发但流式响应无法确认`,
+      `${label} was dispatched but its streaming response could not be confirmed`,
       { cause: error },
     );
   }
@@ -1656,19 +1714,24 @@ async function dispatchProviderRequest(
   try {
     return await fetchImplementation(url, init);
   } catch (error: unknown) {
-    throw new ModelHostOutcomeUnknownError(`${label} 请求已派发但结果未知`, {
-      cause: error,
-    });
+    throw new ModelHostOutcomeUnknownError(
+      `${label} request was dispatched but its outcome is unknown`,
+      {
+        cause: error,
+      },
+    );
   }
 }
 
 function unknownProviderResponse(label: string): ModelHostOutcomeUnknownError {
-  return new ModelHostOutcomeUnknownError(`${label} 已派发但响应形状无法确认`);
+  return new ModelHostOutcomeUnknownError(
+    `${label} was dispatched but its response shape could not be confirmed`,
+  );
 }
 
 function asArguments(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value))
-    throw new Error("创作工具参数必须是对象");
+    throw new Error("Authoring tool arguments must be an object");
   return value as Record<string, unknown>;
 }
 

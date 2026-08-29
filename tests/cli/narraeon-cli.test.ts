@@ -76,7 +76,7 @@ test("web 子命令使用显式端口和数据根，并允许禁止打开浏览�
     port: 45678,
   });
   expect(opened).toBe(false);
-  expect(capture.output).toBe("Narraeon 已启动：http://127.0.0.1:45678\n");
+  expect(capture.output).toBe("Narraeon started: http://127.0.0.1:45678\n");
 });
 
 test("CLI 等待服务启动后才打开页面", async () => {
@@ -110,7 +110,7 @@ test("目标端口已有 Narraeon 时复用服务而不创建第二个 Runtime",
       inspection: "narraeon",
     }),
     startServer: () => {
-      throw new Error("不应启动 Runtime");
+      throw new Error("The Runtime should not start");
     },
     openUrl: (url) => {
       events.push(url);
@@ -139,7 +139,7 @@ test("非 Narraeon 端口占用在初始化 Runtime 前失败", async () => {
         return Promise.resolve(fakeServer);
       },
     }),
-  ).rejects.toThrow("端口 4317 已被其他服务占用");
+  ).rejects.toThrow("Port 4317 is already in use");
   expect(started).toBe(false);
 });
 
@@ -158,7 +158,7 @@ test("监听竞争产生 EADDRINUSE 时返回同一条可理解错误", async ()
           }),
         ),
     }),
-  ).rejects.toThrow("端口 4317 已被其他服务占用");
+  ).rejects.toThrow("Port 4317 is already in use");
 });
 
 test("浏览器打开失败不会关闭已经启动的服务", async () => {
@@ -170,12 +170,12 @@ test("浏览器打开失败不会关闭已经启动的服务", async () => {
       inspection: "available",
     }),
     startServer: () => Promise.resolve(fakeServer),
-    openUrl: () => Promise.reject(new Error("没有图形会话")),
+    openUrl: () => Promise.reject(new Error("No graphical session")),
   });
 
   expect(result.kind).toBe("started");
-  expect(capture.error).toContain("请手动访问 http://127.0.0.1:4317");
-  expect(capture.error).toContain("没有图形会话");
+  expect(capture.error).toContain("Open http://127.0.0.1:4317 manually");
+  expect(capture.error).toContain("No graphical session");
 });
 
 test("非法端口和未知命令是用法错误", async () => {
