@@ -1,6 +1,6 @@
 {
   "name": "narraeon",
-  "version": "0.1.1-oidc.0",
+  "version": "0.1.1-oidc.1",
   "description": "A local-first workspace for living worlds.",
   "license": "Apache-2.0",
   "type": "module",
