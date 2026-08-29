@@ -35,16 +35,21 @@ try {
   for (const required of [
     "LICENSE",
     "README.md",
+    "README.zh-CN.md",
     "package.json",
     "dist/node/cli/main.js",
     "dist/web/index.html",
   ])
     assert(packagePaths.has(required), `The package is missing ${required}`);
+  const allowedRootPaths = new Set([
+    "LICENSE",
+    "README.md",
+    "README.zh-CN.md",
+    "package.json",
+  ]);
   for (const path of packagePaths)
     assert(
-      !/^(?:src|tests|scripts|\.narraeon-data)(?:\/|$)|^\.env(?:\.|$)/u.test(
-        path,
-      ),
+      allowedRootPaths.has(path) || /^dist\/(?:node|web)\//u.test(path),
       `The package contains an unexpected path: ${path}`,
     );
 
