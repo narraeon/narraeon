@@ -261,13 +261,16 @@ test("生产 HTTP 边界只接受显式 runtime/v1 envelope 并返回当前工�
   });
   const headers = {
     "content-type": "application/json",
-    origin: "http://127.0.0.1:4317",
   };
 
-  // Same-origin checking is the only gate at this local boundary. Requests
-  // without the correct Origin are rejected, and restarts do not invalidate pages.
-  for (const origin of [undefined, "http://evil.example"]) {
-    const rejected = await server.inject({
+  // The local HTTP adapter deliberately has no partial Origin policy. Public
+  // deployment needs one unified security model instead of a hostname allowlist.
+  for (const origin of [
+    undefined,
+    "http://narraeon.internal:4317",
+    "http://evil.example",
+  ]) {
+    const accepted = await server.inject({
       method: "POST",
       url: "/api/runtime/v1",
       headers: {
@@ -279,9 +282,10 @@ test("生产 HTTP 边界只接受显式 runtime/v1 envelope 并返回当前工�
         request: { type: "workspace.read" },
       },
     });
-    expect(rejected.statusCode).toBe(403);
-    expect(rejected.json()).toMatchObject({
-      error: { code: "forbidden_request" },
+    expect(accepted.statusCode).toBe(200);
+    expect(accepted.json()).toMatchObject({
+      protocol: "narraeon.runtime/v1",
+      result: { storageNotices: [] },
     });
   }
 

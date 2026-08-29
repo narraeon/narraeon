@@ -9,7 +9,6 @@ import Fastify, {
   type FastifyInstance,
   type FastifyReply,
   type FastifyRequest,
-  type onRequestHookHandler,
   type preHandlerHookHandler,
 } from "fastify";
 
@@ -101,25 +100,7 @@ export async function createServer(input: {
               : { stream: input.logStream }),
           },
   });
-  const suffix = input.port === 80 ? "" : `:${input.port}`;
-  const origins = new Set([
-    `http://127.0.0.1${suffix}`,
-    `http://localhost${suffix}`,
-  ]);
   const html = await readFile(join(input.staticRoot, "index.html"), "utf8");
-  // Origin is what actually stops a hostile page from driving this server: a
-  // cross-site request carries its own origin, and a JSON POST always triggers
-  // a preflight, so the header is always there to check. A per-boot token on
-  // top bought nothing against that threat and made every restart invalidate
-  // the tab the user already had open.
-  const sameOrigin: onRequestHookHandler = (request, reply, done) => {
-    if (
-      request.headers.origin === undefined ||
-      !origins.has(request.headers.origin)
-    )
-      void forbidden(reply);
-    else done();
-  };
   const logRuntimeRequest: preHandlerHookHandler = (request, _reply, done) => {
     if (!isPollingRequest(request))
       request.log.info({ req: request }, "incoming request");
@@ -151,7 +132,6 @@ export async function createServer(input: {
     "/api/runtime/v1",
     {
       bodyLimit: runtimeRequestBodyLimit,
-      onRequest: [sameOrigin],
       preHandler: [logRuntimeRequest],
     },
     async (request, reply) => {
@@ -295,14 +275,4 @@ function isPlayCallChainView(value: unknown): value is V1PlayCallChainView {
       value.status === "running" ||
       value.status === "interrupted")
   );
-}
-
-function forbidden(reply: FastifyReply): FastifyReply {
-  return reply.status(403).send({
-    protocol: "narraeon.runtime/v1",
-    error: {
-      code: "forbidden_request",
-      message: "Local web request is not authorized",
-    },
-  });
 }

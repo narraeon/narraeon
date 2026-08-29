@@ -59,6 +59,9 @@ Then open <http://127.0.0.1:4317>. The named volume preserves worlds,
 configuration, credentials, logs, and recovery state across container
 recreation. Keep the host-side address as `127.0.0.1`; publishing the port on
 all interfaces would unnecessarily expose a local, single-user Runtime.
+Narraeon does not currently provide built-in web authentication or access
+control. Run it only on loopback or a trusted private network; public exposure
+is unsupported until a unified security model is designed.
 Stable releases move `latest`, prereleases move `next`, and every release also
 has an exact version tag.
 
@@ -156,7 +159,7 @@ The container image maps all three storage roots under
 `/var/lib/narraeon`, which is why the Docker example persists that single
 directory as a volume.
 
-The browser talks only to the same-machine Runtime. Local-first does not mean that remote model inference is offline: prompts, selected world material, tool exchanges, and generated text are sent to the provider you configure. API keys are stored in the local configuration and are not returned to the browser after saving.
+By default, the browser talks only to the same-machine Runtime. Local-first does not mean that remote model inference is offline: prompts, selected world material, tool exchanges, and generated text are sent to the provider you configure. API keys are stored in the local configuration and are not returned to the browser after saving.
 
 When a provider, response-format, Runtime-tool, or candidate-check error occurs, Narraeon creates a JSONL incident under `NARRAEON_LOG_ROOT/ai-failures`. It preserves the raw provider exchange and later recovery attempts, including reasoning or thinking actually returned by the provider. It does not invent hidden reasoning or record API keys and request headers. The files can still contain private prompts, world content, tool arguments, and provider-returned reasoning, so treat the log directory as sensitive.
 
