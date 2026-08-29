@@ -41,7 +41,7 @@ const englishMessages: Record<string, string> = {
   内容包编辑方式: "Content package editing mode",
   "已放弃未保存修改；内容包当前树未改变。":
     "Unsaved edits were discarded; the current content package tree is unchanged.",
-  "Narraeon · 叙典 · 本地优先": "Narraeon · Local first",
+  "Narraeon · 本地优先": "Narraeon · Local first",
   世界工作区: "World workspace",
   "创作内容包，连接 AI 主持，让每个世界独立演化。":
     "Create content packages, connect a model host, and let every world evolve independently.",

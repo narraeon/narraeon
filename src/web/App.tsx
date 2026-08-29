@@ -587,7 +587,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     <main className="workspace-shell">
       <header className="workspace-header">
         <div>
-          <p className="eyebrow">{uiText("Narraeon · 叙典 · 本地优先")}</p>
+          <p className="eyebrow">{uiText("Narraeon · 本地优先")}</p>
           <h1>{uiText("世界工作区")}</h1>
           {screen === "home" && (
             <p className="workspace-header-copy">

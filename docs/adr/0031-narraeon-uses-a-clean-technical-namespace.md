@@ -1,6 +1,6 @@
 # Narraeon 使用统一的技术命名空间
 
-产品正式名称为 Narraeon，中文名为“叙典”。当前协议、文件格式、环境变量、浏览器扩展桥、临时路径和默认应用数据目录统一使用 `narraeon` 或 `NARRAEON`，JavaScript 属性按需使用 `narraeonInstance` 一类 lower camel 写法，不继续把旧项目名称暴露为当前接口。
+产品的正式且唯一名称为 Narraeon，不使用中文别名。当前协议、文件格式、环境变量、浏览器扩展桥、临时路径和默认应用数据目录统一使用 `narraeon` 或 `NARRAEON`，JavaScript 属性按需使用 `narraeonInstance` 一类 lower camel 写法，不继续把旧项目名称暴露为当前接口。
 
 任何发布前构建留下的协议、格式、环境变量或本地数据都不构成兼容输入；Runtime 不按旧产品名称识别它们，也不提供别名、双读或静默迁移。调用方必须显式使用当前技术命名空间并重建不兼容的本地开发数据。内容树拒绝 JSON 和 manifest；改名不能让已经废弃的 manifest 重新成为合法业务文件。
 
