@@ -17,7 +17,7 @@ Narraeon 是一个用于开放式 AI 角色扮演的本地优先工作区。你�
 
 ## 运行要求
 
-- Node.js **24.12.0 或更高版本**
+- Docker Engine／Docker Desktop，或 Node.js **24.12.0 或更高版本**，二选一
 - 现代浏览器
 - 如果要进行 AI 游玩或设定完善，还需要与以下任一适配器兼容的模型端点和 API 凭据：
   - OpenAI Responses API
@@ -45,6 +45,17 @@ npx narraeon --help
 ```
 
 服务只监听 `127.0.0.1`。如果选定端口已经运行兼容的 Narraeon，CLI 会直接复用；如果端口被其他程序占用，启动会明确失败，不会连接未知服务。
+
+也可以直接运行 GitHub Container Registry 上的发布镜像：
+
+```bash
+docker run --detach --name narraeon \
+  --publish 127.0.0.1:4317:4317 \
+  --volume narraeon-data:/var/lib/narraeon \
+  ghcr.io/narraeon/narraeon:latest
+```
+
+然后打开 <http://127.0.0.1:4317>。命名卷会在重建容器后继续保留世界、配置、凭据、日志和恢复数据。宿主机一侧应继续绑定 `127.0.0.1`；绑定所有网卡会把本地单用户 Runtime 不必要地暴露出去。稳定版会移动 `latest`，预发布版会移动 `next`，每次发布还会保留精确版本标签。
 
 ## 从源码运行
 
@@ -135,6 +146,8 @@ Narraeon 默认使用当前操作系统的标准用户应用目录。如果要�
 | `NARRAEON_CONFIG_ROOT` | 模型连接、应用偏好和玩法预设       |
 | `NARRAEON_LOG_ROOT`    | Runtime 日志和 AI 失败诊断         |
 | `NARRAEON_PORT`        | 本地 Web 端口，默认为 `4317`       |
+
+容器镜像把前三类存储目录统一放在 `/var/lib/narraeon` 下，因此 Docker 示例只需要持久化这一个目录。
 
 浏览器只与同机 Runtime 通信。“本地优先”不等于远程模型推理也离线：提示词、选中的世界材料、工具交换和生成文本会发送到你配置的 Provider。API Key 保存在本地配置中，保存后不会再返回给浏览器。
 

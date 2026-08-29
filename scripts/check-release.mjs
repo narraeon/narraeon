@@ -20,6 +20,10 @@ export function verifyRelease({ manifest, releaseTag, releaseIsPrerelease }) {
     typeof manifest.version === "string" && isValidSemver(manifest.version),
     `package version is not valid SemVer: ${String(manifest.version)}`,
   );
+  assert(
+    manifest.version.length <= 128 && !manifest.version.includes("+"),
+    `package version must also be an exact container tag without build metadata: ${manifest.version}`,
+  );
   assert(manifest.private !== true, "package.json must not be private");
   assert(
     manifest.bin?.[expectedPackage.name] === expectedPackage.bin &&

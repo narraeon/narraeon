@@ -4,9 +4,11 @@ import { parseArgs } from "node:util";
 
 import { resolveAppPaths } from "../runtime/config/appPaths.ts";
 import {
+  parseWebHost,
   parseWebPort,
   startWebServer,
   type StartWebServerInput,
+  type WebHost,
 } from "../server/startWebServer.ts";
 
 export interface StoppableServer {
@@ -33,6 +35,7 @@ export interface NarraeonCliInput {
 
 interface WebCommand {
   kind: "web";
+  host: WebHost;
   port: number;
   openBrowser: boolean;
 }
@@ -69,6 +72,7 @@ export async function runNarraeonCli(
     server = await start({
       paths: resolveAppPaths(input.environment),
       staticRoot: input.staticRoot,
+      host: command.host,
       port: command.port,
     });
   } catch (error: unknown) {
@@ -142,7 +146,9 @@ function parseCliCommand(
       `Unknown command: ${parsed.positionals.join(" ") || "(empty)"}`,
     );
   let port: number;
+  let host: WebHost;
   try {
+    host = parseWebHost(environment.NARRAEON_HOST);
     port = parseWebPort(
       parsed.values.port ?? environment.NARRAEON_PORT,
       parsed.values.port === undefined ? "NARRAEON_PORT" : "--port",
@@ -152,6 +158,7 @@ function parseCliCommand(
   }
   return {
     kind: "web",
+    host,
     port,
     openBrowser: parsed.values.open !== false,
   };

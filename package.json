@@ -44,6 +44,7 @@
     "prepack": "npm run build",
     "start": "node src/server/main.ts",
     "test": "npm run test:unit && npm run test:release && npm run test:e2e",
+    "test:container": "docker build --tag narraeon:release-smoke . && node scripts/smoke-container.mjs --image narraeon:release-smoke",
     "test:e2e": "npm run build && playwright test",
     "test:package": "node scripts/smoke-package.mjs",
     "test:release": "node --test scripts/check-release.test.mjs",

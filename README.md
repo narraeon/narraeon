@@ -17,7 +17,7 @@ The model handles the meaning of the story: it portrays characters, responds to 
 
 ## Requirements
 
-- Node.js **24.12.0 or newer**
+- Either Docker Engine / Docker Desktop, or Node.js **24.12.0 or newer**
 - A modern browser
 - For AI play or setting improvement, a model endpoint and API credential compatible with one of the supported adapters:
   - OpenAI Responses API
@@ -45,6 +45,22 @@ npx narraeon --help
 ```
 
 The server listens only on `127.0.0.1`. If the chosen port already hosts a compatible Narraeon instance, the CLI reuses it. If another program owns the port, startup fails instead of attaching to an unknown service.
+
+Alternatively, run the release image from GitHub Container Registry:
+
+```bash
+docker run --detach --name narraeon \
+  --publish 127.0.0.1:4317:4317 \
+  --volume narraeon-data:/var/lib/narraeon \
+  ghcr.io/narraeon/narraeon:latest
+```
+
+Then open <http://127.0.0.1:4317>. The named volume preserves worlds,
+configuration, credentials, logs, and recovery state across container
+recreation. Keep the host-side address as `127.0.0.1`; publishing the port on
+all interfaces would unnecessarily expose a local, single-user Runtime.
+Stable releases move `latest`, prereleases move `next`, and every release also
+has an exact version tag.
 
 ## Run from source
 
@@ -135,6 +151,10 @@ Narraeon uses the operating system's standard per-user application directories. 
 | `NARRAEON_CONFIG_ROOT` | Model connections, app preferences, and play presets       |
 | `NARRAEON_LOG_ROOT`    | Runtime logs and AI failure diagnostics                    |
 | `NARRAEON_PORT`        | Local web port, default `4317`                             |
+
+The container image maps all three storage roots under
+`/var/lib/narraeon`, which is why the Docker example persists that single
+directory as a volume.
 
 The browser talks only to the same-machine Runtime. Local-first does not mean that remote model inference is offline: prompts, selected world material, tool exchanges, and generated text are sent to the provider you configure. API keys are stored in the local configuration and are not returned to the browser after saving.
 

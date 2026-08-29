@@ -36,7 +36,7 @@ test("CLI 没有命令或显式请求帮助时只显示用法", async () => {
   }
 });
 
-test("web 子命令使用显式端口和数据根，并允许禁止打开浏览器", async () => {
+test("web 子命令使用容器监听地址、显式端口和数据根，并允许禁止打开浏览器", async () => {
   const capture = createCapture();
   let startInput: StartWebServerInput | undefined;
   let opened = false;
@@ -49,6 +49,7 @@ test("web 子命令使用显式端口和数据根，并允许禁止打开浏览�
     environment: {
       NARRAEON_CONFIG_ROOT: "/tmp/narraeon-cli-config",
       NARRAEON_DATA_ROOT: "/tmp/narraeon-cli-data",
+      NARRAEON_HOST: "0.0.0.0",
       NARRAEON_LOG_ROOT: "/tmp/narraeon-cli-log",
     },
     openUrl: () => {
@@ -73,6 +74,7 @@ test("web 子命令使用显式端口和数据根，并允许禁止打开浏览�
       logRoot: "/tmp/narraeon-cli-log",
     },
     staticRoot: "/package/dist/web",
+    host: "0.0.0.0",
     port: 45678,
   });
   expect(opened).toBe(false);
@@ -81,13 +83,15 @@ test("web 子命令使用显式端口和数据根，并允许禁止打开浏览�
 
 test("CLI 等待服务启动后才打开页面", async () => {
   const events: string[] = [];
+  let host: StartWebServerInput["host"] | undefined;
   const result = await runNarraeonCli({
     ...cliInput({
       args: ["web"],
       capture: createCapture(),
       inspection: "available",
     }),
-    startServer: () => {
+    startServer: (input) => {
+      host = input.host;
       events.push("started");
       return Promise.resolve(fakeServer);
     },
@@ -98,6 +102,7 @@ test("CLI 等待服务启动后才打开页面", async () => {
   });
 
   expect(result.kind).toBe("started");
+  expect(host).toBe("127.0.0.1");
   expect(events).toEqual(["started", "opened:http://127.0.0.1:4317"]);
 });
 
@@ -186,6 +191,17 @@ test("非法端口和未知命令是用法错误", async () => {
       ),
     ).rejects.toBeInstanceOf(NarraeonCliUsageError);
   }
+
+  await expect(
+    runNarraeonCli({
+      ...cliInput({
+        args: ["web"],
+        capture: createCapture(),
+        inspection: "available",
+      }),
+      environment: { NARRAEON_HOST: "192.0.2.10" },
+    }),
+  ).rejects.toThrow("NARRAEON_HOST must be 127.0.0.1 or 0.0.0.0: 192.0.2.10");
 });
 
 test("发布版 CLI 从模块位置解析 Web 产物，不依赖当前目录", () => {

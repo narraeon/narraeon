@@ -5,10 +5,15 @@ import { createRuntime } from "./createRuntime.ts";
 import { createServer } from "./createServer.ts";
 
 export const defaultWebPort = 4317;
+export const defaultWebHost = "127.0.0.1";
+export const containerWebHost = "0.0.0.0";
+
+export type WebHost = typeof defaultWebHost | typeof containerWebHost;
 
 export interface StartWebServerInput {
   paths: AppPaths;
   staticRoot: string;
+  host: WebHost;
   port: number;
   logger?: boolean;
 }
@@ -24,12 +29,23 @@ export async function startWebServer(
     ...(input.logger === undefined ? {} : { logger: input.logger }),
   });
   try {
-    await server.listen({ host: "127.0.0.1", port: input.port });
+    await server.listen({ host: input.host, port: input.port });
     return server;
   } catch (error: unknown) {
     await server.close().catch(() => undefined);
     throw error;
   }
+}
+
+export function parseWebHost(
+  value: string | undefined,
+  source = "NARRAEON_HOST",
+): WebHost {
+  if (value === undefined) return defaultWebHost;
+  if (value === defaultWebHost || value === containerWebHost) return value;
+  throw new Error(
+    `${source} must be ${defaultWebHost} or ${containerWebHost}: ${value}`,
+  );
 }
 
 export function parseWebPort(
