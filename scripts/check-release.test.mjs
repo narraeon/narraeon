@@ -6,6 +6,7 @@ import { verifyRelease } from "./check-release.mjs";
 const manifest = {
   name: "narraeon",
   version: "0.1.0",
+  exports: {},
   bin: { narraeon: "dist/node/cli/main.js" },
   files: ["dist"],
   repository: {
@@ -90,5 +91,17 @@ test("rejects invalid SemVer and publish configuration drift", () => {
         releaseIsPrerelease: false,
       }),
     /publishConfig\.registry/u,
+  );
+  assert.throws(
+    () =>
+      verifyRelease({
+        manifest: {
+          ...manifest,
+          exports: { ".": "./dist/node/cli/main.js" },
+        },
+        releaseTag: "v0.1.0",
+        releaseIsPrerelease: false,
+      }),
+    /exports must be an empty object/u,
   );
 });

@@ -26,6 +26,14 @@ export function verifyRelease({ manifest, releaseTag, releaseIsPrerelease }) {
       Object.keys(manifest.bin).length === 1,
     `package.json must expose only ${expectedPackage.name} at ${expectedPackage.bin}`,
   );
+  assertObject(
+    manifest.exports,
+    "package.json exports must be an empty object for the CLI-only package",
+  );
+  assert(
+    Object.keys(manifest.exports).length === 0,
+    "package.json exports must be an empty object for the CLI-only package",
+  );
   assert(
     Array.isArray(manifest.files) && manifest.files.includes("dist"),
     "package.json files must include dist",

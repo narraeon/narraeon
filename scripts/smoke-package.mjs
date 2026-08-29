@@ -74,6 +74,37 @@ try {
     installedPackage.bin?.narraeon === "dist/node/cli/main.js",
     "The package does not declare exactly one narraeon bin",
   );
+  assert(
+    typeof installedPackage.exports === "object" &&
+      installedPackage.exports !== null &&
+      !Array.isArray(installedPackage.exports) &&
+      Object.keys(installedPackage.exports).length === 0,
+    "The CLI-only package does not block JavaScript entry points",
+  );
+  const importGuard = await execute(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      `for (const specifier of ${JSON.stringify([
+        "narraeon",
+        "narraeon/dist/node/protocol/v1.js",
+      ])}) {
+  try {
+    await import(specifier);
+    throw new Error(\`Unexpectedly imported \${specifier}\`);
+  } catch (error) {
+    if (error?.code !== "ERR_PACKAGE_PATH_NOT_EXPORTED") throw error;
+  }
+}
+process.stdout.write("Package imports are blocked\\n");`,
+    ],
+    { cwd: consumerRoot },
+  );
+  assert(
+    importGuard.stdout.includes("Package imports are blocked"),
+    "The package import guard did not run",
+  );
   await stat(join(consumerRoot, "node_modules", ".bin", "narraeon"));
   const installedCli = join(installedPackageRoot, "dist/node/cli/main.js");
   const firstLine = (await readFile(installedCli, "utf8")).split("\n", 1)[0];
