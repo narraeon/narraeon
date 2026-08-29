@@ -126,6 +126,83 @@ test("Chat Completions 游玩请求用 SSE 聚合正文、reasoning、工具与 
   });
 });
 
+test("Chat Completions 流把工具分片里的 null 字段当作未提供", async () => {
+  const deltas: ModelHostDelta[] = [];
+  const fetch_ = vi.fn<typeof fetch>().mockResolvedValue(
+    sseResponse(
+      [
+        data({
+          choices: [{ index: 0, delta: { role: "assistant" } }],
+          usage: null,
+        }),
+        data({
+          choices: [{ index: 0, delta: { content: "", tool_calls: null } }],
+          usage: null,
+        }),
+        data({
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: "call-gateway-1",
+                    type: "function",
+                    function: { name: "context_read", arguments: "" },
+                  },
+                ],
+              },
+            },
+          ],
+          usage: null,
+        }),
+        data({
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: null,
+                    type: null,
+                    function: {
+                      name: null,
+                      arguments: '{"ref":"@history"}',
+                    },
+                  },
+                ],
+              },
+              finish_reason: "tool_calls",
+            },
+          ],
+          usage: { prompt_tokens: 309, completion_tokens: 471 },
+        }),
+        "data: [DONE]\n\n",
+      ],
+      true,
+    ),
+  );
+  const host = modelHost("chat_completions", fetch_);
+
+  const response = await host.exchange(exchange("chat_completions"), {
+    onDelta: (delta) => deltas.push(structuredClone(delta)),
+  });
+
+  expect(deltas).toEqual([{ kind: "tool", text: '{"ref":"@history"}' }]);
+  expect(response).toMatchObject({
+    toolCalls: [
+      {
+        id: "call-gateway-1",
+        name: "context_read",
+        arguments: { ref: "@history" },
+      },
+    ],
+    usage: { inputTokens: 309, outputTokens: 471 },
+  });
+});
+
 test("OpenAI Responses 游玩请求从 response.completed 取得完整 continuation", async () => {
   const output = [
     {

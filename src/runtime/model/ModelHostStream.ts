@@ -79,7 +79,10 @@ export async function aggregateChatModelStream(
         reasoningContent += delta.reasoning_content;
         onDelta?.({ kind: "reasoning", text: delta.reasoning_content });
       }
-      if (delta.tool_calls === undefined) continue;
+      // Gateways in front of a Chat Completions Model often write `null` where
+      // the protocol omits a field, both for the whole tool-call list and for
+      // individual fragment fields. A null carries no continuation content.
+      if (delta.tool_calls === undefined || delta.tool_calls === null) continue;
       if (!Array.isArray(delta.tool_calls))
         throw new Error("Chat SSE tool_calls delta is invalid");
       for (const [position, fragmentValue] of delta.tool_calls.entries()) {
@@ -97,26 +100,26 @@ export async function aggregateChatModelStream(
           type: "function",
           arguments: "",
         };
-        if (fragmentValue.id !== undefined) {
+        if (isPresent(fragmentValue.id)) {
           if (typeof fragmentValue.id !== "string")
             throw new Error("Chat SSE tool-call id is invalid");
           current.id += fragmentValue.id;
         }
-        if (fragmentValue.type !== undefined) {
+        if (isPresent(fragmentValue.type)) {
           if (fragmentValue.type !== "function")
             throw new Error("Chat SSE tool-call type is invalid");
           current.type = fragmentValue.type;
         }
-        if (fragmentValue.function !== undefined) {
+        if (isPresent(fragmentValue.function)) {
           if (!isRecord(fragmentValue.function))
             throw new Error("Chat SSE tool-call function is invalid");
           const function_ = fragmentValue.function;
-          if (function_.name !== undefined) {
+          if (isPresent(function_.name)) {
             if (typeof function_.name !== "string")
               throw new Error("Chat SSE tool-call name is invalid");
             current.name += function_.name;
           }
-          if (function_.arguments !== undefined) {
+          if (isPresent(function_.arguments)) {
             if (typeof function_.arguments !== "string")
               throw new Error("Chat SSE tool-call arguments are invalid");
             current.arguments += function_.arguments;
@@ -462,6 +465,10 @@ function mergeUsage(target: Record<string, unknown>, value: unknown): void {
 
 function stringOrUndefined(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function isPresent(value: unknown): boolean {
+  return value !== undefined && value !== null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
