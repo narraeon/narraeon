@@ -25,7 +25,9 @@ import {
   type PromptCompilation,
 } from "../prompt/FileNativePromptCompiler.ts";
 import type {
+  FileNativePlayBinding,
   FileNativeStateChange,
+  FileNativeWorldSummary,
   FileNativeWorldStore,
 } from "../world/FileNativeWorldStore.ts";
 import type { ArtifactStore } from "../artifact/FileNativeArtifactStore.ts";
@@ -341,6 +343,33 @@ export class PlayCallChain {
     return projectView(session);
   }
 
+  async deriveWorld(input: {
+    operationId: string;
+    sourceWorldId: string;
+    sourceHead: string;
+    hostPresetId: string;
+  }): Promise<{ outcome: "derived"; world: FileNativeWorldSummary }> {
+    const result = await this.#worlds.deriveWorld({
+      ...input,
+      stageTarget: async ({ targetWorldRoot, targetWorldId, binding }) => {
+        await this.stageForkToDerivedWorld({
+          sourceWorldId: input.sourceWorldId,
+          sourceHead: input.sourceHead,
+          targetWorldId,
+          targetWorldRoot,
+          targetBinding: binding,
+        });
+      },
+    });
+    if ((await this.inspectWorld(result.world.worldId)) === null)
+      await this.forkToDerivedWorld({
+        sourceWorldId: input.sourceWorldId,
+        sourceHead: input.sourceHead,
+        targetWorldId: result.world.worldId,
+      });
+    return result;
+  }
+
   async forkToDerivedWorld(input: {
     sourceWorldId: string;
     sourceHead: string;
@@ -363,12 +392,46 @@ export class PlayCallChain {
       input.sourceHead,
     )!;
     return this.#forkSelectionToDerivedWorld({
+      sourceWorldId: input.sourceWorldId,
       sourceContexts,
       selectedContextIndex,
       sourceEvents,
       sourceHead: input.sourceHead,
       targetWorldId: input.targetWorldId,
       branchIdentity: input.sourceHead,
+    });
+  }
+
+  async stageForkToDerivedWorld(input: {
+    sourceWorldId: string;
+    sourceHead: string;
+    targetWorldId: string;
+    targetWorldRoot: string;
+    targetBinding: FileNativePlayBinding;
+  }): Promise<V1PlayCallChainView | null> {
+    const source = await this.#readPersisted(input.sourceWorldId);
+    if (source === null) return null;
+    const sourceContexts = await this.#worlds.playTimeline.readAllContexts(
+      input.sourceWorldId,
+    );
+    const selectedContextIndex = sourceContexts.findIndex(
+      ({ events }) => eventsThroughHead(events, input.sourceHead) !== null,
+    );
+    if (selectedContextIndex < 0) return null;
+    const sourceEvents = eventsThroughHead(
+      sourceContexts[selectedContextIndex]!.events,
+      input.sourceHead,
+    )!;
+    return this.#forkSelectionToDerivedWorld({
+      sourceWorldId: input.sourceWorldId,
+      sourceContexts,
+      selectedContextIndex,
+      sourceEvents,
+      sourceHead: input.sourceHead,
+      targetWorldId: input.targetWorldId,
+      branchIdentity: input.sourceHead,
+      targetWorldRoot: input.targetWorldRoot,
+      targetBinding: input.targetBinding,
     });
   }
 
@@ -434,9 +497,15 @@ export class PlayCallChain {
       const commit = authority.commits.find(
         ({ head }) => head === appliedEvent.committedHead,
       );
+      const operation = await this.#worlds.getOperationOutcome(
+        input.operationId,
+      );
       if (
-        commit?.operationId !== input.operationId ||
-        commit.mode !== "timeline_revision"
+        commit?.mode !== "timeline_revision" ||
+        (operation.outcome !== "committed" &&
+          operation.outcome !== "committed_materialization_pending") ||
+        operation.worldId !== input.worldId ||
+        operation.head !== appliedEvent.committedHead
       )
         throw new PlayCallChainError(
           "The replacement exchange ID is already used by another commit.",
@@ -652,18 +721,24 @@ export class PlayCallChain {
   }
 
   async #forkSelectionToDerivedWorld(input: {
+    sourceWorldId: string;
     sourceContexts: PersistedPlayCallChainContext[];
     selectedContextIndex: number;
     sourceEvents: V1PlayCallChainEvent[];
     sourceHead: string;
     targetWorldId: string;
     branchIdentity: string;
+    targetWorldRoot?: string;
+    targetBinding?: FileNativePlayBinding;
   }): Promise<V1PlayCallChainView> {
-    const existing = await this.#readPersisted(input.targetWorldId);
-    if (existing !== null) return projectView(existing);
+    if (input.targetWorldRoot === undefined) {
+      const existing = await this.#readPersisted(input.targetWorldId);
+      if (existing !== null) return projectView(existing);
+    }
 
     const sourceContext = input.sourceContexts[input.selectedContextIndex]!;
     if (
+      input.targetWorldRoot === undefined &&
       (await this.#worlds.currentHead(input.targetWorldId)) !== input.sourceHead
     )
       throw new PlayCallChainError(
@@ -672,10 +747,17 @@ export class PlayCallChain {
 
     const [baseline, selected] = await Promise.all([
       this.#worlds.recoverEndpoint(
-        input.targetWorldId,
+        input.targetWorldRoot === undefined
+          ? input.targetWorldId
+          : input.sourceWorldId,
         sourceContext.baselineHead,
       ),
-      this.#worlds.recoverEndpoint(input.targetWorldId, input.sourceHead),
+      this.#worlds.recoverEndpoint(
+        input.targetWorldRoot === undefined
+          ? input.targetWorldId
+          : input.sourceWorldId,
+        input.sourceHead,
+      ),
     ]);
     const transcript = transcriptThroughEvents(
       sourceContext.transcript,
@@ -683,9 +765,9 @@ export class PlayCallChain {
     );
     const completedKeys = completedToolKeys(input.sourceEvents);
     const events = structuredClone(input.sourceEvents);
-    const derivedBinding = await this.#worlds.bindPlayCallChain(
-      input.targetWorldId,
-    );
+    const derivedBinding =
+      input.targetBinding ??
+      (await this.#worlds.bindPlayCallChain(input.targetWorldId));
     const derivedDocuments = restorePlayDocuments(
       derivedBinding.files,
       sourceContext,
@@ -702,7 +784,7 @@ export class PlayCallChain {
         `prefix:${input.branchIdentity}:${index}`,
         input.targetWorldId,
       );
-      await this.#worlds.playTimeline.persist({
+      const previousContext = {
         ...independentContextCopy(context),
         schemaVersion: 3,
         kind: "play_call_chain",
@@ -711,7 +793,16 @@ export class PlayCallChain {
         previousContexts: [],
         previousChainId,
         timelineGeneration,
-      });
+      } satisfies PersistedPlayCallChain;
+      if (input.targetWorldRoot === undefined)
+        await this.#worlds.playTimeline.persist(previousContext);
+      else
+        await this.#worlds.playTimeline.cloneContextPrefixToStaging({
+          sourceWorldId: input.sourceWorldId,
+          targetWorldRoot: input.targetWorldRoot,
+          source: context,
+          target: previousContext,
+        });
       previousChainId = chainId;
     }
     const derived: PersistedPlayCallChain = {
@@ -779,7 +870,15 @@ export class PlayCallChain {
       lastFailure: null,
       updatedAt: now,
     };
-    await this.#worlds.playTimeline.persist(structuredClone(derived));
+    if (input.targetWorldRoot === undefined)
+      await this.#worlds.playTimeline.persist(structuredClone(derived));
+    else
+      await this.#worlds.playTimeline.cloneContextPrefixToStaging({
+        sourceWorldId: input.sourceWorldId,
+        targetWorldRoot: input.targetWorldRoot,
+        source: sourceContext,
+        target: structuredClone(derived),
+      });
     return projectView(derived);
   }
 
@@ -1807,13 +1906,13 @@ function finalizePreparedReceipts(
 }
 
 function appendCommittedHistory(
-  session: Pick<PlayCallChainSession, "worldId" | "history">,
+  session: Pick<PlayCallChainSession, "history">,
   head: string,
   messages: readonly { role: "player" | "narrator"; exactText: string }[],
 ): void {
   const sequence = Number(head.slice("commit:".length));
   for (const [index, message] of messages.entries()) {
-    const path = `${session.worldId}.message.${sequence}.${index + 1}.${message.role}`;
+    const path = `message.${sequence}.${index + 1}.${message.role}`;
     const existing = session.history.find((item) => item.path === path);
     if (existing !== undefined) {
       if (existing.contents !== message.exactText)

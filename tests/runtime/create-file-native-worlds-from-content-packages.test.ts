@@ -79,12 +79,12 @@ describe("从内容包创建文件原生世界", () => {
     expect(genesis.additionalMaterials).toEqual([
       {
         kind: "history_message",
-        message: `${created.world.worldId}.message.genesis.narrator`,
+        message: "message.genesis.narrator",
       },
     ]);
     const binding = await store.bindPlayCallChain(created.world.worldId);
     expect(binding.history).toEqual({
-      [`${created.world.worldId}.message.genesis.narrator`]: opening(),
+      "message.genesis.narrator": opening(),
     });
     expect(binding.additionalMaterials).toEqual(genesis.additionalMaterials);
     const worldContext = created.preview.compilation.logicalMessages.find(

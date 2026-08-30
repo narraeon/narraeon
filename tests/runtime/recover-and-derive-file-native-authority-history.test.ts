@@ -6,6 +6,7 @@ import {
   readFile,
   readdir,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -20,6 +21,8 @@ const roots: string[] = [];
 
 afterEach(async () => {
   delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_FILE_NATIVE_AUTHORITY_EDGE;
+  delete process.env.NARRAEON_INTERNAL_TEST_CLONE_STRATEGY;
+  delete process.env.NARRAEON_INTERNAL_TEST_FORBID_AUTHORITY_FACT_DECODE;
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
   );
@@ -83,7 +86,7 @@ test("从 genesis 与不可变提交恢复同一端点，并用同一 commit 幂
   ).toBe(after);
   expect(
     await fixture.store.readSurface(fixture.worldId, "history"),
-  ).toHaveLength(2);
+  ).toHaveLength(3);
 });
 
 test("Authority 追加只发布新提交和小端点，不再重写累计提交目录", async () => {
@@ -115,13 +118,13 @@ test("Authority 追加只发布新提交和小端点，不再重写累计提交�
     readFile(join(runtimeRoot, "play-authority.json"), "utf8"),
   ).rejects.toMatchObject({ code: "ENOENT" });
   const authorityHead = JSON.parse(
-    await readFile(join(runtimeRoot, "play-authority-head.json"), "utf8"),
+    await readFile(join(runtimeRoot, "continuity-head.json"), "utf8"),
   ) as Record<string, unknown>;
-  expect(authorityHead).toEqual({
-    schemaVersion: 2,
+  expect(authorityHead).toMatchObject({
+    schemaVersion: 3,
+    type: "file_native_continuity_head",
     head: second.head,
     sequence: 2,
-    commitDigest: authorityHead.commitDigest,
     operationId: "small-head-2",
   });
   expect(authorityHead.commitDigest).toMatch(/^[a-f0-9]{64}$/u);
@@ -130,7 +133,7 @@ test("Authority 追加只发布新提交和小端点，不再重写累计提交�
       await readFile(join(runtimeRoot, "materialized-head.json"), "utf8"),
     ),
   ).toEqual({
-    schemaVersion: 2,
+    schemaVersion: 3,
     head: second.head,
     sequence: 2,
     commitDigest: authorityHead.commitDigest,
@@ -138,7 +141,9 @@ test("Authority 追加只发布新提交和小端点，不再重写累计提交�
   await expect(
     fixture.store.getOperationOutcome("small-head-1"),
   ).resolves.toMatchObject({ outcome: "committed", head: first.head });
-  expect(await readdir(join(runtimeRoot, "play-commits"))).toHaveLength(2);
+  expect(
+    await readdir(join(runtimeRoot, "authority-v3", "epochs")),
+  ).toHaveLength(3);
 });
 
 test.runIf(process.platform === "linux")(
@@ -180,16 +185,48 @@ test.runIf(process.platform === "linux")(
     });
     expect(
       await readdir(
-        join(root, "worlds-file-native", worldId, "runtime", "play-commits"),
+        join(
+          root,
+          "worlds-file-native",
+          worldId,
+          "runtime",
+          "authority-v3",
+          "epochs",
+        ),
       ),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
+  },
+);
+
+test.runIf(process.platform === "linux")(
+  "对象发布后 receipt 前退出可由同一请求恢复且不会把孤儿 epoch 当成接受事实",
+  async () => {
+    expect(await crashWorker("after_authority_objects")).toMatchObject({
+      signal: "SIGKILL",
+    });
+    const root = roots.at(-1)!;
+    const store = new FileNativeWorldStore(root);
+    const creation = await store.getCreationOutcome("create");
+    if (creation.outcome !== "created")
+      throw new Error("world was not created");
+    await expect(store.currentHead(creation.world.worldId)).resolves.toBe(
+      "genesis",
+    );
+    await expect(store.getOperationOutcome("play")).resolves.toEqual({
+      outcome: "not_started",
+    });
+    expect(await runWorker(root, "none")).toMatchObject({ code: 0 });
+    await expect(store.getOperationOutcome("play")).resolves.toMatchObject({
+      outcome: "committed",
+      head: "commit:1",
+    });
   },
 );
 
 test("Authority 接受后的确定物化冲突必须抛出，不得伪装为普通 pending", async () => {
   const fixture = await world();
   const worldRoot = join(fixture.root, "worlds-file-native", fixture.worldId);
-  const playerMessageId = `${fixture.worldId}.message.1.1.player`;
+  const playerMessageId = "message.1.1.player";
   const playerDigest = createHash("sha256")
     .update(playerMessageId)
     .digest("hex")
@@ -247,6 +284,28 @@ test("提交边界把无效候选归类为候选校验失败，而不是权威�
   await expect(
     fixture.store.recoverEndpoint(fixture.worldId),
   ).resolves.toMatchObject({ head: "genesis" });
+});
+
+test("提交边界拒绝带外部世界命名空间的历史材料，不接受不可恢复事实", async () => {
+  const fixture = await world();
+  await expect(
+    fixture.store.commitPlayStep({
+      operationId: "foreign-history-material",
+      worldId: fixture.worldId,
+      parentHead: "genesis",
+      historyAppend: [{ role: "player", exactText: "Inspect the archive." }],
+      nextMaterials: [
+        {
+          kind: "history_message",
+          message: "world-foreign.message.1.1.player",
+        },
+      ],
+      stateChanges: [],
+    }),
+  ).rejects.toMatchObject({ code: "operation_conflict" });
+  await expect(fixture.store.currentHead(fixture.worldId)).resolves.toBe(
+    "genesis",
+  );
 });
 
 test("时间线修订在同一世界追加 Authority，并把当前投影恢复到玩家父端点后写入修改稿", async () => {
@@ -323,7 +382,8 @@ test("时间线修订在同一世界追加 Authority，并把当前投影恢复�
   const authority = await fixture.store.readAuthorityHistory(fixture.worldId);
   expect(authority.commits).toHaveLength(5);
   expect(authority.commits[4]).toMatchObject({
-    parentHead: "commit:4",
+    auditParent: { head: "commit:4" },
+    timelineParent: { head: "commit:2" },
     head: "commit:5",
     mode: "timeline_revision",
     timelineRevision: {
@@ -344,7 +404,7 @@ test("时间线修订在同一世界追加 Authority，并把当前投影恢复�
   expect(current.additionalMaterials).toEqual([
     {
       kind: "history_message",
-      message: `${fixture.worldId}.message.1.1.player`,
+      message: "message.1.1.player",
     },
   ]);
   await expect(
@@ -391,7 +451,7 @@ test("时间线修订在同一世界追加 Authority，并把当前投影恢复�
   expect(forked.additionalMaterials).toEqual([
     {
       kind: "history_message",
-      message: `${fork.world.worldId}.message.1.1.player`,
+      message: "message.1.1.player",
     },
   ]);
   expect(
@@ -456,16 +516,17 @@ test("历史端点派生会复制完整 Authority 前缀，并在来源删除后
     (await fixture.store.readAuthorityHistory(derivedWorldId)).commits,
   ).toMatchObject([
     {
-      parentHead: "genesis",
+      auditParent: { head: "genesis" },
+      timelineParent: { head: "genesis" },
       head: "commit:1",
       historyAppend: [
         {
-          messageId: `${derivedWorldId}.message.1.1.player`,
+          messageId: "message.1.1.player",
           role: "player",
           exactText: "First player message",
         },
         {
-          messageId: `${derivedWorldId}.message.1.2.narrator`,
+          messageId: "message.1.2.narrator",
           role: "narrator",
           exactText: "First narrator response",
         },
@@ -473,9 +534,10 @@ test("历史端点派生会复制完整 Authority 前缀，并在来源删除后
     },
   ]);
   expect(
-    (await fixture.store.readAuthorityHistory(derivedWorldId)).commits[0]
-      ?.operationId,
-  ).not.toBe("play-1");
+    JSON.stringify(
+      (await fixture.store.readAuthorityHistory(derivedWorldId)).commits[0],
+    ),
+  ).not.toContain("play-1");
 
   const derivedGenesis = await fixture.store.recoverEndpoint(
     derivedWorldId,
@@ -495,7 +557,7 @@ test("历史端点派生会复制完整 Authority 前缀，并在来源删除后
   expect(derivedFirst.additionalMaterials).toEqual([
     {
       kind: "history_message",
-      message: `${derivedWorldId}.message.1.1.player`,
+      message: "message.1.1.player",
     },
   ]);
   const derivedRuntime = await fixture.store.readSurface(
@@ -534,6 +596,28 @@ test("历史端点派生会复制完整 Authority 前缀，并在来源删除后
     coldStore.recoverEndpoint(derivedWorldId, "commit:1"),
   ).resolves.toEqual(derivedFirst);
 
+  const derivedRoot = join(fixture.root, "worlds-file-native", derivedWorldId);
+  await rm(join(derivedRoot, "state"), { recursive: true, force: true });
+  await rm(join(derivedRoot, "history"), { recursive: true, force: true });
+  await rm(join(derivedRoot, "runtime", "materialized-head.json"), {
+    force: true,
+  });
+  await expect(
+    coldStore.repairMaterialization(derivedWorldId),
+  ).resolves.toEqual({ outcome: "not_started" });
+  await expect(coldStore.getOperationOutcome("derive-1")).resolves.toEqual({
+    outcome: "not_started",
+  });
+  await expect(
+    coldStore.recoverEndpoint(derivedWorldId, "commit:1"),
+  ).resolves.toEqual(derivedFirst);
+  await expect(coldStore.readSurface(derivedWorldId, "state")).resolves.toEqual(
+    derivedFirst.state,
+  );
+  await expect(
+    coldStore.readSurface(derivedWorldId, "history"),
+  ).resolves.toHaveLength(derivedFirst.history.length);
+
   const child = await coldStore.deriveWorld({
     operationId: "derive-child",
     sourceWorldId: derivedWorldId,
@@ -563,10 +647,273 @@ test("历史端点派生会复制完整 Authority 前缀，并在来源删除后
   ).toContain("派生世界第二段状态");
 });
 
+test("分叉保留逐字节相同的世界中立 Authority 前缀", async () => {
+  const fixture = await world();
+  await fixture.store.commitPlayStep({
+    operationId: "world-neutral-source-play",
+    worldId: fixture.worldId,
+    parentHead: "genesis",
+    historyAppend: [
+      { role: "player", exactText: "I inspect the room." },
+      { role: "narrator", exactText: "The room remains quiet." },
+    ],
+    nextMaterials: [{ kind: "history_message", message: "message.1.1.player" }],
+    stateChanges: [],
+  });
+
+  const sourceRuntime = join(
+    fixture.root,
+    "worlds-file-native",
+    fixture.worldId,
+    "runtime",
+  );
+  const sourceFactPath = join(
+    sourceRuntime,
+    "authority-v3",
+    "epochs",
+    "00000001",
+    "authority.json",
+  );
+  const sourceFact = await readFile(sourceFactPath, "utf8");
+  expect(sourceFact).not.toContain(fixture.worldId);
+  expect(sourceFact).not.toContain("world-neutral-source-play");
+  expect(JSON.parse(sourceFact)).toMatchObject({
+    schemaVersion: 3,
+    type: "file_native_authority_commit",
+    head: "commit:1",
+    historyAppend: [
+      { messageId: "message.1.1.player", role: "player" },
+      { messageId: "message.1.2.narrator", role: "narrator" },
+    ],
+  });
+
+  process.env.NARRAEON_INTERNAL_TEST_FORBID_AUTHORITY_FACT_DECODE = "1";
+  const derived = await (async () => {
+    try {
+      return await fixture.store.deriveWorld({
+        operationId: "world-neutral-fork",
+        sourceWorldId: fixture.worldId,
+        sourceHead: "commit:1",
+        hostPresetId: "host-current",
+      });
+    } finally {
+      delete process.env.NARRAEON_INTERNAL_TEST_FORBID_AUTHORITY_FACT_DECODE;
+    }
+  })();
+  const targetFactPath = join(
+    fixture.root,
+    "worlds-file-native",
+    derived.world.worldId,
+    "runtime",
+    "authority-v3",
+    "epochs",
+    "00000001",
+    "authority.json",
+  );
+  await expect(readFile(targetFactPath, "utf8")).resolves.toBe(sourceFact);
+  await expect(
+    fixture.store.currentHeadOperationId(derived.world.worldId),
+  ).resolves.toBe("world-neutral-fork");
+  if (process.platform === "linux")
+    expect((await stat(targetFactPath)).ino).toBe(
+      (await stat(sourceFactPath)).ino,
+    );
+  expect(
+    (
+      await fixture.store.readAuthorityHistory(derived.world.worldId)
+    ).commits[0]?.historyAppend.map(({ messageId }) => messageId),
+  ).toEqual(["message.1.1.player", "message.1.2.narrator"]);
+});
+
+test("分叉 staging 持有统一来源快照 lease，删除不能切断正在保留的物理闭包", async () => {
+  const fixture = await world();
+  let entered!: () => void;
+  let release!: () => void;
+  const stagingEntered = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const stagingRelease = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const derivation = fixture.store.deriveWorld({
+    operationId: "fork-snapshot-lease",
+    sourceWorldId: fixture.worldId,
+    sourceHead: "genesis",
+    hostPresetId: "host-current",
+    stageTarget: async () => {
+      entered();
+      await stagingRelease;
+    },
+  });
+  await stagingEntered;
+  try {
+    await expect(
+      fixture.store.deleteWorld(fixture.worldId),
+    ).rejects.toMatchObject({ name: "WorldOperationBusyError" });
+  } finally {
+    release();
+  }
+  const derived = await derivation;
+  await expect(
+    fixture.store.recoverEndpoint(derived.world.worldId),
+  ).resolves.toMatchObject({ head: "genesis" });
+  await expect(fixture.store.currentHead(fixture.worldId)).resolves.toBe(
+    "genesis",
+  );
+});
+
+test.each(["reflink", "copy"] as const)(
+  "Authority 物理闭包支持 %s 路径且目标可变投影不与来源别名",
+  async (strategy) => {
+    process.env.NARRAEON_INTERNAL_TEST_CLONE_STRATEGY = strategy;
+    const fixture = await world();
+    await fixture.store.commitPlayStep({
+      operationId: `clone-${strategy}-source`,
+      worldId: fixture.worldId,
+      parentHead: "genesis",
+      historyAppend: [{ role: "player", exactText: `Use ${strategy}.` }],
+      nextMaterials: [],
+      stateChanges: [],
+    });
+    const derived = await fixture.store.deriveWorld({
+      operationId: `clone-${strategy}-target`,
+      sourceWorldId: fixture.worldId,
+      sourceHead: "commit:1",
+      hostPresetId: "host-current",
+    });
+    const sourceRoot = join(
+      fixture.root,
+      "worlds-file-native",
+      fixture.worldId,
+    );
+    const targetRoot = join(
+      fixture.root,
+      "worlds-file-native",
+      derived.world.worldId,
+    );
+    const sourceFact = join(
+      sourceRoot,
+      "runtime",
+      "authority-v3",
+      "epochs",
+      "00000001",
+      "authority.json",
+    );
+    const targetFact = join(
+      targetRoot,
+      "runtime",
+      "authority-v3",
+      "epochs",
+      "00000001",
+      "authority.json",
+    );
+    await expect(readFile(targetFact, "utf8")).resolves.toBe(
+      await readFile(sourceFact, "utf8"),
+    );
+    if (process.platform === "linux")
+      expect((await stat(targetFact)).ino).not.toBe(
+        (await stat(sourceFact)).ino,
+      );
+    const sourceState = join(sourceRoot, "state", "current-situation.yaml");
+    const targetState = join(targetRoot, "state", "current-situation.yaml");
+    const sourceBytes = await readFile(sourceState, "utf8");
+    await writeFile(
+      targetState,
+      `${await readFile(targetState, "utf8")}# target\n`,
+    );
+    await expect(readFile(sourceState, "utf8")).resolves.toBe(sourceBytes);
+  },
+);
+
+test("时间线修订只保存双父关系与直接结果引用", async () => {
+  const fixture = await world();
+  await fixture.store.commitPlayStep({
+    operationId: "direct-result-player-1",
+    worldId: fixture.worldId,
+    parentHead: "genesis",
+    historyAppend: [{ role: "player", exactText: "First player message" }],
+    nextMaterials: [],
+    stateChanges: [],
+  });
+  await fixture.store.commitPlayStep({
+    operationId: "direct-result-narrator-1",
+    worldId: fixture.worldId,
+    parentHead: "commit:1",
+    historyAppend: [{ role: "narrator", exactText: "First response" }],
+    nextMaterials: [],
+    stateChanges: [],
+  });
+  await fixture.store.commitPlayStep({
+    operationId: "direct-result-player-2",
+    worldId: fixture.worldId,
+    parentHead: "commit:2",
+    historyAppend: [{ role: "player", exactText: "Second player message" }],
+    nextMaterials: [],
+    stateChanges: [],
+  });
+  await fixture.store.reviseTimeline({
+    operationId: "direct-result-revision",
+    worldId: fixture.worldId,
+    expectedCurrentHead: "commit:3",
+    restoresHead: "commit:2",
+    replacesHead: "commit:3",
+    replacementText: "Revised second player message",
+    requestFingerprint: hash("direct-result-revision"),
+  });
+
+  const fact = JSON.parse(
+    await readFile(
+      join(
+        fixture.root,
+        "worlds-file-native",
+        fixture.worldId,
+        "runtime",
+        "authority-v3",
+        "epochs",
+        "00000004",
+        "authority.json",
+      ),
+      "utf8",
+    ),
+  ) as Record<string, unknown>;
+  expect(fact).toMatchObject({
+    schemaVersion: 3,
+    type: "file_native_authority_commit",
+    head: "commit:4",
+    auditParent: { head: "commit:3" },
+    timelineParent: { head: "commit:2" },
+    result: { epoch: 4 },
+    timelineRevision: {
+      restoresHead: "commit:2",
+      replacesHead: "commit:3",
+    },
+  });
+  expect(JSON.stringify(fact)).not.toContain("replacementState");
+  expect(JSON.stringify(fact)).not.toContain("replacementHistory");
+
+  const worldRoot = join(fixture.root, "worlds-file-native", fixture.worldId);
+  await rm(join(worldRoot, "state"), { recursive: true, force: true });
+  await rm(join(worldRoot, "history"), { recursive: true, force: true });
+  await rm(join(worldRoot, "runtime", "materialized-head.json"), {
+    force: true,
+  });
+  const recovered = await fixture.store.recoverEndpoint(fixture.worldId);
+  expect(recovered.history.map(({ exactText }) => exactText)).toEqual([
+    "The room falls quiet, leaving the present situation for your response.\n",
+    "First player message",
+    "First response",
+    "Revised second player message",
+  ]);
+});
+
 test.runIf(process.platform === "linux")(
   "进程崩溃边界诚实区分接受、物化、修复与派生发布",
   async () => {
-    for (const edge of ["before_commit_acceptance", "after_commit_acceptance"])
+    for (const edge of [
+      "before_commit_acceptance",
+      "after_authority_objects",
+      "after_commit_acceptance",
+    ])
       expect(await crashWorker(edge)).toMatchObject({ signal: "SIGKILL" });
     const root = roots.at(-1)!;
     const store = new FileNativeWorldStore(root);
@@ -581,6 +928,16 @@ test.runIf(process.platform === "linux")(
     expect(await runWorker(root, "none")).toMatchObject({ code: 0 });
     expect(
       await runWorker(root, "derivation_before_publish", "derive"),
+    ).toMatchObject({
+      signal: "SIGKILL",
+    });
+    expect(
+      await runWorker(root, "derivation_after_target_staging", "derive"),
+    ).toMatchObject({
+      signal: "SIGKILL",
+    });
+    expect(
+      await runWorker(root, "derivation_after_publish", "derive"),
     ).toMatchObject({
       signal: "SIGKILL",
     });

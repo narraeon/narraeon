@@ -496,16 +496,11 @@ export class V1Runtime {
       }
       case "world.derive": {
         const preset = await this.#playPresets.bindCurrent();
-        const result = await this.#worlds.deriveWorld({
+        const result = await this.#playCallChains.deriveWorld({
           operationId: request.operationId,
           sourceWorldId: request.sourceWorldId,
           sourceHead: request.sourceHead,
           hostPresetId: preset.id,
-        });
-        await this.#playCallChains.forkToDerivedWorld({
-          sourceWorldId: request.sourceWorldId,
-          sourceHead: request.sourceHead,
-          targetWorldId: result.world.worldId,
         });
         await this.#reconcileResultArtifacts(result);
         return result;

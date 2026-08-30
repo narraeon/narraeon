@@ -13,7 +13,16 @@ import { dirname, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import type { MaterialSelection } from "../prompt/FileNativePromptCompiler.ts";
-import type { FileNativePlayTimelineStore } from "../play/FileNativePlayTimelineStore.ts";
+import type {
+  FileNativePlayTimelineStore,
+  PersistedPlayCallChainContext,
+} from "../play/FileNativePlayTimelineStore.ts";
+import {
+  authorityV3Directory,
+  continuityHeadFile,
+  FileNativeAuthorityV3,
+  type FileNativeAuthorityCommitV3,
+} from "./FileNativeAuthorityV3.ts";
 
 const currentAuthorityHeadFile = "play-authority-head.json";
 const releasedAuthorityFile = "play-authority.json";
@@ -119,16 +128,38 @@ export class FileNativeWorldStorageMigrator {
     assertIdentity(worldId, "World ID");
     const worldRoot = join(this.#worldsRoot, worldId);
     const runtimeRoot = join(worldRoot, "runtime");
+    const currentAuthority = new FileNativeAuthorityV3(worldRoot);
+    if (await currentAuthority.exists()) {
+      const head = await currentAuthority.readHead();
+      return {
+        outcome: "already_current",
+        authorityCommits: head.sequence,
+        callChainContexts: 0,
+      };
+    }
     const current = await readOptionalJson<unknown>(
       join(runtimeRoot, currentAuthorityHeadFile),
     );
     if (current !== null) {
       assertCurrentAuthorityHead(current);
-      return {
-        outcome: "already_current",
-        authorityCommits: current.sequence,
-        callChainContexts: 0,
-      };
+      const commits = await readCurrentAuthority(worldRoot, current);
+      if ((commits.at(-1)?.operationId ?? null) !== current.operationId)
+        throw new Error(
+          "Current Authority head operation does not match its immutable tip",
+        );
+      const contexts = await this.#timeline.readAllContexts(worldId);
+      assertTimelineAuthorityRefs(contexts, commits);
+      const checkpoint = await migrateMaterializedCheckpoint(
+        runtimeRoot,
+        commits,
+      );
+      return this.#migrateCurrentAuthority({
+        worldId,
+        worldRoot,
+        commits,
+        checkpoint,
+        callChainContexts: contexts.length,
+      });
     }
 
     const publication = await readJson<unknown>(
@@ -168,6 +199,12 @@ export class FileNativeWorldStorageMigrator {
       );
     }
     crashAtStorageMigrationEdge("after_timeline");
+    const migratedContexts = await this.#timeline.readAllContexts(worldId);
+    if (migratedContexts.length !== callChainContexts)
+      throw new Error(
+        "Released play timeline migration changed its context closure",
+      );
+    assertTimelineAuthorityRefs(migratedContexts, currentCommits);
 
     for (const commit of currentCommits)
       await publishImmutableJson(
@@ -232,12 +269,484 @@ export class FileNativeWorldStorageMigrator {
           };
     await publishJson(join(runtimeRoot, currentAuthorityHeadFile), head);
     crashAtStorageMigrationEdge("after_current_head");
+    return this.#migrateCurrentAuthority({
+      worldId,
+      worldRoot,
+      commits: currentCommits,
+      checkpoint,
+      callChainContexts,
+    });
+  }
+
+  async #migrateCurrentAuthority(input: {
+    worldId: string;
+    worldRoot: string;
+    commits: readonly CurrentPlayCommit[];
+    checkpoint: CurrentMaterializedCheckpoint;
+    callChainContexts: number;
+  }): Promise<FileNativeWorldStorageMigrationResult> {
+    return migrateCurrentAuthorityToV3({
+      ...input,
+      operationsRoot: this.#operationsRoot,
+    });
+  }
+}
+
+async function migrateCurrentAuthorityToV3(input: {
+  worldId: string;
+  worldRoot: string;
+  operationsRoot: string;
+  commits: readonly CurrentPlayCommit[];
+  checkpoint: CurrentMaterializedCheckpoint;
+  callChainContexts: number;
+}): Promise<FileNativeWorldStorageMigrationResult> {
+  const runtimeRoot = join(input.worldRoot, "runtime");
+  const genesis = await readCurrentGenesis(input.worldRoot, input.worldId);
+  const normalized = normalizeAuthorityIdentity(genesis.history, input.commits);
+  const stagingWorld = join(runtimeRoot, ".authority-v3-migration");
+  const stagedRuntime = join(stagingWorld, "runtime");
+  const targetAuthority = join(runtimeRoot, authorityV3Directory);
+  await rm(stagingWorld, { recursive: true, force: true });
+  const staged = new FileNativeAuthorityV3(stagingWorld);
+  try {
+    const genesisMaterials = normalizeMaterials(
+      genesis.additionalMaterials,
+      normalized.messageIds,
+      input.worldId,
+    );
+    await staged.initialize({
+      operationId: genesis.operationId,
+      state: genesis.state,
+      history: normalized.genesisHistory,
+      additionalMaterials: genesisMaterials,
+    });
+    const expectedEndpoints = new Map<string, MigratedEndpointExpectation>([
+      [
+        "genesis",
+        {
+          state: structuredClone(genesis.state),
+          history: structuredClone(normalized.genesisHistory),
+          additionalMaterials: structuredClone(genesisMaterials),
+        },
+      ],
+    ]);
+    const migrated: {
+      source: CurrentPlayCommit;
+      fact: FileNativeAuthorityCommitV3;
+      digest: string;
+    }[] = [];
+    for (const source of input.commits) {
+      const historyAppend = source.historyAppend.map((message) =>
+        normalizeHistoryMessage(message, normalized.messageIds),
+      );
+      const nextMaterials = normalizeMaterials(
+        source.nextAdditionalMaterials,
+        normalized.messageIds,
+        input.worldId,
+      );
+      const basisHead =
+        source.timelineRevision?.restoresHead ?? source.parentHead;
+      const basis = expectedEndpoints.get(basisHead);
+      if (basis === undefined)
+        throw new Error(
+          "Released Authority transition references an unknown result basis",
+        );
+      if (source.timelineRevision !== undefined) {
+        const restored = await staged.recover(
+          source.timelineRevision.restoresHead,
+        );
+        const expectedHistory = source.timelineRevision.replacementHistory.map(
+          (message) => normalizeHistoryMessage(message, normalized.messageIds),
+        );
+        if (
+          !isDeepStrictEqual(
+            canonicalState(restored.state),
+            canonicalLegacyState(source.timelineRevision.replacementState),
+          ) ||
+          !isDeepStrictEqual(restored.history, expectedHistory) ||
+          !isDeepStrictEqual(restored.additionalMaterials, nextMaterials)
+        )
+          throw new Error(
+            "Released timeline revision does not exactly restore its logical parent",
+          );
+      }
+      const prepared = await staged.prepareAppend({
+        operationId: source.operationId,
+        parentHead: source.parentHead,
+        ...(source.timelineRevision === undefined
+          ? {}
+          : { timelineParentHead: source.timelineRevision.restoresHead }),
+        mode: source.mode,
+        historyAppend: historyAppend.map(({ role, exactText }) => ({
+          role,
+          exactText,
+        })),
+        stateChanges: source.stateChanges,
+        nextMaterials,
+        ...(source.correctionTargets === undefined
+          ? {}
+          : { correctionTargets: source.correctionTargets }),
+        ...(source.corrects === undefined ? {} : { corrects: source.corrects }),
+        ...(source.timelineRevision === undefined
+          ? {}
+          : {
+              timelineRevision: {
+                restoresHead: source.timelineRevision.restoresHead,
+                replacesHead: source.timelineRevision.replacesHead,
+                requestFingerprint: source.timelineRevision.requestFingerprint,
+              },
+            }),
+      });
+      if (
+        !isDeepStrictEqual(prepared.commit.historyAppend, historyAppend) ||
+        prepared.commit.head !== source.head
+      )
+        throw new Error("Migrated Authority fact changed released semantics");
+      await staged.publishPrepared(prepared);
+      const expected = applyReleasedTransition(
+        basis,
+        source,
+        historyAppend,
+        nextMaterials,
+      );
+      const recovered = await staged.recover(source.head);
+      if (
+        !isDeepStrictEqual(
+          canonicalState(recovered.state),
+          canonicalState(expected.state),
+        ) ||
+        !isDeepStrictEqual(recovered.history, expected.history) ||
+        !isDeepStrictEqual(
+          recovered.additionalMaterials,
+          expected.additionalMaterials,
+        )
+      )
+        throw new Error(
+          `Migrated Authority endpoint changed released semantics: ${source.head}`,
+        );
+      expectedEndpoints.set(source.head, expected);
+      migrated.push({
+        source,
+        fact: prepared.commit,
+        digest: prepared.commitDigest,
+      });
+    }
+
+    const finalHead = await staged.readHead();
+    if (
+      finalHead.sequence !== input.commits.length ||
+      finalHead.head !== (input.commits.at(-1)?.head ?? "genesis")
+    )
+      throw new Error(
+        "Migrated Authority head does not match released history",
+      );
+    await staged.readHistory();
+    const checkpointFact =
+      input.checkpoint.sequence === 0
+        ? null
+        : migrated[input.checkpoint.sequence - 1];
+    if (
+      (input.checkpoint.sequence === 0 &&
+        input.checkpoint.head !== "genesis") ||
+      (input.checkpoint.sequence > 0 &&
+        checkpointFact?.fact.head !== input.checkpoint.head)
+    )
+      throw new Error(
+        "Released materialized checkpoint is not in migrated Authority",
+      );
+    const checkpointEndpoint = await staged.recover(input.checkpoint.head);
+
+    await rm(targetAuthority, { recursive: true, force: true });
+    await rename(join(stagedRuntime, authorityV3Directory), targetAuthority);
+    await syncDirectory(runtimeRoot);
+    await publishJson(join(runtimeRoot, "play-genesis-timeline.json"), {
+      schemaVersion: 1,
+      worldId: input.worldId,
+      history: normalized.genesisHistory,
+    });
+    await publishJson(join(runtimeRoot, "additional-materials.json"), {
+      head: input.checkpoint.head,
+      items: checkpointEndpoint.additionalMaterials,
+    });
+    await publishJson(join(runtimeRoot, "materialized-head.json"), {
+      schemaVersion: 3,
+      head: input.checkpoint.head,
+      sequence: input.checkpoint.sequence,
+      commitDigest: checkpointFact?.digest ?? null,
+    });
+    await mkdir(input.operationsRoot, { recursive: true, mode: 0o700 });
+    for (const { source, fact, digest } of migrated) {
+      await publishJson(
+        operationOutcomePath(input.operationsRoot, source.operationId),
+        {
+          outcome:
+            input.checkpoint.sequence >= fact.sequence
+              ? "committed"
+              : "committed_materialization_pending",
+          worldId: input.worldId,
+          parentHead: fact.auditParent.head,
+          head: fact.head,
+          commitDigest: digest,
+          historyAppend: fact.historyAppend.map(({ role, exactText }) => ({
+            role,
+            exactText,
+          })),
+          nextAdditionalMaterials: fact.nextAdditionalMaterials,
+          mode: fact.mode,
+        },
+      );
+    }
+    await rm(stagingWorld, { recursive: true, force: true });
+    crashAtStorageMigrationEdge("before_authority_v3_head");
+    await publishJson(join(runtimeRoot, continuityHeadFile), finalHead);
+    crashAtStorageMigrationEdge("after_authority_v3_head");
     return {
       outcome: "migrated",
-      authorityCommits: currentCommits.length,
-      callChainContexts,
+      authorityCommits: migrated.length,
+      callChainContexts: input.callChainContexts,
     };
+  } finally {
+    await rm(stagingWorld, { recursive: true, force: true }).catch(
+      () => undefined,
+    );
   }
+}
+
+interface MigratedEndpointExpectation {
+  state: { path: string; contents: string }[];
+  history: ReleasedHistoryMessage[];
+  additionalMaterials: MaterialSelection[];
+}
+
+function applyReleasedTransition(
+  basis: MigratedEndpointExpectation,
+  source: CurrentPlayCommit,
+  historyAppend: readonly ReleasedHistoryMessage[],
+  nextMaterials: readonly MaterialSelection[],
+): MigratedEndpointExpectation {
+  const state = new Map(
+    basis.state.map(({ path, contents }) => [path, contents]),
+  );
+  for (const change of source.stateChanges) {
+    const previous = state.get(change.relativePath);
+    if (
+      (previous === undefined ? null : `sha256:${sha256Hex(previous)}`) !==
+        change.expectedPreviousHash ||
+      `sha256:${sha256Hex(change.canonicalNextBytes)}` !== change.nextHash
+    )
+      throw new Error(
+        `Released state transition hash conflicts: ${change.relativePath}`,
+      );
+    state.set(change.relativePath, change.canonicalNextBytes);
+  }
+  return {
+    state: [...state].map(([path, contents]) => ({ path, contents })),
+    history: [
+      ...structuredClone(basis.history),
+      ...structuredClone(historyAppend),
+    ],
+    additionalMaterials: structuredClone([...nextMaterials]),
+  };
+}
+
+function assertTimelineAuthorityRefs(
+  contexts: readonly PersistedPlayCallChainContext[],
+  commits: readonly CurrentPlayCommit[],
+): void {
+  const heads = new Set(["genesis", ...commits.map(({ head }) => head)]);
+  for (const context of contexts) {
+    if (!heads.has(context.baselineHead) || !heads.has(context.parentHead))
+      throw new Error(
+        "Released play timeline references an unknown Authority endpoint",
+      );
+    for (const event of context.events) {
+      if (
+        "committedHead" in event &&
+        event.committedHead !== undefined &&
+        !heads.has(event.committedHead)
+      )
+        throw new Error(
+          "Released play event references an unknown Authority endpoint",
+        );
+    }
+  }
+}
+
+async function readCurrentAuthority(
+  worldRoot: string,
+  head: CurrentAuthorityHead,
+): Promise<CurrentPlayCommit[]> {
+  const reverse: CurrentPlayCommit[] = [];
+  let digest = head.commitDigest;
+  let expectedHead = head.head;
+  let expectedSequence = head.sequence;
+  while (digest !== null) {
+    const value = await readJson<unknown>(
+      join(worldRoot, "runtime", "play-commits", `${digest}.json`),
+    );
+    assertCurrentPlayCommit(value);
+    if (
+      currentCommitDigest(value) !== digest ||
+      value.head !== expectedHead ||
+      value.sequence !== expectedSequence
+    )
+      throw new Error("Current Authority endpoint does not match its commit");
+    reverse.push(value);
+    digest = value.parentCommitDigest;
+    expectedHead = value.parentHead;
+    expectedSequence -= 1;
+  }
+  if (expectedHead !== "genesis" || expectedSequence !== 0)
+    throw new Error("Current Authority chain does not terminate at genesis");
+  return reverse.reverse();
+}
+
+async function readCurrentGenesis(
+  worldRoot: string,
+  worldId: string,
+): Promise<{
+  operationId: string | null;
+  state: { path: string; contents: string }[];
+  history: ReleasedHistoryMessage[];
+  additionalMaterials: MaterialSelection[];
+}> {
+  const value = await readJson<unknown>(
+    join(worldRoot, "runtime", "genesis.json"),
+  );
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== 1 ||
+    value.type !== "file_native_genesis" ||
+    value.worldId !== worldId ||
+    (typeof value.operationId !== "string" && value.operationId !== null) ||
+    !Array.isArray(value.state) ||
+    !Array.isArray(value.history) ||
+    !value.history.every(isReleasedHistoryMessage) ||
+    !Array.isArray(value.additionalMaterials) ||
+    !value.additionalMaterials.every(isMaterialSelection)
+  )
+    throw new Error("Current world genesis has an invalid shape");
+  const state = value.state.map((file) => {
+    if (
+      !isRecord(file) ||
+      typeof file.path !== "string" ||
+      !validRelativePath(file.path) ||
+      typeof file.sha256 !== "string" ||
+      typeof file.canonicalBytes !== "string" ||
+      `sha256:${sha256Hex(file.canonicalBytes)}` !== file.sha256
+    )
+      throw new Error("Current world genesis state is corrupt");
+    return { path: file.path, contents: file.canonicalBytes };
+  });
+  return {
+    operationId: value.operationId,
+    state,
+    history: structuredClone(value.history),
+    additionalMaterials: structuredClone(value.additionalMaterials),
+  };
+}
+
+function normalizeAuthorityIdentity(
+  genesis: readonly ReleasedHistoryMessage[],
+  commits: readonly CurrentPlayCommit[],
+): {
+  genesisHistory: ReleasedHistoryMessage[];
+  messageIds: ReadonlyMap<string, string>;
+} {
+  const messageIds = new Map<string, string>();
+  const bind = (source: string, target: string) => {
+    if (messageIds.has(source) && messageIds.get(source) !== target)
+      throw new Error("Released Authority reuses one message identity");
+    messageIds.set(source, target);
+    messageIds.set(target, target);
+  };
+  for (const [index, message] of genesis.entries())
+    bind(
+      message.messageId,
+      index === 0 && message.role === "narrator"
+        ? "message.genesis.narrator"
+        : `message.genesis.${index + 1}.${message.role}`,
+    );
+  for (const commit of commits)
+    for (const [index, message] of commit.historyAppend.entries())
+      bind(
+        message.messageId,
+        `message.${commit.sequence}.${index + 1}.${message.role}`,
+      );
+  return {
+    genesisHistory: genesis.map((message) =>
+      normalizeHistoryMessage(message, messageIds),
+    ),
+    messageIds,
+  };
+}
+
+function normalizeHistoryMessage(
+  message: ReleasedHistoryMessage,
+  messageIds: ReadonlyMap<string, string>,
+): ReleasedHistoryMessage {
+  const messageId = messageIds.get(message.messageId);
+  if (messageId === undefined)
+    throw new Error(
+      `Released Authority references an unknown history message: ${message.messageId}`,
+    );
+  return { ...structuredClone(message), messageId };
+}
+
+function normalizeMaterials(
+  materials: readonly MaterialSelection[],
+  messageIds: ReadonlyMap<string, string>,
+  worldId: string,
+): MaterialSelection[] {
+  return materials.map((material) => {
+    if (material.kind === "history_message") {
+      const message = messageIds.get(material.message);
+      if (message === undefined)
+        throw new Error(
+          `Released material references an unknown history message: ${material.message}`,
+        );
+      return { ...material, message };
+    }
+    if (material.kind === "history_commit") {
+      const prefix = `${worldId}.`;
+      const commit = material.commit.startsWith(prefix)
+        ? material.commit.slice(prefix.length)
+        : material.commit;
+      if (!/^(?:genesis|commit:[1-9][0-9]*)$/u.test(commit))
+        throw new Error(
+          `Released material references a foreign Authority endpoint: ${material.commit}`,
+        );
+      return {
+        ...material,
+        commit,
+      };
+    }
+    return structuredClone(material);
+  });
+}
+
+function canonicalState(
+  files: readonly { path: string; contents: string }[],
+): { path: string; sha256: string; canonicalBytes: string }[] {
+  return files
+    .map(({ path, contents }) => ({
+      path,
+      sha256: `sha256:${sha256Hex(contents)}`,
+      canonicalBytes: contents,
+    }))
+    .sort((left, right) => left.path.localeCompare(right.path));
+}
+
+function canonicalLegacyState(
+  files: readonly {
+    path: string;
+    sha256: string;
+    canonicalBytes: string;
+  }[],
+): { path: string; sha256: string; canonicalBytes: string }[] {
+  return [...structuredClone(files)].sort((left, right) =>
+    left.path.localeCompare(right.path),
+  );
 }
 
 async function readReleasedAuthority(
@@ -346,6 +855,40 @@ async function migrateMaterializedCheckpoint(
       sequence: 0,
       commitDigest: null,
     };
+  if (
+    isRecord(value) &&
+    hasExactKeys(value, [
+      "schemaVersion",
+      "head",
+      "sequence",
+      "commitDigest",
+    ]) &&
+    value.schemaVersion === 3 &&
+    typeof value.head === "string" &&
+    Number.isSafeInteger(value.sequence) &&
+    Number(value.sequence) >= 0 &&
+    (value.commitDigest === null ||
+      (typeof value.commitDigest === "string" &&
+        /^[a-f0-9]{64}$/u.test(value.commitDigest)))
+  ) {
+    const sequence = Number(value.sequence);
+    const expected = sequence === 0 ? undefined : commits[sequence - 1];
+    if (
+      (sequence === 0 &&
+        (value.head !== "genesis" || value.commitDigest !== null)) ||
+      (sequence > 0 && expected?.head !== value.head)
+    )
+      throw new Error(
+        "Unmarked V3 materialized checkpoint is not in released Authority",
+      );
+    return {
+      schemaVersion: 2,
+      head: value.head,
+      sequence,
+      commitDigest:
+        expected === undefined ? null : currentCommitDigest(expected),
+    };
+  }
   if (isCurrentMaterializedCheckpoint(value)) {
     const expected =
       value.sequence === 0 ? undefined : commits[value.sequence - 1];
@@ -619,7 +1162,7 @@ function isReleasedStateChange(value: unknown): value is ReleasedStateChange {
   );
 }
 
-function isMaterialSelection(value: unknown): boolean {
+function isMaterialSelection(value: unknown): value is MaterialSelection {
   if (!isRecord(value)) return false;
   if (value.kind === "document")
     return (
@@ -689,6 +1232,69 @@ function assertCurrentAuthorityHead(
         value.operationId === null)
   )
     throw new Error("Current Authority head has an invalid shape");
+}
+
+function assertCurrentPlayCommit(
+  value: unknown,
+): asserts value is CurrentPlayCommit {
+  if (!isRecord(value))
+    throw new Error("Current play commit has an invalid shape");
+  const correction = value.mode === "correction";
+  const timelineRevision = value.mode === "timeline_revision";
+  if (
+    !hasExactKeys(value, [
+      "schemaVersion",
+      "sequence",
+      "operationId",
+      "parentHead",
+      "parentCommitDigest",
+      "head",
+      "mode",
+      "historyAppend",
+      "stateChanges",
+      "nextAdditionalMaterials",
+      ...(correction ? ["correctionTargets", "corrects"] : []),
+      ...(timelineRevision ? ["timelineRevision"] : []),
+    ]) ||
+    value.schemaVersion !== 2 ||
+    !Number.isSafeInteger(value.sequence) ||
+    Number(value.sequence) < 1 ||
+    typeof value.operationId !== "string" ||
+    value.operationId.trim() === "" ||
+    typeof value.parentHead !== "string" ||
+    !/^(?:genesis|commit:[1-9][0-9]*)$/u.test(value.parentHead) ||
+    (value.parentCommitDigest !== null &&
+      (typeof value.parentCommitDigest !== "string" ||
+        !/^[a-f0-9]{64}$/u.test(value.parentCommitDigest))) ||
+    typeof value.head !== "string" ||
+    value.head !== `commit:${String(value.sequence)}` ||
+    (value.mode !== "play" &&
+      value.mode !== "correction" &&
+      value.mode !== "timeline_revision") ||
+    !Array.isArray(value.historyAppend) ||
+    !value.historyAppend.every(isReleasedHistoryMessage) ||
+    !Array.isArray(value.stateChanges) ||
+    !value.stateChanges.every(isReleasedStateChange) ||
+    !Array.isArray(value.nextAdditionalMaterials) ||
+    !value.nextAdditionalMaterials.every(isMaterialSelection)
+  )
+    throw new Error("Current play commit has an invalid shape");
+  if (
+    correction &&
+    (!Array.isArray(value.correctionTargets) ||
+      !value.correctionTargets.every(
+        (target) => typeof target === "string" && target.trim() !== "",
+      ) ||
+      typeof value.corrects !== "string" ||
+      value.corrects !== value.parentHead)
+  )
+    throw new Error("Current correction commit has an invalid shape");
+  if (
+    timelineRevision &&
+    (value.stateChanges.length !== 0 ||
+      !isReleasedTimelineRevision(value.timelineRevision))
+  )
+    throw new Error("Current timeline revision has an invalid shape");
 }
 
 function isCurrentMaterializedCheckpoint(

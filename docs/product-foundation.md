@@ -224,13 +224,13 @@ Runtime 是唯一业务提交者。每笔提交绑定稳定 operation ID 和父�
 - 每份变化后完整世界文档及前后 hash；
 - 下一端点完整附加材料清单。
 
-长期恢复保存最终文件效果，不保存模型 patch 语言。提交先 durable 发布内容寻址的不可变记录和“接受已准备”操作事实，再原子切换小型 Authority 端点，最后幂等物化 `state`、`history` 和端点清单；若提交已接受但文件物化失败，结果必须报告“已提交、待修复”，阻止新写入，并只根据同一提交补齐，不能以新 operation 重放模型。每次追加只新增本次提交并替换小端点，不重写此前全部提交。
+长期恢复保存最终文件效果，不保存模型 patch 语言。提交先 durable 发布世界中立的内容 blob、state manifest、history segment、材料集合、直接结果 root 和 Authority 事实，再发布独立的“接受已准备”operation receipt，随后原子切换小型 continuity head，最后幂等物化 `state`、`history` 和材料清单；若事实已接受但投影物化失败，结果必须报告“已提交、待修复”，阻止新写入，并只根据同一结果 root 补齐，不能以新 operation 重放模型。每次追加只新增本次 epoch 并替换小 head，不重写此前事实。
 
-V1 继续只用 genesis 加不可变提交作为正确性来源，不增加第二份权威日志。小型 Authority 端点保存当前 head、序号和提交摘要；物化检查点只证明当前文件树已经追到哪一笔提交，丢失时可沿不可变父摘要链补齐，既不能接受新事实，也不能覆盖 Authority。普通打开与继续游玩读取小端点和当前物化文件；完整审计、旧端点恢复和创建分叉才显式遍历提交链。分叉世界复制来源 genesis 和截至所选端点的完整不可变提交前缀；新世界保留相同的本地 head 拓扑，但为 world、operation 和历史消息重分配所有权身份，不把所选端点压成另一个 genesis，也不持久化来源 world 身份。
+V1 继续只用 genesis anchor 加不可变 Authority 事实作为正确性来源，不增加第二份权威日志。`worldId` 只属于世界本地外壳；历史消息使用 Authority 内局部身份，事实摘要不包含 world 或 operation 身份。`commit:N` 是 V1 世界内别名，父关系同时携带不可变摘要，结果 root 是恢复 state、history 和材料的直接入口。物化检查点只证明本地投影已经追到哪个接受点，不能接受新事实或覆盖 Authority。普通打开与继续游玩读取小 head 和当前投影；旧端点直接读取对应结果 root，完整审计才遍历 audit chain。
 
-“创建分叉”是唯一创建独立世界的历史操作。玩家可以在任一已提交玩家／AI 节点点击该按钮，复制截至所选端点的完整 Authority 前缀及其 state、history 和附加材料清单，使用创建分叉当下的当前世界控制和玩家所选主持预设，发布物理闭包的新世界。若该节点属于持久游玩时间线中的任一模型上下文，分叉同时保留该上下文之前的完整页面轨迹，并截断所选上下文截至该节点的模型 transcript 与调用轨迹，包括思维链、工具参数和结果；每个保留的已提交事件继续指向新世界中同名的本地 Authority 端点，分叉点之后的上下文和响应不进入分叉世界，chain/world 身份重新分配。截断后最后一项是玩家消息时，玩家可以留空点击“追加上下文”直接重新生成，不再提交一遍同样的玩家原文。
+“创建分叉”是唯一创建独立世界的历史操作。玩家可以在任一已提交玩家／AI 节点点击该按钮；Runtime 先持有统一来源 snapshot lease，再保留截至所选端点的世界中立 Authority 物理闭包，使用创建分叉当下的当前控制和玩家所选主持预设，在同一 target staging 中物化一次最终 state/history／材料投影并发布新世界。当前 head 直接采用小 root 的结果引用，不解码或重算 Authority 事实；共享不可变文件优先 hardlink，失败时 reflink 或逐字节复制，可变投影绝不 hardlink，删除来源后目标仍完全自足。分叉不解析、改写、重算或逐笔物化祖先事实，也不调用 Provider 或重新执行工具。若节点属于持久游玩时间线，staging 同时保留此前完整页面轨迹，并截断所选上下文截至节点的模型 transcript 与调用轨迹，包括返回推理、工具参数和结果；分叉点之后的上下文和响应不进入目标，活动 chain 身份重新分配。截断后最后一项是玩家消息时，玩家可以留空点击“追加上下文”直接重新生成，不再提交一遍同样的玩家原文。
 
-“修改”只作用于当前世界，不创建新 world ID（[ADR-0032](adr/0032-player-edits-append-current-world-timeline-revisions.md)）。玩家确认修改稿后，Runtime 在当前 Authority 头上原子追加一笔 timeline_revision 提交：提交内保存所选玩家消息逻辑父端点的完整 state、history 恢复快照和材料清单，并把修改稿作为这笔提交的新玩家原文；随后调用链使用新 chain 身份保留父端点以前的 transcript 与轨迹，从修改稿继续生成。原玩家提交及其后续提交仍按原顺序保留在不可变 Authority 中，旧端点继续可以精确恢复，但它们不再进入当前端点的状态、叙事、材料或活动调用轨迹。物化层会从修订提交确定性重建当前 state 和 history 投影，因此“舍弃后续”不等于删除审计记录。
+“修改”只作用于当前世界，不创建新 world ID（[ADR-0032](adr/0032-player-edits-append-current-world-timeline-revisions.md)、[ADR-0036](adr/0036-authority-facts-are-world-neutral-and-forks-retain-physical-closures.md)）。玩家确认修改稿后，Runtime 在当前 audit head 上原子追加 timeline revision：`auditParent` 指向修改前当前 head，`timelineParent` 指向所选玩家消息的逻辑父端点，事实只保存双父关系、请求指纹、修改稿与直接结果 root，不嵌入完整 replacement state/history。随后调用链换用新 chain 身份保留逻辑父端点以前的 transcript 与轨迹，从修改稿继续生成。旧提交和旧端点继续精确可恢复，但不进入当前结果 root；“舍弃后续”因此不等于删除审计记录。
 
 连续性修正仍只针对当前端点的文档或材料清单，追加普通 correction 提交；它不替换玩家消息，也不改变活动调用轨迹。时间线修订、连续性修正和创建分叉是三种不同授权，界面不得用同一个含混的“重新开始”动作代替。
 
@@ -256,13 +256,13 @@ V1 继续只用 genesis 加不可变提交作为正确性来源，不增加第�
 - `PlayCallChain` 拥有两个提交动作、空输入续写、模型／工具循环、浏览器增量投影、tool-call 幂等、逐响应 Authority 衔接和中断请求原样重发。
 - `FileNativePlayTimelineStore` 拥有跨全新上下文的页面时间线、稳定游标摘要页、单事件详情和可恢复的追加投影。
 - `FileNativePlayAdvanceStore` 拥有冻结请求、完整 Provider 结果、精确响应结算和已结算端点等不可变游玩推进事实。
-- `FileNativeWorldStore` 拥有内容寻址的不可变提交、小型 Authority 端点、operation outcome、时间线修订、物化恢复和创建分叉；它不向模型暴露提交 DTO。
+- `FileNativeAuthorityV3` 拥有世界中立不可变事实、双父关系、直接结果 root、物理闭包复制和小 continuity head；`FileNativeWorldStore` 拥有世界外壳、operation receipt、投影物化、时间线修订与原子分叉 staging；两者都不向模型暴露提交 DTO。
 - `FileNativeArtifactStore` 拥有后置请求产物的 pending 记录、结算、保留策略和活动投影；玩法产物不混入世界 Authority。
 - `ModelHost` 与 provider adapter 只拥有协议编码、流式交换和续传，不拥有世界事实或提示词语义。
 - `Runtime` 协调这些深模块，是唯一业务权威。
 
 ## 持久格式与升级边界
 
-正式发布或公开预发布过的持久格式属于产品兼容契约。Runtime 在旧世界第一次跨越对应的 Authority／页面时间线 seam 前，必须按明确版本执行一次性迁移：先校验旧 Authority、调用链和物化检查点，再以确定身份写完并验证当前不可变事实与可重建投影，最后原子发布小 Authority 端点作为当前布局已经成立的 durable marker。进程在 marker 发布前退出时旧累计源仍然完整，重启复用已经写好的同一内容并继续；marker 发布后只读取和写入当前格式，旧源保留为只读恢复证据，不再随游玩增长。
+正式发布或公开预发布过的持久格式属于产品兼容契约。Runtime 在旧世界第一次跨越对应的 Authority／页面时间线 seam 前，必须按明确版本执行一次性迁移：先校验旧 Authority、调用链、全部可达端点和物化检查点，再确定性归一旧 world-bound 身份，写完并验证当前不可变事实、operation receipts 与可重建投影，最后原子发布 `continuity-head.json` 作为当前布局已经完整成立的 durable marker。进程在 marker 发布前退出时旧累计源仍然完整，重启只从旧源重建或复用未接受对象；marker 发布后只读取和写入当前格式，旧源保留为只读恢复证据，不再随游玩增长。
 
 这项迁移义务不等于长期兼容猜测。Runtime 只迁移能够精确识别的已发布 schema；未知字段、未知命名空间或损坏记录仍然 fail closed，不能推断别名、部分导入、双读、双写，也不能在结果不明时触发模型重放。

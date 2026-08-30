@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -42,6 +49,7 @@ const roots: string[] = [];
 afterEach(async () => {
   delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE;
   delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_FILE_NATIVE_AUTHORITY_EDGE;
+  delete process.env.NARRAEON_INTERNAL_TEST_CLONE_STRATEGY;
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
   );
@@ -1305,6 +1313,43 @@ test("全新上下文只重建模型上下文，持久保留此前调用轨迹�
   expect(branchTrace?.events).toContainEqual(
     expect.objectContaining({ kind: "tool_call", name: "state_list" }),
   );
+  if (process.platform === "linux") {
+    const contextRoot = (targetWorldId: string, chainId: string) =>
+      join(
+        root,
+        "worlds-file-native",
+        targetWorldId,
+        "runtime",
+        "play-contexts",
+        createHash("sha256").update(chainId).digest("hex"),
+      );
+    const sourceContextRoot = contextRoot(worldId, "play-chain-old-context");
+    const targetContextRoot = contextRoot(
+      branch.world.worldId,
+      branchTrace!.chainId,
+    );
+    const sourceTranscript = join(
+      sourceContextRoot,
+      "transcript",
+      "0000000001.json",
+    );
+    const targetTranscript = join(
+      targetContextRoot,
+      "transcript",
+      "0000000001.json",
+    );
+    expect((await stat(targetTranscript)).ino).toBe(
+      (await stat(sourceTranscript)).ino,
+    );
+    const sourceEvent = join(sourceContextRoot, "events", "0000000001.json");
+    const targetEvent = join(targetContextRoot, "events", "0000000001.json");
+    expect((await stat(targetEvent)).ino).not.toBe(
+      (await stat(sourceEvent)).ino,
+    );
+    const sourceEventBytes = await readFile(sourceEvent, "utf8");
+    await writeFile(targetEvent, `${await readFile(targetEvent, "utf8")} `);
+    await expect(readFile(sourceEvent, "utf8")).resolves.toBe(sourceEventBytes);
+  }
 
   const fullBranch = (
     await runtime.handle({
@@ -1335,6 +1380,52 @@ test("全新上下文只重建模型上下文，持久保留此前调用轨迹�
   expect(committedHeads(fullBranchTimeline.items)).toEqual(
     committedHeads(timeline.items),
   );
+  await rm(join(root, "worlds-file-native", worldId), {
+    recursive: true,
+    force: true,
+  });
+  const coldWorlds = new FileNativeWorldStore(root);
+  const coldChains = new PlayCallChain(coldWorlds);
+  const coldBranch = await coldChains.inspectWorld(fullBranch.world.worldId);
+  expect(coldBranch?.parentHead).toBe(second.parentHead);
+  const continued = await coldChains.append({
+    worldId: fullBranch.world.worldId,
+    chainId: coldBranch!.chainId,
+    exchangeId: "continue-after-source-delete",
+    playerText: "Continue independently.",
+    modelHost: new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [{ outcome: "response", text: "The fork continues." }],
+    }),
+  });
+  expect(continued.parentHead).not.toBe(second.parentHead);
+  const oldPlayer = coldBranch!.events.find(
+    (event) => event.kind === "player" && event.committedHead !== undefined,
+  );
+  if (oldPlayer?.kind !== "player") throw new Error("missing old player node");
+  const revised = await coldChains.revisePlayer({
+    operationId: "revise-after-source-delete",
+    worldId: fullBranch.world.worldId,
+    chainId: continued.chainId,
+    eventId: oldPlayer.id,
+    replacementExchangeId: "revised-after-source-delete",
+    replacementText: "Continue independently, but more carefully.",
+  });
+  const child = await coldChains.deriveWorld({
+    operationId: "fork-again-after-source-delete",
+    sourceWorldId: fullBranch.world.worldId,
+    sourceHead: revised.playCallChain.parentHead,
+    hostPresetId: "host-current",
+  });
+  await expect(coldWorlds.currentHead(child.world.worldId)).resolves.toBe(
+    revised.playCallChain.parentHead,
+  );
+  await expect(
+    coldChains.inspectWorld(child.world.worldId),
+  ).resolves.toMatchObject({
+    worldId: child.world.worldId,
+    parentHead: revised.playCallChain.parentHead,
+  });
 });
 
 test("从调用链节点派生会保留截至该节点的调用轨迹，并可在玩家节点空输入重新生成", async () => {
@@ -1574,6 +1665,79 @@ test("从调用链节点派生会保留截至该节点的调用轨迹，并可�
   );
 });
 
+test.each(["reflink", "copy"] as const)(
+  "页面／模型轨迹物理闭包支持 %s 路径且不会重放 Provider 或工具",
+  async (strategy) => {
+    process.env.NARRAEON_INTERNAL_TEST_CLONE_STRATEGY = strategy;
+    const { worlds, worldId, root } = await createWorld(
+      `play-chain-trace-${strategy}`,
+    );
+    const host = new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [
+        {
+          outcome: "response",
+          reasoningContent: `Inspect state before the ${strategy} fork.`,
+          toolCalls: [
+            { id: `state-${strategy}`, name: "state_list", arguments: {} },
+          ],
+        },
+        { outcome: "response", text: `The ${strategy} trace is sealed.` },
+      ],
+    });
+    const chains = new PlayCallChain(worlds);
+    const source = await chains.start({
+      worldId,
+      chainId: `trace-${strategy}-source`,
+      exchangeId: `trace-${strategy}-exchange`,
+      playerText: `Create a ${strategy} trace.`,
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: modelBinding(),
+      modelHost: host,
+    });
+    const requestCount = host.requests.length;
+    const derived = await chains.deriveWorld({
+      operationId: `trace-${strategy}-fork`,
+      sourceWorldId: worldId,
+      sourceHead: source.parentHead,
+      hostPresetId: "host-current",
+    });
+    expect(host.requests).toHaveLength(requestCount);
+    const target = await chains.inspectWorld(derived.world.worldId);
+    expect(target).toMatchObject({
+      worldId: derived.world.worldId,
+      parentHead: source.parentHead,
+    });
+
+    const contextRoot = (targetWorldId: string, chainId: string) =>
+      join(
+        root,
+        "worlds-file-native",
+        targetWorldId,
+        "runtime",
+        "play-contexts",
+        createHash("sha256").update(chainId).digest("hex"),
+      );
+    const sourceRoot = contextRoot(worldId, source.chainId);
+    const targetRoot = contextRoot(derived.world.worldId, target!.chainId);
+    for (const relative of [
+      "transcript/0000000001.json",
+      "completed-tools/0000000001.json",
+    ]) {
+      const sourcePath = join(sourceRoot, relative);
+      const targetPath = join(targetRoot, relative);
+      await expect(readFile(targetPath)).resolves.toEqual(
+        await readFile(sourcePath),
+      );
+      if (process.platform === "linux")
+        expect((await stat(targetPath)).ino).not.toBe(
+          (await stat(sourcePath)).ino,
+        );
+    }
+  },
+);
+
 test("修改历史玩家提交会在同一世界追加时间线修订，并从修改稿继续调用链", async () => {
   const { worlds, worldId, root } = await createWorld("play-chain-edit-player");
   const sourceHost = new ScriptedModelHost({
@@ -1726,7 +1890,8 @@ test("修改历史玩家提交会在同一世界追加时间线修订，并从�
   expect(authority.commits).toHaveLength(6);
   expect(authority.commits[4]).toMatchObject({
     mode: "timeline_revision",
-    parentHead: "commit:4",
+    auditParent: { head: "commit:4" },
+    timelineParent: { head: "commit:2" },
     head: "commit:5",
     timelineRevision: {
       restoresHead: "commit:2",

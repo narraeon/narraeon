@@ -679,7 +679,7 @@ function withoutAppendedContextGenesis(
   const additionalMaterials = input.world.additionalMaterials.filter(
     (material) =>
       material.kind !== "history_message" ||
-      !material.message.endsWith(".message.genesis.narrator"),
+      !material.message.endsWith("message.genesis.narrator"),
   );
   if (additionalMaterials.length === input.world.additionalMaterials.length)
     return input;
@@ -1524,7 +1524,7 @@ function resolveRecentHistory(
   // names: lexical sorting would put `message.genesis` after every numbered
   // message and `message.9` after `message.15`.
   const ordered = Object.entries(history).filter(
-    ([ref]) => !ref.endsWith(".message.genesis.narrator"),
+    ([ref]) => !ref.endsWith("message.genesis.narrator"),
   );
   const chosen = ordered.slice(-recent);
   if (chosen.length === 0) {
@@ -1660,11 +1660,19 @@ function renderHistoryMessage(
 }
 
 function historyMessageLabel(ref: string, locale: AppLocale): string {
-  if (ref.endsWith(".message.genesis.narrator"))
+  if (ref.endsWith("message.genesis.narrator"))
     return locale === "zh-CN" ? "开场白" : "Opening";
-  if (/(?:\.message\.[^.]+(?:\.[0-9]+)?\.|-)(player)(?:-|$)/u.test(ref))
+  if (
+    /(?:^|\.)message\.[^.]+(?:\.[0-9]+)?\.player$|(?:^|-)player(?:-|$)/u.test(
+      ref,
+    )
+  )
     return locale === "zh-CN" ? "玩家原文" : "Player input";
-  if (/(?:\.message\.[^.]+(?:\.[0-9]+)?\.|-)(narrator)(?:-|$)/u.test(ref))
+  if (
+    /(?:^|\.)message\.[^.]+(?:\.[0-9]+)?\.narrator$|(?:^|-)narrator(?:-|$)/u.test(
+      ref,
+    )
+  )
     return locale === "zh-CN" ? "主持叙事" : "Host narrative";
   return locale === "zh-CN" ? "已提交消息" : "Committed message";
 }

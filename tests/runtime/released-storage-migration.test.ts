@@ -32,14 +32,21 @@ test.each([1, 2] as const)(
     expect(authority.commits.map(({ sequence }) => sequence)).toEqual([
       1, 2, 3, 4,
     ]);
+    const continuityHead = JSON.parse(
+      await readFile(join(fixture.runtimeRoot, "continuity-head.json"), "utf8"),
+    ) as { genesisDigest: string };
     expect(
-      authority.commits.map(({ parentCommitDigest }) => parentCommitDigest),
+      authority.commits.map(({ auditParent }) => auditParent.digest),
     ).toEqual([
-      null,
+      continuityHead.genesisDigest,
       digest(authority.commits[0]),
       digest(authority.commits[1]),
       digest(authority.commits[2]),
     ]);
+    for (const expected of fixture.endpoints)
+      await expect(
+        store.recoverEndpoint(fixture.worldId, expected.head),
+      ).resolves.toEqual(expected);
     await expect(store.recoverEndpoint(fixture.worldId)).resolves.toMatchObject(
       {
         head: "commit:4",
@@ -116,7 +123,7 @@ test.each([1, 2] as const)(
     });
 
     const currentHeadBefore = await readFile(
-      join(fixture.runtimeRoot, "play-authority-head.json"),
+      join(fixture.runtimeRoot, "continuity-head.json"),
       "utf8",
     );
     const timelineHeadBefore = await readFile(
@@ -127,7 +134,7 @@ test.each([1, 2] as const)(
       fixture.worldId,
     );
     await expect(
-      readFile(join(fixture.runtimeRoot, "play-authority-head.json"), "utf8"),
+      readFile(join(fixture.runtimeRoot, "continuity-head.json"), "utf8"),
     ).resolves.toBe(currentHeadBefore);
     await expect(
       readFile(join(fixture.runtimeRoot, "play-timeline-head.json"), "utf8"),
@@ -162,7 +169,7 @@ test("从未开始游玩的已发布世界会从 genesis 布局迁移", async ()
   const page = await store.playTimeline.readPage(fixture.worldId, 10);
   expect(page.items).toContainEqual({
     kind: "genesis",
-    messageId: `${fixture.worldId}.message.genesis.narrator`,
+    messageId: "message.genesis.narrator",
     role: "narrator",
     exactText: "门外传来三声短促的铃响。\n",
   });
@@ -180,40 +187,83 @@ test("旧接受点发布前退出留下的唯一不可变链也会按已发布�
   ]);
 });
 
-test.each(["after_timeline", "before_current_head", "after_current_head"])(
-  "已发布存档在 %s 强制退出后可由原始事实幂等完成迁移",
-  async (edge) => {
-    const fixture = await releasedWorld(`released-storage-crash-${edge}`, 1);
-    const crashed = await runMigrationWorker(
-      fixture.root,
-      fixture.worldId,
-      edge,
-    );
-    expect(crashed).toEqual({ code: null, signal: "SIGKILL" });
-    await expect(
-      readFile(join(fixture.runtimeRoot, "play-authority.json"), "utf8"),
-    ).resolves.toBe(fixture.releasedAuthoritySource);
-    await expect(
-      readFile(join(fixture.runtimeRoot, "play-call-chain.json"), "utf8"),
-    ).resolves.toBe(fixture.releasedCallChainSource);
+test("schemaVersion=2 迁移逐端点保留状态、历史、材料与 timeline revision 语义", async () => {
+  const fixture = await currentV2RevisionWorld(
+    "released-storage-current-revision",
+  );
+  const store = new FileNativeWorldStore(fixture.root);
 
-    const recovered = new FileNativeWorldStore(fixture.root);
-    await expect(recovered.currentHead(fixture.worldId)).resolves.toBe(
-      "commit:4",
-    );
-    const endpoint = await recovered.recoverEndpoint(fixture.worldId);
-    expect(endpoint.head).toBe("commit:4");
-    expect(
-      endpoint.history.map(({ role, exactText }) => ({ role, exactText })),
-    ).toContainEqual({ role: "player", exactText: "我点亮提灯。" });
-    expect(
-      endpoint.history.map(({ role, exactText }) => ({ role, exactText })),
-    ).toContainEqual({ role: "narrator", exactText: "昏黄的光照亮走廊。" });
+  await expect(store.currentHead(fixture.worldId)).resolves.toBe("commit:5");
+  for (const endpoint of fixture.endpoints)
     await expect(
-      recovered.playTimeline.readAllContexts(fixture.worldId),
-    ).resolves.toHaveLength(2);
-  },
-);
+      store.recoverEndpoint(fixture.worldId, endpoint.head),
+    ).resolves.toEqual(endpoint);
+  const authority = await store.readAuthorityHistory(fixture.worldId);
+  expect(authority.commits[4]).toMatchObject({
+    mode: "timeline_revision",
+    auditParent: { head: "commit:4" },
+    timelineParent: { head: "commit:2" },
+    timelineRevision: {
+      restoresHead: "commit:2",
+      replacesHead: "commit:3",
+    },
+  });
+  expect(authority.commits[4]?.timelineRevision).not.toHaveProperty(
+    "replacementState",
+  );
+  expect(authority.commits[4]?.timelineRevision).not.toHaveProperty(
+    "replacementHistory",
+  );
+  const fork = await store.deriveWorld({
+    operationId: "fork-migrated-current-revision",
+    sourceWorldId: fixture.worldId,
+    sourceHead: "commit:5",
+    hostPresetId: "host-current",
+  });
+  await expect(store.recoverEndpoint(fork.world.worldId)).resolves.toEqual({
+    ...fixture.endpoints.at(-1)!,
+    worldId: fork.world.worldId,
+  });
+  expect(
+    JSON.stringify(await store.readSurface(fork.world.worldId, "runtime")),
+  ).not.toContain(fixture.worldId);
+  for (const [path, source] of fixture.legacySources)
+    await expect(readFile(path, "utf8")).resolves.toBe(source);
+});
+
+test.each([
+  "after_timeline",
+  "before_current_head",
+  "after_current_head",
+  "before_authority_v3_head",
+  "after_authority_v3_head",
+])("已发布存档在 %s 强制退出后可由原始事实幂等完成迁移", async (edge) => {
+  const fixture = await releasedWorld(`released-storage-crash-${edge}`, 1);
+  const crashed = await runMigrationWorker(fixture.root, fixture.worldId, edge);
+  expect(crashed).toEqual({ code: null, signal: "SIGKILL" });
+  await expect(
+    readFile(join(fixture.runtimeRoot, "play-authority.json"), "utf8"),
+  ).resolves.toBe(fixture.releasedAuthoritySource);
+  await expect(
+    readFile(join(fixture.runtimeRoot, "play-call-chain.json"), "utf8"),
+  ).resolves.toBe(fixture.releasedCallChainSource);
+
+  const recovered = new FileNativeWorldStore(fixture.root);
+  await expect(recovered.currentHead(fixture.worldId)).resolves.toBe(
+    "commit:4",
+  );
+  const endpoint = await recovered.recoverEndpoint(fixture.worldId);
+  expect(endpoint.head).toBe("commit:4");
+  expect(
+    endpoint.history.map(({ role, exactText }) => ({ role, exactText })),
+  ).toContainEqual({ role: "player", exactText: "我点亮提灯。" });
+  expect(
+    endpoint.history.map(({ role, exactText }) => ({ role, exactText })),
+  ).toContainEqual({ role: "narrator", exactText: "昏黄的光照亮走廊。" });
+  await expect(
+    recovered.playTimeline.readAllContexts(fixture.worldId),
+  ).resolves.toHaveLength(2);
+});
 
 async function releasedWorld(label: string, callChainSchemaVersion: 1 | 2) {
   const root = await mkdtemp(join(tmpdir(), `narraeon-${label}-`));
@@ -245,14 +295,22 @@ async function releasedWorld(label: string, callChainSchemaVersion: 1 | 2) {
     parentHead = outcome.head;
   }
   const authority = await store.readAuthorityHistory(worldId);
-  const releasedCommits = authority.commits.map((commit) => ({
+  const endpoints = await Promise.all(
+    ["genesis", ...authority.commits.map(({ head }) => head)].map((head) =>
+      store.recoverEndpoint(worldId, head),
+    ),
+  );
+  const releasedCommits = authority.commits.map((commit, index) => ({
     schemaVersion: 1,
-    operationId: commit.operationId,
-    parentHead: commit.parentHead,
+    operationId: steps[index]![0],
+    parentHead: commit.auditParent.head,
     head: commit.head,
     mode: commit.mode,
-    historyAppend: structuredClone(commit.historyAppend),
-    stateChanges: structuredClone(commit.stateChanges),
+    historyAppend: commit.historyAppend.map((message) => ({
+      ...structuredClone(message),
+      messageId: `${worldId}.${message.messageId}`,
+    })),
+    stateChanges: [],
     nextAdditionalMaterials: structuredClone(commit.nextAdditionalMaterials),
     ...(commit.correctionTargets === undefined
       ? {}
@@ -268,6 +326,22 @@ async function releasedWorld(label: string, callChainSchemaVersion: 1 | 2) {
     commits: releasedCommits,
   };
   const runtimeRoot = join(root, "worlds-file-native", worldId, "runtime");
+  const genesisPath = join(runtimeRoot, "genesis.json");
+  const legacyGenesis = JSON.parse(await readFile(genesisPath, "utf8")) as {
+    history: { messageId: string }[];
+    additionalMaterials: { kind: string; message?: string }[];
+  };
+  legacyGenesis.history = legacyGenesis.history.map((message) => ({
+    ...message,
+    messageId: `${worldId}.${message.messageId}`,
+  }));
+  legacyGenesis.additionalMaterials = legacyGenesis.additionalMaterials.map(
+    (material) =>
+      material.kind === "history_message" && material.message !== undefined
+        ? { ...material, message: `${worldId}.${material.message}` }
+        : material,
+  );
+  await writeJson(genesisPath, legacyGenesis);
   await rm(join(runtimeRoot, "play-commits"), {
     recursive: true,
     force: true,
@@ -317,12 +391,18 @@ async function releasedWorld(label: string, callChainSchemaVersion: 1 | 2) {
     force: true,
   });
   await rm(join(runtimeRoot, "play-authority-head.json"), { force: true });
+  await rm(join(runtimeRoot, "continuity-head.json"), { force: true });
+  await rm(join(runtimeRoot, "authority-v3"), {
+    recursive: true,
+    force: true,
+  });
   return {
     root,
     worldId,
     runtimeRoot,
     releasedAuthoritySource,
     releasedCallChainSource,
+    endpoints,
   };
 }
 
@@ -343,7 +423,204 @@ async function releasedGenesisWorld(label: string) {
   });
   await rm(join(runtimeRoot, "play-genesis-timeline.json"), { force: true });
   await rm(join(runtimeRoot, "play-authority-head.json"), { force: true });
+  await rm(join(runtimeRoot, "continuity-head.json"), { force: true });
+  await rm(join(runtimeRoot, "authority-v3"), {
+    recursive: true,
+    force: true,
+  });
   return { root, worldId };
+}
+
+async function currentV2RevisionWorld(label: string) {
+  const root = await mkdtemp(join(tmpdir(), `narraeon-${label}-`));
+  roots.push(root);
+  const store = new FileNativeWorldStore(root);
+  const created = await store.createFromContentPackage({
+    operationId: `create-${label}`,
+    sourcePackageId: `package-${label}`,
+    packageFiles: worldFiles(),
+    prompt: releasePrompt(),
+  });
+  const worldId = created.world.worldId;
+  const initial = worldFiles().find(
+    ({ path }) => path === "world/current-situation.yaml",
+  )!.contents;
+  const opened = initial.replace("门仍然关着", "门已经打开");
+  const dark = opened.replace("门已经打开", "门外走廊一片漆黑");
+  const stateChange = (before: string, after: string) => ({
+    kind: "replace" as const,
+    documentId: "situation.current",
+    stableShortRef: "current-situation",
+    relativePath: "current-situation.yaml",
+    codec: "yaml" as const,
+    expectedPreviousHash: `sha256:${textDigest(before)}`,
+    nextHash: `sha256:${textDigest(after)}`,
+    canonicalNextBytes: after,
+  });
+  const operations = [
+    "current-player-1",
+    "current-narrator-1",
+    "current-player-2",
+    "current-narrator-2",
+    "current-revision",
+  ];
+  const stateChanges = new Map<number, ReturnType<typeof stateChange>[]>([
+    [2, [stateChange(initial, opened)]],
+    [4, [stateChange(opened, dark)]],
+  ]);
+  await store.commitPlayStep({
+    operationId: operations[0]!,
+    worldId,
+    parentHead: "genesis",
+    historyAppend: [{ role: "player", exactText: "我推开门。" }],
+    nextMaterials: [],
+    stateChanges: [],
+  });
+  await store.commitPlayStep({
+    operationId: operations[1]!,
+    worldId,
+    parentHead: "commit:1",
+    historyAppend: [{ role: "narrator", exactText: "冷风从门外灌进来。" }],
+    nextMaterials: [
+      {
+        kind: "history_message",
+        message: `${worldId}.message.1.1.player`,
+      },
+    ],
+    stateChanges: stateChanges.get(2)!,
+  });
+  await store.commitPlayStep({
+    operationId: operations[2]!,
+    worldId,
+    parentHead: "commit:2",
+    historyAppend: [{ role: "player", exactText: "我点亮提灯。" }],
+    nextMaterials: [],
+    stateChanges: [],
+  });
+  await store.commitPlayStep({
+    operationId: operations[3]!,
+    worldId,
+    parentHead: "commit:3",
+    historyAppend: [{ role: "narrator", exactText: "灯芯没有亮起来。" }],
+    nextMaterials: [],
+    stateChanges: stateChanges.get(4)!,
+  });
+  await store.reviseTimeline({
+    operationId: operations[4]!,
+    worldId,
+    expectedCurrentHead: "commit:4",
+    restoresHead: "commit:2",
+    replacesHead: "commit:3",
+    replacementText: "我先观察走廊。",
+    requestFingerprint: `sha256:${digest("current-revision-request")}`,
+  });
+
+  const authority = await store.readAuthorityHistory(worldId);
+  const endpoints = await Promise.all(
+    ["genesis", ...authority.commits.map(({ head }) => head)].map((head) =>
+      store.recoverEndpoint(worldId, head),
+    ),
+  );
+  const endpointByHead = new Map(
+    endpoints.map((endpoint) => [endpoint.head, endpoint]),
+  );
+  const runtimeRoot = join(root, "worlds-file-native", worldId, "runtime");
+  const genesisPath = join(runtimeRoot, "genesis.json");
+  const legacyGenesis = JSON.parse(await readFile(genesisPath, "utf8")) as {
+    history: { messageId: string }[];
+    additionalMaterials: { kind: string; message?: string }[];
+  };
+  legacyGenesis.history = legacyGenesis.history.map((message) => ({
+    ...message,
+    messageId: `${worldId}.${message.messageId}`,
+  }));
+  legacyGenesis.additionalMaterials = legacyGenesis.additionalMaterials.map(
+    (material) =>
+      material.kind === "history_message" && material.message !== undefined
+        ? { ...material, message: `${worldId}.${material.message}` }
+        : material,
+  );
+  await writeJson(genesisPath, legacyGenesis);
+  const commitsRoot = join(runtimeRoot, "play-commits");
+  await rm(commitsRoot, { recursive: true, force: true });
+  await mkdir(commitsRoot, { recursive: true });
+  let parentCommitDigest: string | null = null;
+  const legacySources = new Map<string, string>();
+  for (const fact of authority.commits) {
+    const operationId = operations[fact.sequence - 1]!;
+    const legacyStateChanges = (stateChanges.get(fact.sequence) ?? []).map(
+      (change) => structuredClone(change),
+    );
+    const legacy = {
+      schemaVersion: 2,
+      sequence: fact.sequence,
+      operationId,
+      parentHead: fact.auditParent.head,
+      parentCommitDigest,
+      head: fact.head,
+      mode: fact.mode,
+      historyAppend: fact.historyAppend.map((message) => ({
+        ...structuredClone(message),
+        messageId: `${worldId}.${message.messageId}`,
+      })),
+      stateChanges: legacyStateChanges,
+      nextAdditionalMaterials: fact.nextAdditionalMaterials.map((material) =>
+        material.kind === "history_message"
+          ? { ...material, message: `${worldId}.${material.message}` }
+          : structuredClone(material),
+      ),
+      ...(fact.correctionTargets === undefined
+        ? {}
+        : { correctionTargets: structuredClone(fact.correctionTargets) }),
+      ...(fact.corrects === undefined ? {} : { corrects: fact.corrects }),
+      ...(fact.timelineRevision === undefined
+        ? {}
+        : {
+            timelineRevision: {
+              ...structuredClone(fact.timelineRevision),
+              replacementState: endpointByHead
+                .get(fact.timelineRevision.restoresHead)!
+                .state.map(({ path, contents }) => ({
+                  path,
+                  sha256: `sha256:${textDigest(contents)}`,
+                  canonicalBytes: contents,
+                })),
+              replacementHistory: endpointByHead
+                .get(fact.timelineRevision.restoresHead)!
+                .history.map((message) => ({
+                  ...structuredClone(message),
+                  messageId: `${worldId}.${message.messageId}`,
+                })),
+            },
+          }),
+    };
+    parentCommitDigest = digest(legacy);
+    const path = join(commitsRoot, `${parentCommitDigest}.json`);
+    legacySources.set(path, await writeJson(path, legacy));
+  }
+  const headPath = join(runtimeRoot, "play-authority-head.json");
+  legacySources.set(
+    headPath,
+    await writeJson(headPath, {
+      schemaVersion: 2,
+      head: "commit:5",
+      sequence: 5,
+      commitDigest: parentCommitDigest,
+      operationId: operations.at(-1),
+    }),
+  );
+  await writeJson(join(runtimeRoot, "materialized-head.json"), {
+    schemaVersion: 2,
+    head: "commit:5",
+    sequence: 5,
+    commitDigest: parentCommitDigest,
+  });
+  await rm(join(runtimeRoot, "continuity-head.json"), { force: true });
+  await rm(join(runtimeRoot, "authority-v3"), {
+    recursive: true,
+    force: true,
+  });
+  return { root, worldId, endpoints, legacySources };
 }
 
 function contextA() {
@@ -531,6 +808,10 @@ function operationOutcomePath(root: string, operationId: string): string {
 
 function digest(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function textDigest(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 async function writeJson(path: string, value: unknown): Promise<string> {

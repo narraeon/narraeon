@@ -4,6 +4,8 @@ status: accepted
 
 # 长时间线使用不可变事实、小端点与可重建投影
 
+> Authority 结果 root、世界中立身份与物理闭包分叉机制见 [ADR-0036](0036-authority-facts-are-world-neutral-and-forks-retain-physical-closures.md)；本 ADR 保留小 head、不可变事实和有界页面读取的决定。
+
 世界增长不再重写一份包含全部 Authority 提交或全部游玩上下文的累计记录。Authority 以内容寻址、父摘要相连的不可变提交保存正确性来源，只用一个小端点指出当前提交；页面时间线把冻结上下文、追加事件、轻量摘要和当前状态分开保存，首次打开只读取有界尾页，工具参数、工具结果、思维链与 usage 在玩家展开单项时才读取。
 
 每次游玩推进还会在不可逆外部动作之前依次保存冻结请求、完整 Provider 结果和精确结算事实。进程在任一边界退出时，Runtime 查询同一 operation 是否已被 Authority 接受，并从已经存在的事实继续：完整返回的 Provider 结果不得再次调用，已经接受的 Authority 提交不得重复，尚未完成的页面投影可以幂等补齐。

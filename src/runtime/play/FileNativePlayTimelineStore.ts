@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
+import { constants } from "node:fs";
 import {
+  copyFile,
   link,
   mkdir,
   open,
@@ -246,9 +248,113 @@ export class FileNativePlayTimelineStore {
     value: PersistedPlayCallChain,
     cursor?: PlayContextPersistenceCursor,
   ): Promise<PlayContextPersistenceCursor> {
+    return this.#persistAtRuntimeRoot(
+      this.#worldRuntimeRoot(value.worldId),
+      value,
+      cursor,
+    );
+  }
+
+  async persistStaged(
+    targetWorldRoot: string,
+    value: PersistedPlayCallChain,
+    cursor?: PlayContextPersistenceCursor,
+  ): Promise<PlayContextPersistenceCursor> {
+    return this.#persistAtRuntimeRoot(
+      join(resolve(targetWorldRoot), "runtime"),
+      value,
+      cursor,
+    );
+  }
+
+  async cloneContextPrefixToStaging(input: {
+    sourceWorldId: string;
+    targetWorldRoot: string;
+    source: PersistedPlayCallChainContext;
+    target: PersistedPlayCallChain;
+  }): Promise<PlayContextPersistenceCursor> {
+    assertIdentity(input.sourceWorldId, "Source world ID");
+    assertIdentity(input.source.chainId, "Source call-chain ID");
+    const sourceRoot = this.#contextRoot(
+      input.sourceWorldId,
+      input.source.chainId,
+    );
+    const targetRuntime = join(resolve(input.targetWorldRoot), "runtime");
+    const targetRoot = join(
+      targetRuntime,
+      "play-contexts",
+      createHash("sha256").update(input.target.chainId).digest("hex"),
+    );
+    const transcriptCount = prefixLength(
+      input.source.transcript,
+      input.target.transcript,
+    );
+    const eventCount = prefixLength(input.source.events, input.target.events);
+    const completedToolCount = prefixLength(
+      input.source.completedTools,
+      input.target.completedTools,
+    );
+    const authorizationCheckpointCount = prefixLength(
+      input.source.documentAuthorizationCheckpoints ?? [],
+      input.target.documentAuthorizationCheckpoints ?? [],
+    );
+    await Promise.all([
+      cloneNumberedPrefix({
+        sourceRoot,
+        targetRoot,
+        directory: "transcript",
+        count: transcriptCount,
+        immutable: true,
+      }),
+      cloneNumberedPrefix({
+        sourceRoot,
+        targetRoot,
+        directory: "events",
+        count: eventCount,
+        immutable: false,
+      }),
+      cloneNumberedPrefix({
+        sourceRoot,
+        targetRoot,
+        directory: "summaries",
+        count: eventCount,
+        immutable: false,
+      }),
+      cloneNumberedPrefix({
+        sourceRoot,
+        targetRoot,
+        directory: "completed-tools",
+        count: completedToolCount,
+        immutable: true,
+      }),
+      cloneNumberedPrefix({
+        sourceRoot,
+        targetRoot,
+        directory: "authorization",
+        count: authorizationCheckpointCount,
+        immutable: true,
+      }),
+    ]);
+    return this.persistStaged(input.targetWorldRoot, input.target, {
+      transcriptCount,
+      eventCount,
+      completedToolCount,
+      authorizationCheckpointCount,
+    });
+  }
+
+  async #persistAtRuntimeRoot(
+    runtimeRoot: string,
+    value: PersistedPlayCallChain,
+    cursor?: PlayContextPersistenceCursor,
+  ): Promise<PlayContextPersistenceCursor> {
     assertIdentity(value.worldId, "World ID");
     assertIdentity(value.chainId, "Call-chain ID");
-    const root = this.#contextRoot(value.worldId, value.chainId);
+    const root = join(
+      runtimeRoot,
+      "play-contexts",
+      createHash("sha256").update(value.chainId).digest("hex"),
+    );
     const index = contextIndex(value);
     const existingIndex = await readOptionalJson<unknown>(
       join(root, "index.json"),
@@ -291,7 +397,7 @@ export class FileNativePlayTimelineStore {
     const lastRequestDigest =
       value.lastRequest === null
         ? null
-        : await this.#publishRequest(value.worldId, value.lastRequest);
+        : await this.#publishRequest(runtimeRoot, value.lastRequest);
     const continuation = {
       schemaVersion: 3,
       kind: "play_context_continuation",
@@ -366,7 +472,7 @@ export class FileNativePlayTimelineStore {
       updatedAt: value.updatedAt,
     };
     await publishJson(join(root, "state.json"), state);
-    await publishJson(this.#timelineHeadPath(value.worldId), {
+    await publishJson(join(runtimeRoot, "play-timeline-head.json"), {
       schemaVersion: 3,
       worldId: value.worldId,
       chainId: value.chainId,
@@ -709,14 +815,14 @@ export class FileNativePlayTimelineStore {
   }
 
   async #publishRequest(
-    worldId: string,
+    runtimeRoot: string,
     request: ModelHostExchange,
   ): Promise<string> {
     const digest = createHash("sha256")
       .update(JSON.stringify(request))
       .digest("hex");
     await publishImmutableJson(
-      join(this.#worldRuntimeRoot(worldId), "play-requests", `${digest}.json`),
+      join(runtimeRoot, "play-requests", `${digest}.json`),
       request,
     );
     return digest;
@@ -1458,6 +1564,100 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isNodeError(value: unknown): value is NodeJS.ErrnoException {
   return value instanceof Error && "code" in value;
+}
+
+function prefixLength<T>(source: readonly T[], target: readonly T[]): number {
+  return isDeepStrictEqual(source.slice(0, target.length), target)
+    ? target.length
+    : 0;
+}
+
+async function cloneNumberedPrefix(input: {
+  sourceRoot: string;
+  targetRoot: string;
+  directory: string;
+  count: number;
+  immutable: boolean;
+}): Promise<void> {
+  for (let index = 1; index <= input.count; index += 1)
+    await cloneTimelineFile(
+      join(input.sourceRoot, input.directory, numbered(index)),
+      join(input.targetRoot, input.directory, numbered(index)),
+      input.immutable,
+    );
+}
+
+async function cloneTimelineFile(
+  source: string,
+  target: string,
+  immutable: boolean,
+): Promise<void> {
+  await mkdir(dirname(target), { recursive: true, mode: 0o700 });
+  const strategy = process.env.NARRAEON_INTERNAL_TEST_CLONE_STRATEGY;
+  if (immutable && strategy !== "reflink" && strategy !== "copy") {
+    try {
+      await link(source, target);
+      return;
+    } catch (error: unknown) {
+      if (isNodeError(error) && error.code === "EEXIST") {
+        await assertSameFileBytes(source, target);
+        return;
+      }
+      if (
+        !isNodeError(error) ||
+        ![
+          "EXDEV",
+          "EPERM",
+          "EACCES",
+          "EMLINK",
+          "ENOTSUP",
+          "EOPNOTSUPP",
+        ].includes(error.code ?? "")
+      )
+        throw error;
+    }
+  }
+  if (strategy !== "copy") {
+    try {
+      await copyFile(source, target, constants.COPYFILE_FICLONE_FORCE);
+      return;
+    } catch (error: unknown) {
+      if (isNodeError(error) && error.code === "EEXIST") {
+        await assertSameFileBytes(source, target);
+        return;
+      }
+      if (
+        !isNodeError(error) ||
+        ![
+          "EXDEV",
+          "EPERM",
+          "EACCES",
+          "ENOTSUP",
+          "EOPNOTSUPP",
+          "EINVAL",
+        ].includes(error.code ?? "")
+      )
+        throw error;
+    }
+  }
+  try {
+    await copyFile(source, target, constants.COPYFILE_EXCL);
+  } catch (error: unknown) {
+    if (!isNodeError(error) || error.code !== "EEXIST") throw error;
+    await assertSameFileBytes(source, target);
+  }
+}
+
+async function assertSameFileBytes(
+  source: string,
+  target: string,
+): Promise<void> {
+  const [sourceBytes, targetBytes] = await Promise.all([
+    readFile(source),
+    readFile(target),
+  ]);
+  if (!sourceBytes.equals(targetBytes))
+    throw new Error("Cloned play timeline prefix conflicts in target staging");
 }
 
 async function readNumbered<T>(root: string, count: number): Promise<T[]> {
