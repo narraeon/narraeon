@@ -20,6 +20,7 @@ import type {
   PlayerViewDiagnostic,
   RenderedPlayerView,
 } from "../protocol/playerViews.ts";
+import { createClientId } from "./ClientId.ts";
 import {
   FileNativeCorrectionPanel,
   type CorrectionPreviewView,
@@ -283,9 +284,9 @@ export function WorldPage({
     const fresh = context === "fresh" || playCallChain === null;
     if ((fresh && !canStartFresh) || (!fresh && !canAppend)) return;
     const chainId = fresh
-      ? `play-chain-${crypto.randomUUID()}`
+      ? createClientId("play-chain")
       : playCallChain.chainId;
-    const exchangeId = `play-exchange-${crypto.randomUUID()}`;
+    const exchangeId = createClientId("play-exchange");
     setPending(context === "fresh" ? "play-fresh" : "play-append");
     setFeedback({
       kind: "status",
@@ -396,7 +397,7 @@ export function WorldPage({
           {
             type: "correction.begin",
             worldId,
-            operationId: `correction-${crypto.randomUUID()}`,
+            operationId: createClientId("correction"),
           },
         ));
       setCorrection(started);
@@ -497,7 +498,7 @@ export function WorldPage({
         client,
         {
           type: "world.derive",
-          operationId: `derive-${crypto.randomUUID()}`,
+          operationId: createClientId("derive"),
           sourceWorldId: world.worldId,
           sourceHead,
         },
@@ -522,7 +523,7 @@ export function WorldPage({
       });
       return;
     }
-    const replacementExchangeId = `play-exchange-${crypto.randomUUID()}`;
+    const replacementExchangeId = createClientId("play-exchange");
     setPending("revise");
     setFeedback({
       kind: "status",
@@ -535,7 +536,7 @@ export function WorldPage({
         playCallChain: V1PlayCallChainView;
       }>(client, {
         type: "play.chain.revise-player",
-        operationId: `revise-player-${crypto.randomUUID()}`,
+        operationId: createClientId("revise-player"),
         worldId: world.worldId,
         chainId,
         eventId,
@@ -565,7 +566,7 @@ export function WorldPage({
           type: "play.chain.append",
           worldId: world.worldId,
           chainId: revised.playCallChain.chainId,
-          exchangeId: `play-exchange-${crypto.randomUUID()}`,
+          exchangeId: createClientId("play-exchange"),
           playerText: "",
         },
         (frame) => applyPlayCallChainFrame(frame, setPlayCallChain),

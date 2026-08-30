@@ -12,6 +12,8 @@ import {
   type ReactNode,
 } from "react";
 
+import { createClientId } from "./ClientId.ts";
+
 export type FrontendRegexScope =
   "raw_text" | "markdown_html" | "structured_payload";
 export type FrontendRegexErrorPolicy = "fallback" | "skip" | "fail";
@@ -1260,9 +1262,7 @@ function hashForDom(value: string): string {
 }
 
 function randomNonce(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto)
-    return crypto.randomUUID();
-  return Math.random().toString(36).slice(2);
+  return createClientId("extension-nonce");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

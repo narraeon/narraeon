@@ -9,6 +9,7 @@ import type {
 } from "../protocol/v1.ts";
 import { firstPartyPlayPresetTemplatesForLocale } from "../shared/first-party-play-preset-templates.ts";
 import type { RuntimeClient } from "./runtimeClient.ts";
+import { createClientId } from "./ClientId.ts";
 import { setWebLocale, uiText } from "./i18n.ts";
 import {
   ContentTreeEditor,
@@ -317,7 +318,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       setNotice(uiText("请先保存手动编辑，再开始 AI 设定完善。"));
       return;
     }
-    const id = `improvement-${crypto.randomUUID()}`;
+    const id = createClientId("improvement");
     setImprovementId(id);
     setImprovementPhase(mode === "plan_first" ? "planning" : "generating");
     setImprovementPlan(null);
@@ -470,7 +471,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     try {
       const created = await client.request<{ world: { worldId: string } }>({
         type: "world.create",
-        operationId: `create-${crypto.randomUUID()}`,
+        operationId: createClientId("create"),
         packageId: selected,
         model: modelBinding(),
       });

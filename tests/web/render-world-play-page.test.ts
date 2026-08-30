@@ -20,7 +20,10 @@ import type {
 import { projectUncoveredPlayerViews } from "../../src/web/PlayerViewFallback.ts";
 import { WorldPage } from "../../src/web/WorldPage.tsx";
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 describe("世界游玩页面", () => {
   test("只由 exact source view 的 panel 承接 fallback，其余 view 与 diagnostics 仍显示", () => {
@@ -97,6 +100,53 @@ describe("世界游玩页面", () => {
       expect(onRenameWorld).toHaveBeenCalledWith("雾港第二夜"),
     );
     expect(await screen.findByText("世界名称已保存。")).toBeTruthy();
+  });
+
+  test("浏览器没有 randomUUID 时仍能启动全新上下文", async () => {
+    let fill = 0;
+    const getRandomValues = vi.fn((bytes: Uint8Array) => {
+      bytes.fill(++fill);
+      return bytes;
+    });
+    vi.stubGlobal("crypto", { getRandomValues });
+
+    let chain: V1PlayCallChainView | null = null;
+    const client = {
+      request: vi.fn(<T>(request: V1Request) => {
+        if (request.type === "world.read")
+          return Promise.resolve(worldView(chain) as T);
+        if (request.type === "artifacts.debug") return Promise.resolve([] as T);
+        if (request.type === "play.chain.inspect")
+          return Promise.resolve(chain as T);
+        if (request.type === "play.chain.start") {
+          chain = playChainView(
+            request.chainId,
+            request.exchangeId,
+            request.playerText,
+          );
+          return Promise.resolve(chain as T);
+        }
+        return Promise.reject(new Error("Unexpected request: " + request.type));
+      }),
+    };
+
+    renderWorld(client);
+    await screen.findByRole("heading", { name: "宿舍世界" });
+    fireEvent.change(screen.getByLabelText("你的行动"), {
+      target: { value: "I signal Alex to open the door." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "全新上下文" }));
+
+    await waitFor(() =>
+      expect(client.request).toHaveBeenCalledWith({
+        type: "play.chain.start",
+        worldId: "world-one",
+        chainId: `play-chain-${"01".repeat(16)}`,
+        exchangeId: `play-exchange-${"02".repeat(16)}`,
+        playerText: "I signal Alex to open the door.",
+      }),
+    );
+    expect(getRandomValues).toHaveBeenCalledTimes(2);
   });
 
   test("全新上下文启动生产调用链并显示玩家、AI、工具与已提交变化", async () => {
