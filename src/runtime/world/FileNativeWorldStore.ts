@@ -29,6 +29,7 @@ import { PlayerViewRenderer } from "./PlayerViewRenderer.ts";
 import { WorldDocumentStore } from "./WorldDocumentStore.ts";
 import { FileNativePlayTimelineStore } from "../play/FileNativePlayTimelineStore.ts";
 import { FileNativePlayAdvanceStore } from "../play/FileNativePlayAdvanceStore.ts";
+import { FileNativeWorldStorageMigrator } from "./FileNativeWorldStorageMigrator.ts";
 import {
   FileNativeWorldOperationCoordinator,
   WorldOperationBusyError,
@@ -247,6 +248,9 @@ export class FileNativeWorldStore {
   readonly operations: FileNativeWorldOperationCoordinator;
   readonly playTimeline: FileNativePlayTimelineStore;
   readonly playAdvances: FileNativePlayAdvanceStore;
+  readonly #storageMigrator: FileNativeWorldStorageMigrator;
+  readonly #storageMigrations = new Map<string, Promise<void>>();
+  readonly #currentStorage = new Set<string>();
 
   constructor(
     dataRoot: string,
@@ -260,6 +264,70 @@ export class FileNativeWorldStore {
     this.operations = new FileNativeWorldOperationCoordinator(root);
     this.playTimeline = new FileNativePlayTimelineStore(root);
     this.playAdvances = new FileNativePlayAdvanceStore(root);
+    this.#storageMigrator = new FileNativeWorldStorageMigrator(
+      root,
+      this.playTimeline,
+    );
+  }
+
+  /**
+   * Upgrade a formally released cumulative layout before current Authority or
+   * play-timeline behavior crosses its seam. Concurrent callers share one
+   * in-process promise; the durable world lock serializes processes.
+   */
+  async ensureCurrentStorage(worldId: string): Promise<void> {
+    assertIdentity(worldId, "World ID");
+    if (this.#currentStorage.has(worldId)) return;
+    const existing = this.#storageMigrations.get(worldId);
+    if (existing !== undefined) return existing;
+    const migration = this.#ensureCurrentStorageSerialized(worldId);
+    this.#storageMigrations.set(worldId, migration);
+    try {
+      await migration;
+    } finally {
+      if (this.#storageMigrations.get(worldId) === migration)
+        this.#storageMigrations.delete(worldId);
+    }
+  }
+
+  async #ensureCurrentStorageSerialized(worldId: string): Promise<void> {
+    try {
+      try {
+        await readAuthorityHead(join(this.#worldsRoot, worldId));
+        this.#currentStorage.add(worldId);
+        return;
+      } catch (error: unknown) {
+        if (!isNodeError(error) || error.code !== "ENOENT") throw error;
+      }
+      await this.operations.withWorldAuthorityLock(worldId, async () => {
+        await this.#storageMigrator.migrate(worldId);
+      });
+      this.#currentStorage.add(worldId);
+    } catch (error: unknown) {
+      if (error instanceof FileNativeWorldCreationError) throw error;
+      if (isNodeError(error) && error.code === "ENOENT") {
+        const root = await stat(join(this.#worldsRoot, worldId)).catch(
+          (statError: unknown) => {
+            if (isNodeError(statError) && statError.code === "ENOENT")
+              return null;
+            throw statError;
+          },
+        );
+        if (root === null)
+          throw new FileNativeWorldNotFoundError({ cause: error });
+      }
+      if (error instanceof WorldOperationBusyError)
+        throw new FileNativeWorldCreationError(
+          "operation_conflict",
+          "World storage is being upgraded by another durable operation",
+          { cause: error },
+        );
+      throw new FileNativeWorldCreationError(
+        "world_corrupt",
+        "Released world storage could not be migrated to the current format",
+        error instanceof Error ? { cause: error } : undefined,
+      );
+    }
   }
 
   async listWorlds(): Promise<FileNativeWorldSummary[]> {
@@ -323,6 +391,7 @@ export class FileNativeWorldStore {
       worldId,
       async () => {
         await rm(root, { recursive: true, force: true });
+        this.#currentStorage.delete(worldId);
         return { deleted: true } as const;
       },
     );
@@ -515,6 +584,7 @@ export class FileNativeWorldStore {
     surface: "state" | "control" | "history" | "runtime",
   ): Promise<ContentTreeFile[] | (Genesis & { historyEntries: number })> {
     assertIdentity(worldId, "World ID");
+    await this.ensureCurrentStorage(worldId);
     const root = join(this.#worldsRoot, worldId);
     await readPublicationAt(root);
     if (surface === "runtime") {
@@ -559,6 +629,7 @@ export class FileNativeWorldStore {
 
   async currentHead(worldId: string): Promise<string> {
     assertIdentity(worldId, "World ID");
+    await this.ensureCurrentStorage(worldId);
     const root = join(this.#worldsRoot, worldId);
     await readPublicationAt(root);
     return (await readAuthorityHead(root)).head;
@@ -566,6 +637,7 @@ export class FileNativeWorldStore {
 
   async currentHeadOperationId(worldId: string): Promise<string | null> {
     assertIdentity(worldId, "World ID");
+    await this.ensureCurrentStorage(worldId);
     const root = join(this.#worldsRoot, worldId);
     await readPublicationAt(root);
     return (await readAuthorityHead(root)).operationId;
@@ -576,6 +648,7 @@ export class FileNativeWorldStore {
     files: readonly ContentTreeFile[],
   ): Promise<{ fingerprint: string }> {
     assertIdentity(worldId, "World ID");
+    await this.ensureCurrentStorage(worldId);
     const root = join(this.#worldsRoot, worldId);
     await readPublicationAt(root);
     for (const file of files) assertRelativePath(file.path);
@@ -699,6 +772,7 @@ export class FileNativeWorldStore {
     worldId: string,
   ): Promise<{ state: ContentTreeFile[]; draft: ContentTreeFile[] }> {
     assertIdentity(worldId, "World ID");
+    await this.ensureCurrentStorage(worldId);
     const root = join(this.#worldsRoot, worldId);
     await readPublicationAt(root);
     const [state, draft] = await Promise.all([
@@ -716,6 +790,7 @@ export class FileNativeWorldStore {
   /** Bind the current Authority endpoint for a model-directed play call chain. */
   async bindPlayCallChain(worldId: string): Promise<FileNativePlayBinding> {
     assertIdentity(worldId, "World ID");
+    await this.ensureCurrentStorage(worldId);
     const root = join(this.#worldsRoot, worldId);
     try {
       await readPublicationAt(root);
@@ -854,6 +929,7 @@ export class FileNativeWorldStore {
     head?: string,
   ): Promise<FileNativeRecoveredEndpoint> {
     assertIdentity(worldId, "World ID");
+    await this.ensureCurrentStorage(worldId);
     const root = join(this.#worldsRoot, worldId);
     await readPublicationAt(root);
     const genesis = await readJson<Genesis>(
@@ -960,6 +1036,7 @@ export class FileNativeWorldStore {
     worldId: string,
   ): Promise<FileNativeOperationOutcome> {
     assertIdentity(worldId, "World ID");
+    await this.ensureCurrentStorage(worldId);
     try {
       const operationId = await this.operations.withExclusiveWorldStateMutation(
         worldId,
@@ -1002,6 +1079,7 @@ export class FileNativeWorldStore {
     const finalRoot = join(this.#worldsRoot, worldId);
     const previous = await readOptionalJson<Publication>(operationPath);
     if (previous !== null) {
+      await this.ensureCurrentStorage(previous.worldId);
       if (
         !(await derivationPublicationMatches(
           join(this.#worldsRoot, previous.worldId),
@@ -1024,6 +1102,7 @@ export class FileNativeWorldStore {
       join(finalRoot, publicationFile),
     );
     if (alreadyPublished !== null) {
+      await this.ensureCurrentStorage(alreadyPublished.worldId);
       if (
         !(await derivationPublicationMatches(
           finalRoot,
@@ -1044,6 +1123,7 @@ export class FileNativeWorldStore {
       };
     }
 
+    await this.ensureCurrentStorage(input.sourceWorldId);
     const sourceRoot = join(this.#worldsRoot, input.sourceWorldId);
     const sourcePublication = await readPublicationAt(sourceRoot);
     const sourceSummary = await readWorldSummaryAt(
@@ -1211,9 +1291,15 @@ export class FileNativeWorldStore {
     assertIdentity(operationId, "operation ID");
     let directRecord: Record<string, unknown> | null;
     try {
-      const value = await readOptionalJson<unknown>(
+      let value = await readOptionalJson<unknown>(
         this.#operationOutcomePath(operationId),
       );
+      if (isReleasedCommittedOperationOutcome(value)) {
+        await this.ensureCurrentStorage(value.worldId);
+        value = await readOptionalJson<unknown>(
+          this.#operationOutcomePath(operationId),
+        );
+      }
       if (value === null) directRecord = null;
       else {
         assertOperationOutcomeIntegrity(value);
@@ -1292,6 +1378,7 @@ export class FileNativeWorldStore {
       throw new TypeError("Edited player message cannot be empty");
     if (!/^sha256:[a-f0-9]{64}$/u.test(input.requestFingerprint))
       throw new TypeError("Timeline-revision request fingerprint is invalid");
+    await this.ensureCurrentStorage(input.worldId);
 
     const existing = await this.getOperationOutcome(input.operationId);
     if (isCommittedOutcome(existing)) {
@@ -1376,6 +1463,7 @@ export class FileNativeWorldStore {
       { outcome: "committed" | "committed_materialization_pending" }
     >
   > {
+    await this.ensureCurrentStorage(input.worldId);
     try {
       const commit = async () => {
         let operationReserved = input.stateOperationClaim !== undefined;
@@ -1432,6 +1520,7 @@ export class FileNativeWorldStore {
       { outcome: "committed" | "committed_materialization_pending" }
     >
   > {
+    await this.ensureCurrentStorage(input.worldId);
     if (input.historyAppend.length === 0 && input.stateChanges.length === 0)
       throw new TypeError(
         "A call-chain commit cannot omit both narrative and state changes",
@@ -1440,29 +1529,6 @@ export class FileNativeWorldStore {
       ...input,
       mode: "play",
     });
-  }
-
-  async readPlayCallChain<T>(worldId: string): Promise<T | null> {
-    assertIdentity(worldId, "World ID");
-    return readOptionalJson<T>(
-      join(this.#worldsRoot, worldId, "runtime", "play-call-chain.json"),
-    );
-  }
-
-  async writePlayCallChain(worldId: string, value: unknown): Promise<void> {
-    assertIdentity(worldId, "World ID");
-    await publishJson(
-      join(this.#worldsRoot, worldId, "runtime", "play-call-chain.json"),
-      value,
-    );
-  }
-
-  async removePlayCallChain(worldId: string): Promise<void> {
-    assertIdentity(worldId, "World ID");
-    await rm(
-      join(this.#worldsRoot, worldId, "runtime", "play-call-chain.json"),
-      { force: true },
-    );
   }
 
   async #commitHistoryChange(input: {
@@ -1772,6 +1838,7 @@ export class FileNativeWorldStore {
     worldId: string,
   ): Promise<{ head: string; commits: FileNativePlayCommit[] }> {
     assertIdentity(worldId, "World ID");
+    await this.ensureCurrentStorage(worldId);
     const root = join(this.#worldsRoot, worldId);
     await readPublicationAt(root);
     const authority = await readAcceptedAuthority(root);
@@ -2157,6 +2224,18 @@ function assertOperationOutcomeIntegrity(
     return;
   }
   throw corruptOperationOutcome();
+}
+
+function isReleasedCommittedOperationOutcome(
+  value: unknown,
+): value is Record<string, unknown> & { worldId: string } {
+  return (
+    isRecord(value) &&
+    (value.outcome === "committed" ||
+      value.outcome === "committed_materialization_pending") &&
+    !Object.hasOwn(value, "commitDigest") &&
+    typeof value.worldId === "string"
+  );
 }
 
 function projectOperationOutcome(

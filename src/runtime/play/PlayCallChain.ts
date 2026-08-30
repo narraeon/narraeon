@@ -1619,15 +1619,9 @@ export class PlayCallChain {
   async #readPersisted(
     worldId: string,
   ): Promise<PersistedPlayCallChain | null> {
+    await this.#worlds.ensureCurrentStorage(worldId);
     const loaded = await this.#worlds.playTimeline.readCurrent(worldId);
-    if (loaded === null) {
-      const legacy = await this.#worlds.readPlayCallChain<unknown>(worldId);
-      if (legacy !== null)
-        throw new PlayCallChainError(
-          "The persisted call-chain record does not match the current format and cannot be read.",
-        );
-      return null;
-    }
+    if (loaded === null) return null;
     this.#loadedCursors.set(loaded.value.chainId, loaded.cursor);
     return structuredClone(loaded.value);
   }

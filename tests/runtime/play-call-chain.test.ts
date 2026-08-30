@@ -861,18 +861,23 @@ test("冷启动恢复 world_create 授予的写权限，后续无需重新读取
   ).toContain("状态: 冷启动后已更新");
 });
 
-test("旧累计调用链格式不会被双读或静默迁移", async () => {
-  const { worlds, worldId } = await createWorld(
+test("当前格式不会双读旁路遗留累计调用链文件", async () => {
+  const { worlds, worldId, root } = await createWorld(
     "play-chain-legacy-authorization-recovery",
   );
-  await worlds.writePlayCallChain(worldId, {
-    schemaVersion: 1,
-    kind: "play_call_chain",
-    worldId,
-  });
-  await expect(new PlayCallChain(worlds).inspectWorld(worldId)).rejects.toThrow(
-    "does not match the current format",
+  await writeFile(
+    join(
+      root,
+      "worlds-file-native",
+      worldId,
+      "runtime",
+      "play-call-chain.json",
+    ),
+    `${JSON.stringify({ schemaVersion: 1, kind: "play_call_chain", worldId })}\n`,
   );
+  await expect(
+    new PlayCallChain(worlds).inspectWorld(worldId),
+  ).resolves.toBeNull();
 });
 
 test("派生世界恢复所选分叉点的文档写授权，不携带分叉点之后的状态", async () => {

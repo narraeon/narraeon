@@ -157,6 +157,13 @@ export interface LoadedPlayContext {
   cursor: PlayContextPersistenceCursor;
 }
 
+interface ReleasedPersistedPlayCallChain extends PersistedPlayCallChainContext {
+  schemaVersion: 1 | 2;
+  kind: "play_call_chain";
+  worldId: string;
+  previousContexts?: PersistedPlayCallChainContext[];
+}
+
 interface TimelineCursor {
   generation: string;
   chainId: string | null;
@@ -170,6 +177,63 @@ export class FileNativePlayTimelineStore {
 
   constructor(dataRoot: string) {
     this.#worldsRoot = join(resolve(dataRoot), "worlds-file-native");
+  }
+
+  /**
+   * Convert the cumulative call-chain record written by every released
+   * Narraeon version through v0.1.1 into immutable context segments. The
+   * source digest makes interrupted retries reproduce the same generation and
+   * identities; callers publish the world-wide storage marker only after this
+   * method has completed.
+   */
+  async migrateReleasedRecord(
+    worldId: string,
+    value: unknown,
+    sourceDigest: string,
+  ): Promise<void> {
+    assertIdentity(worldId, "World ID");
+    if (!/^[a-f0-9]{64}$/u.test(sourceDigest))
+      throw new TypeError("Released call-chain source digest is invalid");
+    assertReleasedPersistedPlayCallChain(value, worldId);
+    const contexts = [
+      ...(value.previousContexts ?? []).map((context) =>
+        structuredClone(context),
+      ),
+      releasedCurrentContext(value),
+    ];
+    const seen = new Set<string>();
+    const generation = `released:${sourceDigest}`;
+    let previousChainId: string | null = null;
+    for (const context of contexts) {
+      assertIdentity(context.chainId, "Call-chain ID");
+      if (seen.has(context.chainId))
+        throw new Error(
+          "Released play-call-chain contexts contain a duplicate identity",
+        );
+      seen.add(context.chainId);
+      await this.persist({
+        ...structuredClone(context),
+        schemaVersion: 3,
+        kind: "play_call_chain",
+        worldId,
+        previousChainId,
+        timelineGeneration: generation,
+        documentAuthorizationCheckpoints: structuredClone(
+          context.documentAuthorizationCheckpoints ?? [],
+        ),
+      });
+      previousChainId = context.chainId;
+    }
+    const migrated = await this.readAllContexts(worldId);
+    if (
+      migrated.length !== contexts.length ||
+      migrated.some(
+        (context, index) => context.chainId !== contexts[index]?.chainId,
+      )
+    )
+      throw new Error(
+        "Released play-call-chain migration did not reproduce its context chain",
+      );
   }
 
   async persist(
@@ -937,6 +1001,144 @@ function assertTimelineHead(
     typeof value.generation !== "string"
   )
     throw new Error("Play timeline head has an invalid shape");
+}
+
+function assertReleasedPersistedPlayCallChain(
+  value: unknown,
+  worldId: string,
+): asserts value is ReleasedPersistedPlayCallChain {
+  if (
+    !isRecord(value) ||
+    (value.schemaVersion !== 1 && value.schemaVersion !== 2) ||
+    value.kind !== "play_call_chain" ||
+    value.worldId !== worldId ||
+    !isReleasedPlayContext(value) ||
+    (value.previousContexts !== undefined &&
+      (!Array.isArray(value.previousContexts) ||
+        value.previousContexts.some(
+          (context) => !isReleasedPlayContext(context),
+        )))
+  )
+    throw new Error(
+      "Released play-call-chain durable data has an invalid shape",
+    );
+}
+
+function isReleasedPlayContext(
+  value: unknown,
+): value is PersistedPlayCallChainContext {
+  if (!isRecord(value)) return false;
+  if (
+    typeof value.chainId !== "string" ||
+    typeof value.baselineHead !== "string" ||
+    (value.baselineHistoryLength !== undefined &&
+      !validCount(value.baselineHistoryLength)) ||
+    typeof value.parentHead !== "string" ||
+    !validReleasedDerivedFrom(value.derivedFrom) ||
+    !validReleasedBranchedBeforePlayer(value.branchedBeforePlayer) ||
+    !isRecord(value.playPreset) ||
+    (value.followups !== undefined && !Array.isArray(value.followups)) ||
+    (value.playPresetScriptsEnabled !== undefined &&
+      typeof value.playPresetScriptsEnabled !== "boolean") ||
+    (value.status !== "ready" &&
+      value.status !== "running" &&
+      value.status !== "interrupted") ||
+    typeof value.canRetry !== "boolean" ||
+    !isRecord(value.bootstrap) ||
+    !Array.isArray(value.tools) ||
+    !Array.isArray(value.transcript) ||
+    !Array.isArray(value.events) ||
+    !Array.isArray(value.completedTools) ||
+    !Array.isArray(value.changedDocuments) ||
+    !Array.isArray(value.nextMaterials) ||
+    !validCount(value.nextEventId) ||
+    !validCount(value.exchange) ||
+    (value.lastRequest !== null && !isRecord(value.lastRequest)) ||
+    !validCount(value.lastRequestAttempt) ||
+    (value.lastFailure !== null && typeof value.lastFailure !== "string") ||
+    typeof value.updatedAt !== "number"
+  )
+    return false;
+  try {
+    for (const event of value.events) assertPlayEvent(event);
+  } catch {
+    return false;
+  }
+  return validReleasedAuthorizationCheckpoints(
+    value.documentAuthorizationCheckpoints,
+    value.events,
+  );
+}
+
+function validReleasedDerivedFrom(value: unknown): boolean {
+  return (
+    value === undefined ||
+    (isRecord(value) &&
+      typeof value.worldId === "string" &&
+      typeof value.chainId === "string" &&
+      typeof value.head === "string")
+  );
+}
+
+function validReleasedBranchedBeforePlayer(value: unknown): boolean {
+  return (
+    value === undefined ||
+    (isRecord(value) &&
+      typeof value.worldId === "string" &&
+      typeof value.chainId === "string" &&
+      Number.isSafeInteger(value.eventId) &&
+      Number(value.eventId) > 0)
+  );
+}
+
+function validReleasedAuthorizationCheckpoints(
+  value: unknown,
+  events: unknown[],
+): boolean {
+  if (value === undefined) return true;
+  if (!Array.isArray(value) || value.length > 100_000) return false;
+  const eventIds = new Set(
+    events.flatMap((event) =>
+      isRecord(event) && Number.isSafeInteger(event.id) && Number(event.id) > 0
+        ? [Number(event.id)]
+        : [],
+    ),
+  );
+  let previousEventId = -1;
+  for (const checkpoint of value) {
+    if (
+      !isRecord(checkpoint) ||
+      Object.keys(checkpoint).length !== 2 ||
+      !Object.hasOwn(checkpoint, "afterEventId") ||
+      !Object.hasOwn(checkpoint, "authorization") ||
+      !Number.isSafeInteger(checkpoint.afterEventId) ||
+      Number(checkpoint.afterEventId) < 0 ||
+      Number(checkpoint.afterEventId) <= previousEventId ||
+      (Number(checkpoint.afterEventId) !== 0 &&
+        !eventIds.has(Number(checkpoint.afterEventId))) ||
+      !isRecord(checkpoint.authorization)
+    )
+      return false;
+    previousEventId = Number(checkpoint.afterEventId);
+  }
+  return true;
+}
+
+function releasedCurrentContext(
+  value: ReleasedPersistedPlayCallChain,
+): PersistedPlayCallChainContext {
+  const {
+    schemaVersion: _schemaVersion,
+    kind: _kind,
+    worldId: _worldId,
+    previousContexts: _previousContexts,
+    ...context
+  } = value;
+  void _schemaVersion;
+  void _kind;
+  void _worldId;
+  void _previousContexts;
+  return structuredClone(context);
 }
 
 function assertPlayEvent(

@@ -531,12 +531,14 @@ export class V1Runtime {
       case "play.chain.inspect":
         return this.#playCallChains.inspectWorld(request.worldId);
       case "play.timeline.page":
+        await this.#worlds.ensureCurrentStorage(request.worldId);
         return this.#worlds.playTimeline.readPage(
           request.worldId,
           request.limit,
           request.cursor,
         );
       case "play.timeline.detail":
+        await this.#worlds.ensureCurrentStorage(request.worldId);
         return this.#worlds.playTimeline.readDetail(
           request.worldId,
           request.chainId,
