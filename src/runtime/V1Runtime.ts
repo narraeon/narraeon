@@ -392,57 +392,44 @@ export class V1Runtime {
           return this.#worlds.deleteWorld(request.worldId);
         });
       case "world.read": {
-        await this.#reconcileArtifacts(request.worldId);
         const head = await this.#worlds.currentHead(request.worldId);
         const playerViews = await this.#worlds.renderPlayerViewsAtHead(
           request.worldId,
           head,
         );
-        const [
-          state,
-          control,
-          history,
-          runtime,
-          endpoint,
-          authority,
-          artifacts,
-          extensions,
-          playerViewPanels,
-        ] = await Promise.all([
-          this.#worlds.readSurface(request.worldId, "state"),
-          this.#worlds.readSurface(request.worldId, "control"),
-          this.#worlds.readSurface(request.worldId, "history"),
-          this.#worlds.readSurface(request.worldId, "runtime"),
-          this.#worlds.recoverEndpoint(request.worldId, head),
-          this.#worlds.readAuthorityHistory(request.worldId),
-          this.#frontendProjection(request.worldId),
-          this.#artifacts.readExtensionSummaries(request.worldId),
+        const [playerViewPanels, playTimeline] = await Promise.all([
           this.#frontendPlayerViewPanels(request.worldId, head, playerViews),
+          this.#worlds.playTimeline.readPage(request.worldId, 40),
         ]);
         return {
           worldId: request.worldId,
           head,
-          state,
-          control,
-          history,
-          runtime,
+          state: [],
+          control: [],
+          history: [],
+          runtime: { head, surfaces: "lazy" },
           playerViews,
-          committedMessages: endpoint.history.map((message) => ({
-            ...message,
-            head:
-              authority.commits.find((commit) =>
-                commit.historyAppend.some(
-                  ({ messageId }) => messageId === message.messageId,
-                ),
-              )?.head ?? "genesis",
-          })),
-          artifacts,
-          extensions,
+          committedMessages: [],
+          artifacts: [],
+          extensions: [],
           playerViewPanels,
-          playCallChain: await this.#playCallChains.inspectWorld(
-            request.worldId,
-          ),
+          artifactDebug: [],
+          playCallChain: null,
+          playTimeline,
         };
+      }
+      case "world.surface.read":
+        return request.surface === "runtime"
+          ? this.#worlds.readSurface(request.worldId, "runtime")
+          : this.#worlds.readSurface(request.worldId, request.surface);
+      case "world.play-decorations.read": {
+        const head = await this.#reconcileArtifacts(request.worldId);
+        const [artifacts, extensions, artifactDebug] = await Promise.all([
+          this.#frontendProjection(request.worldId),
+          this.#artifacts.readExtensionSummaries(request.worldId),
+          this.#frontendDebug(request.worldId),
+        ]);
+        return { head, artifacts, extensions, artifactDebug };
       }
       case "artifacts.read":
         await this.#reconcileArtifacts(request.worldId);
@@ -543,6 +530,18 @@ export class V1Runtime {
         );
       case "play.chain.inspect":
         return this.#playCallChains.inspectWorld(request.worldId);
+      case "play.timeline.page":
+        return this.#worlds.playTimeline.readPage(
+          request.worldId,
+          request.limit,
+          request.cursor,
+        );
+      case "play.timeline.detail":
+        return this.#worlds.playTimeline.readDetail(
+          request.worldId,
+          request.chainId,
+          request.eventId,
+        );
       case "correction.begin":
         return this.#corrections.begin({
           worldId: request.worldId,
@@ -586,7 +585,7 @@ export class V1Runtime {
     );
   }
 
-  async #reconcileArtifacts(worldId: string): Promise<void> {
+  async #reconcileArtifacts(worldId: string): Promise<string> {
     const [head, currentOperationId] = await Promise.all([
       this.#worlds.currentHead(worldId),
       this.#worlds.currentHeadOperationId(worldId),
@@ -596,6 +595,7 @@ export class V1Runtime {
       head,
       currentOperationId ?? undefined,
     );
+    return head;
   }
 
   async #frontendProjection(

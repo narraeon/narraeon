@@ -10,13 +10,12 @@ import type {
   ModelHostAppendItem,
   ModelHostBinding,
   ModelHostExchange,
+  ModelHostResponse,
   ModelHostToolCall,
 } from "../model/ModelHost.ts";
 import {
   FileNativePromptCompiler,
   type FileNativePromptInput,
-  type MaterialSelection,
-  type PlayFollowupCompilation,
   type PromptCompilation,
 } from "../prompt/FileNativePromptCompiler.ts";
 import type {
@@ -32,11 +31,23 @@ import {
 import {
   FileNativePlayDocuments,
   fingerprintControl,
-  isPlayDocumentAuthorizationCheckpoint,
   type PlayDocumentAuthorizationCheckpoint,
   type PlayDocumentToolResult,
 } from "./PlayDocumentTools.ts";
 import type { AiFailureRecorder } from "../model/AiFailureLog.ts";
+import type {
+  PersistedCompletedToolCall,
+  PersistedDocumentAuthorizationCheckpoint,
+  PersistedPlayCallChain,
+  PersistedPlayCallChainContext,
+  PlayContextPersistenceCursor,
+} from "./FileNativePlayTimelineStore.ts";
+import type {
+  DurableModelHostResponse,
+  LoadedPlayAdvance,
+  PlayAdvanceBase,
+  PreparedPlayResponseSettlement,
+} from "./FileNativePlayAdvanceStore.ts";
 
 const callChainToolNames = new Set([
   "context_list",
@@ -45,74 +56,16 @@ const callChainToolNames = new Set([
   "world_patch",
   "world_create",
 ]);
+const projectedEventTail = 40;
 
-interface CompletedToolCall {
-  key: string;
-  name: string;
-  signature: string;
-  result: PlayDocumentToolResult;
-}
-
-interface PersistedDocumentAuthorizationCheckpoint {
-  afterEventId: number;
-  authorization: PlayDocumentAuthorizationCheckpoint;
-}
-
-interface PersistedPlayCallChainContext {
-  chainId: string;
-  baselineHead: string;
-  baselineHistoryLength?: number;
-  parentHead: string;
-  derivedFrom?: { worldId: string; chainId: string; head: string };
-  branchedBeforePlayer?: {
-    worldId: string;
-    chainId: string;
-    eventId: number;
-  };
-  playPreset: V1PlayCallChainView["playPreset"];
-  /** Frozen derived requests run once after each settled model exchange. */
-  followups?: PlayFollowupCompilation[];
-  playPresetScriptsEnabled?: boolean;
-  status: V1PlayCallChainView["status"];
-  canRetry: boolean;
-  bootstrap: PromptCompilation;
-  tools: PromptCompilation["tools"];
-  transcript: ModelHostAppendItem[];
-  events: V1PlayCallChainEvent[];
-  completedTools: CompletedToolCall[];
-  /** Absent on legacy V1 records created before authorizations were durable. */
-  documentAuthorizationCheckpoints?: PersistedDocumentAuthorizationCheckpoint[];
-  changedDocuments: V1PlayCallChainView["changedDocuments"];
-  nextMaterials: MaterialSelection[];
-  nextEventId: number;
-  exchange: number;
-  lastRequest: ModelHostExchange | null;
-  lastRequestAttempt: number;
-  lastFailure: string | null;
-  updatedAt: number;
-}
-
-interface PersistedPlayCallChain extends PersistedPlayCallChainContext {
-  schemaVersion: 1;
-  kind: "play_call_chain";
-  worldId: string;
-  /** Frozen model contexts retained only for display and historical forks. */
-  previousContexts?: PersistedPlayCallChainContext[];
-}
-
-type ReadablePersistedPlayCallChain = Omit<
-  PersistedPlayCallChain,
-  "schemaVersion"
-> & {
-  /** Version 2 was briefly written with the same compatible representation. */
-  schemaVersion: 1 | 2;
-};
+type CompletedToolCall = PersistedCompletedToolCall;
 
 interface PlayCallChainSession extends PersistedPlayCallChain {
   documentAuthorizationCheckpoints: PersistedDocumentAuthorizationCheckpoint[];
   documents: FileNativePlayDocuments;
   history: { path: string; contents: string }[];
   completedToolMap: Map<string, CompletedToolCall>;
+  persistenceCursor: PlayContextPersistenceCursor;
 }
 
 interface PreparedToolResult {
@@ -153,6 +106,7 @@ export class PlayCallChain {
   readonly #failureLog: AiFailureRecorder | undefined;
   readonly #active = new Map<string, PlayCallChainSession>();
   readonly #worldChains = new Map<string, string>();
+  readonly #loadedCursors = new Map<string, PlayContextPersistenceCursor>();
 
   constructor(
     worlds: FileNativeWorldStore,
@@ -225,19 +179,15 @@ export class PlayCallChain {
     documents.bindBootstrap(bootstrap);
     const now = Date.now();
     const session: PlayCallChainSession = {
-      schemaVersion: 1,
+      schemaVersion: 3,
       kind: "play_call_chain",
       chainId: input.chainId,
       worldId: input.worldId,
-      previousContexts:
-        existing === null
-          ? []
-          : [
-              ...(existing.previousContexts ?? []).map((context) =>
-                structuredClone(context),
-              ),
-              snapshotCurrentContext(existing),
-            ],
+      previousContexts: [],
+      previousChainId: existing?.chainId ?? null,
+      timelineGeneration:
+        existing?.timelineGeneration ??
+        this.#worlds.playTimeline.newGeneration(),
       baselineHead: binding.parentHead,
       baselineHistoryLength: Object.keys(binding.history).length,
       parentHead: binding.parentHead,
@@ -272,6 +222,12 @@ export class PlayCallChain {
       documents,
       history: historyEntries(binding.history),
       completedToolMap: new Map(),
+      persistenceCursor: {
+        eventCount: 0,
+        transcriptCount: 0,
+        completedToolCount: 0,
+        authorizationCheckpointCount: 0,
+      },
     };
     if (activeId !== undefined) this.#active.delete(activeId);
     this.#active.set(session.chainId, session);
@@ -352,33 +308,23 @@ export class PlayCallChain {
     const activeId = this.#worldChains.get(worldId);
     const active =
       activeId === undefined ? undefined : this.#active.get(activeId);
-    if (active !== undefined) return projectView(active);
+    if (active !== undefined) {
+      await this.#reconcileSessionAdvance(active);
+      return projectView(active);
+    }
     const persisted = await this.#readPersisted(worldId);
     if (persisted === null) return null;
-    if (persisted.status === "running") {
-      const streaming = persisted.events.findLast(
-        (
-          event,
-        ): event is Extract<V1PlayCallChainEvent, { kind: "assistant" }> =>
-          event.kind === "assistant" && event.status === "streaming",
-      );
-      if (streaming !== undefined) streaming.status = "interrupted";
-      const canRetry = persisted.lastRequest !== null;
-      const message = canRetry
-        ? "The service stopped before the model request completed; the same request can be retried."
-        : "The service stopped before dispatching the model request; use a fresh context.";
-      persisted.events.push({
-        id: persisted.nextEventId++,
-        kind: "failure",
-        message,
-      });
-      persisted.status = "interrupted";
-      persisted.canRetry = canRetry;
-      persisted.lastFailure = message;
-      persisted.updatedAt = Date.now();
-      await this.#worlds.writePlayCallChain(worldId, persisted);
-    }
-    return projectView(persisted);
+    const advance = await this.#worlds.playAdvances.readCurrent(
+      worldId,
+      persisted.chainId,
+    );
+    const session = await this.#hydrateSession(persisted, advance);
+    this.#active.set(session.chainId, session);
+    this.#worldChains.set(worldId, session.chainId);
+    await this.#reconcileSessionAdvance(session, advance);
+    if (session.status === "running")
+      await this.#interruptAbandonedDispatch(session);
+    return projectView(session);
   }
 
   async forkToDerivedWorld(input: {
@@ -390,7 +336,9 @@ export class PlayCallChain {
     if (existing !== null) return projectView(existing);
     const source = await this.#readPersisted(input.sourceWorldId);
     if (source === null) return null;
-    const sourceContexts = persistedContexts(source);
+    const sourceContexts = await this.#worlds.playTimeline.readAllContexts(
+      input.sourceWorldId,
+    );
     const selectedContextIndex = sourceContexts.findIndex(
       ({ events }) => eventsThroughHead(events, input.sourceHead) !== null,
     );
@@ -448,7 +396,9 @@ export class PlayCallChain {
       throw new PlayCallChainError(
         "The current world has no model call chain to revise.",
       );
-    const sourceContexts = persistedContexts(source);
+    const sourceContexts = await this.#worlds.playTimeline.readAllContexts(
+      input.worldId,
+    );
     const appliedEvent = sourceContexts
       .flatMap(({ events }) => events)
       .find(
@@ -608,7 +558,7 @@ export class PlayCallChain {
       prefixEvents,
     );
     const revised: PersistedPlayCallChain = {
-      schemaVersion: 1,
+      schemaVersion: 3,
       kind: "play_call_chain",
       chainId: derivedChainId(
         sourceContext.chainId,
@@ -616,9 +566,12 @@ export class PlayCallChain {
         request.worldId,
       ),
       worldId: request.worldId,
-      previousContexts: input.sourceContexts
-        .slice(0, input.selectedContextIndex)
-        .map((context) => independentContextCopy(context)),
+      previousContexts: [],
+      previousChainId:
+        input.selectedContextIndex === 0
+          ? null
+          : input.sourceContexts[input.selectedContextIndex - 1]!.chainId,
+      timelineGeneration: this.#worlds.playTimeline.newGeneration(),
       baselineHead: sourceContext.baselineHead,
       baselineHistoryLength:
         sourceContext.baselineHistoryLength ?? baseline.history.length,
@@ -669,10 +622,7 @@ export class PlayCallChain {
       lastFailure: null,
       updatedAt: Date.now(),
     };
-    await this.#worlds.writePlayCallChain(
-      request.worldId,
-      structuredClone(revised),
-    );
+    await this.#worlds.playTimeline.persist(structuredClone(revised));
     const activeId = this.#worldChains.get(request.worldId);
     if (activeId !== undefined) this.#active.delete(activeId);
     this.#active.delete(sourceContext.chainId);
@@ -725,8 +675,30 @@ export class PlayCallChain {
       input.sourceEvents,
     );
     const now = Date.now();
+    const timelineGeneration = this.#worlds.playTimeline.newGeneration();
+    let previousChainId: string | null = null;
+    for (const [index, context] of input.sourceContexts
+      .slice(0, input.selectedContextIndex)
+      .entries()) {
+      const chainId = derivedChainId(
+        context.chainId,
+        `prefix:${input.branchIdentity}:${index}`,
+        input.targetWorldId,
+      );
+      await this.#worlds.playTimeline.persist({
+        ...independentContextCopy(context),
+        schemaVersion: 3,
+        kind: "play_call_chain",
+        worldId: input.targetWorldId,
+        chainId,
+        previousContexts: [],
+        previousChainId,
+        timelineGeneration,
+      });
+      previousChainId = chainId;
+    }
     const derived: PersistedPlayCallChain = {
-      schemaVersion: 1,
+      schemaVersion: 3,
       kind: "play_call_chain",
       chainId: derivedChainId(
         sourceContext.chainId,
@@ -734,9 +706,9 @@ export class PlayCallChain {
         input.targetWorldId,
       ),
       worldId: input.targetWorldId,
-      previousContexts: input.sourceContexts
-        .slice(0, input.selectedContextIndex)
-        .map((context) => independentContextCopy(context)),
+      previousContexts: [],
+      previousChainId,
+      timelineGeneration,
       baselineHead: sourceContext.baselineHead,
       baselineHistoryLength:
         sourceContext.baselineHistoryLength ?? baseline.history.length,
@@ -787,10 +759,7 @@ export class PlayCallChain {
       lastFailure: null,
       updatedAt: now,
     };
-    await this.#worlds.writePlayCallChain(
-      input.targetWorldId,
-      structuredClone(derived),
-    );
+    await this.#worlds.playTimeline.persist(structuredClone(derived));
     return projectView(derived);
   }
 
@@ -821,16 +790,51 @@ export class PlayCallChain {
         "The call chain is waiting for the model to return.",
       );
 
-    session.status = "running";
-    session.lastFailure = null;
-    let committed: { head: string };
+    const exchange = session.exchange + 1;
+    const nextRequest = createRequest(session, modelHost, exchange, [
+      ...session.transcript,
+      { kind: "player", text: playerText },
+    ]);
+    const operationKey = `player:${exchangeId}`;
+    const playerOperationId = operationId(session.chainId, operationKey);
+    const advance = {
+      schemaVersion: 1,
+      kind: "play_advance",
+      advanceKind: "player",
+      worldId: session.worldId,
+      chainId: session.chainId,
+      advanceId: playerOperationId,
+      operationId: playerOperationId,
+      parentHead: session.parentHead,
+      eventId: session.nextEventId,
+      exchangeId,
+      playerText,
+      context,
+      transcriptStart: session.transcript.length,
+      exchange,
+      nextRequest: structuredClone(nextRequest),
+      createdAt: Date.now(),
+    } satisfies Extract<PlayAdvanceBase, { advanceKind: "player" }>;
+    await this.#worlds.playAdvances.begin(advance);
     try {
-      committed = await this.#commitStep(session, {
-        operationKey: `player:${exchangeId}`,
-        historyAppend: [{ role: "player", exactText: playerText }],
-        stateChanges: [],
-      });
+      await this.#settlePlayerAdvance(session, advance);
     } catch (error: unknown) {
+      const accepted = await this.#worlds
+        .getOperationOutcome(advance.operationId)
+        .catch(() => ({ outcome: "not_started" as const }));
+      if (
+        accepted.outcome === "committed" ||
+        accepted.outcome === "committed_materialization_pending"
+      ) {
+        await this.#settlePlayerAdvance(session, advance);
+        return this.#dispatch(
+          session,
+          modelHost,
+          structuredClone(nextRequest),
+          1,
+          observer,
+        );
+      }
       const message =
         error instanceof Error
           ? error.message
@@ -844,23 +848,323 @@ export class PlayCallChain {
       session.canRetry = false;
       session.lastFailure = message;
       await this.#persist(session);
+      await this.#worlds.playAdvances.markSettled(advance, session.parentHead);
       throw new PlayCallChainError(message);
     }
-    session.transcript.push({ kind: "player", text: playerText });
-    session.events.push({
-      id: session.nextEventId++,
-      kind: "player",
-      exchangeId,
-      text: playerText,
-      context,
-      committedHead: committed.head,
-    });
-    await this.#persist(session);
-    notifySnapshot(observer, session);
+    return this.#dispatch(
+      session,
+      modelHost,
+      structuredClone(nextRequest),
+      1,
+      observer,
+    );
+  }
 
-    session.exchange += 1;
-    const request = createRequest(session, modelHost, session.exchange);
-    return this.#dispatch(session, modelHost, request, 1, observer);
+  async #settlePlayerAdvance(
+    session: PlayCallChainSession,
+    advance: Extract<PlayAdvanceBase, { advanceKind: "player" }>,
+  ): Promise<void> {
+    const outcome = await this.#worlds.commitPlayStep({
+      operationId: advance.operationId,
+      worldId: session.worldId,
+      parentHead: advance.parentHead,
+      historyAppend: [{ role: "player", exactText: advance.playerText }],
+      nextMaterials: structuredClone(session.nextMaterials),
+      stateChanges: [],
+    });
+    if (
+      outcome.worldId !== session.worldId ||
+      outcome.parentHead !== advance.parentHead
+    )
+      throw new PlayCallChainError(
+        "The recovered player advance belongs to a different world endpoint.",
+      );
+
+    const playerEvent = {
+      id: advance.eventId,
+      kind: "player",
+      exchangeId: advance.exchangeId,
+      text: advance.playerText,
+      context: advance.context,
+      committedHead: outcome.head,
+    } satisfies Extract<V1PlayCallChainEvent, { kind: "player" }>;
+    session.events = [
+      ...session.events.filter(({ id }) => id < advance.eventId),
+      playerEvent,
+    ];
+    if (session.transcript.length < advance.transcriptStart)
+      throw new PlayCallChainError(
+        "The recovered call-chain transcript is shorter than its player prefix.",
+      );
+    session.transcript = [
+      ...session.transcript.slice(0, advance.transcriptStart),
+      { kind: "player", text: advance.playerText },
+    ];
+    session.nextEventId = advance.eventId + 1;
+    session.parentHead = outcome.head;
+    appendCommittedHistory(session, outcome.head, outcome.historyAppend);
+    session.exchange = advance.exchange;
+    session.lastRequest = structuredClone(advance.nextRequest);
+    session.lastRequestAttempt = 0;
+    session.status = "interrupted";
+    session.canRetry = true;
+    session.lastFailure =
+      "The player message is committed; the frozen model request is ready to continue.";
+    await this.#persist(session);
+    crashAtPlayAdvanceEdge("after_timeline_settled");
+    await this.#worlds.playAdvances.markSettled(advance, outcome.head);
+  }
+
+  #prepareResponseSettlement(
+    session: PlayCallChainSession,
+    advance: Extract<PlayAdvanceBase, { advanceKind: "response" }>,
+    response: DurableModelHostResponse,
+  ): PreparedPlayResponseSettlement {
+    const existing = session.events.find(({ id }) => id === advance.eventId);
+    if (existing?.kind !== "assistant")
+      throw new PlayCallChainError(
+        "The durable Provider result no longer matches its assistant event.",
+      );
+    const assistantEvent: Extract<V1PlayCallChainEvent, { kind: "assistant" }> =
+      {
+        id: advance.eventId,
+        kind: "assistant",
+        text: response.text ?? existing.text,
+        status: "completed",
+        exchange: advance.exchange,
+        attempt: advance.attempt,
+        ...(response.reasoningContent === undefined
+          ? existing.reasoning === undefined
+            ? {}
+            : { reasoning: existing.reasoning }
+          : { reasoning: response.reasoningContent }),
+        ...(response.usage === undefined
+          ? {}
+          : {
+              usage: {
+                inputTokens: response.usage.inputTokens,
+                outputTokens: response.usage.outputTokens,
+              },
+            }),
+      };
+    const calls = response.toolCalls ?? [];
+    const workingTools = new Map(session.completedToolMap);
+    const prepared: PreparedToolResult[] = [];
+    const trailingEvents: V1PlayCallChainEvent[] = [];
+    let nextEventId = advance.eventId + 1;
+    for (const call of calls) {
+      const item = prepareTool(session, workingTools, advance.exchange, call);
+      prepared.push(item);
+      trailingEvents.push({
+        id: nextEventId++,
+        kind: "tool_call",
+        callId: call.id,
+        name: call.name,
+        arguments: structuredClone(call.arguments),
+        replayed: item.replayed,
+      });
+      item.event.id = nextEventId++;
+      trailingEvents.push(structuredClone(item.event));
+    }
+    const stateChanges = session.documents.stateChanges();
+    const visibleText = (response.text ?? "").trim().length > 0;
+    const assistantItem: Extract<ModelHostAppendItem, { kind: "assistant" }> = {
+      kind: "assistant",
+      text: response.text ?? "",
+      ...(response.reasoningContent === undefined
+        ? {}
+        : { reasoningContent: response.reasoningContent }),
+      ...(response.providerState === undefined
+        ? {}
+        : { providerState: response.providerState }),
+      toolCalls: structuredClone(calls),
+    };
+    return {
+      assistantEvent,
+      trailingEvents,
+      transcriptStart: session.transcript.length,
+      transcriptAppend: [
+        ...(calls.length > 0 || visibleText ? [assistantItem] : []),
+        ...prepared.map(({ transcript }) => structuredClone(transcript)),
+      ],
+      completedTools: [...workingTools.values()].map((item) =>
+        structuredClone(item),
+      ),
+      authorizationCheckpoint: session.documents.authorizationCheckpoint(),
+      stateChanges: structuredClone(stateChanges),
+      visibleText,
+    };
+  }
+
+  async #settleResponseAdvance(
+    session: PlayCallChainSession,
+    advance: Extract<PlayAdvanceBase, { advanceKind: "response" }>,
+    prepared: PreparedPlayResponseSettlement,
+  ): Promise<
+    { kind: "terminal" } | { kind: "continue"; nextRequest: ModelHostExchange }
+  > {
+    const settlement = structuredClone(prepared);
+    const hasToolCalls = settlement.trailingEvents.some(
+      ({ kind }) => kind === "tool_call",
+    );
+    let committedHead: string | undefined;
+    if (settlement.visibleText || settlement.stateChanges.length > 0) {
+      const outcome = await this.#worlds.commitPlayStep({
+        operationId: advance.operationId,
+        worldId: session.worldId,
+        parentHead: advance.parentHead,
+        historyAppend: settlement.visibleText
+          ? [
+              {
+                role: "narrator",
+                exactText: settlement.assistantEvent.text,
+              },
+            ]
+          : [],
+        nextMaterials: structuredClone(session.nextMaterials),
+        stateChanges: structuredClone(settlement.stateChanges),
+      });
+      committedHead = outcome.head;
+      settlement.assistantEvent.committedHead = outcome.head;
+      crashAtPlayAdvanceEdge("after_authority_accepted");
+      appendCommittedHistory(session, outcome.head, outcome.historyAppend);
+    }
+
+    finalizePreparedReceipts(settlement);
+    session.events = [
+      ...session.events.filter(({ id }) => id < advance.eventId),
+      structuredClone(settlement.assistantEvent),
+      ...structuredClone(settlement.trailingEvents),
+    ];
+    session.nextEventId =
+      Math.max(
+        advance.eventId,
+        ...settlement.trailingEvents.map(({ id }) => id),
+      ) + 1;
+    if (session.transcript.length < settlement.transcriptStart)
+      throw new PlayCallChainError(
+        "The recovered call-chain transcript is shorter than its settlement prefix.",
+      );
+    session.transcript = [
+      ...session.transcript.slice(0, settlement.transcriptStart),
+      ...structuredClone(settlement.transcriptAppend),
+    ];
+    session.completedTools = structuredClone(settlement.completedTools);
+    session.completedToolMap = new Map(
+      settlement.completedTools.map((item) => [
+        item.key,
+        structuredClone(item),
+      ]),
+    );
+    const lastToolEventId = settlement.trailingEvents.findLast(
+      ({ kind }) => kind === "tool_result",
+    )?.id;
+    if (lastToolEventId !== undefined) {
+      session.documentAuthorizationCheckpoints =
+        session.documentAuthorizationCheckpoints.filter(
+          ({ afterEventId }) => afterEventId < advance.eventId,
+        );
+      session.documentAuthorizationCheckpoints.push({
+        afterEventId: lastToolEventId,
+        authorization: structuredClone(settlement.authorizationCheckpoint),
+      });
+    }
+    if (committedHead !== undefined) session.parentHead = committedHead;
+    if (settlement.stateChanges.length > 0) {
+      const currentAuthorization = session.documents.authorizationCheckpoint();
+      if (
+        currentAuthorization.stateFingerprint ===
+        settlement.authorizationCheckpoint.stateFingerprint
+      )
+        session.documents.acceptCommittedState();
+      else {
+        const binding = await this.#worlds.bindPlayCallChain(session.worldId);
+        session.documents = new FileNativePlayDocuments(binding.files);
+        session.documents.restoreAuthorizationCheckpoint(
+          settlement.authorizationCheckpoint,
+        );
+        session.history = historyEntries(binding.history);
+        session.nextMaterials = structuredClone(binding.additionalMaterials);
+      }
+      mergeChangedDocuments(session, settlement.stateChanges);
+    }
+
+    session.exchange = Math.max(session.exchange, advance.exchange);
+    session.canRetry = false;
+    session.lastFailure = null;
+    let result:
+      | { kind: "terminal" }
+      | { kind: "continue"; nextRequest: ModelHostExchange };
+    if (hasToolCalls) {
+      session.exchange += 1;
+      const nextRequest = createRequestWithMaxOutputTokens(
+        session,
+        session.lastRequest?.maxOutputTokens ?? 1,
+        session.exchange,
+      );
+      session.lastRequest = structuredClone(nextRequest);
+      session.lastRequestAttempt = 0;
+      session.status = "interrupted";
+      session.canRetry = true;
+      session.lastFailure =
+        "The completed tool response is settled; its frozen continuation request is ready.";
+      result = { kind: "continue", nextRequest };
+    } else {
+      session.status = settlement.visibleText ? "ready" : "interrupted";
+      if (!settlement.visibleText) {
+        const message =
+          "The model returned neither text nor a complete tool call.";
+        session.events.push({
+          id: session.nextEventId++,
+          kind: "failure",
+          message,
+        });
+        session.lastFailure = message;
+      }
+      result = { kind: "terminal" };
+    }
+    await this.#persist(session);
+    crashAtPlayAdvanceEdge("after_timeline_settled");
+    await this.#worlds.playAdvances.markSettled(
+      advance,
+      committedHead ?? session.parentHead,
+    );
+    return result;
+  }
+
+  async #recoverAcceptedResponseAdvance(
+    session: PlayCallChainSession,
+    advance: Extract<PlayAdvanceBase, { advanceKind: "response" }>,
+  ): Promise<
+    | { kind: "terminal" }
+    | { kind: "continue"; nextRequest: ModelHostExchange }
+    | null
+  > {
+    const outcome = await this.#worlds
+      .getOperationOutcome(advance.operationId)
+      .catch(() => ({ outcome: "not_started" as const }));
+    if (
+      outcome.outcome !== "committed" &&
+      outcome.outcome !== "committed_materialization_pending"
+    )
+      return null;
+    const current = await this.#worlds.playAdvances.readCurrent(
+      advance.worldId,
+      advance.chainId,
+    );
+    if (
+      current?.base.advanceKind !== "response" ||
+      current.base.advanceId !== advance.advanceId ||
+      current.settlementPrepared === null
+    )
+      throw new PlayCallChainError(
+        "Authority accepted a response whose durable settlement is missing.",
+      );
+    return this.#settleResponseAdvance(
+      session,
+      advance,
+      current.settlementPrepared.settlement,
+    );
   }
 
   async #dispatch(
@@ -889,6 +1193,25 @@ export class PlayCallChain {
       };
       session.events.push(event);
       await this.#persist(session);
+      const responseOperationId = operationId(
+        session.chainId,
+        `response:${responseExchange}:attempt:${attempt}`,
+      );
+      const advance = {
+        schemaVersion: 1,
+        kind: "play_advance",
+        advanceKind: "response",
+        worldId: session.worldId,
+        chainId: session.chainId,
+        advanceId: responseOperationId,
+        operationId: responseOperationId,
+        parentHead: session.parentHead,
+        eventId: event.id,
+        exchange: responseExchange,
+        attempt,
+        createdAt: Date.now(),
+      } satisfies Extract<PlayAdvanceBase, { advanceKind: "response" }>;
+      await this.#worlds.playAdvances.begin(advance);
       notifySnapshot(observer, session);
 
       let response: Awaited<ReturnType<ModelHost["exchange"]>>;
@@ -926,59 +1249,40 @@ export class PlayCallChain {
         session.canRetry = true;
         session.lastFailure = message;
         await this.#persist(session);
+        await this.#worlds.playAdvances.markSettled(
+          advance,
+          session.parentHead,
+        );
         notifySnapshot(observer, session);
         return projectView(session);
       }
 
-      event.status = "completed";
-      session.canRetry = false;
-      event.text = response.text ?? event.text;
-      if (response.reasoningContent !== undefined)
-        event.reasoning = response.reasoningContent;
-      delete event.toolFragment;
-      if (response.usage !== undefined)
-        event.usage = {
-          inputTokens: response.usage.inputTokens,
-          outputTokens: response.usage.outputTokens,
-        };
-      const calls = response.toolCalls ?? [];
-      const assistantItem: Extract<ModelHostAppendItem, { kind: "assistant" }> =
-        {
-          kind: "assistant",
-          text: response.text ?? "",
-          ...(response.reasoningContent === undefined
-            ? {}
-            : { reasoningContent: response.reasoningContent }),
-          ...(response.providerState === undefined
-            ? {}
-            : { providerState: response.providerState }),
-          toolCalls: structuredClone(calls),
-        };
-
+      const durableResponse = durableModelResponse(response);
       try {
-        const workingTools = new Map(session.completedToolMap);
-        const prepared: PreparedToolResult[] = [];
-        for (const call of calls) {
-          const item = prepareTool(
-            session,
-            workingTools,
-            responseExchange,
-            call,
-          );
-          prepared.push(item);
-          session.events.push({
-            id: session.nextEventId++,
-            kind: "tool_call",
-            callId: call.id,
-            name: call.name,
-            arguments: structuredClone(call.arguments),
-            replayed: item.replayed,
-          });
-          item.event.id = session.nextEventId++;
-          session.events.push(item.event);
-        }
+        await this.#worlds.playAdvances.recordProviderCompleted(
+          advance,
+          durableResponse,
+        );
+        crashAtPlayAdvanceEdge("after_provider_completed");
+        const settlement = this.#prepareResponseSettlement(
+          session,
+          advance,
+          durableResponse,
+        );
+        await this.#worlds.playAdvances.recordSettlementPrepared(
+          advance,
+          settlement,
+        );
+        crashAtPlayAdvanceEdge("after_settlement_prepared");
 
-        const failedTools = prepared.filter(({ result }) => !result.ok);
+        const failedTools = settlement.trailingEvents.filter(
+          (
+            candidate,
+          ): candidate is Extract<
+            V1PlayCallChainEvent,
+            { kind: "tool_result" }
+          > => candidate.kind === "tool_result" && !candidate.ok,
+        );
         if (failedTools.length > 0 && response.diagnostics !== undefined)
           await this.#failureLog?.recordFailure({
             exchange: response.diagnostics,
@@ -987,75 +1291,25 @@ export class PlayCallChain {
                 kind: "tool_execution",
                 message: "A Runtime tool call from the model was rejected.",
                 details: {
-                  calls: failedTools.map(({ call, result, replayed }) => ({
-                    id: call.id,
-                    name: call.name,
-                    arguments: structuredClone(call.arguments),
+                  calls: failedTools.map((result) => ({
+                    id: result.callId,
+                    name: result.name,
                     ok: result.ok,
-                    failureKind: result.failureKind,
                     markdown: result.markdown,
-                    replayed,
+                    replayed: result.replayed,
                   })),
                 },
               },
             ],
           });
-
-        const stateChanges = session.documents.stateChanges();
-        const visibleText = (response.text ?? "").trim().length > 0;
-        let committedHead: string | undefined;
-        if (visibleText || stateChanges.length > 0) {
-          const committed = await this.#commitStep(session, {
-            operationKey: `response:${responseExchange}:attempt:${attempt}`,
-            historyAppend: visibleText
-              ? [{ role: "narrator", exactText: response.text ?? "" }]
-              : [],
-            stateChanges,
-          });
-          committedHead = committed.head;
-          event.committedHead = committed.head;
-          if (stateChanges.length > 0) {
-            session.documents.acceptCommittedState();
-            mergeChangedDocuments(session, stateChanges);
-          }
-        }
-
-        const committedWriteRefs = new Set(
-          stateChanges.map(({ stableShortRef }) => stableShortRef),
+        const settled = await this.#settleResponseAdvance(
+          session,
+          advance,
+          settlement,
         );
-        for (const item of prepared) {
-          const candidateWrite = item.result.candidateWrite;
-          if (!item.result.ok || candidateWrite === undefined) continue;
-          const markdown =
-            candidateWrite.changed &&
-            committedWriteRefs.has(candidateWrite.shortRef)
-              ? `@${candidateWrite.shortRef} write succeeded`
-              : `@${candidateWrite.shortRef} unchanged`;
-          item.result.markdown = markdown;
-          delete item.result.candidateWrite;
-          item.event.markdown = markdown;
-          item.transcript.markdown = markdown;
-          const completed = workingTools.get(item.key);
-          if (completed !== undefined)
-            completed.result = structuredClone(item.result);
-        }
 
-        if (calls.length > 0 || visibleText)
-          session.transcript.push(assistantItem);
-        session.transcript.push(
-          ...prepared.map(({ transcript }) => transcript),
-        );
-        session.completedToolMap = workingTools;
-        session.completedTools = [...workingTools.values()].map((item) =>
-          structuredClone(item),
-        );
-        const lastToolEventId = prepared.at(-1)?.event.id;
-        if (lastToolEventId !== undefined)
-          recordDocumentAuthorizationCheckpoint(session, lastToolEventId);
-        if (committedHead !== undefined) session.parentHead = committedHead;
-
-        if (calls.length === 0) {
-          if (!visibleText) {
+        if (settled.kind === "terminal") {
+          if (!settlement.visibleText) {
             const message =
               "The model returned neither text nor a complete tool call.";
             if (response.diagnostics !== undefined)
@@ -1068,15 +1322,6 @@ export class PlayCallChain {
                   },
                 ],
               });
-            session.events.push({
-              id: session.nextEventId++,
-              kind: "failure",
-              message,
-            });
-            session.status = "interrupted";
-            session.canRetry = false;
-            session.lastFailure = message;
-            await this.#persist(session);
             notifySnapshot(observer, session);
             return projectView(session);
           }
@@ -1097,13 +1342,24 @@ export class PlayCallChain {
           notifySnapshot(observer, session);
           return projectView(session);
         }
-
-        await this.#persist(session);
         notifySnapshot(observer, session);
-        session.exchange = Math.max(session.exchange, responseExchange) + 1;
-        request = createRequest(session, modelHost, session.exchange);
+        request = settled.nextRequest;
         attempt = 1;
       } catch (error: unknown) {
+        const recovered = await this.#recoverAcceptedResponseAdvance(
+          session,
+          advance,
+        );
+        if (recovered !== null) {
+          if (recovered.kind === "continue") {
+            request = recovered.nextRequest;
+            attempt = 1;
+            notifySnapshot(observer, session);
+            continue;
+          }
+          notifySnapshot(observer, session);
+          return projectView(session);
+        }
         const message =
           error instanceof Error
             ? error.message
@@ -1206,33 +1462,6 @@ export class PlayCallChain {
     }
   }
 
-  async #commitStep(
-    session: PlayCallChainSession,
-    input: {
-      operationKey: string;
-      historyAppend: { role: "player" | "narrator"; exactText: string }[];
-      stateChanges: FileNativeStateChange[];
-    },
-  ) {
-    const parentHead = session.parentHead;
-    const outcome = await this.#worlds.commitPlayStep({
-      operationId: operationId(session.chainId, input.operationKey),
-      worldId: session.worldId,
-      parentHead,
-      historyAppend: structuredClone(input.historyAppend),
-      nextMaterials: structuredClone(session.nextMaterials),
-      stateChanges: structuredClone(input.stateChanges),
-    });
-    session.parentHead = outcome.head;
-    const sequence = Number(outcome.head.slice("commit:".length));
-    for (const [index, message] of input.historyAppend.entries())
-      session.history.push({
-        path: `${session.worldId}.message.${sequence}.${index + 1}.${message.role}`,
-        contents: message.exactText,
-      });
-    return outcome;
-  }
-
   async #requireChain(
     worldId: string,
     chainId: string,
@@ -1244,6 +1473,7 @@ export class PlayCallChain {
         throw new PlayCallChainError(
           "The call chain does not belong to this world.",
         );
+      await this.#reconcileSessionAdvance(active);
       return active;
     }
     const persisted = await this.#readPersisted(worldId);
@@ -1251,36 +1481,45 @@ export class PlayCallChain {
       throw new PlayCallChainError(
         "The call chain does not exist; start from the latest world state.",
       );
-    if (persisted.status === "running") {
-      persisted.status = "interrupted";
-      persisted.canRetry = persisted.lastRequest !== null;
-      persisted.lastFailure = persisted.canRetry
-        ? "The service stopped before the model request completed; the same request can be retried."
-        : "The service stopped before dispatching the model request; use a fresh context.";
-      const streaming = persisted.events.findLast(
-        (
-          event,
-        ): event is Extract<V1PlayCallChainEvent, { kind: "assistant" }> =>
-          event.kind === "assistant" && event.status === "streaming",
-      );
-      if (streaming !== undefined) streaming.status = "interrupted";
-      persisted.events.push({
-        id: persisted.nextEventId++,
-        kind: "failure",
-        message: persisted.lastFailure,
-      });
-    }
-    const binding = await this.#worlds.bindPlayCallChain(worldId);
-    if (binding.parentHead !== persisted.parentHead)
+    const advance = await this.#worlds.playAdvances.readCurrent(
+      worldId,
+      chainId,
+    );
+    const session = await this.#hydrateSession(persisted, advance);
+    this.#active.set(chainId, session);
+    this.#worldChains.set(worldId, chainId);
+    await this.#reconcileSessionAdvance(session, advance);
+    if (session.status === "running")
+      await this.#interruptAbandonedDispatch(session);
+    const currentHead = await this.#worlds.currentHead(worldId);
+    if (currentHead !== session.parentHead)
       throw new PlayCallChainError(
         "The call-chain record differs from the current world endpoint; use a fresh context.",
       );
-    const documents = restorePlayDocuments(
-      binding.files,
-      persisted,
-      persisted.events,
-    );
-    const session: PlayCallChainSession = {
+    return session;
+  }
+
+  async #hydrateSession(
+    persisted: PersistedPlayCallChain,
+    advance: LoadedPlayAdvance | null,
+  ): Promise<PlayCallChainSession> {
+    const binding = await this.#worlds.bindPlayCallChain(persisted.worldId);
+    let documents: FileNativePlayDocuments;
+    try {
+      documents = restorePlayDocuments(
+        binding.files,
+        persisted,
+        persisted.events,
+      );
+    } catch (error: unknown) {
+      const prepared = advance?.settlementPrepared?.settlement;
+      if (prepared === undefined) throw error;
+      documents = new FileNativePlayDocuments(binding.files);
+      documents.restoreAuthorizationCheckpoint(
+        prepared.authorizationCheckpoint,
+      );
+    }
+    return {
       ...structuredClone(persisted),
       documentAuthorizationCheckpoints:
         persisted.documentAuthorizationCheckpoints?.map((checkpoint) =>
@@ -1295,11 +1534,77 @@ export class PlayCallChain {
           structuredClone(item),
         ]),
       ),
+      persistenceCursor: this.#loadedCursors.get(persisted.chainId) ?? {
+        eventCount: 0,
+        transcriptCount: 0,
+        completedToolCount: 0,
+        authorizationCheckpointCount: 0,
+      },
     };
-    this.#active.set(chainId, session);
-    this.#worldChains.set(worldId, chainId);
-    if (persisted.status === "interrupted") await this.#persist(session);
-    return session;
+  }
+
+  async #reconcileSessionAdvance(
+    session: PlayCallChainSession,
+    loaded?: LoadedPlayAdvance | null,
+  ): Promise<void> {
+    const current =
+      loaded ??
+      (await this.#worlds.playAdvances.readCurrent(
+        session.worldId,
+        session.chainId,
+      ));
+    if (current?.settled !== null) return;
+    if (current.base.advanceKind === "player") {
+      await this.#settlePlayerAdvance(session, current.base);
+      return;
+    }
+    if (current.providerCompleted === null) {
+      await this.#interruptAbandonedDispatch(session, current.base);
+      await this.#worlds.playAdvances.markSettled(
+        current.base,
+        session.parentHead,
+      );
+      return;
+    }
+    let settlement = current.settlementPrepared?.settlement;
+    if (settlement === undefined) {
+      settlement = this.#prepareResponseSettlement(
+        session,
+        current.base,
+        current.providerCompleted.response,
+      );
+      await this.#worlds.playAdvances.recordSettlementPrepared(
+        current.base,
+        settlement,
+      );
+    }
+    await this.#settleResponseAdvance(session, current.base, settlement);
+  }
+
+  async #interruptAbandonedDispatch(
+    session: PlayCallChainSession,
+    advance?: Extract<PlayAdvanceBase, { advanceKind: "response" }>,
+  ): Promise<void> {
+    const streaming = session.events.findLast(
+      (event): event is Extract<V1PlayCallChainEvent, { kind: "assistant" }> =>
+        event.kind === "assistant" &&
+        event.status === "streaming" &&
+        (advance === undefined || event.id === advance.eventId),
+    );
+    if (streaming !== undefined) streaming.status = "interrupted";
+    const canRetry = session.lastRequest !== null;
+    const message = canRetry
+      ? "The service stopped before the model request completed; the same request can be retried."
+      : "The service stopped before dispatching the model request; use a fresh context.";
+    session.events.push({
+      id: session.nextEventId++,
+      kind: "failure",
+      message,
+    });
+    session.status = "interrupted";
+    session.canRetry = canRetry;
+    session.lastFailure = message;
+    await this.#persist(session);
   }
 
   async #assertCurrentHead(session: PlayCallChainSession): Promise<void> {
@@ -1314,10 +1619,17 @@ export class PlayCallChain {
   async #readPersisted(
     worldId: string,
   ): Promise<PersistedPlayCallChain | null> {
-    const value = await this.#worlds.readPlayCallChain<unknown>(worldId);
-    if (value === null) return null;
-    assertPersistedPlayCallChain(value, worldId);
-    return { ...structuredClone(value), schemaVersion: 1 };
+    const loaded = await this.#worlds.playTimeline.readCurrent(worldId);
+    if (loaded === null) {
+      const legacy = await this.#worlds.readPlayCallChain<unknown>(worldId);
+      if (legacy !== null)
+        throw new PlayCallChainError(
+          "The persisted call-chain record does not match the current format and cannot be read.",
+        );
+      return null;
+    }
+    this.#loadedCursors.set(loaded.value.chainId, loaded.cursor);
+    return structuredClone(loaded.value);
   }
 
   async #persist(session: PlayCallChainSession): Promise<void> {
@@ -1329,14 +1641,16 @@ export class PlayCallChain {
       documents: _documents,
       history: _history,
       completedToolMap: _completedToolMap,
+      persistenceCursor: _persistenceCursor,
       ...persisted
     } = session;
     void _documents;
     void _history;
     void _completedToolMap;
-    await this.#worlds.writePlayCallChain(
-      session.worldId,
+    void _persistenceCursor;
+    session.persistenceCursor = await this.#worlds.playTimeline.persist(
       structuredClone(persisted),
+      session.persistenceCursor,
     );
   }
 }
@@ -1354,6 +1668,24 @@ function createRequest(
   session: PlayCallChainSession,
   modelHost: ModelHost,
   exchange: number,
+  appended: readonly ModelHostAppendItem[] = session.transcript,
+): ModelHostExchange {
+  return createRequestWithMaxOutputTokens(
+    session,
+    modelHost.binding().maxOutputTokens,
+    exchange,
+    appended,
+  );
+}
+
+function createRequestWithMaxOutputTokens(
+  session: Pick<
+    PlayCallChainSession,
+    "bootstrap" | "tools" | "transcript" | "chainId"
+  >,
+  maxOutputTokens: number,
+  exchange: number,
+  appended: readonly ModelHostAppendItem[] = session.transcript,
 ): ModelHostExchange {
   return {
     bootstrap: structuredClone(session.bootstrap),
@@ -1361,13 +1693,72 @@ function createRequest(
     toolUniverse: structuredClone(session.tools),
     allowedTools: session.tools.map(({ name }) => name),
     toolStrategy: session.bootstrap.toolStrategy,
-    appended: structuredClone(session.transcript),
+    appended: structuredClone([...appended]),
     requestId: "play_call_chain",
     operationId: session.chainId,
     requestAttempt: 1,
     exchange,
-    maxOutputTokens: modelHost.binding().maxOutputTokens,
+    maxOutputTokens,
   };
+}
+
+function durableModelResponse(
+  response: ModelHostResponse,
+): DurableModelHostResponse {
+  const { diagnostics: _diagnostics, ...durable } = response;
+  void _diagnostics;
+  return structuredClone(durable);
+}
+
+function finalizePreparedReceipts(
+  settlement: PreparedPlayResponseSettlement,
+): void {
+  const committedWriteRefs = new Set(
+    settlement.stateChanges.map(({ stableShortRef }) => stableShortRef),
+  );
+  const markdownByCall = new Map<string, string>();
+  for (const completed of settlement.completedTools) {
+    const candidateWrite = completed.result.candidateWrite;
+    if (!completed.result.ok || candidateWrite === undefined) continue;
+    const markdown =
+      candidateWrite.changed && committedWriteRefs.has(candidateWrite.shortRef)
+        ? `@${candidateWrite.shortRef} write succeeded`
+        : `@${candidateWrite.shortRef} unchanged`;
+    completed.result.markdown = markdown;
+    delete completed.result.candidateWrite;
+    const callId = completed.key.slice(completed.key.indexOf(":") + 1);
+    markdownByCall.set(callId, markdown);
+  }
+  for (const event of settlement.trailingEvents) {
+    if (event.kind !== "tool_result") continue;
+    const markdown = markdownByCall.get(event.callId);
+    if (markdown !== undefined) event.markdown = markdown;
+  }
+  for (const item of settlement.transcriptAppend) {
+    if (item.kind !== "tool") continue;
+    const markdown = markdownByCall.get(item.toolCallId);
+    if (markdown !== undefined) item.markdown = markdown;
+  }
+}
+
+function appendCommittedHistory(
+  session: Pick<PlayCallChainSession, "worldId" | "history">,
+  head: string,
+  messages: readonly { role: "player" | "narrator"; exactText: string }[],
+): void {
+  const sequence = Number(head.slice("commit:".length));
+  for (const [index, message] of messages.entries()) {
+    const path = `${session.worldId}.message.${sequence}.${index + 1}.${message.role}`;
+    const existing = session.history.find((item) => item.path === path);
+    if (existing !== undefined) {
+      if (existing.contents !== message.exactText)
+        throw new PlayCallChainError(
+          "Recovered Authority history conflicts with the call-chain history.",
+        );
+      continue;
+    }
+    session.history.push({ path, contents: message.exactText });
+  }
 }
 
 function prepareTool(
@@ -1497,27 +1888,6 @@ function restorePlayDocuments(
   return documents;
 }
 
-function recordDocumentAuthorizationCheckpoint(
-  session: PlayCallChainSession,
-  afterEventId: number,
-): void {
-  const authorization = session.documents.authorizationCheckpoint();
-  const previous = session.documentAuthorizationCheckpoints.at(-1);
-  if (
-    previous !== undefined &&
-    JSON.stringify(previous.authorization) === JSON.stringify(authorization)
-  )
-    return;
-  if (previous !== undefined && afterEventId <= previous.afterEventId)
-    throw new PlayCallChainError(
-      "Call-chain document authorization checkpoints are out of order.",
-    );
-  session.documentAuthorizationCheckpoints.push({
-    afterEventId,
-    authorization,
-  });
-}
-
 function documentAuthorizationThroughEvents(
   context: Pick<
     PersistedPlayCallChainContext,
@@ -1536,34 +1906,6 @@ function documentAuthorizationThroughEvents(
   // prefix predates their first lazily-written checkpoint, retain the exact
   // old recovery behavior and rebuild only bootstrap authorization.
   return selected === undefined ? undefined : structuredClone(selected);
-}
-
-function snapshotCurrentContext(
-  session: PersistedPlayCallChain,
-): PersistedPlayCallChainContext {
-  const {
-    schemaVersion: _schemaVersion,
-    kind: _kind,
-    worldId: _worldId,
-    previousContexts: _previousContexts,
-    ...context
-  } = session;
-  void _schemaVersion;
-  void _kind;
-  void _worldId;
-  void _previousContexts;
-  return structuredClone(context);
-}
-
-function persistedContexts(
-  session: PersistedPlayCallChain,
-): PersistedPlayCallChainContext[] {
-  return [
-    ...(session.previousContexts ?? []).map((context) =>
-      structuredClone(context),
-    ),
-    snapshotCurrentContext(session),
-  ];
 }
 
 function independentContextCopy(
@@ -1608,10 +1950,42 @@ function projectContext(
     playPreset: structuredClone(context.playPreset),
     status: context.status,
     canRetry: context.canRetry,
-    events: structuredClone(context.events),
+    events: context.events
+      .slice(-projectedEventTail)
+      .map((event) => projectActivityEvent(event)),
     changedDocuments: structuredClone(context.changedDocuments),
     lastFailure: context.lastFailure,
     updatedAt: context.updatedAt,
+  };
+}
+
+function projectActivityEvent(
+  event: V1PlayCallChainEvent,
+): V1PlayCallChainEvent {
+  if (event.kind === "player" || event.kind === "failure")
+    return structuredClone(event);
+  if (event.kind === "assistant") {
+    const { reasoning, toolFragment, usage, ...summary } = event;
+    void reasoning;
+    void toolFragment;
+    void usage;
+    return structuredClone(summary);
+  }
+  if (event.kind === "tool_call")
+    return { ...structuredClone(event), arguments: null };
+  if (event.kind === "tool_result")
+    return { ...structuredClone(event), markdown: "" };
+  const { reasoning, usage, ...summary } = event;
+  void reasoning;
+  void usage;
+  return {
+    ...structuredClone(summary),
+    text: "",
+    toolCalls: event.toolCalls.map((call) => ({
+      ...structuredClone(call),
+      arguments: null,
+      markdown: "",
+    })),
   };
 }
 
@@ -1750,111 +2124,6 @@ function operationId(chainId: string, key: string): string {
     .digest("hex")}`;
 }
 
-function assertPersistedPlayCallChain(
-  value: unknown,
-  worldId: string,
-): asserts value is ReadablePersistedPlayCallChain {
-  if (
-    !isRecord(value) ||
-    (value.schemaVersion !== 1 && value.schemaVersion !== 2) ||
-    value.kind !== "play_call_chain" ||
-    value.worldId !== worldId ||
-    !isPersistedPlayCallChainContext(value) ||
-    (value.previousContexts !== undefined &&
-      (!Array.isArray(value.previousContexts) ||
-        value.previousContexts.some(
-          (context) => !isPersistedPlayCallChainContext(context),
-        )))
-  )
-    throw new PlayCallChainError(
-      "The persisted call-chain record does not match the current format and cannot be read.",
-    );
-}
-
-function isPersistedPlayCallChainContext(
-  value: unknown,
-): value is PersistedPlayCallChainContext {
-  if (!isRecord(value)) return false;
-  return (
-    typeof value.chainId === "string" &&
-    typeof value.baselineHead === "string" &&
-    (value.baselineHistoryLength === undefined ||
-      (typeof value.baselineHistoryLength === "number" &&
-        Number.isSafeInteger(value.baselineHistoryLength) &&
-        value.baselineHistoryLength >= 0)) &&
-    typeof value.parentHead === "string" &&
-    (value.derivedFrom === undefined ||
-      (isRecord(value.derivedFrom) &&
-        typeof value.derivedFrom.worldId === "string" &&
-        typeof value.derivedFrom.chainId === "string" &&
-        typeof value.derivedFrom.head === "string")) &&
-    (value.branchedBeforePlayer === undefined ||
-      (isRecord(value.branchedBeforePlayer) &&
-        typeof value.branchedBeforePlayer.worldId === "string" &&
-        typeof value.branchedBeforePlayer.chainId === "string" &&
-        Number.isSafeInteger(value.branchedBeforePlayer.eventId) &&
-        (value.branchedBeforePlayer.eventId as number) > 0)) &&
-    isRecord(value.playPreset) &&
-    (value.followups === undefined || Array.isArray(value.followups)) &&
-    (value.playPresetScriptsEnabled === undefined ||
-      typeof value.playPresetScriptsEnabled === "boolean") &&
-    (value.status === "ready" ||
-      value.status === "running" ||
-      value.status === "interrupted") &&
-    typeof value.canRetry === "boolean" &&
-    isRecord(value.bootstrap) &&
-    Array.isArray(value.tools) &&
-    Array.isArray(value.transcript) &&
-    Array.isArray(value.events) &&
-    Array.isArray(value.completedTools) &&
-    (value.documentAuthorizationCheckpoints === undefined ||
-      isPersistedDocumentAuthorizationHistory(
-        value.documentAuthorizationCheckpoints,
-        value.events,
-      )) &&
-    Array.isArray(value.changedDocuments) &&
-    Array.isArray(value.nextMaterials) &&
-    Number.isSafeInteger(value.nextEventId) &&
-    Number.isSafeInteger(value.exchange) &&
-    (value.lastRequest === null || isRecord(value.lastRequest)) &&
-    Number.isSafeInteger(value.lastRequestAttempt) &&
-    (value.lastFailure === null || typeof value.lastFailure === "string") &&
-    typeof value.updatedAt === "number"
-  );
-}
-
-function isPersistedDocumentAuthorizationHistory(
-  value: unknown,
-  events: unknown[],
-): value is PersistedDocumentAuthorizationCheckpoint[] {
-  if (!Array.isArray(value) || value.length > 100_000) return false;
-  const eventIds = new Set(
-    events.flatMap((event) =>
-      isRecord(event) && Number.isSafeInteger(event.id) && Number(event.id) > 0
-        ? [Number(event.id)]
-        : [],
-    ),
-  );
-  let previousEventId = -1;
-  for (const checkpoint of value) {
-    if (
-      !isRecord(checkpoint) ||
-      Object.keys(checkpoint).length !== 2 ||
-      !Object.hasOwn(checkpoint, "afterEventId") ||
-      !Object.hasOwn(checkpoint, "authorization") ||
-      !Number.isSafeInteger(checkpoint.afterEventId) ||
-      Number(checkpoint.afterEventId) < 0 ||
-      Number(checkpoint.afterEventId) <= previousEventId ||
-      (Number(checkpoint.afterEventId) !== 0 &&
-        !eventIds.has(Number(checkpoint.afterEventId))) ||
-      !isPlayDocumentAuthorizationCheckpoint(checkpoint.authorization)
-    )
-      return false;
-    previousEventId = Number(checkpoint.afterEventId);
-  }
-  return true;
-}
-
 function validateIdentity(value: string, label: string): void {
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/u.test(value))
     throw new PlayCallChainError(`${label} is invalid.`);
@@ -1892,6 +2161,10 @@ function notifyAssistantDelta(
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function crashAtPlayAdvanceEdge(edge: string): void {
+  if (
+    process.env.NODE_ENV === "test" &&
+    process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE === edge
+  )
+    throw new Error(`Simulated process exit at play advance edge: ${edge}`);
 }

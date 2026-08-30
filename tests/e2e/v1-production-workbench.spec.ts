@@ -476,18 +476,33 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(
     page.getByRole("separator", { name: "全新上下文从这里开始" }),
   ).toBeVisible();
-  const reasoning = callChain
-    .getByText("模型思维链")
-    .locator("xpath=ancestor::details");
+  await expect(
+    callChain.getByText(
+      "First verify the character's current location and the player's action.",
+    ),
+  ).toHaveCount(0);
+  const firstAssistant = callChain.locator(".call-chain-assistant", {
+    hasText: "Alex nods and continues folding the jersey.",
+  });
+  const reasoning = firstAssistant.locator("details");
   await expect(reasoning).not.toHaveAttribute("open", "");
+  await reasoning.locator("summary").click();
   await expect(reasoning).toContainText(
     "First verify the character's current location and the player's action.",
   );
   await expect(callChain).toContainText("调用 world_patch");
-  await expect(callChain).toContainText("@current-situation write succeeded");
-  await expect(
-    callChain.getByText("调用 world_patch").locator("xpath=ancestor::details"),
-  ).not.toHaveAttribute("open", "");
+  await expect(callChain).not.toContainText(
+    "@current-situation write succeeded",
+  );
+  const toolCall = callChain
+    .getByText("调用 world_patch")
+    .locator("xpath=ancestor::details");
+  await expect(toolCall).not.toHaveAttribute("open", "");
+  const toolResult = callChain
+    .getByText("world_patch 返回")
+    .locator("xpath=ancestor::details");
+  await toolResult.locator("summary").click();
+  await expect(toolResult).toContainText("@current-situation write succeeded");
   const firstPlayRequest = providerRequest();
   expect(JSON.stringify(firstPlayRequest)).toContain(
     "当前世界没有更早的玩家原文或主持叙事",
@@ -508,12 +523,17 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     page.getByText("Alex saves the training time on the phone."),
   ).toBeVisible();
   const contextsAfterFresh = page.getByLabel("模型调用链");
-  await expect(contextsAfterFresh).toHaveCount(2);
-  await expect(contextsAfterFresh.nth(0)).toContainText(
+  await expect(contextsAfterFresh).toHaveCount(1);
+  await expect(contextsAfterFresh).toContainText(
     "First verify the character's current location and the player's action.",
   );
-  await expect(contextsAfterFresh.nth(0)).toContainText("调用 world_patch");
-  await expect(contextsAfterFresh.nth(1)).toContainText(
+  await expect(contextsAfterFresh).toContainText("调用 world_patch");
+  const freshAssistant = contextsAfterFresh.locator(".call-chain-assistant", {
+    hasText: "Alex saves the training time on the phone.",
+  });
+  const freshReasoning = freshAssistant.locator("details");
+  await freshReasoning.locator("summary").click();
+  await expect(contextsAfterFresh).toContainText(
     "This is a fresh model context.",
   );
   await expect(
@@ -582,7 +602,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     page.getByRole("heading", { name: "Dormitory World (fork)" }),
   ).toBeVisible();
   const derivedTimeline = page.getByLabel("调用链记录");
-  await expect(derivedTimeline).toContainText("模型思维链");
+  await expect(derivedTimeline).toContainText("查看模型诊断详情");
   await expect(derivedTimeline).toContainText("调用 world_patch");
   await expect(derivedTimeline).toContainText(
     "Where should we meet beforehand?",

@@ -27,6 +27,8 @@ import {
 } from "../prompt/FileNativePromptCompiler.ts";
 import { PlayerViewRenderer } from "./PlayerViewRenderer.ts";
 import { WorldDocumentStore } from "./WorldDocumentStore.ts";
+import { FileNativePlayTimelineStore } from "../play/FileNativePlayTimelineStore.ts";
+import { FileNativePlayAdvanceStore } from "../play/FileNativePlayAdvanceStore.ts";
 import {
   FileNativeWorldOperationCoordinator,
   WorldOperationBusyError,
@@ -35,6 +37,7 @@ import {
 
 const publicationFile = "publication.json";
 const localMetadataFile = "local.json";
+const playAuthorityHeadFile = "play-authority-head.json";
 
 export class FileNativeWorldCreationError extends Error {
   readonly code:
@@ -148,9 +151,11 @@ interface FileNativeTimelineRevision {
 }
 
 export interface FileNativePlayCommit {
-  schemaVersion: 1;
+  schemaVersion: 2;
+  sequence: number;
   operationId: string;
   parentHead: string;
+  parentCommitDigest: string | null;
   head: string;
   mode: "play" | "correction" | "timeline_revision";
   historyAppend: {
@@ -166,9 +171,24 @@ export interface FileNativePlayCommit {
 }
 
 interface FileNativePlayAuthority {
-  schemaVersion: 1;
+  schemaVersion: 2;
   head: string;
   commits: FileNativePlayCommit[];
+}
+
+interface FileNativePlayAuthorityHead {
+  schemaVersion: 2;
+  head: string;
+  sequence: number;
+  commitDigest: string | null;
+  operationId: string | null;
+}
+
+interface FileNativeMaterializedCheckpoint {
+  schemaVersion: 2;
+  head: string;
+  sequence: number;
+  commitDigest: string | null;
 }
 
 export type FileNativeOperationOutcome =
@@ -180,10 +200,19 @@ export type FileNativeOperationOutcome =
       worldId: string;
       parentHead: string;
       head: string;
+      commitDigest: string;
       historyAppend: { role: "player" | "narrator"; exactText: string }[];
       nextAdditionalMaterials: MaterialSelection[];
       mode: "play" | "correction" | "timeline_revision";
     };
+
+type FileNativeAcceptancePreparedOutcome = Omit<
+  Extract<
+    FileNativeOperationOutcome,
+    { outcome: "committed" | "committed_materialization_pending" }
+  >,
+  "outcome"
+> & { outcome: "acceptance_prepared" };
 
 export interface FileNativeRecoveredEndpoint {
   worldId: string;
@@ -216,6 +245,8 @@ export class FileNativeWorldStore {
   readonly #promptCompiler: FileNativePromptCompiler;
   readonly #activeControlUsers = new Map<string, Set<string>>();
   readonly operations: FileNativeWorldOperationCoordinator;
+  readonly playTimeline: FileNativePlayTimelineStore;
+  readonly playAdvances: FileNativePlayAdvanceStore;
 
   constructor(
     dataRoot: string,
@@ -227,6 +258,8 @@ export class FileNativeWorldStore {
     this.#promptCompiler =
       options.promptCompiler ?? new FileNativePromptCompiler();
     this.operations = new FileNativeWorldOperationCoordinator(root);
+    this.playTimeline = new FileNativePlayTimelineStore(root);
+    this.playAdvances = new FileNativePlayAdvanceStore(root);
   }
 
   async listWorlds(): Promise<FileNativeWorldSummary[]> {
@@ -398,9 +431,24 @@ export class FileNativeWorldStore {
         additionalMaterials: initialMaterials,
       };
       await writeJson(join(stagingRoot, "runtime", "genesis.json"), genesis);
+      await writeJson(
+        join(stagingRoot, "runtime", "play-genesis-timeline.json"),
+        {
+          schemaVersion: 1,
+          worldId,
+          history: genesis.history,
+        },
+      );
+      await writeJson(
+        join(stagingRoot, "runtime", playAuthorityHeadFile),
+        genesisAuthorityHead(),
+      );
       await writeJson(join(stagingRoot, "runtime", "materialized-head.json"), {
+        schemaVersion: 2,
         head: "genesis",
-      });
+        sequence: 0,
+        commitDigest: null,
+      } satisfies FileNativeMaterializedCheckpoint);
       await writeJson(
         join(stagingRoot, "runtime", "additional-materials.json"),
         { head: "genesis", items: initialMaterials },
@@ -492,11 +540,19 @@ export class FileNativeWorldStore {
    * must never pair a mutable state tree with a different response head.
    */
   async renderPlayerViewsAtHead(worldId: string, head: string) {
-    const endpoint = await this.recoverEndpoint(worldId, head);
-    const control = await this.readSurface(worldId, "control");
+    const root = join(this.#worldsRoot, worldId);
+    const materialized = await readOptionalJson<{ head: string }>(
+      join(root, "runtime", "materialized-head.json"),
+    );
+    const [state, control] = await Promise.all([
+      materialized?.head === head
+        ? readTree(join(root, "state"))
+        : this.recoverEndpoint(worldId, head).then(({ state }) => state),
+      this.readSurface(worldId, "control"),
+    ]);
     const source = control.find(({ path }) => path === "player-views.yaml");
     return new PlayerViewRenderer().render({
-      snapshot: openWorldDocumentSnapshot(endpoint.state),
+      snapshot: openWorldDocumentSnapshot(state),
       control: source?.contents ?? "",
     });
   }
@@ -505,16 +561,14 @@ export class FileNativeWorldStore {
     assertIdentity(worldId, "World ID");
     const root = join(this.#worldsRoot, worldId);
     await readPublicationAt(root);
-    return (await readAcceptedAuthority(root))?.head ?? "genesis";
+    return (await readAuthorityHead(root)).head;
   }
 
   async currentHeadOperationId(worldId: string): Promise<string | null> {
     assertIdentity(worldId, "World ID");
     const root = join(this.#worldsRoot, worldId);
     await readPublicationAt(root);
-    return (
-      (await readAcceptedAuthority(root))?.commits.at(-1)?.operationId ?? null
-    );
+    return (await readAuthorityHead(root)).operationId;
   }
 
   async saveControlDraft(
@@ -686,34 +740,16 @@ export class FileNativeWorldStore {
     }
     try {
       return await this.operations.withWorldAuthorityLock(worldId, async () => {
-        const publishedAuthority = await readAcceptedAuthority(root);
-        if (publishedAuthority !== null) {
-          const materialized = await readOptionalJson<{ head: string }>(
-            join(root, "runtime", "materialized-head.json"),
-          );
-          let materializedIndex = 0;
-          if (materialized !== null && materialized.head !== "genesis") {
-            const found = publishedAuthority.commits.findIndex(
-              ({ head }) => head === materialized.head,
-            );
-            if (found < 0)
-              throw new FileNativeWorldCreationError(
-                "world_corrupt",
-                "World materialized head does not belong to the authority commit chain",
-              );
-            materializedIndex = found + 1;
-          }
-          for (
-            let index = materializedIndex;
-            index < publishedAuthority.commits.length;
-            index += 1
-          ) {
-            const commit = publishedAuthority.commits[index]!;
-            await materializePlayCommit(root, index + 1, {
+        const authority = await readAuthorityHead(root);
+        const checkpoint = await readMaterializedCheckpoint(root);
+        if (!sameMaterializedEndpoint(checkpoint, authority)) {
+          const missing = await readAuthorityTail(root, authority, checkpoint);
+          for (const commit of missing) {
+            await materializePlayCommit(root, commit.sequence, {
               mode: commit.mode,
               historyAppend: commit.historyAppend,
               nextMaterials: commit.nextAdditionalMaterials,
-              stateChanges: commit.stateChanges ?? [],
+              stateChanges: commit.stateChanges,
               ...(commit.timelineRevision === undefined
                 ? {}
                 : { timelineRevision: commit.timelineRevision }),
@@ -723,6 +759,7 @@ export class FileNativeWorldStore {
               worldId,
               parentHead: commit.parentHead,
               head: commit.head,
+              commitDigest: playCommitDigest(commit),
               historyAppend: commit.historyAppend.map(
                 ({ role, exactText }) => ({ role, exactText }),
               ),
@@ -731,22 +768,28 @@ export class FileNativeWorldStore {
             } satisfies FileNativeOperationOutcome);
           }
           await publishJson(join(root, "runtime", "materialized-head.json"), {
-            head: publishedAuthority.head,
-          });
+            schemaVersion: 2,
+            head: authority.head,
+            sequence: authority.sequence,
+            commitDigest: authority.commitDigest,
+          } satisfies FileNativeMaterializedCheckpoint);
         }
-        const [state, control, authority, materials, recovered] =
-          await Promise.all([
-            readTree(join(root, "state")),
-            readTree(join(root, "control")),
-            readAcceptedAuthority(root),
-            readOptionalJson<{ items: MaterialSelection[] }>(
-              join(root, "runtime", "additional-materials.json"),
-            ),
-            this.recoverEndpoint(worldId),
-          ]);
+        const [state, control, history, materials] = await Promise.all([
+          readTree(join(root, "state")),
+          readTree(join(root, "control")),
+          readTree(join(root, "history")),
+          readOptionalJson<{ head: string; items: MaterialSelection[] }>(
+            join(root, "runtime", "additional-materials.json"),
+          ),
+        ]);
+        if ((materials?.head ?? "genesis") !== authority.head)
+          throw new FileNativeWorldCreationError(
+            "inconsistent_materialization",
+            "Materialized additional materials do not match the current Authority endpoint",
+          );
         return {
           worldId,
-          parentHead: authority?.head ?? "genesis",
+          parentHead: authority.head,
           files: [...state, ...control].reduce<Record<string, string>>(
             (files, { path, contents }, index) => {
               files[`${index < state.length ? "state" : "control"}/${path}`] =
@@ -756,12 +799,7 @@ export class FileNativeWorldStore {
             {},
           ),
           additionalMaterials: materials?.items ?? [],
-          history: Object.fromEntries(
-            recovered.history.map(({ messageId, exactText }) => [
-              messageId,
-              exactText,
-            ]),
-          ),
+          history: materializedHistoryRecord(worldId, history),
         };
       });
     } catch (error: unknown) {
@@ -1058,18 +1096,19 @@ export class FileNativeWorldStore {
         additionalMaterials: cloned.genesisMaterials,
       };
       await writeJson(join(staging, "runtime", "genesis.json"), genesis);
+      await writeJson(join(staging, "runtime", "play-genesis-timeline.json"), {
+        schemaVersion: 1,
+        worldId,
+        history: genesis.history,
+      });
       await writeJson(join(staging, "runtime", "additional-materials.json"), {
         head: "genesis",
         items: cloned.genesisMaterials,
       });
       for (const [index, commit] of cloned.commits.entries()) {
+        const digest = playCommitDigest(commit);
         await publishImmutableJson(
-          join(
-            staging,
-            "runtime",
-            "play-commits",
-            `${createHash("sha256").update(JSON.stringify(commit)).digest("hex")}.json`,
-          ),
+          join(staging, "runtime", "play-commits", `${digest}.json`),
           commit,
         );
         await materializePlayCommit(staging, index + 1, {
@@ -1082,15 +1121,26 @@ export class FileNativeWorldStore {
             : { timelineRevision: commit.timelineRevision }),
         });
       }
-      if (cloned.commits.length > 0)
-        await writeJson(join(staging, "runtime", "play-authority.json"), {
-          schemaVersion: 1,
-          head: input.sourceHead,
-          commits: cloned.commits,
-        } satisfies FileNativePlayAuthority);
+      const clonedHead = cloned.commits.at(-1);
+      await writeJson(
+        join(staging, "runtime", playAuthorityHeadFile),
+        clonedHead === undefined
+          ? genesisAuthorityHead()
+          : ({
+              schemaVersion: 2,
+              head: clonedHead.head,
+              sequence: clonedHead.sequence,
+              commitDigest: playCommitDigest(clonedHead),
+              operationId: clonedHead.operationId,
+            } satisfies FileNativePlayAuthorityHead),
+      );
       await writeJson(join(staging, "runtime", "materialized-head.json"), {
+        schemaVersion: 2,
         head: input.sourceHead,
-      });
+        sequence: clonedHead?.sequence ?? 0,
+        commitDigest:
+          clonedHead === undefined ? null : playCommitDigest(clonedHead),
+      } satisfies FileNativeMaterializedCheckpoint);
       const materializedState = await readTree(join(staging, "state"));
       if (!isDeepStrictEqual(materializedState, selected.state))
         throw new FileNativeWorldCreationError(
@@ -1177,77 +1227,33 @@ export class FileNativeWorldStore {
         error instanceof Error ? { cause: error } : undefined,
       );
     }
+    if (directRecord?.outcome === "acceptance_prepared")
+      return resolvePreparedOperationOutcome(
+        this.#worldsRoot,
+        operationId,
+        directRecord,
+      );
     const direct =
       directRecord === null ? null : projectOperationOutcome(directRecord);
     if (
       direct?.outcome === "committed" ||
       direct?.outcome === "committed_materialization_pending"
     ) {
-      if (direct.outcome === "committed") {
-        await assertCommittedAuthorityOutcomeMatches(
-          join(this.#worldsRoot, direct.worldId),
-          operationId,
-          direct,
-        );
-        const materialized = await readOptionalJson<{ head: string }>(
-          join(
-            this.#worldsRoot,
-            direct.worldId,
-            "runtime",
-            "materialized-head.json",
-          ),
-        );
-        if (materialized?.head !== direct.head)
-          return { ...direct, outcome: "committed_materialization_pending" };
-      } else {
-        await assertCommittedAuthorityOutcomeMatches(
-          join(this.#worldsRoot, direct.worldId),
-          operationId,
-          direct,
-        );
-        await assertPendingMaterializationCompatible(
-          join(this.#worldsRoot, direct.worldId),
-          operationId,
-        );
-      }
-      return direct;
-    }
-    const worlds = await readDirectoryNames(this.#worldsRoot);
-    for (const worldId of worlds) {
-      const authority = await readAcceptedAuthority(
-        join(this.#worldsRoot, worldId),
+      const worldRoot = join(this.#worldsRoot, direct.worldId);
+      const commit = await assertCommittedAuthorityOutcomeMatches(
+        worldRoot,
+        operationId,
+        direct,
       );
-      const commitIndex =
-        authority?.commits.findIndex(
-          (candidate) => candidate.operationId === operationId,
-        ) ?? -1;
-      const commit = authority?.commits[commitIndex];
-      if (commit !== undefined) {
-        const materialized = await readOptionalJson<{ head: string }>(
-          join(this.#worldsRoot, worldId, "runtime", "materialized-head.json"),
-        );
-        const materializedIndex =
-          materialized?.head === "genesis"
-            ? -1
-            : (authority?.commits.findIndex(
-                ({ head }) => head === materialized?.head,
-              ) ?? -1);
-        return {
-          outcome:
-            materializedIndex >= commitIndex
-              ? "committed"
-              : "committed_materialization_pending",
-          worldId,
-          parentHead: commit.parentHead,
-          head: commit.head,
-          historyAppend: commit.historyAppend.map(({ role, exactText }) => ({
-            role,
-            exactText,
-          })),
-          nextAdditionalMaterials: commit.nextAdditionalMaterials,
-          mode: commit.mode,
-        };
-      }
+      const materialized = await readMaterializedCheckpoint(worldRoot);
+      if (materialized !== null && materialized.sequence >= commit.sequence)
+        return { ...direct, outcome: "committed" };
+      await assertPendingMaterializationCompatible(
+        worldRoot,
+        operationId,
+        direct.commitDigest,
+      );
+      return { ...direct, outcome: "committed_materialization_pending" };
     }
     return direct?.outcome === "in_progress"
       ? { outcome: "in_progress" }
@@ -1478,11 +1484,9 @@ export class FileNativeWorldStore {
     const existing = await this.getOperationOutcome(input.operationId);
     if (isCommittedOutcome(existing)) {
       assertSameOperationOutcome(existing, input);
-      const accepted = await readAcceptedAuthority(
+      const commit = await readPlayCommitByDigest(
         join(this.#worldsRoot, existing.worldId),
-      );
-      const commit = accepted?.commits.find(
-        ({ operationId }) => operationId === input.operationId,
+        existing.commitDigest,
       );
       if (
         commit?.mode !== input.mode ||
@@ -1496,9 +1500,25 @@ export class FileNativeWorldStore {
         );
       return existing;
     }
+    const prepared =
+      existing.outcome === "in_progress"
+        ? await readAcceptancePreparedOutcome(
+            this.#operationOutcomePath(input.operationId),
+          )
+        : null;
+    if (prepared !== null)
+      await assertPreparedOperationMatches(
+        this.#worldsRoot,
+        input.operationId,
+        prepared,
+        input,
+      );
     if (
       existing.outcome !== "not_started" &&
-      !(input.operationReserved === true && existing.outcome === "in_progress")
+      !(
+        existing.outcome === "in_progress" &&
+        (input.operationReserved === true || prepared !== null)
+      )
     )
       throw new FileNativeWorldCreationError(
         "operation_conflict",
@@ -1514,11 +1534,9 @@ export class FileNativeWorldStore {
           );
           if (isCommittedOutcome(concurrent)) {
             assertSameOperationOutcome(concurrent, input);
-            const accepted = await readAcceptedAuthority(
+            const knownCommit = await readPlayCommitByDigest(
               join(this.#worldsRoot, concurrent.worldId),
-            );
-            const knownCommit = accepted?.commits.find(
-              ({ operationId }) => operationId === input.operationId,
+              concurrent.commitDigest,
             );
             if (
               knownCommit?.mode !== input.mode ||
@@ -1537,12 +1555,29 @@ export class FileNativeWorldStore {
               );
             return concurrent;
           }
-          const authorityPath = join(root, "runtime", "play-authority.json");
-          const authority = (await readAcceptedAuthority(root)) ?? {
-            schemaVersion: 1,
-            head: "genesis",
-            commits: [],
-          };
+          const concurrentPrepared =
+            concurrent.outcome === "in_progress"
+              ? await readAcceptancePreparedOutcome(
+                  this.#operationOutcomePath(input.operationId),
+                )
+              : null;
+          if (concurrentPrepared !== null)
+            await assertPreparedOperationMatches(
+              this.#worldsRoot,
+              input.operationId,
+              concurrentPrepared,
+              input,
+            );
+          else if (
+            concurrent.outcome === "in_progress" &&
+            input.operationReserved !== true
+          )
+            throw new FileNativeWorldCreationError(
+              "operation_conflict",
+              "The same play operation ID is occupied by another durable operation",
+            );
+          const authorityPath = join(root, "runtime", playAuthorityHeadFile);
+          const authority = await readAuthorityHead(root);
           if (authority.head !== input.parentHead) {
             throw new FileNativeWorldCreationError(
               "operation_conflict",
@@ -1626,12 +1661,14 @@ export class FileNativeWorldStore {
               "candidate_validation_failed",
               `Candidate world failed mechanical validation: ${inspection.issues.map(({ message }) => message).join("; ")}`,
             );
-          const sequence = authority.commits.length + 1;
+          const sequence = authority.sequence + 1;
           const head = `commit:${sequence}`;
           const commit = {
-            schemaVersion: 1,
+            schemaVersion: 2,
+            sequence,
             operationId: input.operationId,
             parentHead: input.parentHead,
+            parentCommitDigest: authority.commitDigest,
             head,
             mode: input.mode,
             historyAppend: input.historyAppend.map((message, index) => ({
@@ -1654,31 +1691,35 @@ export class FileNativeWorldStore {
                 }
               : {}),
           } satisfies FileNativePlayCommit;
+          const digest = playCommitDigest(commit);
           crashAtFileNativeAuthorityEdge("before_commit_acceptance");
           await publishImmutableJson(
-            join(
-              root,
-              "runtime",
-              "play-commits",
-              `${createHash("sha256").update(JSON.stringify(commit)).digest("hex")}.json`,
-            ),
+            join(root, "runtime", "play-commits", `${digest}.json`),
             commit,
           );
-          await publishJson(authorityPath, {
-            schemaVersion: 1,
-            head,
-            commits: [...authority.commits, commit],
-          } satisfies FileNativePlayAuthority);
-          crashAtFileNativeAuthorityEdge("after_commit_acceptance");
           const pending = {
             outcome: "committed_materialization_pending" as const,
             worldId: input.worldId,
             parentHead: input.parentHead,
             head,
+            commitDigest: digest,
             historyAppend: structuredClone(input.historyAppend),
             nextAdditionalMaterials: structuredClone(input.nextMaterials),
             mode: input.mode,
           };
+          await publishJson(this.#operationOutcomePath(input.operationId), {
+            ...pending,
+            outcome: "acceptance_prepared",
+          });
+          crashAtFileNativeAuthorityEdge("after_acceptance_prepared");
+          await publishJson(authorityPath, {
+            schemaVersion: 2,
+            head,
+            sequence,
+            commitDigest: digest,
+            operationId: input.operationId,
+          } satisfies FileNativePlayAuthorityHead);
+          crashAtFileNativeAuthorityEdge("after_commit_acceptance");
           await publishJson(
             this.#operationOutcomePath(input.operationId),
             pending,
@@ -1695,8 +1736,11 @@ export class FileNativeWorldStore {
             });
             crashAtFileNativeAuthorityEdge("after_materialization");
             await publishJson(join(root, "runtime", "materialized-head.json"), {
+              schemaVersion: 2,
               head,
-            });
+              sequence,
+              commitDigest: digest,
+            } satisfies FileNativeMaterializedCheckpoint);
             const outcome = { ...pending, outcome: "committed" as const };
             await publishJson(
               this.#operationOutcomePath(input.operationId),
@@ -2002,18 +2046,6 @@ async function readTree(root: string, prefix = ""): Promise<ContentTreeFile[]> {
   return files;
 }
 
-async function readDirectoryNames(root: string): Promise<string[]> {
-  try {
-    return (await readdir(root, { withFileTypes: true }))
-      .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
-      .map((entry) => entry.name)
-      .sort();
-  } catch (error: unknown) {
-    if (isNodeError(error) && error.code === "ENOENT") return [];
-    throw error;
-  }
-}
-
 function immutableFiles(files: readonly ContentTreeFile[]) {
   return files.map(({ path, contents }) => ({
     path,
@@ -2088,6 +2120,7 @@ function assertOperationOutcomeIntegrity(
     return;
   }
   if (
+    value.outcome === "acceptance_prepared" ||
     value.outcome === "committed" ||
     value.outcome === "committed_materialization_pending"
   ) {
@@ -2097,6 +2130,7 @@ function assertOperationOutcomeIntegrity(
         "worldId",
         "parentHead",
         "head",
+        "commitDigest",
         "historyAppend",
         "nextAdditionalMaterials",
         "mode",
@@ -2107,6 +2141,8 @@ function assertOperationOutcomeIntegrity(
       !/^(?:genesis|commit:[1-9][0-9]*)$/u.test(value.parentHead) ||
       typeof value.head !== "string" ||
       !/^commit:[1-9][0-9]*$/u.test(value.head) ||
+      typeof value.commitDigest !== "string" ||
+      !/^[a-f0-9]{64}$/u.test(value.commitDigest) ||
       !Array.isArray(value.historyAppend) ||
       !value.historyAppend.every(isPlayHistoryAppendInput) ||
       !Array.isArray(value.nextAdditionalMaterials) ||
@@ -2129,6 +2165,94 @@ function projectOperationOutcome(
   return structuredClone(value) as FileNativeOperationOutcome;
 }
 
+async function readAcceptancePreparedOutcome(
+  path: string,
+): Promise<FileNativeAcceptancePreparedOutcome | null> {
+  const value = await readOptionalJson<unknown>(path);
+  if (value === null) return null;
+  assertOperationOutcomeIntegrity(value);
+  if (value.outcome !== "acceptance_prepared") return null;
+  return structuredClone(
+    value,
+  ) as unknown as FileNativeAcceptancePreparedOutcome;
+}
+
+async function assertPreparedOperationMatches(
+  worldsRoot: string,
+  operationId: string,
+  prepared: FileNativeAcceptancePreparedOutcome,
+  input: {
+    worldId: string;
+    parentHead: string;
+    historyAppend: { role: "player" | "narrator"; exactText: string }[];
+    nextMaterials: MaterialSelection[];
+    stateChanges: FileNativeStateChange[];
+    mode: "play" | "correction" | "timeline_revision";
+    timelineRevision?: FileNativeTimelineRevision;
+  },
+): Promise<void> {
+  const comparable = {
+    ...structuredClone(prepared),
+    outcome: "committed_materialization_pending" as const,
+  };
+  assertSameOperationOutcome(comparable, input);
+  const commit = await readPlayCommitByDigest(
+    join(worldsRoot, prepared.worldId),
+    prepared.commitDigest,
+  );
+  if (
+    commit.operationId !== operationId ||
+    commit.mode !== input.mode ||
+    !isDeepStrictEqual(commit.stateChanges, input.stateChanges) ||
+    !isDeepStrictEqual(commit.timelineRevision, input.timelineRevision)
+  )
+    throw new FileNativeWorldCreationError(
+      "operation_conflict",
+      "The same play operation ID is bound to a different prepared commit payload",
+    );
+}
+
+async function resolvePreparedOperationOutcome(
+  worldsRoot: string,
+  operationId: string,
+  value: Record<string, unknown>,
+): Promise<FileNativeOperationOutcome> {
+  const prepared = value as unknown as Extract<
+    FileNativeOperationOutcome,
+    { outcome: "committed" | "committed_materialization_pending" }
+  >;
+  const worldRoot = join(worldsRoot, prepared.worldId);
+  const authority = await readAuthorityHead(worldRoot);
+  if (authority.head === prepared.parentHead) return { outcome: "in_progress" };
+  const commit = await assertCommittedAuthorityOutcomeMatches(
+    worldRoot,
+    operationId,
+    prepared,
+  );
+  if (authority.sequence < commit.sequence) throw corruptOperationOutcome();
+  await readAuthorityTail(worldRoot, authority, {
+    schemaVersion: 2,
+    head: commit.head,
+    sequence: commit.sequence,
+    commitDigest: prepared.commitDigest,
+  }).catch(() => {
+    throw corruptOperationOutcome();
+  });
+  const materialized = await readMaterializedCheckpoint(worldRoot);
+  const outcome: "committed" | "committed_materialization_pending" =
+    materialized !== null && materialized.sequence >= commit.sequence
+      ? "committed"
+      : "committed_materialization_pending";
+  const resolved = { ...structuredClone(prepared), outcome };
+  if (outcome === "committed_materialization_pending")
+    await assertPendingMaterializationCompatible(
+      worldRoot,
+      operationId,
+      prepared.commitDigest,
+    );
+  return resolved;
+}
+
 function corruptOperationOutcome(): FileNativeWorldCreationError {
   return new FileNativeWorldCreationError(
     "world_corrupt",
@@ -2143,12 +2267,10 @@ async function assertCommittedAuthorityOutcomeMatches(
     FileNativeOperationOutcome,
     { outcome: "committed" | "committed_materialization_pending" }
   >,
-): Promise<void> {
-  const authority = await readAcceptedAuthority(worldRoot);
-  const commit = authority?.commits.find(
-    (candidate) => candidate.operationId === operationId,
-  );
+): Promise<FileNativePlayCommit> {
+  const commit = await readPlayCommitByDigest(worldRoot, outcome.commitDigest);
   if (
+    commit.operationId !== operationId ||
     commit?.parentHead !== outcome.parentHead ||
     commit?.head !== outcome.head ||
     commit?.mode !== outcome.mode ||
@@ -2162,19 +2284,22 @@ async function assertCommittedAuthorityOutcomeMatches(
     )
   )
     throw corruptOperationOutcome();
+  return commit;
 }
 
 async function assertPendingMaterializationCompatible(
   worldRoot: string,
   operationId: string,
+  commitDigest?: string,
 ): Promise<void> {
-  const authority = await readAcceptedAuthority(worldRoot);
-  const sequence =
-    authority?.commits.findIndex(
-      (candidate) => candidate.operationId === operationId,
-    ) ?? -1;
-  const commit = sequence < 0 ? undefined : authority?.commits[sequence];
-  if (commit === undefined) throw corruptOperationOutcome();
+  const commit =
+    commitDigest === undefined
+      ? (await readAcceptedAuthority(worldRoot))?.commits.find(
+          (candidate) => candidate.operationId === operationId,
+        )
+      : await readPlayCommitByDigest(worldRoot, commitDigest);
+  if (commit?.operationId !== operationId) throw corruptOperationOutcome();
+  const sequence = commit.sequence - 1;
   for (const change of commit.stateChanges) {
     const path = join(worldRoot, "state", change.relativePath);
     const existing = await readOptionalText(path);
@@ -2312,75 +2437,49 @@ async function readAcceptedAuthority(
   root: string,
 ): Promise<FileNativePlayAuthority | null> {
   try {
-    const published = await readOptionalJson<unknown>(
-      join(root, "runtime", "play-authority.json"),
-    );
-    if (published === null) {
-      const commitRoot = join(root, "runtime", "play-commits");
-      const names = await readDirectoryFileNames(commitRoot);
-      if (names.length === 0) return null;
-      const remaining = await Promise.all(
-        names.map(async (name) => {
-          const commit = await readJson<unknown>(join(commitRoot, name));
-          assertFileNativePlayCommit(commit);
-          const canonicalName = `${createHash("sha256")
-            .update(JSON.stringify(commit))
-            .digest("hex")}.json`;
-          if (name !== canonicalName)
-            throw new FileNativeWorldCreationError(
-              "world_corrupt",
-              "Immutable commit does not match the durable path identity",
-            );
-          return commit;
-        }),
-      );
-      const commits: FileNativePlayCommit[] = [];
-      let parent = "genesis";
-      while (remaining.length > 0) {
-        const matches = remaining.filter(
-          (commit) => commit.parentHead === parent,
-        );
-        if (matches.length !== 1)
-          throw new FileNativeWorldCreationError(
-            "world_corrupt",
-            "Immutable commits cannot rebuild one unique authority chain",
-          );
-        const next = matches[0]!;
-        commits.push(next);
-        remaining.splice(remaining.indexOf(next), 1);
-        parent = next.head;
-      }
-      assertFileNativePlayAuthority({
-        schemaVersion: 1,
-        head: parent,
-        commits,
-      });
-      return { schemaVersion: 1, head: parent, commits };
-    }
-    assertFileNativePlayAuthority(published);
-    const commits: FileNativePlayCommit[] = [];
-    for (const recorded of published.commits) {
-      const digest = createHash("sha256")
-        .update(JSON.stringify(recorded))
-        .digest("hex");
+    const published = await readAuthorityHead(root);
+    if (published.sequence === 0) return null;
+    const reverse: FileNativePlayCommit[] = [];
+    let digest = published.commitDigest;
+    let expectedHead = published.head;
+    let expectedSequence = published.sequence;
+    while (digest !== null) {
       const immutable = await readJson<unknown>(
         join(root, "runtime", "play-commits", `${digest}.json`),
       ).catch((error: unknown) => {
         throw new FileNativeWorldCreationError(
           "world_corrupt",
-          `Accepted endpoint is missing an immutable commit: ${recorded.head}`,
+          `Accepted endpoint is missing an immutable commit: ${expectedHead}`,
           { cause: error },
         );
       });
       assertFileNativePlayCommit(immutable);
-      if (JSON.stringify(immutable) !== JSON.stringify(recorded))
+      if (
+        playCommitDigest(immutable) !== digest ||
+        immutable.head !== expectedHead ||
+        immutable.sequence !== expectedSequence
+      )
         throw new FileNativeWorldCreationError(
           "world_corrupt",
-          `Accepted endpoint does not match its immutable commit: ${recorded.head}`,
+          `Accepted endpoint does not match its immutable commit: ${expectedHead}`,
         );
-      commits.push(immutable);
+      reverse.push(immutable);
+      digest = immutable.parentCommitDigest;
+      expectedHead = immutable.parentHead;
+      expectedSequence -= 1;
     }
-    return { ...published, commits };
+    if (expectedSequence !== 0 || expectedHead !== "genesis")
+      throw new FileNativeWorldCreationError(
+        "world_corrupt",
+        "Accepted Authority chain does not terminate at genesis",
+      );
+    const authority: FileNativePlayAuthority = {
+      schemaVersion: 2,
+      head: published.head,
+      commits: reverse.reverse(),
+    };
+    assertFileNativePlayAuthority(authority);
+    return authority;
   } catch (error: unknown) {
     if (error instanceof FileNativeWorldCreationError) throw error;
     throw new FileNativeWorldCreationError(
@@ -2391,13 +2490,173 @@ async function readAcceptedAuthority(
   }
 }
 
+async function readMaterializedCheckpoint(
+  root: string,
+): Promise<FileNativeMaterializedCheckpoint | null> {
+  const value = await readOptionalJson<unknown>(
+    join(root, "runtime", "materialized-head.json"),
+  );
+  if (value === null) return null;
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "schemaVersion",
+      "head",
+      "sequence",
+      "commitDigest",
+    ]) ||
+    value.schemaVersion !== 2 ||
+    typeof value.head !== "string" ||
+    !Number.isSafeInteger(value.sequence) ||
+    Number(value.sequence) < 0 ||
+    (value.commitDigest !== null &&
+      (typeof value.commitDigest !== "string" ||
+        !/^[a-f0-9]{64}$/u.test(value.commitDigest))) ||
+    (Number(value.sequence) === 0
+      ? value.head !== "genesis" || value.commitDigest !== null
+      : value.head !== `commit:${String(value.sequence)}` ||
+        value.commitDigest === null)
+  )
+    throw new FileNativeWorldCreationError(
+      "world_corrupt",
+      "Materialized world checkpoint has an invalid shape",
+    );
+  return value as unknown as FileNativeMaterializedCheckpoint;
+}
+
+function sameMaterializedEndpoint(
+  checkpoint: FileNativeMaterializedCheckpoint | null,
+  authority: FileNativePlayAuthorityHead,
+): boolean {
+  return (
+    checkpoint !== null &&
+    checkpoint.head === authority.head &&
+    checkpoint.sequence === authority.sequence &&
+    checkpoint.commitDigest === authority.commitDigest
+  );
+}
+
+async function readAuthorityTail(
+  root: string,
+  authority: FileNativePlayAuthorityHead,
+  checkpoint: FileNativeMaterializedCheckpoint | null,
+): Promise<FileNativePlayCommit[]> {
+  const targetDigest = checkpoint?.commitDigest ?? null;
+  const targetHead = checkpoint?.head ?? "genesis";
+  const targetSequence = checkpoint?.sequence ?? 0;
+  if (targetSequence > authority.sequence)
+    throw new FileNativeWorldCreationError(
+      "world_corrupt",
+      "Materialized checkpoint is ahead of Authority",
+    );
+  const reverse: FileNativePlayCommit[] = [];
+  let digest = authority.commitDigest;
+  let expectedHead = authority.head;
+  let expectedSequence = authority.sequence;
+  while (digest !== targetDigest) {
+    if (digest === null)
+      throw new FileNativeWorldCreationError(
+        "world_corrupt",
+        "Materialized checkpoint is not an ancestor of Authority",
+      );
+    const commit = await readPlayCommitByDigest(root, digest);
+    if (commit.head !== expectedHead || commit.sequence !== expectedSequence)
+      throw new FileNativeWorldCreationError(
+        "world_corrupt",
+        "Authority tail does not match its immutable commit chain",
+      );
+    reverse.push(commit);
+    digest = commit.parentCommitDigest;
+    expectedHead = commit.parentHead;
+    expectedSequence -= 1;
+  }
+  if (expectedHead !== targetHead || expectedSequence !== targetSequence)
+    throw new FileNativeWorldCreationError(
+      "world_corrupt",
+      "Materialized checkpoint identity does not match Authority ancestry",
+    );
+  return reverse.reverse();
+}
+
+function genesisAuthorityHead(): FileNativePlayAuthorityHead {
+  return {
+    schemaVersion: 2,
+    head: "genesis",
+    sequence: 0,
+    commitDigest: null,
+    operationId: null,
+  };
+}
+
+async function readAuthorityHead(
+  root: string,
+): Promise<FileNativePlayAuthorityHead> {
+  const value = await readJson<unknown>(
+    join(root, "runtime", playAuthorityHeadFile),
+  );
+  assertFileNativePlayAuthorityHead(value);
+  return value;
+}
+
+function assertFileNativePlayAuthorityHead(
+  value: unknown,
+): asserts value is FileNativePlayAuthorityHead {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "schemaVersion",
+      "head",
+      "sequence",
+      "commitDigest",
+      "operationId",
+    ]) ||
+    value.schemaVersion !== 2 ||
+    typeof value.head !== "string" ||
+    !Number.isSafeInteger(value.sequence) ||
+    Number(value.sequence) < 0 ||
+    (value.commitDigest !== null &&
+      (typeof value.commitDigest !== "string" ||
+        !/^[a-f0-9]{64}$/u.test(value.commitDigest))) ||
+    (value.operationId !== null && typeof value.operationId !== "string") ||
+    (Number(value.sequence) === 0
+      ? value.head !== "genesis" ||
+        value.commitDigest !== null ||
+        value.operationId !== null
+      : value.head !== `commit:${String(value.sequence)}` ||
+        value.commitDigest === null ||
+        value.operationId === null)
+  )
+    throw new Error("Play Authority head has an invalid shape");
+}
+
+function playCommitDigest(commit: FileNativePlayCommit): string {
+  return createHash("sha256").update(JSON.stringify(commit)).digest("hex");
+}
+
+async function readPlayCommitByDigest(
+  root: string,
+  digest: string,
+): Promise<FileNativePlayCommit> {
+  if (!/^[a-f0-9]{64}$/u.test(digest)) throw corruptOperationOutcome();
+  const value = await readJson<unknown>(
+    join(root, "runtime", "play-commits", `${digest}.json`),
+  );
+  assertFileNativePlayCommit(value);
+  if (playCommitDigest(value) !== digest)
+    throw new FileNativeWorldCreationError(
+      "world_corrupt",
+      "Immutable play commit does not match its durable identity",
+    );
+  return value;
+}
+
 function assertFileNativePlayAuthority(
   value: unknown,
 ): asserts value is FileNativePlayAuthority {
   if (
     !isRecord(value) ||
     !hasExactKeys(value, ["schemaVersion", "head", "commits"]) ||
-    value.schemaVersion !== 1 ||
+    value.schemaVersion !== 2 ||
     typeof value.head !== "string" ||
     !Array.isArray(value.commits)
   )
@@ -2406,6 +2665,7 @@ function assertFileNativePlayAuthority(
   const heads = new Set<string>();
   const commitsByHead = new Map<string, FileNativePlayCommit>();
   let parent = "genesis";
+  let parentDigest: string | null = null;
   for (const [index, commit] of value.commits.entries()) {
     assertFileNativePlayCommit(commit);
     const revision = commit.timelineRevision;
@@ -2419,6 +2679,8 @@ function assertFileNativePlayAuthority(
         : replaced?.parentHead;
     if (
       commit.parentHead !== parent ||
+      commit.parentCommitDigest !== parentDigest ||
+      commit.sequence !== index + 1 ||
       commit.head !== `commit:${index + 1}` ||
       operationIds.has(commit.operationId) ||
       heads.has(commit.head) ||
@@ -2434,6 +2696,7 @@ function assertFileNativePlayAuthority(
     heads.add(commit.head);
     commitsByHead.set(commit.head, commit);
     parent = commit.head;
+    parentDigest = playCommitDigest(commit);
   }
   if (value.head !== parent) throw new Error("Play Authority head is invalid");
 }
@@ -2447,8 +2710,10 @@ function assertFileNativePlayCommit(
   if (
     !hasExactKeys(value, [
       "schemaVersion",
+      "sequence",
       "operationId",
       "parentHead",
+      "parentCommitDigest",
       "head",
       "mode",
       "historyAppend",
@@ -2457,13 +2722,20 @@ function assertFileNativePlayCommit(
       ...(correction ? ["correctionTargets", "corrects"] : []),
       ...(timelineRevision ? ["timelineRevision"] : []),
     ]) ||
-    value.schemaVersion !== 1 ||
+    value.schemaVersion !== 2 ||
+    !Number.isSafeInteger(value.sequence) ||
+    Number(value.sequence) < 1 ||
     typeof value.operationId !== "string" ||
     value.operationId.trim() === "" ||
     typeof value.parentHead !== "string" ||
     !/^(?:genesis|commit:[1-9][0-9]*)$/u.test(value.parentHead) ||
+    (value.parentCommitDigest !== null &&
+      (typeof value.parentCommitDigest !== "string" ||
+        !/^[a-f0-9]{64}$/u.test(value.parentCommitDigest))) ||
+    (value.parentHead === "genesis") !== (value.parentCommitDigest === null) ||
     typeof value.head !== "string" ||
     !/^commit:[1-9][0-9]*$/u.test(value.head) ||
+    value.head !== `commit:${String(value.sequence)}` ||
     (value.mode !== "play" &&
       value.mode !== "correction" &&
       value.mode !== "timeline_revision") ||
@@ -2599,18 +2871,6 @@ function isFileNativeStateChange(value: unknown): boolean {
     return false;
   }
   return true;
-}
-
-async function readDirectoryFileNames(root: string): Promise<string[]> {
-  try {
-    return (await readdir(root, { withFileTypes: true }))
-      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
-      .map((entry) => entry.name)
-      .sort();
-  } catch (error: unknown) {
-    if (isNodeError(error) && error.code === "ENOENT") return [];
-    throw error;
-  }
 }
 
 async function materializePlayCommit(
@@ -2770,6 +3030,39 @@ function historySurfaceFiles(
   });
 }
 
+function materializedHistoryRecord(
+  worldId: string,
+  files: readonly ContentTreeFile[],
+): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const file of files) {
+    const match = /^(\d{8})-(\d+)-(player|narrator)-[a-f0-9]{12}\.md$/u.exec(
+      file.path,
+    );
+    if (match === null)
+      throw new FileNativeWorldCreationError(
+        "world_corrupt",
+        `Materialized history path is invalid: ${file.path}`,
+      );
+    const sequence = Number.parseInt(match[1]!, 10);
+    const index = Number.parseInt(match[2]!, 10);
+    const role = match[3]!;
+    const messageId =
+      sequence === 0
+        ? index === 1 && role === "narrator"
+          ? `${worldId}.message.genesis.narrator`
+          : `${worldId}.message.genesis.${index}.${role}`
+        : `${worldId}.message.${sequence}.${index}.${role}`;
+    if (messageId in result)
+      throw new FileNativeWorldCreationError(
+        "world_corrupt",
+        `Materialized history contains a duplicate message: ${messageId}`,
+      );
+    result[messageId] = file.contents;
+  }
+  return result;
+}
+
 async function writeIdempotentText(
   path: string,
   contents: string,
@@ -2851,16 +3144,13 @@ function cloneAuthorityPrefix(input: {
       ...structuredClone(message),
       messageId: messageIds.get(message.messageId)!,
     }));
-  return {
-    genesisHistory: rewriteHistory(input.sourceGenesis.history),
-    genesisMaterials: rewriteMaterials(
-      input.sourceGenesis.additionalMaterials,
-      messageIds,
-      input.sourceWorldId,
-      input.targetWorldId,
-    ),
-    commits: sourceCommits.map((commit) => ({
+  const clonedCommits: FileNativePlayCommit[] = [];
+  let parentCommitDigest: string | null = null;
+  for (const commit of sourceCommits) {
+    const cloned: FileNativePlayCommit = {
       ...structuredClone(commit),
+      schemaVersion: 2,
+      parentCommitDigest,
       operationId: `clone-${operationDigest(`${input.targetWorldId}\0${commit.head}`).slice(0, 56)}`,
       historyAppend: rewriteHistory(commit.historyAppend),
       nextAdditionalMaterials: rewriteMaterials(
@@ -2879,7 +3169,19 @@ function cloneAuthorityPrefix(input: {
               ),
             },
           }),
-    })),
+    };
+    clonedCommits.push(cloned);
+    parentCommitDigest = playCommitDigest(cloned);
+  }
+  return {
+    genesisHistory: rewriteHistory(input.sourceGenesis.history),
+    genesisMaterials: rewriteMaterials(
+      input.sourceGenesis.additionalMaterials,
+      messageIds,
+      input.sourceWorldId,
+      input.targetWorldId,
+    ),
+    commits: clonedCommits,
   };
 }
 

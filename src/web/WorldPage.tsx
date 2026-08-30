@@ -1,6 +1,5 @@
 import { uiText } from "./i18n.ts";
 import {
-  Fragment,
   useEffect,
   useRef,
   useState,
@@ -10,10 +9,12 @@ import {
 
 import type {
   ContentTreeFile,
-  V1PlayCallChainContextView,
   V1PlayCallChainEvent,
   V1PlayCallChainStreamFrame,
   V1PlayCallChainView,
+  V1PlayTimelineEventSummary,
+  V1PlayTimelineItem,
+  V1PlayTimelinePage,
   V1Request,
 } from "../protocol/v1.ts";
 import type {
@@ -42,6 +43,7 @@ type WorldSection = "play" | "documents" | "history" | "manage";
 type PendingAction =
   | "play-fresh"
   | "play-append"
+  | "timeline-page"
   | "control-preview"
   | "control-apply"
   | "correction-preview"
@@ -75,6 +77,14 @@ interface WorldReadView {
   extensions?: FrontendArtifactExtensionSummary[];
   committedMessages: WorldMessage[];
   playCallChain: V1PlayCallChainView | null;
+  playTimeline?: V1PlayTimelinePage;
+}
+
+interface WorldPlayDecorationsView {
+  head: string;
+  artifacts: FrontendArtifactProjection[];
+  extensions: FrontendArtifactExtensionSummary[];
+  artifactDebug: FrontendArtifactDebugRecord[];
 }
 
 interface Feedback {
@@ -132,6 +142,9 @@ export function WorldPage({
   }
   const [playCallChain, setPlayCallChain] =
     useState<V1PlayCallChainView | null>(null);
+  const [playTimeline, setPlayTimeline] = useState<V1PlayTimelinePage | null>(
+    null,
+  );
   const [selectedDocument, setSelectedDocument] = useState("");
   const [controlFiles, setControlFiles] = useState("[]");
   const [controlDirty, setControlDirty] = useState(false);
@@ -149,20 +162,18 @@ export function WorldPage({
     {},
   );
   const historyEndRef = useRef<HTMLDivElement>(null);
+  const worldHead = world?.head;
 
   useEffect(() => {
     let active = true;
     const open = async (): Promise<void> => {
       try {
-        const [next, artifactDebug] = await Promise.all([
-          requestRuntime<WorldReadView>(client, {
-            type: "world.read",
-            worldId,
-          }),
-          requestArtifactDebug(client, worldId),
-        ]);
+        const next = await requestRuntime<WorldReadView>(client, {
+          type: "world.read",
+          worldId,
+        });
         if (!active) return;
-        applyWorld({ ...next, artifactDebug }, false);
+        applyWorld(next, false);
       } catch (reason: unknown) {
         if (!active) return;
         setFeedback({ kind: "error", text: errorMessage(reason) });
@@ -177,9 +188,30 @@ export function WorldPage({
   }, [client, worldId]);
 
   useEffect(() => {
+    if (worldHead === undefined) return;
+    let active = true;
+    const expectedHead = worldHead;
+    void requestPlayDecorations(client, worldId).then((decorations) => {
+      if (!active) return;
+      setWorld((current) =>
+        current?.head !== expectedHead || decorations?.head !== expectedHead
+          ? current
+          : { ...current, ...decorations },
+      );
+    });
+    return () => {
+      active = false;
+    };
+  }, [client, worldHead, worldId]);
+
+  useEffect(() => {
     const chainPending = pending === "play-fresh" || pending === "play-append";
     if (chainPending && client.streamPlayCallChain !== undefined) return;
-    if (!chainPending && playCallChain?.status !== "running") return;
+    if (
+      !chainPending &&
+      (playCallChain?.status ?? playTimeline?.activeStatus) !== "running"
+    )
+      return;
     let active = true;
     const poll = async (): Promise<void> => {
       try {
@@ -200,7 +232,13 @@ export function WorldPage({
       active = false;
       clearInterval(timer);
     };
-  }, [client, pending, playCallChain?.status, worldId]);
+  }, [
+    client,
+    pending,
+    playCallChain?.status,
+    playTimeline?.activeStatus,
+    worldId,
+  ]);
 
   useEffect(() => {
     if (section !== "play") return;
@@ -208,6 +246,49 @@ export function WorldPage({
     // Only explicit navigation into the play surface may reposition the page.
     // Streaming frames must stay silent so the player can read older content.
   }, [section]);
+
+  useEffect(() => {
+    if (world === null || (section !== "documents" && section !== "manage"))
+      return;
+    if (world.state.length > 0 && world.control.length > 0) return;
+    let active = true;
+    const loadSurfaces = async (): Promise<void> => {
+      try {
+        const [state, control, runtime] = await Promise.all([
+          requestRuntime<ContentTreeFile[]>(client, {
+            type: "world.surface.read",
+            worldId,
+            surface: "state",
+          }),
+          requestRuntime<ContentTreeFile[]>(client, {
+            type: "world.surface.read",
+            worldId,
+            surface: "control",
+          }),
+          requestRuntime<unknown>(client, {
+            type: "world.surface.read",
+            worldId,
+            surface: "runtime",
+          }),
+        ]);
+        if (!active) return;
+        setWorld((current) =>
+          current === null ? null : { ...current, state, control, runtime },
+        );
+        setSelectedDocument((current) => selectedStateDocument(state, current));
+        setCorrectionDocument((current) =>
+          selectedCorrectionDocument(state, current),
+        );
+        if (!controlDirty) setControlFiles(JSON.stringify(control, null, 2));
+      } catch (reason: unknown) {
+        if (active) setFeedback({ kind: "error", text: errorMessage(reason) });
+      }
+    };
+    void loadSurfaces();
+    return () => {
+      active = false;
+    };
+  }, [client, controlDirty, section, world, worldId]);
 
   const documents = world?.state ?? [];
   const documentOptions = documents.map(documentOption);
@@ -220,24 +301,50 @@ export function WorldPage({
     world?.playerViews ?? { views: [], diagnostics: [] },
     world?.playerViewPanels ?? [],
   );
-  const committedMessages = world?.committedMessages ?? [];
-  const displayedPlayContexts =
-    playCallChain === null
-      ? []
-      : [...(playCallChain.previousContexts ?? []), playCallChain];
-  const committedStoryBeforeDisplayedContexts =
-    displayedPlayContexts.length === 0
-      ? committedMessages
-      : messagesBeforeContext(committedMessages, displayedPlayContexts[0]!);
+  const timelineCommittedMessages: WorldMessage[] =
+    playTimeline?.items.flatMap((item) => {
+      if (item.kind === "genesis")
+        return [
+          {
+            messageId: item.messageId,
+            role: item.role,
+            exactText: item.exactText,
+            head: "genesis",
+          },
+        ];
+      if (
+        item.kind !== "event" ||
+        (item.event.kind !== "player" && item.event.kind !== "assistant") ||
+        item.event.committedHead === undefined ||
+        (item.event.kind === "assistant" && item.event.text.length === 0)
+      )
+        return [];
+      return [
+        {
+          messageId: `${item.chainId}:${item.event.id}`,
+          role: item.event.kind === "player" ? "player" : "narrator",
+          exactText: item.event.text,
+          head: item.event.committedHead,
+        },
+      ];
+    }) ?? [];
+  const committedMessages =
+    (world?.committedMessages.length ?? 0) > 0
+      ? world!.committedMessages
+      : timelineCommittedMessages;
+  const activeStatus = playCallChain?.status ?? playTimeline?.activeStatus;
+  const activeChainId =
+    playCallChain?.chainId ?? playTimeline?.activeChainId ?? null;
+  const activeCanRetry =
+    playCallChain?.canRetry ?? playTimeline?.activeCanRetry ?? false;
   const hasPlayerText = playerText.trim().length > 0;
-  const playIdle = pending === null && playCallChain?.status !== "running";
+  const playIdle = pending === null && activeStatus !== "running";
   const canStartFresh = hasPlayerText && playIdle;
   const canAppend =
     playIdle &&
-    (playCallChain === null
+    (activeChainId === null
       ? hasPlayerText
-      : playCallChain.status === "ready" ||
-        (!hasPlayerText && playCallChain.canRetry));
+      : activeStatus === "ready" || (!hasPlayerText && activeCanRetry));
 
   function applyWorld(
     next: WorldReadView,
@@ -250,42 +357,28 @@ export function WorldPage({
       setControlPreview(null);
     }
     setPlayCallChain(next.playCallChain);
+    setPlayTimeline(next.playTimeline ?? legacyTimelinePage(next));
     setSelectedDocument((current) =>
-      next.state.some(({ path }) => path === current)
-        ? current
-        : (next.state[0]?.path ?? ""),
+      selectedStateDocument(next.state, current),
     );
-    setCorrectionDocument((current) => {
-      const options = next.state
-        .map(documentOption)
-        .filter(({ path }) => /\.ya?ml$/iu.test(path));
-      if (options.some(({ handle }) => handle === current)) return current;
-      return (
-        options.find(({ ref }) => ref === "qinlong")?.handle ??
-        options[0]?.handle ??
-        ""
-      );
-    });
+    setCorrectionDocument((current) =>
+      selectedCorrectionDocument(next.state, current),
+    );
   }
 
   async function refreshWorld(preserveControlDraft = true): Promise<void> {
-    const [next, artifactDebug] = await Promise.all([
-      requestRuntime<WorldReadView>(client, {
-        type: "world.read",
-        worldId,
-      }),
-      requestArtifactDebug(client, worldId),
-    ]);
-    applyWorld({ ...next, artifactDebug }, preserveControlDraft);
+    const next = await requestRuntime<WorldReadView>(client, {
+      type: "world.read",
+      worldId,
+    });
+    applyWorld(next, preserveControlDraft);
   }
 
   async function submitPlayChain(context: "fresh" | "append"): Promise<void> {
     if (!modelConfigured) return;
-    const fresh = context === "fresh" || playCallChain === null;
+    const fresh = context === "fresh" || activeChainId === null;
     if ((fresh && !canStartFresh) || (!fresh && !canAppend)) return;
-    const chainId = fresh
-      ? createClientId("play-chain")
-      : playCallChain.chainId;
+    const chainId = fresh ? createClientId("play-chain") : activeChainId;
     const exchangeId = createClientId("play-exchange");
     setPending(context === "fresh" ? "play-fresh" : "play-append");
     setFeedback({
@@ -294,7 +387,7 @@ export function WorldPage({
         ? uiText("正在从当前世界重新拼接上下文…")
         : hasPlayerText
           ? uiText("正在把玩家输入追加到现有上下文…")
-          : playCallChain.status === "interrupted"
+          : activeStatus === "interrupted"
             ? uiText("正在原样发送上次未完成的模型请求…")
             : uiText("正在沿现有上下文继续生成…"),
     });
@@ -314,9 +407,10 @@ export function WorldPage({
             exchangeId,
             playerText,
           } satisfies Extract<V1Request, { type: "play.chain.append" }>);
-      const next = await requestPlayCallChain(client, request, (frame) =>
-        applyPlayCallChainFrame(frame, setPlayCallChain),
-      );
+      const next = await requestPlayCallChain(client, request, (frame) => {
+        applyPlayCallChainFrame(frame, setPlayCallChain);
+        applyPlayTimelineFrame(frame, setPlayTimeline);
+      });
       setPlayCallChain(next);
       if (hasPlayerText) setPlayerText("");
       await refreshWorld();
@@ -339,6 +433,40 @@ export function WorldPage({
         { type: "play.chain.inspect", worldId },
       ).catch(() => null);
       if (inspected !== null) setPlayCallChain(inspected);
+      const timeline = await requestRuntime<V1PlayTimelinePage>(client, {
+        type: "play.timeline.page",
+        worldId,
+        limit: 40,
+      }).catch(() => null);
+      if (timeline !== null) setPlayTimeline(timeline);
+      setFeedback({ kind: "error", text: errorMessage(reason) });
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function loadEarlierTimeline(): Promise<void> {
+    if (playTimeline?.nextCursor === null || playTimeline === null) return;
+    setPending("timeline-page");
+    try {
+      const earlier = await requestRuntime<V1PlayTimelinePage>(client, {
+        type: "play.timeline.page",
+        worldId,
+        limit: 40,
+        cursor: playTimeline.nextCursor,
+      });
+      setPlayTimeline((current) =>
+        current === null
+          ? earlier
+          : current.generation !== earlier.generation
+            ? current
+            : {
+                ...current,
+                items: [...earlier.items, ...current.items],
+                nextCursor: earlier.nextCursor,
+              },
+      );
+    } catch (reason: unknown) {
       setFeedback({ kind: "error", text: errorMessage(reason) });
     } finally {
       setPending(null);
@@ -372,7 +500,7 @@ export function WorldPage({
   }
 
   async function applyControl(): Promise<void> {
-    if (controlPreview === null || playCallChain?.status === "running") return;
+    if (controlPreview === null || activeStatus === "running") return;
     setPending("control-apply");
     try {
       await client.request({ type: "world.control-draft.apply", worldId });
@@ -569,7 +697,10 @@ export function WorldPage({
           exchangeId: createClientId("play-exchange"),
           playerText: "",
         },
-        (frame) => applyPlayCallChainFrame(frame, setPlayCallChain),
+        (frame) => {
+          applyPlayCallChainFrame(frame, setPlayCallChain);
+          applyPlayTimelineFrame(frame, setPlayTimeline);
+        },
       );
       setPlayCallChain(continued);
       await refreshWorld();
@@ -636,16 +767,15 @@ export function WorldPage({
         </div>
         <div className="world-header-summary" aria-label={uiText("世界概况")}>
           <span>
-            {committedMessages.length} {uiText("条已提交消息")}
+            {committedMessages.length}{" "}
+            {playTimeline?.nextCursor === null
+              ? uiText("条已提交消息")
+              : uiText("条已加载叙事")}
           </span>
-          <span
-            className={
-              playCallChain?.status === "running" ? "is-live" : "is-saved"
-            }
-          >
-            {playCallChain?.status === "running"
+          <span className={activeStatus === "running" ? "is-live" : "is-saved"}>
+            {activeStatus === "running"
               ? uiText("模型调用中")
-              : playCallChain?.status === "interrupted"
+              : activeStatus === "interrupted"
                 ? uiText("调用链已中断")
                 : uiText("世界已保存")}
           </span>
@@ -704,15 +834,13 @@ export function WorldPage({
           >
             <article
               className="story-workspace"
-              aria-busy={
-                pending !== null || playCallChain?.status === "running"
-              }
+              aria-busy={pending !== null || activeStatus === "running"}
             >
               <header className="story-heading">
                 <h2>{uiText("故事")}</h2>
-                {playCallChain?.status === "running" ? (
+                {activeStatus === "running" ? (
                   <span className="session-badge">{uiText("模型响应中")}</span>
-                ) : playCallChain?.status === "interrupted" ? (
+                ) : activeStatus === "interrupted" ? (
                   <span className="session-badge call-chain-badge">
                     {uiText("调用链已中断")}
                   </span>
@@ -724,43 +852,29 @@ export function WorldPage({
                 aria-label={uiText("调用链记录")}
               >
                 <ArtifactExtensionMount mount="story" />
-                {playCallChain !== null ? (
-                  <>
-                    {committedStoryBeforeDisplayedContexts.length ===
-                    0 ? null : (
-                      <Transcript
-                        messages={committedStoryBeforeDisplayedContexts.map(
-                          (message) => ({ ...message, pending: false }),
-                        )}
-                        restartDisabled={pending !== null}
-                        onRestartFrom={(head) => void deriveWorld(head)}
-                      />
-                    )}
-                    {displayedPlayContexts.map((context, index) => (
-                      <Fragment key={`${context.chainId}:${index}`}>
-                        <div
-                          className="story-context-boundary"
-                          role="separator"
-                          aria-label={uiText("全新上下文从这里开始")}
-                        >
-                          <span>{uiText("全新上下文从这里开始")}</span>
-                        </div>
-                        <CallChain
-                          chain={context}
-                          current={index === displayedPlayContexts.length - 1}
-                          restartDisabled={pending !== null}
-                          onRestartFrom={(head) => void deriveWorld(head)}
-                          onEditPlayer={(eventId, editedText) =>
-                            void reviseEditedPlayer(
-                              context.chainId,
-                              eventId,
-                              editedText,
-                            )
-                          }
-                        />
-                      </Fragment>
-                    ))}
-                  </>
+                {playTimeline?.nextCursor === null ? null : (
+                  <button
+                    type="button"
+                    className="secondary-button timeline-load-earlier"
+                    disabled={pending !== null}
+                    onClick={() => void loadEarlierTimeline()}
+                  >
+                    {pending === "timeline-page"
+                      ? uiText("正在加载…")
+                      : uiText("加载更早的故事")}
+                  </button>
+                )}
+                {playTimeline !== null && playTimeline.items.length > 0 ? (
+                  <PlayTimeline
+                    client={client}
+                    worldId={worldId}
+                    items={playTimeline.items}
+                    restartDisabled={pending !== null}
+                    onRestartFrom={(head) => void deriveWorld(head)}
+                    onEditPlayer={(chainId, eventId, editedText) =>
+                      void reviseEditedPlayer(chainId, eventId, editedText)
+                    }
+                  />
                 ) : committedMessages.length === 0 ? (
                   <div className="story-empty-state">
                     <span aria-hidden="true">✦</span>
@@ -791,7 +905,7 @@ export function WorldPage({
                 )}
 
                 <ArtifactExtensionMount mount="composer_above" />
-                {!playCallChain?.canRetry ? null : (
+                {!activeCanRetry ? null : (
                   <div className="play-retry-note" role="alert">
                     <span aria-hidden="true">!</span>
                     <p>
@@ -813,7 +927,7 @@ export function WorldPage({
                     disabled={
                       pending !== null ||
                       !modelConfigured ||
-                      playCallChain?.status === "running"
+                      activeStatus === "running"
                     }
                     onChange={(event) => setPlayerText(event.target.value)}
                     onKeyDown={(event) => {
@@ -961,6 +1075,18 @@ export function WorldPage({
             </div>
             <p>{uiText("这里只显示已经进入世界权威的玩家与主持原文。")}</p>
           </header>
+          {playTimeline?.nextCursor === null ? null : (
+            <button
+              type="button"
+              className="secondary-button timeline-load-earlier"
+              disabled={pending !== null}
+              onClick={() => void loadEarlierTimeline()}
+            >
+              {pending === "timeline-page"
+                ? uiText("正在加载…")
+                : uiText("加载更早的已提交叙事")}
+            </button>
+          )}
           {committedMessages.length === 0 ? (
             <div className="history-empty-state">
               {uiText("尚无已提交叙事。")}
@@ -1046,9 +1172,7 @@ export function WorldPage({
               </div>
               <button
                 type="button"
-                disabled={
-                  pending !== null || playCallChain?.status === "running"
-                }
+                disabled={pending !== null || activeStatus === "running"}
                 onClick={() => void deriveWorld(world.head)}
               >
                 {pending === "derive"
@@ -1072,7 +1196,7 @@ export function WorldPage({
                   ? uiText("有尚未预览的修改")
                   : uiText("当前已应用控制")}
               </span>
-              {playCallChain?.status !== "running" ? null : (
+              {activeStatus !== "running" ? null : (
                 <p className="manage-warning">
                   {uiText("模型调用尚未返回；完成或中断后才能应用新控制。")}
                 </p>
@@ -1105,7 +1229,7 @@ export function WorldPage({
                   disabled={
                     pending !== null ||
                     controlPreview === null ||
-                    playCallChain?.status === "running"
+                    activeStatus === "running"
                   }
                   onClick={() => void applyControl()}
                 >
@@ -1180,7 +1304,7 @@ export function WorldPage({
                       disabled={
                         pending !== null ||
                         !modelConfigured ||
-                        playCallChain?.status === "running" ||
+                        activeStatus === "running" ||
                         correctableDocuments.length === 0 ||
                         correctionDocument.length === 0 ||
                         correctionPath.trim().length === 0
@@ -1241,136 +1365,130 @@ export function WorldPage({
   );
 }
 
-function Transcript({
-  messages,
-  restartDisabled = false,
-  onRestartFrom,
-}: {
-  messages: readonly (WorldMessage & { pending: boolean })[];
-  restartDisabled?: boolean;
-  onRestartFrom?: (head: string) => void;
-}): React.JSX.Element {
-  return (
-    <ol className="narrative-list">
-      {messages.map((message, index) => (
-        <li
-          key={`${index}-${message.role}`}
-          className={`${message.role}-message ${message.pending ? "pending-message" : ""}`}
-        >
-          <article>
-            <header>
-              <strong>
-                {message.role === "player" ? uiText("你") : uiText("主持")}
-              </strong>
-              {message.pending ? <span>{uiText("未结算")}</span> : null}
-              {message.head === undefined ||
-              onRestartFrom === undefined ? null : (
-                <button
-                  type="button"
-                  className="history-restart-button"
-                  disabled={restartDisabled}
-                  onClick={() => onRestartFrom(message.head!)}
-                >
-                  {uiText("创建分叉")}
-                </button>
-              )}
-            </header>
-            <p>{message.exactText}</p>
-          </article>
-        </li>
-      ))}
-    </ol>
-  );
-}
-
-function messagesBeforeContext(
-  messages: readonly WorldMessage[],
-  chain: V1PlayCallChainContextView,
-): readonly WorldMessage[] {
-  if (chain.baselineHistoryLength !== undefined)
-    return messages.slice(0, chain.baselineHistoryLength);
-  const firstPlayer = chain.events.find(
-    (event): event is Extract<V1PlayCallChainEvent, { kind: "player" }> =>
-      event.kind === "player",
-  );
-  if (firstPlayer?.committedHead === undefined) return messages;
-  const firstCurrentMessage = messages.findIndex(
-    ({ head }) => head === firstPlayer.committedHead,
-  );
-  return firstCurrentMessage < 0
-    ? messages
-    : messages.slice(0, firstCurrentMessage);
-}
-
-function CallChain({
-  chain,
-  current,
+function PlayTimeline({
+  client,
+  worldId,
+  items,
   restartDisabled,
   onRestartFrom,
   onEditPlayer,
 }: {
-  chain: V1PlayCallChainContextView;
-  current: boolean;
+  client: WorldPageClient;
+  worldId: string;
+  items: readonly V1PlayTimelineItem[];
   restartDisabled: boolean;
   onRestartFrom: (head: string) => void;
-  onEditPlayer: (eventId: number, editedText: string) => void;
+  onEditPlayer: (chainId: string, eventId: number, editedText: string) => void;
 }): React.JSX.Element {
   return (
-    <section className="play-call-chain" aria-label={uiText("模型调用链")}>
-      <header className="play-call-chain-heading">
-        <span>
-          {chain.playPreset.name} ·{" "}
-          {callChainStatusLabel(chain.status, current)}
-        </span>
-      </header>
-
-      <ol className="call-chain-events">
-        {chain.events.map((event) => (
-          <CallChainEvent
-            key={
-              event.kind === "player"
-                ? `${event.id}:${event.exchangeId}`
-                : event.id
-            }
-            event={event}
+    <ol
+      className="call-chain-events play-timeline-events"
+      aria-label={uiText("模型调用链")}
+    >
+      {items.map((item) => {
+        if (item.kind === "context_boundary")
+          return (
+            <li
+              key={`context:${item.chainId}`}
+              className="story-context-boundary"
+              role="separator"
+              aria-label={uiText("全新上下文从这里开始")}
+            >
+              <span>{uiText("全新上下文从这里开始")}</span>
+              <small>{item.playPreset.name}</small>
+              <details className="call-chain-summary">
+                <summary>{uiText("本上下文已提交的世界变化")}</summary>
+                {item.changedDocuments.length === 0 ? (
+                  <span>{uiText("没有文档变化")}</span>
+                ) : (
+                  <ul>
+                    {item.changedDocuments.map((change) => (
+                      <li key={`${change.kind}:${change.path}`}>
+                        {change.kind === "create"
+                          ? uiText("新建")
+                          : uiText("更新")}{" "}
+                        {change.ref} · {change.path}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </details>
+            </li>
+          );
+        if (item.kind === "genesis")
+          return (
+            <li
+              key={`genesis:${item.messageId}`}
+              className={`${item.role}-message`}
+            >
+              <article>
+                <header>
+                  <strong>
+                    {item.role === "player" ? uiText("你") : uiText("主持")}
+                  </strong>
+                </header>
+                <p>{item.exactText}</p>
+              </article>
+            </li>
+          );
+        return (
+          <TimelineEvent
+            key={`${item.chainId}:${item.event.id}`}
+            client={client}
+            worldId={worldId}
+            chainId={item.chainId}
+            event={item.event}
             restartDisabled={restartDisabled}
             onRestartFrom={onRestartFrom}
             onEditPlayer={onEditPlayer}
           />
-        ))}
-      </ol>
-
-      <footer className="call-chain-summary">
-        <strong>{uiText("本上下文已提交的世界变化")}</strong>
-        {chain.changedDocuments.length === 0 ? (
-          <span>{uiText("没有文档变化")}</span>
-        ) : (
-          <ul>
-            {chain.changedDocuments.map((change) => (
-              <li key={`${change.kind}:${change.path}`}>
-                {change.kind === "create" ? uiText("新建") : uiText("更新")}{" "}
-                {change.ref} · {change.path}
-              </li>
-            ))}
-          </ul>
-        )}
-      </footer>
-    </section>
+        );
+      })}
+    </ol>
   );
 }
 
-function CallChainEvent({
+function TimelineEvent({
+  client,
+  worldId,
+  chainId,
   event,
   restartDisabled,
   onRestartFrom,
   onEditPlayer,
 }: {
-  event: V1PlayCallChainEvent;
+  client: WorldPageClient;
+  worldId: string;
+  chainId: string;
+  event: V1PlayTimelineEventSummary;
   restartDisabled: boolean;
   onRestartFrom: (head: string) => void;
-  onEditPlayer: (eventId: number, editedText: string) => void;
-}): React.JSX.Element | null {
+  onEditPlayer: (chainId: string, eventId: number, editedText: string) => void;
+}): React.JSX.Element {
+  const [detail, setDetail] = useState<V1PlayCallChainEvent | null>(null);
+  const [detailPending, setDetailPending] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
   const [editedText, setEditedText] = useState<string | null>(null);
+  const loadDetail = async (): Promise<void> => {
+    if (detail !== null || detailPending) return;
+    setDetailPending(true);
+    setDetailError(null);
+    try {
+      setDetail(
+        await requestRuntime<V1PlayCallChainEvent>(client, {
+          type: "play.timeline.detail",
+          worldId,
+          chainId,
+          eventId: event.id,
+        }),
+      );
+    } catch (reason: unknown) {
+      setDetailError(errorMessage(reason));
+    } finally {
+      setDetailPending(false);
+    }
+  };
+
   if (event.kind === "player")
     return (
       <li className="call-chain-player">
@@ -1428,7 +1546,7 @@ function CallChainEvent({
                 <button
                   type="button"
                   disabled={restartDisabled || editedText.trim().length === 0}
-                  onClick={() => onEditPlayer(event.id, editedText)}
+                  onClick={() => onEditPlayer(chainId, event.id, editedText)}
                 >
                   {uiText("保存修改并继续")}
                 </button>
@@ -1446,12 +1564,18 @@ function CallChainEvent({
         </article>
       </li>
     );
-  if (event.kind === "assistant")
+
+  if (event.kind === "assistant") {
+    const full = detail?.kind === "assistant" ? detail : null;
     return (
       <li className={`call-chain-assistant is-${event.status}`}>
         <article>
           <header>
-            <strong>{uiText("AI 响应")}</strong>
+            <strong>
+              {event.status === "streaming"
+                ? uiText("模型响应中")
+                : uiText("AI 响应")}
+            </strong>
             <span>
               {uiText("{status} · 第 {attempt} 次派发", {
                 status: callChainAssistantStatusLabel(event.status),
@@ -1469,16 +1593,6 @@ function CallChainEvent({
               </button>
             )}
           </header>
-          {event.reasoning === undefined ||
-          event.reasoning.length === 0 ? null : (
-            <details className="call-chain-reasoning">
-              <summary>
-                <strong>{uiText("模型思维链")}</strong>
-                <span>{uiText("默认折叠")}</span>
-              </summary>
-              <pre>{event.reasoning}</pre>
-            </details>
-          )}
           <p>
             {event.text.length > 0
               ? event.text
@@ -1486,95 +1600,109 @@ function CallChainEvent({
                 ? uiText("正在接收模型输出…")
                 : uiText("（本次响应没有文本）")}
           </p>
-          {event.toolFragment === undefined ? null : (
-            <details>
-              <summary>{uiText("正在接收的工具调用片段")}</summary>
-              <pre>{event.toolFragment}</pre>
+          {!event.detailsAvailable ? null : event.status === "streaming" ? (
+            <small>{uiText("响应完成后可查看模型诊断详情")}</small>
+          ) : (
+            <details
+              onToggle={(change) =>
+                change.currentTarget.open && void loadDetail()
+              }
+            >
+              <summary>{uiText("查看模型诊断详情")}</summary>
+              {detailPending ? <p>{uiText("正在加载…")}</p> : null}
+              {detailError === null ? null : <p role="alert">{detailError}</p>}
+              {full?.reasoning === undefined ? null : (
+                <pre>{full.reasoning}</pre>
+              )}
+              {full?.toolFragment === undefined ? null : (
+                <pre>{full.toolFragment}</pre>
+              )}
+              {full?.usage === undefined ? null : (
+                <small>
+                  {uiText("Provider usage：输入")}
+                  {full.usage.inputTokens ?? "unavailable"} {uiText("· 输出")}
+                  {full.usage.outputTokens ?? "unavailable"}
+                </small>
+              )}
             </details>
-          )}
-          {event.usage === undefined ? null : (
-            <small>
-              {uiText("Provider usage：输入")}
-              {event.usage.inputTokens ?? "unavailable"} {uiText("· 输出")}
-              {event.usage.outputTokens ?? "unavailable"}
-            </small>
           )}
         </article>
       </li>
     );
-  if (event.kind === "tool_call")
+  }
+
+  if (event.kind === "tool_call") {
+    const full = detail?.kind === "tool_call" ? detail : null;
     return (
       <li className="call-chain-tool">
-        <details>
+        <details
+          onToggle={(change) => change.currentTarget.open && void loadDetail()}
+        >
           <summary>
             <strong>{uiText("调用 {tool}", { tool: event.name })}</strong>
             <span>
               {event.replayed ? uiText("复用同 ID 结果") : event.callId}
             </span>
           </summary>
-          <pre>{safeJson(event.arguments)}</pre>
+          {detailPending ? <p>{uiText("正在加载…")}</p> : null}
+          {detailError === null ? null : <p role="alert">{detailError}</p>}
+          {full === null ? null : <pre>{safeJson(full.arguments)}</pre>}
         </details>
       </li>
     );
-  if (event.kind === "tool_result")
+  }
+
+  if (event.kind === "tool_result") {
+    const full = detail?.kind === "tool_result" ? detail : null;
     return (
       <li
         className={`call-chain-tool-result ${event.ok ? "is-ok" : "is-error"}`}
       >
-        <details>
+        <details
+          onToggle={(change) => change.currentTarget.open && void loadDetail()}
+        >
           <summary>
             <strong>
               {event.name} {uiText("返回")}
             </strong>
             <span>{event.ok ? uiText("成功") : uiText("拒绝／失败")}</span>
           </summary>
-          <pre>{event.markdown}</pre>
+          {detailPending ? <p>{uiText("正在加载…")}</p> : null}
+          {detailError === null ? null : <p role="alert">{detailError}</p>}
+          {full === null ? null : <pre>{full.markdown}</pre>}
         </details>
       </li>
     );
-  if (event.kind === "followup")
+  }
+
+  if (event.kind === "followup") {
+    const full = detail?.kind === "followup" ? detail : null;
     return (
       <li
-        className={`call-chain-followup ${
-          event.failure === undefined ? "is-ok" : "is-error"
-        }`}
+        className={`call-chain-followup ${event.failed ? "is-error" : "is-ok"}`}
       >
-        <details>
+        <details
+          onToggle={(change) => change.currentTarget.open && void loadDetail()}
+        >
           <summary>
             <strong>
               {uiText("后置请求 ·")}
               {event.displayName}
             </strong>
             <span>
-              {event.failure === undefined
-                ? uiText("{count} 项产物", {
-                    count: event.toolCalls.filter(({ ok }) => ok).length,
-                  })
-                : uiText("未完成")}
+              {event.failed
+                ? uiText("未完成")
+                : uiText("{count} 项产物", { count: event.toolCallCount })}
             </span>
           </summary>
-          {/* Follow-ups stay outside the main chain and only explain panel provenance. */}
-          {event.failure !== undefined && <p role="alert">{event.failure}</p>}
-          {event.text.trim() !== "" && <pre>{event.text}</pre>}
-          {event.toolCalls.map((call) => (
-            <div key={call.callId}>
-              <strong>
-                {call.name} · {call.ok ? uiText("成功") : uiText("拒绝／失败")}
-              </strong>
-              <pre>{safeJson(call.arguments)}</pre>
-              <pre>{call.markdown}</pre>
-            </div>
-          ))}
-          {event.usage !== undefined && (
-            <small>
-              {uiText("Provider usage：输入")}
-              {event.usage.inputTokens ?? "unavailable"} {uiText("· 输出")}
-              {event.usage.outputTokens ?? "unavailable"}
-            </small>
-          )}
+          {detailPending ? <p>{uiText("正在加载…")}</p> : null}
+          {detailError === null ? null : <p role="alert">{detailError}</p>}
+          {full === null ? null : <pre>{safeJson(full)}</pre>}
         </details>
       </li>
     );
+  }
+
   return (
     <li className="call-chain-failure" role="alert">
       <strong>{uiText("调用链中断")}</strong>
@@ -1583,13 +1711,46 @@ function CallChainEvent({
   );
 }
 
-function callChainStatusLabel(
-  status: V1PlayCallChainContextView["status"],
-  current: boolean,
-): string {
-  if (status === "running") return uiText("模型响应中");
-  if (status === "interrupted") return uiText("调用链已中断");
-  return current ? uiText("等待玩家追加") : uiText("上下文已结束");
+function Transcript({
+  messages,
+  restartDisabled = false,
+  onRestartFrom,
+}: {
+  messages: readonly (WorldMessage & { pending: boolean })[];
+  restartDisabled?: boolean;
+  onRestartFrom?: (head: string) => void;
+}): React.JSX.Element {
+  return (
+    <ol className="narrative-list">
+      {messages.map((message, index) => (
+        <li
+          key={message.messageId ?? `${index}-${message.role}`}
+          className={`${message.role}-message ${message.pending ? "pending-message" : ""}`}
+        >
+          <article>
+            <header>
+              <strong>
+                {message.role === "player" ? uiText("你") : uiText("主持")}
+              </strong>
+              {message.pending ? <span>{uiText("未结算")}</span> : null}
+              {message.head === undefined ||
+              onRestartFrom === undefined ? null : (
+                <button
+                  type="button"
+                  className="history-restart-button"
+                  disabled={restartDisabled}
+                  onClick={() => onRestartFrom(message.head!)}
+                >
+                  {uiText("创建分叉")}
+                </button>
+              )}
+            </header>
+            <p>{message.exactText}</p>
+          </article>
+        </li>
+      ))}
+    </ol>
+  );
 }
 
 function callChainAssistantStatusLabel(
@@ -1698,6 +1859,30 @@ function documentOption(file: ContentTreeFile): DocumentOption {
   return { path: file.path, title, ref, handle: `@${ref}` };
 }
 
+function selectedStateDocument(
+  state: readonly ContentTreeFile[],
+  current: string,
+): string {
+  return state.some(({ path }) => path === current)
+    ? current
+    : (state[0]?.path ?? "");
+}
+
+function selectedCorrectionDocument(
+  state: readonly ContentTreeFile[],
+  current: string,
+): string {
+  const options = state
+    .map(documentOption)
+    .filter(({ path }) => /\.ya?ml$/iu.test(path));
+  if (options.some(({ handle }) => handle === current)) return current;
+  return (
+    options.find(({ ref }) => ref === "qinlong")?.handle ??
+    options[0]?.handle ??
+    ""
+  );
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -1759,19 +1944,227 @@ function applyPlayCallChainFrame(
   });
 }
 
-async function requestArtifactDebug(
+function applyPlayTimelineFrame(
+  frame: V1PlayCallChainStreamFrame,
+  setTimeline: Dispatch<SetStateAction<V1PlayTimelinePage | null>>,
+): void {
+  if (frame.kind === "snapshot") {
+    setTimeline((current) => {
+      if (current === null) return current;
+      const chain = frame.value;
+      const previousActiveChainId = current.activeChainId;
+      const items = current.items.map((item) => {
+        if (item.kind === "genesis") return item;
+        if (item.kind === "context_boundary")
+          return item.chainId === chain.chainId
+            ? {
+                ...item,
+                playPreset: structuredClone(chain.playPreset),
+                changedDocuments: structuredClone(chain.changedDocuments),
+                current: true,
+              }
+            : { ...item, current: false };
+        return { ...item, current: item.chainId === chain.chainId };
+      });
+      if (
+        previousActiveChainId !== chain.chainId &&
+        !items.some(
+          (item) =>
+            item.kind === "context_boundary" && item.chainId === chain.chainId,
+        )
+      )
+        items.push({
+          kind: "context_boundary",
+          chainId: chain.chainId,
+          playPreset: structuredClone(chain.playPreset),
+          changedDocuments: structuredClone(chain.changedDocuments),
+          current: true,
+        });
+      for (const event of chain.events) {
+        const summary = summarizeTimelineEvent(event);
+        const index = items.findIndex(
+          (item) =>
+            item.kind === "event" &&
+            item.chainId === chain.chainId &&
+            item.event.id === event.id,
+        );
+        const next: V1PlayTimelineItem = {
+          kind: "event",
+          chainId: chain.chainId,
+          current: true,
+          event: summary,
+        };
+        if (index < 0) items.push(next);
+        else items[index] = next;
+      }
+      return {
+        ...current,
+        activeChainId: chain.chainId,
+        activeStatus: chain.status,
+        activeCanRetry: chain.canRetry,
+        activeLastFailure: chain.lastFailure,
+        items,
+      };
+    });
+    return;
+  }
+  if (frame.kind !== "assistant_delta") return;
+  setTimeline((current) => {
+    if (current?.activeChainId == null) return current;
+    const activeChainId = current.activeChainId;
+    return {
+      ...current,
+      items: current.items.map((item) => {
+        if (
+          item.kind !== "event" ||
+          item.chainId !== activeChainId ||
+          item.event.kind !== "assistant" ||
+          item.event.id !== frame.eventId
+        )
+          return item;
+        if (frame.deltaKind === "text")
+          return {
+            ...item,
+            event: { ...item.event, text: item.event.text + frame.text },
+          };
+        if (frame.deltaKind === "reasoning")
+          return {
+            ...item,
+            event: {
+              ...item.event,
+              hasReasoning: true,
+              detailsAvailable: true,
+            },
+          };
+        return {
+          ...item,
+          event: {
+            ...item.event,
+            hasToolFragment: true,
+            detailsAvailable: true,
+          },
+        };
+      }),
+    };
+  });
+}
+
+function summarizeTimelineEvent(
+  event: V1PlayCallChainEvent,
+): V1PlayTimelineEventSummary {
+  if (event.kind === "player" || event.kind === "failure")
+    return structuredClone(event);
+  if (event.kind === "assistant") {
+    const { reasoning, toolFragment, usage, ...summary } = event;
+    return {
+      ...summary,
+      hasReasoning: reasoning !== undefined && reasoning.length > 0,
+      hasToolFragment: toolFragment !== undefined && toolFragment.length > 0,
+      hasUsage: usage !== undefined,
+      detailsAvailable:
+        (reasoning !== undefined && reasoning.length > 0) ||
+        (toolFragment !== undefined && toolFragment.length > 0) ||
+        usage !== undefined,
+    };
+  }
+  if (event.kind === "tool_call") {
+    const { arguments: _arguments, ...summary } = event;
+    void _arguments;
+    return { ...summary, detailsAvailable: true };
+  }
+  if (event.kind === "tool_result") {
+    const { markdown: _markdown, ...summary } = event;
+    void _markdown;
+    return { ...summary, detailsAvailable: true };
+  }
+  return {
+    id: event.id,
+    kind: "followup",
+    followupId: event.followupId,
+    displayName: event.displayName,
+    toolCallCount: event.toolCalls.length,
+    failed: event.failure !== undefined,
+    detailsAvailable: true,
+  };
+}
+
+function legacyTimelinePage(world: WorldReadView): V1PlayTimelinePage {
+  const chain = world.playCallChain;
+  if (chain === null)
+    return {
+      worldId: world.worldId,
+      generation: `legacy:${world.worldId}`,
+      activeChainId: null,
+      activeStatus: null,
+      activeCanRetry: false,
+      activeLastFailure: null,
+      items: [],
+      nextCursor: null,
+    };
+  const contexts = [...chain.previousContexts, chain];
+  const firstPlayerHead = contexts[0]?.events.find(
+    (
+      event,
+    ): event is Extract<V1PlayCallChainEvent, { kind: "player" }> & {
+      committedHead: string;
+    } => event.kind === "player" && event.committedHead !== undefined,
+  )?.committedHead;
+  const inferredBaseline =
+    firstPlayerHead === undefined
+      ? 0
+      : world.committedMessages.findIndex(
+          ({ head }) => head === firstPlayerHead,
+        );
+  const baselineHistoryLength =
+    contexts[0]?.baselineHistoryLength ?? Math.max(0, inferredBaseline);
+  const baseline: V1PlayTimelineItem[] = world.committedMessages
+    .slice(0, baselineHistoryLength)
+    .map((message, index) => ({
+      kind: "genesis",
+      messageId: message.messageId ?? `legacy-message-${index + 1}`,
+      role: message.role,
+      exactText: message.exactText,
+    }));
+  return {
+    worldId: world.worldId,
+    generation: `legacy:${world.worldId}:${chain.chainId}`,
+    activeChainId: chain.chainId,
+    activeStatus: chain.status,
+    activeCanRetry: chain.canRetry,
+    activeLastFailure: chain.lastFailure,
+    items: [
+      ...baseline,
+      ...contexts.flatMap((context) => [
+        {
+          kind: "context_boundary" as const,
+          chainId: context.chainId,
+          playPreset: structuredClone(context.playPreset),
+          changedDocuments: structuredClone(context.changedDocuments),
+          current: context.chainId === chain.chainId,
+        },
+        ...context.events.map((event): V1PlayTimelineItem => ({
+          kind: "event",
+          chainId: context.chainId,
+          current: context.chainId === chain.chainId,
+          event: summarizeTimelineEvent(event),
+        })),
+      ]),
+    ],
+    nextCursor: null,
+  };
+}
+
+async function requestPlayDecorations(
   client: WorldPageClient,
   worldId: string,
-): Promise<FrontendArtifactDebugRecord[]> {
+): Promise<WorldPlayDecorationsView | null> {
   try {
     const result = await client.request({
-      type: "artifacts.debug",
+      type: "world.play-decorations.read",
       worldId,
     });
-    return Array.isArray(result)
-      ? (result as FrontendArtifactDebugRecord[])
-      : [];
+    return result as WorldPlayDecorationsView;
   } catch {
-    return [];
+    return null;
   }
 }

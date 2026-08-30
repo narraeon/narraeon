@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -23,6 +24,10 @@ import {
   type PlayPresetBinding,
 } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
 import { PlayCallChain } from "../../src/runtime/play/PlayCallChain.ts";
+import {
+  FileNativePlayAdvanceStore,
+  type PlayAdvanceBase,
+} from "../../src/runtime/play/FileNativePlayAdvanceStore.ts";
 import { FileNativeArtifactStore } from "../../src/runtime/artifact/FileNativeArtifactStore.ts";
 import {
   FileNativePromptCompiler,
@@ -34,9 +39,426 @@ import { FileNativeWorldStore } from "../../src/runtime/world/FileNativeWorldSto
 const roots: string[] = [];
 
 afterEach(async () => {
+  delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE;
+  delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_FILE_NATIVE_AUTHORITY_EDGE;
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
   );
+});
+
+test("推进事实先写入、当前指针尚未发布时，可按同一身份恢复而不改写事实", async () => {
+  const root = await mkdtemp(join(tmpdir(), "narraeon-play-advance-pointer-"));
+  roots.push(root);
+  const store = new FileNativePlayAdvanceStore(root);
+  const base = {
+    schemaVersion: 1,
+    kind: "play_advance",
+    advanceKind: "response",
+    worldId: "world-pointer-recovery",
+    chainId: "chain-pointer-recovery",
+    advanceId: "advance-pointer-recovery",
+    operationId: "operation-pointer-recovery",
+    parentHead: "commit:1",
+    eventId: 2,
+    exchange: 1,
+    attempt: 1,
+    createdAt: 100,
+  } satisfies Extract<PlayAdvanceBase, { advanceKind: "response" }>;
+  await store.begin(base);
+
+  const chainDigest = createHash("sha256").update(base.chainId).digest("hex");
+  await rm(
+    join(
+      root,
+      "worlds-file-native",
+      base.worldId,
+      "runtime",
+      "play-advances",
+      chainDigest,
+      "current.json",
+    ),
+  );
+
+  const retried = { ...base, createdAt: 200 };
+  await store.begin(retried);
+  await store.recordProviderCompleted(retried, { text: "Recovered once." });
+  const recovered = await store.readCurrent(base.worldId, base.chainId);
+  expect(recovered).toMatchObject({
+    base: { createdAt: 100 },
+    providerCompleted: {
+      recordedAt: 100,
+      response: { text: "Recovered once." },
+    },
+  });
+});
+
+test("Provider 完整结果先落盘，冷恢复不重新调用模型即可继续结算", async () => {
+  const { worlds, worldId } = await createWorld(
+    "play-chain-provider-result-recovery",
+  );
+  const modelHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        text: "Alex opens the recovered door exactly once.",
+      },
+    ],
+  });
+  process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE =
+    "after_provider_completed";
+
+  const interrupted = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "play-chain-provider-result-recovery",
+    exchangeId: "play-chain-provider-result-recovery-player",
+    playerText: "I ask Alex to open the recovered door.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+  expect(interrupted).toMatchObject({
+    status: "interrupted",
+    parentHead: "commit:1",
+  });
+  expect(modelHost.requests).toHaveLength(1);
+
+  delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE;
+  const recovered = await new PlayCallChain(worlds).inspectWorld(worldId);
+  expect(recovered).toMatchObject({
+    status: "ready",
+    parentHead: "commit:2",
+  });
+  expect(modelHost.requests).toHaveLength(1);
+  expect(
+    (await worlds.recoverEndpoint(worldId)).history
+      .map(({ exactText }) => exactText)
+      .filter((text) => text === "Alex opens the recovered door exactly once."),
+  ).toHaveLength(1);
+});
+
+test("精确结算已准备但 Authority 尚未接受时，冷恢复提交同一结果", async () => {
+  const { worlds, worldId } = await createWorld(
+    "play-chain-settlement-prepared-recovery",
+  );
+  const modelHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        text: "The prepared response is committed after restart.",
+      },
+    ],
+  });
+  process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE =
+    "after_settlement_prepared";
+
+  const interrupted = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "play-chain-settlement-prepared-recovery",
+    exchangeId: "play-chain-settlement-prepared-player",
+    playerText: "I wait for the prepared response.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+  expect(interrupted).toMatchObject({
+    status: "interrupted",
+    parentHead: "commit:1",
+  });
+  expect(modelHost.requests).toHaveLength(1);
+
+  delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE;
+  const recovered = await new PlayCallChain(worlds).inspectWorld(worldId);
+  expect(recovered).toMatchObject({ status: "ready", parentHead: "commit:2" });
+  expect(modelHost.requests).toHaveLength(1);
+  expect(
+    (await worlds.readAuthorityHistory(worldId)).commits.filter(
+      ({ historyAppend }) =>
+        historyAppend[0]?.exactText ===
+        "The prepared response is committed after restart.",
+    ),
+  ).toHaveLength(1);
+});
+
+test("页面时间线已落盘但推进尚未标记完成时，冷恢复只补完成标记", async () => {
+  const { worlds, worldId } = await createWorld(
+    "play-chain-timeline-settled-recovery",
+  );
+  const scripted = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        text: "The projected response remains exactly once.",
+      },
+    ],
+  });
+  const modelHost: ModelHost = {
+    binding: () => scripted.binding(),
+    exchange(request, observer) {
+      process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE =
+        "after_timeline_settled";
+      return scripted.exchange(request, observer);
+    },
+  };
+
+  await expect(
+    new PlayCallChain(worlds).start({
+      worldId,
+      chainId: "play-chain-timeline-settled-recovery",
+      exchangeId: "play-chain-timeline-settled-player",
+      playerText: "I wait for the projected response.",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: modelBinding(),
+      modelHost,
+    }),
+  ).rejects.toThrow("after_timeline_settled");
+  expect(scripted.requests).toHaveLength(1);
+  expect(await worlds.currentHead(worldId)).toBe("commit:2");
+
+  delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE;
+  const recovered = await new PlayCallChain(worlds).inspectWorld(worldId);
+  expect(recovered).toMatchObject({ status: "ready", parentHead: "commit:2" });
+  expect(scripted.requests).toHaveLength(1);
+  expect(
+    (await worlds.readAuthorityHistory(worldId)).commits.filter(
+      ({ historyAppend }) =>
+        historyAppend[0]?.exactText ===
+        "The projected response remains exactly once.",
+    ),
+  ).toHaveLength(1);
+});
+
+test("Authority 已接受但时间线未结算时，冷恢复补齐同一响应而不重复提交", async () => {
+  const { worlds, worldId } = await createWorld(
+    "play-chain-authority-accepted-recovery",
+  );
+  const scripted = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        text: "The accepted response survives the process exit.",
+      },
+    ],
+  });
+  const modelHost: ModelHost = {
+    binding: () => scripted.binding(),
+    exchange(request, observer) {
+      process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE =
+        "after_authority_accepted";
+      return scripted.exchange(request, observer);
+    },
+  };
+
+  await expect(
+    new PlayCallChain(worlds).start({
+      worldId,
+      chainId: "play-chain-authority-accepted-recovery",
+      exchangeId: "play-chain-authority-accepted-recovery-player",
+      playerText: "I wait for the accepted response.",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: modelBinding(),
+      modelHost,
+    }),
+  ).rejects.toThrow("after_authority_accepted");
+  expect(await worlds.currentHead(worldId)).toBe("commit:2");
+  expect(scripted.requests).toHaveLength(1);
+
+  delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE;
+  const recovered = await new PlayCallChain(worlds).inspectWorld(worldId);
+  expect(recovered).toMatchObject({
+    status: "ready",
+    parentHead: "commit:2",
+  });
+  expect(scripted.requests).toHaveLength(1);
+  expect(
+    (await worlds.readAuthorityHistory(worldId)).commits.filter(
+      ({ historyAppend }) =>
+        historyAppend[0]?.exactText ===
+        "The accepted response survives the process exit.",
+    ),
+  ).toHaveLength(1);
+});
+
+test("长调用轨迹按稳定游标读取摘要，重型详情与旧事件不会随尾部追加重写", async () => {
+  const { worlds, worldId, root } = await createWorld(
+    "play-chain-long-timeline",
+  );
+  const detailMarker = "tool-detail-must-stay-out-of-pages";
+  const modelHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: Array.from({ length: 30 }, (_, index) => ({
+          id: `list-${index + 1}`,
+          name: "context_list",
+          arguments: { marker: detailMarker, index },
+        })),
+      },
+      { outcome: "response", text: "The long trace is complete." },
+    ],
+  });
+  const chains = new PlayCallChain(worlds);
+  const completed = await chains.start({
+    worldId,
+    chainId: "play-chain-long-timeline",
+    exchangeId: "play-chain-long-timeline-player",
+    playerText: "Inspect many context entries.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+  expect(completed.events).toHaveLength(40);
+
+  const tail = await worlds.playTimeline.readPage(worldId, 10);
+  expect(tail.items).toHaveLength(10);
+  expect(tail.nextCursor).not.toBeNull();
+  expect(JSON.stringify(tail)).not.toContain(detailMarker);
+  const earlier = await worlds.playTimeline.readPage(
+    worldId,
+    10,
+    tail.nextCursor!,
+  );
+  expect(earlier.generation).toBe(tail.generation);
+  expect(earlier.items).toHaveLength(10);
+  expect(JSON.stringify(earlier)).not.toContain(detailMarker);
+
+  let page = tail;
+  let selected: { chainId: string; eventId: number } | undefined;
+  while (page.nextCursor !== null && selected === undefined) {
+    page = await worlds.playTimeline.readPage(worldId, 10, page.nextCursor);
+    const item = page.items.find(
+      (candidate) =>
+        candidate.kind === "event" && candidate.event.kind === "tool_call",
+    );
+    if (item?.kind === "event")
+      selected = { chainId: item.chainId, eventId: item.event.id };
+  }
+  expect(selected).toBeDefined();
+  const selectedDetail = await worlds.playTimeline.readDetail(
+    worldId,
+    selected!.chainId,
+    selected!.eventId,
+  );
+  expect(selectedDetail.kind).toBe("tool_call");
+  if (selectedDetail.kind !== "tool_call")
+    throw new Error("Expected a tool-call timeline detail");
+  expect(selectedDetail.arguments).toMatchObject({ marker: detailMarker });
+
+  const [contextDirectory] = await readdir(
+    join(root, "worlds-file-native", worldId, "runtime", "play-contexts"),
+  );
+  const oldEventPath = join(
+    root,
+    "worlds-file-native",
+    worldId,
+    "runtime",
+    "play-contexts",
+    contextDirectory!,
+    "events",
+    "0000000003.json",
+  );
+  const oldEvent = await readFile(oldEventPath, "utf8");
+  const continuation = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [{ outcome: "response", text: "Only the tail advances." }],
+  });
+  await chains.append({
+    worldId,
+    chainId: completed.chainId,
+    exchangeId: "play-chain-long-timeline-continuation",
+    playerText: "",
+    modelHost: continuation,
+  });
+  expect(await readFile(oldEventPath, "utf8")).toBe(oldEvent);
+  await expect(
+    worlds.playTimeline.readPage(worldId, 10, tail.nextCursor!),
+  ).resolves.toEqual(earlier);
+
+  const contextRoot = join(
+    root,
+    "worlds-file-native",
+    worldId,
+    "runtime",
+    "play-contexts",
+    contextDirectory!,
+  );
+  await writeFile(join(contextRoot, "base.json"), "not needed by a page\n");
+  await rm(join(contextRoot, "continuations"), {
+    recursive: true,
+    force: true,
+  });
+
+  const runtime = new V1Runtime({
+    dataRoot: root,
+    configRoot: join(root, "config"),
+  });
+  await runtime.initialize();
+  const opened = (await runtime.handle({ type: "world.read", worldId }))
+    .result as {
+    state: unknown[];
+    control: unknown[];
+    history: unknown[];
+    runtime: unknown;
+    committedMessages: unknown[];
+    playCallChain: unknown;
+    playTimeline: { items: unknown[]; nextCursor: string | null };
+  };
+  expect(opened).toMatchObject({
+    state: [],
+    control: [],
+    history: [],
+    runtime: { surfaces: "lazy" },
+    committedMessages: [],
+    playCallChain: null,
+  });
+  expect(opened.playTimeline.items.length).toBeLessThanOrEqual(40);
+  expect(JSON.stringify(opened)).not.toContain(detailMarker);
+  await expect(readdir(join(root, "artifact-store"))).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+
+  const runtimePage = (
+    await runtime.handle({
+      type: "play.timeline.page",
+      worldId,
+      limit: 10,
+      cursor: tail.nextCursor!,
+    })
+  ).result;
+  expect(runtimePage).toEqual(earlier);
+  const runtimeDetail = (
+    await runtime.handle({
+      type: "play.timeline.detail",
+      worldId,
+      chainId: selected!.chainId,
+      eventId: selected!.eventId,
+    })
+  ).result;
+  expect(JSON.stringify(runtimeDetail)).toContain(detailMarker);
+  const stateSurface = (
+    await runtime.handle({
+      type: "world.surface.read",
+      worldId,
+      surface: "state",
+    })
+  ).result as ContentTreeFile[];
+  expect(stateSurface).toContainEqual(
+    expect.objectContaining({ path: "current-situation.yaml" }),
+  );
+  await expect(
+    runtime.handle({ type: "world.play-decorations.read", worldId }),
+  ).resolves.toMatchObject({
+    result: { artifacts: [], extensions: [], artifactDebug: [] },
+  });
 });
 
 test("协议允许空的追加输入，用现有请求上下文触发续写", () => {
@@ -69,6 +491,37 @@ test("协议把玩家历史修改建模为当前世界的时间线修订", () =>
       },
     }),
   ).not.toThrow();
+});
+
+test("协议拒绝无界时间线分页、空游标、非法详情事件与未知世界表面", () => {
+  const invalidRequests = [
+    { type: "play.timeline.page", worldId: "world-1", limit: 0 },
+    { type: "play.timeline.page", worldId: "world-1", limit: 101 },
+    {
+      type: "play.timeline.page",
+      worldId: "world-1",
+      limit: 20,
+      cursor: "",
+    },
+    {
+      type: "play.timeline.detail",
+      worldId: "world-1",
+      chainId: "chain-1",
+      eventId: 0,
+    },
+    {
+      type: "world.surface.read",
+      worldId: "world-1",
+      surface: "everything",
+    },
+  ];
+  for (const request of invalidRequests)
+    expect(() =>
+      parseV1Envelope({
+        protocol: "narraeon.runtime/v1",
+        request,
+      }),
+    ).toThrow();
 });
 
 test("模型自行交替文本与工具，每个完成响应立即推进世界并可追加上下文", async () => {
@@ -145,13 +598,24 @@ test("模型自行交替文本与工具，每个完成响应立即推进世界�
       { kind: "tool_result" }
     > => event.kind === "tool_result" && event.callId === "patch-door",
   );
-  expect(patchResult?.markdown).toBe("@current-situation write succeeded");
-  expect(patchResult?.markdown).not.toContain("Alex守在宿舍门边。");
-  expect(patchResult?.markdown).not.toContain("Alex已经把宿舍门打开。");
+  expect(patchResult?.markdown).toBe("");
+  const patchDetail = await worlds.playTimeline.readDetail(
+    worldId,
+    first.chainId,
+    patchResult!.id,
+  );
+  expect(patchDetail).toMatchObject({
+    kind: "tool_result",
+    markdown: "@current-situation write succeeded",
+  });
+  if (patchDetail.kind !== "tool_result")
+    throw new Error("Expected a tool-result timeline detail");
+  expect(patchDetail.markdown).not.toContain("Alex守在宿舍门边。");
+  expect(patchDetail.markdown).not.toContain("Alex已经把宿舍门打开。");
   expect(modelHost.requests[1]?.appended.at(-1)).toEqual({
     kind: "tool",
     toolCallId: "patch-door",
-    markdown: patchResult?.markdown,
+    markdown: patchDetail.markdown,
   });
   expect(modelHost.requests[0]?.tools.map(({ name }) => name)).toEqual([
     "context_list",
@@ -278,11 +742,22 @@ test("world_patch no-op 保留匹配的紧凑工具结果且不推进世界", as
     > =>
       event.kind === "tool_result" && event.callId === "patch-same-situation",
   );
-  expect(patchResult?.markdown).toBe("@current-situation unchanged");
+  expect(patchResult?.markdown).toBe("");
+  const patchDetail = await worlds.playTimeline.readDetail(
+    worldId,
+    view.chainId,
+    patchResult!.id,
+  );
+  expect(patchDetail).toMatchObject({
+    kind: "tool_result",
+    markdown: "@current-situation unchanged",
+  });
+  if (patchDetail.kind !== "tool_result")
+    throw new Error("Expected a tool-result timeline detail");
   expect(modelHost.requests[1]?.appended.at(-1)).toEqual({
     kind: "tool",
     toolCallId: "patch-same-situation",
-    markdown: patchResult?.markdown,
+    markdown: patchDetail.markdown,
   });
 });
 
@@ -386,101 +861,18 @@ test("冷启动恢复 world_create 授予的写权限，后续无需重新读取
   ).toContain("状态: 冷启动后已更新");
 });
 
-test("旧 V1 调用链没有授权 checkpoint 时沿用 bootstrap 恢复并惰性补写", async () => {
+test("旧累计调用链格式不会被双读或静默迁移", async () => {
   const { worlds, worldId } = await createWorld(
     "play-chain-legacy-authorization-recovery",
   );
-  const initial = await new PlayCallChain(worlds).start({
+  await worlds.writePlayCallChain(worldId, {
+    schemaVersion: 1,
+    kind: "play_call_chain",
     worldId,
-    chainId: "play-chain-legacy-authorization-recovery",
-    exchangeId: "play-chain-legacy-authorization-initial",
-    playerText: "Record the next action first.",
-    hostBinding: hostBinding(),
-    playPreset: playPreset(),
-    modelBinding: modelBinding(),
-    modelHost: new ScriptedModelHost({
-      binding: modelBinding(),
-      steps: [
-        {
-          outcome: "response",
-          text: "The previous call chain is established.",
-        },
-      ],
-    }),
   });
-  expect(initial.status).toBe("ready");
-
-  const legacy =
-    await worlds.readPlayCallChain<Record<string, unknown>>(worldId);
-  expect(legacy).not.toBeNull();
-  legacy!.schemaVersion = 1;
-  delete legacy!.documentAuthorizationCheckpoints;
-  await worlds.writePlayCallChain(worldId, legacy);
-
-  const recovered = await new PlayCallChain(worlds).append({
-    worldId,
-    chainId: initial.chainId,
-    exchangeId: "play-chain-legacy-authorization-resume",
-    playerText: "Continue.",
-    modelHost: new ScriptedModelHost({
-      binding: modelBinding(),
-      steps: [
-        {
-          outcome: "response",
-          toolCalls: [
-            {
-              id: "patch-from-legacy-bootstrap",
-              name: "world_patch",
-              arguments: {
-                target: "@current-situation",
-                edits: [
-                  {
-                    op: "replace",
-                    locator: { yaml: ["情况"] },
-                    value: "旧记录冷启动后Continue.",
-                  },
-                ],
-              },
-            },
-          ],
-        },
-        { outcome: "response", text: "The action continues." },
-      ],
-    }),
-  });
-
-  expect(recovered.events).toContainEqual(
-    expect.objectContaining({
-      kind: "tool_result",
-      callId: "patch-from-legacy-bootstrap",
-      ok: true,
-    }),
+  await expect(new PlayCallChain(worlds).inspectWorld(worldId)).rejects.toThrow(
+    "does not match the current format",
   );
-  const checkpointed =
-    await worlds.readPlayCallChain<Record<string, unknown>>(worldId);
-  expect(checkpointed?.schemaVersion).toBe(1);
-  expect(checkpointed?.documentAuthorizationCheckpoints).toEqual(
-    expect.arrayContaining([expect.any(Object)]),
-  );
-
-  checkpointed!.schemaVersion = 2;
-  await worlds.writePlayCallChain(worldId, checkpointed);
-  await new PlayCallChain(worlds).append({
-    worldId,
-    chainId: initial.chainId,
-    exchangeId: "play-chain-transient-v2-resume",
-    playerText: "Continue again.",
-    modelHost: new ScriptedModelHost({
-      binding: modelBinding(),
-      steps: [
-        { outcome: "response", text: "Continue with the same call chain." },
-      ],
-    }),
-  });
-  expect(
-    (await worlds.readPlayCallChain<Record<string, unknown>>(worldId))
-      ?.schemaVersion,
-  ).toBe(1);
 });
 
 test("派生世界恢复所选分叉点的文档写授权，不携带分叉点之后的状态", async () => {
@@ -660,11 +1052,6 @@ test("全新上下文只重建模型上下文，持久保留此前调用轨迹�
     modelHost: firstHost,
   });
   const sourceHead = first.parentHead;
-  const singleContextRecord =
-    await worlds.readPlayCallChain<Record<string, unknown>>(worldId);
-  expect(singleContextRecord).not.toBeNull();
-  delete singleContextRecord!.previousContexts;
-  await worlds.writePlayCallChain(worldId, singleContextRecord);
 
   const secondHost = new ScriptedModelHost({
     binding: modelBinding(),
@@ -687,22 +1074,72 @@ test("全新上下文只重建模型上下文，持久保留此前调用轨迹�
   expect(secondHost.requests[0]?.appended).toEqual([
     { kind: "player", text: "Player input for the new context." },
   ]);
-  expect(withHistory.previousContexts).toHaveLength(1);
-  expect(withHistory.previousContexts?.[0]?.events).toContainEqual(
-    expect.objectContaining({
-      kind: "assistant",
-      reasoning: "Earlier-context reasoning.",
-    }),
+  expect(withHistory.previousContexts).toEqual([]);
+  const timeline = await worlds.playTimeline.readPage(worldId, 100);
+  expect(
+    timeline.items.filter(({ kind }) => kind === "context_boundary"),
+  ).toHaveLength(2);
+  expect(
+    timeline.items.some(
+      (item) =>
+        item.kind === "event" &&
+        item.event.kind === "assistant" &&
+        item.event.hasReasoning,
+    ),
+  ).toBe(true);
+  expect(
+    timeline.items.some(
+      (item) =>
+        item.kind === "event" &&
+        item.event.kind === "tool_call" &&
+        item.event.name === "context_list",
+    ),
+  ).toBe(true);
+  const reasoningSummary = timeline.items.find(
+    (item) =>
+      item.kind === "event" &&
+      item.event.kind === "assistant" &&
+      item.event.hasReasoning,
   );
-  expect(withHistory.previousContexts?.[0]?.events).toContainEqual(
-    expect.objectContaining({ kind: "tool_call", name: "context_list" }),
-  );
-  expect(withHistory.previousContexts?.[0]?.events).toContainEqual(
-    expect.objectContaining({ kind: "tool_result", name: "context_list" }),
-  );
+  expect(reasoningSummary?.kind).toBe("event");
+  if (reasoningSummary?.kind === "event")
+    await expect(
+      worlds.playTimeline.readDetail(
+        worldId,
+        reasoningSummary.chainId,
+        reasoningSummary.event.id,
+      ),
+    ).resolves.toMatchObject({ reasoning: "Earlier-context reasoning." });
+
+  expect(
+    await readdir(
+      join(root, "worlds-file-native", worldId, "runtime", "play-contexts"),
+    ),
+  ).toHaveLength(2);
+  await expect(
+    readFile(
+      join(
+        root,
+        "worlds-file-native",
+        worldId,
+        "runtime",
+        "play-call-chain.json",
+      ),
+      "utf8",
+    ),
+  ).rejects.toMatchObject({ code: "ENOENT" });
 
   const cold = await new PlayCallChain(worlds).inspectWorld(worldId);
-  expect(cold?.previousContexts).toEqual(withHistory.previousContexts);
+  expect(cold?.previousContexts).toEqual([]);
+
+  expect(
+    timeline.items.some(
+      (item) =>
+        item.kind === "event" &&
+        item.event.kind === "tool_result" &&
+        item.event.name === "context_list",
+    ),
+  ).toBe(true);
 
   const runtime = new V1Runtime({
     dataRoot: root,
@@ -723,12 +1160,17 @@ test("全新上下文只重建模型上下文，持久保留此前调用轨迹�
       worldId: branch.world.worldId,
     })
   ).result as V1PlayCallChainView | null;
-  expect(branchTrace?.events).toContainEqual(
-    expect.objectContaining({
-      kind: "assistant",
-      reasoning: "Earlier-context reasoning.",
-    }),
+  const branchReasoningSummary = branchTrace?.events.find(
+    (event) => event.kind === "assistant" && event.exchange === 1,
   );
+  expect(branchReasoningSummary).not.toHaveProperty("reasoning");
+  await expect(
+    worlds.playTimeline.readDetail(
+      branch.world.worldId,
+      branchTrace!.chainId,
+      branchReasoningSummary!.id,
+    ),
+  ).resolves.toMatchObject({ reasoning: "Earlier-context reasoning." });
   expect(branchTrace?.events).toContainEqual(
     expect.objectContaining({ kind: "tool_call", name: "context_list" }),
   );
@@ -747,15 +1189,20 @@ test("全新上下文只重建模型上下文，持久保留此前调用轨迹�
       worldId: fullBranch.world.worldId,
     })
   ).result as V1PlayCallChainView | null;
-  const committedHeads = (events: V1PlayCallChainView["events"]) =>
-    events
-      .filter((event) => event.kind === "player" || event.kind === "assistant")
-      .map(({ committedHead }) => committedHead);
-  expect(committedHeads(fullBranchTrace!.previousContexts[0]!.events)).toEqual(
-    committedHeads(withHistory.previousContexts[0]!.events),
+  expect(fullBranchTrace?.previousContexts).toEqual([]);
+  const fullBranchTimeline = await worlds.playTimeline.readPage(
+    fullBranch.world.worldId,
+    100,
   );
-  expect(committedHeads(fullBranchTrace!.events)).toEqual(
-    committedHeads(withHistory.events),
+  const committedHeads = (items: typeof fullBranchTimeline.items) =>
+    items.flatMap((item) =>
+      item.kind === "event" &&
+      (item.event.kind === "player" || item.event.kind === "assistant")
+        ? [item.event.committedHead]
+        : [],
+    );
+  expect(committedHeads(fullBranchTimeline.items)).toEqual(
+    committedHeads(timeline.items),
   );
 });
 
@@ -834,12 +1281,19 @@ test("从调用链节点派生会保留截至该节点的调用轨迹，并可�
     status: "ready",
   });
   expect(completedTrace?.chainId).not.toBe(source.chainId);
-  expect(completedTrace?.events).toContainEqual(
-    expect.objectContaining({
-      kind: "assistant",
-      reasoning: "First confirm the dormitory door's current state.",
-    }),
+  const completedReasoningSummary = completedTrace?.events.find(
+    (event) => event.kind === "assistant" && event.exchange === 1,
   );
+  expect(completedReasoningSummary).not.toHaveProperty("reasoning");
+  await expect(
+    worlds.playTimeline.readDetail(
+      completedBranch.world.worldId,
+      completedTrace!.chainId,
+      completedReasoningSummary!.id,
+    ),
+  ).resolves.toMatchObject({
+    reasoning: "First confirm the dormitory door's current state.",
+  });
   expect(completedTrace?.events).toContainEqual(
     expect.objectContaining({
       kind: "tool_call",
@@ -859,9 +1313,7 @@ test("从调用链节点派生会保留截至该节点的调用轨迹，并可�
     ): event is Extract<
       V1PlayCallChainView["events"][number],
       { kind: "assistant" }
-    > =>
-      event.kind === "assistant" &&
-      event.reasoning === "First confirm the dormitory door's current state.",
+    > => event.kind === "assistant" && event.exchange === 1,
   )?.committedHead;
   expect(toolResponseHead).toBe("commit:2");
   const toolBranch = (
@@ -932,11 +1384,13 @@ test("从调用链节点派生会保留截至该节点的调用轨迹，并可�
     ],
   });
   expect(playerTrace?.events).toHaveLength(1);
-  const persistedPlayerBranch = await worlds.readPlayCallChain<
-    Record<string, unknown>
-  >(playerBranch.world.worldId);
-  expect(persistedPlayerBranch).not.toHaveProperty("derivedFrom");
-  expect(persistedPlayerBranch).not.toHaveProperty("branchedBeforePlayer");
+  const persistedPlayerBranch = await worlds.playTimeline.readCurrent(
+    playerBranch.world.worldId,
+  );
+  expect(persistedPlayerBranch?.value).not.toHaveProperty("derivedFrom");
+  expect(persistedPlayerBranch?.value).not.toHaveProperty(
+    "branchedBeforePlayer",
+  );
   expect(
     await readUtf8Tree(
       join(root, "worlds-file-native", playerBranch.world.worldId),
@@ -1192,10 +1646,23 @@ test("中断后留空追加会原样发送已保存的模型请求，不追加�
     expect.objectContaining({
       kind: "assistant",
       text: "Alex has pushed the door halfway open",
-      reasoning: "First confirm whether the door can open",
       status: "interrupted",
     }),
   );
+  const interruptedAssistant = interrupted.events.find(
+    (event) => event.kind === "assistant",
+  );
+  expect(interruptedAssistant).not.toHaveProperty("reasoning");
+  await expect(
+    worlds.playTimeline.readDetail(
+      worldId,
+      interrupted.chainId,
+      interruptedAssistant!.id,
+    ),
+  ).resolves.toMatchObject({
+    reasoning: "First confirm whether the door can open",
+    status: "interrupted",
+  });
 
   const recoveredChains = new PlayCallChain(worlds);
   const recovered = await recoveredChains.inspectWorld(worldId);
@@ -1204,11 +1671,7 @@ test("中断后留空追加会原样发送已保存的模型请求，不追加�
     canRetry: true,
   });
   expect(recovered?.events).toContainEqual(
-    expect.objectContaining({
-      kind: "assistant",
-      reasoning: "First confirm whether the door can open",
-      status: "interrupted",
-    }),
+    expect.objectContaining({ kind: "assistant", status: "interrupted" }),
   );
   const completed = await recoveredChains.append({
     worldId,
@@ -1280,12 +1743,15 @@ test("空输入追加会从完整逻辑 transcript 继续生成，并把 Provide
   expect(deltas).toEqual(["Alex opens ", "the door first."]);
 
   expect(reasoningDeltas).toEqual(["First confirm the doorway ", "is clear."]);
-  expect(first.events).toContainEqual(
-    expect.objectContaining({
-      kind: "assistant",
-      reasoning: "First confirm that the doorway is clear.",
-    }),
+  const firstAssistant = first.events.find(
+    (event) => event.kind === "assistant",
   );
+  expect(firstAssistant).not.toHaveProperty("reasoning");
+  await expect(
+    worlds.playTimeline.readDetail(worldId, first.chainId, firstAssistant!.id),
+  ).resolves.toMatchObject({
+    reasoning: "First confirm that the doorway is clear.",
+  });
 
   const continued = await chains.append({
     worldId,

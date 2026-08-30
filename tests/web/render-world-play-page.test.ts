@@ -15,6 +15,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import type {
   V1PlayCallChainStreamFrame,
   V1PlayCallChainView,
+  V1PlayTimelinePage,
   V1Request,
 } from "../../src/protocol/v1.ts";
 import { projectUncoveredPlayerViews } from "../../src/web/PlayerViewFallback.ts";
@@ -250,6 +251,14 @@ describe("世界游玩页面", () => {
         if (request.type === "artifacts.debug") return Promise.resolve([] as T);
         if (request.type === "play.chain.inspect")
           return Promise.resolve(chain as T);
+        if (request.type === "play.timeline.detail") {
+          const context = [...chain.previousContexts, chain].find(
+            ({ chainId }) => chainId === request.chainId,
+          );
+          return Promise.resolve(
+            context?.events.find(({ id }) => id === request.eventId) as T,
+          );
+        }
         if (request.type === "play.chain.start") {
           const previous = structuredClone(chain);
           chain = {
@@ -269,6 +278,13 @@ describe("世界游玩页面", () => {
     };
 
     renderWorld(client);
+    await screen.findByText("调用 context_search");
+    expect(
+      screen.queryByText(
+        "Earlier-context reasoning that should remain visible.",
+      ),
+    ).toBeNull();
+    fireEvent.click(screen.getByText("查看模型诊断详情").closest("summary")!);
     expect(
       await screen.findByText(
         "Earlier-context reasoning that should remain visible.",
@@ -427,13 +443,11 @@ describe("世界游玩页面", () => {
 
     expect(await screen.findByText("Alex is opening the door")).toBeTruthy();
     expect(screen.getByText("接收中 · 第 1 次派发")).toBeTruthy();
-    const reasoning = screen
-      .getByText("模型思维链")
-      .closest<HTMLDetailsElement>("details");
-    expect(reasoning?.open).toBe(false);
+    expect(screen.getByText("响应完成后可查看模型诊断详情")).toBeTruthy();
+    expect(screen.queryByText("查看模型诊断详情")).toBeNull();
     expect(
-      screen.getByText("First confirm that the doorway is clear."),
-    ).toBeTruthy();
+      screen.queryByText("First confirm that the doorway is clear."),
+    ).toBeNull();
     act(() => finishStream?.());
     expect(
       await screen.findByText("Alex opens the door and lets you go first."),
@@ -519,7 +533,9 @@ describe("世界游玩页面", () => {
       });
       fireEvent.click(screen.getByRole("button", { name: "全新上下文" }));
       await waitFor(() => expect(emitFrame).toBeTypeOf("function"));
-      expect(screen.getByText("模型响应中")).toBeTruthy();
+      expect(
+        within(screen.getByLabelText("模型调用链")).getByText("模型响应中"),
+      ).toBeTruthy();
       scrollIntoView.mockClear();
 
       act(() =>
@@ -548,6 +564,118 @@ describe("世界游玩页面", () => {
           "scrollIntoView",
           scrollDescriptor,
         );
+    }
+  });
+
+  test("长上下文首页省略边界时，追加不会伪造一个全新上下文", async () => {
+    const chainId = "play-chain-long-current-context";
+    const timeline = {
+      worldId: "world-one",
+      generation: "timeline-long-current-context",
+      activeChainId: chainId,
+      activeStatus: "ready",
+      activeCanRetry: false,
+      activeLastFailure: null,
+      items: [
+        {
+          kind: "event",
+          chainId,
+          current: true,
+          event: {
+            id: 40,
+            kind: "assistant",
+            text: "The visible tail starts in the middle of one context.",
+            status: "completed",
+            exchange: 20,
+            attempt: 1,
+            hasReasoning: false,
+            hasToolFragment: false,
+            hasUsage: false,
+            detailsAvailable: false,
+          },
+        },
+      ],
+      nextCursor: "older-page",
+    } satisfies V1PlayTimelinePage;
+    let finishStream: (() => void) | undefined;
+    const client = {
+      request: vi.fn(<T>(request: V1Request) => {
+        if (request.type === "world.read")
+          return Promise.resolve({
+            ...worldView(null),
+            playTimeline: timeline,
+          } as T);
+        if (request.type === "world.play-decorations.read")
+          return Promise.resolve({
+            head: "commit:1",
+            artifacts: [],
+            extensions: [],
+            artifactDebug: [],
+          } as T);
+        if (request.type === "play.chain.inspect")
+          return Promise.resolve(null as T);
+        return Promise.reject(new Error(`Unexpected request: ${request.type}`));
+      }),
+      async streamPlayCallChain(
+        request: Extract<V1Request, { type: "play.chain.append" }>,
+        onFrame: (frame: V1PlayCallChainStreamFrame) => void,
+      ) {
+        const running = {
+          ...playChainView(chainId, request.exchangeId, request.playerText),
+          status: "running" as const,
+          events: [
+            {
+              id: 41,
+              kind: "player" as const,
+              exchangeId: request.exchangeId,
+              text: request.playerText,
+              context: "append" as const,
+              committedHead: "commit:2",
+            },
+            {
+              id: 42,
+              kind: "assistant" as const,
+              text: "",
+              status: "streaming" as const,
+              exchange: 21,
+              attempt: 1,
+            },
+          ],
+        } satisfies V1PlayCallChainView;
+        onFrame({ kind: "snapshot", value: running, final: false });
+        await new Promise<void>((resolve) => {
+          finishStream = resolve;
+        });
+        return { ...running, status: "ready" as const };
+      },
+    };
+
+    try {
+      renderWorld(client);
+      await screen.findByText(
+        "The visible tail starts in the middle of one context.",
+      );
+      fireEvent.change(screen.getByLabelText("你的行动"), {
+        target: { value: "I continue inside the same model context." },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "追加上下文" }));
+
+      await waitFor(() =>
+        expect(
+          within(screen.getByLabelText("模型调用链")).getByText("模型响应中"),
+        ).toBeTruthy(),
+      );
+      expect(
+        screen.queryAllByRole("separator", {
+          name: "全新上下文从这里开始",
+        }),
+      ).toHaveLength(0);
+    } finally {
+      await act(async () => {
+        finishStream?.();
+        await Promise.resolve();
+      });
+      cleanup();
     }
   });
 

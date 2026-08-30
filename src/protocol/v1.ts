@@ -150,6 +150,24 @@ export type V1Request =
       playerText: string;
     }
   | { type: "play.chain.inspect"; worldId: string }
+  | {
+      type: "play.timeline.page";
+      worldId: string;
+      limit: number;
+      cursor?: string;
+    }
+  | {
+      type: "play.timeline.detail";
+      worldId: string;
+      chainId: string;
+      eventId: number;
+    }
+  | {
+      type: "world.surface.read";
+      worldId: string;
+      surface: "state" | "control" | "history" | "runtime";
+    }
+  | { type: "world.play-decorations.read"; worldId: string }
   | { type: "correction.begin"; worldId: string; operationId: string }
   | { type: "correction.read"; candidateId: string; document: string }
   | {
@@ -256,6 +274,67 @@ export type V1PlayCallChainEvent =
       kind: "failure";
       message: string;
     };
+
+export type V1PlayTimelineEventSummary =
+  | Extract<V1PlayCallChainEvent, { kind: "player" }>
+  | (Omit<
+      Extract<V1PlayCallChainEvent, { kind: "assistant" }>,
+      "reasoning" | "toolFragment" | "usage"
+    > & {
+      hasReasoning: boolean;
+      hasToolFragment: boolean;
+      hasUsage: boolean;
+      detailsAvailable: boolean;
+    })
+  | (Omit<Extract<V1PlayCallChainEvent, { kind: "tool_call" }>, "arguments"> & {
+      detailsAvailable: true;
+    })
+  | (Omit<
+      Extract<V1PlayCallChainEvent, { kind: "tool_result" }>,
+      "markdown"
+    > & { detailsAvailable: true })
+  | {
+      id: number;
+      kind: "followup";
+      followupId: string;
+      displayName: string;
+      toolCallCount: number;
+      failed: boolean;
+      detailsAvailable: true;
+    }
+  | Extract<V1PlayCallChainEvent, { kind: "failure" }>;
+
+export type V1PlayTimelineItem =
+  | {
+      kind: "context_boundary";
+      chainId: string;
+      playPreset: { id: string; name: string; revision: string };
+      changedDocuments: V1PlayCallChainContextView["changedDocuments"];
+      current: boolean;
+    }
+  | {
+      kind: "event";
+      chainId: string;
+      current: boolean;
+      event: V1PlayTimelineEventSummary;
+    }
+  | {
+      kind: "genesis";
+      messageId: string;
+      role: "player" | "narrator";
+      exactText: string;
+    };
+
+export interface V1PlayTimelinePage {
+  worldId: string;
+  generation: string;
+  activeChainId: string | null;
+  activeStatus: V1PlayCallChainStatus | null;
+  activeCanRetry: boolean;
+  activeLastFailure: string | null;
+  items: V1PlayTimelineItem[];
+  nextCursor: string | null;
+}
 
 /** One model context as projected into the durable player-visible timeline. */
 export interface V1PlayCallChainContextView {
@@ -432,6 +511,14 @@ const requiredFields: Record<
     playerText: "string",
   },
   "play.chain.inspect": { worldId: "string" },
+  "play.timeline.page": { worldId: "string", limit: "number" },
+  "play.timeline.detail": {
+    worldId: "string",
+    chainId: "string",
+    eventId: "number",
+  },
+  "world.surface.read": { worldId: "string", surface: "string" },
+  "world.play-decorations.read": { worldId: "string" },
   "correction.begin": { worldId: "string", operationId: "string" },
   "correction.read": { candidateId: "string", document: "string" },
   "correction.patch": {
@@ -618,6 +705,38 @@ function validateRequestFields(request: Record<string, unknown>): void {
       "invalid_request",
       "artifacts.debug.operationId is invalid",
     );
+  if (request.type === "play.timeline.page") {
+    if (
+      !Number.isSafeInteger(request.limit) ||
+      Number(request.limit) < 1 ||
+      Number(request.limit) > 100 ||
+      (request.cursor !== undefined &&
+        (typeof request.cursor !== "string" || request.cursor === ""))
+    )
+      throw new V1ProtocolError(
+        "invalid_request",
+        "play.timeline.page pagination is invalid",
+      );
+  }
+  if (
+    request.type === "play.timeline.detail" &&
+    (!Number.isSafeInteger(request.eventId) || Number(request.eventId) < 1)
+  )
+    throw new V1ProtocolError(
+      "invalid_request",
+      "play.timeline.detail.eventId is invalid",
+    );
+  if (
+    request.type === "world.surface.read" &&
+    request.surface !== "state" &&
+    request.surface !== "control" &&
+    request.surface !== "history" &&
+    request.surface !== "runtime"
+  )
+    throw new V1ProtocolError(
+      "invalid_request",
+      "world.surface.read.surface is invalid",
+    );
   if (request.type !== "setting-improvement.start") return;
   if (request.mode !== "plan_first" && request.mode !== "direct_candidate")
     throw new V1ProtocolError(
@@ -688,6 +807,10 @@ const requestTypes = new Set([
   "play.chain.start",
   "play.chain.append",
   "play.chain.inspect",
+  "play.timeline.page",
+  "play.timeline.detail",
+  "world.surface.read",
+  "world.play-decorations.read",
   "correction.begin",
   "correction.read",
   "correction.patch",

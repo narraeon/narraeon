@@ -1170,6 +1170,7 @@ const worldPageEnglishMessages: Record<string, string> = {
   正在游玩的世界: "World in play",
   世界概况: "World overview",
   条已提交消息: "committed messages",
+  条已加载叙事: "loaded narrative messages",
   模型调用中: "Model call in progress",
   调用链已中断: "Call chain interrupted",
   世界已保存: "World saved",
@@ -1182,6 +1183,9 @@ const worldPageEnglishMessages: Record<string, string> = {
   故事: "Story",
   模型响应中: "Model responding",
   调用链记录: "Call-chain record",
+  "正在加载…": "Loading…",
+  加载更早的故事: "Load earlier story",
+  加载更早的已提交叙事: "Load earlier committed narrative",
   全新上下文从这里开始: "A new context begins here",
   故事还没有开始: "The story has not started",
   "描述你的行动，从当前世界开始一条调用链。":
@@ -1278,6 +1282,9 @@ const worldPageEnglishMessages: Record<string, string> = {
   默认折叠: "Collapsed by default",
   "正在接收模型输出…": "Receiving model output…",
   "（本次响应没有文本）": "(This response has no text)",
+  查看模型诊断详情: "View model diagnostic details",
+  响应完成后可查看模型诊断详情:
+    "Model diagnostic details are available after the response completes",
   正在接收的工具调用片段: "Incoming tool-call fragments",
   "Provider usage：输入": "Provider usage: input",
   "· 输出": "· output",

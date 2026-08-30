@@ -1,6 +1,13 @@
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolve } from "node:path";
@@ -12,6 +19,7 @@ import { FileNativeWorldStore } from "../../src/runtime/world/FileNativeWorldSto
 const roots: string[] = [];
 
 afterEach(async () => {
+  delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_FILE_NATIVE_AUTHORITY_EDGE;
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
   );
@@ -77,6 +85,106 @@ test("从 genesis 与不可变提交恢复同一端点，并用同一 commit 幂
     await fixture.store.readSurface(fixture.worldId, "history"),
   ).toHaveLength(2);
 });
+
+test("Authority 追加只发布新提交和小端点，不再重写累计提交目录", async () => {
+  const fixture = await world();
+  const first = await fixture.store.commitPlayStep({
+    operationId: "small-head-1",
+    worldId: fixture.worldId,
+    parentHead: "genesis",
+    historyAppend: [{ role: "player", exactText: "First action" }],
+    nextMaterials: [],
+    stateChanges: [],
+  });
+  const second = await fixture.store.commitPlayStep({
+    operationId: "small-head-2",
+    worldId: fixture.worldId,
+    parentHead: first.head,
+    historyAppend: [{ role: "narrator", exactText: "Second result" }],
+    nextMaterials: [],
+    stateChanges: [],
+  });
+  const runtimeRoot = join(
+    fixture.root,
+    "worlds-file-native",
+    fixture.worldId,
+    "runtime",
+  );
+
+  await expect(
+    readFile(join(runtimeRoot, "play-authority.json"), "utf8"),
+  ).rejects.toMatchObject({ code: "ENOENT" });
+  const authorityHead = JSON.parse(
+    await readFile(join(runtimeRoot, "play-authority-head.json"), "utf8"),
+  ) as Record<string, unknown>;
+  expect(authorityHead).toEqual({
+    schemaVersion: 2,
+    head: second.head,
+    sequence: 2,
+    commitDigest: authorityHead.commitDigest,
+    operationId: "small-head-2",
+  });
+  expect(authorityHead.commitDigest).toMatch(/^[a-f0-9]{64}$/u);
+  expect(
+    JSON.parse(
+      await readFile(join(runtimeRoot, "materialized-head.json"), "utf8"),
+    ),
+  ).toEqual({
+    schemaVersion: 2,
+    head: second.head,
+    sequence: 2,
+    commitDigest: authorityHead.commitDigest,
+  });
+  await expect(
+    fixture.store.getOperationOutcome("small-head-1"),
+  ).resolves.toMatchObject({ outcome: "committed", head: first.head });
+  expect(await readdir(join(runtimeRoot, "play-commits"))).toHaveLength(2);
+});
+
+test.runIf(process.platform === "linux")(
+  "提交事实已写但 Authority 端点尚未切换时，只允许同一操作原样恢复",
+  async () => {
+    expect(await crashWorker("after_acceptance_prepared")).toMatchObject({
+      signal: "SIGKILL",
+    });
+    const root = roots.at(-1)!;
+    const store = new FileNativeWorldStore(root);
+    const creation = await store.getCreationOutcome("create");
+    if (creation.outcome !== "created")
+      throw new Error("world was not created");
+    const worldId = creation.world.worldId;
+    await expect(store.currentHead(worldId)).resolves.toBe("genesis");
+    await expect(store.getOperationOutcome("play")).resolves.toEqual({
+      outcome: "in_progress",
+    });
+    const before = initialSituation();
+    const after = before.replace("安静", "已经提交");
+    await expect(
+      store.commitPlayStep({
+        operationId: "play",
+        worldId,
+        parentHead: "genesis",
+        historyAppend: [
+          { role: "player", exactText: "Different player" },
+          { role: "narrator", exactText: "Narrator" },
+        ],
+        nextMaterials: [],
+        stateChanges: [change(before, after)],
+      }),
+    ).rejects.toMatchObject({ code: "operation_conflict" });
+
+    expect(await runWorker(root, "none")).toMatchObject({ code: 0 });
+    await expect(store.getOperationOutcome("play")).resolves.toMatchObject({
+      outcome: "committed",
+      head: "commit:1",
+    });
+    expect(
+      await readdir(
+        join(root, "worlds-file-native", worldId, "runtime", "play-commits"),
+      ),
+    ).toHaveLength(1);
+  },
+);
 
 test("Authority 接受后的确定物化冲突必须抛出，不得伪装为普通 pending", async () => {
   const fixture = await world();
