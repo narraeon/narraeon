@@ -30,6 +30,7 @@ export interface SettingAuthorMessage {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
   toolCallId?: string;
+  isError?: boolean;
   toolCalls?: SettingAuthorToolCall[];
   reasoningContent?: string;
   providerState?: ProviderExchangeState;
@@ -821,6 +822,7 @@ export class DocumentCandidateSettingImprovement {
           role: "tool",
           toolCallId: call.id,
           content: result.markdown,
+          ...(result.ok ? {} : { isError: true }),
         });
         this.#recordAction(call, result.ok);
         if (!result.ok) {
@@ -1093,6 +1095,7 @@ export class DocumentCandidateSettingImprovement {
                         failureIndex,
                         this.#locale,
                       ),
+                isError: true,
               });
             await this.#recordResponseFailure(response, {
               kind: "tool_execution",
@@ -1146,6 +1149,7 @@ export class DocumentCandidateSettingImprovement {
                     `# Runtime tool rejected\n\n${rejection}`,
                     `# Runtime 工具拒绝\n\n${rejection}`,
                   ),
+            ...(rejection === null ? {} : { isError: true }),
           });
           if (rejection === null) finished = true;
           else {
@@ -1171,6 +1175,7 @@ export class DocumentCandidateSettingImprovement {
             role: "tool",
             toolCallId: call.id,
             content: check.markdown,
+            ...(check.passed ? {} : { isError: true }),
           });
           lastFailedCheck = check.passed ? null : check.markdown;
           previewedSnapshotId = check.passed ? candidate.id : null;
@@ -1212,6 +1217,7 @@ export class DocumentCandidateSettingImprovement {
           role: "tool",
           toolCallId: call.id,
           content: result.markdown,
+          ...(result.ok ? {} : { isError: true }),
         });
         this.#recordAction(call, result.ok);
         if (!result.ok) {
@@ -1393,7 +1399,7 @@ function assistantMessage(response: {
       : { reasoningContent: response.reasoningContent }),
     ...(response.providerState === undefined
       ? {}
-      : { providerState: response.providerState }),
+      : { providerState: structuredClone(response.providerState) }),
     toolCalls: structuredClone(response.toolCalls),
   };
 }

@@ -9,6 +9,7 @@ export interface ChatModelStreamResult {
   assistantMessage: Record<string, unknown>;
   toolCalls: { id: string; name: string; arguments: string }[];
   usage: unknown;
+  stopReason?: string;
 }
 
 export async function aggregateChatModelStream(
@@ -18,8 +19,10 @@ export async function aggregateChatModelStream(
   let content = "";
   let reasoningContent = "";
   let usage: unknown;
+  let stopReason: string | undefined;
   let completed = false;
   let sawPayload = false;
+  const providerMessage: Record<string, unknown> = { role: "assistant" };
   const calls = new Map<
     number,
     { id: string; name: string; type: string; arguments: string }
@@ -53,9 +56,12 @@ export async function aggregateChatModelStream(
         typeof choiceValue.finish_reason !== "string"
       )
         throw new Error("Chat SSE finish_reason is invalid");
+      if (typeof choiceValue.finish_reason === "string")
+        stopReason = choiceValue.finish_reason;
       const delta = choiceValue.delta;
       if (delta.role !== undefined && delta.role !== "assistant")
         throw new Error("Chat SSE assistant role is invalid");
+      mergeChatProviderDelta(providerMessage, delta);
       if (
         delta.content !== undefined &&
         delta.content !== null &&
@@ -142,6 +148,7 @@ export async function aggregateChatModelStream(
       return { id: call.id, name: call.name, arguments: call.arguments };
     });
   const assistantMessage: Record<string, unknown> = {
+    ...providerMessage,
     role: "assistant",
     content: content === "" ? null : content,
     ...(reasoningContent === "" ? {} : { reasoning_content: reasoningContent }),
@@ -161,7 +168,53 @@ export async function aggregateChatModelStream(
     assistantMessage,
     toolCalls,
     usage,
+    ...(stopReason === undefined ? {} : { stopReason }),
   };
+}
+
+/**
+ * Preserve compatibility fields carried by Chat SSE deltas without pretending
+ * they are part of the Runtime projection. Known fields are rebuilt below from
+ * their protocol-defined fragment rules; unknown fields stay opaque here.
+ */
+function mergeChatProviderDelta(
+  target: Record<string, unknown>,
+  delta: Record<string, unknown>,
+): void {
+  for (const [key, value] of Object.entries(delta)) {
+    if (
+      key === "role" ||
+      key === "content" ||
+      key === "reasoning_content" ||
+      key === "tool_calls" ||
+      value === undefined
+    )
+      continue;
+    target[key] = mergeOpaqueDelta(target[key], value);
+  }
+}
+
+function mergeOpaqueDelta(current: unknown, fragment: unknown): unknown {
+  if (fragment === null) return current ?? null;
+  if (typeof fragment === "string")
+    return typeof current === "string" ? current + fragment : fragment;
+  if (Array.isArray(fragment)) {
+    const result = Array.isArray(current) ? structuredClone(current) : [];
+    for (const item of fragment) {
+      if (isRecord(item) && Number.isSafeInteger(item.index)) {
+        const index = Number(item.index);
+        result[index] = mergeOpaqueDelta(result[index], item);
+      } else result.push(structuredClone(item));
+    }
+    return result;
+  }
+  if (isRecord(fragment)) {
+    const result = isRecord(current) ? structuredClone(current) : {};
+    for (const [key, value] of Object.entries(fragment))
+      result[key] = mergeOpaqueDelta(result[key], value);
+    return result;
+  }
+  return structuredClone(fragment);
 }
 
 export interface AnthropicModelStreamResult {
@@ -205,7 +258,8 @@ export async function aggregateAnthropicModelStream(
           throw new Error("Anthropic SSE message_start is invalid");
         if (
           payload.message.role !== "assistant" ||
-          !Array.isArray(payload.message.content)
+          !Array.isArray(payload.message.content) ||
+          payload.message.content.length !== 0
         )
           throw new Error("Anthropic SSE initial message is invalid");
         started = true;
@@ -458,6 +512,7 @@ function mergeUsage(target: Record<string, unknown>, value: unknown): void {
     "output_tokens",
     "cache_read_input_tokens",
     "cache_creation_input_tokens",
+    "thinking_tokens",
   ]) {
     if (value[field] !== undefined) target[field] = value[field];
   }

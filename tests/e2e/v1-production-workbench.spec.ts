@@ -562,16 +562,19 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   const interruptedRequestIndex = providerRequests.length;
   await page.getByRole("button", { name: "追加上下文" }).click();
   await expect(
-    page.getByRole("alert").filter({ hasText: "保持输入框为空" }),
+    page.getByRole("alert").filter({ hasText: "旧请求不能重发" }),
   ).toBeVisible();
   await expect(
     page.getByText("Where should we meet beforehand?", { exact: true }),
   ).toHaveCount(1);
-  await page.getByRole("button", { name: "追加上下文" }).click();
+  await page
+    .getByLabel("你的行动")
+    .fill("Start a fresh call and tell me where we should meet beforehand.");
+  await page.getByRole("button", { name: "全新上下文" }).click();
   await expect(
     page.getByText("Alex adds that everyone will meet downstairs at 7:30."),
   ).toBeVisible();
-  expect(providerRequests[interruptedRequestIndex + 1]).toBe(
+  expect(providerRequests[interruptedRequestIndex + 1]).not.toBe(
     providerRequests[interruptedRequestIndex],
   );
   await expect(

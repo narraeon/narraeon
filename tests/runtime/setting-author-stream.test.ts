@@ -69,6 +69,7 @@ test("多个工具调用按 index 排序，交错到达也不串行", async () =
         { index: 0, function: { arguments: '{"path":"x"}' } },
       ],
     }),
+    "data: [DONE]\n\n",
   ]);
 
   expect(result.toolCalls.map(({ id }) => id)).toEqual(["a", "b"]);
@@ -93,6 +94,7 @@ test("心跳注释与空 delta 不产生增量", async () => {
       ": keep-alive\n\n",
       chunk({ content: "" }),
       chunk({ content: "Present." }),
+      "data: [DONE]\n\n",
     ],
     (delta) => deltas.push(delta),
   );
@@ -107,17 +109,25 @@ test("anthropic：拼接 thinking 与 text，并按 index 拼 tool 的 partial_j
     [
       anthropic("message_start", {
         type: "message_start",
-        message: { usage: { input_tokens: 240 } },
+        message: {
+          role: "assistant",
+          content: [],
+          usage: { input_tokens: 240 },
+        },
       }),
       anthropic("content_block_start", {
         type: "content_block_start",
         index: 0,
-        content_block: { type: "thinking" },
+        content_block: { type: "thinking", thinking: "" },
       }),
       anthropic("content_block_delta", {
         type: "content_block_delta",
         index: 0,
         delta: { type: "thinking_delta", thinking: "Think it through." },
+      }),
+      anthropic("content_block_stop", {
+        type: "content_block_stop",
+        index: 0,
       }),
       anthropic("content_block_start", {
         type: "content_block_start",
@@ -126,6 +136,7 @@ test("anthropic：拼接 thinking 与 text，并按 index 拼 tool 的 partial_j
           type: "tool_use",
           id: "toolu_1",
           name: "setting_write_file",
+          input: {},
         },
       }),
       anthropic("content_block_delta", {
@@ -138,10 +149,16 @@ test("anthropic：拼接 thinking 与 text，并按 index 拼 tool 的 partial_j
         index: 1,
         delta: { type: "input_json_delta", partial_json: '"a.yaml"}' },
       }),
+      anthropic("content_block_stop", {
+        type: "content_block_stop",
+        index: 1,
+      }),
       anthropic("message_delta", {
         type: "message_delta",
+        delta: { stop_reason: "tool_use" },
         usage: { output_tokens: 36 },
       }),
+      anthropic("message_stop", { type: "message_stop" }),
     ],
     (delta) => deltas.push(delta),
   );
@@ -151,29 +168,27 @@ test("anthropic：拼接 thinking 与 text，并按 index 拼 tool 的 partial_j
     {
       id: "toolu_1",
       name: "setting_write_file",
-      arguments: '{"path":"a.yaml"}',
+      arguments: { path: "a.yaml" },
     },
   ]);
   expect(result.usage).toEqual({ input_tokens: 240, output_tokens: 36 });
   expect(deltas.map(({ kind }) => kind)).toEqual(["reasoning", "tool", "tool"]);
 });
 
-test("anthropic：没有对应 tool 块的 partial_json 被忽略而不是崩溃", async () => {
-  const result = await aggregateAnthropic([
-    anthropic("content_block_delta", {
-      type: "content_block_delta",
-      index: 7,
-      delta: { type: "input_json_delta", partial_json: "{}" },
-    }),
-    anthropic("content_block_delta", {
-      type: "content_block_delta",
-      index: 0,
-      delta: { type: "text_delta", text: "Okay." },
-    }),
-  ]);
-
-  expect(result.toolCalls).toEqual([]);
-  expect(result.content).toBe("Okay.");
+test("anthropic：缺少对应原生块的 delta 会使续传载荷整体失败", async () => {
+  await expect(
+    aggregateAnthropic([
+      anthropic("message_start", {
+        type: "message_start",
+        message: { role: "assistant", content: [] },
+      }),
+      anthropic("content_block_delta", {
+        type: "content_block_delta",
+        index: 7,
+        delta: { type: "input_json_delta", partial_json: "{}" },
+      }),
+    ]),
+  ).rejects.toThrow("Anthropic SSE content block delta is invalid");
 });
 
 function anthropic(event: string, payload: unknown): string {

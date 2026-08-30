@@ -36,6 +36,9 @@ const englishMessages: Record<string, string> = {
   操作失败: "Operation failed",
   未命名世界: "Untitled world",
   模型连接: "Model connection",
+  完成原因: "Provider completion reason",
+  原生续传载荷: "Provider-native continuation payload",
+  不可用: "Unavailable",
   尚未配置: "Not configured",
   内容包: "Content package",
   内容包编辑方式: "Content package editing mode",
@@ -1279,6 +1282,8 @@ const worldPageEnglishMessages: Record<string, string> = {
   "· 第": "· dispatch",
   次派发: "",
   模型思维链: "Model reasoning",
+  "Provider 返回推理（不等同隐藏思维链）":
+    "Provider-returned reasoning (not hidden chain of thought)",
   默认折叠: "Collapsed by default",
   "正在接收模型输出…": "Receiving model output…",
   "（本次响应没有文本）": "(This response has no text)",
@@ -1474,6 +1479,28 @@ const dynamicEnglishMessages: Record<string, string> = {
   "{status} · 第 {attempt} 次派发": "{status} · dispatch {attempt}",
   "调用 {tool}": "Call {tool}",
   "{count} 项产物": "{count} artifact(s)",
+  端点方言: "Endpoint dialect",
+  协议标准: "Protocol standard",
+  推理强度: "Reasoning effort",
+  返回推理摘要: "Returned reasoning summary",
+  "Provider 默认": "Provider default",
+  "方言 / 推理": "Dialect / reasoning",
+  "CLIProxyAPI 方言只启用代理明确支持的兼容参数；响应仍按所选协议解析，不从可见文本猜测思考块。Claude 的签名 thinking 请选 Responses 或 Anthropic Messages；Chat Completions 通常只有 reasoning_content，不能承诺无损续传签名。模型名的 (high) 等 thinking 后缀会覆盖请求参数，因此只能与“Provider 默认”推理强度一起使用。":
+    "The CLIProxyAPI dialect enables only compatibility parameters explicitly supported by the proxy. Responses are still decoded as the selected protocol; visible text is never guessed to be a thinking block. Use Responses or Anthropic Messages for signed Claude thinking. Chat Completions usually exposes only reasoning_content and cannot guarantee lossless signature continuation. Model-name thinking suffixes such as (high) override body parameters, so use them only with Provider default effort.",
+  "推理摘要只进入模型诊断，不会成为玩家叙事；Provider 返回的原生续传块会原样保存并在下一次请求中重放。":
+    "Reasoning summaries are diagnostic only and never become player narrative. Provider-native continuation blocks are retained and replayed in the next request.",
+  "查看实际 HTTP 请求（凭据已省略）":
+    "View actual HTTP request (credentials omitted)",
+  字节: "bytes",
+  缓存策略: "Cache strategy",
+  "由 Provider 管理，无显式断点": "Provider-managed; no explicit breakpoint",
+  输入: "Input",
+  未缓存输入: "Uncached input",
+  缓存读取: "Cache read",
+  缓存写入: "Cache write",
+  推理: "Reasoning",
+  输出: "Output",
+  合计: "Total",
 };
 
 Object.assign(englishMessages, dynamicEnglishMessages);

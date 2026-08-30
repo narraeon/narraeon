@@ -11,6 +11,7 @@ import {
 } from "../../src/protocol/v1.ts";
 import type { ContentTreeFile } from "../../src/runtime/content/ContentWorkspace.ts";
 import {
+  ModelHostFailureError,
   ModelHostOutcomeUnknownError,
   ScriptedModelHost,
   type ModelHost,
@@ -136,6 +137,45 @@ test("Provider 完整结果先落盘，冷恢复不重新调用模型即可继�
       .map(({ exactText }) => exactText)
       .filter((text) => text === "Alex opens the recovered door exactly once."),
   ).toHaveLength(1);
+});
+
+test("派发推进存在但结果未落盘时按 outcome unknown 终止，冷恢复不允许重放", async () => {
+  const { worlds, worldId } = await createWorld(
+    "play-chain-abandoned-dispatch-unknown",
+  );
+  const modelHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [{ outcome: "response", text: "Must never be dispatched." }],
+  });
+  process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE =
+    "after_response_advance_began";
+
+  await expect(
+    new PlayCallChain(worlds).start({
+      worldId,
+      chainId: "play-chain-abandoned-dispatch-unknown",
+      exchangeId: "play-chain-abandoned-dispatch-player",
+      playerText: "I wait while the service exits.",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: modelBinding(),
+      modelHost,
+    }),
+  ).rejects.toThrow("after_response_advance_began");
+  expect(modelHost.requests).toHaveLength(0);
+
+  delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE;
+  const recovered = await new PlayCallChain(worlds).inspectWorld(worldId);
+
+  expect(recovered).toMatchObject({ status: "interrupted", canRetry: false });
+  expect(
+    recovered?.events.some(
+      (event) =>
+        event.kind === "failure" &&
+        event.message.includes("outcome is unknown"),
+    ),
+  ).toBe(true);
+  expect(modelHost.requests).toHaveLength(0);
 });
 
 test("精确结算已准备但 Authority 尚未接受时，冷恢复提交同一结果", async () => {
@@ -786,7 +826,7 @@ test("冷启动恢复 world_create 授予的写权限，后续无需重新读取
           },
         ],
       },
-      { outcome: "unknown", message: "创建后的下一次模型请求中断。" },
+      { outcome: "failure", message: "创建后的下一次模型请求被拒绝。" },
     ],
   });
 
@@ -1585,6 +1625,13 @@ test("修改历史玩家提交会在同一世界追加时间线修订，并从�
     {
       kind: "assistant",
       text: "Alex says to meet downstairs at eight.",
+      providerState: {
+        protocol: "chat_completions",
+        assistantMessage: {
+          role: "assistant",
+          content: "Alex says to meet downstairs at eight.",
+        },
+      },
       toolCalls: [],
     },
     { kind: "player", text: "Then let's meet fifteen minutes early." },
@@ -1602,7 +1649,7 @@ test("修改历史玩家提交会在同一世界追加时间线修订，并从�
   });
 });
 
-test("中断后留空追加会原样发送已保存的模型请求，不追加玩家指令或中断片段", async () => {
+test("Provider 结果未知时禁止重放已派发请求，并要求全新上下文", async () => {
   const { worlds, worldId } = await createWorld("play-chain-retry");
   const requests: ModelHostExchange[] = [];
   let attempt = 0;
@@ -1673,38 +1720,81 @@ test("中断后留空追加会原样发送已保存的模型请求，不追加�
   const recovered = await recoveredChains.inspectWorld(worldId);
   expect(recovered).toMatchObject({
     status: "interrupted",
-    canRetry: true,
+    canRetry: false,
   });
   expect(recovered?.events).toContainEqual(
     expect.objectContaining({ kind: "assistant", status: "interrupted" }),
   );
-  const completed = await recoveredChains.append({
-    worldId,
-    chainId: interrupted.chainId,
-    exchangeId: "continue-without-player-input",
-    playerText: "",
-    modelHost,
-  });
-
-  expect(completed).toMatchObject({
-    status: "ready",
-    parentHead: "commit:2",
-    lastFailure: null,
-  });
-  expect(requests).toHaveLength(2);
-  expect(requests[1]).toEqual(requests[0]);
-  expect(completed.events.filter(({ kind }) => kind === "player")).toHaveLength(
-    1,
+  await expect(
+    recoveredChains.append({
+      worldId,
+      chainId: interrupted.chainId,
+      exchangeId: "continue-without-player-input",
+      playerText: "",
+      modelHost,
+    }),
+  ).rejects.toThrow(
+    "Call-chain processing failed, and there is no model context to continue.",
   );
+  expect(requests).toHaveLength(1);
   const endpoint = await worlds.recoverEndpoint(worldId);
   expect(endpoint.history.map(({ exactText }) => exactText)).toEqual([
     "门外传来三声短促的铃响。\n",
     "I ask Alex to open the door.",
-    "Alex pushes the door fully open, and cold corridor air rushes in.",
   ]);
   expect(endpoint.history.map(({ exactText }) => exactText)).not.toContain(
     "Alex has pushed the door halfway open",
   );
+});
+
+test("确定性 Provider 拒绝后只重放原样保存的请求", async () => {
+  const { worlds, worldId } = await createWorld("play-chain-safe-retry");
+  const requests: ModelHostExchange[] = [];
+  let attempt = 0;
+  const modelHost: ModelHost = {
+    binding: modelBinding,
+    exchange(request) {
+      requests.push(structuredClone(request));
+      attempt += 1;
+      if (attempt === 1)
+        return Promise.reject(
+          new ModelHostFailureError("Provider 在生成前拒绝了请求。"),
+        );
+      return Promise.resolve({
+        text: "Alex opens the door after the retry.",
+        providerState: {
+          protocol: "chat_completions",
+          assistantMessage: {
+            role: "assistant",
+            content: "Alex opens the door after the retry.",
+          },
+        },
+      });
+    },
+  };
+  const chains = new PlayCallChain(worlds);
+  const interrupted = await chains.start({
+    worldId,
+    chainId: "play-chain-safe-retry-contract",
+    exchangeId: "exchange-safe-retry",
+    playerText: "I ask Alex to open the door.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+  expect(interrupted).toMatchObject({ status: "interrupted", canRetry: true });
+
+  const completed = await chains.append({
+    worldId,
+    chainId: interrupted.chainId,
+    exchangeId: "safe-retry-without-player-input",
+    playerText: "",
+    modelHost,
+  });
+  expect(completed).toMatchObject({ status: "ready", canRetry: false });
+  expect(requests).toHaveLength(2);
+  expect(requests[1]).toEqual(requests[0]);
 });
 
 test("空输入追加会从完整逻辑 transcript 继续生成，并把 Provider 文本增量实时投影", async () => {
@@ -1776,6 +1866,14 @@ test("空输入追加会从完整逻辑 transcript 继续生成，并把 Provide
       kind: "assistant",
       text: "Alex opens the door first.",
       reasoningContent: "First confirm that the doorway is clear.",
+      providerState: {
+        protocol: "chat_completions",
+        assistantMessage: {
+          role: "assistant",
+          content: "Alex opens the door first.",
+          reasoning_content: "First confirm that the doorway is clear.",
+        },
+      },
       toolCalls: [],
     },
   ]);
@@ -1789,6 +1887,167 @@ test("空输入追加会从完整逻辑 transcript 继续生成，并把 Provide
     "Alex opens the door first.",
     "He then walks into the corridor.",
   ]);
+});
+
+test("模型绑定的协议配置变化会在提交玩家输入前拒绝旧上下文", async () => {
+  const { worlds, worldId } = await createWorld("play-binding-switch");
+  const initialHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [{ outcome: "response", text: "The first exchange settles." }],
+  });
+  const chains = new PlayCallChain(worlds);
+  const initial = await chains.start({
+    worldId,
+    chainId: "play-binding-switch-contract",
+    exchangeId: "binding-switch-first",
+    playerText: "Begin with the frozen model.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: initialHost,
+  });
+  const switchedHost = new ScriptedModelHost({
+    binding: {
+      ...modelBinding(),
+      protocolConfigFingerprint: "sha256:changed-reasoning-policy",
+    },
+    steps: [{ outcome: "response", text: "Must not be dispatched." }],
+  });
+
+  await expect(
+    chains.append({
+      worldId,
+      chainId: initial.chainId,
+      exchangeId: "binding-switch-second",
+      playerText: "Continue after changing the connection.",
+      modelHost: switchedHost,
+    }),
+  ).rejects.toThrow(
+    "The selected model connection does not match the frozen model binding; start a fresh context.",
+  );
+  expect(switchedHost.requests).toHaveLength(0);
+  expect((await worlds.recoverEndpoint(worldId)).history).toHaveLength(3);
+});
+
+test("只有 reasoning 的响应仍持久化原生续传载荷，但不会进入叙事 Authority", async () => {
+  const { worlds, worldId } = await createWorld("play-reasoning-only-state");
+  const host = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        reasoningContent: "Private returned reasoning.",
+        stopReason: "tool_calls",
+        usage: {
+          inputTokens: 100,
+          uncachedInputTokens: 60,
+          cacheReadTokens: 30,
+          cacheWriteTokens: 10,
+          reasoningTokens: 20,
+          outputTokens: 30,
+          totalTokens: 130,
+          provenance: {
+            inputTokens: "provider",
+            uncachedInputTokens: "derived_provider_fields",
+            cacheReadTokens: "provider",
+            cacheWriteTokens: "provider",
+            reasoningTokens: "provider",
+            outputTokens: "provider",
+            totalTokens: "provider",
+          },
+        },
+      },
+    ],
+  });
+
+  const view = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "play-reasoning-only-state-contract",
+    exchangeId: "reasoning-only-first",
+    playerText: "Think without narrating.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: host,
+  });
+
+  expect(view).toMatchObject({ status: "interrupted", canRetry: false });
+  expect((await worlds.recoverEndpoint(worldId)).history).toHaveLength(2);
+  const persisted = await worlds.playTimeline.readCurrent(worldId);
+  expect(persisted?.value.transcript.at(-1)).toMatchObject({
+    kind: "assistant",
+    text: "",
+    reasoningContent: "Private returned reasoning.",
+    providerState: {
+      protocol: "chat_completions",
+      assistantMessage: {
+        role: "assistant",
+        content: null,
+        reasoning_content: "Private returned reasoning.",
+      },
+    },
+  });
+  expect(
+    persisted?.value.events.find(({ kind }) => kind === "assistant"),
+  ).toMatchObject({
+    stopReason: "tool_calls",
+    continuation: "available",
+    usage: {
+      uncachedInputTokens: 60,
+      cacheReadTokens: 30,
+      cacheWriteTokens: 10,
+      reasoningTokens: 20,
+      provenance: { uncachedInputTokens: "derived_provider_fields" },
+    },
+  });
+});
+
+test("完整响应若缺失原生续传载荷会保留叙事，但立即终止当前模型上下文", async () => {
+  const { worlds, worldId } = await createWorld(
+    "play-missing-native-continuation",
+  );
+  const host = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        continuation: "lost",
+        text: "The visible scene still settles once.",
+      },
+    ],
+  });
+
+  const view = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "play-missing-native-continuation",
+    exchangeId: "play-missing-native-continuation-player",
+    playerText: "I look around.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: host,
+  });
+
+  expect(view).toMatchObject({ status: "interrupted", canRetry: false });
+  expect(view.events).toContainEqual(
+    expect.objectContaining({
+      kind: "assistant",
+      text: "The visible scene still settles once.",
+      continuation: "unavailable",
+    }),
+  );
+  expect(
+    view.events.some(
+      (event) =>
+        event.kind === "failure" &&
+        event.message.includes("no provider-native continuation payload"),
+    ),
+  ).toBe(true);
+  expect(
+    (await worlds.recoverEndpoint(worldId)).history.map(({ exactText }) =>
+      exactText.trim(),
+    ),
+  ).toContain("The visible scene still settles once.");
 });
 
 test("AI 工具被 Runtime 拒绝时保存产生该调用的原始交换与 reasoning", async () => {
@@ -2090,6 +2349,13 @@ test("后置请求在整轮结束后各跑一次，共享同一主链前缀且�
     {
       kind: "assistant",
       text: "Alex opens the door, and wind rushes in.",
+      providerState: {
+        protocol: "chat_completions",
+        assistantMessage: {
+          role: "assistant",
+          content: "Alex opens the door, and wind rushes in.",
+        },
+      },
       toolCalls: [],
     },
   ];

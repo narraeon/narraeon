@@ -8,6 +8,7 @@ import type {
   ModelHostAppendItem,
   ModelHostToolCall,
 } from "../model/ModelHost.ts";
+import type { ModelUsage } from "../../protocol/modelUsage.ts";
 import {
   errorDescription,
   type AiExchangeDiagnostics,
@@ -24,7 +25,7 @@ export interface PlayFollowupOutcome {
   displayName: string;
   text: string;
   reasoning?: string;
-  usage?: { inputTokens: number | null; outputTokens: number | null };
+  usage?: ModelUsage;
   toolCalls: {
     callId: string;
     name: string;
@@ -169,10 +170,7 @@ async function runOne(
     if (response.reasoningContent !== undefined)
       outcome.reasoning = response.reasoningContent;
     if (response.usage !== undefined)
-      outcome.usage = {
-        inputTokens: response.usage.inputTokens,
-        outputTokens: response.usage.outputTokens,
-      };
+      outcome.usage = structuredClone(response.usage);
     // One request, one pass: tool results are recorded for the trace but never
     // fed back for another exchange.
     for (const call of response.toolCalls ?? []) {

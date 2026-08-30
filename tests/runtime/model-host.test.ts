@@ -34,6 +34,12 @@ test("ModelHost binding 比较覆盖端点、模型、预算与协议配置", ()
   expect(
     equalModelHostBinding(binding, {
       ...binding,
+      cacheStrategy: "provider_managed",
+    }),
+  ).toBe(false);
+  expect(
+    equalModelHostBinding(binding, {
+      ...binding,
       protocolConfigFingerprint: "sha256:other-protocol",
     }),
   ).toBe(false);
@@ -69,6 +75,235 @@ test("FileNativeModelHost 暴露不含凭据且稳定的完整绑定", () => {
   expect(movedEndpoint.endpointFingerprint).not.toBe(left.endpointFingerprint);
   expect(left).not.toHaveProperty("apiKey");
   expect(left).not.toHaveProperty("baseUrl");
+
+  const changedReasoningPolicy = new FileNativeModelHost({
+    provider: "chat_completions",
+    dialect: "cliproxyapi",
+    baseUrl: "https://provider.invalid/v1",
+    apiKey: "secret-b",
+    modelId: "model-a",
+    reasoningEffort: "high",
+    reasoningSummary: "none",
+    contextWindowTokens: 64_000,
+    maxOutputTokens: 2_048,
+  }).binding();
+  expect(changedReasoningPolicy.protocolConfigFingerprint).not.toBe(
+    left.protocolConfigFingerprint,
+  );
+});
+
+test("wire adapter 自身拒绝无效推理策略，不依赖配置存储层兜底", () => {
+  expect(
+    () =>
+      new FileNativeModelHost({
+        provider: "anthropic_messages",
+        baseUrl: "https://provider.invalid/v1",
+        apiKey: "secret",
+        modelId: "claude",
+        reasoningEffort: "minimal",
+        contextWindowTokens: 64_000,
+        maxOutputTokens: 2_048,
+      }),
+  ).toThrow("does not define minimal effort");
+  expect(
+    () =>
+      new FileNativeModelHost({
+        provider: "chat_completions",
+        dialect: "standard",
+        baseUrl: "https://provider.invalid/v1",
+        apiKey: "secret",
+        modelId: "chat-model",
+        reasoningSummary: "auto",
+        contextWindowTokens: 64_000,
+        maxOutputTokens: 2_048,
+      }),
+  ).toThrow("has no reasoning-summary parameter");
+  expect(
+    () =>
+      new FileNativeModelHost({
+        provider: "anthropic_messages",
+        baseUrl: "https://provider.invalid/v1",
+        apiKey: "secret",
+        modelId: "claude",
+        reasoningEffort: "none",
+        reasoningSummary: "auto",
+        contextWindowTokens: 64_000,
+        maxOutputTokens: 2_048,
+      }),
+  ).toThrow("cannot return a reasoning summary");
+});
+
+test.each([
+  {
+    provider: "chat_completions" as const,
+    dialect: "cliproxyapi" as const,
+    effort: "high" as const,
+    summary: "none" as const,
+    expected: {
+      reasoning_effort: "high",
+      reasoning: { exclude: true },
+      stream_options: { include_usage: true },
+    },
+  },
+  {
+    provider: "openai_responses" as const,
+    dialect: "cliproxyapi" as const,
+    effort: "max" as const,
+    summary: "detailed" as const,
+    expected: {
+      reasoning: { effort: "max", summary: "detailed" },
+      store: false,
+      include: ["reasoning.encrypted_content"],
+    },
+  },
+  {
+    provider: "openai_responses" as const,
+    dialect: "standard" as const,
+    effort: "high" as const,
+    summary: "none" as const,
+    expected: {
+      reasoning: { effort: "high" },
+      store: false,
+      include: ["reasoning.encrypted_content"],
+    },
+  },
+  {
+    provider: "openai_responses" as const,
+    dialect: "cliproxyapi" as const,
+    effort: "high" as const,
+    summary: "none" as const,
+    expected: {
+      reasoning: { effort: "high", summary: null },
+      store: false,
+      include: ["reasoning.encrypted_content"],
+    },
+  },
+  {
+    provider: "anthropic_messages" as const,
+    dialect: "cliproxyapi" as const,
+    effort: "high" as const,
+    summary: "auto" as const,
+    expected: {
+      thinking: { type: "adaptive", display: "summarized" },
+      output_config: { effort: "high" },
+    },
+  },
+  {
+    provider: "anthropic_messages" as const,
+    dialect: "standard" as const,
+    effort: "low" as const,
+    summary: "provider_default" as const,
+    expected: {
+      output_config: { effort: "low" },
+    },
+  },
+])(
+  "$provider 的 wire preview 与生产编码器共享 reasoning 请求合同",
+  ({ provider, dialect, effort, summary, expected }) => {
+    const host = new FileNativeModelHost({
+      provider,
+      dialect,
+      baseUrl: "https://provider.invalid/v1",
+      apiKey: "must-not-appear",
+      modelId: "reasoning-model",
+      reasoningEffort: effort,
+      reasoningSummary: summary,
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_048,
+    });
+    const request = exchangeFor(
+      provider,
+      "reasoning-model",
+      host.binding().cacheStrategy,
+    );
+
+    const preview = host.previewRequest(request);
+
+    expect(preview).toMatchObject({
+      provider,
+      method: "POST",
+      body: expected,
+    });
+    if (dialect === "cliproxyapi" && provider !== "anthropic_messages") {
+      const body = preview.body as {
+        messages?: unknown[];
+        input?: unknown[];
+        prompt_cache_key?: unknown;
+      };
+      expect(body.prompt_cache_key).toEqual(expect.any(String));
+      const items = body.messages ?? body.input ?? [];
+      expect(items.find(isSystemMessage)).toMatchObject({
+        role: "system",
+        cache_control: { type: "ephemeral" },
+      });
+      const userMessage = items.find(isUserMessage) as
+        { role: "user"; content: unknown[] } | undefined;
+      expect(userMessage?.role).toBe("user");
+      expect(userMessage?.content[0]).toMatchObject({
+        cache_control: { type: "ephemeral" },
+      });
+    }
+    expect(JSON.stringify(preview)).not.toContain("must-not-appear");
+  },
+);
+
+test("prompt_cache_key 在同一冻结调用链稳定，并隔离不同 CLIProxy 会话", () => {
+  const host = new FileNativeModelHost({
+    provider: "openai_responses",
+    dialect: "cliproxyapi",
+    baseUrl: "https://provider.invalid/v1",
+    apiKey: "secret",
+    modelId: "claude-through-proxy",
+    contextWindowTokens: 64_000,
+    maxOutputTokens: 2_048,
+  });
+  const base = exchangeFor(
+    "openai_responses",
+    "claude-through-proxy",
+    host.binding().cacheStrategy,
+  );
+  const key = (request: ModelHostExchange): unknown =>
+    (host.previewRequest(request).body as Record<string, unknown>)
+      .prompt_cache_key;
+
+  const first = key({ ...base, operationId: "chain-a" });
+  const continued = key({
+    ...base,
+    operationId: "chain-a",
+    appended: [...base.appended, { kind: "player", text: "Continue." }],
+  });
+  const other = key({ ...base, operationId: "chain-b" });
+
+  expect(first).toEqual(expect.any(String));
+  expect(continued).toBe(first);
+  expect(other).not.toBe(first);
+  expect(first).not.toBe("chain-a");
+});
+
+test("标准 Responses 用稳定前缀而不是内部调用链身份分组缓存", () => {
+  const host = new FileNativeModelHost({
+    provider: "openai_responses",
+    dialect: "standard",
+    baseUrl: "https://provider.invalid/v1",
+    apiKey: "secret",
+    modelId: "openai-reasoning-model",
+    contextWindowTokens: 64_000,
+    maxOutputTokens: 2_048,
+  });
+  const request = exchangeFor(
+    "openai_responses",
+    "openai-reasoning-model",
+    host.binding().cacheStrategy,
+  );
+  const key = (operationId: string) =>
+    (
+      host.previewRequest({ ...request, operationId }).body as {
+        prompt_cache_key: string;
+      }
+    ).prompt_cache_key;
+
+  expect(key("chain-a")).toBe(key("chain-b"));
+  expect(key("chain-a")).not.toBe("chain-a");
 });
 
 test("ScriptedModelHost 记录真实 exchange 并返回确定性 Provider 状态", async () => {
@@ -136,4 +371,49 @@ function exchange(): ModelHostExchange {
     exchange: 1,
     maxOutputTokens: 1_024,
   };
+}
+
+function exchangeFor(
+  provider: ModelHostBinding["provider"],
+  modelId: string,
+  cacheStrategy: ModelHostBinding["cacheStrategy"],
+): ModelHostExchange {
+  const bootstrap = new FileNativePromptCompiler().compileBootstrap(
+    createMinimalFileNativePreviewInput({
+      provider,
+      modelId,
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_048,
+      ...(cacheStrategy === undefined ? {} : { cacheStrategy }),
+      playerInput: "Inspect the actual request body.",
+      playerInputPlacement: "append",
+    }),
+  );
+  return {
+    bootstrap,
+    tools: bootstrap.tools,
+    toolUniverse: bootstrap.toolUniverse,
+    allowedTools: bootstrap.tools.map(({ name }) => name),
+    toolStrategy: bootstrap.toolStrategy,
+    appended: [{ kind: "player", text: "Inspect the actual request body." }],
+    maxOutputTokens: 2_048,
+  };
+}
+
+function isSystemMessage(value: unknown): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "role" in value &&
+    value.role === "system"
+  );
+}
+
+function isUserMessage(value: unknown): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "role" in value &&
+    value.role === "user"
+  );
 }

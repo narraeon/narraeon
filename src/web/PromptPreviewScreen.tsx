@@ -81,15 +81,26 @@ export interface PromptPreviewData {
       status: "fits" | "over_budget" | "not_checked";
     };
     cache: {
+      strategy:
+        | "explicit_anthropic_blocks"
+        | "explicit_cliproxyapi_message"
+        | "provider_managed";
       stablePrefixFingerprint: string;
       breakpoints: LogicalRole[];
-      estimatedCacheableTokens: number;
+      estimatedCacheableBytes: number;
       firstDynamicByte: number;
     };
   };
   initialAppend?: {
     logical: { kind: "player"; text: string };
     provider: { role: "user"; content: string };
+  };
+  wireRequest?: {
+    provider: ModelProviderKind;
+    method: "POST";
+    endpointPath: string;
+    headerNames: string[];
+    body: unknown;
   };
   playPreset?: {
     id: string;
@@ -668,6 +679,7 @@ function PromptPreviewResult({
         <ProviderMapping
           provider={compilation.provider}
           initialAppend={preview.initialAppend}
+          wireRequest={preview.wireRequest}
         />
       ) : null}
       {section === "diagnostics" ? (
@@ -1033,9 +1045,11 @@ function MaterialsAndTools({
 function ProviderMapping({
   provider,
   initialAppend,
+  wireRequest,
 }: {
   provider: PromptPreviewData["compilation"]["provider"];
   initialAppend: PromptPreviewData["initialAppend"];
+  wireRequest: PromptPreviewData["wireRequest"];
 }): React.JSX.Element {
   return (
     <section
@@ -1122,6 +1136,12 @@ function ProviderMapping({
         <summary>{uiText("查看 Provider 映射原始结构")}</summary>
         <pre>{JSON.stringify(provider, null, 2)}</pre>
       </details>
+      {wireRequest === undefined ? null : (
+        <details className="prompt-preview-raw">
+          <summary>{uiText("查看实际 HTTP 请求（凭据已省略）")}</summary>
+          <pre>{JSON.stringify(wireRequest, null, 2)}</pre>
+        </details>
+      )}
     </section>
   );
 }
@@ -1226,7 +1246,9 @@ function BudgetAndDiagnostics({
         <section aria-labelledby="prompt-cache-title">
           <div className="prompt-preview-subsection-heading">
             <h4 id="prompt-cache-title">{uiText("稳定前缀与缓存")}</h4>
-            <span>{formatNumber(cache.estimatedCacheableTokens)} tokens</span>
+            <span>
+              {formatNumber(cache.estimatedCacheableBytes)} {uiText("字节")}
+            </span>
           </div>
           <dl className="prompt-cache-report">
             <div>
@@ -1236,11 +1258,19 @@ function BudgetAndDiagnostics({
               </dd>
             </div>
             <div>
+              <dt>{uiText("缓存策略")}</dt>
+              <dd>
+                <code>{cache.strategy}</code>
+              </dd>
+            </div>
+            <div>
               <dt>{uiText("缓存断点")}</dt>
               <dd className="prompt-cache-breakpoints">
-                {cache.breakpoints.map((role) => (
-                  <code key={role}>{role}</code>
-                ))}
+                {cache.breakpoints.length === 0
+                  ? uiText("由 Provider 管理，无显式断点")
+                  : cache.breakpoints.map((role) => (
+                      <code key={role}>{role}</code>
+                    ))}
               </dd>
             </div>
             <div>

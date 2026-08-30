@@ -37,6 +37,9 @@ test("保存多份模型配置、显式切换并且不向浏览器返回 API Key
   expect(first.connections[0]).toMatchObject({
     id: firstId,
     name: "OpenAI 主配置",
+    dialect: "standard",
+    reasoningEffort: "provider_default",
+    reasoningSummary: "provider_default",
     hasApiKey: true,
   });
 
@@ -88,6 +91,104 @@ test("保存多份模型配置、显式切换并且不向浏览器返回 API Key
     connections: { apiKey: string }[];
   };
   expect(persisted.connections[0]?.apiKey).toBe("openai-secret");
+});
+
+test("模型配置持久化方言与推理策略，并拒绝协议没有定义的组合", async () => {
+  const root = await temporaryRoot();
+  const store = new ModelConnectionStore(root);
+  const saved = await store.save({
+    name: "CLIProxy Chat",
+    presetId: "custom",
+    provider: "chat_completions",
+    dialect: "cliproxyapi",
+    baseUrl: "http://127.0.0.1:8317/v1",
+    apiKey: "proxy-secret",
+    modelId: "deepseek-reasoner",
+    reasoningEffort: "high",
+    reasoningSummary: "none",
+    contextWindowTokens: 128_000,
+    maxOutputTokens: 8_000,
+  });
+  expect(saved.connections[0]).toMatchObject({
+    dialect: "cliproxyapi",
+    reasoningEffort: "high",
+    reasoningSummary: "none",
+  });
+  await expect(new ModelConnectionStore(root).bind()).resolves.toMatchObject({
+    dialect: "cliproxyapi",
+    reasoningEffort: "high",
+    reasoningSummary: "none",
+  });
+
+  await expect(
+    store.save({
+      name: "Invalid standard Chat summary",
+      presetId: "custom",
+      provider: "chat_completions",
+      dialect: "standard",
+      baseUrl: "https://provider.invalid/v1",
+      apiKey: "secret",
+      modelId: "model",
+      reasoningEffort: "high",
+      reasoningSummary: "auto",
+      contextWindowTokens: 32_000,
+      maxOutputTokens: 2_000,
+    }),
+  ).rejects.toThrow("has no reasoning-summary parameter");
+  await expect(
+    store.save({
+      name: "Invalid Anthropic minimal",
+      presetId: "custom",
+      provider: "anthropic_messages",
+      baseUrl: "https://provider.invalid/v1",
+      apiKey: "secret",
+      modelId: "claude",
+      reasoningEffort: "minimal",
+      contextWindowTokens: 32_000,
+      maxOutputTokens: 2_000,
+    }),
+  ).rejects.toThrow("does not define minimal effort");
+  await expect(
+    store.save({
+      name: "Invalid disabled Anthropic summary",
+      presetId: "custom",
+      provider: "anthropic_messages",
+      baseUrl: "https://provider.invalid/v1",
+      apiKey: "secret",
+      modelId: "claude",
+      reasoningEffort: "none",
+      reasoningSummary: "auto",
+      contextWindowTokens: 32_000,
+      maxOutputTokens: 2_000,
+    }),
+  ).rejects.toThrow("cannot return a reasoning summary");
+  await expect(
+    store.save({
+      name: "Invalid detailed Anthropic summary",
+      presetId: "custom",
+      provider: "anthropic_messages",
+      baseUrl: "https://provider.invalid/v1",
+      apiKey: "secret",
+      modelId: "claude",
+      reasoningSummary: "detailed",
+      contextWindowTokens: 32_000,
+      maxOutputTokens: 2_000,
+    }),
+  ).rejects.toThrow("defined only by OpenAI Responses");
+  await expect(
+    store.save({
+      name: "Conflicting CLIProxy effort",
+      presetId: "custom",
+      provider: "openai_responses",
+      dialect: "cliproxyapi",
+      baseUrl: "http://127.0.0.1:8317/v1",
+      apiKey: "proxy-secret",
+      modelId: "claude-test(high)",
+      reasoningEffort: "low",
+      contextWindowTokens: 32_000,
+      maxOutputTokens: 2_000,
+    }),
+  ).rejects.toThrow("model thinking suffixes override request effort");
 });
 
 test("模型列表使用当前端点的正确凭据且不把旧凭据带到已修改端点", async () => {
@@ -276,7 +377,20 @@ test("Prompt Preview 只采用 Runtime 当前配置，不信任浏览器提交�
       provider: { protocol: "openai_responses" },
       budget: { contextWindowTokens: 64_000 },
     },
+    wireRequest: {
+      provider: "openai_responses",
+      method: "POST",
+      endpointPath: "/v1/responses",
+      body: {
+        model: "runtime-model",
+        store: false,
+        include: ["reasoning.encrypted_content"],
+        stream: true,
+      },
+    },
   });
+  expect(JSON.stringify(preview.result)).not.toContain("secret");
+  expect(JSON.stringify(preview.result)).not.toContain("browser-forged-model");
 });
 
 async function temporaryRoot(): Promise<string> {

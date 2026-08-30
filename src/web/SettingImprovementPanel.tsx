@@ -68,9 +68,13 @@ interface SettingPromptPreview {
       status: "fits" | "over_budget" | "not_checked";
     };
     cache: {
+      strategy:
+        | "explicit_anthropic_blocks"
+        | "explicit_cliproxyapi_message"
+        | "provider_managed";
       stablePrefixFingerprint: string;
       breakpoints: string[];
-      estimatedCacheableTokens: number;
+      estimatedCacheableBytes: number;
       firstDynamicByte: number;
     };
   };

@@ -4,8 +4,11 @@ import { useEffect, useMemo, useState } from "react";
 import type {
   ModelConnectionLibraryView,
   ModelConnectionView,
+  ModelProviderDialect,
   ModelProviderKind,
   ModelProviderPresetId,
+  ModelReasoningEffort,
+  ModelReasoningSummary,
 } from "../protocol/modelConnections.ts";
 import type { RuntimeClient } from "./runtimeClient.ts";
 
@@ -14,9 +17,12 @@ interface ConnectionForm {
   name: string;
   presetId: ModelProviderPresetId;
   provider: ModelProviderKind;
+  dialect: ModelProviderDialect;
   baseUrl: string;
   apiKey: string;
   modelId: string;
+  reasoningEffort: ModelReasoningEffort;
+  reasoningSummary: ModelReasoningSummary;
   contextWindowTokens: string;
   maxOutputTokens: string;
 }
@@ -27,9 +33,12 @@ function emptyConnectionForm(): ConnectionForm {
     name: uiText("默认模型"),
     presetId: "custom",
     provider: "chat_completions",
+    dialect: "standard",
     baseUrl: "",
     apiKey: "",
     modelId: "",
+    reasoningEffort: "provider_default",
+    reasoningSummary: "provider_default",
     contextWindowTokens: "128000",
     maxOutputTokens: "16000",
   };
@@ -101,6 +110,14 @@ export function ModelConnectionScreen({
         : {
             presetId,
             provider: preset.provider,
+            dialect: "standard",
+            reasoningSummary:
+              preset.provider === "chat_completions" ||
+              (preset.provider !== "openai_responses" &&
+                (form.reasoningSummary === "concise" ||
+                  form.reasoningSummary === "detailed"))
+                ? "provider_default"
+                : form.reasoningSummary,
             baseUrl: preset.baseUrl,
             name:
               form.connectionId === null || form.name === uiText("默认模型")
@@ -139,9 +156,12 @@ export function ModelConnectionScreen({
           name: form.name,
           presetId: form.presetId,
           provider: form.provider,
+          dialect: form.dialect,
           baseUrl: form.baseUrl,
           ...(form.apiKey.length === 0 ? {} : { apiKey: form.apiKey }),
           modelId: form.modelId,
+          reasoningEffort: form.reasoningEffort,
+          reasoningSummary: form.reasoningSummary,
           contextWindowTokens: Number(form.contextWindowTokens),
           maxOutputTokens: Number(form.maxOutputTokens),
         },
@@ -296,6 +316,22 @@ export function ModelConnectionScreen({
                 {
                   presetId: "custom",
                   provider: event.target.value as ModelProviderKind,
+                  reasoningEffort:
+                    event.target.value === "anthropic_messages" &&
+                    form.reasoningEffort === "minimal"
+                      ? "provider_default"
+                      : form.reasoningEffort,
+                  reasoningSummary:
+                    (event.target.value !== "openai_responses" &&
+                      (form.reasoningSummary === "concise" ||
+                        form.reasoningSummary === "detailed")) ||
+                    (event.target.value === "chat_completions" &&
+                      form.dialect === "standard") ||
+                    (event.target.value === "anthropic_messages" &&
+                      form.reasoningEffort === "none" &&
+                      form.reasoningSummary === "auto")
+                      ? "provider_default"
+                      : form.reasoningSummary,
                 },
                 true,
               )
@@ -307,6 +343,98 @@ export function ModelConnectionScreen({
             <option value="openai_responses">OpenAI Responses API</option>
             <option value="anthropic_messages">Anthropic Messages</option>
           </select>
+
+          <label htmlFor="model-dialect">{uiText("端点方言")}</label>
+          <select
+            id="model-dialect"
+            value={form.dialect}
+            onChange={(event) =>
+              change({
+                dialect: event.target.value as ModelProviderDialect,
+                reasoningSummary:
+                  event.target.value === "standard" &&
+                  form.provider === "chat_completions"
+                    ? "provider_default"
+                    : form.reasoningSummary,
+              })
+            }
+          >
+            <option value="standard">{uiText("协议标准")}</option>
+            <option value="cliproxyapi">CLIProxyAPI</option>
+          </select>
+          <p className="field-note">
+            {uiText(
+              "CLIProxyAPI 方言只启用代理明确支持的兼容参数；响应仍按所选协议解析，不从可见文本猜测思考块。Claude 的签名 thinking 请选 Responses 或 Anthropic Messages；Chat Completions 通常只有 reasoning_content，不能承诺无损续传签名。模型名的 (high) 等 thinking 后缀会覆盖请求参数，因此只能与“Provider 默认”推理强度一起使用。",
+            )}
+          </p>
+
+          <div className="two-column-fields">
+            <label>
+              {uiText("推理强度")}
+              <select
+                value={form.reasoningEffort}
+                onChange={(event) =>
+                  change({
+                    reasoningEffort: event.target.value as ModelReasoningEffort,
+                    reasoningSummary:
+                      event.target.value === "none" &&
+                      form.provider === "anthropic_messages" &&
+                      form.reasoningSummary === "auto"
+                        ? "provider_default"
+                        : form.reasoningSummary,
+                  })
+                }
+              >
+                <option value="provider_default">
+                  {uiText("Provider 默认")}
+                </option>
+                <option value="none">none</option>
+                {form.provider === "anthropic_messages" ? null : (
+                  <option value="minimal">minimal</option>
+                )}
+                <option value="low">low</option>
+                <option value="medium">medium</option>
+                <option value="high">high</option>
+                <option value="xhigh">xhigh</option>
+                <option value="max">max</option>
+              </select>
+            </label>
+            <label>
+              {uiText("返回推理摘要")}
+              <select
+                disabled={
+                  (form.provider === "chat_completions" &&
+                    form.dialect === "standard") ||
+                  (form.provider === "anthropic_messages" &&
+                    form.reasoningEffort === "none")
+                }
+                value={form.reasoningSummary}
+                onChange={(event) =>
+                  change({
+                    reasoningSummary: event.target
+                      .value as ModelReasoningSummary,
+                  })
+                }
+              >
+                <option value="provider_default">
+                  {uiText("Provider 默认")}
+                </option>
+                <option value="auto">auto</option>
+                {form.provider === "openai_responses" ? (
+                  <>
+                    <option value="concise">concise</option>
+                    <option value="detailed">detailed</option>
+                  </>
+                ) : null}
+                <option value="none">none</option>
+              </select>
+            </label>
+          </div>
+          <p className="field-note">
+            {uiText(
+              "推理摘要只进入模型诊断，不会成为玩家叙事；Provider 返回的原生续传块会原样保存并在下一次请求中重放。",
+            )}
+          </p>
 
           <label htmlFor="model-base-url">Base URL</label>
           <input
@@ -497,6 +625,13 @@ export function ModelConnectionScreen({
                     </dd>
                   </div>
                   <div>
+                    <dt>{uiText("方言 / 推理")}</dt>
+                    <dd>
+                      {connection.dialect} / {connection.reasoningEffort} /{" "}
+                      {connection.reasoningSummary}
+                    </dd>
+                  </div>
+                  <div>
                     <dt>{uiText("凭据")}</dt>
                     <dd>
                       {connection.hasApiKey
@@ -577,9 +712,12 @@ function formFor(connection: ModelConnectionView): ConnectionForm {
     name: connection.name,
     presetId: connection.presetId,
     provider: connection.provider,
+    dialect: connection.dialect,
     baseUrl: connection.baseUrl,
     apiKey: "",
     modelId: connection.modelId,
+    reasoningEffort: connection.reasoningEffort,
+    reasoningSummary: connection.reasoningSummary,
     contextWindowTokens: String(connection.contextWindowTokens),
     maxOutputTokens: String(connection.maxOutputTokens),
   };

@@ -583,6 +583,11 @@ context:
     expect(compiled.cache.stablePrefixFingerprint).toMatch(
       /^sha256:[a-f0-9]{64}$/u,
     );
+    expect(compiled.cache).toMatchObject({
+      strategy: "provider_managed",
+      breakpoints: [],
+    });
+    expect(compiled.cache.estimatedCacheableBytes).toBeGreaterThan(0);
     expect(preview.leakage.status).toBe("clean");
   });
 
@@ -650,6 +655,92 @@ context:
     expect(anthropic.provider.messages).toEqual([
       expect.objectContaining({ role: "user" }),
     ]);
+    expect(anthropic.cache).toMatchObject({
+      strategy: "explicit_anthropic_blocks",
+      breakpoints: ["runtime_system", "author_instruction", "world_context"],
+    });
+    expect(
+      (
+        anthropic.provider.messages[0]?.content as {
+          cache_control?: unknown;
+        }[]
+      )[0],
+    ).toMatchObject({ cache_control: { type: "ephemeral" } });
+  });
+
+  test("CLIProxyAPI 方言把稳定前缀报告为代理原生显式缓存消息", () => {
+    const compiled = new FileNativePromptCompiler().compileBootstrap(
+      input({
+        modelBinding: {
+          provider: "openai_responses",
+          modelId: "claude-through-proxy",
+          contextWindowTokens: 32_000,
+          maxOutputTokens: 2_000,
+          cacheStrategy: "explicit_cliproxyapi_message",
+        },
+      }),
+    );
+
+    expect(compiled.cache).toMatchObject({
+      strategy: "explicit_cliproxyapi_message",
+      breakpoints: ["author_instruction", "world_context"],
+    });
+    expect(
+      (
+        compiled.provider.messages[1]?.content as {
+          cache_control?: unknown;
+        }[]
+      )[0],
+    ).toMatchObject({ cache_control: { type: "ephemeral" } });
+  });
+
+  test("显式缓存策略把冻结世界正文作为同一玩法链可复用的最长 breakpoint", () => {
+    const compiler = new FileNativePromptCompiler();
+    const firstInput = input({
+      modelBinding: {
+        provider: "anthropic_messages",
+        modelId: "claude-test",
+        contextWindowTokens: 32_000,
+        maxOutputTokens: 2_000,
+      },
+    });
+    const secondInput = input({
+      modelBinding: {
+        provider: "anthropic_messages",
+        modelId: "claude-test",
+        contextWindowTokens: 32_000,
+        maxOutputTokens: 2_000,
+      },
+    });
+    const files = snapshotRecord(secondInput);
+    files["state/current-situation.yaml"] = files[
+      "state/current-situation.yaml"
+    ]!.replace("Alex正在整理球衣。", "Alex已经离开宿舍。");
+    bindSnapshot(secondInput, files);
+
+    const first = compiler.compilePlayCallChain(
+      firstInput,
+      builtinDefaultPlayPresetBinding(),
+    ).bootstrap;
+    const second = compiler.compilePlayCallChain(
+      secondInput,
+      builtinDefaultPlayPresetBinding(),
+    ).bootstrap;
+
+    expect(JSON.stringify(second.provider)).not.toBe(
+      JSON.stringify(first.provider),
+    );
+    expect(second.cache.stablePrefixFingerprint).not.toBe(
+      first.cache.stablePrefixFingerprint,
+    );
+    expect(first.cache.breakpoints).toContain("world_context");
+    expect(
+      (
+        first.provider.messages[0]?.content as {
+          cache_control?: unknown;
+        }[]
+      )[0],
+    ).toMatchObject({ cache_control: { type: "ephemeral" } });
   });
 
   test("append 输入不嵌入 bootstrap 且冻结完整工具全集", () => {

@@ -1,6 +1,9 @@
 import { parseDocument, stringify } from "yaml";
 
-import type { ModelProviderKind } from "../../protocol/modelConnections.ts";
+import type {
+  ModelPromptCacheStrategy,
+  ModelProviderKind,
+} from "../../protocol/modelConnections.ts";
 import {
   defaultAppLocale,
   type AppLocale,
@@ -66,6 +69,7 @@ export interface FileNativePromptInput {
     contextWindowTokens: number;
     maxOutputTokens: number;
     endpointFingerprint?: string;
+    cacheStrategy?: ModelPromptCacheStrategy;
   };
 }
 
@@ -114,9 +118,10 @@ export interface PromptCompilation {
     status: "fits" | "over_budget" | "not_checked";
   };
   cache: {
+    strategy: ModelPromptCacheStrategy;
     stablePrefixFingerprint: string;
     breakpoints: LogicalRole[];
-    estimatedCacheableTokens: number;
+    estimatedCacheableBytes: number;
     firstDynamicByte: number;
   };
 }
@@ -370,17 +375,18 @@ export class FileNativePromptCompiler {
       defaultRuntimeToolDefinitionStrategy(
         effectiveInput.modelBinding.provider,
       );
+    const cacheStrategy =
+      effectiveInput.modelBinding.cacheStrategy ??
+      (effectiveInput.modelBinding.provider === "anthropic_messages"
+        ? "explicit_anthropic_blocks"
+        : "provider_managed");
     const provider = mapProvider(
       effectiveInput.modelBinding.provider,
       logicalMessages,
+      cacheStrategy,
     );
     const budget = disabledPromptBudget(effectiveInput);
-    const stableMessages = logicalMessages.filter(
-      ({ role }) => role !== "player_input",
-    );
-    const stableText = stableMessages
-      .map(({ role, markdown }) => `${role}\n${markdown}`)
-      .join("\n");
+    const stableText = cacheStableText(logicalMessages);
     const cache = stableCacheBoundary(stableText, tools, toolStrategy);
     return {
       logicalMessages,
@@ -392,7 +398,13 @@ export class FileNativePromptCompiler {
       budget,
       cache: {
         ...cache,
-        breakpoints: ["runtime_system", "author_instruction", "world_context"],
+        strategy: cacheStrategy,
+        breakpoints:
+          cacheStrategy === "explicit_anthropic_blocks"
+            ? ["runtime_system", "author_instruction", "world_context"]
+            : cacheStrategy === "explicit_cliproxyapi_message"
+              ? ["author_instruction", "world_context"]
+              : [],
       },
     };
   }
@@ -444,11 +456,12 @@ export class FileNativePromptCompiler {
       presetCompilation.bootstrap.logicalMessages,
       binding,
     );
-    const provider = mapProvider(input.modelBinding.provider, logicalMessages);
-    const stableText = logicalMessages
-      .filter(({ role }) => role !== "player_input")
-      .map(({ role, markdown }) => `${role}\n${markdown}`)
-      .join("\n");
+    const provider = mapProvider(
+      input.modelBinding.provider,
+      logicalMessages,
+      presetCompilation.bootstrap.cache.strategy,
+    );
+    const stableText = cacheStableText(logicalMessages);
     const bootstrap: PromptCompilation = {
       ...structuredClone(presetCompilation.bootstrap),
       logicalMessages,
@@ -509,14 +522,13 @@ export class FileNativePromptCompiler {
       });
       return { role: message.role, blocks, markdown: joinBlocks(blocks) };
     });
-    const provider = mapProvider(input.modelBinding.provider, logicalMessages);
-    const budget = disabledPromptBudget(input);
-    const stableMessages = logicalMessages.filter(
-      ({ role }) => role !== "player_input",
+    const provider = mapProvider(
+      input.modelBinding.provider,
+      logicalMessages,
+      base.cache.strategy,
     );
-    const stableText = stableMessages
-      .map(({ role, markdown }) => `${role}\n${markdown}`)
-      .join("\n");
+    const budget = disabledPromptBudget(input);
+    const stableText = cacheStableText(logicalMessages);
     const cache = stableCacheBoundary(
       stableText,
       base.tools,
@@ -829,6 +841,7 @@ export function createMinimalFileNativePreviewInput(input: {
   modelId: string;
   contextWindowTokens: number;
   maxOutputTokens: number;
+  cacheStrategy?: ModelPromptCacheStrategy;
   playerInput: string;
   playerInputPlacement: FileNativePromptInput["playerInputPlacement"];
   locale?: AppLocale;
@@ -2030,12 +2043,19 @@ function coverageWriteHint(
 function mapProvider(
   provider: ProviderKind,
   messages: PromptCompilation["logicalMessages"],
+  cacheStrategy: ModelPromptCacheStrategy,
 ): PromptCompilation["provider"] {
   const byRole = Object.fromEntries(
     messages.map((message) => [message.role, message.markdown]),
   ) as Record<LogicalRole, string>;
   const userBlocks = [
-    { type: "text" as const, text: byRole.world_context },
+    {
+      type: "text" as const,
+      text: byRole.world_context,
+      ...(cacheStrategy === "provider_managed"
+        ? {}
+        : { cache_control: { type: "ephemeral" as const } }),
+    },
     ...(typeof byRole.player_input === "string" &&
     byRole.player_input.length > 0
       ? [{ type: "text" as const, text: byRole.player_input }]
@@ -2192,8 +2212,17 @@ function joinBlocks(blocks: { source: string; markdown: string }[]): string {
   return blocks.map(({ markdown }) => markdown.trim()).join("\n\n");
 }
 
-function utf8Tokens(value: string): number {
+function utf8Bytes(value: string): number {
   return new TextEncoder().encode(value).byteLength;
+}
+
+function cacheStableText(
+  messages: PromptCompilation["logicalMessages"],
+): string {
+  return messages
+    .filter(({ role }) => role !== "player_input")
+    .map(({ role, markdown }) => `${role}\n${markdown}`)
+    .join("\n");
 }
 
 function stableCacheBoundary(
@@ -2202,7 +2231,7 @@ function stableCacheBoundary(
   toolStrategy: RuntimeToolDefinitionStrategy,
 ): Pick<
   PromptCompilation["cache"],
-  "stablePrefixFingerprint" | "estimatedCacheableTokens" | "firstDynamicByte"
+  "stablePrefixFingerprint" | "estimatedCacheableBytes" | "firstDynamicByte"
 > {
   const stableTools = JSON.stringify({ toolUniverse, toolStrategy });
   const stablePrefix = JSON.stringify({
@@ -2210,10 +2239,10 @@ function stableCacheBoundary(
     toolUniverse,
     toolStrategy,
   });
-  const stableBytes = utf8Tokens(stableText) + utf8Tokens(stableTools);
+  const stableBytes = utf8Bytes(stableText) + utf8Bytes(stableTools);
   return {
     stablePrefixFingerprint: `sha256:${sha256(stablePrefix)}`,
-    estimatedCacheableTokens: stableBytes,
+    estimatedCacheableBytes: stableBytes,
     firstDynamicByte: stableBytes,
   };
 }

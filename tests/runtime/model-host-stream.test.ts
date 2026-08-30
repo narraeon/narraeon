@@ -97,6 +97,7 @@ test("Chat Completions 游玩请求用 SSE 聚合正文、reasoning、工具与 
   expect(response).toMatchObject({
     text: "The door creaks.",
     reasoningContent: "Analysis",
+    stopReason: "tool_calls",
     toolCalls: [
       {
         id: "call-stream-1",
@@ -203,13 +204,101 @@ test("Chat Completions 流把工具分片里的 null 字段当作未提供", asy
   });
 });
 
+test("Chat Completions 流将未知续传字段保持为原生 assistant message，而不从投影重建", async () => {
+  const fetch_ = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(
+      sseResponse(
+        [
+          data({
+            choices: [
+              {
+                index: 0,
+                delta: {
+                  role: "assistant",
+                  reasoning_details: [
+                    {
+                      index: 0,
+                      type: "reasoning.encrypted",
+                      data: "opaque-",
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          data({
+            choices: [
+              {
+                index: 0,
+                delta: {
+                  content: "Visible.",
+                  reasoning_details: [{ index: 0, data: "signature" }],
+                },
+              },
+            ],
+          }),
+          "data: [DONE]\n\n",
+        ],
+        true,
+      ),
+    )
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { role: "assistant", content: "Continued." } }],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+  const host = modelHost("chat_completions", fetch_);
+  const firstRequest = exchange("chat_completions");
+  const first = await host.exchange(firstRequest);
+  const nativeAssistant = {
+    role: "assistant",
+    content: "Visible.",
+    reasoning_details: [
+      {
+        index: 0,
+        type: "reasoning.encrypted",
+        data: "opaque-signature",
+      },
+    ],
+  };
+  expect(first.providerState).toEqual({
+    protocol: "chat_completions",
+    assistantMessage: nativeAssistant,
+  });
+  if (first.providerState === undefined)
+    throw new Error("Chat stream did not retain provider continuation state");
+
+  await host.exchange({
+    ...firstRequest,
+    appended: [
+      {
+        kind: "assistant",
+        text: "Different parsed text must be ignored for continuation.",
+        reasoningContent: "Different parsed reasoning must be ignored.",
+        providerState: first.providerState,
+        toolCalls: [],
+      },
+      { kind: "player", text: "Continue." },
+    ],
+  });
+  const sent = requestBody(fetch_, 1) as { messages: unknown[] };
+  expect(sent.messages.at(-2)).toEqual(nativeAssistant);
+  expect(JSON.stringify(sent.messages.at(-2))).not.toContain(
+    "Different parsed",
+  );
+});
+
 test("OpenAI Responses 游玩请求从 response.completed 取得完整 continuation", async () => {
   const output = [
     {
       type: "reasoning",
       id: "reasoning-stream-1",
       encrypted_content: "opaque-reasoning",
-      summary: [],
+      summary: [{ type: "summary_text", text: "Returned summary" }],
     },
     {
       type: "function_call",
@@ -270,6 +359,8 @@ test("OpenAI Responses 游玩请求从 response.completed 取得完整 continuat
   ]);
   expect(response).toMatchObject({
     text: "The wind stops.",
+    reasoningContent: "Returned summary",
+    stopReason: "completed",
     toolCalls: [
       {
         id: "call-responses-stream-1",
@@ -384,6 +475,7 @@ test("Anthropic Messages 游玩请求用 SSE 保留 thinking 签名与完整 con
   expect(response).toMatchObject({
     text: "The light comes on.",
     reasoningContent: "Check first",
+    stopReason: "tool_use",
     toolCalls: [
       {
         id: "tool-anthropic-stream-1",
@@ -517,8 +609,8 @@ function namedData(event: string, value: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(value)}\n\n`;
 }
 
-function requestBody(fetch_: ReturnType<typeof vi.fn<typeof fetch>>) {
-  return JSON.parse(fetch_.mock.calls[0]?.[1]?.body as string) as Record<
+function requestBody(fetch_: ReturnType<typeof vi.fn<typeof fetch>>, call = 0) {
+  return JSON.parse(fetch_.mock.calls[call]?.[1]?.body as string) as Record<
     string,
     unknown
   >;

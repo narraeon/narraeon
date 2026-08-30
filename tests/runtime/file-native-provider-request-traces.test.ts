@@ -5,6 +5,7 @@ import {
   FileNativeSettingAuthorProvider,
 } from "../../src/runtime/model/FileNativeModelAdapters.ts";
 import {
+  ModelHostContinuationError,
   ModelHostFailureError,
   ModelHostOutcomeUnknownError,
   type ModelHostAppendItem,
@@ -23,7 +24,17 @@ test.each([
 ] as const)("%s 对追加提示使用编译器拥有的逻辑 role 署名", async (provider) => {
   const responseBody =
     provider === "chat_completions"
-      ? { choices: [{ message: { content: "Complete", tool_calls: [] } }] }
+      ? {
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: "Complete",
+                tool_calls: [],
+              },
+            },
+          ],
+        }
       : provider === "anthropic_messages"
         ? { content: [{ type: "text", text: "Complete" }] }
         : {
@@ -105,7 +116,14 @@ test("OpenAI Responses 使用扁平工具定义并逐次原样重放 output item
   const fetch_ = vi
     .fn<typeof fetch>()
     .mockResolvedValueOnce(
-      new Response(JSON.stringify({ output: firstOutput }), { status: 200 }),
+      new Response(
+        JSON.stringify({
+          id: "resp-envelope-1",
+          output: firstOutput,
+          usage: { input_tokens: 10, output_tokens: 2, total_tokens: 12 },
+        }),
+        { status: 200 },
+      ),
     )
     .mockResolvedValueOnce(
       new Response(
@@ -213,6 +231,7 @@ test("OpenAI Responses 使用扁平工具定义并逐次原样重放 output item
       output: "# Exact read\n\nCurrent-situation source",
     },
   ]);
+  expect(JSON.stringify(secondRequest.input)).not.toContain("resp-envelope-1");
 });
 
 test("OpenAI Responses 冻结全集并用 native allowed subset，usage 与 encrypted reasoning 私有续传", async () => {
@@ -237,6 +256,7 @@ test("OpenAI Responses 冻结全集并用 native allowed subset，usage 与 encr
       new Response(
         JSON.stringify({
           id: "resp-1",
+          status: "completed",
           output,
           usage: {
             input_tokens: 120,
@@ -307,6 +327,7 @@ test("OpenAI Responses 冻结全集并用 native allowed subset，usage 与 encr
     output,
     responseId: "resp-1",
   });
+  expect(first.stopReason).toBe("completed");
   expect(first.usage).toMatchObject({
     inputTokens: 120,
     uncachedInputTokens: 20,
@@ -460,6 +481,67 @@ test("OpenAI Responses 设定完善保留 provider output 并回送工具结果"
   expect(body.tools[0]).not.toHaveProperty("function");
 });
 
+test.each(["chat_completions", "openai_responses"] as const)(
+  "CLIProxyAPI %s 设定作者同时标记稳定 system 与初始 user 前缀",
+  async (provider) => {
+    const fetch_ = vi.fn<typeof fetch>().mockResolvedValue(
+      provider === "chat_completions"
+        ? settingSseResponse(provider, "Complete")
+        : new Response(
+            JSON.stringify({
+              id: "setting-cache-response",
+              status: "completed",
+              output: [
+                {
+                  type: "message",
+                  role: "assistant",
+                  content: [{ type: "output_text", text: "Complete" }],
+                },
+              ],
+              usage: {},
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+    );
+    const adapter = new FileNativeSettingAuthorProvider(
+      {
+        provider,
+        dialect: "cliproxyapi",
+        baseUrl: "https://provider.invalid/v1",
+        apiKey: "secret",
+        modelId: "model",
+        contextWindowTokens: 32_000,
+        maxOutputTokens: 2_000,
+      },
+      fetch_,
+      { operationId: "setting-cache-chain" },
+    );
+
+    await adapter.next({
+      messages: [
+        { role: "system", content: "Stable author contract" },
+        { role: "user", content: "Stable improvement goal" },
+      ],
+      tools: [],
+      maxOutputTokens: 1_024,
+    });
+
+    const body = JSON.parse(fetch_.mock.calls[0]?.[1]?.body as string) as {
+      messages?: Record<string, unknown>[];
+      input?: Record<string, unknown>[];
+      prompt_cache_key?: unknown;
+    };
+    const items = body.messages ?? body.input ?? [];
+    expect(body.prompt_cache_key).toEqual(expect.any(String));
+    expect(items.find(({ role }) => role === "system")).toMatchObject({
+      cache_control: { type: "ephemeral" },
+    });
+    expect(items.find(({ role }) => role === "user")).toMatchObject({
+      cache_control: { type: "ephemeral" },
+    });
+  },
+);
+
 test("Chat Completions 保留 reasoning_content、usage 与原始 assistant message 续传", async () => {
   const rawMessage = {
     role: "assistant",
@@ -481,12 +563,12 @@ test("Chat Completions 保留 reasoning_content、usage 与原始 assistant mess
     .mockResolvedValueOnce(
       new Response(
         JSON.stringify({
-          choices: [{ message: rawMessage }],
+          choices: [{ message: rawMessage, finish_reason: "tool_calls" }],
           usage: {
             prompt_tokens: 50,
             prompt_tokens_details: {
               cached_tokens: 20,
-              cache_write_tokens: 10,
+              cached_creation_tokens: 10,
             },
             completion_tokens: 12,
             completion_tokens_details: { reasoning_tokens: 8 },
@@ -499,7 +581,15 @@ test("Chat Completions 保留 reasoning_content、usage 与原始 assistant mess
     .mockResolvedValueOnce(
       new Response(
         JSON.stringify({
-          choices: [{ message: { content: "Continue.", tool_calls: [] } }],
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: "Continue.",
+                tool_calls: [],
+              },
+            },
+          ],
         }),
         { status: 200 },
       ),
@@ -542,6 +632,7 @@ test("Chat Completions 保留 reasoning_content、usage 与原始 assistant mess
     protocol: "chat_completions",
     assistantMessage: rawMessage,
   });
+  expect(first.stopReason).toBe("tool_calls");
   expect(first.usage).toMatchObject({
     inputTokens: 50,
     uncachedInputTokens: 20,
@@ -574,16 +665,25 @@ test("Chat Completions 保留 reasoning_content、usage 与原始 assistant mess
   expect(secondBody.messages.at(-2)).toEqual(rawMessage);
 });
 
-test("Anthropic Messages 保留 thinking/redacted/signature block、usage 与原始 assistant content 续传", async () => {
+test("Anthropic Messages 保留 thinking/redacted/signature block、usage、原始 assistant content 与并行工具结果", async () => {
   const rawContent = [
-    { type: "thinking", thinking: "private-anthropic-thinking" },
+    {
+      type: "thinking",
+      thinking: "private-anthropic-thinking",
+      signature: "opaque-signature",
+    },
     { type: "redacted_thinking", data: "opaque-redacted" },
-    { type: "signature", signature: "opaque-signature" },
     {
       type: "tool_use",
       id: "anthropic-read",
       name: "context_read",
       input: { ref: "@current-situation" },
+    },
+    {
+      type: "tool_use",
+      id: "anthropic-search",
+      name: "context_search",
+      input: { query: "missing" },
     },
   ];
   const fetch_ = vi
@@ -599,6 +699,7 @@ test("Anthropic Messages 保留 thinking/redacted/signature block、usage 与原
             input_tokens: 70,
             cache_read_input_tokens: 30,
             cache_creation_input_tokens: 5,
+            thinking_tokens: 7,
             output_tokens: 18,
           },
         }),
@@ -655,11 +756,13 @@ test("Anthropic Messages 保留 thinking/redacted/signature block、usage 与原
     model: "claude-test",
     stopReason: "tool_use",
   });
+  expect(first.stopReason).toBe("tool_use");
   expect(first.usage).toMatchObject({
     inputTokens: 105,
     uncachedInputTokens: 70,
     cacheReadTokens: 30,
     cacheWriteTokens: 5,
+    reasoningTokens: 7,
     outputTokens: 18,
     totalTokens: 123,
     provenance: {
@@ -685,6 +788,12 @@ test("Anthropic Messages 保留 thinking/redacted/signature block、usage 与原
         toolCallId: "anthropic-read",
         markdown: "Read result",
       },
+      {
+        kind: "tool",
+        toolCallId: "anthropic-search",
+        markdown: "Search failed",
+        isError: true,
+      },
     ],
   });
   const secondBody = JSON.parse(fetch_.mock.calls[1]?.[1]?.body as string) as {
@@ -694,6 +803,23 @@ test("Anthropic Messages 保留 thinking/redacted/signature block、usage 与原
     role: "assistant",
     content: rawContent,
   });
+  expect(secondBody.messages.at(-1)).toEqual({
+    role: "user",
+    content: [
+      {
+        type: "tool_result",
+        tool_use_id: "anthropic-read",
+        content: "Read result",
+      },
+      {
+        type: "tool_result",
+        tool_use_id: "anthropic-search",
+        content: "Search failed",
+        is_error: true,
+      },
+    ],
+  });
+  expect(JSON.stringify(secondBody.messages)).not.toContain("msg-1");
 });
 
 test.each([
@@ -712,7 +838,9 @@ test.each([
           ],
         }
       : provider === "chat_completions"
-        ? { choices: [{ message: { content: "No tools" } }] }
+        ? {
+            choices: [{ message: { role: "assistant", content: "No tools" } }],
+          }
         : { content: [{ type: "text", text: "No tools" }] };
   const fetch_ = vi
     .fn<typeof fetch>()
@@ -954,6 +1082,7 @@ test.each([
             choices: [
               {
                 message: {
+                  role: "assistant",
                   content: null,
                   reasoning_content: null,
                   [field]: value,
@@ -986,6 +1115,7 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
             choices: [
               {
                 message: {
+                  role: "assistant",
                   content: null,
                   tool_calls: [
                     {
@@ -1085,6 +1215,9 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
         {
           kind: "assistant",
           text: "",
+          ...(output.providerState === undefined
+            ? {}
+            : { providerState: output.providerState }),
           toolCalls: [
             {
               id: "read-1",
@@ -1131,7 +1264,16 @@ test.each([
   async (provider, playerInputPlacement) => {
     const responseBody =
       provider === "chat_completions"
-        ? { choices: [{ message: { content: "Visible response" } }] }
+        ? {
+            choices: [
+              {
+                message: {
+                  role: "assistant",
+                  content: "Visible response",
+                },
+              },
+            ],
+          }
         : { content: [{ type: "text", text: "Visible response" }] };
     const fetch_ = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify(responseBody), {
@@ -1207,13 +1349,14 @@ test.each([
   },
 );
 
-test("Chat Completions 续传 reasoning_content，空工具数组不进入请求，畸形参数留在可修复协议内", async () => {
+test("Chat Completions 只原样续传原生 assistant message，缺失载荷时不从投影重建", async () => {
   const fetch_ = vi.fn<typeof fetch>().mockResolvedValue(
     new Response(
       JSON.stringify({
         choices: [
           {
             message: {
+              role: "assistant",
               content: null,
               reasoning_content: "Continue reasoning",
               tool_calls: [
@@ -1250,26 +1393,45 @@ test("Chat Completions 续传 reasoning_content，空工具数组不进入请求
       playerInputPlacement: "bootstrap",
     }),
   );
-  const output = await adapter.exchange({
+  const request = {
     bootstrap,
     tools: bootstrap.tools,
     appended: [
       {
-        kind: "assistant",
+        kind: "assistant" as const,
         text: "Previous-turn visible text",
         reasoningContent: "Previous-turn reasoning",
         toolCalls: [],
       },
     ],
     maxOutputTokens: 2_000,
+  };
+  await expect(adapter.exchange(request)).rejects.toBeInstanceOf(
+    ModelHostContinuationError,
+  );
+  expect(fetch_).not.toHaveBeenCalled();
+
+  const previousMessage = {
+    role: "assistant",
+    content: "Previous-turn visible text",
+    reasoning_content: "Previous-turn reasoning",
+  };
+  const output = await adapter.exchange({
+    ...request,
+    appended: [
+      {
+        ...request.appended[0]!,
+        providerState: {
+          protocol: "chat_completions",
+          assistantMessage: previousMessage,
+        },
+      },
+    ],
   });
-  const request = JSON.parse(fetch_.mock.calls[0]?.[1]?.body as string) as {
+  const sent = JSON.parse(fetch_.mock.calls[0]?.[1]?.body as string) as {
     messages: { reasoning_content?: string; tool_calls?: unknown[] }[];
   };
-  expect(request.messages.at(-1)).toMatchObject({
-    reasoning_content: "Previous-turn reasoning",
-  });
-  expect(request.messages.at(-1)).not.toHaveProperty("tool_calls");
+  expect(sent.messages.at(-1)).toEqual(previousMessage);
   expect(output).toMatchObject({
     reasoningContent: "Continue reasoning",
     toolCalls: [
@@ -1282,12 +1444,82 @@ test("Chat Completions 续传 reasoning_content，空工具数组不进入请求
   });
 });
 
+test.each([
+  {
+    provider: "chat_completions" as const,
+    providerState: {
+      protocol: "chat_completions" as const,
+      assistantMessage: { role: "assistant", content: { corrupt: true } },
+    },
+  },
+  {
+    provider: "openai_responses" as const,
+    providerState: {
+      protocol: "openai_responses" as const,
+      output: [{ type: "message", content: "corrupt" }],
+    },
+  },
+  {
+    provider: "anthropic_messages" as const,
+    providerState: {
+      protocol: "anthropic_messages" as const,
+      content: [{ type: "thinking", signature: "missing-thinking" }],
+    },
+  },
+])(
+  "$provider 的损坏原生续传载荷在派发前 fail closed",
+  async ({ provider, providerState }) => {
+    const fetch_ = vi.fn<typeof fetch>();
+    const adapter = new FileNativeModelHost(
+      {
+        provider,
+        baseUrl: "https://provider.invalid/v1",
+        apiKey: "secret",
+        modelId: "continuation-model",
+        contextWindowTokens: 32_000,
+        maxOutputTokens: 2_000,
+      },
+      fetch_,
+    );
+    const bootstrap = new FileNativePromptCompiler().compileBootstrap(
+      createMinimalFileNativePreviewInput({
+        provider,
+        modelId: "continuation-model",
+        contextWindowTokens: 32_000,
+        maxOutputTokens: 2_000,
+        playerInput: "Check corrupt continuation.",
+        playerInputPlacement: "bootstrap",
+      }),
+    );
+
+    await expect(
+      adapter.exchange({
+        bootstrap,
+        tools: bootstrap.tools,
+        appended: [
+          {
+            kind: "assistant",
+            text: "Projection must not be used.",
+            reasoningContent: "Nor this projection.",
+            providerState,
+            toolCalls: [],
+          },
+        ],
+        maxOutputTokens: 2_000,
+      }),
+    ).rejects.toBeInstanceOf(ModelHostContinuationError);
+    expect(fetch_).not.toHaveBeenCalled();
+  },
+);
+
 test.each(["chat_completions", "anthropic_messages"] as const)(
   "%s 连续首条玩家原文只在 append 中出现一次",
   async (provider) => {
     const responseBody =
       provider === "chat_completions"
-        ? { choices: [{ message: { content: "Continue." } }] }
+        ? {
+            choices: [{ message: { role: "assistant", content: "Continue." } }],
+          }
         : { content: [{ type: "text", text: "Continue." }] };
     const fetch_ = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify(responseBody), {
@@ -1374,7 +1606,9 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
       "Unique committed narrator source: Alex tilts his head toward the stairs.";
     const response = (text: string) =>
       provider === "chat_completions"
-        ? { choices: [{ message: { content: text } }] }
+        ? {
+            choices: [{ message: { role: "assistant", content: text } }],
+          }
         : { content: [{ type: "text", text }] };
     const fetch_ = vi
       .fn<typeof fetch>()
@@ -1466,18 +1700,11 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
 test.each(["chat_completions", "anthropic_messages"] as const)(
   "%s 设定完善逐轮重放 assistant tool call 与对应 tool result",
   async (provider) => {
-    const responseBody =
-      provider === "chat_completions"
-        ? { choices: [{ message: { content: "Complete", tool_calls: [] } }] }
-        : { content: [{ type: "text", text: "Complete" }] };
-    const fetch_ = vi.fn<typeof fetch>().mockImplementation(() =>
-      Promise.resolve(
-        new Response(JSON.stringify(responseBody), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
-      ),
-    );
+    const fetch_ = vi
+      .fn<typeof fetch>()
+      .mockImplementation(() =>
+        Promise.resolve(settingSseResponse(provider, "Complete")),
+      );
     const adapter = new FileNativeSettingAuthorProvider(
       {
         provider,
@@ -1489,6 +1716,56 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
       },
       fetch_,
     );
+    const providerState =
+      provider === "chat_completions"
+        ? {
+            protocol: "chat_completions" as const,
+            assistantMessage: {
+              role: "assistant",
+              content: "",
+              reasoning_content: "Read first",
+              tool_calls: [
+                {
+                  id: "setting-read-1",
+                  type: "function",
+                  function: {
+                    name: "setting_read",
+                    arguments: '{"path":"world/current-situation.yaml"}',
+                  },
+                },
+                {
+                  id: "setting-read-2",
+                  type: "function",
+                  function: {
+                    name: "setting_read",
+                    arguments: '{"path":"world/cast/player.yaml"}',
+                  },
+                },
+              ],
+            },
+          }
+        : {
+            protocol: "anthropic_messages" as const,
+            content: [
+              {
+                type: "thinking",
+                thinking: "Read first",
+                signature: "opaque-setting-signature",
+              },
+              {
+                type: "tool_use",
+                id: "setting-read-1",
+                name: "setting_read",
+                input: { path: "world/current-situation.yaml" },
+              },
+              {
+                type: "tool_use",
+                id: "setting-read-2",
+                name: "setting_read",
+                input: { path: "world/cast/player.yaml" },
+              },
+            ],
+          };
     await adapter.next({
       messages: [
         { role: "user", content: "Improve the setting" },
@@ -1496,11 +1773,17 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
           role: "assistant",
           content: "",
           reasoningContent: "Read first",
+          providerState,
           toolCalls: [
             {
               id: "setting-read-1",
               name: "setting_read",
               arguments: { path: "world/current-situation.yaml" },
+            },
+            {
+              id: "setting-read-2",
+              name: "setting_read",
+              arguments: { path: "world/cast/player.yaml" },
             },
           ],
         },
@@ -1508,6 +1791,12 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
           role: "tool",
           toolCallId: "setting-read-1",
           content: "# File source",
+        },
+        {
+          role: "tool",
+          toolCallId: "setting-read-2",
+          content: "# Missing source",
+          isError: true,
         },
       ],
       tools: documentCandidateSettingTools,
@@ -1533,31 +1822,47 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
       expect(serialized).toContain(`"${field}"`);
     if (provider === "chat_completions")
       expect(serialized).toContain("reasoning_content");
-    else expect(serialized).toContain("tool_use");
+    else {
+      expect(serialized).toContain("tool_use");
+      const messages = (body as { messages: unknown[] }).messages;
+      expect(messages[0]).toEqual({
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "Improve the setting",
+            cache_control: { type: "ephemeral" },
+          },
+        ],
+      });
+      expect(messages.at(-1)).toEqual({
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "setting-read-1",
+            content: "# File source",
+          },
+          {
+            type: "tool_result",
+            tool_use_id: "setting-read-2",
+            content: "# Missing source",
+            is_error: true,
+          },
+        ],
+      });
+    }
   },
 );
 
 test.each(["chat_completions", "anthropic_messages"] as const)(
   "%s 设定计划把宿主契约放在 system 且不发送编辑工具",
   async (provider) => {
-    const responseBody =
-      provider === "chat_completions"
-        ? {
-            choices: [
-              { message: { content: "# Creation plan\n\nConcise plan" } },
-            ],
-          }
-        : {
-            content: [
-              { type: "text", text: "# Creation plan\n\nConcise plan" },
-            ],
-          };
-    const fetch_ = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(JSON.stringify(responseBody), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
-    );
+    const fetch_ = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        settingSseResponse(provider, "# Creation plan\n\nConcise plan"),
+      );
     const adapter = new FileNativeSettingAuthorProvider(
       {
         provider,
@@ -1580,7 +1885,7 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
     });
 
     const body = JSON.parse(fetch_.mock.calls[0]?.[1]?.body as string) as {
-      system?: string;
+      system?: { type: string; text: string; cache_control?: unknown }[];
       messages: { role: string; content: unknown }[];
       tools?: unknown;
       max_tokens: number;
@@ -1593,10 +1898,69 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
         content: "# Fixed authoring contract",
       });
     } else {
-      expect(body.system).toBe("# Fixed authoring contract");
+      expect(body.system).toEqual([
+        {
+          type: "text",
+          text: "# Fixed authoring contract",
+          cache_control: { type: "ephemeral" },
+        },
+      ]);
       expect(body.messages).toEqual([
-        { role: "user", content: "Create a small world" },
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: "Create a small world",
+              cache_control: { type: "ephemeral" },
+            },
+          ],
+        },
       ]);
     }
   },
 );
+
+function settingSseResponse(
+  provider: "chat_completions" | "anthropic_messages",
+  text: string,
+): Response {
+  if (provider === "chat_completions")
+    return new Response(
+      `data: ${JSON.stringify({
+        choices: [{ index: 0, delta: { role: "assistant", content: text } }],
+      })}\n\ndata: [DONE]\n\n`,
+      { status: 200, headers: { "content-type": "text/event-stream" } },
+    );
+  const event = (name: string, value: unknown): string =>
+    `event: ${name}\ndata: ${JSON.stringify(value)}\n\n`;
+  return new Response(
+    [
+      event("message_start", {
+        type: "message_start",
+        message: { role: "assistant", content: [], usage: {} },
+      }),
+      event("content_block_start", {
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "text", text: "" },
+      }),
+      event("content_block_delta", {
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "text_delta", text },
+      }),
+      event("content_block_stop", {
+        type: "content_block_stop",
+        index: 0,
+      }),
+      event("message_delta", {
+        type: "message_delta",
+        delta: { stop_reason: "end_turn" },
+        usage: {},
+      }),
+      event("message_stop", { type: "message_stop" }),
+    ].join(""),
+    { status: 200, headers: { "content-type": "text/event-stream" } },
+  );
+}

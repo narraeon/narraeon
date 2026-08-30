@@ -287,7 +287,8 @@ function candidate(): SettingImprovementCandidateResult {
           cache: {
             stablePrefixFingerprint: "stable",
             breakpoints: ["world_context"],
-            estimatedCacheableTokens: 4_000,
+            strategy: "provider_managed",
+            estimatedCacheableBytes: 4_000,
             firstDynamicByte: 2_000,
           },
         },

@@ -4,6 +4,7 @@ import type {
   SaveModelConnectionInput,
 } from "./modelConnections.ts";
 import type { AppLocale } from "./appPreferences.ts";
+import type { ModelUsage } from "./modelUsage.ts";
 import { maxPortableContentArchiveBase64Characters } from "./contentTree.ts";
 
 export interface ContentTreeFile {
@@ -227,7 +228,9 @@ export type V1PlayCallChainEvent =
       attempt: number;
       reasoning?: string;
       toolFragment?: string;
-      usage?: { inputTokens: number | null; outputTokens: number | null };
+      usage?: ModelUsage;
+      stopReason?: string;
+      continuation?: "available" | "unavailable";
       committedHead?: string;
     }
   | {
@@ -259,7 +262,7 @@ export type V1PlayCallChainEvent =
       displayName: string;
       text: string;
       reasoning?: string;
-      usage?: { inputTokens: number | null; outputTokens: number | null };
+      usage?: ModelUsage;
       toolCalls: {
         callId: string;
         name: string;

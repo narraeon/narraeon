@@ -1612,17 +1612,62 @@ function TimelineEvent({
               {detailPending ? <p>{uiText("正在加载…")}</p> : null}
               {detailError === null ? null : <p role="alert">{detailError}</p>}
               {full?.reasoning === undefined ? null : (
-                <pre>{full.reasoning}</pre>
+                <>
+                  <p>
+                    <strong>
+                      {uiText("Provider 返回推理（不等同隐藏思维链）")}
+                    </strong>
+                  </p>
+                  <pre>{full.reasoning}</pre>
+                </>
               )}
               {full?.toolFragment === undefined ? null : (
                 <pre>{full.toolFragment}</pre>
               )}
+              {full?.stopReason === undefined &&
+              full?.continuation === undefined ? null : (
+                <dl className="prompt-budget-breakdown">
+                  {full.stopReason === undefined ? null : (
+                    <div>
+                      <dt>{uiText("完成原因")}</dt>
+                      <dd>{full.stopReason}</dd>
+                    </div>
+                  )}
+                  {full.continuation === undefined ? null : (
+                    <div>
+                      <dt>{uiText("原生续传载荷")}</dt>
+                      <dd>
+                        {full.continuation === "available"
+                          ? uiText("可用")
+                          : uiText("不可用")}
+                      </dd>
+                    </div>
+                  )}
+                </dl>
+              )}
               {full?.usage === undefined ? null : (
-                <small>
-                  {uiText("Provider usage：输入")}
-                  {full.usage.inputTokens ?? "unavailable"} {uiText("· 输出")}
-                  {full.usage.outputTokens ?? "unavailable"}
-                </small>
+                <dl className="prompt-budget-breakdown">
+                  {[
+                    [uiText("输入"), "inputTokens"],
+                    [uiText("未缓存输入"), "uncachedInputTokens"],
+                    [uiText("缓存读取"), "cacheReadTokens"],
+                    [uiText("缓存写入"), "cacheWriteTokens"],
+                    [uiText("推理"), "reasoningTokens"],
+                    [uiText("输出"), "outputTokens"],
+                    [uiText("合计"), "totalTokens"],
+                  ].map(([label, field]) => {
+                    const key = field as keyof typeof full.usage.provenance;
+                    return (
+                      <div key={key}>
+                        <dt>{label}</dt>
+                        <dd>
+                          {full.usage![key] ?? "unavailable"} tokens ·{" "}
+                          {full.usage!.provenance[key]}
+                        </dd>
+                      </div>
+                    );
+                  })}
+                </dl>
               )}
             </details>
           )}
@@ -2064,7 +2109,9 @@ function summarizeTimelineEvent(
       detailsAvailable:
         (reasoning !== undefined && reasoning.length > 0) ||
         (toolFragment !== undefined && toolFragment.length > 0) ||
-        usage !== undefined,
+        usage !== undefined ||
+        event.stopReason !== undefined ||
+        event.continuation !== undefined,
     };
   }
   if (event.kind === "tool_call") {

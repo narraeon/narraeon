@@ -1,4 +1,12 @@
-import type { ModelProviderKind } from "../../protocol/modelConnections.ts";
+import type {
+  ModelPromptCacheStrategy,
+  ModelProviderKind,
+} from "../../protocol/modelConnections.ts";
+import type {
+  ModelUsage as ModelHostUsage,
+  ModelUsageField as ModelHostUsageField,
+} from "../../protocol/modelUsage.ts";
+export type { ModelHostUsage, ModelHostUsageField };
 import type { ProviderExchangeState } from "./ProviderExchangeState.ts";
 import type { PromptCompilation } from "../prompt/FileNativePromptCompiler.ts";
 import type { RuntimeToolDefinitionStrategy } from "../prompt/FileNativeToolRegistry.ts";
@@ -17,6 +25,8 @@ export interface ModelHostToolCall {
   arguments: unknown;
 }
 
+export type ModelHostCacheStrategy = ModelPromptCacheStrategy;
+
 /**
  * The protocol identity frozen for one logical model operation. Credentials
  * are deliberately absent; rotating a secret does not change this binding.
@@ -28,6 +38,8 @@ export interface ModelHostBinding {
   contextWindowTokens: number;
   maxOutputTokens: number;
   protocolConfigFingerprint: string;
+  /** Optional only for bindings written before cache policy became visible. */
+  cacheStrategy?: ModelHostCacheStrategy;
 }
 
 export function equalModelHostBinding(
@@ -40,7 +52,8 @@ export function equalModelHostBinding(
     left.modelId === right.modelId &&
     left.contextWindowTokens === right.contextWindowTokens &&
     left.maxOutputTokens === right.maxOutputTokens &&
-    left.protocolConfigFingerprint === right.protocolConfigFingerprint
+    left.protocolConfigFingerprint === right.protocolConfigFingerprint &&
+    left.cacheStrategy === right.cacheStrategy
   );
 }
 
@@ -64,6 +77,8 @@ export type ModelHostAppendItem =
       kind: "tool";
       toolCallId: string;
       markdown: string;
+      /** Provider-visible failure state; Anthropic encodes this as is_error. */
+      isError?: boolean;
     };
 
 export interface ModelHostExchange {
@@ -83,32 +98,11 @@ export interface ModelHostExchange {
   maxOutputTokens: number;
 }
 
-export type ModelHostUsageField =
-  "provider" | "unavailable" | "derived_provider_fields";
-
-/** Provider-reported usage only; Runtime does not estimate token usage. */
-export interface ModelHostUsage {
-  inputTokens: number | null;
-  uncachedInputTokens: number | null;
-  cacheReadTokens: number | null;
-  cacheWriteTokens: number | null;
-  reasoningTokens: number | null;
-  outputTokens: number | null;
-  totalTokens: number | null;
-  provenance: {
-    inputTokens: ModelHostUsageField;
-    uncachedInputTokens: ModelHostUsageField;
-    cacheReadTokens: ModelHostUsageField;
-    cacheWriteTokens: ModelHostUsageField;
-    reasoningTokens: ModelHostUsageField;
-    outputTokens: ModelHostUsageField;
-    totalTokens: ModelHostUsageField;
-  };
-}
-
 export interface ModelHostResponse {
   text?: string;
   reasoningContent?: string;
+  /** Provider-declared terminal status/reason, kept outside narrative. */
+  stopReason?: string;
   providerState?: ProviderExchangeState;
   usage?: ModelHostUsage;
   toolCalls?: ModelHostToolCall[];
@@ -130,6 +124,15 @@ export interface ModelHostExchangeObserver {
   onDelta?: (delta: ModelHostDelta) => void;
 }
 
+/** Credential-free projection of the exact request body a host will send. */
+export interface ModelHostWireRequest {
+  provider: ModelProviderKind;
+  method: "POST";
+  endpointPath: string;
+  headerNames: string[];
+  body: unknown;
+}
+
 export interface ModelHost {
   binding(): ModelHostBinding;
   exchange(
@@ -145,6 +148,16 @@ export class ModelHostBindingMismatchError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = "ModelHostBindingMismatchError";
+  }
+}
+
+/** The logical session cannot continue without its provider-native payload. */
+export class ModelHostContinuationError extends Error {
+  readonly kind = "continuation_unavailable" as const;
+
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "ModelHostContinuationError";
   }
 }
 
@@ -180,6 +193,11 @@ export type ScriptedModelHostStep =
   | { outcome: "unknown"; message: string };
 
 /** Deterministic adapter for exercising the true external ModelHost port. */
+/**
+ * Deterministic test double. Its synthetic provider state is fixture data, not
+ * a production continuation codec; real adapters must retain returned native
+ * state and never call scriptedProviderState.
+ */
 export class ScriptedModelHost implements ModelHost {
   readonly requests: ModelHostExchange[] = [];
   readonly #binding: ModelHostBinding;
@@ -216,8 +234,12 @@ export class ScriptedModelHost implements ModelHost {
       observer?.onDelta?.(structuredClone(delta));
     const providerState =
       response.providerState ??
-      (continuation === "available"
-        ? scriptedProviderState(this.#binding.provider, this.#responseIndex)
+      (continuation !== "lost"
+        ? scriptedProviderState(
+            this.#binding.provider,
+            this.#responseIndex,
+            response,
+          )
         : undefined);
     this.#responseIndex += 1;
     return Promise.resolve({
@@ -232,21 +254,73 @@ export class ScriptedModelHost implements ModelHost {
 function scriptedProviderState(
   provider: ModelProviderKind,
   responseIndex: number,
+  response: Omit<ModelHostResponse, "providerState">,
 ): ProviderExchangeState {
-  if (provider === "openai_responses")
+  if (provider === "openai_responses") {
+    const output: unknown[] = [];
+    if (response.reasoningContent !== undefined)
+      output.push({
+        type: "reasoning",
+        summary: [{ type: "summary_text", text: response.reasoningContent }],
+      });
+    if (response.text !== undefined)
+      output.push({
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: response.text }],
+      });
+    for (const call of response.toolCalls ?? [])
+      output.push({
+        type: "function_call",
+        call_id: call.id,
+        name: call.name,
+        arguments: JSON.stringify(call.arguments),
+      });
     return {
       protocol: "openai_responses",
-      output: [],
+      output,
       responseId: `scripted-${responseIndex}`,
     };
-  if (provider === "anthropic_messages")
+  }
+  if (provider === "anthropic_messages") {
+    const content: unknown[] = [];
+    if (response.reasoningContent !== undefined)
+      content.push({ type: "thinking", thinking: response.reasoningContent });
+    if (response.text !== undefined)
+      content.push({ type: "text", text: response.text });
+    for (const call of response.toolCalls ?? [])
+      content.push({
+        type: "tool_use",
+        id: call.id,
+        name: call.name,
+        input: structuredClone(call.arguments),
+      });
     return {
       protocol: "anthropic_messages",
-      content: [],
+      content,
       responseId: `scripted-${responseIndex}`,
     };
+  }
   return {
     protocol: "chat_completions",
-    assistantMessage: { role: "assistant", content: null },
+    assistantMessage: {
+      role: "assistant",
+      content: response.text ?? null,
+      ...(response.reasoningContent === undefined
+        ? {}
+        : { reasoning_content: response.reasoningContent }),
+      ...((response.toolCalls ?? []).length === 0
+        ? {}
+        : {
+            tool_calls: response.toolCalls!.map((call) => ({
+              id: call.id,
+              type: "function",
+              function: {
+                name: call.name,
+                arguments: JSON.stringify(call.arguments),
+              },
+            })),
+          }),
+    },
   };
 }

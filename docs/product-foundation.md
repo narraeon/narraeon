@@ -24,7 +24,7 @@ Narraeon 是一个本地优先的开放式角色扮演工作区，其核心产�
 
 模型连接配置是工作区设置，不是第五个内容任务。世界列表和世界页是已有世界的使用入口；世界页提供游玩、当前文档、控制编辑、已提交叙事、重命名、修正、修改和创建分叉，而不把运行中世界重新叫作“设定”。世界名称是可修改、可重名的本地显示标签，不是世界身份，也不是当前情境文档的 title；重命名不改变 state、control、history、当前端点或 Authority。
 
-世界页首次打开以故事可读为完成边界：先取得当前端点、玩家视图和最近 40 项页面时间线摘要并开始显示；更早时间线由玩家显式向前加载，工具／思维链详情在展开单项时读取，世界文档与 Runtime 诊断只在进入对应页面时读取，玩法产物和调试投影在首屏之后独立加载。首屏不得为了计算“完整对话”而遍历 Authority、读取全部模型上下文或重放全部工具记录。
+世界页首次打开以故事可读为完成边界：先取得当前端点、玩家视图和最近 40 项页面时间线摘要并开始显示；更早时间线由玩家显式向前加载，工具／Provider 返回推理详情在展开单项时读取，世界文档与 Runtime 诊断只在进入对应页面时读取，玩法产物和调试投影在首屏之后独立加载。首屏不得为了计算“完整对话”而遍历 Authority、读取全部模型上下文或重放全部工具记录。
 
 直接把另一份内容包合并进运行中世界不属于 V1。若以后增加该能力，必须作为显式世界外操作定义 state／control 的原子边界，不能把内容包当成运行中世界的可同步设定副本。
 
@@ -135,6 +135,10 @@ AI 决定是否持久化时遵循以下顺序：
 
 模型请求使用稳定逻辑 role：bootstrap 中的 `runtime_system`、`author_instruction`、`world_context`，以及随后追加的 `player_input`、`assistant`、`tool`。Provider adapter 只做协议 role 映射；无论目标 API 只有 system／user 还是支持 developer，世界状态不能被提升成宿主指令，Runtime 机械契约也不能被降成普通材料。
 
+Provider 响应进入 Runtime 后形成两条不能互相替代的轨道（[ADR-0035](adr/0035-provider-continuation-is-opaque-and-bound.md)）。**模型调用投影**解析可见正文、返回推理、工具调用、usage 与错误，供工具执行、诊断和界面呈现；**Provider 续传载荷**则保留下一次请求所需的完整协议原生片段。Chat Completions 保留完整 assistant message，Responses 保留完整 `output` items，Anthropic Messages 保留完整 assistant `content` blocks；下一次 append 必须直接使用这些片段，不能保存整个 HTTP response，也不能从投影重新拼装消息。尤其不能把 Claude 文本按标签或字段猜测成 thinking：签名 thinking、redacted thinking 和 Responses encrypted reasoning 都必须作为不透明协议项保留，且不得展示成玩家正文。
+
+工具结果也由各协议的 encoder 从 Runtime 工具事实直接生成，而不是从 assistant 投影反推：Chat Completions 使用逐项 `tool` message，Responses 使用逐项 `function_call_output`，Anthropic Messages 把同一 assistant 响应触发的并行 `tool_result` blocks 合并在紧随其后的同一个 `user` message 中，并用 `is_error` 明示失败。工具调用和结果可以进入模型上下文与诊断，但不能越权进入玩家叙事或世界 Authority。
+
 输入正文使用 Markdown。只有 provider 传输外壳和原生工具参数使用 JSON；不得再把内部上下文对象序列化后塞进一条 `user.content`。
 
 ## 附加材料与按需读取
@@ -174,19 +178,21 @@ Runtime 不按剩余 token 从新到旧填充历史。除 genesis 开场白外�
 
 每次模型响应都在同一份调用链契约下自由选择直接叙事、只调用工具，或同时给出文本与工具调用。世界写工具只操作当前候选，完整响应处理成功后才把变化后的完整 YAML／Markdown 写入 Authority；普通游玩不删除或移动整份文档。
 
-调用链没有整体原子提交或集中结算。玩家原文先单独提交；每个已经完整返回且含可见文本或状态变化的模型响应再各自提交。后续模型或传输失败不会回滚已经成立的前序步骤。Provider 的 SSE 增量经 Runtime 的 NDJSON 流直接投影到浏览器，界面实时显示玩家和逐字 AI 正文，而不是轮询等待最终文本；增量只更新调用链内容，不主动改变玩家当前的滚动位置。Provider 思维链、工具参数／结果和 usage 只属于调用轨迹，不成为玩家／主持历史或世界 Authority；响应完成后，页面只显示它们存在的轻量提示，玩家展开单项时才读取完整详情。
+调用链没有整体原子提交或集中结算。玩家原文先单独提交；每个已经完整返回且含可见文本或状态变化的模型响应再各自提交。后续模型或传输失败不会回滚已经成立的前序步骤。Provider 的 SSE 增量经 Runtime 的 NDJSON 流直接投影到浏览器，界面实时显示玩家和逐字 AI 正文，而不是轮询等待最终文本；增量只更新调用链内容，不主动改变玩家当前的滚动位置。Provider 返回推理、工具参数／结果和 usage 只属于调用轨迹，不成为玩家／主持历史或世界 Authority；Runtime 不声称这些内容是模型隐藏思维，页面只显示它们存在的轻量提示，玩家展开单项时才读取完整详情。不透明或加密推理为协议续传保留，但不向玩家投影。
 
-追加上下文继续使用当前模型上下文开始时冻结的 bootstrap，但每次 Authority 写入都必须基于该上下文当前已提交端点；若世界被其他操作推进，只能选择全新上下文重新编译。全新上下文替换旧逻辑 transcript，不把旧链嵌套进新请求；Web 另行持久保留页面时间线，使此前的玩家输入、AI 正文、思维链、工具参数与结果、失败和 usage 在刷新或冷恢复后仍按原顺序可达，并在每个模型上下文起点显示分隔标记。页面时间线按不可变上下文链和追加事件保存，首次打开只返回最近的有界摘要页；“加载更早”使用稳定游标向前读取，普通尾部追加不会改写旧页或旧事件。
+追加上下文继续使用当前模型上下文开始时冻结的 bootstrap，但每次 Authority 写入都必须基于该上下文当前已提交端点；若世界被其他操作推进，只能选择全新上下文重新编译。全新上下文替换旧逻辑 transcript，不把旧链嵌套进新请求；Web 另行持久保留页面时间线，使此前的玩家输入、AI 正文、Provider 返回推理、工具参数与结果、失败和 usage 在刷新或冷恢复后仍按原顺序可达，并在每个模型上下文起点显示分隔标记。页面时间线按不可变上下文链和追加事件保存，首次打开只返回最近的有界摘要页；“加载更早”使用稳定游标向前读取，普通尾部追加不会改写旧页或旧事件。
 
-Runtime 在每次模型派发前持久保存完整 `ModelHostExchange`。Provider 完整返回后，Runtime 先保存去除临时诊断的完整结果，再执行工具、准备精确结算并尝试 Authority 提交；因此进程在 Provider 返回后退出时只能继续结算同一结果，不能再次调用模型。若 Provider 流中断，中断片段只在界面显示，不追加到模型 transcript，也不进入 Authority；玩家保持输入为空并点击“追加上下文”时，Runtime 原样发送已保存请求，不再添加一次玩家原文，不根据片段构造“继续写”指令，也不重新拼装 frame。若上一响应已经完整结束，同样的空输入动作会用包含该完整响应的当前 transcript 发起下一次生成。界面始终只提供“全新上下文”和“追加上下文”两个提交动作。
+Runtime 在每次模型派发前持久保存完整 `ModelHostExchange`。Provider 完整返回后，Runtime 先保存去除临时诊断的完整结果和协议原生续传载荷，再执行工具、准备精确结算并尝试 Authority 提交；因此进程在 Provider 返回后退出时只能继续结算同一结果，不能再次调用模型。若 Provider 流中断或进程可能已开始派发但未保存完整结果，中断片段只在界面显示，不追加到模型 transcript，也不进入 Authority；此时外部结果未知，旧请求绝不能重发，当前模型会话终止并要求玩家使用全新上下文。只有 Provider 在开始生成前明确拒绝请求，或持久状态能证明请求尚未派发时，空输入“追加上下文”才会原样重发已保存请求，不重复玩家原文，不根据片段构造“继续写”指令，也不重新拼装 frame。若上一响应已经完整结束，同样的空输入动作会用包含其原生续传载荷的当前 transcript 发起下一次生成。完整响应的续传载荷缺失、损坏或与冻结模型绑定不兼容时同样必须 fail closed，不能退回到解析投影重建。界面始终只提供“全新上下文”和“追加上下文”两个提交动作。
 
-Provider response ID、continuation token、不透明推理项和缓存只用于协议续传或加速，不成为世界状态、已提交叙事或唯一恢复来源。
+模型会话冻结 endpoint、协议与方言、模型、续传 codec、推理／摘要配置、输出能力、工具策略和缓存策略；只允许凭据与传输超时在保持同一语义绑定时更新。CLIProxyAPI 模型名的 thinking 后缀优先于请求 body，因此模型 ID 含 `(high)`、`(max)` 等后缀时只能把结构化推理强度留在 `Provider 默认`，不能同时制造两个配置权威。Provider response ID、continuation token、不透明推理项和缓存只用于协议续传或加速，不成为世界状态、已提交叙事或唯一恢复来源。Claude 通过 Chat Completions 代理时通常只能得到 `reasoning_content`，协议本身不能保证携带签名 thinking；需要可验证续传时必须使用能保留完整原生块的 Anthropic Messages，或使用携带 `reasoning.encrypted_content` 的 OpenAI Responses 兼容路径，而不是切割正文猜测。
+
+推理强度与返回摘要是两项独立意图。OpenAI Responses 使用 `reasoning.effort` 与 `reasoning.summary`；Chat Completions 只在协议／方言确实定义的扩展上发送对应字段；Anthropic effort 只写入 `output_config.effort`，不能仅因调整 effort 就擅自开启 adaptive thinking，只有显式摘要可见性才需要 `thinking.display`。不受目标模型支持的等级由 Provider 明确拒绝，Runtime 不猜测模型能力或静默换档。
 
 ## 预算、缓存与预览
 
 模型配置继续提供 Provider 的 `contextWindowTokens` 和 `maxOutputTokens`。每次新派发直接使用当前 ModelHost 的固定 `maxOutputTokens`；原样重发使用已持久化的完整原请求。Runtime 不估算 token、不做上下文准入、不另设“连续交换输出上限”，也不在响应已经完成并计费后重新计算再拒绝结果。上下文能否容纳请求完全由 Provider 判断；Runtime 不自动摘要、压缩或截断历史。
 
-提示词编译把稳定机械块、主持块和世界控制块放在稳定前缀，内部 ID、时间戳和 operation 数据不得污染缓存键。缓存 miss 只影响成本和延迟，不能改变请求语义或恢复能力。
+提示词编译把稳定机械块、主持块和世界控制块放在稳定前缀，稳定前缀指纹不包含内部 ID、时间戳和 operation 数据。Anthropic Messages 在这些真实稳定块上编码显式 cache breakpoint；CLIProxyAPI 方言的 Chat Completions／Responses 使用代理明确支持的 `cache_control` 扩展。标准 Responses 的 `prompt_cache_key` 按稳定前缀分组，使等价前缀可复用 Provider 缓存；CLIProxyAPI 中该字段还承担 session affinity／重放隔离职责，因此改为按冻结模型会话生成稳定散列：同一会话各轮不变，不同调用链绝不共享。两种路径都不把原始内部身份写入 wire。没有等价显式块的标准协议只报告 provider-managed 策略。Runtime 不能把字节估计伪装成 token 命中，而要持久投影 Provider 实际报告的 uncached input、cache read、cache write、reasoning、output 与 total usage，并分别保留 provider／派生／不可用 provenance。缓存 miss 只影响成本和延迟，不能改变请求语义或恢复能力。
 
 Prompt Preview 必须调用真实编译器，并展示：
 
@@ -195,6 +201,7 @@ Prompt Preview 必须调用真实编译器，并展示：
 - 最终 Markdown 正文与真实工具定义；
 - 附加材料展开和按需读取入口；
 - Provider 窗口／最大输出配置、Runtime 不做上下文准入的状态和 cache 报告；
+- 去除凭据后的真实 HTTP method、endpoint path、header 名称与 request body；
 - 内部 DTO 字段泄漏扫描。
 
 内容包和设定候选的生产 Preview 必须明确显示 `opening.md` 不进入 bootstrap，并把预览玩家原文单列为紧随 bootstrap 的首条普通 user 追加；它不能制造一条权威玩家历史。

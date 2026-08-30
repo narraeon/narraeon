@@ -344,7 +344,8 @@ export class V1Runtime {
               ),
         ]);
         const hostBinding = presetHostBinding(playPreset);
-        return this.#compiler.preview(
+        const modelHost = new FileNativeModelHost(connection);
+        const preview = this.#compiler.preview(
           {
             endpoint: {
               id: `content:${request.packageId}`,
@@ -361,10 +362,37 @@ export class V1Runtime {
             ),
             playerInputPlacement: "append",
             playerInput: request.playerInput,
-            modelBinding: new FileNativeModelHost(connection).binding(),
+            modelBinding: modelHost.binding(),
           },
           playPreset,
         );
+        const tools = structuredClone(
+          preview.compilation.toolUniverse ?? preview.compilation.tools,
+        );
+        return {
+          ...preview,
+          wireRequest: modelHost.previewRequest({
+            bootstrap: structuredClone(preview.compilation),
+            tools: structuredClone(tools),
+            toolUniverse: structuredClone(tools),
+            allowedTools: tools.map(({ name }) => name),
+            toolStrategy: preview.compilation.toolStrategy,
+            appended:
+              preview.initialAppend === undefined
+                ? []
+                : [
+                    {
+                      kind: "player" as const,
+                      text: preview.initialAppend.logical.text,
+                    },
+                  ],
+            requestId: "play_call_chain",
+            operationId: "prompt-preview",
+            requestAttempt: 1,
+            exchange: 1,
+            maxOutputTokens: modelHost.binding().maxOutputTokens,
+          }),
+        };
       }
       case "world.create": {
         const [package_, connection, preset] = await Promise.all([

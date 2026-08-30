@@ -88,6 +88,26 @@ test.each([1, 2] as const)(
       markdown: "# 读取成功\n\n这是已发布存档里的完整工具结果。",
     });
     await expect(
+      store.playTimeline.readDetail(fixture.worldId, "released-context-b", 2),
+    ).resolves.toMatchObject({
+      kind: "assistant",
+      usage: {
+        inputTokens: 321,
+        uncachedInputTokens: null,
+        cacheReadTokens: null,
+        cacheWriteTokens: null,
+        reasoningTokens: null,
+        outputTokens: 45,
+        totalTokens: null,
+        provenance: {
+          inputTokens: "provider",
+          uncachedInputTokens: "unavailable",
+          outputTokens: "provider",
+          totalTokens: "unavailable",
+        },
+      },
+    });
+    await expect(
       store.getOperationOutcome("released-player-b"),
     ).resolves.toMatchObject({
       outcome: "committed",

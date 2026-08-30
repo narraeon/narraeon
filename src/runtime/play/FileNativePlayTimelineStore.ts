@@ -19,8 +19,10 @@ import type {
   V1PlayTimelineItem,
   V1PlayTimelinePage,
 } from "../../protocol/v1.ts";
+import type { ModelUsage, ModelUsageField } from "../../protocol/modelUsage.ts";
 import type {
   ModelHostAppendItem,
+  ModelHostBinding,
   ModelHostExchange,
 } from "../model/ModelHost.ts";
 import type {
@@ -59,6 +61,8 @@ export interface PersistedPlayCallChainContext {
   playPreset: V1PlayCallChainView["playPreset"];
   followups?: PlayFollowupCompilation[];
   playPresetScriptsEnabled?: boolean;
+  /** Missing only for contexts written before bindings became durable. */
+  modelBinding?: ModelHostBinding;
   status: V1PlayCallChainStatus;
   canRetry: boolean;
   bootstrap: PromptCompilation;
@@ -107,6 +111,7 @@ interface PersistedContextBase {
   branchedBeforePlayer?: PersistedPlayCallChainContext["branchedBeforePlayer"];
   followups?: PlayFollowupCompilation[];
   playPresetScriptsEnabled?: boolean;
+  modelBinding?: ModelHostBinding;
   bootstrap: PromptCompilation;
   tools: PromptCompilation["tools"];
 }
@@ -213,6 +218,7 @@ export class FileNativePlayTimelineStore {
       seen.add(context.chainId);
       await this.persist({
         ...structuredClone(context),
+        events: context.events.map(normalizePlayEvent),
         schemaVersion: 3,
         kind: "play_call_chain",
         worldId,
@@ -397,7 +403,7 @@ export class FileNativePlayTimelineStore {
       baseValue,
       continuationValue,
       transcript,
-      events,
+      rawEvents,
       completedTools,
       checkpoints,
     ] = await Promise.all([
@@ -423,6 +429,7 @@ export class FileNativePlayTimelineStore {
         stateValue.authorizationCheckpointCount,
       ),
     ]);
+    const events = rawEvents.map(normalizePlayEvent);
     assertContextBase(baseValue);
     assertContextContinuation(continuationValue);
     if (
@@ -483,6 +490,9 @@ export class FileNativePlayTimelineStore {
       ...(baseValue.playPresetScriptsEnabled === undefined
         ? {}
         : { playPresetScriptsEnabled: baseValue.playPresetScriptsEnabled }),
+      ...(baseValue.modelBinding === undefined
+        ? {}
+        : { modelBinding: structuredClone(baseValue.modelBinding) }),
       status: stateValue.status,
       canRetry: stateValue.canRetry,
       bootstrap: structuredClone(baseValue.bootstrap),
@@ -661,7 +671,7 @@ export class FileNativePlayTimelineStore {
     assertPlayEvent(event);
     if (event.id !== eventId)
       throw new Error("Play timeline event identity is inconsistent");
-    return event;
+    return normalizePlayEvent(event);
   }
 
   newGeneration(): string {
@@ -829,6 +839,9 @@ function contextBase(value: PersistedPlayCallChain): PersistedContextBase {
     ...(value.playPresetScriptsEnabled === undefined
       ? {}
       : { playPresetScriptsEnabled: value.playPresetScriptsEnabled }),
+    ...(value.modelBinding === undefined
+      ? {}
+      : { modelBinding: structuredClone(value.modelBinding) }),
     bootstrap: structuredClone(value.bootstrap),
     tools: structuredClone(value.tools),
   };
@@ -848,7 +861,9 @@ function summarizeEvent(
       detailsAvailable:
         (reasoning !== undefined && reasoning.length > 0) ||
         (toolFragment !== undefined && toolFragment.length > 0) ||
-        usage !== undefined,
+        usage !== undefined ||
+        event.stopReason !== undefined ||
+        event.continuation !== undefined,
     };
   }
   if (event.kind === "tool_call") {
@@ -940,6 +955,8 @@ function assertContextBase(
     typeof value.worldId !== "string" ||
     typeof value.chainId !== "string" ||
     typeof value.baselineHead !== "string" ||
+    (value.modelBinding !== undefined &&
+      !validModelHostBinding(value.modelBinding)) ||
     !isRecord(value.bootstrap) ||
     !Array.isArray(value.tools)
   )
@@ -1040,6 +1057,8 @@ function isReleasedPlayContext(
     (value.followups !== undefined && !Array.isArray(value.followups)) ||
     (value.playPresetScriptsEnabled !== undefined &&
       typeof value.playPresetScriptsEnabled !== "boolean") ||
+    (value.modelBinding !== undefined &&
+      !validModelHostBinding(value.modelBinding)) ||
     (value.status !== "ready" &&
       value.status !== "running" &&
       value.status !== "interrupted") ||
@@ -1067,6 +1086,31 @@ function isReleasedPlayContext(
   return validReleasedAuthorizationCheckpoints(
     value.documentAuthorizationCheckpoints,
     value.events,
+  );
+}
+
+function validModelHostBinding(value: unknown): value is ModelHostBinding {
+  return (
+    isRecord(value) &&
+    (value.provider === "chat_completions" ||
+      value.provider === "openai_responses" ||
+      value.provider === "anthropic_messages") &&
+    typeof value.endpointFingerprint === "string" &&
+    value.endpointFingerprint.length > 0 &&
+    typeof value.modelId === "string" &&
+    value.modelId.length > 0 &&
+    typeof value.contextWindowTokens === "number" &&
+    validCount(value.contextWindowTokens) &&
+    value.contextWindowTokens > 0 &&
+    typeof value.maxOutputTokens === "number" &&
+    validCount(value.maxOutputTokens) &&
+    value.maxOutputTokens > 0 &&
+    typeof value.protocolConfigFingerprint === "string" &&
+    value.protocolConfigFingerprint.length > 0 &&
+    (value.cacheStrategy === undefined ||
+      value.cacheStrategy === "explicit_anthropic_blocks" ||
+      value.cacheStrategy === "explicit_cliproxyapi_message" ||
+      value.cacheStrategy === "provider_managed")
   );
 }
 
@@ -1166,6 +1210,10 @@ function assertPlayEvent(
       !validOptionalString(value.reasoning) ||
       !validOptionalString(value.toolFragment) ||
       !validOptionalUsage(value.usage) ||
+      !validOptionalString(value.stopReason) ||
+      (value.continuation !== undefined &&
+        value.continuation !== "available" &&
+        value.continuation !== "unavailable") ||
       !validOptionalString(value.committedHead)
     )
       throw new Error("Assistant timeline event has an invalid shape");
@@ -1226,6 +1274,10 @@ function assertTimelineEventSummary(
     if (
       !validAssistantEventCore(value) ||
       !validOptionalString(value.committedHead) ||
+      !validOptionalString(value.stopReason) ||
+      (value.continuation !== undefined &&
+        value.continuation !== "available" &&
+        value.continuation !== "unavailable") ||
       typeof value.hasReasoning !== "boolean" ||
       typeof value.hasToolFragment !== "boolean" ||
       typeof value.hasUsage !== "boolean" ||
@@ -1286,8 +1338,81 @@ function validOptionalUsage(value: unknown): boolean {
   return (
     value === undefined ||
     (isRecord(value) &&
-      (value.inputTokens === null || typeof value.inputTokens === "number") &&
-      (value.outputTokens === null || typeof value.outputTokens === "number"))
+      validUsageToken(value.inputTokens) &&
+      validUsageToken(value.outputTokens) &&
+      (value.provenance === undefined || validFullUsage(value)))
+  );
+}
+
+/**
+ * v0.1.1 stored only input/output usage. Keep that released shape readable,
+ * but expose one current protocol projection with honest unavailable fields.
+ */
+function normalizePlayEvent(event: V1PlayCallChainEvent): V1PlayCallChainEvent {
+  if (
+    (event.kind !== "assistant" && event.kind !== "followup") ||
+    event.usage === undefined ||
+    validFullUsage(event.usage)
+  )
+    return structuredClone(event);
+  const legacy = event.usage as unknown as {
+    inputTokens: number | null;
+    outputTokens: number | null;
+  };
+  const unavailable: ModelUsageField = "unavailable";
+  const provider = (value: number | null): ModelUsageField =>
+    value === null ? unavailable : "provider";
+  const usage: ModelUsage = {
+    inputTokens: legacy.inputTokens,
+    uncachedInputTokens: null,
+    cacheReadTokens: null,
+    cacheWriteTokens: null,
+    reasoningTokens: null,
+    outputTokens: legacy.outputTokens,
+    totalTokens: null,
+    provenance: {
+      inputTokens: provider(legacy.inputTokens),
+      uncachedInputTokens: unavailable,
+      cacheReadTokens: unavailable,
+      cacheWriteTokens: unavailable,
+      reasoningTokens: unavailable,
+      outputTokens: provider(legacy.outputTokens),
+      totalTokens: unavailable,
+    },
+  };
+  return { ...structuredClone(event), usage };
+}
+
+function validFullUsage(value: unknown): value is ModelUsage {
+  if (!isRecord(value) || !isRecord(value.provenance)) return false;
+  const provenance = value.provenance;
+  const fields = [
+    "inputTokens",
+    "uncachedInputTokens",
+    "cacheReadTokens",
+    "cacheWriteTokens",
+    "reasoningTokens",
+    "outputTokens",
+    "totalTokens",
+  ] as const;
+  return fields.every(
+    (field) =>
+      validUsageToken(value[field]) && validUsageField(provenance[field]),
+  );
+}
+
+function validUsageToken(value: unknown): boolean {
+  return (
+    value === null ||
+    (typeof value === "number" && Number.isFinite(value) && value >= 0)
+  );
+}
+
+function validUsageField(value: unknown): value is ModelUsageField {
+  return (
+    value === "provider" ||
+    value === "unavailable" ||
+    value === "derived_provider_fields"
   );
 }
 

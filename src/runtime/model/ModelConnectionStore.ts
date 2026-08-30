@@ -11,12 +11,16 @@ import {
 import { join } from "node:path";
 
 import {
+  modelReasoningPolicyIssue,
   modelProviderPresets,
   type ListProviderModelsInput,
   type ModelConnectionLibraryView,
   type ModelConnectionView,
+  type ModelProviderDialect,
   type ModelProviderKind,
   type ModelProviderPresetId,
+  type ModelReasoningEffort,
+  type ModelReasoningSummary,
   type SaveModelConnectionInput,
 } from "../../protocol/modelConnections.ts";
 import type { FileNativeModelConnection } from "./FileNativeModelAdapters.ts";
@@ -28,6 +32,9 @@ interface StoredModelConnection extends FileNativeModelConnection {
   id: string;
   name: string;
   presetId: ModelProviderPresetId;
+  dialect: ModelProviderDialect;
+  reasoningEffort: ModelReasoningEffort;
+  reasoningSummary: ModelReasoningSummary;
 }
 
 interface ModelConnectionDocument {
@@ -272,6 +279,20 @@ function normalizeSaveInput(
     requiredTrimmed(input.baseUrl, "Base URL", 4096),
   );
   const modelId = requiredTrimmed(input.modelId, "Model ID", 512);
+  const dialect = validateDialect(input.dialect ?? existing?.dialect);
+  const reasoningEffort = validateReasoningEffort(
+    input.reasoningEffort ?? existing?.reasoningEffort,
+  );
+  const reasoningSummary = validateReasoningSummary(
+    input.reasoningSummary ?? existing?.reasoningSummary,
+  );
+  validateReasoningPolicy({
+    provider,
+    dialect,
+    modelId,
+    effort: reasoningEffort,
+    summary: reasoningSummary,
+  });
   const explicitApiKey = normalizeOptionalApiKey(input.apiKey);
   const apiKey =
     explicitApiKey ??
@@ -290,9 +311,12 @@ function normalizeSaveInput(
     name,
     presetId,
     provider,
+    dialect,
     baseUrl,
     apiKey,
     modelId,
+    reasoningEffort,
+    reasoningSummary,
     contextWindowTokens: input.contextWindowTokens,
     maxOutputTokens: input.maxOutputTokens,
   };
@@ -331,9 +355,19 @@ function validateStoredConnection(value: unknown): StoredModelConnection {
   const name = requiredTrimmed(value.name, "Configuration name", 160);
   const presetId = validatePresetId(value.presetId);
   const provider = validateProvider(value.provider);
+  const dialect = validateDialect(value.dialect);
   const baseUrl = normalizeBaseUrl(requiredTrimmed(value.baseUrl, "Base URL"));
   const apiKey = requiredTrimmed(value.apiKey, "API Key", 16_384);
   const modelId = requiredTrimmed(value.modelId, "Model ID", 512);
+  const reasoningEffort = validateReasoningEffort(value.reasoningEffort);
+  const reasoningSummary = validateReasoningSummary(value.reasoningSummary);
+  validateReasoningPolicy({
+    provider,
+    dialect,
+    modelId,
+    effort: reasoningEffort,
+    summary: reasoningSummary,
+  });
   validateTokenLimits(value.contextWindowTokens, value.maxOutputTokens);
   validatePresetBinding(presetId, provider, baseUrl);
   return {
@@ -341,9 +375,12 @@ function validateStoredConnection(value: unknown): StoredModelConnection {
     name,
     presetId,
     provider,
+    dialect,
     baseUrl,
     apiKey,
     modelId,
+    reasoningEffort,
+    reasoningSummary,
     contextWindowTokens: value.contextWindowTokens as number,
     maxOutputTokens: value.maxOutputTokens as number,
   };
@@ -355,8 +392,11 @@ function toView(connection: StoredModelConnection): ModelConnectionView {
     name: connection.name,
     presetId: connection.presetId,
     provider: connection.provider,
+    dialect: connection.dialect,
     baseUrl: connection.baseUrl,
     modelId: connection.modelId,
+    reasoningEffort: connection.reasoningEffort,
+    reasoningSummary: connection.reasoningSummary,
     contextWindowTokens: connection.contextWindowTokens,
     maxOutputTokens: connection.maxOutputTokens,
     hasApiKey: true,
@@ -368,9 +408,12 @@ function toBinding(
 ): FileNativeModelConnection {
   return structuredClone({
     provider: connection.provider,
+    dialect: connection.dialect,
     baseUrl: connection.baseUrl,
     apiKey: connection.apiKey,
     modelId: connection.modelId,
+    reasoningEffort: connection.reasoningEffort,
+    reasoningSummary: connection.reasoningSummary,
     contextWindowTokens: connection.contextWindowTokens,
     maxOutputTokens: connection.maxOutputTokens,
   });
@@ -384,6 +427,49 @@ function validateProvider(value: unknown): ModelProviderKind {
   )
     throw new Error("Model-connection protocol is invalid");
   return value;
+}
+
+function validateDialect(value: unknown): ModelProviderDialect {
+  if (value === undefined) return "standard";
+  if (value !== "standard" && value !== "cliproxyapi")
+    throw new Error("Model-provider dialect is invalid");
+  return value;
+}
+
+function validateReasoningEffort(value: unknown): ModelReasoningEffort {
+  if (value === undefined) return "provider_default";
+  if (
+    value !== "provider_default" &&
+    value !== "none" &&
+    value !== "minimal" &&
+    value !== "low" &&
+    value !== "medium" &&
+    value !== "high" &&
+    value !== "xhigh" &&
+    value !== "max"
+  )
+    throw new Error("Model reasoning effort is invalid");
+  return value;
+}
+
+function validateReasoningSummary(value: unknown): ModelReasoningSummary {
+  if (value === undefined) return "provider_default";
+  if (
+    value !== "provider_default" &&
+    value !== "auto" &&
+    value !== "concise" &&
+    value !== "detailed" &&
+    value !== "none"
+  )
+    throw new Error("Model reasoning-summary policy is invalid");
+  return value;
+}
+
+function validateReasoningPolicy(
+  input: Parameters<typeof modelReasoningPolicyIssue>[0],
+): void {
+  const issue = modelReasoningPolicyIssue(input);
+  if (issue !== null) throw new Error(issue);
 }
 
 function validatePresetId(value: unknown): ModelProviderPresetId {

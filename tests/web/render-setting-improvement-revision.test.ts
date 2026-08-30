@@ -119,7 +119,8 @@ function candidate() {
           cache: {
             stablePrefixFingerprint: "sha256:0",
             breakpoints: [],
-            estimatedCacheableTokens: 0,
+            strategy: "provider_managed" as const,
+            estimatedCacheableBytes: 0,
             firstDynamicByte: 0,
           },
         },

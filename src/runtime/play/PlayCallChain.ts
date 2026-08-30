@@ -14,6 +14,12 @@ import type {
   ModelHostToolCall,
 } from "../model/ModelHost.ts";
 import {
+  equalModelHostBinding,
+  ModelHostContinuationError,
+  ModelHostFailureError,
+  ModelHostOutcomeUnknownError,
+} from "../model/ModelHost.ts";
+import {
   FileNativePromptCompiler,
   type FileNativePromptInput,
   type PromptCompilation,
@@ -134,6 +140,7 @@ export class PlayCallChain {
     validateIdentity(input.chainId, "call-chain ID");
     validateIdentity(input.exchangeId, "exchange ID");
     validatePlayerText(input.playerText);
+    assertModelHostBinding(input.modelBinding, input.modelHost);
 
     const existing = await this.#readPersisted(input.worldId);
     if (existing?.chainId === input.chainId) {
@@ -198,6 +205,7 @@ export class PlayCallChain {
       },
       followups: structuredClone(compilation.followups ?? []),
       playPresetScriptsEnabled: input.playPreset.scriptsEnabled,
+      modelBinding: structuredClone(input.modelBinding),
       status: "ready",
       canRetry: false,
       bootstrap,
@@ -254,6 +262,7 @@ export class PlayCallChain {
     validateIdentity(input.exchangeId, "exchange ID");
     const session = await this.#requireChain(input.worldId, input.chainId);
     await this.#assertCurrentHead(session);
+    assertSessionModelHostBinding(session, input.modelHost);
     if (input.playerText.trim().length === 0) {
       if (session.status === "running")
         throw new PlayCallChainError("A model request is still running.");
@@ -585,6 +594,9 @@ export class PlayCallChain {
         : {
             playPresetScriptsEnabled: sourceContext.playPresetScriptsEnabled,
           }),
+      ...(sourceContext.modelBinding === undefined
+        ? {}
+        : { modelBinding: structuredClone(sourceContext.modelBinding) }),
       status: "ready",
       canRetry: false,
       bootstrap: structuredClone(sourceContext.bootstrap),
@@ -722,6 +734,9 @@ export class PlayCallChain {
         : {
             playPresetScriptsEnabled: sourceContext.playPresetScriptsEnabled,
           }),
+      ...(sourceContext.modelBinding === undefined
+        ? {}
+        : { modelBinding: structuredClone(sourceContext.modelBinding) }),
       status: "ready",
       canRetry: false,
       bootstrap: structuredClone(sourceContext.bootstrap),
@@ -940,12 +955,12 @@ export class PlayCallChain {
           : { reasoning: response.reasoningContent }),
         ...(response.usage === undefined
           ? {}
-          : {
-              usage: {
-                inputTokens: response.usage.inputTokens,
-                outputTokens: response.usage.outputTokens,
-              },
-            }),
+          : { usage: structuredClone(response.usage) }),
+        ...(response.stopReason === undefined
+          ? {}
+          : { stopReason: response.stopReason }),
+        continuation:
+          response.providerState === undefined ? "unavailable" : "available",
       };
     const calls = response.toolCalls ?? [];
     const workingTools = new Map(session.completedToolMap);
@@ -984,7 +999,11 @@ export class PlayCallChain {
       trailingEvents,
       transcriptStart: session.transcript.length,
       transcriptAppend: [
-        ...(calls.length > 0 || visibleText ? [assistantItem] : []),
+        ...(calls.length > 0 ||
+        visibleText ||
+        response.providerState !== undefined
+          ? [assistantItem]
+          : []),
         ...prepared.map(({ transcript }) => structuredClone(transcript)),
       ],
       completedTools: [...workingTools.values()].map((item) =>
@@ -1001,7 +1020,8 @@ export class PlayCallChain {
     advance: Extract<PlayAdvanceBase, { advanceKind: "response" }>,
     prepared: PreparedPlayResponseSettlement,
   ): Promise<
-    { kind: "terminal" } | { kind: "continue"; nextRequest: ModelHostExchange }
+    | { kind: "terminal"; status: "ready" | "interrupted" }
+    | { kind: "continue"; nextRequest: ModelHostExchange }
   > {
     const settlement = structuredClone(prepared);
     const hasToolCalls = settlement.trailingEvents.some(
@@ -1093,9 +1113,20 @@ export class PlayCallChain {
     session.canRetry = false;
     session.lastFailure = null;
     let result:
-      | { kind: "terminal" }
+      | { kind: "terminal"; status: "ready" | "interrupted" }
       | { kind: "continue"; nextRequest: ModelHostExchange };
-    if (hasToolCalls) {
+    if (settlement.assistantEvent.continuation !== "available") {
+      const message =
+        "The complete model response has no provider-native continuation payload; use a fresh context.";
+      session.events.push({
+        id: session.nextEventId++,
+        kind: "failure",
+        message,
+      });
+      session.status = "interrupted";
+      session.lastFailure = message;
+      result = { kind: "terminal", status: "interrupted" };
+    } else if (hasToolCalls) {
       session.exchange += 1;
       const nextRequest = createRequestWithMaxOutputTokens(
         session,
@@ -1121,7 +1152,7 @@ export class PlayCallChain {
         });
         session.lastFailure = message;
       }
-      result = { kind: "terminal" };
+      result = { kind: "terminal", status: session.status };
     }
     await this.#persist(session);
     crashAtPlayAdvanceEdge("after_timeline_settled");
@@ -1136,7 +1167,7 @@ export class PlayCallChain {
     session: PlayCallChainSession,
     advance: Extract<PlayAdvanceBase, { advanceKind: "response" }>,
   ): Promise<
-    | { kind: "terminal" }
+    | { kind: "terminal"; status: "ready" | "interrupted" }
     | { kind: "continue"; nextRequest: ModelHostExchange }
     | null
   > {
@@ -1212,6 +1243,7 @@ export class PlayCallChain {
         createdAt: Date.now(),
       } satisfies Extract<PlayAdvanceBase, { advanceKind: "response" }>;
       await this.#worlds.playAdvances.begin(advance);
+      crashAtPlayAdvanceEdge("after_response_advance_began");
       notifySnapshot(observer, session);
 
       let response: Awaited<ReturnType<ModelHost["exchange"]>>;
@@ -1246,7 +1278,11 @@ export class PlayCallChain {
           message,
         });
         session.status = "interrupted";
-        session.canRetry = true;
+        const requiresFreshContext =
+          error instanceof ModelHostContinuationError ||
+          error instanceof ModelHostOutcomeUnknownError;
+        session.canRetry =
+          !requiresFreshContext && error instanceof ModelHostFailureError;
         session.lastFailure = message;
         await this.#persist(session);
         await this.#worlds.playAdvances.markSettled(
@@ -1322,6 +1358,10 @@ export class PlayCallChain {
                   },
                 ],
               });
+            notifySnapshot(observer, session);
+            return projectView(session);
+          }
+          if (settled.status !== "ready") {
             notifySnapshot(observer, session);
             return projectView(session);
           }
@@ -1592,10 +1632,13 @@ export class PlayCallChain {
         (advance === undefined || event.id === advance.eventId),
     );
     if (streaming !== undefined) streaming.status = "interrupted";
-    const canRetry = session.lastRequest !== null;
-    const message = canRetry
-      ? "The service stopped before the model request completed; the same request can be retried."
-      : "The service stopped before dispatching the model request; use a fresh context.";
+    const dispatchMayHaveStarted = advance !== undefined;
+    const canRetry = !dispatchMayHaveStarted && session.lastRequest !== null;
+    const message = dispatchMayHaveStarted
+      ? "The service stopped after model dispatch may have started; the outcome is unknown and the request cannot be replayed. Use a fresh context."
+      : canRetry
+        ? "The service stopped before model dispatch; the frozen request can be retried."
+        : "The service stopped before preparing a model request; use a fresh context.";
     session.events.push({
       id: session.nextEventId++,
       kind: "failure",
@@ -1819,6 +1862,7 @@ function prepareTool(
       kind: "tool",
       toolCallId: call.id,
       markdown: result.markdown,
+      ...(result.ok ? {} : { isError: true }),
     },
   };
 }
@@ -2040,7 +2084,9 @@ function transcriptThroughEvents(
             candidate.kind === "tool_call",
         );
       const recorded =
-        event.text.trim().length > 0 || hasToolCall?.kind === "tool_call";
+        event.text.trim().length > 0 ||
+        hasToolCall?.kind === "tool_call" ||
+        transcript[cursor]?.kind === "assistant";
       if (!recorded) continue;
       const item = transcript[cursor];
       if (item?.kind !== "assistant" || item.text !== event.text)
@@ -2116,6 +2162,27 @@ function operationId(chainId: string, key: string): string {
   return `play-${createHash("sha256")
     .update(`${chainId}\0${key}`)
     .digest("hex")}`;
+}
+
+function assertModelHostBinding(
+  frozen: ModelHostBinding,
+  modelHost: ModelHost,
+): void {
+  if (!equalModelHostBinding(frozen, modelHost.binding()))
+    throw new PlayCallChainError(
+      "The selected model connection does not match the frozen model binding; start a fresh context.",
+    );
+}
+
+function assertSessionModelHostBinding(
+  session: PersistedPlayCallChain,
+  modelHost: ModelHost,
+): void {
+  if (session.modelBinding === undefined)
+    throw new PlayCallChainError(
+      "This model context predates durable provider continuation bindings; start a fresh context.",
+    );
+  assertModelHostBinding(session.modelBinding, modelHost);
 }
 
 function validateIdentity(value: string, label: string): void {
