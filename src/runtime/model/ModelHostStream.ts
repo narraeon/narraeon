@@ -516,6 +516,16 @@ function mergeUsage(target: Record<string, unknown>, value: unknown): void {
   ]) {
     if (value[field] !== undefined) target[field] = value[field];
   }
+  // Anthropic reports the billed thinking subset only on the final
+  // message_delta. Preserve the nested object so the shared usage normalizer
+  // sees the same shape for streaming and non-streaming responses.
+  if (isRecord(value.output_tokens_details))
+    target.output_tokens_details = {
+      ...(isRecord(target.output_tokens_details)
+        ? target.output_tokens_details
+        : {}),
+      ...structuredClone(value.output_tokens_details),
+    };
 }
 
 function stringOrUndefined(value: unknown): string | undefined {

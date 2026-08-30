@@ -209,6 +209,8 @@ function modelLibrary() {
         modelId: "trace-model",
         reasoningEffort: "provider_default" as const,
         reasoningSummary: "provider_default" as const,
+        thinkingMode: "provider_default" as const,
+        thinkingBudgetTokens: null,
         contextWindowTokens: 128_000,
         maxOutputTokens: 16_000,
         hasApiKey: true as const,

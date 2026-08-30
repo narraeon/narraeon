@@ -178,21 +178,21 @@ Runtime 不按剩余 token 从新到旧填充历史。除 genesis 开场白外�
 
 每次模型响应都在同一份调用链契约下自由选择直接叙事、只调用工具，或同时给出文本与工具调用。世界写工具只操作当前候选，完整响应处理成功后才把变化后的完整 YAML／Markdown 写入 Authority；普通游玩不删除或移动整份文档。
 
-调用链没有整体原子提交或集中结算。玩家原文先单独提交；每个已经完整返回且含可见文本或状态变化的模型响应再各自提交。后续模型或传输失败不会回滚已经成立的前序步骤。Provider 的 SSE 增量经 Runtime 的 NDJSON 流直接投影到浏览器，界面实时显示玩家和逐字 AI 正文，而不是轮询等待最终文本；增量只更新调用链内容，不主动改变玩家当前的滚动位置。Provider 返回推理、工具参数／结果和 usage 只属于调用轨迹，不成为玩家／主持历史或世界 Authority；Runtime 不声称这些内容是模型隐藏思维，页面只显示它们存在的轻量提示，玩家展开单项时才读取完整详情。不透明或加密推理为协议续传保留，但不向玩家投影。
+调用链没有整体原子提交或集中结算。玩家原文先单独提交；每个已经完整返回且含可见文本或状态变化的模型响应再各自提交。后续模型或传输失败不会回滚已经成立的前序步骤。Provider 的 SSE 增量经 Runtime 的 NDJSON 流直接投影到浏览器，界面实时显示玩家和逐字 AI 正文，而不是轮询等待最终文本；增量只更新调用链内容，不主动改变玩家当前的滚动位置。Provider 返回推理、工具参数／结果和 usage 只属于调用轨迹，不成为玩家／主持历史或世界 Authority；每份完整模型响应旁始终显示 input、uncached input、cache read、cache write、reasoning、output 与 total token 明细，返回推理、工具和 usage provenance 则在展开单项时读取完整详情。Runtime 不声称这些内容是模型隐藏思维。不透明或加密推理为协议续传保留，但不向玩家投影。
 
 追加上下文继续使用当前模型上下文开始时冻结的 bootstrap，但每次 Authority 写入都必须基于该上下文当前已提交端点；若世界被其他操作推进，只能选择全新上下文重新编译。全新上下文替换旧逻辑 transcript，不把旧链嵌套进新请求；Web 另行持久保留页面时间线，使此前的玩家输入、AI 正文、Provider 返回推理、工具参数与结果、失败和 usage 在刷新或冷恢复后仍按原顺序可达，并在每个模型上下文起点显示分隔标记。页面时间线按不可变上下文链和追加事件保存，首次打开只返回最近的有界摘要页；“加载更早”使用稳定游标向前读取，普通尾部追加不会改写旧页或旧事件。
 
 Runtime 在每次模型派发前持久保存完整 `ModelHostExchange`。Provider 完整返回后，Runtime 先保存去除临时诊断的完整结果和协议原生续传载荷，再执行工具、准备精确结算并尝试 Authority 提交；因此进程在 Provider 返回后退出时只能继续结算同一结果，不能再次调用模型。若 Provider 流中断或进程可能已开始派发但未保存完整结果，中断片段只在界面显示，不追加到模型 transcript，也不进入 Authority；此时外部结果未知，旧请求绝不能重发，当前模型会话终止并要求玩家使用全新上下文。只有 Provider 在开始生成前明确拒绝请求，或持久状态能证明请求尚未派发时，空输入“追加上下文”才会原样重发已保存请求，不重复玩家原文，不根据片段构造“继续写”指令，也不重新拼装 frame。若上一响应已经完整结束，同样的空输入动作会用包含其原生续传载荷的当前 transcript 发起下一次生成。完整响应的续传载荷缺失、损坏或与冻结模型绑定不兼容时同样必须 fail closed，不能退回到解析投影重建。界面始终只提供“全新上下文”和“追加上下文”两个提交动作。
 
-模型会话冻结 endpoint、协议与方言、模型、续传 codec、推理／摘要配置、输出能力、工具策略和缓存策略；只允许凭据与传输超时在保持同一语义绑定时更新。CLIProxyAPI 模型名的 thinking 后缀优先于请求 body，因此模型 ID 含 `(high)`、`(max)` 等后缀时只能把结构化推理强度留在 `Provider 默认`，不能同时制造两个配置权威。Provider response ID、continuation token、不透明推理项和缓存只用于协议续传或加速，不成为世界状态、已提交叙事或唯一恢复来源。Claude 通过 Chat Completions 代理时通常只能得到 `reasoning_content`，协议本身不能保证携带签名 thinking；需要可验证续传时必须使用能保留完整原生块的 Anthropic Messages，或使用携带 `reasoning.encrypted_content` 的 OpenAI Responses 兼容路径，而不是切割正文猜测。
+模型会话冻结 endpoint、协议与方言、模型、续传 codec、Effort、Thinking 模式／手动预算、返回 thinking 内容、输出能力、工具策略和缓存策略；只允许凭据与传输超时在保持同一语义绑定时更新。CLIProxyAPI 模型名的 thinking 后缀优先于请求 body，因此模型 ID 含 `(high)`、`(max)` 等后缀时只能把结构化 Effort 与 Thinking 都留在 `Provider 默认`，不能同时制造两个配置权威；返回 thinking 内容仍是正交的可见性意图，可以随该后缀独立传递。Provider response ID、continuation token、不透明推理项和缓存只用于协议续传或加速，不成为世界状态、已提交叙事或唯一恢复来源。Claude 通过 Chat Completions 代理时通常只能得到 `reasoning_content`，协议本身不能保证携带签名 thinking；需要可验证续传时必须使用能保留完整原生块的 Anthropic Messages，或使用携带 `reasoning.encrypted_content` 的 OpenAI Responses 兼容路径，而不是切割正文猜测。
 
-推理强度与返回摘要是两项独立意图。OpenAI Responses 使用 `reasoning.effort` 与 `reasoning.summary`；Chat Completions 只在协议／方言确实定义的扩展上发送对应字段；Anthropic effort 只写入 `output_config.effort`，不能仅因调整 effort 就擅自开启 adaptive thinking，只有显式摘要可见性才需要 `thinking.display`。不受目标模型支持的等级由 Provider 明确拒绝，Runtime 不猜测模型能力或静默换档。
+Effort、Thinking 模式和返回 thinking 内容是三项独立意图。OpenAI Responses 使用 `reasoning.effort` 与 `reasoning.summary`；Chat Completions 只在协议／方言确实定义的扩展上发送对应字段；这两种 OpenAI-shaped 协议都没有独立 `thinking` 请求字段，因此界面必须诚实固定为 `Provider 默认`，不能假造一项配置。Anthropic effort 只写入 `output_config.effort`；Thinking 则按用户选择省略、写入 `adaptive`、写入带 `budget_tokens` 的 `enabled`，或写入 `disabled`，手动预算至少为 1024 且必须小于最大输出；`thinking.display` 独立控制 summarized／omitted 返回内容。Provider 返回的 thinking block 无论是否显示摘要都原样保留以供续传。不受目标模型支持的组合或等级由 Provider 明确拒绝，Runtime 不猜测模型能力或静默换档。
 
 ## 预算、缓存与预览
 
 模型配置继续提供 Provider 的 `contextWindowTokens` 和 `maxOutputTokens`。每次新派发直接使用当前 ModelHost 的固定 `maxOutputTokens`；原样重发使用已持久化的完整原请求。Runtime 不估算 token、不做上下文准入、不另设“连续交换输出上限”，也不在响应已经完成并计费后重新计算再拒绝结果。上下文能否容纳请求完全由 Provider 判断；Runtime 不自动摘要、压缩或截断历史。
 
-提示词编译把稳定机械块、主持块和世界控制块放在稳定前缀，稳定前缀指纹不包含内部 ID、时间戳和 operation 数据。Anthropic Messages 在这些真实稳定块上编码显式 cache breakpoint；CLIProxyAPI 方言的 Chat Completions／Responses 使用代理明确支持的 `cache_control` 扩展。标准 Responses 的 `prompt_cache_key` 按稳定前缀分组，使等价前缀可复用 Provider 缓存；CLIProxyAPI 中该字段还承担 session affinity／重放隔离职责，因此改为按冻结模型会话生成稳定散列：同一会话各轮不变，不同调用链绝不共享。两种路径都不把原始内部身份写入 wire。没有等价显式块的标准协议只报告 provider-managed 策略。Runtime 不能把字节估计伪装成 token 命中，而要持久投影 Provider 实际报告的 uncached input、cache read、cache write、reasoning、output 与 total usage，并分别保留 provider／派生／不可用 provenance。缓存 miss 只影响成本和延迟，不能改变请求语义或恢复能力。
+提示词编译把稳定机械块、主持块和世界控制块放在稳定前缀，稳定前缀指纹不包含内部 ID、时间戳和 operation 数据。Anthropic Messages 在这些真实稳定块上编码显式 cache breakpoint；CLIProxyAPI 方言的 Chat Completions／Responses 使用代理明确支持的 `cache_control` 扩展。标准 Responses 的 `prompt_cache_key` 按稳定前缀分组，使等价前缀可复用 Provider 缓存；CLIProxyAPI 中该字段还承担 session affinity／重放隔离职责，因此改为按冻结模型会话生成稳定散列：同一会话各轮不变，不同调用链绝不共享。两种路径都不把原始内部身份写入 wire。没有等价显式块的标准协议只报告 provider-managed 策略。Runtime 不能把字节估计伪装成 token 命中，而要持久投影 Provider 实际报告的 input、uncached input、cache read、cache write、reasoning、output 与 total usage，并分别保留 provider／派生／不可用 provenance；游玩时间线和设定完善进度都直接显示全部七项，未报告字段显示为未报告而不是零。缓存 read／write 是 input 的构成，reasoning 已包含在 output 中，界面不能重复相加。改变 Thinking 或 Effort 会改变 Provider prompt/cache key 的语义并使旧缓存边界失效；缓存 miss 只影响成本和延迟，不能改变请求语义或恢复能力。
 
 Prompt Preview 必须调用真实编译器，并展示：
 

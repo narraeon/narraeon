@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -40,6 +40,8 @@ test("保存多份模型配置、显式切换并且不向浏览器返回 API Key
     dialect: "standard",
     reasoningEffort: "provider_default",
     reasoningSummary: "provider_default",
+    thinkingMode: "provider_default",
+    thinkingBudgetTokens: null,
     hasApiKey: true,
   });
 
@@ -120,6 +122,56 @@ test("模型配置持久化方言与推理策略，并拒绝协议没有定义�
     reasoningSummary: "none",
   });
 
+  const anthropic = await store.save({
+    name: "Claude manual thinking",
+    presetId: "custom",
+    provider: "anthropic_messages",
+    dialect: "cliproxyapi",
+    baseUrl: "http://127.0.0.1:8317/v1",
+    apiKey: "proxy-secret",
+    modelId: "claude-sonnet",
+    reasoningEffort: "high",
+    reasoningSummary: "none",
+    thinkingMode: "enabled",
+    thinkingBudgetTokens: 4_096,
+    contextWindowTokens: 128_000,
+    maxOutputTokens: 8_000,
+  });
+  expect(
+    anthropic.connections.find(({ name }) => name === "Claude manual thinking"),
+  ).toMatchObject({
+    reasoningEffort: "high",
+    reasoningSummary: "none",
+    thinkingMode: "enabled",
+    thinkingBudgetTokens: 4_096,
+  });
+
+  const anthropicId = anthropic.connections.find(
+    ({ name }) => name === "Claude manual thinking",
+  )!.id;
+  const disabled = await store.save({
+    connectionId: anthropicId,
+    name: "Claude thinking disabled",
+    presetId: "custom",
+    provider: "anthropic_messages",
+    dialect: "cliproxyapi",
+    baseUrl: "http://127.0.0.1:8317/v1",
+    modelId: "claude-sonnet",
+    reasoningEffort: "high",
+    reasoningSummary: "provider_default",
+    thinkingMode: "disabled",
+    thinkingBudgetTokens: null,
+    contextWindowTokens: 128_000,
+    maxOutputTokens: 8_000,
+  });
+  expect(
+    disabled.connections.find(({ id }) => id === anthropicId),
+  ).toMatchObject({
+    id: anthropicId,
+    thinkingMode: "disabled",
+    thinkingBudgetTokens: null,
+  });
+
   await expect(
     store.save({
       name: "Invalid standard Chat summary",
@@ -147,7 +199,7 @@ test("模型配置持久化方言与推理策略，并拒绝协议没有定义�
       contextWindowTokens: 32_000,
       maxOutputTokens: 2_000,
     }),
-  ).rejects.toThrow("does not define minimal effort");
+  ).rejects.toThrow("effort supports low, medium, high, xhigh, and max");
   await expect(
     store.save({
       name: "Invalid disabled Anthropic summary",
@@ -156,12 +208,27 @@ test("模型配置持久化方言与推理策略，并拒绝协议没有定义�
       baseUrl: "https://provider.invalid/v1",
       apiKey: "secret",
       modelId: "claude",
-      reasoningEffort: "none",
+      thinkingMode: "disabled",
       reasoningSummary: "auto",
       contextWindowTokens: 32_000,
       maxOutputTokens: 2_000,
     }),
-  ).rejects.toThrow("cannot return a reasoning summary");
+  ).rejects.toThrow("can be configured only when Thinking is adaptive");
+
+  await expect(
+    store.save({
+      name: "Invalid manual thinking budget",
+      presetId: "custom",
+      provider: "anthropic_messages",
+      baseUrl: "https://provider.invalid/v1",
+      apiKey: "secret",
+      modelId: "claude",
+      thinkingMode: "enabled",
+      thinkingBudgetTokens: 2_000,
+      contextWindowTokens: 32_000,
+      maxOutputTokens: 2_000,
+    }),
+  ).rejects.toThrow("must be lower than maximum output tokens");
   await expect(
     store.save({
       name: "Invalid detailed Anthropic summary",
@@ -170,6 +237,7 @@ test("模型配置持久化方言与推理策略，并拒绝协议没有定义�
       baseUrl: "https://provider.invalid/v1",
       apiKey: "secret",
       modelId: "claude",
+      thinkingMode: "adaptive",
       reasoningSummary: "detailed",
       contextWindowTokens: 32_000,
       maxOutputTokens: 2_000,
@@ -189,6 +257,88 @@ test("模型配置持久化方言与推理策略，并拒绝协议没有定义�
       maxOutputTokens: 2_000,
     }),
   ).rejects.toThrow("model thinking suffixes override request effort");
+});
+
+test("旧 Anthropic 配置无损迁移为独立 Thinking 模式", async () => {
+  const root = await temporaryRoot();
+  await writeFile(
+    join(root, "model-connections-v1.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      activeConnectionId: "legacy-disabled",
+      connections: [
+        {
+          id: "legacy-disabled",
+          name: "Legacy disabled",
+          presetId: "custom",
+          provider: "anthropic_messages",
+          dialect: "standard",
+          baseUrl: "https://provider.invalid/v1",
+          apiKey: "secret-disabled",
+          modelId: "claude-disabled",
+          reasoningEffort: "none",
+          reasoningSummary: "provider_default",
+          contextWindowTokens: 32_000,
+          maxOutputTokens: 4_096,
+        },
+        {
+          id: "legacy-adaptive",
+          name: "Legacy adaptive",
+          presetId: "custom",
+          provider: "anthropic_messages",
+          dialect: "standard",
+          baseUrl: "https://provider.invalid/v1",
+          apiKey: "secret-adaptive",
+          modelId: "claude-adaptive",
+          reasoningEffort: "high",
+          reasoningSummary: "auto",
+          contextWindowTokens: 32_000,
+          maxOutputTokens: 4_096,
+        },
+        {
+          id: "legacy-suffix-summary",
+          name: "Legacy suffix summary",
+          presetId: "custom",
+          provider: "anthropic_messages",
+          dialect: "cliproxyapi",
+          baseUrl: "http://127.0.0.1:8317/v1",
+          apiKey: "secret-suffix",
+          modelId: "claude-sonnet(high)",
+          reasoningEffort: "provider_default",
+          reasoningSummary: "auto",
+          contextWindowTokens: 32_000,
+          maxOutputTokens: 4_096,
+        },
+      ],
+    }),
+    { encoding: "utf8", mode: 0o600 },
+  );
+
+  const view = await new ModelConnectionStore(root).view();
+
+  expect(view.connections).toEqual([
+    expect.objectContaining({
+      id: "legacy-disabled",
+      reasoningEffort: "provider_default",
+      reasoningSummary: "provider_default",
+      thinkingMode: "disabled",
+      thinkingBudgetTokens: null,
+    }),
+    expect.objectContaining({
+      id: "legacy-adaptive",
+      reasoningEffort: "high",
+      reasoningSummary: "auto",
+      thinkingMode: "adaptive",
+      thinkingBudgetTokens: null,
+    }),
+    expect.objectContaining({
+      id: "legacy-suffix-summary",
+      reasoningEffort: "provider_default",
+      reasoningSummary: "auto",
+      thinkingMode: "provider_default",
+      thinkingBudgetTokens: null,
+    }),
+  ]);
 });
 
 test("模型列表使用当前端点的正确凭据且不把旧凭据带到已修改端点", async () => {

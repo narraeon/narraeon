@@ -1,14 +1,16 @@
 import { uiText } from "./i18n.ts";
 import { useEffect, useMemo, useState } from "react";
 
-import type {
-  ModelConnectionLibraryView,
-  ModelConnectionView,
-  ModelProviderDialect,
-  ModelProviderKind,
-  ModelProviderPresetId,
-  ModelReasoningEffort,
-  ModelReasoningSummary,
+import {
+  hasCLIProxyThinkingSuffix,
+  type ModelConnectionLibraryView,
+  type ModelConnectionView,
+  type ModelProviderDialect,
+  type ModelProviderKind,
+  type ModelProviderPresetId,
+  type ModelReasoningEffort,
+  type ModelReasoningSummary,
+  type ModelThinkingMode,
 } from "../protocol/modelConnections.ts";
 import type { RuntimeClient } from "./runtimeClient.ts";
 
@@ -23,6 +25,8 @@ interface ConnectionForm {
   modelId: string;
   reasoningEffort: ModelReasoningEffort;
   reasoningSummary: ModelReasoningSummary;
+  thinkingMode: ModelThinkingMode;
+  thinkingBudgetTokens: string;
   contextWindowTokens: string;
   maxOutputTokens: string;
 }
@@ -39,6 +43,8 @@ function emptyConnectionForm(): ConnectionForm {
     modelId: "",
     reasoningEffort: "provider_default",
     reasoningSummary: "provider_default",
+    thinkingMode: "provider_default",
+    thinkingBudgetTokens: "",
     contextWindowTokens: "128000",
     maxOutputTokens: "16000",
   };
@@ -111,13 +117,7 @@ export function ModelConnectionScreen({
             presetId,
             provider: preset.provider,
             dialect: "standard",
-            reasoningSummary:
-              preset.provider === "chat_completions" ||
-              (preset.provider !== "openai_responses" &&
-                (form.reasoningSummary === "concise" ||
-                  form.reasoningSummary === "detailed"))
-                ? "provider_default"
-                : form.reasoningSummary,
+            ...reasoningForProvider(form, preset.provider, "standard"),
             baseUrl: preset.baseUrl,
             name:
               form.connectionId === null || form.name === uiText("默认模型")
@@ -162,6 +162,11 @@ export function ModelConnectionScreen({
           modelId: form.modelId,
           reasoningEffort: form.reasoningEffort,
           reasoningSummary: form.reasoningSummary,
+          thinkingMode: form.thinkingMode,
+          thinkingBudgetTokens:
+            form.thinkingMode === "enabled"
+              ? Number(form.thinkingBudgetTokens)
+              : null,
           contextWindowTokens: Number(form.contextWindowTokens),
           maxOutputTokens: Number(form.maxOutputTokens),
         },
@@ -316,22 +321,11 @@ export function ModelConnectionScreen({
                 {
                   presetId: "custom",
                   provider: event.target.value as ModelProviderKind,
-                  reasoningEffort:
-                    event.target.value === "anthropic_messages" &&
-                    form.reasoningEffort === "minimal"
-                      ? "provider_default"
-                      : form.reasoningEffort,
-                  reasoningSummary:
-                    (event.target.value !== "openai_responses" &&
-                      (form.reasoningSummary === "concise" ||
-                        form.reasoningSummary === "detailed")) ||
-                    (event.target.value === "chat_completions" &&
-                      form.dialect === "standard") ||
-                    (event.target.value === "anthropic_messages" &&
-                      form.reasoningEffort === "none" &&
-                      form.reasoningSummary === "auto")
-                      ? "provider_default"
-                      : form.reasoningSummary,
+                  ...reasoningForProvider(
+                    form,
+                    event.target.value as ModelProviderKind,
+                    form.dialect,
+                  ),
                 },
                 true,
               )
@@ -348,49 +342,43 @@ export function ModelConnectionScreen({
           <select
             id="model-dialect"
             value={form.dialect}
-            onChange={(event) =>
+            onChange={(event) => {
+              const dialect = event.target.value as ModelProviderDialect;
               change({
-                dialect: event.target.value as ModelProviderDialect,
-                reasoningSummary:
-                  event.target.value === "standard" &&
-                  form.provider === "chat_completions"
-                    ? "provider_default"
-                    : form.reasoningSummary,
-              })
-            }
+                dialect,
+                ...reasoningForProvider(form, form.provider, dialect),
+              });
+            }}
           >
             <option value="standard">{uiText("协议标准")}</option>
             <option value="cliproxyapi">CLIProxyAPI</option>
           </select>
           <p className="field-note">
             {uiText(
-              "CLIProxyAPI 方言只启用代理明确支持的兼容参数；响应仍按所选协议解析，不从可见文本猜测思考块。Claude 的签名 thinking 请选 Responses 或 Anthropic Messages；Chat Completions 通常只有 reasoning_content，不能承诺无损续传签名。模型名的 (high) 等 thinking 后缀会覆盖请求参数，因此只能与“Provider 默认”推理强度一起使用。",
+              "CLIProxyAPI 方言只启用代理明确支持的兼容参数；响应仍按所选协议解析，不从可见文本猜测思考块。Claude 的签名 thinking 请选 Responses 或 Anthropic Messages；Chat Completions 通常只有 reasoning_content，不能承诺无损续传签名。模型名的 (high) 等 thinking 后缀会覆盖请求参数，因此 Effort 与 Thinking 都必须保留“Provider 默认”。",
             )}
           </p>
 
-          <div className="two-column-fields">
-            <label>
-              {uiText("推理强度")}
+          <div className="model-reasoning-fields">
+            <label htmlFor="model-reasoning-effort">
+              {uiText("Effort（推理强度）")}
               <select
+                id="model-reasoning-effort"
                 value={form.reasoningEffort}
                 onChange={(event) =>
                   change({
                     reasoningEffort: event.target.value as ModelReasoningEffort,
-                    reasoningSummary:
-                      event.target.value === "none" &&
-                      form.provider === "anthropic_messages" &&
-                      form.reasoningSummary === "auto"
-                        ? "provider_default"
-                        : form.reasoningSummary,
                   })
                 }
               >
                 <option value="provider_default">
                   {uiText("Provider 默认")}
                 </option>
-                <option value="none">none</option>
                 {form.provider === "anthropic_messages" ? null : (
-                  <option value="minimal">minimal</option>
+                  <>
+                    <option value="none">none</option>
+                    <option value="minimal">minimal</option>
+                  </>
                 )}
                 <option value="low">low</option>
                 <option value="medium">medium</option>
@@ -399,14 +387,54 @@ export function ModelConnectionScreen({
                 <option value="max">max</option>
               </select>
             </label>
-            <label>
-              {uiText("返回推理摘要")}
+            <label htmlFor="model-thinking-mode">
+              {uiText("Thinking（思考模式）")}
               <select
+                id="model-thinking-mode"
+                disabled={form.provider !== "anthropic_messages"}
+                value={form.thinkingMode}
+                onChange={(event) => {
+                  const thinkingMode = event.target.value as ModelThinkingMode;
+                  change({
+                    thinkingMode,
+                    thinkingBudgetTokens:
+                      thinkingMode === "enabled"
+                        ? form.thinkingBudgetTokens ||
+                          defaultThinkingBudget(form.maxOutputTokens)
+                        : "",
+                    reasoningSummary:
+                      thinkingMode === "provider_default" ||
+                      thinkingMode === "disabled"
+                        ? thinkingMode === "provider_default" &&
+                          cliProxySuffixControlsThinking({
+                            ...form,
+                            thinkingMode,
+                          })
+                          ? form.reasoningSummary
+                          : "provider_default"
+                        : form.reasoningSummary,
+                  });
+                }}
+              >
+                <option value="provider_default">
+                  {uiText("Provider 默认")}
+                </option>
+                <option value="adaptive">adaptive</option>
+                <option value="enabled">{uiText("手动 token 预算")}</option>
+                <option value="disabled">disabled</option>
+              </select>
+            </label>
+            <label htmlFor="model-reasoning-summary">
+              {uiText("Thinking 返回内容")}
+              <select
+                id="model-reasoning-summary"
                 disabled={
                   (form.provider === "chat_completions" &&
                     form.dialect === "standard") ||
                   (form.provider === "anthropic_messages" &&
-                    form.reasoningEffort === "none")
+                    (form.thinkingMode === "provider_default" ||
+                      form.thinkingMode === "disabled") &&
+                    !cliProxySuffixControlsThinking(form))
                 }
                 value={form.reasoningSummary}
                 onChange={(event) =>
@@ -430,9 +458,27 @@ export function ModelConnectionScreen({
               </select>
             </label>
           </div>
+          {form.provider === "anthropic_messages" &&
+          form.thinkingMode === "enabled" ? (
+            <label htmlFor="model-thinking-budget">
+              {uiText("Thinking budget tokens")}
+              <input
+                id="model-thinking-budget"
+                min={1024}
+                max={Math.max(1024, Number(form.maxOutputTokens) - 1)}
+                required
+                step={1}
+                type="number"
+                value={form.thinkingBudgetTokens}
+                onChange={(event) =>
+                  change({ thinkingBudgetTokens: event.target.value })
+                }
+              />
+            </label>
+          ) : null}
           <p className="field-note">
             {uiText(
-              "推理摘要只进入模型诊断，不会成为玩家叙事；Provider 返回的原生续传块会原样保存并在下一次请求中重放。",
+              "Effort 控制整份响应投入；Anthropic Thinking 独立控制思考块，手动预算必须小于最大输出。Thinking 返回内容只进入模型诊断；原生续传块仍会原样保存。",
             )}
           </p>
 
@@ -486,7 +532,17 @@ export function ModelConnectionScreen({
                 maxLength={512}
                 required
                 value={form.modelId}
-                onChange={(event) => change({ modelId: event.target.value })}
+                onChange={(event) => {
+                  const modelId = event.target.value;
+                  change({
+                    modelId,
+                    ...(form.provider === "anthropic_messages" &&
+                    form.thinkingMode === "provider_default" &&
+                    !cliProxySuffixControlsThinking({ ...form, modelId })
+                      ? { reasoningSummary: "provider_default" as const }
+                      : {}),
+                  });
+                }}
               />
               <datalist id="provider-models">
                 {models.map((model) => (
@@ -625,10 +681,14 @@ export function ModelConnectionScreen({
                     </dd>
                   </div>
                   <div>
-                    <dt>{uiText("方言 / 推理")}</dt>
+                    <dt>{uiText("方言 / Effort / Thinking")}</dt>
                     <dd>
                       {connection.dialect} / {connection.reasoningEffort} /{" "}
-                      {connection.reasoningSummary}
+                      {connection.thinkingMode}
+                      {connection.thinkingBudgetTokens === null
+                        ? ""
+                        : ` (${connection.thinkingBudgetTokens.toLocaleString()} tokens)`}{" "}
+                      / {connection.reasoningSummary}
                     </dd>
                   </div>
                   <div>
@@ -718,6 +778,11 @@ function formFor(connection: ModelConnectionView): ConnectionForm {
     modelId: connection.modelId,
     reasoningEffort: connection.reasoningEffort,
     reasoningSummary: connection.reasoningSummary,
+    thinkingMode: connection.thinkingMode,
+    thinkingBudgetTokens:
+      connection.thinkingBudgetTokens === null
+        ? ""
+        : String(connection.thinkingBudgetTokens),
     contextWindowTokens: String(connection.contextWindowTokens),
     maxOutputTokens: String(connection.maxOutputTokens),
   };
@@ -729,4 +794,69 @@ function errorMessage(error: unknown): string {
 
 function comparableUrl(value: string): string {
   return value.trim().replace(/\/+$/u, "");
+}
+
+function reasoningForProvider(
+  form: ConnectionForm,
+  provider: ModelProviderKind,
+  dialect: ModelProviderDialect,
+): Pick<
+  ConnectionForm,
+  | "reasoningEffort"
+  | "reasoningSummary"
+  | "thinkingMode"
+  | "thinkingBudgetTokens"
+> {
+  const reasoningEffort =
+    provider === "anthropic_messages" &&
+    (form.reasoningEffort === "none" || form.reasoningEffort === "minimal")
+      ? "provider_default"
+      : form.reasoningEffort;
+  const thinkingMode =
+    provider === "anthropic_messages" && form.provider === "anthropic_messages"
+      ? form.thinkingMode
+      : "provider_default";
+  const suffixControlsThinking = cliProxySuffixControlsThinking({
+    ...form,
+    provider,
+    dialect,
+    thinkingMode,
+  });
+  const reasoningSummary =
+    (provider !== "openai_responses" &&
+      (form.reasoningSummary === "concise" ||
+        form.reasoningSummary === "detailed")) ||
+    (provider === "chat_completions" && dialect === "standard") ||
+    (provider === "anthropic_messages" &&
+      (thinkingMode === "provider_default" || thinkingMode === "disabled") &&
+      !suffixControlsThinking)
+      ? "provider_default"
+      : form.reasoningSummary;
+  return {
+    reasoningEffort,
+    reasoningSummary,
+    thinkingMode,
+    thinkingBudgetTokens:
+      thinkingMode === "enabled" ? form.thinkingBudgetTokens : "",
+  };
+}
+
+function cliProxySuffixControlsThinking(
+  form: Pick<
+    ConnectionForm,
+    "provider" | "dialect" | "modelId" | "thinkingMode"
+  >,
+): boolean {
+  return (
+    form.provider === "anthropic_messages" &&
+    form.dialect === "cliproxyapi" &&
+    form.thinkingMode === "provider_default" &&
+    hasCLIProxyThinkingSuffix(form.modelId)
+  );
+}
+
+function defaultThinkingBudget(maxOutputTokens: string): string {
+  const output = Number(maxOutputTokens);
+  if (!Number.isSafeInteger(output) || output <= 1_024) return "1024";
+  return String(Math.min(8_192, output - 1));
 }

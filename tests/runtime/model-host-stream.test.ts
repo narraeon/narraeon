@@ -389,7 +389,12 @@ test("Anthropic Messages 游玩请求用 SSE 保留 thinking 签名与完整 con
             role: "assistant",
             model: "claude-test",
             content: [],
-            usage: { input_tokens: 310, output_tokens: 1 },
+            usage: {
+              input_tokens: 310,
+              cache_read_input_tokens: 120,
+              cache_creation_input_tokens: 30,
+              output_tokens: 1,
+            },
           },
         }),
         namedData("content_block_start", {
@@ -452,7 +457,10 @@ test("Anthropic Messages 游玩请求用 SSE 保留 thinking 签名与完整 con
         namedData("message_delta", {
           type: "message_delta",
           delta: { stop_reason: "tool_use", stop_sequence: null },
-          usage: { output_tokens: 41 },
+          usage: {
+            output_tokens: 41,
+            output_tokens_details: { thinking_tokens: 17 },
+          },
         }),
         namedData("message_stop", { type: "message_stop" }),
       ],
@@ -484,9 +492,13 @@ test("Anthropic Messages 游玩请求用 SSE 保留 thinking 签名与完整 con
       },
     ],
     usage: {
-      inputTokens: null,
+      inputTokens: 460,
       uncachedInputTokens: 310,
+      cacheReadTokens: 120,
+      cacheWriteTokens: 30,
+      reasoningTokens: 17,
       outputTokens: 41,
+      totalTokens: 501,
     },
     providerState: {
       protocol: "anthropic_messages",

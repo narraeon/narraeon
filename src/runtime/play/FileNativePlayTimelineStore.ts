@@ -852,16 +852,16 @@ function summarizeEvent(
 ): V1PlayTimelineEventSummary {
   if (event.kind === "player") return structuredClone(event);
   if (event.kind === "assistant") {
-    const { reasoning, toolFragment, usage, ...summary } = event;
+    const { reasoning, toolFragment, ...summary } = event;
     return {
       ...structuredClone(summary),
       hasReasoning: reasoning !== undefined && reasoning.length > 0,
       hasToolFragment: toolFragment !== undefined && toolFragment.length > 0,
-      hasUsage: usage !== undefined,
+      hasUsage: event.usage !== undefined,
       detailsAvailable:
         (reasoning !== undefined && reasoning.length > 0) ||
         (toolFragment !== undefined && toolFragment.length > 0) ||
-        usage !== undefined ||
+        event.usage !== undefined ||
         event.stopReason !== undefined ||
         event.continuation !== undefined,
     };
@@ -884,6 +884,9 @@ function summarizeEvent(
       displayName: event.displayName,
       toolCallCount: event.toolCalls.length,
       failed: event.failure !== undefined,
+      ...(event.usage === undefined
+        ? {}
+        : { usage: structuredClone(event.usage) }),
       detailsAvailable: true,
     };
   return structuredClone(event);
@@ -1275,6 +1278,7 @@ function assertTimelineEventSummary(
       !validAssistantEventCore(value) ||
       !validOptionalString(value.committedHead) ||
       !validOptionalString(value.stopReason) ||
+      !validOptionalUsage(value.usage) ||
       (value.continuation !== undefined &&
         value.continuation !== "available" &&
         value.continuation !== "unavailable") ||
@@ -1313,6 +1317,7 @@ function assertTimelineEventSummary(
     typeof value.displayName !== "string" ||
     !validCount(value.toolCallCount) ||
     typeof value.failed !== "boolean" ||
+    !validOptionalUsage(value.usage) ||
     value.detailsAvailable !== true
   )
     throw new Error("Follow-up timeline summary has an invalid shape");

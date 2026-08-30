@@ -22,13 +22,16 @@ test("候选进行中可以读到轮次、工具调用、token 与当前写入�
         round += 1;
         // Capture the previous projection before each round, as concurrent polling would.
         seen.push(improvement.progress());
-        if (round === 1) return assistant(validPlan(), [], 900, 40);
+        if (round === 1) return assistant(validPlan(), [], 900, 40, 100, 50, 4);
         if (round === 2)
           return assistant(
             "Read the character first.",
             [readCall("r1", alexPath)],
             1200,
             60,
+            200,
+            50,
+            6,
           );
         if (round === 3)
           return assistant(
@@ -45,6 +48,9 @@ test("候选进行中可以读到轮次、工具调用、token 与当前写入�
             ],
             1500,
             80,
+            300,
+            50,
+            8,
           );
         if (round === 4)
           return assistant(
@@ -52,8 +58,11 @@ test("候选进行中可以读到轮次、工具调用、token 与当前写入�
             [previewCall("p1")],
             1700,
             20,
+            400,
+            50,
+            2,
           );
-        return assistant("Finish.", [finishCall("f1")], 1800, 10);
+        return assistant("Finish.", [finishCall("f1")], 1800, 10, 500, 50, 1);
       },
     },
     preview: previewSnapshot,
@@ -69,7 +78,15 @@ test("候选进行中可以读到轮次、工具调用、token 与当前写入�
     round: 1,
     failure: null,
   });
-  expect(afterPlan.usage).toEqual({ inputTokens: 900, outputTokens: 40 });
+  expect(afterPlan.usage).toMatchObject({
+    inputTokens: 900,
+    uncachedInputTokens: 750,
+    cacheReadTokens: 100,
+    cacheWriteTokens: 50,
+    reasoningTokens: 4,
+    outputTokens: 40,
+    totalTokens: 940,
+  });
 
   // Candidate-phase usage is independent from planning-phase usage.
   const midWrite = seen.at(-2);
@@ -91,7 +108,15 @@ test("候选进行中可以读到轮次、工具调用、token 与当前写入�
     failure: null,
     maxRounds: 64,
   });
-  expect(final.usage).toEqual({ inputTokens: 6200, outputTokens: 170 });
+  expect(final.usage).toMatchObject({
+    inputTokens: 6200,
+    uncachedInputTokens: 4600,
+    cacheReadTokens: 1400,
+    cacheWriteTokens: 200,
+    reasoningTokens: 17,
+    outputTokens: 170,
+    totalTokens: 6370,
+  });
   expect(final.updatedAt).toBeGreaterThan(0);
 });
 
@@ -211,12 +236,36 @@ function assistant(
   toolCalls: SettingAuthorToolCall[] = [],
   inputTokens = 0,
   outputTokens = 0,
+  cacheReadTokens = 0,
+  cacheWriteTokens = 0,
+  reasoningTokens = 0,
 ): AuthorResponse {
+  const uncachedInputTokens = Math.max(
+    0,
+    inputTokens - cacheReadTokens - cacheWriteTokens,
+  );
   return {
     role: "assistant",
     content,
     toolCalls,
-    usage: { inputTokens, outputTokens },
+    usage: {
+      inputTokens,
+      uncachedInputTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
+      reasoningTokens,
+      outputTokens,
+      totalTokens: inputTokens + outputTokens,
+      provenance: {
+        inputTokens: "provider",
+        uncachedInputTokens: "derived_provider_fields",
+        cacheReadTokens: "provider",
+        cacheWriteTokens: "provider",
+        reasoningTokens: "provider",
+        outputTokens: "provider",
+        totalTokens: "provider",
+      },
+    },
   };
 }
 

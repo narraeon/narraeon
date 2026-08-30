@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 
@@ -20,7 +20,15 @@ test("候选生成中展示轮次、计数、token 与当前写入路径", () =>
         round: 12,
         toolCalls: 47,
         failedChecks: 2,
-        usage: { inputTokens: 128_400, outputTokens: 9200 },
+        usage: usage({
+          inputTokens: 128_400,
+          uncachedInputTokens: 96_400,
+          cacheReadTokens: 24_000,
+          cacheWriteTokens: 8_000,
+          reasoningTokens: 3_200,
+          outputTokens: 9_200,
+          totalTokens: 137_600,
+        }),
         writing: "world/characters/mia.yaml",
         recentActions: [
           { tool: "setting_patch", target: "@alex", ok: true },
@@ -40,6 +48,11 @@ test("候选生成中展示轮次、计数、token 与当前写入路径", () =>
   expect(screen.getByText("47")).toBeTruthy();
   expect(screen.getByText("2")).toBeTruthy();
   expect(screen.getByText("↑128.4k ↓9.2k")).toBeTruthy();
+  const tokenUsage = screen.getByLabelText("Token 用量明细");
+  expect(within(tokenUsage).getByText("128,400")).toBeTruthy();
+  expect(within(tokenUsage).getByText("24,000")).toBeTruthy();
+  expect(within(tokenUsage).getByText("8,000")).toBeTruthy();
+  expect(within(tokenUsage).getByText("9,200")).toBeTruthy();
   // The current write path and recent action each appear once.
   expect(screen.getAllByText("world/characters/mia.yaml")).toHaveLength(2);
   expect(screen.getByText("@alex")).toBeTruthy();
@@ -156,13 +169,38 @@ function progress(
     toolCalls: 0,
     repairs: 0,
     failedChecks: 0,
-    usage: { inputTokens: 0, outputTokens: 0 },
+    usage: usage(),
     writing: null,
     recentActions: [],
     lastCheck: null,
     failure: null,
     streaming: null,
     updatedAt: 1_000_000_000,
+    ...overrides,
+  };
+}
+
+function usage(
+  overrides: Partial<SettingImprovementProgress["usage"]> = {},
+): SettingImprovementProgress["usage"] {
+  const provenance = {
+    inputTokens: "derived_provider_fields" as const,
+    uncachedInputTokens: "derived_provider_fields" as const,
+    cacheReadTokens: "derived_provider_fields" as const,
+    cacheWriteTokens: "derived_provider_fields" as const,
+    reasoningTokens: "derived_provider_fields" as const,
+    outputTokens: "derived_provider_fields" as const,
+    totalTokens: "derived_provider_fields" as const,
+  };
+  return {
+    inputTokens: 0,
+    uncachedInputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    reasoningTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    provenance,
     ...overrides,
   };
 }

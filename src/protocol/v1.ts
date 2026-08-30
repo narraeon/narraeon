@@ -282,7 +282,7 @@ export type V1PlayTimelineEventSummary =
   | Extract<V1PlayCallChainEvent, { kind: "player" }>
   | (Omit<
       Extract<V1PlayCallChainEvent, { kind: "assistant" }>,
-      "reasoning" | "toolFragment" | "usage"
+      "reasoning" | "toolFragment"
     > & {
       hasReasoning: boolean;
       hasToolFragment: boolean;
@@ -303,6 +303,7 @@ export type V1PlayTimelineEventSummary =
       displayName: string;
       toolCallCount: number;
       failed: boolean;
+      usage?: ModelUsage;
       detailsAvailable: true;
     }
   | Extract<V1PlayCallChainEvent, { kind: "failure" }>;

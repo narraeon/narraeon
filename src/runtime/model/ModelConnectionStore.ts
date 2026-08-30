@@ -11,6 +11,7 @@ import {
 import { join } from "node:path";
 
 import {
+  hasCLIProxyThinkingSuffix,
   modelReasoningPolicyIssue,
   modelProviderPresets,
   type ListProviderModelsInput,
@@ -21,6 +22,7 @@ import {
   type ModelProviderPresetId,
   type ModelReasoningEffort,
   type ModelReasoningSummary,
+  type ModelThinkingMode,
   type SaveModelConnectionInput,
 } from "../../protocol/modelConnections.ts";
 import type { FileNativeModelConnection } from "./FileNativeModelAdapters.ts";
@@ -35,6 +37,8 @@ interface StoredModelConnection extends FileNativeModelConnection {
   dialect: ModelProviderDialect;
   reasoningEffort: ModelReasoningEffort;
   reasoningSummary: ModelReasoningSummary;
+  thinkingMode: ModelThinkingMode;
+  thinkingBudgetTokens: number | null;
 }
 
 interface ModelConnectionDocument {
@@ -286,12 +290,26 @@ function normalizeSaveInput(
   const reasoningSummary = validateReasoningSummary(
     input.reasoningSummary ?? existing?.reasoningSummary,
   );
+  const thinkingMode = validateThinkingMode(
+    input.thinkingMode ?? existing?.thinkingMode,
+  );
+  const thinkingBudgetTokens = validateThinkingBudgetTokens(
+    input.thinkingBudgetTokens !== undefined
+      ? input.thinkingBudgetTokens
+      : thinkingMode === "enabled"
+        ? existing?.thinkingBudgetTokens
+        : null,
+  );
+  validateTokenLimits(input.contextWindowTokens, input.maxOutputTokens);
   validateReasoningPolicy({
     provider,
     dialect,
     modelId,
     effort: reasoningEffort,
     summary: reasoningSummary,
+    thinking: thinkingMode,
+    thinkingBudgetTokens,
+    maxOutputTokens: input.maxOutputTokens,
   });
   const explicitApiKey = normalizeOptionalApiKey(input.apiKey);
   const apiKey =
@@ -305,7 +323,6 @@ function normalizeSaveInput(
         ? "A new model configuration requires an API key"
         : "The endpoint or protocol changed; enter the API key again because old credentials are never forwarded to a new endpoint",
     );
-  validateTokenLimits(input.contextWindowTokens, input.maxOutputTokens);
   validatePresetBinding(presetId, provider, baseUrl);
   return {
     name,
@@ -317,6 +334,8 @@ function normalizeSaveInput(
     modelId,
     reasoningEffort,
     reasoningSummary,
+    thinkingMode,
+    thinkingBudgetTokens,
     contextWindowTokens: input.contextWindowTokens,
     maxOutputTokens: input.maxOutputTokens,
   };
@@ -359,16 +378,37 @@ function validateStoredConnection(value: unknown): StoredModelConnection {
   const baseUrl = normalizeBaseUrl(requiredTrimmed(value.baseUrl, "Base URL"));
   const apiKey = requiredTrimmed(value.apiKey, "API Key", 16_384);
   const modelId = requiredTrimmed(value.modelId, "Model ID", 512);
-  const reasoningEffort = validateReasoningEffort(value.reasoningEffort);
+  let reasoningEffort = validateReasoningEffort(value.reasoningEffort);
   const reasoningSummary = validateReasoningSummary(value.reasoningSummary);
+  let thinkingMode = validateThinkingMode(value.thinkingMode);
+  const thinkingBudgetTokens = validateThinkingBudgetTokens(
+    value.thinkingBudgetTokens,
+  );
+  // Before Thinking became an independent field, Anthropic effort=none meant
+  // disabled thinking and a non-default summary implicitly activated adaptive
+  // thinking. Normalize that released shape without reinterpreting new data.
+  if (value.thinkingMode === undefined && provider === "anthropic_messages") {
+    if (reasoningEffort === "none") {
+      reasoningEffort = "provider_default";
+      thinkingMode = "disabled";
+    } else if (
+      reasoningSummary !== "provider_default" &&
+      !(dialect === "cliproxyapi" && hasCLIProxyThinkingSuffix(modelId))
+    ) {
+      thinkingMode = "adaptive";
+    }
+  }
+  validateTokenLimits(value.contextWindowTokens, value.maxOutputTokens);
   validateReasoningPolicy({
     provider,
     dialect,
     modelId,
     effort: reasoningEffort,
     summary: reasoningSummary,
+    thinking: thinkingMode,
+    thinkingBudgetTokens,
+    maxOutputTokens: value.maxOutputTokens as number,
   });
-  validateTokenLimits(value.contextWindowTokens, value.maxOutputTokens);
   validatePresetBinding(presetId, provider, baseUrl);
   return {
     id,
@@ -381,6 +421,8 @@ function validateStoredConnection(value: unknown): StoredModelConnection {
     modelId,
     reasoningEffort,
     reasoningSummary,
+    thinkingMode,
+    thinkingBudgetTokens,
     contextWindowTokens: value.contextWindowTokens as number,
     maxOutputTokens: value.maxOutputTokens as number,
   };
@@ -397,6 +439,8 @@ function toView(connection: StoredModelConnection): ModelConnectionView {
     modelId: connection.modelId,
     reasoningEffort: connection.reasoningEffort,
     reasoningSummary: connection.reasoningSummary,
+    thinkingMode: connection.thinkingMode,
+    thinkingBudgetTokens: connection.thinkingBudgetTokens,
     contextWindowTokens: connection.contextWindowTokens,
     maxOutputTokens: connection.maxOutputTokens,
     hasApiKey: true,
@@ -414,6 +458,8 @@ function toBinding(
     modelId: connection.modelId,
     reasoningEffort: connection.reasoningEffort,
     reasoningSummary: connection.reasoningSummary,
+    thinkingMode: connection.thinkingMode,
+    thinkingBudgetTokens: connection.thinkingBudgetTokens,
     contextWindowTokens: connection.contextWindowTokens,
     maxOutputTokens: connection.maxOutputTokens,
   });
@@ -463,6 +509,25 @@ function validateReasoningSummary(value: unknown): ModelReasoningSummary {
   )
     throw new Error("Model reasoning-summary policy is invalid");
   return value;
+}
+
+function validateThinkingMode(value: unknown): ModelThinkingMode {
+  if (value === undefined) return "provider_default";
+  if (
+    value !== "provider_default" &&
+    value !== "adaptive" &&
+    value !== "enabled" &&
+    value !== "disabled"
+  )
+    throw new Error("Model thinking mode is invalid");
+  return value;
+}
+
+function validateThinkingBudgetTokens(value: unknown): number | null {
+  if (value === undefined || value === null) return null;
+  if (!Number.isSafeInteger(value) || Number(value) < 0)
+    throw new Error("Model thinking token budget is invalid");
+  return Number(value);
 }
 
 function validateReasoningPolicy(

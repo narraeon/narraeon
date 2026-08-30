@@ -20,6 +20,14 @@ export type ModelReasoningEffort =
 export type ModelReasoningSummary =
   "provider_default" | "auto" | "concise" | "detailed" | "none";
 
+/**
+ * Anthropic exposes thinking as a control independent from output effort.
+ * OpenAI-shaped protocols do not have an equivalent request field, so their
+ * only valid value is provider_default.
+ */
+export type ModelThinkingMode =
+  "provider_default" | "adaptive" | "enabled" | "disabled";
+
 export type ModelPromptCacheStrategy =
   | "explicit_anthropic_blocks"
   | "explicit_cliproxyapi_message"
@@ -39,15 +47,50 @@ export function modelReasoningPolicyIssue(input: {
   modelId: string;
   effort: ModelReasoningEffort;
   summary: ModelReasoningSummary;
+  thinking?: ModelThinkingMode;
+  thinkingBudgetTokens?: number | null;
+  maxOutputTokens?: number;
 }): string | null {
-  if (input.provider === "anthropic_messages" && input.effort === "minimal")
-    return "Anthropic Messages does not define minimal effort; choose low or provider default";
+  const thinking = input.thinking ?? "provider_default";
+  const thinkingBudgetTokens = input.thinkingBudgetTokens ?? null;
+  const thinkingControlledByCLIProxySuffix =
+    input.provider === "anthropic_messages" &&
+    input.dialect === "cliproxyapi" &&
+    hasCLIProxyThinkingSuffix(input.modelId);
   if (
     input.provider === "anthropic_messages" &&
-    input.effort === "none" &&
-    input.summary === "auto"
+    (input.effort === "none" || input.effort === "minimal")
   )
-    return "Anthropic Messages cannot return a reasoning summary while thinking is disabled";
+    return "Anthropic Messages effort supports low, medium, high, xhigh, and max; use Thinking disabled instead of effort none";
+  if (
+    input.provider !== "anthropic_messages" &&
+    thinking !== "provider_default"
+  )
+    return "Only Anthropic Messages defines a separate thinking mode; OpenAI-shaped protocols control reasoning through effort";
+  if (input.provider !== "anthropic_messages" && thinkingBudgetTokens !== null)
+    return "Only Anthropic Messages manual thinking accepts a thinking token budget";
+  if (thinking === "enabled") {
+    if (
+      thinkingBudgetTokens === null ||
+      !Number.isSafeInteger(thinkingBudgetTokens) ||
+      thinkingBudgetTokens < 1_024
+    )
+      return "Anthropic manual thinking requires an integer budget of at least 1024 tokens";
+    if (
+      input.maxOutputTokens !== undefined &&
+      thinkingBudgetTokens >= input.maxOutputTokens
+    )
+      return "Anthropic thinking budget must be lower than maximum output tokens";
+  } else if (thinkingBudgetTokens !== null) {
+    return "A thinking token budget is valid only when Anthropic Thinking is set to manual enabled";
+  }
+  if (
+    input.provider === "anthropic_messages" &&
+    (thinking === "provider_default" || thinking === "disabled") &&
+    input.summary !== "provider_default" &&
+    !(thinking === "provider_default" && thinkingControlledByCLIProxySuffix)
+  )
+    return "Anthropic returned thinking can be configured only when Thinking is adaptive or manual enabled, or when a CLIProxyAPI model suffix controls Thinking";
   if (
     input.provider !== "openai_responses" &&
     (input.summary === "concise" || input.summary === "detailed")
@@ -61,10 +104,10 @@ export function modelReasoningPolicyIssue(input: {
     return "Standard Chat Completions has no reasoning-summary parameter; use provider default or select the CLIProxyAPI dialect";
   if (
     input.dialect === "cliproxyapi" &&
-    input.effort !== "provider_default" &&
+    (input.effort !== "provider_default" || thinking !== "provider_default") &&
     hasCLIProxyThinkingSuffix(input.modelId)
   )
-    return "CLIProxyAPI model thinking suffixes override request effort; use either the model suffix with provider default or the explicit reasoning-effort field, not both";
+    return "CLIProxyAPI model thinking suffixes override request effort and thinking; use either the model suffix with provider defaults or explicit request fields, not both";
   return null;
 }
 
@@ -199,6 +242,8 @@ export interface ModelConnectionView {
   modelId: string;
   reasoningEffort: ModelReasoningEffort;
   reasoningSummary: ModelReasoningSummary;
+  thinkingMode: ModelThinkingMode;
+  thinkingBudgetTokens: number | null;
   contextWindowTokens: number;
   maxOutputTokens: number;
   hasApiKey: true;
@@ -222,6 +267,8 @@ export interface SaveModelConnectionInput {
   modelId: string;
   reasoningEffort?: ModelReasoningEffort;
   reasoningSummary?: ModelReasoningSummary;
+  thinkingMode?: ModelThinkingMode;
+  thinkingBudgetTokens?: number | null;
   contextWindowTokens: number;
   maxOutputTokens: number;
 }

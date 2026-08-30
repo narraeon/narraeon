@@ -90,6 +90,28 @@ test("FileNativeModelHost 暴露不含凭据且稳定的完整绑定", () => {
   expect(changedReasoningPolicy.protocolConfigFingerprint).not.toBe(
     left.protocolConfigFingerprint,
   );
+
+  const changedThinkingPolicy = new FileNativeModelHost({
+    provider: "anthropic_messages",
+    baseUrl: "https://provider.invalid/v1",
+    apiKey: "secret-b",
+    modelId: "claude-a",
+    thinkingMode: "enabled",
+    thinkingBudgetTokens: 1_024,
+    contextWindowTokens: 64_000,
+    maxOutputTokens: 2_048,
+  }).binding();
+  const defaultThinkingPolicy = new FileNativeModelHost({
+    provider: "anthropic_messages",
+    baseUrl: "https://provider.invalid/v1",
+    apiKey: "secret-b",
+    modelId: "claude-a",
+    contextWindowTokens: 64_000,
+    maxOutputTokens: 2_048,
+  }).binding();
+  expect(changedThinkingPolicy.protocolConfigFingerprint).not.toBe(
+    defaultThinkingPolicy.protocolConfigFingerprint,
+  );
 });
 
 test("wire adapter 自身拒绝无效推理策略，不依赖配置存储层兜底", () => {
@@ -104,7 +126,7 @@ test("wire adapter 自身拒绝无效推理策略，不依赖配置存储层兜�
         contextWindowTokens: 64_000,
         maxOutputTokens: 2_048,
       }),
-  ).toThrow("does not define minimal effort");
+  ).toThrow("effort supports low, medium, high, xhigh, and max");
   expect(
     () =>
       new FileNativeModelHost({
@@ -125,12 +147,12 @@ test("wire adapter 自身拒绝无效推理策略，不依赖配置存储层兜�
         baseUrl: "https://provider.invalid/v1",
         apiKey: "secret",
         modelId: "claude",
-        reasoningEffort: "none",
+        thinkingMode: "disabled",
         reasoningSummary: "auto",
         contextWindowTokens: 64_000,
         maxOutputTokens: 2_048,
       }),
-  ).toThrow("cannot return a reasoning summary");
+  ).toThrow("can be configured only when Thinking is adaptive");
 });
 
 test.each([
@@ -139,6 +161,8 @@ test.each([
     dialect: "cliproxyapi" as const,
     effort: "high" as const,
     summary: "none" as const,
+    thinking: "provider_default" as const,
+    thinkingBudgetTokens: null,
     expected: {
       reasoning_effort: "high",
       reasoning: { exclude: true },
@@ -150,6 +174,8 @@ test.each([
     dialect: "cliproxyapi" as const,
     effort: "max" as const,
     summary: "detailed" as const,
+    thinking: "provider_default" as const,
+    thinkingBudgetTokens: null,
     expected: {
       reasoning: { effort: "max", summary: "detailed" },
       store: false,
@@ -161,6 +187,8 @@ test.each([
     dialect: "standard" as const,
     effort: "high" as const,
     summary: "none" as const,
+    thinking: "provider_default" as const,
+    thinkingBudgetTokens: null,
     expected: {
       reasoning: { effort: "high" },
       store: false,
@@ -172,6 +200,8 @@ test.each([
     dialect: "cliproxyapi" as const,
     effort: "high" as const,
     summary: "none" as const,
+    thinking: "provider_default" as const,
+    thinkingBudgetTokens: null,
     expected: {
       reasoning: { effort: "high", summary: null },
       store: false,
@@ -183,6 +213,8 @@ test.each([
     dialect: "cliproxyapi" as const,
     effort: "high" as const,
     summary: "auto" as const,
+    thinking: "adaptive" as const,
+    thinkingBudgetTokens: null,
     expected: {
       thinking: { type: "adaptive", display: "summarized" },
       output_config: { effort: "high" },
@@ -193,13 +225,39 @@ test.each([
     dialect: "standard" as const,
     effort: "low" as const,
     summary: "provider_default" as const,
+    thinking: "provider_default" as const,
+    thinkingBudgetTokens: null,
     expected: {
       output_config: { effort: "low" },
     },
   },
+  {
+    provider: "anthropic_messages" as const,
+    dialect: "standard" as const,
+    effort: "medium" as const,
+    summary: "none" as const,
+    thinking: "enabled" as const,
+    thinkingBudgetTokens: 1_024,
+    expected: {
+      thinking: {
+        type: "enabled",
+        budget_tokens: 1_024,
+        display: "omitted",
+      },
+      output_config: { effort: "medium" },
+    },
+  },
 ])(
   "$provider 的 wire preview 与生产编码器共享 reasoning 请求合同",
-  ({ provider, dialect, effort, summary, expected }) => {
+  ({
+    provider,
+    dialect,
+    effort,
+    summary,
+    thinking,
+    thinkingBudgetTokens,
+    expected,
+  }) => {
     const host = new FileNativeModelHost({
       provider,
       dialect,
@@ -208,6 +266,8 @@ test.each([
       modelId: "reasoning-model",
       reasoningEffort: effort,
       reasoningSummary: summary,
+      thinkingMode: thinking,
+      thinkingBudgetTokens,
       contextWindowTokens: 64_000,
       maxOutputTokens: 2_048,
     });
@@ -246,6 +306,34 @@ test.each([
     expect(JSON.stringify(preview)).not.toContain("must-not-appear");
   },
 );
+
+test("CLIProxyAPI 模型后缀保持 Thinking 唯一权威，同时独立传递返回内容", () => {
+  const host = new FileNativeModelHost({
+    provider: "anthropic_messages",
+    dialect: "cliproxyapi",
+    baseUrl: "https://provider.invalid/v1",
+    apiKey: "must-not-appear",
+    modelId: "claude-sonnet(high)",
+    reasoningEffort: "provider_default",
+    reasoningSummary: "auto",
+    thinkingMode: "provider_default",
+    contextWindowTokens: 64_000,
+    maxOutputTokens: 2_048,
+  });
+
+  const preview = host.previewRequest(
+    exchangeFor(
+      "anthropic_messages",
+      "claude-sonnet(high)",
+      host.binding().cacheStrategy,
+    ),
+  );
+
+  expect(preview.body).toMatchObject({
+    thinking: { type: "adaptive", display: "summarized" },
+  });
+  expect(preview.body).not.toHaveProperty("output_config.effort");
+});
 
 test("prompt_cache_key 在同一冻结调用链稳定，并隔离不同 CLIProxy 会话", () => {
   const host = new FileNativeModelHost({

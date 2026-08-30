@@ -5,6 +5,8 @@ import type {
   ContentTreeFile,
   SettingImprovementStartMode,
 } from "../protocol/v1.ts";
+import type { ModelUsage } from "../protocol/modelUsage.ts";
+import { ModelUsageBreakdown } from "./ModelUsageBreakdown.tsx";
 
 export type SettingImprovementPhase =
   | "idle"
@@ -98,7 +100,7 @@ export interface SettingImprovementProgress {
   toolCalls: number;
   repairs: number;
   failedChecks: number;
-  usage: { inputTokens: number; outputTokens: number };
+  usage: ModelUsage;
   writing: string | null;
   recentActions: { tool: string; target: string | null; ok: boolean }[];
   lastCheck: string | null;
@@ -267,11 +269,14 @@ function SettingRunProgress({
         <div>
           <dt>token</dt>
           <dd>
-            ↑{formatTokens(progress?.usage.inputTokens ?? 0)} ↓
-            {formatTokens(progress?.usage.outputTokens ?? 0)}
+            ↑{formatProgressTokens(progress?.usage.inputTokens)} ↓
+            {formatProgressTokens(progress?.usage.outputTokens)}
           </dd>
         </div>
       </dl>
+      {progress !== null && progress.round > 0 ? (
+        <ModelUsageBreakdown usage={progress.usage} compact />
+      ) : null}
       {progress?.writing != null && (
         <p className="setting-run-writing">
           {uiText("正在写")}
@@ -320,6 +325,11 @@ function SettingRunProgress({
       )}
     </section>
   );
+}
+
+function formatProgressTokens(value: number | null | undefined): string {
+  if (value === null) return "—";
+  return formatTokens(value ?? 0);
 }
 
 function formatTokens(value: number): string {

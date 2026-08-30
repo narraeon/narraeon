@@ -223,6 +223,72 @@ describe("世界游玩页面", () => {
     expect(start?.exchangeId).toMatch(/^play-exchange-/u);
   });
 
+  test("模型响应始终显示输入、缓存读写、推理和输出 token 明细", async () => {
+    const chain = playChainView(
+      "play-chain-usage",
+      "exchange-usage",
+      "I ask Alex to check the cache.",
+    );
+    const assistant = chain.events.find((event) => event.kind === "assistant");
+    if (assistant?.kind !== "assistant")
+      throw new Error("The usage fixture requires an assistant event");
+    assistant.usage = {
+      inputTokens: 1_200,
+      uncachedInputTokens: 700,
+      cacheReadTokens: 400,
+      cacheWriteTokens: 100,
+      reasoningTokens: 80,
+      outputTokens: 240,
+      totalTokens: 1_440,
+      provenance: {
+        inputTokens: "provider",
+        uncachedInputTokens: "derived_provider_fields",
+        cacheReadTokens: "provider",
+        cacheWriteTokens: "provider",
+        reasoningTokens: "provider",
+        outputTokens: "provider",
+        totalTokens: "provider",
+      },
+    };
+    const client = {
+      request: vi.fn(<T>(request: V1Request) => {
+        if (request.type === "world.read")
+          return Promise.resolve(worldView(chain) as T);
+        if (request.type === "artifacts.debug") return Promise.resolve([] as T);
+        if (request.type === "play.chain.inspect")
+          return Promise.resolve(chain as T);
+        if (request.type === "play.timeline.detail")
+          return Promise.resolve(
+            chain.events.find(({ id }) => id === request.eventId) as T,
+          );
+        return Promise.reject(new Error(`Unexpected request: ${request.type}`));
+      }),
+    };
+
+    renderWorld(client);
+    await screen.findByText("Alex opens the door and lets you go first.");
+
+    const compact = screen.getByLabelText("Token 用量明细");
+    expect(within(compact).getByText("1,200")).toBeTruthy();
+    expect(within(compact).getByText("700")).toBeTruthy();
+    expect(within(compact).getByText("400")).toBeTruthy();
+    expect(within(compact).getByText("100")).toBeTruthy();
+    expect(within(compact).getByText("80")).toBeTruthy();
+    expect(within(compact).getByText("240")).toBeTruthy();
+    expect(within(compact).getByText("1,440")).toBeTruthy();
+
+    const details = screen.getByText("查看模型诊断详情").closest("details");
+    expect(details).not.toBeNull();
+    fireEvent.click(details!.querySelector("summary")!);
+    expect(
+      await within(details!).findByText(
+        "缓存读取和缓存写入属于输入构成；推理 tokens 已包含在输出 tokens 中，不应重复相加。",
+      ),
+    ).toBeTruthy();
+    expect(within(details!).getAllByText("Provider 报告")).toHaveLength(6);
+    expect(within(details!).getByText("由 Provider 字段计算")).toBeTruthy();
+  });
+
   test("再次全新上下文后仍按分隔符显示此前思维链和工具记录", async () => {
     let chain = playChainView(
       "play-chain-old",

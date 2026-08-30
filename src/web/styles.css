@@ -284,6 +284,12 @@ label {
   gap: 0.8rem;
 }
 
+.model-reasoning-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
 .inline-choice {
   display: flex;
   align-items: center;
@@ -1645,7 +1651,8 @@ label {
 
   .document-create-grid,
   .content-tree-layout,
-  .two-column-fields {
+  .two-column-fields,
+  .model-reasoning-fields {
     grid-template-columns: 1fr;
   }
 }
@@ -4511,6 +4518,68 @@ summary:focus-visible {
   margin-top: 0.6rem;
   color: var(--muted);
   font-size: 0.68rem;
+}
+
+.model-usage {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 0.8rem;
+}
+
+.model-usage dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7.4rem, 1fr));
+  gap: 0.45rem;
+  margin: 0;
+}
+
+.model-usage dl > div {
+  min-width: 0;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid rgb(158 229 209 / 16%);
+  border-radius: 0.55rem;
+  background: rgb(2 12 10 / 38%);
+}
+
+.model-usage dt {
+  color: var(--muted);
+  font-size: 0.67rem;
+  line-height: 1.35;
+}
+
+.model-usage dd {
+  margin: 0.18rem 0 0;
+  color: #dcebe7;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.model-usage dd strong {
+  color: var(--accent);
+  font-size: 0.84rem;
+}
+
+.model-usage dd small {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--muted);
+  font-size: 0.62rem;
+}
+
+.model-usage > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.5;
+}
+
+.model-usage-compact dl > div {
+  padding: 0.42rem 0.52rem;
+}
+
+.call-chain-followup > .model-usage {
+  margin-top: 0.4rem;
 }
 
 .call-chain-reasoning {

@@ -3,6 +3,11 @@ import {
   defaultAppLocale,
   type AppLocale,
 } from "../../protocol/appPreferences.ts";
+import {
+  aggregateModelUsage,
+  emptyAggregatedModelUsage,
+  type ModelUsage,
+} from "../../protocol/modelUsage.ts";
 import { defaultSettingImprovementPromptForLocale } from "../../shared/default-setting-improvement-prompt.ts";
 import {
   inspectContentPackageCurrentTree,
@@ -42,10 +47,7 @@ export interface SettingAuthorToolCall {
   arguments: Record<string, unknown>;
 }
 
-export interface SettingAuthorUsage {
-  inputTokens: number;
-  outputTokens: number;
-}
+export type SettingAuthorUsage = ModelUsage;
 
 /**
  * One fragment of a response still being produced. Reported for observability
@@ -511,7 +513,7 @@ export interface SettingImprovementProgress {
   toolCalls: number;
   repairs: number;
   failedChecks: number;
-  usage: { inputTokens: number; outputTokens: number };
+  usage: ModelUsage;
   writing: string | null;
   recentActions: SettingImprovementAction[];
   lastCheck: string | null;
@@ -609,8 +611,7 @@ export class DocumentCandidateSettingImprovement {
 
   #recordExchange(usage: SettingAuthorUsage | undefined): void {
     this.#progress.round += 1;
-    this.#progress.usage.inputTokens += usage?.inputTokens ?? 0;
-    this.#progress.usage.outputTokens += usage?.outputTokens ?? 0;
+    this.#progress.usage = aggregateModelUsage(this.#progress.usage, usage);
     this.#progress.streaming = null;
     this.#progress.updatedAt = Date.now();
   }
@@ -2473,7 +2474,7 @@ function idleSettingProgress(): SettingImprovementProgress {
     toolCalls: 0,
     repairs: 0,
     failedChecks: 0,
-    usage: { inputTokens: 0, outputTokens: 0 },
+    usage: emptyAggregatedModelUsage(),
     writing: null,
     recentActions: [],
     lastCheck: null,

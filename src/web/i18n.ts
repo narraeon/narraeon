@@ -1481,14 +1481,17 @@ const dynamicEnglishMessages: Record<string, string> = {
   "{count} 项产物": "{count} artifact(s)",
   端点方言: "Endpoint dialect",
   协议标准: "Protocol standard",
-  推理强度: "Reasoning effort",
-  返回推理摘要: "Returned reasoning summary",
+  "Effort（推理强度）": "Effort (reasoning intensity)",
+  "Thinking（思考模式）": "Thinking mode",
+  "Thinking 返回内容": "Returned thinking content",
+  "Thinking budget tokens": "Thinking budget tokens",
+  "手动 token 预算": "Manual token budget",
   "Provider 默认": "Provider default",
-  "方言 / 推理": "Dialect / reasoning",
-  "CLIProxyAPI 方言只启用代理明确支持的兼容参数；响应仍按所选协议解析，不从可见文本猜测思考块。Claude 的签名 thinking 请选 Responses 或 Anthropic Messages；Chat Completions 通常只有 reasoning_content，不能承诺无损续传签名。模型名的 (high) 等 thinking 后缀会覆盖请求参数，因此只能与“Provider 默认”推理强度一起使用。":
-    "The CLIProxyAPI dialect enables only compatibility parameters explicitly supported by the proxy. Responses are still decoded as the selected protocol; visible text is never guessed to be a thinking block. Use Responses or Anthropic Messages for signed Claude thinking. Chat Completions usually exposes only reasoning_content and cannot guarantee lossless signature continuation. Model-name thinking suffixes such as (high) override body parameters, so use them only with Provider default effort.",
-  "推理摘要只进入模型诊断，不会成为玩家叙事；Provider 返回的原生续传块会原样保存并在下一次请求中重放。":
-    "Reasoning summaries are diagnostic only and never become player narrative. Provider-native continuation blocks are retained and replayed in the next request.",
+  "方言 / Effort / Thinking": "Dialect / effort / thinking",
+  "CLIProxyAPI 方言只启用代理明确支持的兼容参数；响应仍按所选协议解析，不从可见文本猜测思考块。Claude 的签名 thinking 请选 Responses 或 Anthropic Messages；Chat Completions 通常只有 reasoning_content，不能承诺无损续传签名。模型名的 (high) 等 thinking 后缀会覆盖请求参数，因此 Effort 与 Thinking 都必须保留“Provider 默认”。":
+    "The CLIProxyAPI dialect enables only compatibility parameters explicitly supported by the proxy. Responses are still decoded as the selected protocol; visible text is never guessed to be a thinking block. Use Responses or Anthropic Messages for signed Claude thinking. Chat Completions usually exposes only reasoning_content and cannot guarantee lossless signature continuation. Model-name thinking suffixes such as (high) override request fields, so leave both Effort and Thinking at Provider default.",
+  "Effort 控制整份响应投入；Anthropic Thinking 独立控制思考块，手动预算必须小于最大输出。Thinking 返回内容只进入模型诊断；原生续传块仍会原样保存。":
+    "Effort controls work across the whole response. Anthropic Thinking independently controls thinking blocks, and a manual budget must be lower than maximum output. Returned thinking is diagnostic only; provider-native continuation blocks are still retained unchanged.",
   "查看实际 HTTP 请求（凭据已省略）":
     "View actual HTTP request (credentials omitted)",
   字节: "bytes",
@@ -1499,8 +1502,17 @@ const dynamicEnglishMessages: Record<string, string> = {
   缓存读取: "Cache read",
   缓存写入: "Cache write",
   推理: "Reasoning",
+  "推理（输出内）": "Reasoning (inside output)",
   输出: "Output",
+  "输出（含推理）": "Output (includes reasoning)",
   合计: "Total",
+  "Token 用量明细": "Token usage breakdown",
+  未报告: "Not reported",
+  "Provider 报告": "Provider reported",
+  "由 Provider 字段计算": "Derived from Provider fields",
+  "Provider 未报告": "Not reported by Provider",
+  "缓存读取和缓存写入属于输入构成；推理 tokens 已包含在输出 tokens 中，不应重复相加。":
+    "Cache-read and cache-write tokens are components of input. Reasoning tokens are already included in output tokens and must not be added twice.",
 };
 
 Object.assign(englishMessages, dynamicEnglishMessages);

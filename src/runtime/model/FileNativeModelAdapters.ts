@@ -7,10 +7,12 @@ import {
   type AppLocale,
 } from "../../protocol/appPreferences.ts";
 import {
+  hasCLIProxyThinkingSuffix,
   modelReasoningPolicyIssue,
   type ModelProviderDialect,
   type ModelReasoningEffort,
   type ModelReasoningSummary,
+  type ModelThinkingMode,
 } from "../../protocol/modelConnections.ts";
 
 import type {
@@ -74,17 +76,25 @@ export interface FileNativeModelConnection {
   modelId: string;
   reasoningEffort?: ModelReasoningEffort;
   reasoningSummary?: ModelReasoningSummary;
+  thinkingMode?: ModelThinkingMode;
+  thinkingBudgetTokens?: number | null;
   contextWindowTokens: number;
   maxOutputTokens: number;
 }
 
 interface ResolvedFileNativeModelConnection extends Omit<
   FileNativeModelConnection,
-  "dialect" | "reasoningEffort" | "reasoningSummary"
+  | "dialect"
+  | "reasoningEffort"
+  | "reasoningSummary"
+  | "thinkingMode"
+  | "thinkingBudgetTokens"
 > {
   dialect: ModelProviderDialect;
   reasoningEffort: ModelReasoningEffort;
   reasoningSummary: ModelReasoningSummary;
+  thinkingMode: ModelThinkingMode;
+  thinkingBudgetTokens: number | null;
 }
 
 const providerContinuationCodecVersion = 1;
@@ -97,6 +107,8 @@ function resolveConnection(
     dialect: connection.dialect ?? "standard",
     reasoningEffort: connection.reasoningEffort ?? "provider_default",
     reasoningSummary: connection.reasoningSummary ?? "provider_default",
+    thinkingMode: connection.thinkingMode ?? "provider_default",
+    thinkingBudgetTokens: connection.thinkingBudgetTokens ?? null,
   });
   const issue = modelReasoningPolicyIssue({
     provider: resolved.provider,
@@ -104,6 +116,9 @@ function resolveConnection(
     modelId: resolved.modelId,
     effort: resolved.reasoningEffort,
     summary: resolved.reasoningSummary,
+    thinking: resolved.thinkingMode,
+    thinkingBudgetTokens: resolved.thinkingBudgetTokens,
+    maxOutputTokens: resolved.maxOutputTokens,
   });
   if (issue !== null) throw new Error(issue);
   return resolved;
@@ -161,6 +176,8 @@ export class FileNativeModelHost implements ModelHost {
             dialect: this.#connection.dialect,
             reasoningEffort: this.#connection.reasoningEffort,
             reasoningSummary: this.#connection.reasoningSummary,
+            thinkingMode: this.#connection.thinkingMode,
+            thinkingBudgetTokens: this.#connection.thinkingBudgetTokens,
             cachePolicy: modelCacheStrategy(this.#connection),
             providerContinuationCodecVersion,
           }),
@@ -925,16 +942,21 @@ export class FileNativeSettingAuthorProvider implements SettingAuthorAdapter {
   }
 }
 
-// The progress projection only counts tokens, so the nullable per-field
-// provenance of ModelHostUsage collapses to two numbers here.
+// Setting authoring uses the same complete usage projection as play. Missing
+// Provider usage stays unavailable instead of being counted as zero.
 function settingAuthorUsage(
   usage: ModelHostUsage | undefined,
 ): SettingAuthorUsage {
-  if (usage === undefined) return { inputTokens: 0, outputTokens: 0 };
-  return {
-    inputTokens: usage.inputTokens ?? 0,
-    outputTokens: usage.outputTokens ?? 0,
-  };
+  if (usage !== undefined) return structuredClone(usage);
+  return usageRecord({
+    inputTokens: null,
+    uncachedInputTokens: null,
+    cacheReadTokens: null,
+    cacheWriteTokens: null,
+    reasoningTokens: null,
+    outputTokens: null,
+    totalTokens: null,
+  });
 }
 
 function settingToolDefinition(
@@ -1507,23 +1529,39 @@ function responsesReasoningRequest(
 function anthropicReasoningRequest(
   connection: ResolvedFileNativeModelConnection,
 ): Record<string, unknown> {
-  if (
-    connection.reasoningEffort === "provider_default" &&
+  const display =
     connection.reasoningSummary === "provider_default"
-  )
-    return {};
-  if (connection.reasoningEffort === "none")
-    return { thinking: { type: "disabled" } };
-  return {
-    ...(connection.reasoningSummary === "provider_default"
       ? {}
       : {
-          thinking: {
-            type: "adaptive",
-            display:
-              connection.reasoningSummary === "auto" ? "summarized" : "omitted",
-          },
-        }),
+          display:
+            connection.reasoningSummary === "auto" ? "summarized" : "omitted",
+        };
+  const thinking =
+    connection.thinkingMode === "provider_default"
+      ? connection.dialect === "cliproxyapi" &&
+        hasCLIProxyThinkingSuffix(connection.modelId) &&
+        connection.reasoningSummary !== "provider_default"
+        ? {
+            // CLIProxyAPI extracts visibility from a valid source thinking
+            // block before the model suffix replaces its mode. The suffix is
+            // still the sole mode/effort authority; adaptive is only the
+            // proxy's protocol-valid summary carrier.
+            thinking: { type: "adaptive", ...display },
+          }
+        : {}
+      : connection.thinkingMode === "disabled"
+        ? { thinking: { type: "disabled" } }
+        : connection.thinkingMode === "adaptive"
+          ? { thinking: { type: "adaptive", ...display } }
+          : {
+              thinking: {
+                type: "enabled",
+                budget_tokens: connection.thinkingBudgetTokens,
+                ...display,
+              },
+            };
+  return {
+    ...thinking,
     ...(connection.reasoningEffort === "provider_default"
       ? {}
       : { output_config: { effort: connection.reasoningEffort } }),
@@ -2055,6 +2093,9 @@ function normalizeChatUsage(value: unknown): ModelHostUsage {
 
 function normalizeAnthropicUsage(value: unknown): ModelHostUsage {
   const usage = isRecord(value) ? value : {};
+  const outputDetails = isRecord(usage.output_tokens_details)
+    ? usage.output_tokens_details
+    : {};
   const uncachedInputTokens = providerNumber(usage.input_tokens);
   const cacheReadTokens = providerNumber(usage.cache_read_input_tokens);
   const cacheWriteTokens = providerNumber(usage.cache_creation_input_tokens);
@@ -2070,7 +2111,9 @@ function normalizeAnthropicUsage(value: unknown): ModelHostUsage {
       uncachedInputTokens,
       cacheReadTokens,
       cacheWriteTokens,
-      reasoningTokens: providerNumber(usage.thinking_tokens),
+      reasoningTokens:
+        providerNumber(outputDetails.thinking_tokens) ??
+        providerNumber(usage.thinking_tokens),
       outputTokens,
       totalTokens:
         inputTokens === null || outputTokens === null

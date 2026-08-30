@@ -38,6 +38,7 @@ import {
   type FrontendArtifactDebugRecord,
 } from "./ArtifactDebugger.tsx";
 import { projectUncoveredPlayerViews } from "./PlayerViewFallback.ts";
+import { ModelUsageBreakdown } from "./ModelUsageBreakdown.tsx";
 
 type WorldSection = "play" | "documents" | "history" | "manage";
 type PendingAction =
@@ -1600,6 +1601,9 @@ function TimelineEvent({
                 ? uiText("正在接收模型输出…")
                 : uiText("（本次响应没有文本）")}
           </p>
+          {event.usage === undefined ? null : (
+            <ModelUsageBreakdown usage={event.usage} compact />
+          )}
           {!event.detailsAvailable ? null : event.status === "streaming" ? (
             <small>{uiText("响应完成后可查看模型诊断详情")}</small>
           ) : (
@@ -1646,28 +1650,7 @@ function TimelineEvent({
                 </dl>
               )}
               {full?.usage === undefined ? null : (
-                <dl className="prompt-budget-breakdown">
-                  {[
-                    [uiText("输入"), "inputTokens"],
-                    [uiText("未缓存输入"), "uncachedInputTokens"],
-                    [uiText("缓存读取"), "cacheReadTokens"],
-                    [uiText("缓存写入"), "cacheWriteTokens"],
-                    [uiText("推理"), "reasoningTokens"],
-                    [uiText("输出"), "outputTokens"],
-                    [uiText("合计"), "totalTokens"],
-                  ].map(([label, field]) => {
-                    const key = field as keyof typeof full.usage.provenance;
-                    return (
-                      <div key={key}>
-                        <dt>{label}</dt>
-                        <dd>
-                          {full.usage![key] ?? "unavailable"} tokens ·{" "}
-                          {full.usage!.provenance[key]}
-                        </dd>
-                      </div>
-                    );
-                  })}
-                </dl>
+                <ModelUsageBreakdown usage={full.usage} showProvenance />
               )}
             </details>
           )}
@@ -1744,6 +1727,9 @@ function TimelineEvent({
           {detailError === null ? null : <p role="alert">{detailError}</p>}
           {full === null ? null : <pre>{safeJson(full)}</pre>}
         </details>
+        {event.usage === undefined ? null : (
+          <ModelUsageBreakdown usage={event.usage} compact />
+        )}
       </li>
     );
   }
@@ -2100,16 +2086,16 @@ function summarizeTimelineEvent(
   if (event.kind === "player" || event.kind === "failure")
     return structuredClone(event);
   if (event.kind === "assistant") {
-    const { reasoning, toolFragment, usage, ...summary } = event;
+    const { reasoning, toolFragment, ...summary } = event;
     return {
       ...summary,
       hasReasoning: reasoning !== undefined && reasoning.length > 0,
       hasToolFragment: toolFragment !== undefined && toolFragment.length > 0,
-      hasUsage: usage !== undefined,
+      hasUsage: event.usage !== undefined,
       detailsAvailable:
         (reasoning !== undefined && reasoning.length > 0) ||
         (toolFragment !== undefined && toolFragment.length > 0) ||
-        usage !== undefined ||
+        event.usage !== undefined ||
         event.stopReason !== undefined ||
         event.continuation !== undefined,
     };
@@ -2131,6 +2117,9 @@ function summarizeTimelineEvent(
     displayName: event.displayName,
     toolCallCount: event.toolCalls.length,
     failed: event.failure !== undefined,
+    ...(event.usage === undefined
+      ? {}
+      : { usage: structuredClone(event.usage) }),
     detailsAvailable: true,
   };
 }
