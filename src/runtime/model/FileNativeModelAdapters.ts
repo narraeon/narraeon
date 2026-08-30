@@ -58,6 +58,8 @@ import {
 } from "./ModelHostStream.ts";
 import {
   defaultRuntimeToolDefinitionStrategy,
+  isRegisteredRuntimeToolName,
+  runtimeToolsForNames,
   type RuntimeToolDefinitionStrategy,
 } from "../prompt/FileNativeToolRegistry.ts";
 import {
@@ -1277,7 +1279,35 @@ function providerToolDefinitions(
   request: ProviderRequest,
 ): PromptCompilation["tools"] {
   const policy = frozenToolPolicy(request);
-  return policy?.toolUniverse ?? request.tools;
+  return (policy?.toolUniverse ?? request.tools).map((tool) => {
+    if (!hasUnsupportedProviderToolSchemaRoot(tool.inputSchema)) return tool;
+    if (!isRegisteredRuntimeToolName(tool.name))
+      throw new Error(
+        `Provider tool ${tool.name} uses oneOf, allOf, or anyOf at the input schema root`,
+      );
+    const current = runtimeToolsForNames([tool.name])[0];
+    if (
+      current === undefined ||
+      hasUnsupportedProviderToolSchemaRoot(current.inputSchema)
+    )
+      throw new Error(
+        `Provider tool ${tool.name} has no portable root-object input schema`,
+      );
+    // Released play contexts freeze their logical tool universe. Migrate only
+    // the Provider wire projection of the old root-union schema; Runtime keeps
+    // validating the original source-specific contract and the persisted
+    // transcript remains untouched.
+    return {
+      ...tool,
+      inputSchema: structuredClone(current.inputSchema),
+    };
+  });
+}
+
+function hasUnsupportedProviderToolSchemaRoot(schema: object): boolean {
+  return ["oneOf", "allOf", "anyOf"].some((keyword) =>
+    Object.prototype.hasOwnProperty.call(schema, keyword),
+  );
 }
 
 function providerAllowedTools(request: ProviderRequest): string[] {

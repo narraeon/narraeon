@@ -23,7 +23,7 @@ export const registeredRuntimeToolNames = [
 ] as const;
 
 /** Changes only when the executable Runtime tool universe or schemas change. */
-export const runtimeToolRegistryRevision = "runtime-tools-v3";
+export const runtimeToolRegistryRevision = "runtime-tools-v4";
 
 export type RegisteredRuntimeToolName =
   (typeof registeredRuntimeToolNames)[number];
@@ -115,29 +115,20 @@ function createToolDefinitions(
   > = {
     context_list: {
       description: descriptions.context_list,
-      inputSchema: {
-        type: "object",
-        oneOf: [
-          object(
-            {
-              source: { const: "state" },
-              parent: string,
-              cursor: { type: ["string", "null"] },
-              limit: { type: "integer", minimum: 1, maximum: 100 },
-            },
-            ["source", "parent"],
-          ),
-          object(
-            {
-              source: { const: "history" },
-              order: { enum: ["newest_first", "oldest_first"] },
-              cursor: { type: ["string", "null"] },
-              limit: { type: "integer", minimum: 1, maximum: 100 },
-            },
-            ["source", "order"],
-          ),
-        ],
-      },
+      // Anthropic rejects oneOf/allOf/anyOf at a custom tool schema's root,
+      // including when CLIProxyAPI translates an OpenAI-shaped request to
+      // Messages. Keep the Provider contract portable and enforce the
+      // source-specific parent/order invariant again at the Runtime boundary.
+      inputSchema: object(
+        {
+          source: { enum: ["state", "history"] },
+          parent: string,
+          order: { enum: ["newest_first", "oldest_first"] },
+          cursor: { type: ["string", "null"] },
+          limit: { type: "integer", minimum: 1, maximum: 100 },
+        },
+        ["source"],
+      ),
     },
     context_search: {
       description: descriptions.context_search,

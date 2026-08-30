@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 
 import { defaultPresetHostFiles } from "../../src/shared/default-preset-host.ts";
 import { builtinDefaultPlayPresetBinding } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
+import { FileNativePlayDocuments } from "../../src/runtime/play/PlayDocumentTools.ts";
 import type { PromptCompilationError } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
 import {
   FileNativePromptCompiler,
@@ -799,15 +800,23 @@ context:
     );
   });
 
-  test("context_list schema 机械区分状态目录与历史顺序", () => {
+  test("context_list 使用 Provider 可接受的单一根对象，Runtime 负责分支校验", () => {
     const compiled = new FileNativePromptCompiler().compileBootstrap(input());
     const list = compiled.tools.find(({ name }) => name === "context_list");
 
     const schema = JSON.stringify(list?.inputSchema);
-    expect(list?.inputSchema).toMatchObject({ type: "object" });
-    expect(schema).toContain('"oneOf"');
-    expect(schema).toContain('"const":"state"');
-    expect(schema).toContain('"required":["source","parent"]');
+    expect(list?.inputSchema).toMatchObject({
+      type: "object",
+      required: ["source"],
+      properties: {
+        source: { enum: ["state", "history"] },
+        parent: { type: "string" },
+        order: { enum: ["newest_first", "oldest_first"] },
+      },
+    });
+    expect(schema).not.toContain('"oneOf"');
+    expect(schema).not.toContain('"allOf"');
+    expect(schema).not.toContain('"anyOf"');
 
     const patch = compiled.tools.find(({ name }) => name === "world_patch");
     expect(patch?.description).toContain(
@@ -831,10 +840,35 @@ context:
     );
     expect(patch?.description).toContain("does not echo the body");
     expect(patch?.description).toContain("Call context_read again only when");
-    expect(schema).toContain('"const":"history"');
-    expect(schema).toContain('"required":["source","order"]');
     expect(list?.description).toContain("@dir-/");
     expect(list?.description).toContain("mutually exclusive");
+  });
+
+  test("context_list 的 state/history 互斥参数仍由 Runtime 严格拒绝", () => {
+    const snapshot = input().world.documentSnapshot;
+    const documents = new FileNativePlayDocuments(
+      Object.fromEntries(
+        snapshot.files.map(({ path, contents }) => [path, contents]),
+      ),
+    );
+    const call = (arguments_: Record<string, unknown>) =>
+      documents.execute(
+        { id: "context-list", name: "context_list", arguments: arguments_ },
+        [],
+      );
+
+    expect(
+      call({ source: "state", parent: "@dir-/", order: "newest_first" }),
+    ).toMatchObject({ ok: false });
+    expect(call({ source: "history", parent: "@dir-/" })).toMatchObject({
+      ok: false,
+    });
+    expect(call({ source: "state", parent: "@dir-/" })).toMatchObject({
+      ok: true,
+    });
+    expect(call({ source: "history", order: "newest_first" })).toMatchObject({
+      ok: true,
+    });
   });
 
   test("发给模型的输出上限就是 Provider 配置，Runtime 不计算预留", async () => {

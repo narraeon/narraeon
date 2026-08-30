@@ -335,6 +335,106 @@ test("CLIProxyAPI 模型后缀保持 Thinking 唯一权威，同时独立传递�
   expect(preview.body).not.toHaveProperty("output_config.effort");
 });
 
+test.each([
+  "chat_completions",
+  "openai_responses",
+  "anthropic_messages",
+] as const)("$provider 不向 Provider 发送顶层组合工具 schema", (provider) => {
+  const host = new FileNativeModelHost({
+    provider,
+    dialect: "cliproxyapi",
+    baseUrl: "https://provider.invalid/v1",
+    apiKey: "must-not-appear",
+    modelId: "claude-through-proxy",
+    contextWindowTokens: 64_000,
+    maxOutputTokens: 2_048,
+  });
+
+  const preview = host.previewRequest(
+    exchangeFor(provider, "claude-through-proxy", host.binding().cacheStrategy),
+  );
+  const tools = (preview.body as { tools: Record<string, unknown>[] }).tools;
+  const contextList = tools.find((tool) =>
+    provider === "chat_completions"
+      ? (tool.function as { name?: unknown } | undefined)?.name ===
+        "context_list"
+      : tool.name === "context_list",
+  );
+  const schema =
+    provider === "chat_completions"
+      ? (contextList?.function as { parameters?: unknown } | undefined)
+          ?.parameters
+      : provider === "openai_responses"
+        ? contextList?.parameters
+        : contextList?.input_schema;
+
+  expect(contextList).toBeDefined();
+  expect(schema).toMatchObject({ type: "object" });
+  expect(schema).not.toHaveProperty("oneOf");
+  expect(schema).not.toHaveProperty("allOf");
+  expect(schema).not.toHaveProperty("anyOf");
+});
+
+test("历史调用链中的旧 context_list schema 也会在 Anthropic wire 边界迁移", () => {
+  const host = new FileNativeModelHost({
+    provider: "anthropic_messages",
+    dialect: "cliproxyapi",
+    baseUrl: "https://provider.invalid/v1",
+    apiKey: "must-not-appear",
+    modelId: "claude-through-proxy",
+    contextWindowTokens: 64_000,
+    maxOutputTokens: 2_048,
+  });
+  const request = exchangeFor(
+    "anthropic_messages",
+    "claude-through-proxy",
+    host.binding().cacheStrategy,
+  );
+  request.toolUniverse = (request.toolUniverse ?? request.tools).map((tool) =>
+    tool.name === "context_list"
+      ? {
+          ...tool,
+          inputSchema: {
+            type: "object",
+            oneOf: [
+              {
+                type: "object",
+                properties: {
+                  source: { const: "state" },
+                  parent: { type: "string" },
+                },
+                required: ["source", "parent"],
+              },
+              {
+                type: "object",
+                properties: {
+                  source: { const: "history" },
+                  order: { enum: ["newest_first", "oldest_first"] },
+                },
+                required: ["source", "order"],
+              },
+            ],
+          },
+        }
+      : tool,
+  );
+
+  const tools = (
+    host.previewRequest(request).body as {
+      tools: { name: string; input_schema: object }[];
+    }
+  ).tools;
+  const schema = tools.find(
+    ({ name }) => name === "context_list",
+  )?.input_schema;
+
+  expect(schema).toMatchObject({
+    type: "object",
+    required: ["source"],
+  });
+  expect(schema).not.toHaveProperty("oneOf");
+});
+
 test("prompt_cache_key 在同一冻结调用链稳定，并隔离不同 CLIProxy 会话", () => {
   const host = new FileNativeModelHost({
     provider: "openai_responses",

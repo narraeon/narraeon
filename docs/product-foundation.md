@@ -137,7 +137,7 @@ AI 决定是否持久化时遵循以下顺序：
 
 Provider 响应进入 Runtime 后形成两条不能互相替代的轨道（[ADR-0035](adr/0035-provider-continuation-is-opaque-and-bound.md)）。**模型调用投影**解析可见正文、返回推理、工具调用、usage 与错误，供工具执行、诊断和界面呈现；**Provider 续传载荷**则保留下一次请求所需的完整协议原生片段。Chat Completions 保留完整 assistant message，Responses 保留完整 `output` items，Anthropic Messages 保留完整 assistant `content` blocks；下一次 append 必须直接使用这些片段，不能保存整个 HTTP response，也不能从投影重新拼装消息。尤其不能把 Claude 文本按标签或字段猜测成 thinking：签名 thinking、redacted thinking 和 Responses encrypted reasoning 都必须作为不透明协议项保留，且不得展示成玩家正文。
 
-工具结果也由各协议的 encoder 从 Runtime 工具事实直接生成，而不是从 assistant 投影反推：Chat Completions 使用逐项 `tool` message，Responses 使用逐项 `function_call_output`，Anthropic Messages 把同一 assistant 响应触发的并行 `tool_result` blocks 合并在紧随其后的同一个 `user` message 中，并用 `is_error` 明示失败。工具调用和结果可以进入模型上下文与诊断，但不能越权进入玩家叙事或世界 Authority。
+工具结果也由各协议的 encoder 从 Runtime 工具事实直接生成，而不是从 assistant 投影反推：Chat Completions 使用逐项 `tool` message，Responses 使用逐项 `function_call_output`，Anthropic Messages 把同一 assistant 响应触发的并行 `tool_result` blocks 合并在紧随其后的同一个 `user` message 中，并用 `is_error` 明示失败。Provider wire 上每个自定义工具的输入 schema 必须是没有顶层 `oneOf`／`allOf`／`anyOf` 的单一对象；分支条件由描述提示，并由 Runtime 在执行边界再次严格验证。旧调用链中已冻结的不兼容 schema 只在 Provider wire 投影处迁移，不能改写持久 transcript 或从解析投影重建消息。工具调用和结果可以进入模型上下文与诊断，但不能越权进入玩家叙事或世界 Authority。
 
 输入正文使用 Markdown。只有 provider 传输外壳和原生工具参数使用 JSON；不得再把内部上下文对象序列化后塞进一条 `user.content`。
 
