@@ -237,6 +237,20 @@ export class FileNativePlayDocuments {
         history,
         call.arguments,
       );
+    if (call.name === "state_list")
+      return executeStateList(
+        this.#candidate.snapshot,
+        history,
+        call.arguments,
+      );
+    if (call.name === "history_list")
+      return executeHistoryList(
+        this.#candidate.snapshot,
+        history,
+        call.arguments,
+      );
+    // Frozen contexts created before runtime-tools-v5 retain this exact name
+    // and argument shape. New contexts never advertise it.
     if (call.name === "context_list")
       return executeContextList(
         this.#candidate.snapshot,
@@ -778,6 +792,10 @@ function previewContextToolResult(
   history: { path: string; contents: string }[],
   call: ModelHostToolCall,
 ): ContextToolResult | null {
+  if (call.name === "state_list")
+    return executeStateList(snapshot, history, call.arguments);
+  if (call.name === "history_list")
+    return executeHistoryList(snapshot, history, call.arguments);
   if (call.name === "context_list")
     return executeContextList(snapshot, history, call.arguments);
   if (call.name === "context_search")
@@ -990,6 +1008,47 @@ function parseStateDirectoryHandle(handle: string): string | null {
   } catch {
     return null;
   }
+}
+
+function executeStateList(
+  snapshot: WorldDocumentStore,
+  history: { path: string; contents: string }[],
+  args: unknown,
+): ContextToolResult {
+  if (
+    !record(args) ||
+    !hasOnlyToolKeys(args, ["parent", "cursor", "limit"]) ||
+    typeof args.parent !== "string" ||
+    parseStateDirectoryHandle(args.parent) === null ||
+    (args.limit !== undefined && typeof args.limit !== "number") ||
+    !validOptionalCursor(args.cursor)
+  )
+    return {
+      ok: false,
+      markdown:
+        "# Runtime argument error\n\nstate_list requires an @dir-* parent returned by Runtime and accepts only cursor and limit in addition; use history_list for committed history.",
+    };
+  return executeContextList(snapshot, history, { ...args, source: "state" });
+}
+
+function executeHistoryList(
+  snapshot: WorldDocumentStore,
+  history: { path: string; contents: string }[],
+  args: unknown,
+): ContextToolResult {
+  if (
+    !record(args) ||
+    !hasOnlyToolKeys(args, ["order", "cursor", "limit"]) ||
+    (args.order !== "newest_first" && args.order !== "oldest_first") ||
+    (args.limit !== undefined && typeof args.limit !== "number") ||
+    !validOptionalCursor(args.cursor)
+  )
+    return {
+      ok: false,
+      markdown:
+        "# Runtime argument error\n\nhistory_list requires newest_first or oldest_first order and accepts only cursor and limit in addition; use state_list for state directories.",
+    };
+  return executeContextList(snapshot, history, { ...args, source: "history" });
 }
 
 function executeContextList(

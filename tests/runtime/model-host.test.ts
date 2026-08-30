@@ -354,25 +354,26 @@ test.each([
     exchangeFor(provider, "claude-through-proxy", host.binding().cacheStrategy),
   );
   const tools = (preview.body as { tools: Record<string, unknown>[] }).tools;
-  const contextList = tools.find((tool) =>
+  const names = tools.map((tool) =>
     provider === "chat_completions"
-      ? (tool.function as { name?: unknown } | undefined)?.name ===
-        "context_list"
-      : tool.name === "context_list",
+      ? (tool.function as { name?: unknown } | undefined)?.name
+      : tool.name,
   );
-  const schema =
-    provider === "chat_completions"
-      ? (contextList?.function as { parameters?: unknown } | undefined)
-          ?.parameters
-      : provider === "openai_responses"
-        ? contextList?.parameters
-        : contextList?.input_schema;
-
-  expect(contextList).toBeDefined();
-  expect(schema).toMatchObject({ type: "object" });
-  expect(schema).not.toHaveProperty("oneOf");
-  expect(schema).not.toHaveProperty("allOf");
-  expect(schema).not.toHaveProperty("anyOf");
+  expect(names).toContain("state_list");
+  expect(names).toContain("history_list");
+  expect(names).not.toContain("context_list");
+  for (const tool of tools) {
+    const schema =
+      provider === "chat_completions"
+        ? (tool.function as { parameters?: unknown } | undefined)?.parameters
+        : provider === "openai_responses"
+          ? tool.parameters
+          : tool.input_schema;
+    expect(schema).toMatchObject({ type: "object" });
+    expect(schema).not.toHaveProperty("oneOf");
+    expect(schema).not.toHaveProperty("allOf");
+    expect(schema).not.toHaveProperty("anyOf");
+  }
 });
 
 test("历史调用链中的旧 context_list schema 也会在 Anthropic wire 边界迁移", () => {
@@ -390,34 +391,36 @@ test("历史调用链中的旧 context_list schema 也会在 Anthropic wire 边�
     "claude-through-proxy",
     host.binding().cacheStrategy,
   );
-  request.toolUniverse = (request.toolUniverse ?? request.tools).map((tool) =>
-    tool.name === "context_list"
-      ? {
-          ...tool,
-          inputSchema: {
+  request.toolUniverse = [
+    {
+      name: "context_list",
+      description: "Legacy frozen list tool.",
+      inputSchema: {
+        type: "object",
+        oneOf: [
+          {
             type: "object",
-            oneOf: [
-              {
-                type: "object",
-                properties: {
-                  source: { const: "state" },
-                  parent: { type: "string" },
-                },
-                required: ["source", "parent"],
-              },
-              {
-                type: "object",
-                properties: {
-                  source: { const: "history" },
-                  order: { enum: ["newest_first", "oldest_first"] },
-                },
-                required: ["source", "order"],
-              },
-            ],
+            properties: {
+              source: { const: "state" },
+              parent: { type: "string" },
+            },
+            required: ["source", "parent"],
           },
-        }
-      : tool,
-  );
+          {
+            type: "object",
+            properties: {
+              source: { const: "history" },
+              order: { enum: ["newest_first", "oldest_first"] },
+            },
+            required: ["source", "order"],
+          },
+        ],
+      },
+    },
+    ...(request.toolUniverse ?? request.tools).filter(
+      ({ name }) => name !== "state_list" && name !== "history_list",
+    ),
+  ];
 
   const tools = (
     host.previewRequest(request).body as {

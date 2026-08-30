@@ -338,7 +338,7 @@ test("长调用轨迹按稳定游标读取摘要，重型详情与旧事件不�
         outcome: "response",
         toolCalls: Array.from({ length: 30 }, (_, index) => ({
           id: `list-${index + 1}`,
-          name: "context_list",
+          name: "state_list",
           arguments: { marker: detailMarker, index },
         })),
       },
@@ -501,6 +501,55 @@ test("长调用轨迹按稳定游标读取摘要，重型详情与旧事件不�
   });
 });
 
+test("新调用链拒绝未冻结的旧 context_list 名称", async () => {
+  const { worlds, worldId } = await createWorld(
+    "play-chain-reject-unfrozen-context-list",
+  );
+  const modelHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "legacy-list",
+            name: "context_list",
+            arguments: { source: "state", parent: "@dir-/" },
+          },
+        ],
+      },
+      { outcome: "response", text: "The rejected legacy call is ignored." },
+    ],
+  });
+
+  const completed = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "play-chain-reject-unfrozen-context-list",
+    exchangeId: "play-chain-reject-unfrozen-context-list-player",
+    playerText: "Continue without using obsolete tools.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+
+  expect(modelHost.requests[0]?.tools.map(({ name }) => name)).not.toContain(
+    "context_list",
+  );
+  expect(completed.events).toContainEqual(
+    expect.objectContaining({
+      kind: "tool_result",
+      callId: "legacy-list",
+      ok: false,
+    }),
+  );
+  expect(modelHost.requests[1]?.appended.at(-1)).toMatchObject({
+    kind: "tool",
+    toolCallId: "legacy-list",
+    isError: true,
+  });
+});
+
 test("协议允许空的追加输入，用现有请求上下文触发续写", () => {
   expect(() =>
     parseV1Envelope({
@@ -658,7 +707,8 @@ test("模型自行交替文本与工具，每个完成响应立即推进世界�
     markdown: patchDetail.markdown,
   });
   expect(modelHost.requests[0]?.tools.map(({ name }) => name)).toEqual([
-    "context_list",
+    "state_list",
+    "history_list",
     "context_search",
     "context_read",
     "world_patch",
@@ -1074,7 +1124,7 @@ test("全新上下文只重建模型上下文，持久保留此前调用轨迹�
         toolCalls: [
           {
             id: "old-context-list",
-            name: "context_list",
+            name: "state_list",
             arguments: {},
           },
         ],
@@ -1137,7 +1187,7 @@ test("全新上下文只重建模型上下文，持久保留此前调用轨迹�
       (item) =>
         item.kind === "event" &&
         item.event.kind === "tool_call" &&
-        item.event.name === "context_list",
+        item.event.name === "state_list",
     ),
   ).toBe(true);
   const reasoningSummary = timeline.items.find(
@@ -1182,7 +1232,7 @@ test("全新上下文只重建模型上下文，持久保留此前调用轨迹�
       (item) =>
         item.kind === "event" &&
         item.event.kind === "tool_result" &&
-        item.event.name === "context_list",
+        item.event.name === "state_list",
     ),
   ).toBe(true);
 
@@ -1217,7 +1267,7 @@ test("全新上下文只重建模型上下文，持久保留此前调用轨迹�
     ),
   ).resolves.toMatchObject({ reasoning: "Earlier-context reasoning." });
   expect(branchTrace?.events).toContainEqual(
-    expect.objectContaining({ kind: "tool_call", name: "context_list" }),
+    expect.objectContaining({ kind: "tool_call", name: "state_list" }),
   );
 
   const fullBranch = (

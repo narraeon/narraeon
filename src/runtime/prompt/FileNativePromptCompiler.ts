@@ -261,7 +261,8 @@ The model may output player-visible text directly, call attached read or world-w
 };
 
 const playCallChainToolNames = new Set<RegisteredRuntimeToolName>([
-  "context_list",
+  "state_list",
+  "history_list",
   "context_search",
   "context_read",
   "world_patch",
@@ -1300,7 +1301,7 @@ function addDocumentSelection(
       source: modelVisibleDocumentSource(target, document, locale),
       status: "optional_missing",
       complete: false,
-      continuation: "context_list",
+      continuation: "state_list",
     });
     return;
   }
@@ -1484,7 +1485,7 @@ function resolveCatalog(
           : "resolved",
     complete:
       matches.length > 0 && matches.length <= max && damaged.length === 0,
-    continuation: "context_list",
+    continuation: "state_list",
   });
 }
 
@@ -1559,7 +1560,7 @@ function resolveRecentHistory(
           : `${historyMessageLabel(ref, locale)} (recent ${index + 1}/${chosen.length})`,
       status: "resolved",
       complete: true,
-      continuation: "context_list",
+      continuation: "history_list",
     });
   }
 }
@@ -1642,7 +1643,7 @@ function resolveAdditionalMaterials(
               : `selected history commit (${matches.length} messages)`,
         status: "resolved",
         complete: true,
-        continuation: "context_list",
+        continuation: "history_list",
       });
     }
   }

@@ -99,7 +99,8 @@ describe("提示词预览界面", () => {
     ).toBeTruthy();
     expect(screen.getByText("当前情境")).toBeTruthy();
     expect(screen.getByText("可选未证明完整")).toBeTruthy();
-    expect(screen.getByText(/context_list \/ context_read/u)).toBeTruthy();
+    expect(screen.getByText("state_list", { exact: true })).toBeTruthy();
+    expect(screen.getByText("history_list", { exact: true })).toBeTruthy();
     expect(screen.getByText("world_patch")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /Provider 映射/u }));
@@ -279,8 +280,13 @@ function previewFixture(): PromptPreviewData {
       },
       tools: [
         {
-          name: "context_list",
-          description: "List handles known to Runtime.",
+          name: "state_list",
+          description: "List state handles known to Runtime.",
+          inputSchema: { type: "object" },
+        },
+        {
+          name: "history_list",
+          description: "List committed history handles known to Runtime.",
           inputSchema: { type: "object" },
         },
         {

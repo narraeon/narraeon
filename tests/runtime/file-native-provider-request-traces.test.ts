@@ -197,7 +197,11 @@ test("OpenAI Responses 使用扁平工具定义并逐次原样重放 output item
   );
   expect(firstRequest.tools[0]).toMatchObject({
     type: "function",
-    name: "context_list",
+    name: "state_list",
+  });
+  expect(firstRequest.tools[1]).toMatchObject({
+    type: "function",
+    name: "history_list",
   });
   expect(firstRequest.tools[0]).not.toHaveProperty("function");
 
@@ -1314,7 +1318,8 @@ test.each([
     const bootstrap = new FileNativePromptCompiler().compileBootstrap(input);
 
     const appendedTools = fileNativeToolsForNames([
-      "context_list",
+      "state_list",
+      "history_list",
       "context_search",
       "context_read",
     ]);
@@ -1550,7 +1555,8 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
     );
 
     const continuousPlayTools = fileNativeToolsForNames([
-      "context_list",
+      "state_list",
+      "history_list",
       "context_search",
       "context_read",
     ]);
@@ -1577,7 +1583,8 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
       messages?: { content?: unknown }[];
     };
     expect(body.tools.map((tool) => tool.function?.name ?? tool.name)).toEqual([
-      "context_list",
+      "state_list",
+      "history_list",
       "context_search",
       "context_read",
       "world_patch",
@@ -1650,7 +1657,8 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
       }),
     );
     const continuousPlayTools = fileNativeToolsForNames([
-      "context_list",
+      "state_list",
+      "history_list",
       "context_search",
       "context_read",
     ]);

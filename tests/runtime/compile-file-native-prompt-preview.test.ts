@@ -5,6 +5,7 @@ import { builtinDefaultPlayPresetBinding } from "../../src/runtime/play/FileNati
 import { FileNativePlayDocuments } from "../../src/runtime/play/PlayDocumentTools.ts";
 import type { PromptCompilationError } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
 import {
+  fileNativeToolsForNames,
   FileNativePromptCompiler,
   type FileNativePromptInput,
 } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
@@ -262,7 +263,7 @@ describe("文件原生 PromptCompiler", () => {
       source: "characters",
       status: "paged_catalog",
       complete: false,
-      continuation: "context_list",
+      continuation: "state_list",
     });
     expect(worldContext).toContain("Showing 1/2.");
     expect(worldContext).toContain(
@@ -385,7 +386,7 @@ context:
       source: "@alex",
       status: "optional_missing",
       complete: false,
-      continuation: "context_list",
+      continuation: "state_list",
     });
     expect(worldContext).not.toContain("character.alex");
   });
@@ -760,7 +761,8 @@ context:
     expect(JSON.stringify(compiled.provider)).not.toContain("Append only once");
     // Runtime fixes the complete tool set; player-input position does not split it.
     expect(compiled.tools.map(({ name }) => name)).toEqual([
-      "context_list",
+      "state_list",
+      "history_list",
       "context_search",
       "context_read",
       "world_patch",
@@ -800,23 +802,36 @@ context:
     );
   });
 
-  test("context_list 使用 Provider 可接受的单一根对象，Runtime 负责分支校验", () => {
+  test("state_list 与 history_list 各自暴露简单且完整的模型工具提示", () => {
     const compiled = new FileNativePromptCompiler().compileBootstrap(input());
-    const list = compiled.tools.find(({ name }) => name === "context_list");
+    const stateList = compiled.tools.find(({ name }) => name === "state_list");
+    const historyList = compiled.tools.find(
+      ({ name }) => name === "history_list",
+    );
 
-    const schema = JSON.stringify(list?.inputSchema);
-    expect(list?.inputSchema).toMatchObject({
+    expect(stateList?.inputSchema).toEqual({
       type: "object",
-      required: ["source"],
+      additionalProperties: false,
+      required: ["parent"],
       properties: {
-        source: { enum: ["state", "history"] },
-        parent: { type: "string" },
-        order: { enum: ["newest_first", "oldest_first"] },
+        parent: { type: "string", minLength: 1 },
+        cursor: { type: ["string", "null"] },
+        limit: { type: "integer", minimum: 1, maximum: 100 },
       },
     });
-    expect(schema).not.toContain('"oneOf"');
-    expect(schema).not.toContain('"allOf"');
-    expect(schema).not.toContain('"anyOf"');
+    expect(historyList?.inputSchema).toEqual({
+      type: "object",
+      additionalProperties: false,
+      required: ["order"],
+      properties: {
+        order: { enum: ["newest_first", "oldest_first"] },
+        cursor: { type: ["string", "null"] },
+        limit: { type: "integer", minimum: 1, maximum: 100 },
+      },
+    });
+    expect(JSON.stringify([stateList, historyList])).not.toMatch(
+      /"(?:oneOf|allOf|anyOf)"/u,
+    );
 
     const patch = compiled.tools.find(({ name }) => name === "world_patch");
     expect(patch?.description).toContain(
@@ -840,35 +855,55 @@ context:
     );
     expect(patch?.description).toContain("does not echo the body");
     expect(patch?.description).toContain("Call context_read again only when");
-    expect(list?.description).toContain("@dir-/");
-    expect(list?.description).toContain("mutually exclusive");
+    expect(stateList?.description).toContain("@dir-/");
+    expect(stateList?.description).toContain("state directory");
+    expect(historyList?.description).toContain("newest_first");
+    expect(historyList?.description).toContain("committed history");
+    expect(create?.description).toContain("state_list");
+    expect(create?.description).not.toContain("context_list");
+
+    const chinese = fileNativeToolsForNames(
+      ["state_list", "history_list"],
+      "zh-CN",
+    );
+    expect(chinese[0]?.description).toContain("状态目录");
+    expect(chinese[0]?.description).toContain("@dir-*");
+    expect(chinese[1]?.description).toContain("已提交历史");
+    expect(chinese[1]?.description).toContain("oldest_first");
   });
 
-  test("context_list 的 state/history 互斥参数仍由 Runtime 严格拒绝", () => {
+  test("state_list 与 history_list 在 Runtime 执行接口拒绝另一工具的参数", () => {
     const snapshot = input().world.documentSnapshot;
     const documents = new FileNativePlayDocuments(
       Object.fromEntries(
         snapshot.files.map(({ path, contents }) => [path, contents]),
       ),
     );
-    const call = (arguments_: Record<string, unknown>) =>
-      documents.execute(
-        { id: "context-list", name: "context_list", arguments: arguments_ },
-        [],
-      );
+    const call = (name: string, arguments_: Record<string, unknown>) =>
+      documents.execute({ id: name, name, arguments: arguments_ }, []);
 
     expect(
-      call({ source: "state", parent: "@dir-/", order: "newest_first" }),
-    ).toMatchObject({ ok: false });
-    expect(call({ source: "history", parent: "@dir-/" })).toMatchObject({
+      call("state_list", { parent: "@dir-/", order: "newest_first" }),
+    ).toMatchObject({
       ok: false,
     });
-    expect(call({ source: "state", parent: "@dir-/" })).toMatchObject({
+    expect(
+      call("history_list", { order: "newest_first", parent: "@dir-/" }),
+    ).toMatchObject({
+      ok: false,
+    });
+    expect(call("state_list", { parent: "@dir-/" })).toMatchObject({
       ok: true,
     });
-    expect(call({ source: "history", order: "newest_first" })).toMatchObject({
+    expect(call("history_list", { order: "newest_first" })).toMatchObject({
       ok: true,
     });
+    expect(
+      call("context_list", { source: "state", parent: "@dir-/" }),
+    ).toMatchObject({ ok: true });
+    expect(
+      call("context_list", { source: "history", order: "oldest_first" }),
+    ).toMatchObject({ ok: true });
   });
 
   test("发给模型的输出上限就是 Provider 配置，Runtime 不计算预留", async () => {
@@ -998,7 +1033,7 @@ context:
       source: "states",
       status: "optional_missing",
       complete: false,
-      continuation: "context_list",
+      continuation: "state_list",
     });
     const optionalWorldContext = optional.logicalMessages.find(
       ({ role }) => role === "world_context",
@@ -1025,7 +1060,7 @@ context:
       source: "states",
       status: "optional_missing",
       complete: false,
-      continuation: "context_list",
+      continuation: "state_list",
     });
     const mixedWorldContext = mixed.logicalMessages.find(
       ({ role }) => role === "world_context",

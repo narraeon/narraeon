@@ -509,7 +509,8 @@ extensions:
     expect(preview.playPreset?.revision).toBe(binding.revision);
     // The main chain receives the stable complete tool set.
     expect(preview.playPreset?.toolUniverse.map(({ name }) => name)).toEqual([
-      "context_list",
+      "state_list",
+      "history_list",
       "context_search",
       "context_read",
       "world_patch",
@@ -598,7 +599,8 @@ extensions:
     );
     // Presets no longer declare toolUniverse; Runtime fixes main-chain tools.
     expect(full.toolUniverse.map(({ name }) => name)).toEqual([
-      "context_list",
+      "state_list",
+      "history_list",
       "context_search",
       "context_read",
       "world_patch",
@@ -750,7 +752,8 @@ extensions:
       playPreset: {
         followups: [],
         toolUniverse: [
-          { name: "context_list" },
+          { name: "state_list" },
+          { name: "history_list" },
           { name: "context_search" },
           { name: "context_read" },
           { name: "world_patch" },

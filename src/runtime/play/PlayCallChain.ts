@@ -56,6 +56,9 @@ import type {
 } from "./FileNativePlayAdvanceStore.ts";
 
 const callChainToolNames = new Set([
+  "state_list",
+  "history_list",
+  // Kept executable only for contexts whose frozen tool universe contains it.
   "context_list",
   "context_search",
   "context_read",
@@ -1820,7 +1823,10 @@ function prepareTool(
             markdown:
               "# Runtime tool rejected\n\nThe same tool-call ID is already bound to another tool name or argument set.",
           };
-  } else if (!callChainToolNames.has(call.name)) {
+  } else if (
+    !callChainToolNames.has(call.name) ||
+    !session.tools.some(({ name }) => name === call.name)
+  ) {
     result = {
       ok: false,
       failureKind: "protocol",

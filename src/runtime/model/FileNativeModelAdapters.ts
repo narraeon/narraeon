@@ -58,8 +58,7 @@ import {
 } from "./ModelHostStream.ts";
 import {
   defaultRuntimeToolDefinitionStrategy,
-  isRegisteredRuntimeToolName,
-  runtimeToolsForNames,
+  portableRuntimeToolInputSchema,
   type RuntimeToolDefinitionStrategy,
 } from "../prompt/FileNativeToolRegistry.ts";
 import {
@@ -1281,15 +1280,12 @@ function providerToolDefinitions(
   const policy = frozenToolPolicy(request);
   return (policy?.toolUniverse ?? request.tools).map((tool) => {
     if (!hasUnsupportedProviderToolSchemaRoot(tool.inputSchema)) return tool;
-    if (!isRegisteredRuntimeToolName(tool.name))
+    const portableInputSchema = portableRuntimeToolInputSchema(tool.name);
+    if (portableInputSchema === null)
       throw new Error(
         `Provider tool ${tool.name} uses oneOf, allOf, or anyOf at the input schema root`,
       );
-    const current = runtimeToolsForNames([tool.name])[0];
-    if (
-      current === undefined ||
-      hasUnsupportedProviderToolSchemaRoot(current.inputSchema)
-    )
+    if (hasUnsupportedProviderToolSchemaRoot(portableInputSchema))
       throw new Error(
         `Provider tool ${tool.name} has no portable root-object input schema`,
       );
@@ -1299,7 +1295,7 @@ function providerToolDefinitions(
     // transcript remains untouched.
     return {
       ...tool,
-      inputSchema: structuredClone(current.inputSchema),
+      inputSchema: portableInputSchema,
     };
   });
 }
