@@ -1210,6 +1210,7 @@ function assertPlayEvent(
   if (value.kind === "assistant") {
     if (
       !validAssistantEventCore(value) ||
+      !validOptionalAssistantResponseKind(value.responseKind) ||
       !validOptionalString(value.reasoning) ||
       !validOptionalString(value.toolFragment) ||
       !validOptionalUsage(value.usage) ||
@@ -1276,6 +1277,7 @@ function assertTimelineEventSummary(
   if (value.kind === "assistant") {
     if (
       !validAssistantEventCore(value) ||
+      !validOptionalAssistantResponseKind(value.responseKind) ||
       !validOptionalString(value.committedHead) ||
       !validOptionalString(value.stopReason) ||
       !validOptionalUsage(value.usage) ||
@@ -1332,6 +1334,16 @@ function validAssistantEventCore(value: Record<string, unknown>): boolean {
     validCount(value.exchange) &&
     Number.isSafeInteger(value.attempt) &&
     Number(value.attempt) >= 1
+  );
+}
+
+function validOptionalAssistantResponseKind(value: unknown): boolean {
+  return (
+    value === undefined ||
+    value === "pending" ||
+    value === "narrative" ||
+    value === "tool_step" ||
+    value === "empty"
   );
 }
 

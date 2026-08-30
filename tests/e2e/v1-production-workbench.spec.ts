@@ -427,19 +427,22 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await page.getByRole("button", { name: "游玩" }).click();
 
   responses.push(
-    chatTools([
-      tool("world_patch", {
-        target: "@current-situation",
-        edits: [
-          {
-            op: "replace",
-            locator: { yaml: ["situation"] },
-            value:
-              "Alex has put away the jersey and is waiting for you to confirm the training plan.",
-          },
-        ],
-      }),
-    ]),
+    chatTools(
+      [
+        tool("world_patch", {
+          target: "@current-situation",
+          edits: [
+            {
+              op: "replace",
+              locator: { yaml: ["situation"] },
+              value:
+                "Alex has put away the jersey and is waiting for you to confirm the training plan.",
+            },
+          ],
+        }),
+      ],
+      "I will update the record before narrating the result.",
+    ),
     chatText(
       "Alex nods and continues folding the jersey.",
       "First verify the character's current location and the player's action.",
@@ -467,6 +470,15 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   providerDelayMs = 0;
   await expect(
     page.getByText("Alex nods and continues folding the jersey."),
+  ).toBeVisible();
+  const toolStep = callChain.locator(".call-chain-assistant.is-tool-step");
+  await expect(toolStep.getByText("模型工具步骤")).toBeVisible();
+  await expect(
+    toolStep.getByText("I will update the record before narrating the result."),
+  ).not.toBeVisible();
+  await toolStep.getByText("查看工具步骤文本（未进入故事）").click();
+  await expect(
+    toolStep.getByText("I will update the record before narrating the result."),
   ).toBeVisible();
   await expect(
     page.getByText(
@@ -649,8 +661,8 @@ function chatText(text: string, reasoningContent?: string) {
   };
 }
 
-function chatTools(toolCalls: object[]) {
-  return { choices: [{ message: { content: null, tool_calls: toolCalls } }] };
+function chatTools(toolCalls: object[], content: string | null = null) {
+  return { choices: [{ message: { content, tool_calls: toolCalls } }] };
 }
 
 /** Rewrite a non-streaming chat response as equivalent SSE delta frames. */

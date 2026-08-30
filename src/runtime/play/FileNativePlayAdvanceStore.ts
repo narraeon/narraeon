@@ -31,6 +31,7 @@ export interface PreparedPlayResponseSettlement {
   completedTools: PersistedCompletedToolCall[];
   authorizationCheckpoint: PlayDocumentAuthorizationCheckpoint;
   stateChanges: FileNativeStateChange[];
+  /** Legacy field name: true only for tool-free text eligible for narrative. */
   visibleText: boolean;
 }
 

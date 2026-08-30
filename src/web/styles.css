@@ -4507,6 +4507,43 @@ summary:focus-visible {
   line-height: 1.85;
 }
 
+.call-chain-assistant.is-pending article > p {
+  color: #d7e5e1;
+  font-family: inherit;
+  font-size: 0.9rem;
+  line-height: 1.65;
+}
+
+.call-chain-assistant.is-tool-step article {
+  padding: 0.75rem 0.85rem;
+  border-style: dotted;
+  background: rgb(8 25 22 / 46%);
+}
+
+.call-chain-assistant.is-tool-step article > p {
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.call-chain-tool-step-text {
+  margin-top: 0.45rem;
+  border: 1px solid rgb(158 229 209 / 16%);
+  border-radius: 0.55rem;
+  background: rgb(2 12 10 / 28%);
+}
+
+.call-chain-tool-step-text > p {
+  margin: 0;
+  padding: 0.75rem 0.85rem;
+  border-top: 1px solid rgb(158 229 209 / 12%);
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
 .call-chain-assistant.is-interrupted article,
 .call-chain-failure {
   border-color: rgb(255 152 137 / 38%);

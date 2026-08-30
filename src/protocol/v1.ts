@@ -210,6 +210,9 @@ export interface V1Response {
 
 export type V1PlayCallChainStatus = "ready" | "running" | "interrupted";
 
+export type V1AssistantResponseKind =
+  "pending" | "narrative" | "tool_step" | "empty";
+
 export type V1PlayCallChainEvent =
   | {
       id: number;
@@ -224,6 +227,11 @@ export type V1PlayCallChainEvent =
       kind: "assistant";
       text: string;
       status: "streaming" | "completed" | "interrupted";
+      /**
+       * Runtime's settlement classification for the response text. Optional
+       * only for timelines written before this classification was persisted.
+       */
+      responseKind?: V1AssistantResponseKind;
       exchange: number;
       attempt: number;
       reasoning?: string;

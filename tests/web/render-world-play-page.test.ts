@@ -509,6 +509,7 @@ describe("世界游玩页面", () => {
 
     expect(await screen.findByText("Alex is opening the door")).toBeTruthy();
     expect(screen.getByText("接收中 · 第 1 次派发")).toBeTruthy();
+    expect(screen.getByText("待定输出；响应完成前不会进入故事")).toBeTruthy();
     expect(screen.getByText("响应完成后可查看模型诊断详情")).toBeTruthy();
     expect(screen.queryByText("查看模型诊断详情")).toBeNull();
     expect(
@@ -518,6 +519,83 @@ describe("世界游玩页面", () => {
     expect(
       await screen.findByText("Alex opens the door and lets you go first."),
     ).toBeTruthy();
+  });
+
+  test("工具中间步文本默认折叠在调用轨迹中且不会伪装成叙事", async () => {
+    const intermediate = "I will inspect the record before narrating.";
+    const chain = playChainView(
+      "play-chain-tool-step",
+      "exchange-tool-step",
+      "I ask Alex to check the door.",
+    );
+    chain.parentHead = "commit:4";
+    chain.events = [
+      chain.events[0]!,
+      {
+        id: 2,
+        kind: "assistant",
+        text: intermediate,
+        status: "completed",
+        responseKind: "tool_step",
+        exchange: 1,
+        attempt: 1,
+        committedHead: "commit:3",
+      },
+      {
+        id: 3,
+        kind: "tool_call",
+        callId: "patch-tool-step",
+        name: "world_patch",
+        arguments: { target: "@current-situation", edits: [] },
+        replayed: false,
+      },
+      {
+        id: 4,
+        kind: "tool_result",
+        callId: "patch-tool-step",
+        name: "world_patch",
+        ok: true,
+        markdown: "@current-situation write succeeded",
+        replayed: false,
+      },
+      {
+        id: 5,
+        kind: "assistant",
+        text: "Alex checks the latch and pulls the door shut.",
+        status: "completed",
+        responseKind: "narrative",
+        exchange: 2,
+        attempt: 1,
+        committedHead: "commit:4",
+      },
+    ];
+    const client = {
+      request: vi.fn(<T>(request: V1Request) => {
+        if (request.type === "world.read")
+          return Promise.resolve(worldView(chain) as T);
+        if (request.type === "artifacts.debug") return Promise.resolve([] as T);
+        if (request.type === "play.chain.inspect")
+          return Promise.resolve(chain as T);
+        return Promise.reject(new Error(`Unexpected request: ${request.type}`));
+      }),
+    };
+
+    renderWorld(client);
+    await screen.findByRole("heading", { name: "宿舍世界" });
+    const timeline = screen.getByLabelText("模型调用链");
+    expect(within(timeline).getByText("模型工具步骤")).toBeTruthy();
+    expect(
+      within(timeline).getByText(
+        "Alex checks the latch and pulls the door shut.",
+      ),
+    ).toBeTruthy();
+    expect(within(timeline).getAllByText(intermediate)).toHaveLength(1);
+    const summary =
+      within(timeline).getByText("查看工具步骤文本（未进入故事）");
+    const details = summary.closest("details");
+    expect(details?.open).toBe(false);
+    fireEvent.click(summary);
+    expect(details?.open).toBe(true);
   });
 
   test("模型流式输出只更新内容，不反复把页面定位到底部", async () => {
@@ -1236,7 +1314,8 @@ function committedChainMessages(
       if (
         event.kind === "assistant" &&
         event.committedHead !== undefined &&
-        event.text.trim().length > 0
+        event.text.trim().length > 0 &&
+        event.responseKind !== "tool_step"
       )
         messages.push({
           role: "narrator",
@@ -1297,6 +1376,7 @@ function playChainView(
         text: "Alex opens the door and lets you go first.",
         reasoning: "First confirm that the doorway is clear.",
         status: "completed",
+        responseKind: "narrative",
         exchange: 2,
         attempt: 1,
         committedHead: "commit:3",

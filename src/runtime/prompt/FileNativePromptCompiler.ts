@@ -230,12 +230,13 @@ const runtimeContracts: Record<
 - World-write tools change only an uncommitted working copy. Their changes are not official world facts until Runtime accepts and completes the commit.`,
     operation: `# Runtime call-chain rules
 
-- The model may output player-visible text directly, call attached read or world-write tools, and then continue from tool results.
+- A response with no tool calls may contain player-visible story text and finish the current call-chain step.
+- A response that calls any tool is an intermediate tool step. Do not include player-visible story text in that response. After receiving all tool results, return the story in a later response with no tool calls.
 - Obey only the real tool definitions attached to this request. A tool that is not defined cannot be called.
 - Runtime performs state commits and saves follow-up artifacts. Tool exchanges and internal processing must never appear in player-visible content.`,
     shell: `# Runtime play boundary
 
-The model may output player-visible text directly, call attached read or world-write tools as needed, or continue after receiving tool results. Runtime executes only real tool definitions, file validation, and authority commits. This block does not define story content, point of view, style, player agency, or state semantics.`,
+A tool-free response may contain player-visible story text. A response that calls any tool is an intermediate step and must not contain player-visible story text; continue from the tool results, then narrate in a later tool-free response. Runtime executes only real tool definitions, file validation, and authority commits. This block does not define story content, point of view, style, player agency, or state semantics.`,
   },
   "zh-CN": {
     play: `# Runtime 权限边界
@@ -251,12 +252,13 @@ The model may output player-visible text directly, call attached read or world-w
 - 世界写入工具只修改尚未提交的工作副本；Runtime 接受并完成提交前，这些修改都不是正式世界事实。`,
     operation: `# Runtime 调用链规则
 
-- 模型可以直接输出玩家可见文本，或调用本次请求随附的读取和世界写入工具，再根据工具结果继续。
+- 不调用工具的响应可以输出玩家可见故事正文，并结束当前调用链步骤。
+- 只要响应调用了任何工具，它就是工具中间步；该响应不要输出玩家可见故事正文。收到全部工具结果后，再用一个不调用工具的后续响应完成叙事。
 - 只服从当前请求的真实工具定义；没有定义的工具不可调用。
 - 状态提交与后置产物保存由 Runtime 执行。工具交换与内部处理过程不得混入玩家可见内容。`,
     shell: `# Runtime 游玩边界
 
-模型可以根据当前需要直接输出玩家可见文本、调用请求随附的读取或世界写入工具，或在取得工具结果后继续。Runtime 只执行真实工具定义、文件校验和权威提交；本段不规定故事、人称、文风、玩家代理权或状态语义。`,
+不调用工具的响应可以输出玩家可见故事正文。只要响应调用了任何工具，它就是工具中间步，不得同时输出玩家可见故事正文；先根据工具结果继续，再用一个不调用工具的后续响应完成叙事。Runtime 只执行真实工具定义、文件校验和权威提交；本段不规定故事、人称、文风、玩家代理权或状态语义。`,
   },
 };
 

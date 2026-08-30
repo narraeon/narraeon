@@ -105,8 +105,10 @@ export interface PlayCallChainObserver {
 
 /**
  * The production play loop: one durable logical context, no Runtime-authored
- * adjudication/narration phases, and immediate Authority commits after every
- * completed model response that contains visible text or world changes.
+ * adjudication/narration phases. Responses with tool calls are intermediate
+ * tool steps: their Provider-native payload remains appendable, while only
+ * their world changes may advance Authority. A tool-free response is the sole
+ * response shape whose non-empty text can become committed narrative.
  */
 export class PlayCallChain {
   readonly #worlds: FileNativeWorldStore;
@@ -943,12 +945,18 @@ export class PlayCallChain {
       throw new PlayCallChainError(
         "The durable Provider result no longer matches its assistant event.",
       );
+    const calls = response.toolCalls ?? [];
+    const text = response.text ?? existing.text;
+    const hasText = text.trim().length > 0;
+    const responseKind =
+      calls.length > 0 ? "tool_step" : hasText ? "narrative" : "empty";
     const assistantEvent: Extract<V1PlayCallChainEvent, { kind: "assistant" }> =
       {
         id: advance.eventId,
         kind: "assistant",
-        text: response.text ?? existing.text,
+        text,
         status: "completed",
+        responseKind,
         exchange: advance.exchange,
         attempt: advance.attempt,
         ...(response.reasoningContent === undefined
@@ -965,7 +973,6 @@ export class PlayCallChain {
         continuation:
           response.providerState === undefined ? "unavailable" : "available",
       };
-    const calls = response.toolCalls ?? [];
     const workingTools = new Map(session.completedToolMap);
     const prepared: PreparedToolResult[] = [];
     const trailingEvents: V1PlayCallChainEvent[] = [];
@@ -985,10 +992,10 @@ export class PlayCallChain {
       trailingEvents.push(structuredClone(item.event));
     }
     const stateChanges = session.documents.stateChanges();
-    const visibleText = (response.text ?? "").trim().length > 0;
+    const visibleText = responseKind === "narrative";
     const assistantItem: Extract<ModelHostAppendItem, { kind: "assistant" }> = {
       kind: "assistant",
-      text: response.text ?? "",
+      text,
       ...(response.reasoningContent === undefined
         ? {}
         : { reasoningContent: response.reasoningContent }),
@@ -1030,6 +1037,23 @@ export class PlayCallChain {
     const hasToolCalls = settlement.trailingEvents.some(
       ({ kind }) => kind === "tool_call",
     );
+    // A legacy prepared fact has no responseKind. Its visibleText decision is
+    // already part of an immutable recovery operation and must be replayed as
+    // recorded; every newly prepared fact is checked against the current rule.
+    if (settlement.assistantEvent.responseKind !== undefined) {
+      const expectedResponseKind = hasToolCalls
+        ? "tool_step"
+        : settlement.assistantEvent.text.trim().length > 0
+          ? "narrative"
+          : "empty";
+      if (
+        settlement.assistantEvent.responseKind !== expectedResponseKind ||
+        settlement.visibleText !== (expectedResponseKind === "narrative")
+      )
+        throw new PlayCallChainError(
+          "The prepared response settlement has an inconsistent narrative classification.",
+        );
+    }
     let committedHead: string | undefined;
     if (settlement.visibleText || settlement.stateChanges.length > 0) {
       const outcome = await this.#worlds.commitPlayStep({
@@ -1222,6 +1246,7 @@ export class PlayCallChain {
         kind: "assistant",
         text: "",
         status: "streaming",
+        responseKind: "pending",
         exchange: responseExchange,
         attempt,
       };

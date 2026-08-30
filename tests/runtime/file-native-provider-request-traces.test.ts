@@ -247,6 +247,16 @@ test("OpenAI Responses 冻结全集并用 native allowed subset，usage 与 encr
       summary: [],
     },
     {
+      type: "message",
+      role: "assistant",
+      content: [
+        {
+          type: "output_text",
+          text: "I will inspect the record before answering.",
+        },
+      ],
+    },
+    {
       type: "function_call",
       id: "call-private",
       call_id: "call-private",
@@ -331,6 +341,7 @@ test("OpenAI Responses 冻结全集并用 native allowed subset，usage 与 encr
     output,
     responseId: "resp-1",
   });
+  expect(first.text).toBe("I will inspect the record before answering.");
   expect(first.stopReason).toBe("completed");
   expect(first.usage).toMatchObject({
     inputTokens: 120,
@@ -366,7 +377,7 @@ test("OpenAI Responses 冻结全集并用 native allowed subset，usage 与 encr
     appended: [
       {
         kind: "assistant",
-        text: "",
+        text: first.text ?? "",
         ...(first.providerState === undefined
           ? {}
           : { providerState: first.providerState }),
@@ -391,7 +402,7 @@ test("OpenAI Responses 冻结全集并用 native allowed subset，usage 与 encr
     input: unknown[];
   };
   expect(secondBody.tools).toEqual(firstBody.tools);
-  expect(secondBody.input.slice(-3)).toEqual([
+  expect(secondBody.input.slice(-(output.length + 1))).toEqual([
     ...output,
     {
       type: "function_call_output",
@@ -549,7 +560,7 @@ test.each(["chat_completions", "openai_responses"] as const)(
 test("Chat Completions 保留 reasoning_content、usage 与原始 assistant message 续传", async () => {
   const rawMessage = {
     role: "assistant",
-    content: null,
+    content: "I will inspect the record before answering.",
     reasoning_content: "private-chat-reasoning",
     tool_calls: [
       {
@@ -636,6 +647,7 @@ test("Chat Completions 保留 reasoning_content、usage 与原始 assistant mess
     protocol: "chat_completions",
     assistantMessage: rawMessage,
   });
+  expect(first.text).toBe("I will inspect the record before answering.");
   expect(first.stopReason).toBe("tool_calls");
   expect(first.usage).toMatchObject({
     inputTokens: 50,
@@ -653,7 +665,7 @@ test("Chat Completions 保留 reasoning_content、usage 与原始 assistant mess
     appended: [
       {
         kind: "assistant",
-        text: "",
+        text: first.text ?? "",
         reasoningContent: "private-chat-reasoning",
         ...(first.providerState === undefined
           ? {}
@@ -677,6 +689,10 @@ test("Anthropic Messages 保留 thinking/redacted/signature block、usage、原�
       signature: "opaque-signature",
     },
     { type: "redacted_thinking", data: "opaque-redacted" },
+    {
+      type: "text",
+      text: "I will inspect the record before answering.",
+    },
     {
       type: "tool_use",
       id: "anthropic-read",
@@ -760,6 +776,7 @@ test("Anthropic Messages 保留 thinking/redacted/signature block、usage、原�
     model: "claude-test",
     stopReason: "tool_use",
   });
+  expect(first.text).toBe("I will inspect the record before answering.");
   expect(first.stopReason).toBe("tool_use");
   expect(first.usage).toMatchObject({
     inputTokens: 105,
@@ -781,7 +798,7 @@ test("Anthropic Messages 保留 thinking/redacted/signature block、usage、原�
     appended: [
       {
         kind: "assistant",
-        text: "",
+        text: first.text ?? "",
         ...(first.providerState === undefined
           ? {}
           : { providerState: first.providerState }),

@@ -613,13 +613,14 @@ test("协议拒绝无界时间线分页、空游标、非法详情事件与未�
     ).toThrow();
 });
 
-test("模型自行交替文本与工具，每个完成响应立即推进世界并可追加上下文", async () => {
+test("工具中间步文本不进入叙事，状态与终态叙事分别推进并可追加上下文", async () => {
   const { worlds, worldId } = await createWorld("play-chain");
   const modelHost = new ScriptedModelHost({
     binding: modelBinding(),
     steps: [
       {
         outcome: "response",
+        text: "I will update the door before narrating the result.",
         toolCalls: [
           {
             id: "patch-door",
@@ -679,6 +680,24 @@ test("模型自行交替文本与工具，每个完成响应立即推进世界�
     "tool_result",
     "assistant",
   ]);
+  const assistantEvents = first.events.filter(
+    (
+      event,
+    ): event is Extract<
+      V1PlayCallChainView["events"][number],
+      { kind: "assistant" }
+    > => event.kind === "assistant",
+  );
+  expect(assistantEvents[0]).toMatchObject({
+    text: "I will update the door before narrating the result.",
+    responseKind: "tool_step",
+    committedHead: "commit:2",
+  });
+  expect(assistantEvents[1]).toMatchObject({
+    text: "Alex opens the door and gestures for you to go first.",
+    responseKind: "narrative",
+    committedHead: "commit:3",
+  });
   const patchResult = first.events.find(
     (
       event,
@@ -705,6 +724,14 @@ test("模型自行交替文本与工具，每个完成响应立即推进世界�
     kind: "tool",
     toolCallId: "patch-door",
     markdown: patchDetail.markdown,
+  });
+  expect(modelHost.requests[1]?.appended.at(-2)).toMatchObject({
+    kind: "assistant",
+    text: "I will update the door before narrating the result.",
+    toolCalls: [
+      expect.objectContaining({ id: "patch-door", name: "world_patch" }),
+    ],
+    providerState: { protocol: "chat_completions" },
   });
   expect(modelHost.requests[0]?.tools.map(({ name }) => name)).toEqual([
     "state_list",
@@ -739,6 +766,12 @@ test("模型自行交替文本与工具，每个完成响应立即推进世界�
   expect(authorPrompt).toContain(
     "Make the final sentence a specific action someone takes",
   );
+  expect(
+    modelHost.requests[0]?.bootstrap.logicalMessages
+      .filter(({ role }) => role === "runtime_system")
+      .map(({ markdown }) => markdown)
+      .join("\n"),
+  ).toContain("A response that calls any tool is an intermediate step");
 
   const continued = await chains.append({
     worldId,
@@ -772,6 +805,9 @@ test("模型自行交替文本与工具，每个完成响应立即推进世界�
     "I walk into the corridor.",
     "The corridor lights come on one by one with each step.",
   ]);
+  expect(endpoint.history.map(({ exactText }) => exactText)).not.toContain(
+    "I will update the door before narrating the result.",
+  );
   expect(
     endpoint.state.find(({ path }) => path === "current-situation.yaml")
       ?.contents,
@@ -2108,6 +2144,7 @@ test("AI 工具被 Runtime 拒绝时保存产生该调用的原始交换与 reas
     steps: [
       {
         outcome: "response",
+        text: "I will patch the record before presenting the scene.",
         reasoningContent: "First patch a node that has not been read.",
         toolCalls: [
           {
@@ -2234,6 +2271,19 @@ test("AI 工具被 Runtime 拒绝时保存产生该调用的原始交换与 reas
     message:
       "The play call chain recovered during a later model exchange and completed.",
   });
+  expect(
+    view.events.find(
+      (event) => event.kind === "assistant" && event.exchange === 1,
+    ),
+  ).toMatchObject({
+    text: "I will patch the record before presenting the scene.",
+    responseKind: "tool_step",
+  });
+  expect(
+    (await worlds.recoverEndpoint(worldId)).history.map(
+      ({ exactText }) => exactText,
+    ),
+  ).not.toContain("I will patch the record before presenting the scene.");
 });
 
 async function createWorld(label: string): Promise<{

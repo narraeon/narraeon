@@ -1279,6 +1279,13 @@ const worldPageEnglishMessages: Record<string, string> = {
   保存修改并继续: "Save edit and continue",
   取消: "Cancel",
   "AI 响应": "Model response",
+  模型工具步骤: "Model tool step",
+  空模型响应: "Empty model response",
+  "查看工具步骤文本（未进入故事）":
+    "View tool-step text (not part of the story)",
+  "（本次响应只调用了工具）": "(This response only called tools)",
+  "待定输出；响应完成前不会进入故事":
+    "Pending output; it does not enter the story before the response completes",
   "· 第": "· dispatch",
   次派发: "",
   模型思维链: "Model reasoning",

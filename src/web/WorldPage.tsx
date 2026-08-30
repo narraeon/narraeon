@@ -317,7 +317,9 @@ export function WorldPage({
         item.kind !== "event" ||
         (item.event.kind !== "player" && item.event.kind !== "assistant") ||
         item.event.committedHead === undefined ||
-        (item.event.kind === "assistant" && item.event.text.length === 0)
+        (item.event.kind === "assistant" &&
+          (item.event.text.length === 0 ||
+            assistantResponseKind(item.event) !== "narrative"))
       )
         return [];
       return [
@@ -1568,14 +1570,23 @@ function TimelineEvent({
 
   if (event.kind === "assistant") {
     const full = detail?.kind === "assistant" ? detail : null;
+    const responseKind = assistantResponseKind(event);
+    const responseClass =
+      responseKind === "tool_step" ? "tool-step" : responseKind;
     return (
-      <li className={`call-chain-assistant is-${event.status}`}>
+      <li
+        className={`call-chain-assistant is-${event.status} is-${responseClass}`}
+      >
         <article>
           <header>
             <strong>
               {event.status === "streaming"
                 ? uiText("模型响应中")
-                : uiText("AI 响应")}
+                : responseKind === "tool_step"
+                  ? uiText("模型工具步骤")
+                  : responseKind === "empty"
+                    ? uiText("空模型响应")
+                    : uiText("AI 响应")}
             </strong>
             <span>
               {uiText("{status} · 第 {attempt} 次派发", {
@@ -1594,13 +1605,25 @@ function TimelineEvent({
               </button>
             )}
           </header>
-          <p>
-            {event.text.length > 0
-              ? event.text
-              : event.status === "streaming"
-                ? uiText("正在接收模型输出…")
-                : uiText("（本次响应没有文本）")}
-          </p>
+          {responseKind === "tool_step" && event.text.length > 0 ? (
+            <details className="call-chain-tool-step-text">
+              <summary>{uiText("查看工具步骤文本（未进入故事）")}</summary>
+              <p>{event.text}</p>
+            </details>
+          ) : (
+            <p>
+              {event.text.length > 0
+                ? event.text
+                : event.status === "streaming"
+                  ? uiText("正在接收模型输出…")
+                  : responseKind === "tool_step"
+                    ? uiText("（本次响应只调用了工具）")
+                    : uiText("（本次响应没有文本）")}
+            </p>
+          )}
+          {responseKind === "pending" ? (
+            <small>{uiText("待定输出；响应完成前不会进入故事")}</small>
+          ) : null}
           {event.usage === undefined ? null : (
             <ModelUsageBreakdown usage={event.usage} compact />
           )}
@@ -1790,6 +1813,18 @@ function callChainAssistantStatusLabel(
   if (status === "streaming") return uiText("接收中");
   if (status === "interrupted") return uiText("中断片段");
   return uiText("已完成");
+}
+
+function assistantResponseKind(
+  event: Extract<V1PlayTimelineEventSummary, { kind: "assistant" }>,
+): NonNullable<
+  Extract<V1PlayCallChainEvent, { kind: "assistant" }>["responseKind"]
+> {
+  if (event.responseKind !== undefined) return event.responseKind;
+  if (event.status === "streaming" || event.status === "interrupted")
+    return "pending";
+  if (event.text.trim().length === 0) return "empty";
+  return event.committedHead === undefined ? "tool_step" : "narrative";
 }
 
 function safeJson(value: unknown): string {

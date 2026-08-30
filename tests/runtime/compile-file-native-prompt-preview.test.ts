@@ -577,6 +577,12 @@ context:
       "Editable host, world, and play prompts determine story semantics",
     );
     expect(runtimeSystem).toContain("Runtime call-chain rules");
+    expect(runtimeSystem).toContain(
+      "A response that calls any tool is an intermediate tool step",
+    );
+    expect(runtimeSystem).toContain(
+      "return the story in a later response with no tool calls",
+    );
     expect(compiled.budget).toMatchObject({
       estimator: "disabled",
       status: "not_checked",
