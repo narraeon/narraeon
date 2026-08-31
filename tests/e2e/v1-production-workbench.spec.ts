@@ -567,6 +567,49 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   ).toBeVisible();
 
   responses.push(
+    chatText(
+      "This response must not become story after cancellation.",
+      "The Provider has started returning explicit reasoning.",
+    ),
+  );
+  providerDelayMs = 3000;
+  const cancellableRequestIndex = providerRequests.length;
+  await page.getByLabel("你的行动").fill("I ask Alex to pause for a moment.");
+  await page.getByRole("button", { name: "追加上下文" }).click();
+  const playProgress = page.getByLabel("本次模型调用进度");
+  await expect(playProgress).toBeVisible();
+  await expect(playProgress).toContainText(
+    "思考中（正在接收 Provider 返回推理）",
+  );
+  expect(providerRequests).toHaveLength(cancellableRequestIndex + 1);
+  await expect(playProgress).toContainText("Provider 派发");
+  await expect(
+    playProgress.getByRole("button", { name: "取消生成" }),
+  ).toBeEnabled();
+  await playProgress.getByRole("button", { name: "取消生成" }).click();
+  providerDelayMs = 0;
+  await expect(page.locator(".world-feedback.status")).toContainText(
+    "模型生成已取消",
+  );
+  await expect(playProgress).toBeHidden();
+  await expect(page.getByText("生成已取消", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("This response must not become story after cancellation."),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText("I ask Alex to pause for a moment.", { exact: true }),
+  ).toHaveCount(1);
+
+  responses.push(chatText("Alex waits and lets the moment pass."));
+  await page
+    .getByLabel("你的行动")
+    .fill("Start again after the pause and continue from here.");
+  await page.getByRole("button", { name: "全新上下文" }).click();
+  await expect(
+    page.getByText("Alex waits and lets the moment pass."),
+  ).toBeVisible();
+
+  responses.push(
     disconnectProviderResponse,
     chatText("Alex adds that everyone will meet downstairs at 7:30."),
   );

@@ -556,6 +556,14 @@ export class V1Runtime {
               : { observer: playCallChainObserver }),
           }),
         );
+      case "play.chain.cancel":
+        return playCall(() =>
+          this.#playCallChains.cancel({
+            worldId: request.worldId,
+            chainId: request.chainId,
+            exchangeId: request.exchangeId,
+          }),
+        );
       case "play.chain.inspect":
         return this.#playCallChains.inspectWorld(request.worldId);
       case "play.timeline.page":

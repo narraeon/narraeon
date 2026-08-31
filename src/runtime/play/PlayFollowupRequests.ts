@@ -6,8 +6,10 @@ import type {
 import type {
   ModelHost,
   ModelHostAppendItem,
+  ModelHostDelta,
   ModelHostToolCall,
 } from "../model/ModelHost.ts";
+import { ModelHostCancelledError } from "../model/ModelHost.ts";
 import type { ModelUsage } from "../../protocol/modelUsage.ts";
 import {
   errorDescription,
@@ -42,6 +44,9 @@ export interface PlayFollowupRun {
 }
 
 export interface PlayFollowupObserver {
+  onProviderDispatch?: () => void;
+  onProviderDelta?: (delta: ModelHostDelta) => void;
+  onProviderSettled?: () => void;
   onOutcome?: (outcome: PlayFollowupOutcome) => void;
 }
 
@@ -95,11 +100,15 @@ export async function runPlayFollowupRequests(
   let failure: string | undefined;
 
   for (const followup of input.followups) {
-    if (input.signal?.aborted === true) {
+    if (signalWasAborted(input.signal)) {
       failure ??= "The follow-up request was cancelled.";
       break;
     }
     const outcome = await runOne(input, followup, prefix);
+    if (signalWasAborted(input.signal)) {
+      failure ??= "The follow-up request was cancelled.";
+      break;
+    }
     outcomes.push(outcome);
     input.observer?.onOutcome?.(outcome);
     if (outcome.failure === undefined) completed.push(followup.id);
@@ -142,27 +151,43 @@ async function runOne(
   let responseDiagnostics: AiExchangeDiagnostics | undefined;
   try {
     await input.artifacts.beginRequestAttempt(requestContext);
-    const response = await input.modelHost.exchange({
-      bootstrap: structuredClone(input.bootstrap),
-      tools: structuredClone(followup.tools),
-      toolUniverse: structuredClone(followup.tools),
-      allowedTools: [...followup.allowedTools],
-      toolStrategy: input.toolStrategy,
-      // The prompt replaces the previous followup's prompt instead of being
-      // appended after it: every request sees exactly the main-chain prefix.
-      appended: [
-        ...structuredClone(prefix),
+    input.observer?.onProviderDispatch?.();
+    let response: Awaited<ReturnType<ModelHost["exchange"]>>;
+    try {
+      response = await input.modelHost.exchange(
         {
-          kind: "prompt_delta",
-          logicalMessages: structuredClone(followup.logicalMessages),
+          bootstrap: structuredClone(input.bootstrap),
+          tools: structuredClone(followup.tools),
+          toolUniverse: structuredClone(followup.tools),
+          allowedTools: [...followup.allowedTools],
+          toolStrategy: input.toolStrategy,
+          // The prompt replaces the previous followup's prompt instead of being
+          // appended after it: every request sees exactly the main-chain prefix.
+          appended: [
+            ...structuredClone(prefix),
+            {
+              kind: "prompt_delta",
+              logicalMessages: structuredClone(followup.logicalMessages),
+            },
+          ],
+          requestId: followup.id,
+          operationId: input.context.operationId,
+          requestAttempt: 1,
+          exchange: 1,
+          maxOutputTokens: input.maxOutputTokens,
         },
-      ],
-      requestId: followup.id,
-      operationId: input.context.operationId,
-      requestAttempt: 1,
-      exchange: 1,
-      maxOutputTokens: input.maxOutputTokens,
-    });
+        {
+          ...(input.signal === undefined ? {} : { signal: input.signal }),
+          onDelta: (delta) => input.observer?.onProviderDelta?.(delta),
+        },
+      );
+      if (input.signal?.aborted === true)
+        throw new ModelHostCancelledError(
+          "The player cancelled the follow-up model request; its response was not committed.",
+        );
+    } finally {
+      input.observer?.onProviderSettled?.();
+    }
     responseDiagnostics = response.diagnostics;
     if (response.diagnostics !== undefined)
       await input.failureLog?.recordExchangeIfActive(response.diagnostics);
@@ -241,6 +266,10 @@ async function runOne(
       });
   }
   return outcome;
+}
+
+function signalWasAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true;
 }
 
 async function executeArtifactCall(

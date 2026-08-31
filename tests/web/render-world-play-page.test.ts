@@ -446,7 +446,7 @@ describe("世界游玩页面", () => {
         >,
         onFrame: (frame: V1PlayCallChainStreamFrame) => void,
       ) {
-        chain = {
+        const running: V1PlayCallChainView = {
           ...playChainView(
             request.chainId,
             request.exchangeId,
@@ -472,20 +472,21 @@ describe("世界游玩页面", () => {
             },
           ],
         };
-        onFrame({ kind: "snapshot", value: chain, final: false });
+        chain = running;
+        onFrame({ kind: "snapshot", value: running, final: false });
         onFrame({
           kind: "assistant_delta",
           eventId: 2,
           deltaKind: "reasoning",
           text: "First confirm that the doorway is clear.",
-          updatedAt: 2,
+          updatedAt: Date.now(),
         });
         onFrame({
           kind: "assistant_delta",
           eventId: 2,
           deltaKind: "text",
           text: "Alex is opening the door",
-          updatedAt: 2,
+          updatedAt: Date.now(),
         });
         await new Promise<void>((resolve) => {
           finishStream = resolve;
@@ -508,6 +509,12 @@ describe("世界游玩页面", () => {
     fireEvent.click(screen.getByRole("button", { name: "全新上下文" }));
 
     expect(await screen.findByText("Alex is opening the door")).toBeTruthy();
+    const progress = screen.getByRole("status", {
+      name: "本次模型调用进度",
+    });
+    expect(within(progress).getByText("正在输出正文…")).toBeTruthy();
+    expect(within(progress).getByText("40 字")).toBeTruthy();
+    expect(within(progress).getByText("24 字")).toBeTruthy();
     expect(screen.getByText("接收中 · 第 1 次派发")).toBeTruthy();
     expect(screen.getByText("待定输出；响应完成前不会进入故事")).toBeTruthy();
     expect(screen.getByText("响应完成后可查看模型诊断详情")).toBeTruthy();
@@ -519,6 +526,235 @@ describe("世界游玩页面", () => {
     expect(
       await screen.findByText("Alex opens the door and lets you go first."),
     ).toBeTruthy();
+  });
+
+  test("模型尚未返回首个流帧时持续显示进度并允许取消", async () => {
+    let finishStream: (() => void) | undefined;
+    let chain: V1PlayCallChainView | null = null;
+    let activeExchangeId: string | undefined;
+    const client = {
+      request: vi.fn(<T>(request: V1Request) => {
+        if (request.type === "world.read")
+          return Promise.resolve(worldView(chain) as T);
+        if (request.type === "artifacts.debug") return Promise.resolve([] as T);
+        if (request.type === "play.chain.inspect")
+          return Promise.resolve(chain as T);
+        if (request.type === "play.chain.cancel") {
+          expect(request).toMatchObject({
+            worldId: "world-one",
+            chainId: chain?.chainId,
+            exchangeId: activeExchangeId,
+          });
+          finishStream?.();
+          return Promise.resolve({ outcome: "cancellation_requested" } as T);
+        }
+        return Promise.reject(new Error(`Unexpected request: ${request.type}`));
+      }),
+      async streamPlayCallChain(
+        request: Extract<
+          V1Request,
+          { type: "play.chain.start" | "play.chain.append" }
+        >,
+        onFrame: (frame: V1PlayCallChainStreamFrame) => void,
+      ) {
+        activeExchangeId = request.exchangeId;
+        const running: V1PlayCallChainView = {
+          ...playChainView(
+            request.chainId,
+            request.exchangeId,
+            request.playerText,
+          ),
+          status: "running",
+          events: [
+            {
+              id: 1,
+              kind: "player",
+              exchangeId: request.exchangeId,
+              text: request.playerText,
+              context: "fresh",
+              committedHead: "commit:2",
+            },
+            {
+              id: 2,
+              kind: "assistant",
+              text: "",
+              status: "streaming",
+              exchange: 1,
+              attempt: 1,
+            },
+          ],
+        };
+        chain = running;
+        onFrame({ kind: "snapshot", value: running, final: false });
+        await new Promise<void>((resolve) => {
+          finishStream = resolve;
+        });
+        const cancelled: V1PlayCallChainView = {
+          ...running,
+          status: "interrupted",
+          canRetry: false,
+          events: [
+            running.events[0]!,
+            {
+              id: 2,
+              kind: "assistant",
+              text: "",
+              status: "interrupted",
+              exchange: 1,
+              attempt: 1,
+            },
+            {
+              id: 3,
+              kind: "cancellation",
+              message: "玩家取消了模型生成。",
+            },
+          ],
+          lastFailure: "玩家取消了模型生成。",
+        };
+        chain = cancelled;
+        onFrame({ kind: "snapshot", value: cancelled, final: true });
+        return cancelled;
+      },
+    };
+
+    try {
+      renderWorld(client);
+      await screen.findByRole("heading", { name: "宿舍世界" });
+      fireEvent.change(screen.getByLabelText("你的行动"), {
+        target: { value: "I wait while Alex considers the answer." },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "全新上下文" }));
+
+      const progress = await screen.findByRole("status", {
+        name: "本次模型调用进度",
+      });
+      expect(within(progress).getByText("正在等待模型响应…")).toBeTruthy();
+      const cancel = within(progress).getByRole("button", {
+        name: "取消生成",
+      });
+      expect((cancel as HTMLButtonElement).disabled).toBe(false);
+
+      fireEvent.click(cancel);
+      await waitFor(() =>
+        expect(
+          client.request.mock.calls.some(
+            ([request]) => request.type === "play.chain.cancel",
+          ),
+        ).toBe(true),
+      );
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("status", { name: "本次模型调用进度" }),
+        ).toBeNull(),
+      );
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(screen.getByText("模型生成已取消。")).toBeTruthy();
+    } finally {
+      finishStream?.();
+    }
+  });
+
+  test("刷新页面后从 Runtime 恢复进度、识别长时间无数据并仍可取消", async () => {
+    const now = Date.now();
+    let chain: V1PlayCallChainView = {
+      ...playChainView(
+        "play-chain-restored-progress",
+        "exchange-restored-progress",
+        "I wait for Alex to answer.",
+      ),
+      status: "running",
+      parentHead: "commit:2",
+      activeInvocation: {
+        chainId: "play-chain-restored-progress",
+        exchangeId: "exchange-restored-progress",
+        phase: "waiting",
+        startedAt: now - 95_000,
+        lastActivityAt: now - 91_000,
+        reasoningChars: 0,
+        textChars: 0,
+        toolChars: 0,
+        toolCalls: 0,
+        dispatches: 1,
+      },
+      events: [
+        {
+          id: 1,
+          kind: "player",
+          exchangeId: "exchange-restored-progress",
+          text: "I wait for Alex to answer.",
+          context: "fresh",
+          committedHead: "commit:2",
+        },
+        {
+          id: 2,
+          kind: "assistant",
+          text: "",
+          status: "streaming",
+          responseKind: "pending",
+          exchange: 1,
+          attempt: 1,
+        },
+      ],
+      changedDocuments: [],
+      lastFailure: null,
+      updatedAt: now - 91_000,
+    };
+    const client = {
+      request: vi.fn(<T>(request: V1Request) => {
+        if (request.type === "world.read")
+          return Promise.resolve(worldView(chain) as T);
+        if (request.type === "artifacts.debug") return Promise.resolve([] as T);
+        if (request.type === "play.chain.inspect")
+          return Promise.resolve(chain as T);
+        if (request.type === "play.chain.cancel") {
+          expect(request).toMatchObject({
+            worldId: "world-one",
+            chainId: "play-chain-restored-progress",
+            exchangeId: "exchange-restored-progress",
+          });
+          const { activeInvocation: _activeInvocation, ...settled } = chain;
+          void _activeInvocation;
+          const activeAssistant = settled.events.at(-1);
+          if (activeAssistant?.kind !== "assistant")
+            throw new Error("Expected an active assistant event");
+          chain = {
+            ...settled,
+            status: "interrupted",
+            events: [
+              ...settled.events.slice(0, -1),
+              { ...activeAssistant, status: "interrupted" },
+              {
+                id: 3,
+                kind: "cancellation",
+                message: "The player cancelled model generation.",
+              },
+            ],
+            lastFailure: "The player cancelled model generation.",
+            updatedAt: Date.now(),
+          };
+          return Promise.resolve({ outcome: "cancellation_requested" } as T);
+        }
+        return Promise.reject(new Error(`Unexpected request: ${request.type}`));
+      }),
+    };
+
+    renderWorld(client);
+    const progress = await screen.findByRole("status", {
+      name: "本次模型调用进度",
+    });
+    await waitFor(() =>
+      expect(within(progress).getByText(/模型调用可能已经卡住/u)).toBeTruthy(),
+    );
+    fireEvent.click(within(progress).getByRole("button", { name: "取消生成" }));
+    await waitFor(
+      () =>
+        expect(
+          screen.queryByRole("status", { name: "本次模型调用进度" }),
+        ).toBeNull(),
+      { timeout: 2_500 },
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText("生成已取消")).toBeTruthy();
   });
 
   test("工具中间步文本默认折叠在调用轨迹中且不会伪装成叙事", async () => {

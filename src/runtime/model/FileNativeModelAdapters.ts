@@ -29,6 +29,7 @@ import type {
 } from "./ModelHost.ts";
 import {
   ModelHostBindingMismatchError,
+  ModelHostCancelledError,
   ModelHostContinuationError,
   ModelHostFailureError,
   ModelHostOutcomeUnknownError,
@@ -193,11 +194,22 @@ export class FileNativeModelHost implements ModelHost {
   ): Promise<ModelHostResponse> {
     assertExchangeCompatibility(this.#connection, request);
     await trace("model_host_exchange", modelHostTrace(request));
-    if (this.#connection.provider === "chat_completions")
-      return this.#chat(request, observer?.onDelta);
-    if (this.#connection.provider === "openai_responses")
-      return this.#responses(request, observer?.onDelta);
-    return this.#anthropic(request, observer?.onDelta);
+    const signal = observer?.signal;
+    if (signalWasAborted(signal)) throw cancelledModelRequest();
+    try {
+      if (this.#connection.provider === "chat_completions")
+        return await this.#chat(request, observer?.onDelta, signal);
+      if (this.#connection.provider === "openai_responses")
+        return await this.#responses(request, observer?.onDelta, signal);
+      return await this.#anthropic(request, observer?.onDelta, signal);
+    } catch (error: unknown) {
+      if (
+        signalWasAborted(signal) &&
+        !(error instanceof ModelHostCancelledError)
+      )
+        throw cancelledModelRequest(error);
+      throw error;
+    }
   }
 
   /** Uses the production encoders and deliberately omits credentials. */
@@ -227,6 +239,7 @@ export class FileNativeModelHost implements ModelHost {
   async #responses(
     request: ModelHostExchange,
     onDelta?: ModelHostDeltaSink,
+    signal?: AbortSignal,
   ): Promise<ModelHostResponse> {
     return openAIResponsesRequest({
       ...responsesRequestInput(this.#connection, request),
@@ -237,12 +250,14 @@ export class FileNativeModelHost implements ModelHost {
         : { failureLog: this.#failureLog }),
       diagnosticContext: modelDiagnosticContext(request),
       ...(onDelta === undefined ? {} : { onDelta }),
+      ...(signal === undefined ? {} : { signal }),
     });
   }
 
   async #chat(
     request: ModelHostExchange,
     onDelta?: ModelHostDeltaSink,
+    signal?: AbortSignal,
   ): Promise<ModelHostResponse> {
     const body = chatRequestBody(this.#connection, request);
     const bodyJson = JSON.stringify(body);
@@ -272,6 +287,7 @@ export class FileNativeModelHost implements ModelHost {
                 "Content-Type": "application/json",
               },
               body: bodyJson,
+              ...(signal === undefined ? {} : { signal }),
             },
             "Chat Completions",
           ),
@@ -282,6 +298,7 @@ export class FileNativeModelHost implements ModelHost {
             response,
             "Chat Completions",
             (body) => aggregateChatModelStream(body, diagnosticDelta),
+            signal,
           );
           capture?.setReasoning(streamed.reasoningContent);
           await trace("chat_response", streamed);
@@ -378,6 +395,7 @@ export class FileNativeModelHost implements ModelHost {
   async #anthropic(
     request: ModelHostExchange,
     onDelta?: ModelHostDeltaSink,
+    signal?: AbortSignal,
   ): Promise<ModelHostResponse> {
     const body = anthropicRequestBody(this.#connection, request);
     const bodyJson = JSON.stringify(body);
@@ -408,6 +426,7 @@ export class FileNativeModelHost implements ModelHost {
                 "Content-Type": "application/json",
               },
               body: bodyJson,
+              ...(signal === undefined ? {} : { signal }),
             },
             "Anthropic Messages",
           ),
@@ -418,6 +437,7 @@ export class FileNativeModelHost implements ModelHost {
             response,
             "Anthropic Messages",
             (body) => aggregateAnthropicModelStream(body, diagnosticDelta),
+            signal,
           );
           capture?.setReasoning(streamed.reasoningContent);
           await trace("anthropic_response", streamed);
@@ -641,6 +661,7 @@ async function capturedProviderOperation<Value extends object>(
     if (capture === undefined) return value;
     return { ...value, diagnostics: capture.snapshot() };
   } catch (error: unknown) {
+    if (error instanceof ModelHostCancelledError) throw error;
     if (capture !== undefined && failureLog !== undefined) {
       const exchange = capture.snapshot();
       const failure: AiFailureDescription = {
@@ -1918,6 +1939,7 @@ async function openAIResponsesRequest(
     failureLog?: AiFailureRecorder;
     diagnosticContext: AiExchangeDiagnostics["context"];
     onDelta?: ModelHostDeltaSink;
+    signal?: AbortSignal;
   },
 ): Promise<{
   text?: string;
@@ -1955,14 +1977,18 @@ async function openAIResponsesRequest(
               "Content-Type": "application/json",
             },
             body: bodyJson,
+            ...(input.signal === undefined ? {} : { signal: input.signal }),
           },
           "OpenAI Responses",
         ),
       );
       if (!response.ok) throw await providerError(response);
       const payload = isProviderEventStream(response)
-        ? await providerStreamResult(response, "Responses API", (body) =>
-            aggregateResponsesModelStream(body, diagnosticDelta),
+        ? await providerStreamResult(
+            response,
+            "Responses API",
+            (body) => aggregateResponsesModelStream(body, diagnosticDelta),
+            input.signal,
           )
         : await providerJson(response, "Responses API");
       await trace(`${input.tracePrefix}_response`, payload);
@@ -2296,6 +2322,7 @@ async function providerStreamResult<Value>(
   response: Response,
   label: string,
   read: (body: ReadableStream<Uint8Array>) => Promise<Value>,
+  signal?: AbortSignal,
 ): Promise<Value> {
   if (response.body === null)
     throw new ModelHostOutcomeUnknownError(
@@ -2304,6 +2331,7 @@ async function providerStreamResult<Value>(
   try {
     return await read(response.body);
   } catch (error: unknown) {
+    if (signal?.aborted === true) throw cancelledModelRequest(error);
     if (
       error instanceof ModelHostFailureError ||
       error instanceof ModelHostOutcomeUnknownError
@@ -2325,6 +2353,7 @@ async function dispatchProviderRequest(
   try {
     return await fetchImplementation(url, init);
   } catch (error: unknown) {
+    if (init.signal?.aborted === true) throw cancelledModelRequest(error);
     throw new ModelHostOutcomeUnknownError(
       `${label} request was dispatched but its outcome is unknown`,
       {
@@ -2332,6 +2361,17 @@ async function dispatchProviderRequest(
       },
     );
   }
+}
+
+function cancelledModelRequest(cause?: unknown): ModelHostCancelledError {
+  return new ModelHostCancelledError(
+    "The player cancelled the dispatched model request; its partial response was not committed and cannot be replayed.",
+    cause === undefined ? undefined : { cause },
+  );
+}
+
+function signalWasAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true;
 }
 
 function unknownProviderResponse(label: string): ModelHostOutcomeUnknownError {

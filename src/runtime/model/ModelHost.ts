@@ -122,6 +122,8 @@ export interface ModelHostDelta {
 
 export interface ModelHostExchangeObserver {
   onDelta?: (delta: ModelHostDelta) => void;
+  /** Explicit user cancellation for this logical dispatch. */
+  signal?: AbortSignal;
 }
 
 /** Credential-free projection of the exact request body a host will send. */
@@ -178,6 +180,14 @@ export class ModelHostOutcomeUnknownError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = "ModelHostOutcomeUnknownError";
+  }
+}
+
+/** The player explicitly stopped a dispatched request; it remains non-replayable. */
+export class ModelHostCancelledError extends ModelHostOutcomeUnknownError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "ModelHostCancelledError";
   }
 }
 

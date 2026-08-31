@@ -3,7 +3,7 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 
 import {
   parseV1Envelope,
@@ -17,6 +17,7 @@ import {
   type ModelHost,
   type ModelHostBinding,
   type ModelHostExchange,
+  type ModelHostResponse,
 } from "../../src/runtime/model/ModelHost.ts";
 import { FileNativeAiFailureLog } from "../../src/runtime/model/AiFailureLog.ts";
 import {
@@ -176,6 +177,210 @@ test("派发推进存在但结果未落盘时按 outcome unknown 终止，冷恢
     ),
   ).toBe(true);
   expect(modelHost.requests).toHaveLength(0);
+});
+
+test("玩家取消会终止当前 Provider 派发并保留已提交玩家原文", async () => {
+  const { worlds, worldId } = await createWorld("play-chain-player-cancel");
+  let signal: AbortSignal | undefined;
+  let markExchangeStarted: (() => void) | undefined;
+  const exchangeStarted = new Promise<void>((resolve) => {
+    markExchangeStarted = resolve;
+  });
+  let finishExchange: ((response: ModelHostResponse) => void) | undefined;
+  const providerResult = new Promise<ModelHostResponse>((resolve) => {
+    finishExchange = resolve;
+  });
+  const modelHost: ModelHost = {
+    binding: modelBinding,
+    async exchange(_request, observer) {
+      signal = observer?.signal;
+      markExchangeStarted?.();
+      // This deliberately uncooperative adapter ignores AbortSignal. Runtime
+      // must still discard the result when it eventually returns.
+      return await providerResult;
+    },
+  };
+  const chains = new PlayCallChain(worlds);
+  const running = chains.start({
+    worldId,
+    chainId: "play-chain-player-cancel-contract",
+    exchangeId: "exchange-player-cancel",
+    playerText: "I ask Alex to wait while I reconsider.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+  await exchangeStarted;
+
+  const inspectedWhileRunning = await chains.inspectWorld(worldId);
+  expect(inspectedWhileRunning).toMatchObject({
+    status: "running",
+    activeInvocation: {
+      chainId: "play-chain-player-cancel-contract",
+      exchangeId: "exchange-player-cancel",
+      phase: "waiting",
+      dispatches: 1,
+    },
+  });
+  expect(inspectedWhileRunning?.activeInvocation).not.toHaveProperty(
+    "abortable",
+  );
+  expect(inspectedWhileRunning?.activeInvocation).not.toHaveProperty(
+    "controller",
+  );
+  expect(
+    inspectedWhileRunning?.events.some(
+      (event) => event.kind === "cancellation" || event.kind === "failure",
+    ),
+  ).toBe(false);
+  expect(signal?.aborted).toBe(false);
+
+  expect(
+    chains.cancel({
+      worldId,
+      chainId: "play-chain-player-cancel-contract",
+      exchangeId: "different-exchange",
+    }),
+  ).toEqual({ outcome: "not_running" });
+  expect(signal?.aborted).toBe(false);
+  expect(
+    chains.cancel({
+      worldId,
+      chainId: "play-chain-player-cancel-contract",
+      exchangeId: "exchange-player-cancel",
+    }),
+  ).toEqual({ outcome: "cancellation_requested" });
+
+  expect(signal?.aborted).toBe(true);
+  finishExchange?.({ text: "This late response must never be committed." });
+  const interrupted = await running;
+  expect(interrupted).toMatchObject({
+    status: "interrupted",
+    canRetry: false,
+  });
+  expect(interrupted.activeInvocation).toBeUndefined();
+  expect(
+    interrupted.events.some(
+      (event) =>
+        event.kind === "cancellation" &&
+        event.message.includes("player cancelled"),
+    ),
+  ).toBe(true);
+  expect(
+    (await worlds.recoverEndpoint(worldId)).history.map(
+      ({ exactText }) => exactText,
+    ),
+  ).toEqual([
+    "门外传来三声短促的铃响。\n",
+    "I ask Alex to wait while I reconsider.",
+  ]);
+});
+
+test("浏览器进度流断开不会隐式取消 Runtime 调用或改变 Authority", async () => {
+  const { worlds, worldId } = await createWorld(
+    "play-chain-browser-stream-disconnect",
+  );
+  const modelHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        text: "Alex answers even though the browser progress stream closed.",
+        deltas: [
+          { kind: "reasoning", text: "checking" },
+          { kind: "text", text: "Alex answers" },
+        ],
+      },
+    ],
+  });
+  const chains = new PlayCallChain(worlds);
+
+  const completed = await chains.start({
+    worldId,
+    chainId: "play-chain-browser-stream-disconnect-contract",
+    exchangeId: "exchange-browser-stream-disconnect",
+    playerText: "I keep waiting after the browser stream closes.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+    observer: {
+      onSnapshot() {
+        throw new Error("Browser snapshot stream closed");
+      },
+      onAssistantDelta() {
+        throw new Error("Browser delta stream closed");
+      },
+    },
+  });
+
+  expect(completed.status).toBe("ready");
+  expect(
+    (await worlds.recoverEndpoint(worldId)).history.map(
+      ({ exactText }) => exactText,
+    ),
+  ).toEqual([
+    "门外传来三声短促的铃响。\n",
+    "I keep waiting after the browser stream closes.",
+    "Alex answers even though the browser progress stream closed.",
+  ]);
+});
+
+test("Provider 派发前取消保留冻结请求，空输入可继续且不重复玩家原文", async () => {
+  const { worlds, worldId } = await createWorld(
+    "play-chain-player-cancel-before-dispatch",
+  );
+  const modelHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        text: "Alex answers only after the explicitly resumed request.",
+      },
+    ],
+  });
+  const chains = new PlayCallChain(worlds);
+  const running = chains.start({
+    worldId,
+    chainId: "play-chain-cancel-before-dispatch",
+    exchangeId: "exchange-cancel-before-dispatch",
+    playerText: "I ask Alex a question, then pause before dispatch.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+
+  expect(
+    chains.cancel({
+      worldId,
+      chainId: "play-chain-cancel-before-dispatch",
+      exchangeId: "exchange-cancel-before-dispatch",
+    }),
+  ).toEqual({ outcome: "cancellation_requested" });
+  const interrupted = await running;
+  expect(interrupted).toMatchObject({ status: "interrupted", canRetry: true });
+  expect(modelHost.requests).toHaveLength(0);
+
+  const resumed = await chains.append({
+    worldId,
+    chainId: "play-chain-cancel-before-dispatch",
+    exchangeId: "exchange-resume-after-cancel",
+    playerText: "",
+    modelHost,
+  });
+  expect(resumed).toMatchObject({ status: "ready", canRetry: false });
+  expect(modelHost.requests).toHaveLength(1);
+  expect(
+    (await worlds.recoverEndpoint(worldId)).history.map(
+      ({ exactText }) => exactText,
+    ),
+  ).toEqual([
+    "门外传来三声短促的铃响。\n",
+    "I ask Alex a question, then pause before dispatch.",
+    "Alex answers only after the explicitly resumed request.",
+  ]);
 });
 
 test("精确结算已准备但 Authority 尚未接受时，冷恢复提交同一结果", async () => {
@@ -560,6 +765,20 @@ test("协议允许空的追加输入，用现有请求上下文触发续写", ()
         chainId: "chain-1",
         exchangeId: "exchange-1",
         playerText: "",
+      },
+    }),
+  ).not.toThrow();
+});
+
+test("协议接受按世界、调用链与本轮交换精确寻址的取消请求", () => {
+  expect(() =>
+    parseV1Envelope({
+      protocol: "narraeon.runtime/v1",
+      request: {
+        type: "play.chain.cancel",
+        worldId: "world-1",
+        chainId: "chain-1",
+        exchangeId: "exchange-1",
       },
     }),
   ).not.toThrow();
@@ -2390,6 +2609,98 @@ context:
     },
   ];
 }
+
+test("后置请求的 Provider 派发和增量持续更新同一轮进度", async () => {
+  const { worlds, root, worldId } = await createWorld(
+    "play-chain-followup-progress",
+  );
+  const artifacts = new FileNativeArtifactStore(root);
+  let dispatch = 0;
+  let markFollowupStarted: (() => void) | undefined;
+  const followupStarted = new Promise<void>((resolve) => {
+    markFollowupStarted = resolve;
+  });
+  let finishFollowup: (() => void) | undefined;
+  const followupRelease = new Promise<void>((resolve) => {
+    finishFollowup = resolve;
+  });
+  const modelHost: ModelHost = {
+    binding: modelBinding,
+    async exchange(_request, observer) {
+      dispatch += 1;
+      if (dispatch === 1) {
+        const text = "Alex opens the door before panels are generated.";
+        return {
+          text,
+          providerState: {
+            protocol: "chat_completions",
+            assistantMessage: { role: "assistant", content: text },
+          },
+        };
+      }
+      if (dispatch === 2) {
+        observer?.onDelta?.({ kind: "reasoning", text: "checking" });
+        observer?.onDelta?.({ kind: "text", text: "panel" });
+        observer?.onDelta?.({ kind: "tool", text: '{"output":' });
+        markFollowupStarted?.();
+        await followupRelease;
+        return {
+          toolCalls: [
+            {
+              id: "emit-status-progress",
+              name: "artifact_emit",
+              arguments: { output: "status_bar", payload: { hp: 9 } },
+            },
+          ],
+        };
+      }
+      return {
+        toolCalls: [
+          {
+            id: "emit-options-progress",
+            name: "artifact_emit",
+            arguments: { output: "options", payload: { first: "跟上去" } },
+          },
+        ],
+      };
+    },
+  };
+  const chains = new PlayCallChain(
+    worlds,
+    new FileNativePromptCompiler(),
+    artifacts,
+  );
+  const running = chains.start({
+    worldId,
+    chainId: "play-chain-followup-progress-contract",
+    exchangeId: "exchange-followup-progress",
+    playerText: "I ask Alex to open the door.",
+    hostBinding: hostBinding(),
+    playPreset: followupPlayPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+  let completed: V1PlayCallChainView | undefined;
+  try {
+    await vi.waitFor(() => expect(dispatch).toBe(2));
+    await followupStarted;
+    expect(await chains.inspectWorld(worldId)).toMatchObject({
+      status: "running",
+      activeInvocation: {
+        phase: "followup",
+        reasoningChars: 8,
+        textChars: 5,
+        toolChars: 10,
+        dispatches: 2,
+      },
+    });
+  } finally {
+    finishFollowup?.();
+    completed = await running;
+  }
+  expect(completed).toMatchObject({ status: "ready" });
+  expect(dispatch).toBe(3);
+});
 
 test("后置请求在整轮结束后各跑一次，共享同一主链前缀且互不可见", async () => {
   const { worlds, root, worldId } = await createWorld("play-chain-followup");

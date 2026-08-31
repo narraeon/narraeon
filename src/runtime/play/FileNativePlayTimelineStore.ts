@@ -1257,7 +1257,10 @@ function assertPlayEvent(
       throw new Error("Follow-up timeline event has an invalid shape");
     return;
   }
-  if (value.kind !== "failure" || typeof value.message !== "string")
+  if (
+    (value.kind !== "failure" && value.kind !== "cancellation") ||
+    typeof value.message !== "string"
+  )
     throw new Error("Play timeline event has an invalid kind");
 }
 
@@ -1270,7 +1273,11 @@ function assertTimelineEventSummary(
     Number(value.id) < 1
   )
     throw new Error("Play timeline summary has an invalid identity");
-  if (value.kind === "player" || value.kind === "failure") {
+  if (
+    value.kind === "player" ||
+    value.kind === "failure" ||
+    value.kind === "cancellation"
+  ) {
     assertPlayEvent(value);
     return;
   }

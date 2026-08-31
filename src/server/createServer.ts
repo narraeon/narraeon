@@ -156,7 +156,8 @@ export async function createServer(input: {
             runtimeRequestType === "play.chain.append") &&
           isRecord(response.result) &&
           response.result.status === "interrupted" &&
-          typeof response.result.lastFailure === "string"
+          typeof response.result.lastFailure === "string" &&
+          !hasPlayCancellation(response.result)
         )
           request.log.error(
             {
@@ -239,7 +240,8 @@ function sendPlayCallChainStream(
       send({ kind: "snapshot", value: response.result, final: true });
       if (
         response.result.status === "interrupted" &&
-        response.result.lastFailure !== null
+        response.result.lastFailure !== null &&
+        !hasPlayCancellation(response.result)
       )
         request.log.error(
           {
@@ -275,4 +277,10 @@ function isPlayCallChainView(value: unknown): value is V1PlayCallChainView {
       value.status === "running" ||
       value.status === "interrupted")
   );
+}
+
+function hasPlayCancellation(value: unknown): boolean {
+  if (!isRecord(value) || !Array.isArray(value.events)) return false;
+  const last: unknown = value.events.at(-1);
+  return isRecord(last) && last.kind === "cancellation";
 }
