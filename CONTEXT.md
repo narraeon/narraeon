@@ -192,6 +192,10 @@ _Avoid_：完整 HTTP response、解析后重建消息、从 text 切思维链�
 Runtime 从 Provider 响应解析出的协议中立观察，包括可见正文、返回推理、工具调用、usage 和错误；它服务于工具执行、诊断与界面叙事，但不是下一次请求的续传来源。usage 逐项保留 input、uncached input、cache read、cache write、reasoning、output、total 及其 Provider／派生／未报告 provenance，未报告不能显示成零；返回推理只进入可展开诊断，不进入玩家正文、已提交叙事或世界 Authority。
 _Avoid_：续传消息、隐藏思维推断、世界事实、把 reasoning 当正文
 
+**模型调用进度**：
+Runtime 对当前仍在执行的一次游玩生成给出的临时观察，按准备、等待首个 Provider 数据、接收返回推理／正文／工具参数、工具调用和后置请求区分阶段，并携带已运行时间、最近数据时间与累计数量。它只在收到 Provider 明示的 reasoning 增量后称为“思考中”；首个增量之前只能诚实表示排队、模型内部处理或网络等待尚不可区分。浏览器刷新可以重新读取同一 Runtime 进程拥有的进度，但它不是持久 Authority 或 Provider 续传载荷。
+_Avoid_：隐藏思维探针、把无数据等同卡死、持久模型状态、客户端自造阶段
+
 **模型绑定**：
 一次模型会话固定使用的 provider endpoint、协议与方言、模型、续传 codec、Effort、Thinking 模式／手动预算、返回 thinking 内容、输出能力、工具策略和缓存策略；凭据与传输超时可以更新，但任何会改变请求或续传语义的字段都只能在全新上下文生效。它必须提供真实上下文窗口与最大输出能力，不能用脱离模型的 48k／128k 产品常量代替。
 _Avoid_：自动猜测模型能力、会话中途换模、只比较模型名、固定全局 token 预算
@@ -218,6 +222,10 @@ _Avoid_：清空世界、清空页面调用轨迹、把旧 conversation 发给�
 **追加上下文**：
 点击同名按钮后，已有上下文且输入非空时只追加玩家原文，输入为空时不制造 user 消息而直接触发续写；没有上下文且输入非空时自动按全新上下文开始。它是一次提交动作，不是需要保持的游玩模式。
 _Avoid_：重新拼接历史、连续会话、自动摘要
+
+**取消生成**：
+玩家按当前 world、call chain 与 exchange 的精确身份请求 Runtime 停止这一轮。Runtime 把取消信号传到 Chat Completions、OpenAI Responses 或 Anthropic Messages 的实际 Provider 请求；已经提交的玩家原文和先前成立的 Authority 步骤保留，未完整结算的模型片段不进入 transcript、故事或 Authority。请求若已经派发则不能重放；若能证明取消发生在下一次派发之前，冻结请求仍可原样继续。浏览器流断开只是呈现故障，不等同玩家授权取消。
+_Avoid_：回滚玩家原文、把取消当 Provider 故障、按旧 exchange 误取消、断线即取消
 
 **原样重发模型请求**：
 模型响应中断后，以空输入点击追加上下文，重新发送 Runtime 在派发前持久保存的上一份完整模型请求；不新增玩家消息，也不把中断片段放进模型上下文。它没有独立按钮或调用链事件。

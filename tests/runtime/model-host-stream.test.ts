@@ -2,6 +2,7 @@ import { expect, test, vi } from "vitest";
 
 import { FileNativeModelHost } from "../../src/runtime/model/FileNativeModelAdapters.ts";
 import {
+  ModelHostCancelledError,
   ModelHostOutcomeUnknownError,
   type ModelHostDelta,
   type ModelHostExchange,
@@ -521,6 +522,39 @@ test("Anthropic Messages 游玩请求用 SSE 保留 thinking 签名与完整 con
       ],
     },
   });
+});
+
+test.each([
+  "chat_completions",
+  "openai_responses",
+  "anthropic_messages",
+] as const)("%s 会把玩家取消传到底层 Provider 请求", async (provider) => {
+  let providerSignal: AbortSignal | null | undefined;
+  const fetch_ = vi.fn<typeof fetch>().mockImplementation((_url, init) => {
+    providerSignal = init?.signal;
+    return new Promise<Response>((_resolve, reject) => {
+      const rejectCancelled = (): void =>
+        reject(new DOMException("The operation was aborted.", "AbortError"));
+      if (providerSignal?.aborted === true) rejectCancelled();
+      else
+        providerSignal?.addEventListener("abort", rejectCancelled, {
+          once: true,
+        });
+    });
+  });
+  const host = modelHost(provider, fetch_);
+  const controller = new AbortController();
+  const pending = host.exchange(exchange(provider), {
+    signal: controller.signal,
+  });
+
+  await vi.waitFor(() => expect(fetch_).toHaveBeenCalledOnce());
+  expect(providerSignal).toBe(controller.signal);
+  const cancelled = expect(pending).rejects.toBeInstanceOf(
+    ModelHostCancelledError,
+  );
+  controller.abort();
+  await cancelled;
 });
 
 test.each([

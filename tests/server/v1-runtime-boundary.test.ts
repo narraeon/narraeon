@@ -7,6 +7,7 @@ import { afterEach, expect, test } from "vitest";
 
 import {
   v1Protocol,
+  type V1PlayCallChainStreamFrame,
   type V1PlayCallChainView,
   type V1Request,
 } from "../../src/protocol/v1.ts";
@@ -90,6 +91,21 @@ test("进度轮询不写访问日志，调用链中断写出原始 Provider 原�
             lastFailure: "Provider 请求失败：502 upstream disconnected",
           },
         });
+      if (request.type === "play.chain.append")
+        return Promise.resolve({
+          protocol: v1Protocol,
+          result: {
+            status: "interrupted",
+            lastFailure: "The player cancelled model generation.",
+            events: [
+              {
+                id: 1,
+                kind: "cancellation",
+                message: "The player cancelled model generation.",
+              },
+            ],
+          },
+        });
       return Promise.resolve({ protocol: v1Protocol, result: null });
     },
   } as unknown as V1Runtime;
@@ -148,6 +164,22 @@ test("进度轮询不写访问日志，调用链中断写出原始 Provider 原�
     },
   });
   expect(interrupted.statusCode).toBe(200);
+  const cancelled = await server.inject({
+    method: "POST",
+    url: "/api/runtime/v1",
+    headers,
+    payload: {
+      protocol: v1Protocol,
+      request: {
+        type: "play.chain.append",
+        worldId: "world-one",
+        chainId: "chain-one",
+        exchangeId: "exchange-two",
+        playerText: "Continue.",
+      },
+    },
+  });
+  expect(cancelled.statusCode).toBe(200);
   await server.close();
 
   const entries = output
@@ -156,14 +188,16 @@ test("进度轮询不写访问日志，调用链中断写出原始 Provider 原�
     .filter(Boolean)
     .map((line) => JSON.parse(line) as Record<string, unknown>);
   expect(entries.filter(({ msg }) => msg === "incoming request")).toHaveLength(
-    1,
+    2,
   );
   expect(entries.filter(({ msg }) => msg === "request completed")).toHaveLength(
-    1,
+    2,
   );
-  expect(
-    entries.find(({ msg }) => msg === "play call interrupted"),
-  ).toMatchObject({
+  const interruptions = entries.filter(
+    ({ msg }) => msg === "play call interrupted",
+  );
+  expect(interruptions).toHaveLength(1);
+  expect(interruptions[0]).toMatchObject({
     runtimeRequestType: "play.chain.start",
     playCallFailure: "Provider 请求失败：502 upstream disconnected",
   });
@@ -240,6 +274,129 @@ test("生产 HTTP 边界把 Provider 文本增量作为 NDJSON 调用链流直�
     "snapshot",
   ]);
   expect(frames.at(-1)).toMatchObject({ kind: "snapshot", final: true });
+});
+
+test("模型流仍在等待时，独立的精确取消请求可以终止本轮并返回最终快照", async () => {
+  const root = await mkdtemp(join(tmpdir(), "narraeon-v1-play-cancel-"));
+  roots.push(root);
+  const staticRoot = join(root, "dist");
+  await mkdir(staticRoot, { recursive: true });
+  await writeFile(join(staticRoot, "index.html"), "<!doctype html>");
+  const running = playChainView("running", "");
+  const activeAssistant = running.events.at(-1);
+  if (activeAssistant?.kind !== "assistant")
+    throw new Error("Expected an active assistant event");
+  const cancelled: V1PlayCallChainView = {
+    ...running,
+    status: "interrupted",
+    events: [
+      running.events[0]!,
+      { ...activeAssistant, status: "interrupted" },
+      {
+        id: 3,
+        kind: "cancellation",
+        message: "The player cancelled model generation.",
+      },
+    ],
+    lastFailure: "The player cancelled model generation.",
+    updatedAt: 3,
+  };
+  let markStarted: (() => void) | undefined;
+  const started = new Promise<void>((resolve) => {
+    markStarted = resolve;
+  });
+  let finish: (() => void) | undefined;
+  const runtime = {
+    handle(request: V1Request, observer?: PlayCallChainObserver) {
+      if (request.type === "play.chain.start") {
+        observer?.onSnapshot?.(running);
+        markStarted?.();
+        return new Promise<{ protocol: typeof v1Protocol; result: unknown }>(
+          (resolve) => {
+            finish = () => resolve({ protocol: v1Protocol, result: cancelled });
+          },
+        );
+      }
+      if (request.type === "play.chain.cancel") {
+        expect(request).toMatchObject({
+          worldId: "world-one",
+          chainId: "chain-one",
+          exchangeId: "exchange-one",
+        });
+        finish?.();
+        return Promise.resolve({
+          protocol: v1Protocol,
+          result: { outcome: "cancellation_requested" },
+        });
+      }
+      return Promise.reject(new Error(`Unexpected request: ${request.type}`));
+    },
+  } as unknown as V1Runtime;
+  const server = await createServer({
+    runtime,
+    staticRoot,
+    port: 4317,
+    logger: false,
+  });
+  const headers = {
+    "content-type": "application/json",
+    origin: "http://127.0.0.1:4317",
+  };
+
+  const streamed = server.inject({
+    method: "POST",
+    url: "/api/runtime/v1",
+    headers: { ...headers, accept: "application/x-ndjson" },
+    payload: {
+      protocol: v1Protocol,
+      request: {
+        type: "play.chain.start",
+        worldId: "world-one",
+        chainId: "chain-one",
+        exchangeId: "exchange-one",
+        playerText: "I wait for Alex to answer.",
+      },
+    },
+  });
+  await started;
+  const cancellation = await server.inject({
+    method: "POST",
+    url: "/api/runtime/v1",
+    headers,
+    payload: {
+      protocol: v1Protocol,
+      request: {
+        type: "play.chain.cancel",
+        worldId: "world-one",
+        chainId: "chain-one",
+        exchangeId: "exchange-one",
+      },
+    },
+  });
+  const response = await streamed;
+  await server.close();
+
+  expect(cancellation.statusCode).toBe(200);
+  expect(cancellation.json()).toMatchObject({
+    result: { outcome: "cancellation_requested" },
+  });
+  const finalFrame = response.body
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as { frame: V1PlayCallChainStreamFrame })
+    .at(-1)?.frame;
+  expect(finalFrame).toMatchObject({
+    kind: "snapshot",
+    final: true,
+    value: {
+      status: "interrupted",
+      events: [
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({ kind: "cancellation" }),
+      ],
+    },
+  });
 });
 
 test("生产 HTTP 边界只接受显式 runtime/v1 envelope 并返回当前工作区", async () => {

@@ -150,6 +150,12 @@ export type V1Request =
       exchangeId: string;
       playerText: string;
     }
+  | {
+      type: "play.chain.cancel";
+      worldId: string;
+      chainId: string;
+      exchangeId: string;
+    }
   | { type: "play.chain.inspect"; worldId: string }
   | {
       type: "play.timeline.page";
@@ -209,6 +215,29 @@ export interface V1Response {
 }
 
 export type V1PlayCallChainStatus = "ready" | "running" | "interrupted";
+
+export type V1PlayRunPhase =
+  | "preparing"
+  | "waiting"
+  | "reasoning"
+  | "text"
+  | "tool"
+  | "followup"
+  | "cancelling";
+
+/** Ephemeral observation of the one model invocation currently owned by Runtime. */
+export interface V1PlayRunProgress {
+  chainId: string;
+  exchangeId: string;
+  phase: V1PlayRunPhase;
+  startedAt: number;
+  lastActivityAt: number;
+  reasoningChars: number;
+  textChars: number;
+  toolChars: number;
+  toolCalls: number;
+  dispatches: number;
+}
 
 export type V1AssistantResponseKind =
   "pending" | "narrative" | "tool_step" | "empty";
@@ -284,6 +313,11 @@ export type V1PlayCallChainEvent =
       id: number;
       kind: "failure";
       message: string;
+    }
+  | {
+      id: number;
+      kind: "cancellation";
+      message: string;
     };
 
 export type V1PlayTimelineEventSummary =
@@ -314,7 +348,7 @@ export type V1PlayTimelineEventSummary =
       usage?: ModelUsage;
       detailsAvailable: true;
     }
-  | Extract<V1PlayCallChainEvent, { kind: "failure" }>;
+  | Extract<V1PlayCallChainEvent, { kind: "failure" | "cancellation" }>;
 
 export type V1PlayTimelineItem =
   | {
@@ -376,6 +410,8 @@ export interface V1PlayCallChainContextView {
 export interface V1PlayCallChainView extends V1PlayCallChainContextView {
   worldId: string;
   previousContexts: V1PlayCallChainContextView[];
+  /** Present only while this Runtime process owns the active invocation. */
+  activeInvocation?: V1PlayRunProgress;
 }
 
 /** Incremental browser projection of the Provider stream. */
@@ -521,6 +557,11 @@ const requiredFields: Record<
     chainId: "string",
     exchangeId: "string",
     playerText: "string",
+  },
+  "play.chain.cancel": {
+    worldId: "string",
+    chainId: "string",
+    exchangeId: "string",
   },
   "play.chain.inspect": { worldId: "string" },
   "play.timeline.page": { worldId: "string", limit: "number" },
@@ -818,6 +859,7 @@ const requestTypes = new Set([
   "play.chain.revise-player",
   "play.chain.start",
   "play.chain.append",
+  "play.chain.cancel",
   "play.chain.inspect",
   "play.timeline.page",
   "play.timeline.detail",

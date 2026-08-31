@@ -846,6 +846,7 @@ const settingImprovementEnglishMessages: Record<string, string> = {
   轮: "",
   "正在建立连接…": "Connecting…",
   工具调用: "Tool calls",
+  "Provider 派发": "Provider dispatches",
   自检未通过: "Failed checks",
   协议错误: "Protocol errors",
   正在写: "Writing",
@@ -1136,6 +1137,14 @@ const worldPageEnglishMessages: Record<string, string> = {
   "正在原样发送上次未完成的模型请求…":
     "Resending the previous incomplete model request unchanged…",
   "正在沿现有上下文继续生成…": "Continuing from the existing context…",
+  "正在取消模型生成…": "Cancelling model generation…",
+  "模型生成已取消。": "Model generation cancelled.",
+  生成已取消: "Generation cancelled",
+  "本轮生成已停止；已提交的玩家原文保留，未完成的模型输出不会进入故事。":
+    "This generation was stopped. The committed player message is preserved, and incomplete model output will not enter the story.",
+  "模型调用已经结束，正在刷新结果…":
+    "The model call has already ended; refreshing the result…",
+  模型调用失败: "Model call failed",
   "模型请求中断；清空输入后点击追加上下文即可原样发送上次请求。":
     "The model request was interrupted. Clear the input and append context to resend the previous request unchanged.",
   "调用链处理失败；旧请求不能重发，请使用全新上下文。":
@@ -1183,6 +1192,28 @@ const worldPageEnglishMessages: Record<string, string> = {
   已提交叙事: "Committed narrative",
   世界管理: "World management",
   世界游玩: "World play",
+  本次模型调用进度: "Current model-call progress",
+  "正在建立调用…": "Establishing the model call…",
+  "已运行 {seconds} 秒": "Running for {seconds} seconds",
+  尚未收到模型数据: "No model data received yet",
+  刚刚收到新数据: "New data received just now",
+  "{seconds} 秒没有新数据": "No new data for {seconds} seconds",
+  返回推理: "Returned reasoning",
+  工具参数: "Tool arguments",
+  "{count} 字": "{count} characters",
+  "Provider 尚未返回可区分的增量；这可能是排队、模型内部思考或网络等待。":
+    "The Provider has not returned a distinguishable delta yet; it may be queued, thinking internally, or waiting on the network.",
+  "已有 {seconds} 秒没有收到任何新数据，模型调用可能已经卡住；你可以继续等待或取消。":
+    "No new data has arrived for {seconds} seconds. The model call may be stuck; you can keep waiting or cancel it.",
+  "正在准备模型请求…": "Preparing the model request…",
+  "正在等待模型响应…": "Waiting for the model response…",
+  "思考中（正在接收 Provider 返回推理）":
+    "Reasoning (receiving Provider-returned reasoning)",
+  "正在输出正文…": "Streaming response text…",
+  "正在处理工具调用…": "Processing tool calls…",
+  "正在生成界面产物…": "Generating interface artifacts…",
+  "正在取消…": "Cancelling…",
+  取消生成: "Cancel generation",
   故事: "Story",
   模型响应中: "Model responding",
   调用链记录: "Call-chain record",

@@ -14,6 +14,8 @@ Authority 结算只查看完整投影是否含工具调用，不改写续传载�
 
 请求已派发但没有完整结果时同样 fail closed。传输中断、无法确认的响应或进程在“派发可能已经开始”之后退出，都不能用旧请求重试，因为模型可能已经产生工具调用或其他外部可见结果；只有 Provider 在生成前明确拒绝，或持久状态能证明派发尚未发生，才允许原样重试冻结请求。
 
+玩家显式取消已经派发的请求也是一种已知原因的 outcome unknown：adapter 可以把它与 Provider 故障分开呈现和记录，但不能因此获得重放权限，也不能用已收到的正文、reasoning 或工具片段重建续传载荷。取消若发生在下一次 Provider 派发之前，则 Runtime 可以保留那份已冻结请求的继续资格。取消作用于实际 fetch／流读取，不由浏览器展示流的连接状态推断。
+
 返回推理只作为 Provider 明示的诊断投影保存，不被宣称为隐藏思维，也不进入玩家正文、已提交叙事或世界 Authority；签名、redacted 或加密推理可以为了续传留在不透明载荷中，但不向玩家投影。Chat Completions 代理若只暴露 `reasoning_content`，就不能保证 Claude 签名 thinking 的无损续传；需要该能力时选择 Anthropic Messages，或选择能返回 `reasoning.encrypted_content` 的 OpenAI Responses 兼容路径。
 
 工具结果是 Runtime 事实，不属于 Provider 续传载荷。encoder 按目标协议生成对应结果项；其中 Anthropic 要求同一轮并行调用的全部 `tool_result` blocks 位于紧随 assistant 的同一个 `user` message，并对失败结果携带 `is_error`。这层协议分组不能反过来改变 Runtime 中逐调用的工具记录、执行顺序或 Authority 边界。

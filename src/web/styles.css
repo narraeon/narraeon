@@ -2704,6 +2704,80 @@ label {
   background: rgb(107 32 25 / 28%);
 }
 
+.model-run-progress {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--panel);
+}
+
+.model-run-headline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.45rem 0.9rem;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.model-run-headline strong {
+  color: #ecf4f1;
+  font-size: 0.9rem;
+}
+
+.model-run-headline span:last-child {
+  margin-left: auto;
+}
+
+.model-run-age-stalled,
+.model-run-stalled-note {
+  color: #f1c460;
+}
+
+.model-run-counters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1.25rem;
+  margin: 0;
+}
+
+.model-run-counters div {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+}
+
+.model-run-counters dt,
+.model-run-note,
+.model-run-stalled-note {
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.model-run-counters dd {
+  margin: 0;
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.model-run-note,
+.model-run-stalled-note {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.model-run-stalled-note {
+  color: #f1c460;
+}
+
+.model-run-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 /* AI setting improvement */
 
 .setting-improvement-workspace {
@@ -4259,6 +4333,7 @@ summary:focus-visible {
   background: rgb(4 15 13 / 72%);
 }
 
+.play-call-failure,
 .play-retry-note,
 .model-required-callout {
   display: flex;
@@ -4270,6 +4345,27 @@ summary:focus-visible {
   color: #ead7b5;
   background: rgb(105 72 24 / 14%);
   font-size: 0.78rem;
+}
+
+.play-call-failure {
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid rgb(255 152 137 / 38%);
+  border-radius: 0.65rem;
+  color: #ffd6cf;
+  background: rgb(107 32 25 / 22%);
+  font-size: 0.78rem;
+}
+
+.play-call-failure strong,
+.play-call-failure p {
+  margin: 0;
+}
+
+.play-call-failure p {
+  overflow-wrap: anywhere;
+  line-height: 1.5;
 }
 
 .play-retry-note p,
@@ -4398,14 +4494,16 @@ summary:focus-visible {
 
 .call-chain-events article,
 .call-chain-events details,
-.call-chain-failure {
+.call-chain-failure,
+.call-chain-cancellation {
   border: 1px solid var(--border);
   border-radius: 0.8rem;
   background: rgb(13 39 34 / 72%);
 }
 
 .call-chain-events article,
-.call-chain-failure {
+.call-chain-failure,
+.call-chain-cancellation {
   padding: 0.8rem 0.95rem;
 }
 
@@ -4427,7 +4525,8 @@ summary:focus-visible {
 }
 
 .call-chain-events article p,
-.call-chain-failure p {
+.call-chain-failure p,
+.call-chain-cancellation p {
   margin: 0.45rem 0 0;
   line-height: 1.65;
   white-space: pre-wrap;
@@ -4548,6 +4647,11 @@ summary:focus-visible {
 .call-chain-failure {
   border-color: rgb(255 152 137 / 38%);
   background: rgb(107 32 25 / 18%);
+}
+
+.call-chain-cancellation {
+  border-color: rgb(158 229 209 / 28%);
+  color: var(--muted);
 }
 
 .call-chain-assistant small {

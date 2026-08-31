@@ -39,6 +39,14 @@ import {
 } from "./ArtifactDebugger.tsx";
 import { projectUncoveredPlayerViews } from "./PlayerViewFallback.ts";
 import { ModelUsageBreakdown } from "./ModelUsageBreakdown.tsx";
+import { PlayRunProgress } from "./PlayRunProgress.tsx";
+import {
+  activePlayExchangeId,
+  createPlayRunProgress,
+  progressAfterFrame,
+  progressFromCallChain,
+  type PlayRunProgressValue,
+} from "./PlayRunProgressState.ts";
 
 type WorldSection = "play" | "documents" | "history" | "manage";
 type PendingAction =
@@ -135,6 +143,12 @@ export function WorldPage({
   const [playerText, setPlayerText] = useState("");
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const [playFailure, setPlayFailure] = useState<string | null>(null);
+  const [playProgress, setPlayProgress] = useState<PlayRunProgressValue | null>(
+    null,
+  );
+  const [playProgressNow, setPlayProgressNow] = useState(0);
+  const cancelledExchangeRef = useRef<string | null>(null);
   const [worldNameDraft, setWorldNameDraft] = useState(worldTitle);
   const [lastWorldTitle, setLastWorldTitle] = useState(worldTitle);
   if (lastWorldTitle !== worldTitle) {
@@ -222,6 +236,29 @@ export function WorldPage({
         });
         if (!active || next === null) return;
         setPlayCallChain(next);
+        setPlayFailure(playCallFailureMessage(next));
+        if (next.status === "running") {
+          setPlayProgress((current) =>
+            progressFromCallChain(
+              next.chainId,
+              activePlayExchangeId(next, null, next.chainId),
+              next,
+              current,
+            ),
+          );
+          setPlayProgressNow(Date.now());
+        } else setPlayProgress(null);
+        applyPlayTimelineFrame(
+          { kind: "snapshot", value: next, final: next.status !== "running" },
+          setPlayTimeline,
+        );
+        if (
+          cancelledExchangeRef.current !== null &&
+          next.status !== "running"
+        ) {
+          cancelledExchangeRef.current = null;
+          setFeedback({ kind: "status", text: uiText("模型生成已取消。") });
+        }
       } catch {
         // Inspection is observational. The initiating request remains the
         // source of truth and the last visible call-chain snapshot stays put.
@@ -340,6 +377,7 @@ export function WorldPage({
     playCallChain?.chainId ?? playTimeline?.activeChainId ?? null;
   const activeCanRetry =
     playCallChain?.canRetry ?? playTimeline?.activeCanRetry ?? false;
+  const playProgressActive = playProgress !== null;
   const hasPlayerText = playerText.trim().length > 0;
   const playIdle = pending === null && activeStatus !== "running";
   const canStartFresh = hasPlayerText && playIdle;
@@ -349,18 +387,38 @@ export function WorldPage({
       ? hasPlayerText
       : activeStatus === "ready" || (!hasPlayerText && activeCanRetry));
 
+  useEffect(() => {
+    if (!playProgressActive) return;
+    const timer = setInterval(() => setPlayProgressNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [playProgressActive]);
+
   function applyWorld(
     next: WorldReadView,
     preserveControlDraft: boolean,
   ): void {
+    const nextChain = next.playCallChain;
+    const nextTimeline = next.playTimeline ?? legacyTimelinePage(next);
     setWorld(next);
     if (!preserveControlDraft) {
       setControlFiles(JSON.stringify(next.control, null, 2));
       setControlDirty(false);
       setControlPreview(null);
     }
-    setPlayCallChain(next.playCallChain);
-    setPlayTimeline(next.playTimeline ?? legacyTimelinePage(next));
+    setPlayCallChain(nextChain);
+    setPlayTimeline(nextTimeline);
+    setPlayFailure(playCallFailureMessage(nextChain));
+    if (nextChain?.status === "running") {
+      setPlayProgress((current) =>
+        progressFromCallChain(
+          nextChain.chainId,
+          activePlayExchangeId(nextChain, nextTimeline, nextChain.chainId),
+          nextChain,
+          current,
+        ),
+      );
+      setPlayProgressNow(Date.now());
+    } else setPlayProgress(null);
     setSelectedDocument((current) =>
       selectedStateDocument(next.state, current),
     );
@@ -383,6 +441,11 @@ export function WorldPage({
     if ((fresh && !canStartFresh) || (!fresh && !canAppend)) return;
     const chainId = fresh ? createClientId("play-chain") : activeChainId;
     const exchangeId = createClientId("play-exchange");
+    const startedAt = Date.now();
+    cancelledExchangeRef.current = null;
+    setPlayFailure(null);
+    setPlayProgressNow(startedAt);
+    setPlayProgress(createPlayRunProgress(chainId, exchangeId, startedAt));
     setPending(context === "fresh" ? "play-fresh" : "play-append");
     setFeedback({
       kind: "status",
@@ -413,38 +476,115 @@ export function WorldPage({
       const next = await requestPlayCallChain(client, request, (frame) => {
         applyPlayCallChainFrame(frame, setPlayCallChain);
         applyPlayTimelineFrame(frame, setPlayTimeline);
+        setPlayProgress((current) =>
+          progressAfterFrame(current, frame, chainId, exchangeId),
+        );
       });
       setPlayCallChain(next);
       if (hasPlayerText) setPlayerText("");
       await refreshWorld();
-      setFeedback({
-        kind: next.status === "interrupted" ? "error" : "status",
-        text:
-          next.status === "interrupted"
-            ? next.canRetry
+      const wasCancelled = cancelledExchangeRef.current === exchangeId;
+      if (wasCancelled) {
+        setPlayFailure(null);
+        setFeedback({ kind: "status", text: uiText("模型生成已取消。") });
+      } else if (next.status === "interrupted") {
+        setPlayFailure(
+          playCallFailureMessage(next) ??
+            (next.canRetry
               ? uiText(
                   "模型请求中断；清空输入后点击追加上下文即可原样发送上次请求。",
                 )
-              : uiText("调用链处理失败；旧请求不能重发，请使用全新上下文。")
-            : !fresh && !hasPlayerText
+              : uiText("调用链处理失败；旧请求不能重发，请使用全新上下文。")),
+        );
+        setFeedback(null);
+      } else {
+        setPlayFailure(null);
+        setFeedback({
+          kind: "status",
+          text:
+            !fresh && !hasPlayerText
               ? uiText("AI 已沿现有上下文继续生成，没有追加玩家指令。")
               : uiText("调用链已返回；模型完成的叙事和世界变化已经分别提交。"),
-      });
+        });
+      }
     } catch (reason: unknown) {
       const inspected = await requestRuntime<V1PlayCallChainView | null>(
         client,
         { type: "play.chain.inspect", worldId },
       ).catch(() => null);
-      if (inspected !== null) setPlayCallChain(inspected);
+      if (inspected !== null) {
+        setPlayCallChain(inspected);
+        if (
+          hasPlayerText &&
+          inspected.events.some(
+            (event) =>
+              event.kind === "player" && event.exchangeId === exchangeId,
+          )
+        )
+          setPlayerText("");
+      }
       const timeline = await requestRuntime<V1PlayTimelinePage>(client, {
         type: "play.timeline.page",
         worldId,
         limit: 40,
       }).catch(() => null);
       if (timeline !== null) setPlayTimeline(timeline);
-      setFeedback({ kind: "error", text: errorMessage(reason) });
+      if (cancelledExchangeRef.current === exchangeId) {
+        setPlayFailure(null);
+        setFeedback({ kind: "status", text: uiText("模型生成已取消。") });
+      } else {
+        setPlayFailure(
+          playCallFailureMessage(inspected) ?? errorMessage(reason),
+        );
+        setFeedback(null);
+      }
     } finally {
+      if (cancelledExchangeRef.current === exchangeId)
+        cancelledExchangeRef.current = null;
+      setPlayProgress((current) =>
+        current?.exchangeId === exchangeId ? null : current,
+      );
       setPending(null);
+    }
+  }
+
+  async function cancelPlayGeneration(): Promise<void> {
+    if (playProgress === null || playProgress.phase === "cancelling") return;
+    const { chainId, exchangeId } = playProgress;
+    cancelledExchangeRef.current = exchangeId;
+    setPlayProgress((current) =>
+      current?.chainId === chainId && current.exchangeId === exchangeId
+        ? { ...current, phase: "cancelling" }
+        : current,
+    );
+    setFeedback({ kind: "status", text: uiText("正在取消模型生成…") });
+    try {
+      const result = await requestRuntime<{
+        outcome: "cancellation_requested" | "not_running";
+      }>(client, {
+        type: "play.chain.cancel",
+        worldId,
+        chainId,
+        exchangeId,
+      });
+      if (result.outcome === "not_running") {
+        if (cancelledExchangeRef.current === exchangeId)
+          cancelledExchangeRef.current = null;
+        setFeedback({
+          kind: "status",
+          text: uiText("模型调用已经结束，正在刷新结果…"),
+        });
+        await refreshWorld();
+      }
+    } catch (reason: unknown) {
+      if (cancelledExchangeRef.current === exchangeId)
+        cancelledExchangeRef.current = null;
+      setPlayProgress((current) =>
+        current?.chainId === chainId && current.exchangeId === exchangeId
+          ? { ...current, phase: "waiting" }
+          : current,
+      );
+      setFeedback({ kind: "error", text: errorMessage(reason) });
     }
   }
 
@@ -908,6 +1048,16 @@ export function WorldPage({
                 )}
 
                 <ArtifactExtensionMount mount="composer_above" />
+                {playFailure === null ? null : (
+                  <div
+                    className="play-call-failure"
+                    role="alert"
+                    aria-label={uiText("模型调用失败")}
+                  >
+                    <strong>{uiText("模型调用失败")}</strong>
+                    <p>{playFailure}</p>
+                  </div>
+                )}
                 {!activeCanRetry ? null : (
                   <div className="play-retry-note" role="alert">
                     <span aria-hidden="true">!</span>
@@ -917,6 +1067,13 @@ export function WorldPage({
                       )}
                     </p>
                   </div>
+                )}
+                {playProgress === null ? null : (
+                  <PlayRunProgress
+                    progress={playProgress}
+                    now={playProgressNow}
+                    onCancel={() => void cancelPlayGeneration()}
+                  />
                 )}
                 <label className="composer-field">
                   <span className="visually-hidden">{uiText("你的行动")}</span>
@@ -1757,6 +1914,18 @@ function TimelineEvent({
     );
   }
 
+  if (event.kind === "cancellation")
+    return (
+      <li className="call-chain-cancellation" role="status">
+        <strong>{uiText("生成已取消")}</strong>
+        <p>
+          {uiText(
+            "本轮生成已停止；已提交的玩家原文保留，未完成的模型输出不会进入故事。",
+          )}
+        </p>
+      </li>
+    );
+
   return (
     <li className="call-chain-failure" role="alert">
       <strong>{uiText("调用链中断")}</strong>
@@ -1957,6 +2126,29 @@ function errorMessage(reason: unknown): string {
   return reason instanceof Error ? reason.message : uiText("操作失败");
 }
 
+function playCallFailureMessage(
+  chain: V1PlayCallChainView | null,
+): string | null {
+  if (
+    chain?.status !== "interrupted" ||
+    chain.events.at(-1)?.kind === "cancellation"
+  )
+    return null;
+  const event = chain.events.findLast(
+    (
+      candidate,
+    ): candidate is Extract<V1PlayCallChainEvent, { kind: "failure" }> =>
+      candidate.kind === "failure",
+  );
+  const detail = chain.lastFailure ?? event?.message ?? null;
+  const guidance = chain.canRetry
+    ? uiText("模型请求中断；清空输入后点击追加上下文即可原样发送上次请求。")
+    : uiText("调用链处理失败；旧请求不能重发，请使用全新上下文。");
+  return detail === null || detail.includes(guidance)
+    ? (detail ?? guidance)
+    : `${detail} ${guidance}`;
+}
+
 function requestRuntime<T>(
   client: WorldPageClient,
   request: V1Request,
@@ -2118,7 +2310,11 @@ function applyPlayTimelineFrame(
 function summarizeTimelineEvent(
   event: V1PlayCallChainEvent,
 ): V1PlayTimelineEventSummary {
-  if (event.kind === "player" || event.kind === "failure")
+  if (
+    event.kind === "player" ||
+    event.kind === "failure" ||
+    event.kind === "cancellation"
+  )
     return structuredClone(event);
   if (event.kind === "assistant") {
     const { reasoning, toolFragment, ...summary } = event;

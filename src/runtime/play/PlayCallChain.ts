@@ -4,6 +4,7 @@ import type {
   V1PlayCallChainContextView,
   V1PlayCallChainEvent,
   V1PlayCallChainView,
+  V1PlayRunProgress,
 } from "../../protocol/v1.ts";
 import type {
   ModelHost,
@@ -15,6 +16,7 @@ import type {
 } from "../model/ModelHost.ts";
 import {
   equalModelHostBinding,
+  ModelHostCancelledError,
   ModelHostContinuationError,
   ModelHostFailureError,
   ModelHostOutcomeUnknownError,
@@ -34,6 +36,7 @@ import type { ArtifactStore } from "../artifact/FileNativeArtifactStore.ts";
 import type { PlayPresetBinding } from "./FileNativePlayPresetStore.ts";
 import {
   runPlayFollowupRequests,
+  type PlayFollowupObserver,
   type PlayFollowupOutcome,
 } from "./PlayFollowupRequests.ts";
 import {
@@ -88,6 +91,34 @@ interface PreparedToolResult {
   transcript: Extract<ModelHostAppendItem, { kind: "tool" }>;
 }
 
+interface PlayCallChainStartInput {
+  worldId: string;
+  chainId: string;
+  exchangeId: string;
+  playerText: string;
+  hostBinding: FileNativePromptInput["hostBinding"];
+  playPreset: PlayPresetBinding;
+  modelBinding: ModelHostBinding;
+  modelHost: ModelHost;
+  observer?: PlayCallChainObserver;
+}
+
+interface PlayCallChainAppendInput {
+  worldId: string;
+  chainId: string;
+  exchangeId: string;
+  playerText: string;
+  modelHost: ModelHost;
+  observer?: PlayCallChainObserver;
+}
+
+interface ActivePlayInvocation extends V1PlayRunProgress {
+  worldId: string;
+  controller: AbortController;
+  /** False once a complete Provider result has entered durable settlement. */
+  abortable: boolean;
+}
+
 export class PlayCallChainError extends Error {
   constructor(message: string) {
     super(message);
@@ -120,6 +151,7 @@ export class PlayCallChain {
   readonly #active = new Map<string, PlayCallChainSession>();
   readonly #worldChains = new Map<string, string>();
   readonly #loadedCursors = new Map<string, PlayContextPersistenceCursor>();
+  readonly #activeInvocations = new Map<string, ActivePlayInvocation>();
 
   constructor(
     worlds: FileNativeWorldStore,
@@ -133,17 +165,14 @@ export class PlayCallChain {
     this.#failureLog = failureLog;
   }
 
-  async start(input: {
-    worldId: string;
-    chainId: string;
-    exchangeId: string;
-    playerText: string;
-    hostBinding: FileNativePromptInput["hostBinding"];
-    playPreset: PlayPresetBinding;
-    modelBinding: ModelHostBinding;
-    modelHost: ModelHost;
-    observer?: PlayCallChainObserver;
-  }): Promise<V1PlayCallChainView> {
+  async start(input: PlayCallChainStartInput): Promise<V1PlayCallChainView> {
+    return this.#runInvocation(input, (signal) => this.#start(input, signal));
+  }
+
+  async #start(
+    input: PlayCallChainStartInput,
+    signal: AbortSignal,
+  ): Promise<V1PlayCallChainView> {
     validateIdentity(input.chainId, "call-chain ID");
     validateIdentity(input.exchangeId, "exchange ID");
     validatePlayerText(input.playerText);
@@ -254,18 +283,19 @@ export class PlayCallChain {
       input.playerText,
       "fresh",
       input.modelHost,
+      signal,
       input.observer,
     );
   }
 
-  async append(input: {
-    worldId: string;
-    chainId: string;
-    exchangeId: string;
-    playerText: string;
-    modelHost: ModelHost;
-    observer?: PlayCallChainObserver;
-  }): Promise<V1PlayCallChainView> {
+  async append(input: PlayCallChainAppendInput): Promise<V1PlayCallChainView> {
+    return this.#runInvocation(input, (signal) => this.#append(input, signal));
+  }
+
+  async #append(
+    input: PlayCallChainAppendInput,
+    signal: AbortSignal,
+  ): Promise<V1PlayCallChainView> {
     validateIdentity(input.exchangeId, "exchange ID");
     const session = await this.#requireChain(input.worldId, input.chainId);
     await this.#assertCurrentHead(session);
@@ -283,6 +313,7 @@ export class PlayCallChain {
           input.modelHost,
           structuredClone(session.lastRequest),
           session.lastRequestAttempt + 1,
+          signal,
           input.observer,
         );
       }
@@ -292,6 +323,7 @@ export class PlayCallChain {
         input.modelHost,
         createRequest(session, input.modelHost, session.exchange),
         1,
+        signal,
         input.observer,
       );
     }
@@ -316,8 +348,133 @@ export class PlayCallChain {
       input.playerText,
       "append",
       input.modelHost,
+      signal,
       input.observer,
     );
+  }
+
+  cancel(input: { worldId: string; chainId: string; exchangeId: string }): {
+    outcome: "cancellation_requested" | "not_running";
+  } {
+    validateIdentity(input.worldId, "world ID");
+    validateIdentity(input.chainId, "call-chain ID");
+    validateIdentity(input.exchangeId, "exchange ID");
+    const active = this.#activeInvocations.get(input.chainId);
+    if (
+      active?.worldId !== input.worldId ||
+      active?.exchangeId !== input.exchangeId ||
+      active?.abortable !== true
+    )
+      return { outcome: "not_running" };
+    if (!active.controller.signal.aborted) {
+      active.phase = "cancelling";
+      active.lastActivityAt = Date.now();
+      active.controller.abort();
+    }
+    return { outcome: "cancellation_requested" };
+  }
+
+  async #runInvocation(
+    input: {
+      worldId: string;
+      chainId: string;
+      exchangeId: string;
+    },
+    run: (signal: AbortSignal) => Promise<V1PlayCallChainView>,
+  ): Promise<V1PlayCallChainView> {
+    validateIdentity(input.worldId, "world ID");
+    validateIdentity(input.chainId, "call-chain ID");
+    validateIdentity(input.exchangeId, "exchange ID");
+    if (
+      this.#activeInvocations.has(input.chainId) ||
+      [...this.#activeInvocations.values()].some(
+        ({ worldId }) => worldId === input.worldId,
+      )
+    )
+      throw new PlayCallChainError(
+        "A model request is already running for this world or call chain.",
+      );
+    const startedAt = Date.now();
+    const invocation: ActivePlayInvocation = {
+      worldId: input.worldId,
+      chainId: input.chainId,
+      exchangeId: input.exchangeId,
+      phase: "preparing",
+      startedAt,
+      lastActivityAt: startedAt,
+      reasoningChars: 0,
+      textChars: 0,
+      toolChars: 0,
+      toolCalls: 0,
+      dispatches: 0,
+      controller: new AbortController(),
+      abortable: true,
+    };
+    this.#activeInvocations.set(input.chainId, invocation);
+    try {
+      return await run(invocation.controller.signal);
+    } finally {
+      if (this.#activeInvocations.get(input.chainId) === invocation)
+        this.#activeInvocations.delete(input.chainId);
+    }
+  }
+
+  #observeInvocation(
+    chainId: string,
+    phase: Exclude<V1PlayRunProgress["phase"], "cancelling">,
+    increments: Partial<
+      Pick<
+        V1PlayRunProgress,
+        | "reasoningChars"
+        | "textChars"
+        | "toolChars"
+        | "toolCalls"
+        | "dispatches"
+      >
+    > = {},
+  ): void {
+    const active = this.#activeInvocations.get(chainId);
+    if (active === undefined || active.phase === "cancelling") return;
+    active.phase = phase;
+    active.lastActivityAt = Date.now();
+    active.reasoningChars += increments.reasoningChars ?? 0;
+    active.textChars += increments.textChars ?? 0;
+    active.toolChars += increments.toolChars ?? 0;
+    active.toolCalls += increments.toolCalls ?? 0;
+    active.dispatches += increments.dispatches ?? 0;
+  }
+
+  #setInvocationAbortable(chainId: string, abortable: boolean): void {
+    const active = this.#activeInvocations.get(chainId);
+    if (active !== undefined) active.abortable = abortable;
+  }
+
+  #projectActiveView(session: PersistedPlayCallChain): V1PlayCallChainView {
+    const view = projectView(session);
+    const active = this.#activeInvocations.get(session.chainId);
+    if (active?.worldId !== session.worldId) return view;
+    const {
+      controller: _controller,
+      worldId: _worldId,
+      abortable: _abortable,
+      ...progress
+    } = active;
+    void _controller;
+    void _worldId;
+    void _abortable;
+    return { ...view, activeInvocation: structuredClone(progress) };
+  }
+
+  #notifySnapshot(
+    observer: PlayCallChainObserver | undefined,
+    session: PersistedPlayCallChain,
+  ): void {
+    try {
+      observer?.onSnapshot?.(this.#projectActiveView(session));
+    } catch {
+      // A browser stream may disconnect while the durable model request keeps
+      // running. Presentation failure never cancels or changes play Authority.
+    }
   }
 
   async inspectWorld(worldId: string): Promise<V1PlayCallChainView | null> {
@@ -325,8 +482,11 @@ export class PlayCallChain {
     const active =
       activeId === undefined ? undefined : this.#active.get(activeId);
     if (active !== undefined) {
-      await this.#reconcileSessionAdvance(active);
-      return projectView(active);
+      if (
+        this.#activeInvocations.get(active.chainId)?.worldId !== active.worldId
+      )
+        await this.#reconcileSessionAdvance(active);
+      return this.#projectActiveView(active);
     }
     const persisted = await this.#readPersisted(worldId);
     if (persisted === null) return null;
@@ -340,7 +500,7 @@ export class PlayCallChain {
     await this.#reconcileSessionAdvance(session, advance);
     if (session.status === "running")
       await this.#interruptAbandonedDispatch(session);
-    return projectView(session);
+    return this.#projectActiveView(session);
   }
 
   async deriveWorld(input: {
@@ -906,6 +1066,7 @@ export class PlayCallChain {
     playerText: string,
     context: "fresh" | "append",
     modelHost: ModelHost,
+    signal: AbortSignal,
     observer?: PlayCallChainObserver,
   ): Promise<V1PlayCallChainView> {
     if (duplicatePlayerExchange(session, exchangeId, playerText, context))
@@ -957,6 +1118,7 @@ export class PlayCallChain {
           modelHost,
           structuredClone(nextRequest),
           1,
+          signal,
           observer,
         );
       }
@@ -981,6 +1143,7 @@ export class PlayCallChain {
       modelHost,
       structuredClone(nextRequest),
       1,
+      signal,
       observer,
     );
   }
@@ -1335,11 +1498,21 @@ export class PlayCallChain {
     modelHost: ModelHost,
     firstRequest: ModelHostExchange,
     firstAttempt: number,
+    signal: AbortSignal,
     observer?: PlayCallChainObserver,
   ): Promise<V1PlayCallChainView> {
     let request = structuredClone(firstRequest);
     let attempt = firstAttempt;
     for (;;) {
+      this.#setInvocationAbortable(session.chainId, true);
+      if (signal.aborted)
+        return this.#cancelBeforeProviderDispatch(
+          session,
+          request,
+          attempt,
+          observer,
+        );
+      this.#observeInvocation(session.chainId, "waiting");
       session.status = "running";
       session.canRetry = false;
       session.lastFailure = null;
@@ -1377,12 +1550,29 @@ export class PlayCallChain {
       } satisfies Extract<PlayAdvanceBase, { advanceKind: "response" }>;
       await this.#worlds.playAdvances.begin(advance);
       crashAtPlayAdvanceEdge("after_response_advance_began");
-      notifySnapshot(observer, session);
+      this.#notifySnapshot(observer, session);
+      if (signal.aborted)
+        return this.#cancelBeforeProviderDispatch(
+          session,
+          request,
+          attempt,
+          observer,
+          advance,
+        );
 
       let response: Awaited<ReturnType<ModelHost["exchange"]>>;
       try {
+        this.#observeInvocation(session.chainId, "waiting", { dispatches: 1 });
         response = await modelHost.exchange(request, {
+          signal,
           onDelta: (delta) => {
+            this.#observeInvocation(session.chainId, delta.kind, {
+              ...(delta.kind === "reasoning"
+                ? { reasoningChars: delta.text.length }
+                : delta.kind === "text"
+                  ? { textChars: delta.text.length }
+                  : { toolChars: delta.text.length }),
+            });
             if (delta.kind === "text") event.text += delta.text;
             else if (delta.kind === "reasoning")
               event.reasoning = `${event.reasoning ?? ""}${delta.text}`;
@@ -1397,6 +1587,15 @@ export class PlayCallChain {
             });
           },
         });
+        if (signal.aborted)
+          throw new ModelHostCancelledError(
+            "The player cancelled the dispatched model request; its response was not committed and cannot be replayed.",
+          );
+        this.#setInvocationAbortable(session.chainId, false);
+        if ((response.toolCalls?.length ?? 0) > 0)
+          this.#observeInvocation(session.chainId, "tool", {
+            toolCalls: response.toolCalls?.length ?? 0,
+          });
         if (response.diagnostics !== undefined)
           await this.#failureLog?.recordExchangeIfActive(response.diagnostics);
       } catch (error: unknown) {
@@ -1407,7 +1606,10 @@ export class PlayCallChain {
             : "The model request was interrupted.";
         session.events.push({
           id: session.nextEventId++,
-          kind: "failure",
+          kind:
+            error instanceof ModelHostCancelledError
+              ? "cancellation"
+              : "failure",
           message,
         });
         session.status = "interrupted";
@@ -1422,7 +1624,7 @@ export class PlayCallChain {
           advance,
           session.parentHead,
         );
-        notifySnapshot(observer, session);
+        this.#notifySnapshot(observer, session);
         return projectView(session);
       }
 
@@ -1491,11 +1693,11 @@ export class PlayCallChain {
                   },
                 ],
               });
-            notifySnapshot(observer, session);
+            this.#notifySnapshot(observer, session);
             return projectView(session);
           }
           if (settled.status !== "ready") {
-            notifySnapshot(observer, session);
+            this.#notifySnapshot(observer, session);
             return projectView(session);
           }
           // The exchange has settled: no tool call is pending and the narrative
@@ -1509,13 +1711,32 @@ export class PlayCallChain {
                 "The play call chain recovered during a later model exchange and completed.",
               details: { parentHead: session.parentHead },
             });
-          await this.#runFollowups(session, modelHost, observer);
+          if ((session.followups?.length ?? 0) > 0) {
+            // Follow-up artifacts are part of this player-visible invocation.
+            // Keep `running` ephemeral: the settled main response remains the
+            // durable recovery point if this Runtime process stops here.
+            session.status = "running";
+            this.#observeInvocation(session.chainId, "followup");
+            this.#setInvocationAbortable(session.chainId, true);
+            this.#notifySnapshot(observer, session);
+          }
+          await this.#runFollowups(session, modelHost, signal, observer);
+          this.#setInvocationAbortable(session.chainId, false);
+          if (signal.aborted) {
+            session.events.push({
+              id: session.nextEventId++,
+              kind: "cancellation",
+              message:
+                "The player cancelled the remaining follow-up generation after the narrative was committed.",
+            });
+            touch(session);
+          }
           session.status = "ready";
           await this.#persist(session);
-          notifySnapshot(observer, session);
+          this.#notifySnapshot(observer, session);
           return projectView(session);
         }
-        notifySnapshot(observer, session);
+        this.#notifySnapshot(observer, session);
         request = settled.nextRequest;
         attempt = 1;
       } catch (error: unknown) {
@@ -1527,10 +1748,10 @@ export class PlayCallChain {
           if (recovered.kind === "continue") {
             request = recovered.nextRequest;
             attempt = 1;
-            notifySnapshot(observer, session);
+            this.#notifySnapshot(observer, session);
             continue;
           }
-          notifySnapshot(observer, session);
+          this.#notifySnapshot(observer, session);
           return projectView(session);
         }
         const message =
@@ -1556,10 +1777,45 @@ export class PlayCallChain {
         session.canRetry = false;
         session.lastFailure = message;
         await this.#persist(session);
-        notifySnapshot(observer, session);
+        this.#notifySnapshot(observer, session);
         return projectView(session);
       }
     }
+  }
+
+  async #cancelBeforeProviderDispatch(
+    session: PlayCallChainSession,
+    request: ModelHostExchange,
+    attempt: number,
+    observer?: PlayCallChainObserver,
+    advance?: Extract<PlayAdvanceBase, { advanceKind: "response" }>,
+  ): Promise<V1PlayCallChainView> {
+    if (advance !== undefined) {
+      const streaming = session.events.find(
+        (
+          event,
+        ): event is Extract<V1PlayCallChainEvent, { kind: "assistant" }> =>
+          event.kind === "assistant" && event.id === advance.eventId,
+      );
+      if (streaming !== undefined) streaming.status = "interrupted";
+    }
+    const message =
+      "The player cancelled before the next Provider dispatch; the frozen request can be resumed without replaying a completed model result.";
+    session.events.push({
+      id: session.nextEventId++,
+      kind: "cancellation",
+      message,
+    });
+    session.status = "interrupted";
+    session.canRetry = true;
+    session.lastRequest = structuredClone(request);
+    session.lastRequestAttempt = Math.max(0, attempt - 1);
+    session.lastFailure = message;
+    await this.#persist(session);
+    if (advance !== undefined)
+      await this.#worlds.playAdvances.markSettled(advance, session.parentHead);
+    this.#notifySnapshot(observer, session);
+    return projectView(session);
   }
 
   /**
@@ -1573,11 +1829,29 @@ export class PlayCallChain {
   async #runFollowups(
     session: PlayCallChainSession,
     modelHost: ModelHost,
+    signal: AbortSignal,
     observer?: PlayCallChainObserver,
   ): Promise<void> {
     const followups = session.followups ?? [];
     if (this.#artifacts === undefined || followups.length === 0) return;
+    const observeFollowupDelta = (
+      delta: Parameters<
+        NonNullable<PlayFollowupObserver["onProviderDelta"]>
+      >[0],
+    ): void => {
+      this.#observeInvocation(session.chainId, "followup", {
+        ...(delta.kind === "reasoning"
+          ? { reasoningChars: delta.text.length }
+          : delta.kind === "text"
+            ? { textChars: delta.text.length }
+            : { toolChars: delta.text.length }),
+      });
+      this.#notifySnapshot(observer, session);
+    };
     const record = (outcome: PlayFollowupOutcome): void => {
+      this.#observeInvocation(session.chainId, "followup", {
+        toolCalls: outcome.toolCalls.length,
+      });
       session.events.push({
         id: session.nextEventId++,
         kind: "followup",
@@ -1592,7 +1866,7 @@ export class PlayCallChain {
         ...(outcome.failure === undefined ? {} : { failure: outcome.failure }),
       });
       touch(session);
-      notifySnapshot(observer, session);
+      this.#notifySnapshot(observer, session);
     };
     try {
       await runPlayFollowupRequests({
@@ -1617,10 +1891,23 @@ export class PlayCallChain {
         },
         head: session.parentHead,
         maxOutputTokens: modelHost.binding().maxOutputTokens,
+        signal,
         ...(this.#failureLog === undefined
           ? {}
           : { failureLog: this.#failureLog }),
-        observer: { onOutcome: record },
+        observer: {
+          onProviderDispatch: () => {
+            this.#setInvocationAbortable(session.chainId, true);
+            this.#observeInvocation(session.chainId, "followup", {
+              dispatches: 1,
+            });
+            this.#notifySnapshot(observer, session);
+          },
+          onProviderDelta: observeFollowupDelta,
+          onProviderSettled: () =>
+            this.#setInvocationAbortable(session.chainId, false),
+          onOutcome: record,
+        },
       });
     } catch (error: unknown) {
       session.events.push({
@@ -2136,7 +2423,11 @@ function projectContext(
 function projectActivityEvent(
   event: V1PlayCallChainEvent,
 ): V1PlayCallChainEvent {
-  if (event.kind === "player" || event.kind === "failure")
+  if (
+    event.kind === "player" ||
+    event.kind === "failure" ||
+    event.kind === "cancellation"
+  )
     return structuredClone(event);
   if (event.kind === "assistant") {
     const { reasoning, toolFragment, usage, ...summary } = event;
@@ -2335,18 +2626,6 @@ function touch(session: Pick<PersistedPlayCallChain, "updatedAt">): void {
   session.updatedAt = Date.now();
 }
 
-function notifySnapshot(
-  observer: PlayCallChainObserver | undefined,
-  session: PersistedPlayCallChain,
-): void {
-  try {
-    observer?.onSnapshot?.(projectView(session));
-  } catch {
-    // A browser stream may disconnect while the durable model request keeps
-    // running. Presentation failure never cancels or changes play Authority.
-  }
-}
-
 function notifyAssistantDelta(
   observer: PlayCallChainObserver | undefined,
   delta: Parameters<NonNullable<PlayCallChainObserver["onAssistantDelta"]>>[0],
@@ -2354,7 +2633,7 @@ function notifyAssistantDelta(
   try {
     observer?.onAssistantDelta?.(structuredClone(delta));
   } catch {
-    // See notifySnapshot: the Provider exchange outlives its browser stream.
+    // Like snapshot projection, the Provider exchange outlives its browser stream.
   }
 }
 
