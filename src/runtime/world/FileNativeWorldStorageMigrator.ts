@@ -149,7 +149,7 @@ export class FileNativeWorldStorageMigrator {
           "Current Authority head operation does not match its immutable tip",
         );
       const contexts = await this.#timeline.readAllContexts(worldId);
-      assertTimelineAuthorityRefs(contexts, commits);
+      assertCurrentTimelineAuthorityRefs(contexts, commits);
       const checkpoint = await migrateMaterializedCheckpoint(
         runtimeRoot,
         commits,
@@ -205,7 +205,7 @@ export class FileNativeWorldStorageMigrator {
       throw new Error(
         "Released play timeline migration changed its context closure",
       );
-    assertTimelineAuthorityRefs(migratedContexts, currentCommits);
+    assertCurrentTimelineAuthorityRefs(migratedContexts, currentCommits);
 
     for (const commit of currentCommits)
       await publishImmutableJson(
@@ -563,26 +563,32 @@ function applyReleasedTransition(
   };
 }
 
-function assertTimelineAuthorityRefs(
+function assertCurrentTimelineAuthorityRefs(
   contexts: readonly PersistedPlayCallChainContext[],
   commits: readonly CurrentPlayCommit[],
 ): void {
+  // Released clone-and-remap forks retained their inherited page/model trace
+  // prefix while absorbing the selected source history into the target
+  // genesis. Older contexts can therefore carry source-world commit aliases
+  // that never belonged to the target Authority. They are immutable display
+  // history; only the current context is a continuation boundary owned by the
+  // target world and must resolve against its Authority.
+  const context = contexts.at(-1);
+  if (context === undefined) return;
   const heads = new Set(["genesis", ...commits.map(({ head }) => head)]);
-  for (const context of contexts) {
-    if (!heads.has(context.baselineHead) || !heads.has(context.parentHead))
+  if (!heads.has(context.baselineHead) || !heads.has(context.parentHead))
+    throw new Error(
+      "Released play timeline references an unknown Authority endpoint",
+    );
+  for (const event of context.events) {
+    if (
+      "committedHead" in event &&
+      event.committedHead !== undefined &&
+      !heads.has(event.committedHead)
+    )
       throw new Error(
-        "Released play timeline references an unknown Authority endpoint",
+        "Released play event references an unknown Authority endpoint",
       );
-    for (const event of context.events) {
-      if (
-        "committedHead" in event &&
-        event.committedHead !== undefined &&
-        !heads.has(event.committedHead)
-      )
-        throw new Error(
-          "Released play event references an unknown Authority endpoint",
-        );
-    }
   }
 }
 

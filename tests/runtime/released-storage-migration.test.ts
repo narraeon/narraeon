@@ -167,6 +167,46 @@ test.each([1, 2] as const)(
   },
 );
 
+test("已发布分叉继承的历史调用链可保留来源世界端点别名并完成迁移", async () => {
+  const fixture = await releasedWorld(
+    "released-storage-inherited-context-head",
+    2,
+  );
+  const callChainPath = join(fixture.runtimeRoot, "play-call-chain.json");
+  const releasedCallChain = JSON.parse(
+    await readFile(callChainPath, "utf8"),
+  ) as {
+    previousContexts: { parentHead: string }[];
+  };
+  releasedCallChain.previousContexts[0]!.parentHead = "commit:47";
+  await writeJson(callChainPath, releasedCallChain);
+
+  const store = new FileNativeWorldStore(fixture.root);
+  await expect(store.currentHead(fixture.worldId)).resolves.toBe("commit:4");
+  const contexts = await store.playTimeline.readAllContexts(fixture.worldId);
+  expect(contexts.map(({ parentHead }) => parentHead)).toEqual([
+    "commit:47",
+    "commit:4",
+  ]);
+});
+
+test("已发布世界的当前调用链引用未知 Authority 端点时仍然拒绝迁移", async () => {
+  const fixture = await releasedWorld(
+    "released-storage-invalid-current-context-head",
+    2,
+  );
+  const callChainPath = join(fixture.runtimeRoot, "play-call-chain.json");
+  const releasedCallChain = JSON.parse(
+    await readFile(callChainPath, "utf8"),
+  ) as { parentHead: string };
+  releasedCallChain.parentHead = "commit:47";
+  await writeJson(callChainPath, releasedCallChain);
+
+  await expect(
+    new FileNativeWorldStore(fixture.root).currentHead(fixture.worldId),
+  ).rejects.toMatchObject({ code: "world_corrupt" });
+});
+
 test("schemaVersion=2 调用链迁移后可从包含工具结果的端点创建分叉", async () => {
   const fixture = await releasedWorld(
     "released-storage-v2-tool-result-fork",
