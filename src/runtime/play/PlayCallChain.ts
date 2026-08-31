@@ -759,11 +759,17 @@ export class PlayCallChain {
         input.sourceHead,
       ),
     ]);
-    const transcript = transcriptThroughEvents(
-      sourceContext.transcript,
-      input.sourceEvents,
-    );
-    const completedKeys = completedToolKeys(input.sourceEvents);
+    const selectsCompleteContext =
+      input.sourceEvents.length === sourceContext.events.length;
+    // A complete context already defines the selected trace closure. Preserve
+    // its model transcript verbatim instead of reconstructing it from the
+    // independently persisted page-event projection.
+    const transcript = selectsCompleteContext
+      ? structuredClone(sourceContext.transcript)
+      : transcriptThroughEvents(sourceContext.transcript, input.sourceEvents);
+    const completedKeys = selectsCompleteContext
+      ? null
+      : completedToolKeys(input.sourceEvents);
     const events = structuredClone(input.sourceEvents);
     const derivedBinding =
       input.targetBinding ??
@@ -840,7 +846,7 @@ export class PlayCallChain {
       transcript,
       events,
       completedTools: sourceContext.completedTools
-        .filter(({ key }) => completedKeys.has(key))
+        .filter(({ key }) => completedKeys === null || completedKeys.has(key))
         .map((item) => structuredClone(item)),
       documentAuthorizationCheckpoints: authorizationCheckpointsThroughEvents(
         sourceContext,

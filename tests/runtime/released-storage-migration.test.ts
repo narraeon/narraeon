@@ -14,6 +14,7 @@ import { join, resolve } from "node:path";
 
 import { afterEach, expect, test } from "vitest";
 
+import { PlayCallChain } from "../../src/runtime/play/PlayCallChain.ts";
 import { FileNativeWorldStore } from "../../src/runtime/world/FileNativeWorldStore.ts";
 
 const roots: string[] = [];
@@ -165,6 +166,44 @@ test.each([1, 2] as const)(
     await expect(store.currentHead(fixture.worldId)).resolves.toBe("commit:5");
   },
 );
+
+test("schemaVersion=2 调用链迁移后可从包含工具结果的端点创建分叉", async () => {
+  const fixture = await releasedWorld(
+    "released-storage-v2-tool-result-fork",
+    2,
+  );
+  const store = new FileNativeWorldStore(fixture.root);
+  const chains = new PlayCallChain(store);
+
+  await expect(store.currentHead(fixture.worldId)).resolves.toBe("commit:4");
+  const sourceContexts = await store.playTimeline.readAllContexts(
+    fixture.worldId,
+  );
+  expect(
+    sourceContexts.at(-1)?.events.some(({ kind }) => kind === "tool_result"),
+  ).toBe(true);
+  expect(
+    sourceContexts.at(-1)?.transcript.some(({ kind }) => kind === "tool"),
+  ).toBe(false);
+  const derived = await chains.deriveWorld({
+    operationId: "fork-migrated-v2-tool-result",
+    sourceWorldId: fixture.worldId,
+    sourceHead: "commit:4",
+    hostPresetId: "host-current",
+  });
+  await expect(
+    chains.inspectWorld(derived.world.worldId),
+  ).resolves.toMatchObject({
+    parentHead: "commit:4",
+  });
+  const targetContexts = await store.playTimeline.readAllContexts(
+    derived.world.worldId,
+  );
+  expect(targetContexts.at(-1)?.transcript).toEqual(
+    sourceContexts.at(-1)?.transcript,
+  );
+  expect(targetContexts.at(-1)?.events).toEqual(sourceContexts.at(-1)?.events);
+});
 
 test("从未开始游玩的已发布世界会从 genesis 布局迁移", async () => {
   const fixture = await releasedGenesisWorld("released-storage-genesis");
@@ -373,6 +412,7 @@ async function releasedWorld(label: string, callChainSchemaVersion: 1 | 2) {
     });
     parentHead = outcome.head;
   }
+  const currentBinding = await store.bindPlayCallChain(worldId);
   const authority = await store.readAuthorityHistory(worldId);
   const endpoints = await Promise.all(
     ["genesis", ...authority.commits.map(({ head }) => head)].map((head) =>
@@ -457,6 +497,17 @@ async function releasedWorld(label: string, callChainSchemaVersion: 1 | 2) {
     kind: "play_call_chain",
     worldId,
     ...contextB(),
+    documentAuthorizationCheckpoints: [
+      {
+        afterEventId: 4,
+        authorization: {
+          schemaVersion: 1,
+          kind: "play_document_authorizations",
+          stateFingerprint: stateFilesFingerprint(currentBinding.files),
+          documents: [],
+        },
+      },
+    ],
     previousContexts: [contextA()],
   };
   const releasedCallChainSource = await writeJson(
@@ -919,6 +970,17 @@ function digest(value: unknown): string {
 
 function textDigest(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function stateFilesFingerprint(
+  files: Readonly<Record<string, string>>,
+): string {
+  const hash = createHash("sha256");
+  for (const [path, contents] of Object.entries(files)
+    .filter(([path]) => path.startsWith("state/"))
+    .sort(([left], [right]) => left.localeCompare(right)))
+    hash.update(path).update("\0").update(contents).update("\0");
+  return `sha256:${hash.digest("hex")}`;
 }
 
 async function writeJson(path: string, value: unknown): Promise<string> {
