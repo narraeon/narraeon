@@ -23,6 +23,7 @@ import {
   FileNativeAuthorityV3,
   type FileNativeAuthorityCommitV3,
 } from "./FileNativeAuthorityV3.ts";
+import { projectFileNativeHistorySurface } from "./FileNativeHistoryProjection.ts";
 
 const currentAuthorityHeadFile = "play-authority-head.json";
 const releasedAuthorityFile = "play-authority.json";
@@ -464,6 +465,19 @@ async function migrateCurrentAuthorityToV3(input: {
       worldId: input.worldId,
       history: normalized.genesisHistory,
     });
+    // V2 filenames hash world-scoped message IDs. Rebuild this derived surface
+    // from the normalized checkpoint before publishing the V3 checkpoint/head.
+    await replaceMaterializedHistory(
+      join(input.worldRoot, "history"),
+      projectFileNativeHistorySurface(
+        checkpointEndpoint.history,
+        (messageId) => {
+          throw new Error(
+            `Migrated history-message identity cannot form a materialization path: ${messageId}`,
+          );
+        },
+      ),
+    );
     await publishJson(join(runtimeRoot, "additional-materials.json"), {
       head: input.checkpoint.head,
       items: checkpointEndpoint.additionalMaterials,
@@ -1419,6 +1433,50 @@ async function readDirectoryFileNames(root: string): Promise<string[]> {
   } catch (error: unknown) {
     if (isNodeError(error) && error.code === "ENOENT") return [];
     throw error;
+  }
+}
+
+async function replaceMaterializedHistory(
+  root: string,
+  files: readonly { path: string; contents: string }[],
+): Promise<void> {
+  await mkdir(root, { recursive: true, mode: 0o700 });
+  const entries = await readdir(root, { withFileTypes: true });
+  if (entries.some((entry) => !entry.isFile()))
+    throw new Error("Materialized history projection must be a flat file tree");
+  const current = new Map(
+    await Promise.all(
+      entries.map(
+        async (entry) =>
+          [entry.name, await readFile(join(root, entry.name), "utf8")] as const,
+      ),
+    ),
+  );
+  const expected = new Set<string>();
+  for (const file of files) {
+    if (!validRelativePath(file.path) || file.path.includes("/"))
+      throw new Error(
+        `Migrated history projection has an invalid path: ${file.path}`,
+      );
+    if (expected.has(file.path))
+      throw new Error(
+        `Migrated history projection has a duplicate path: ${file.path}`,
+      );
+    expected.add(file.path);
+    if (current.get(file.path) === file.contents) continue;
+    const temporary = join(root, `${file.path}.${randomUUID()}.tmp`);
+    await writeFile(temporary, file.contents, {
+      encoding: "utf8",
+      mode: 0o600,
+    });
+    await syncFile(temporary);
+    await rename(temporary, join(root, file.path));
+    await syncDirectory(root);
+  }
+  for (const entry of entries) {
+    if (expected.has(entry.name)) continue;
+    await rm(join(root, entry.name), { force: true });
+    await syncDirectory(root);
   }
 }
 

@@ -42,6 +42,10 @@ import {
   WorldOperationBusyError,
   type ContinuityCorrectionWorldClaimHandle,
 } from "./WorldOperationCoordinator.ts";
+import {
+  fileNativeHistoryMessageIdFromProjectionPath,
+  projectFileNativeHistorySurface,
+} from "./FileNativeHistoryProjection.ts";
 
 const publicationFile = "publication.json";
 const localMetadataFile = "local.json";
@@ -446,7 +450,7 @@ export class FileNativeWorldStore {
         join(
           stagingRoot,
           "history",
-          `00000000-${historyFileName(1, openingMessage)}`,
+          historySurfaceFiles([openingMessage])[0]!.path,
         ),
         openingMessage.exactText,
       );
@@ -2194,8 +2198,7 @@ async function assertPendingMaterializationCompatible(
     readTree(join(worldRoot, "history")),
   ]);
   assertProjectionBetweenEndpoints("state", state, parent.state, target.state);
-  assertProjectionBetweenEndpoints(
-    "history",
+  assertHistoryProjectionBetweenEndpoints(
     history,
     historySurfaceFiles(parent.history),
     historySurfaceFiles(target.history),
@@ -2239,6 +2242,37 @@ function assertProjectionBetweenEndpoints(
         "inconsistent_materialization",
         `World ${surface} projection conflicts with both accepted endpoints: ${file.path}`,
       );
+  }
+}
+
+function assertHistoryProjectionBetweenEndpoints(
+  current: readonly ContentTreeFile[],
+  parent: readonly ContentTreeFile[],
+  target: readonly ContentTreeFile[],
+): void {
+  const byMessageId = (files: readonly ContentTreeFile[]) =>
+    new Map(
+      files.map((file) => [
+        fileNativeHistoryMessageIdFromProjectionPath(file.path),
+        file.contents,
+      ]),
+    );
+  const parentFiles = byMessageId(parent);
+  const targetFiles = byMessageId(target);
+  const seen = new Set<string>();
+  for (const file of current) {
+    const messageId = fileNativeHistoryMessageIdFromProjectionPath(file.path);
+    if (
+      messageId === null ||
+      seen.has(messageId) ||
+      (file.contents !== parentFiles.get(messageId) &&
+        file.contents !== targetFiles.get(messageId))
+    )
+      throw new FileNativeWorldCreationError(
+        "inconsistent_materialization",
+        `World history projection conflicts with both accepted endpoints: ${file.path}`,
+      );
+    seen.add(messageId);
   }
 }
 
@@ -2412,37 +2446,11 @@ async function publishText(path: string, contents: string): Promise<void> {
 function historySurfaceFiles(
   messages: readonly Genesis["history"][number][],
 ): ContentTreeFile[] {
-  return messages.map((message) => {
-    const genesis =
-      /(?:^|\.)message\.genesis(?:\.([1-9][0-9]*))?\.(player|narrator)$/u.exec(
-        message.messageId,
-      );
-    const committed =
-      /(?:^|\.)message\.([1-9][0-9]*)\.([1-9][0-9]*)\.(player|narrator)$/u.exec(
-        message.messageId,
-      );
-    const sequence =
-      genesis !== null ? 0 : Number.parseInt(committed?.[1] ?? "", 10);
-    const index =
-      genesis !== null
-        ? Number.parseInt(genesis[1] ?? "1", 10)
-        : Number.parseInt(committed?.[2] ?? "", 10);
-    const role = genesis?.[2] ?? committed?.[3];
-    if (
-      !Number.isSafeInteger(sequence) ||
-      sequence < 0 ||
-      !Number.isSafeInteger(index) ||
-      index < 1 ||
-      role !== message.role
-    )
-      throw new FileNativeWorldCreationError(
-        "world_corrupt",
-        `History-message identity cannot form a materialization path: ${message.messageId}`,
-      );
-    return {
-      path: `${String(sequence).padStart(8, "0")}-${historyFileName(index, message)}`,
-      contents: message.exactText,
-    };
+  return projectFileNativeHistorySurface(messages, (messageId) => {
+    throw new FileNativeWorldCreationError(
+      "world_corrupt",
+      `History-message identity cannot form a materialization path: ${messageId}`,
+    );
   });
 }
 
@@ -2451,23 +2459,12 @@ function materializedHistoryRecord(
 ): Record<string, string> {
   const result: Record<string, string> = {};
   for (const file of files) {
-    const match = /^(\d{8})-(\d+)-(player|narrator)-[a-f0-9]{12}\.md$/u.exec(
-      file.path,
-    );
-    if (match === null)
+    const messageId = fileNativeHistoryMessageIdFromProjectionPath(file.path);
+    if (messageId === null)
       throw new FileNativeWorldCreationError(
         "world_corrupt",
         `Materialized history path is invalid: ${file.path}`,
       );
-    const sequence = Number.parseInt(match[1]!, 10);
-    const index = Number.parseInt(match[2]!, 10);
-    const role = match[3]!;
-    const messageId =
-      sequence === 0
-        ? index === 1 && role === "narrator"
-          ? "message.genesis.narrator"
-          : `message.genesis.${index}.${role}`
-        : `message.${sequence}.${index}.${role}`;
     if (messageId in result)
       throw new FileNativeWorldCreationError(
         "world_corrupt",
@@ -2497,13 +2494,6 @@ async function writeIdempotentText(
     await rename(temporary, path);
     await syncDirectory(dirname(path));
   }
-}
-
-function historyFileName(
-  index: number,
-  message: { messageId: string; role: "player" | "narrator" },
-): string {
-  return `${String(index).padStart(2, "0")}-${message.role}-${operationDigest(message.messageId).slice(0, 12)}.md`;
 }
 
 function isCommittedOutcome(

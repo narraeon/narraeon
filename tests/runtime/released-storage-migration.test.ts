@@ -1,6 +1,14 @@
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -229,6 +237,77 @@ test("schemaVersion=2 迁移逐端点保留状态、历史、材料与 timeline 
   ).not.toContain(fixture.worldId);
   for (const [path, source] of fixture.legacySources)
     await expect(readFile(path, "utf8")).resolves.toBe(source);
+});
+
+test("schemaVersion=2 存档迁移后的第一条消息可继续提交", async () => {
+  const fixture = await currentV2RevisionWorld(
+    "released-storage-current-first-message",
+  );
+  const store = new FileNativeWorldStore(fixture.root);
+
+  await expect(store.currentHead(fixture.worldId)).resolves.toBe("commit:5");
+  await expect(
+    store.commitPlayStep({
+      operationId: "current-first-message-after-migration",
+      worldId: fixture.worldId,
+      parentHead: "commit:5",
+      historyAppend: [{ role: "player", exactText: "我继续向前。" }],
+      nextMaterials: [],
+      stateChanges: [],
+    }),
+  ).resolves.toMatchObject({ head: "commit:6" });
+  await expect(store.currentHead(fixture.worldId)).resolves.toBe("commit:6");
+});
+
+test("已被旧版本迁移为 V3 的世界作用域历史文件名会在首笔提交时自愈", async () => {
+  const fixture = await currentV2RevisionWorld(
+    "released-storage-already-migrated-projection",
+  );
+  const migrated = new FileNativeWorldStore(fixture.root);
+  await expect(migrated.currentHead(fixture.worldId)).resolves.toBe("commit:5");
+  await rewriteMaterializedHistoryAsWorldScoped(
+    join(fixture.root, "worlds-file-native", fixture.worldId, "history"),
+    fixture.worldId,
+  );
+
+  const reopened = new FileNativeWorldStore(fixture.root);
+  await expect(
+    reopened.commitPlayStep({
+      operationId: "current-first-message-after-old-v3-migration",
+      worldId: fixture.worldId,
+      parentHead: "commit:5",
+      historyAppend: [{ role: "player", exactText: "我继续向前。" }],
+      nextMaterials: [],
+      stateChanges: [],
+    }),
+  ).resolves.toMatchObject({ head: "commit:6" });
+});
+
+test("schemaVersion=2 历史投影重键后在 V3 头发布前退出仍可幂等恢复", async () => {
+  const fixture = await currentV2RevisionWorld(
+    "released-storage-current-projection-crash",
+  );
+  const crashed = await runMigrationWorker(
+    fixture.root,
+    fixture.worldId,
+    "before_authority_v3_head",
+  );
+  expect(crashed).toEqual({ code: null, signal: "SIGKILL" });
+
+  const recovered = new FileNativeWorldStore(fixture.root);
+  await expect(recovered.currentHead(fixture.worldId)).resolves.toBe(
+    "commit:5",
+  );
+  await expect(
+    recovered.commitPlayStep({
+      operationId: "current-first-message-after-projection-crash",
+      worldId: fixture.worldId,
+      parentHead: "commit:5",
+      historyAppend: [{ role: "player", exactText: "我继续向前。" }],
+      nextMaterials: [],
+      stateChanges: [],
+    }),
+  ).resolves.toMatchObject({ head: "commit:6" });
 });
 
 test.each([
@@ -615,12 +694,40 @@ async function currentV2RevisionWorld(label: string) {
     sequence: 5,
     commitDigest: parentCommitDigest,
   });
+  await rewriteMaterializedHistoryAsWorldScoped(
+    join(root, "worlds-file-native", worldId, "history"),
+    worldId,
+  );
   await rm(join(runtimeRoot, "continuity-head.json"), { force: true });
   await rm(join(runtimeRoot, "authority-v3"), {
     recursive: true,
     force: true,
   });
   return { root, worldId, endpoints, legacySources };
+}
+
+async function rewriteMaterializedHistoryAsWorldScoped(
+  historyRoot: string,
+  worldId: string,
+): Promise<void> {
+  for (const file of await readdir(historyRoot)) {
+    const match = /^(\d{8})-(\d+)-(player|narrator)-[a-f0-9]{12}\.md$/u.exec(
+      file,
+    );
+    if (match === null) throw new Error(`Unexpected history file: ${file}`);
+    const sequence = Number.parseInt(match[1]!, 10);
+    const index = Number.parseInt(match[2]!, 10);
+    const role = match[3]!;
+    const localMessageId =
+      sequence === 0
+        ? index === 1 && role === "narrator"
+          ? "message.genesis.narrator"
+          : `message.genesis.${String(index)}.${role}`
+        : `message.${String(sequence)}.${String(index)}.${role}`;
+    const legacyMessageId = `${worldId}.${localMessageId}`;
+    const legacyName = `${match[1]}-${match[2]}-${role}-${textDigest(legacyMessageId).slice(0, 12)}.md`;
+    await rename(join(historyRoot, file), join(historyRoot, legacyName));
+  }
 }
 
 function contextA() {
