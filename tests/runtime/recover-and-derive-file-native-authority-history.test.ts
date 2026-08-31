@@ -22,6 +22,7 @@ const roots: string[] = [];
 afterEach(async () => {
   delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_FILE_NATIVE_AUTHORITY_EDGE;
   delete process.env.NARRAEON_INTERNAL_TEST_CLONE_STRATEGY;
+  delete process.env.NARRAEON_INTERNAL_TEST_REFLINK_ERROR_CODE;
   delete process.env.NARRAEON_INTERNAL_TEST_FORBID_AUTHORITY_FACT_DECODE;
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
@@ -762,21 +763,42 @@ test("分叉 staging 持有统一来源快照 lease，删除不能切断正在�
   );
 });
 
-test.each(["reflink", "copy"] as const)(
-  "Authority 物理闭包支持 %s 路径且目标可变投影不与来源别名",
-  async (strategy) => {
+test.each([
+  {
+    label: "reflink",
+    key: "reflink",
+    strategy: "reflink",
+    reflinkErrorCode: undefined,
+  },
+  {
+    label: "copy",
+    key: "copy",
+    strategy: "copy",
+    reflinkErrorCode: undefined,
+  },
+  {
+    label: "macOS ENOSYS 回退",
+    key: "reflink-enosys",
+    strategy: "reflink",
+    reflinkErrorCode: "ENOSYS",
+  },
+] as const)(
+  "Authority 物理闭包支持 $label 路径且目标可变投影不与来源别名",
+  async ({ key, strategy, reflinkErrorCode }) => {
     process.env.NARRAEON_INTERNAL_TEST_CLONE_STRATEGY = strategy;
+    if (reflinkErrorCode !== undefined)
+      process.env.NARRAEON_INTERNAL_TEST_REFLINK_ERROR_CODE = reflinkErrorCode;
     const fixture = await world();
     await fixture.store.commitPlayStep({
-      operationId: `clone-${strategy}-source`,
+      operationId: `clone-${key}-source`,
       worldId: fixture.worldId,
       parentHead: "genesis",
-      historyAppend: [{ role: "player", exactText: `Use ${strategy}.` }],
+      historyAppend: [{ role: "player", exactText: `Use ${key}.` }],
       nextMaterials: [],
       stateChanges: [],
     });
     const derived = await fixture.store.deriveWorld({
-      operationId: `clone-${strategy}-target`,
+      operationId: `clone-${key}-target`,
       sourceWorldId: fixture.worldId,
       sourceHead: "commit:1",
       hostPresetId: "host-current",

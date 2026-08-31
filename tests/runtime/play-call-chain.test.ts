@@ -50,6 +50,7 @@ afterEach(async () => {
   delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE;
   delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_FILE_NATIVE_AUTHORITY_EDGE;
   delete process.env.NARRAEON_INTERNAL_TEST_CLONE_STRATEGY;
+  delete process.env.NARRAEON_INTERNAL_TEST_REFLINK_ERROR_CODE;
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
   );
@@ -1665,32 +1666,53 @@ test("从调用链节点派生会保留截至该节点的调用轨迹，并可�
   );
 });
 
-test.each(["reflink", "copy"] as const)(
-  "页面／模型轨迹物理闭包支持 %s 路径且不会重放 Provider 或工具",
-  async (strategy) => {
+test.each([
+  {
+    label: "reflink",
+    key: "reflink",
+    strategy: "reflink",
+    reflinkErrorCode: undefined,
+  },
+  {
+    label: "copy",
+    key: "copy",
+    strategy: "copy",
+    reflinkErrorCode: undefined,
+  },
+  {
+    label: "macOS ENOSYS 回退",
+    key: "reflink-enosys",
+    strategy: "reflink",
+    reflinkErrorCode: "ENOSYS",
+  },
+] as const)(
+  "页面／模型轨迹物理闭包支持 $label 路径且不会重放 Provider 或工具",
+  async ({ key, strategy, reflinkErrorCode }) => {
     process.env.NARRAEON_INTERNAL_TEST_CLONE_STRATEGY = strategy;
+    if (reflinkErrorCode !== undefined)
+      process.env.NARRAEON_INTERNAL_TEST_REFLINK_ERROR_CODE = reflinkErrorCode;
     const { worlds, worldId, root } = await createWorld(
-      `play-chain-trace-${strategy}`,
+      `play-chain-trace-${key}`,
     );
     const host = new ScriptedModelHost({
       binding: modelBinding(),
       steps: [
         {
           outcome: "response",
-          reasoningContent: `Inspect state before the ${strategy} fork.`,
+          reasoningContent: `Inspect state before the ${key} fork.`,
           toolCalls: [
-            { id: `state-${strategy}`, name: "state_list", arguments: {} },
+            { id: `state-${key}`, name: "state_list", arguments: {} },
           ],
         },
-        { outcome: "response", text: `The ${strategy} trace is sealed.` },
+        { outcome: "response", text: `The ${key} trace is sealed.` },
       ],
     });
     const chains = new PlayCallChain(worlds);
     const source = await chains.start({
       worldId,
-      chainId: `trace-${strategy}-source`,
-      exchangeId: `trace-${strategy}-exchange`,
-      playerText: `Create a ${strategy} trace.`,
+      chainId: `trace-${key}-source`,
+      exchangeId: `trace-${key}-exchange`,
+      playerText: `Create a ${key} trace.`,
       hostBinding: hostBinding(),
       playPreset: playPreset(),
       modelBinding: modelBinding(),
@@ -1698,7 +1720,7 @@ test.each(["reflink", "copy"] as const)(
     });
     const requestCount = host.requests.length;
     const derived = await chains.deriveWorld({
-      operationId: `trace-${strategy}-fork`,
+      operationId: `trace-${key}-fork`,
       sourceWorldId: worldId,
       sourceHead: source.parentHead,
       hostPresetId: "host-current",
@@ -1722,6 +1744,7 @@ test.each(["reflink", "copy"] as const)(
     const sourceRoot = contextRoot(worldId, source.chainId);
     const targetRoot = contextRoot(derived.world.worldId, target!.chainId);
     for (const relative of [
+      "events/0000000001.json",
       "transcript/0000000001.json",
       "completed-tools/0000000001.json",
     ]) {

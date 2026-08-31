@@ -1,7 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants } from "node:fs";
 import {
-  copyFile,
   link,
   mkdir,
   open,
@@ -32,6 +30,7 @@ import type {
   PlayFollowupCompilation,
   PromptCompilation,
 } from "../prompt/FileNativePromptCompiler.ts";
+import { cloneFilePhysically } from "../FileNativePhysicalClone.ts";
 import type {
   PlayDocumentAuthorizationCheckpoint,
   PlayDocumentToolResult,
@@ -1592,60 +1591,12 @@ async function cloneTimelineFile(
   target: string,
   immutable: boolean,
 ): Promise<void> {
-  await mkdir(dirname(target), { recursive: true, mode: 0o700 });
-  const strategy = process.env.NARRAEON_INTERNAL_TEST_CLONE_STRATEGY;
-  if (immutable && strategy !== "reflink" && strategy !== "copy") {
-    try {
-      await link(source, target);
-      return;
-    } catch (error: unknown) {
-      if (isNodeError(error) && error.code === "EEXIST") {
-        await assertSameFileBytes(source, target);
-        return;
-      }
-      if (
-        !isNodeError(error) ||
-        ![
-          "EXDEV",
-          "EPERM",
-          "EACCES",
-          "EMLINK",
-          "ENOTSUP",
-          "EOPNOTSUPP",
-        ].includes(error.code ?? "")
-      )
-        throw error;
-    }
-  }
-  if (strategy !== "copy") {
-    try {
-      await copyFile(source, target, constants.COPYFILE_FICLONE_FORCE);
-      return;
-    } catch (error: unknown) {
-      if (isNodeError(error) && error.code === "EEXIST") {
-        await assertSameFileBytes(source, target);
-        return;
-      }
-      if (
-        !isNodeError(error) ||
-        ![
-          "EXDEV",
-          "EPERM",
-          "EACCES",
-          "ENOTSUP",
-          "EOPNOTSUPP",
-          "EINVAL",
-        ].includes(error.code ?? "")
-      )
-        throw error;
-    }
-  }
-  try {
-    await copyFile(source, target, constants.COPYFILE_EXCL);
-  } catch (error: unknown) {
-    if (!isNodeError(error) || error.code !== "EEXIST") throw error;
-    await assertSameFileBytes(source, target);
-  }
+  await cloneFilePhysically({
+    source,
+    target,
+    immutable,
+    onTargetExists: assertSameFileBytes,
+  });
 }
 
 async function assertSameFileBytes(
