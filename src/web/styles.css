@@ -4333,6 +4333,7 @@ summary:focus-visible {
   background: rgb(4 15 13 / 72%);
 }
 
+.play-call-failure,
 .play-retry-note,
 .model-required-callout {
   display: flex;
@@ -4344,6 +4345,27 @@ summary:focus-visible {
   color: #ead7b5;
   background: rgb(105 72 24 / 14%);
   font-size: 0.78rem;
+}
+
+.play-call-failure {
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid rgb(255 152 137 / 38%);
+  border-radius: 0.65rem;
+  color: #ffd6cf;
+  background: rgb(107 32 25 / 22%);
+  font-size: 0.78rem;
+}
+
+.play-call-failure strong,
+.play-call-failure p {
+  margin: 0;
+}
+
+.play-call-failure p {
+  overflow-wrap: anywhere;
+  line-height: 1.5;
 }
 
 .play-retry-note p,

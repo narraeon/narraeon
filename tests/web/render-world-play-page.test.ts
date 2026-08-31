@@ -757,6 +757,100 @@ describe("世界游玩页面", () => {
     expect(screen.getByText("生成已取消")).toBeTruthy();
   });
 
+  test("调用链流失败后在当前操作区保留明确错误而不是只在页面顶部提示", async () => {
+    const failure = "Immutable play-advance fact already has different data";
+    let chain: V1PlayCallChainView | null = null;
+    const client = {
+      request: vi.fn(<T>(request: V1Request) => {
+        if (request.type === "world.read")
+          return Promise.resolve(worldView(chain) as T);
+        if (request.type === "artifacts.debug") return Promise.resolve([] as T);
+        if (request.type === "play.chain.inspect")
+          return Promise.resolve(chain as T);
+        if (request.type === "play.timeline.page")
+          return Promise.reject(new Error("Timeline refresh unavailable"));
+        return Promise.reject(new Error(`Unexpected request: ${request.type}`));
+      }),
+      streamPlayCallChain(
+        request: Extract<
+          V1Request,
+          { type: "play.chain.start" | "play.chain.append" }
+        >,
+        onFrame: (frame: V1PlayCallChainStreamFrame) => void,
+      ) {
+        const running: V1PlayCallChainView = {
+          ...playChainView(
+            request.chainId,
+            request.exchangeId,
+            request.playerText,
+          ),
+          status: "running",
+          events: [
+            {
+              id: 1,
+              kind: "player",
+              exchangeId: request.exchangeId,
+              text: request.playerText,
+              context: "fresh",
+              committedHead: "commit:2",
+            },
+            {
+              id: 2,
+              kind: "assistant",
+              text: "",
+              status: "streaming",
+              responseKind: "pending",
+              exchange: 1,
+              attempt: 1,
+            },
+          ],
+        };
+        chain = running;
+        onFrame({ kind: "snapshot", value: running, final: false });
+        chain = {
+          ...running,
+          status: "interrupted",
+          events: [
+            running.events[0]!,
+            {
+              id: 2,
+              kind: "assistant",
+              text: "",
+              status: "interrupted",
+              responseKind: "pending",
+              exchange: 1,
+              attempt: 1,
+            },
+            { id: 3, kind: "failure", message: failure },
+          ],
+          lastFailure: failure,
+        };
+        return Promise.reject(new Error(failure));
+      },
+    };
+
+    renderWorld(client);
+    await screen.findByRole("heading", { name: "宿舍世界" });
+    fireEvent.change(screen.getByLabelText("你的行动"), {
+      target: { value: "I wait for Alex to answer." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "全新上下文" }));
+
+    const composer = document.querySelector<HTMLElement>(".play-composer");
+    expect(composer).not.toBeNull();
+    const alert = await within(composer!).findByRole("alert", {
+      name: "模型调用失败",
+    });
+    expect(alert.textContent).toContain(failure);
+    expect(alert.textContent).toContain("旧请求不能重发");
+    expect(
+      screen.queryByRole("status", { name: "本次模型调用进度" }),
+    ).toBeNull();
+    expect(screen.getByLabelText<HTMLTextAreaElement>("你的行动").value).toBe(
+      "",
+    );
+  });
+
   test("工具中间步文本默认折叠在调用轨迹中且不会伪装成叙事", async () => {
     const intermediate = "I will inspect the record before narrating.";
     const chain = playChainView(

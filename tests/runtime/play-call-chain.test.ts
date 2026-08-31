@@ -327,6 +327,70 @@ test("浏览器进度流断开不会隐式取消 Runtime 调用或改变 Authori
   ]);
 });
 
+test("检查进度不会把本进程仍在等待的 Provider 派发误判为遗留推进", async () => {
+  const { worlds, worldId } = await createWorld(
+    "play-chain-live-inspection-race",
+  );
+  let markExchangeStarted: (() => void) | undefined;
+  const exchangeStarted = new Promise<void>((resolve) => {
+    markExchangeStarted = resolve;
+  });
+  let finishExchange: (() => void) | undefined;
+  const providerRelease = new Promise<void>((resolve) => {
+    finishExchange = resolve;
+  });
+  const modelHost: ModelHost = {
+    binding: modelBinding,
+    async exchange() {
+      markExchangeStarted?.();
+      await providerRelease;
+      const text = "Alex answers after the live progress inspection.";
+      return {
+        text,
+        providerState: {
+          protocol: "chat_completions",
+          assistantMessage: { role: "assistant", content: text },
+        },
+      };
+    },
+  };
+  const chains = new PlayCallChain(worlds);
+  const running = chains.start({
+    worldId,
+    chainId: "play-chain-live-inspection-race-contract",
+    exchangeId: "exchange-live-inspection-race",
+    playerText: "I wait for Alex while checking the progress display.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+  await exchangeStarted;
+
+  const inspected = await chains.inspectWorld(worldId);
+  finishExchange?.();
+  const completed = await running;
+
+  expect(inspected).toMatchObject({
+    status: "running",
+    activeInvocation: {
+      chainId: "play-chain-live-inspection-race-contract",
+      exchangeId: "exchange-live-inspection-race",
+      phase: "waiting",
+    },
+  });
+  expect(completed).toMatchObject({ status: "ready", parentHead: "commit:2" });
+  expect(
+    (await worlds.recoverEndpoint(worldId)).history.map(
+      ({ exactText }) => exactText,
+    ),
+  ).toEqual([
+    "门外传来三声短促的铃响。\n",
+    "I wait for Alex while checking the progress display.",
+    "Alex answers after the live progress inspection.",
+  ]);
+});
+
 test("Provider 派发前取消保留冻结请求，空输入可继续且不重复玩家原文", async () => {
   const { worlds, worldId } = await createWorld(
     "play-chain-player-cancel-before-dispatch",

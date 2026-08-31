@@ -1144,6 +1144,7 @@ const worldPageEnglishMessages: Record<string, string> = {
     "This generation was stopped. The committed player message is preserved, and incomplete model output will not enter the story.",
   "模型调用已经结束，正在刷新结果…":
     "The model call has already ended; refreshing the result…",
+  模型调用失败: "Model call failed",
   "模型请求中断；清空输入后点击追加上下文即可原样发送上次请求。":
     "The model request was interrupted. Clear the input and append context to resend the previous request unchanged.",
   "调用链处理失败；旧请求不能重发，请使用全新上下文。":
