@@ -858,20 +858,38 @@ test("协议接受按世界、调用链与本轮交换精确寻址的取消请�
 });
 
 test("协议把玩家历史修改建模为当前世界的时间线修订", () => {
+  for (const continuation of ["continue_context", "fresh_context"] as const)
+    expect(() =>
+      parseV1Envelope({
+        protocol: "narraeon.runtime/v1",
+        request: {
+          type: "play.chain.revise-player",
+          operationId: `revise-player-${continuation}`,
+          worldId: "world-1",
+          chainId: "chain-1",
+          eventId: 3,
+          replacementExchangeId: `exchange-replacement-${continuation}`,
+          replacementText: "我改为留在门内。",
+          continuation,
+        },
+      }),
+    ).not.toThrow();
+
   expect(() =>
     parseV1Envelope({
       protocol: "narraeon.runtime/v1",
       request: {
         type: "play.chain.revise-player",
-        operationId: "revise-player-1",
+        operationId: "revise-player-invalid",
         worldId: "world-1",
         chainId: "chain-1",
         eventId: 3,
-        replacementExchangeId: "exchange-replacement-1",
+        replacementExchangeId: "exchange-replacement-invalid",
         replacementText: "我改为留在门内。",
+        continuation: "reuse_whatever_is_available",
       },
     }),
-  ).not.toThrow();
+  ).toThrow("play.chain.revise-player.continuation is invalid");
 });
 
 test("协议拒绝无界时间线分页、空游标、非法详情事件与未知世界表面", () => {
@@ -1694,6 +1712,7 @@ test("全新上下文只重建模型上下文，持久保留此前调用轨迹�
     eventId: oldPlayer.id,
     replacementExchangeId: "revised-after-source-delete",
     replacementText: "Continue independently, but more carefully.",
+    continuation: "continue_context",
   });
   const child = await coldChains.deriveWorld({
     operationId: "fork-again-after-source-delete",
@@ -2093,6 +2112,7 @@ test("修改历史玩家提交会在同一世界追加时间线修订，并从�
     eventId: editedEvent!.id,
     replacementExchangeId: "exchange-edited-replacement",
     replacementText: "Then let's meet fifteen minutes early.",
+    continuation: "continue_context" as const,
   };
   const revised = (await runtime.handle(revisionRequest)).result as {
     outcome: "revised";
@@ -2204,6 +2224,310 @@ test("修改历史玩家提交会在同一世界追加时间线修订，并从�
       replacesHead: "commit:3",
     },
   });
+});
+
+test("修改第一条玩家消息可把修改稿保存为不继承旧续传的全新上下文", async () => {
+  const { worlds, worldId, root } = await createWorld(
+    "play-chain-edit-first-as-fresh",
+  );
+  const sourceHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [{ outcome: "response", text: "The old response is discarded." }],
+  });
+  const source = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "play-chain-edit-first-source",
+    exchangeId: "exchange-edit-first-source",
+    playerText: "I take the eastern path.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: sourceHost,
+  });
+  const selected = source.events.find(
+    (event) => event.kind === "player" && event.context === "fresh",
+  );
+  if (selected?.kind !== "player") throw new Error("missing first player");
+
+  const basePath = join(
+    root,
+    "worlds-file-native",
+    worldId,
+    "runtime",
+    "play-contexts",
+    createHash("sha256").update(source.chainId).digest("hex"),
+    "base.json",
+  );
+  const legacyBase = JSON.parse(await readFile(basePath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  delete legacyBase.modelBinding;
+  await writeFile(basePath, `${JSON.stringify(legacyBase)}\n`, "utf8");
+
+  const freshBinding = {
+    ...modelBinding(),
+    endpointFingerprint: "fresh-edit-endpoint",
+    modelId: "fresh-edit-model",
+    protocolConfigFingerprint: "fresh-edit-protocol",
+  };
+  const freshHost = hostBinding();
+  freshHost.files["blocks/style.md"] =
+    "# Fresh edit style\n\nThis bootstrap was compiled for the edited context.\n";
+  const freshPreset = {
+    ...playPreset(),
+    name: "fresh edit preset",
+    revision: "fresh-edit-preset-v1",
+  };
+  const chains = new PlayCallChain(worlds);
+  const request = {
+    operationId: "revise-first-as-fresh",
+    worldId,
+    chainId: source.chainId,
+    eventId: selected.id,
+    replacementExchangeId: "exchange-edit-first-replacement",
+    replacementText: "I take the western path.",
+    continuation: "fresh_context" as const,
+    freshContext: {
+      hostBinding: freshHost,
+      playPreset: freshPreset,
+      modelBinding: freshBinding,
+    },
+  };
+  const revised = await chains.revisePlayer(request);
+
+  expect(revised.playCallChain).toMatchObject({
+    baselineHead: "genesis",
+    parentHead: "commit:3",
+    playPreset: {
+      name: "fresh edit preset",
+      revision: "fresh-edit-preset-v1",
+    },
+    events: [
+      {
+        id: 1,
+        kind: "player",
+        context: "fresh",
+        text: "I take the western path.",
+        committedHead: "commit:3",
+      },
+    ],
+  });
+  expect(
+    (await worlds.playTimeline.readPage(worldId, 100)).items.filter(
+      ({ kind }) => kind === "context_boundary",
+    ),
+  ).toHaveLength(1);
+
+  const replacementHost = new ScriptedModelHost({
+    binding: freshBinding,
+    steps: [{ outcome: "response", text: "The western path opens ahead." }],
+  });
+  const continued = await chains.append({
+    worldId,
+    chainId: revised.playCallChain.chainId,
+    exchangeId: "exchange-edit-first-continue",
+    playerText: "",
+    modelHost: replacementHost,
+  });
+  expect(replacementHost.requests[0]?.appended).toEqual([
+    { kind: "player", text: "I take the western path." },
+  ]);
+  expect(
+    replacementHost.requests[0]?.bootstrap.logicalMessages
+      .map(({ markdown }) => markdown)
+      .join("\n"),
+  ).toContain("This bootstrap was compiled for the edited context.");
+  expect(
+    (await worlds.recoverEndpoint(worldId)).history.map(
+      ({ exactText }) => exactText,
+    ),
+  ).toEqual([
+    "门外传来三声短促的铃响。\n",
+    "I take the western path.",
+    "The western path opens ahead.",
+  ]);
+  await expect(chains.revisePlayer(request)).resolves.toMatchObject({
+    outcome: "revised",
+    playCallChain: {
+      chainId: continued.chainId,
+      parentHead: continued.parentHead,
+    },
+  });
+  await expect(
+    chains.revisePlayer({
+      operationId: request.operationId,
+      worldId,
+      chainId: source.chainId,
+      eventId: selected.id,
+      replacementExchangeId: request.replacementExchangeId,
+      replacementText: request.replacementText,
+      continuation: "continue_context",
+    }),
+  ).rejects.toThrow("already used by another commit");
+});
+
+test("全新上下文无法编译时不会先提交玩家消息修订", async () => {
+  const { worlds, worldId } = await createWorld(
+    "play-chain-edit-fresh-compile-failure",
+  );
+  const chains = new PlayCallChain(worlds);
+  const source = await chains.start({
+    worldId,
+    chainId: "play-chain-edit-fresh-compile-source",
+    exchangeId: "exchange-edit-fresh-compile-source",
+    playerText: "I take the eastern path.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [{ outcome: "response", text: "The eastern path is quiet." }],
+    }),
+  });
+  const selected = source.events.find(
+    (event) => event.kind === "player" && event.context === "fresh",
+  );
+  if (selected?.kind !== "player") throw new Error("missing first player");
+  const authorityBefore = await worlds.readAuthorityHistory(worldId);
+  const invalidHost = hostBinding();
+  delete invalidHost.files["blocks/style.md"];
+
+  await expect(
+    chains.revisePlayer({
+      operationId: "revise-fresh-compile-failure",
+      worldId,
+      chainId: source.chainId,
+      eventId: selected.id,
+      replacementExchangeId: "exchange-edit-fresh-compile-failure",
+      replacementText: "I take the western path.",
+      continuation: "fresh_context",
+      freshContext: {
+        hostBinding: invalidHost,
+        playPreset: playPreset(),
+        modelBinding: modelBinding(),
+      },
+    }),
+  ).rejects.toThrow();
+
+  expect(await worlds.readAuthorityHistory(worldId)).toEqual(authorityBefore);
+  expect(await worlds.currentHead(worldId)).toBe(source.parentHead);
+});
+
+test("把上下文中较后的修改稿另存为全新上下文时保留页面前缀但不继承模型 transcript", async () => {
+  const { worlds, worldId, root } = await createWorld(
+    "play-chain-edit-later-as-fresh",
+  );
+  const sourceHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      { outcome: "response", text: "Alex waits beside the eastern path." },
+      { outcome: "response", text: "The abandoned continuation." },
+    ],
+  });
+  const chains = new PlayCallChain(worlds);
+  await chains.start({
+    worldId,
+    chainId: "play-chain-edit-later-source",
+    exchangeId: "exchange-edit-later-first",
+    playerText: "I ask Alex where the paths lead.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: sourceHost,
+  });
+  const source = await chains.append({
+    worldId,
+    chainId: "play-chain-edit-later-source",
+    exchangeId: "exchange-edit-later-second",
+    playerText: "I take the eastern path.",
+    modelHost: sourceHost,
+  });
+  const selected = source.events.find(
+    (event) =>
+      event.kind === "player" &&
+      event.exchangeId === "exchange-edit-later-second",
+  );
+  if (selected?.kind !== "player") throw new Error("missing later player");
+
+  const basePath = join(
+    root,
+    "worlds-file-native",
+    worldId,
+    "runtime",
+    "play-contexts",
+    createHash("sha256").update(source.chainId).digest("hex"),
+    "base.json",
+  );
+  const legacyBase = JSON.parse(await readFile(basePath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  delete legacyBase.modelBinding;
+  await writeFile(basePath, `${JSON.stringify(legacyBase)}\n`, "utf8");
+
+  const freshBinding = {
+    ...modelBinding(),
+    endpointFingerprint: "later-fresh-endpoint",
+    modelId: "later-fresh-model",
+    protocolConfigFingerprint: "later-fresh-protocol",
+  };
+  const revisedChains = new PlayCallChain(worlds);
+  const revised = await revisedChains.revisePlayer({
+    operationId: "revise-later-as-fresh",
+    worldId,
+    chainId: source.chainId,
+    eventId: selected.id,
+    replacementExchangeId: "exchange-edit-later-replacement",
+    replacementText: "I take the western path instead.",
+    continuation: "fresh_context",
+    freshContext: {
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: freshBinding,
+    },
+  });
+
+  expect(revised.playCallChain.events).toEqual([
+    expect.objectContaining({
+      id: 1,
+      kind: "player",
+      context: "fresh",
+      text: "I take the western path instead.",
+      committedHead: "commit:5",
+    }),
+  ]);
+  const page = await worlds.playTimeline.readPage(worldId, 100);
+  expect(
+    page.items.filter(({ kind }) => kind === "context_boundary"),
+  ).toHaveLength(2);
+  expect(
+    page.items.flatMap((item) =>
+      item.kind === "event" &&
+      (item.event.kind === "player" || item.event.kind === "assistant")
+        ? [item.event.text]
+        : [],
+    ),
+  ).toEqual([
+    "I ask Alex where the paths lead.",
+    "Alex waits beside the eastern path.",
+    "I take the western path instead.",
+  ]);
+
+  const replacementHost = new ScriptedModelHost({
+    binding: freshBinding,
+    steps: [{ outcome: "response", text: "Alex follows you west." }],
+  });
+  await revisedChains.append({
+    worldId,
+    chainId: revised.playCallChain.chainId,
+    exchangeId: "exchange-edit-later-continue",
+    playerText: "",
+    modelHost: replacementHost,
+  });
+  expect(replacementHost.requests[0]?.appended).toEqual([
+    { kind: "player", text: "I take the western path instead." },
+  ]);
 });
 
 test("Provider 结果未知时禁止重放已派发请求，并要求全新上下文", async () => {

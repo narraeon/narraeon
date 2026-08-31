@@ -4570,6 +4570,66 @@ summary:focus-visible {
   line-height: 1.5;
 }
 
+.history-player-edit-continuation {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.history-player-edit-continuation legend {
+  margin-bottom: 0.35rem;
+  color: #17493e;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.history-player-edit-continuation label {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.55rem;
+  align-items: start;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid rgb(23 73 62 / 24%);
+  border-radius: 0.7rem;
+  background: rgb(255 255 255 / 28%);
+  cursor: pointer;
+}
+
+.history-player-edit-continuation label:has(input:checked) {
+  border-color: #17493e;
+  background: rgb(255 255 255 / 52%);
+}
+
+.history-player-edit-continuation label:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.56;
+}
+
+.history-player-edit-continuation input {
+  margin-top: 0.18rem;
+  accent-color: #17493e;
+}
+
+.history-player-edit .history-player-edit-continuation label > span {
+  display: grid;
+  gap: 0.12rem;
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+.history-player-edit-continuation strong {
+  font-size: 0.74rem;
+}
+
+.history-player-edit-continuation small {
+  color: #17493e;
+  font-size: 0.68rem;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
 .history-player-edit .button-row {
   justify-content: flex-end;
 }

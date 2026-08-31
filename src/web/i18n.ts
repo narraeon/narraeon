@@ -1176,12 +1176,16 @@ const worldPageEnglishMessages: Record<string, string> = {
     "The edit was saved in the current world. After configuring a model, append context to continue generation.",
   "修改已保存，正在从修改稿继续生成…":
     "Edit saved; continuing from the edited message…",
+  "修改已保存，正在从全新上下文继续生成…":
+    "Edit saved; continuing from a fresh context…",
   "修改已保存，但模型请求中断；点击“追加上下文”即可原样重发。":
     "The edit was saved, but the model request was interrupted. Append context to resend it unchanged.",
   "修改已保存，但模型请求失败；请使用全新上下文继续。":
     "The edit was saved, but the model request failed. Continue with a new context.",
   "修改已保存在当前世界，并已从修改稿继续。":
     "The edit was saved in the current world and play continued from it.",
+  "修改已保存在当前世界，并已作为全新上下文继续。":
+    "The edit was saved in the current world and continued as a fresh context.",
   "世界名称已保存。": "World name saved.",
   "← 返回工作区": "← Back to workspace",
   "正在打开世界…": "Opening world…",
@@ -1312,9 +1316,17 @@ const worldPageEnglishMessages: Record<string, string> = {
   玩家: "Player",
   修改: "Edit",
   修改后的行动: "Edited action",
+  修改后如何继续: "How to continue after editing",
   "修改会直接保存在当前世界；这条原提交及其后的内容会离开当前时间线，但旧 Authority 记录仍可恢复。":
     "The edit is saved directly in the current world. The original message and later content leave the current timeline, while the old Authority records remain recoverable.",
+  沿原上下文继续: "Continue the original context",
+  "保留修改点以前的模型对话和原生续传。":
+    "Keep model messages and provider-native continuation before the edit.",
+  作为全新上下文保存: "Save as a fresh context",
+  "不继承旧模型对话；修改稿会成为全新上下文的第一条消息。":
+    "Do not inherit the old model conversation. The edited message becomes the first message in a fresh context.",
   保存修改并继续: "Save edit and continue",
+  保存为全新上下文并继续: "Save as fresh context and continue",
   取消: "Cancel",
   "AI 响应": "Model response",
   模型工具步骤: "Model tool step",

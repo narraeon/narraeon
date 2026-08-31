@@ -136,6 +136,7 @@ export type V1Request =
       eventId: number;
       replacementExchangeId: string;
       replacementText: string;
+      continuation: "continue_context" | "fresh_context";
     }
   | {
       type: "play.chain.start";
@@ -547,6 +548,7 @@ const requiredFields: Record<
     eventId: "number",
     replacementExchangeId: "string",
     replacementText: "string",
+    continuation: "string",
   },
   "play.chain.start": {
     worldId: "string",
@@ -780,6 +782,15 @@ function validateRequestFields(request: Record<string, unknown>): void {
     throw new V1ProtocolError(
       "invalid_request",
       "play.timeline.detail.eventId is invalid",
+    );
+  if (
+    request.type === "play.chain.revise-player" &&
+    request.continuation !== "continue_context" &&
+    request.continuation !== "fresh_context"
+  )
+    throw new V1ProtocolError(
+      "invalid_request",
+      "play.chain.revise-player.continuation is invalid",
     );
   if (
     request.type === "world.surface.read" &&

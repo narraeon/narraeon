@@ -254,6 +254,19 @@ export class FileNativePlayTimelineStore {
     );
   }
 
+  /** Write a sealed context segment without making it the active timeline. */
+  async persistDetached(
+    value: PersistedPlayCallChain,
+    cursor?: PlayContextPersistenceCursor,
+  ): Promise<PlayContextPersistenceCursor> {
+    return this.#persistAtRuntimeRoot(
+      this.#worldRuntimeRoot(value.worldId),
+      value,
+      cursor,
+      false,
+    );
+  }
+
   async persistStaged(
     targetWorldRoot: string,
     value: PersistedPlayCallChain,
@@ -346,6 +359,7 @@ export class FileNativePlayTimelineStore {
     runtimeRoot: string,
     value: PersistedPlayCallChain,
     cursor?: PlayContextPersistenceCursor,
+    publishHead = true,
   ): Promise<PlayContextPersistenceCursor> {
     assertIdentity(value.worldId, "World ID");
     assertIdentity(value.chainId, "Call-chain ID");
@@ -471,12 +485,13 @@ export class FileNativePlayTimelineStore {
       updatedAt: value.updatedAt,
     };
     await publishJson(join(root, "state.json"), state);
-    await publishJson(join(runtimeRoot, "play-timeline-head.json"), {
-      schemaVersion: 3,
-      worldId: value.worldId,
-      chainId: value.chainId,
-      generation: value.timelineGeneration,
-    } satisfies PersistedTimelineHead);
+    if (publishHead)
+      await publishJson(join(runtimeRoot, "play-timeline-head.json"), {
+        schemaVersion: 3,
+        worldId: value.worldId,
+        chainId: value.chainId,
+        generation: value.timelineGeneration,
+      } satisfies PersistedTimelineHead);
     return {
       eventCount: value.events.length,
       transcriptCount: value.transcript.length,

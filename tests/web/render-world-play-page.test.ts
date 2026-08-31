@@ -1494,6 +1494,13 @@ describe("世界游玩页面", () => {
     expect((editor as HTMLTextAreaElement).value).toBe(
       "I signal Alex to open the door.",
     );
+    expect(
+      within(playerMessage)
+        .getByRole("radio", {
+          name: /沿原上下文继续/u,
+        })
+        .matches(":checked"),
+    ).toBe(true);
     fireEvent.change(editor, {
       target: { value: "I ask Alex not to open the door yet." },
     });
@@ -1520,6 +1527,7 @@ describe("世界游玩页面", () => {
       chainId: "play-chain-existing",
       eventId: 1,
       replacementText: "I ask Alex not to open the door yet.",
+      continuation: "continue_context",
     });
     expect(
       client.request.mock.calls
@@ -1528,6 +1536,113 @@ describe("世界游玩页面", () => {
     ).toMatchObject({
       worldId: "world-one",
       chainId: "play-chain-revised",
+      playerText: "",
+    });
+  });
+
+  test("修改玩家提交可明确选择把修改稿作为全新上下文保存", async () => {
+    let chain = playChainView(
+      "play-chain-existing",
+      "exchange-first",
+      "I signal Alex to open the door.",
+    );
+    const client = {
+      request: vi.fn(<T>(request: V1Request) => {
+        if (request.type === "world.read")
+          return Promise.resolve(worldView(chain) as T);
+        if (request.type === "artifacts.debug") return Promise.resolve([] as T);
+        if (request.type === "play.chain.revise-player") {
+          chain = {
+            ...chain,
+            chainId: "play-chain-fresh-revision",
+            baselineHead: "commit:1",
+            parentHead: "commit:4",
+            events: [
+              {
+                id: 1,
+                kind: "player",
+                exchangeId: request.replacementExchangeId,
+                text: request.replacementText,
+                context: "fresh",
+                committedHead: "commit:4",
+              },
+            ],
+            changedDocuments: [],
+          };
+          return Promise.resolve({
+            outcome: "revised",
+            worldId: "world-one",
+            playCallChain: chain,
+          } as T);
+        }
+        if (request.type === "play.chain.append") {
+          chain = {
+            ...chain,
+            parentHead: "commit:5",
+            events: [
+              ...chain.events,
+              {
+                id: 2,
+                kind: "assistant",
+                text: "Alex waits at the beginning of the fresh context.",
+                status: "completed",
+                exchange: 1,
+                attempt: 1,
+                committedHead: "commit:5",
+              },
+            ],
+          };
+          return Promise.resolve(chain as T);
+        }
+        return Promise.reject(new Error("Unexpected request: " + request.type));
+      }),
+    };
+
+    renderWorld(client);
+    await screen.findByText("I signal Alex to open the door.");
+    const playerMessage = screen
+      .getByText("I signal Alex to open the door.")
+      .closest<HTMLElement>(".call-chain-player")!;
+    fireEvent.click(
+      within(playerMessage).getByRole("button", { name: "修改" }),
+    );
+    fireEvent.change(within(playerMessage).getByLabelText("修改后的行动"), {
+      target: { value: "I ask Alex to wait before opening the door." },
+    });
+    fireEvent.click(
+      within(playerMessage).getByRole("radio", {
+        name: /作为全新上下文保存/u,
+      }),
+    );
+    fireEvent.click(
+      within(playerMessage).getByRole("button", {
+        name: "保存为全新上下文并继续",
+      }),
+    );
+
+    expect(
+      await screen.findByText(
+        "Alex waits at the beginning of the fresh context.",
+      ),
+    ).toBeTruthy();
+    expect(
+      client.request.mock.calls
+        .map(([request]) => request)
+        .find((request) => request.type === "play.chain.revise-player"),
+    ).toMatchObject({
+      worldId: "world-one",
+      chainId: "play-chain-existing",
+      eventId: 1,
+      replacementText: "I ask Alex to wait before opening the door.",
+      continuation: "fresh_context",
+    });
+    expect(
+      client.request.mock.calls
+        .map(([request]) => request)
+        .find((request) => request.type === "play.chain.append"),
+    ).toMatchObject({
+      worldId: "world-one",
+      chainId: "play-chain-fresh-revision",
       playerText: "",
     });
   });

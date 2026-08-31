@@ -508,16 +508,28 @@ export class V1Runtime {
         return result;
       }
       case "play.chain.revise-player": {
-        const result = await playCall(() =>
-          this.#playCallChains.revisePlayer({
-            operationId: request.operationId,
-            worldId: request.worldId,
-            chainId: request.chainId,
-            eventId: request.eventId,
-            replacementExchangeId: request.replacementExchangeId,
-            replacementText: request.replacementText,
-          }),
-        );
+        const base = {
+          operationId: request.operationId,
+          worldId: request.worldId,
+          chainId: request.chainId,
+          eventId: request.eventId,
+          replacementExchangeId: request.replacementExchangeId,
+          replacementText: request.replacementText,
+        };
+        const result = await playCall(async () => {
+          if (request.continuation === "continue_context")
+            return this.#playCallChains.revisePlayer({
+              ...base,
+              continuation: request.continuation,
+            });
+          const { hostBinding, playPreset, modelBinding } =
+            await this.#continuousBinding();
+          return this.#playCallChains.revisePlayer({
+            ...base,
+            continuation: request.continuation,
+            freshContext: { hostBinding, playPreset, modelBinding },
+          });
+        });
         await this.#reconcileArtifacts(request.worldId);
         return result;
       }

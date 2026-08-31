@@ -861,6 +861,42 @@ export class FileNativeWorldStore {
     }
   }
 
+  /**
+   * Bind an immutable historical endpoint with the world's current control
+   * surface. This is the same semantic input as a fresh context started while
+   * that endpoint was current, without rematerializing it over today's head.
+   */
+  async bindPlayCallChainAt(
+    worldId: string,
+    head: string,
+  ): Promise<FileNativePlayBinding> {
+    assertIdentity(worldId, "World ID");
+    const [endpoint, control] = await Promise.all([
+      this.recoverEndpoint(worldId, head),
+      this.readSurface(worldId, "control"),
+    ]);
+    return {
+      worldId,
+      parentHead: endpoint.head,
+      files: [...endpoint.state, ...control].reduce<Record<string, string>>(
+        (files, { path, contents }, index) => {
+          files[
+            `${index < endpoint.state.length ? "state" : "control"}/${path}`
+          ] = contents;
+          return files;
+        },
+        {},
+      ),
+      additionalMaterials: structuredClone(endpoint.additionalMaterials),
+      history: Object.fromEntries(
+        endpoint.history.map(({ messageId, exactText }) => [
+          messageId,
+          exactText,
+        ]),
+      ),
+    };
+  }
+
   async reserveOperation(operationId: string): Promise<boolean> {
     assertIdentity(operationId, "operation ID");
     await mkdir(this.#operationsRoot, { recursive: true, mode: 0o700 });

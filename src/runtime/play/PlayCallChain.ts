@@ -24,10 +24,12 @@ import {
 import {
   FileNativePromptCompiler,
   type FileNativePromptInput,
+  type PlayPresetCompilation,
   type PromptCompilation,
 } from "../prompt/FileNativePromptCompiler.ts";
 import type {
   FileNativePlayBinding,
+  FileNativeRecoveredEndpoint,
   FileNativeStateChange,
   FileNativeWorldSummary,
   FileNativeWorldStore,
@@ -110,6 +112,35 @@ interface PlayCallChainAppendInput {
   playerText: string;
   modelHost: ModelHost;
   observer?: PlayCallChainObserver;
+}
+
+interface PlayCallChainRevisionBaseInput {
+  operationId: string;
+  worldId: string;
+  chainId: string;
+  eventId: number;
+  replacementExchangeId: string;
+  replacementText: string;
+}
+
+type PlayCallChainRevisionInput = PlayCallChainRevisionBaseInput &
+  (
+    | { continuation: "continue_context" }
+    | {
+        continuation: "fresh_context";
+        freshContext: Pick<
+          PlayCallChainStartInput,
+          "hostBinding" | "playPreset" | "modelBinding"
+        >;
+      }
+  );
+
+interface PreparedFreshPlayerRevision {
+  binding: FileNativePlayBinding;
+  bootstrap: PromptCompilation;
+  tools: PromptCompilation["tools"];
+  followups: PlayPresetCompilation["followups"];
+  authorization: PlayDocumentAuthorizationCheckpoint;
 }
 
 interface ActivePlayInvocation extends V1PlayRunProgress {
@@ -600,14 +631,7 @@ export class PlayCallChain {
    * append-only: one timeline-revision commit restores the player's logical
    * parent snapshot and appends the replacement text atomically.
    */
-  async revisePlayer(input: {
-    operationId: string;
-    worldId: string;
-    chainId: string;
-    eventId: number;
-    replacementExchangeId: string;
-    replacementText: string;
-  }): Promise<{
+  async revisePlayer(input: PlayCallChainRevisionInput): Promise<{
     outcome: "revised";
     worldId: string;
     playCallChain: V1PlayCallChainView;
@@ -636,23 +660,54 @@ export class PlayCallChain {
     const sourceContexts = await this.#worlds.playTimeline.readAllContexts(
       input.worldId,
     );
-    const appliedEvent = sourceContexts
-      .flatMap(({ events }) => events)
-      .find(
-        (
-          event,
-        ): event is Extract<V1PlayCallChainEvent, { kind: "player" }> & {
-          committedHead: string;
-        } =>
+    const appliedContext = sourceContexts.find(({ events }) =>
+      events.some(
+        (event) =>
           event.kind === "player" &&
           event.exchangeId === input.replacementExchangeId &&
           event.committedHead !== undefined,
-      );
+      ),
+    );
+    const appliedEvent = appliedContext?.events.find(
+      (
+        event,
+      ): event is Extract<V1PlayCallChainEvent, { kind: "player" }> & {
+        committedHead: string;
+      } =>
+        event.kind === "player" &&
+        event.exchangeId === input.replacementExchangeId &&
+        event.committedHead !== undefined,
+    );
     if (appliedEvent !== undefined) {
       if (appliedEvent.text !== input.replacementText)
         throw new PlayCallChainError(
           "The same replacement exchange ID is already bound to different player text.",
         );
+      const requestedSource = await this.#worlds.playTimeline.readContext(
+        input.worldId,
+        input.chainId,
+      );
+      const requestedEventIndex = requestedSource?.value.events.findIndex(
+        ({ id }) => id === input.eventId,
+      );
+      const requestedEvent =
+        requestedEventIndex === undefined || requestedEventIndex < 0
+          ? undefined
+          : requestedSource?.value.events[requestedEventIndex];
+      if (
+        requestedSource === null ||
+        requestedEventIndex === undefined ||
+        requestedEventIndex < 0 ||
+        requestedEvent?.kind !== "player" ||
+        requestedEvent.committedHead === undefined
+      )
+        throw new PlayCallChainError(
+          "The replacement exchange ID is already used by another commit.",
+        );
+      const requestedRestoresHead = playerRevisionRestoresHead(
+        requestedSource.value,
+        requestedEventIndex,
+      );
       const authority = await this.#worlds.readAuthorityHistory(input.worldId);
       const commit = authority.commits.find(
         ({ head }) => head === appliedEvent.committedHead,
@@ -665,7 +720,15 @@ export class PlayCallChain {
         (operation.outcome !== "committed" &&
           operation.outcome !== "committed_materialization_pending") ||
         operation.worldId !== input.worldId ||
-        operation.head !== appliedEvent.committedHead
+        operation.head !== appliedEvent.committedHead ||
+        commit.timelineRevision?.restoresHead !== requestedRestoresHead ||
+        commit.timelineRevision.replacesHead !== requestedEvent.committedHead ||
+        commit.timelineRevision.requestFingerprint !==
+          playerRevisionRequestFingerprint(
+            input,
+            requestedEvent.committedHead,
+            requestedRestoresHead,
+          )
       )
         throw new PlayCallChainError(
           "The replacement exchange ID is already used by another commit.",
@@ -711,14 +774,7 @@ export class PlayCallChain {
   }
 
   async #applyPlayerRevision(input: {
-    request: {
-      operationId: string;
-      worldId: string;
-      chainId: string;
-      eventId: number;
-      replacementExchangeId: string;
-      replacementText: string;
-    };
+    request: PlayCallChainRevisionInput;
     source: PersistedPlayCallChain;
     sourceContexts: PersistedPlayCallChainContext[];
     selectedContextIndex: number;
@@ -733,29 +789,27 @@ export class PlayCallChain {
   }> {
     const request = input.request;
     const sourceContext = input.sourceContexts[input.selectedContextIndex]!;
-    let restoresHead = sourceContext.baselineHead;
-    for (const event of sourceContext.events.slice(0, input.selectedEventIndex))
-      if (
-        (event.kind === "player" || event.kind === "assistant") &&
-        event.committedHead !== undefined
-      )
-        restoresHead = event.committedHead;
+    const restoresHead = playerRevisionRestoresHead(
+      sourceContext,
+      input.selectedEventIndex,
+    );
 
-    const requestFingerprint =
-      "sha256:" +
-      createHash("sha256")
-        .update(
-          JSON.stringify({
-            schema: "narraeon.timeline-revision-request/v1",
-            chainId: request.chainId,
-            eventId: request.eventId,
-            selectedHead: input.selectedEvent.committedHead,
-            restoresHead,
-            replacementExchangeId: request.replacementExchangeId,
-            replacementText: request.replacementText,
-          }),
-        )
-        .digest("hex");
+    const freshPreparation =
+      request.continuation === "fresh_context"
+        ? await this.#prepareFreshPlayerRevision(request, restoresHead)
+        : null;
+    const timelineGeneration = playerRevisionTimelineGeneration(
+      input.source.timelineGeneration,
+      request.operationId,
+      request.worldId,
+      request.continuation,
+    );
+
+    const requestFingerprint = playerRevisionRequestFingerprint(
+      request,
+      input.selectedEvent.committedHead,
+      restoresHead,
+    );
     const outcome = await this.#worlds.reviseTimeline({
       operationId: request.operationId,
       worldId: request.worldId,
@@ -795,6 +849,36 @@ export class PlayCallChain {
       throw new PlayCallChainError(
         "The timeline revision was committed, but current-world materialization has not reached the new endpoint.",
       );
+    if (request.continuation === "fresh_context") {
+      if (freshPreparation === null)
+        throw new PlayCallChainError(
+          "The fresh model context was not prepared before committing the timeline revision.",
+        );
+      const revised = await this.#buildFreshPlayerRevision({
+        request,
+        sourceContext,
+        sourceContexts: input.sourceContexts,
+        selectedContextIndex: input.selectedContextIndex,
+        prefixEvents,
+        baseline,
+        selected,
+        binding,
+        restoresHead,
+        outcomeHead: outcome.head,
+        timelineGeneration,
+        freshPreparation,
+      });
+      await this.#worlds.playTimeline.persist(structuredClone(revised));
+      const activeId = this.#worldChains.get(request.worldId);
+      if (activeId !== undefined) this.#active.delete(activeId);
+      this.#active.delete(sourceContext.chainId);
+      this.#worldChains.delete(request.worldId);
+      return {
+        outcome: "revised",
+        worldId: request.worldId,
+        playCallChain: projectView(revised),
+      };
+    }
     const documents = restorePlayDocuments(
       binding.files,
       sourceContext,
@@ -803,10 +887,11 @@ export class PlayCallChain {
     const revised: PersistedPlayCallChain = {
       schemaVersion: 3,
       kind: "play_call_chain",
-      chainId: derivedChainId(
+      chainId: playerRevisionChainId(
         sourceContext.chainId,
-        "timeline-revision:" + request.operationId,
+        request.operationId,
         request.worldId,
+        request.continuation,
       ),
       worldId: request.worldId,
       previousContexts: [],
@@ -814,7 +899,7 @@ export class PlayCallChain {
         input.selectedContextIndex === 0
           ? null
           : input.sourceContexts[input.selectedContextIndex - 1]!.chainId,
-      timelineGeneration: this.#worlds.playTimeline.newGeneration(),
+      timelineGeneration,
       baselineHead: sourceContext.baselineHead,
       baselineHistoryLength:
         sourceContext.baselineHistoryLength ?? baseline.history.length,
@@ -877,6 +962,193 @@ export class PlayCallChain {
       outcome: "revised",
       worldId: request.worldId,
       playCallChain: projectView(revised),
+    };
+  }
+
+  async #prepareFreshPlayerRevision(
+    request: PlayCallChainRevisionInput & { continuation: "fresh_context" },
+    restoresHead: string,
+  ): Promise<PreparedFreshPlayerRevision> {
+    const binding = await this.#worlds.bindPlayCallChainAt(
+      request.worldId,
+      restoresHead,
+    );
+    const documents = new FileNativePlayDocuments(binding.files);
+    const compilation = this.#compiler.compilePlayCallChain(
+      {
+        endpoint: {
+          id: `${request.worldId}:${binding.parentHead}`,
+          commit: binding.parentHead,
+        },
+        hostBinding: structuredClone(request.freshContext.hostBinding),
+        world: {
+          controlFingerprint: fingerprintControl(binding.files),
+          documentSnapshot: documents.snapshot,
+          additionalMaterials: structuredClone(binding.additionalMaterials),
+          history: structuredClone(binding.history),
+        },
+        playerInputPlacement: "append",
+        playerInput: request.replacementText,
+        modelBinding: structuredClone(request.freshContext.modelBinding),
+      },
+      request.freshContext.playPreset,
+    );
+    const bootstrap = structuredClone(compilation.bootstrap);
+    documents.bindBootstrap(bootstrap);
+    return {
+      binding,
+      bootstrap,
+      tools: structuredClone(compilation.toolUniverse),
+      followups: structuredClone(compilation.followups ?? []),
+      authorization: documents.authorizationCheckpoint(),
+    };
+  }
+
+  async #buildFreshPlayerRevision(input: {
+    request: PlayCallChainRevisionInput & { continuation: "fresh_context" };
+    sourceContext: PersistedPlayCallChainContext;
+    sourceContexts: PersistedPlayCallChainContext[];
+    selectedContextIndex: number;
+    prefixEvents: V1PlayCallChainEvent[];
+    baseline: FileNativeRecoveredEndpoint;
+    selected: FileNativeRecoveredEndpoint;
+    binding: FileNativePlayBinding;
+    restoresHead: string;
+    outcomeHead: string;
+    timelineGeneration: string;
+    freshPreparation: PreparedFreshPlayerRevision;
+  }): Promise<PersistedPlayCallChain> {
+    const { request, sourceContext } = input;
+    let previousChainId =
+      input.selectedContextIndex === 0
+        ? null
+        : input.sourceContexts[input.selectedContextIndex - 1]!.chainId;
+
+    if (input.prefixEvents.length > 0) {
+      const prefixTranscript = transcriptThroughEvents(
+        sourceContext.transcript,
+        input.prefixEvents,
+      );
+      const completedKeys = completedToolKeys(input.prefixEvents);
+      const documents = restorePlayDocuments(
+        input.binding.files,
+        sourceContext,
+        input.prefixEvents,
+      );
+      const prefix: PersistedPlayCallChain = {
+        schemaVersion: 3,
+        kind: "play_call_chain",
+        chainId: derivedChainId(
+          sourceContext.chainId,
+          "timeline-revision-prefix:" + request.operationId,
+          request.worldId,
+        ),
+        worldId: request.worldId,
+        previousContexts: [],
+        previousChainId,
+        timelineGeneration: input.timelineGeneration,
+        baselineHead: sourceContext.baselineHead,
+        baselineHistoryLength:
+          sourceContext.baselineHistoryLength ?? input.baseline.history.length,
+        parentHead: input.restoresHead,
+        playPreset: structuredClone(sourceContext.playPreset),
+        ...(sourceContext.followups === undefined
+          ? {}
+          : { followups: structuredClone(sourceContext.followups) }),
+        ...(sourceContext.playPresetScriptsEnabled === undefined
+          ? {}
+          : {
+              playPresetScriptsEnabled: sourceContext.playPresetScriptsEnabled,
+            }),
+        ...(sourceContext.modelBinding === undefined
+          ? {}
+          : { modelBinding: structuredClone(sourceContext.modelBinding) }),
+        status: "ready",
+        canRetry: false,
+        bootstrap: structuredClone(sourceContext.bootstrap),
+        tools: structuredClone(sourceContext.tools),
+        transcript: prefixTranscript,
+        events: structuredClone(input.prefixEvents),
+        completedTools: sourceContext.completedTools
+          .filter(({ key }) => completedKeys.has(key))
+          .map((item) => structuredClone(item)),
+        documentAuthorizationCheckpoints: authorizationCheckpointsThroughEvents(
+          sourceContext,
+          input.prefixEvents,
+          documents.authorizationCheckpoint(),
+        ),
+        changedDocuments: changedDocumentsAtHead(
+          sourceContext.changedDocuments,
+          input.baseline.state,
+          input.selected.state,
+        ),
+        nextMaterials: structuredClone(input.selected.additionalMaterials),
+        nextEventId: Math.max(0, ...input.prefixEvents.map(({ id }) => id)) + 1,
+        exchange: completedAssistantExchange(input.prefixEvents),
+        lastRequest: null,
+        lastRequestAttempt: 0,
+        lastFailure: null,
+        updatedAt: Date.now(),
+      };
+      await this.#worlds.playTimeline.persistDetached(structuredClone(prefix));
+      previousChainId = prefix.chainId;
+    }
+
+    const fresh = input.freshPreparation;
+    return {
+      schemaVersion: 3,
+      kind: "play_call_chain",
+      chainId: playerRevisionChainId(
+        sourceContext.chainId,
+        request.operationId,
+        request.worldId,
+        request.continuation,
+      ),
+      worldId: request.worldId,
+      previousContexts: [],
+      previousChainId,
+      timelineGeneration: input.timelineGeneration,
+      baselineHead: input.restoresHead,
+      baselineHistoryLength: Object.keys(fresh.binding.history).length,
+      parentHead: input.outcomeHead,
+      playPreset: {
+        id: request.freshContext.playPreset.id,
+        name: request.freshContext.playPreset.name,
+        revision: request.freshContext.playPreset.revision,
+      },
+      followups: structuredClone(fresh.followups),
+      playPresetScriptsEnabled: request.freshContext.playPreset.scriptsEnabled,
+      modelBinding: structuredClone(request.freshContext.modelBinding),
+      status: "ready",
+      canRetry: false,
+      bootstrap: structuredClone(fresh.bootstrap),
+      tools: structuredClone(fresh.tools),
+      transcript: [{ kind: "player", text: request.replacementText }],
+      events: [
+        {
+          id: 1,
+          kind: "player",
+          exchangeId: request.replacementExchangeId,
+          text: request.replacementText,
+          context: "fresh",
+          committedHead: input.outcomeHead,
+        },
+      ],
+      completedTools: [],
+      documentAuthorizationCheckpoints: [
+        {
+          afterEventId: 0,
+          authorization: structuredClone(fresh.authorization),
+        },
+      ],
+      changedDocuments: [],
+      nextMaterials: structuredClone(input.binding.additionalMaterials),
+      nextEventId: 2,
+      exchange: 0,
+      lastRequest: null,
+      lastRequestAttempt: 0,
+      lastFailure: null,
+      updatedAt: Date.now(),
     };
   }
 
@@ -2574,6 +2846,98 @@ function derivedChainId(
     .update(`${sourceChainId}\0${branchIdentity}\0${targetWorldId}`)
     .digest("hex")
     .slice(0, 40)}`;
+}
+
+function playerRevisionRestoresHead(
+  source: Pick<PersistedPlayCallChainContext, "baselineHead" | "events">,
+  selectedEventIndex: number,
+): string {
+  let restoresHead = source.baselineHead;
+  for (const event of source.events.slice(0, selectedEventIndex))
+    if (
+      (event.kind === "player" || event.kind === "assistant") &&
+      event.committedHead !== undefined
+    )
+      restoresHead = event.committedHead;
+  return restoresHead;
+}
+
+function playerRevisionRequestFingerprint(
+  request: PlayCallChainRevisionInput,
+  selectedHead: string,
+  restoresHead: string,
+): string {
+  const base = {
+    schema: "narraeon.timeline-revision-request/v1",
+    chainId: request.chainId,
+    eventId: request.eventId,
+    selectedHead,
+    restoresHead,
+    replacementExchangeId: request.replacementExchangeId,
+    replacementText: request.replacementText,
+  };
+  // Keep the released continuation fingerprint byte-for-byte recoverable;
+  // the fresh strategy owns a new request shape with an explicit mode.
+  const value =
+    request.continuation === "continue_context"
+      ? base
+      : {
+          ...base,
+          schema: "narraeon.timeline-revision-request/v2",
+          continuation: request.continuation,
+        };
+  return (
+    "sha256:" + createHash("sha256").update(JSON.stringify(value)).digest("hex")
+  );
+}
+
+function playerRevisionChainId(
+  sourceChainId: string,
+  operationId: string,
+  worldId: string,
+  continuation: PlayCallChainRevisionInput["continuation"],
+): string {
+  return derivedChainId(
+    sourceChainId,
+    `${continuation === "fresh_context" ? "timeline-revision-fresh" : "timeline-revision"}:${operationId}`,
+    worldId,
+  );
+}
+
+function playerRevisionTimelineGeneration(
+  sourceGeneration: string,
+  operationId: string,
+  worldId: string,
+  continuation: PlayCallChainRevisionInput["continuation"],
+): string {
+  return `timeline:${createHash("sha256")
+    .update(
+      JSON.stringify({
+        schema: "narraeon.player-revision-timeline-generation/v1",
+        sourceGeneration,
+        operationId,
+        worldId,
+        continuation,
+      }),
+    )
+    .digest("hex")
+    .slice(0, 40)}`;
+}
+
+function completedAssistantExchange(
+  events: readonly V1PlayCallChainEvent[],
+): number {
+  return Math.max(
+    0,
+    ...events
+      .filter(
+        (
+          event,
+        ): event is Extract<V1PlayCallChainEvent, { kind: "assistant" }> =>
+          event.kind === "assistant" && event.status === "completed",
+      )
+      .map(({ exchange }) => exchange),
+  );
 }
 
 function historyEntries(

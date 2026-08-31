@@ -58,7 +58,7 @@ test.afterAll(async () => {
   );
 });
 
-test("修改旧玩家提交会留在当前世界，创建分叉才生成独立世界", async ({
+test("修改旧玩家提交可另存为全新上下文，创建分叉才生成独立世界", async ({
   page,
 }) => {
   await page.goto("/");
@@ -129,13 +129,17 @@ test("修改旧玩家提交会留在当前世界，创建分叉才生成独立�
   await editedPlayer
     .getByLabel("修改后的行动")
     .fill("Then let's meet fifteen minutes early.");
+  await page.getByRole("radio", { name: /作为全新上下文保存/u }).check();
   responses.push("Alex agrees to wait downstairs at seven forty-five.");
-  await page.getByRole("button", { name: "保存修改并继续" }).click();
+  await page.getByRole("button", { name: "保存为全新上下文并继续" }).click();
 
   await expect(
     page.getByRole("heading", { name: "Current Situation", exact: true }),
   ).toBeVisible();
   const revisedTimeline = page.getByLabel("调用链记录");
+  await expect(
+    page.getByRole("separator", { name: "全新上下文从这里开始" }),
+  ).toHaveCount(2);
   await expect(revisedTimeline).not.toContainText(
     "Then I will go downstairs five minutes early.",
   );

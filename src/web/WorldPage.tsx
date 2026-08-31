@@ -49,6 +49,10 @@ import {
 } from "./PlayRunProgressState.ts";
 
 type WorldSection = "play" | "documents" | "history" | "manage";
+type PlayerRevisionContinuation = Extract<
+  V1Request,
+  { type: "play.chain.revise-player" }
+>["continuation"];
 type PendingAction =
   | "play-fresh"
   | "play-append"
@@ -785,6 +789,7 @@ export function WorldPage({
     chainId: string,
     eventId: number,
     editedText: string,
+    continuation: PlayerRevisionContinuation,
   ): Promise<void> {
     if (world === null) return;
     if (editedText.trim().length === 0) {
@@ -813,6 +818,7 @@ export function WorldPage({
         eventId,
         replacementExchangeId,
         replacementText: editedText,
+        continuation,
       });
       setPlayCallChain(revised.playCallChain);
       await refreshWorld();
@@ -829,7 +835,10 @@ export function WorldPage({
       setPending("play-append");
       setFeedback({
         kind: "status",
-        text: uiText("修改已保存，正在从修改稿继续生成…"),
+        text:
+          continuation === "fresh_context"
+            ? uiText("修改已保存，正在从全新上下文继续生成…")
+            : uiText("修改已保存，正在从修改稿继续生成…"),
       });
       const continued = await requestPlayCallChain(
         client,
@@ -856,7 +865,9 @@ export function WorldPage({
                   "修改已保存，但模型请求中断；点击“追加上下文”即可原样重发。",
                 )
               : uiText("修改已保存，但模型请求失败；请使用全新上下文继续。")
-            : uiText("修改已保存在当前世界，并已从修改稿继续。"),
+            : continuation === "fresh_context"
+              ? uiText("修改已保存在当前世界，并已作为全新上下文继续。")
+              : uiText("修改已保存在当前世界，并已从修改稿继续。"),
       });
     } catch (reason: unknown) {
       setFeedback({ kind: "error", text: errorMessage(reason) });
@@ -1013,9 +1024,20 @@ export function WorldPage({
                     worldId={worldId}
                     items={playTimeline.items}
                     restartDisabled={pending !== null}
+                    freshContextDisabled={!modelConfigured}
                     onRestartFrom={(head) => void deriveWorld(head)}
-                    onEditPlayer={(chainId, eventId, editedText) =>
-                      void reviseEditedPlayer(chainId, eventId, editedText)
+                    onEditPlayer={(
+                      chainId,
+                      eventId,
+                      editedText,
+                      continuation,
+                    ) =>
+                      void reviseEditedPlayer(
+                        chainId,
+                        eventId,
+                        editedText,
+                        continuation,
+                      )
                     }
                   />
                 ) : committedMessages.length === 0 ? (
@@ -1530,6 +1552,7 @@ function PlayTimeline({
   worldId,
   items,
   restartDisabled,
+  freshContextDisabled,
   onRestartFrom,
   onEditPlayer,
 }: {
@@ -1537,8 +1560,14 @@ function PlayTimeline({
   worldId: string;
   items: readonly V1PlayTimelineItem[];
   restartDisabled: boolean;
+  freshContextDisabled: boolean;
   onRestartFrom: (head: string) => void;
-  onEditPlayer: (chainId: string, eventId: number, editedText: string) => void;
+  onEditPlayer: (
+    chainId: string,
+    eventId: number,
+    editedText: string,
+    continuation: PlayerRevisionContinuation,
+  ) => void;
 }): React.JSX.Element {
   return (
     <ol
@@ -1599,6 +1628,7 @@ function PlayTimeline({
             chainId={item.chainId}
             event={item.event}
             restartDisabled={restartDisabled}
+            freshContextDisabled={freshContextDisabled}
             onRestartFrom={onRestartFrom}
             onEditPlayer={onEditPlayer}
           />
@@ -1614,6 +1644,7 @@ function TimelineEvent({
   chainId,
   event,
   restartDisabled,
+  freshContextDisabled,
   onRestartFrom,
   onEditPlayer,
 }: {
@@ -1622,13 +1653,21 @@ function TimelineEvent({
   chainId: string;
   event: V1PlayTimelineEventSummary;
   restartDisabled: boolean;
+  freshContextDisabled: boolean;
   onRestartFrom: (head: string) => void;
-  onEditPlayer: (chainId: string, eventId: number, editedText: string) => void;
+  onEditPlayer: (
+    chainId: string,
+    eventId: number,
+    editedText: string,
+    continuation: PlayerRevisionContinuation,
+  ) => void;
 }): React.JSX.Element {
   const [detail, setDetail] = useState<V1PlayCallChainEvent | null>(null);
   const [detailPending, setDetailPending] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [editedText, setEditedText] = useState<string | null>(null);
+  const [revisionContinuation, setRevisionContinuation] =
+    useState<PlayerRevisionContinuation>("continue_context");
   const loadDetail = async (): Promise<void> => {
     if (detail !== null || detailPending) return;
     setDetailPending(true);
@@ -1667,7 +1706,10 @@ function TimelineEvent({
                     type="button"
                     className="history-restart-button"
                     disabled={restartDisabled}
-                    onClick={() => setEditedText(event.text)}
+                    onClick={() => {
+                      setEditedText(event.text);
+                      setRevisionContinuation("continue_context");
+                    }}
                   >
                     {uiText("修改")}
                   </button>
@@ -1702,13 +1744,64 @@ function TimelineEvent({
                   "修改会直接保存在当前世界；这条原提交及其后的内容会离开当前时间线，但旧 Authority 记录仍可恢复。",
                 )}
               </p>
+              <fieldset className="history-player-edit-continuation">
+                <legend>{uiText("修改后如何继续")}</legend>
+                <label>
+                  <input
+                    type="radio"
+                    name={`revision-continuation-${chainId}-${event.id}`}
+                    value="continue_context"
+                    checked={revisionContinuation === "continue_context"}
+                    disabled={restartDisabled}
+                    onChange={() => setRevisionContinuation("continue_context")}
+                  />
+                  <span>
+                    <strong>{uiText("沿原上下文继续")}</strong>
+                    <small>
+                      {uiText("保留修改点以前的模型对话和原生续传。")}
+                    </small>
+                  </span>
+                </label>
+                <label>
+                  <input
+                    type="radio"
+                    name={`revision-continuation-${chainId}-${event.id}`}
+                    value="fresh_context"
+                    checked={revisionContinuation === "fresh_context"}
+                    disabled={restartDisabled || freshContextDisabled}
+                    onChange={() => setRevisionContinuation("fresh_context")}
+                  />
+                  <span>
+                    <strong>{uiText("作为全新上下文保存")}</strong>
+                    <small>
+                      {uiText(
+                        "不继承旧模型对话；修改稿会成为全新上下文的第一条消息。",
+                      )}
+                    </small>
+                  </span>
+                </label>
+              </fieldset>
               <div className="button-row">
                 <button
                   type="button"
-                  disabled={restartDisabled || editedText.trim().length === 0}
-                  onClick={() => onEditPlayer(chainId, event.id, editedText)}
+                  disabled={
+                    restartDisabled ||
+                    editedText.trim().length === 0 ||
+                    (revisionContinuation === "fresh_context" &&
+                      freshContextDisabled)
+                  }
+                  onClick={() =>
+                    onEditPlayer(
+                      chainId,
+                      event.id,
+                      editedText,
+                      revisionContinuation,
+                    )
+                  }
                 >
-                  {uiText("保存修改并继续")}
+                  {revisionContinuation === "fresh_context"
+                    ? uiText("保存为全新上下文并继续")
+                    : uiText("保存修改并继续")}
                 </button>
                 <button
                   type="button"
