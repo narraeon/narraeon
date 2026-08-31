@@ -14,6 +14,7 @@ import {
   hasCLIProxyThinkingSuffix,
   modelReasoningPolicyIssue,
   modelProviderPresets,
+  type CopyModelConnectionResult,
   type ListProviderModelsInput,
   type ModelConnectionLibraryView,
   type ModelConnectionView,
@@ -29,6 +30,7 @@ import type { FileNativeModelConnection } from "./FileNativeModelAdapters.ts";
 
 const libraryFileName = "model-connections-v1.json";
 const maxModelListBytes = 1024 * 1024;
+const maxStoredConnections = 64;
 
 interface StoredModelConnection extends FileNativeModelConnection {
   id: string;
@@ -83,6 +85,8 @@ export class ModelConnectionStore {
             );
       if (input.connectionId !== undefined && index < 0)
         throw new Error("The model configuration to edit was not found");
+      if (index < 0 && document.connections.length >= maxStoredConnections)
+        throw new Error("The model configuration limit has been reached");
       const existing = index < 0 ? undefined : document.connections[index];
       const saved: StoredModelConnection = {
         id: existing?.id ?? randomUUID(),
@@ -93,6 +97,28 @@ export class ModelConnectionStore {
       document.activeConnectionId = saved.id;
       await this.#writeDocument(document);
       return this.#viewDocument(document);
+    });
+  }
+
+  copy(connectionId: string, name: string): Promise<CopyModelConnectionResult> {
+    return this.#mutate(async () => {
+      const document = await this.#readDocument();
+      const source = document.connections.find(({ id }) => id === connectionId);
+      if (source === undefined)
+        throw new Error("The model configuration to copy was not found");
+      if (document.connections.length >= maxStoredConnections)
+        throw new Error("The model configuration limit has been reached");
+      const copied: StoredModelConnection = {
+        ...structuredClone(source),
+        id: randomUUID(),
+        name: requiredTrimmed(name, "Configuration name", 160),
+      };
+      document.connections.push(copied);
+      await this.#writeDocument(document);
+      return {
+        library: this.#viewDocument(document),
+        copiedConnectionId: copied.id,
+      };
     });
   }
 
@@ -321,7 +347,7 @@ function normalizeSaveInput(
     throw new Error(
       existing === undefined
         ? "A new model configuration requires an API key"
-        : "The endpoint or protocol changed; enter the API key again because old credentials are never forwarded to a new endpoint",
+        : "The endpoint or protocol changed; enter the API key again because old credentials are never rebound to a new protocol or endpoint",
     );
   validatePresetBinding(presetId, provider, baseUrl);
   return {
@@ -348,7 +374,7 @@ function validateDocument(value: unknown): ModelConnectionDocument {
     (value.activeConnectionId !== null &&
       typeof value.activeConnectionId !== "string") ||
     !Array.isArray(value.connections) ||
-    value.connections.length > 64
+    value.connections.length > maxStoredConnections
   )
     throw new Error(
       "Model-connection configuration file does not match its fixed schema",

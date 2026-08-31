@@ -138,6 +138,23 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await page.getByLabel("模型 ID").fill("backup-model");
   await page.getByRole("button", { name: "保存模型连接" }).click();
   await expect(page.locator(".config-card")).toHaveCount(2);
+  const backupModel = page
+    .locator(".config-card")
+    .filter({ hasText: "备用模型" });
+  await backupModel.getByRole("button", { name: "克隆配置" }).click();
+  await expect(page.locator(".config-card")).toHaveCount(3);
+  await expect(page.getByRole("status")).toContainText(
+    "副本保留本机凭据，但不会切换当前配置",
+  );
+  await expect(page.locator(".model-active-summary")).toContainText("备用模型");
+  await expect(page.getByLabel("配置名称")).toHaveValue("备用模型（副本）");
+  await expect(page.getByLabel("API Key")).toHaveValue("");
+  await page.getByLabel("模型 ID").fill("backup-model-copy");
+  await page.getByRole("button", { name: "保存模型连接" }).click();
+  await expect(page.getByRole("status")).toContainText("模型连接已保存");
+  await expect(page.locator(".model-active-summary")).toContainText(
+    "备用模型（副本）",
+  );
   const firstModel = page
     .locator(".config-card")
     .filter({ hasText: "默认模型" });

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import {
   hasCLIProxyThinkingSuffix,
+  type CopyModelConnectionResult,
   type ModelConnectionLibraryView,
   type ModelConnectionView,
   type ModelProviderDialect,
@@ -195,6 +196,35 @@ export function ModelConnectionScreen({
       });
       onLibraryChange(next);
       onNotice(uiText("已切换当前模型配置；Runtime 不会自动故障转移。"));
+    } catch (error: unknown) {
+      onNotice(errorMessage(error));
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function copy(connection: ModelConnectionView): Promise<void> {
+    if (pending !== null) return;
+    setPending(`copy:${connection.id}`);
+    try {
+      const name = copyName(connection.name, library.connections);
+      const result = await client.request<CopyModelConnectionResult>({
+        type: "model.copy",
+        connectionId: connection.id,
+        name,
+      });
+      const copied = result.library.connections.find(
+        ({ id }) => id === result.copiedConnectionId,
+      );
+      if (copied === undefined)
+        throw new Error(uiText("Runtime 没有返回已克隆的模型配置"));
+      onLibraryChange(result.library);
+      edit(copied);
+      onNotice(
+        uiText("已克隆为「{name}」。副本保留本机凭据，但不会切换当前配置。", {
+          name: copied.name,
+        }),
+      );
     } catch (error: unknown) {
       onNotice(errorMessage(error));
     } finally {
@@ -519,7 +549,9 @@ export function ModelConnectionScreen({
             onChange={(event) => change({ apiKey: event.target.value }, true)}
           />
           <p className="field-note">
-            {uiText("旧凭据只会为同一协议和端点保留，不会静默转发到新端点。")}
+            {uiText(
+              "凭据按协议和端点共同划分作用域；任一变化都要重新填写，避免 Runtime 用新的认证方式或目标静默发送旧密钥。",
+            )}
           </p>
 
           <div className="model-picker-row">
@@ -714,6 +746,16 @@ export function ModelConnectionScreen({
                   )}
                   <button
                     className="secondary-button"
+                    disabled={pending !== null || dirty}
+                    onClick={() => void copy(connection)}
+                    type="button"
+                  >
+                    {pending === `copy:${connection.id}`
+                      ? uiText("正在克隆…")
+                      : uiText("克隆配置")}
+                  </button>
+                  <button
+                    className="secondary-button"
                     disabled={
                       pending !== null ||
                       dirty ||
@@ -794,6 +836,26 @@ function errorMessage(error: unknown): string {
 
 function comparableUrl(value: string): string {
   return value.trim().replace(/\/+$/u, "");
+}
+
+function copyName(
+  sourceName: string,
+  connections: readonly ModelConnectionView[],
+): string {
+  const names = new Set(connections.map(({ name }) => name));
+  for (
+    let copyNumber = 1;
+    copyNumber <= connections.length + 1;
+    copyNumber += 1
+  ) {
+    const suffix =
+      copyNumber === 1
+        ? uiText("（副本）")
+        : uiText("（副本 {number}）", { number: copyNumber });
+    const candidate = `${sourceName.slice(0, Math.max(0, 160 - suffix.length))}${suffix}`;
+    if (!names.has(candidate)) return candidate;
+  }
+  throw new Error(uiText("无法生成不重复的副本名称"));
 }
 
 function reasoningForProvider(

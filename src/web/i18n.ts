@@ -275,6 +275,8 @@ const englishMessages: Record<string, string> = {
     "The current model configuration was switched. Runtime does not fail over automatically.",
   "模型配置已从本机删除。":
     "The model configuration was deleted from this device.",
+  "已克隆为「{name}」。副本保留本机凭据，但不会切换当前配置。":
+    "Cloned as “{name}”. The copy keeps the locally stored credential without switching the active configuration.",
   "保存多份本机配置并明确切换。API Key 不会返回浏览器；切换失败时 Runtime 不会悄悄改用另一份配置。":
     "Save multiple local configurations and switch explicitly. API keys are never returned to the browser, and Runtime does not silently use another configuration when a switch fails.",
   当前配置: "Current configuration",
@@ -294,8 +296,8 @@ const englishMessages: Record<string, string> = {
     "The endpoint or protocol changed; enter it again",
   留空以保留当前端点的现有凭据:
     "Leave blank to keep the existing credential for this endpoint",
-  "旧凭据只会为同一协议和端点保留，不会静默转发到新端点。":
-    "An old credential is retained only for the same protocol and endpoint; it is never silently forwarded to a new endpoint.",
+  "凭据按协议和端点共同划分作用域；任一变化都要重新填写，避免 Runtime 用新的认证方式或目标静默发送旧密钥。":
+    "Credentials are scoped by both protocol and endpoint. If either changes, enter the key again so Runtime never silently sends an old key with a new authentication scheme or to a new target.",
   "模型 ID": "Model ID",
   "正在拉取…": "Fetching…",
   从端点拉取模型: "Fetch models from endpoint",
@@ -319,6 +321,13 @@ const englishMessages: Record<string, string> = {
   未配置: "Not configured",
   "正在切换…": "Switching…",
   切换到此配置: "Switch to this configuration",
+  "（副本）": " (copy)",
+  "（副本 {number}）": " (copy {number})",
+  "正在克隆…": "Cloning…",
+  克隆配置: "Clone configuration",
+  "Runtime 没有返回已克隆的模型配置":
+    "Runtime did not return the cloned model configuration",
+  无法生成不重复的副本名称: "Could not generate a unique copy name",
   正在编辑: "Editing",
   编辑: "Edit",
   "正在删除…": "Deleting…",

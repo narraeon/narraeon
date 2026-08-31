@@ -149,6 +149,8 @@ export class V1Runtime {
         return this.#models.view();
       case "model.save":
         return this.#models.save(request.connection);
+      case "model.copy":
+        return this.#models.copy(request.connectionId, request.name);
       case "model.select":
         return this.#models.select(request.connectionId);
       case "model.delete":

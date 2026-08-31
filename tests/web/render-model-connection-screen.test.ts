@@ -168,6 +168,60 @@ test("CLIProxyAPI 模型后缀控制 Thinking 时仍可独立配置返回内容"
   expect(returned.value).toBe("auto");
 });
 
+test("克隆配置由 Runtime 复制凭据、保持当前配置并打开副本编辑", async () => {
+  const library = modelLibrary();
+  const copiedConnection = {
+    ...library.connections[0]!,
+    id: "model-claude-copy",
+    name: "Claude via CLIProxyAPI（副本）",
+  };
+  const copiedLibrary = {
+    ...library,
+    connections: [...library.connections, copiedConnection],
+  };
+  const requests: V1Request[] = [];
+  const onLibraryChange = vi.fn();
+  const onNotice = vi.fn();
+
+  render(
+    createElement(ModelConnectionScreen, {
+      client: {
+        request<T = unknown>(request: V1Request): Promise<T> {
+          requests.push(request);
+          return Promise.resolve({
+            library: copiedLibrary,
+            copiedConnectionId: copiedConnection.id,
+          } as T);
+        },
+      } as RuntimeClient,
+      library,
+      onLibraryChange,
+      onNotice,
+      onDirtyChange: vi.fn(),
+    }),
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "克隆配置" }));
+
+  await waitFor(() =>
+    expect(onLibraryChange).toHaveBeenCalledWith(copiedLibrary),
+  );
+  expect(requests).toEqual([
+    {
+      type: "model.copy",
+      connectionId: "model-claude",
+      name: "Claude via CLIProxyAPI（副本）",
+    },
+  ]);
+  expect(screen.getByLabelText<HTMLInputElement>("配置名称").value).toBe(
+    "Claude via CLIProxyAPI（副本）",
+  );
+  expect(screen.getByRole("heading", { name: "编辑配置" })).toBeTruthy();
+  expect(onNotice).toHaveBeenLastCalledWith(
+    "已克隆为「Claude via CLIProxyAPI（副本）」。副本保留本机凭据，但不会切换当前配置。",
+  );
+});
+
 function modelLibrary(): ModelConnectionLibraryView {
   return {
     configured: true,

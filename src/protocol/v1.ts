@@ -38,6 +38,7 @@ export type V1Request =
       type: "model.save";
       connection: SaveModelConnectionInput;
     }
+  | { type: "model.copy"; connectionId: string; name: string }
   | { type: "model.select"; connectionId: string }
   | { type: "model.delete"; connectionId: string }
   | ({ type: "model.models" } & ListProviderModelsInput)
@@ -473,6 +474,7 @@ const requiredFields: Record<
 > = {
   "preferences.save": { locale: "string" },
   "model.save": { connection: "object" },
+  "model.copy": { connectionId: "string", name: "string" },
   "model.select": { connectionId: "string" },
   "model.delete": { connectionId: "string" },
   "model.models": { provider: "string", baseUrl: "string" },
@@ -813,6 +815,7 @@ const requestTypes = new Set([
   "preferences.save",
   "model.read",
   "model.save",
+  "model.copy",
   "model.select",
   "model.delete",
   "model.models",

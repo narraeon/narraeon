@@ -256,6 +256,11 @@ export interface ModelConnectionLibraryView {
   presets: readonly ModelProviderPreset[];
 }
 
+export interface CopyModelConnectionResult {
+  library: ModelConnectionLibraryView;
+  copiedConnectionId: string;
+}
+
 export interface SaveModelConnectionInput {
   connectionId?: string;
   name: string;

@@ -95,6 +95,62 @@ test("保存多份模型配置、显式切换并且不向浏览器返回 API Key
   expect(persisted.connections[0]?.apiKey).toBe("openai-secret");
 });
 
+test("克隆模型配置会复制本机凭据但保持当前配置不变", async () => {
+  const root = await temporaryRoot();
+  const store = new ModelConnectionStore(root);
+  const saved = await store.save({
+    name: "Claude 主配置",
+    presetId: "custom",
+    provider: "anthropic_messages",
+    dialect: "cliproxyapi",
+    baseUrl: "http://127.0.0.1:8317/v1",
+    apiKey: "clone-secret",
+    modelId: "claude-sonnet",
+    reasoningEffort: "high",
+    reasoningSummary: "auto",
+    thinkingMode: "adaptive",
+    contextWindowTokens: 128_000,
+    maxOutputTokens: 16_000,
+  });
+  const sourceId = saved.activeConnectionId!;
+
+  const copied = await store.copy(sourceId, "Claude 主配置（副本）");
+
+  expect(copied.copiedConnectionId).not.toBe(sourceId);
+  expect(copied.library.activeConnectionId).toBe(sourceId);
+  expect(copied.library.connections).toHaveLength(2);
+  expect(copied.library.connections).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        id: copied.copiedConnectionId,
+        name: "Claude 主配置（副本）",
+        provider: "anthropic_messages",
+        dialect: "cliproxyapi",
+        baseUrl: "http://127.0.0.1:8317/v1",
+        modelId: "claude-sonnet",
+        reasoningEffort: "high",
+        reasoningSummary: "auto",
+        thinkingMode: "adaptive",
+        contextWindowTokens: 128_000,
+        maxOutputTokens: 16_000,
+        hasApiKey: true,
+      }),
+    ]),
+  );
+  expect(copied.library.connections[1]).not.toHaveProperty("apiKey");
+
+  const path = join(root, "model-connections-v1.json");
+  const persisted = JSON.parse(await readFile(path, "utf8")) as {
+    activeConnectionId: string;
+    connections: { id: string; apiKey: string }[];
+  };
+  expect(persisted.activeConnectionId).toBe(sourceId);
+  expect(
+    persisted.connections.find(({ id }) => id === copied.copiedConnectionId)
+      ?.apiKey,
+  ).toBe("clone-secret");
+});
+
 test("模型配置持久化方言与推理策略，并拒绝协议没有定义的组合", async () => {
   const root = await temporaryRoot();
   const store = new ModelConnectionStore(root);
@@ -393,7 +449,7 @@ test("模型列表使用当前端点的正确凭据且不把旧凭据带到已�
   expect(fetch_).toHaveBeenCalledTimes(1);
 });
 
-test("编辑配置时不会把旧端点凭据静默带到新端点", async () => {
+test("编辑配置时不会把旧凭据静默绑定到新协议或端点", async () => {
   const root = await temporaryRoot();
   const store = new ModelConnectionStore(root);
   const saved = await store.save({
@@ -410,15 +466,31 @@ test("编辑配置时不会把旧端点凭据静默带到新端点", async () =>
   await expect(
     store.save({
       connectionId,
-      name: "新端点",
+      name: "新协议",
       presetId: "custom",
       provider: "openai_responses",
+      baseUrl: "https://old.invalid/v1",
+      modelId: "model",
+      contextWindowTokens: 32_000,
+      maxOutputTokens: 2_000,
+    }),
+  ).rejects.toThrow(
+    "old credentials are never rebound to a new protocol or endpoint",
+  );
+  await expect(
+    store.save({
+      connectionId,
+      name: "新端点",
+      presetId: "custom",
+      provider: "chat_completions",
       baseUrl: "https://new.invalid/v1",
       modelId: "model",
       contextWindowTokens: 32_000,
       maxOutputTokens: 2_000,
     }),
-  ).rejects.toThrow("old credentials are never forwarded to a new endpoint");
+  ).rejects.toThrow(
+    "old credentials are never rebound to a new protocol or endpoint",
+  );
   await expect(
     store.save({
       connectionId,
