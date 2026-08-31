@@ -18,6 +18,17 @@ afterEach(async () => {
 test("保存多份模型配置、显式切换并且不向浏览器返回 API Key", async () => {
   const root = await temporaryRoot();
   const store = new ModelConnectionStore(root);
+  await expect(
+    store.save({
+      name: "缺少凭据的新配置",
+      presetId: "openai",
+      provider: "openai_responses",
+      baseUrl: "https://api.openai.com/v1",
+      modelId: "gpt-test",
+      contextWindowTokens: 128_000,
+      maxOutputTokens: 16_000,
+    }),
+  ).rejects.toThrow("A new model configuration requires an API key");
   const first = await store.save({
     name: "OpenAI 主配置",
     presetId: "openai",
@@ -397,19 +408,21 @@ test("旧 Anthropic 配置无损迁移为独立 Thinking 模式", async () => {
   ]);
 });
 
-test("模型列表使用当前端点的正确凭据且不把旧凭据带到已修改端点", async () => {
+test("模型列表在协议和端点改变后仍复用已有配置的本机凭据", async () => {
   const root = await temporaryRoot();
-  const fetch_ = vi.fn<typeof fetch>().mockResolvedValue(
-    new Response(
-      JSON.stringify({
-        data: [
-          { id: "z-model" },
-          { id: "a-model" },
-          { id: "a-model" },
-          { missing: true },
-        ],
-      }),
-      { status: 200, headers: { "content-type": "application/json" } },
+  const fetch_ = vi.fn<typeof fetch>().mockImplementation(() =>
+    Promise.resolve(
+      new Response(
+        JSON.stringify({
+          data: [
+            { id: "z-model" },
+            { id: "a-model" },
+            { id: "a-model" },
+            { missing: true },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
     ),
   );
   const store = new ModelConnectionStore(root, fetch_);
@@ -440,16 +453,21 @@ test("模型列表使用当前端点的正确凭据且不把旧凭据带到已�
   await expect(
     store.listModels({
       connectionId: saved.activeConnectionId!,
-      provider: "chat_completions",
+      provider: "anthropic_messages",
       baseUrl: "https://other.invalid/v1",
     }),
-  ).rejects.toThrow(
-    "The endpoint or protocol changed; enter the API key again before fetching models",
+  ).resolves.toEqual({ models: ["a-model", "z-model"] });
+  expect((fetch_.mock.calls[1]?.[0] as URL).toString()).toBe(
+    "https://other.invalid/v1/models?limit=1000",
   );
-  expect(fetch_).toHaveBeenCalledTimes(1);
+  expect(fetch_.mock.calls[1]?.[1]?.headers).toEqual({
+    "anthropic-version": "2023-06-01",
+    "x-api-key": "stored-secret",
+  });
+  expect(fetch_).toHaveBeenCalledTimes(2);
 });
 
-test("编辑配置时不会把旧凭据静默绑定到新协议或端点", async () => {
+test("编辑已有配置时协议或端点变化均复用本机凭据", async () => {
   const root = await temporaryRoot();
   const store = new ModelConnectionStore(root);
   const saved = await store.save({
@@ -474,23 +492,29 @@ test("编辑配置时不会把旧凭据静默绑定到新协议或端点", async
       contextWindowTokens: 32_000,
       maxOutputTokens: 2_000,
     }),
-  ).rejects.toThrow(
-    "old credentials are never rebound to a new protocol or endpoint",
-  );
+  ).resolves.toMatchObject({ activeConnectionId: connectionId });
+  await expect(store.bind()).resolves.toMatchObject({
+    provider: "openai_responses",
+    baseUrl: "https://old.invalid/v1",
+    apiKey: "old-secret",
+  });
   await expect(
     store.save({
       connectionId,
       name: "新端点",
       presetId: "custom",
-      provider: "chat_completions",
+      provider: "openai_responses",
       baseUrl: "https://new.invalid/v1",
       modelId: "model",
       contextWindowTokens: 32_000,
       maxOutputTokens: 2_000,
     }),
-  ).rejects.toThrow(
-    "old credentials are never rebound to a new protocol or endpoint",
-  );
+  ).resolves.toMatchObject({ activeConnectionId: connectionId });
+  await expect(store.bind()).resolves.toMatchObject({
+    provider: "openai_responses",
+    baseUrl: "https://new.invalid/v1",
+    apiKey: "old-secret",
+  });
   await expect(
     store.save({
       connectionId,

@@ -142,6 +142,44 @@ test("三种协议只暴露各自真实支持的 Effort、Thinking 和返回内�
   );
 });
 
+test("已有配置改变协议和端点后仍可沿用本机 API Key", () => {
+  const library = modelLibrary();
+  render(
+    createElement(ModelConnectionScreen, {
+      client: { request: vi.fn() } as unknown as RuntimeClient,
+      library,
+      onLibraryChange: vi.fn(),
+      onNotice: vi.fn(),
+      onDirtyChange: vi.fn(),
+    }),
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "新建另一份" }));
+  expect(screen.getByLabelText<HTMLInputElement>("API Key").required).toBe(
+    true,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+
+  fireEvent.change(screen.getByLabelText("协议适配器"), {
+    target: { value: "openai_responses" },
+  });
+  fireEvent.change(screen.getByLabelText("Base URL"), {
+    target: { value: "https://new-endpoint.invalid/v1" },
+  });
+
+  expect(screen.getByLabelText<HTMLInputElement>("API Key").required).toBe(
+    false,
+  );
+  expect(
+    screen.getByRole<HTMLButtonElement>("button", {
+      name: "从端点拉取模型",
+    }).disabled,
+  ).toBe(false);
+  expect(screen.getByLabelText("API Key").getAttribute("placeholder")).toBe(
+    "留空以沿用本机保存的现有凭据",
+  );
+});
+
 test("CLIProxyAPI 模型后缀控制 Thinking 时仍可独立配置返回内容", () => {
   const library = modelLibrary();
   library.connections[0] = {

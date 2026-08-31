@@ -149,6 +149,13 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(page.locator(".model-active-summary")).toContainText("备用模型");
   await expect(page.getByLabel("配置名称")).toHaveValue("备用模型（副本）");
   await expect(page.getByLabel("API Key")).toHaveValue("");
+  await page.getByLabel("协议适配器").selectOption("openai_responses");
+  await page.getByLabel("Base URL").fill(`${providerUrl}/alternate`);
+  await expect(page.getByLabel("API Key")).not.toHaveAttribute("required", "");
+  await page.getByRole("button", { name: "从端点拉取模型" }).click();
+  await expect(page.getByRole("status")).toContainText(
+    "已从当前端点拉取 2 个模型",
+  );
   await page.getByLabel("模型 ID").fill("backup-model-copy");
   await page.getByRole("button", { name: "保存模型连接" }).click();
   await expect(page.getByRole("status")).toContainText("模型连接已保存");

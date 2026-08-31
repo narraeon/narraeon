@@ -292,12 +292,10 @@ const englishMessages: Record<string, string> = {
   "的内置端点；手动修改后按自定义端点保存。":
     "'s built-in endpoint. After a manual edit it will be saved as a custom endpoint.",
   新配置必填: "Required for a new configuration",
-  "端点或协议已改变，必须重新填写":
-    "The endpoint or protocol changed; enter it again",
-  留空以保留当前端点的现有凭据:
-    "Leave blank to keep the existing credential for this endpoint",
-  "凭据按协议和端点共同划分作用域；任一变化都要重新填写，避免 Runtime 用新的认证方式或目标静默发送旧密钥。":
-    "Credentials are scoped by both protocol and endpoint. If either changes, enter the key again so Runtime never silently sends an old key with a new authentication scheme or to a new target.",
+  留空以沿用本机保存的现有凭据:
+    "Leave blank to reuse the existing credential saved on this device",
+  "编辑已有配置时，API Key 留空会把本机保存的现有凭据用于当前协议和端点；填写新值会覆盖它。":
+    "When editing an existing configuration, leaving API Key blank reuses the credential saved on this device for the current protocol and endpoint. Enter a new value to replace it.",
   "模型 ID": "Model ID",
   "正在拉取…": "Fetching…",
   从端点拉取模型: "Fetch models from endpoint",

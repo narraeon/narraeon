@@ -181,10 +181,8 @@ export class ModelConnectionStore {
       );
       if (stored === undefined)
         throw new Error("Model configuration not found");
-      if (stored.provider !== provider || stored.baseUrl !== baseUrl)
-        throw new Error(
-          "The endpoint or protocol changed; enter the API key again before fetching models",
-        );
+      // A saved connection owns its credential across later protocol and
+      // endpoint edits; an explicit key in this request still takes precedence.
       apiKey = stored.apiKey;
     }
     if (apiKey === undefined)
@@ -338,17 +336,11 @@ function normalizeSaveInput(
     maxOutputTokens: input.maxOutputTokens,
   });
   const explicitApiKey = normalizeOptionalApiKey(input.apiKey);
-  const apiKey =
-    explicitApiKey ??
-    (existing?.provider === provider && existing.baseUrl === baseUrl
-      ? existing.apiKey
-      : undefined);
+  // Credential reuse follows the saved configuration identity, not its current
+  // protocol or endpoint fields.
+  const apiKey = explicitApiKey ?? existing?.apiKey;
   if (apiKey === undefined)
-    throw new Error(
-      existing === undefined
-        ? "A new model configuration requires an API key"
-        : "The endpoint or protocol changed; enter the API key again because old credentials are never rebound to a new protocol or endpoint",
-    );
+    throw new Error("A new model configuration requires an API key");
   validatePresetBinding(presetId, provider, baseUrl);
   return {
     name,

@@ -82,14 +82,7 @@ export function ModelConnectionScreen({
     () => library.presets.find(({ id }) => id === form.presetId),
     [form.presetId, library.presets],
   );
-  const editedConnection = library.connections.find(
-    ({ id }) => id === form.connectionId,
-  );
-  const credentialsMustBeEntered =
-    form.connectionId === null ||
-    editedConnection?.provider !== form.provider ||
-    comparableUrl(editedConnection?.baseUrl ?? "") !==
-      comparableUrl(form.baseUrl);
+  const credentialsMustBeEntered = form.connectionId === null;
 
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
   useEffect(
@@ -542,15 +535,13 @@ export function ModelConnectionScreen({
             placeholder={
               form.connectionId === null
                 ? uiText("新配置必填")
-                : credentialsMustBeEntered
-                  ? uiText("端点或协议已改变，必须重新填写")
-                  : uiText("留空以保留当前端点的现有凭据")
+                : uiText("留空以沿用本机保存的现有凭据")
             }
             onChange={(event) => change({ apiKey: event.target.value }, true)}
           />
           <p className="field-note">
             {uiText(
-              "凭据按协议和端点共同划分作用域；任一变化都要重新填写，避免 Runtime 用新的认证方式或目标静默发送旧密钥。",
+              "编辑已有配置时，API Key 留空会把本机保存的现有凭据用于当前协议和端点；填写新值会覆盖它。",
             )}
           </p>
 
@@ -832,10 +823,6 @@ function formFor(connection: ModelConnectionView): ConnectionForm {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : uiText("模型配置操作失败");
-}
-
-function comparableUrl(value: string): string {
-  return value.trim().replace(/\/+$/u, "");
 }
 
 function copyName(
