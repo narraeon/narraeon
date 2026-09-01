@@ -60,11 +60,14 @@ test.each([
       "setting_list",
       "setting_search",
       "setting_read",
+      "setting_create",
       "setting_write_file",
       "setting_patch",
       "setting_move",
     ])
       expect(serialized).toContain(name);
+    expect(serialized).not.toContain("$document.id");
+    expect(serialized).not.toContain("document ID");
     expect(serialized).not.toContain("setting_preview_candidate");
     expect(serialized).not.toContain("setting_finish_candidate");
   },

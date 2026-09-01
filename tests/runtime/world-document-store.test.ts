@@ -417,6 +417,18 @@ describe("WorldDocumentStore open/query Interface", () => {
       },
     });
 
+    const projectedRead = snapshot.query({
+      kind: "read_document",
+      document: { shortRef: "hero" },
+      maxBytes: 65_536,
+      referenceProjection: "short_ref",
+    });
+    expect(projectedRead.kind).toBe("read_document");
+    if (projectedRead.kind !== "read_document")
+      throw new Error("Expected a projected document read");
+    expect(projectedRead.body).toContain('盟友: { $ref: "@gate" }');
+    expect(projectedRead.body).not.toContain("place.gate");
+
     const yamlNode = snapshot.query({
       kind: "select_node",
       document: { documentId: "character.hero" },

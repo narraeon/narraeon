@@ -72,6 +72,7 @@ test("普通消息直接形成持久对话；首轮工具全集不随讨论或�
     "setting_list",
     "setting_search",
     "setting_read",
+    "setting_create",
     "setting_write_file",
     "setting_patch",
     "setting_move",
@@ -111,6 +112,48 @@ test("普通消息直接形成持久对话；首轮工具全集不随讨论或�
   });
 });
 
+test("升级后既有开放对话保留内容并自动换用当前 ref-only 工具契约", async () => {
+  const fixture = await createFixture([
+    { outcome: "response", text: "Existing conversation.", toolCalls: [] },
+  ]);
+  const view = await fixture.session.send({
+    packageId: fixture.packageId,
+    requestId: "request-before-tool-upgrade",
+    message: "Keep this conversation.",
+  });
+  const store = new FileNativeSettingImprovementStore(fixture.root);
+  const legacy = await store.read(view.sessionId);
+  legacy.bootstrap.logicalMessages[0]!.markdown = "legacy runtime contract";
+  legacy.bootstrap.tools = legacy.bootstrap.tools.filter(
+    ({ name }) => name !== "setting_create",
+  );
+  legacy.bootstrap.toolUniverse = legacy.bootstrap.toolUniverse.filter(
+    ({ name }) => name !== "setting_create",
+  );
+  await store.save(legacy);
+
+  const restarted = serviceFor(
+    fixture.root,
+    fixture.content,
+    new ScriptedModelHost({ binding, steps: [] }),
+  );
+  await expect(restarted.read(fixture.packageId)).resolves.toMatchObject({
+    sessionId: view.sessionId,
+    draftVersion: 0,
+    messages: view.messages,
+  });
+  const upgraded = await store.read(view.sessionId);
+  expect(upgraded.bootstrap.toolUniverse.map(({ name }) => name)).toContain(
+    "setting_create",
+  );
+  expect(
+    upgraded.bootstrap.logicalMessages.find(
+      ({ role }) => role === "runtime_system",
+    )?.markdown,
+  ).toContain("Every write tool call settles independently");
+  expect(JSON.stringify(upgraded.bootstrap)).not.toContain("$document.id");
+});
+
 test("重启后继续使用会话冻结的玩法预设语义和 Preview，而不跟随当前选择", async () => {
   const root = await mkdtemp(join(tmpdir(), "narraeon-setting-preset-"));
   roots.push(root);
@@ -139,11 +182,14 @@ test("重启后继续使用会话冻结的玩法预设语义和 Preview，而不
         toolCalls: [
           {
             id: "create-recovery-lore",
-            name: "setting_write_file",
+            name: "setting_create",
             arguments: {
               path: "world/lore/recovery.md",
-              contents:
-                "---\n$document:\n  id: ignored\n  ref: recovery\n  title: Recovery\n  summary: Confirms the frozen preset survives restart.\n  aliases: []\n---\n\n# Recovery\n\nStill frozen.\n",
+              ref: "recovery",
+              title: "Recovery",
+              summary: "Confirms the frozen preset survives restart.",
+              aliases: [],
+              body: "# Recovery\n\nStill frozen.\n",
             },
           },
         ],

@@ -3,7 +3,7 @@ import type { AppLocale } from "../protocol/appPreferences.ts";
 /**
  * Canonical author-owned guidance for AI-assisted setting improvement.
  *
- * The Runtime tool universe, schemas, response transaction, persistence and
+ * The Runtime tool universe, schemas, per-call settlement, persistence and
  * Apply boundary deliberately do not live here. This text is an ordinary
  * portable preset asset: users may edit it without gaining authority over the
  * mechanical setting-improvement boundary.

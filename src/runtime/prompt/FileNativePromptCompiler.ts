@@ -1027,7 +1027,7 @@ export function createMinimalFileNativePreviewInput(input: {
   const worldFiles = {
     "control/frame.yaml": `format: narraeon.world-frame/v1
 bindings:
-  currentSituation: situation.current
+  currentSituation: "@current-situation"
 instructions:
   - markdown: blocks/world-style.md
 context:

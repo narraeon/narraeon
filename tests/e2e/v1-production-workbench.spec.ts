@@ -221,8 +221,11 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
       tool("setting_read", { path: damagedPath }),
       tool("setting_write_file", {
         path: damagedPath,
-        contents:
-          "$document:\n  id: character.damaged\n  ref: damaged\n  title: Damaged Character\n  summary: Character document repaired in the isolated candidate.\n  aliases: []\nstatus: repaired\n",
+        ref: "damaged",
+        title: "Damaged Character",
+        summary: "Character document repaired in the isolated candidate.",
+        aliases: [],
+        contents: "status: repaired\n",
       }),
     ]),
     chatText(
@@ -250,19 +253,22 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
       tool("setting_read", { path: "world/characters/alex.yaml" }),
       tool("setting_read", { path: "opening.md" }),
       tool("setting_read", { path: "control/blocks/world.md" }),
-      tool("setting_write_file", {
+      tool("setting_create", {
         path: "world/notes/training.yaml",
-        contents:
-          "$document:\n  id: Assigned by Runtime\n  ref: training\n  title: Tonight's Training\n  summary: Alex's training plans for tonight.\n  aliases: []\nlocation: Campus basketball court\n",
+        ref: "training",
+        title: "Tonight's Training",
+        summary: "Alex's training plans for tonight.",
+        aliases: [],
+        body: "location: Campus basketball court\n",
       }),
       tool("setting_patch", {
-        document: "world/notes/training.yaml",
+        document: "@training",
         op: "add",
         locator: ["time"],
         value: "8:00 p.m.",
       }),
       tool("setting_move", {
-        from: "world/notes/training.yaml",
+        from: "@training",
         to: "world/events/training.yaml",
       }),
       tool("setting_patch", {
@@ -274,7 +280,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
       tool("setting_write_file", {
         path: "world/current-situation.yaml",
         contents:
-          "$document:\n  id: situation.current\n  ref: current\n  title: Dormitory World\n  summary: The current situation in the dormitory.\n  aliases: []\nsituation: Alex has put away the jersey and is ready to discuss tonight's training.\n",
+          "situation: Alex has put away the jersey and is ready to discuss tonight's training.\n",
       }),
       tool("setting_write_file", {
         path: "opening.md",
@@ -308,6 +314,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     "setting_list",
     "setting_search",
     "setting_read",
+    "setting_create",
     "setting_write_file",
     "setting_patch",
     "setting_move",
@@ -342,7 +349,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
       tool("setting_write_file", {
         path: "control/frame.yaml",
         contents:
-          "format: narraeon.world-frame/v1\nbindings:\n  currentSituation: situation.current\ninstructions:\n  - markdown: blocks/world.md\ncontext:\n  - slot: { kind: current_situation }\n  - slot: { kind: history, recent: 4 }\n  - slot: { kind: additional_materials }\n",
+          'format: narraeon.world-frame/v1\nbindings:\n  currentSituation: "@current-situation"\ninstructions:\n  - markdown: blocks/world.md\ncontext:\n  - slot: { kind: current_situation }\n  - slot: { kind: history, recent: 4 }\n  - slot: { kind: additional_materials }\n',
       }),
     ]),
     chatText("The frame was repaired and the automatic review now passes."),
@@ -368,6 +375,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     "setting_list",
     "setting_search",
     "setting_read",
+    "setting_create",
     "setting_write_file",
     "setting_patch",
     "setting_move",

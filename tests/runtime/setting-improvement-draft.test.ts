@@ -28,6 +28,7 @@ test("设定完善契约只描述当前对话、工具与应用行为", () => {
     "setting_list",
     "setting_search",
     "setting_read",
+    "setting_create",
     "setting_write_file",
     "setting_patch",
     "setting_move",
@@ -36,8 +37,11 @@ test("设定完善契约只描述当前对话、工具与应用行为", () => {
   expect(contract).toContain("每条用户消息都追加到当前设定完善对话");
   expect(contract).toContain("用户要求讨论或规划时给出讨论结果");
   expect(contract).toContain("不调用工具的完整响应");
-  expect(contract).toContain("原子批次");
-  expect(contract).toContain("检查结果随本批工具结果返回");
+  expect(contract).toContain("每个写工具调用独立结算");
+  expect(contract).toContain("失败只在对应的工具结果中返回");
+  expect(contract).toContain("ref 由你提供");
+  expect(contract).toContain('{ $ref: "@alex" }');
+  expect(contract).not.toContain("$document.id");
   expect(contract).toContain("内容包在游玩中的生命周期");
   expect(contract).toContain("world/*");
   expect(contract).toContain("state_list");
@@ -61,18 +65,27 @@ test("自动检查把改动文档在真实游玩提示中的覆盖方式返回�
   const results = draft.execute([
     {
       id: "create-character",
-      name: "setting_write_file",
+      name: "setting_create",
       arguments: {
         path: "world/characters/alex.yaml",
-        contents: `$document:\n  id: ignored\n  ref: alex\n  title: Alex\n  summary: A courier whose current assignment can affect the opening scene.\n  aliases: []\nstatus: waiting at the gate\n`,
+        ref: "alex",
+        title: "Alex",
+        summary:
+          "A courier whose current assignment can affect the opening scene.",
+        aliases: [],
+        body: "status: waiting at the gate\n",
       },
     },
     {
       id: "create-lore",
-      name: "setting_write_file",
+      name: "setting_create",
       arguments: {
         path: "world/lore/old-oath.md",
-        contents: `---\n$document:\n  id: ignored\n  ref: old-oath\n  title: The old oath\n  summary: Explains the promise that still constrains the two houses.\n  aliases: []\n---\n\n# The old oath\n\nThe two houses may not draw steel inside the gate.\n`,
+        ref: "old-oath",
+        title: "The old oath",
+        summary: "Explains the promise that still constrains the two houses.",
+        aliases: [],
+        body: "# The old oath\n\nThe two houses may not draw steel inside the gate.\n",
       },
     },
     {
@@ -111,7 +124,7 @@ test("自动检查把改动文档在真实游玩提示中的覆盖方式返回�
   });
 });
 
-test("同一完整响应里的所有写入整批原子回滚，读取结果仍保留", () => {
+test("每个写调用独立结算，失败只回到对应调用且不回滚成功调用", () => {
   const baseFiles = minimalFileNativeContentScaffold("en");
   const draft = new SettingImprovementDraft({
     baseFiles,
@@ -140,25 +153,382 @@ test("同一完整响应里的所有写入整批原子回滚，读取结果仍�
     },
   ]);
 
-  expect(results.map(({ isError }) => isError)).toEqual([false, true, true]);
-  expect(draft.files()).toEqual(baseFiles);
-  expect(draft.review().diff).toEqual([]);
-
-  const accepted = draft.execute([
-    {
-      id: "write-opening-again",
-      name: "setting_write_file",
-      arguments: {
-        path: "opening.md",
-        contents: `${opening.contents}\nChanged.`,
-      },
-    },
+  expect(results.map(({ toolCallId }) => toolCallId)).toEqual([
+    "read-opening",
+    "write-opening",
+    "write-invalid",
   ]);
-  expect(accepted).toMatchObject([{ isError: false }]);
+  expect(results.map(({ isError }) => isError)).toEqual([false, false, true]);
+  expect(results[1]?.markdown).toContain("Updated opening.md");
+  expect(results[1]?.markdown).not.toContain("private/runtime.txt");
+  expect(results[2]?.markdown).toContain("Special-file writes accept only");
+  expect(results[2]?.markdown).not.toContain("rolled back");
   expect(draft.review()).toMatchObject({
     status: "usable",
     diff: [{ path: "opening.md", kind: "modify" }],
   });
+});
+
+test("AI 用 ref 和正文新建文档，Runtime 隐藏 id，后续调用可直接更新", () => {
+  const baseFiles = minimalFileNativeContentScaffold("en");
+  const draft = new SettingImprovementDraft({
+    baseFiles,
+    locale: "en",
+    preview: () => preview,
+  });
+
+  const results = draft.execute([
+    {
+      id: "create-alex",
+      name: "setting_create",
+      arguments: {
+        path: "world/characters/alex.yaml",
+        ref: "alex",
+        title: "Alex",
+        summary: "A courier waiting at the city gate.",
+        aliases: ["The courier"],
+        body: "status: waiting\n",
+      },
+    },
+    {
+      id: "update-alex",
+      name: "setting_patch",
+      arguments: {
+        document: "@alex",
+        op: "replace",
+        locator: ["status"],
+        value: "ready",
+      },
+    },
+    {
+      id: "update-alex-metadata",
+      name: "setting_patch",
+      arguments: {
+        document: "@alex",
+        op: "set_metadata",
+        title: "Alex at the gate",
+        summary: "A courier who is ready to leave the city gate.",
+        aliases: ["The courier"],
+      },
+    },
+  ]);
+
+  expect(results.map(({ isError }) => isError)).toEqual([false, false, false]);
+  expect(results[0]?.markdown).toContain(
+    "Created @alex · world/characters/alex.yaml",
+  );
+  expect(results[0]?.markdown).toContain("already fully read");
+  expect(results[0]?.markdown).not.toMatch(/\$document\.id|doc\.[a-f0-9]+/u);
+  expect(results[1]?.markdown).toContain(
+    "Updated @alex · world/characters/alex.yaml",
+  );
+  expect(results[1]?.markdown).not.toContain("No file changed");
+  expect(results[2]?.markdown).toContain(
+    "Updated @alex · world/characters/alex.yaml",
+  );
+
+  const source = draft
+    .files()
+    .find(({ path }) => path === "world/characters/alex.yaml")?.contents;
+  expect(source).toMatch(/id: doc\.[a-f0-9]{32}/u);
+  expect(source).toContain("ref: alex");
+  expect(source).toContain("title: Alex at the gate");
+  expect(source).toContain(
+    "summary: A courier who is ready to leave the city gate.",
+  );
+  expect(source).toContain("status: ready");
+
+  const read = draft.execute([
+    {
+      id: "read-alex",
+      name: "setting_read",
+      arguments: { path: "@alex" },
+    },
+  ]);
+  expect(read).toMatchObject([{ isError: false }]);
+  expect(read[0]?.markdown).toContain("# Exact read @alex");
+  expect(read[0]?.markdown).not.toMatch(/\$document|doc\.[a-f0-9]+/u);
+});
+
+test("无效 ref 和字面 Unicode 转义只拒绝各自调用，既有成功写入保留", () => {
+  const baseFiles = minimalFileNativeContentScaffold("en");
+  const draft = new SettingImprovementDraft({
+    baseFiles,
+    locale: "en",
+    preview: () => preview,
+  });
+  const opening = baseFiles.find(({ path }) => path === "opening.md")!;
+  draft.execute([
+    {
+      id: "read-opening",
+      name: "setting_read",
+      arguments: { path: "opening.md" },
+    },
+  ]);
+
+  const results = draft.execute([
+    {
+      id: "write-opening",
+      name: "setting_write_file",
+      arguments: {
+        path: "opening.md",
+        contents: `${opening.contents}\nAccepted.`,
+      },
+    },
+    {
+      id: "missing-create-contract",
+      name: "setting_write_file",
+      arguments: {
+        path: "world/notes/missing-header.yaml",
+        contents: "status: waiting\n",
+      },
+    },
+    {
+      id: "bad-ref",
+      name: "setting_create",
+      arguments: {
+        path: "world/characters/x.yaml",
+        ref: "x",
+        title: "X",
+        summary: "A deliberately invalid one-character ref.",
+        aliases: [],
+        body: "status: waiting\n",
+      },
+    },
+    {
+      id: "escaped-unicode",
+      name: "setting_create",
+      arguments: {
+        path: "world/lore/escaped.md",
+        ref: "escaped",
+        title: "Escaped",
+        summary: "Contains a double-escaped payload that must be rejected.",
+        aliases: [],
+        body: "text: \\u4f60\\u597d\n",
+      },
+    },
+  ]);
+
+  expect(results.map(({ isError }) => isError)).toEqual([
+    false,
+    true,
+    true,
+    true,
+  ]);
+  expect(results[1]?.markdown).toContain("setting_create");
+  expect(results[1]?.markdown).not.toContain("$document");
+  expect(results[2]?.markdown).toContain("ref must be 2 to 32");
+  expect(results[2]?.markdown).not.toContain("literal Unicode escape");
+  expect(results[3]?.markdown).toContain("literal Unicode escape");
+  expect(results[3]?.markdown).not.toContain("ref must be 2 to 32");
+  expect(draft.review().diff).toMatchObject([
+    { path: "opening.md", kind: "modify" },
+  ]);
+  expect(draft.files().some(({ path }) => path.endsWith("escaped.md"))).toBe(
+    false,
+  );
+});
+
+test("重复 ref 精确拒绝，不由 Runtime 静默改成带后缀的新 ref", () => {
+  const draft = new SettingImprovementDraft({
+    baseFiles: minimalFileNativeContentScaffold("en"),
+    locale: "en",
+    preview: () => preview,
+  });
+  const create = (id: string, path: string, ref: string) => ({
+    id,
+    name: "setting_create",
+    arguments: {
+      path,
+      ref,
+      title: id,
+      summary: `Document ${id}.`,
+      aliases: [],
+      body: "status: ready\n",
+    },
+  });
+
+  const results = draft.execute([
+    create("first", "world/notes/first.yaml", "shared-ref"),
+    create("duplicate", "world/notes/duplicate.yaml", "shared-ref"),
+    create("third", "world/notes/third.yaml", "third-ref"),
+  ]);
+
+  expect(results.map(({ isError }) => isError)).toEqual([false, true, false]);
+  expect(results[1]?.markdown).toContain("ref @shared-ref already exists");
+  expect(
+    draft.files().some(({ contents }) => contents.includes("shared-ref-2")),
+  ).toBe(false);
+  expect(draft.files().some(({ path }) => path.endsWith("third.yaml"))).toBe(
+    true,
+  );
+});
+
+test("修复损坏文档只需公开 ref 和元信息，Runtime 自动保留可恢复 id", () => {
+  const baseFiles = [
+    ...minimalFileNativeContentScaffold("en"),
+    {
+      path: "world/characters/damaged.yaml",
+      contents:
+        "$document:\n  id: character.damaged\n  ref: broken ref\n  title: Damaged\n  summary: A damaged character.\n  aliases: []\nstatus: broken\n",
+    },
+    {
+      path: "world/notes/holder.yaml",
+      contents:
+        "$document:\n  id: note.holder\n  ref: holder\n  title: Holder\n  summary: Keeps a reference to the damaged character.\n  aliases: []\ntarget:\n  $ref: character.damaged\n",
+    },
+  ];
+  const draft = new SettingImprovementDraft({
+    baseFiles,
+    locale: "en",
+    preview: () => preview,
+  });
+  expect(JSON.stringify(draft.review().diagnostics)).not.toContain("$document");
+  const damagedRead = draft.execute([
+    {
+      id: "read-damaged",
+      name: "setting_read",
+      arguments: { path: "world/characters/damaged.yaml" },
+    },
+  ]);
+  expect(damagedRead).toMatchObject([{ isError: true }]);
+  expect(damagedRead[0]?.markdown).toContain("Document ref must be");
+  expect(damagedRead[0]?.markdown).not.toContain("$document");
+
+  const result = draft.execute([
+    {
+      id: "repair-damaged",
+      name: "setting_write_file",
+      arguments: {
+        path: "world/characters/damaged.yaml",
+        ref: "damaged",
+        title: "Repaired character",
+        summary: "A repaired character whose old references still resolve.",
+        aliases: [],
+        contents: "status: repaired\n",
+      },
+    },
+  ]);
+
+  expect(result).toMatchObject([{ isError: false }]);
+  expect(result[0]?.markdown).not.toContain("character.damaged");
+  const repaired = draft
+    .files()
+    .find(({ path }) => path.endsWith("damaged.yaml"))?.contents;
+  expect(repaired).toContain("id: character.damaged");
+  expect(repaired).toContain("ref: damaged");
+  expect(draft.review().status).toBe("usable");
+});
+
+test("设定模型只能用 @ref 或逻辑路径，既有正文与控制文件中的 id 自动投影为 @ref", () => {
+  const legacyFiles = [
+    ...minimalFileNativeContentScaffold("en").map((file) => {
+      if (file.path === "control/frame.yaml")
+        return {
+          ...file,
+          contents: file.contents.replace(
+            'currentSituation: "@current-situation"',
+            "currentSituation: situation.current",
+          ),
+        };
+      if (file.path === "control/player-views.yaml")
+        return {
+          ...file,
+          contents:
+            "format: narraeon.player-views/v1\nviews:\n  - id: situation\n    title: Situation\n    items:\n      - id: location\n        label: Location\n        select: { document: situation.current, locator: { yaml: [location] } }\n",
+        };
+      return file;
+    }),
+    {
+      path: "world/notes/holder.yaml",
+      contents:
+        "$document:\n  id: note.holder\n  ref: holder\n  title: Holder\n  summary: Holds one legacy persisted reference.\n  aliases: []\ntarget:\n  $ref: situation.current\n",
+    },
+  ];
+  const draft = new SettingImprovementDraft({
+    baseFiles: legacyFiles,
+    locale: "en",
+    preview: () => preview,
+  });
+
+  const results = draft.execute([
+    {
+      id: "raw-id-read",
+      name: "setting_read",
+      arguments: { path: "situation.current" },
+    },
+    {
+      id: "path-read",
+      name: "setting_read",
+      arguments: { path: "world/current-situation.yaml" },
+    },
+    {
+      id: "raw-id-patch",
+      name: "setting_patch",
+      arguments: {
+        document: "situation.current",
+        op: "replace",
+        locator: ["location"],
+        value: "Old harbor",
+      },
+    },
+    {
+      id: "frame-read",
+      name: "setting_read",
+      arguments: { path: "control/frame.yaml" },
+    },
+    {
+      id: "holder-read",
+      name: "setting_read",
+      arguments: { path: "@holder" },
+    },
+    {
+      id: "player-views-read",
+      name: "setting_read",
+      arguments: { path: "control/player-views.yaml" },
+    },
+    {
+      id: "legacy-id-search",
+      name: "setting_search",
+      arguments: { query: "situation.current" },
+    },
+    {
+      id: "legacy-frame-write",
+      name: "setting_write_file",
+      arguments: {
+        path: "control/frame.yaml",
+        contents: legacyFiles.find(({ path }) => path === "control/frame.yaml")!
+          .contents,
+      },
+    },
+  ]);
+
+  expect(results[0]).toMatchObject({ isError: true });
+  expect(results[0]?.markdown).toContain("Use @ref or a world/ logical path");
+  expect(results[1]).toMatchObject({ isError: false });
+  expect(results[2]).toMatchObject({ isError: true });
+  expect(results[2]?.markdown).toContain("Invalid world-document selector");
+  expect(results[3]).toMatchObject({ isError: false });
+  expect(results[3]?.markdown).toContain(
+    'currentSituation: "@current-situation"',
+  );
+  expect(results[3]?.markdown).not.toContain("situation.current");
+  expect(results[4]).toMatchObject({ isError: false });
+  expect(results[4]?.markdown).toContain('$ref: "@current-situation"');
+  expect(results[4]?.markdown).not.toContain("situation.current");
+  expect(results[5]).toMatchObject({ isError: false });
+  expect(results[5]?.markdown).toContain('document: "@current-situation"');
+  expect(results[5]?.markdown).not.toContain("situation.current");
+  expect(results[6]).toMatchObject({ isError: false });
+  expect(results[6]?.markdown).toContain("@current-situation");
+  expect(results[6]?.markdown).not.toContain("situation.current");
+  expect(results[7]).toMatchObject({ isError: false });
+  expect(
+    draft.files().find(({ path }) => path === "control/frame.yaml")?.contents,
+  ).toContain('currentSituation: "@current-situation"');
+  expect(
+    draft.files().find(({ path }) => path === "control/frame.yaml")?.contents,
+  ).not.toContain("situation.current");
 });
 
 test("草稿读取授权和内容可持久化后恢复", () => {

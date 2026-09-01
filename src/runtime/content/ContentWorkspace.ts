@@ -331,7 +331,7 @@ short_term_continuity: []
 
 const defaultWorldFrame = `format: narraeon.world-frame/v1
 bindings:
-  currentSituation: situation.current
+  currentSituation: "@current-situation"
 instructions:
   - markdown: blocks/world.md
 context:

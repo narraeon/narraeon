@@ -1,5 +1,6 @@
 import type { AppLocale } from "../../protocol/appPreferences.ts";
 import { defaultAppLocale } from "../../protocol/appPreferences.ts";
+import { isScalar, isSeq, parseDocument, stringify } from "yaml";
 import type { ContentTreeFile } from "../content/ContentTreeFile.ts";
 import { inspectContentPackageCurrentTree } from "../content/FileNativeContentTree.ts";
 import type { ModelHostToolCall } from "../model/ModelHost.ts";
@@ -23,6 +24,7 @@ export const settingImprovementToolNames = [
   "setting_list",
   "setting_search",
   "setting_read",
+  "setting_create",
   "setting_write_file",
   "setting_patch",
   "setting_move",
@@ -145,13 +147,15 @@ export function settingImprovementRuntimeContract(locale: AppLocale): string {
     ? `# Runtime 设定完善对话契约
 
 - 每条用户消息都追加到当前设定完善对话。根据用户当前要求决定直接回复、提出问题、读取草稿或修改草稿；用户要求讨论或规划时给出讨论结果，用户要求落实修改时调用写工具更新隔离草稿。
-- 当前请求随附六个读写工具。不调用工具的完整响应会作为普通助手消息显示，并结束本次用户调用。含有工具调用的响应是内部工具步骤；收到全部工具结果后继续处理，最终用一个不调用工具的完整响应答复用户。
+- 当前请求随附七个读写工具。不调用工具的完整响应会作为普通助手消息显示，并结束本次用户调用。含有工具调用的响应是内部工具步骤；收到全部工具结果后继续处理，最终用一个不调用工具的完整响应答复用户。
 - 工具写入只更新隔离草稿。用户在完整响应结束后审阅草稿并从界面执行“应用”；Runtime 校验所选草稿版本后原子替换内容包当前树。
-- 同一模型响应里的所有写调用属于一个原子批次：任何写调用失败，整批都不生效。Runtime 在成功批次后自动运行内容树检查和真实 Prompt Preview，检查结果随本批工具结果返回。
+- 每个写工具调用独立结算，并按本响应中的调用顺序读取之前已接受的结果。成功调用立即保留在隔离草稿；某个调用失败只在对应的工具结果中返回精确原因，不回滚其他成功调用，后续调用仍会执行。只重试失败的调用。Runtime 在本响应的写调用结算后自动运行内容树检查和真实 Prompt Preview，并把检查结果附在最后一个成功写调用的结果中。
 - 修改既有文件前必须完整读取它。setting_list／setting_search／setting_read 的 cursor 只属于产生它的草稿快照；写入成功后旧 cursor 失效。工具只暴露逻辑路径，不暴露宿主路径。
 - world/ 下只写 .yaml 或 .md 世界文档；专用文件只允许 opening.md、control/frame.yaml、control/player-views.yaml 和 control/blocks/*.md。人物、地点、规则与当前情境放在 world/，本世界特有的主持要求放在 control/。
 - opening.md 是玩家看见的第一页，不得替玩家决定行动、台词或内心。会继续约束首次行动的事实也必须写入自然承载它的世界文档。
-- world 文档的 $document.id 与 ref 由 Runtime 分配或保留。跨文档引用和 control 中的文档选择使用工具返回的 @短引用；不要猜测文档 id，也不要用文件路径冒充引用。
+- 新建 world 文档使用 setting_create：ref 由你提供，并同时提供路径、标题、摘要、别名与不含技术头的正文。ref 必须是唯一的 2～32 位小写 ASCII 短句柄；Runtime 自行完成技术存储。既有文档选择值会在读取时自动投影为对应的 @ref；跨文档引用和 control 中的文档选择只使用 @ref。
+- YAML 中指向整份文档的机械引用只写成单键 map，例如 { $ref: "@alex" }；普通字符串中的 @alex 仍只是文字。frame 与 player-view selector 的 document 值也写成 "@alex"，局部位置另用 locator 表达。
+- 任何准备持久化的字符串中若仍包含字面的 \\uXXXX，说明工具参数被重复转义；该调用会被拒绝。请重新发送真实 Unicode 字符，不要要求 Runtime 猜测解码。
 
 ## 内容包在游玩中的生命周期
 
@@ -174,13 +178,15 @@ export function settingImprovementRuntimeContract(locale: AppLocale): string {
     : `# Runtime setting-improvement conversation contract
 
 - Every user message is appended to the current setting-improvement conversation. Decide from the user's current request whether to reply directly, ask a question, read the draft, or change it. When the user asks to discuss or plan, return that discussion; when the user asks to implement changes, update the isolated draft with write tools.
-- The current request includes six read/write tools. A complete response with no tool calls is shown as an ordinary assistant message and settles this user invocation. A response containing tool calls is an internal tool step; continue after all results and eventually answer with a complete tool-free response.
+- The current request includes seven read/write tools. A complete response with no tool calls is shown as an ordinary assistant message and settles this user invocation. A response containing tool calls is an internal tool step; continue after all results and eventually answer with a complete tool-free response.
 - Tool writes update only the isolated draft. After a complete response, the user reviews the draft and invokes Apply from the interface. Runtime validates that exact draft version and atomically replaces the content package's current tree.
-- All writes in one model response form one atomic batch. If any write fails, none take effect. After a successful batch, Runtime automatically runs content-tree checks and a real Prompt Preview, and returns the review with that batch's tool results.
+- Every write tool call settles independently and, in this response's call order, sees earlier accepted results. A successful call remains in the isolated draft. A failure returns its precise cause only in that call's tool result, does not roll back other successful calls, and does not prevent later calls from running. Retry only failed calls. After this response's writes settle, Runtime runs content-tree checks and a real Prompt Preview and appends that review to the last successful write result.
 - Read an existing file completely before changing it. Cursors from setting_list, setting_search, and setting_read belong only to the draft snapshot that produced them; a successful write invalidates them. Tools expose logical paths, never host paths.
 - World documents are .yaml or .md files under world/. Special writes are limited to opening.md, control/frame.yaml, control/player-views.yaml, and control/blocks/*.md. Put characters, places, rules, and the current situation under world/, and world-specific hosting guidance under control/.
 - opening.md is the first page shown to the player. Never decide the player's action, dialogue, or inner thoughts. Facts that constrain the first action must also live in the world document that naturally owns them.
-- Runtime allocates or preserves $document.id and ref. Cross-document references and control selectors use @short-refs returned by tools. Never guess a document id or substitute a file path for a reference.
+- Create a world document with setting_create. You provide its unique 2-to-32-character lowercase ASCII ref, path, title, summary, aliases, and body without a technical header; Runtime completes the technical storage. Existing document selectors are automatically projected to their @refs when read. Cross-document references and control selectors use only @refs.
+- A mechanical YAML reference to one whole document is a one-key map such as { $ref: "@alex" }; @alex inside an ordinary string is still only text. The document value in frame and player-view selectors is likewise "@alex", with any local position expressed separately by a locator.
+- If any string to be persisted still contains a literal \\uXXXX sequence, its tool arguments were double-escaped and that call is rejected. Resend real Unicode characters; Runtime will not guess-decode them.
 
 ## Content-package lifecycle during play
 
@@ -257,9 +263,45 @@ export function settingImprovementToolDefinitions(
       ),
     },
     {
+      name: "setting_create",
+      description: descriptions.setting_create,
+      inputSchema: schema(
+        {
+          path: {
+            type: "string",
+            pattern: "^world/.+\\.(?:ya?ml|md)$",
+          },
+          ref: { type: "string", pattern: "^[a-z][a-z0-9-]{1,31}$" },
+          title: { type: "string", minLength: 1, maxLength: 120 },
+          summary: { type: "string", minLength: 1, maxLength: 240 },
+          aliases: {
+            type: "array",
+            maxItems: 16,
+            items: { type: "string", minLength: 1, maxLength: 64 },
+          },
+          body: { type: "string", minLength: 1, maxLength: 65_536 },
+        },
+        ["path", "ref", "title", "summary", "aliases", "body"],
+      ),
+    },
+    {
       name: "setting_write_file",
       description: descriptions.setting_write_file,
-      inputSchema: schema({ path, contents: text }, ["path", "contents"]),
+      inputSchema: schema(
+        {
+          path,
+          contents: text,
+          ref: { type: "string", pattern: "^[a-z][a-z0-9-]{1,31}$" },
+          title: { type: "string", minLength: 1, maxLength: 120 },
+          summary: { type: "string", minLength: 1, maxLength: 240 },
+          aliases: {
+            type: "array",
+            maxItems: 16,
+            items: { type: "string", minLength: 1, maxLength: 64 },
+          },
+        },
+        ["path", "contents"],
+      ),
     },
     {
       name: "setting_patch",
@@ -267,15 +309,22 @@ export function settingImprovementToolDefinitions(
       inputSchema: schema(
         {
           document: text,
-          op: { type: "string", enum: ["add", "replace"] },
+          op: { type: "string", enum: ["add", "replace", "set_metadata"] },
           locator: {
             type: "array",
             minItems: 1,
             items: { type: "string", minLength: 1 },
           },
           value: {},
+          title: { type: "string", minLength: 1, maxLength: 120 },
+          summary: { type: "string", minLength: 1, maxLength: 240 },
+          aliases: {
+            type: "array",
+            maxItems: 16,
+            items: { type: "string", minLength: 1, maxLength: 64 },
+          },
         },
-        ["document", "op", "locator", "value"],
+        ["document", "op"],
       ),
     },
     {
@@ -290,13 +339,15 @@ const toolDescriptionsEn: Record<SettingImprovementToolName, string> = {
   setting_list:
     "List the world root or a world/ subdirectory from the isolated draft. The root also lists opening and control files. A cursor is valid only for the same query and draft snapshot.",
   setting_search:
-    "Search literal source text in world documents in the isolated draft. within may be world, a world/ directory or path, @short-ref, or document identity.",
+    "Search literal source text in world documents in the isolated draft. within may be world, a world/ directory or path, or @ref.",
   setting_read:
-    "Read a world document by world/ path, @short-ref, or identity, or read an exact opening/control path. Read every page before overwriting an existing file.",
+    "Read a world document by world/ path or @ref, or read an exact opening/control path. Existing document selectors are projected to @refs. Read every page before overwriting an existing file.",
+  setting_create:
+    "Create one world/ .yaml or .md document. Supply a unique lowercase ASCII ref, title, summary, aliases, and body without a technical header; Runtime completes the storage envelope. The created document is already fully read.",
   setting_write_file:
-    "Create or replace a complete draft file: a .yaml/.md document under world/, opening.md, control/frame.yaml, control/player-views.yaml, or control/blocks/*.md. Runtime owns world-document identity.",
+    "Replace a completely read world/ .yaml or .md document body while preserving its identity and metadata, or create/replace opening.md, control/frame.yaml, control/player-views.yaml, or control/blocks/*.md. To repair a damaged world document, also provide ref, title, summary, and aliases; Runtime preserves any recoverable storage identity. Create new world documents with setting_create.",
   setting_patch:
-    "Add or replace one YAML map node in a completely read world document. locator is a non-empty array of map keys. Rewrite Markdown with setting_write_file.",
+    'Update a completely read world document. For YAML, add or replace one map node with locator as a non-empty map-key array. When title, summary, or aliases are stale, update all three together with op "set_metadata". Rewrite Markdown bodies with setting_write_file.',
   setting_move:
     "Move a completely read world document to a new world/ .yaml or .md logical path while preserving its identity and contents.",
 };
@@ -305,13 +356,15 @@ const toolDescriptionsZhCN: Record<SettingImprovementToolName, string> = {
   setting_list:
     "列出隔离草稿的 world 根目录或 world/ 子目录；根目录同时列出 opening 和 control 专用文件。cursor 只对同一查询和草稿快照有效。",
   setting_search:
-    "在隔离草稿的 world 文档中按原文字面搜索；within 可为 world、world/ 目录或路径、@短引用或文档身份。",
+    "在隔离草稿的 world 文档中按原文字面搜索；within 可为 world、world/ 目录或路径或 @ref。",
   setting_read:
-    "按 world/ 路径、@短引用或身份读取世界文档，或按精确路径读取 opening/control；覆盖既有文件前必须读完全部分页。",
+    "按 world/ 路径或 @ref 读取世界文档，或按精确路径读取 opening/control；既有文档选择值自动投影为 @ref。覆盖既有文件前必须读完全部分页。",
+  setting_create:
+    "创建一份 world/ 下的 .yaml 或 .md 文档；提供唯一的小写 ASCII ref、标题、摘要、别名和不含技术头的正文，Runtime 自行完成存储封装。创建成功的文档视为已经完整读取。",
   setting_write_file:
-    "创建或整份替换草稿文件：world/ 下的 .yaml/.md、opening.md、control/frame.yaml、control/player-views.yaml 或 control/blocks/*.md。世界文档身份由 Runtime 管理。",
+    "整份替换已完整读取的 world/ .yaml 或 .md 正文并保留身份和元信息，或创建／替换 opening.md、control/frame.yaml、control/player-views.yaml、control/blocks/*.md。修复损坏世界文档时同时提供 ref、title、summary、aliases，Runtime 会保留仍可恢复的存储身份。新建世界文档使用 setting_create。",
   setting_patch:
-    "在已完整读取的 YAML 世界文档中新增或替换一个 map 节点；locator 是非空 map-key 数组。Markdown 用 setting_write_file 整份重写。",
+    '更新已完整读取的世界文档。YAML 用 add／replace 更新一个 map 节点，locator 是非空 map-key 数组；title、summary 或 aliases 过时时用 op "set_metadata" 整组更新三项。Markdown 正文用 setting_write_file 整份重写。',
   setting_move:
     "把已完整读取的世界文档移动到新的 world/ .yaml 或 .md 逻辑路径，并保留身份与内容。",
 };
@@ -385,29 +438,28 @@ export class SettingImprovementDraft {
 
   execute(calls: readonly ModelHostToolCall[]): SettingDraftToolResult[] {
     const normalized = calls.map(normalizeCall);
-    const results = new Map<string, SettingDraftToolResult>();
-    const reads = normalized.filter((call) => isReadTool(call.name));
-    const writes = normalized.filter((call) => !isReadTool(call.name));
+    const results: SettingDraftToolResult[] = [];
+    let lastSuccessfulWrite = -1;
 
-    for (const call of reads) {
-      const result = this.#executeRead(call);
-      results.set(call.id, toToolResult(call.id, result));
+    for (const call of normalized) {
+      if (isReadTool(call.name)) {
+        results.push(toToolResult(call.id, this.#executeRead(call)));
+        continue;
+      }
+      const result = this.#executeWrite(call);
+      results.push(toToolResult(call.id, result));
+      if (result.ok) lastSuccessfulWrite = results.length - 1;
     }
 
-    if (writes.length > 0) {
-      const writeResults = this.#executeWriteBatch(writes);
-      for (const result of writeResults) results.set(result.toolCallId, result);
+    if (lastSuccessfulWrite >= 0) {
+      this.#review = this.#inspect();
+      const settled = results[lastSuccessfulWrite]!;
+      settled.markdown = `${settled.markdown}\n\n${renderAutomaticReview(
+        this.#review,
+        this.#locale,
+      )}`;
     }
-
-    return normalized.map(
-      ({ id }) =>
-        results.get(id) ?? {
-          toolCallId: id,
-          markdown:
-            "# Runtime tool rejected\n\nThe tool call was not executed.",
-          isError: true,
-        },
-    );
+    return results;
   }
 
   #executeRead(call: NormalizedCall): QueryResult {
@@ -425,22 +477,32 @@ export class SettingImprovementDraft {
     return failure(`Unsupported read tool: ${call.name}`, this.#locale);
   }
 
-  #executeWriteBatch(
-    calls: readonly NormalizedCall[],
-  ): SettingDraftToolResult[] {
-    let snapshot = this.#snapshot;
+  #executeWrite(call: NormalizedCall): QueryResult {
+    const snapshot = this.#snapshot;
     const reads = cloneReads(this.#reads);
-    const successes = new Map<string, string>();
     try {
-      const worldCalls = calls.filter(isWorldWriteCall);
-      if (worldCalls.length > 0) {
-        const commands = worldCalls.map((call) =>
-          worldRevisionCommand(call, this.#locale),
-        );
-        const revised = snapshot.revise({ commands });
+      if (isWorldWriteCall(call)) {
+        const requestedRef =
+          call.name === "setting_create"
+            ? requiredSettingRef(call.arguments.ref, this.#locale)
+            : null;
+        const revised = snapshot.revise({
+          commands: [worldRevisionCommand(snapshot, call, this.#locale)],
+        });
         if (!revised.ok)
           throw new SettingDraftError(
-            renderRevisionFailure(revised.diagnostics),
+            renderRevisionFailure(revised.diagnostics, this.#locale),
+          );
+        if (
+          requestedRef !== null &&
+          revised.changes.some(({ shortRef }) => shortRef !== requestedRef)
+        )
+          throw new SettingDraftError(
+            localized(
+              this.#locale,
+              `ref @${requestedRef} already exists; choose a different ref`,
+              `ref @${requestedRef} 已存在；请换一个 ref`,
+            ),
           );
         assertWorldWritesAuthorized(
           snapshot.id,
@@ -448,56 +510,24 @@ export class SettingImprovementDraft {
           revised.changes,
           this.#locale,
         );
-        snapshot = revised.snapshot;
-        rebaseReads(reads, snapshot);
+        rebaseReads(reads, revised.snapshot);
         for (const change of revised.changes)
           reads.worldDocumentIds.add(change.documentId);
-        for (const [index, call] of worldCalls.entries())
-          successes.set(
-            call.id,
-            renderWorldWriteSuccess(revised.changes, index, this.#locale),
-          );
+        this.#snapshot = revised.snapshot;
+        this.#reads = reads;
+        return success(renderWorldWriteSuccess(revised.changes, this.#locale));
       }
-      for (const call of calls.filter(
-        (candidate) => !isWorldWriteCall(candidate),
-      )) {
-        if (call.name !== "setting_write_file")
-          throw new SettingDraftError(`Unsupported write tool: ${call.name}`);
-        const changed = writeOpaque(snapshot, call, reads, this.#locale);
-        snapshot = changed.snapshot;
-        successes.set(call.id, changed.markdown);
-      }
+      if (call.name !== "setting_write_file")
+        throw new SettingDraftError(`Unsupported write tool: ${call.name}`);
+      const changed = writeOpaque(snapshot, call, reads, this.#locale);
+      this.#snapshot = changed.snapshot;
+      this.#reads = reads;
+      return success(changed.markdown);
     } catch (error: unknown) {
       const message =
-        error instanceof Error ? error.message : "The draft write batch failed";
-      return calls.map((call) => ({
-        toolCallId: call.id,
-        markdown: localized(
-          this.#locale,
-          `# Runtime tool rejected\n\nThe entire response-level write batch was rolled back. ${message}`,
-          `# Runtime 工具拒绝\n\n本响应中的整批写入已回滚。${message}`,
-        ),
-        isError: true,
-      }));
+        error instanceof Error ? error.message : "The draft write failed";
+      return failure(message, this.#locale);
     }
-
-    this.#snapshot = snapshot;
-    this.#reads = reads;
-    this.#review = this.#inspect();
-    const reviewMarkdown = renderAutomaticReview(this.#review, this.#locale);
-    const lastCallId = calls.at(-1)?.id;
-    return calls.map((call) => ({
-      toolCallId: call.id,
-      markdown: `${
-        successes.get(call.id) ??
-        localized(
-          this.#locale,
-          "# Draft write accepted\n\nThe response-level batch was committed to the isolated draft.",
-          "# 草稿写入已接受\n\n本响应中的写入已整批提交到隔离草稿。",
-        )
-      }${call.id === lastCallId ? `\n\n${reviewMarkdown}` : ""}`,
-      isError: false,
-    }));
   }
 
   #inspect(): SettingDraftReview {
@@ -512,7 +542,7 @@ export class SettingImprovementDraft {
         diagnostics: inspection.issues.map(({ code, path, message }) => ({
           code,
           path,
-          message,
+          message: publicSettingDiagnosticMessage(code, message, this.#locale),
         })),
         preview: null,
         playCoverage: null,
@@ -574,8 +604,8 @@ function renderAutomaticReview(
     "",
     localized(
       locale,
-      "Repair these diagnostics with the ordinary read/write tools. Runtime will run the review again after the next successful write batch.",
-      "请用普通读写工具修复这些诊断；下一批写入成功后 Runtime 会再次自动检查。",
+      "Repair these diagnostics with the ordinary read/write tools. Runtime will run the review again after the next successful write call.",
+      "请用普通读写工具修复这些诊断；下一个写调用成功后 Runtime 会再次自动检查。",
     ),
   ].join("\n");
 }
@@ -888,7 +918,11 @@ function isReadTool(name: string): boolean {
 }
 
 function isWorldWriteCall(call: NormalizedCall): boolean {
-  if (call.name === "setting_patch" || call.name === "setting_move")
+  if (
+    call.name === "setting_create" ||
+    call.name === "setting_patch" ||
+    call.name === "setting_move"
+  )
     return true;
   return (
     call.name === "setting_write_file" &&
@@ -898,23 +932,65 @@ function isWorldWriteCall(call: NormalizedCall): boolean {
 }
 
 function worldRevisionCommand(
+  snapshot: WorldDocumentStore,
   call: NormalizedCall,
   locale: AppLocale,
 ): WorldDocumentRevisionCommand {
-  if (call.name === "setting_write_file") {
-    const logicalPath = safePath(requiredString(call.arguments.path, "path"));
-    if (!/^world\/.+\.(?:ya?ml|md)$/u.test(logicalPath))
+  if (call.name === "setting_create") {
+    if (
+      !hasOnly(call.arguments, [
+        "path",
+        "ref",
+        "title",
+        "summary",
+        "aliases",
+        "body",
+      ])
+    )
       throw new SettingDraftError(
-        localized(
-          locale,
-          "World files must be .yaml or .md documents below world/",
-          "world 文件必须是 world/ 下的 .yaml 或 .md 文档",
-        ),
+        "setting_create accepts only path, ref, title, summary, aliases, and body",
       );
+    const logicalPath = safeWorldDocumentPath(
+      requiredString(call.arguments.path, "path"),
+      locale,
+    );
+    const ref = requiredSettingRef(call.arguments.ref, locale);
+    const title = requiredString(call.arguments.title, "title");
+    const summary = requiredString(call.arguments.summary, "summary");
+    const aliases = requiredAliases(call.arguments.aliases);
+    const body = requiredString(call.arguments.body, "body");
+    assertNoLiteralUnicodeEscapes(
+      { ref, title, summary, aliases, body },
+      locale,
+    );
+    return {
+      kind: "create",
+      temporaryName: "setting-document",
+      logicalPath,
+      codec: logicalPath.endsWith(".md") ? "markdown" : "yaml",
+      refHint: ref,
+      title,
+      summary,
+      aliases,
+      body,
+    };
+  }
+  if (call.name === "setting_write_file") {
+    const logicalPath = safeWorldDocumentPath(
+      requiredString(call.arguments.path, "path"),
+      locale,
+    );
+    const contents = worldWriteContents(
+      snapshot,
+      logicalPath,
+      call.arguments,
+      locale,
+    );
+    assertNoLiteralUnicodeEscapes(contents, locale);
     return {
       kind: "write",
       logicalPath,
-      contents: requiredString(call.arguments.contents, "contents"),
+      contents,
     };
   }
   if (call.name === "setting_move") {
@@ -931,8 +1007,28 @@ function worldRevisionCommand(
   }
   if (call.name === "setting_patch") {
     const op = requiredString(call.arguments.op, "op");
+    if (op === "set_metadata") {
+      const title = requiredString(call.arguments.title, "title");
+      const summary = requiredString(call.arguments.summary, "summary");
+      const aliases = requiredAliases(call.arguments.aliases);
+      assertNoLiteralUnicodeEscapes({ title, summary, aliases }, locale);
+      return {
+        kind: "patch",
+        document: revisionTarget(
+          requiredString(call.arguments.document, "document"),
+        ),
+        edits: [{ op: "set_metadata", title, summary, aliases }],
+      };
+    }
     if (op !== "add" && op !== "replace")
-      throw new SettingDraftError("setting_patch.op must be add or replace");
+      throw new SettingDraftError(
+        "setting_patch.op must be add, replace, or set_metadata",
+      );
+    const locator = requiredStringArray(call.arguments.locator, "locator");
+    const value = structuredClone(
+      call.arguments.value,
+    ) as WorldDocumentRevisionYamlValue;
+    assertNoLiteralUnicodeEscapes({ locator, value }, locale);
     return {
       kind: "patch",
       document: revisionTarget(
@@ -942,16 +1038,143 @@ function worldRevisionCommand(
         {
           op,
           locator: {
-            yaml: requiredStringArray(call.arguments.locator, "locator"),
+            yaml: locator,
           },
-          value: structuredClone(
-            call.arguments.value,
-          ) as WorldDocumentRevisionYamlValue,
+          value,
         },
       ],
     };
   }
   throw new SettingDraftError(`Unsupported write tool: ${call.name}`);
+}
+
+function safeWorldDocumentPath(path: string, locale: AppLocale): string {
+  const logicalPath = safePath(path);
+  if (!/^world\/.+\.(?:ya?ml|md)$/u.test(logicalPath))
+    throw new SettingDraftError(
+      localized(
+        locale,
+        "World files must be .yaml or .md documents below world/",
+        "world 文件必须是 world/ 下的 .yaml 或 .md 文档",
+      ),
+    );
+  return logicalPath;
+}
+
+function worldWriteContents(
+  snapshot: WorldDocumentStore,
+  logicalPath: string,
+  args: Record<string, unknown>,
+  locale: AppLocale,
+): string {
+  if (
+    !hasOnly(args, ["path", "contents", "ref", "title", "summary", "aliases"])
+  )
+    throw new SettingDraftError(
+      "setting_write_file accepts only its declared arguments",
+    );
+  const body = requiredString(args.contents, "contents");
+  const metadataKeys = ["ref", "title", "summary", "aliases"] as const;
+  const provided = metadataKeys.filter((key) => args[key] !== undefined);
+  const existingFile = snapshot.files.some(({ path }) => path === logicalPath);
+  const existingDocument = listQueryableWorldDocuments(snapshot).some(
+    ({ logicalPath: existingPath }) => existingPath === logicalPath,
+  );
+  if (provided.length === 0) {
+    if (!existingFile && !containsTechnicalDocumentHeader(logicalPath, body))
+      throw new SettingDraftError(
+        localized(
+          locale,
+          "Create a new world document with setting_create",
+          "新建世界文档请使用 setting_create",
+        ),
+      );
+    if (
+      existingFile &&
+      !existingDocument &&
+      !containsTechnicalDocumentHeader(logicalPath, body)
+    )
+      throw new SettingDraftError(
+        localized(
+          locale,
+          "Repair a damaged document by providing ref, title, summary, and aliases with its body",
+          "修复损坏文档时，请在正文之外同时提供 ref、title、summary 和 aliases",
+        ),
+      );
+    return body;
+  }
+  if (provided.length !== metadataKeys.length)
+    throw new SettingDraftError(
+      localized(
+        locale,
+        "Repair metadata must provide ref, title, summary, and aliases together",
+        "修复元信息时必须同时提供 ref、title、summary 和 aliases",
+      ),
+    );
+  if (!existingFile)
+    throw new SettingDraftError(
+      localized(
+        locale,
+        "Create a new world document with setting_create",
+        "新建世界文档请使用 setting_create",
+      ),
+    );
+  if (existingDocument)
+    throw new SettingDraftError(
+      localized(
+        locale,
+        "Repair metadata is only for a damaged document; update valid metadata with setting_patch set_metadata",
+        "修复元信息只用于损坏文档；有效文档请用 setting_patch set_metadata 更新元信息",
+      ),
+    );
+  const ref = requiredSettingRef(args.ref, locale);
+  const title = requiredString(args.title, "title");
+  const summary = requiredString(args.summary, "summary");
+  const aliases = requiredAliases(args.aliases);
+  assertNoLiteralUnicodeEscapes({ body, ref, title, summary, aliases }, locale);
+  const storedId = recoverStoredDocumentId(snapshot, logicalPath);
+  const header = {
+    $document: {
+      ...(storedId === null ? {} : { id: storedId }),
+      ref,
+      title,
+      summary,
+      aliases,
+    },
+  };
+  if (logicalPath.endsWith(".md"))
+    return `---\n${stringify(header, { indent: 2, lineWidth: 0 }).trimEnd()}\n---\n${body.trimEnd()}\n`;
+  return `${stringify(header, { indent: 2, lineWidth: 0 }).trimEnd()}\n${body.trimStart()}`;
+}
+
+function containsTechnicalDocumentHeader(
+  logicalPath: string,
+  source: string,
+): boolean {
+  if (logicalPath.endsWith(".md"))
+    return /^---\r?\n[\s\S]*?^\$document\s*:/mu.test(source);
+  return /^\s*\$document\s*:/u.test(source);
+}
+
+function recoverStoredDocumentId(
+  snapshot: WorldDocumentStore,
+  logicalPath: string,
+): string | null {
+  const source = snapshot.files.find(
+    ({ path }) => path === logicalPath,
+  )?.contents;
+  if (source === undefined) return null;
+  const yamlSource = logicalPath.endsWith(".md")
+    ? /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u.exec(source)?.[1]
+    : source;
+  if (yamlSource === undefined) return null;
+  const document = parseDocument(yamlSource, { uniqueKeys: true });
+  if (document.errors.length > 0) return null;
+  const id = document.getIn(["$document", "id"]);
+  return typeof id === "string" &&
+    /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u.test(id)
+    ? id
+    : null;
 }
 
 function revisionTarget(value: string): WorldDocumentRevisionTarget {
@@ -967,6 +1190,10 @@ function writeOpaque(
   reads: ReadAuthorizations,
   locale: AppLocale,
 ): { snapshot: WorldDocumentStore; markdown: string } {
+  if (!hasOnly(call.arguments, ["path", "contents"]))
+    throw new SettingDraftError(
+      "Special-file writes accept only path and contents",
+    );
   const path = safePath(requiredString(call.arguments.path, "path"));
   if (!writableOpaquePath(path))
     throw new SettingDraftError(
@@ -976,7 +1203,9 @@ function writeOpaque(
         "专用文件只允许写入 opening.md、control/frame.yaml、control/player-views.yaml 或 control/blocks/*.md",
       ),
     );
-  const contents = requiredString(call.arguments.contents, "contents");
+  const authoredContents = requiredString(call.arguments.contents, "contents");
+  assertNoLiteralUnicodeEscapes(authoredContents, locale);
+  const contents = projectOpaqueDocumentIds(snapshot, path, authoredContents);
   const next = cloneFiles(snapshot.files);
   const existing = next.find((file) => file.path === path);
   if (existing !== undefined && !reads.opaquePaths.has(path))
@@ -1002,8 +1231,8 @@ function writeOpaque(
     snapshot: revised,
     markdown: localized(
       locale,
-      `# Draft write accepted\n\n${existing === undefined ? "Created" : "Updated"} ${path} in the isolated draft. Runtime automatically refreshed the draft review.`,
-      `# 草稿写入已接受\n\n已在隔离草稿中${existing === undefined ? "创建" : "更新"} ${path}；Runtime 已自动刷新草稿检查。`,
+      `# Draft write accepted\n\n${existing === undefined ? "Created" : "Updated"} ${path} in the isolated draft. This file is already fully read; do not read it again unless a later decision needs Runtime's exact serialization.`,
+      `# 草稿写入已接受\n\n已在隔离草稿中${existing === undefined ? "创建" : "更新"} ${path}。该文件已视为完整读取；除非后续判断依赖 Runtime 的精确序列化结果，否则不要再次读取。`,
     ),
   };
 }
@@ -1044,16 +1273,14 @@ function assertWorldWritesAuthorized(
 
 function renderWorldWriteSuccess(
   changes: readonly WorldDocumentRevisionChange[],
-  commandIndex: number,
   locale: AppLocale,
 ): string {
-  const own = changes.filter((change) => change.commandIndex === commandIndex);
   return [
     localized(locale, "# Draft revision accepted", "# 草稿 revision 已接受"),
     "",
-    ...(own.length === 0
+    ...(changes.length === 0
       ? [localized(locale, "- No file changed", "- 没有文件发生变化")]
-      : own.map((change) => {
+      : changes.map((change) => {
           if (change.before === null)
             return `- ${localized(locale, "Created", "创建")} @${change.shortRef} · ${change.after.logicalPath}`;
           if (change.before.logicalPath === change.after.logicalPath)
@@ -1063,24 +1290,24 @@ function renderWorldWriteSuccess(
     "",
     localized(
       locale,
-      "The whole response-level write batch was committed atomically. Runtime automatically refreshed the draft review.",
-      "本响应中的整批写入已原子提交；Runtime 已自动刷新草稿检查。",
+      "This call was accepted independently. Every created or changed document above is already fully read; do not read it again unless a later decision needs Runtime's exact serialization.",
+      "本调用已独立接受。上方新建或修改的文档均视为已经完整读取；除非后续判断依赖 Runtime 的精确序列化结果，否则不要再次读取。",
     ),
   ].join("\n");
 }
 
 function renderRevisionFailure(
   diagnostics: readonly {
-    commandIndex: number | null;
     code: string;
     logicalPath?: string;
     message: string;
   }[],
+  locale: AppLocale,
 ): string {
   return diagnostics
     .map(
-      ({ commandIndex, code, logicalPath, message }) =>
-        `[${commandIndex ?? "batch"}] ${code}${logicalPath === undefined ? "" : ` · ${logicalPath}`} · ${message}`,
+      ({ code, logicalPath, message }) =>
+        `${code}${logicalPath === undefined ? "" : ` · ${logicalPath}`} · ${publicSettingDiagnosticMessage(code, message, locale)}`,
     )
     .join("\n");
 }
@@ -1201,9 +1428,7 @@ function searchScope(
       ? { document: { logicalPath: path } }
       : { directory: path.slice(6) };
   }
-  return value.includes("/")
-    ? invalidScope
-    : { document: { documentId: value } };
+  return invalidScope;
 }
 
 function readDocument(
@@ -1231,8 +1456,9 @@ function readDocument(
     )
       return failure("Special files require one complete text read", locale);
     reads.opaquePaths.add(path);
+    const projected = projectOpaqueDocumentIds(snapshot, path, opaque.contents);
     return success(
-      `# ${localized(locale, "Special-file source", "专用文件原文")} ${path}\n\n${opaque.contents}\n\n---\nComplete: yes`,
+      `# ${localized(locale, "Special-file source", "专用文件原文")} ${path}\n\n${projected}\n\n---\nComplete: yes`,
     );
   }
   const selector = documentSelector(path);
@@ -1244,11 +1470,17 @@ function readDocument(
     maxBytes < 4 ||
     maxBytes > 65_536
   )
-    return failure("Invalid setting_read path or maxBytes", locale);
+    return failure(
+      selector === null && typeof path === "string" && !path.includes("/")
+        ? "Use @ref or a world/ logical path"
+        : "Invalid setting_read path or maxBytes",
+      locale,
+    );
   const result = snapshot.query({
     kind: "read_document",
     document: selector,
     maxBytes,
+    referenceProjection: "short_ref",
     ...(args.cursor === undefined ? {} : { cursor: args.cursor }),
   });
   if (result.kind === "error") {
@@ -1293,7 +1525,60 @@ function documentSelector(value: string): WorldDocumentSelector | null {
     const path = safePath(value);
     return /\.(?:ya?ml|md)$/u.test(path) ? { logicalPath: path } : null;
   }
-  return value.includes("/") ? null : { documentId: value };
+  return null;
+}
+
+function projectOpaqueDocumentIds(
+  snapshot: WorldDocumentStore,
+  path: string,
+  source: string,
+): string {
+  if (path !== "control/frame.yaml" && path !== "control/player-views.yaml")
+    return source;
+  const byId = new Map(
+    listQueryableWorldDocuments(snapshot).map((document) => [
+      document.documentId,
+      document.shortRef,
+    ]),
+  );
+  if (byId.size === 0) return source;
+  const document = parseDocument(source, { uniqueKeys: true });
+  if (document.errors.length > 0) return source;
+  let changed = false;
+  const projectAt = (selectorPath: readonly (string | number)[]): void => {
+    const node = document.getIn(selectorPath, true);
+    if (!isScalar(node) || typeof node.value !== "string") return;
+    const shortRef = byId.get(node.value);
+    if (shortRef === undefined) return;
+    node.value = `@${shortRef}`;
+    changed = true;
+  };
+  if (path === "control/frame.yaml") {
+    projectAt(["bindings", "currentSituation"]);
+    const context = document.getIn(["context"], true);
+    if (isSeq(context))
+      for (const index of context.items.keys()) {
+        projectAt(["context", index, "slot", "document"]);
+        projectAt(["context", index, "slot", "from", "document"]);
+      }
+  } else {
+    const views = document.getIn(["views"], true);
+    if (isSeq(views))
+      for (const viewIndex of views.items.keys()) {
+        const items = document.getIn(["views", viewIndex, "items"], true);
+        if (!isSeq(items)) continue;
+        for (const itemIndex of items.items.keys())
+          projectAt([
+            "views",
+            viewIndex,
+            "items",
+            itemIndex,
+            "select",
+            "document",
+          ]);
+      }
+  }
+  return changed ? document.toString({ indent: 2, lineWidth: 0 }) : source;
 }
 
 function authorizeReadPage(
@@ -1335,11 +1620,52 @@ function renderQueryFailure(
     result.diagnostics
       .map(
         ({ code, logicalPath, message }) =>
-          `${code}${logicalPath === undefined ? "" : ` · ${logicalPath}`} · ${message}`,
+          `${code}${logicalPath === undefined ? "" : ` · ${logicalPath}`} · ${publicSettingDiagnosticMessage(code, message, locale)}`,
       )
       .join("\n"),
     locale,
   );
+}
+
+function publicSettingDiagnosticMessage(
+  code: string,
+  message: string,
+  locale: AppLocale,
+): string {
+  if (
+    code === "document_header_invalid" ||
+    code === "document_identity_invalid" ||
+    code === "invalid_document_header"
+  )
+    return localized(
+      locale,
+      "Document storage metadata is missing or damaged. Repair this document with setting_write_file using its ref, title, summary, aliases, and body",
+      "文档存储元信息缺失或损坏；请用 setting_write_file 提供 ref、title、summary、aliases 和正文进行修复",
+    );
+  if (code === "document_identity_duplicate" || code === "duplicate_id")
+    return localized(
+      locale,
+      "Runtime-owned storage identity is duplicated; repair the affected document without supplying an identity",
+      "Runtime 维护的存储身份发生重复；请修复受影响文档，不要提供内部身份",
+    );
+  if (code === "document_short_ref_invalid")
+    return localized(
+      locale,
+      "Document ref must be a 2-to-32-character lowercase ASCII short handle; repair it with setting_write_file and public metadata",
+      "文档 ref 必须是 2～32 位小写 ASCII 短句柄；请用 setting_write_file 和公开元信息修复",
+    );
+  if (code === "document_short_ref_duplicate" || code === "duplicate_ref")
+    return localized(
+      locale,
+      "Document refs must be unique; choose a different ref for the affected document",
+      "文档 ref 必须唯一；请为受影响文档选择另一个 ref",
+    );
+  return message
+    .replaceAll("$document.id", "Runtime-owned storage identity")
+    .replaceAll("$document.ref", "ref")
+    .replaceAll("$document technical header", "document storage metadata")
+    .replaceAll("$document", "document storage metadata")
+    .replace(/document identity/giu, "Runtime-owned storage identity");
 }
 
 function pageFooter(
@@ -1436,6 +1762,74 @@ function requiredString(value: unknown, name: string): string {
   if (typeof value !== "string" || value.length === 0)
     throw new SettingDraftError(`${name} must be a non-empty string`);
   return value;
+}
+
+function requiredSettingRef(value: unknown, locale: AppLocale): string {
+  if (
+    typeof value !== "string" ||
+    value.length < 2 ||
+    value.length > 32 ||
+    !/^[a-z][a-z0-9-]*$/u.test(value)
+  )
+    throw new SettingDraftError(
+      localized(
+        locale,
+        "ref must be 2 to 32 lowercase ASCII letters, digits, or hyphens, beginning with a letter",
+        "ref 必须是 2～32 位小写 ASCII 字母、数字或连字符，并以字母开头",
+      ),
+    );
+  return value;
+}
+
+function requiredAliases(value: unknown): string[] {
+  if (
+    !Array.isArray(value) ||
+    value.length > 16 ||
+    !value.every(
+      (item) =>
+        typeof item === "string" &&
+        [...item].length >= 1 &&
+        [...item].length <= 64,
+    )
+  )
+    throw new SettingDraftError(
+      "aliases must be an array of at most 16 strings, each 1 to 64 characters",
+    );
+  return value.filter(
+    (item: unknown): item is string => typeof item === "string",
+  );
+}
+
+function assertNoLiteralUnicodeEscapes(
+  value: unknown,
+  locale: AppLocale,
+): void {
+  const seen = new Set<object>();
+  const walk = (candidate: unknown): void => {
+    if (typeof candidate === "string") {
+      if (/\\u[0-9a-f]{4}/iu.test(candidate))
+        throw new SettingDraftError(
+          localized(
+            locale,
+            "Persisted text contains a literal Unicode escape such as \\u4f60. Resend real Unicode characters instead of a double-escaped string",
+            "待写入文本包含 \\u4f60 这类字面 Unicode 转义；请重新发送真实 Unicode 字符，不要发送重复转义字符串",
+          ),
+        );
+      return;
+    }
+    if (typeof candidate !== "object" || candidate === null) return;
+    if (seen.has(candidate)) return;
+    seen.add(candidate);
+    if (Array.isArray(candidate)) {
+      for (const item of candidate) walk(item);
+      return;
+    }
+    for (const [key, item] of Object.entries(candidate)) {
+      walk(key);
+      walk(item);
+    }
+  };
+  walk(value);
 }
 
 function requiredStringArray(value: unknown, name: string): string[] {

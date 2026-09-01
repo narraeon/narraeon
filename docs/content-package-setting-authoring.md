@@ -146,19 +146,19 @@ $document:
 突破需要灵力、心境与契机共同成熟，不是经验值达到阈值就自动发生。
 ```
 
-五项职责：
+技术头的五项职责：
 
-- `id`：世界内不可变身份；复制和创建分叉时保留；
-- `ref`：模型工具使用的稳定短句柄，例如 `@qinlong`；
+- `id`：Runtime 维护的世界内不可变身份；复制和创建分叉时保留，但不进入 AI 提示、工具参数或工具结果；
+- `ref`：AI 新建文档时提供、Runtime 校验唯一性的稳定短句柄，例如 `@qinlong`；
 - `title`：可修改、可重名的人类显示名称；
 - `summary`：1～240 字符的一句话稳定简介，不是当前状态摘要；
 - `aliases`：改名、外号或检索别名。
 
-Runtime 路径、hash、内部 version、operation 和宿主 ID 不写进这里，也不发送给模型。改名只改 `title`／aliases，不改 `id`／`ref`。
+物理文件仍可包含 Runtime 管理的技术头，供导出、恢复和人工诊断；设定完善 AI 读取正文时只看 `ref`、标题、摘要、codec、逻辑路径和正文，新建时也只提交这些公开字段，Runtime 自行生成 `id`。改名只改 `title`／aliases，不改 `id`／`ref`。
 
 ## 5. 裸文字与机械引用必须分开
 
-只有下面的单键 map 是机械文档引用：
+只有下面的单键 map 是机械文档引用。物理 YAML 保存 Runtime 内部身份；AI 的读取结果会自动投影成对应 `@ref`，create／patch 参数也只接受 `@ref`，Runtime 在接受调用时解析回内部身份：
 
 ```yaml
 人物:
@@ -166,6 +166,16 @@ Runtime 路径、hash、内部 version、operation 和宿主 ID 不写进这里�
   - $ref: character.qinlong
 地点:
   $ref: location.dormitory-302
+```
+
+同一段内容在设定完善 AI 的读取结果与写工具参数中只使用公开引用：
+
+```yaml
+人物:
+  - $ref: "@qiming"
+  - $ref: "@qinlong"
+地点:
+  $ref: "@dormitory-302"
 ```
 
 以下都只是文字：
@@ -182,7 +192,7 @@ Runtime 路径、hash、内部 version、operation 和宿主 ID 不写进这里�
 - 需要稳定身份、跨文档完整性或精确读取时才用 `$ref`；
 - 自然语言关系不必为了“结构化”强行升级成引用；
 - `$ref` 只指整份文档，不指 YAML 子路径或 Markdown 标题；
-- 局部选择用文档 ID 加 locator；Runtime 不沿 `$ref` 自动展开；
+- AI 和控制文件的局部选择用 `@ref` 加 locator；Runtime 不沿 `$ref` 自动展开；
 - 持久化 locator 不使用列表下标，容易长期选择的条目改用 map key 或独立文档。
 
 例如秦龙自己的关系可以这样写：
@@ -258,7 +268,7 @@ $document:
   - 宿舍闷热，房门开着
 ```
 
-Runtime 只知道控制文件把 `situation.current` 绑定为当前情境；它不解析内部的地点、人物或情况，也不从中判断谁“在场”。作者必须在状态维护政策中告诉 AI 怎样理解、清理和提升内容。
+Runtime 只知道控制文件把 `@current-situation` 绑定为当前情境；它把公开引用解析到内部身份，但不解析文档中的地点、人物或情况，也不从中判断谁“在场”。作者必须在状态维护政策中告诉 AI 怎样理解、清理和提升内容。
 
 当前情境不是状态汇总：
 
@@ -290,7 +300,7 @@ Runtime 只知道控制文件把 `situation.current` 绑定为当前情境；它
 ```yaml
 format: narraeon.world-frame/v1
 bindings:
-  currentSituation: situation.current
+  currentSituation: "@current-situation"
 instructions:
   - markdown: blocks/world-style.md
   - markdown: blocks/state-maintenance.md
@@ -304,7 +314,7 @@ context:
   - slot:
       kind: reference_targets
       from:
-        document: situation.current
+        document: "@current-situation"
         locator:
           yaml: [人物]
       maxEntries: 12
@@ -374,19 +384,19 @@ views:
       - id: qinlong-clothes
         label: 秦龙衣着
         select:
-          document: character.qinlong
+          document: "@qinlong"
           locator:
             yaml: [衣着]
       - id: qinlong-relationships
         label: 秦龙关系
         select:
-          document: character.qinlong
+          document: "@qinlong"
           locator:
             yaml: [关系]
       - id: jindan-rule
         label: 金丹
         select:
-          document: rule.cultivation
+          document: "@cultivation"
           locator:
             markdown: [金丹]
 ```
@@ -408,9 +418,9 @@ AI 设定完善只编辑内容包，不修改已经创建世界的当前状态�
 流程：
 
 1. 用户像普通对话一样直接说明当前想做什么；内容包正文不预先塞入消息，AI 通过固定工具从隔离草稿按需读取。固定提示先说明内容包会怎样成为独立的世界 state／control／genesis、未来游玩怎样读取和更新它，并给出冻结预设实际启用的主持／叙事规则作为只读创作参考。
-2. AI 从第一条消息开始就可以 list／search／read／write／patch／move 隔离草稿，并根据用户消息决定讨论、提问或修改；“先讨论计划”只是普通用户要求，不是 Runtime 阶段。
+2. AI 从第一条消息开始就可以 list／search／read／create／write／patch／move 隔离草稿，并根据用户消息决定讨论、提问或修改；“先讨论计划”只是普通用户要求，不是 Runtime 阶段。
 3. 修改前先完整读取既有文件；涉及结构、发现路径或未来更新位置时，还要先读 frame、它引用的世界指令、绑定的当前情境与开场白。由 AI 创建或已经成功修改过的完整文件视为已读。
-4. 一个完整模型响应中的全部写工具形成一个原子草稿修订，任一写调用失败则整批不生效；不完整 Provider 响应不执行工具。
+4. 每个完整写工具调用按调用顺序独立结算；成功调用保留，失败只在对应工具结果中说明原因，后续调用仍继续，AI 只重试失败调用。不完整 Provider 响应不执行任何尚未完整收到的工具调用。
 5. 开场白缺失时创建；开局地点、人物、局面、语气或行动钩子变化时，完整读取后更新；不受影响时保留。
 6. 小修改用 YAML 路径 patch；Markdown 通过完整文件重写；新增自然对象才创建新文档。
 7. 每次草稿修订后，Runtime 自动检查开场白、文件安全、身份、引用、控制格式、必需当前情境、持久 selector 和真实 Prompt Preview，并把改动材料在全新游玩中属于全文／节点注入、目录摘要、直接引用还是仅按需发现，以及控制块是否真正启用的确定性覆盖反馈给 AI；上下文是否可容纳请求由 Provider 判断。

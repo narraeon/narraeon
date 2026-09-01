@@ -115,6 +115,8 @@ export interface WorldDocumentReadQuery {
   readonly document: WorldDocumentSelector;
   readonly maxBytes?: number;
   readonly cursor?: string | null;
+  /** Replace persisted reference identities with quoted @short-ref values. */
+  readonly referenceProjection?: "short_ref";
 }
 
 export interface WorldDocumentSelectNodeQuery {
@@ -1986,7 +1988,15 @@ export class WorldDocumentStore {
   #readDocument(
     request: WorldDocumentReadQuery,
   ): WorldDocumentReadResult | WorldDocumentQueryFailure {
-    if (!hasOnlyKeys(request, ["kind", "document", "maxBytes", "cursor"]))
+    if (
+      !hasOnlyKeys(request, [
+        "kind",
+        "document",
+        "maxBytes",
+        "cursor",
+        "referenceProjection",
+      ])
+    )
       return this.#failure("read_document", request, [
         diagnostic({
           code: "query_invalid",
@@ -1994,11 +2004,18 @@ export class WorldDocumentStore {
         }),
       ]);
     const maxBytes = request.maxBytes ?? 8192;
-    if (!Number.isInteger(maxBytes) || maxBytes < 4 || maxBytes > 65_536)
+    if (
+      !Number.isInteger(maxBytes) ||
+      maxBytes < 4 ||
+      maxBytes > 65_536 ||
+      (request.referenceProjection !== undefined &&
+        request.referenceProjection !== "short_ref")
+    )
       return this.#failure("read_document", request, [
         diagnostic({
           code: "query_invalid",
-          message: "read_document maxBytes must be 4 to 65536",
+          message:
+            "read_document maxBytes must be 4 to 65536 and referenceProjection, when present, must be short_ref",
         }),
       ]);
     const resolved = this.#resolveSelector(request.document);
@@ -2024,10 +2041,19 @@ export class WorldDocumentStore {
         ],
         resolved.entry.descriptor,
       );
-    const completeBody = resolved.entry.file.contents.slice(
-      bodyRange.start.offset,
-      bodyRange.end.offset,
-    );
+    const completeBody =
+      request.referenceProjection === "short_ref"
+        ? projectExplicitReferenceValues(
+            resolved.entry.file.contents,
+            bodyRange,
+            resolved.entry.references,
+            this.#descriptorIndex(),
+            true,
+          )
+        : resolved.entry.file.contents.slice(
+            bodyRange.start.offset,
+            bodyRange.end.offset,
+          );
     const bytes = Buffer.from(completeBody, "utf8");
     const cursorScope = JSON.stringify({
       kind: "read_document",
@@ -2035,6 +2061,7 @@ export class WorldDocumentStore {
       logicalRoot: this.logicalRoot,
       document: request.document,
       maxBytes,
+      referenceProjection: request.referenceProjection ?? null,
     });
     const offset = this.#cursorOffset(request.cursor, cursorScope);
     if (offset === null || offset > bytes.length)
@@ -3220,6 +3247,7 @@ function projectExplicitReferenceValues(
   selectedRange: WorldDocumentSourceRange,
   references: readonly InternalReference[],
   descriptors: ReadonlyMap<string, WorldDocumentDescriptor>,
+  quoteProjection = false,
 ): string {
   const selectedStart = selectedRange.start.offset;
   const selectedEnd = selectedRange.end.offset;
@@ -3238,8 +3266,12 @@ function projectExplicitReferenceValues(
               end,
               projection:
                 descriptor === undefined
-                  ? "(invalid document reference)"
-                  : `@${descriptor.shortRef}`,
+                  ? quoteProjection
+                    ? JSON.stringify("(invalid document reference)")
+                    : "(invalid document reference)"
+                  : quoteProjection
+                    ? JSON.stringify(`@${descriptor.shortRef}`)
+                    : `@${descriptor.shortRef}`,
             },
           ]
         : [];

@@ -17,9 +17,9 @@ import {
   equalModelHostBinding,
   ModelHostCancelledError,
 } from "../model/ModelHost.ts";
-import type {
+import {
   FileNativePromptCompiler,
-  PromptPreview,
+  type PromptPreview,
 } from "../prompt/FileNativePromptCompiler.ts";
 import {
   settingImprovementPromptForBinding,
@@ -315,6 +315,7 @@ export class SettingImprovementSession {
     live: LiveRun,
   ): Promise<SettingImprovementView> {
     try {
+      let draft: SettingImprovementDraft | null = null;
       for (let round = 0; round < maximumExchangesPerMessage; round += 1) {
         session.exchange += 1;
         live.streaming = emptyStreaming();
@@ -381,7 +382,7 @@ export class SettingImprovementSession {
         // The complete provider response and native continuation are durable
         // before any draft tool can run.
         await this.#store.save(session);
-        const draft = this.#openDraft(session);
+        draft ??= this.#openDraft(session);
         const before = contentFingerprint(draft.files());
         const results = draft.execute(toolCalls);
         const after = contentFingerprint(draft.files());
@@ -421,6 +422,7 @@ export class SettingImprovementSession {
   ): Promise<StoredSettingImprovementSession> {
     if (this.#runs.has(original.sessionId)) return original;
     const session = structuredClone(original);
+    const runtimeContractUpgraded = this.#upgradeRuntimeContract(session);
     if (session.applyRequest !== null) {
       const current = await this.#content.readCurrentTreeContentPackage(
         session.packageId,
@@ -453,7 +455,13 @@ export class SettingImprovementSession {
       lastAssistant?.kind === "assistant" &&
       lastAssistantIndex === session.modelItems.length - 1 &&
       lastAssistant.toolCalls.length > 0;
-    if (session.runStatus !== "running" && !pendingTools) return session;
+    if (session.runStatus !== "running" && !pendingTools) {
+      if (runtimeContractUpgraded) {
+        session.updatedAt = Date.now();
+        await this.#store.save(session);
+      }
+      return session;
+    }
     if (pendingTools && lastAssistant?.kind === "assistant") {
       const draft = this.#openDraft(session);
       const before = contentFingerprint(draft.files());
@@ -484,6 +492,37 @@ export class SettingImprovementSession {
     session.updatedAt = Date.now();
     await this.#store.save(session);
     return session;
+  }
+
+  #upgradeRuntimeContract(session: StoredSettingImprovementSession): boolean {
+    if (session.lifecycle !== "open" || session.playPreset === undefined)
+      return false;
+    const tools = settingImprovementToolDefinitions(session.locale);
+    const runtimeContract = settingImprovementRuntimeContract(session.locale);
+    const currentRuntimeContract = session.bootstrap.logicalMessages.find(
+      ({ role }) => role === "runtime_system",
+    )?.markdown;
+    if (
+      currentRuntimeContract === runtimeContract &&
+      JSON.stringify(session.bootstrap.toolUniverse) === JSON.stringify(tools)
+    )
+      return false;
+    const authorPrompt = session.bootstrap.logicalMessages.find(
+      ({ role }) => role === "author_instruction",
+    )?.markdown;
+    if (authorPrompt === undefined) return false;
+    const compiler = new FileNativePromptCompiler({
+      locale: session.locale,
+      toolStrategy: session.bootstrap.toolStrategy,
+    });
+    session.bootstrap = compiler.compileSettingImprovement({
+      runtimeContract,
+      authorPrompt,
+      playPreset: session.playPreset,
+      modelBinding: session.modelBinding,
+      tools,
+    });
+    return true;
   }
 
   #openDraft(
