@@ -126,6 +126,13 @@ export interface PromptCompilation {
   };
 }
 
+export interface SettingImprovementPromptInput {
+  runtimeContract: string;
+  authorPrompt: string;
+  modelBinding: FileNativePromptInput["modelBinding"];
+  tools: PromptCompilation["tools"];
+}
+
 export interface PromptPreview {
   diagnosticBinding: {
     endpoint: string;
@@ -289,6 +296,99 @@ export class FileNativePromptCompiler {
 
   setLocale(locale: AppLocale): void {
     this.#locale = locale;
+  }
+
+  /**
+   * Freeze the stable prefix for one setting-improvement conversation.
+   * Package contents deliberately stay behind tools, so every user turn is a
+   * plain append and no Runtime-authored planning or generation phase exists.
+   */
+  compileSettingImprovement(
+    input: SettingImprovementPromptInput,
+  ): PromptCompilation {
+    validateModel(input.modelBinding);
+    const logicalMessages: PromptCompilation["logicalMessages"] = [
+      {
+        role: "runtime_system",
+        markdown: input.runtimeContract.trim(),
+        blocks: [
+          {
+            source: "runtime:builtin/setting-improvement",
+            markdown: input.runtimeContract.trim(),
+          },
+        ],
+      },
+      {
+        role: "author_instruction",
+        markdown: input.authorPrompt.trim(),
+        blocks: [
+          {
+            source: "play-preset:setting-improvement",
+            markdown: input.authorPrompt.trim(),
+          },
+        ],
+      },
+      {
+        role: "world_context",
+        markdown:
+          this.#locale === "zh-CN"
+            ? "# 隔离草稿\n\n当前内容包只可通过随附工具读取和修改。所有修改先进入隔离草稿；只有用户在界面中点击应用，Runtime 才会替换内容包当前树。"
+            : "# Isolated draft\n\nThe current content package can be read and changed only through the attached tools. Every change first enters an isolated draft; Runtime replaces the package's current tree only when the user clicks Apply in the interface.",
+        blocks: [
+          {
+            source: "runtime:setting-draft-boundary",
+            markdown:
+              this.#locale === "zh-CN"
+                ? "当前内容包只可通过随附工具读取和修改；修改先进入隔离草稿，只有用户点击应用才替换当前树。"
+                : "The current content package is available only through the attached tools; changes enter an isolated draft and replace the current tree only when the user clicks Apply.",
+          },
+        ],
+      },
+    ];
+    const tools = structuredClone(input.tools);
+    const toolStrategy =
+      this.#toolStrategyOverride ??
+      defaultRuntimeToolDefinitionStrategy(input.modelBinding.provider);
+    const cacheStrategy =
+      input.modelBinding.cacheStrategy ??
+      (input.modelBinding.provider === "anthropic_messages"
+        ? "explicit_anthropic_blocks"
+        : "provider_managed");
+    const stableText = cacheStableText(logicalMessages);
+    const cache = stableCacheBoundary(stableText, tools, toolStrategy);
+    return {
+      logicalMessages,
+      provider: mapProvider(
+        input.modelBinding.provider,
+        logicalMessages,
+        cacheStrategy,
+      ),
+      tools: structuredClone(tools),
+      toolUniverse: structuredClone(tools),
+      toolStrategy,
+      coverage: [],
+      budget: {
+        estimator: "disabled",
+        messageTokens: 0,
+        toolTokens: 0,
+        outputReserveTokens: input.modelBinding.maxOutputTokens,
+        forcedTailReserveTokens: 0,
+        safetyMarginTokens: 0,
+        requiredTokens: 0,
+        contextWindowTokens: input.modelBinding.contextWindowTokens,
+        status: "not_checked",
+      },
+      cache: {
+        ...cache,
+        strategy: cacheStrategy,
+        breakpoints:
+          cacheStrategy === "explicit_anthropic_blocks"
+            ? ["runtime_system", "author_instruction", "world_context"]
+            : cacheStrategy === "explicit_cliproxyapi_message"
+              ? ["author_instruction", "world_context"]
+              : [],
+      },
+    };
   }
 
   renderWorldDocument(

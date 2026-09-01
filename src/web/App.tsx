@@ -3,10 +3,7 @@ import { useEffect, useState } from "react";
 import { maxPortableContentArchiveBytes } from "../protocol/contentTree.ts";
 import type { ModelConnectionLibraryView } from "../protocol/modelConnections.ts";
 import type { AppLocale, AppPreferences } from "../protocol/appPreferences.ts";
-import type {
-  ContentTreeFile,
-  SettingImprovementStartMode,
-} from "../protocol/v1.ts";
+import type { ContentTreeFile } from "../protocol/v1.ts";
 import { firstPartyPlayPresetTemplatesForLocale } from "../shared/first-party-play-preset-templates.ts";
 import type { RuntimeClient } from "./runtimeClient.ts";
 import { createClientId } from "./ClientId.ts";
@@ -21,10 +18,7 @@ import { PlayPresetScreen } from "./PlayPresetScreen.tsx";
 import { PromptPreviewScreen } from "./PromptPreviewScreen.tsx";
 import {
   SettingImprovementPanel,
-  type SettingImprovementCandidateResult,
-  type SettingImprovementPhase,
-  type SettingImprovementPlanResult,
-  type SettingImprovementProgress,
+  type SettingImprovementView,
 } from "./SettingImprovementPanel.tsx";
 import { WorldPage } from "./WorldPage.tsx";
 
@@ -64,11 +58,6 @@ type Screen =
   "home" | "content" | "plays" | "model" | "create" | "preview" | "world";
 type ContentMode = "files" | "improve";
 
-interface SettingImprovementFailure {
-  message: string;
-  mode: SettingImprovementStartMode;
-}
-
 export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [screen, setScreen] = useState<Screen>("home");
@@ -90,22 +79,13 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   } | null>(null);
   const [importArchive, setImportArchive] = useState<File | null>(null);
   const [importPending, setImportPending] = useState(false);
-  const [improvementGoal, setImprovementGoal] = useState("");
-  const [improvementContextPaths, setImprovementContextPaths] = useState<
-    string[]
-  >([]);
-  const [improvementId, setImprovementId] = useState("");
-  const [improvementPhase, setImprovementPhase] =
-    useState<SettingImprovementPhase>("idle");
-  const [improvementPlan, setImprovementPlan] =
-    useState<SettingImprovementPlanResult | null>(null);
-  const [improvementCandidate, setImprovementCandidate] =
-    useState<SettingImprovementCandidateResult | null>(null);
-  const [improvementProgress, setImprovementProgress] =
-    useState<SettingImprovementProgress | null>(null);
-  const [improvementProgressNow, setImprovementProgressNow] = useState(0);
-  const [improvementFailure, setImprovementFailure] =
-    useState<SettingImprovementFailure | null>(null);
+  const [improvementView, setImprovementView] =
+    useState<SettingImprovementView | null>(null);
+  const [improvementLoading, setImprovementLoading] = useState(false);
+  const [improvementRequestFailure, setImprovementRequestFailure] = useState<
+    string | null
+  >(null);
+  const [improvementNow, setImprovementNow] = useState(0);
   const [worldId, setWorldId] = useState("");
   const [notice, setNotice] = useState(uiText("正在读取工作区…"));
   const [localeSaving, setLocaleSaving] = useState(false);
@@ -122,36 +102,41 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     setNotice("");
   }
 
-  // The start/confirm request stays open for the whole run, so progress can
-  // only arrive out of band. A failed poll keeps the previous snapshot and
-  // still advances the clock, which is what makes a stall visible.
+  // The durable Runtime view is the only saved setting-improvement state.
+  // Polling restores it after navigation or refresh and exposes live provider
+  // progress while a message request remains open.
   useEffect(() => {
-    if (
-      improvementId === "" ||
-      (improvementPhase !== "planning" && improvementPhase !== "generating")
-    )
+    if (screen !== "content" || contentMode !== "improve" || selected === "")
       return;
     let active = true;
     const poll = async (): Promise<void> => {
       try {
-        const next = await client.request<SettingImprovementProgress>({
-          type: "setting-improvement.progress",
-          improvementId,
+        const next = await client.request<SettingImprovementView | null>({
+          type: "setting-improvement.read",
+          packageId: selected,
         });
-        if (active) setImprovementProgress(next);
+        if (active) setImprovementView(next);
       } catch {
-        // A failed poll does not interrupt generation or replace known progress.
+        // Keep the last authoritative snapshot when one poll fails.
       } finally {
-        if (active) setImprovementProgressNow(Date.now());
+        if (active) {
+          setImprovementNow(Date.now());
+          setImprovementLoading(false);
+        }
       }
     };
-    void poll();
+    const initialPoll = window.setTimeout(() => {
+      if (!active) return;
+      setImprovementLoading(true);
+      void poll();
+    }, 0);
     const timer = setInterval(() => void poll(), 1000);
     return () => {
       active = false;
+      clearTimeout(initialPoll);
       clearInterval(timer);
     };
-  }, [client, improvementId, improvementPhase]);
+  }, [client, contentMode, screen, selected]);
 
   useEffect(() => {
     let active = true;
@@ -206,9 +191,8 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       setSelected(packageId);
       setPackageDetail(package_);
       setCurrentPackageFiles(packageFiles.map((file) => ({ ...file })));
-      setImprovementContextPaths([]);
-      setImprovementFailure(null);
-      setImprovementProgress(null);
+      setImprovementView(null);
+      setImprovementRequestFailure(null);
       setFiles(packageFiles.map((file) => ({ ...file })));
       setFilesDirty(false);
       setContentMode(nextMode);
@@ -320,150 +304,85 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     }
   }
 
-  async function startImprovement(
-    mode: SettingImprovementStartMode,
-  ): Promise<void> {
+  async function sendImprovement(message: string): Promise<void> {
     if (filesDirty) {
-      setNotice(uiText("请先保存手动编辑，再开始 AI 设定完善。"));
-      return;
+      const error = new Error(uiText("请先保存手动编辑，再继续 AI 设定完善。"));
+      report(error);
+      throw error;
     }
-    const id = createClientId("improvement");
-    setImprovementId(id);
-    setImprovementPhase(mode === "plan_first" ? "planning" : "generating");
-    setImprovementPlan(null);
-    setImprovementCandidate(null);
-    setImprovementProgress(null);
-    setImprovementFailure(null);
+    setImprovementRequestFailure(null);
     setNotice("");
     try {
-      const outcome = await client.request<
-        SettingImprovementPlanResult | SettingImprovementCandidateResult
-      >({
-        type: "setting-improvement.start",
-        improvementId: id,
+      const next = await client.request<SettingImprovementView>({
+        type: "setting-improvement.message",
         packageId: selected,
-        goal: improvementGoal,
-        mode,
-        contextPaths: improvementContextPaths,
+        requestId: createClientId("setting-message"),
+        message,
       });
-      if (outcome.kind === "plan") {
-        setImprovementPlan(outcome);
-        setImprovementPhase("planned");
-        setNotice(uiText("创作计划已生成；计划阶段只读取了当前设定。"));
-      } else {
-        setImprovementCandidate(outcome);
-        setImprovementPhase("ready");
-        setNotice(uiText("候选已通过机械检查；可整批应用或放弃。"));
-      }
+      setImprovementView(next);
     } catch (error: unknown) {
-      setImprovementId("");
-      setImprovementPhase("idle");
-      setImprovementFailure({
-        message: error instanceof Error ? error.message : uiText("操作失败"),
-        mode,
-      });
-      report(error);
-    }
-  }
-
-  async function confirmImprovement(): Promise<void> {
-    setImprovementPhase("generating");
-    setImprovementProgress(null);
-    try {
-      const candidate = await client.request<SettingImprovementCandidateResult>(
-        {
-          type: "setting-improvement.confirm",
-          improvementId,
-        },
+      setImprovementRequestFailure(
+        error instanceof Error ? error.message : uiText("操作失败"),
       );
-      setImprovementCandidate(candidate);
-      setImprovementPhase("ready");
-      setNotice(uiText("候选已通过机械检查；可整批应用或放弃。"));
-    } catch (error: unknown) {
-      setImprovementPhase("planned");
       report(error);
+      throw error;
     }
   }
 
-  async function reviseImprovementPlan(feedback: string): Promise<void> {
-    setImprovementPhase("planning");
-    setImprovementProgress(null);
+  async function cancelImprovement(): Promise<void> {
+    if (improvementView === null) return;
+    setImprovementRequestFailure(null);
     try {
-      const plan = await client.request<SettingImprovementPlanResult>({
-        type: "setting-improvement.revise-plan",
-        improvementId,
-        feedback,
+      const next = await client.request<SettingImprovementView>({
+        type: "setting-improvement.cancel",
+        sessionId: improvementView.sessionId,
       });
-      setImprovementPlan(plan);
-      setImprovementPhase("planned");
-      setNotice(uiText("已按你的意见重出创作计划。"));
+      setImprovementView(next);
     } catch (error: unknown) {
-      setImprovementPhase("planned");
-      report(error);
-    }
-  }
-
-  async function reviseImprovementCandidate(feedback: string): Promise<void> {
-    setImprovementPhase("generating");
-    setImprovementProgress(null);
-    try {
-      const candidate = await client.request<SettingImprovementCandidateResult>(
-        {
-          type: "setting-improvement.revise-candidate",
-          improvementId,
-          feedback,
-        },
+      setImprovementRequestFailure(
+        error instanceof Error ? error.message : uiText("操作失败"),
       );
-      setImprovementCandidate(candidate);
-      setImprovementPhase("ready");
-      setNotice(uiText("候选已按你的意见修改并重新通过机械检查。"));
-    } catch (error: unknown) {
-      setImprovementPhase("ready");
       report(error);
     }
   }
 
-  async function applyImprovement(): Promise<void> {
-    setImprovementPhase("applying");
+  async function applyImprovement(draftVersion: number): Promise<void> {
+    if (improvementView === null) return;
+    setImprovementRequestFailure(null);
     try {
-      await client.request({
+      await client.request<SettingImprovementView>({
         type: "setting-improvement.apply",
-        improvementId,
+        sessionId: improvementView.sessionId,
+        expectedDraftVersion: draftVersion,
       });
-      setImprovementId("");
-      setImprovementPlan(null);
-      setImprovementCandidate(null);
-      setImprovementGoal("");
-      setImprovementContextPaths([]);
-      setImprovementFailure(null);
-      setImprovementProgress(null);
-      setImprovementPhase("idle");
+      setImprovementView(null);
+      setImprovementRequestFailure(null);
       await refresh();
       await openPackage(selected, "improve");
-      setNotice(uiText("设定候选已整批应用。"));
+      setNotice(uiText("隔离草稿已整批应用到内容包当前树。"));
     } catch (error: unknown) {
-      setImprovementPhase("ready");
+      setImprovementRequestFailure(
+        error instanceof Error ? error.message : uiText("操作失败"),
+      );
       report(error);
     }
   }
 
   async function discardImprovement(): Promise<void> {
-    const previousPhase = improvementCandidate === null ? "planned" : "ready";
-    setImprovementPhase("discarding");
+    if (improvementView === null) return;
+    setImprovementRequestFailure(null);
     try {
       await client.request({
         type: "setting-improvement.discard",
-        improvementId,
+        sessionId: improvementView.sessionId,
       });
-      setImprovementId("");
-      setImprovementPlan(null);
-      setImprovementCandidate(null);
-      setImprovementFailure(null);
-      setImprovementProgress(null);
-      setImprovementPhase("idle");
-      setNotice(uiText("设定候选已放弃，当前树未改变。"));
+      setImprovementView(null);
+      setImprovementRequestFailure(null);
+      setNotice(uiText("设定完善对话和隔离草稿已放弃，当前树未改变。"));
     } catch (error: unknown) {
-      setImprovementPhase(previousPhase);
+      setImprovementRequestFailure(
+        error instanceof Error ? error.message : uiText("操作失败"),
+      );
       report(error);
     }
   }
@@ -573,7 +492,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   );
   const selectedPackageDetail =
     packageDetail?.localId === selected ? packageDetail : null;
-  const improvementActive = improvementId.length > 0;
+  const improvementActive = improvementView?.runStatus === "running";
   const selectedWorld = workspace.worlds.find(
     (world) => world.worldId === worldId,
   );
@@ -781,37 +700,16 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
           ) : (
             <SettingImprovementPanel
               packageName={selectedPackage?.displayName ?? selected}
-              packageStatus={selectedPackage?.status ?? "needs_repair"}
               modelConfigured={workspace.model.configured}
-              currentFiles={currentPackageFiles}
               hasUnsavedFileDraft={filesDirty}
-              contextPaths={improvementContextPaths}
-              contextLocked={improvementActive}
-              phase={improvementPhase}
-              goal={improvementGoal}
-              plan={improvementPlan}
-              candidate={improvementCandidate}
-              progress={improvementProgress}
-              progressNow={improvementProgressNow}
-              failure={improvementFailure}
-              onGoalChange={setImprovementGoal}
-              onContextPathsChange={setImprovementContextPaths}
-              onStart={(mode) => void startImprovement(mode)}
-              onConfirm={() => void confirmImprovement()}
-              onRevisePlan={(feedback) => void reviseImprovementPlan(feedback)}
-              onReviseCandidate={(feedback) =>
-                void reviseImprovementCandidate(feedback)
-              }
-              onApply={() => void applyImprovement()}
-              onDiscard={() => void discardImprovement()}
-              onRetry={() => {
-                if (improvementFailure !== null)
-                  void startImprovement(improvementFailure.mode);
-              }}
-              onDismissFailure={() => {
-                setImprovementFailure(null);
-                setImprovementProgress(null);
-              }}
+              loading={improvementLoading}
+              view={improvementView}
+              requestFailure={improvementRequestFailure}
+              now={improvementNow}
+              onSend={sendImprovement}
+              onCancel={cancelImprovement}
+              onApply={applyImprovement}
+              onDiscard={discardImprovement}
               onConfigureModel={() => setScreen("model")}
             />
           )}

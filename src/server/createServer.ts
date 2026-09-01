@@ -58,7 +58,7 @@ function isPollingRequest(request: FastifyRequest): boolean {
   const runtimeRequest = body.request;
   return (
     isRecord(runtimeRequest) &&
-    (runtimeRequest.type === "setting-improvement.progress" ||
+    (runtimeRequest.type === "setting-improvement.read" ||
       runtimeRequest.type === "play.chain.inspect")
   );
 }

@@ -24,10 +24,7 @@ import {
   InvalidContentTreeError,
 } from "./content/ContentWorkspace.ts";
 import { inspectContentPackageCurrentTree } from "./content/FileNativeContentTree.ts";
-import {
-  FileNativeModelHost,
-  FileNativeSettingAuthorProvider,
-} from "./model/FileNativeModelAdapters.ts";
+import { FileNativeModelHost } from "./model/FileNativeModelAdapters.ts";
 import { type ModelHostBinding } from "./model/ModelHost.ts";
 import { ModelConnectionStore } from "./model/ModelConnectionStore.ts";
 import { FileNativeContinuityCorrection } from "./play/FileNativeContinuityCorrection.ts";
@@ -57,11 +54,8 @@ import {
   type FrontendPlayerViewPanelProjection,
 } from "./extension/PlayerViewPanelProjector.ts";
 import { FileNativePromptCompiler } from "./prompt/FileNativePromptCompiler.ts";
-import {
-  createSettingImprovementStartingProgress,
-  DocumentCandidateSettingImprovement,
-  type SettingImprovementProgress,
-} from "./setting/DocumentCandidateSettingImprovement.ts";
+import { FileNativeSettingImprovementStore } from "./setting/FileNativeSettingImprovementStore.ts";
+import { SettingImprovementSession } from "./setting/SettingImprovementSession.ts";
 import { FileNativeWorldStore } from "./world/FileNativeWorldStore.ts";
 import { WorldDocumentStore } from "./world/WorldDocumentStore.ts";
 import { FileNativeAiFailureLog } from "./model/AiFailureLog.ts";
@@ -77,14 +71,7 @@ export class V1Runtime {
   readonly #playCallChains: PlayCallChain;
   readonly #failureLog: FileNativeAiFailureLog | undefined;
   readonly #preferences: AppPreferencesStore;
-  readonly #settingImprovements = new Map<
-    string,
-    { packageId: string; improvement: DocumentCandidateSettingImprovement }
-  >();
-  readonly #startingSettingImprovements = new Map<
-    string,
-    SettingImprovementProgress
-  >();
+  readonly #settingImprovements: SettingImprovementSession;
   readonly #compiler = new FileNativePromptCompiler();
   #locale: AppLocale = defaultAppLocale;
 
@@ -114,6 +101,37 @@ export class V1Runtime {
     );
     this.#models = new ModelConnectionStore(input.configRoot);
     this.#corrections = new FileNativeContinuityCorrection(this.#worlds);
+    this.#settingImprovements = new SettingImprovementSession({
+      store: new FileNativeSettingImprovementStore(input.dataRoot),
+      content: this.#content,
+      compiler: this.#compiler,
+      locale: () => this.#locale,
+      bindModelHost: () => this.#modelHost(),
+      authorPrompt: async () =>
+        settingImprovementPromptForBinding(
+          await this.#playPresets.bindCurrent(),
+          this.#locale,
+        ),
+      preview: (snapshot, modelBinding) =>
+        this.#compiler.preview({
+          endpoint: { id: "setting-draft", commit: "draft" },
+          hostBinding: {
+            hostPresetId: "setting-draft",
+            files: defaultSettingPreviewHost(),
+          },
+          world: previewWorld(
+            snapshot,
+            "setting-draft.message.genesis.narrator",
+            "setting-draft",
+          ),
+          playerInputPlacement: "bootstrap",
+          playerInput:
+            this.#locale === "zh-CN"
+              ? "预览设定草稿。"
+              : "Preview the setting draft.",
+          modelBinding,
+        }),
+    });
   }
 
   async initialize(): Promise<void> {
@@ -210,110 +228,19 @@ export class V1Runtime {
           base64: exported.archive.toString("base64"),
         };
       }
-      case "setting-improvement.start": {
-        if (
-          this.#settingImprovements.has(request.improvementId) ||
-          this.#startingSettingImprovements.has(request.improvementId)
-        )
-          throw new Error("Setting-improvement ID already exists");
-        this.#startingSettingImprovements.set(
-          request.improvementId,
-          createSettingImprovementStartingProgress(request.mode),
+      case "setting-improvement.read":
+        return this.#settingImprovements.read(request.packageId);
+      case "setting-improvement.message":
+        return this.#settingImprovements.send(request);
+      case "setting-improvement.cancel":
+        return this.#settingImprovements.cancel(request.sessionId);
+      case "setting-improvement.apply":
+        return this.#settingImprovements.apply(
+          request.sessionId,
+          request.expectedDraftVersion,
         );
-        try {
-          const [package_, connection, preset] = await Promise.all([
-            this.#content.readCurrentTreeContentPackage(request.packageId),
-            this.#models.bind(),
-            this.#playPresets.bindCurrent(),
-          ]);
-          const improvement = new DocumentCandidateSettingImprovement({
-            files: package_.files,
-            adapter: new FileNativeSettingAuthorProvider(connection, fetch, {
-              ...(this.#failureLog === undefined
-                ? {}
-                : { failureLog: this.#failureLog }),
-              operationId: request.improvementId,
-              locale: this.#locale,
-            }),
-            authorPrompt: settingImprovementPromptForBinding(
-              preset,
-              this.#locale,
-            ),
-            locale: this.#locale,
-            ...(this.#failureLog === undefined
-              ? {}
-              : { failureLog: this.#failureLog }),
-            preview: (snapshot) =>
-              this.#compiler.preview({
-                endpoint: { id: "setting-candidate", commit: "candidate" },
-                hostBinding: {
-                  hostPresetId: "setting-candidate",
-                  files: defaultSettingPreviewHost(),
-                },
-                world: previewWorld(
-                  snapshot,
-                  "setting-candidate.message.genesis.narrator",
-                  "setting-candidate",
-                ),
-                playerInputPlacement: "bootstrap",
-                playerInput:
-                  this.#locale === "zh-CN"
-                    ? "预览设定候选。"
-                    : "Preview the setting candidate.",
-                modelBinding: new FileNativeModelHost(connection).binding(),
-              }),
-          });
-          this.#startingSettingImprovements.delete(request.improvementId);
-          this.#settingImprovements.set(request.improvementId, {
-            packageId: request.packageId,
-            improvement,
-          });
-          try {
-            return await improvement.start({
-              goal: request.goal,
-              contextPaths: request.contextPaths,
-              mode: request.mode,
-            });
-          } catch (error: unknown) {
-            this.#settingImprovements.delete(request.improvementId);
-            throw error;
-          }
-        } catch (error: unknown) {
-          this.#startingSettingImprovements.delete(request.improvementId);
-          throw error;
-        }
-      }
-      case "setting-improvement.confirm":
-        return this.#settingImprovement(
-          request.improvementId,
-        ).improvement.confirmPlan();
-      // The start reservation exists before dependency loading, so the first
-      // browser poll observes preparation instead of a missing session.
-      case "setting-improvement.progress":
-        return this.#settingImprovementProgress(request.improvementId);
-      case "setting-improvement.revise-plan":
-        return this.#settingImprovement(
-          request.improvementId,
-        ).improvement.revisePlan(request.feedback);
-      case "setting-improvement.revise-candidate":
-        return this.#settingImprovement(
-          request.improvementId,
-        ).improvement.reviseCandidate(request.feedback);
-      case "setting-improvement.apply": {
-        const active = this.#settingImprovement(request.improvementId);
-        await active.improvement.apply(async (files) => {
-          await this.#content.replaceCurrentTreeContentPackage(
-            active.packageId,
-            files,
-          );
-        });
-        this.#settingImprovements.delete(request.improvementId);
-        return { applied: true };
-      }
       case "setting-improvement.discard":
-        this.#settingImprovement(request.improvementId).improvement.discard();
-        this.#settingImprovements.delete(request.improvementId);
-        return { discarded: true };
+        return this.#settingImprovements.discard(request.sessionId);
       case "play.read":
         return this.#playPresets.list();
       case "play.create":
@@ -788,23 +715,6 @@ export class V1Runtime {
       fallbackWorldId;
     if (worldId === undefined) return;
     await this.#reconcileArtifacts(worldId);
-  }
-
-  #settingImprovement(improvementId: string) {
-    const active = this.#settingImprovements.get(improvementId);
-    if (active === undefined)
-      throw new Error("Setting-improvement session does not exist");
-    return active;
-  }
-
-  #settingImprovementProgress(
-    improvementId: string,
-  ): SettingImprovementProgress {
-    const active = this.#settingImprovements.get(improvementId);
-    if (active !== undefined) return active.improvement.progress();
-    const starting = this.#startingSettingImprovements.get(improvementId);
-    if (starting !== undefined) return structuredClone(starting);
-    throw new Error("Setting-improvement session does not exist");
   }
 
   async #promptBinding() {

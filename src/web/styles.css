@@ -7482,3 +7482,338 @@ summary:focus-visible {
   border-top: 1px dashed var(--border);
   font-size: 0.8rem;
 }
+
+/* Persistent setting-improvement conversation */
+
+.setting-conversation-workspace .setting-improvement-header {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.setting-improvement-blocker,
+.setting-improvement-warning {
+  padding: 0.9rem 1rem;
+  border: 1px solid rgb(241 196 96 / 45%);
+  border-radius: 0.8rem;
+  background: rgb(94 73 26 / 20%);
+}
+
+.setting-improvement-blocker {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.setting-improvement-blocker p,
+.setting-improvement-warning {
+  margin: 0;
+}
+
+.setting-conversation-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.42fr) minmax(18rem, 0.58fr);
+  align-items: start;
+  gap: 1rem;
+}
+
+.setting-conversation-main,
+.setting-draft-summary {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  background: var(--panel);
+}
+
+.setting-conversation-main {
+  display: grid;
+  min-height: 38rem;
+  grid-template-rows: minmax(20rem, 1fr) auto;
+  overflow: hidden;
+}
+
+.setting-conversation-messages {
+  display: grid;
+  align-content: start;
+  gap: 0.8rem;
+  max-height: 62vh;
+  overflow: auto;
+  padding: 1rem;
+}
+
+.setting-draft-prompt-preview .setting-preview-summary {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.setting-conversation-empty {
+  align-self: center;
+  max-width: 34rem;
+  margin: 4rem auto;
+  color: var(--muted);
+  text-align: center;
+}
+
+.setting-conversation-empty p {
+  margin: 0.35rem 0;
+}
+
+.setting-conversation-message {
+  display: grid;
+  gap: 0.35rem;
+  max-width: min(88%, 46rem);
+  padding: 0.8rem 0.95rem;
+  border: 1px solid var(--border);
+  border-radius: 0.9rem;
+}
+
+.setting-conversation-message p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.setting-conversation-user {
+  justify-self: end;
+  border-bottom-right-radius: 0.25rem;
+  background: rgb(31 88 78 / 34%);
+}
+
+.setting-conversation-assistant {
+  justify-self: start;
+  border-bottom-left-radius: 0.25rem;
+  background: rgb(4 15 13 / 58%);
+}
+
+.setting-conversation-role {
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.setting-conversation-running,
+.setting-conversation-failure {
+  display: flex;
+  align-items: start;
+  gap: 0.75rem;
+  padding: 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 0.8rem;
+  background: rgb(4 15 13 / 55%);
+}
+
+.setting-conversation-running p,
+.setting-conversation-failure p {
+  margin: 0.25rem 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+}
+
+.setting-conversation-failure {
+  display: grid;
+  border-color: rgb(241 126 126 / 42%);
+  color: #ffd0d0;
+  background: rgb(91 28 28 / 18%);
+}
+
+.setting-conversation-spinner {
+  width: 0.9rem;
+  height: 0.9rem;
+  margin-top: 0.25rem;
+  border: 2px solid rgb(158 229 209 / 25%);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: setting-conversation-spin 0.9s linear infinite;
+}
+
+@keyframes setting-conversation-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.setting-conversation-composer {
+  display: grid;
+  gap: 0.55rem;
+  padding: 1rem;
+  border-top: 1px solid var(--border);
+  background: rgb(4 15 13 / 45%);
+}
+
+.setting-conversation-composer label {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.setting-conversation-composer textarea {
+  min-height: 6.5rem;
+}
+
+.setting-conversation-composer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.setting-draft-summary {
+  position: sticky;
+  top: 1rem;
+  display: grid;
+  gap: 0.85rem;
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+  padding: 1rem;
+}
+
+.setting-draft-summary-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.setting-draft-summary-heading h3 {
+  margin: 0;
+  font-family: Georgia, "Noto Serif SC", serif;
+  font-size: 1.5rem;
+  font-weight: 500;
+}
+
+.setting-draft-version {
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.setting-draft-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.45rem;
+  margin: 0;
+}
+
+.setting-draft-facts > div {
+  min-width: 0;
+  padding: 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  background: rgb(4 15 13 / 45%);
+}
+
+.setting-draft-facts dt {
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.setting-draft-facts dd {
+  margin: 0.15rem 0 0;
+  overflow-wrap: anywhere;
+  color: var(--accent);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.setting-draft-diagnostics {
+  padding: 0.75rem;
+  border: 1px solid rgb(241 196 96 / 36%);
+  border-radius: 0.65rem;
+  background: rgb(94 73 26 / 16%);
+}
+
+.setting-draft-diagnostics ul {
+  margin: 0.45rem 0 0;
+  padding-left: 1.15rem;
+  color: #f5dda3;
+  font-size: 0.76rem;
+}
+
+.setting-draft-diff {
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+  overflow: hidden;
+}
+
+.setting-draft-diff summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem;
+  cursor: pointer;
+}
+
+.setting-draft-diff summary code {
+  overflow-wrap: anywhere;
+  font-size: 0.75rem;
+}
+
+.setting-diff-kind {
+  flex: 0 0 auto;
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.3rem;
+  font-size: 0.65rem;
+  font-weight: 800;
+}
+
+.setting-diff-create {
+  color: #bdf5d9;
+  background: rgb(38 118 84 / 38%);
+}
+
+.setting-diff-modify {
+  color: #f5dda3;
+  background: rgb(115 84 24 / 38%);
+}
+
+.setting-diff-delete {
+  color: #ffd0d0;
+  background: rgb(118 38 38 / 38%);
+}
+
+.setting-draft-diff pre {
+  max-height: 16rem;
+  margin: 0;
+  overflow: auto;
+  padding: 0.65rem;
+  border-top: 1px solid var(--border);
+  color: #dcebe7;
+  background: var(--field-surface);
+  font-size: 0.68rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.setting-apply-button {
+  width: 100%;
+}
+
+@media (max-width: 900px) {
+  .setting-conversation-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .setting-draft-summary {
+    position: static;
+    max-height: none;
+  }
+}
+
+@media (max-width: 620px) {
+  .setting-conversation-workspace .setting-improvement-header,
+  .setting-improvement-blocker {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .setting-conversation-message {
+    max-width: 96%;
+  }
+
+  .setting-conversation-composer-actions,
+  .setting-draft-summary-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

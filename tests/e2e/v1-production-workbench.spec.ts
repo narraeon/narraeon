@@ -218,37 +218,38 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
 
   responses.push(
     chatTools([
+      tool("setting_read", { path: damagedPath }),
       tool("setting_write_file", {
         path: damagedPath,
         contents:
           "$document:\n  id: character.damaged\n  ref: damaged\n  title: Damaged Character\n  summary: Character document repaired in the isolated candidate.\n  aliases: []\nstatus: repaired\n",
       }),
-      tool("setting_preview_candidate", {}),
     ]),
-    chatTools([tool("setting_finish_candidate", {})]),
+    chatText(
+      "The damaged character document is repaired in the isolated draft.",
+    ),
   );
   await page.getByRole("button", { name: "AI 完善" }).click();
-  const currentSetting = page.getByRole("complementary", {
-    name: "当前设定",
-  });
-  await currentSetting
-    .getByRole("button", { name: /world\/characters\/damaged\.yaml/u })
-    .click();
-  await currentSetting.getByLabel(`注入 ${damagedPath}`).check();
   await page
-    .getByLabel("设定完善目标")
-    .fill("Repair the damaged character document selected by the user.");
-  await page.getByRole("button", { name: "跳过计划，直接生成候选" }).click();
-  await expect(page.getByRole("status")).toContainText("候选已通过机械检查");
-  await expect(page.locator(".setting-diff-list")).toContainText(damagedPath);
-  await page.getByRole("button", { name: "整批应用候选" }).click();
-  await expect(page.getByRole("status")).toContainText("候选已整批应用");
+    .getByLabel("给 AI 发消息")
+    .fill("Repair the damaged character document.");
+  await page.getByRole("button", { name: "发送" }).click();
+  await expect(page.locator(".setting-conversation-assistant")).toContainText(
+    "damaged character document is repaired",
+  );
+  await expect(page.locator(".setting-draft-summary")).toContainText(
+    damagedPath,
+  );
+  await page.getByRole("button", { name: "应用当前草稿" }).click();
+  await expect(page.getByRole("status")).toContainText("隔离草稿已整批应用");
 
   responses.push(
     chatText(plan()),
     chatTools([
       tool("setting_read", { path: "world/current-situation.yaml" }),
       tool("setting_read", { path: "world/characters/alex.yaml" }),
+      tool("setting_read", { path: "opening.md" }),
+      tool("setting_read", { path: "control/blocks/world.md" }),
       tool("setting_write_file", {
         path: "world/notes/training.yaml",
         contents:
@@ -275,7 +276,6 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
         contents:
           "$document:\n  id: situation.current\n  ref: current\n  title: Dormitory World\n  summary: The current situation in the dormitory.\n  aliases: []\nsituation: Alex has put away the jersey and is ready to discuss tonight's training.\n",
       }),
-      tool("setting_read", { path: "opening.md" }),
       tool("setting_write_file", {
         path: "opening.md",
         contents:
@@ -286,67 +286,57 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
         contents:
           "# World Narration Rules\n\nWrite persistent outcomes back to their natural owner; advance training plans according to character choices.\n",
       }),
-      tool("setting_preview_candidate", {}),
     ]),
-    chatTools([tool("setting_finish_candidate", {})]),
+    chatText(
+      "The agreed changes are now in the isolated draft and pass the automatic review.",
+    ),
   );
   await page.getByRole("button", { name: "AI 完善" }).click();
-  await expect(currentSetting).toContainText("opening.md");
-  await currentSetting.getByRole("button", { name: /opening\.md/u }).click();
-  await expect(currentSetting).toContainText(
-    "The dormitory door closes behind you",
-  );
-  await expect(currentSetting).toContainText("world/current-situation.yaml");
-  await currentSetting
-    .getByRole("button", { name: /world\/current-situation\.yaml/u })
-    .click();
-  await expect(currentSetting).toContainText("Alex is organizing a jersey");
-  await currentSetting.getByLabel("注入 world/current-situation.yaml").check();
   await page
-    .getByLabel("设定完善目标")
-    .fill(
-      "Preserve the dormitory experience and review the current file plan.",
-    );
-  await page.getByRole("button", { name: "生成可见创作计划" }).click();
-  await expect(page.getByRole("status")).toContainText("创作计划已生成");
+    .getByLabel("给 AI 发消息")
+    .fill("先讨论一个保留宿舍体验的修改计划，暂时不要改文件。");
+  await page.getByRole("button", { name: "发送" }).click();
+  await expect(page.locator(".setting-conversation-assistant")).toContainText(
+    "创作计划",
+  );
   const planningRequest = providerRequest();
-  expect(JSON.stringify(planningRequest)).toContain(
+  expect(JSON.stringify(planningRequest)).toContain("暂时不要改文件");
+  expect(JSON.stringify(planningRequest)).not.toContain(
     "Alex is organizing a jersey",
   );
-  expect(JSON.stringify(planningRequest)).toContain("用户选定的当前设定文件");
   expect(toolNames(planningRequest)).toEqual([
     "setting_list",
     "setting_search",
     "setting_read",
+    "setting_write_file",
+    "setting_patch",
+    "setting_move",
   ]);
-  await expect(page.getByRole("heading", { name: "创作计划" })).toBeVisible();
-  await page.getByRole("button", { name: "确认计划并生成候选" }).click();
-  await expect(page.getByRole("status")).toContainText("候选已通过机械检查");
+  await page.getByLabel("给 AI 发消息").fill("按刚才讨论的方向更新隔离草稿。");
+  await page.getByRole("button", { name: "发送" }).click();
   await expect(
-    page.getByRole("heading", { name: "审阅候选，再决定是否应用" }),
-  ).toBeVisible();
-  await expect(page.locator(".setting-diff-list")).toContainText(
+    page.locator(".setting-conversation-assistant").last(),
+  ).toContainText("pass the automatic review");
+  await expect(page.locator(".setting-draft-summary")).toContainText(
     "world/events/training.yaml",
   );
-  await expect(page.locator(".setting-diff-list")).toContainText("opening.md");
-  await expect(page.locator(".setting-diff-list")).toContainText(
+  await expect(page.locator(".setting-draft-summary")).toContainText(
+    "opening.md",
+  );
+  await expect(page.locator(".setting-draft-summary")).toContainText(
     "control/blocks/world.md",
   );
-  await expect(page.getByText("真实提示词预览")).toBeVisible();
-  await page.getByText("查看逻辑消息正文").click();
-  await expect(page.locator(".setting-prompt-preview")).toContainText(
-    "Alex, wearing a dark blue athletic tank top",
-  );
-  await page.getByRole("button", { name: "整批应用候选" }).click();
-  await expect(page.getByRole("status")).toContainText("候选已整批应用");
+  await expect(page.locator(".setting-draft-summary")).toContainText("已通过");
+  await page.getByRole("button", { name: "应用当前草稿" }).click();
+  await expect(page.getByRole("status")).toContainText("隔离草稿已整批应用");
 
   responses.push(
     chatTools([
+      tool("setting_read", { path: "control/frame.yaml" }),
       tool("setting_write_file", {
         path: "control/frame.yaml",
         contents: "invalid: true\n",
       }),
-      tool("setting_preview_candidate", {}),
     ]),
     chatTools([
       tool("setting_write_file", {
@@ -354,30 +344,35 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
         contents:
           "format: narraeon.world-frame/v1\nbindings:\n  currentSituation: situation.current\ninstructions:\n  - markdown: blocks/world.md\ncontext:\n  - slot: { kind: current_situation }\n  - slot: { kind: history, recent: 4 }\n  - slot: { kind: additional_materials }\n",
       }),
-      tool("setting_preview_candidate", {}),
     ]),
-    chatTools([tool("setting_finish_candidate", {})]),
+    chatText("The frame was repaired and the automatic review now passes."),
   );
-  await page
-    .getByLabel("设定完善目标")
-    .fill("Inspect the current tree directly and generate a candidate.");
+  await page.getByLabel("给 AI 发消息").fill("直接检查当前树并修复 frame。");
   providerDelayMs = 1200;
-  await page.getByRole("button", { name: "跳过计划，直接生成候选" }).click();
-  // Progress must move while generation is active; rounds come from live server projection.
-  const runProgress = page.getByLabel("本次生成进度");
-  await expect(runProgress).toContainText("正在生成候选");
-  await expect(runProgress).toContainText(/第 \d+ \/ 64 轮/u);
+  await page.getByRole("button", { name: "发送" }).click();
+  // Progress moves while the ordinary conversation message is active; the
+  // counters come from the same durable Runtime session used after refresh.
+  const runProgress = page.locator(".setting-conversation-running");
+  await expect(runProgress).toContainText("AI 正在处理");
+  await expect(runProgress).toContainText(/第 \d+ 次模型交换/u);
   // While the first round is still streaming, the UI shows received characters
   // rather than inactivity. This number can only come from live server increments.
-  await expect(runProgress).toContainText(/正在输出 \S+ 字/u);
+  await expect(runProgress).toContainText(/已接收 \d+ 字/u);
   providerDelayMs = 0;
-  await expect(page.getByRole("status")).toContainText("候选已通过机械检查");
+  await expect(
+    page.locator(".setting-conversation-assistant").last(),
+  ).toContainText("automatic review now passes");
   await expect(runProgress).toBeHidden();
-  await expect(page.getByText("已跳过可见计划")).toBeVisible();
   const directRequest = providerRequest();
-  expect(JSON.stringify(directRequest)).toContain("跳过可见创作计划");
-  expect(toolNames(directRequest)).toContain("setting_finish_candidate");
-  await page.getByRole("button", { name: "放弃整批候选" }).click();
+  expect(toolNames(directRequest)).toEqual([
+    "setting_list",
+    "setting_search",
+    "setting_read",
+    "setting_write_file",
+    "setting_patch",
+    "setting_move",
+  ]);
+  await page.getByRole("button", { name: "放弃对话" }).click();
   await expect(page.getByRole("status")).toContainText("当前树未改变");
 
   await page.getByRole("button", { name: "返回工作区" }).click();

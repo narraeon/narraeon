@@ -3,10 +3,6 @@ import { appendFile, chmod, mkdir, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import {
-  defaultAppLocale,
-  type AppLocale,
-} from "../../protocol/appPreferences.ts";
-import {
   hasCLIProxyThinkingSuffix,
   modelReasoningPolicyIssue,
   type ModelProviderDialect,
@@ -39,18 +35,7 @@ import {
   type FileNativePromptInput,
   type PromptCompilation,
 } from "../prompt/FileNativePromptCompiler.ts";
-import type {
-  documentCandidateSettingTools,
-  SettingAuthorAdapter,
-  SettingAuthorDelta,
-  SettingAuthorMessage,
-  SettingAuthorUsage,
-} from "../setting/DocumentCandidateSettingImprovement.ts";
 import type { ProviderExchangeState } from "./ProviderExchangeState.ts";
-import {
-  aggregateAnthropicSettingStream,
-  aggregateChatSettingStream,
-} from "./SettingAuthorStream.ts";
 import {
   aggregateAnthropicModelStream,
   aggregateChatModelStream,
@@ -597,9 +582,11 @@ function modelDiagnosticContext(
     scope:
       request.requestId === "play_call_chain"
         ? "play_call_chain"
-        : request.operationId?.includes(":followup:") === true
-          ? "play_followup"
-          : "model_host",
+        : request.operationId?.startsWith("setting-") === true
+          ? "setting_improvement"
+          : request.operationId?.includes(":followup:") === true
+            ? "play_followup"
+            : "model_host",
     ...(request.requestId === undefined
       ? {}
       : { requestId: request.requestId }),
@@ -629,17 +616,6 @@ function captureDelta(
   capture: AiExchangeCapture | undefined,
   downstream: ModelHostDeltaSink | undefined,
 ): ModelHostDeltaSink | undefined {
-  if (capture === undefined) return downstream;
-  return (delta) => {
-    if (delta.kind === "reasoning") capture.observeReasoning(delta.text);
-    downstream?.(delta);
-  };
-}
-
-function captureSettingDelta(
-  capture: AiExchangeCapture | undefined,
-  downstream: ((delta: SettingAuthorDelta) => void) | undefined,
-): ((delta: SettingAuthorDelta) => void) | undefined {
   if (capture === undefined) return downstream;
   return (delta) => {
     if (delta.kind === "reasoning") capture.observeReasoning(delta.text);
@@ -700,424 +676,6 @@ async function trace(kind: string, value: unknown): Promise<void> {
     // Explicit acceptance diagnostics must never change provider semantics.
   }
 }
-
-export class FileNativeSettingAuthorProvider implements SettingAuthorAdapter {
-  readonly #connection: ResolvedFileNativeModelConnection;
-  readonly #fetch: typeof fetch;
-  readonly #failureLog: AiFailureRecorder | undefined;
-  readonly #operationId: string | undefined;
-  readonly #locale: AppLocale;
-  #exchange = 0;
-
-  constructor(
-    connection: FileNativeModelConnection,
-    fetchImplementation: typeof fetch = fetch,
-    diagnostics?: {
-      failureLog?: AiFailureRecorder;
-      operationId?: string;
-      locale?: AppLocale;
-    },
-  ) {
-    this.#connection = resolveConnection(connection);
-    this.#fetch = fetchImplementation;
-    this.#failureLog = diagnostics?.failureLog;
-    this.#operationId = diagnostics?.operationId;
-    this.#locale = diagnostics?.locale ?? defaultAppLocale;
-  }
-
-  async next(request: Parameters<SettingAuthorAdapter["next"]>[0]) {
-    this.#exchange += 1;
-    const diagnosticContext: AiExchangeDiagnostics["context"] = {
-      scope: "setting_improvement",
-      requestId: "setting_improvement",
-      ...(this.#operationId === undefined
-        ? {}
-        : { operationId: this.#operationId }),
-      requestAttempt: 1,
-      exchange: this.#exchange,
-    };
-    const tools = request.tools.map((name) =>
-      settingToolDefinition(name, this.#locale),
-    );
-    if (this.#connection.provider === "chat_completions") {
-      const body = {
-        model: this.#connection.modelId,
-        ...chatReasoningRequest(this.#connection),
-        messages: chatSettingMessages(this.#connection, request.messages),
-        ...(this.#connection.dialect === "cliproxyapi"
-          ? {
-              prompt_cache_key: settingPromptCacheKey(
-                this.#connection,
-                request.messages,
-                this.#operationId,
-              ),
-            }
-          : {}),
-        ...(tools.length === 0
-          ? {}
-          : {
-              tools: tools.map((tool) => ({
-                type: "function",
-                function: {
-                  name: tool.name,
-                  description: tool.description,
-                  parameters: tool.schema,
-                },
-              })),
-            }),
-        max_tokens: Math.min(
-          request.maxOutputTokens,
-          this.#connection.maxOutputTokens,
-        ),
-        stream: true,
-        stream_options: { include_usage: true },
-      };
-      await trace("setting_chat_request", body);
-      const bodyJson = JSON.stringify(body);
-      const url = providerUrl(this.#connection);
-      const capture = providerCapture(
-        this.#failureLog,
-        this.#connection.provider,
-        url,
-        diagnosticContext,
-        bodyJson,
-      );
-      const diagnosticDelta = captureSettingDelta(capture, request.onDelta);
-      return capturedProviderOperation(
-        this.#failureLog,
-        capture,
-        async (observe) => {
-          const response = observe(
-            await this.#fetch(url, {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${this.#connection.apiKey}`,
-                "Content-Type": "application/json",
-              },
-              body: bodyJson,
-            }),
-          );
-          if (!response.ok) throw await providerError(response);
-          if (response.body === null)
-            throw new Error(
-              "The authoring response is missing a streaming body",
-            );
-          const streamed = await aggregateChatSettingStream(
-            response.body,
-            diagnosticDelta,
-          );
-          capture?.setReasoning(streamed.reasoningContent);
-          await trace("setting_chat_response", streamed);
-          return {
-            role: "assistant" as const,
-            content: streamed.content,
-            ...(streamed.reasoningContent === ""
-              ? {}
-              : { reasoningContent: streamed.reasoningContent }),
-            providerState: {
-              protocol: "chat_completions" as const,
-              assistantMessage: cloneProviderValue(streamed.assistantMessage),
-            },
-            toolCalls: streamed.toolCalls.map((call) => ({
-              id: call.id,
-              name: call.name,
-              arguments: asArguments(parseArguments(call.arguments)),
-            })),
-            usage: settingAuthorUsage(normalizeChatUsage(streamed.usage)),
-          };
-        },
-      );
-    }
-    if (this.#connection.provider === "openai_responses") {
-      const response = await openAIResponsesRequest({
-        connection: this.#connection,
-        fetchImplementation: this.#fetch,
-        input: responsesSettingInput(this.#connection, request.messages),
-        tools: tools.map((tool) => ({
-          name: tool.name,
-          description: tool.description,
-          parameters: tool.schema,
-        })),
-        maxOutputTokens: Math.min(
-          request.maxOutputTokens,
-          this.#connection.maxOutputTokens,
-        ),
-        promptCacheKey: settingPromptCacheKey(
-          this.#connection,
-          request.messages,
-          this.#operationId,
-        ),
-        tracePrefix: "setting_responses",
-        ...(this.#failureLog === undefined
-          ? {}
-          : { failureLog: this.#failureLog }),
-        diagnosticContext,
-        ...(request.onDelta === undefined ? {} : { onDelta: request.onDelta }),
-      });
-      return {
-        role: "assistant" as const,
-        content: response.text ?? "",
-        ...(response.reasoningContent === undefined
-          ? {}
-          : { reasoningContent: response.reasoningContent }),
-        providerState: response.providerState,
-        toolCalls: (response.toolCalls ?? []).map((call) => ({
-          ...call,
-          arguments: asArguments(call.arguments),
-        })),
-        usage: settingAuthorUsage(response.usage),
-        ...(response.diagnostics === undefined
-          ? {}
-          : { diagnostics: response.diagnostics }),
-      };
-    }
-    const system = request.messages
-      .filter(({ role }) => role === "system")
-      .map(({ content }, index, messages) => ({
-        type: "text",
-        text: content,
-        ...(index === messages.length - 1
-          ? { cache_control: { type: "ephemeral" } }
-          : {}),
-      }));
-    const body = {
-      model: this.#connection.modelId,
-      ...anthropicReasoningRequest(this.#connection),
-      ...(system.length === 0 ? {} : { system }),
-      messages: anthropicSettingMessages(request.messages),
-      ...(tools.length === 0
-        ? {}
-        : {
-            tools: tools.map((tool) => ({
-              name: tool.name,
-              description: tool.description,
-              input_schema: tool.schema,
-            })),
-          }),
-      max_tokens: Math.min(
-        request.maxOutputTokens,
-        this.#connection.maxOutputTokens,
-      ),
-      stream: true,
-    };
-    await trace("setting_anthropic_request", body);
-    const bodyJson = JSON.stringify(body);
-    const url = providerUrl(this.#connection);
-    const capture = providerCapture(
-      this.#failureLog,
-      this.#connection.provider,
-      url,
-      diagnosticContext,
-      bodyJson,
-    );
-    const diagnosticDelta = captureSettingDelta(capture, request.onDelta);
-    return capturedProviderOperation(
-      this.#failureLog,
-      capture,
-      async (observe) => {
-        const response = observe(
-          await this.#fetch(url, {
-            method: "POST",
-            headers: {
-              "anthropic-version": "2023-06-01",
-              "x-api-key": this.#connection.apiKey,
-              "Content-Type": "application/json",
-            },
-            body: bodyJson,
-          }),
-        );
-        if (!response.ok) throw await providerError(response);
-        if (response.body === null)
-          throw new Error("The authoring response is missing a streaming body");
-        const streamed = await aggregateAnthropicSettingStream(
-          response.body,
-          diagnosticDelta,
-        );
-        capture?.setReasoning(streamed.reasoningContent);
-        await trace("setting_anthropic_response", streamed);
-        return {
-          role: "assistant" as const,
-          content: streamed.content,
-          ...(streamed.reasoningContent === ""
-            ? {}
-            : { reasoningContent: streamed.reasoningContent }),
-          providerState: {
-            protocol: "anthropic_messages" as const,
-            content: cloneProviderValue(streamed.providerContent),
-            ...(streamed.responseId === undefined
-              ? {}
-              : { responseId: streamed.responseId }),
-            ...(streamed.model === undefined ? {} : { model: streamed.model }),
-            ...(streamed.stopReason === undefined
-              ? {}
-              : { stopReason: streamed.stopReason }),
-          },
-          toolCalls: streamed.toolCalls.map((call) => ({
-            id: call.id,
-            name: call.name,
-            arguments: asArguments(structuredClone(call.arguments)),
-          })),
-          usage: settingAuthorUsage(normalizeAnthropicUsage(streamed.usage)),
-        };
-      },
-    );
-  }
-}
-
-// Setting authoring uses the same complete usage projection as play. Missing
-// Provider usage stays unavailable instead of being counted as zero.
-function settingAuthorUsage(
-  usage: ModelHostUsage | undefined,
-): SettingAuthorUsage {
-  if (usage !== undefined) return structuredClone(usage);
-  return usageRecord({
-    inputTokens: null,
-    uncachedInputTokens: null,
-    cacheReadTokens: null,
-    cacheWriteTokens: null,
-    reasoningTokens: null,
-    outputTokens: null,
-    totalTokens: null,
-  });
-}
-
-function settingToolDefinition(
-  name: (typeof documentCandidateSettingTools)[number],
-  locale: AppLocale = defaultAppLocale,
-) {
-  const descriptions = settingToolDescriptions[locale];
-  const schema = (properties: Record<string, object>, required: string[]) => ({
-    type: "object",
-    additionalProperties: false,
-    properties,
-    required,
-  });
-  const text = { type: "string", minLength: 1 };
-  const path = { type: "string", minLength: 1 };
-  const cursor = { type: "string", minLength: 1 };
-  const limit = { type: "integer", minimum: 1, maximum: 100 };
-  const definitions = {
-    setting_list: {
-      description: descriptions.setting_list,
-      schema: schema(
-        {
-          // World document paths accept any segment that is not "."/".."; an
-          // ASCII-only pattern here made directories the author had just
-          // created impossible to list back.
-          directory: {
-            type: "string",
-            pattern: "^world(?:/[^\\\\]+)?$",
-          },
-          limit,
-          cursor,
-        },
-        [],
-      ),
-    },
-    setting_search: {
-      description: descriptions.setting_search,
-      schema: schema(
-        {
-          query: { type: "string", minLength: 1, maxLength: 256 },
-          within: path,
-          caseSensitive: { type: "boolean" },
-          limit,
-          cursor,
-        },
-        ["query"],
-      ),
-    },
-    setting_read: {
-      description: descriptions.setting_read,
-      schema: schema(
-        {
-          path,
-          maxBytes: { type: "integer", minimum: 4, maximum: 65_536 },
-          cursor,
-        },
-        ["path"],
-      ),
-    },
-    setting_write_file: {
-      description: descriptions.setting_write_file,
-      schema: schema({ path, contents: text }, ["path", "contents"]),
-    },
-    setting_patch: {
-      description: descriptions.setting_patch,
-      schema: schema(
-        {
-          document: text,
-          op: { type: "string", enum: ["add", "replace"] },
-          locator: {
-            type: "array",
-            minItems: 1,
-            items: { type: "string", minLength: 1 },
-          },
-          value: {},
-        },
-        ["document", "op", "locator", "value"],
-      ),
-    },
-    setting_move: {
-      description: descriptions.setting_move,
-      schema: schema({ from: text, to: path }, ["from", "to"]),
-    },
-    setting_preview_candidate: {
-      description: descriptions.setting_preview_candidate,
-      schema: schema({}, []),
-    },
-    setting_finish_candidate: {
-      description: descriptions.setting_finish_candidate,
-      schema: schema({}, []),
-    },
-  } satisfies Record<
-    (typeof documentCandidateSettingTools)[number],
-    { description: string; schema: object }
-  >;
-  return { name, ...definitions[name] };
-}
-
-const settingToolDescriptions: Record<
-  AppLocale,
-  Record<(typeof documentCandidateSettingTools)[number], string>
-> = {
-  en: {
-    setting_list:
-      "List the world root or a world/ subdirectory from the current candidate-document snapshot. The root also lists specialized opening and control files. A pagination cursor is valid only for the same query against the candidate snapshot that produced it.",
-    setting_search:
-      "Search literal source text in world documents from the current candidate snapshot. within may be a world/ directory, world/ document path, @short-ref, or document identity.",
-    setting_read:
-      "Precisely read a world-document body from the current candidate snapshot by world/ path, @short-ref, or document identity. Read opening and control files through their exact dedicated paths. Write authorization is granted only after every page has been read; later candidate changes do not revoke it.",
-    setting_write_file:
-      "Create or replace one complete candidate file. path is always a full logical path: a .yaml or .md world document under world/, control/frame.yaml, control/player-views.yaml, control/blocks/*.md, or the root opening.md. A new world document must include a complete body with its $document technical header. When replacing an existing world document, you may omit $document and write back the body returned by setting_read; Runtime preserves the existing title, summary, and aliases. Runtime always decides id and ref: it allocates them for a new document and preserves them for an existing one, regardless of values you supply. Existing world documents and an existing opening.md must be read completely before replacement.",
-    setting_patch:
-      'Patch one YAML map node by document id, @short-ref, or world/ logical path and revision. op must explicitly be add or replace. locator is a stable array of map keys, for example ["relationships","player","trust"]. The existing document must already have been read completely. Rewrite Markdown documents in full with setting_write_file.',
-    setting_move:
-      "Move a completely read world document to a new world/ logical path by revision. Use this to repair catalog-directory association while preserving document content and identity.",
-    setting_preview_candidate:
-      "Run mechanical content-tree checks and the real Prompt Preview against the isolated candidate, returning diagnostics for path association, slots, references, and material coverage. Call this after all final changes; the candidate may finish only after it passes. A failed preview is a normal iteration: repair the diagnostics and call it again.",
-    setting_finish_candidate:
-      "Call only after setting_preview_candidate has passed for the final changes. It may immediately follow the passing preview in the same model response. It must be the last call in that response and takes no arguments.",
-  },
-  "zh-CN": {
-    setting_list:
-      "通过当前候选文档快照列出 world 或 world/ 子目录；根目录同时显示 opening／control 等专用文件。分页 cursor 只能用于产生它的同一候选快照和相同查询。",
-    setting_search:
-      "通过当前候选文档快照原文字面搜索 world 文档；within 可取 world/ 目录、world/ 文档路径、@短引用或文档身份。",
-    setting_read:
-      "通过当前候选文档快照按 world/ 路径、@短引用或文档身份精确读取世界文档正文；opening／control 使用精确路径专用读取。只有读完全部分页才获得写授权，此后不因其他修改失效。",
-    setting_write_file:
-      "创建或整份写入一个候选文件，path 一律是完整逻辑路径：world/ 下的 .yaml 或 .md 世界文档、control/frame.yaml、control/player-views.yaml、control/blocks/*.md，或根级 opening.md。新建世界文档写完整原文并带 $document 技术头；覆盖既有世界文档可以省略 $document，直接写回 setting_read 返回的正文，Runtime 会沿用原有 title、summary 和 aliases。id 和 ref 始终由 Runtime 决定——新建时分配，覆盖时保留原值，你写什么都不会报错。既有 world 文档和既有 opening.md 必须先完整读取。",
-    setting_patch:
-      '通过 revision 按文档 ID、@短引用或 world/ 逻辑路径 patch 一个 YAML map 节点；op 必须明确选择 add（新增）或 replace（替换），locator 是稳定 map-key 数组，例如 ["关系","对玩家","信任"]。既有文档必须已完整读取。Markdown 文档请用 setting_write_file 整份重写。',
-    setting_move:
-      "通过 revision 把已完整读取的 world 文档移动到新的 world/ 逻辑路径；用于修复 catalog 目录关联，保留文档内容和身份。",
-    setting_preview_candidate:
-      "对当前隔离候选运行内容树机械检查和真实 Prompt Preview，并返回路径关联、slot、引用和材料覆盖诊断；所有最终修改后调用，通过后才可结束候选。未通过属于正常迭代，修复后重新调用即可。",
-    setting_finish_candidate:
-      "setting_preview_candidate 已对最终修改返回自检通过后调用，可以紧接在同一模型响应的自检之后；必须是当前响应的最后一个调用，且不得携带参数。",
-  },
-};
 
 function items(request: ModelHostExchange): ModelHostAppendItem[] {
   return request.appended;
@@ -1413,31 +971,10 @@ function promptCacheKey(
     .digest("hex");
 }
 
-function settingPromptCacheKey(
-  connection: ResolvedFileNativeModelConnection,
-  messages: readonly SettingAuthorMessage[],
-  operationId?: string,
-): string {
-  const firstAssistant = messages.findIndex(({ role }) => role === "assistant");
-  const initialPrefix = messages.slice(
-    0,
-    firstAssistant < 0 ? messages.length : firstAssistant,
-  );
-  const stablePrefixScope = JSON.stringify(initialPrefix);
-  const scope =
-    connection.dialect === "cliproxyapi"
-      ? (operationId ?? stablePrefixScope)
-      : stablePrefixScope;
-  return createHash("sha256")
-    .update(
-      `${connection.provider}\0${connection.dialect}\0${connection.modelId}\0${scope}`,
-    )
-    .digest("hex");
-}
-
 function chatAppend(request: ModelHostExchange): unknown[] {
   return items(request).flatMap((item): unknown[] => {
-    if (item.kind === "player") return [{ role: "user", content: item.text }];
+    if (item.kind === "player" || item.kind === "user")
+      return [{ role: "user", content: item.text }];
     if (item.kind === "prompt_delta")
       return promptDeltaProviderMessages(item.logicalMessages);
     if (item.kind === "tool")
@@ -1476,7 +1013,7 @@ function anthropicAppend(request: ModelHostExchange): unknown[] {
       continue;
     }
     flushToolResults();
-    if (item.kind === "player") {
+    if (item.kind === "player" || item.kind === "user") {
       messages.push({ role: "user", content: item.text });
       continue;
     }
@@ -1502,7 +1039,8 @@ function anthropicAppend(request: ModelHostExchange): unknown[] {
 
 function responsesAppend(request: ModelHostExchange): unknown[] {
   return items(request).flatMap((item) => {
-    if (item.kind === "player") return [{ role: "user", content: item.text }];
+    if (item.kind === "player" || item.kind === "user")
+      return [{ role: "user", content: item.text }];
     if (item.kind === "prompt_delta")
       return promptDeltaProviderMessages(item.logicalMessages);
     if (item.kind === "tool")
@@ -1652,149 +1190,6 @@ async function providerError(response: Response): Promise<Error> {
   return new ModelHostFailureError(
     `Provider request failed: ${response.status} ${text}`,
   );
-}
-
-function chatSettingMessages(
-  connection: ResolvedFileNativeModelConnection,
-  messages: readonly SettingAuthorMessage[],
-): unknown[] {
-  const translated = messages.map(chatSettingMessage);
-  if (connection.dialect !== "cliproxyapi") return translated;
-  return attachCacheControlAtIndex(
-    attachCacheControlToLastRole(translated, "system"),
-    settingPrefixUserIndex(messages),
-  );
-}
-
-function chatSettingMessage(message: SettingAuthorMessage) {
-  if (message.role === "tool")
-    return {
-      role: "tool",
-      tool_call_id: message.toolCallId,
-      content: message.content,
-    };
-  if (message.role === "assistant") {
-    const state = message.providerState;
-    if (
-      state?.protocol === "chat_completions" &&
-      validChatAssistantMessage(state.assistantMessage)
-    )
-      return cloneProviderValue(state.assistantMessage);
-    throw continuationError("Chat Completions setting improvement");
-  }
-  return {
-    role: message.role === "system" ? "system" : "user",
-    content: message.content,
-  };
-}
-
-function anthropicSettingMessages(
-  source: readonly SettingAuthorMessage[],
-): unknown[] {
-  const messages: unknown[] = [];
-  const cacheableUserIndex = settingPrefixUserIndex(source);
-  let toolResults: Record<string, unknown>[] = [];
-  const flushToolResults = () => {
-    if (toolResults.length === 0) return;
-    messages.push({ role: "user", content: toolResults });
-    toolResults = [];
-  };
-  for (const [index, message] of source.entries()) {
-    if (message.role === "system") continue;
-    if (message.role === "tool") {
-      toolResults.push({
-        type: "tool_result",
-        tool_use_id: message.toolCallId,
-        content: message.content,
-        ...(message.isError === true ? { is_error: true } : {}),
-      });
-      continue;
-    }
-    flushToolResults();
-    if (message.role === "assistant") {
-      if (
-        message.providerState?.protocol !== "anthropic_messages" ||
-        !validAnthropicContent(message.providerState.content)
-      )
-        throw continuationError("Anthropic Messages setting improvement");
-      messages.push({
-        role: "assistant",
-        content: cloneProviderValue(message.providerState.content),
-      });
-      continue;
-    }
-    messages.push({
-      role: "user",
-      content:
-        index === cacheableUserIndex
-          ? [
-              {
-                type: "text",
-                text: message.content,
-                cache_control: { type: "ephemeral" },
-              },
-            ]
-          : message.content,
-    });
-  }
-  flushToolResults();
-  return messages;
-}
-
-function responsesSettingInput(
-  connection: ResolvedFileNativeModelConnection,
-  messages: readonly SettingAuthorMessage[],
-): unknown[] {
-  const translated = messages.flatMap(responsesSettingMessage);
-  if (connection.dialect !== "cliproxyapi") return translated;
-  return attachCacheControlAtIndex(
-    attachCacheControlToLastRole(translated, "system"),
-    settingPrefixUserIndex(messages),
-  );
-}
-
-function settingPrefixUserIndex(
-  messages: readonly SettingAuthorMessage[],
-): number {
-  const firstAssistant = messages.findIndex(({ role }) => role === "assistant");
-  const end = firstAssistant < 0 ? messages.length : firstAssistant;
-  let target = -1;
-  for (let index = 0; index < end; index += 1)
-    if (messages[index]?.role === "user") target = index;
-  return target;
-}
-
-function attachCacheControlAtIndex(
-  messages: unknown[],
-  index: number,
-): unknown[] {
-  const result = cloneProviderValue(messages);
-  if (index < 0 || !isRecord(result[index])) return result;
-  result[index] = {
-    ...result[index],
-    cache_control: { type: "ephemeral" },
-  };
-  return result;
-}
-
-function responsesSettingMessage(message: SettingAuthorMessage): unknown[] {
-  if (message.role === "tool")
-    return [
-      {
-        type: "function_call_output",
-        call_id: message.toolCallId,
-        output: message.content,
-      },
-    ];
-  if (
-    message.role === "assistant" &&
-    message.providerState?.protocol === "openai_responses" &&
-    validResponsesOutput(message.providerState.output)
-  )
-    return cloneResponseOutput(message.providerState.output);
-  if (message.role === "assistant")
-    throw continuationError("OpenAI Responses setting improvement");
-  return [{ role: message.role, content: message.content }];
 }
 
 function responsesBootstrapMessage(
@@ -2378,12 +1773,6 @@ function unknownProviderResponse(label: string): ModelHostOutcomeUnknownError {
   return new ModelHostOutcomeUnknownError(
     `${label} was dispatched but its response shape could not be confirmed`,
   );
-}
-
-function asArguments(value: unknown): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value))
-    throw new Error("Authoring tool arguments must be an object");
-  return value as Record<string, unknown>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

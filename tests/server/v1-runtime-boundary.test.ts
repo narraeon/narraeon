@@ -127,8 +127,8 @@ test("进度轮询不写访问日志，调用链中断写出原始 Provider 原�
     payload: {
       protocol: v1Protocol,
       request: {
-        type: "setting-improvement.progress",
-        improvementId: "improvement-one",
+        type: "setting-improvement.read",
+        packageId: "package-one",
       },
     },
   });
@@ -488,7 +488,8 @@ test("生产 HTTP 边界只接受显式 runtime/v1 envelope 并返回当前工�
     },
   });
 
-  // Progress queries pass protocol validation and reach session lookup.
+  // Durable conversation reads pass protocol validation and safely return
+  // null when the package has no open setting-improvement session.
   const unknownProgress = await server.inject({
     method: "POST",
     url: "/api/runtime/v1",
@@ -496,15 +497,13 @@ test("生产 HTTP 边界只接受显式 runtime/v1 envelope 并返回当前工�
     payload: {
       protocol: "narraeon.runtime/v1",
       request: {
-        type: "setting-improvement.progress",
-        improvementId: "improvement-missing",
+        type: "setting-improvement.read",
+        packageId: "package-missing",
       },
     },
   });
-  expect(unknownProgress.statusCode).toBe(500);
-  expect(JSON.stringify(unknownProgress.json())).not.toContain(
-    "invalid_request",
-  );
+  expect(unknownProgress.statusCode).toBe(200);
+  expect(unknownProgress.json()).toMatchObject({ result: null });
 
   const malformedProgress = await server.inject({
     method: "POST",
@@ -512,7 +511,7 @@ test("生产 HTTP 边界只接受显式 runtime/v1 envelope 并返回当前工�
     headers,
     payload: {
       protocol: "narraeon.runtime/v1",
-      request: { type: "setting-improvement.progress" },
+      request: { type: "setting-improvement.read" },
     },
   });
   expect(malformedProgress.statusCode).toBe(400);

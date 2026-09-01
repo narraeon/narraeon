@@ -3,17 +3,17 @@ import type { AppLocale } from "../protocol/appPreferences.ts";
 /**
  * Canonical author-owned guidance for AI-assisted setting improvement.
  *
- * The Runtime tool universe, schemas, descriptions, stage transitions and
- * candidate-settlement protocol deliberately do not live here. This text is
- * an ordinary portable preset asset: users may edit it without gaining any
- * authority over the mechanical setting-improvement boundary.
+ * The Runtime tool universe, schemas, response transaction, persistence and
+ * Apply boundary deliberately do not live here. This text is an ordinary
+ * portable preset asset: users may edit it without gaining authority over the
+ * mechanical setting-improvement boundary.
  */
 export const defaultSettingImprovementPromptPath =
   "prompts/setting-improvement.md";
 
 export const defaultSettingImprovementPromptZhCN = `# 系统推荐的设定完善方法
 
-把本次目标理解为对已有内容包设定的完善，而不是默认从零重建一个新世界。用户直接注入的当前文件是已经成立的事实和约束；其他文件也应按需读取。保留仍然成立的内容，只修改目标真正涉及的部分。
+把本次目标理解为对已有内容包设定的完善，而不是默认从零重建一个新世界。通过工具读取到的当前文件是已经成立的事实和约束；其他文件也应按需读取。保留仍然成立的内容，只修改目标真正涉及的部分。
 
 ## 先理解，再创作
 
@@ -45,7 +45,7 @@ export const defaultSettingImprovementPromptZhCN = `# 系统推荐的设定完�
 
 export const defaultSettingImprovementPromptEn = `# Recommended setting-improvement method
 
-Treat the current goal as an improvement to an existing content-package setting, not as an instruction to rebuild a new world from scratch. Files injected directly by the user are established facts and constraints; read other files as needed. Preserve anything that still holds and change only what the goal actually affects.
+Treat the current goal as an improvement to an existing content-package setting, not as an instruction to rebuild a new world from scratch. Current files read through the tools are established facts and constraints; read other files as needed. Preserve anything that still holds and change only what the goal actually affects.
 
 ## Understand first, then create
 

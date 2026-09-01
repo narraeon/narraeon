@@ -22,8 +22,6 @@ export interface ModelBinding {
 
 export const v1Protocol = "narraeon.runtime/v1" as const;
 
-export type SettingImprovementStartMode = "plan_first" | "direct_candidate";
-
 export interface V1Envelope {
   protocol: typeof v1Protocol;
   request: V1Request;
@@ -50,28 +48,20 @@ export type V1Request =
   | { type: "content.rename"; packageId: string; name: string }
   | { type: "content.import"; archiveBase64: string }
   | { type: "content.export"; packageId: string }
+  | { type: "setting-improvement.read"; packageId: string }
   | {
-      type: "setting-improvement.start";
-      improvementId: string;
+      type: "setting-improvement.message";
       packageId: string;
-      goal: string;
-      mode: SettingImprovementStartMode;
-      contextPaths: string[];
+      requestId: string;
+      message: string;
     }
-  | { type: "setting-improvement.confirm"; improvementId: string }
-  | { type: "setting-improvement.progress"; improvementId: string }
+  | { type: "setting-improvement.cancel"; sessionId: string }
   | {
-      type: "setting-improvement.revise-plan";
-      improvementId: string;
-      feedback: string;
+      type: "setting-improvement.apply";
+      sessionId: string;
+      expectedDraftVersion: number;
     }
-  | {
-      type: "setting-improvement.revise-candidate";
-      improvementId: string;
-      feedback: string;
-    }
-  | { type: "setting-improvement.apply"; improvementId: string }
-  | { type: "setting-improvement.discard"; improvementId: string }
+  | { type: "setting-improvement.discard"; sessionId: string }
   | { type: "play.read" }
   | { type: "play.create"; name: string; files?: Record<string, string> }
   | { type: "play.copy"; presetId: string }
@@ -214,6 +204,99 @@ export type V1Request =
 export interface V1Response {
   protocol: typeof v1Protocol;
   result: unknown;
+}
+
+export interface V1SettingConversationMessage {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  createdAt: number;
+}
+
+export interface V1SettingDraftDiff {
+  path: string;
+  kind: "create" | "modify" | "delete";
+  before: string | null;
+  after: string | null;
+}
+
+export interface V1SettingPromptPreview {
+  diagnosticBinding: {
+    endpoint: string;
+    commit: string;
+    hostPresetId: string;
+    controlFingerprint: string;
+    modelId: string;
+  };
+  compilation: {
+    logicalMessages: {
+      role: string;
+      markdown: string;
+      blocks: { source: string; markdown: string }[];
+    }[];
+    provider: unknown;
+    tools: { name: string; description: string; inputSchema: object }[];
+    coverage: {
+      slot: string;
+      source: string;
+      status: string;
+      complete: boolean;
+      continuation: string | null;
+    }[];
+    budget: {
+      estimator: "conservative_utf8_bytes" | "disabled";
+      messageTokens: number;
+      toolTokens: number;
+      outputReserveTokens: number;
+      forcedTailReserveTokens: number;
+      safetyMarginTokens: number;
+      requiredTokens: number;
+      contextWindowTokens: number;
+      status: "fits" | "over_budget" | "not_checked";
+    };
+    cache: {
+      strategy:
+        | "explicit_anthropic_blocks"
+        | "explicit_cliproxyapi_message"
+        | "provider_managed";
+      stablePrefixFingerprint: string;
+      breakpoints: string[];
+      estimatedCacheableBytes: number;
+      firstDynamicByte: number;
+    };
+  };
+  leakage: { status: "clean"; checkedFields: string[] };
+}
+
+export interface V1SettingImprovementView {
+  sessionId: string;
+  packageId: string;
+  lifecycle: "open" | "applied" | "discarded";
+  runStatus: "ready" | "running" | "interrupted";
+  baseStatus: "current" | "stale";
+  draftVersion: number;
+  messages: V1SettingConversationMessage[];
+  review: {
+    status: "usable" | "needs_repair";
+    diff: V1SettingDraftDiff[];
+    diagnostics: { code: string; path: string; message: string }[];
+    preview: V1SettingPromptPreview | null;
+  };
+  usage: ModelUsage;
+  progress: {
+    exchange: number;
+    toolCalls: number;
+    streaming: {
+      reasoningChars: number;
+      textChars: number;
+      toolChars: number;
+      tail: string;
+      receivedAt: number;
+    } | null;
+    updatedAt: number;
+  };
+  lastFailure: string | null;
+  canApply: boolean;
 }
 
 export type V1PlayCallChainStatus = "ready" | "running" | "interrupted";
@@ -486,25 +569,18 @@ const requiredFields: Record<
   "content.rename": { packageId: "string", name: "string" },
   "content.import": { archiveBase64: "string" },
   "content.export": { packageId: "string" },
-  "setting-improvement.start": {
-    improvementId: "string",
+  "setting-improvement.read": { packageId: "string" },
+  "setting-improvement.message": {
     packageId: "string",
-    goal: "string",
-    mode: "string",
-    contextPaths: "array",
+    requestId: "string",
+    message: "string",
   },
-  "setting-improvement.confirm": { improvementId: "string" },
-  "setting-improvement.progress": { improvementId: "string" },
-  "setting-improvement.revise-plan": {
-    improvementId: "string",
-    feedback: "string",
+  "setting-improvement.cancel": { sessionId: "string" },
+  "setting-improvement.apply": {
+    sessionId: "string",
+    expectedDraftVersion: "number",
   },
-  "setting-improvement.revise-candidate": {
-    improvementId: "string",
-    feedback: "string",
-  },
-  "setting-improvement.apply": { improvementId: "string" },
-  "setting-improvement.discard": { improvementId: "string" },
+  "setting-improvement.discard": { sessionId: "string" },
   "play.create": { name: "string" },
   "play.copy": { presetId: "string" },
   "play.save": { presetId: "string", name: "string", files: "object" },
@@ -803,20 +879,14 @@ function validateRequestFields(request: Record<string, unknown>): void {
       "invalid_request",
       "world.surface.read.surface is invalid",
     );
-  if (request.type !== "setting-improvement.start") return;
-  if (request.mode !== "plan_first" && request.mode !== "direct_candidate")
-    throw new V1ProtocolError(
-      "invalid_request",
-      "setting-improvement.start.mode is invalid",
-    );
   if (
-    !(request.contextPaths as unknown[]).every(
-      (path) => typeof path === "string" && path.length > 0,
-    )
+    request.type === "setting-improvement.apply" &&
+    (!Number.isSafeInteger(request.expectedDraftVersion) ||
+      Number(request.expectedDraftVersion) < 0)
   )
     throw new V1ProtocolError(
       "invalid_request",
-      "setting-improvement.start.contextPaths is invalid",
+      "setting-improvement.apply.expectedDraftVersion is invalid",
     );
 }
 
@@ -838,11 +908,9 @@ const requestTypes = new Set([
   "content.rename",
   "content.import",
   "content.export",
-  "setting-improvement.start",
-  "setting-improvement.confirm",
-  "setting-improvement.progress",
-  "setting-improvement.revise-plan",
-  "setting-improvement.revise-candidate",
+  "setting-improvement.read",
+  "setting-improvement.message",
+  "setting-improvement.cancel",
   "setting-improvement.apply",
   "setting-improvement.discard",
   "play.read",

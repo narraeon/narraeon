@@ -67,6 +67,11 @@ export type ModelHostAppendItem =
       text: string;
     }
   | {
+      /** A non-play user turn, such as an authoring conversation message. */
+      kind: "user";
+      text: string;
+    }
+  | {
       kind: "assistant";
       text: string;
       reasoningContent?: string;

@@ -997,6 +997,65 @@ const settingImprovementEnglishMessages: Record<string, string> = {
   状态: "Status",
   查看真实工具定义: "View real tool definitions",
   "查看最终 Provider 请求结构": "View final Provider request structure",
+  "和 AI 直接讨论或修改 {packageName}。它始终可以读取和更新隔离草稿；满意时再由你应用。":
+    "Discuss or revise {packageName} directly with the model. It can always read and update the isolated draft; apply only when you are satisfied.",
+  放弃对话: "Discard conversation",
+  "先配置并启用模型，才能开始设定完善对话。":
+    "Configure and enable a model before starting a setting-improvement conversation.",
+  "请先保存或放弃文件编辑中的未保存修改。":
+    "Save or discard the unsaved manual file edits first.",
+  "正在恢复设定完善对话…": "Restoring the setting-improvement conversation…",
+  "直接说你现在想做什么。": "Say what you want to do now.",
+  "例如：先帮我梳理一下人物关系；或者直接把开场改成雨夜码头，并同步当前情境。":
+    "For example: help me reason through the character relationships first; or change the opening to a rainy-night wharf and update the current situation too.",
+  你: "You",
+  AI: "AI",
+  上一次回复已中断: "The previous response was interrupted",
+  上一次操作未完成: "The previous operation did not complete",
+  "最后一次完整草稿和完整对话都已保留，可以直接继续说。":
+    "The last complete draft and transcript were retained. You can continue directly.",
+  "给 AI 发消息": "Message the model",
+  "可以先讨论、要求它检查某份设定，也可以直接让它修改草稿。":
+    "You can discuss first, ask it to inspect part of the setting, or tell it to edit the draft directly.",
+  "Enter 发送，Shift + Enter 换行":
+    "Enter to send; Shift + Enter for a new line",
+  停止回复: "Stop response",
+  发送: "Send",
+  "AI 正在处理…": "The model is working…",
+  "第 {exchange} 次模型交换 · {tools} 次工具调用 · 已接收 {chars} 字":
+    "Model exchange {exchange} · {tools} tool calls · {chars} characters received",
+  "已 {seconds} 秒没有收到新片段，可以停止后继续对话。":
+    "No new fragment for {seconds} seconds. You can stop and continue the conversation.",
+  隔离草稿: "Isolated draft",
+  当前候选: "Current draft",
+  "版本 {version}": "Version {version}",
+  "AI 调用写入工具后，改动和自动检查会出现在这里。":
+    "Changes and automatic checks appear here after the model calls write tools.",
+  改动: "Changes",
+  "{count} 个文件": "{count} files",
+  自动检查: "Automatic checks",
+  已通过: "Passed",
+  基线: "Base",
+  未变化: "Current",
+  已过期: "Stale",
+  修改前: "Before",
+  修改后: "After",
+  应用当前草稿: "Apply current draft",
+  "内容包已在对话外发生变化，不能覆盖应用。":
+    "The content package changed outside this conversation, so the draft cannot overwrite it.",
+  "草稿还没有改动。": "The draft has no changes yet.",
+  "修复所有自动检查问题后才能应用。":
+    "Resolve every automatic-check issue before applying.",
+  "等待当前回复结束后即可应用。":
+    "Wait for the current response to finish before applying.",
+  "应用只提交这个精确版本；对话中的讨论本身不会修改当前树。":
+    "Apply commits only this exact version; discussion in the conversation never changes the current tree.",
+  "请先保存手动编辑，再继续 AI 设定完善。":
+    "Save the manual edits before continuing setting improvement.",
+  "隔离草稿已整批应用到内容包当前树。":
+    "The isolated draft was applied to the content package's current tree.",
+  "设定完善对话和隔离草稿已放弃，当前树未改变。":
+    "The setting-improvement conversation and isolated draft were discarded; the current tree was unchanged.",
 };
 
 Object.assign(englishMessages, settingImprovementEnglishMessages);
