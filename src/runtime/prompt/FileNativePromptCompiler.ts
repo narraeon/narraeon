@@ -236,7 +236,7 @@ const runtimeContracts: Record<
     tools: `# Runtime tool contract
 
 - Use only tools attached to the current request. Read results state their scope, cursor, and completeness. Directories must use @dir-* handles returned by Runtime; documents and history must use @handles returned by Runtime. Never substitute a world/ path or natural-language name for a handle.
-- A document marked \`full text injected\` in the material-coverage report already appears byte-for-byte in the request and already carries write authorization. Do not read it again merely to confirm structure, check fields, or “be safe”: context_read would return the same bytes and waste a round trip. Read only when you need material the report says is not covered.
+- A document marked \`full body injected\` in the material-coverage report already has its complete writable body in the request and carries write authorization. Do not read it again merely to confirm body structure, check body fields, or “be safe.” context_read additionally exposes the current title, summary, and aliases. world_patch preserves metadata fields omitted from set_metadata, so do not read merely to copy unchanged metadata. Read only when a decision depends on unseen metadata or material the report says is not covered.
 - Zero literal-search matches do not prove that a fact does not exist. Tools, directories, documents, archives, searches, matches, handles, Runtime, and failure processes are private adjudication details. Player-visible narrative must not mention internal phrases such as “nothing was found.” When information is insufficient, preserve uncertainty inside the world instead of inventing an internal process.
 - World-write tools change only an uncommitted working copy. Their changes are not official world facts until Runtime accepts and completes the commit.`,
     operation: `# Runtime call-chain rules
@@ -262,7 +262,7 @@ Runtime executes only real tool definitions, file validation, and authority comm
     tools: `# Runtime 工具契约
 
 - 只使用请求随附的工具；读取结果会明确范围、cursor 与完整性。目录只能使用 Runtime 返回的 @dir-*，文档和历史只能使用 Runtime 返回的 @句柄，不要把 world/路径或自然语言名称冒充句柄。
-- 材料覆盖报告标为 \`已注入全文\` 的文档，其完整原文已经逐字在本次请求里，写入资格同样已经具备。不要为确认结构、核对字段或"保险起见"重读它：context_read 只会原样返回你已经看到的字节，白费一次往返。只有需要报告未覆盖的内容时才读。
+- 材料覆盖报告标为 \`已注入完整正文\` 的文档，其完整可写正文已经在本次请求里，写入资格同样已经具备。不要为确认正文结构、核对正文字段或“保险起见”重读它。context_read 会额外显示当前 title、summary 和 aliases；world_patch 会保留 set_metadata 中未提供的元数据字段，因此不要只为照抄未改变的元数据而读取。只有后续决策确实依赖尚未显示的元数据，或材料覆盖报告未覆盖的内容时才读。
 - 字面搜索 0 命中不证明事实不存在。工具、目录、文档、档案、检索、命中、句柄、Runtime 及失败过程只供私下裁决；玩家可见叙事不得出现“没搜到／没找到资料”等内部措辞。信息不足时保持世界内的不确定性，不编造内部过程。
 - 世界写入工具只修改尚未提交的工作副本；Runtime 接受并完成提交前，这些修改都不是正式世界事实。`,
     operation: `# Runtime 调用链规则
@@ -2216,14 +2216,14 @@ function renderCoverage(
 
 下列条目说明本次请求注入了哪些材料，以及可以用哪个工具取得更多。\`未完整\` 表示这一项的覆盖没有得到证明，不表示一定还有内容：\`optional_missing\` 的位置可能什么都没注入（目录为空、或内容存在但未被选中），也可能已经注入了一部分（目录里还有无法解析的条目）；\`paged_catalog\` 表示确实还有条目没有列出。任何一种都不能用来推断世界上是否存在某件事；需要确认时用条目末尾列出的工具查。
 
-\`已注入全文\` 表示该文档的完整正文已经出现在下方世界材料里，并且已经具备写入资格：直接对它调用写入工具即可，\`context_read\` 会返回同样的正文。\`已注入节点\` 表示只注入并授权了标出的那个节点，改动该节点之外的位置才需要先读。
+\`已注入完整正文\` 表示该文档的完整正文已经出现在下方世界材料里，并且已经具备写入资格，可以直接调用写入工具。\`context_read\` 会返回同一正文，并额外显示当前 title、summary 和 aliases；\`world_patch\` 会保留 \`set_metadata\` 中未提供的元数据字段，因此不要只为照抄未改变的元数据而读取。\`已注入节点\` 表示只注入并授权了标出的那个节点，改动该节点之外的位置才需要先读。
 
 每份材料的标题都标出了它的 codec：\`· YAML\` 的用 \`{yaml: [键, ...]}\` 定位，正文就是它的 YAML 原文，键名和层级照写即可；\`· Markdown\` 的用 \`{markdown: [标题, ...]}\` 定位，路径是正文里的标题层级。文档 id 一律投影成 \`@短引用\`，写回时照原样保留。`
       : `# Material coverage report
 
 The entries below state which material this request injected and which tool can retrieve more. \`incomplete\` means coverage was not proven, not that more content necessarily exists. An \`optional_missing\` location may have injected nothing because a directory is empty or material exists but was not selected, or it may have injected only part because the directory contains entries that could not be parsed. \`paged_catalog\` means additional entries definitely were not listed. None of these states proves whether a world fact exists. Use the tool named at the end of the entry when confirmation is needed.
 
-\`full text injected\` means the complete document body already appears below and write authorization is already available. Call a write tool directly; \`context_read\` would return the same body. \`node injected\` means only the named node was injected and authorized. Read first only when changing something outside that node.
+\`full body injected\` means the complete document body already appears below and write authorization is already available, so a write tool may be called directly. \`context_read\` returns that same body and additionally exposes the current title, summary, and aliases. \`world_patch\` preserves metadata fields omitted from \`set_metadata\`; do not read merely to copy unchanged metadata. \`node injected\` means only the named node was injected and authorized. Read first only when changing something outside that node.
 
 Each material heading identifies its codec. For \`· YAML\`, use \`{yaml: [key, ...]}\`; the body is the YAML source, so preserve its keys and hierarchy. For \`· Markdown\`, use \`{markdown: [heading, ...]}\`; the path follows the body's heading hierarchy. Document ids are always projected as \`@short-refs\`; preserve those handles exactly when writing.`;
 
@@ -2254,8 +2254,8 @@ function coverageWriteHint(
   )
     return authorization.locator === null
       ? locale === "zh-CN"
-        ? " · 已注入全文"
-        : " · full text injected"
+        ? " · 已注入完整正文"
+        : " · full body injected"
       : locale === "zh-CN"
         ? " · 已注入节点"
         : " · node injected";

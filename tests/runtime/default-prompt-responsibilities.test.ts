@@ -281,6 +281,94 @@ describe("默认提示词职责", () => {
     }
   });
 
+  test("生产提示允许部分 metadata 更新且不谎称精确读取只会重复正文", () => {
+    const scenarios = [
+      {
+        locale: "zh-CN" as const,
+        playerInput: "夜深了，我回到宿舍。",
+        coverage: [
+          "已注入完整正文",
+          "会返回同一正文，并额外显示当前 title、summary 和 aliases",
+          "未提供的元数据字段",
+          "不要只为照抄未改变的元数据而读取",
+        ],
+        patch: [
+          "只提供需要改变的 title、summary 或 aliases",
+          "至少提供一项",
+          "未提供的字段由 Runtime 从当前候选文档保留",
+        ],
+        read: ["set_metadata 可以只提交需要改变的字段"],
+        absent: [
+          "已注入全文",
+          "context_read 只会原样返回你已经看到的字节",
+          "整组更新，未改项照抄读取结果",
+        ],
+      },
+      {
+        locale: "en" as const,
+        playerInput: "Night falls, and I return to the dorm.",
+        coverage: [
+          "full body injected",
+          "returns that same body and additionally exposes the current title, summary, and aliases",
+          "preserves metadata fields omitted from",
+          "do not read merely to copy unchanged metadata",
+        ],
+        patch: [
+          "include only the title, summary, or aliases that must change",
+          "At least one is required",
+          "Runtime preserves omitted fields from the current candidate document",
+        ],
+        read: ["set_metadata may include only the fields that must change"],
+        absent: [
+          "full text injected",
+          "context_read would return the same bytes",
+          "update all three",
+        ],
+      },
+    ];
+
+    for (const scenario of scenarios) {
+      const binding = builtinDefaultPlayPresetBinding(scenario.locale);
+      const input = createMinimalFileNativePreviewInput({
+        provider: "chat_completions",
+        modelId: `partial-metadata-contract-${scenario.locale}`,
+        contextWindowTokens: 128_000,
+        maxOutputTokens: 16_384,
+        playerInput: scenario.playerInput,
+        playerInputPlacement: "append",
+        locale: scenario.locale,
+      });
+      input.hostBinding = presetHostBinding(binding);
+      const compilation = new FileNativePromptCompiler({
+        locale: scenario.locale,
+      }).compilePlayCallChain(input, binding).bootstrap;
+      const runtimePrompt = compilation.logicalMessages
+        .filter(({ role }) => role === "runtime_system")
+        .map(({ markdown }) => markdown)
+        .join("\n");
+      const worldPrompt = compilation.logicalMessages
+        .filter(({ role }) => role === "world_context")
+        .map(({ markdown }) => markdown)
+        .join("\n");
+      const patch = compilation.tools.find(
+        ({ name }) => name === "world_patch",
+      )?.description;
+      const read = compilation.tools.find(
+        ({ name }) => name === "context_read",
+      )?.description;
+      const completeContract = [runtimePrompt, worldPrompt, patch, read].join(
+        "\n",
+      );
+
+      for (const phrase of scenario.coverage)
+        expect(worldPrompt).toContain(phrase);
+      for (const phrase of scenario.patch) expect(patch).toContain(phrase);
+      for (const phrase of scenario.read) expect(read).toContain(phrase);
+      for (const phrase of scenario.absent)
+        expect(completeContract).not.toContain(phrase);
+    }
+  });
+
   test("后置请求携带自己的 Runtime 契约，主链只拿到读写工具", () => {
     const files = structuredClone(firstPartyActionChoicesPresetFiles);
     const parsed = parsePlayPresetFiles(files);

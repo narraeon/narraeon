@@ -24,7 +24,7 @@ export const registeredRuntimeToolNames = [
 ] as const;
 
 /** Changes only when the executable Runtime tool universe or schemas change. */
-export const runtimeToolRegistryRevision = "runtime-tools-v5";
+export const runtimeToolRegistryRevision = "runtime-tools-v6";
 
 export type RegisteredRuntimeToolName =
   (typeof registeredRuntimeToolNames)[number];
@@ -237,15 +237,18 @@ function createToolDefinitions(
                   { op: { const: "remove_section" }, locator: markdownLocator },
                   ["op", "locator"],
                 ),
-                object(
-                  {
-                    op: { const: "set_metadata" },
-                    title: string,
-                    summary: string,
-                    aliases: { type: "array", items: { type: "string" } },
-                  },
-                  ["op", "title", "summary", "aliases"],
-                ),
+                {
+                  ...object(
+                    {
+                      op: { const: "set_metadata" },
+                      title: string,
+                      summary: string,
+                      aliases: { type: "array", items: { type: "string" } },
+                    },
+                    ["op"],
+                  ),
+                  minProperties: 2,
+                },
                 object(
                   {
                     op: { enum: ["replace_body", "replace_preamble"] },
@@ -312,9 +315,9 @@ const toolDescriptions: Record<
     context_search:
       "Search literal source text in state or history. Zero matches means only that the supplied text had no literal match; it does not prove that a world fact does not exist. Player-visible narrative must not recount the search process. within accepts only an @document or @dir-* handle returned by Runtime.",
     context_read:
-      "Precisely read an @document, @node, or @history-message-* handle previously returned by Runtime. Read headings, page markers, metadata boundaries, and body boundaries in a whole-document result are not source text. Update metadata only as one set_metadata operation and update the writable body between the boundaries with locators. YAML bodies omit the $document technical header; Markdown bodies begin at the document's level-one heading. Never pass file paths, natural-language names, or an invented world/... value.",
+      "Precisely read an @document, @node, or @history-message-* handle previously returned by Runtime. Read headings, page markers, metadata boundaries, and body boundaries in a whole-document result are not source text. set_metadata may include only the fields that must change; Runtime preserves omitted metadata fields. Update the writable body between the boundaries with locators. YAML bodies omit the $document technical header; Markdown bodies begin at the document's level-one heading. Never pass file paths, natural-language names, or an invented world/... value.",
     world_patch:
-      'Update a document that has been read precisely. target must be an @short-ref. When title, summary, or aliases are stale, update all three with {op:"set_metadata",title,summary,aliases}, copying unchanged values from the read result. A YAML edit uses locator:{yaml:["field","child"]}, for example {op:"replace",locator:{yaml:["status"]},value:"new value"}. A YAML value may reference a whole document only as {$ref:"@short-ref"}; the short reference must come from a Runtime list, read, or create result. Never invent a document id. If no handle is available, use ordinary text when semantically correct or call world_create first and use its returned @short-ref. To add an item to the end of an existing sequence, use append with the locator pointing to that sequence; add creates only a map key or list index that does not exist. A Markdown locator excludes the document level-one heading: {markdown:["Responsibilities"]} points exactly to ## Responsibilities, and replace_section.markdown must begin with the same heading at the same level. Use replace_preamble for text after the level-one heading and before the first level-two heading; send only that text. Use replace_body to replace the whole Markdown body and retain the original level-one heading. Success reports only whether the document changed and does not echo the body. Call context_read again only when a later decision depends on Runtime\'s exact serialized body. Do not use path, JSON Pointer, set, or a file name.',
+      'Update a document that has been read precisely or whose complete body was injected with write authorization. target must be an @short-ref. When title, summary, or aliases are stale, use set_metadata and include only the title, summary, or aliases that must change. At least one is required; Runtime preserves omitted fields from the current candidate document. A YAML edit uses locator:{yaml:["field","child"]}, for example {op:"replace",locator:{yaml:["status"]},value:"new value"}. A YAML value may reference a whole document only as {$ref:"@short-ref"}; the short reference must come from a Runtime list, read, or create result. Never invent a document id. If no handle is available, use ordinary text when semantically correct or call world_create first and use its returned @short-ref. To add an item to the end of an existing sequence, use append with the locator pointing to that sequence; add creates only a map key or list index that does not exist. A Markdown locator excludes the document level-one heading: {markdown:["Responsibilities"]} points exactly to ## Responsibilities, and replace_section.markdown must begin with the same heading at the same level. Use replace_preamble for text after the level-one heading and before the first level-two heading; send only that text. Use replace_body to replace the whole Markdown body and retain the original level-one heading. Success reports only whether the document changed and does not echo the body. Call context_read again only when a later decision depends on Runtime\'s exact serialized body or current metadata. Do not use path, JSON Pointer, set, or a file name.',
     world_create:
       'Create a document inside a state directory returned by Runtime. parent must be an @dir-* handle returned by state_list, such as @dir-/characters; use @dir-/ for the root. refHint is a lowercase ASCII short-reference hint, not a world/ path. A YAML body may reference a whole document only as {$ref:"@short-ref"}, and the short reference must come from a Runtime list, read, or create result. Never invent a document id.',
     artifact_emit:
@@ -330,9 +333,9 @@ const toolDescriptions: Record<
     context_search:
       "在 state 或 history 的原文字面中搜索。0 命中只表示给定文本没有字面命中，不证明世界事实不存在；玩家可见叙事不得复述搜索过程。within 只能使用 Runtime 已返回的 @文档或 @dir-* 句柄。",
     context_read:
-      "精确读取 Runtime 先前返回的 @文档、@节点或 @history-message-* 句柄。整文档结果中的读取标题、分页线、元信息边界和正文边界不属于源文；元信息只能用 set_metadata 整组更新，中间的可写正文用 locator 更新。YAML 正文不含 $document 技术头，Markdown 正文从文档 # 一级标题开始。不要传文件路径、自然语言名称或自行拼造的 world/...。",
+      "精确读取 Runtime 先前返回的 @文档、@节点或 @history-message-* 句柄。整文档结果中的读取标题、分页线、元信息边界和正文边界不属于源文；set_metadata 可以只提交需要改变的字段，Runtime 会保留未提供的元数据字段。中间的可写正文用 locator 更新。YAML 正文不含 $document 技术头，Markdown 正文从文档 # 一级标题开始。不要传文件路径、自然语言名称或自行拼造的 world/...。",
     world_patch:
-      '更新已精确读取的文档。target 必须使用 @短引用；文档 title、summary 或 aliases 过时时用 {op:"set_metadata",title,summary,aliases} 整组更新，未改项照抄读取结果。YAML edit 使用 locator:{yaml:["字段","子字段"]}，例如 {op:"replace",locator:{yaml:["情况"]},value:"新值"}。YAML value 需要引用整份文档时只能写 {$ref:"@短引用"}，短引用必须来自 Runtime 的 list、read 或 create 结果；不得自行编造文档 id。没有可用句柄时，根据语义使用普通文本，或先 world_create 后使用其返回的 @短引用。向已存在的 sequence 末尾加一项必须使用 append 并把 locator 指向该 sequence；add 只创建尚不存在的 map key 或 list index。Markdown locator 不包含文档 # 一级标题：{markdown:["职责"]} 精确指向 ## 职责，replace_section.markdown 必须从同级同名标题开始。修改 # 标题下、第一个 ## 前的文字用 replace_preamble（只传该段文字）；替换整个 Markdown 正文用 replace_body，且 markdown 必须保留原 # 一级标题。成功结果只报告文档是否发生变化，不回显正文；只有后续决策依赖 Runtime 序列化后的精确正文时才重新 context_read。不要使用 path、JSON Pointer、set 或文件名。',
+      '更新已精确读取，或已随写入资格注入完整正文的文档。target 必须使用 @短引用；文档 title、summary 或 aliases 过时时使用 set_metadata，只提供需要改变的 title、summary 或 aliases。至少提供一项；未提供的字段由 Runtime 从当前候选文档保留。YAML edit 使用 locator:{yaml:["字段","子字段"]}，例如 {op:"replace",locator:{yaml:["情况"]},value:"新值"}。YAML value 需要引用整份文档时只能写 {$ref:"@短引用"}，短引用必须来自 Runtime 的 list、read 或 create 结果；不得自行编造文档 id。没有可用句柄时，根据语义使用普通文本，或先 world_create 后使用其返回的 @短引用。向已存在的 sequence 末尾加一项必须使用 append 并把 locator 指向该 sequence；add 只创建尚不存在的 map key 或 list index。Markdown locator 不包含文档 # 一级标题：{markdown:["职责"]} 精确指向 ## 职责，replace_section.markdown 必须从同级同名标题开始。修改 # 标题下、第一个 ## 前的文字用 replace_preamble（只传该段文字）；替换整个 Markdown 正文用 replace_body，且 markdown 必须保留原 # 一级标题。成功结果只报告文档是否发生变化，不回显正文；只有后续决策依赖 Runtime 序列化后的精确正文或当前元数据时才重新 context_read。不要使用 path、JSON Pointer、set 或文件名。',
     world_create:
       '在 Runtime 返回的状态目录中创建文档。parent 必须是 state_list 返回的 @dir-*，例如 @dir-/characters；根目录使用 @dir-/。refHint 是小写 ASCII 短引用，不要传 world/ 路径。YAML body 需要引用整份文档时只能写 {$ref:"@短引用"}，且短引用必须来自 Runtime 的 list、read 或 create 结果；不得自行编造文档 id。',
     artifact_emit:

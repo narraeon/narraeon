@@ -913,6 +913,99 @@ context:
     ).toMatchObject({ ok: true });
   });
 
+  test("已注入完整正文的文档可只更新 summary 并保留未展示的 aliases", () => {
+    const source = input();
+    const files = snapshotRecord(source);
+    files["state/current-situation.yaml"] = files[
+      "state/current-situation.yaml"
+    ]!.replace("aliases: []", 'aliases: [宿舍, "302"]');
+    const documents = new FileNativePlayDocuments(files);
+    source.world.documentSnapshot = documents.snapshot;
+    const compiled = new FileNativePromptCompiler().compileBootstrap(source);
+    documents.bindBootstrap(compiled);
+
+    expect(
+      documents.execute(
+        {
+          id: "partial-summary",
+          name: "world_patch",
+          arguments: {
+            target: "@current-situation",
+            edits: [
+              {
+                op: "set_metadata",
+                summary: "夜里的宿舍局面。",
+              },
+            ],
+          },
+        },
+        [],
+      ),
+    ).toMatchObject({ ok: true });
+
+    expect(
+      documents.snapshot.query({
+        kind: "read_document",
+        document: { shortRef: "current-situation" },
+        maxBytes: 8_192,
+      }),
+    ).toMatchObject({
+      kind: "read_document",
+      ok: true,
+      document: {
+        title: "当前情境",
+        summary: "夜里的宿舍局面。",
+        aliases: ["宿舍", "302"],
+      },
+    });
+    const exactRead = documents.execute(
+      {
+        id: "read-after-partial-summary",
+        name: "context_read",
+        arguments: { ref: "@current-situation" },
+      },
+      [],
+    );
+    expect(exactRead.markdown).toContain(
+      "set_metadata updates one or more fields and preserves omitted fields",
+    );
+    expect(exactRead.markdown).toContain(
+      'summary: 夜里的宿舍局面。\naliases:\n  - 宿舍\n  - "302"',
+    );
+  });
+
+  test("world_patch 公开 schema 允许 set_metadata 提交任一非空字段子集", () => {
+    const patch = new FileNativePromptCompiler()
+      .compileBootstrap(input())
+      .tools.find(({ name }) => name === "world_patch");
+    const schema = patch?.inputSchema as {
+      properties?: {
+        edits?: {
+          items?: {
+            oneOf?: {
+              minProperties?: number;
+              required?: string[];
+              properties?: { op?: { const?: string } };
+            }[];
+          };
+        };
+      };
+    };
+    const metadataEdit = schema.properties?.edits?.items?.oneOf?.find(
+      ({ properties }) => properties?.op?.const === "set_metadata",
+    );
+
+    expect(metadataEdit).toMatchObject({
+      minProperties: 2,
+      required: ["op"],
+      properties: {
+        title: { type: "string" },
+        summary: { type: "string" },
+        aliases: { type: "array" },
+      },
+    });
+  });
+
   test("发给模型的输出上限就是 Provider 配置，Runtime 不计算预留", async () => {
     const compiler = new FileNativePromptCompiler();
     const source = input({
@@ -1136,10 +1229,10 @@ context:
       .compileBootstrap(source)
       .logicalMessages.find(({ role }) => role === "world_context")?.markdown;
     expect(worldContext).toMatch(
-      /^- current_situation: @current-situation · resolved · complete · full text injected$/mu,
+      /^- current_situation: @current-situation · resolved · complete · full body injected$/mu,
     );
     expect(worldContext).toMatch(
-      /^- reference_targets: @alex · resolved · complete · full text injected$/mu,
+      /^- reference_targets: @alex · resolved · complete · full body injected$/mu,
     );
     expect(worldContext).toMatch(
       /^- node: @cultivation · markdown:金丹 · resolved · complete · node injected$/mu,
@@ -1148,7 +1241,12 @@ context:
     expect(worldContext).not.toMatch(
       /^- (current_situation|document|node): .*continue with context_read$/mu,
     );
-    expect(worldContext).toContain("`context_read` would return the same body");
+    expect(worldContext).toContain(
+      "`context_read` returns that same body and additionally exposes the current title, summary, and aliases",
+    );
+    expect(worldContext).toContain(
+      "`world_patch` preserves metadata fields omitted from `set_metadata`",
+    );
     // Injected text is already writable; headings expose the codec needed for locators.
     expect(worldContext).toContain(
       "Each material heading identifies its codec",

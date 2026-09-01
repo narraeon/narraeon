@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 import {
   WorldDocumentStore,
   type WorldDocumentCreateRevisionCommand,
+  type WorldDocumentRevisionEdit,
 } from "../../src/runtime/world/WorldDocumentStore.ts";
 
 describe("WorldDocumentStore atomic candidate batch Interface", () => {
@@ -478,6 +479,139 @@ describe("WorldDocumentStore atomic candidate batch Interface", () => {
       kind: "error",
       diagnostics: [expect.objectContaining({ code: "locator_not_found" })],
     });
+  });
+
+  test("partial metadata edits preserve omitted fields and keep Markdown title aligned", () => {
+    const source = WorldDocumentStore.open({
+      layout: "content_package",
+      files: [
+        {
+          path: "world/situation.yaml",
+          contents: `$document:
+  id: situation.current
+  ref: current-situation
+  title: 当前情境
+  summary: 白天的宿舍。
+  aliases: [宿舍, "302"]
+情况: 正在整理装备
+`,
+        },
+        {
+          path: "world/rules/lore.md",
+          contents: `---
+$document:
+  id: rule.lore
+  ref: lore
+  title: 旧规则
+  summary: 一份规则文档。
+  aliases: [法则]
+---
+# 旧规则
+
+规则正文。
+`,
+        },
+      ],
+    });
+
+    const revised = source.revise({
+      commands: [
+        {
+          kind: "patch",
+          document: { shortRef: "current-situation" },
+          edits: [{ op: "set_metadata", summary: "夜里的宿舍。" }],
+        },
+        {
+          kind: "patch",
+          document: { shortRef: "lore" },
+          edits: [{ op: "set_metadata", title: "世界规则" }],
+        },
+      ],
+    });
+
+    expect(revised).toMatchObject({ kind: "revision", ok: true });
+    if (!revised.ok) throw new Error("partial metadata revision failed");
+    expect(
+      revised.snapshot.query({
+        kind: "read_document",
+        document: { shortRef: "current-situation" },
+        maxBytes: 8_192,
+      }),
+    ).toMatchObject({
+      kind: "read_document",
+      ok: true,
+      document: {
+        title: "当前情境",
+        summary: "夜里的宿舍。",
+        aliases: ["宿舍", "302"],
+      },
+    });
+    const lore = revised.snapshot.query({
+      kind: "read_document",
+      document: { shortRef: "lore" },
+      maxBytes: 8_192,
+    });
+    expect(lore).toMatchObject({
+      kind: "read_document",
+      ok: true,
+      document: {
+        title: "世界规则",
+        summary: "一份规则文档。",
+        aliases: ["法则"],
+      },
+    });
+    if (lore.kind !== "read_document" || !lore.ok)
+      throw new Error("partially renamed Markdown document cannot be read");
+    expect(lore.body).toContain("# 世界规则");
+  });
+
+  test.each([
+    [
+      "没有提供任何字段",
+      { op: "set_metadata" },
+      "at least one of title, summary, or aliases must be provided",
+    ],
+    [
+      "包含未知字段",
+      { op: "set_metadata", summary: "新简介", unknown: true },
+      "set_metadata accepts only op, title, summary, and aliases",
+    ],
+    [
+      "提供无效字段",
+      { op: "set_metadata", aliases: [1] },
+      "aliases item 1 must be a string",
+    ],
+  ])("set_metadata 拒绝%s", (_label, edit, message) => {
+    const source = WorldDocumentStore.open({
+      layout: "content_package",
+      files: [
+        {
+          path: "world/situation.yaml",
+          contents: yamlDocument({
+            id: "situation.current",
+            ref: "current-situation",
+            title: "当前情境",
+            body: "情况: 正在整理装备\n",
+          }),
+        },
+      ],
+    });
+
+    const rejected = source.revise({
+      commands: [
+        {
+          kind: "patch",
+          document: { shortRef: "current-situation" },
+          edits: [edit as WorldDocumentRevisionEdit],
+        },
+      ],
+    });
+    expect(rejected).toMatchObject({
+      kind: "error",
+      ok: false,
+    });
+    if (rejected.ok) throw new Error("invalid metadata edit was accepted");
+    expect(rejected.diagnostics[0]?.message).toContain(message);
   });
 
   test("YAML patch can add or replace the whole body without touching the technical header", () => {

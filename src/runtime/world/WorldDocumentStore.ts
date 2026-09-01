@@ -351,9 +351,25 @@ export interface WorldDocumentYamlRemoveRevisionEdit {
   readonly locator: { readonly yaml: readonly (string | number)[] };
 }
 
-export interface WorldDocumentMetadataRevisionEdit extends WorldDocumentMetadataInput {
+export type WorldDocumentMetadataRevisionEdit = {
   readonly op: "set_metadata";
-}
+} & (
+  | {
+      readonly title: string;
+      readonly summary?: string;
+      readonly aliases?: readonly string[];
+    }
+  | {
+      readonly title?: string;
+      readonly summary: string;
+      readonly aliases?: readonly string[];
+    }
+  | {
+      readonly title?: string;
+      readonly summary?: string;
+      readonly aliases: readonly string[];
+    }
+);
 
 export interface WorldDocumentMarkdownSectionRevisionEdit {
   readonly op: "replace_section" | "add_section";
@@ -987,6 +1003,7 @@ export class WorldDocumentStore {
             const patched = patchRevisionMarkdown(
               target.working.file.contents,
               command.edits,
+              target.entry.descriptor,
             );
             if ("diagnostics" in patched)
               return this.#revisionFailure(
@@ -1004,6 +1021,11 @@ export class WorldDocumentStore {
               uniqueKeys: true,
               strict: true,
             });
+            let metadata: WorldDocumentMetadataInput = {
+              title: target.entry.descriptor.title,
+              summary: target.entry.descriptor.summary,
+              aliases: [...target.entry.descriptor.aliases],
+            };
             for (const edit of command.edits) {
               if (!isRecord(edit) || typeof edit.op !== "string")
                 return this.#revisionFailure(commandIndex, {
@@ -1021,16 +1043,21 @@ export class WorldDocumentStore {
                     message:
                       "set_metadata accepts only op, title, summary, and aliases",
                   });
-                if (!validDocumentMetadata(edit))
+                const resolved = resolveDocumentMetadataRevision(
+                  metadata,
+                  edit,
+                );
+                if ("problems" in resolved)
                   return this.#revisionFailure(commandIndex, {
                     code: "document_header_invalid",
                     logicalPath: target.entry.file.path,
                     documentId: target.entry.descriptor.documentId,
-                    message: `set_metadata arguments are invalid: ${documentMetadataProblems(edit).join("; ")}`,
+                    message: `set_metadata arguments are invalid: ${resolved.problems.join("; ")}`,
                   });
-                document.setIn(["$document", "title"], edit.title);
-                document.setIn(["$document", "summary"], edit.summary);
-                document.setIn(["$document", "aliases"], [...edit.aliases]);
+                metadata = resolved.metadata;
+                document.setIn(["$document", "title"], metadata.title);
+                document.setIn(["$document", "summary"], metadata.summary);
+                document.setIn(["$document", "aliases"], [...metadata.aliases]);
                 continue;
               }
               if (
@@ -3572,10 +3599,16 @@ function scanMarkdownHeadings(
 function patchRevisionMarkdown(
   source: string,
   edits: readonly unknown[],
+  initialMetadata: WorldDocumentMetadataInput,
 ):
   | { readonly contents: string }
   | { readonly diagnostics: readonly WorldDocumentDiagnostic[] } {
   let contents = source;
+  let metadata: WorldDocumentMetadataInput = {
+    title: initialMetadata.title,
+    summary: initialMetadata.summary,
+    aliases: [...initialMetadata.aliases],
+  };
   for (const edit of edits) {
     if (!isRecord(edit) || typeof edit.op !== "string")
       return {
@@ -3587,25 +3620,32 @@ function patchRevisionMarkdown(
         ],
       };
     if (edit.op === "set_metadata") {
-      if (
-        !hasOnlyKeys(edit, ["op", "title", "summary", "aliases"]) ||
-        !validDocumentMetadata(edit)
-      )
+      if (!hasOnlyKeys(edit, ["op", "title", "summary", "aliases"]))
         return {
           diagnostics: [
             diagnostic({
               code: "document_header_invalid",
-              message: hasOnlyKeys(edit, ["op", "title", "summary", "aliases"])
-                ? `set_metadata arguments are invalid: ${documentMetadataProblems(edit).join("; ")}`
-                : "set_metadata accepts only op, title, summary, and aliases",
+              message:
+                "set_metadata accepts only op, title, summary, and aliases",
             }),
           ],
         };
+      const resolved = resolveDocumentMetadataRevision(metadata, edit);
+      if ("problems" in resolved)
+        return {
+          diagnostics: [
+            diagnostic({
+              code: "document_header_invalid",
+              message: `set_metadata arguments are invalid: ${resolved.problems.join("; ")}`,
+            }),
+          ],
+        };
+      metadata = resolved.metadata;
       const envelope = markdownEnvelope(contents);
       if ("diagnostics" in envelope) return envelope;
-      envelope.header.setIn(["$document", "title"], edit.title);
-      envelope.header.setIn(["$document", "summary"], edit.summary);
-      envelope.header.setIn(["$document", "aliases"], [...edit.aliases]);
+      envelope.header.setIn(["$document", "title"], metadata.title);
+      envelope.header.setIn(["$document", "summary"], metadata.summary);
+      envelope.header.setIn(["$document", "aliases"], [...metadata.aliases]);
       const body = contents.slice(envelope.bodyStart);
       const firstHeading = scanMarkdownHeadings(body, 0).headings[0];
       if (firstHeading?.level !== 1)
@@ -3617,7 +3657,7 @@ function patchRevisionMarkdown(
             }),
           ],
         };
-      const nextBody = `${body.slice(0, firstHeading.range.start.offset)}# ${edit.title}${body.slice(firstHeading.range.end.offset)}`;
+      const nextBody = `${body.slice(0, firstHeading.range.start.offset)}# ${metadata.title}${body.slice(firstHeading.range.end.offset)}`;
       contents = `---\n${envelope.header.toString({ indent: 2, lineWidth: 0 }).trimEnd()}\n---\n${nextBody}`;
       continue;
     }
@@ -4040,6 +4080,35 @@ function validDocumentMetadata<
   },
 >(value: T): value is T & WorldDocumentMetadataInput {
   return documentMetadataProblems(value).length === 0;
+}
+
+function resolveDocumentMetadataRevision(
+  current: WorldDocumentMetadataInput,
+  edit: {
+    readonly title?: unknown;
+    readonly summary?: unknown;
+    readonly aliases?: unknown;
+  },
+):
+  | { readonly metadata: WorldDocumentMetadataInput }
+  | { readonly problems: readonly string[] } {
+  if (
+    !Object.hasOwn(edit, "title") &&
+    !Object.hasOwn(edit, "summary") &&
+    !Object.hasOwn(edit, "aliases")
+  )
+    return {
+      problems: ["at least one of title, summary, or aliases must be provided"],
+    };
+  const metadata = {
+    title: Object.hasOwn(edit, "title") ? edit.title : current.title,
+    summary: Object.hasOwn(edit, "summary") ? edit.summary : current.summary,
+    aliases: Object.hasOwn(edit, "aliases") ? edit.aliases : current.aliases,
+  };
+  const problems = documentMetadataProblems(metadata);
+  return problems.length === 0
+    ? { metadata: metadata as WorldDocumentMetadataInput }
+    : { problems };
 }
 
 /**

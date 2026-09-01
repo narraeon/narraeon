@@ -1306,7 +1306,7 @@ function renderDocumentMetadata(document: WorldDocumentDescriptor): string {
     },
     { indent: 2, lineWidth: 0 },
   ).trimEnd();
-  return `[Document metadata: not body content; use set_metadata to replace the entire group]\n${metadata}`;
+  return `[Document metadata: not body content; set_metadata updates one or more fields and preserves omitted fields]\n${metadata}`;
 }
 
 function toolWorldDocumentValue(value: WorldDocumentValue): unknown {
