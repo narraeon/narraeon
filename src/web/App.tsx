@@ -64,6 +64,11 @@ type Screen =
   "home" | "content" | "plays" | "model" | "create" | "preview" | "world";
 type ContentMode = "files" | "improve";
 
+interface SettingImprovementFailure {
+  message: string;
+  mode: SettingImprovementStartMode;
+}
+
 export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [screen, setScreen] = useState<Screen>("home");
@@ -99,6 +104,8 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const [improvementProgress, setImprovementProgress] =
     useState<SettingImprovementProgress | null>(null);
   const [improvementProgressNow, setImprovementProgressNow] = useState(0);
+  const [improvementFailure, setImprovementFailure] =
+    useState<SettingImprovementFailure | null>(null);
   const [worldId, setWorldId] = useState("");
   const [notice, setNotice] = useState(uiText("正在读取工作区…"));
   const [localeSaving, setLocaleSaving] = useState(false);
@@ -200,6 +207,8 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       setPackageDetail(package_);
       setCurrentPackageFiles(packageFiles.map((file) => ({ ...file })));
       setImprovementContextPaths([]);
+      setImprovementFailure(null);
+      setImprovementProgress(null);
       setFiles(packageFiles.map((file) => ({ ...file })));
       setFilesDirty(false);
       setContentMode(nextMode);
@@ -324,6 +333,8 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     setImprovementPlan(null);
     setImprovementCandidate(null);
     setImprovementProgress(null);
+    setImprovementFailure(null);
+    setNotice("");
     try {
       const outcome = await client.request<
         SettingImprovementPlanResult | SettingImprovementCandidateResult
@@ -347,6 +358,10 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     } catch (error: unknown) {
       setImprovementId("");
       setImprovementPhase("idle");
+      setImprovementFailure({
+        message: error instanceof Error ? error.message : uiText("操作失败"),
+        mode,
+      });
       report(error);
     }
   }
@@ -420,6 +435,8 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       setImprovementCandidate(null);
       setImprovementGoal("");
       setImprovementContextPaths([]);
+      setImprovementFailure(null);
+      setImprovementProgress(null);
       setImprovementPhase("idle");
       await refresh();
       await openPackage(selected, "improve");
@@ -441,6 +458,8 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       setImprovementId("");
       setImprovementPlan(null);
       setImprovementCandidate(null);
+      setImprovementFailure(null);
+      setImprovementProgress(null);
       setImprovementPhase("idle");
       setNotice(uiText("设定候选已放弃，当前树未改变。"));
     } catch (error: unknown) {
@@ -774,6 +793,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
               candidate={improvementCandidate}
               progress={improvementProgress}
               progressNow={improvementProgressNow}
+              failure={improvementFailure}
               onGoalChange={setImprovementGoal}
               onContextPathsChange={setImprovementContextPaths}
               onStart={(mode) => void startImprovement(mode)}
@@ -784,6 +804,14 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
               }
               onApply={() => void applyImprovement()}
               onDiscard={() => void discardImprovement()}
+              onRetry={() => {
+                if (improvementFailure !== null)
+                  void startImprovement(improvementFailure.mode);
+              }}
+              onDismissFailure={() => {
+                setImprovementFailure(null);
+                setImprovementProgress(null);
+              }}
               onConfigureModel={() => setScreen("model")}
             />
           )}

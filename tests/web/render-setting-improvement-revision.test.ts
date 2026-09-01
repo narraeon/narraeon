@@ -144,6 +144,7 @@ function common() {
     candidate: null,
     progress: null,
     progressNow: 0,
+    failure: null,
     onGoalChange: vi.fn(),
     onContextPathsChange: vi.fn(),
     onStart: vi.fn(),
@@ -152,6 +153,8 @@ function common() {
     onReviseCandidate: vi.fn(),
     onApply: vi.fn(),
     onDiscard: vi.fn(),
+    onRetry: vi.fn(),
+    onDismissFailure: vi.fn(),
     onConfigureModel: vi.fn(),
   };
 }

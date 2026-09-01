@@ -52,6 +52,7 @@ describe("AI 设定完善界面", () => {
       contextLocked: false,
       progress: null,
       progressNow: 0,
+      failure: null,
       onGoalChange,
       onContextPathsChange,
       onStart,
@@ -60,6 +61,8 @@ describe("AI 设定完善界面", () => {
       onReviseCandidate: vi.fn(),
       onApply,
       onDiscard,
+      onRetry: vi.fn(),
+      onDismissFailure: vi.fn(),
       onConfigureModel: vi.fn(),
     };
     const view = render(
@@ -195,6 +198,7 @@ describe("AI 设定完善界面", () => {
         candidate: candidate(),
         progress: null,
         progressNow: 0,
+        failure: null,
         onGoalChange: vi.fn(),
         onContextPathsChange: vi.fn(),
         onStart: vi.fn(),
@@ -203,6 +207,8 @@ describe("AI 设定完善界面", () => {
         onReviseCandidate: vi.fn(),
         onApply: vi.fn(),
         onDiscard: vi.fn(),
+        onRetry: vi.fn(),
+        onDismissFailure: vi.fn(),
         onConfigureModel: vi.fn(),
       }),
     );

@@ -863,6 +863,13 @@ const settingImprovementEnglishMessages: Record<string, string> = {
   已有: "No output for",
   "秒没有收到任何输出，模型调用可能已经卡住。":
     "seconds; the model call may be stuck.",
+  "AI 设定完善失败": "Setting improvement failed",
+  这次生成没有完成: "This generation did not complete",
+  已完成轮次: "Completed rounds",
+  "未完成的 AI 输出没有成为候选，内容包当前树没有改变。可以直接按原方式重试，也可以先调整目标或注入文件。":
+    "The incomplete model output did not become a candidate, and the content package's current tree did not change. Retry the same way, or adjust the goal or injected files first.",
+  按原方式重试: "Retry the same way",
+  关闭错误: "Dismiss error",
   "AI 设定完善": "Setting improvement",
   "AI 会基于当前树完善设定：可以先只读现有文件并确认计划，也可以直接生成隔离候选。 只有最后整批应用才会替换当前内容包；已有世界不会改变。":
     "The model can improve the current tree by first reading files and proposing a plan, or by generating an isolated candidate directly. Only applying the whole candidate replaces the content package; existing worlds remain unchanged.",

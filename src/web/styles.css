@@ -3232,6 +3232,36 @@ label {
   background: var(--panel);
 }
 
+.setting-run-failure {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.9rem 1.1rem;
+  border: 1px solid rgb(255 152 137 / 38%);
+  border-radius: 0.85rem;
+  background: rgb(107 32 25 / 22%);
+  color: #ffd6cf;
+}
+
+.setting-run-failure strong {
+  font-size: 0.95rem;
+}
+
+.setting-run-failure p {
+  margin: 0.25rem 0 0;
+  overflow-wrap: anywhere;
+}
+
+.setting-run-failure .setting-run-failure-safety {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+
+.setting-run-failure .setting-decision-row {
+  justify-content: flex-start;
+}
+
 .setting-run-headline {
   display: flex;
   flex-wrap: wrap;

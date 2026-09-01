@@ -2484,6 +2484,16 @@ function idleSettingProgress(): SettingImprovementProgress {
   };
 }
 
+export function createSettingImprovementStartingProgress(
+  mode: SettingImprovementStartInput["mode"],
+): SettingImprovementProgress {
+  return {
+    ...idleSettingProgress(),
+    phase: mode === "plan_first" ? "planning" : "generating",
+    updatedAt: Date.now(),
+  };
+}
+
 // The check renders as a Markdown report; the panel only has room for the
 // diagnostic lines, which are the bullet list under the heading.
 function summarizeSettingCheck(markdown: string): string {

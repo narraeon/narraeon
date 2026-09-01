@@ -43,10 +43,49 @@ test("setting-improvement.start 失败后删除预占条目，同 ID 可干净�
   ).resolves.toMatchObject({ result: { discarded: true } });
 });
 
-test("同 ID 并发 start 即使同时停在依赖加载窗口也只建立一条会话", async () => {
+test("start 仍在读取依赖时进度查询不会误报会话不存在", async () => {
   const { runtime, packageId } = await fixture();
   const releaseDependencies = deferred<void>();
-  const bothEntered = deferred<void>();
+  const dependenciesEntered = deferred<void>();
+  const readSpy = vi.spyOn(
+    ContentWorkspace.prototype,
+    "readCurrentTreeContentPackage",
+  );
+  readSpy.mockImplementation(async function (this: ContentWorkspace, localId) {
+    dependenciesEntered.resolve();
+    await releaseDependencies.promise;
+    readSpy.mockRestore();
+    return this.readCurrentTreeContentPackage(localId);
+  });
+  vi.stubGlobal("fetch", () =>
+    Promise.resolve(candidateResponse("loading-id")),
+  );
+
+  const starting = runtime.handle({
+    type: "setting-improvement.start",
+    improvementId: "loading-id",
+    packageId,
+    goal: "Improve the player experience in the current content package",
+    mode: "direct_candidate",
+    contextPaths: [],
+  });
+  await dependenciesEntered.promise;
+  await expect(
+    runtime.handle({
+      type: "setting-improvement.progress",
+      improvementId: "loading-id",
+    }),
+  ).resolves.toMatchObject({ result: { phase: "generating", round: 0 } });
+  releaseDependencies.resolve();
+  await expect(starting).resolves.toMatchObject({
+    result: { kind: "candidate" },
+  });
+});
+
+test("同 ID 并发 start 在读取依赖前就只预占一条会话", async () => {
+  const { runtime, packageId } = await fixture();
+  const releaseDependencies = deferred<void>();
+  const dependenciesEntered = deferred<void>();
   let entered = 0;
   const readSpy = vi.spyOn(
     ContentWorkspace.prototype,
@@ -54,7 +93,7 @@ test("同 ID 并发 start 即使同时停在依赖加载窗口也只建立一条
   );
   readSpy.mockImplementation(async function (this: ContentWorkspace, localId) {
     entered += 1;
-    if (entered === 2) bothEntered.resolve();
+    dependenciesEntered.resolve();
     await releaseDependencies.promise;
     readSpy.mockRestore();
     return this.readCurrentTreeContentPackage(localId);
@@ -63,26 +102,12 @@ test("同 ID 并发 start 即使同时停在依赖加载窗口也只建立一条
   vi.stubGlobal("fetch", fetchMock);
 
   const first = runtime.handle(startRequest(packageId, "concurrent-id"));
+  await dependenciesEntered.promise;
   const second = runtime.handle(startRequest(packageId, "concurrent-id"));
-  await bothEntered.promise;
+  await expect(second).rejects.toThrow("Setting-improvement ID already exists");
+  expect(entered).toBe(1);
   releaseDependencies.resolve();
-  const outcomes = await Promise.allSettled([first, second]);
-
-  expect(outcomes.filter(({ status }) => status === "fulfilled")).toHaveLength(
-    1,
-  );
-  expect(outcomes.filter(({ status }) => status === "rejected")).toHaveLength(
-    1,
-  );
-  const rejected = outcomes.find(({ status }) => status === "rejected");
-  expect(rejected?.status).toBe("rejected");
-  if (rejected?.status !== "rejected")
-    throw new Error("Expected one rejected request");
-  const reason: unknown = rejected.reason;
-  expect(reason).toBeInstanceOf(Error);
-  expect((reason as Error).message).toBe(
-    "Setting-improvement ID already exists",
-  );
+  await expect(first).resolves.toMatchObject({ result: { kind: "plan" } });
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
 

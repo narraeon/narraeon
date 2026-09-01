@@ -129,6 +129,7 @@ interface SettingImprovementPanelProps {
   candidate: SettingImprovementCandidateResult | null;
   progress: SettingImprovementProgress | null;
   progressNow: number;
+  failure: { message: string } | null;
   onGoalChange: (goal: string) => void;
   onContextPathsChange: (paths: string[]) => void;
   onStart: (mode: SettingImprovementStartMode) => void;
@@ -137,6 +138,8 @@ interface SettingImprovementPanelProps {
   onReviseCandidate: (feedback: string) => void;
   onApply: () => void;
   onDiscard: () => void;
+  onRetry: () => void;
+  onDismissFailure: () => void;
   onConfigureModel: () => void;
 }
 
@@ -332,6 +335,63 @@ function formatProgressTokens(value: number | null | undefined): string {
   return formatTokens(value ?? 0);
 }
 
+function SettingRunFailure({
+  failure,
+  progress,
+  onRetry,
+  onDismiss,
+}: {
+  failure: string;
+  progress: SettingImprovementProgress | null;
+  onRetry: () => void;
+  onDismiss: () => void;
+}): React.JSX.Element {
+  return (
+    <section
+      className="setting-run-failure"
+      role="alert"
+      aria-label={uiText("AI 设定完善失败")}
+    >
+      <div>
+        <strong>{uiText("这次生成没有完成")}</strong>
+        <p>{failure}</p>
+      </div>
+      {progress !== null && progress.round > 0 ? (
+        <>
+          <dl className="setting-run-counters">
+            <div>
+              <dt>{uiText("已完成轮次")}</dt>
+              <dd>{progress.round}</dd>
+            </div>
+            <div>
+              <dt>{uiText("工具调用")}</dt>
+              <dd>{progress.toolCalls}</dd>
+            </div>
+            <div>
+              <dt>{uiText("自检未通过")}</dt>
+              <dd>{progress.failedChecks}</dd>
+            </div>
+          </dl>
+          <ModelUsageBreakdown usage={progress.usage} compact />
+        </>
+      ) : null}
+      <p className="setting-run-failure-safety">
+        {uiText(
+          "未完成的 AI 输出没有成为候选，内容包当前树没有改变。可以直接按原方式重试，也可以先调整目标或注入文件。",
+        )}
+      </p>
+      <div className="setting-decision-row">
+        <button type="button" onClick={onRetry}>
+          {uiText("按原方式重试")}
+        </button>
+        <button type="button" className="secondary-button" onClick={onDismiss}>
+          {uiText("关闭错误")}
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function formatTokens(value: number): string {
   return value >= 1000 ? `${(value / 1000).toFixed(1)}k` : String(value);
 }
@@ -356,6 +416,7 @@ export function SettingImprovementPanel({
   candidate,
   progress,
   progressNow,
+  failure,
   onGoalChange,
   onContextPathsChange,
   onStart,
@@ -364,6 +425,8 @@ export function SettingImprovementPanel({
   onReviseCandidate,
   onApply,
   onDiscard,
+  onRetry,
+  onDismissFailure,
   onConfigureModel,
 }: SettingImprovementPanelProps): React.JSX.Element {
   const busy = ["planning", "generating", "applying", "discarding"].includes(
@@ -451,6 +514,15 @@ export function SettingImprovementPanel({
               phase={phase}
               progress={progress}
               now={progressNow}
+            />
+          )}
+
+          {failure !== null && (
+            <SettingRunFailure
+              failure={failure.message}
+              progress={progress}
+              onRetry={onRetry}
+              onDismiss={onDismissFailure}
             />
           )}
 
