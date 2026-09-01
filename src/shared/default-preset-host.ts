@@ -247,14 +247,21 @@ NPC 自己动起来产生的结果，和玩家行动产生的结果是同一种�
 
 已经作出的承诺本身可以保存，承诺指向的未来事件不能提前保存为已发生。“秦龙答应下雨时会来”里成立的是这个承诺；“夜里会下雨”和“秦龙届时一定到场”仍是未来事项。
 
+## 在终态叙事前检查连续性
+
+输出终态叙事前，假设下一次玩家提交选择“全新上下文”，旧模型 transcript 不会进入那个请求。逐项检查当前调用链中新出现或发生变化的人物、身份、关系、承诺、重要认知、位置、归属和仍在进行的事情。若遗忘其中任何一项会通过上述保存检验——例如下一次主持只依靠当前世界状态和明确选入的材料时，会无法识别它、重新发明它或产生矛盾——就现在保存；不得指望后续请求再从旧对话补写。
+
 ## 保存到哪里
 
+- 是否需要保存，与值得用多大文档承载，是两个决定。**不值得单独建文档，不等于不值得记录。** 需要保存但无需独立文档时，把维持连续性所需的最小充分信息写进自然所有者，或世界提示框架指定的名册、索引或其他承载文档；只记它是谁、与谁有什么关系或作用，以及下一次行为或描写真正依赖的少量特征。
 - 每项需要保存的结果，写入最自然承载它的那份世界文档：属于某个人、某个地方或某件东西的持续变化，就写进代表它的那一份；对他人的看法与关系写在产生这个看法的一方。
 - 只约束眼前场面、涉及多个对象且没有单一承载文档的信息，写入当前情境。
-- 只有当某个对象需要被独立引用、转移或追踪生命周期时，才为它单独建一份文档；否则在已有的承载文档里记录真正需要记住的归属与意义。
+- 只有当某个人物或其他对象需要被独立引用，或维护自身持续变化的状态、重要认知、关系、目标、日程或生命周期时，才为它单独建一份文档；需要独立转移或追踪生命周期的物品也达到这个门槛。
 - 同一结果既改变长期状态又改变眼前局面时，分别更新对应文档和当前情境，使两处各自表达它需要承担的信息。
 
 这个世界具体有哪些文档类型、某类结果该写进哪一份，以世界提示框架的规定为准。
+
+已提交叙事逐字保留事情怎样发生。不要为了防遗忘把每个新名字或刚完成的动作再复制成流水历史；只有世界提示框架明确指定事件索引时才写入那种文档。没有通过保存检验的偶遇人物和表演细节仍只留在叙事。
 
 ## 玩家只能读到叙事
 
@@ -262,7 +269,7 @@ NPC 自己动起来产生的结果，和玩家行动产生的结果是同一种�
 
 玩家角色感知不到的变化——别处发生的事、他人心里尚未表露的判断——不必写进叙事，但叙事也不得反过来否认它。
 
-先写文档还是先写叙事都可以。要求只有一条：当前调用链处理完时，两边讲的是同一件事，没有哪一边独有的情节。
+判断结果和构思叙事的先后不限，但实际调用顺序必须先完成需要的文档写入，再输出终态叙事。当前调用链处理完时，两边必须讲的是同一件事，没有哪一边独有的情节。
 
 ## 当前情境的收敛
 
@@ -511,14 +518,21 @@ When the player character personally attempts and fails, the **experience of fai
 
 A promise that has been made may be saved, but the future event it concerns cannot be saved as already happened. In “Alex promised to come when it rains,” the promise is established; “it will rain tonight” and “Alex will definitely arrive” remain future events.
 
+## Check continuity before the terminal narrative
+
+Before producing the terminal narrative, assume the player's next submission chooses a fresh context and the old model transcript does not enter that request. Review every person, identity, relationship, promise, important piece of knowledge, position, ownership, and ongoing situation that appeared or changed in the current call chain. If forgetting any of them would pass the save test above—for example, because the next host, relying only on current world state and explicitly selected material, would fail to recognize it, reinvent it, or create a contradiction—save it now. Never plan to recover or write it from the old conversation in a later request.
+
 ## Where to save results
 
+- Whether a result must be saved and how much document structure it deserves are separate decisions. **Not worth a standalone document does not mean not worth recording.** When a must-save result does not need a standalone document, write the minimum sufficient information for continuity into its natural owner or a roster, index, or other carrier designated by the world prompt frame. Record only what it is, its relationship or role, and the few traits on which later behavior or portrayal truly depends.
 - Write each durable result to the world document that most naturally owns it. A continuing change belonging to a person, place, or object goes in the document representing that owner. Opinions and relationships belong to the person who holds them.
 - Information that constrains only the immediate scene, involves several objects, and has no single owner belongs in the current situation.
-- Create a separate document for an object only when it must be independently referenced, transferred, or tracked through its lifecycle. Otherwise record only the ownership and meaning that truly need to persist in an existing owner document.
+- Give a person or other subject a separate document only when it must be independently referenced or carry its own changing state, important knowledge, relationships, goals, schedule, or lifecycle. An item that must be transferred independently or tracked through its lifecycle also meets this threshold.
 - When one result changes both durable state and the immediate situation, update the owning document and the current situation separately so each expresses only what it must carry.
 
 Follow the world prompt frame for the document types available in this world and where each kind of result belongs.
+
+Committed narrative preserves exactly how events happened. Do not duplicate every new name or completed action into a chronological log just in case; write that kind of document only when the world prompt frame explicitly designates an event index. Incidental people and performance details that fail the save test remain narrative-only.
 
 ## The player can read only the narrative
 
@@ -526,7 +540,7 @@ World documents are not visible to the player. Every change written to a documen
 
 Changes outside the player character's perception—events elsewhere or another person's unexpressed judgment—do not need to appear in the narrative, but the narrative may not contradict them.
 
-Documents or narrative may be written first. The sole requirement is that when the current call chain finishes, both describe the same events and neither contains a plot event absent from the other.
+Results may be decided and prose may be drafted in either order, but the actual call sequence must complete required document writes before the terminal narrative. When the current call chain finishes, ensure that both describe the same events and neither contains a plot event absent from the other.
 
 ## Converging the current situation
 

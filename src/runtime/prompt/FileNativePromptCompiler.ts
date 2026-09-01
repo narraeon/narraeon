@@ -247,7 +247,11 @@ const runtimeContracts: Record<
 - Runtime performs state commits and saves follow-up artifacts. Tool exchanges and internal processing must never appear in player-visible content.`,
     shell: `# Runtime play boundary
 
-A tool-free response may contain player-visible story text. A response that calls any tool is an intermediate step and must not contain player-visible story text; continue from the tool results, then narrate in a later tool-free response. Runtime executes only real tool definitions, file validation, and authority commits. This block does not define story content, point of view, style, player agency, or state semantics.`,
+A tool-free response with player-visible story text ends the model/tool loop started by the current player submission. A response that calls any tool is an intermediate step and must not contain player-visible story text; continue from the tool results, then narrate in a later tool-free response.
+
+The player's next submission may choose a fresh context; the old model transcript will not enter that request. Every world write required by the author state-maintenance criteria must be completed before the terminal narrative. Do not defer them to a later request.
+
+Runtime executes only real tool definitions, file validation, and authority commits. This block does not define story content, point of view, style, player agency, or state semantics.`,
   },
   "zh-CN": {
     play: `# Runtime 权限边界
@@ -269,7 +273,11 @@ A tool-free response may contain player-visible story text. A response that call
 - 状态提交与后置产物保存由 Runtime 执行。工具交换与内部处理过程不得混入玩家可见内容。`,
     shell: `# Runtime 游玩边界
 
-不调用工具的响应可以输出玩家可见故事正文。只要响应调用了任何工具，它就是工具中间步，不得同时输出玩家可见故事正文；先根据工具结果继续，再用一个不调用工具的后续响应完成叙事。Runtime 只执行真实工具定义、文件校验和权威提交；本段不规定故事、人称、文风、玩家代理权或状态语义。`,
+不调用工具且包含玩家可见故事正文的响应会结束本次玩家提交触发的模型／工具循环。只要响应调用了任何工具，它就是工具中间步，不得同时输出玩家可见故事正文；先根据工具结果继续，再用一个不调用工具的后续响应完成叙事。
+
+下一次玩家提交可以选择“全新上下文”；旧模型 transcript 不会进入那个请求。凡作者状态维护判据要求保存的结果，必须在终态叙事之前完成世界写入，不得留待后续请求补写。
+
+Runtime 只执行真实工具定义、文件校验和权威提交；本段不规定故事、人称、文风、玩家代理权或状态语义。`,
   },
 };
 

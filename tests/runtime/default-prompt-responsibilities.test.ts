@@ -5,6 +5,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { minimalFileNativeContentScaffold } from "../../src/runtime/content/ContentWorkspace.ts";
 import { inspectContentPackageCurrentTree } from "../../src/runtime/content/FileNativeContentTree.ts";
 import {
+  builtinDefaultPlayPresetBinding,
   defaultPlayPresetFiles,
   parsePlayPresetFiles,
   presetHostBinding,
@@ -201,6 +202,83 @@ describe("默认提示词职责", () => {
       inspectContentPackageCurrentTree(minimalFileNativeContentScaffold())
         .status,
     ).toBe("usable");
+  });
+
+  test("生产提示要求在可能丢弃旧 transcript 前收口最低充分连续性", () => {
+    const locales = [
+      {
+        locale: "zh-CN" as const,
+        playerInput: "我和新认识的同学约好明天继续见面。",
+        runtime: [
+          "结束本次玩家提交触发的模型／工具循环",
+          "下一次玩家提交可以选择“全新上下文”",
+          "旧模型 transcript 不会进入那个请求",
+          "必须在终态叙事之前完成",
+          "不得留待后续请求补写",
+        ],
+        state: [
+          "在终态叙事前检查连续性",
+          "假设下一次玩家提交选择“全新上下文”",
+          "不值得单独建文档，不等于不值得记录",
+          "最小充分信息",
+          "实际调用顺序必须先完成需要的文档写入",
+          "不要为了防遗忘把每个新名字或刚完成的动作再复制成流水历史",
+        ],
+        stateAbsent: ["先写文档还是先写叙事都可以"],
+      },
+      {
+        locale: "en" as const,
+        playerInput: "I arrange to meet a newly introduced classmate again.",
+        runtime: [
+          "ends the model/tool loop started by the current player submission",
+          "The player's next submission may choose a fresh context",
+          "the old model transcript will not enter that request",
+          "must be completed before the terminal narrative",
+          "Do not defer them to a later request",
+        ],
+        state: [
+          "Check continuity before the terminal narrative",
+          "assume the player's next submission chooses a fresh context",
+          "Not worth a standalone document does not mean not worth recording",
+          "minimum sufficient information",
+          "actual call sequence must complete required document writes before the terminal narrative",
+          "Do not duplicate every new name or completed action into a chronological log just in case",
+        ],
+        stateAbsent: ["Documents or narrative may be written first"],
+      },
+    ];
+
+    for (const scenario of locales) {
+      const binding = builtinDefaultPlayPresetBinding(scenario.locale);
+      const input = createMinimalFileNativePreviewInput({
+        provider: "chat_completions",
+        modelId: `continuity-contract-${scenario.locale}`,
+        contextWindowTokens: 128_000,
+        maxOutputTokens: 16_384,
+        playerInput: scenario.playerInput,
+        playerInputPlacement: "append",
+        locale: scenario.locale,
+      });
+      input.hostBinding = presetHostBinding(binding);
+      const compilation = new FileNativePromptCompiler({
+        locale: scenario.locale,
+      }).compilePlayCallChain(input, binding).bootstrap;
+      const runtimePrompt = compilation.logicalMessages
+        .filter(({ role }) => role === "runtime_system")
+        .map(({ markdown }) => markdown)
+        .join("\n");
+      const authorPrompt = compilation.logicalMessages
+        .filter(({ role }) => role === "author_instruction")
+        .map(({ markdown }) => markdown)
+        .join("\n");
+
+      for (const phrase of scenario.runtime)
+        expect(runtimePrompt).toContain(phrase);
+      for (const phrase of scenario.state)
+        expect(authorPrompt).toContain(phrase);
+      for (const phrase of scenario.stateAbsent)
+        expect(authorPrompt).not.toContain(phrase);
+    }
   });
 
   test("后置请求携带自己的 Runtime 契约，主链只拿到读写工具", () => {
