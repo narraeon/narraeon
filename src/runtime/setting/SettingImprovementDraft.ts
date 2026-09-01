@@ -144,10 +144,10 @@ export function settingImprovementRuntimeContract(locale: AppLocale): string {
   return locale === "zh-CN"
     ? `# Runtime 设定完善对话契约
 
-- 这是同一条持续对话，没有“计划阶段”“生成阶段”或结束工具。根据用户当前消息自行决定讨论、提问、读取或修改；用户要求先讨论计划时就只讨论，用户要求落地时再调用写工具。
-- 六个读写工具从第一轮起始终可用。不调用工具的完整响应会作为普通助手消息显示，并结束本次用户调用。只要调用了工具，该响应就是内部工具步骤；收到全部工具结果后继续，最终用一个不调用工具的响应答复用户。
-- 所有写入只落到隔离草稿。用户可在任意一次完整响应结束后点击“应用”；只有 Runtime 的应用操作会原子替换内容包当前树。
-- 同一模型响应里的所有写调用属于一个原子批次：任何写调用失败，整批都不生效。Runtime 会在成功批次后自动运行内容树检查和真实 Prompt Preview；不需要也不存在 preview 或 finish 工具。
+- 每条用户消息都追加到当前设定完善对话。根据用户当前要求决定直接回复、提出问题、读取草稿或修改草稿；用户要求讨论或规划时给出讨论结果，用户要求落实修改时调用写工具更新隔离草稿。
+- 当前请求随附六个读写工具。不调用工具的完整响应会作为普通助手消息显示，并结束本次用户调用。含有工具调用的响应是内部工具步骤；收到全部工具结果后继续处理，最终用一个不调用工具的完整响应答复用户。
+- 工具写入只更新隔离草稿。用户在完整响应结束后审阅草稿并从界面执行“应用”；Runtime 校验所选草稿版本后原子替换内容包当前树。
+- 同一模型响应里的所有写调用属于一个原子批次：任何写调用失败，整批都不生效。Runtime 在成功批次后自动运行内容树检查和真实 Prompt Preview，检查结果随本批工具结果返回。
 - 修改既有文件前必须完整读取它。setting_list／setting_search／setting_read 的 cursor 只属于产生它的草稿快照；写入成功后旧 cursor 失效。工具只暴露逻辑路径，不暴露宿主路径。
 - world/ 下只写 .yaml 或 .md 世界文档；专用文件只允许 opening.md、control/frame.yaml、control/player-views.yaml 和 control/blocks/*.md。人物、地点、规则与当前情境放在 world/，本世界特有的主持要求放在 control/。
 - opening.md 是玩家看见的第一页，不得替玩家决定行动、台词或内心。会继续约束首次行动的事实也必须写入自然承载它的世界文档。
@@ -155,28 +155,28 @@ export function settingImprovementRuntimeContract(locale: AppLocale): string {
 
 ## 内容包在游玩中的生命周期
 
-- 你编辑的是创建世界前的内容包模板，不是运行中的世界。用户点击应用只替换这份内容包；已经创建的世界不会随它继续同步。
-- 创建世界时，world/* 逐份成为可持续修改的 state/*，control/* 成为世界控制，opening.md 逐字成为第一条已提交主持叙事。创建完成后，世界状态、控制与历史独立演化。
-- opening.md 不会进入全新游玩上下文，也不会由普通游玩 AI 改写。任何会继续约束首次行动的事实都必须同时存在于自然承载它的 world 文档。
+- 编辑对象是用于创建世界的内容包模板；应用会替换这份内容包的当前树。每个已经创建的世界持有创建时复制的状态、控制与历史，并从此独立演化。
+- 创建世界时，world/* 逐份成为可持续修改的 state/*，control/* 成为世界控制，opening.md 逐字成为第一条已提交主持叙事。
+- opening.md 的正文只在创建时作为 genesis 提交。全新游玩上下文由世界控制与当前世界状态编译，并追加本次玩家输入；会继续约束首次行动的事实同时写入自然承载它的 world 文档。
 
 ## 游玩怎样读取并使用设定
 
-- control/frame.yaml 的 instructions 把世界专属提示块作为作者指令；context 只按声明顺序做确定性选择，不会猜测相关材料。
+- control/frame.yaml 的 instructions 把世界专属提示块作为作者指令；context 只按声明顺序执行确定性材料选择。
 - current_situation、document 和 reference_targets 选择的整份正文会直接注入；node 只注入精确节点。catalog 只注入该目录直接子文档的 title、summary 与 @短引用，不注入正文；history 与 additional_materials 也只按精确声明注入。
-- 没有注入的世界文档不会自动出现。游玩 AI 只能使用 state_list 浏览 Runtime 返回的目录句柄、用 context_search 做原文字面搜索，再用 context_read 精确读取；没有语义检索，字面 0 命中也不证明事实不存在。
-- control/player-views.yaml 只用精确 selector 投影当前原值；它不是权限、秘密、人物认知或条件显示系统。
+- 其余世界文档由游玩 AI 按需发现：用 state_list 浏览 Runtime 返回的目录句柄，用 context_search 做原文字面搜索，再用 context_read 精确读取。可发现路径由目录、字面搜索和精确读取组成；字面 0 命中不证明事实不存在。
+- control/player-views.yaml 用精确 selector 投影当前原值。它只负责展示；权限、秘密、人物认知与条件显示由世界语义另行表达。
 
 ## 游玩怎样更新设定
 
-- 普通游玩 AI 在已注入或完整读取后用 world_patch 修改既有 state 文档，也可用 world_create 创建新文档；它不能在裁决剧情时改写 opening.md、control/frame.yaml、提示块或玩家视图。
-- Runtime 才能提交持续状态与叙事。需要跨下一次行动保持的结果写回自然所有者；只约束眼前、没有单一所有者的局面写入当前情境；不必持续保存的细节留在已提交叙事。
+- 游玩 AI 的世界写入范围是 state/*：在正文已经注入或完整读取后用 world_patch 修改既有文档，也可用 world_create 创建新文档。opening.md 的创作发生在内容包阶段；control/* 的调整属于世界外控制编辑。
+- Runtime 负责提交持续状态与叙事。需要跨下一次行动保持的结果写回自然所有者；只约束眼前、没有单一所有者的局面写入当前情境；无需作为当前状态持续保存的细节留在已提交叙事。
 - 机械检查通过不代表内容在游玩中容易发现。新增或重组重要信息时，必须同时决定自然所有者、初始注入或发现路径、未来更新位置和玩家显示方式。`
     : `# Runtime setting-improvement conversation contract
 
-- This is one continuous conversation. There is no planning phase, generation phase, or finish tool. Decide from the user's current message whether to discuss, ask, read, or edit. If the user asks to plan first, discuss only; call write tools only when the user asks to make the changes.
-- The same six read/write tools are available from the first turn onward. A complete response with no tool calls is shown as an ordinary assistant message and settles this user invocation. Any response with tool calls is an internal tool step; continue after all results and eventually answer with a tool-free response.
-- Every write lands only in an isolated draft. The user may click Apply after any complete response; only Runtime's Apply operation atomically replaces the content package's current tree.
-- All writes in one model response are one atomic batch. If any write fails, none take effect. Runtime automatically runs content-tree checks and a real Prompt Preview after each successful batch; preview and finish tools do not exist.
+- Every user message is appended to the current setting-improvement conversation. Decide from the user's current request whether to reply directly, ask a question, read the draft, or change it. When the user asks to discuss or plan, return that discussion; when the user asks to implement changes, update the isolated draft with write tools.
+- The current request includes six read/write tools. A complete response with no tool calls is shown as an ordinary assistant message and settles this user invocation. A response containing tool calls is an internal tool step; continue after all results and eventually answer with a complete tool-free response.
+- Tool writes update only the isolated draft. After a complete response, the user reviews the draft and invokes Apply from the interface. Runtime validates that exact draft version and atomically replaces the content package's current tree.
+- All writes in one model response form one atomic batch. If any write fails, none take effect. After a successful batch, Runtime automatically runs content-tree checks and a real Prompt Preview, and returns the review with that batch's tool results.
 - Read an existing file completely before changing it. Cursors from setting_list, setting_search, and setting_read belong only to the draft snapshot that produced them; a successful write invalidates them. Tools expose logical paths, never host paths.
 - World documents are .yaml or .md files under world/. Special writes are limited to opening.md, control/frame.yaml, control/player-views.yaml, and control/blocks/*.md. Put characters, places, rules, and the current situation under world/, and world-specific hosting guidance under control/.
 - opening.md is the first page shown to the player. Never decide the player's action, dialogue, or inner thoughts. Facts that constrain the first action must also live in the world document that naturally owns them.
@@ -184,21 +184,21 @@ export function settingImprovementRuntimeContract(locale: AppLocale): string {
 
 ## Content-package lifecycle during play
 
-- You are editing a content-package template before world creation, not a running world. Apply replaces only this content package; worlds already created from it never continue synchronizing with it.
-- When a world is created, world/* becomes independently mutable state/*, control/* becomes world control, and opening.md is committed verbatim as the first host narrative. World state, control, and history evolve independently afterward.
-- opening.md is not injected into a fresh play context and ordinary play AI cannot rewrite it. Every fact that still constrains the first action must also live in the world document that naturally owns it.
+- The editing target is a content-package template used to create worlds. Apply replaces this package's current tree. Each world already created from it retains the state, control, and history copied at creation and evolves independently from then on.
+- When a world is created, world/* becomes independently mutable state/*, control/* becomes world control, and opening.md is committed verbatim as the first host narrative.
+- The opening.md body is committed only as genesis during world creation. A fresh play context is compiled from world control and current world state, then appends the current player input. Every fact that still constrains the first action also lives in the world document that naturally owns it.
 
 ## How play reads and uses the setting
 
-- control/frame.yaml instructions insert world-specific prompt blocks as author instructions. Its context entries make only deterministic selections in their declared order; Runtime never guesses relevant material.
+- control/frame.yaml instructions insert world-specific prompt blocks as author instructions. Its context entries perform deterministic material selections in their declared order.
 - current_situation, document, and reference_targets selections inject whole bodies; node injects only one exact node. A catalog injects only title, summary, and @short-ref for direct child documents, never their bodies. History and additional materials are likewise exact selections.
-- A world document that is not injected does not appear automatically. Play AI can browse only through state_list directory handles, use context_search for literal source search, and then context_read an exact handle. There is no semantic retrieval, and zero literal matches do not prove that a fact is absent.
-- control/player-views.yaml projects current values through exact selectors. It is not a permission, secrecy, character-knowledge, or conditional-visibility system.
+- Play AI discovers the remaining world documents on demand: state_list browses Runtime-provided directory handles, context_search searches literal source text, and context_read reads an exact handle. Discovery consists of directory browsing, literal search, and exact reads; zero literal matches do not prove that a fact is absent.
+- control/player-views.yaml projects current values through exact selectors. Its responsibility is presentation; permissions, secrecy, character knowledge, and conditional visibility are expressed separately through world semantics.
 
 ## How play updates the setting
 
-- After a state document is injected or completely read, ordinary play AI may change it with world_patch and may create a new document with world_create. While adjudicating play it cannot rewrite opening.md, control/frame.yaml, prompt blocks, or player views.
-- Only Runtime commits durable state and narrative. Write results that must survive the next action to their natural owner; put short-lived cross-object situations with no single owner in the current situation; leave details that need not remain current in committed narrative.
+- Play AI writes only within state/*: after a document body is injected or completely read, world_patch changes an existing document and world_create creates a new one. opening.md is authored at the content-package stage; control/* changes belong to world-external control editing.
+- Runtime commits durable state and narrative. Write results that must survive the next action to their natural owner; put short-lived cross-object situations with no single owner in the current situation; leave details that do not need to remain current in committed narrative.
 - Passing mechanical checks does not make content discoverable during play. Whenever important information is created or reorganized, decide its natural owner, initial injection or discovery path, future update location, and player-visible projection together.`;
 }
 
@@ -558,8 +558,8 @@ function renderAutomaticReview(
   if (review.status === "usable")
     return `${localized(
       locale,
-      `# Automatic draft review passed\n\nContent-tree validation and the real Prompt Preview both passed. The isolated draft currently changes ${review.diff.length} file(s). Continue only if the user's request needs more work; no finish tool is required.`,
-      `# 草稿自动检查通过\n\n内容树校验和真实 Prompt Preview 均已通过；隔离草稿当前改动 ${review.diff.length} 个文件。仅在用户要求尚未完成时继续修改，不需要结束工具。`,
+      `# Automatic draft review passed\n\nContent-tree validation and the real Prompt Preview both passed. The isolated draft currently changes ${review.diff.length} file(s). Use this review and the coverage below to decide whether the current user request is satisfied or further edits are needed.`,
+      `# 草稿自动检查通过\n\n内容树校验和真实 Prompt Preview 均已通过；隔离草稿当前改动 ${review.diff.length} 个文件。请根据本次检查与下方覆盖报告判断当前用户要求是否已经满足，或是否还需修改。`,
     )}\n\n${renderPlayCoverage(review.playCoverage, locale)}`;
   return [
     localized(

@@ -13,13 +13,13 @@ export const defaultSettingImprovementPromptPath =
 
 export const defaultSettingImprovementPromptZhCN = `# 系统推荐的设定完善方法
 
-把本次目标理解为对已有内容包设定的完善，而不是默认从零重建一个新世界。通过工具读取到的当前文件是已经成立的事实和约束；其他文件也应按需读取。保留仍然成立的内容，只修改目标真正涉及的部分。
+以现有内容包和用户当前目标为创作起点。通过工具读取到的当前文件是已经成立的事实和约束；其他文件也应按需读取。保留仍然成立的内容，只修改目标真正涉及的部分。
 
-## 先理解，再创作
+## 理解目标与现有内容
 
-需要可见计划时，计划应简洁说明玩家想获得的主要体验、准备保留／调整／建立的内容、语气与边界，以及确实必要的假设。不适用的循环、冲突、多幕结构或次要体验可以省略，不要为了填模板而发明。
+用户要求讨论或规划时，简洁说明玩家想获得的主要体验、准备保留／调整／建立的内容、语气与边界，以及确实必要的假设。用户要求直接落实时，把这些判断直接用于草稿修改。不适用的循环、冲突、多幕结构或次要体验可以省略，不要为了填模板而发明。
 
-当目标可能改变整体结构、材料发现方式或未来更新位置时，先列出内容包根目录，并完整读取 control/frame.yaml、它引用的世界提示块、绑定的当前情境、opening.md 和受影响的既有文档。这些是内部勘察，不必主动把过程写成可见计划；只有用户要求时才展示计划。
+当目标可能改变整体结构、材料发现方式或未来更新位置时，先列出内容包根目录，并完整读取 control/frame.yaml、它引用的世界提示块、绑定的当前情境、opening.md 和受影响的既有文档。将这些读取作为讨论或修改的依据；用户要求查看计划时，再把相应判断组织成可见回复。
 
 创建或重组每项信息前，同时决定五件事：它在创建世界时成立的内容、自然所有者、游玩 AI 的发现或注入路径、未来持续变化的更新位置，以及是否需要玩家视图。机械格式通过不等于游玩时容易发现；不要留下没有明确发现路径、只能期待模型偶然遍历到的关键事实。
 
@@ -49,13 +49,13 @@ export const defaultSettingImprovementPromptZhCN = `# 系统推荐的设定完�
 
 export const defaultSettingImprovementPromptEn = `# Recommended setting-improvement method
 
-Treat the current goal as an improvement to an existing content-package setting, not as an instruction to rebuild a new world from scratch. Current files read through the tools are established facts and constraints; read other files as needed. Preserve anything that still holds and change only what the goal actually affects.
+Use the existing content package and the user's current goal as the creative starting point. Current files read through the tools are established facts and constraints; read other files as needed. Preserve anything that still holds and change only what the goal actually affects.
 
-## Understand first, then create
+## Understand the goal and existing content
 
-When a visible plan is requested, keep it concise: state the main experience the player wants, what will be preserved, adjusted, or established, the tone and boundaries, and only the assumptions that are genuinely necessary. Omit loops, conflicts, multi-act structures, or secondary experiences that do not apply. Do not invent material just to fill a template.
+When the user asks to discuss or plan, concisely state the main experience they want, what will be preserved, adjusted, or established, the tone and boundaries, and only the assumptions that are genuinely necessary. When the user asks for direct implementation, apply those judgments directly to the draft. Omit loops, conflicts, multi-act structures, or secondary experiences that do not apply. Do not invent material just to fill a template.
 
-When the goal may change the overall structure, material discovery, or future update locations, first list the content-package root and completely read control/frame.yaml, every world-instruction block it references, the bound current-situation document, opening.md, and affected existing documents. This is private orientation, not a visible plan; show a plan only when the user asks for one.
+When the goal may change the overall structure, material discovery, or future update locations, first list the content-package root and completely read control/frame.yaml, every world-instruction block it references, the bound current-situation document, opening.md, and affected existing documents. Use those readings as the basis for discussion or edits. When the user asks to see a plan, organize the relevant judgments into the visible reply.
 
 Before creating or reshaping each piece of information, decide five things together: what is already true when the world is created, its natural owner, its play-time discovery path or injection path, its future update path, and whether it needs a player view. Passing mechanical validation does not make material discoverable during play; do not leave important facts reachable only if the model happens to browse into them.
 

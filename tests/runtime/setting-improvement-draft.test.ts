@@ -21,7 +21,7 @@ const preview = {
   leakage: { status: "clean", checkedFields: [] },
 } as unknown as PromptPreview;
 
-test("设定完善从第一轮起只有固定六个读写工具，没有计划或结束工具", () => {
+test("设定完善契约只描述当前对话、工具与应用行为", () => {
   expect(
     settingImprovementToolDefinitions("zh-CN").map(({ name }) => name),
   ).toEqual([
@@ -33,14 +33,22 @@ test("设定完善从第一轮起只有固定六个读写工具，没有计划�
     "setting_move",
   ]);
   const contract = settingImprovementRuntimeContract("zh-CN");
-  expect(contract).toContain("没有“计划阶段”“生成阶段”或结束工具");
+  expect(contract).toContain("每条用户消息都追加到当前设定完善对话");
+  expect(contract).toContain("用户要求讨论或规划时给出讨论结果");
   expect(contract).toContain("不调用工具的完整响应");
   expect(contract).toContain("原子批次");
+  expect(contract).toContain("检查结果随本批工具结果返回");
   expect(contract).toContain("内容包在游玩中的生命周期");
   expect(contract).toContain("world/*");
   expect(contract).toContain("state_list");
-  expect(contract).toContain("opening.md 不会进入全新游玩上下文");
+  expect(contract).toContain("全新游玩上下文由世界控制与当前世界状态编译");
   expect(contract).toContain("精确 selector");
+  expect(contract).not.toMatch(/计划阶段|生成阶段|结束工具|preview 或 finish/u);
+
+  const englishContract = settingImprovementRuntimeContract("en");
+  expect(englishContract).not.toMatch(
+    /planning phase|generation phase|finish tool|preview and finish tools/iu,
+  );
 });
 
 test("自动检查把改动文档在真实游玩提示中的覆盖方式返回给模型", () => {
@@ -90,6 +98,7 @@ test("自动检查把改动文档在真实游玩提示中的覆盖方式返回�
   expect(results.at(-1)?.markdown).toContain(
     "consider adding a catalog, injected reference, or world instruction",
   );
+  expect(results.at(-1)?.markdown).not.toContain("finish tool");
   expect(draft.review().playCoverage).toMatchObject({
     changed: [
       { path: "control/blocks/unused.md", access: "unused_control" },

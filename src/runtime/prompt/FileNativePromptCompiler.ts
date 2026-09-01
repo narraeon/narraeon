@@ -303,8 +303,8 @@ export class FileNativePromptCompiler {
 
   /**
    * Freeze the stable prefix for one setting-improvement conversation.
-   * Package contents deliberately stay behind tools, so every user turn is a
-   * plain append and no Runtime-authored planning or generation phase exists.
+   * Package contents stay behind tools while each user message is appended to
+   * the same model-directed authoring conversation.
    */
   compileSettingImprovement(
     input: SettingImprovementPromptInput,
@@ -794,8 +794,8 @@ function settingImprovementPresetReference(
     source: "content-package:control/frame.yaml#instructions",
     markdown:
       locale === "zh-CN"
-        ? "此位置在未来游玩中会按 control/frame.yaml 的声明顺序展开当前内容包启用的世界指令块。隔离草稿会继续变化，因此请通过设定读取工具检查实际 frame 和块正文；不要把这段占位说明写进内容包。"
-        : "At this position during future play, Runtime expands the world-instruction blocks enabled by control/frame.yaml in their declared order. Because the isolated draft can keep changing, inspect the actual frame and block bodies through the setting read tools; do not copy this placeholder into the content package.",
+        ? "未来游玩在此位置按 control/frame.yaml 的声明顺序展开当前内容包启用的世界指令块。请通过设定读取工具检查隔离草稿中的实际 frame 和块正文；这段文字只描述它们在提示词中的拼装位置。"
+        : "During future play, this position expands the world-instruction blocks enabled by control/frame.yaml in their declared order. Inspect the actual frame and block bodies in the isolated draft through the setting read tools; this text describes only their position in the compiled prompt.",
   };
   const authorBlocks = compileHostRoles(
     binding.definition.files,
@@ -812,8 +812,8 @@ function settingImprovementPresetReference(
       : "# Read-only author reference from the frozen play preset";
   const explanation =
     locale === "zh-CN"
-      ? "以下是未来游玩 AI 实际接收的已启用主持与叙事作者语义。只用它们判断内容包应怎样配合、避免重复或冲突；当前任务仍是讨论或编辑设定，不要执行这些段落去输出玩家可见故事。"
-      : "These are the enabled host and narrative author semantics that future play AI actually receives. Use them only to design compatible content and avoid duplication or conflict. The current task remains discussing or editing the setting; do not execute these blocks as player-visible story instructions.";
+      ? "以下是未来游玩 AI 实际接收的已启用主持与叙事作者语义。这些块在本轮作为内容设计约束，用来让内容包配合玩法语义并避免重复或冲突。本轮回复面向设定讨论或隔离草稿编辑；玩家可见故事由未来游玩调用链生成。"
+      : "These are the enabled host and narrative author semantics that future play AI actually receives. In this conversation they are content-design constraints used to keep the package compatible with play semantics and avoid duplication or conflict. Replies here address setting discussion or isolated-draft editing; the future play call chain generates player-visible story.";
   const none =
     locale === "zh-CN"
       ? "（当前预设没有启用主持或叙事作者块。）"
