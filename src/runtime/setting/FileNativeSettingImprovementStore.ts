@@ -8,6 +8,10 @@ import type {
   ModelHostAppendItem,
   ModelHostBinding,
 } from "../model/ModelHost.ts";
+import {
+  isPlayPresetBinding,
+  type PlayPresetBinding,
+} from "../play/FileNativePlayPresetStore.ts";
 import type { PromptCompilation } from "../prompt/FileNativePromptCompiler.ts";
 import type {
   PersistedSettingDraftState,
@@ -37,6 +41,8 @@ export interface StoredSettingImprovementSession {
   review: SettingDraftReview;
   bootstrap: PromptCompilation;
   modelBinding: ModelHostBinding;
+  /** Absent only on conversations created before preset freezing shipped. */
+  playPreset?: PlayPresetBinding;
   modelItems: ModelHostAppendItem[];
   messages: SettingConversationMessage[];
   usage: ModelUsage;
@@ -173,6 +179,8 @@ function validateStoredSession(
     !isRecord(value.review) ||
     !isRecord(value.bootstrap) ||
     !isRecord(value.modelBinding) ||
+    (value.playPreset !== undefined &&
+      !isPlayPresetBinding(value.playPreset)) ||
     !Array.isArray(value.modelItems) ||
     !Array.isArray(value.messages) ||
     !isRecord(value.usage) ||

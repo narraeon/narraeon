@@ -281,6 +281,31 @@ export interface V1SettingImprovementView {
     diff: V1SettingDraftDiff[];
     diagnostics: { code: string; path: string; message: string }[];
     preview: V1SettingPromptPreview | null;
+    /** Absent only on views persisted before deterministic coverage shipped. */
+    playCoverage?: {
+      totals: {
+        fullInjected: number;
+        nodeInjected: number;
+        catalogSummary: number;
+        referencedFromInjected: number;
+        onDemand: number;
+      };
+      changed: {
+        path: string;
+        access:
+          | "full_injected"
+          | "node_injected"
+          | "catalog_summary"
+          | "referenced_from_injected"
+          | "on_demand"
+          | "opening_genesis"
+          | "play_control"
+          | "unused_control"
+          | "player_view"
+          | "removed";
+        detail: string;
+      }[];
+    } | null;
   };
   usage: ModelUsage;
   progress: {

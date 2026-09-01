@@ -1,14 +1,23 @@
 import { expect, test } from "vitest";
 
 import { minimalFileNativeContentScaffold } from "../../src/runtime/content/ContentWorkspace.ts";
-import type { PromptPreview } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
+import {
+  builtinDefaultPlayPresetBinding,
+  presetHostBinding,
+} from "../../src/runtime/play/FileNativePlayPresetStore.ts";
+import {
+  FileNativePromptCompiler,
+  type PromptPreview,
+} from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
 import {
   SettingImprovementDraft,
   settingImprovementRuntimeContract,
   settingImprovementToolDefinitions,
 } from "../../src/runtime/setting/SettingImprovementDraft.ts";
+import type { WorldDocumentStore } from "../../src/runtime/world/WorldDocumentStore.ts";
 
 const preview = {
+  compilation: { coverage: [], logicalMessages: [] },
   leakage: { status: "clean", checkedFields: [] },
 } as unknown as PromptPreview;
 
@@ -27,6 +36,70 @@ test("设定完善从第一轮起只有固定六个读写工具，没有计划�
   expect(contract).toContain("没有“计划阶段”“生成阶段”或结束工具");
   expect(contract).toContain("不调用工具的完整响应");
   expect(contract).toContain("原子批次");
+  expect(contract).toContain("内容包在游玩中的生命周期");
+  expect(contract).toContain("world/*");
+  expect(contract).toContain("state_list");
+  expect(contract).toContain("opening.md 不会进入全新游玩上下文");
+  expect(contract).toContain("精确 selector");
+});
+
+test("自动检查把改动文档在真实游玩提示中的覆盖方式返回给模型", () => {
+  const baseFiles = minimalFileNativeContentScaffold("en");
+  const draft = new SettingImprovementDraft({
+    baseFiles,
+    locale: "en",
+    preview: productionPreview,
+  });
+  const results = draft.execute([
+    {
+      id: "create-character",
+      name: "setting_write_file",
+      arguments: {
+        path: "world/characters/alex.yaml",
+        contents: `$document:\n  id: ignored\n  ref: alex\n  title: Alex\n  summary: A courier whose current assignment can affect the opening scene.\n  aliases: []\nstatus: waiting at the gate\n`,
+      },
+    },
+    {
+      id: "create-lore",
+      name: "setting_write_file",
+      arguments: {
+        path: "world/lore/old-oath.md",
+        contents: `---\n$document:\n  id: ignored\n  ref: old-oath\n  title: The old oath\n  summary: Explains the promise that still constrains the two houses.\n  aliases: []\n---\n\n# The old oath\n\nThe two houses may not draw steel inside the gate.\n`,
+      },
+    },
+    {
+      id: "create-unused-control",
+      name: "setting_write_file",
+      arguments: {
+        path: "control/blocks/unused.md",
+        contents: "# Unused world instruction\n\nThis block is not enabled.",
+      },
+    },
+  ]);
+
+  expect(results.at(-1)?.markdown).toContain("Play-consumption coverage");
+  expect(results.at(-1)?.markdown).toContain(
+    "world/characters/alex.yaml — catalog summary only",
+  );
+  expect(results.at(-1)?.markdown).toContain(
+    "world/lore/old-oath.md — on-demand only",
+  );
+  expect(results.at(-1)?.markdown).toContain(
+    "control/blocks/unused.md — not enabled by control/frame.yaml",
+  );
+  expect(results.at(-1)?.markdown).toContain(
+    "consider adding a catalog, injected reference, or world instruction",
+  );
+  expect(draft.review().playCoverage).toMatchObject({
+    changed: [
+      { path: "control/blocks/unused.md", access: "unused_control" },
+      {
+        path: "world/characters/alex.yaml",
+        access: "catalog_summary",
+      },
+      { path: "world/lore/old-oath.md", access: "on_demand" },
+    ],
+  });
 });
 
 test("同一完整响应里的所有写入整批原子回滚，读取结果仍保留", () => {
@@ -146,3 +219,33 @@ test("无效 cursor 不会把正常世界文档误授权为可覆盖的损坏文
     ]),
   ).toMatchObject([{ isError: true }]);
 });
+
+function productionPreview(snapshot: WorldDocumentStore): PromptPreview {
+  const playPreset = builtinDefaultPlayPresetBinding("en");
+  const compiler = new FileNativePromptCompiler({ locale: "en" });
+  const openingMessage = "setting-draft.message.genesis.narrator";
+  const opening = snapshot.files.find(({ path }) => path === "opening.md");
+  return compiler.preview(
+    {
+      endpoint: { id: "setting-draft", commit: "draft" },
+      hostBinding: presetHostBinding(playPreset),
+      world: {
+        controlFingerprint: "setting-draft",
+        documentSnapshot: snapshot,
+        history: { [openingMessage]: opening?.contents ?? "" },
+        additionalMaterials: [
+          { kind: "history_message", message: openingMessage },
+        ],
+      },
+      playerInputPlacement: "append",
+      playerInput: "Preview the setting draft.",
+      modelBinding: {
+        provider: "chat_completions",
+        modelId: "preview-model",
+        contextWindowTokens: 32_000,
+        maxOutputTokens: 4_096,
+      },
+    },
+    playPreset,
+  );
+}

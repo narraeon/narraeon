@@ -105,6 +105,8 @@ export interface PromptCompilation {
         | { markdown: readonly string[] }
         | null;
     };
+    /** Exact catalog entries whose summaries, but not bodies, were injected. */
+    catalogEntries?: string[];
   }[];
   budget: {
     estimator: "conservative_utf8_bytes" | "disabled";
@@ -129,6 +131,7 @@ export interface PromptCompilation {
 export interface SettingImprovementPromptInput {
   runtimeContract: string;
   authorPrompt: string;
+  playPreset: PlayPresetBinding;
   modelBinding: FileNativePromptInput["modelBinding"];
   tools: PromptCompilation["tools"];
 }
@@ -307,6 +310,24 @@ export class FileNativePromptCompiler {
     input: SettingImprovementPromptInput,
   ): PromptCompilation {
     validateModel(input.modelBinding);
+    const presetReference = settingImprovementPresetReference(
+      input.playPreset,
+      this.#locale,
+    );
+    const draftBoundary =
+      this.#locale === "zh-CN"
+        ? "# 隔离草稿\n\n当前内容包只可通过随附工具读取和修改。所有修改先进入隔离草稿；只有用户在界面中点击应用，Runtime 才会替换内容包当前树。"
+        : "# Isolated draft\n\nThe current content package can be read and changed only through the attached tools. Every change first enters an isolated draft; Runtime replaces the package's current tree only when the user clicks Apply in the interface.";
+    const worldContextBlocks = [
+      {
+        source: "play-preset:author-reference",
+        markdown: presetReference,
+      },
+      {
+        source: "runtime:setting-draft-boundary",
+        markdown: draftBoundary,
+      },
+    ];
     const logicalMessages: PromptCompilation["logicalMessages"] = [
       {
         role: "runtime_system",
@@ -330,19 +351,8 @@ export class FileNativePromptCompiler {
       },
       {
         role: "world_context",
-        markdown:
-          this.#locale === "zh-CN"
-            ? "# 隔离草稿\n\n当前内容包只可通过随附工具读取和修改。所有修改先进入隔离草稿；只有用户在界面中点击应用，Runtime 才会替换内容包当前树。"
-            : "# Isolated draft\n\nThe current content package can be read and changed only through the attached tools. Every change first enters an isolated draft; Runtime replaces the package's current tree only when the user clicks Apply in the interface.",
-        blocks: [
-          {
-            source: "runtime:setting-draft-boundary",
-            markdown:
-              this.#locale === "zh-CN"
-                ? "当前内容包只可通过随附工具读取和修改；修改先进入隔离草稿，只有用户点击应用才替换当前树。"
-                : "The current content package is available only through the attached tools; changes enter an isolated draft and replace the current tree only when the user clicks Apply.",
-          },
-        ],
+        markdown: joinBlocks(worldContextBlocks),
+        blocks: worldContextBlocks,
       },
     ];
     const tools = structuredClone(input.tools);
@@ -746,15 +756,7 @@ function playCallChainNarrativeGuidance(
   messages: PromptCompilation["logicalMessages"],
   binding: PlayPresetBinding,
 ): PromptCompilation["logicalMessages"] {
-  const narrativeBlocks = binding.definition.narrativePrompts.map((prompt) => {
-    const markdown = binding.definition.files[prompt.path];
-    if (markdown === undefined)
-      throw new PromptCompilationError(
-        "play_preset_prompt_missing",
-        `Play-preset narrative prompt block does not exist: ${prompt.path}`,
-      );
-    return { source: `play:${prompt.path}`, markdown: markdown.trim() };
-  });
+  const narrativeBlocks = playNarrativeBlocks(binding);
   if (narrativeBlocks.length === 0) return cloneLogicalMessages(messages);
   let found = false;
   const result = cloneLogicalMessages(messages).map((message) => {
@@ -770,6 +772,78 @@ function playCallChainNarrativeGuidance(
     );
   scanRuntimeLeakage(result);
   return result;
+}
+
+/**
+ * Freeze the enabled play-author semantics as reference material for setting
+ * design. World instructions stay behind setting tools because they belong to
+ * the evolving draft; the current host and narrative blocks are immutable for
+ * this conversation and must be visible if the authoring model is expected to
+ * avoid duplicating or contradicting them.
+ */
+function settingImprovementPresetReference(
+  binding: PlayPresetBinding,
+  locale: AppLocale,
+): string {
+  const hostFrame = readYamlRecord(
+    binding.definition.files["frame.yaml"],
+    "play-preset host frame",
+  );
+  requireFormat(hostFrame, "narraeon.host-frame/v1", "host frame");
+  const worldInstructionPlaceholder = {
+    source: "content-package:control/frame.yaml#instructions",
+    markdown:
+      locale === "zh-CN"
+        ? "此位置在未来游玩中会按 control/frame.yaml 的声明顺序展开当前内容包启用的世界指令块。隔离草稿会继续变化，因此请通过设定读取工具检查实际 frame 和块正文；不要把这段占位说明写进内容包。"
+        : "At this position during future play, Runtime expands the world-instruction blocks enabled by control/frame.yaml in their declared order. Because the isolated draft can keep changing, inspect the actual frame and block bodies through the setting read tools; do not copy this placeholder into the content package.",
+  };
+  const authorBlocks = compileHostRoles(
+    binding.definition.files,
+    hostFrame,
+    [worldInstructionPlaceholder],
+    [],
+    [],
+    locale,
+  ).author_instruction;
+  const blocks = [...authorBlocks, ...playNarrativeBlocks(binding)];
+  const heading =
+    locale === "zh-CN"
+      ? "# 当前冻结预设的只读创作参考"
+      : "# Read-only author reference from the frozen play preset";
+  const explanation =
+    locale === "zh-CN"
+      ? "以下是未来游玩 AI 实际接收的已启用主持与叙事作者语义。只用它们判断内容包应怎样配合、避免重复或冲突；当前任务仍是讨论或编辑设定，不要执行这些段落去输出玩家可见故事。"
+      : "These are the enabled host and narrative author semantics that future play AI actually receives. Use them only to design compatible content and avoid duplication or conflict. The current task remains discussing or editing the setting; do not execute these blocks as player-visible story instructions.";
+  const none =
+    locale === "zh-CN"
+      ? "（当前预设没有启用主持或叙事作者块。）"
+      : "(The current preset enables no host or narrative author blocks.)";
+  const rendered = blocks.map(
+    ({ source, markdown }) => `## ${source}\n\n${markdown.trim()}\n\n---`,
+  );
+  return [
+    heading,
+    "",
+    explanation,
+    "",
+    ...(rendered.length > 0 ? rendered : [none]),
+  ]
+    .join("\n")
+    .trim();
+}
+
+function playNarrativeBlocks(
+  binding: PlayPresetBinding,
+): { source: string; markdown: string }[] {
+  return binding.definition.narrativePrompts.map((prompt) => {
+    const markdown = binding.definition.files[prompt.path];
+    if (markdown === undefined)
+      throw new PromptCompilationError(
+        "play_preset_prompt_missing",
+        `Play-preset narrative prompt block does not exist: ${prompt.path}`,
+      );
+    return { source: `play:${prompt.path}`, markdown: markdown.trim() };
+  });
 }
 
 function withoutAppendedContextGenesis(
@@ -1588,6 +1662,7 @@ function resolveCatalog(
     complete:
       matches.length > 0 && matches.length <= max && damaged.length === 0,
     continuation: "state_list",
+    catalogEntries: page.map(({ shortRef }) => shortRef),
   });
 }
 

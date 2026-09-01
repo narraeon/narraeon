@@ -91,6 +91,11 @@ describe("默认提示词职责", () => {
     expect(defaultSettingImprovementPrompt).toContain(
       "first page of this interactive novel",
     );
+    expect(defaultSettingImprovementPrompt).toContain(
+      "read control/frame.yaml",
+    );
+    expect(defaultSettingImprovementPrompt).toContain("discovery path");
+    expect(defaultSettingImprovementPrompt).toContain("future update path");
     expect(defaultSettingImprovementPrompt).not.toContain("setting_write_file");
     expect(defaultSettingImprovementPrompt).not.toContain("参数 schema");
     expect(

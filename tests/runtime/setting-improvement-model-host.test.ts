@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 
 import { FileNativeModelHost } from "../../src/runtime/model/FileNativeModelAdapters.ts";
+import { builtinDefaultPlayPresetBinding } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
 import { FileNativePromptCompiler } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
 import {
   settingImprovementRuntimeContract,
@@ -24,9 +25,13 @@ test.each([
     });
     const compiler = new FileNativePromptCompiler({ locale: "zh-CN" });
     const tools = settingImprovementToolDefinitions("zh-CN");
+    const playPreset = builtinDefaultPlayPresetBinding("zh-CN");
+    playPreset.definition.files["blocks/not-enabled.md"] =
+      "UNLISTED-PRESET-BLOCK-MUST-NOT-LEAK";
     const bootstrap = compiler.compileSettingImprovement({
       runtimeContract: settingImprovementRuntimeContract("zh-CN"),
       authorPrompt: "保留已有事实，只按用户当前消息行动。",
+      playPreset,
       modelBinding: host.binding(),
       tools,
     });
@@ -45,6 +50,12 @@ test.each([
     const serialized = JSON.stringify(request.body);
 
     expect(serialized).toContain("先讨论，不要修改。");
+    expect(serialized).toContain("内容包在游玩中的生命周期");
+    expect(serialized).toContain("当前冻结预设的只读创作参考");
+    expect(serialized).toContain("按 control/frame.yaml 的声明顺序");
+    expect(serialized).toContain("通用状态维护判据");
+    expect(serialized).toContain("玩家可见叙事规则");
+    expect(serialized).not.toContain("UNLISTED-PRESET-BLOCK-MUST-NOT-LEAK");
     for (const name of [
       "setting_list",
       "setting_search",

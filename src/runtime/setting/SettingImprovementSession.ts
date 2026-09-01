@@ -21,6 +21,10 @@ import type {
   FileNativePromptCompiler,
   PromptPreview,
 } from "../prompt/FileNativePromptCompiler.ts";
+import {
+  settingImprovementPromptForBinding,
+  type PlayPresetBinding,
+} from "../play/FileNativePlayPresetStore.ts";
 import type { WorldDocumentStore } from "../world/WorldDocumentStore.ts";
 import {
   type FileNativeSettingImprovementStore,
@@ -50,10 +54,11 @@ export class SettingImprovementSession {
   readonly #compiler: FileNativePromptCompiler;
   readonly #locale: () => AppLocale;
   readonly #bindModelHost: () => Promise<ModelHost>;
-  readonly #authorPrompt: () => Promise<string>;
+  readonly #bindPlayPreset: () => Promise<PlayPresetBinding>;
   readonly #preview: (
     snapshot: WorldDocumentStore,
     modelBinding: ReturnType<ModelHost["binding"]>,
+    playPreset: PlayPresetBinding | undefined,
   ) => PromptPreview;
   readonly #runs = new Map<string, LiveRun>();
   #mutationTail: Promise<void> = Promise.resolve();
@@ -64,10 +69,11 @@ export class SettingImprovementSession {
     compiler: FileNativePromptCompiler;
     locale: () => AppLocale;
     bindModelHost: () => Promise<ModelHost>;
-    authorPrompt: () => Promise<string>;
+    bindPlayPreset: () => Promise<PlayPresetBinding>;
     preview: (
       snapshot: WorldDocumentStore,
       modelBinding: ReturnType<ModelHost["binding"]>,
+      playPreset: PlayPresetBinding | undefined,
     ) => PromptPreview;
   }) {
     this.#store = input.store;
@@ -75,7 +81,7 @@ export class SettingImprovementSession {
     this.#compiler = input.compiler;
     this.#locale = input.locale;
     this.#bindModelHost = input.bindModelHost;
-    this.#authorPrompt = input.authorPrompt;
+    this.#bindPlayPreset = input.bindPlayPreset;
     this.#preview = input.preview;
   }
 
@@ -249,22 +255,24 @@ export class SettingImprovementSession {
   }
 
   async #create(packageId: string): Promise<StoredSettingImprovementSession> {
-    const [package_, host, authorPrompt] = await Promise.all([
+    const [package_, host, playPreset] = await Promise.all([
       this.#content.readCurrentTreeContentPackage(packageId),
       this.#bindModelHost(),
-      this.#authorPrompt(),
+      this.#bindPlayPreset(),
     ]);
     const locale = this.#locale();
     const modelBinding = host.binding();
+    const authorPrompt = settingImprovementPromptForBinding(playPreset, locale);
     const draft = new SettingImprovementDraft({
       baseFiles: package_.files,
       locale,
-      preview: (snapshot) => this.#preview(snapshot, modelBinding),
+      preview: (snapshot) => this.#preview(snapshot, modelBinding, playPreset),
     });
     const tools = settingImprovementToolDefinitions(locale);
     const bootstrap = this.#compiler.compileSettingImprovement({
       runtimeContract: settingImprovementRuntimeContract(locale),
       authorPrompt,
+      playPreset,
       modelBinding,
       tools,
     });
@@ -285,6 +293,7 @@ export class SettingImprovementSession {
       review: draft.review(),
       bootstrap,
       modelBinding,
+      playPreset: structuredClone(playPreset),
       modelItems: [],
       messages: [],
       usage: emptyAggregatedModelUsage(),
@@ -483,7 +492,8 @@ export class SettingImprovementSession {
     return new SettingImprovementDraft({
       baseFiles: session.baseFiles,
       locale: session.locale,
-      preview: (snapshot) => this.#preview(snapshot, session.modelBinding),
+      preview: (snapshot) =>
+        this.#preview(snapshot, session.modelBinding, session.playPreset),
       persisted: session.draft,
     });
   }

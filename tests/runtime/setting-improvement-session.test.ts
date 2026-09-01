@@ -12,10 +12,14 @@ import {
   type ModelHostBinding,
   type ScriptedModelHostStep,
 } from "../../src/runtime/model/ModelHost.ts";
+import { FileNativePromptCompiler } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
 import {
-  FileNativePromptCompiler,
-  type PromptPreview,
-} from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
+  builtinDefaultPlayPresetBinding,
+  parsePlayPresetFiles,
+  presetHostBinding,
+  revisionForPlayPresetFiles,
+  type PlayPresetBinding,
+} from "../../src/runtime/play/FileNativePlayPresetStore.ts";
 import { FileNativeSettingImprovementStore } from "../../src/runtime/setting/FileNativeSettingImprovementStore.ts";
 import {
   SettingImprovementSession,
@@ -39,10 +43,6 @@ const binding: ModelHostBinding = {
   protocolConfigFingerprint: "protocol:test",
   cacheStrategy: "provider_managed",
 };
-
-const preview = {
-  leakage: { status: "clean", checkedFields: [] },
-} as unknown as PromptPreview;
 
 test("普通消息直接形成持久对话；首轮工具全集不随讨论或修改意图变化", async () => {
   const fixture = await createFixture([
@@ -79,6 +79,25 @@ test("普通消息直接形成持久对话；首轮工具全集不随讨论或�
   expect(fixture.host.requests[0]?.appended).toEqual([
     { kind: "user", text: "先讨论一下计划" },
   ]);
+  const stored = await new FileNativeSettingImprovementStore(fixture.root).read(
+    view.sessionId,
+  );
+  expect(stored.playPreset).toMatchObject({
+    id: "builtin-default",
+    revision: "builtin-default-v1",
+  });
+  expect(stored.review.preview).toMatchObject({
+    diagnosticBinding: {
+      playPresetId: "builtin-default",
+      playPresetRevision: "builtin-default-v1",
+    },
+    initialAppend: {
+      logical: { kind: "player", text: "Preview the setting draft." },
+    },
+  });
+  expect(JSON.stringify(stored.review.preview)).not.toContain(
+    "message.genesis.narrator",
+  );
 
   const restarted = serviceFor(
     fixture.root,
@@ -89,6 +108,68 @@ test("普通消息直接形成持久对话；首轮工具全集不随讨论或�
     sessionId: view.sessionId,
     messages: view.messages,
     draftVersion: 0,
+  });
+});
+
+test("重启后继续使用会话冻结的玩法预设语义和 Preview，而不跟随当前选择", async () => {
+  const root = await mkdtemp(join(tmpdir(), "narraeon-setting-preset-"));
+  roots.push(root);
+  const content = new ContentWorkspace(root, { locale: () => "en" });
+  const created = await content.createCurrentTreeContentPackage();
+  const frozenPreset = presetWithFrozenStateMarker();
+  const firstHost = new ScriptedModelHost({
+    binding,
+    steps: [{ outcome: "response", text: "We can continue.", toolCalls: [] }],
+  });
+  const first = serviceFor(root, content, firstHost, frozenPreset);
+  const started = await first.send({
+    packageId: created.localId,
+    requestId: "request-freeze-preset",
+    message: "Start with this preset.",
+  });
+  expect(JSON.stringify(firstHost.requests[0]?.bootstrap)).toContain(
+    "FROZEN-PRESET-STATE-MARKER",
+  );
+
+  const nextHost = new ScriptedModelHost({
+    binding,
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "create-recovery-lore",
+            name: "setting_write_file",
+            arguments: {
+              path: "world/lore/recovery.md",
+              contents:
+                "---\n$document:\n  id: ignored\n  ref: recovery\n  title: Recovery\n  summary: Confirms the frozen preset survives restart.\n  aliases: []\n---\n\n# Recovery\n\nStill frozen.\n",
+            },
+          },
+        ],
+      },
+      { outcome: "response", text: "The draft is updated.", toolCalls: [] },
+    ],
+  });
+  const restartedWithDifferentCurrentPreset = serviceFor(
+    root,
+    content,
+    nextHost,
+    builtinDefaultPlayPresetBinding("en"),
+  );
+  const continued = await restartedWithDifferentCurrentPreset.send({
+    packageId: created.localId,
+    requestId: "request-after-preset-change",
+    message: "Add one recovery note.",
+  });
+
+  expect(continued.sessionId).toBe(started.sessionId);
+  expect(JSON.stringify(nextHost.requests[0]?.bootstrap)).toContain(
+    "FROZEN-PRESET-STATE-MARKER",
+  );
+  expect(continued.review.preview?.diagnosticBinding).toMatchObject({
+    playPresetId: frozenPreset.id,
+    playPresetRevision: frozenPreset.revision,
   });
 });
 
@@ -493,15 +574,58 @@ function serviceFor(
   root: string,
   content: ContentWorkspace,
   host: ModelHost,
+  playPreset: PlayPresetBinding = builtinDefaultPlayPresetBinding("en"),
 ): SettingImprovementSession {
+  const compiler = new FileNativePromptCompiler({ locale: "en" });
   return new SettingImprovementSession({
     store: new FileNativeSettingImprovementStore(root),
     content,
-    compiler: new FileNativePromptCompiler({ locale: "en" }),
+    compiler,
     locale: () => "en",
     bindModelHost: () => Promise.resolve(host),
-    authorPrompt: () =>
-      Promise.resolve("Preserve existing facts and follow the user's request."),
-    preview: () => preview,
+    bindPlayPreset: () => Promise.resolve(structuredClone(playPreset)),
+    preview: (snapshot, modelBinding, frozenPreset) => {
+      if (frozenPreset === undefined)
+        throw new Error(
+          "New setting-improvement sessions must freeze a preset",
+        );
+      const openingMessage = "setting-draft.message.genesis.narrator";
+      const opening = snapshot.files.find(({ path }) => path === "opening.md");
+      return compiler.preview(
+        {
+          endpoint: { id: "setting-draft", commit: "draft" },
+          hostBinding: presetHostBinding(frozenPreset),
+          world: {
+            controlFingerprint: "setting-draft",
+            documentSnapshot: snapshot,
+            history: { [openingMessage]: opening?.contents ?? "" },
+            additionalMaterials: [
+              { kind: "history_message", message: openingMessage },
+            ],
+          },
+          playerInputPlacement: "append",
+          playerInput: "Preview the setting draft.",
+          modelBinding,
+        },
+        frozenPreset,
+      );
+    },
   });
+}
+
+function presetWithFrozenStateMarker(): PlayPresetBinding {
+  const base = builtinDefaultPlayPresetBinding("en");
+  const files = structuredClone(base.files);
+  files["blocks/state.md"] =
+    `${files["blocks/state.md"]}\n\nFROZEN-PRESET-STATE-MARKER\n`;
+  const parsed = parsePlayPresetFiles(files);
+  if (parsed.kind !== "valid") throw parsed.error;
+  return {
+    id: "preset-frozen-test",
+    name: "Frozen test preset",
+    revision: revisionForPlayPresetFiles(files),
+    definition: parsed.definition,
+    files,
+    scriptsEnabled: true,
+  };
 }

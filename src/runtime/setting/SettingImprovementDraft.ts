@@ -10,6 +10,7 @@ import type {
 import {
   WorldDocumentStore,
   type WorldDocumentDescriptor,
+  type WorldDocumentLocator,
   type WorldDocumentQueryFailure,
   type WorldDocumentRevisionChange,
   type WorldDocumentRevisionCommand,
@@ -43,11 +44,39 @@ export interface SettingDraftDiagnostic {
   message: string;
 }
 
+export type SettingDraftPlayAccess =
+  | "full_injected"
+  | "node_injected"
+  | "catalog_summary"
+  | "referenced_from_injected"
+  | "on_demand"
+  | "opening_genesis"
+  | "play_control"
+  | "unused_control"
+  | "player_view"
+  | "removed";
+
+export interface SettingDraftPlayCoverage {
+  totals: {
+    fullInjected: number;
+    nodeInjected: number;
+    catalogSummary: number;
+    referencedFromInjected: number;
+    onDemand: number;
+  };
+  changed: {
+    path: string;
+    access: SettingDraftPlayAccess;
+    detail: string;
+  }[];
+}
+
 export interface SettingDraftReview {
   status: "usable" | "needs_repair";
   diff: SettingDraftDiff[];
   diagnostics: SettingDraftDiagnostic[];
   preview: PromptPreview | null;
+  playCoverage: SettingDraftPlayCoverage | null;
 }
 
 export interface PersistedSettingDraftState {
@@ -122,7 +151,26 @@ export function settingImprovementRuntimeContract(locale: AppLocale): string {
 - 修改既有文件前必须完整读取它。setting_list／setting_search／setting_read 的 cursor 只属于产生它的草稿快照；写入成功后旧 cursor 失效。工具只暴露逻辑路径，不暴露宿主路径。
 - world/ 下只写 .yaml 或 .md 世界文档；专用文件只允许 opening.md、control/frame.yaml、control/player-views.yaml 和 control/blocks/*.md。人物、地点、规则与当前情境放在 world/，本世界特有的主持要求放在 control/。
 - opening.md 是玩家看见的第一页，不得替玩家决定行动、台词或内心。会继续约束首次行动的事实也必须写入自然承载它的世界文档。
-- world 文档的 $document.id 与 ref 由 Runtime 分配或保留。跨文档引用和 control 中的文档选择使用工具返回的 @短引用；不要猜测文档 id，也不要用文件路径冒充引用。`
+- world 文档的 $document.id 与 ref 由 Runtime 分配或保留。跨文档引用和 control 中的文档选择使用工具返回的 @短引用；不要猜测文档 id，也不要用文件路径冒充引用。
+
+## 内容包在游玩中的生命周期
+
+- 你编辑的是创建世界前的内容包模板，不是运行中的世界。用户点击应用只替换这份内容包；已经创建的世界不会随它继续同步。
+- 创建世界时，world/* 逐份成为可持续修改的 state/*，control/* 成为世界控制，opening.md 逐字成为第一条已提交主持叙事。创建完成后，世界状态、控制与历史独立演化。
+- opening.md 不会进入全新游玩上下文，也不会由普通游玩 AI 改写。任何会继续约束首次行动的事实都必须同时存在于自然承载它的 world 文档。
+
+## 游玩怎样读取并使用设定
+
+- control/frame.yaml 的 instructions 把世界专属提示块作为作者指令；context 只按声明顺序做确定性选择，不会猜测相关材料。
+- current_situation、document 和 reference_targets 选择的整份正文会直接注入；node 只注入精确节点。catalog 只注入该目录直接子文档的 title、summary 与 @短引用，不注入正文；history 与 additional_materials 也只按精确声明注入。
+- 没有注入的世界文档不会自动出现。游玩 AI 只能使用 state_list 浏览 Runtime 返回的目录句柄、用 context_search 做原文字面搜索，再用 context_read 精确读取；没有语义检索，字面 0 命中也不证明事实不存在。
+- control/player-views.yaml 只用精确 selector 投影当前原值；它不是权限、秘密、人物认知或条件显示系统。
+
+## 游玩怎样更新设定
+
+- 普通游玩 AI 在已注入或完整读取后用 world_patch 修改既有 state 文档，也可用 world_create 创建新文档；它不能在裁决剧情时改写 opening.md、control/frame.yaml、提示块或玩家视图。
+- Runtime 才能提交持续状态与叙事。需要跨下一次行动保持的结果写回自然所有者；只约束眼前、没有单一所有者的局面写入当前情境；不必持续保存的细节留在已提交叙事。
+- 机械检查通过不代表内容在游玩中容易发现。新增或重组重要信息时，必须同时决定自然所有者、初始注入或发现路径、未来更新位置和玩家显示方式。`
     : `# Runtime setting-improvement conversation contract
 
 - This is one continuous conversation. There is no planning phase, generation phase, or finish tool. Decide from the user's current message whether to discuss, ask, read, or edit. If the user asks to plan first, discuss only; call write tools only when the user asks to make the changes.
@@ -132,7 +180,26 @@ export function settingImprovementRuntimeContract(locale: AppLocale): string {
 - Read an existing file completely before changing it. Cursors from setting_list, setting_search, and setting_read belong only to the draft snapshot that produced them; a successful write invalidates them. Tools expose logical paths, never host paths.
 - World documents are .yaml or .md files under world/. Special writes are limited to opening.md, control/frame.yaml, control/player-views.yaml, and control/blocks/*.md. Put characters, places, rules, and the current situation under world/, and world-specific hosting guidance under control/.
 - opening.md is the first page shown to the player. Never decide the player's action, dialogue, or inner thoughts. Facts that constrain the first action must also live in the world document that naturally owns them.
-- Runtime allocates or preserves $document.id and ref. Cross-document references and control selectors use @short-refs returned by tools. Never guess a document id or substitute a file path for a reference.`;
+- Runtime allocates or preserves $document.id and ref. Cross-document references and control selectors use @short-refs returned by tools. Never guess a document id or substitute a file path for a reference.
+
+## Content-package lifecycle during play
+
+- You are editing a content-package template before world creation, not a running world. Apply replaces only this content package; worlds already created from it never continue synchronizing with it.
+- When a world is created, world/* becomes independently mutable state/*, control/* becomes world control, and opening.md is committed verbatim as the first host narrative. World state, control, and history evolve independently afterward.
+- opening.md is not injected into a fresh play context and ordinary play AI cannot rewrite it. Every fact that still constrains the first action must also live in the world document that naturally owns it.
+
+## How play reads and uses the setting
+
+- control/frame.yaml instructions insert world-specific prompt blocks as author instructions. Its context entries make only deterministic selections in their declared order; Runtime never guesses relevant material.
+- current_situation, document, and reference_targets selections inject whole bodies; node injects only one exact node. A catalog injects only title, summary, and @short-ref for direct child documents, never their bodies. History and additional materials are likewise exact selections.
+- A world document that is not injected does not appear automatically. Play AI can browse only through state_list directory handles, use context_search for literal source search, and then context_read an exact handle. There is no semantic retrieval, and zero literal matches do not prove that a fact is absent.
+- control/player-views.yaml projects current values through exact selectors. It is not a permission, secrecy, character-knowledge, or conditional-visibility system.
+
+## How play updates the setting
+
+- After a state document is injected or completely read, ordinary play AI may change it with world_patch and may create a new document with world_create. While adjudicating play it cannot rewrite opening.md, control/frame.yaml, prompt blocks, or player views.
+- Only Runtime commits durable state and narrative. Write results that must survive the next action to their natural owner; put short-lived cross-object situations with no single owner in the current situation; leave details that need not remain current in committed narrative.
+- Passing mechanical checks does not make content discoverable during play. Whenever important information is created or reorganized, decide its natural owner, initial injection or discovery path, future update location, and player-visible projection together.`;
 }
 
 export function settingImprovementToolDefinitions(
@@ -448,13 +515,20 @@ export class SettingImprovementDraft {
           message,
         })),
         preview: null,
+        playCoverage: null,
       };
     try {
+      const preview = structuredClone(this.#preview(this.#snapshot));
       return {
         status: "usable",
         diff,
         diagnostics: [],
-        preview: structuredClone(this.#preview(this.#snapshot)),
+        preview,
+        playCoverage: buildSettingDraftPlayCoverage(
+          this.#snapshot,
+          preview,
+          diff,
+        ),
       };
     } catch (error: unknown) {
       return {
@@ -471,6 +545,7 @@ export class SettingImprovementDraft {
           },
         ],
         preview: null,
+        playCoverage: null,
       };
     }
   }
@@ -481,11 +556,11 @@ function renderAutomaticReview(
   locale: AppLocale,
 ): string {
   if (review.status === "usable")
-    return localized(
+    return `${localized(
       locale,
       `# Automatic draft review passed\n\nContent-tree validation and the real Prompt Preview both passed. The isolated draft currently changes ${review.diff.length} file(s). Continue only if the user's request needs more work; no finish tool is required.`,
       `# 草稿自动检查通过\n\n内容树校验和真实 Prompt Preview 均已通过；隔离草稿当前改动 ${review.diff.length} 个文件。仅在用户要求尚未完成时继续修改，不需要结束工具。`,
-    );
+    )}\n\n${renderPlayCoverage(review.playCoverage, locale)}`;
   return [
     localized(
       locale,
@@ -502,6 +577,282 @@ function renderAutomaticReview(
       "Repair these diagnostics with the ordinary read/write tools. Runtime will run the review again after the next successful write batch.",
       "请用普通读写工具修复这些诊断；下一批写入成功后 Runtime 会再次自动检查。",
     ),
+  ].join("\n");
+}
+
+function buildSettingDraftPlayCoverage(
+  snapshot: WorldDocumentStore,
+  preview: PromptPreview,
+  diff: readonly SettingDraftDiff[],
+): SettingDraftPlayCoverage {
+  const documents = listQueryableWorldDocuments(snapshot);
+  const byShortRef = new Map(
+    documents.map((document) => [document.shortRef, document]),
+  );
+  const fullInjected = new Set<string>();
+  const nodeInjected = new Set<string>();
+  const catalogSummary = new Set<string>();
+  const injectedSelections: {
+    shortRef: string;
+    locator: WorldDocumentLocator | null;
+  }[] = [];
+  const compilationCoverage = preview.compilation.coverage;
+
+  for (const entry of compilationCoverage) {
+    const authorization = entry.readAuthorization;
+    if (authorization !== undefined) {
+      const selection = {
+        shortRef: authorization.shortRef,
+        locator: authorization.locator,
+      };
+      injectedSelections.push(selection);
+      if (authorization.locator === null)
+        fullInjected.add(authorization.shortRef);
+      else nodeInjected.add(authorization.shortRef);
+    }
+    for (const shortRef of entry.catalogEntries ?? [])
+      catalogSummary.add(shortRef);
+  }
+
+  const referencedFromInjected = new Set<string>();
+  for (const selection of injectedSelections) {
+    const descriptor = byShortRef.get(selection.shortRef);
+    if (descriptor === undefined) continue;
+    const locator =
+      selection.locator ??
+      (descriptor.codec === "yaml" ? ({ yaml: [] } as const) : null);
+    if (locator === null) continue;
+    const selected = snapshot.query({
+      kind: "select_node",
+      document: { shortRef: selection.shortRef },
+      locator,
+    });
+    if (selected.kind !== "select_node") continue;
+    for (const reference of selected.references)
+      referencedFromInjected.add(reference.target.shortRef);
+  }
+
+  const enabledWorldInstructionPaths = new Set(
+    preview.compilation.logicalMessages
+      .flatMap(({ blocks }) => blocks)
+      .flatMap(({ source }) =>
+        source.startsWith("world:control/blocks/")
+          ? [source.slice("world:".length)]
+          : [],
+      ),
+  );
+
+  const accessByPath = new Map<string, SettingDraftPlayAccess>();
+  const totals: SettingDraftPlayCoverage["totals"] = {
+    fullInjected: 0,
+    nodeInjected: 0,
+    catalogSummary: 0,
+    referencedFromInjected: 0,
+    onDemand: 0,
+  };
+  for (const document of documents) {
+    const access = fullInjected.has(document.shortRef)
+      ? "full_injected"
+      : nodeInjected.has(document.shortRef)
+        ? "node_injected"
+        : catalogSummary.has(document.shortRef)
+          ? "catalog_summary"
+          : referencedFromInjected.has(document.shortRef)
+            ? "referenced_from_injected"
+            : "on_demand";
+    accessByPath.set(document.logicalPath, access);
+    incrementPlayCoverageTotal(totals, access);
+  }
+
+  return {
+    totals,
+    changed: diff.map(({ path, after }) => {
+      const access = changedPathPlayAccess(
+        path,
+        after,
+        accessByPath,
+        enabledWorldInstructionPaths,
+      );
+      return { path, access, detail: playAccessDetail(access) };
+    }),
+  };
+}
+
+function listQueryableWorldDocuments(
+  snapshot: WorldDocumentStore,
+): WorldDocumentDescriptor[] {
+  const documents: WorldDocumentDescriptor[] = [];
+  const pending = [""];
+  const visited = new Set<string>();
+  while (pending.length > 0) {
+    const directory = pending.shift();
+    if (directory === undefined || visited.has(directory)) continue;
+    visited.add(directory);
+    let cursor: string | null = null;
+    do {
+      const result = snapshot.query({
+        kind: "catalog",
+        directory,
+        limit: 100,
+        cursor,
+      });
+      if (result.kind !== "catalog")
+        throw new Error(
+          `Play-coverage catalog failed for ${directory || snapshot.logicalRoot}`,
+        );
+      for (const entry of result.entries) {
+        if (entry.kind === "directory") {
+          const prefix = `${snapshot.logicalRoot}/`;
+          if (!entry.logicalPath.startsWith(prefix))
+            throw new Error("Play-coverage catalog escaped the logical root");
+          pending.push(entry.logicalPath.slice(prefix.length));
+        } else if (entry.document !== undefined) documents.push(entry.document);
+      }
+      cursor = result.page.nextCursor;
+    } while (cursor !== null);
+  }
+  return documents.sort((left, right) =>
+    left.logicalPath.localeCompare(right.logicalPath),
+  );
+}
+
+function changedPathPlayAccess(
+  path: string,
+  after: string | null,
+  accessByPath: ReadonlyMap<string, SettingDraftPlayAccess>,
+  enabledWorldInstructionPaths: ReadonlySet<string>,
+): SettingDraftPlayAccess {
+  if (after === null) return "removed";
+  if (path === "opening.md") return "opening_genesis";
+  if (path === "control/player-views.yaml") return "player_view";
+  if (path.startsWith("control/blocks/"))
+    return enabledWorldInstructionPaths.has(path)
+      ? "play_control"
+      : "unused_control";
+  if (path.startsWith("control/")) return "play_control";
+  return accessByPath.get(path) ?? "on_demand";
+}
+
+function incrementPlayCoverageTotal(
+  totals: SettingDraftPlayCoverage["totals"],
+  access: SettingDraftPlayAccess,
+): void {
+  if (access === "full_injected") totals.fullInjected += 1;
+  else if (access === "node_injected") totals.nodeInjected += 1;
+  else if (access === "catalog_summary") totals.catalogSummary += 1;
+  else if (access === "referenced_from_injected")
+    totals.referencedFromInjected += 1;
+  else if (access === "on_demand") totals.onDemand += 1;
+}
+
+function playAccessDetail(access: SettingDraftPlayAccess): string {
+  const details: Record<SettingDraftPlayAccess, string> = {
+    full_injected: "complete body is injected into every fresh play context",
+    node_injected: "only a selected node is injected into fresh play context",
+    catalog_summary: "catalog injects title, summary, and short reference only",
+    referenced_from_injected:
+      "an injected YAML selection exposes a direct short reference",
+    on_demand:
+      "available only through directory, literal search, and exact read",
+    opening_genesis:
+      "committed as genesis narrative and excluded from later fresh context",
+    play_control: "compiled as immutable play-author control",
+    unused_control:
+      "not enabled by control/frame.yaml and unavailable to ordinary play AI",
+    player_view: "projected through exact player-view selectors",
+    removed: "removed from the candidate content package",
+  };
+  return details[access];
+}
+
+function renderPlayCoverage(
+  coverage: SettingDraftPlayCoverage | null,
+  locale: AppLocale,
+): string {
+  if (coverage === null)
+    return localized(
+      locale,
+      "# Play-consumption coverage\n\nCoverage is unavailable until the real Prompt Preview succeeds.",
+      "# 游玩读取覆盖\n\n真实 Prompt Preview 通过后才会提供覆盖报告。",
+    );
+  const labels: Record<SettingDraftPlayAccess, string> =
+    locale === "zh-CN"
+      ? {
+          full_injected: "全文注入",
+          node_injected: "仅节点注入",
+          catalog_summary: "仅目录摘要",
+          referenced_from_injected: "由已注入内容直接引用",
+          on_demand: "仅按需发现",
+          opening_genesis: "仅作为创世叙事提交",
+          play_control: "游玩控制",
+          unused_control: "未被 control/frame.yaml 启用",
+          player_view: "玩家视图精确投影",
+          removed: "已从候选内容包删除",
+        }
+      : {
+          full_injected: "full text injected",
+          node_injected: "selected node only",
+          catalog_summary: "catalog summary only",
+          referenced_from_injected: "directly referenced from injected content",
+          on_demand: "on-demand only",
+          opening_genesis: "genesis narrative only",
+          play_control: "play-author control",
+          unused_control: "not enabled by control/frame.yaml",
+          player_view: "exact player-view projection",
+          removed: "removed from the candidate package",
+        };
+  const maximumReportedChanges = 64;
+  const reportedChanges = coverage.changed.slice(0, maximumReportedChanges);
+  const changed = reportedChanges.map(
+    ({ path, access }) => `- ${path} — ${labels[access]}`,
+  );
+  const onDemand = coverage.changed.filter(
+    ({ access }) => access === "on_demand",
+  );
+  const unusedControl = coverage.changed.filter(
+    ({ access }) => access === "unused_control",
+  );
+  return [
+    localized(locale, "# Play-consumption coverage", "# 游玩读取覆盖"),
+    "",
+    localized(
+      locale,
+      `World documents: ${coverage.totals.fullInjected} full text injected; ${coverage.totals.nodeInjected} node-only; ${coverage.totals.catalogSummary} catalog-summary-only; ${coverage.totals.referencedFromInjected} directly referenced; ${coverage.totals.onDemand} on-demand-only.`,
+      `世界文档：${coverage.totals.fullInjected} 份全文注入；${coverage.totals.nodeInjected} 份仅节点注入；${coverage.totals.catalogSummary} 份仅目录摘要；${coverage.totals.referencedFromInjected} 份由已注入内容直接引用；${coverage.totals.onDemand} 份仅按需发现。`,
+    ),
+    "",
+    ...(changed.length > 0
+      ? changed
+      : [localized(locale, "- No changed files", "- 没有改动文件")]),
+    ...(coverage.changed.length > reportedChanges.length
+      ? [
+          localized(
+            locale,
+            `- ${coverage.changed.length - reportedChanges.length} additional changed file(s) omitted from this compact report`,
+            `- 此精简报告另省略 ${coverage.changed.length - reportedChanges.length} 个改动文件`,
+          ),
+        ]
+      : []),
+    ...(onDemand.length > 0
+      ? [
+          "",
+          localized(
+            locale,
+            "Changed world documents marked on-demand only are not present in a fresh play prompt. If play should discover them reliably, consider adding a catalog, injected reference, or world instruction.",
+            "标为仅按需发现的改动世界文档不会出现在全新游玩提示中；如果游玩应可靠发现它们，请考虑增加目录、由已注入内容建立引用，或加入世界指令。",
+          ),
+        ]
+      : []),
+    ...(unusedControl.length > 0
+      ? [
+          "",
+          localized(
+            locale,
+            "Changed control blocks not enabled by control/frame.yaml never reach ordinary play AI. Add each intended block to frame.instructions or remove the unused file.",
+            "未被 control/frame.yaml 启用的改动控制块不会进入普通游玩 AI；请把确实需要的块加入 frame.instructions，或删除无用文件。",
+          ),
+        ]
+      : []),
   ].join("\n");
 }
 

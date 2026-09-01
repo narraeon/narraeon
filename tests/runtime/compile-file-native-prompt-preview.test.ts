@@ -264,6 +264,7 @@ describe("文件原生 PromptCompiler", () => {
       status: "paged_catalog",
       complete: false,
       continuation: "state_list",
+      catalogEntries: ["alex"],
     });
     expect(worldContext).toContain("Showing 1/2.");
     expect(worldContext).toContain(
@@ -1040,6 +1041,7 @@ context:
       status: "optional_missing",
       complete: false,
       continuation: "state_list",
+      catalogEntries: [],
     });
     const optionalWorldContext = optional.logicalMessages.find(
       ({ role }) => role === "world_context",
@@ -1067,6 +1069,7 @@ context:
       status: "optional_missing",
       complete: false,
       continuation: "state_list",
+      catalogEntries: ["sam-status"],
     });
     const mixedWorldContext = mixed.logicalMessages.find(
       ({ role }) => role === "world_context",

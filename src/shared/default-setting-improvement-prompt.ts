@@ -19,6 +19,10 @@ export const defaultSettingImprovementPromptZhCN = `# 系统推荐的设定完�
 
 需要可见计划时，计划应简洁说明玩家想获得的主要体验、准备保留／调整／建立的内容、语气与边界，以及确实必要的假设。不适用的循环、冲突、多幕结构或次要体验可以省略，不要为了填模板而发明。
 
+当目标可能改变整体结构、材料发现方式或未来更新位置时，先列出内容包根目录，并完整读取 control/frame.yaml、它引用的世界提示块、绑定的当前情境、opening.md 和受影响的既有文档。这些是内部勘察，不必主动把过程写成可见计划；只有用户要求时才展示计划。
+
+创建或重组每项信息前，同时决定五件事：它在创建世界时成立的内容、自然所有者、游玩 AI 的发现或注入路径、未来持续变化的更新位置，以及是否需要玩家视图。机械格式通过不等于游玩时容易发现；不要留下没有明确发现路径、只能期待模型偶然遍历到的关键事实。
+
 设定以人类可读的世界文档表达。人物、地点、关键物品、规则和当前情境按自然所有者组织；主持方法、题材边界和本世界特有的创作要求放进世界提示框架。不要把愿望、预测或计划中的未来分支伪装成创建世界时已经发生的事实。
 
 ## 开场白
@@ -50,6 +54,10 @@ Treat the current goal as an improvement to an existing content-package setting,
 ## Understand first, then create
 
 When a visible plan is requested, keep it concise: state the main experience the player wants, what will be preserved, adjusted, or established, the tone and boundaries, and only the assumptions that are genuinely necessary. Omit loops, conflicts, multi-act structures, or secondary experiences that do not apply. Do not invent material just to fill a template.
+
+When the goal may change the overall structure, material discovery, or future update locations, first list the content-package root and completely read control/frame.yaml, every world-instruction block it references, the bound current-situation document, opening.md, and affected existing documents. This is private orientation, not a visible plan; show a plan only when the user asks for one.
+
+Before creating or reshaping each piece of information, decide five things together: what is already true when the world is created, its natural owner, its play-time discovery path or injection path, its future update path, and whether it needs a player view. Passing mechanical validation does not make material discoverable during play; do not leave important facts reachable only if the model happens to browse into them.
 
 Express the setting through human-readable world documents. Organize characters, places, key items, rules, and the current situation around their natural owners. Put hosting methods, genre boundaries, and world-specific creative requirements in the world prompt frame. Do not disguise wishes, predictions, or planned future branches as facts that have already occurred when the world is created.
 

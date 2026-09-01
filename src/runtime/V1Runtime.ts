@@ -37,7 +37,6 @@ import {
   FileNativePlayPresetError,
   FileNativePlayPresetStore,
   presetHostBinding,
-  settingImprovementPromptForBinding,
   type PlayPresetBinding,
 } from "./play/FileNativePlayPresetStore.ts";
 import { buildPlayPresetWorkbenchSnapshot } from "./play/PlayPresetWorkbench.ts";
@@ -107,30 +106,32 @@ export class V1Runtime {
       compiler: this.#compiler,
       locale: () => this.#locale,
       bindModelHost: () => this.#modelHost(),
-      authorPrompt: async () =>
-        settingImprovementPromptForBinding(
-          await this.#playPresets.bindCurrent(),
-          this.#locale,
-        ),
-      preview: (snapshot, modelBinding) =>
-        this.#compiler.preview({
-          endpoint: { id: "setting-draft", commit: "draft" },
-          hostBinding: {
-            hostPresetId: "setting-draft",
-            files: defaultSettingPreviewHost(),
+      bindPlayPreset: () => this.#playPresets.freeze(),
+      preview: (snapshot, modelBinding, playPreset) =>
+        this.#compiler.preview(
+          {
+            endpoint: { id: "setting-draft", commit: "draft" },
+            hostBinding:
+              playPreset === undefined
+                ? {
+                    hostPresetId: "legacy-setting-draft",
+                    files: defaultSettingPreviewHost(),
+                  }
+                : presetHostBinding(playPreset),
+            world: previewWorld(
+              snapshot,
+              "setting-draft.message.genesis.narrator",
+              "setting-draft",
+            ),
+            playerInputPlacement: "append",
+            playerInput:
+              this.#locale === "zh-CN"
+                ? "预览设定草稿。"
+                : "Preview the setting draft.",
+            modelBinding,
           },
-          world: previewWorld(
-            snapshot,
-            "setting-draft.message.genesis.narrator",
-            "setting-draft",
-          ),
-          playerInputPlacement: "bootstrap",
-          playerInput:
-            this.#locale === "zh-CN"
-              ? "预览设定草稿。"
-              : "Preview the setting draft.",
-          modelBinding,
-        }),
+          playPreset,
+        ),
     });
   }
 
