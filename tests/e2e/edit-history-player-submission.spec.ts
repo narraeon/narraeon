@@ -103,7 +103,10 @@ test("修改旧玩家提交可另存为全新上下文，创建分叉才生成�
 
   await page.reload();
   await page
-    .getByRole("button", { name: "打开世界：Current Situation", exact: true })
+    .getByRole("button", {
+      name: "打开世界：History branch world",
+      exact: true,
+    })
     .click();
 
   responses.push("Alex says to meet downstairs at eight.");
@@ -134,7 +137,7 @@ test("修改旧玩家提交可另存为全新上下文，创建分叉才生成�
   await page.getByRole("button", { name: "保存为全新上下文并继续" }).click();
 
   await expect(
-    page.getByRole("heading", { name: "Current Situation", exact: true }),
+    page.getByRole("heading", { name: "History branch world", exact: true }),
   ).toBeVisible();
   const revisedTimeline = page.getByLabel("调用链记录");
   await expect(
@@ -180,7 +183,7 @@ test("修改旧玩家提交可另存为全新上下文，创建分叉才生成�
     .filter({ hasText: "Then let's meet fifteen minutes early." });
   await revisedPlayer.getByRole("button", { name: "创建分叉" }).click();
   await expect(
-    page.getByRole("heading", { name: "Current Situation (fork)" }),
+    page.getByRole("heading", { name: "History branch world (fork)" }),
   ).toBeVisible();
   const forkTimeline = page.getByLabel("调用链记录");
   await expect(forkTimeline).toContainText(
@@ -201,7 +204,10 @@ test("修改旧玩家提交可另存为全新上下文，创建分叉才生成�
 
   await page.getByRole("button", { name: "工作区", exact: true }).click();
   await page
-    .getByRole("button", { name: "打开世界：Current Situation", exact: true })
+    .getByRole("button", {
+      name: "打开世界：History branch world",
+      exact: true,
+    })
     .click();
   const currentTimeline = page.getByLabel("调用链记录");
   await expect(currentTimeline).toContainText(

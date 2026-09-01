@@ -45,7 +45,6 @@ export interface FileNativeContentDocument {
 
 export interface FileNativeContentInspection {
   status: "usable" | "needs_repair";
-  displayName: string;
   documents: FileNativeContentDocument[];
   issues: FileNativeContentIssue[];
   opening: "valid" | "missing" | "invalid";
@@ -261,13 +260,8 @@ export function inspectContentPackageCurrentTree(
     }
   }
 
-  const displayName =
-    documents.find(({ id }) => id === "situation.current")?.title ??
-    documents[0]?.title ??
-    "Untitled content package";
   return {
     status: issues.length === 0 ? "usable" : "needs_repair",
-    displayName,
     documents: documents.sort((a, b) => a.path.localeCompare(b.path)),
     issues,
     opening,

@@ -50,6 +50,10 @@ export interface ContentWorkspaceOperationOptions {
   waitForLease?: boolean;
 }
 
+export interface ContentPackageImportOptions extends ContentWorkspaceOperationOptions {
+  title?: string;
+}
+
 export interface PortableContentPackageExport {
   fileName: string;
   archive: Buffer;
@@ -100,9 +104,11 @@ export class ContentWorkspace {
   }
 
   createCurrentTreeContentPackage() {
-    return this.#currentTreeLibrary.createPackage(
-      minimalFileNativeContentScaffold(this.#locale()),
-    );
+    const locale = this.#locale();
+    return this.#currentTreeLibrary.createPackage({
+      title: defaultContentPackageTitle(locale, "new"),
+      files: minimalFileNativeContentScaffold(locale),
+    });
   }
 
   listCurrentTreeContentPackages() {
@@ -133,7 +139,7 @@ export class ContentWorkspace {
 
   importPortableContentPackageArchive(
     archive: Buffer,
-    options: ContentWorkspaceOperationOptions = {},
+    options: ContentPackageImportOptions = {},
   ) {
     return this.#mutate(async () => {
       const files = readPortableContentArchive(
@@ -144,7 +150,12 @@ export class ContentWorkspace {
       options.signal?.throwIfAborted();
       const currentTree = files.map(toCurrentTreeFile);
       return this.#currentTreeLibrary.importPackage(
-        currentTree,
+        {
+          title:
+            options.title ??
+            defaultContentPackageTitle(this.#locale(), "imported"),
+          files: currentTree,
+        },
         options.signal === undefined ? {} : { signal: options.signal },
       );
     });
@@ -173,11 +184,11 @@ export class ContentWorkspace {
 
   renameCurrentTreeContentPackage(
     localId: string,
-    name: string,
+    title: string,
     options: ContentWorkspaceOperationOptions = {},
   ) {
     return this.#mutate(() =>
-      this.#currentTreeLibrary.renamePackage(localId, name, options),
+      this.#currentTreeLibrary.renamePackage(localId, title, options),
     );
   }
 
@@ -199,7 +210,7 @@ export class ContentWorkspace {
       await crashProcessAtPortableContentExportEdge("after_archive_created");
       options.signal?.throwIfAborted();
       return {
-        fileName: `${portableArchiveBaseName(package_.displayName)}.zip`,
+        fileName: `${portableArchiveBaseName(package_.title)}.zip`,
         archive,
       };
     });
@@ -218,6 +229,17 @@ export class ContentWorkspace {
       release();
     }
   }
+}
+
+function defaultContentPackageTitle(
+  locale: AppLocale,
+  source: "new" | "imported",
+): string {
+  if (locale === "zh-CN")
+    return source === "new" ? "待创作内容包" : "导入的内容包";
+  return source === "new"
+    ? "Untitled content package"
+    : "Imported content package";
 }
 
 /**
@@ -241,7 +263,7 @@ export function minimalFileNativeContentScaffold(
         contents: `$document:
   id: situation.current
   ref: current-situation
-  title: 待创作世界
+  title: 当前情境
   summary: 当前正在发生且接下来不能忘记的短期局面。
   aliases: []
 地点: 未设定
@@ -290,7 +312,7 @@ export function minimalFileNativeContentScaffold(
       contents: `$document:
   id: situation.current
   ref: current-situation
-  title: Unwritten world
+  title: Current situation
   summary: The short-term situation happening now that must not be forgotten next.
   aliases: []
 location: Not set
@@ -440,8 +462,8 @@ function createPortableContentArchive(
   return Buffer.concat([...localRecords, centralDirectory, end]);
 }
 
-function portableArchiveBaseName(displayName: string): string {
-  const normalized = displayName
+function portableArchiveBaseName(title: string): string {
+  const normalized = title
     .normalize("NFKC")
     .replaceAll(/[^\p{L}\p{N}._-]+/gu, "-")
     .replaceAll(/^[.-]+|[.-]+$/gu, "")

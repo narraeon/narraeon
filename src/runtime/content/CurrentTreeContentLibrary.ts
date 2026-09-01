@@ -36,13 +36,14 @@ const currentTreePreviousFileName = ".current-tree.previous.json";
 const defaultLimits = defaultContentWorkspaceLimits;
 
 interface StoredLocalMetadata {
+  schemaVersion: 2;
+  localId: string;
+  title: string;
+}
+
+interface LegacyStoredLocalMetadata {
   schemaVersion: 1;
   localId: string;
-  /**
-   * Author-chosen library name. Absent means the display name is still derived
-   * from the package contents, which is the right default for a fresh package
-   * and for everything imported before renaming existed.
-   */
   name?: string;
 }
 
@@ -59,7 +60,7 @@ interface CurrentTreeContentPackageLockMarker {
 
 export interface EditableContentPackageSummary {
   localId: string;
-  displayName: string;
+  title: string;
   status: "usable" | "needs_repair";
   documentCount: number;
   issueCount: number;
@@ -146,24 +147,33 @@ export class CurrentTreeContentLibrary {
     this.#beforeCurrentTreeReplace = options.beforeCurrentTreeReplace;
   }
 
-  createPackage(
-    files: readonly ContentTreeFile[] = [],
-  ): Promise<EditableContentPackageSummary> {
+  createPackage(input: {
+    title: string;
+    files?: readonly ContentTreeFile[];
+  }): Promise<EditableContentPackageSummary> {
     return this.#mutate(async () => {
-      const normalized = normalizeCurrentContentTreeFiles(files, this.#limits);
-      const package_ = await this.#publishNewPackage(normalized);
+      const title = normalizePackageTitle(input.title);
+      const normalized = normalizeCurrentContentTreeFiles(
+        input.files ?? [],
+        this.#limits,
+      );
+      const package_ = await this.#publishNewPackage(normalized, title);
       return packageSummary(package_);
     });
   }
 
   importPackage(
-    files: readonly ContentTreeFile[],
+    input: { title: string; files: readonly ContentTreeFile[] },
     options: CurrentTreeMutationOptions = {},
   ): Promise<EditableContentPackageDetail> {
     return this.#mutate(async () => {
       options.signal?.throwIfAborted();
-      const normalized = normalizeCurrentContentTreeFiles(files, this.#limits);
-      return this.#publishNewPackage(normalized, options.signal);
+      const title = normalizePackageTitle(input.title);
+      const normalized = normalizeCurrentContentTreeFiles(
+        input.files,
+        this.#limits,
+      );
+      return this.#publishNewPackage(normalized, title, options.signal);
     });
   }
 
@@ -175,7 +185,11 @@ export class CurrentTreeContentLibrary {
       options.signal?.throwIfAborted();
       const source = await this.readPackage(localId);
       options.signal?.throwIfAborted();
-      return this.#publishNewPackage(source.files, options.signal);
+      return this.#publishNewPackage(
+        source.files,
+        source.title,
+        options.signal,
+      );
     });
   }
 
@@ -247,6 +261,25 @@ export class CurrentTreeContentLibrary {
   }
 
   async readPackage(localId: string): Promise<EditableContentPackageDetail> {
+    const snapshot = await this.#readPackageSnapshot(localId);
+    if (snapshot.metadata.schemaVersion === 2) return snapshot.package;
+    const lease = await this.acquireOperationLease(localId, { wait: true });
+    try {
+      await ensureStoredPackageTitle(
+        this.#packageRoot(localId),
+        localId,
+        lease.package.title,
+      );
+      return structuredClone(lease.package);
+    } finally {
+      lease.release();
+    }
+  }
+
+  async #readPackageSnapshot(localId: string): Promise<{
+    metadata: StoredLocalMetadata | LegacyStoredLocalMetadata;
+    package: EditableContentPackageDetail;
+  }> {
     const packageRoot = this.#packageRoot(localId);
     const metadata = await readJsonFile(
       join(packageRoot, localMetadataFileName),
@@ -282,30 +315,30 @@ export class CurrentTreeContentLibrary {
         },
       );
     }
-    return detail(
-      localId,
-      files,
-      inspectContentPackageCurrentTree(files),
-      metadata.name,
-    );
+    const inspection = inspectContentPackageCurrentTree(files);
+    return {
+      metadata,
+      package: detail(
+        localId,
+        effectivePackageTitle(metadata, inspection),
+        files,
+        inspection,
+      ),
+    };
   }
 
   /**
-   * Name a package in the local library. The name lives in the package's own
+   * Title a package in the local library. The title lives in the package's own
    * local shell, not in its content, so renaming never touches a document the
    * runtime reads during play.
    */
   renamePackage(
     localId: string,
-    name: string,
+    title: string,
     options: CurrentTreeMutationOptions = {},
   ): Promise<EditableContentPackageSummary> {
     return this.#mutate(async () => {
-      const trimmed = name.trim();
-      if (!validPackageName(trimmed))
-        throw new CurrentTreeContentLibraryError(
-          "A content-package name must contain 1 to 160 characters and no line breaks",
-        );
+      const normalizedTitle = normalizePackageTitle(title);
       const lease = await this.acquireOperationLease(localId, {
         wait: options.waitForLease !== false,
       });
@@ -321,22 +354,11 @@ export class CurrentTreeContentLibrary {
           throw new CurrentTreeContentLibraryError(
             "The local content-package envelope is damaged",
           );
-        const temporaryPath = join(packageRoot, `.local-${randomUUID()}.tmp`);
-        try {
-          await writeDurableNewFile(
-            temporaryPath,
-            serialize({
-              schemaVersion: 1,
-              localId,
-              name: trimmed,
-            } satisfies StoredLocalMetadata),
-          );
-          await rename(temporaryPath, join(packageRoot, localMetadataFileName));
-          await syncDirectory(packageRoot);
-        } catch (error: unknown) {
-          await rm(temporaryPath, { force: true }).catch(() => undefined);
-          throw error;
-        }
+        await writeStoredLocalMetadata(packageRoot, {
+          schemaVersion: 2,
+          localId,
+          title: normalizedTitle,
+        });
         return packageSummary(await this.readPackage(localId));
       } finally {
         lease.release();
@@ -417,7 +439,7 @@ export class CurrentTreeContentLibrary {
 
     let released = false;
     try {
-      const package_ = await this.readPackage(localId);
+      const package_ = (await this.#readPackageSnapshot(localId)).package;
       return {
         package: structuredClone(package_),
         replace: async (files, options = {}) => {
@@ -429,6 +451,7 @@ export class CurrentTreeContentLibrary {
           );
           return this.#replaceNormalizedCurrentTree(
             localId,
+            package_.title,
             normalized,
             options.signal,
           );
@@ -447,6 +470,7 @@ export class CurrentTreeContentLibrary {
 
   async #replaceNormalizedCurrentTree(
     localId: string,
+    title: string,
     normalized: ContentTreeFile[],
     signal?: AbortSignal,
   ): Promise<EditableContentPackageDetail> {
@@ -458,6 +482,7 @@ export class CurrentTreeContentLibrary {
     const previousPath = join(packageRoot, currentTreePreviousFileName);
     try {
       signal?.throwIfAborted();
+      await ensureStoredPackageTitle(packageRoot, localId, title);
       await writeDurableNewFile(
         temporaryPath,
         serialize({
@@ -511,6 +536,7 @@ export class CurrentTreeContentLibrary {
     }
     return detail(
       localId,
+      title,
       normalized,
       inspectContentPackageCurrentTree(normalized),
     );
@@ -518,6 +544,7 @@ export class CurrentTreeContentLibrary {
 
   async #publishNewPackage(
     normalized: ContentTreeFile[],
+    title: string,
     signal?: AbortSignal,
   ): Promise<EditableContentPackageDetail> {
     const localId = `package-${randomUUID()}`;
@@ -533,8 +560,9 @@ export class CurrentTreeContentLibrary {
       await writeDurableNewFile(
         join(stagingPath, localMetadataFileName),
         serialize({
-          schemaVersion: 1,
+          schemaVersion: 2,
           localId,
+          title,
         } satisfies StoredLocalMetadata),
       );
       await writeDurableNewFile(
@@ -566,6 +594,7 @@ export class CurrentTreeContentLibrary {
     }
     return detail(
       localId,
+      title,
       normalized,
       inspectContentPackageCurrentTree(normalized),
     );
@@ -675,12 +704,12 @@ export class CurrentTreeContentLibrary {
 
 function detail(
   localId: string,
+  title: string,
   files: readonly ContentTreeFile[],
   inspection: FileNativeContentInspection,
-  name?: string,
 ): EditableContentPackageDetail {
   return {
-    ...summary(localId, inspection, name),
+    ...summary(localId, title, inspection),
     files: files.map((file) => ({ ...file })),
     documents: structuredClone(inspection.documents),
     issues: structuredClone(inspection.issues),
@@ -691,14 +720,12 @@ function detail(
 
 function summary(
   localId: string,
+  title: string,
   inspection: FileNativeContentInspection,
-  name?: string,
 ): EditableContentPackageSummary {
   return {
     localId,
-    // An author-chosen name wins; without one the name still tracks whatever
-    // the package currently contains.
-    displayName: name ?? inspection.displayName,
+    title,
     status: inspection.status,
     documentCount: inspection.documents.length,
     issueCount: inspection.issues.length,
@@ -710,7 +737,7 @@ function packageSummary(
 ): EditableContentPackageSummary {
   return {
     localId: package_.localId,
-    displayName: package_.displayName,
+    title: package_.title,
     status: package_.status,
     documentCount: package_.documentCount,
     issueCount: package_.issueCount,
@@ -861,6 +888,49 @@ function normalizeLimits(
   return limits;
 }
 
+async function ensureStoredPackageTitle(
+  packageRoot: string,
+  localId: string,
+  title: string,
+): Promise<void> {
+  const metadata = await readJsonFile(
+    join(packageRoot, localMetadataFileName),
+    () => new CurrentTreeContentPackageNotFoundError(),
+    "The local content-package envelope is damaged",
+  );
+  if (!isStoredMetadata(metadata) || metadata.localId !== localId)
+    throw new CurrentTreeContentLibraryError(
+      "The local content-package envelope is damaged",
+    );
+  if (metadata.schemaVersion === 2) {
+    if (metadata.title !== title)
+      throw new CurrentTreeContentLibraryError(
+        "The content-package title changed while its current tree was locked",
+      );
+    return;
+  }
+  await writeStoredLocalMetadata(packageRoot, {
+    schemaVersion: 2,
+    localId,
+    title,
+  });
+}
+
+async function writeStoredLocalMetadata(
+  packageRoot: string,
+  metadata: StoredLocalMetadata,
+): Promise<void> {
+  const temporaryPath = join(packageRoot, `.local-${randomUUID()}.tmp`);
+  try {
+    await writeDurableNewFile(temporaryPath, serialize(metadata));
+    await rename(temporaryPath, join(packageRoot, localMetadataFileName));
+    await syncDirectory(packageRoot);
+  } catch (error: unknown) {
+    await rm(temporaryPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
 async function writeDurableNewFile(
   path: string,
   contents: string,
@@ -899,7 +969,27 @@ async function readJsonFile(
   }
 }
 
-function isStoredMetadata(value: unknown): value is StoredLocalMetadata {
+function isStoredMetadata(
+  value: unknown,
+): value is StoredLocalMetadata | LegacyStoredLocalMetadata {
+  return isStoredLocalMetadata(value) || isLegacyStoredLocalMetadata(value);
+}
+
+function isStoredLocalMetadata(value: unknown): value is StoredLocalMetadata {
+  return (
+    isPlainObject(value) &&
+    Object.keys(value).length === 3 &&
+    value.schemaVersion === 2 &&
+    typeof value.localId === "string" &&
+    localIdPattern.test(value.localId) &&
+    typeof value.title === "string" &&
+    validPackageTitle(value.title)
+  );
+}
+
+function isLegacyStoredLocalMetadata(
+  value: unknown,
+): value is LegacyStoredLocalMetadata {
   return (
     isPlainObject(value) &&
     Object.keys(value).length === (value.name === undefined ? 2 : 3) &&
@@ -907,14 +997,41 @@ function isStoredMetadata(value: unknown): value is StoredLocalMetadata {
     typeof value.localId === "string" &&
     localIdPattern.test(value.localId) &&
     (value.name === undefined ||
-      (typeof value.name === "string" && validPackageName(value.name)))
+      (typeof value.name === "string" && validPackageTitle(value.name)))
   );
 }
 
-const packageNamePattern = /^[^\r\n]{1,160}$/u;
+function effectivePackageTitle(
+  metadata: StoredLocalMetadata | LegacyStoredLocalMetadata,
+  inspection: FileNativeContentInspection,
+): string {
+  if (metadata.schemaVersion === 2) return metadata.title;
+  return metadata.name ?? legacyContentDerivedTitle(inspection);
+}
 
-function validPackageName(name: string): boolean {
-  return packageNamePattern.test(name);
+function legacyContentDerivedTitle(
+  inspection: FileNativeContentInspection,
+): string {
+  return (
+    inspection.documents.find(({ id }) => id === "situation.current")?.title ??
+    inspection.documents[0]?.title ??
+    "Untitled content package"
+  );
+}
+
+const packageTitlePattern = /^[^\r\n]{1,160}$/u;
+
+function validPackageTitle(title: string): boolean {
+  return packageTitlePattern.test(title);
+}
+
+function normalizePackageTitle(title: string): string {
+  const normalized = title.trim();
+  if (!validPackageTitle(normalized))
+    throw new CurrentTreeContentLibraryError(
+      "A content-package title must contain 1 to 160 characters and no line breaks",
+    );
+  return normalized;
 }
 
 function isStoredCurrentTree(value: unknown): value is StoredCurrentTree {

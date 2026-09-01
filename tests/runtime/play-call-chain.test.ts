@@ -3092,6 +3092,7 @@ async function createWorld(label: string): Promise<{
   const created = await worlds.createFromContentPackage({
     operationId: `create-${label}-world`,
     sourcePackageId: `${label}-package`,
+    sourcePackageTitle: `${label} package`,
     packageFiles: worldFiles(),
     prompt: { hostBinding: hostBinding(), modelBinding: modelBinding() },
   });

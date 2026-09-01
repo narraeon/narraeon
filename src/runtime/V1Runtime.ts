@@ -208,6 +208,7 @@ export class V1Runtime {
         try {
           return await this.#content.importPortableContentPackageArchive(
             archive,
+            request.title === undefined ? {} : { title: request.title },
           );
         } catch (error: unknown) {
           if (
@@ -350,6 +351,7 @@ export class V1Runtime {
         return this.#worlds.createFromContentPackage({
           operationId: request.operationId,
           sourcePackageId: request.packageId,
+          sourcePackageTitle: package_.title,
           packageFiles: package_.files,
           prompt: {
             hostBinding: presetHostBinding(preset),

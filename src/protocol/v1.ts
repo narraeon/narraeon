@@ -46,7 +46,7 @@ export type V1Request =
   | { type: "content.copy"; packageId: string }
   | { type: "content.delete"; packageId: string }
   | { type: "content.rename"; packageId: string; name: string }
-  | { type: "content.import"; archiveBase64: string }
+  | { type: "content.import"; archiveBase64: string; title?: string }
   | { type: "content.export"; packageId: string }
   | { type: "setting-improvement.read"; packageId: string }
   | {
@@ -739,8 +739,19 @@ function validateRequestFields(request: Record<string, unknown>): void {
         "invalid_request",
         "content.import.archiveBase64 is not a supported content-package ZIP",
       );
+    if (
+      request.title !== undefined &&
+      (typeof request.title !== "string" ||
+        request.title.trim().length === 0 ||
+        !/^[^\r\n]{1,160}$/u.test(request.title.trim()))
+    )
+      throw new V1ProtocolError(
+        "invalid_request",
+        "content.import.title is invalid",
+      );
     const unexpectedFields = Object.keys(request).filter(
-      (field) => field !== "type" && field !== "archiveBase64",
+      (field) =>
+        field !== "type" && field !== "archiveBase64" && field !== "title",
     );
     if (unexpectedFields.length > 0)
       throw new V1ProtocolError(

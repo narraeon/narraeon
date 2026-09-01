@@ -118,6 +118,9 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(
     page.getByRole("heading", { name: "内容包当前树" }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "dormitory-world" }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "返回工作区" }).click();
 
   await page.getByRole("button", { name: "模型连接" }).click();
@@ -215,6 +218,15 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await page.getByRole("button", { name: "整批保存" }).click();
   await expect(page.getByRole("status")).toContainText("已整批保存");
   await expect(page.getByRole("button", { name: "返回工作区" })).toBeEnabled();
+  const packageActions = page.locator(".content-package-actions");
+  await packageActions.locator("summary").click();
+  await packageActions
+    .getByLabel("内容包标题")
+    .fill("Dormitory Content Package");
+  await packageActions.getByRole("button", { name: "重命名" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Dormitory Content Package" }),
+  ).toBeVisible();
 
   responses.push(
     chatTools([
@@ -307,6 +319,9 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   );
   const planningRequest = providerRequest();
   expect(JSON.stringify(planningRequest)).toContain("暂时不要改文件");
+  expect(JSON.stringify(planningRequest)).toContain(
+    "Dormitory Content Package",
+  );
   expect(JSON.stringify(planningRequest)).not.toContain(
     "Alex is organizing a jersey",
   );
@@ -411,7 +426,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await page.getByRole("button", { name: "新建世界" }).click();
   await page.getByRole("button", { name: "从当前内容包创建" }).click();
   await expect(
-    page.getByRole("heading", { name: "Dormitory World" }),
+    page.getByRole("heading", { name: "Dormitory Content Package" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "世界管理" }).click();
   await page.getByLabel("世界显示名称").fill("Night Training Dormitory");

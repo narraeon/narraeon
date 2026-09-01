@@ -22,8 +22,8 @@ interface ContentTreeEditorProps {
   onCopy: () => void;
   onExport: () => void;
   onDelete: () => void;
-  displayName: string;
-  onRename: (name: string) => void;
+  title: string;
+  onRename: (title: string) => void;
 }
 
 type FileGroup = "opening" | "world" | "control" | "other";
@@ -46,17 +46,17 @@ export function ContentTreeEditor({
   onCopy,
   onExport,
   onDelete,
-  displayName,
+  title,
   onRename,
 }: ContentTreeEditorProps): React.JSX.Element {
   const [query, setQuery] = useState("");
-  const [nameDraft, setNameDraft] = useState(displayName);
-  // Switching packages, or a rename landing, replaces the name from outside;
+  const [titleDraft, setTitleDraft] = useState(title);
+  // Switching packages, or a rename landing, replaces the title from outside;
   // adjust the draft during render rather than through an effect.
-  const [lastDisplayName, setLastDisplayName] = useState(displayName);
-  if (lastDisplayName !== displayName) {
-    setLastDisplayName(displayName);
-    setNameDraft(displayName);
+  const [lastTitle, setLastTitle] = useState(title);
+  if (lastTitle !== title) {
+    setLastTitle(title);
+    setTitleDraft(title);
   }
   const [requestedPath, setRequestedPath] = useState("");
   const [pathEdit, setPathEdit] = useState({ sourcePath: "", value: "" });
@@ -507,12 +507,12 @@ export function ContentTreeEditor({
             <p>{uiText("请先整批保存或放弃当前草稿，再操作已保存内容包。")}</p>
           )}
           <label className="content-package-rename">
-            <span>{uiText("内容包名称")}</span>
+            <span>{uiText("内容包标题")}</span>
             <input
-              value={nameDraft}
+              value={titleDraft}
               disabled={dirty}
               maxLength={160}
-              onChange={(event) => setNameDraft(event.target.value)}
+              onChange={(event) => setTitleDraft(event.target.value)}
             />
           </label>
           <div className="button-row">
@@ -520,11 +520,9 @@ export function ContentTreeEditor({
               type="button"
               className="secondary-button"
               disabled={
-                dirty ||
-                nameDraft.trim() === "" ||
-                nameDraft.trim() === displayName
+                dirty || titleDraft.trim() === "" || titleDraft.trim() === title
               }
-              onClick={() => onRename(nameDraft.trim())}
+              onClick={() => onRename(titleDraft.trim())}
             >
               {uiText("重命名")}
             </button>

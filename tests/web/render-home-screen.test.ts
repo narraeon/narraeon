@@ -32,12 +32,12 @@ describe("世界工作区主页", () => {
         contentPackages: [
           {
             localId: "package-ready",
-            displayName: "雾港来信",
+            title: "雾港来信",
             status: "usable" as const,
           },
           {
             localId: "package-repair",
-            displayName: "旧塔草稿",
+            title: "旧塔草稿",
             status: "needs_repair" as const,
           },
         ],

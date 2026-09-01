@@ -548,13 +548,14 @@ test("生产 HTTP 边界只接受显式 runtime/v1 envelope 并返回当前工�
       request: {
         type: "content.import",
         archiveBase64: archive.toString("base64"),
+        title: "雾港来信",
       },
     },
   });
   expect(uploaded.statusCode).toBe(200);
   expect(uploaded.json()).toMatchObject({
     protocol: "narraeon.runtime/v1",
-    result: { status: "needs_repair" },
+    result: { title: "雾港来信", status: "needs_repair" },
   });
 
   const invalidArchive = await server.inject({

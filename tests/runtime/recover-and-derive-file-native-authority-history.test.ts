@@ -974,6 +974,7 @@ async function world() {
   const created = await store.createFromContentPackage({
     operationId: "create",
     sourcePackageId: "package",
+    sourcePackageTitle: "Test content package",
     packageFiles: [
       {
         path: "opening.md",

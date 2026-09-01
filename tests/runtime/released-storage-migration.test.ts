@@ -430,6 +430,7 @@ async function releasedWorld(label: string, callChainSchemaVersion: 1 | 2) {
   const created = await store.createFromContentPackage({
     operationId: `create-${label}`,
     sourcePackageId: `package-${label}`,
+    sourcePackageTitle: `${label} package`,
     packageFiles: worldFiles(),
     prompt: releasePrompt(),
   });
@@ -583,6 +584,7 @@ async function releasedGenesisWorld(label: string) {
   const created = await store.createFromContentPackage({
     operationId: `create-${label}`,
     sourcePackageId: `package-${label}`,
+    sourcePackageTitle: `${label} package`,
     packageFiles: worldFiles(),
     prompt: releasePrompt(),
   });
@@ -608,6 +610,7 @@ async function currentV2RevisionWorld(label: string) {
   const created = await store.createFromContentPackage({
     operationId: `create-${label}`,
     sourcePackageId: `package-${label}`,
+    sourcePackageTitle: `${label} package`,
     packageFiles: worldFiles(),
     prompt: releasePrompt(),
   });

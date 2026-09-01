@@ -429,6 +429,7 @@ describe("世界外控制草稿", () => {
     const created = await store.createFromContentPackage({
       operationId: "create-control-world",
       sourcePackageId: "package-control-world",
+      sourcePackageTitle: "Control world package",
       packageFiles: packageFiles(),
       prompt: prompt(),
     });
@@ -486,6 +487,7 @@ test("玩家视图按精确 Authority head 渲染，不读取落后的 materiali
   const created = await store.createFromContentPackage({
     operationId: "create-authority-view-world",
     sourcePackageId: "package-authority-view-world",
+    sourcePackageTitle: "Authority view world package",
     packageFiles: packageFiles(),
     prompt: prompt(),
   });

@@ -37,6 +37,10 @@ describe("内容包手动编辑界面", () => {
     expect(within(fileTree).getByText("世界内容")).toBeTruthy();
     expect(within(fileTree).getByText("控制")).toBeTruthy();
     expect(screen.getByLabelText("内容包文件统计").textContent).toContain("3");
+    fireEvent.click(screen.getByText("内容包操作"));
+    expect(screen.getByLabelText<HTMLInputElement>("内容包标题").value).toBe(
+      "测试内容包",
+    );
 
     fireEvent.click(
       screen.getByRole("button", { name: "打开 control/frame.yaml" }),
@@ -138,7 +142,7 @@ function EditorHarness({
     status: issues.length === 0 ? "usable" : "needs_repair",
     issues,
     dirty,
-    displayName: "测试内容包",
+    title: "测试内容包",
     onRename: vi.fn(),
     onFilesChange: (nextFiles) => {
       setDraft(nextFiles);

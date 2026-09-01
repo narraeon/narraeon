@@ -169,7 +169,8 @@ const englishMessages: Record<string, string> = {
   内容包操作: "Content-package actions",
   "请先整批保存或放弃当前草稿，再操作已保存内容包。":
     "Save or discard the current draft before acting on the saved content package.",
-  内容包名称: "Content-package name",
+  内容包标题: "Content-package title",
+  导入的内容包: "Imported content package",
   重命名: "Rename",
   复制为新本地身份: "Copy as a new local identity",
   "导出 ZIP": "Export ZIP",

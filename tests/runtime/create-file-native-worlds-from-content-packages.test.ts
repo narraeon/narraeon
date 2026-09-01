@@ -29,7 +29,7 @@ describe("从内容包创建文件原生世界", () => {
     const store = new FileNativeWorldStore(join(root, "runtime"));
 
     const created = await store.createFromContentPackage(
-      input(source.localId, source.files),
+      input(source.localId, source.files, source.title),
     );
 
     expect(created.outcome).toBe("created");
@@ -37,6 +37,7 @@ describe("从内容包创建文件原生世界", () => {
     expect(created.preview.compilation.logicalMessages).toHaveLength(4);
     expect(created.preview.leakage.status).toBe("clean");
     expect(created.world.parentEndpoint).toBe("genesis");
+    expect(created.world.title).toBe(source.title);
     expect(await store.readSurface(created.world.worldId, "state")).toEqual([
       expect.objectContaining({
         path: "characters/alex.yaml",
@@ -276,6 +277,12 @@ describe("从内容包创建文件原生世界", () => {
         ],
       }),
     ).rejects.toMatchObject({ code: "operation_conflict" });
+    await expect(
+      store.createFromContentPackage({
+        ...source,
+        sourcePackageTitle: "A different package title",
+      }),
+    ).rejects.toMatchObject({ code: "operation_conflict" });
   });
 
   test("删除世界移除它的全部存档，并拒绝删除不存在的世界", async () => {
@@ -455,10 +462,12 @@ describe("从内容包创建文件原生世界", () => {
 function input(
   sourcePackageId: string,
   packageFiles: ReturnType<typeof files>,
+  sourcePackageTitle = "Test content package",
 ) {
   return {
     operationId: "create-op-1",
     sourcePackageId,
+    sourcePackageTitle,
     packageFiles,
     prompt: {
       hostBinding: {

@@ -16,7 +16,7 @@ interface PromptPreviewClient {
 
 export interface PromptPreviewPackage {
   localId: string;
-  displayName: string;
+  title: string;
   status: "usable" | "needs_repair";
 }
 
@@ -362,7 +362,7 @@ export function PromptPreviewScreen({
                 >
                   {packages.map((package_) => (
                     <option key={package_.localId} value={package_.localId}>
-                      {package_.displayName}
+                      {package_.title}
                       {package_.status === "usable"
                         ? ""
                         : uiText(" · 需要修复")}
@@ -499,7 +499,7 @@ export function PromptPreviewScreen({
       ) : (
         <PromptPreviewResult
           preview={preview}
-          packageName={selectedPackage?.displayName ?? packageId}
+          packageName={selectedPackage?.title ?? packageId}
           hostName={currentPreset?.name ?? uiText("未知预设")}
           modelName={
             activeConnection?.name ?? preview.diagnosticBinding.modelId

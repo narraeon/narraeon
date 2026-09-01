@@ -85,6 +85,7 @@ function input() {
   return {
     operationId: "create-op-1",
     sourcePackageId: "package-1",
+    sourcePackageTitle: "Test content package",
     packageFiles: [
       {
         path: "opening.md",

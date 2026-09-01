@@ -3,7 +3,7 @@ import { useState } from "react";
 
 interface HomeContentPackage {
   localId: string;
-  displayName: string;
+  title: string;
   status: "usable" | "needs_repair";
 }
 
@@ -334,14 +334,14 @@ export function HomeScreen({
                     key={item.localId}
                     type="button"
                     aria-label={uiText("打开内容包：{name}", {
-                      name: item.displayName,
+                      name: item.title,
                     })}
                     aria-pressed={item.localId === selectedPackageId}
                     disabled={importPending}
                     onClick={() => onOpenPackage(item.localId)}
                   >
                     <span className="home-package-card-heading">
-                      <strong>{item.displayName}</strong>
+                      <strong>{item.title}</strong>
                       <span className={`home-package-state ${item.status}`}>
                         {item.status === "usable"
                           ? uiText("可用")

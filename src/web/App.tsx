@@ -44,7 +44,7 @@ interface PlayPresetLibrary {
 
 interface PackageSummary {
   localId: string;
-  displayName: string;
+  title: string;
   status: "usable" | "needs_repair";
   files?: ContentTreeFile[];
 }
@@ -244,12 +244,12 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     }
   }
 
-  async function renamePackage(name: string): Promise<void> {
+  async function renamePackage(title: string): Promise<void> {
     try {
       await client.request({
         type: "content.rename",
         packageId: selected,
-        name,
+        name: title,
       });
       await refresh();
       setNotice(uiText("内容包已重命名。"));
@@ -270,6 +270,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       const imported = await client.request<PackageSummary>({
         type: "content.import",
         archiveBase64,
+        title: contentPackageTitleFromArchiveName(importArchive.name),
       });
       setImportArchive(null);
       await refresh();
@@ -638,7 +639,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             <div>
               <p className="eyebrow">CONTENT PACKAGE</p>
               <h2 id="content-workbench-title">
-                {selectedPackage?.displayName ?? uiText("内容包")}
+                {selectedPackage?.title ?? uiText("内容包")}
               </h2>
             </div>
             <div
@@ -694,12 +695,12 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
               onCopy={() => void contentCommand("content.copy")}
               onExport={() => void exportPackage()}
               onDelete={() => void contentCommand("content.delete")}
-              displayName={selectedPackage?.displayName ?? selected}
+              title={selectedPackage?.title ?? selected}
               onRename={(name) => void renamePackage(name)}
             />
           ) : (
             <SettingImprovementPanel
-              packageName={selectedPackage?.displayName ?? selected}
+              packageName={selectedPackage?.title ?? selected}
               modelConfigured={workspace.model.configured}
               hasUnsavedFileDraft={filesDirty}
               loading={improvementLoading}
@@ -765,7 +766,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
           >
             {workspace.contentPackages.map((item) => (
               <option key={item.localId} value={item.localId}>
-                {item.displayName}
+                {item.title}
               </option>
             ))}
           </select>
@@ -819,4 +820,13 @@ async function readFileAsBase64(file: File): Promise<string> {
     });
     reader.readAsDataURL(file);
   });
+}
+
+function contentPackageTitleFromArchiveName(fileName: string): string {
+  const normalized = fileName
+    .replace(/\.zip$/iu, "")
+    .replace(/[\r\n]+/gu, " ")
+    .trim();
+  const limited = Array.from(normalized).slice(0, 160).join("");
+  return limited.length > 0 ? limited : uiText("导入的内容包");
 }

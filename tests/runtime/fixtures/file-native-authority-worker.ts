@@ -10,6 +10,7 @@ const after = before.replace("安静", "已经提交");
 const created = await store.createFromContentPackage({
   operationId: "create",
   sourcePackageId: "package",
+  sourcePackageTitle: "Test content package",
   packageFiles: [
     {
       path: "opening.md",

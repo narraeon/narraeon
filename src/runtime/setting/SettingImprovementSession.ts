@@ -270,6 +270,7 @@ export class SettingImprovementSession {
     });
     const tools = settingImprovementToolDefinitions(locale);
     const bootstrap = this.#compiler.compileSettingImprovement({
+      contentPackageTitle: package_.title,
       runtimeContract: settingImprovementRuntimeContract(locale),
       authorPrompt,
       playPreset,
@@ -281,6 +282,7 @@ export class SettingImprovementSession {
       schemaVersion: 1,
       sessionId: this.#store.createId(),
       packageId,
+      contentPackageTitle: package_.title,
       locale,
       lifecycle: "open",
       runStatus: "ready",
@@ -422,12 +424,15 @@ export class SettingImprovementSession {
   ): Promise<StoredSettingImprovementSession> {
     if (this.#runs.has(original.sessionId)) return original;
     const session = structuredClone(original);
-    const runtimeContractUpgraded = this.#upgradeRuntimeContract(session);
+    const currentPackage = await this.#content.readCurrentTreeContentPackage(
+      session.packageId,
+    );
+    const runtimeContractUpgraded = this.#upgradeRuntimeContract(
+      session,
+      currentPackage.title,
+    );
     if (session.applyRequest !== null) {
-      const current = await this.#content.readCurrentTreeContentPackage(
-        session.packageId,
-      );
-      const currentFingerprint = contentFingerprint(current.files);
+      const currentFingerprint = contentFingerprint(currentPackage.files);
       if (currentFingerprint === session.applyRequest.draftFingerprint) {
         session.lifecycle = "applied";
         session.appliedAt = Date.now();
@@ -494,7 +499,10 @@ export class SettingImprovementSession {
     return session;
   }
 
-  #upgradeRuntimeContract(session: StoredSettingImprovementSession): boolean {
+  #upgradeRuntimeContract(
+    session: StoredSettingImprovementSession,
+    contentPackageTitle: string,
+  ): boolean {
     if (session.lifecycle !== "open" || session.playPreset === undefined)
       return false;
     const tools = settingImprovementToolDefinitions(session.locale);
@@ -503,6 +511,7 @@ export class SettingImprovementSession {
       ({ role }) => role === "runtime_system",
     )?.markdown;
     if (
+      session.contentPackageTitle === contentPackageTitle &&
       currentRuntimeContract === runtimeContract &&
       JSON.stringify(session.bootstrap.toolUniverse) === JSON.stringify(tools)
     )
@@ -516,12 +525,14 @@ export class SettingImprovementSession {
       toolStrategy: session.bootstrap.toolStrategy,
     });
     session.bootstrap = compiler.compileSettingImprovement({
+      contentPackageTitle,
       runtimeContract,
       authorPrompt,
       playPreset: session.playPreset,
       modelBinding: session.modelBinding,
       tools,
     });
+    session.contentPackageTitle = contentPackageTitle;
     return true;
   }
 

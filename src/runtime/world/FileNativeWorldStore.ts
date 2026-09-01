@@ -53,6 +53,7 @@ const localMetadataFile = "local.json";
 export class FileNativeWorldCreationError extends Error {
   readonly code:
     | "content_package_needs_repair"
+    | "content_package_title_invalid"
     | "candidate_validation_failed"
     | "operation_conflict"
     | "world_corrupt"
@@ -79,6 +80,7 @@ export class FileNativeWorldNotFoundError extends Error {
 export interface FileNativeWorldCreationInput {
   operationId: string;
   sourcePackageId: string;
+  sourcePackageTitle: string;
   packageFiles: readonly ContentTreeFile[];
   prompt: Pick<FileNativePromptInput, "hostBinding" | "modelBinding"> & {
     playerInput?: string;
@@ -373,6 +375,14 @@ export class FileNativeWorldStore {
   }> {
     assertIdentity(input.operationId, "operation ID");
     assertIdentity(input.sourcePackageId, "Content-package local identity");
+    if (
+      input.sourcePackageTitle !== input.sourcePackageTitle.trim() ||
+      !validWorldName(input.sourcePackageTitle)
+    )
+      throw new FileNativeWorldCreationError(
+        "content_package_title_invalid",
+        "The source content package has no valid standalone title",
+      );
     const inspection = inspectContentPackageCurrentTree(input.packageFiles);
     if (inspection.status !== "usable") {
       throw new FileNativeWorldCreationError(
@@ -407,10 +417,17 @@ export class FileNativeWorldStore {
       packageFiles,
     };
 
-    const sourceFingerprint = fingerprint(packageFiles);
+    const legacySourceFingerprint = fingerprint(packageFiles);
+    const sourceFingerprint = contentPackageCreationFingerprint(
+      input.sourcePackageTitle,
+      packageFiles,
+    );
     const previous = await this.#readPublication(input.operationId);
     if (previous !== null) {
-      if (previous.sourceFingerprint !== sourceFingerprint) {
+      if (
+        previous.sourceFingerprint !== sourceFingerprint &&
+        previous.sourceFingerprint !== legacySourceFingerprint
+      ) {
         throw new FileNativeWorldCreationError(
           "operation_conflict",
           "The same operation ID is bound to a different creation payload",
@@ -493,7 +510,7 @@ export class FileNativeWorldStore {
       const publication: Publication = {
         schemaVersion: 1,
         worldId,
-        title: inspection.displayName,
+        title: input.sourcePackageTitle,
         parentEndpoint: "genesis",
         operationId: input.operationId,
         sourceFingerprint,
@@ -512,7 +529,10 @@ export class FileNativeWorldStore {
       );
       const recovered = await this.#readPublication(input.operationId);
       if (recovered !== null) {
-        if (recovered.sourceFingerprint === sourceFingerprint) {
+        if (
+          recovered.sourceFingerprint === sourceFingerprint ||
+          recovered.sourceFingerprint === legacySourceFingerprint
+        ) {
           return {
             outcome: "created",
             world: await this.#currentSummary(recovered),
@@ -2038,6 +2058,20 @@ function fingerprint(files: readonly ContentTreeFile[]): string {
   for (const file of [...files].sort((a, b) => a.path.localeCompare(b.path))) {
     hash.update(file.path).update("\0").update(file.contents).update("\0");
   }
+  return `sha256:${hash.digest("hex")}`;
+}
+
+function contentPackageCreationFingerprint(
+  title: string,
+  files: readonly ContentTreeFile[],
+): string {
+  const hash = createHash("sha256");
+  hash
+    .update("narraeon.file-native-world-creation/v2")
+    .update("\0")
+    .update(title)
+    .update("\0")
+    .update(fingerprint(files));
   return `sha256:${hash.digest("hex")}`;
 }
 

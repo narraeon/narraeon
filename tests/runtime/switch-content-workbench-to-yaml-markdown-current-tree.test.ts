@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -26,6 +26,7 @@ describe("YAML/Markdown 内容包当前树", () => {
     );
 
     expect(created).toMatchObject({
+      title: "Untitled content package",
       status: "usable",
       documentCount: 1,
       issueCount: 0,
@@ -40,6 +41,10 @@ describe("YAML/Markdown 内容包当前树", () => {
     expect(detail.files.every(({ path }) => !path.endsWith(".json"))).toBe(
       true,
     );
+    expect(
+      detail.files.find(({ path }) => path === "world/current-situation.yaml")
+        ?.contents,
+    ).toContain("title: Current situation");
     const frame = detail.files.find(
       ({ path }) => path === "control/frame.yaml",
     )?.contents;
@@ -69,6 +74,7 @@ describe("YAML/Markdown 内容包当前树", () => {
     const imported =
       await workspace.importPortableContentPackageArchive(source);
     expect(imported).toMatchObject({
+      title: "Imported content package",
       status: "needs_repair",
       documentCount: 1,
     });
@@ -107,7 +113,7 @@ describe("YAML/Markdown 内容包当前树", () => {
       imported.localId,
     );
     expect(copied.localId).not.toBe(imported.localId);
-    expect(copied.displayName).toBe(repaired.displayName);
+    expect(copied.title).toBe(repaired.title);
     expect(copied.files).toEqual(repaired.files);
 
     const exported = await workspace.exportCurrentTreeContentPackage(
@@ -388,6 +394,111 @@ describe("YAML/Markdown 内容包当前树", () => {
     );
   });
 
+  test("未手动改名的内容包标题也不随当前情境文档标题漂移", async () => {
+    const root = await temporaryRoot();
+    const workspace = new ContentWorkspace(join(root, "data"));
+    const created = await workspace.createCurrentTreeContentPackage();
+    const before = await workspace.readCurrentTreeContentPackage(
+      created.localId,
+    );
+
+    await workspace.replaceCurrentTreeContentPackage(created.localId, [
+      ...before.files.filter(
+        ({ path }) => path !== "world/current-situation.yaml",
+      ),
+      {
+        path: "world/current-situation.yaml",
+        contents: currentSituation().replace(
+          "title: 当前情境",
+          "title: 暴雨中的码头",
+        ),
+      },
+    ]);
+
+    expect(
+      (await workspace.readCurrentTreeContentPackage(created.localId)).title,
+    ).toBe(before.title);
+  });
+
+  test("旧内容包第一次读取时把原显示名固化为独立标题", async () => {
+    const root = await temporaryRoot();
+    const dataRoot = join(root, "data");
+    const first = new ContentWorkspace(dataRoot);
+    const created = await first.createCurrentTreeContentPackage();
+    const metadataPath = join(
+      dataRoot,
+      "content",
+      "packages",
+      created.localId,
+      "local.json",
+    );
+    await writeFile(
+      metadataPath,
+      `${JSON.stringify({ schemaVersion: 1, localId: created.localId })}\n`,
+      "utf8",
+    );
+
+    const restarted = new ContentWorkspace(dataRoot);
+    const before = await restarted.readCurrentTreeContentPackage(
+      created.localId,
+    );
+    expect(JSON.parse(await readFile(metadataPath, "utf8")) as unknown).toEqual(
+      {
+        schemaVersion: 2,
+        localId: created.localId,
+        title: before.title,
+      },
+    );
+    await restarted.replaceCurrentTreeContentPackage(created.localId, [
+      ...before.files.filter(
+        ({ path }) => path !== "world/current-situation.yaml",
+      ),
+      {
+        path: "world/current-situation.yaml",
+        contents: currentSituation().replace(
+          "title: 当前情境",
+          "title: 暴雨中的码头",
+        ),
+      },
+    ]);
+
+    expect(
+      (await restarted.readCurrentTreeContentPackage(created.localId)).title,
+    ).toBe(before.title);
+    const migratedMetadata: unknown = JSON.parse(
+      await readFile(metadataPath, "utf8"),
+    );
+    expect(migratedMetadata).toEqual({
+      schemaVersion: 2,
+      localId: created.localId,
+      title: before.title,
+    });
+
+    await writeFile(
+      metadataPath,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        localId: created.localId,
+        name: "旧包标题",
+      })}\n`,
+      "utf8",
+    );
+    expect(
+      (
+        await new ContentWorkspace(dataRoot).readCurrentTreeContentPackage(
+          created.localId,
+        )
+      ).title,
+    ).toBe("旧包标题");
+    expect(JSON.parse(await readFile(metadataPath, "utf8")) as unknown).toEqual(
+      {
+        schemaVersion: 2,
+        localId: created.localId,
+        title: "旧包标题",
+      },
+    );
+  });
+
   test("内容包改名只动本地外壳，不碰世界文档，也不随内容漂移", async () => {
     const root = await temporaryRoot();
     const workspace = new ContentWorkspace(join(root, "data"));
@@ -400,21 +511,25 @@ describe("YAML/Markdown 内容包当前树", () => {
       created.localId,
       "  雾港来信  ",
     );
-    expect(renamed.displayName).toBe("雾港来信");
+    expect(renamed.title).toBe("雾港来信");
+    expect(
+      (await workspace.exportCurrentTreeContentPackage(created.localId))
+        .fileName,
+    ).toBe("雾港来信.zip");
 
-    // The name lives in the local shell, so content bytes must not change.
+    // The title lives in the local shell, so content bytes must not change.
     const after = await workspace.readCurrentTreeContentPackage(
       created.localId,
     );
     expect(after.files).toEqual(before.files);
-    expect(after.displayName).toBe("雾港来信");
+    expect(after.title).toBe("雾港来信");
     expect(
       (await workspace.listCurrentTreeContentPackages()).find(
         ({ localId }) => localId === created.localId,
-      )?.displayName,
+      )?.title,
     ).toBe("雾港来信");
 
-    // Changing the current-situation title does not replace the package name.
+    // Changing the current-situation title does not replace the package title.
     await workspace.replaceCurrentTreeContentPackage(created.localId, [
       ...after.files.filter(
         ({ path }) => path !== "world/current-situation.yaml",
@@ -428,16 +543,15 @@ describe("YAML/Markdown 内容包当前树", () => {
       },
     ]);
     expect(
-      (await workspace.readCurrentTreeContentPackage(created.localId))
-        .displayName,
+      (await workspace.readCurrentTreeContentPackage(created.localId)).title,
     ).toBe("雾港来信");
 
     await expect(
       workspace.renameCurrentTreeContentPackage(created.localId, "   "),
-    ).rejects.toThrow(/content-package name/u);
+    ).rejects.toThrow(/content-package title/u);
     await expect(
       workspace.renameCurrentTreeContentPackage(created.localId, "坏\n名字"),
-    ).rejects.toThrow(/content-package name/u);
+    ).rejects.toThrow(/content-package title/u);
   });
 });
 

@@ -32,7 +32,7 @@ describe("提示词预览界面", () => {
         packages: [
           {
             localId: "package-dormitory",
-            displayName: "宿舍内容",
+            title: "宿舍内容",
             status: "usable" as const,
           },
         ],
@@ -135,12 +135,12 @@ describe("提示词预览界面", () => {
         packages: [
           {
             localId: "package-broken",
-            displayName: "待修内容",
+            title: "待修内容",
             status: "needs_repair" as const,
           },
           {
             localId: "package-ready",
-            displayName: "可用内容",
+            title: "可用内容",
             status: "usable" as const,
           },
         ],

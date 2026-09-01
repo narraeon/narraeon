@@ -29,6 +29,8 @@ export interface StoredSettingImprovementSession {
   schemaVersion: 1;
   sessionId: string;
   packageId: string;
+  /** Absent only on conversations created before package titles were injected. */
+  contentPackageTitle?: string;
   locale: AppLocale;
   lifecycle: "open" | "applied" | "discarded";
   runStatus: "ready" | "running" | "interrupted";
@@ -162,6 +164,10 @@ function validateStoredSession(
     value.schemaVersion !== 1 ||
     typeof value.sessionId !== "string" ||
     typeof value.packageId !== "string" ||
+    (value.contentPackageTitle !== undefined &&
+      (typeof value.contentPackageTitle !== "string" ||
+        value.contentPackageTitle.trim().length === 0 ||
+        /[\r\n]/u.test(value.contentPackageTitle))) ||
     (value.locale !== "en" && value.locale !== "zh-CN") ||
     (value.lifecycle !== "open" &&
       value.lifecycle !== "applied" &&
