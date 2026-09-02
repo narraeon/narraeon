@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator } from "@playwright/test";
 import { rm } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 
@@ -13,6 +13,26 @@ const providerRequests: string[] = [];
 let providerDelayMs = 0;
 
 test.setTimeout(120_000);
+
+async function expectCanScrollVertically(locator: Locator): Promise<void> {
+  const result = await locator.evaluate((root) => {
+    if (!(root instanceof HTMLElement)) return null;
+    const initial = root.scrollTop;
+    root.scrollTop = root.scrollHeight;
+    const result = {
+      overflowY: getComputedStyle(root).overflowY,
+      scrollTop: root.scrollTop,
+      maximum: root.scrollHeight - root.clientHeight,
+    };
+    root.scrollTop = initial;
+    return result;
+  });
+
+  expect(result).not.toBeNull();
+  expect(["auto", "scroll"]).toContain(result?.overflowY);
+  expect(result?.maximum).toBeGreaterThan(0);
+  expect(result?.scrollTop).toBe(result?.maximum);
+}
 
 test.beforeAll(async () => {
   await Promise.all(
@@ -791,6 +811,54 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(
     page.getByRole("heading", { name: "Dormitory World (fork)" }),
   ).toBeVisible();
+});
+
+test("世界修订和世界管理浮窗在矮视口可以纵向滚动", async ({ page }) => {
+  await page.setViewportSize({ width: 700, height: 500 });
+  await page.goto("/");
+  await page.locator(".workspace-locale-picker select").selectOption("zh-CN");
+  await page.getByLabel("内容包 ZIP 文件").setInputFiles({
+    name: "dialog-scroll-world.zip",
+    mimeType: "application/zip",
+    buffer: createZip(files()),
+  });
+  await page.getByRole("button", { name: "导入 ZIP" }).click();
+  await expect(page.getByText(/dialog-scroll-world\.zip/u)).toBeVisible();
+  await page.getByRole("button", { name: "返回工作区" }).click();
+  await page.getByRole("button", { name: "模型连接" }).click();
+  if ((await page.getByLabel("Base URL").inputValue()).length === 0) {
+    await page.getByLabel("Base URL").fill(providerUrl);
+    await page.getByLabel("API Key").fill("dialog-scroll-secret");
+    await page.getByLabel("模型 ID").fill("trace-model");
+    await page.getByRole("button", { name: "保存模型连接" }).click();
+    await expect(page.getByRole("status")).toContainText("模型连接已保存");
+  }
+  await page.getByRole("button", { name: "返回工作区" }).click();
+  await page.getByRole("button", { name: "新建世界" }).click();
+  await page.getByRole("button", { name: "从当前内容包创建" }).click();
+  await expect(page.getByLabel("你的行动")).toBeVisible();
+
+  await page.getByRole("button", { name: "世界", exact: true }).click();
+  await page
+    .getByRole("complementary", { name: "当前世界" })
+    .getByRole("button", { name: "修订当前世界" })
+    .click();
+  const revisionDialog = page.getByRole("dialog", {
+    name: "修订当前世界",
+  });
+  await expectCanScrollVertically(
+    revisionDialog.locator(".content-file-editor"),
+  );
+  await revisionDialog.getByRole("button", { name: "关闭" }).click();
+
+  await page
+    .getByRole("navigation", { name: "世界阅读工具" })
+    .getByRole("button", { name: "世界管理" })
+    .click();
+  const managementDialog = page.getByRole("dialog", { name: "世界管理" });
+  await expectCanScrollVertically(
+    managementDialog.locator(".world-management-body"),
+  );
 });
 
 function chatText(text: string, reasoningContent?: string) {
