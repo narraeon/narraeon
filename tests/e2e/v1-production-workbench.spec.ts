@@ -813,7 +813,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   ).toBeVisible();
 });
 
-test("世界修订和世界管理浮窗在矮视口可以纵向滚动", async ({ page }) => {
+test("世界修订保持紧凑编辑区且世界管理可以纵向滚动", async ({ page }) => {
   await page.setViewportSize({ width: 700, height: 500 });
   await page.goto("/");
   await page.locator(".workspace-locale-picker select").selectOption("zh-CN");
@@ -846,9 +846,60 @@ test("世界修订和世界管理浮窗在矮视口可以纵向滚动", async ({
   const revisionDialog = page.getByRole("dialog", {
     name: "修订当前世界",
   });
+  const revisionLayout = await revisionDialog.evaluate((root) => {
+    const header = root.querySelector(":scope > header");
+    const navigation = root.querySelector(":scope > nav");
+    const workbench = root.querySelector(
+      ".document-workbench-world-correction",
+    );
+    const editor = root.querySelector(".content-file-editor");
+    const textarea = root.querySelector(".content-source-editor textarea");
+    const review = root.querySelector(".document-workbench-review");
+    if (
+      header === null ||
+      navigation === null ||
+      workbench === null ||
+      editor === null ||
+      textarea === null ||
+      review === null
+    )
+      return null;
+    const headerBox = header.getBoundingClientRect();
+    const navigationBox = navigation.getBoundingClientRect();
+    const workbenchBox = workbench.getBoundingClientRect();
+    const editorBox = editor.getBoundingClientRect();
+    const textareaBox = textarea.getBoundingClientRect();
+    const reviewBox = review.getBoundingClientRect();
+    return {
+      headerHeight: headerBox.height,
+      workbenchGap: workbenchBox.top - navigationBox.bottom,
+      editorOverflowY: getComputedStyle(editor).overflowY,
+      editorScrollRange: editor.scrollHeight - editor.clientHeight,
+      textareaReviewOverlap: textareaBox.bottom - reviewBox.top,
+      visibleTextareaHeight:
+        Math.min(textareaBox.bottom, reviewBox.top, editorBox.bottom) -
+        Math.max(textareaBox.top, editorBox.top),
+    };
+  });
+  expect(revisionLayout).not.toBeNull();
+  expect.soft(revisionLayout?.headerHeight).toBeLessThanOrEqual(88);
+  expect.soft(revisionLayout?.workbenchGap).toBeLessThanOrEqual(16);
+  expect.soft(revisionLayout?.editorOverflowY).toBe("hidden");
+  expect.soft(revisionLayout?.editorScrollRange).toBeLessThanOrEqual(1);
+  expect.soft(revisionLayout?.textareaReviewOverlap).toBeLessThanOrEqual(0);
+  expect
+    .soft(revisionLayout?.visibleTextareaHeight)
+    .toBeGreaterThanOrEqual(260);
   await expectCanScrollVertically(
-    revisionDialog.locator(".content-file-editor"),
+    revisionDialog.locator(".world-manual-revision"),
   );
+  const revisionEditor = revisionDialog.locator(
+    ".content-source-editor textarea",
+  );
+  await revisionEditor.fill(
+    Array.from({ length: 80 }, (_, index) => `line-${index + 1}`).join("\n"),
+  );
+  await expectCanScrollVertically(revisionEditor);
   await revisionDialog.getByRole("button", { name: "关闭" }).click();
 
   await page

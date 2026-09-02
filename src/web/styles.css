@@ -8775,44 +8775,75 @@ summary:focus-visible {
   color: var(--accent);
 }
 
+.world-workbench-dialog > header {
+  align-items: center;
+  padding: 0.65rem 0.9rem 0.55rem;
+}
+
+.world-workbench-dialog > header > div {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.15rem 0.65rem;
+}
+
+.world-workbench-dialog > header h2,
+.world-workbench-dialog > header p {
+  margin: 0;
+}
+
+.world-workbench-dialog > header h2 {
+  font-size: clamp(1.15rem, 2vw, 1.45rem);
+}
+
+.world-workbench-dialog > header p {
+  font-size: 0.65rem;
+}
+
+.world-workbench-dialog > nav {
+  padding: 0 0.9rem;
+}
+
+.world-workbench-dialog > nav button {
+  padding: 0.42rem 0.65rem;
+}
+
 .world-manual-revision {
-  display: grid;
+  display: flex;
   min-height: 0;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 0.7rem;
-  padding: 0.9rem 1.1rem 1.1rem;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.5rem 0.65rem 0.65rem;
   overflow: hidden;
 }
 
-.world-revision-explainer {
+.world-revision-dirty-bar {
   display: flex;
   align-items: center;
-  gap: 0.75rem 1rem;
-  padding: 0.7rem 0.85rem;
+  justify-content: space-between;
+  gap: 0.65rem;
+  flex: none;
+  padding: 0.3rem 0.45rem;
   border-left: 3px solid var(--accent);
   background: rgb(158 229 209 / 6%);
 }
 
-.world-revision-explainer strong {
-  flex: none;
-}
-
-.world-revision-explainer p {
-  flex: 1;
-  margin: 0;
+.world-revision-dirty-bar span {
   color: var(--muted);
-  font-size: 0.7rem;
+  font-size: 0.62rem;
 }
 
-.world-revision-explainer button {
+.world-revision-dirty-bar button {
   flex: none;
-  padding: 0.42rem 0.62rem;
-  font-size: 0.66rem;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.62rem;
 }
 
 .document-workbench-world-correction {
+  flex: 1 1 auto;
   min-height: 0;
-  height: 100%;
+  height: auto;
   grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr);
   overflow: hidden;
   border: 1px solid var(--border);
@@ -8826,7 +8857,16 @@ summary:focus-visible {
 }
 
 .document-workbench-world-correction .content-file-editor {
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-content: normal;
+  padding: 0.75rem 0.85rem 0.65rem;
+  overflow: hidden;
+}
+
+.document-workbench-world-correction .content-file-editor-header {
+  flex: none;
+  margin-bottom: 0;
 }
 
 .document-workbench-world-correction .content-file-list,
@@ -8834,10 +8874,28 @@ summary:focus-visible {
   min-height: 0;
 }
 
+.document-workbench-world-correction .content-source-editor {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  margin-top: 0.45rem;
+}
+
 .document-workbench-world-correction .content-source-editor textarea {
-  height: 100%;
-  min-height: 18rem;
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
   resize: none;
+}
+
+.document-workbench-world-correction .content-source-meta,
+.document-workbench-world-correction .content-selected-diagnostics,
+.document-workbench-world-correction .document-workbench-review {
+  flex: none;
+}
+
+.document-workbench-world-correction .content-source-meta {
+  margin-top: 0.25rem;
 }
 
 .world-document-list-copy {
@@ -8923,6 +8981,28 @@ summary:focus-visible {
   padding: 0.55rem 0.75rem;
   border-radius: 0.6rem;
   font-size: 0.66rem;
+}
+
+.document-workbench-world-correction .document-workbench-review {
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+  padding: 0.4rem 0.5rem;
+}
+
+.document-workbench-world-correction .document-workbench-review > div {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.1rem 0.4rem;
+}
+
+.document-workbench-world-correction .document-workbench-review span {
+  margin-top: 0;
+}
+
+.document-workbench-world-correction .document-workbench-review button {
+  padding: 0.38rem 0.58rem;
 }
 
 .world-correction-review,
@@ -9067,6 +9147,17 @@ summary:focus-visible {
   pointer-events: none;
 }
 
+@media (max-height: 40rem) {
+  .world-manual-revision {
+    overflow-y: auto;
+  }
+
+  .document-workbench-world-correction {
+    flex: none;
+    min-height: 32rem;
+  }
+}
+
 @media (max-width: 72rem) {
   .world-overlay-rail {
     width: min(20rem, calc(100vw - 1.4rem));
@@ -9103,8 +9194,24 @@ summary:focus-visible {
     grid-template-columns: 1fr;
   }
 
+  .world-manual-revision {
+    overflow-y: auto;
+  }
+
+  .document-workbench-world-correction {
+    flex: none;
+    min-height: 42rem;
+  }
+
   .document-workbench-world-correction .content-file-sidebar {
-    max-height: 17rem;
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    height: 13rem;
+    max-height: 13rem;
+    overflow: hidden;
+  }
+
+  .document-workbench-world-correction .content-file-editor {
+    min-height: 29rem;
   }
 
   .world-management-body .control-card {
@@ -9156,10 +9263,6 @@ summary:focus-visible {
     bottom: calc(var(--world-composer-height) + 1.2rem);
     left: 0.35rem;
     width: auto;
-  }
-
-  .world-revision-explainer {
-    display: grid;
   }
 
   .ai-reading-table {

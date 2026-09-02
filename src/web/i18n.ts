@@ -1490,8 +1490,6 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
   "只改变工作区显示名称，不改变故事与状态。":
     "Change only the workspace display name, not the story or state.",
   可核验依据: "Verifiable evidence",
-  和内容包共用同一套文档工作台:
-    "Uses the same document workbench as content packages",
   字号: "Font size",
   字间距: "Letter spacing",
   完整: "Complete",

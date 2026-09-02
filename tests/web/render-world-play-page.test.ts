@@ -379,8 +379,8 @@ describe("世界游玩页面", () => {
       name: "修订当前世界",
     });
     expect(
-      within(dialog).getByText("和内容包共用同一套文档工作台"),
-    ).toBeTruthy();
+      within(dialog).queryByText("和内容包共用同一套文档工作台"),
+    ).toBeNull();
     fireEvent.change(
       within(dialog).getByLabelText("编辑 current-situation.yaml"),
       {
@@ -392,6 +392,10 @@ describe("世界游玩页面", () => {
         },
       },
     );
+    expect(within(dialog).getByText("有尚未预览的修改")).toBeTruthy();
+    expect(
+      within(dialog).getByRole("button", { name: "放弃本地修改" }),
+    ).toBeTruthy();
     fireEvent.click(
       within(dialog).getByRole("button", {
         name: "打开 locations/dorm-404.yaml",

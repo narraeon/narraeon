@@ -397,14 +397,9 @@ export function WorldRevisionDialog({
           <AiReadingAudit reading={reading} documents={files} />
         ) : preview === null ? (
           <div className="world-manual-revision">
-            <div className="world-revision-explainer">
-              <strong>{uiText("和内容包共用同一套文档工作台")}</strong>
-              <p>
-                {uiText(
-                  "文件树、搜索与全文编辑一致；这里会追加一笔世界修订，不会反向修改来源内容包。",
-                )}
-              </p>
-              {dirty ? (
+            {dirty ? (
+              <div className="world-revision-dirty-bar">
+                <span>{uiText("有尚未预览的修改")}</span>
                 <button
                   type="button"
                   className="secondary-button"
@@ -413,8 +408,8 @@ export function WorldRevisionDialog({
                 >
                   {uiText("放弃本地修改")}
                 </button>
-              ) : null}
-            </div>
+              </div>
+            ) : null}
             <DocumentWorkbench
               selectedPath={selectedPath}
               onSelectedPathChange={onSelectedPathChange}
