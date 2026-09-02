@@ -1,6 +1,7 @@
 import { uiText } from "./i18n.ts";
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type Dispatch,
@@ -12,20 +13,30 @@ import type {
   V1PlayCallChainEvent,
   V1PlayCallChainStreamFrame,
   V1PlayCallChainView,
+  V1PlayContextReadingView,
   V1PlayTimelineEventSummary,
   V1PlayTimelineItem,
   V1PlayTimelinePage,
   V1Request,
 } from "../protocol/v1.ts";
+import {
+  defaultAppReadingPreferences,
+  type AppReadingPreferences,
+} from "../protocol/appPreferences.ts";
 import type {
   PlayerViewDiagnostic,
   RenderedPlayerView,
 } from "../protocol/playerViews.ts";
 import { createClientId } from "./ClientId.ts";
+import type { CorrectionPreviewView } from "./FileNativeCorrectionPanel.tsx";
+import { worldDocumentPresentation } from "./worldDocumentPresentation.ts";
 import {
-  FileNativeCorrectionPanel,
-  type CorrectionPreviewView,
-} from "./FileNativeCorrectionPanel.tsx";
+  AiReadingRail,
+  ReadingPreferencesPopover,
+  WorldDocumentRail,
+  WorldManagementDialog,
+  WorldRevisionDialog,
+} from "./WorldPlayWorkspacePanels.tsx";
 import {
   ArtifactExtensionHost,
   ArtifactExtensionMount,
@@ -48,7 +59,8 @@ import {
   type PlayRunProgressValue,
 } from "./PlayRunProgressState.ts";
 
-type WorldSection = "play" | "documents" | "history" | "manage";
+type RightRailTab = "documents" | "ai-reading";
+type WorldDialog = "revision" | "manage" | null;
 type PlayerRevisionContinuation = Extract<
   V1Request,
   { type: "play.chain.revise-player" }
@@ -105,13 +117,6 @@ interface Feedback {
   text: string;
 }
 
-interface DocumentOption {
-  path: string;
-  title: string;
-  ref: string;
-  handle: string;
-}
-
 interface WorldPageClient {
   request(request: V1Request): Promise<unknown>;
   streamPlayCallChain?: (
@@ -132,6 +137,7 @@ export function WorldPage({
   onConfigureModel,
   onRenameWorld,
   onOpenWorld,
+  initialReadingPreferences = defaultAppReadingPreferences,
 }: {
   client: WorldPageClient;
   worldId: string;
@@ -141,9 +147,22 @@ export function WorldPage({
   onConfigureModel: () => void;
   onRenameWorld: (name: string) => Promise<void>;
   onOpenWorld: (worldId: string) => Promise<void>;
+  initialReadingPreferences?: AppReadingPreferences;
 }): React.JSX.Element {
   const [world, setWorld] = useState<WorldReadView | null>(null);
-  const [section, setSection] = useState<WorldSection>("play");
+  const [leftRailOpen, setLeftRailOpen] = useState(false);
+  const [rightRailOpen, setRightRailOpen] = useState(false);
+  const [rightRailTab, setRightRailTab] = useState<RightRailTab>("documents");
+  const [readingOpen, setReadingOpen] = useState(false);
+  const [dialog, setDialog] = useState<WorldDialog>(null);
+  const [revisionTab, setRevisionTab] = useState<"manual" | "ai-reading">(
+    "manual",
+  );
+  const [readingPreferences, setReadingPreferences] = useState(
+    initialReadingPreferences,
+  );
+  const [readingPreferencesSaving, setReadingPreferencesSaving] =
+    useState(false);
   const [playerText, setPlayerText] = useState("");
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
@@ -161,6 +180,7 @@ export function WorldPage({
   }
   const [playCallChain, setPlayCallChain] =
     useState<V1PlayCallChainView | null>(null);
+  const [forceFreshContext, setForceFreshContext] = useState(false);
   const [playTimeline, setPlayTimeline] = useState<V1PlayTimelinePage | null>(
     null,
   );
@@ -174,14 +194,24 @@ export function WorldPage({
   } | null>(null);
   const [correctionPreview, setCorrectionPreview] =
     useState<CorrectionPreviewView | null>(null);
-  const [correctionDocument, setCorrectionDocument] = useState("");
-  const [correctionPath, setCorrectionPath] = useState(uiText("衣着"));
-  const [correctionValue, setCorrectionValue] = useState("");
+  const [correctionBaseFiles, setCorrectionBaseFiles] = useState<
+    ContentTreeFile[]
+  >([]);
+  const [correctionFiles, setCorrectionFiles] = useState<ContentTreeFile[]>([]);
+  const [aiReading, setAiReading] = useState<V1PlayContextReadingView | null>(
+    null,
+  );
+  const [aiReadingLoading, setAiReadingLoading] = useState(false);
   const [bridgeEvents, setBridgeEvents] = useState<Record<string, string[]>>(
     {},
   );
   const historyEndRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLElement>(null);
+  const composerTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const [composerHeight, setComposerHeight] = useState(72);
   const worldHead = world?.head;
+  const openedWorldId = world?.worldId;
+  const correctionDirty = !sameTextFiles(correctionBaseFiles, correctionFiles);
 
   useEffect(() => {
     let active = true;
@@ -283,15 +313,12 @@ export function WorldPage({
   ]);
 
   useEffect(() => {
-    if (section !== "play") return;
+    if (openedWorldId === undefined) return;
     historyEndRef.current?.scrollIntoView?.({ block: "nearest" });
-    // Only explicit navigation into the play surface may reposition the page.
-    // Streaming frames must stay silent so the player can read older content.
-  }, [section]);
+  }, [openedWorldId]);
 
   useEffect(() => {
-    if (world === null || (section !== "documents" && section !== "manage"))
-      return;
+    if (world === null || (!rightRailOpen && dialog === null)) return;
     if (world.state.length > 0 && world.control.length > 0) return;
     let active = true;
     const loadSurfaces = async (): Promise<void> => {
@@ -318,9 +345,10 @@ export function WorldPage({
           current === null ? null : { ...current, state, control, runtime },
         );
         setSelectedDocument((current) => selectedStateDocument(state, current));
-        setCorrectionDocument((current) =>
-          selectedCorrectionDocument(state, current),
-        );
+        if (!correctionDirty) {
+          setCorrectionBaseFiles(cloneTextFiles(state));
+          setCorrectionFiles(cloneTextFiles(state));
+        }
         if (!controlDirty) setControlFiles(JSON.stringify(control, null, 2));
       } catch (reason: unknown) {
         if (active) setFeedback({ kind: "error", text: errorMessage(reason) });
@@ -330,15 +358,81 @@ export function WorldPage({
     return () => {
       active = false;
     };
-  }, [client, controlDirty, section, world, worldId]);
+  }, [
+    client,
+    controlDirty,
+    correctionDirty,
+    dialog,
+    rightRailOpen,
+    world,
+    worldId,
+  ]);
+
+  useEffect(() => {
+    if (
+      !rightRailOpen ||
+      rightRailTab !== "ai-reading" ||
+      worldHead === undefined
+    )
+      return;
+    let active = true;
+    const loadingTimer = window.setTimeout(() => {
+      if (active) setAiReadingLoading(true);
+    }, 0);
+    void requestRuntime<V1PlayContextReadingView>(client, {
+      type: "world.play-context.read",
+      worldId,
+    })
+      .then((reading) => {
+        if (active) setAiReading(reading);
+      })
+      .catch((reason: unknown) => {
+        if (active) setFeedback({ kind: "error", text: errorMessage(reason) });
+      })
+      .finally(() => {
+        if (active) setAiReadingLoading(false);
+      });
+    return () => {
+      active = false;
+      window.clearTimeout(loadingTimer);
+    };
+  }, [
+    client,
+    playCallChain?.updatedAt,
+    rightRailOpen,
+    rightRailTab,
+    worldHead,
+    worldId,
+  ]);
+
+  useLayoutEffect(() => {
+    const textarea = composerTextareaRef.current;
+    if (textarea === null) return;
+    textarea.style.height = "0px";
+    const height = Math.min(textarea.scrollHeight, 152);
+    textarea.style.height = `${Math.max(height, 24)}px`;
+    textarea.style.overflowY = textarea.scrollHeight > 152 ? "auto" : "hidden";
+  }, [playerText]);
+
+  useLayoutEffect(() => {
+    const composer = composerRef.current;
+    if (composer === null) return;
+    const publish = (): void =>
+      setComposerHeight(composer.getBoundingClientRect().height);
+    publish();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(publish);
+    observer.observe(composer);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (feedback?.kind !== "status") return;
+    const timer = window.setTimeout(() => setFeedback(null), 3200);
+    return () => window.clearTimeout(timer);
+  }, [feedback]);
 
   const documents = world?.state ?? [];
-  const documentOptions = documents.map(documentOption);
-  const correctableDocuments = documentOptions.filter(({ path }) =>
-    /\.ya?ml$/iu.test(path),
-  );
-  const currentDocument =
-    documents.find(({ path }) => path === selectedDocument) ?? documents[0];
   const playerViewFallback = projectUncoveredPlayerViews(
     world?.playerViews ?? { views: [], diagnostics: [] },
     world?.playerViewPanels ?? [],
@@ -381,12 +475,18 @@ export function WorldPage({
     playCallChain?.chainId ?? playTimeline?.activeChainId ?? null;
   const activeCanRetry =
     playCallChain?.canRetry ?? playTimeline?.activeCanRetry ?? false;
+  const activeChainStale =
+    forceFreshContext ||
+    (world !== null &&
+      playCallChain !== null &&
+      playCallChain.parentHead !== world.head);
   const playProgressActive = playProgress !== null;
   const hasPlayerText = playerText.trim().length > 0;
   const playIdle = pending === null && activeStatus !== "running";
   const canStartFresh = hasPlayerText && playIdle;
   const canAppend =
     playIdle &&
+    !activeChainStale &&
     (activeChainId === null
       ? hasPlayerText
       : activeStatus === "ready" || (!hasPlayerText && activeCanRetry));
@@ -426,17 +526,17 @@ export function WorldPage({
     setSelectedDocument((current) =>
       selectedStateDocument(next.state, current),
     );
-    setCorrectionDocument((current) =>
-      selectedCorrectionDocument(next.state, current),
-    );
   }
 
-  async function refreshWorld(preserveControlDraft = true): Promise<void> {
+  async function refreshWorld(
+    preserveControlDraft = true,
+  ): Promise<WorldReadView> {
     const next = await requestRuntime<WorldReadView>(client, {
       type: "world.read",
       worldId,
     });
     applyWorld(next, preserveControlDraft);
+    return next;
   }
 
   async function submitPlayChain(context: "fresh" | "append"): Promise<void> {
@@ -485,6 +585,7 @@ export function WorldPage({
         );
       });
       setPlayCallChain(next);
+      if (fresh) setForceFreshContext(false);
       if (hasPlayerText) setPlayerText("");
       await refreshWorld();
       const wasCancelled = cancelledExchangeRef.current === exchangeId;
@@ -518,6 +619,7 @@ export function WorldPage({
       ).catch(() => null);
       if (inspected !== null) {
         setPlayCallChain(inspected);
+        if (fresh && inspected.chainId === chainId) setForceFreshContext(false);
         if (
           hasPlayerText &&
           inspected.events.some(
@@ -661,55 +763,87 @@ export function WorldPage({
   }
 
   async function previewCorrection(): Promise<void> {
-    if (correctionDocument.length === 0 || correctionPath.trim().length === 0)
-      return;
+    const changed = changedTextFiles(correctionBaseFiles, correctionFiles);
+    if (changed.length === 0 || activeStatus === "running") return;
     setPending("correction-preview");
+    let activeCandidate: { candidateId: string; version: number } | null = null;
     try {
-      const started =
-        correction ??
-        (await requestRuntime<{ candidateId: string; version: number }>(
-          client,
-          {
-            type: "correction.begin",
-            worldId,
-            operationId: createClientId("correction"),
-          },
-        ));
-      setCorrection(started);
-      const document = await requestRuntime<{ hash: string }>(client, {
-        type: "correction.read",
-        candidateId: started.candidateId,
-        document: correctionDocument,
+      if (correction !== null)
+        await client.request({
+          type: "correction.cancel",
+          candidateId: correction.candidateId,
+          expectedVersion: correction.version,
+        });
+      const started = await requestRuntime<{
+        candidateId: string;
+        version: number;
+        parentHead: string;
+      }>(client, {
+        type: "correction.begin",
+        worldId,
+        operationId: createClientId("correction"),
       });
-      const patched = await requestRuntime<{ version: number }>(client, {
-        type: "correction.patch",
+      activeCandidate = {
         candidateId: started.candidateId,
-        expectedVersion: started.version,
-        target: correctionDocument,
-        expectedHash: document.hash,
-        edits: [
-          {
-            op: "replace",
-            locator: { yaml: correctionPath.split(".").filter(Boolean) },
-            value: correctionValue,
-          },
-        ],
-      });
+        version: started.version,
+      };
+      setCorrection(activeCandidate);
+      for (const nextFile of changed) {
+        const baseFile = correctionBaseFiles.find(
+          ({ path }) => path === nextFile.path,
+        );
+        if (baseFile === undefined)
+          throw new Error("World correction cannot create a new document.");
+        const handle = `@${worldDocumentPresentation(baseFile).ref}`;
+        const read = await requestRuntime<{
+          hash: string;
+          contents: string;
+        }>(client, {
+          type: "correction.read",
+          candidateId: activeCandidate.candidateId,
+          document: handle,
+        });
+        if (read.contents !== baseFile.contents)
+          throw new Error(
+            "The current world changed after this editor opened. Reopen the revision workbench before applying edits.",
+          );
+        const replaced: { version: number } = await requestRuntime<{
+          version: number;
+        }>(client, {
+          type: "correction.replace",
+          candidateId: activeCandidate.candidateId,
+          expectedVersion: activeCandidate.version,
+          target: handle,
+          expectedHash: read.hash,
+          contents: nextFile.contents,
+        });
+        activeCandidate = {
+          candidateId: activeCandidate.candidateId,
+          version: replaced.version,
+        };
+        setCorrection(activeCandidate);
+      }
       const preview = await requestRuntime<CorrectionPreviewView>(client, {
         type: "correction.preview",
-        candidateId: started.candidateId,
-        expectedVersion: patched.version,
-      });
-      setCorrection({
-        candidateId: started.candidateId,
-        version: patched.version,
+        candidateId: activeCandidate.candidateId,
+        expectedVersion: activeCandidate.version,
       });
       setCorrectionPreview(preview);
       setFeedback({
         kind: "status",
-        text: uiText("修正草稿已预览；应用前世界状态没有变化。"),
+        text: uiText("修订草稿已预览；应用前当前世界没有变化。"),
       });
     } catch (reason: unknown) {
+      if (activeCandidate !== null)
+        await client
+          .request({
+            type: "correction.cancel",
+            candidateId: activeCandidate.candidateId,
+            expectedVersion: activeCandidate.version,
+          })
+          .catch(() => undefined);
+      setCorrection(null);
+      setCorrectionPreview(null);
       setFeedback({ kind: "error", text: errorMessage(reason) });
     } finally {
       setPending(null);
@@ -727,10 +861,22 @@ export function WorldPage({
       });
       setCorrection(null);
       setCorrectionPreview(null);
-      await refreshWorld();
+      setCorrectionBaseFiles([]);
+      setCorrectionFiles([]);
+      setDialog(null);
+      setRightRailTab("documents");
+      setRightRailOpen(true);
+      setForceFreshContext(true);
+      const refreshed = await refreshWorld();
+      if (refreshed.state.length > 0) {
+        setCorrectionBaseFiles(cloneTextFiles(refreshed.state));
+        setCorrectionFiles(cloneTextFiles(refreshed.state));
+      }
       setFeedback({
         kind: "status",
-        text: uiText("连续性修正已作为一笔新提交应用，旧历史保持不变。"),
+        text: uiText(
+          "世界修订已提交。现有追加上下文已过期，下一次行动会自动使用全新上下文。",
+        ),
       });
     } catch (reason: unknown) {
       setFeedback({ kind: "error", text: errorMessage(reason) });
@@ -740,6 +886,35 @@ export function WorldPage({
   }
 
   async function cancelCorrection(): Promise<void> {
+    if (correction === null) {
+      setCorrectionPreview(null);
+      setCorrectionFiles(cloneTextFiles(correctionBaseFiles));
+      setDialog(null);
+      return;
+    }
+    setPending("correction-cancel");
+    try {
+      await client.request({
+        type: "correction.cancel",
+        candidateId: correction.candidateId,
+        expectedVersion: correction.version,
+      });
+      setCorrection(null);
+      setCorrectionPreview(null);
+      setCorrectionFiles(cloneTextFiles(correctionBaseFiles));
+      setDialog(null);
+      setFeedback({
+        kind: "status",
+        text: uiText("修订草稿已放弃，世界端点没有推进。"),
+      });
+    } catch (reason: unknown) {
+      setFeedback({ kind: "error", text: errorMessage(reason) });
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function returnToCorrectionEditor(): Promise<void> {
     if (correction === null) {
       setCorrectionPreview(null);
       return;
@@ -753,17 +928,12 @@ export function WorldPage({
       });
       setCorrection(null);
       setCorrectionPreview(null);
-      setFeedback({
-        kind: "status",
-        text: uiText("修正草稿已放弃，世界端点没有推进。"),
-      });
     } catch (reason: unknown) {
       setFeedback({ kind: "error", text: errorMessage(reason) });
     } finally {
       setPending(null);
     }
   }
-
   async function deriveWorld(sourceHead = world?.head): Promise<void> {
     if (world === null) return;
     if (sourceHead === undefined) return;
@@ -877,7 +1047,36 @@ export function WorldPage({
   }
 
   function submitCurrentMode(): void {
-    void submitPlayChain("append");
+    void submitPlayChain(activeChainStale ? "fresh" : "append");
+  }
+
+  function openRevision(tab: "manual" | "ai-reading", path?: string): void {
+    if (path !== undefined) setSelectedDocument(path);
+    if (
+      tab === "manual" &&
+      correction === null &&
+      !correctionDirty &&
+      documents.length > 0
+    ) {
+      setCorrectionBaseFiles(cloneTextFiles(documents));
+      setCorrectionFiles(cloneTextFiles(documents));
+    }
+    setRevisionTab(tab);
+    setDialog("revision");
+  }
+
+  async function saveReadingPreferences(
+    next: AppReadingPreferences,
+  ): Promise<void> {
+    setReadingPreferences(next);
+    setReadingPreferencesSaving(true);
+    try {
+      await client.request({ type: "preferences.save", reading: next });
+    } catch (reason: unknown) {
+      setFeedback({ kind: "error", text: errorMessage(reason) });
+    } finally {
+      setReadingPreferencesSaving(false);
+    }
   }
 
   async function renameCurrentWorld(): Promise<void> {
@@ -897,7 +1096,7 @@ export function WorldPage({
 
   if (world === null)
     return (
-      <main className="world-page world-page-loading">
+      <main className="world-reader-page world-page-loading">
         <button className="world-back-button secondary-button" onClick={onBack}>
           {uiText("← 返回工作区")}
         </button>
@@ -909,251 +1108,350 @@ export function WorldPage({
       </main>
     );
 
+  const defaultSubmitFresh = activeChainId === null || activeChainStale;
+  const defaultSubmitEnabled = defaultSubmitFresh ? canStartFresh : canAppend;
+
   return (
-    <main className="world-page">
-      <header className="world-page-header">
-        <button className="world-back-button secondary-button" onClick={onBack}>
-          <span aria-hidden="true">←</span> {uiText("工作区")}
-        </button>
-        <div className="world-title-block">
-          <p className="eyebrow">{uiText("正在游玩的世界")}</p>
-          <h1>{worldTitle}</h1>
-        </div>
-        <div className="world-header-summary" aria-label={uiText("世界概况")}>
-          <span>
-            {committedMessages.length}{" "}
-            {playTimeline?.nextCursor === null
-              ? uiText("条已提交消息")
-              : uiText("条已加载叙事")}
-          </span>
-          <span className={activeStatus === "running" ? "is-live" : "is-saved"}>
-            {activeStatus === "running"
-              ? uiText("模型调用中")
-              : activeStatus === "interrupted"
-                ? uiText("调用链已中断")
-                : uiText("世界已保存")}
-          </span>
-        </div>
-      </header>
-
-      <nav className="world-section-tabs" aria-label={uiText("世界页面")}>
-        {(
-          [
-            ["play", uiText("游玩")],
-            ["documents", uiText("当前文档")],
-            ["history", uiText("已提交叙事")],
-            ["manage", uiText("世界管理")],
-          ] as const
-        ).map(([value, label]) => (
-          <button
-            key={value}
-            type="button"
-            className={section === value ? "is-current" : "secondary-button"}
-            aria-current={section === value ? "page" : undefined}
-            onClick={() => setSection(value)}
+    <main
+      className="world-reader-page"
+      style={
+        {
+          "--world-story-size": readingPreferences.fontSize + "px",
+          "--world-story-leading": readingPreferences.lineHeight,
+          "--world-story-tracking": readingPreferences.letterSpacing + "em",
+          "--world-story-measure": readingPreferences.measure + "rem",
+          "--world-composer-height": composerHeight + "px",
+          "--world-story-paragraph-gap":
+            readingPreferences.density === "compact"
+              ? "0.5em"
+              : readingPreferences.density === "standard"
+                ? "0.8em"
+                : "1.1em",
+          "--world-story-block-gap":
+            readingPreferences.density === "compact"
+              ? "1.3em"
+              : readingPreferences.density === "standard"
+                ? "1.85em"
+                : "2.4em",
+        } as React.CSSProperties
+      }
+    >
+      <ArtifactExtensionHost
+        worldId={world.worldId}
+        artifacts={world.artifacts ?? []}
+        playerViewPanels={world.playerViewPanels ?? []}
+        playerViews={world.playerViews}
+        interactionDisabled={pending !== null}
+        onSetComposerDraft={setPlayerText}
+        onRefresh={async () => {
+          await refreshWorld();
+        }}
+        onBridgeEvent={(recordId, event) =>
+          setBridgeEvents((current) => ({
+            ...current,
+            [recordId]: [...(current[recordId] ?? []), event],
+          }))
+        }
+      >
+        <div className="world-reader-shell">
+          <nav
+            className="world-floating-chrome world-floating-chrome-left"
+            aria-label={uiText("世界与状态")}
           >
-            {label}
-          </button>
-        ))}
-      </nav>
+            <button
+              type="button"
+              onClick={onBack}
+              aria-label={uiText("返回工作区")}
+            >
+              ←
+            </button>
+            <button
+              type="button"
+              className={leftRailOpen ? "is-current" : ""}
+              aria-pressed={leftRailOpen}
+              onClick={() => setLeftRailOpen((open) => !open)}
+            >
+              {uiText("此刻")}
+            </button>
+          </nav>
 
-      {feedback === null ? null : (
-        <p
-          className={`world-feedback ${feedback.kind}`}
-          role={feedback.kind === "error" ? "alert" : "status"}
-        >
-          {feedback.text}
-        </p>
-      )}
+          <h1 className="world-floating-title" title={worldTitle}>
+            {worldTitle}
+          </h1>
 
-      {section === "play" && (
-        <ArtifactExtensionHost
-          worldId={world.worldId}
-          artifacts={world.artifacts ?? []}
-          playerViewPanels={world.playerViewPanels ?? []}
-          playerViews={world.playerViews}
-          interactionDisabled={pending !== null}
-          onSetComposerDraft={setPlayerText}
-          onRefresh={() => refreshWorld()}
-          onBridgeEvent={(recordId, event) =>
-            setBridgeEvents((current) => ({
-              ...current,
-              [recordId]: [...(current[recordId] ?? []), event],
-            }))
-          }
-        >
+          <nav
+            className="world-floating-chrome world-floating-chrome-right"
+            aria-label={uiText("世界阅读工具")}
+          >
+            <button
+              type="button"
+              className={
+                rightRailOpen && rightRailTab === "documents"
+                  ? "is-current"
+                  : ""
+              }
+              onClick={() => {
+                setRightRailTab("documents");
+                setRightRailOpen(true);
+                setReadingOpen(false);
+              }}
+            >
+              {uiText("世界")}
+            </button>
+            <button
+              type="button"
+              className={
+                rightRailOpen && rightRailTab === "ai-reading"
+                  ? "is-current"
+                  : ""
+              }
+              onClick={() => {
+                setRightRailTab("ai-reading");
+                setRightRailOpen(true);
+                setReadingOpen(false);
+              }}
+            >
+              {uiText("AI 读取")}
+            </button>
+            <button
+              type="button"
+              className={readingOpen ? "is-current" : ""}
+              aria-label={uiText("阅读设置")}
+              onClick={() => {
+                setReadingOpen((open) => !open);
+                setRightRailOpen(false);
+              }}
+            >
+              Aa
+            </button>
+            <button
+              type="button"
+              aria-label={uiText("世界管理")}
+              onClick={() => {
+                setDialog("manage");
+                setReadingOpen(false);
+              }}
+            >
+              ···
+            </button>
+          </nav>
+
           <section
-            className="world-play-layout"
+            className="world-reader-scroll"
             aria-label={uiText("世界游玩")}
           >
             <article
-              className="story-workspace"
+              className="world-story-column"
               aria-busy={pending !== null || activeStatus === "running"}
+              aria-label={uiText("故事时间线")}
             >
-              <header className="story-heading">
-                <h2>{uiText("故事")}</h2>
-                {activeStatus === "running" ? (
-                  <span className="session-badge">{uiText("模型响应中")}</span>
-                ) : activeStatus === "interrupted" ? (
-                  <span className="session-badge call-chain-badge">
-                    {uiText("调用链已中断")}
-                  </span>
-                ) : null}
-              </header>
-
-              <div
-                className="story-transcript"
-                aria-label={uiText("调用链记录")}
-              >
-                <ArtifactExtensionMount mount="story" />
-                {playTimeline?.nextCursor === null ? null : (
-                  <button
-                    type="button"
-                    className="secondary-button timeline-load-earlier"
-                    disabled={pending !== null}
-                    onClick={() => void loadEarlierTimeline()}
-                  >
-                    {pending === "timeline-page"
-                      ? uiText("正在加载…")
-                      : uiText("加载更早的故事")}
-                  </button>
-                )}
-                {playTimeline !== null && playTimeline.items.length > 0 ? (
-                  <PlayTimeline
-                    client={client}
-                    worldId={worldId}
-                    items={playTimeline.items}
-                    restartDisabled={pending !== null}
-                    freshContextDisabled={!modelConfigured}
-                    onRestartFrom={(head) => void deriveWorld(head)}
-                    onEditPlayer={(
+              <ArtifactExtensionMount mount="story" />
+              {playTimeline?.nextCursor === null ? null : (
+                <button
+                  type="button"
+                  className="secondary-button timeline-load-earlier"
+                  disabled={pending !== null}
+                  onClick={() => void loadEarlierTimeline()}
+                >
+                  {pending === "timeline-page"
+                    ? uiText("正在加载…")
+                    : uiText("加载更早的故事")}
+                </button>
+              )}
+              {playTimeline !== null && playTimeline.items.length > 0 ? (
+                <PlayTimeline
+                  client={client}
+                  worldId={worldId}
+                  items={playTimeline.items}
+                  restartDisabled={pending !== null}
+                  freshContextDisabled={!modelConfigured}
+                  onRestartFrom={(head) => void deriveWorld(head)}
+                  onEditPlayer={(chainId, eventId, editedText, continuation) =>
+                    void reviseEditedPlayer(
                       chainId,
                       eventId,
                       editedText,
                       continuation,
-                    ) =>
-                      void reviseEditedPlayer(
-                        chainId,
-                        eventId,
-                        editedText,
-                        continuation,
-                      )
-                    }
-                  />
-                ) : committedMessages.length === 0 ? (
-                  <div className="story-empty-state">
-                    <span aria-hidden="true">✦</span>
-                    <h3>{uiText("故事还没有开始")}</h3>
-                    <p>{uiText("描述你的行动，从当前世界开始一条调用链。")}</p>
-                  </div>
-                ) : (
-                  <Transcript
-                    messages={committedMessages.map((message) => ({
-                      ...message,
-                      pending: false,
-                    }))}
-                    restartDisabled={pending !== null}
-                    onRestartFrom={(head) => void deriveWorld(head)}
-                  />
-                )}
-                <div ref={historyEndRef} />
-              </div>
-
-              <footer className="play-composer">
-                {!modelConfigured && (
-                  <div className="model-required-callout">
-                    <p>{uiText("需要先配置模型连接才能游玩。")}</p>
-                    <button type="button" onClick={onConfigureModel}>
-                      {uiText("配置模型")}
-                    </button>
-                  </div>
-                )}
-
-                <ArtifactExtensionMount mount="composer_above" />
-                {playFailure === null ? null : (
-                  <div
-                    className="play-call-failure"
-                    role="alert"
-                    aria-label={uiText("模型调用失败")}
-                  >
-                    <strong>{uiText("模型调用失败")}</strong>
-                    <p>{playFailure}</p>
-                  </div>
-                )}
-                {!activeCanRetry ? null : (
-                  <div className="play-retry-note" role="alert">
-                    <span aria-hidden="true">!</span>
-                    <p>
-                      {uiText(
-                        "上次模型请求没有完整返回。保持输入框为空并点击“追加上下文”，就会原样发送已保存的请求；不会追加玩家指令，中断片段也不会进入模型上下文。",
-                      )}
-                    </p>
-                  </div>
-                )}
-                {playProgress === null ? null : (
-                  <PlayRunProgress
-                    progress={playProgress}
-                    now={playProgressNow}
-                    onCancel={() => void cancelPlayGeneration()}
-                  />
-                )}
-                <label className="composer-field">
-                  <span className="visually-hidden">{uiText("你的行动")}</span>
-                  <textarea
-                    aria-label={uiText("你的行动")}
-                    rows={2}
-                    placeholder={uiText(
-                      "描述你的行动；也可以留空并追加，让 AI 沿现有上下文续写…",
-                    )}
-                    value={playerText}
-                    disabled={
-                      pending !== null ||
-                      !modelConfigured ||
-                      activeStatus === "running"
-                    }
-                    onChange={(event) => setPlayerText(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (
-                        (event.ctrlKey || event.metaKey) &&
-                        event.key === "Enter"
-                      ) {
-                        event.preventDefault();
-                        submitCurrentMode();
-                      }
-                    }}
-                  />
-                </label>
-                <ArtifactExtensionMount mount="composer_below" />
-                <div className="composer-actions">
-                  <p>
-                    {uiText("Ctrl / ⌘ + Enter 追加；没有上下文时自动全新开始")}
-                  </p>
-                  <div className="button-row">
-                    <button
-                      type="button"
-                      disabled={!canStartFresh || !modelConfigured}
-                      onClick={() => void submitPlayChain("fresh")}
-                    >
-                      {pending === "play-fresh"
-                        ? uiText("正在开始…")
-                        : uiText("全新上下文")}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={!canAppend || !modelConfigured}
-                      onClick={() => void submitPlayChain("append")}
-                    >
-                      {pending === "play-append"
-                        ? uiText("正在追加…")
-                        : uiText("追加上下文")}
-                    </button>
-                  </div>
+                    )
+                  }
+                />
+              ) : committedMessages.length === 0 ? (
+                <div className="story-empty-state">
+                  <span aria-hidden="true">✦</span>
+                  <h3>{uiText("故事还没有开始")}</h3>
+                  <p>{uiText("描述你的行动，从当前世界开始一条调用链。")}</p>
                 </div>
-              </footer>
+              ) : (
+                <Transcript
+                  messages={committedMessages.map((message) => ({
+                    ...message,
+                    pending: false,
+                  }))}
+                  restartDisabled={pending !== null}
+                  onRestartFrom={(head) => void deriveWorld(head)}
+                />
+              )}
+              {playProgress === null ? null : (
+                <PlayRunProgress
+                  progress={playProgress}
+                  now={playProgressNow}
+                  onCancel={() => void cancelPlayGeneration()}
+                />
+              )}
+              <div ref={historyEndRef} />
             </article>
+          </section>
 
-            <aside className="player-view-rail" aria-label={uiText("玩家视图")}>
-              <h2 className="visually-hidden">{uiText("当前情景")}</h2>
+          <footer ref={composerRef} className="world-composer-dock">
+            <ArtifactExtensionMount mount="composer_above" />
+            {!modelConfigured ? (
+              <div className="model-required-callout">
+                <p>{uiText("需要先配置模型连接才能游玩。")}</p>
+                <button type="button" onClick={onConfigureModel}>
+                  {uiText("配置模型")}
+                </button>
+              </div>
+            ) : null}
+            {playFailure === null ? null : (
+              <div
+                className="play-call-failure"
+                role="alert"
+                aria-label={uiText("模型调用失败")}
+              >
+                <strong>{uiText("模型调用失败")}</strong>
+                <p>{playFailure}</p>
+              </div>
+            )}
+            {!activeCanRetry ? null : (
+              <div className="play-retry-note" role="alert">
+                <span aria-hidden="true">!</span>
+                <p>
+                  {uiText(
+                    "上次模型请求没有完整返回。保持输入为空并重试，会原样发送保存的请求。",
+                  )}
+                </p>
+              </div>
+            )}
+            {activeChainStale ? (
+              <div className="world-fresh-context-note" role="note">
+                {uiText("世界已在故事外修订；下一次行动会从新上下文开始。")}
+              </div>
+            ) : null}
+            <div className="world-composer-row">
+              <details className="world-composer-mode">
+                <summary aria-label={uiText("选择提交方式")}>＋</summary>
+                <div>
+                  <button
+                    type="button"
+                    aria-label={uiText("追加上下文")}
+                    disabled={!canAppend || !modelConfigured}
+                    onClick={(event) => {
+                      event.currentTarget
+                        .closest("details")
+                        ?.removeAttribute("open");
+                      void submitPlayChain("append");
+                    }}
+                  >
+                    <strong>{uiText("追加当前上下文")}</strong>
+                    <span>{uiText("保留这条调用链已经看到的内容")}</span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={uiText("全新上下文")}
+                    disabled={!canStartFresh || !modelConfigured}
+                    onClick={(event) => {
+                      event.currentTarget
+                        .closest("details")
+                        ?.removeAttribute("open");
+                      void submitPlayChain("fresh");
+                    }}
+                  >
+                    <strong>{uiText("使用全新上下文")}</strong>
+                    <span>{uiText("从当前世界重新编译材料")}</span>
+                  </button>
+                </div>
+              </details>
+              <label>
+                <span className="visually-hidden">{uiText("你的行动")}</span>
+                <textarea
+                  ref={composerTextareaRef}
+                  aria-label={uiText("你的行动")}
+                  rows={1}
+                  placeholder={uiText("接下来，你要做什么？")}
+                  value={playerText}
+                  disabled={
+                    pending !== null ||
+                    !modelConfigured ||
+                    activeStatus === "running"
+                  }
+                  onChange={(event) => setPlayerText(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (
+                      (event.ctrlKey || event.metaKey) &&
+                      event.key === "Enter"
+                    ) {
+                      event.preventDefault();
+                      submitCurrentMode();
+                    }
+                  }}
+                />
+              </label>
+              <button
+                type="button"
+                className="world-composer-send"
+                aria-label={
+                  defaultSubmitFresh
+                    ? uiText("从全新上下文发送行动")
+                    : uiText("追加行动")
+                }
+                disabled={!defaultSubmitEnabled || !modelConfigured}
+                onClick={submitCurrentMode}
+              >
+                {pending === "play-fresh" || pending === "play-append"
+                  ? "…"
+                  : "↑"}
+              </button>
+            </div>
+            <ArtifactExtensionMount mount="composer_below" />
+          </footer>
+
+          <button
+            type="button"
+            className={
+              leftRailOpen || rightRailOpen
+                ? "world-panel-scrim is-visible"
+                : "world-panel-scrim"
+            }
+            aria-label={uiText("收起侧栏")}
+            onClick={() => {
+              setLeftRailOpen(false);
+              setRightRailOpen(false);
+            }}
+          />
+
+          <aside
+            className={
+              leftRailOpen
+                ? "world-overlay-rail world-overlay-rail-left is-open"
+                : "world-overlay-rail world-overlay-rail-left"
+            }
+            aria-hidden={!leftRailOpen}
+            aria-label={uiText("当前情景")}
+          >
+            <header>
+              <div>
+                <span>PLAYER VIEW</span>
+                <strong>{uiText("此刻")}</strong>
+              </div>
+              <button
+                type="button"
+                aria-label={uiText("收起状态栏")}
+                onClick={() => setLeftRailOpen(false)}
+              >
+                ×
+              </button>
+            </header>
+            <div className="world-overlay-rail-body">
               <ArtifactExtensionMount mount="sidebar" />
               {playerViewFallback.views.length === 0 ? (
                 playerViewFallback.coveredViewIds.size > 0 ? null : (
@@ -1177,372 +1475,166 @@ export function WorldPage({
                   </summary>
                   <ul>
                     {playerViewFallback.diagnostics.map((diagnostic, index) => (
-                      <li key={`${diagnostic.code}-${index}`}>
+                      <li key={diagnostic.code + "-" + index}>
                         {diagnostic.message}
                       </li>
                     ))}
                   </ul>
                 </details>
               )}
-            </aside>
-            <ArtifactExtensionMount mount="overlay" />
-            <ArtifactExtensionMount mount="debug" />
-            <ArtifactDebugger
-              records={world.artifactDebug ?? []}
-              extensions={world.extensions ?? []}
-              playerViewPanels={world.playerViewPanels ?? []}
-              bridgeEvents={bridgeEvents}
-            />
-          </section>
-        </ArtifactExtensionHost>
-      )}
-
-      {section === "documents" && (
-        <section className="world-browser" aria-labelledby="documents-heading">
-          <aside className="world-browser-index">
-            <div>
-              <p className="eyebrow">CURRENT STATE</p>
-              <h2 id="documents-heading">{uiText("当前文档")}</h2>
-              <p>
-                {documents.length} {uiText("份世界状态文件")}
-              </p>
             </div>
-            <ul>
-              {documentOptions.map((document) => (
-                <li key={document.path}>
-                  <button
-                    type="button"
-                    className={
-                      currentDocument?.path === document.path
-                        ? "is-selected"
-                        : "secondary-button"
-                    }
-                    onClick={() => setSelectedDocument(document.path)}
-                  >
-                    <strong>{document.title}</strong>
-                    <span>{document.path}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
           </aside>
-          <article className="world-document-reader">
-            {currentDocument === undefined ? (
-              <p>{uiText("当前世界没有状态文档。")}</p>
-            ) : (
-              <>
-                <header>
-                  <div>
-                    <p className="eyebrow">WORLD DOCUMENT</p>
-                    <h2>{documentOption(currentDocument).title}</h2>
-                  </div>
-                  <code>{currentDocument.path}</code>
-                </header>
-                <pre>{currentDocument.contents}</pre>
-              </>
-            )}
-          </article>
-        </section>
-      )}
 
-      {section === "history" && (
-        <section
-          className="world-history-page"
-          aria-labelledby="history-heading"
-        >
-          <header>
-            <div>
-              <p className="eyebrow">COMMITTED NARRATIVE</p>
-              <h2 id="history-heading">{uiText("已提交叙事")}</h2>
-            </div>
-            <p>{uiText("这里只显示已经进入世界权威的玩家与主持原文。")}</p>
-          </header>
-          {playTimeline?.nextCursor === null ? null : (
-            <button
-              type="button"
-              className="secondary-button timeline-load-earlier"
-              disabled={pending !== null}
-              onClick={() => void loadEarlierTimeline()}
-            >
-              {pending === "timeline-page"
-                ? uiText("正在加载…")
-                : uiText("加载更早的已提交叙事")}
-            </button>
-          )}
-          {committedMessages.length === 0 ? (
-            <div className="history-empty-state">
-              {uiText("尚无已提交叙事。")}
-            </div>
-          ) : (
-            <Transcript
-              messages={committedMessages.map((message) => ({
-                ...message,
-                pending: false,
-              }))}
-              restartDisabled={pending !== null}
-              onRestartFrom={(head) => void deriveWorld(head)}
-            />
-          )}
-        </section>
-      )}
-
-      {section === "manage" && (
-        <section className="world-manage-page" aria-labelledby="manage-heading">
-          <header className="world-manage-heading">
-            <div>
-              <p className="eyebrow">WORLD MANAGEMENT</p>
-              <h2 id="manage-heading">{uiText("世界管理")}</h2>
-            </div>
-            <p>
-              {uiText("这些操作位于故事之外；它们不会被普通游玩 AI 擅自执行。")}
-            </p>
-          </header>
-
-          <div className="world-manage-grid">
-            <article className="manage-card world-name-card">
-              <span className="manage-card-number">01</span>
-              <div className="manage-card-copy">
-                <h3>{uiText("世界名称")}</h3>
-                <p>
-                  {uiText(
-                    "这是工作区和世界页显示的名字；修改它不会改动故事、状态或历史。",
-                  )}
-                </p>
-              </div>
-              <form
-                className="world-name-editor"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void renameCurrentWorld();
-                }}
-              >
-                <label>
-                  {uiText("世界显示名称")}
-                  <input
-                    aria-label={uiText("世界显示名称")}
-                    maxLength={160}
-                    value={worldNameDraft}
-                    onChange={(event) =>
-                      setWorldNameDraft(event.currentTarget.value)
-                    }
-                  />
-                </label>
-                <button
-                  type="submit"
-                  disabled={
-                    pending !== null ||
-                    worldNameDraft.trim() === "" ||
-                    worldNameDraft.trim() === worldTitle
-                  }
-                >
-                  {pending === "rename"
-                    ? uiText("正在保存…")
-                    : uiText("保存名称")}
-                </button>
-              </form>
-            </article>
-
-            <article className="manage-card derive-card">
-              <span className="manage-card-number">02</span>
+          <aside
+            className={
+              rightRailOpen
+                ? "world-overlay-rail world-overlay-rail-right is-open"
+                : "world-overlay-rail world-overlay-rail-right"
+            }
+            aria-hidden={!rightRailOpen}
+            aria-label={
+              rightRailTab === "documents"
+                ? uiText("当前世界")
+                : uiText("AI 如何读取")
+            }
+          >
+            <header>
               <div>
-                <h3>{uiText("从此刻创建分叉")}</h3>
-                <p>
-                  {uiText(
-                    "复制当前状态和截至此刻的已提交叙事，得到一个完全独立的新世界。",
-                  )}
-                </p>
+                <span>WORLD CONTEXT</span>
+                <strong>
+                  {rightRailTab === "documents"
+                    ? uiText("当前世界")
+                    : uiText("AI 如何读取")}
+                </strong>
               </div>
               <button
                 type="button"
-                disabled={pending !== null || activeStatus === "running"}
-                onClick={() => void deriveWorld(world.head)}
+                aria-label={uiText("收起世界栏")}
+                onClick={() => setRightRailOpen(false)}
               >
-                {pending === "derive"
-                  ? uiText("正在创建…")
-                  : uiText("创建分叉")}
+                ×
               </button>
-            </article>
-
-            <article className="manage-card control-card">
-              <span className="manage-card-number">03</span>
-              <div className="manage-card-copy">
-                <h3>{uiText("世界控制")}</h3>
-                <p>
-                  {uiText(
-                    "编辑主持框架和玩家视图。草稿必须先通过真实提示词预览，再整批应用。",
-                  )}
-                </p>
-              </div>
-              <span className="control-draft-state">
-                {controlDirty
-                  ? uiText("有尚未预览的修改")
-                  : uiText("当前已应用控制")}
-              </span>
-              {activeStatus !== "running" ? null : (
-                <p className="manage-warning">
-                  {uiText("模型调用尚未返回；完成或中断后才能应用新控制。")}
-                </p>
-              )}
-              <label>
-                {uiText("世界控制文件（JSON）")}
-                <textarea
-                  aria-label={uiText("世界控制文件")}
-                  rows={18}
-                  value={controlFiles}
-                  onChange={(event) => {
-                    setControlFiles(event.target.value);
-                    setControlDirty(true);
-                    setControlPreview(null);
-                  }}
+            </header>
+            <nav aria-label={uiText("世界侧栏")}>
+              <button
+                type="button"
+                className={rightRailTab === "documents" ? "is-current" : ""}
+                onClick={() => setRightRailTab("documents")}
+              >
+                {uiText("世界")}
+              </button>
+              <button
+                type="button"
+                className={rightRailTab === "ai-reading" ? "is-current" : ""}
+                onClick={() => setRightRailTab("ai-reading")}
+              >
+                {uiText("AI 读取")}
+              </button>
+            </nav>
+            <div className="world-overlay-rail-body">
+              {rightRailTab === "documents" ? (
+                <WorldDocumentRail
+                  documents={documents}
+                  selectedPath={selectedDocument}
+                  onSelect={setSelectedDocument}
+                  onRevise={(path) => openRevision("manual", path)}
                 />
-              </label>
-              <div className="button-row">
-                <button
-                  type="button"
-                  disabled={pending !== null || !modelConfigured}
-                  onClick={() => void previewControl()}
-                >
-                  {pending === "control-preview"
-                    ? uiText("正在预览…")
-                    : uiText("预览世界控制")}
-                </button>
-                <button
-                  type="button"
-                  disabled={
-                    pending !== null ||
-                    controlPreview === null ||
-                    activeStatus === "running"
-                  }
-                  onClick={() => void applyControl()}
-                >
-                  {pending === "control-apply"
-                    ? uiText("正在应用…")
-                    : uiText("整批应用世界控制")}
-                </button>
-              </div>
-              {controlPreview === null ? null : (
-                <details className="technical-details">
-                  <summary>{uiText("查看真实提示词预览结果")}</summary>
-                  <pre>{JSON.stringify(controlPreview, null, 2)}</pre>
-                </details>
-              )}
-            </article>
-
-            <article className="manage-card correction-card">
-              <span className="manage-card-number">04</span>
-              <div className="manage-card-copy">
-                <h3>{uiText("连续性修正")}</h3>
-                <p>
-                  {uiText(
-                    "在故事之外修正当前文档。修正会追加一笔新提交，不会改写旧叙事。",
-                  )}
-                </p>
-              </div>
-              {correctionPreview === null ? (
-                <>
-                  <div className="correction-fields">
-                    <label>
-                      {uiText("要修正的文档")}
-                      <select
-                        aria-label={uiText("要修正的文档")}
-                        value={correctionDocument}
-                        onChange={(event) =>
-                          setCorrectionDocument(event.target.value)
-                        }
-                      >
-                        {correctableDocuments.map((document) => (
-                          <option key={document.handle} value={document.handle}>
-                            {document.title}（@{document.ref}）
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      {uiText("YAML 路径")}
-                      <input
-                        aria-label={uiText("YAML 路径")}
-                        placeholder={uiText("例如：衣着 或 关系.秦龙.好感")}
-                        value={correctionPath}
-                        onChange={(event) =>
-                          setCorrectionPath(event.target.value)
-                        }
-                      />
-                    </label>
-                    <label>
-                      {uiText("新值")}
-                      <textarea
-                        aria-label={uiText("修正后的新值")}
-                        rows={3}
-                        value={correctionValue}
-                        onChange={(event) =>
-                          setCorrectionValue(event.target.value)
-                        }
-                      />
-                    </label>
-                  </div>
-                  <div className="button-row">
-                    <button
-                      type="button"
-                      disabled={
-                        pending !== null ||
-                        !modelConfigured ||
-                        activeStatus === "running" ||
-                        correctableDocuments.length === 0 ||
-                        correctionDocument.length === 0 ||
-                        correctionPath.trim().length === 0
-                      }
-                      onClick={() => void previewCorrection()}
-                    >
-                      {pending === "correction-preview"
-                        ? uiText("正在预览…")
-                        : uiText("预览整笔修正")}
-                    </button>
-                    {correction === null ? null : (
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        disabled={pending !== null}
-                        onClick={() => void cancelCorrection()}
-                      >
-                        {uiText("取消修正草稿")}
-                      </button>
-                    )}
-                  </div>
-                </>
               ) : (
-                <FileNativeCorrectionPanel
-                  preview={correctionPreview}
-                  pending={pending !== null}
-                  onApply={() => void applyCorrection()}
-                  onCancel={() => void cancelCorrection()}
+                <AiReadingRail
+                  reading={aiReading}
+                  loading={aiReadingLoading}
+                  documents={documents}
+                  onOpenFull={() => openRevision("ai-reading")}
                 />
               )}
-            </article>
+            </div>
+            <footer>
+              <button type="button" onClick={() => openRevision("manual")}>
+                {uiText("修订当前世界")}
+              </button>
+              <button type="button" onClick={() => setDialog("manage")}>
+                {uiText("世界管理")}
+              </button>
+            </footer>
+          </aside>
 
-            <article className="manage-card runtime-card">
-              <span className="manage-card-number">05</span>
-              <div className="manage-card-copy">
-                <h3>{uiText("运行详情")}</h3>
-                <p>{uiText("用于排查本地恢复问题，不参与普通游玩。")}</p>
-              </div>
-              <dl className="runtime-summary">
-                <div>
-                  <dt>{uiText("当前端点")}</dt>
-                  <dd>{world.head}</dd>
-                </div>
-                <div>
-                  <dt>{uiText("世界 ID")}</dt>
-                  <dd>{world.worldId}</dd>
-                </div>
-              </dl>
-              <details className="technical-details">
-                <summary>{uiText("查看 Runtime 原始诊断")}</summary>
-                <pre>{JSON.stringify(world.runtime, null, 2)}</pre>
-              </details>
-            </article>
-          </div>
-        </section>
-      )}
+          {readingOpen ? (
+            <ReadingPreferencesPopover
+              value={readingPreferences}
+              saving={readingPreferencesSaving}
+              onChange={(next) => void saveReadingPreferences(next)}
+              onClose={() => setReadingOpen(false)}
+            />
+          ) : null}
+
+          {dialog === "revision" ? (
+            <WorldRevisionDialog
+              files={revisionTab === "ai-reading" ? documents : correctionFiles}
+              selectedPath={selectedDocument}
+              dirty={correctionDirty}
+              preview={correctionPreview}
+              reading={aiReading}
+              tab={revisionTab}
+              pending={pending !== null}
+              onFilesChange={setCorrectionFiles}
+              onSelectedPathChange={setSelectedDocument}
+              onTab={setRevisionTab}
+              onPreview={() => void previewCorrection()}
+              onApply={() => void applyCorrection()}
+              onBack={() => void returnToCorrectionEditor()}
+              onDiscard={() => void cancelCorrection()}
+              onClose={() => {
+                if (correction !== null)
+                  void returnToCorrectionEditor().then(() => setDialog(null));
+                else setDialog(null);
+              }}
+            />
+          ) : null}
+
+          {dialog === "manage" ? (
+            <WorldManagementDialog
+              world={world}
+              worldTitle={worldTitle}
+              worldNameDraft={worldNameDraft}
+              setWorldNameDraft={setWorldNameDraft}
+              pending={pending}
+              activeStatus={activeStatus}
+              controlFiles={controlFiles}
+              controlDirty={controlDirty}
+              controlPreview={controlPreview}
+              onControlFiles={(value) => {
+                setControlFiles(value);
+                setControlDirty(true);
+                setControlPreview(null);
+              }}
+              onRename={() => void renameCurrentWorld()}
+              onDerive={() => void deriveWorld(world.head)}
+              onPreviewControl={() => void previewControl()}
+              onApplyControl={() => void applyControl()}
+              onClose={() => setDialog(null)}
+              modelConfigured={modelConfigured}
+            />
+          ) : null}
+
+          {feedback === null ? null : (
+            <p
+              className={"world-feedback " + feedback.kind}
+              role={feedback.kind === "error" ? "alert" : "status"}
+            >
+              {feedback.text}
+            </p>
+          )}
+
+          <ArtifactExtensionMount mount="overlay" />
+          <ArtifactExtensionMount mount="debug" />
+          <ArtifactDebugger
+            records={world.artifactDebug ?? []}
+            extensions={world.extensions ?? []}
+            playerViewPanels={world.playerViewPanels ?? []}
+            bridgeEvents={bridgeEvents}
+          />
+        </div>
+      </ArtifactExtensionHost>
     </main>
   );
 }
@@ -1569,6 +1661,9 @@ function PlayTimeline({
     continuation: PlayerRevisionContinuation,
   ) => void;
 }): React.JSX.Element {
+  const traceEvents = items.flatMap((item) =>
+    item.kind === "event" && timelineEventHasTrace(item.event) ? [item] : [],
+  );
   return (
     <ol
       className="call-chain-events play-timeline-events"
@@ -1620,6 +1715,7 @@ function PlayTimeline({
               </article>
             </li>
           );
+        if (!timelineEventBelongsInStory(item.event)) return null;
         return (
           <TimelineEvent
             key={`${item.chainId}:${item.event.id}`}
@@ -1631,10 +1727,73 @@ function PlayTimeline({
             freshContextDisabled={freshContextDisabled}
             onRestartFrom={onRestartFrom}
             onEditPlayer={onEditPlayer}
+            presentation="story"
           />
         );
       })}
+      {traceEvents.length === 0 ? null : (
+        <li className="world-timeline-trace">
+          <details>
+            <summary>
+              <span>{uiText("本段调用详情")}</span>
+              <small>
+                {uiText("{count} 项记录", { count: traceEvents.length })}
+              </small>
+            </summary>
+            <ol
+              className="world-timeline-trace-events"
+              aria-label={uiText("本段模型调用详情")}
+            >
+              {traceEvents.map((item) => (
+                <TimelineEvent
+                  key={`trace:${item.chainId}:${item.event.id}`}
+                  client={client}
+                  worldId={worldId}
+                  chainId={item.chainId}
+                  event={item.event}
+                  restartDisabled={restartDisabled}
+                  freshContextDisabled={freshContextDisabled}
+                  onRestartFrom={onRestartFrom}
+                  onEditPlayer={onEditPlayer}
+                  presentation="trace"
+                />
+              ))}
+            </ol>
+          </details>
+        </li>
+      )}
     </ol>
+  );
+}
+
+function timelineEventBelongsInStory(
+  event: V1PlayTimelineEventSummary,
+): boolean {
+  if (
+    event.kind === "player" ||
+    event.kind === "failure" ||
+    event.kind === "cancellation"
+  )
+    return true;
+  if (event.kind === "followup") return event.failed;
+  if (event.kind !== "assistant") return false;
+  return (
+    event.status === "streaming" || assistantResponseKind(event) === "narrative"
+  );
+}
+
+function timelineEventHasTrace(event: V1PlayTimelineEventSummary): boolean {
+  if (
+    event.kind === "tool_call" ||
+    event.kind === "tool_result" ||
+    event.kind === "followup"
+  )
+    return true;
+  if (event.kind !== "assistant" || event.status === "streaming") return false;
+  return (
+    assistantResponseKind(event) !== "narrative" ||
+    event.usage !== undefined ||
+    event.detailsAvailable
   );
 }
 
@@ -1647,6 +1806,7 @@ function TimelineEvent({
   freshContextDisabled,
   onRestartFrom,
   onEditPlayer,
+  presentation,
 }: {
   client: WorldPageClient;
   worldId: string;
@@ -1661,6 +1821,7 @@ function TimelineEvent({
     editedText: string,
     continuation: PlayerRevisionContinuation,
   ) => void;
+  presentation: "story" | "trace";
 }): React.JSX.Element {
   const [detail, setDetail] = useState<V1PlayCallChainEvent | null>(null);
   const [detailPending, setDetailPending] = useState(false);
@@ -1823,6 +1984,80 @@ function TimelineEvent({
     const responseKind = assistantResponseKind(event);
     const responseClass =
       responseKind === "tool_step" ? "tool-step" : responseKind;
+    const diagnostics = (
+      <>
+        {event.usage === undefined ? null : (
+          <ModelUsageBreakdown usage={event.usage} compact />
+        )}
+        {!event.detailsAvailable ? null : event.status === "streaming" ? (
+          <small>{uiText("响应完成后可查看模型诊断详情")}</small>
+        ) : (
+          <details
+            onToggle={(change) =>
+              change.currentTarget.open && void loadDetail()
+            }
+          >
+            <summary>{uiText("查看模型诊断详情")}</summary>
+            {detailPending ? <p>{uiText("正在加载…")}</p> : null}
+            {detailError === null ? null : <p role="alert">{detailError}</p>}
+            {full?.reasoning === undefined ? null : (
+              <>
+                <p>
+                  <strong>
+                    {uiText("Provider 返回推理（不等同隐藏思维链）")}
+                  </strong>
+                </p>
+                <pre>{full.reasoning}</pre>
+              </>
+            )}
+            {full?.toolFragment === undefined ? null : (
+              <pre>{full.toolFragment}</pre>
+            )}
+            {full?.stopReason === undefined &&
+            full?.continuation === undefined ? null : (
+              <dl className="prompt-budget-breakdown">
+                {full.stopReason === undefined ? null : (
+                  <div>
+                    <dt>{uiText("完成原因")}</dt>
+                    <dd>{full.stopReason}</dd>
+                  </div>
+                )}
+                {full.continuation === undefined ? null : (
+                  <div>
+                    <dt>{uiText("原生续传载荷")}</dt>
+                    <dd>
+                      {full.continuation === "available"
+                        ? uiText("可用")
+                        : uiText("不可用")}
+                    </dd>
+                  </div>
+                )}
+              </dl>
+            )}
+            {full?.usage === undefined ? null : (
+              <ModelUsageBreakdown usage={full.usage} showProvenance />
+            )}
+          </details>
+        )}
+      </>
+    );
+    if (presentation === "trace" && responseKind === "narrative")
+      return (
+        <li className="call-chain-assistant-diagnostics">
+          <article>
+            <header>
+              <strong>{uiText("AI 响应诊断")}</strong>
+              <span>
+                {uiText("{status} · 第 {attempt} 次派发", {
+                  status: callChainAssistantStatusLabel(event.status),
+                  attempt: event.attempt,
+                })}
+              </span>
+            </header>
+            {diagnostics}
+          </article>
+        </li>
+      );
     return (
       <li
         className={`call-chain-assistant is-${event.status} is-${responseClass}`}
@@ -1874,59 +2109,11 @@ function TimelineEvent({
           {responseKind === "pending" ? (
             <small>{uiText("待定输出；响应完成前不会进入故事")}</small>
           ) : null}
-          {event.usage === undefined ? null : (
-            <ModelUsageBreakdown usage={event.usage} compact />
-          )}
-          {!event.detailsAvailable ? null : event.status === "streaming" ? (
+          {presentation === "trace" ? (
+            diagnostics
+          ) : event.status === "streaming" && event.detailsAvailable ? (
             <small>{uiText("响应完成后可查看模型诊断详情")}</small>
-          ) : (
-            <details
-              onToggle={(change) =>
-                change.currentTarget.open && void loadDetail()
-              }
-            >
-              <summary>{uiText("查看模型诊断详情")}</summary>
-              {detailPending ? <p>{uiText("正在加载…")}</p> : null}
-              {detailError === null ? null : <p role="alert">{detailError}</p>}
-              {full?.reasoning === undefined ? null : (
-                <>
-                  <p>
-                    <strong>
-                      {uiText("Provider 返回推理（不等同隐藏思维链）")}
-                    </strong>
-                  </p>
-                  <pre>{full.reasoning}</pre>
-                </>
-              )}
-              {full?.toolFragment === undefined ? null : (
-                <pre>{full.toolFragment}</pre>
-              )}
-              {full?.stopReason === undefined &&
-              full?.continuation === undefined ? null : (
-                <dl className="prompt-budget-breakdown">
-                  {full.stopReason === undefined ? null : (
-                    <div>
-                      <dt>{uiText("完成原因")}</dt>
-                      <dd>{full.stopReason}</dd>
-                    </div>
-                  )}
-                  {full.continuation === undefined ? null : (
-                    <div>
-                      <dt>{uiText("原生续传载荷")}</dt>
-                      <dd>
-                        {full.continuation === "available"
-                          ? uiText("可用")
-                          : uiText("不可用")}
-                      </dd>
-                    </div>
-                  )}
-                </dl>
-              )}
-              {full?.usage === undefined ? null : (
-                <ModelUsageBreakdown usage={full.usage} showProvenance />
-              )}
-            </details>
-          )}
+          ) : null}
         </article>
       </li>
     );
@@ -2171,22 +2358,6 @@ function PlayerValue({ value }: { value: unknown }): React.JSX.Element {
   return <span className="empty-value">{uiText("[无法显示]")}</span>;
 }
 
-function documentOption(file: ContentTreeFile): DocumentOption {
-  const titleMatch = /^\s{0,4}title:\s*["']?(.+?)["']?\s*$/mu.exec(
-    file.contents,
-  );
-  const title =
-    titleMatch?.[1] ??
-    file.path
-      .split("/")
-      .at(-1)
-      ?.replace(/\.(?:ya?ml|md)$/iu, "") ??
-    file.path;
-  const refMatch = /^\s{0,4}ref:\s*["']?(.+?)["']?\s*$/mu.exec(file.contents);
-  const ref = refMatch?.[1] ?? file.path;
-  return { path: file.path, title, ref, handle: `@${ref}` };
-}
-
 function selectedStateDocument(
   state: readonly ContentTreeFile[],
   current: string,
@@ -2196,21 +2367,36 @@ function selectedStateDocument(
     : (state[0]?.path ?? "");
 }
 
-function selectedCorrectionDocument(
-  state: readonly ContentTreeFile[],
-  current: string,
-): string {
-  const options = state
-    .map(documentOption)
-    .filter(({ path }) => /\.ya?ml$/iu.test(path));
-  if (options.some(({ handle }) => handle === current)) return current;
+function cloneTextFiles(files: readonly ContentTreeFile[]): ContentTreeFile[] {
+  return files.map((file) => ({ ...file }));
+}
+
+function sameTextFiles(
+  left: readonly ContentTreeFile[],
+  right: readonly ContentTreeFile[],
+): boolean {
   return (
-    options.find(({ ref }) => ref === "qinlong")?.handle ??
-    options[0]?.handle ??
-    ""
+    left.length === right.length &&
+    left.every((file, index) => {
+      const candidate = right[index];
+      return (
+        candidate?.path === file.path &&
+        candidate.contents === file.contents &&
+        candidate.encoding === file.encoding
+      );
+    })
   );
 }
 
+function changedTextFiles(
+  before: readonly ContentTreeFile[],
+  after: readonly ContentTreeFile[],
+): ContentTreeFile[] {
+  return after.filter((file) => {
+    const previous = before.find(({ path }) => path === file.path);
+    return previous?.contents !== file.contents;
+  });
+}
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

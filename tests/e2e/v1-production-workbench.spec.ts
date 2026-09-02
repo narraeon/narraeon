@@ -435,7 +435,11 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(
     page.getByRole("heading", { name: "Night Training Dormitory" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "工作区", exact: true }).click();
+  await page
+    .getByRole("dialog", { name: "世界管理" })
+    .getByRole("button", { name: "关闭" })
+    .click();
+  await page.getByRole("button", { name: "返回工作区" }).click();
   await page
     .getByRole("button", { name: "重命名世界：Night Training Dormitory" })
     .click();
@@ -444,7 +448,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await page
     .getByRole("button", { name: "打开世界：Dormitory World", exact: true })
     .click();
-  await expect(page.getByLabel("调用链记录")).toContainText(
+  await expect(page.getByLabel("故事时间线")).toContainText(
     "The dormitory door closes behind you. Alex, wearing a dark blue athletic tank top, waits to discuss tonight's training.",
   );
   await expect(page.getByLabel("你的行动")).toBeVisible();
@@ -459,14 +463,21 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     await expect(
       page.locator(`[data-extension-mount="${mount}"]`),
     ).toBeAttached();
+  await page.getByRole("button", { name: "此刻" }).click();
+  await expect(page.getByLabel("当前情景")).toContainText(
+    "Dark blue athletic tank top",
+  );
+  await page.getByRole("button", { name: "收起状态栏" }).click();
+  await page
+    .getByRole("navigation", { name: "世界阅读工具" })
+    .getByRole("button", { name: "世界", exact: true })
+    .click();
+  const worldRail = page.getByRole("complementary", { name: "当前世界" });
+  await worldRail.getByRole("button", { name: /选择文档/u }).click();
   await expect(
-    page.getByRole("complementary", { name: "玩家视图" }),
-  ).toContainText("Dark blue athletic tank top");
-  await page.getByRole("button", { name: "当前文档" }).click();
-  await expect(
-    page.getByRole("button", { name: /current-situation\.yaml/u }),
+    worldRail.getByRole("option", { name: /current-situation\.yaml/u }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "游玩" }).click();
+  await page.getByRole("button", { name: "收起世界栏" }).click();
 
   responses.push(
     chatTools(
@@ -494,10 +505,12 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await page
     .getByLabel("你的行动")
     .fill("I ask Alex whether we are training tonight.");
-  await page.getByRole("button", { name: "全新上下文" }).click();
+  await page
+    .getByRole("button", { name: "从全新上下文发送行动", exact: true })
+    .click();
   const callChain = page.getByLabel("模型调用链");
   await expect(callChain).toContainText("模型响应中");
-  const transcript = page.getByLabel("调用链记录");
+  const transcript = page.getByLabel("世界游玩");
   const scrollRange = await transcript.evaluate((element) => {
     element.scrollTop = 0;
     return element.scrollHeight - element.clientHeight;
@@ -513,6 +526,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(
     page.getByText("Alex nods and continues folding the jersey."),
   ).toBeVisible();
+  await callChain.getByText("本段调用详情", { exact: true }).click();
   const toolStep = callChain.locator(".call-chain-assistant.is-tool-step");
   await expect(toolStep.getByText("模型工具步骤")).toBeVisible();
   await expect(
@@ -535,10 +549,10 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
       "First verify the character's current location and the player's action.",
     ),
   ).toHaveCount(0);
-  const firstAssistant = callChain.locator(".call-chain-assistant", {
-    hasText: "Alex nods and continues folding the jersey.",
-  });
-  const reasoning = firstAssistant.locator("details");
+  const reasoning = callChain
+    .locator(".call-chain-assistant-diagnostics")
+    .last()
+    .locator("details");
   await expect(reasoning).not.toHaveAttribute("open", "");
   await reasoning.locator("summary").click();
   await expect(reasoning).toContainText(
@@ -550,11 +564,11 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   );
   const toolCall = callChain
     .getByText("调用 world_patch")
-    .locator("xpath=ancestor::details");
+    .locator("xpath=ancestor::details[1]");
   await expect(toolCall).not.toHaveAttribute("open", "");
   const toolResult = callChain
     .getByText("world_patch 返回")
-    .locator("xpath=ancestor::details");
+    .locator("xpath=ancestor::details[1]");
   await toolResult.locator("summary").click();
   await expect(toolResult).toContainText("@current-situation write succeeded");
   const firstPlayRequest = providerRequest();
@@ -572,7 +586,8 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     ),
   );
   await page.getByLabel("你的行动").fill("I ask Alex to write down the time.");
-  await page.getByRole("button", { name: "全新上下文" }).click();
+  await page.getByLabel("选择提交方式").click();
+  await page.getByRole("button", { name: "全新上下文", exact: true }).click();
   await expect(
     page.getByText("Alex saves the training time on the phone."),
   ).toBeVisible();
@@ -582,10 +597,13 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     "First verify the character's current location and the player's action.",
   );
   await expect(contextsAfterFresh).toContainText("调用 world_patch");
-  const freshAssistant = contextsAfterFresh.locator(".call-chain-assistant", {
-    hasText: "Alex saves the training time on the phone.",
-  });
-  const freshReasoning = freshAssistant.locator("details");
+  await expect(
+    contextsAfterFresh.locator(".call-chain-assistant-diagnostics"),
+  ).toHaveCount(2);
+  const freshReasoning = contextsAfterFresh
+    .locator(".call-chain-assistant-diagnostics")
+    .last()
+    .locator("details");
   await freshReasoning.locator("summary").click();
   await expect(contextsAfterFresh).toContainText(
     "This is a fresh model context.",
@@ -603,7 +621,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
 
   responses.push(chatText("We are heading to the court at eight."));
   await page.getByLabel("你的行动").fill("What time are we leaving?");
-  await page.getByRole("button", { name: "追加上下文" }).click();
+  await page.getByRole("button", { name: "追加行动" }).click();
   await expect(
     page.getByText("We are heading to the court at eight."),
   ).toBeVisible();
@@ -617,7 +635,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   providerDelayMs = 3000;
   const cancellableRequestIndex = providerRequests.length;
   await page.getByLabel("你的行动").fill("I ask Alex to pause for a moment.");
-  await page.getByRole("button", { name: "追加上下文" }).click();
+  await page.getByRole("button", { name: "追加行动" }).click();
   const playProgress = page.getByLabel("本次模型调用进度");
   await expect(playProgress).toBeVisible();
   await expect(playProgress).toContainText(
@@ -646,7 +664,8 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await page
     .getByLabel("你的行动")
     .fill("Start again after the pause and continue from here.");
-  await page.getByRole("button", { name: "全新上下文" }).click();
+  await page.getByLabel("选择提交方式").click();
+  await page.getByRole("button", { name: "全新上下文", exact: true }).click();
   await expect(
     page.getByText("Alex waits and lets the moment pass."),
   ).toBeVisible();
@@ -657,7 +676,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   );
   await page.getByLabel("你的行动").fill("Where should we meet beforehand?");
   const interruptedRequestIndex = providerRequests.length;
-  await page.getByRole("button", { name: "追加上下文" }).click();
+  await page.getByRole("button", { name: "追加行动" }).click();
   await expect(
     page.getByRole("alert").filter({ hasText: "旧请求不能重发" }),
   ).toBeVisible();
@@ -667,7 +686,8 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await page
     .getByLabel("你的行动")
     .fill("Start a fresh call and tell me where we should meet beforehand.");
-  await page.getByRole("button", { name: "全新上下文" }).click();
+  await page.getByLabel("选择提交方式").click();
+  await page.getByRole("button", { name: "全新上下文", exact: true }).click();
   await expect(
     page.getByText("Alex adds that everyone will meet downstairs at 7:30."),
   ).toBeVisible();
@@ -678,22 +698,53 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     page.getByText("Where should we meet beforehand?", { exact: true }),
   ).toHaveCount(1);
 
-  await page.getByRole("button", { name: "世界管理" }).click();
-  await page.getByLabel("YAML 路径").fill("clothes");
-  await page.getByLabel("修正后的新值").fill("Blue training jacket");
-  await page.getByRole("button", { name: "预览整笔修正" }).click();
-  await page.getByRole("button", { name: "应用这笔修正" }).click();
-  await page.getByRole("button", { name: "游玩" }).click();
+  await page
+    .getByRole("navigation", { name: "世界阅读工具" })
+    .getByRole("button", { name: "世界", exact: true })
+    .click();
+  await page
+    .getByRole("complementary", { name: "当前世界" })
+    .getByRole("button", { name: "修订当前世界" })
+    .click();
+  const correctionDialog = page.getByRole("dialog", {
+    name: "修订当前世界",
+  });
+  await correctionDialog
+    .getByRole("button", { name: "打开 characters/alex.yaml" })
+    .click();
+  const alexEditor = correctionDialog.getByLabel("编辑 characters/alex.yaml");
+  await alexEditor.fill(
+    (await alexEditor.inputValue()).replace(
+      "Dark blue athletic tank top",
+      "Blue training jacket",
+    ),
+  );
+  await correctionDialog.getByRole("button", { name: "预览修订" }).click();
   await expect(
-    page.getByRole("complementary", { name: "玩家视图" }),
-  ).toContainText("Blue training jacket");
+    correctionDialog.getByRole("heading", { name: "确认修正内容" }),
+  ).toBeVisible();
+  await correctionDialog.getByRole("button", { name: "应用这笔修正" }).click();
+  await page.getByRole("button", { name: "收起世界栏" }).click();
+  await page.getByRole("button", { name: "此刻" }).click();
+  await expect(page.getByLabel("当前情景")).toContainText(
+    "Blue training jacket",
+  );
+  await page.getByRole("button", { name: "收起状态栏" }).click();
 
-  await page.getByRole("button", { name: "世界管理" }).click();
-  await page.getByRole("button", { name: "预览世界控制" }).click();
-  await page.getByRole("button", { name: "整批应用世界控制" }).click();
-  await expect(page.getByRole("status")).toContainText("世界控制已整批应用");
+  await page
+    .getByRole("navigation", { name: "世界阅读工具" })
+    .getByRole("button", { name: "世界管理" })
+    .click();
+  const managementDialog = page.getByRole("dialog", { name: "世界管理" });
+  await managementDialog.getByRole("button", { name: "预览世界控制" }).click();
+  await managementDialog
+    .getByRole("button", { name: "整批应用世界控制" })
+    .click();
+  await expect(page.locator(".world-feedback.status")).toContainText(
+    "世界控制已整批应用",
+  );
 
-  await page.getByRole("button", { name: "游玩" }).click();
+  await managementDialog.getByRole("button", { name: "关闭" }).click();
   const playerBranchPoint = page
     .locator(".call-chain-player")
     .filter({ hasText: "Where should we meet beforehand?" });
@@ -701,30 +752,35 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(
     page.getByRole("heading", { name: "Dormitory World (fork)" }),
   ).toBeVisible();
-  const derivedTimeline = page.getByLabel("调用链记录");
+  const derivedTimeline = page.getByLabel("故事时间线");
   await expect(derivedTimeline).toContainText("查看模型诊断详情");
   await expect(derivedTimeline).toContainText("调用 world_patch");
   await expect(derivedTimeline).toContainText(
     "Where should we meet beforehand?",
   );
   await expect(page.getByLabel("你的行动")).toHaveValue("");
-  await expect(page.getByRole("button", { name: "全新上下文" })).toBeDisabled();
-  await expect(page.getByRole("button", { name: "追加上下文" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "追加行动" })).toBeEnabled();
   responses.push(
     chatText("Alex reconsiders and says to meet downstairs at 7:20."),
   );
-  await page.getByRole("button", { name: "追加上下文" }).click();
+  await page.getByRole("button", { name: "追加行动" }).click();
   await expect(
     page.getByText("Alex reconsiders and says to meet downstairs at 7:20."),
   ).toBeVisible();
 
-  await page.getByRole("button", { name: "工作区", exact: true }).click();
+  await page.getByRole("button", { name: "返回工作区" }).click();
   await page
     .getByRole("button", { name: "打开世界：Dormitory World", exact: true })
     .click();
-  await page.getByRole("button", { name: "世界管理" }).click();
+  await page
+    .getByRole("navigation", { name: "世界阅读工具" })
+    .getByRole("button", { name: "世界管理" })
+    .click();
 
-  await page.getByRole("button", { name: "创建分叉" }).click();
+  await page
+    .getByRole("dialog", { name: "世界管理" })
+    .getByRole("button", { name: "创建分叉" })
+    .click();
   await expect(
     page.getByRole("heading", { name: "Dormitory World (fork)" }),
   ).toBeVisible();

@@ -28,6 +28,7 @@ import { FileNativeModelHost } from "./model/FileNativeModelAdapters.ts";
 import { type ModelHostBinding } from "./model/ModelHost.ts";
 import { ModelConnectionStore } from "./model/ModelConnectionStore.ts";
 import { FileNativeContinuityCorrection } from "./play/FileNativeContinuityCorrection.ts";
+import { fingerprintControl } from "./play/PlayDocumentTools.ts";
 import {
   PlayCallChain,
   PlayCallChainError,
@@ -99,7 +100,9 @@ export class V1Runtime {
       this.#failureLog,
     );
     this.#models = new ModelConnectionStore(input.configRoot);
-    this.#corrections = new FileNativeContinuityCorrection(this.#worlds);
+    this.#corrections = new FileNativeContinuityCorrection(this.#worlds, {
+      compiler: this.#compiler,
+    });
     this.#settingImprovements = new SettingImprovementSession({
       store: new FileNativeSettingImprovementStore(input.dataRoot),
       content: this.#content,
@@ -166,7 +169,12 @@ export class V1Runtime {
       case "preferences.read":
         return this.#preferences.view();
       case "preferences.save": {
-        const preferences = await this.#preferences.save(request.locale);
+        const preferences = await this.#preferences.save({
+          ...(request.locale === undefined ? {} : { locale: request.locale }),
+          ...(request.reading === undefined
+            ? {}
+            : { reading: request.reading }),
+        });
         this.#locale = preferences.locale;
         this.#compiler.setLocale(this.#locale);
         await this.#playPresets.syncBuiltinDefaultLocale();
@@ -536,6 +544,53 @@ export class V1Runtime {
           request.chainId,
           request.eventId,
         );
+      case "world.play-context.read": {
+        const binding = await this.#worlds.bindPlayCallChain(request.worldId);
+        const currentContext = await this.#playCallChains.inspectReading(
+          request.worldId,
+          binding.parentHead,
+        );
+        const model = await this.#models.view();
+        if (!model.configured)
+          return {
+            worldId: request.worldId,
+            worldHead: binding.parentHead,
+            currentContext,
+            nextFreshContext: null,
+          };
+        const { hostBinding, playPreset, modelBinding } =
+          await this.#continuousBinding();
+        const preview = this.#compiler.preview(
+          {
+            endpoint: {
+              id: `${request.worldId}:${binding.parentHead}`,
+              commit: binding.parentHead,
+            },
+            hostBinding,
+            world: {
+              controlFingerprint: fingerprintControl(binding.files),
+              documentSnapshot: WorldDocumentStore.open({
+                layout: "world_state",
+                files: Object.entries(binding.files).map(
+                  ([path, contents]) => ({ path, contents }),
+                ),
+              }),
+              additionalMaterials: structuredClone(binding.additionalMaterials),
+              history: structuredClone(binding.history),
+            },
+            playerInputPlacement: "append",
+            playerInput: "",
+            modelBinding,
+          },
+          playPreset,
+        );
+        return {
+          worldId: request.worldId,
+          worldHead: binding.parentHead,
+          currentContext,
+          nextFreshContext: { head: binding.parentHead, preview },
+        };
+      }
       case "correction.begin":
         return this.#corrections.begin({
           worldId: request.worldId,
@@ -551,12 +606,15 @@ export class V1Runtime {
         return this.#corrections.patchDocument(request);
       case "correction.replace":
         return this.#corrections.replaceDocument(request);
-      case "correction.preview":
+      case "correction.preview": {
+        const { hostBinding, modelBinding, playPreset } =
+          await this.#continuousBinding();
         return this.#corrections.preview({
           candidateId: request.candidateId,
           expectedVersion: request.expectedVersion,
-          prompt: await this.#promptBinding(),
+          prompt: { hostBinding, modelBinding, playPreset },
         });
+      }
       case "correction.apply": {
         const result = await this.#corrections.apply(request);
         await this.#reconcileResultArtifacts(result);

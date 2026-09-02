@@ -1,4 +1,5 @@
 import { uiText } from "./i18n.ts";
+import type { V1SettingPromptPreview } from "../protocol/v1.ts";
 type CorrectionMaterial =
   | { kind: "document"; document: string }
   | {
@@ -24,18 +25,20 @@ export interface CorrectionPreviewView {
     before: readonly CorrectionMaterial[];
     after: readonly CorrectionMaterial[];
   };
-  nextPromptMarkdown: string;
+  nextPrompt: V1SettingPromptPreview;
 }
 
 export function FileNativeCorrectionPanel({
   preview,
   pending = false,
   onApply,
+  onBack,
   onCancel,
 }: {
   preview: CorrectionPreviewView;
   pending?: boolean;
   onApply: () => void;
+  onBack?: () => void;
   onCancel: () => void;
 }): React.JSX.Element {
   return (
@@ -88,11 +91,35 @@ export function FileNativeCorrectionPanel({
         <h4>{uiText("完整附加材料清单差异")}</h4>
         <pre>{JSON.stringify(preview.materials, null, 2)}</pre>
         <h4>{uiText("下一次真实 Prompt Preview")}</h4>
-        <pre>{preview.nextPromptMarkdown}</pre>
+        <ul>
+          {preview.nextPrompt.compilation.coverage.map((entry, index) => (
+            <li key={entry.slot + "-" + entry.source + "-" + index}>
+              <code>{entry.slot}</code> · {entry.source} · {entry.status} ·{" "}
+              {entry.complete ? uiText("完整") : uiText("不完整")}
+            </li>
+          ))}
+        </ul>
+        <details>
+          <summary>{uiText("查看下一次上下文的完整文本块")}</summary>
+          <pre>
+            {preview.nextPrompt.compilation.logicalMessages
+              .map(({ role, markdown }) => `## ${role}\n\n${markdown}`)
+              .join("\n\n---\n\n")}
+          </pre>
+        </details>
       </details>
       <div className="button-row correction-preview-actions">
         <button disabled={pending} onClick={onApply} type="button">
           {uiText("应用这笔修正")}
+        </button>
+        <button
+          className="secondary-button"
+          disabled={pending}
+          onClick={onBack}
+          type="button"
+          hidden={onBack === undefined}
+        >
+          {uiText("返回编辑")}
         </button>
         <button
           className="secondary-button"

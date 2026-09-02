@@ -29,7 +29,59 @@ describe("文件原生连续性修正界面", () => {
             before: [],
             after: [{ kind: "document", document: "character.alex" }],
           },
-          nextPromptMarkdown: "# Next real request\n\nCurrent situation",
+          nextPrompt: {
+            diagnosticBinding: {
+              endpoint: "world-one:commit:7",
+              commit: "commit:7",
+              hostPresetId: "host",
+              controlFingerprint: "control",
+              modelId: "model",
+            },
+            compilation: {
+              logicalMessages: [
+                {
+                  role: "world_context",
+                  markdown: "# Next real request\n\nCurrent situation",
+                  blocks: [
+                    {
+                      source: "@current-situation",
+                      markdown: "Current situation",
+                    },
+                  ],
+                },
+              ],
+              provider: {},
+              tools: [],
+              coverage: [
+                {
+                  slot: "current_situation",
+                  source: "@current-situation",
+                  status: "resolved",
+                  complete: true,
+                  continuation: null,
+                },
+              ],
+              budget: {
+                estimator: "disabled",
+                messageTokens: 0,
+                toolTokens: 0,
+                outputReserveTokens: 0,
+                forcedTailReserveTokens: 0,
+                safetyMarginTokens: 0,
+                requiredTokens: 0,
+                contextWindowTokens: 0,
+                status: "not_checked",
+              },
+              cache: {
+                strategy: "provider_managed",
+                stablePrefixFingerprint: "cache",
+                breakpoints: [],
+                estimatedCacheableBytes: 0,
+                firstDynamicByte: 0,
+              },
+            },
+            leakage: { status: "clean", checkedFields: [] },
+          },
         },
         onApply: apply,
         onCancel: cancel,

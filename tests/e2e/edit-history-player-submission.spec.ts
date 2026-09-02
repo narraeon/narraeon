@@ -111,7 +111,9 @@ test("修改旧玩家提交可另存为全新上下文，创建分叉才生成�
 
   responses.push("Alex says to meet downstairs at eight.");
   await page.getByLabel("你的行动").fill("I ask Alex when we are meeting.");
-  await page.getByRole("button", { name: "全新上下文" }).click();
+  await page
+    .getByRole("button", { name: "从全新上下文发送行动", exact: true })
+    .click();
   await expect(
     page.getByText("Alex says to meet downstairs at eight."),
   ).toBeVisible();
@@ -120,7 +122,7 @@ test("修改旧玩家提交可另存为全新上下文，创建分叉才生成�
   await page
     .getByLabel("你的行动")
     .fill("Then I will go downstairs five minutes early.");
-  await page.getByRole("button", { name: "追加上下文" }).click();
+  await page.getByRole("button", { name: "追加行动" }).click();
   await expect(
     page.getByText("Alex nods and says he will arrive five minutes early."),
   ).toBeVisible();
@@ -139,7 +141,7 @@ test("修改旧玩家提交可另存为全新上下文，创建分叉才生成�
   await expect(
     page.getByRole("heading", { name: "History branch world", exact: true }),
   ).toBeVisible();
-  const revisedTimeline = page.getByLabel("调用链记录");
+  const revisedTimeline = page.getByLabel("故事时间线");
   await expect(
     page.getByRole("separator", { name: "全新上下文从这里开始" }),
   ).toHaveCount(2);
@@ -185,7 +187,7 @@ test("修改旧玩家提交可另存为全新上下文，创建分叉才生成�
   await expect(
     page.getByRole("heading", { name: "History branch world (fork)" }),
   ).toBeVisible();
-  const forkTimeline = page.getByLabel("调用链记录");
+  const forkTimeline = page.getByLabel("故事时间线");
   await expect(forkTimeline).toContainText(
     "Then let's meet fifteen minutes early.",
   );
@@ -202,14 +204,14 @@ test("修改旧玩家提交可另存为全新上下文，创建分叉才生成�
     ),
   ).toBe(true);
 
-  await page.getByRole("button", { name: "工作区", exact: true }).click();
+  await page.getByRole("button", { name: "返回工作区" }).click();
   await page
     .getByRole("button", {
       name: "打开世界：History branch world",
       exact: true,
     })
     .click();
-  const currentTimeline = page.getByLabel("调用链记录");
+  const currentTimeline = page.getByLabel("故事时间线");
   await expect(currentTimeline).toContainText(
     "Then let's meet fifteen minutes early.",
   );

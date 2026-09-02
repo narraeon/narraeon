@@ -13,10 +13,13 @@ import { createElement } from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import type {
+  ContentTreeFile,
   V1PlayCallChainStreamFrame,
   V1PlayCallChainView,
+  V1PlayContextReadingView,
   V1PlayTimelinePage,
   V1Request,
+  V1SettingPromptPreview,
 } from "../../src/protocol/v1.ts";
 import { projectUncoveredPlayerViews } from "../../src/web/PlayerViewFallback.ts";
 import { WorldPage } from "../../src/web/WorldPage.tsx";
@@ -59,7 +62,7 @@ describe("世界游玩页面", () => {
     ]);
   });
 
-  test("没有调用链时显示已提交叙事和玩家视图，技术表面收进独立页面", async () => {
+  test("故事固定在阅读区，玩家视图和世界文档从两侧覆盖层按需展开", async () => {
     const client = readOnlyClient();
 
     renderWorld(client);
@@ -67,13 +70,15 @@ describe("世界游玩页面", () => {
     expect(
       await screen.findByRole("heading", { name: "宿舍世界" }),
     ).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "故事" })).toBeTruthy();
+    expect(screen.getByRole("article", { name: "故事时间线" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "调用链" })).toBeNull();
     expect(screen.getByText("I ask what time practice starts.")).toBeTruthy();
     expect(
       screen.getByText("Alex says practice starts at eight tonight."),
     ).toBeTruthy();
-    expect(screen.getByText("白色运动背心")).toBeTruthy();
+    expect(screen.getByLabelText("当前情景").getAttribute("aria-hidden")).toBe(
+      "true",
+    );
     expect(screen.queryByText(/file_native_genesis/u)).toBeNull();
     expect(screen.getByRole("button", { name: "全新上下文" })).toBeTruthy();
     expect(
@@ -81,8 +86,14 @@ describe("世界游玩页面", () => {
         .disabled,
     ).toBe(true);
 
-    fireEvent.click(screen.getByRole("button", { name: "当前文档" }));
-    expect(screen.getByRole("heading", { name: "宿舍里的夜晚" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "此刻" }));
+    expect(screen.getByLabelText("当前情景").getAttribute("aria-hidden")).toBe(
+      "false",
+    );
+    expect(screen.getByText("白色运动背心")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "世界" }));
+    expect(screen.getAllByText("宿舍里的夜晚").length).toBeGreaterThan(0);
     expect(screen.getByText(/情况: Alex正在整理球衣/u)).toBeTruthy();
   });
 
@@ -101,6 +112,324 @@ describe("世界游玩页面", () => {
       expect(onRenameWorld).toHaveBeenCalledWith("雾港第二夜"),
     );
     expect(await screen.findByText("世界名称已保存。")).toBeTruthy();
+  });
+
+  test("大量世界文档收进可搜索选择器，不改变中间故事栏宽度", async () => {
+    const documents = [
+      ...worldView(null).state,
+      ...Array.from({ length: 33 }, (_, index) =>
+        worldDocument(
+          `locations/place-${index + 1}.yaml`,
+          `location.place-${index + 1}`,
+          `place-${index + 1}`,
+          `地点 ${index + 1}`,
+          `第 ${index + 1} 个临时地点。`,
+          `描述: 地点 ${index + 1}\n`,
+        ),
+      ),
+      worldDocument(
+        "locations/south-hotpot.yaml",
+        "location.south-hotpot",
+        "south-hotpot",
+        "南门火锅",
+        "学校南门外的火锅店。",
+        "设施: 有靠窗四人桌\n",
+      ),
+    ];
+    const client = {
+      request: vi.fn(<T>(request: V1Request) => {
+        if (request.type === "world.read")
+          return Promise.resolve({ ...worldView(null), state: documents } as T);
+        if (request.type === "artifacts.debug") return Promise.resolve([] as T);
+        if (request.type === "world.play-decorations.read")
+          return Promise.resolve({
+            head: "commit:1",
+            artifacts: [],
+            extensions: [],
+            artifactDebug: [],
+          } as T);
+        return Promise.reject(new Error(`Unexpected request: ${request.type}`));
+      }),
+    };
+
+    const rendered = renderWorld(client, undefined, {
+      initialReadingPreferences: {
+        density: "compact",
+        fontSize: 17,
+        lineHeight: 1.7,
+        letterSpacing: 0.01,
+        measure: 64,
+      },
+    });
+    await screen.findByRole("heading", { name: "宿舍世界" });
+    const root =
+      rendered.container.querySelector<HTMLElement>(".world-reader-page")!;
+    expect(root.style.getPropertyValue("--world-story-measure")).toBe("64rem");
+
+    fireEvent.click(screen.getByRole("button", { name: "世界" }));
+    const rail = rendered.container.querySelector<HTMLElement>(
+      ".world-overlay-rail-right",
+    )!;
+    expect(rail.getAttribute("aria-hidden")).toBe("false");
+    fireEvent.click(within(rail).getByRole("button", { name: /选择文档/u }));
+    expect(within(rail).getByText("全部 35 份文档")).toBeTruthy();
+    fireEvent.change(within(rail).getByLabelText("查找当前文档"), {
+      target: { value: "南门 火锅" },
+    });
+    expect(within(rail).getByText("没有匹配的文档")).toBeTruthy();
+    fireEvent.change(within(rail).getByLabelText("查找当前文档"), {
+      target: { value: "south-hotpot" },
+    });
+    expect(within(rail).getByText("找到 1 / 35 份")).toBeTruthy();
+    fireEvent.click(within(rail).getByRole("option", { name: /南门火锅/u }));
+    expect(within(rail).getByText(/设施: 有靠窗四人桌/u)).toBeTruthy();
+    expect(root.style.getPropertyValue("--world-story-measure")).toBe("64rem");
+  });
+
+  test("阅读设置支持更宽正文并持久化，底部输入条随内容向上增长", async () => {
+    const client = {
+      request: vi.fn(<T>(request: V1Request) => {
+        if (request.type === "world.read")
+          return Promise.resolve(worldView(null) as T);
+        if (request.type === "artifacts.debug") return Promise.resolve([] as T);
+        if (request.type === "preferences.save")
+          return Promise.resolve({
+            locale: "zh-CN",
+            reading: request.reading,
+          } as T);
+        return Promise.reject(new Error(`Unexpected request: ${request.type}`));
+      }),
+    };
+    const rendered = renderWorld(client);
+    await screen.findByRole("heading", { name: "宿舍世界" });
+    fireEvent.click(screen.getByRole("button", { name: "阅读设置" }));
+    const width = screen.getByRole<HTMLInputElement>("slider", {
+      name: /正文宽度/u,
+    });
+    expect(width.max).toBe("72");
+    fireEvent.change(width, { target: { value: "72" } });
+    await waitFor(() =>
+      expect(
+        client.request.mock.calls.some(
+          ([request]) =>
+            request.type === "preferences.save" &&
+            request.reading?.measure === 72,
+        ),
+      ).toBe(true),
+    );
+    expect(
+      rendered.container
+        .querySelector<HTMLElement>(".world-reader-page")!
+        .style.getPropertyValue("--world-story-measure"),
+    ).toBe("72rem");
+
+    const composer = screen.getByLabelText<HTMLTextAreaElement>("你的行动");
+    expect(composer.rows).toBe(1);
+    Object.defineProperty(composer, "scrollHeight", {
+      configurable: true,
+      value: 96,
+    });
+    fireEvent.change(composer, {
+      target: { value: "第一行\n第二行\n第三行\n第四行" },
+    });
+    await waitFor(() => expect(composer.style.height).toBe("96px"));
+    expect(composer.style.overflowY).toBe("hidden");
+  });
+
+  test("AI 如何读取区分目录摘要、冻结注入与已返回的精确全文", async () => {
+    const chain = playChainView(
+      "play-chain-reading",
+      "exchange-reading",
+      "I wash up before bed.",
+    );
+    const dorm = worldDocument(
+      "locations/dorm-404.yaml",
+      "location.dorm-404",
+      "dorm-404",
+      "404 宿舍",
+      "Alex 与玩家当前居住的宿舍。",
+      "设施:\n  独立卫生间: true\n  独立淋浴间: true\n",
+    );
+    const reading = playReadingView();
+    const client = {
+      request: vi.fn(<T>(request: V1Request) => {
+        if (request.type === "world.read")
+          return Promise.resolve({
+            ...worldView(chain),
+            state: [...worldView(chain).state, dorm],
+          } as T);
+        if (request.type === "artifacts.debug") return Promise.resolve([] as T);
+        if (request.type === "world.play-context.read")
+          return Promise.resolve(reading as T);
+        return Promise.reject(new Error(`Unexpected request: ${request.type}`));
+      }),
+    };
+
+    const rendered = renderWorld(client);
+    await screen.findByRole("heading", { name: "宿舍世界" });
+    fireEvent.click(screen.getByRole("button", { name: "AI 读取" }));
+    const rail = rendered.container.querySelector<HTMLElement>(
+      ".world-overlay-rail-right",
+    )!;
+    expect(await within(rail).findByText("精确全文")).toBeTruthy();
+    expect(within(rail).getByText("精确节点")).toBeTruthy();
+    expect(
+      within(rail).getByText(
+        "这里只证明 Runtime 发送或返回了什么，不声称 AI 理解、记住或正确使用。",
+      ),
+    ).toBeTruthy();
+
+    fireEvent.click(
+      within(rail).getByRole("button", { name: "展开完整读取记录" }),
+    );
+    const dialog = screen.getByRole("dialog", { name: "修订当前世界" });
+    expect(within(dialog).getByText("AI 实际收到了哪些世界内容")).toBeTruthy();
+    expect(within(dialog).getByText("标题 + 摘要")).toBeTruthy();
+    fireEvent.click(within(dialog).getByText("查看按需读取返回的完整记录"));
+    expect(within(dialog).getByText(/独立淋浴间: true/u)).toBeTruthy();
+    expect(
+      within(dialog).getAllByText("下一次全新上下文").length,
+    ).toBeGreaterThan(0);
+  });
+
+  test("世界修订复用全文工作台，并把多文档改动作为一个候选预览和提交", async () => {
+    const chain = playChainView(
+      "play-chain-correction",
+      "exchange-correction",
+      "I look around the dormitory.",
+    );
+    const dorm = worldDocument(
+      "locations/dorm-404.yaml",
+      "location.dorm-404",
+      "dorm-404",
+      "404 宿舍",
+      "Alex 与玩家当前居住的宿舍。",
+      "设施:\n  独立卫生间: false\n  独立淋浴间: false\n",
+    );
+    const original = [...worldView(chain).state, dorm];
+    let version = 0;
+    let applied = false;
+    const replacements: Extract<V1Request, { type: "correction.replace" }>[] =
+      [];
+    const client = {
+      request: vi.fn(<T>(request: V1Request) => {
+        if (request.type === "world.read")
+          return Promise.resolve({
+            ...worldView(chain),
+            head: applied ? "commit:4" : "commit:3",
+            state: original,
+          } as T);
+        if (request.type === "artifacts.debug") return Promise.resolve([] as T);
+        if (request.type === "correction.begin")
+          return Promise.resolve({
+            candidateId: "candidate-one",
+            version: 0,
+            parentHead: "commit:3",
+          } as T);
+        if (request.type === "correction.read") {
+          const file = request.document === "@dorm-404" ? dorm : original[0]!;
+          return Promise.resolve({
+            hash: `hash-${request.document}`,
+            contents: file.contents,
+          } as T);
+        }
+        if (request.type === "correction.replace") {
+          expect(request.expectedVersion).toBe(version);
+          replacements.push(request);
+          version += 1;
+          return Promise.resolve({ version } as T);
+        }
+        if (request.type === "correction.preview")
+          return Promise.resolve({
+            parentHead: "commit:3",
+            candidateVersion: version,
+            diffs: replacements.map((replacement) => ({
+              documentId: replacement.target.slice(1),
+              path:
+                replacement.target === "@dorm-404"
+                  ? dorm.path
+                  : original[0]!.path,
+              beforeHash: `hash-${replacement.target}`,
+              afterHash: `next-${replacement.target}`,
+              before:
+                replacement.target === "@dorm-404"
+                  ? dorm.contents
+                  : original[0]!.contents,
+              after: replacement.contents,
+            })),
+            materials: { before: [], after: [] },
+            nextPrompt: promptPreviewFixture(),
+          } as T);
+        if (request.type === "correction.apply") {
+          applied = true;
+          return Promise.resolve({
+            outcome: "committed",
+            head: "commit:4",
+          } as T);
+        }
+        return Promise.reject(new Error(`Unexpected request: ${request.type}`));
+      }),
+    };
+
+    renderWorld(client);
+    await screen.findByRole("heading", { name: "宿舍世界" });
+    fireEvent.click(screen.getByRole("button", { name: "世界" }));
+    fireEvent.click(screen.getByRole("button", { name: "修订当前世界" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "修订当前世界",
+    });
+    expect(
+      within(dialog).getByText("和内容包共用同一套文档工作台"),
+    ).toBeTruthy();
+    fireEvent.change(
+      within(dialog).getByLabelText("编辑 current-situation.yaml"),
+      {
+        target: {
+          value: original[0]!.contents.replace(
+            "Alex正在整理球衣",
+            "Alex正在浴室门边整理球衣",
+          ),
+        },
+      },
+    );
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "打开 locations/dorm-404.yaml",
+      }),
+    );
+    fireEvent.change(
+      within(dialog).getByLabelText("编辑 locations/dorm-404.yaml"),
+      {
+        target: {
+          value: dorm.contents.replaceAll("false", "true"),
+        },
+      },
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: "预览修订" }));
+
+    expect(
+      await within(dialog).findByRole("heading", { name: "确认修正内容" }),
+    ).toBeTruthy();
+    expect(replacements.map(({ target }) => target)).toEqual([
+      "@current-situation",
+      "@dorm-404",
+    ]);
+    expect(replacements.map(({ expectedVersion }) => expectedVersion)).toEqual([
+      0, 1,
+    ]);
+    expect(within(dialog).getByText("2 份文档会变化")).toBeTruthy();
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "应用这笔修正" }),
+    );
+    expect(
+      await screen.findByText(
+        "世界修订已提交。现有追加上下文已过期，下一次行动会自动使用全新上下文。",
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole<HTMLButtonElement>("button", { name: "追加上下文" })
+        .disabled,
+    ).toBe(true);
   });
 
   test("浏览器没有 randomUUID 时仍能启动全新上下文", async () => {
@@ -197,6 +526,9 @@ describe("世界游玩页面", () => {
     );
     expect(screen.getByText("调用 world_patch")).toBeTruthy();
     expect(screen.getByText("world_patch 返回")).toBeTruthy();
+    const trace = screen.getByText("本段调用详情").closest("details");
+    expect(trace?.open).toBe(false);
+    expect(trace?.contains(screen.getByText("调用 world_patch"))).toBe(true);
     expect(screen.getByText("调用 world_patch").closest("details")?.open).toBe(
       false,
     );
@@ -836,7 +1168,9 @@ describe("世界游玩页面", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "全新上下文" }));
 
-    const composer = document.querySelector<HTMLElement>(".play-composer");
+    const composer = document.querySelector<HTMLElement>(
+      ".world-composer-dock",
+    );
     expect(composer).not.toBeNull();
     const alert = await within(composer!).findByRole("alert", {
       name: "模型调用失败",
@@ -1264,7 +1598,7 @@ describe("世界游玩页面", () => {
     expect(
       await screen.findByText("Alex has opened the door halfway"),
     ).toBeTruthy();
-    expect(screen.getByText(/保持输入框为空并点击“追加上下文”/u)).toBeTruthy();
+    expect(screen.getByText(/保持输入为空并重试/u)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "追加上下文" }));
 
     expect(
@@ -1657,6 +1991,13 @@ function renderWorld(
   ),
   options: {
     onRenameWorld?: (name: string) => Promise<void>;
+    initialReadingPreferences?: {
+      density: "compact" | "standard" | "relaxed";
+      fontSize: number;
+      lineHeight: number;
+      letterSpacing: number;
+      measure: number;
+    };
   } = {},
 ) {
   return render(
@@ -1672,6 +2013,141 @@ function renderWorld(
       ...options,
     }),
   );
+}
+
+function worldDocument(
+  path: string,
+  id: string,
+  ref: string,
+  title: string,
+  summary: string,
+  body: string,
+): ContentTreeFile {
+  return {
+    path,
+    contents: `$document:
+  id: ${id}
+  ref: ${ref}
+  title: ${title}
+  summary: ${summary}
+  aliases: []
+${body}`,
+  };
+}
+
+function promptPreviewFixture(): V1SettingPromptPreview {
+  return {
+    diagnosticBinding: {
+      endpoint: "world-one:commit:3",
+      commit: "commit:3",
+      hostPresetId: "host-one",
+      controlFingerprint: "control-one",
+      modelId: "model-one",
+    },
+    compilation: {
+      logicalMessages: [
+        {
+          role: "world_context",
+          markdown: "# 当前世界\n\n404 宿舍",
+          blocks: [
+            {
+              source: "slot:current_situation",
+              markdown: "# 当前世界\n\n404 宿舍",
+            },
+          ],
+        },
+      ],
+      provider: { protocol: "openai_responses" },
+      tools: [],
+      coverage: [
+        {
+          slot: "current_situation",
+          source: "@current-situation",
+          status: "resolved",
+          complete: true,
+          continuation: "context_read",
+          readAuthorization: {
+            shortRef: "current-situation",
+            locator: null,
+          },
+        },
+        {
+          slot: "catalog",
+          source: "locations",
+          status: "resolved",
+          complete: true,
+          continuation: "state_list",
+          catalogEntries: ["dorm-404"],
+        },
+      ],
+      budget: {
+        estimator: "conservative_utf8_bytes",
+        messageTokens: 100,
+        toolTokens: 0,
+        outputReserveTokens: 1_000,
+        forcedTailReserveTokens: 0,
+        safetyMarginTokens: 100,
+        requiredTokens: 1_200,
+        contextWindowTokens: 64_000,
+        status: "fits",
+      },
+      cache: {
+        strategy: "provider_managed",
+        stablePrefixFingerprint: "stable-one",
+        breakpoints: [],
+        estimatedCacheableBytes: 100,
+        firstDynamicByte: 100,
+      },
+    },
+    leakage: { status: "clean", checkedFields: [] },
+  };
+}
+
+function playReadingView(): V1PlayContextReadingView {
+  const preview = promptPreviewFixture();
+  return {
+    worldId: "world-one",
+    worldHead: "commit:3",
+    currentContext: {
+      chainId: "play-chain-reading",
+      baselineHead: "commit:1",
+      parentHead: "commit:3",
+      stale: false,
+      playPreset: {
+        id: "preset-one",
+        name: "default",
+        revision: "preset-revision-one",
+      },
+      updatedAt: 1,
+      bootstrap: {
+        logicalMessages: preview.compilation.logicalMessages,
+        coverage: preview.compilation.coverage,
+      },
+      reads: [
+        {
+          eventId: 3,
+          callId: "read-dorm-room",
+          ref: "@dorm-404",
+          ok: true,
+          complete: true,
+          locator: null,
+          markdown:
+            "Document: @dorm-404\nComplete: yes\n\n设施:\n  独立卫生间: true\n  独立淋浴间: true",
+        },
+        {
+          eventId: 4,
+          callId: "read-current-situation-node",
+          ref: "@current-situation#/情况",
+          ok: true,
+          complete: true,
+          locator: { yaml: ["情况"] },
+          markdown:
+            "Document: @current-situation#/情况\nComplete: yes\n\nAlex正在整理球衣",
+        },
+      ],
+    },
+    nextFreshContext: { head: "commit:3", preview },
+  };
 }
 
 function readOnlyClient() {

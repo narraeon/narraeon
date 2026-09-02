@@ -11,6 +11,10 @@ test("web text follows the active locale and interpolates complete messages", ()
   expect(getWebLocale()).toBe("en");
   expect(document.documentElement.lang).toBe("en");
   expect(uiText("继续游玩")).toBe("Continue playing");
+  expect(uiText("AI 如何读取")).toBe("How the model reads");
+  expect(uiText("追加不会重新编译世界材料。")).toBe(
+    "Appending does not recompile world materials.",
+  );
   expect(uiText("调用 {tool}", { tool: "world_patch" })).toBe(
     "Call world_patch",
   );

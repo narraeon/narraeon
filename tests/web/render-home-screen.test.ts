@@ -251,7 +251,7 @@ describe("世界工作区主页", () => {
     const request = vi.fn(async (input: V1Request): Promise<unknown> => {
       const resolvedInput = await Promise.resolve(input);
       if (resolvedInput.type === "preferences.save") {
-        locale = resolvedInput.locale;
+        locale = resolvedInput.locale ?? locale;
         return { locale };
       }
       if (resolvedInput.type === "workspace.read")

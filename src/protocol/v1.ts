@@ -3,7 +3,7 @@ import type {
   ModelProviderKind,
   SaveModelConnectionInput,
 } from "./modelConnections.ts";
-import type { AppLocale } from "./appPreferences.ts";
+import type { AppLocale, AppReadingPreferences } from "./appPreferences.ts";
 import type { ModelUsage } from "./modelUsage.ts";
 import { maxPortableContentArchiveBase64Characters } from "./contentTree.ts";
 
@@ -30,7 +30,11 @@ export interface V1Envelope {
 export type V1Request =
   | { type: "workspace.read" }
   | { type: "preferences.read" }
-  | { type: "preferences.save"; locale: AppLocale }
+  | {
+      type: "preferences.save";
+      locale?: AppLocale;
+      reading?: AppReadingPreferences;
+    }
   | { type: "model.read" }
   | {
       type: "model.save";
@@ -161,6 +165,7 @@ export type V1Request =
       chainId: string;
       eventId: number;
     }
+  | { type: "world.play-context.read"; worldId: string }
   | {
       type: "world.surface.read";
       worldId: string;
@@ -242,6 +247,14 @@ export interface V1SettingPromptPreview {
       status: string;
       complete: boolean;
       continuation: string | null;
+      readAuthorization?: {
+        shortRef: string;
+        locator:
+          | { yaml: readonly (string | number)[] }
+          | { markdown: readonly string[] }
+          | null;
+      };
+      catalogEntries?: string[];
     }[];
     budget: {
       estimator: "conservative_utf8_bytes" | "disabled";
@@ -266,6 +279,39 @@ export interface V1SettingPromptPreview {
     };
   };
   leakage: { status: "clean"; checkedFields: string[] };
+}
+
+export interface V1PlayContextReadingView {
+  worldId: string;
+  worldHead: string;
+  currentContext: {
+    chainId: string;
+    baselineHead: string;
+    parentHead: string;
+    stale: boolean;
+    playPreset: V1PlayCallChainContextView["playPreset"];
+    updatedAt: number;
+    bootstrap: Pick<
+      V1SettingPromptPreview["compilation"],
+      "logicalMessages" | "coverage"
+    >;
+    reads: {
+      eventId: number;
+      callId: string;
+      ref: string;
+      ok: boolean;
+      complete: boolean | null;
+      markdown: string | null;
+      locator:
+        | { yaml: readonly (string | number)[] }
+        | { markdown: readonly string[] }
+        | null;
+    }[];
+  } | null;
+  nextFreshContext: {
+    head: string;
+    preview: V1SettingPromptPreview;
+  } | null;
 }
 
 export interface V1SettingImprovementView {
@@ -581,7 +627,7 @@ const requiredFields: Record<
   string,
   Record<string, "string" | "number" | "boolean" | "object" | "array">
 > = {
-  "preferences.save": { locale: "string" },
+  "preferences.save": {},
   "model.save": { connection: "object" },
   "model.copy": { connectionId: "string", name: "string" },
   "model.select": { connectionId: "string" },
@@ -675,6 +721,7 @@ const requiredFields: Record<
     chainId: "string",
     eventId: "number",
   },
+  "world.play-context.read": { worldId: "string" },
   "world.surface.read": { worldId: "string", surface: "string" },
   "world.play-decorations.read": { worldId: "string" },
   "correction.begin": { worldId: "string", operationId: "string" },
@@ -717,15 +764,35 @@ function validateRequestFields(request: Record<string, unknown>): void {
         `${String(request.type)}.${field} is invalid`,
       );
   }
-  if (
-    request.type === "preferences.save" &&
-    request.locale !== "en" &&
-    request.locale !== "zh-CN"
-  )
-    throw new V1ProtocolError(
-      "invalid_request",
-      "preferences.save.locale must be en or zh-CN",
-    );
+  if (request.type === "preferences.save") {
+    if (
+      (request.locale === undefined && request.reading === undefined) ||
+      Object.keys(request).some(
+        (key) => key !== "type" && key !== "locale" && key !== "reading",
+      )
+    )
+      throw new V1ProtocolError(
+        "invalid_request",
+        "preferences.save must update locale or reading preferences",
+      );
+    if (
+      request.locale !== undefined &&
+      request.locale !== "en" &&
+      request.locale !== "zh-CN"
+    )
+      throw new V1ProtocolError(
+        "invalid_request",
+        "preferences.save.locale must be en or zh-CN",
+      );
+    if (
+      request.reading !== undefined &&
+      !isValidReadingPreferences(request.reading)
+    )
+      throw new V1ProtocolError(
+        "invalid_request",
+        "preferences.save.reading is invalid",
+      );
+  }
   if (request.type === "content.import") {
     const archiveBase64 = request.archiveBase64 as string;
     if (
@@ -981,6 +1048,7 @@ const requestTypes = new Set([
   "play.chain.inspect",
   "play.timeline.page",
   "play.timeline.detail",
+  "world.play-context.read",
   "world.surface.read",
   "world.play-decorations.read",
   "correction.begin",
@@ -994,4 +1062,27 @@ const requestTypes = new Set([
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isValidReadingPreferences(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return (
+    Object.keys(value).length === 5 &&
+    (value.density === "compact" ||
+      value.density === "standard" ||
+      value.density === "relaxed") &&
+    isFiniteRange(value.fontSize, 15, 24) &&
+    isFiniteRange(value.lineHeight, 1.4, 2.4) &&
+    isFiniteRange(value.letterSpacing, 0, 0.12) &&
+    isFiniteRange(value.measure, 32, 72)
+  );
+}
+
+function isFiniteRange(value: unknown, minimum: number, maximum: number) {
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= minimum &&
+    value <= maximum
+  );
 }

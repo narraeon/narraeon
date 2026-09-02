@@ -1438,6 +1438,167 @@ const worldPageEnglishMessages: Record<string, string> = {
 
 Object.assign(englishMessages, worldPageEnglishMessages);
 
+const playWorkspaceEnglishMessages: Record<string, string> = {
+  "AI 响应诊断": "Model response diagnostics",
+  "AI 如何读取": "How the model reads",
+  "AI 实际收到了哪些世界内容": "What world content the model actually received",
+  "AI 读取": "Model reads",
+  "Ctrl / ⌘ + S 预览整笔修订": "Ctrl / ⌘ + S previews the complete revision",
+  "{count} 项记录": "{count} records",
+  "上次模型请求没有完整返回。保持输入为空并重试，会原样发送保存的请求。":
+    "The previous model request did not complete. Retry with an empty input to resend the saved request unchanged.",
+  "下一次 Prompt Preview 未选择这份文档":
+    "The next Prompt Preview did not select this document",
+  "下一次 Prompt Preview 的真实 coverage":
+    "Real coverage from the next Prompt Preview",
+  下一次全新上下文: "Next fresh context",
+  下一次行动将建立全新上下文: "The next action will create a fresh context",
+  不完整: "Incomplete",
+  世界与状态: "World and status",
+  世界侧栏: "World side panel",
+  "世界修订已提交。现有追加上下文已过期，下一次行动会自动使用全新上下文。":
+    "The world revision was committed. The existing append context is now stale, so the next action will automatically use a fresh context.",
+  "世界已在故事外修订；下一次行动会从新上下文开始。":
+    "The world was revised outside the story. The next action will start from a fresh context.",
+  世界阅读工具: "World reading tools",
+  从全新上下文发送行动: "Send action from a fresh context",
+  从当前世界重新编译材料: "Recompile materials from the current world",
+  从当前端点创建分叉: "Fork from the current endpoint",
+  使用全新上下文: "Use a fresh context",
+  "依据冻结 bootstrap 与已提交工具读取记录；不会把“世界里有这份文档”误写成“AI 已读”。":
+    "Based on the frozen bootstrap and committed tool-read records. A document existing in the world is never presented as proof that the model read it.",
+  保留这条调用链已经看到的内容: "Keep what this call chain has already seen",
+  修订: "Revise",
+  修订工作台: "Revision workbench",
+  修订当前世界: "Revise current world",
+  "修订草稿已放弃，世界端点没有推进。":
+    "The revision draft was discarded; the world endpoint did not advance.",
+  "修订草稿已预览；应用前当前世界没有变化。":
+    "The revision draft was previewed; the current world remains unchanged until it is applied.",
+  全文: "Full document",
+  全文片段: "Document fragment",
+  全文编辑: "Full-source editing",
+  "全部 {count} 份文档": "All {count} documents",
+  关闭: "Close",
+  "冻结 bootstrap 的真实 coverage": "Real frozen-bootstrap coverage",
+  "创建一个拥有独立状态与时间线的新世界。":
+    "Create a new world with independent state and timeline.",
+  "只修订已有世界文档；临时出现的地点不需要先建立档案。":
+    "Revise existing world documents only. Transient locations do not need to be documented first.",
+  "只改变从现在起成立的事实；旧叙事保持原样。":
+    "Change facts from this point forward; earlier narrative stays unchanged.",
+  "只改变工作区显示名称，不改变故事与状态。":
+    "Change only the workspace display name, not the story or state.",
+  可核验依据: "Verifiable evidence",
+  和内容包共用同一套文档工作台:
+    "Uses the same document workbench as content packages",
+  字号: "Font size",
+  字间距: "Letter spacing",
+  完整: "Complete",
+  "完整差异 · 真实 Prompt Preview · 一笔 Authority 修订":
+    "Complete diff · real Prompt Preview · one Authority revision",
+  尚未建立: "Not established",
+  展开完整读取记录: "Open the complete read record",
+  "已修改 · 未预览": "Modified · not previewed",
+  应用前先审阅: "Review before applying",
+  建立后追加不重新注入世界材料:
+    "Appending after creation does not reinject world materials",
+  当前上下文: "Current context",
+  当前世界: "Current world",
+  "当前世界已推进；这条追加上下文不能再继续。":
+    "The current world has advanced; this append context can no longer continue.",
+  当前世界文档: "Current world documents",
+  "当前世界没有可修订的状态文档。":
+    "The current world has no state documents that can be revised.",
+  当前冻结上下文: "Current frozen context",
+  当前没有追加上下文: "There is no current append context",
+  "当前还没有冻结上下文。": "There is no frozen context yet.",
+  "当前链已结算的 context_read 记录":
+    "Settled context_read record from the current chain",
+  恢复默认: "Restore defaults",
+  手动修正: "Manual correction",
+  "找到 {visible} / {total} 份": "Found {visible} / {total}",
+  "按当前世界重新运行真实 Prompt 编译":
+    "Run the real Prompt compilation against the current world",
+  按需读取: "On-demand reads",
+  排版密度: "Layout density",
+  "接下来，你要做什么？": "What do you do next?",
+  "控制草稿必须经过真实 Prompt Preview 后整批应用。":
+    "The control draft must pass a real Prompt Preview before being applied as a whole.",
+  收起世界栏: "Close world panel",
+  收起侧栏: "Close side panel",
+  收起状态栏: "Close status panel",
+  放弃本地修改: "Discard local changes",
+  故事之外: "Outside the story",
+  故事时间线: "Story timeline",
+  "文件树、搜索与全文编辑一致；这里会追加一笔世界修订，不会反向修改来源内容包。":
+    "The file tree, search, and full-source editor are shared. This creates a world revision and does not modify the source content package.",
+  无本地修改: "No local changes",
+  暂无摘要: "No summary",
+  "暂时无法读取上下文证据。": "Context evidence is currently unavailable.",
+  未进入: "Not included",
+  本段模型调用详情: "Model-call details for this section",
+  本段调用详情: "Call details",
+  "材料目录；正文没有因此进入上下文":
+    "Material catalog only; the document body did not enter context",
+  "来自当前链已结算的 context_read":
+    "From settled context_read calls in the current chain",
+  "查找人物、地点、规则…": "Search characters, locations, rules…",
+  查找当前文档: "Search current documents",
+  查看下一次上下文的完整文本块:
+    "View complete text blocks for the next context",
+  "查看下一次全新上下文的完整 Prompt Preview":
+    "View the complete Prompt Preview for the next fresh context",
+  "查看当前上下文的完整 Runtime 文本块":
+    "View complete Runtime text blocks for the current context",
+  查看按需读取返回的完整记录:
+    "View complete records returned by on-demand reads",
+  标准: "Standard",
+  "标题 + 摘要": "Title + summary",
+  模型未配置: "Model not configured",
+  次成功记录: "successful reads",
+  "正在核对 Runtime 读取记录…": "Checking Runtime read records…",
+  正文宽度: "Text width",
+  此刻: "Now",
+  "没有 bootstrap 注入或成功读取记录":
+    "No bootstrap injection or successful read record",
+  没有匹配的文档: "No matching documents",
+  "管理名称、分叉、控制文件与 Runtime 诊断。":
+    "Manage the name, forks, control files, and Runtime diagnostics.",
+  精确全文: "Exact full document",
+  精确片段: "Exact fragment",
+  精确节点: "Exact node",
+  紧凑: "Compact",
+  舒展: "Relaxed",
+  节点: "Node",
+  节点片段: "Node fragment",
+  行距: "Line height",
+  "请先从右侧 AI 读取页加载 Runtime 证据。":
+    "Load Runtime evidence from the Model reads panel first.",
+  读取失败: "Read failed",
+  "读取成功 · 完整文档": "Read succeeded · complete document",
+  "读取成功 · 文档片段": "Read succeeded · document fragment",
+  "输入完整 UTF-8 文档内容……": "Enter complete UTF-8 document contents…",
+  返回编辑: "Back to editing",
+  "这些证据只能证明 Runtime 发出了哪些文本、工具返回了哪些内容；无法证明模型理解或记住。":
+    "This evidence only proves what text Runtime sent and what tools returned. It cannot prove that the model understood or remembered it.",
+  "这里只证明 Runtime 发送或返回了什么，不声称 AI 理解、记住或正确使用。":
+    "This only proves what Runtime sent or returned; it does not claim the model understood, remembered, or used it correctly.",
+  进入方式: "How it entered",
+  "追加不会重新编译世界材料。": "Appending does not recompile world materials.",
+  追加当前上下文: "Append to current context",
+  追加行动: "Append action",
+  选择提交方式: "Choose submission mode",
+  选择文档: "Choose document",
+  "配置模型后才能编译下一次上下文。":
+    "Configure a model before compiling the next context.",
+  阅读设置: "Reading settings",
+  阅读设置保存在本机: "Reading settings are saved locally",
+  预览修订: "Preview revision",
+};
+
+Object.assign(englishMessages, playWorkspaceEnglishMessages);
+
 const dynamicEnglishMessages: Record<string, string> = {
   开场: "Opening",
   控制: "Control",

@@ -6,6 +6,7 @@ import {
   type MaterialSelection,
   type PromptPreview,
 } from "../prompt/FileNativePromptCompiler.ts";
+import type { PlayPresetBinding } from "./FileNativePlayPresetStore.ts";
 import { validateMaterialList } from "../prompt/MaterialSelection.ts";
 import {
   FileNativeWorldCreationError,
@@ -262,7 +263,9 @@ export class FileNativeContinuityCorrection {
   preview(input: {
     candidateId: string;
     expectedVersion: number;
-    prompt: Pick<FileNativePromptInput, "hostBinding" | "modelBinding">;
+    prompt: Pick<FileNativePromptInput, "hostBinding" | "modelBinding"> & {
+      playPreset?: PlayPresetBinding;
+    };
   }): {
     parentHead: string;
     candidateVersion: number;
@@ -357,26 +360,31 @@ export class FileNativeContinuityCorrection {
 
   #compile(
     candidate: Candidate,
-    prompt: Pick<FileNativePromptInput, "hostBinding" | "modelBinding">,
+    prompt: Pick<FileNativePromptInput, "hostBinding" | "modelBinding"> & {
+      playPreset?: PlayPresetBinding;
+    },
     materials: MaterialSelection[],
   ): PromptPreview {
-    return this.#compiler.preview({
-      endpoint: {
-        id: `${candidate.worldId}:${candidate.parentHead}`,
-        commit: candidate.parentHead,
-        operationId: candidate.operationId,
+    return this.#compiler.preview(
+      {
+        endpoint: {
+          id: `${candidate.worldId}:${candidate.parentHead}`,
+          commit: candidate.parentHead,
+          operationId: candidate.operationId,
+        },
+        hostBinding: structuredClone(prompt.hostBinding),
+        world: {
+          controlFingerprint: fingerprintControl(candidate.files),
+          documentSnapshot: candidate.snapshot,
+          additionalMaterials: materials,
+          history: candidate.history,
+        },
+        playerInputPlacement: "append",
+        playerInput: "",
+        modelBinding: prompt.modelBinding,
       },
-      hostBinding: structuredClone(prompt.hostBinding),
-      world: {
-        controlFingerprint: fingerprintControl(candidate.files),
-        documentSnapshot: candidate.snapshot,
-        additionalMaterials: materials,
-        history: candidate.history,
-      },
-      playerInputPlacement: "bootstrap",
-      playerInput: "",
-      modelBinding: prompt.modelBinding,
-    });
+      prompt.playPreset,
+    );
   }
 
   #candidate(id: string): Candidate {

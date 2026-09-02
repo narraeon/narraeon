@@ -12,16 +12,18 @@ import { join } from "node:path";
 
 import {
   defaultAppLocale,
+  defaultAppReadingPreferences,
   isAppLocale,
-  type AppLocale,
+  isAppReadingPreferences,
   type AppPreferences,
+  type AppPreferencesUpdate,
 } from "../../protocol/appPreferences.ts";
 
 const preferencesFileName = "preferences-v1.json";
 
-interface AppPreferencesDocument extends AppPreferences {
-  schemaVersion: 1;
-}
+type AppPreferencesDocument =
+  | { schemaVersion: 1; locale: AppPreferences["locale"] }
+  | ({ schemaVersion: 2 } & AppPreferences);
 
 export class AppPreferencesStore {
   readonly #configRoot: string;
@@ -38,10 +40,24 @@ export class AppPreferencesStore {
     return toView(await this.#readDocument());
   }
 
-  save(locale: AppLocale): Promise<AppPreferences> {
+  save(update: AppPreferencesUpdate): Promise<AppPreferences> {
     return this.#mutate(async () => {
-      if (!isAppLocale(locale)) throw new Error("Unsupported app locale");
-      const document: AppPreferencesDocument = { schemaVersion: 1, locale };
+      if (
+        Object.keys(update).length === 0 ||
+        Object.keys(update).some(
+          (key) => key !== "locale" && key !== "reading",
+        ) ||
+        (update.locale !== undefined && !isAppLocale(update.locale)) ||
+        (update.reading !== undefined &&
+          !isAppReadingPreferences(update.reading))
+      )
+        throw new Error("Unsupported app preferences update");
+      const current = toView(await this.#readDocument());
+      const document: AppPreferencesDocument = {
+        schemaVersion: 2,
+        locale: update.locale ?? current.locale,
+        reading: structuredClone(update.reading ?? current.reading),
+      };
       await this.#writeDocument(document);
       return toView(document);
     });
@@ -69,7 +85,11 @@ export class AppPreferencesStore {
     } catch (error: unknown) {
       if (!isMissingFile(error)) throw error;
     }
-    return { schemaVersion: 1, locale: defaultAppLocale };
+    return {
+      schemaVersion: 2,
+      locale: defaultAppLocale,
+      reading: structuredClone(defaultAppReadingPreferences),
+    };
   }
 
   async #writeDocument(document: AppPreferencesDocument): Promise<void> {
@@ -97,24 +117,45 @@ export class AppPreferencesStore {
 }
 
 function validateDocument(value: unknown): AppPreferencesDocument {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    throw new Error("App preferences file does not match a supported schema");
   if (
-    typeof value !== "object" ||
-    value === null ||
-    Array.isArray(value) ||
-    !("schemaVersion" in value) ||
-    value.schemaVersion !== 1 ||
-    !("locale" in value) ||
-    !isAppLocale(value.locale) ||
-    Object.keys(value).some(
-      (key) => key !== "schemaVersion" && key !== "locale",
+    "schemaVersion" in value &&
+    value.schemaVersion === 1 &&
+    "locale" in value &&
+    isAppLocale(value.locale) &&
+    Object.keys(value).every(
+      (key) => key === "schemaVersion" || key === "locale",
     )
   )
-    throw new Error("App preferences file does not match the v1 schema");
-  return { schemaVersion: 1, locale: value.locale };
+    return { schemaVersion: 1, locale: value.locale };
+  if (
+    "schemaVersion" in value &&
+    value.schemaVersion === 2 &&
+    "locale" in value &&
+    isAppLocale(value.locale) &&
+    "reading" in value &&
+    isAppReadingPreferences(value.reading) &&
+    Object.keys(value).every(
+      (key) => key === "schemaVersion" || key === "locale" || key === "reading",
+    )
+  )
+    return {
+      schemaVersion: 2,
+      locale: value.locale,
+      reading: structuredClone(value.reading),
+    };
+  throw new Error("App preferences file does not match a supported schema");
 }
 
 function toView(document: AppPreferencesDocument): AppPreferences {
-  return { locale: document.locale };
+  return {
+    locale: document.locale,
+    reading:
+      document.schemaVersion === 1
+        ? structuredClone(defaultAppReadingPreferences)
+        : structuredClone(document.reading),
+  };
 }
 
 function isMissingFile(error: unknown): boolean {

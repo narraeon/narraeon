@@ -15,6 +15,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import {
   parseV1Envelope,
   type V1PlayCallChainView,
+  type V1PlayContextReadingView,
 } from "../../src/protocol/v1.ts";
 import type { ContentTreeFile } from "../../src/runtime/content/ContentWorkspace.ts";
 import {
@@ -1122,6 +1123,127 @@ test("工具中间步文本不进入叙事，状态与终态叙事分别推进�
     endpoint.state.find(({ path }) => path === "current-situation.yaml")
       ?.contents,
   ).toContain("Alex已经把宿舍门打开。");
+});
+
+test("AI 读取证据返回冻结 bootstrap、已结算全文读取与下一次真实 Prompt Preview", async () => {
+  const root = await mkdtemp(join(tmpdir(), "narraeon-play-reading-"));
+  roots.push(root);
+  const worlds = new FileNativeWorldStore(root);
+  const packageFiles = worldFiles().map((file) =>
+    file.path === "control/frame.yaml"
+      ? {
+          ...file,
+          contents: file.contents.replace(
+            "  - slot: { kind: additional_materials }",
+            "  - slot: { kind: catalog, directory: locations, maxEntries: 24 }\n  - slot: { kind: additional_materials }",
+          ),
+        }
+      : file,
+  );
+  packageFiles.push({
+    path: "world/locations/dorm-404.yaml",
+    contents: `$document:
+  id: location.dorm-404
+  ref: dorm-404
+  title: 404 宿舍
+  summary: Alex 与玩家当前居住的宿舍。
+  aliases: []
+设施:
+  独立卫生间: true
+  独立淋浴间: true
+`,
+  });
+  const created = await worlds.createFromContentPackage({
+    operationId: "create-play-reading-world",
+    sourcePackageId: "play-reading-package",
+    sourcePackageTitle: "Play reading package",
+    packageFiles,
+    prompt: { hostBinding: hostBinding(), modelBinding: modelBinding() },
+  });
+  if (created.outcome !== "created") throw new Error("world was not created");
+  const worldId = created.world.worldId;
+  const modelHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        text: "I will read the dormitory record before describing the scene.",
+        toolCalls: [
+          {
+            id: "read-dorm-room",
+            name: "context_read",
+            arguments: { ref: "@dorm-404" },
+          },
+        ],
+      },
+      {
+        outcome: "response",
+        text: "You wash up in the dormitory's private bathroom.",
+      },
+    ],
+  });
+  const chains = new PlayCallChain(worlds);
+  const completed = await chains.start({
+    worldId,
+    chainId: "play-reading-chain",
+    exchangeId: "play-reading-exchange",
+    playerText: "I wash up before bed.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+
+  const direct = await chains.inspectReading(worldId, completed.parentHead);
+  expect(direct?.bootstrap).toEqual({
+    logicalMessages: modelHost.requests[0]!.bootstrap.logicalMessages,
+    coverage: modelHost.requests[0]!.bootstrap.coverage,
+  });
+  expect(JSON.stringify(direct?.bootstrap)).not.toContain("独立淋浴间");
+  expect(direct?.bootstrap.coverage).toContainEqual(
+    expect.objectContaining({ catalogEntries: ["dorm-404"] }),
+  );
+  const dormRead = direct?.reads.find(
+    ({ callId }) => callId === "read-dorm-room",
+  );
+  expect(dormRead).toMatchObject({
+    ref: "@dorm-404",
+    ok: true,
+    complete: true,
+    locator: null,
+  });
+  expect(dormRead?.markdown).toContain("独立淋浴间");
+
+  const runtime = new V1Runtime({
+    dataRoot: root,
+    configRoot: join(root, "config"),
+  });
+  await runtime.initialize();
+  await runtime.handle({
+    type: "model.save",
+    connection: {
+      name: "Audit model",
+      presetId: "custom",
+      provider: "openai_responses",
+      baseUrl: "https://provider.invalid/v1",
+      apiKey: "secret",
+      modelId: "audit-model",
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 8_000,
+    },
+  });
+  const reading = (
+    await runtime.handle({ type: "world.play-context.read", worldId })
+  ).result as V1PlayContextReadingView;
+  expect(reading.currentContext?.bootstrap).toEqual(direct?.bootstrap);
+  expect(reading.currentContext?.reads).toEqual(direct?.reads);
+  expect(reading.nextFreshContext).toMatchObject({
+    head: completed.parentHead,
+    preview: { diagnosticBinding: { modelId: "audit-model" } },
+  });
+  expect(reading.nextFreshContext?.preview.compilation.coverage).toContainEqual(
+    expect.objectContaining({ catalogEntries: ["dorm-404"] }),
+  );
 });
 
 test("world_patch no-op 保留匹配的紧凑工具结果且不推进世界", async () => {

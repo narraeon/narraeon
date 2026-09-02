@@ -4,6 +4,7 @@ import type {
   V1PlayCallChainContextView,
   V1PlayCallChainEvent,
   V1PlayCallChainView,
+  V1PlayContextReadingView,
   V1PlayRunProgress,
 } from "../../protocol/v1.ts";
 import type {
@@ -532,6 +533,32 @@ export class PlayCallChain {
     if (session.status === "running")
       await this.#interruptAbandonedDispatch(session);
     return this.#projectActiveView(session);
+  }
+
+  async inspectReading(
+    worldId: string,
+    worldHead: string,
+  ): Promise<V1PlayContextReadingView["currentContext"]> {
+    const view = await this.inspectWorld(worldId);
+    if (view === null) return null;
+    const session = this.#active.get(view.chainId);
+    if (session === undefined)
+      throw new PlayCallChainError(
+        "The current play context could not be inspected.",
+      );
+    return {
+      chainId: session.chainId,
+      baselineHead: session.baselineHead,
+      parentHead: session.parentHead,
+      stale: session.parentHead !== worldHead,
+      playPreset: structuredClone(session.playPreset),
+      updatedAt: session.updatedAt,
+      bootstrap: {
+        logicalMessages: structuredClone(session.bootstrap.logicalMessages),
+        coverage: structuredClone(session.bootstrap.coverage),
+      },
+      reads: projectContextReads(session),
+    };
   }
 
   async deriveWorld(input: {
@@ -2734,6 +2761,60 @@ function projectView(session: PersistedPlayCallChain): V1PlayCallChainView {
       projectContext(context),
     ),
   };
+}
+
+function projectContextReads(
+  session: PersistedPlayCallChain,
+): NonNullable<V1PlayContextReadingView["currentContext"]>["reads"] {
+  const completed = new Map(
+    session.completedTools.map((tool) => [tool.key, tool.result]),
+  );
+  let exchange = 0;
+  const calls = new Map<string, { key: string; ref: string }>();
+  const reads: NonNullable<
+    V1PlayContextReadingView["currentContext"]
+  >["reads"] = [];
+  for (const event of session.events) {
+    if (event.kind === "assistant") {
+      exchange = event.exchange;
+      continue;
+    }
+    if (event.kind === "tool_call" && event.name === "context_read") {
+      const ref =
+        isRecord(event.arguments) && typeof event.arguments.ref === "string"
+          ? event.arguments.ref
+          : "(invalid ref)";
+      calls.set(event.callId, {
+        key: `${exchange}:${event.callId}`,
+        ref,
+      });
+      continue;
+    }
+    if (event.kind !== "tool_result" || event.name !== "context_read") continue;
+    const call = calls.get(event.callId);
+    if (call === undefined) continue;
+    const result = completed.get(call.key);
+    reads.push({
+      eventId: event.id,
+      callId: event.callId,
+      ref: call.ref,
+      ok: event.ok,
+      complete:
+        result === undefined
+          ? null
+          : result.readAuthorization === undefined
+            ? /(?:^|\n)Complete: yes(?:\n|$)/u.test(result.markdown)
+            : result.readAuthorization.page.end ===
+              result.readAuthorization.page.total,
+      markdown: result?.markdown ?? null,
+      locator: result?.readAuthorization?.locator ?? null,
+    });
+  }
+  return reads;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function eventsThroughHead(

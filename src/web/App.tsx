@@ -2,7 +2,11 @@ import { useEffect, useState } from "react";
 
 import { maxPortableContentArchiveBytes } from "../protocol/contentTree.ts";
 import type { ModelConnectionLibraryView } from "../protocol/modelConnections.ts";
-import type { AppLocale, AppPreferences } from "../protocol/appPreferences.ts";
+import {
+  defaultAppReadingPreferences,
+  type AppLocale,
+  type AppPreferences,
+} from "../protocol/appPreferences.ts";
 import type { ContentTreeFile } from "../protocol/v1.ts";
 import { firstPartyPlayPresetTemplatesForLocale } from "../shared/first-party-play-preset-templates.ts";
 import type { RuntimeClient } from "./runtimeClient.ts";
@@ -516,6 +520,9 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         onBack={() => setScreen("home")}
         onConfigureModel={() => setScreen("model")}
         onRenameWorld={(name) => renameWorld(worldId, name)}
+        initialReadingPreferences={
+          workspace.preferences.reading ?? defaultAppReadingPreferences
+        }
         onOpenWorld={async (nextWorldId) => {
           await refresh();
           setWorldId(nextWorldId);
