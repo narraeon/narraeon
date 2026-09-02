@@ -2,46 +2,83 @@ import { expect, test } from "vitest";
 
 import { parseV1Envelope, v1Protocol } from "../../src/protocol/v1.ts";
 
-test("设定完善协议只有读取、普通消息、停止、精确版本应用和放弃", () => {
-  expect(
-    parseV1Envelope({
-      protocol: v1Protocol,
-      request: {
-        type: "setting-improvement.message",
-        packageId: "package-1",
-        requestId: "request-1",
-        message: "先讨论一下人物关系",
-      },
-    }).request,
-  ).toEqual({
+test("设定完善协议显式区分继续历史与全新上下文", () => {
+  const fresh = {
     type: "setting-improvement.message",
     packageId: "package-1",
     requestId: "request-1",
     message: "先讨论一下人物关系",
-  });
+    continuation: { kind: "fresh_context" },
+  } as const;
+  expect(
+    parseV1Envelope({ protocol: v1Protocol, request: fresh }).request,
+  ).toEqual(fresh);
 
-  expect(() =>
+  const continued = {
+    type: "setting-improvement.message",
+    packageId: "package-1",
+    requestId: "request-2",
+    message: "接着改",
+    continuation: {
+      kind: "continue_context",
+      sessionId: "setting-00000000-0000-4000-8000-000000000000",
+    },
+  } as const;
+  expect(
+    parseV1Envelope({ protocol: v1Protocol, request: continued }).request,
+  ).toEqual(continued);
+
+  for (const continuation of [
+    undefined,
+    { kind: "continue_context" },
+    { kind: "fresh_context", sessionId: "unexpected" },
+    { kind: "guess" },
+  ])
+    expect(() =>
+      parseV1Envelope({
+        protocol: v1Protocol,
+        request: {
+          type: "setting-improvement.message",
+          packageId: "package-1",
+          requestId: "request-bad",
+          message: "bad",
+          ...(continuation === undefined ? {} : { continuation }),
+        },
+      }),
+    ).toThrow(/continuation|missing required field/u);
+});
+
+test("历史读取和所选对话状态保留，Apply 与 Discard 已从协议删除", () => {
+  expect(
     parseV1Envelope({
       protocol: v1Protocol,
       request: {
-        type: "setting-improvement.apply",
-        sessionId: "setting-1",
-        expectedDraftVersion: -1,
-      },
-    }),
-  ).toThrow(/expectedDraftVersion/u);
-
-  expect(() =>
-    parseV1Envelope({
-      protocol: v1Protocol,
-      request: {
-        type: "setting-improvement.start",
-        improvementId: "legacy",
+        type: "setting-improvement.status",
         packageId: "package-1",
-        goal: "legacy generation",
-        mode: "plan_first",
-        contextPaths: [],
+        sessionId: "setting-00000000-0000-4000-8000-000000000000",
       },
-    }),
-  ).toThrow(/does not support command/u);
+    }).request,
+  ).toMatchObject({ type: "setting-improvement.status" });
+  expect(
+    parseV1Envelope({
+      protocol: v1Protocol,
+      request: {
+        type: "setting-improvement.session.read",
+        packageId: "package-1",
+        sessionId: "setting-00000000-0000-4000-8000-000000000000",
+      },
+    }).request,
+  ).toMatchObject({ type: "setting-improvement.session.read" });
+
+  for (const type of [
+    "setting-improvement.apply",
+    "setting-improvement.discard",
+    "setting-improvement.start",
+  ])
+    expect(() =>
+      parseV1Envelope({
+        protocol: v1Protocol,
+        request: { type, sessionId: "setting-1" },
+      }),
+    ).toThrow(/does not support command/u);
 });

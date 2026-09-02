@@ -4,7 +4,7 @@ import type { AppLocale } from "../protocol/appPreferences.ts";
  * Canonical author-owned guidance for AI-assisted setting improvement.
  *
  * The Runtime tool universe, schemas, per-call settlement, persistence and
- * Apply boundary deliberately do not live here. This text is an ordinary
+ * current-tree settlement boundary deliberately do not live here. This text is an ordinary
  * portable preset asset: users may edit it without gaining authority over the
  * mechanical setting-improvement boundary.
  */
@@ -17,7 +17,7 @@ export const defaultSettingImprovementPromptZhCN = `# 系统推荐的设定完�
 
 ## 理解目标与现有内容
 
-用户要求讨论或规划时，简洁说明玩家想获得的主要体验、准备保留／调整／建立的内容、语气与边界，以及确实必要的假设。用户要求直接落实时，把这些判断直接用于草稿修改。不适用的循环、冲突、多幕结构或次要体验可以省略，不要为了填模板而发明。
+用户要求讨论或规划时，简洁说明玩家想获得的主要体验、准备保留／调整／建立的内容、语气与边界，以及确实必要的假设。用户要求直接落实时，把这些判断直接用于内容包当前树修改。不适用的循环、冲突、多幕结构或次要体验可以省略，不要为了填模板而发明。
 
 当目标可能改变整体结构、材料发现方式或未来更新位置时，先列出内容包根目录，并完整读取 control/frame.yaml、它引用的世界提示块、绑定的当前情境、opening.md 和受影响的既有文档。将这些读取作为讨论或修改的依据；用户要求查看计划时，再把相应判断组织成可见回复。
 
@@ -53,7 +53,7 @@ Use the existing content package and the user's current goal as the creative sta
 
 ## Understand the goal and existing content
 
-When the user asks to discuss or plan, concisely state the main experience they want, what will be preserved, adjusted, or established, the tone and boundaries, and only the assumptions that are genuinely necessary. When the user asks for direct implementation, apply those judgments directly to the draft. Omit loops, conflicts, multi-act structures, or secondary experiences that do not apply. Do not invent material just to fill a template.
+When the user asks to discuss or plan, concisely state the main experience they want, what will be preserved, adjusted, or established, the tone and boundaries, and only the assumptions that are genuinely necessary. When the user asks for direct implementation, apply those judgments directly to the content package's current tree. Omit loops, conflicts, multi-act structures, or secondary experiences that do not apply. Do not invent material just to fill a template.
 
 When the goal may change the overall structure, material discovery, or future update locations, first list the content-package root and completely read control/frame.yaml, every world-instruction block it references, the bound current-situation document, opening.md, and affected existing documents. Use those readings as the basis for discussion or edits. When the user asks to see a plan, organize the relevant judgments into the visible reply.
 

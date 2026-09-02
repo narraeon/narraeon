@@ -17,17 +17,6 @@ const englishMessages: Record<string, string> = {
     "The ZIP content package was imported with a new local identity.",
   "请先保存手动编辑，再开始 AI 设定完善。":
     "Save manual edits before starting setting improvement.",
-  "创作计划已生成；计划阶段只读取了当前设定。":
-    "The creation plan is ready; the planning phase only read the current setting.",
-  "候选已通过机械检查；可整批应用或放弃。":
-    "The candidate passed mechanical checks and can now be applied or discarded.",
-  "已按你的意见重出创作计划。":
-    "The creation plan has been regenerated from your feedback.",
-  "候选已按你的意见修改并重新通过机械检查。":
-    "The candidate was revised from your feedback and passed mechanical checks again.",
-  "设定候选已整批应用。": "The setting candidate has been applied.",
-  "设定候选已放弃，当前树未改变。":
-    "The setting candidate was discarded; the current tree is unchanged.",
   "请先保存并启用一份模型配置。": "Save and enable a model connection first.",
   "世界已重命名为“{name}”。": "World renamed to “{name}”.",
   "删除世界“{title}”？它的全部提交、历史和存档都会从本机移除，且无法撤销。":
@@ -446,8 +435,8 @@ const playPresetEnglishMessages: Record<string, string> = {
   "这份文字决定 AI 怎样理解、规划和创作内容包设定；每次开始完善时会冻结当前预设 revision。":
     "This text tells the model how to understand, plan, and author content-package settings. Each session freezes the current preset revision.",
   "工具为什么不在这里？": "Why are the tools not editable here?",
-  "Runtime 继续内置 setting_* 工具定义、参数、说明、只读／写入阶段边界和候选终态协议。预设只能编辑创作语义，不能替换这些机械契约。":
-    "Runtime owns the setting_* definitions, parameters, descriptions, read/write phase boundaries, and candidate settlement protocol. A preset can edit authoring semantics but cannot replace these mechanical contracts.",
+  "Runtime 继续内置 setting_* 工具定义、参数、说明和当前树直接结算协议。预设只能编辑创作语义，不能替换这些机械契约。":
+    "Runtime owns the setting_* definitions, parameters, descriptions, and direct current-tree settlement protocol. A preset can edit authoring semantics but cannot replace these mechanical contracts.",
   沿用系统推荐提示: "Use the system-recommended prompt",
   "这是一份功能加入前保存的 v1 预设。打开页面不会改写它；写入后才会产生新的预设 revision。":
     "This v1 preset was saved before the feature existed. Opening this page does not rewrite it; writing the prompt creates a new preset revision.",
@@ -697,16 +686,16 @@ const promptPreviewEnglishMessages: Record<string, string> = {
   "真实编译已完成；没有调用模型，也没有改变内容或世界。":
     "Real compilation completed without calling a model or changing content or world state.",
   全新上下文会发送什么: "What a new context sends",
-  "真实编译，0 次模型调用，不会创建候选或写入权威状态。":
-    "Real compilation, zero model calls, and no candidate creation or authority writes.",
+  "真实编译，0 次模型调用，不会创建对话或写入权威状态。":
+    "Real compilation, zero model calls, and no conversation creation or authority writes.",
   提示词预览: "Prompt Preview",
   "用真实编译器检查全新上下文会发送什么：逻辑 role、Markdown、材料、工具、预算与 Provider 映射。":
     "Use the real compiler to inspect what a new context sends: logical roles, Markdown, material, tools, budgets, and Provider mapping.",
   预览性质: "Preview properties",
   只读检查: "Read-only inspection",
   "0 次模型调用": "Zero model calls",
-  不会创建候选或写入权威状态:
-    "Does not create candidates or write authority state",
+  不会创建对话或写入权威状态:
+    "Does not create conversations or write authority state",
   决定这次检查什么: "Choose what to inspect",
   "内容包首轮 · 全新上下文": "Content-package first turn · new context",
   "还没有内容包。先新建并修好一份内容包，才能编译真实提示词。":
@@ -845,147 +834,6 @@ const promptPreviewEnglishMessages: Record<string, string> = {
 Object.assign(englishMessages, promptPreviewEnglishMessages);
 
 const settingImprovementEnglishMessages: Record<string, string> = {
-  "例如：秦龙的动机再具体一点，别改开场白。":
-    "For example: Make Alex's motivation more specific, but do not change the opening.",
-  本次生成进度: "Generation progress",
-  正在生成创作计划: "Generating creation plan",
-  正在生成候选: "Generating candidate",
-  第: "Round",
-  轮: "",
-  "正在建立连接…": "Connecting…",
-  工具调用: "Tool calls",
-  "Provider 派发": "Provider dispatches",
-  自检未通过: "Failed checks",
-  协议错误: "Protocol errors",
-  正在写: "Writing",
-  思考中: "Reasoning",
-  正文: "Text",
-  "最近自检：": "Latest check:",
-  已有: "No output for",
-  "秒没有收到任何输出，模型调用可能已经卡住。":
-    "seconds; the model call may be stuck.",
-  "AI 设定完善失败": "Setting improvement failed",
-  这次生成没有完成: "This generation did not complete",
-  已完成轮次: "Completed rounds",
-  "未完成的 AI 输出没有成为候选，内容包当前树没有改变。可以直接按原方式重试，也可以先调整目标或注入文件。":
-    "The incomplete model output did not become a candidate, and the content package's current tree did not change. Retry the same way, or adjust the goal or injected files first.",
-  按原方式重试: "Retry the same way",
-  关闭错误: "Dismiss error",
-  "AI 设定完善": "Setting improvement",
-  "AI 会基于当前树完善设定：可以先只读现有文件并确认计划，也可以直接生成隔离候选。 只有最后整批应用才会替换当前内容包；已有世界不会改变。":
-    "The model can improve the current tree by first reading files and proposing a plan, or by generating an isolated candidate directly. Only applying the whole candidate replaces the content package; existing worlds remain unchanged.",
-  当前内容包: "Current content package",
-  正在完善: "Improving",
-  可用于创建世界: "Ready to create a world",
-  需要修复: "Needs repair",
-  设定完善进度: "Setting-improvement progress",
-  描述目标: "Describe the goal",
-  说清想获得的体验: "Describe the desired experience",
-  可选计划: "Optional plan",
-  只读现有设定后确认方向: "Read the current setting, then confirm direction",
-  审阅并应用: "Review and apply",
-  核对完整差异与提示词: "Inspect the complete diff and prompt",
-  "当前创作会话及直接注入文件已固定。应用或放弃前，手动编辑、上下文选择和内容包切换会暂时停用。":
-    "The current authoring session and directly injected files are frozen. Manual editing, context selection, and content-package switching stay disabled until the candidate is applied or discarded.",
-  需要先连接模型: "Connect a model first",
-  "创作计划和候选文件都由当前模型生成。":
-    "The current model generates the creation plan and candidate files.",
-  配置模型连接: "Configure model connection",
-  "第 1 步": "Step 1",
-  "这次想把设定完善成什么样？": "How should this setting be improved?",
-  "写玩家最终会感受到什么、哪里薄弱、哪些内容不要改。无需描述文件名或技术格式。":
-    "Describe what players should feel, what is weak, and what must not change. You do not need file names or technical formats.",
-  设定完善目标: "Setting-improvement goal",
-  "例如：我想让学院生活更有日常节奏。补足室友之间的目标与矛盾，保留轻松基调，不增加数值化好感度，也不要预写未来剧情。":
-    "For example: Give academy life a stronger everyday rhythm. Add goals and conflicts between roommates, keep the light tone, do not add numeric affinity, and do not prewrite future plot.",
-  目标示例: "Goal examples",
-  "可以这样写：": "Try one of these:",
-  "正在生成创作计划…": "Generating creation plan…",
-  生成可见创作计划: "Generate visible creation plan",
-  "正在直接生成候选…": "Generating candidate directly…",
-  "跳过计划，直接生成候选": "Skip plan and generate candidate",
-  "计划阶段只能读取；直接生成也仍需在最后审阅并整批应用。":
-    "The planning phase is read-only. A directly generated candidate still requires final review and whole-candidate application.",
-  创作目标已提交: "Authoring goal submitted",
-  方向已提交: "Direction submitted",
-  "第 2 步": "Step 2",
-  "确认 AI 理解的创作方向": "Confirm the model's understanding",
-  "这里仍然只是计划。AI 已可只读当前树，但确认前不能修改；若方向不对，放弃后修改目标。":
-    "This is still only a plan. The model can read the current tree but cannot modify it before confirmation. If the direction is wrong, discard it and change the goal.",
-  "正在生成并检查候选…": "Generating and checking candidate…",
-  确认计划并生成候选: "Confirm plan and generate candidate",
-  放弃整批候选: "Discard whole candidate",
-  "让 AI 调整计划": "Ask the model to revise the plan",
-  "方向不对时不必放弃重来：写下要改什么，AI 会在同一次会话里重出完整计划。":
-    "If the direction is wrong, describe the correction instead of starting over. The model will produce a complete revised plan in the same session.",
-  "正在重新规划…": "Replanning…",
-  按意见重出计划: "Regenerate plan from feedback",
-  创作计划已确认: "Creation plan confirmed",
-  已确认: "Confirmed",
-  "第 2 步 · 可选": "Step 2 · optional",
-  已跳过可见计划: "Visible plan skipped",
-  "本次按你的目标直接生成候选，仍需审阅完整差异后才能应用。":
-    "This candidate was generated directly from your goal and still requires review of the complete diff before application.",
-  "AI 的起点": "Model starting point",
-  当前设定: "Current setting",
-  个文件: "files",
-  "计划阶段可通过只读工具查看整棵已保存当前树；勾选的文本文件会额外完整注入首个模型请求。":
-    "Read-only tools can inspect the entire saved tree during planning. Selected text files are additionally injected in full into the first model request.",
-  手动编辑尚未保存: "Manual edits are not saved",
-  "这些修改不会进入 AI 候选；请先返回手动编辑并整批保存。":
-    "These changes will not enter the model candidate. Return to manual editing and save the whole draft first.",
-  当前设定文件统计: "Current setting file counts",
-  开场白: "Opening text",
-  世界内容: "World content",
-  控制文件: "Control files",
-  "直接注入给 AI": "Inject directly into the model",
-  "适合指定本次完善必须先看到的核心人物、规则或当前情境。":
-    "Use this for core characters, rules, or the current situation that this session must see first.",
-  全选文本文件: "Select all text files",
-  清空注入: "Clear injected files",
-  "当前内容包还没有文件。": "The current content package has no files.",
-  筛选文件: "Filter files",
-  "例如 characters 或 frame": "For example, characters or frame",
-  当前设定文件: "Current setting files",
-  "没有匹配的文件。": "No files match.",
-  开场: "Opening",
-  世界: "World",
-  控制: "Control",
-  二进制: "Binary",
-  注入: "Inject",
-  "这是二进制资源，内容不在此处展开。":
-    "This is a binary resource; its content is not expanded here.",
-  "第 3 步": "Step 3",
-  "审阅候选，再决定是否应用": "Review the candidate before applying",
-  机械检查通过: "Mechanical checks passed",
-  候选需要修复: "Candidate needs repair",
-  候选摘要: "Candidate summary",
-  文件变化: "File changes",
-  新建: "Create",
-  修改: "Update",
-  删除: "Delete",
-  机械检查诊断: "Mechanical-check diagnostics",
-  完整文件差异: "Complete file diff",
-  "逐个展开检查；这里显示的就是整批应用将替换的内容。":
-    "Expand each item to inspect exactly what applying the whole candidate will replace.",
-  "AI 没有改动任何文件。": "The model did not change any files.",
-  应用前: "Before",
-  应用后: "After",
-  这是一次整批替换: "This is a whole-candidate replacement",
-  "不能只勾选部分文件。放弃会丢弃整个隔离候选，当前内容包保持不变。":
-    "Individual files cannot be selected. Discarding removes the entire isolated candidate and leaves the current content package unchanged.",
-  "正在整批应用…": "Applying whole candidate…",
-  整批应用候选: "Apply whole candidate",
-  "正在放弃…": "Discarding…",
-  "让 AI 继续改这份候选": "Ask the model to revise this candidate",
-  "只有一两处不满意时不必整批放弃：写下要改什么，AI 会在当前候选上接着改，已经对的部分保留。":
-    "If only a few parts are wrong, describe the corrections instead of discarding everything. The model will continue from the current candidate and preserve what already works.",
-  "正在修改候选…": "Revising candidate…",
-  按意见继续修改: "Continue revision from feedback",
-  真实提示词预览: "Real Prompt Preview",
-  "候选已通过和真实请求同源的编译检查。":
-    "The candidate passed the same compilation checks used by a real request.",
-  无内部字段泄漏: "No internal-field leakage",
   模型: "Model",
   逻辑消息: "Logical messages",
   工具: "Tools",
@@ -998,26 +846,25 @@ const settingImprovementEnglishMessages: Record<string, string> = {
   状态: "Status",
   查看真实工具定义: "View real tool definitions",
   "查看最终 Provider 请求结构": "View final Provider request structure",
-  "和 AI 直接讨论或修改 {packageName}。它始终可以读取和更新隔离草稿；满意时再由你应用。":
-    "Discuss or revise {packageName} directly with the model. It can always read and update the isolated draft; apply only when you are satisfied.",
-  放弃对话: "Discard conversation",
   "先配置并启用模型，才能开始设定完善对话。":
     "Configure and enable a model before starting a setting-improvement conversation.",
   "请先保存或放弃文件编辑中的未保存修改。":
     "Save or discard the unsaved manual file edits first.",
+  内容包记录: "Content-package record",
+  设定完善对话历史: "Setting-improvement conversation history",
+  "{count} 次对话": "{count} conversations",
+  未命名对话: "Untitled conversation",
+  回复中: "Responding",
+  可继续: "Can continue",
+  "{turns} 轮对话 · {tools} 次工具 · {files} 个文件":
+    "{turns} turns · {tools} tools · {files} files",
   "正在恢复设定完善对话…": "Restoring the setting-improvement conversation…",
   "直接说你现在想做什么。": "Say what you want to do now.",
   "例如：先帮我梳理一下人物关系；或者直接把开场改成雨夜码头，并同步当前情境。":
     "For example: help me reason through the character relationships first; or change the opening to a rainy-night wharf and update the current situation too.",
   你: "You",
   AI: "AI",
-  上一次回复已中断: "The previous response was interrupted",
   上一次操作未完成: "The previous operation did not complete",
-  "最后一次完整草稿和完整对话都已保留，可以直接继续说。":
-    "The last complete draft and transcript were retained. You can continue directly.",
-  "给 AI 发消息": "Message the model",
-  "可以先讨论、要求它检查某份设定，也可以直接让它修改草稿。":
-    "You can discuss first, ask it to inspect part of the setting, or tell it to edit the draft directly.",
   "Enter 发送，Shift + Enter 换行":
     "Enter to send; Shift + Enter for a new line",
   停止回复: "Stop response",
@@ -1025,38 +872,65 @@ const settingImprovementEnglishMessages: Record<string, string> = {
   "AI 正在处理…": "The model is working…",
   "第 {exchange} 次模型交换 · {tools} 次工具调用 · 已接收 {chars} 字":
     "Model exchange {exchange} · {tools} tool calls · {chars} characters received",
+  "第 {exchange} 次模型交换": "Model exchange {exchange}",
+  "{count} 次工具调用": "{count} tool calls",
+  "等待 Runtime 结果": "Waiting for Runtime result",
+  "Runtime 工具结果": "Runtime tool result",
+  "AI · 工具步骤文本": "AI · tool-step text",
+  正在接收的正文: "Incoming visible text",
   "已 {seconds} 秒没有收到新片段，可以停止后继续对话。":
     "No new fragment for {seconds} seconds. You can stop and continue the conversation.",
-  隔离草稿: "Isolated draft",
-  当前候选: "Current draft",
-  "版本 {version}": "Version {version}",
-  "AI 调用写入工具后，改动和自动检查会出现在这里。":
-    "Changes and automatic checks appear here after the model calls write tools.",
-  改动: "Changes",
-  "{count} 个文件": "{count} files",
-  自动检查: "Automatic checks",
-  已通过: "Passed",
-  基线: "Base",
-  未变化: "Current",
-  已过期: "Stale",
-  修改前: "Before",
-  修改后: "After",
-  应用当前草稿: "Apply current draft",
-  "内容包已在对话外发生变化，不能覆盖应用。":
-    "The content package changed outside this conversation, so the draft cannot overwrite it.",
-  "草稿还没有改动。": "The draft has no changes yet.",
-  "修复所有自动检查问题后才能应用。":
-    "Resolve every automatic-check issue before applying.",
-  "等待当前回复结束后即可应用。":
-    "Wait for the current response to finish before applying.",
-  "应用只提交这个精确版本；对话中的讨论本身不会修改当前树。":
-    "Apply commits only this exact version; discussion in the conversation never changes the current tree.",
+  "{path} 的完整差异": "Complete diff for {path}",
+  "{count} 行未变化": "{count} unchanged lines",
+  删除行: "Removed line",
+  新增行: "Added line",
+  未变行: "Unchanged line",
+  原文件行号: "Original line number",
+  新文件行号: "New line number",
+  改动标记: "Change marker",
+  行内容: "Line content",
+  原文件无对应行: "No corresponding original line",
+  新文件无对应行: "No corresponding new line",
+  "原文件第 {line} 行": "Original line {line}",
+  "新文件第 {line} 行": "New line {line}",
   "请先保存手动编辑，再继续 AI 设定完善。":
     "Save the manual edits before continuing setting improvement.",
-  "隔离草稿已整批应用到内容包当前树。":
-    "The isolated draft was applied to the content package's current tree.",
-  "设定完善对话和隔离草稿已放弃，当前树未改变。":
-    "The setting-improvement conversation and isolated draft were discarded; the current tree was unchanged.",
+  "和 AI 边聊边修改 {packageName}。成功的工具改动会像游玩一样直接写入内容包当前树。":
+    "Discuss and revise {packageName} with the model. Successful tool changes write directly to the content package current tree, just like play.",
+  全新上下文: "Fresh context",
+  "这里没有隔离草稿或应用步骤：每个已完成工具响应的绿色新增和红色删除都已经生效。":
+    "There is no isolated draft or Apply step. Green additions and red removals from every completed tool response are already effective.",
+  "开始后，对话、Provider 返回内容和已生效差异会保留在这里。":
+    "Conversations, Provider-returned content, and effective diffs remain here after you begin.",
+  当前所选: "Selected",
+  最近: "Latest",
+  下一条消息将开启全新上下文: "The next message starts a fresh context",
+  "新对话会从内容包当前树重新编译；原有对话仍保留在历史中。":
+    "The new conversation compiles again from the content package current tree; existing conversations remain in history.",
+  正在继续历史对话: "Continuing a past conversation",
+  "下一条消息会追加到这段历史的原 Provider 上下文；写入仍以此刻的内容包当前树为准。":
+    "The next message appends to this conversation's original Provider context; writes still target the current content package tree.",
+  "完整对话和已经结算的当前树改动都已保留，可以直接继续说。":
+    "The complete conversation and every settled current-tree change were retained. You can continue directly.",
+  "用全新上下文给 AI 发消息": "Message the model in a fresh context",
+  继续这段对话: "Continue this conversation",
+  "可以讨论、要求它检查某份设定，也可以直接让它修改内容包。":
+    "You can discuss, ask it to inspect part of the setting, or tell it to edit the content package directly.",
+  "已生效 · {count} 个文件": "Effective · {count} files",
+  已生效差异: "Effective changes",
+  "迁移前的隔离草稿记录（仅回顾）":
+    "Pre-migration isolated draft record (history only)",
+  迁移前已应用的差异: "Changes applied before migration",
+  "迁移前草稿差异（未生效）": "Pre-migration draft changes (not applied)",
+  "迁移前草稿差异（结果未知）": "Pre-migration draft changes (outcome unknown)",
+  "这份旧草稿在迁移前已经应用。":
+    "This legacy draft was applied before migration.",
+  "这份旧草稿在迁移前已经放弃。":
+    "This legacy draft was discarded before migration.",
+  "这份旧草稿没有自动应用；当前树保持迁移时的真实状态。":
+    "This legacy draft was not auto-applied; the current tree retains its actual state at migration.",
+  "旧应用收据的结果无法确认；迁移没有改写当前树。":
+    "The old Apply receipt outcome cannot be proven; migration did not modify the current tree.",
 };
 
 Object.assign(englishMessages, settingImprovementEnglishMessages);
@@ -1712,7 +1586,6 @@ const dynamicEnglishMessages: Record<string, string> = {
   改节点: "Patch node",
   移动: "Move",
   自检: "Check",
-  结束候选: "Finish candidate",
   "第 {round} / {maxRounds} 轮": "Round {round} / {maxRounds}",
   "正在输出 {count} 字": "Streaming {count} characters",
   "{seconds} 秒前更新": "Updated {seconds} seconds ago",

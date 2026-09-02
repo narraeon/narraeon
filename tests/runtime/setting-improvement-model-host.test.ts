@@ -6,7 +6,7 @@ import { FileNativePromptCompiler } from "../../src/runtime/prompt/FileNativePro
 import {
   settingImprovementRuntimeContract,
   settingImprovementToolDefinitions,
-} from "../../src/runtime/setting/SettingImprovementDraft.ts";
+} from "../../src/runtime/setting/SettingAuthoringTransaction.ts";
 
 test.each([
   "chat_completions",
@@ -59,6 +59,7 @@ test.each([
     );
     expect(serialized).toContain("不必保留“当前情境”字样");
     expect(serialized).toContain("内容包在游玩中的生命周期");
+    expect(serialized).toContain("内容包当前树写入边界");
     expect(serialized).toContain("当前冻结预设的只读创作参考");
     expect(serialized).toContain("按 control/frame.yaml 的声明顺序");
     expect(serialized).toContain("通用状态维护判据");
@@ -76,6 +77,8 @@ test.each([
       expect(serialized).toContain(name);
     expect(serialized).not.toContain("$document.id");
     expect(serialized).not.toContain("document ID");
+    expect(serialized).not.toContain("隔离草稿");
+    expect(serialized).not.toContain("点击应用");
     expect(serialized).not.toContain("setting_preview_candidate");
     expect(serialized).not.toContain("setting_finish_candidate");
   },

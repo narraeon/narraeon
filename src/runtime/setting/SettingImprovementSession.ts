@@ -1,45 +1,62 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
+import type { AppLocale } from "../../protocol/appPreferences.ts";
 import {
   aggregateModelUsage,
   emptyAggregatedModelUsage,
 } from "../../protocol/modelUsage.ts";
-import type { AppLocale } from "../../protocol/appPreferences.ts";
-import type { V1SettingImprovementView } from "../../protocol/v1.ts";
-import type { ContentWorkspace } from "../content/ContentWorkspace.ts";
+import type {
+  V1SettingConversationTurn,
+  V1SettingImprovementHistoryItem,
+  V1SettingImprovementOverview,
+  V1SettingImprovementStatus,
+  V1SettingImprovementView,
+} from "../../protocol/v1.ts";
+import {
+  InvalidContentTreeError,
+  type ContentWorkspace,
+} from "../content/ContentWorkspace.ts";
 import type { ContentTreeFile } from "../content/ContentTreeFile.ts";
+import { contentTreeFingerprint } from "../content/ContentTreeFingerprint.ts";
 import type {
   ModelHost,
+  ModelHostBinding,
   ModelHostDelta,
   ModelHostResponse,
+  ModelHostToolCall,
 } from "../model/ModelHost.ts";
 import {
   equalModelHostBinding,
   ModelHostCancelledError,
 } from "../model/ModelHost.ts";
 import {
-  FileNativePromptCompiler,
-  type PromptPreview,
-} from "../prompt/FileNativePromptCompiler.ts";
-import {
   settingImprovementPromptForBinding,
   type PlayPresetBinding,
 } from "../play/FileNativePlayPresetStore.ts";
+import type {
+  FileNativePromptCompiler,
+  PromptPreview,
+} from "../prompt/FileNativePromptCompiler.ts";
 import type { WorldDocumentStore } from "../world/WorldDocumentStore.ts";
 import {
+  summarizeStoredSettingImprovementSession,
   type FileNativeSettingImprovementStore,
   type StoredSettingImprovementSession,
+  type StoredSettingPreparedPublication,
+  type StoredSettingImprovementSummary,
 } from "./FileNativeSettingImprovementStore.ts";
 import {
-  SettingImprovementDraft,
+  SettingAuthoringTransaction,
   settingImprovementRuntimeContract,
   settingImprovementToolDefinitions,
-} from "./SettingImprovementDraft.ts";
+} from "./SettingAuthoringTransaction.ts";
 
 const maximumExchangesPerMessage = 64;
 const maximumStreamTailCharacters = 240;
 
 export type SettingImprovementView = V1SettingImprovementView;
+export type SettingImprovementContinuation =
+  { kind: "fresh_context" } | { kind: "continue_context"; sessionId: string };
 
 interface LiveRun {
   requestId: string;
@@ -48,16 +65,26 @@ interface LiveRun {
   streaming: NonNullable<SettingImprovementView["progress"]["streaming"]>;
 }
 
+interface ActiveTransaction {
+  revision: string;
+  transaction: SettingAuthoringTransaction;
+}
+
+class RecoveryWriteConflictError extends Error {}
+
 export class SettingImprovementSession {
   readonly #store: FileNativeSettingImprovementStore;
   readonly #content: ContentWorkspace;
   readonly #compiler: FileNativePromptCompiler;
   readonly #locale: () => AppLocale;
   readonly #bindModelHost: () => Promise<ModelHost>;
+  readonly #bindExistingModelHost: (
+    binding: ModelHostBinding,
+  ) => Promise<ModelHost>;
   readonly #bindPlayPreset: () => Promise<PlayPresetBinding>;
   readonly #preview: (
     snapshot: WorldDocumentStore,
-    modelBinding: ReturnType<ModelHost["binding"]>,
+    modelBinding: ModelHostBinding,
     playPreset: PlayPresetBinding | undefined,
   ) => PromptPreview;
   readonly #runs = new Map<string, LiveRun>();
@@ -69,10 +96,11 @@ export class SettingImprovementSession {
     compiler: FileNativePromptCompiler;
     locale: () => AppLocale;
     bindModelHost: () => Promise<ModelHost>;
+    bindExistingModelHost?: (binding: ModelHostBinding) => Promise<ModelHost>;
     bindPlayPreset: () => Promise<PlayPresetBinding>;
     preview: (
       snapshot: WorldDocumentStore,
-      modelBinding: ReturnType<ModelHost["binding"]>,
+      modelBinding: ModelHostBinding,
       playPreset: PlayPresetBinding | undefined,
     ) => PromptPreview;
   }) {
@@ -81,27 +109,113 @@ export class SettingImprovementSession {
     this.#compiler = input.compiler;
     this.#locale = input.locale;
     this.#bindModelHost = input.bindModelHost;
+    this.#bindExistingModelHost =
+      input.bindExistingModelHost ??
+      (async (binding) => {
+        const host = await input.bindModelHost();
+        if (!equalModelHostBinding(binding, host.binding()))
+          throw new Error(
+            "The enabled model connection no longer matches this setting-improvement conversation",
+          );
+        return host;
+      });
     this.#bindPlayPreset = input.bindPlayPreset;
     this.#preview = input.preview;
   }
 
+  /** Latest conversation for compatibility with the original read endpoint. */
   async read(packageId: string): Promise<SettingImprovementView | null> {
-    const session = await this.#store.findOpenByPackage(packageId);
-    if (session === null) return null;
-    const recovered = await this.#recoverIfNeeded(session);
-    return this.#view(recovered);
+    return this.#mutate(async () => {
+      const session = await this.#store.findLatestByPackage(packageId);
+      return session === null
+        ? null
+        : this.#view(await this.#recoverIfNeeded(session));
+    });
+  }
+
+  async overview(packageId: string): Promise<V1SettingImprovementOverview> {
+    return this.#mutate(async () => {
+      let summaries = await this.#store.listSummariesByPackage(packageId);
+      const latestSummary = summaries[0];
+      const latest =
+        latestSummary === undefined
+          ? null
+          : await this.#recoverIfNeeded(
+              await this.#store.read(latestSummary.sessionId),
+            );
+      if (latest !== null) {
+        const index = summaries.findIndex(
+          ({ sessionId }) => sessionId === latest.sessionId,
+        );
+        if (index >= 0)
+          summaries[index] = summarizeStoredSettingImprovementSession(latest);
+        summaries = summaries.sort(compareStoredSummaries);
+      }
+      return {
+        latest: latest === null ? null : this.#view(latest),
+        history: summaries.map(settingImprovementHistoryItem),
+      };
+    });
+  }
+
+  async status(
+    packageId: string,
+    sessionId?: string,
+  ): Promise<V1SettingImprovementStatus> {
+    return this.#mutate(async () => {
+      let status = await this.#store.summaryStatusByPackage(
+        packageId,
+        sessionId,
+      );
+      let selected = status.selected;
+      if (
+        selected?.needsRecovery === true &&
+        !this.#runs.has(selected.sessionId)
+      ) {
+        const recovered = await this.#recoverIfNeeded(
+          await this.#store.read(selected.sessionId),
+        );
+        selected = summarizeStoredSettingImprovementSession(recovered);
+        status = await this.#store.summaryStatusByPackage(packageId, sessionId);
+      }
+      return {
+        revision: status.revision,
+        selected: selected === null ? null : this.#statusView(selected),
+      };
+    });
+  }
+
+  async readSession(
+    packageId: string,
+    sessionId: string,
+  ): Promise<SettingImprovementView> {
+    return this.#mutate(async () => {
+      const stored = await this.#store.read(sessionId);
+      assertPackage(stored, packageId);
+      return this.#view(await this.#recoverIfNeeded(stored));
+    });
   }
 
   async send(input: {
     packageId: string;
     requestId: string;
     message: string;
+    continuation: SettingImprovementContinuation;
   }): Promise<SettingImprovementView> {
     const message = requiredMessage(input.message);
     const requestId = requiredRequestId(input.requestId);
     const prepared = await this.#mutate(async () => {
-      let session = await this.#store.findOpenByPackage(input.packageId);
-      session ??= await this.#create(input.packageId);
+      let session: StoredSettingImprovementSession;
+      if (input.continuation.kind === "fresh_context") {
+        session =
+          (await this.#store.findByCreationRequest(
+            input.packageId,
+            requestId,
+          )) ?? (await this.#create(input.packageId, requestId));
+      } else {
+        session = await this.#store.read(input.continuation.sessionId);
+        assertPackage(session, input.packageId);
+      }
       session = await this.#recoverIfNeeded(session);
       if (session.completedRequestIds.includes(requestId))
         return { session, run: null as LiveRun | null };
@@ -109,16 +223,14 @@ export class SettingImprovementSession {
       if (running !== undefined) {
         if (running.requestId !== requestId)
           throw new Error(
-            "Another setting-improvement message is still running",
+            "Another message in this setting-improvement conversation is still running",
           );
         return { session, run: running };
       }
-      if (session.lifecycle !== "open")
-        throw new Error("The setting-improvement conversation is closed");
-      const host = await this.#bindModelHost();
+      const host = await this.#bindExistingModelHost(session.modelBinding);
       if (!equalModelHostBinding(session.modelBinding, host.binding()))
         throw new Error(
-          "The enabled model connection no longer matches this setting-improvement conversation",
+          "No saved model connection matches this setting-improvement conversation",
         );
       const now = Date.now();
       session.messages.push({
@@ -160,101 +272,17 @@ export class SettingImprovementSession {
       running.controller.abort();
       return running.promise;
     }
-    const session = await this.#recoverIfNeeded(
-      await this.#store.read(sessionId),
+    return this.#mutate(async () =>
+      this.#view(
+        await this.#recoverIfNeeded(await this.#store.read(sessionId)),
+      ),
     );
-    return this.#view(session);
   }
 
-  async apply(
-    sessionId: string,
-    expectedDraftVersion: number,
-  ): Promise<SettingImprovementView> {
-    return this.#mutate(async () => {
-      const session = await this.#recoverIfNeeded(
-        await this.#store.read(sessionId),
-      );
-      if (this.#runs.has(sessionId) || session.runStatus === "running")
-        throw new Error("Wait for the current model response before applying");
-      if (session.lifecycle === "applied") return this.#view(session);
-      if (session.lifecycle !== "open")
-        throw new Error("The setting-improvement conversation is closed");
-      if (session.draftVersion !== expectedDraftVersion)
-        throw new Error(
-          "The isolated draft changed; review the latest version before applying",
-        );
-
-      // Apply never trusts a cached review. Re-open the exact persisted draft
-      // and run the mechanical inspection plus real Prompt Preview again while
-      // the requested version is settled.
-      const recheckedDraft = this.#openDraft(session);
-      session.draft = recheckedDraft.persist();
-      session.review = recheckedDraft.review();
-      if (
-        session.review.status !== "usable" ||
-        session.review.diff.length === 0
-      ) {
-        session.lastFailure =
-          "Only a changed draft that passes automatic checks can be applied";
-        session.updatedAt = Date.now();
-        await this.#store.save(session);
-        throw new Error(session.lastFailure);
-      }
-
-      const draftFingerprint = contentFingerprint(session.draft.files);
-      session.applyRequest = { expectedDraftVersion, draftFingerprint };
-      session.updatedAt = Date.now();
-      await this.#store.save(session);
-      const lease = await this.#content.beginCurrentTreeContentPackageOperation(
-        session.packageId,
-      );
-      try {
-        const liveFingerprint = contentFingerprint(lease.package.files);
-        if (liveFingerprint === session.baseFingerprint) {
-          await lease.replace(session.draft.files);
-        } else {
-          session.applyRequest = null;
-          session.lastFailure =
-            "The content package changed after this conversation started; the draft was not applied.";
-          session.updatedAt = Date.now();
-          await this.#store.save(session);
-          throw new Error(session.lastFailure);
-        }
-      } finally {
-        lease.release();
-      }
-      session.lifecycle = "applied";
-      session.runStatus = "ready";
-      session.applyRequest = null;
-      session.appliedAt = Date.now();
-      session.updatedAt = session.appliedAt;
-      session.lastFailure = null;
-      await this.#store.save(session);
-      return this.#view(session, "current");
-    });
-  }
-
-  async discard(sessionId: string): Promise<SettingImprovementView> {
-    return this.#mutate(async () => {
-      const session = await this.#recoverIfNeeded(
-        await this.#store.read(sessionId),
-      );
-      if (this.#runs.has(sessionId) || session.runStatus === "running")
-        throw new Error(
-          "Cancel or wait for the current response before discarding",
-        );
-      if (session.lifecycle === "applied")
-        throw new Error("An applied setting draft cannot be discarded");
-      session.lifecycle = "discarded";
-      session.runStatus = "ready";
-      session.updatedAt = Date.now();
-      session.lastFailure = null;
-      await this.#store.save(session);
-      return this.#view(session);
-    });
-  }
-
-  async #create(packageId: string): Promise<StoredSettingImprovementSession> {
+  async #create(
+    packageId: string,
+    creationRequestId: string,
+  ): Promise<StoredSettingImprovementSession> {
     const [package_, host, playPreset] = await Promise.all([
       this.#content.readCurrentTreeContentPackage(packageId),
       this.#bindModelHost(),
@@ -262,37 +290,26 @@ export class SettingImprovementSession {
     ]);
     const locale = this.#locale();
     const modelBinding = host.binding();
-    const authorPrompt = settingImprovementPromptForBinding(playPreset, locale);
-    const draft = new SettingImprovementDraft({
-      baseFiles: package_.files,
-      locale,
-      preview: (snapshot) => this.#preview(snapshot, modelBinding, playPreset),
-    });
     const tools = settingImprovementToolDefinitions(locale);
     const bootstrap = this.#compiler.compileSettingImprovement({
       contentPackageTitle: package_.title,
       runtimeContract: settingImprovementRuntimeContract(locale),
-      authorPrompt,
+      authorPrompt: settingImprovementPromptForBinding(playPreset, locale),
       playPreset,
       modelBinding,
       tools,
     });
     const now = Date.now();
     const session: StoredSettingImprovementSession = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       sessionId: this.#store.createId(),
       packageId,
       contentPackageTitle: package_.title,
       locale,
-      lifecycle: "open",
       runStatus: "ready",
       createdAt: now,
       updatedAt: now,
-      baseFingerprint: contentFingerprint(package_.files),
-      baseFiles: cloneFiles(package_.files),
-      draftVersion: 0,
-      draft: draft.persist(),
-      review: draft.review(),
+      creationRequestId,
       bootstrap,
       modelBinding,
       playPreset: structuredClone(playPreset),
@@ -304,8 +321,9 @@ export class SettingImprovementSession {
       activeRequestId: null,
       completedRequestIds: [],
       lastFailure: null,
-      applyRequest: null,
-      appliedAt: null,
+      authorization: null,
+      pendingSettlement: null,
+      legacyDraft: null,
     };
     await this.#store.save(session);
     return session;
@@ -316,8 +334,8 @@ export class SettingImprovementSession {
     host: ModelHost,
     live: LiveRun,
   ): Promise<SettingImprovementView> {
+    let activeTransaction: ActiveTransaction | null = null;
     try {
-      let draft: SettingImprovementDraft | null = null;
       for (let round = 0; round < maximumExchangesPerMessage; round += 1) {
         session.exchange += 1;
         live.streaming = emptyStreaming();
@@ -355,7 +373,7 @@ export class SettingImprovementSession {
         session.usage = aggregateModelUsage(session.usage, response.usage);
         session.modelItems.push({
           kind: "assistant",
-          text: response.text ?? "",
+          text: visibleText,
           ...(response.reasoningContent === undefined
             ? {}
             : { reasoningContent: response.reasoningContent }),
@@ -381,26 +399,12 @@ export class SettingImprovementSession {
           return this.#view(session);
         }
 
-        // The complete provider response and native continuation are durable
-        // before any draft tool can run.
-        await this.#store.save(session);
-        draft ??= this.#openDraft(session);
-        const before = contentFingerprint(draft.files());
-        const results = draft.execute(toolCalls);
-        const after = contentFingerprint(draft.files());
-        session.draft = draft.persist();
-        session.review = draft.review();
-        if (before !== after) session.draftVersion += 1;
-        session.toolCalls += toolCalls.length;
-        for (const result of results)
-          session.modelItems.push({
-            kind: "tool",
-            toolCallId: result.toolCallId,
-            markdown: result.markdown,
-            ...(result.isError ? { isError: true } : {}),
-          });
-        session.updatedAt = Date.now();
-        await this.#store.save(session);
+        activeTransaction = await this.#settleToolResponse(
+          session,
+          session.modelItems.length - 1,
+          toolCalls,
+          activeTransaction,
+        );
       }
       throw new Error(
         `Setting improvement exceeded ${maximumExchangesPerMessage} model exchanges for one user message`,
@@ -419,169 +423,252 @@ export class SettingImprovementSession {
     }
   }
 
+  async #settleToolResponse(
+    session: StoredSettingImprovementSession,
+    assistantItemIndex: number,
+    calls: readonly ModelHostToolCall[],
+    active: ActiveTransaction | null,
+  ): Promise<ActiveTransaction> {
+    const lease = await this.#content.beginCurrentTreeContentPackageOperation(
+      session.packageId,
+    );
+    try {
+      const beforeFingerprint = contentTreeFingerprint(lease.package.files);
+      session.pendingSettlement = {
+        phase: "response_confirmed",
+        assistantItemIndex,
+        beforeFingerprint,
+      };
+      session.updatedAt = Date.now();
+      // Persist the complete Provider-native assistant item together with the
+      // exact tree revision it may settle against before executing any call.
+      await this.#store.save(session);
+      const transaction =
+        active?.revision === beforeFingerprint
+          ? active.transaction
+          : this.#openTransaction(
+              session,
+              lease.package.files,
+              beforeFingerprint,
+            );
+      const results = transaction.execute(calls);
+      const afterFiles = transaction.files();
+      const afterFingerprint = contentTreeFingerprint(afterFiles);
+      const prepared: StoredSettingPreparedPublication = {
+        phase: "publication_prepared",
+        assistantItemIndex,
+        beforeFingerprint,
+        afterFingerprint,
+        toolResults: structuredClone(results),
+        authorization: transaction.authorization(afterFingerprint),
+      };
+      session.pendingSettlement = prepared;
+      session.updatedAt = Date.now();
+      await this.#store.save(session);
+      if (afterFingerprint !== beforeFingerprint) {
+        try {
+          await lease.replace(afterFiles);
+        } catch (error: unknown) {
+          if (!(error instanceof InvalidContentTreeError)) throw error;
+          throw new Error(
+            "A current-tree transaction passed per-call validation but publication rejected it",
+            { cause: error },
+          );
+        }
+      }
+      this.#finalizeSettlement(session, prepared);
+      session.updatedAt = Date.now();
+      await this.#store.save(session);
+      return { revision: afterFingerprint, transaction };
+    } finally {
+      lease.release();
+    }
+  }
+
+  #openTransaction(
+    session: StoredSettingImprovementSession,
+    files: readonly ContentTreeFile[],
+    revision: string,
+  ): SettingAuthoringTransaction {
+    return new SettingAuthoringTransaction({
+      baseFiles: files,
+      locale: session.locale,
+      revision,
+      authorization: session.authorization,
+      validateFiles: (files) =>
+        this.#content.validateCurrentTreeContentPackage(files),
+      preview: (snapshot) =>
+        this.#preview(snapshot, session.modelBinding, session.playPreset),
+    });
+  }
+
+  #finalizeSettlement(
+    session: StoredSettingImprovementSession,
+    pending: StoredSettingPreparedPublication,
+  ): void {
+    for (const result of pending.toolResults)
+      session.modelItems.push({
+        kind: "tool",
+        toolCallId: result.toolCallId,
+        markdown: result.markdown,
+        ...(result.isError ? { isError: true } : {}),
+        changes: structuredClone(result.changes),
+      });
+    session.authorization = structuredClone(pending.authorization);
+    session.toolCalls += pending.toolResults.length;
+    session.pendingSettlement = null;
+  }
+
   async #recoverIfNeeded(
     original: StoredSettingImprovementSession,
   ): Promise<StoredSettingImprovementSession> {
     if (this.#runs.has(original.sessionId)) return original;
+    let expected = original;
     const session = structuredClone(original);
-    const currentPackage = await this.#content.readCurrentTreeContentPackage(
-      session.packageId,
-    );
-    const runtimeContractUpgraded = this.#upgradeRuntimeContract(
-      session,
-      currentPackage.title,
-    );
-    if (session.applyRequest !== null) {
-      const currentFingerprint = contentFingerprint(currentPackage.files);
-      if (currentFingerprint === session.applyRequest.draftFingerprint) {
-        session.lifecycle = "applied";
-        session.appliedAt = Date.now();
-        session.applyRequest = null;
-        session.lastFailure = null;
-        session.updatedAt = session.appliedAt;
-        await this.#store.save(session);
-        return session;
-      }
-      session.applyRequest = null;
-      if (currentFingerprint !== session.baseFingerprint)
-        session.lastFailure =
-          "The content package changed while a previous Apply was incomplete; the draft was not applied.";
+    const pendingAssistant = lastPendingAssistant(session);
+    if (session.pendingSettlement === null && pendingAssistant !== null) {
+      this.#finalizeUnconfirmedToolResponse(
+        session,
+        pendingAssistant.itemIndex,
+        "Runtime found a complete tool response without the persisted current-tree revision that authorized it. The calls were not replayed against a newer tree; read the current tree again before editing.",
+      );
+      markInterruptedAfterRestart(session);
       session.updatedAt = Date.now();
-      await this.#store.save(session);
+      if (await this.#store.saveIfUnchanged(expected, session)) return session;
+      return this.#recoverIfNeeded(await this.#store.read(session.sessionId));
     }
-    const lastAssistantIndex = session.modelItems.findLastIndex(
-      (item) => item.kind === "assistant",
-    );
-    const lastAssistant =
-      lastAssistantIndex < 0
-        ? undefined
-        : session.modelItems[lastAssistantIndex];
-    const pendingTools =
-      lastAssistant?.kind === "assistant" &&
-      lastAssistantIndex === session.modelItems.length - 1 &&
-      lastAssistant.toolCalls.length > 0;
-    if (session.runStatus !== "running" && !pendingTools) {
-      if (runtimeContractUpgraded) {
-        session.updatedAt = Date.now();
-        await this.#store.save(session);
+
+    if (session.pendingSettlement !== null) {
+      const lease = await this.#content.beginCurrentTreeContentPackageOperation(
+        session.packageId,
+      );
+      let retry = false;
+      try {
+        try {
+          let fingerprint = contentTreeFingerprint(lease.package.files);
+          const pending = session.pendingSettlement;
+          let prepared: StoredSettingPreparedPublication | null =
+            pending.phase === "publication_prepared" ? pending : null;
+          if (fingerprint === pending.beforeFingerprint) {
+            const assistant = assistantAt(session, pending.assistantItemIndex);
+            const transaction = this.#openTransaction(
+              session,
+              lease.package.files,
+              fingerprint,
+            );
+            const results = transaction.execute(assistant.toolCalls);
+            const afterFiles = transaction.files();
+            const afterFingerprint = contentTreeFingerprint(afterFiles);
+            prepared = {
+              phase: "publication_prepared",
+              assistantItemIndex: pending.assistantItemIndex,
+              beforeFingerprint: fingerprint,
+              afterFingerprint,
+              toolResults: structuredClone(results),
+              authorization: transaction.authorization(afterFingerprint),
+            };
+            session.pendingSettlement = prepared;
+            session.updatedAt = Date.now();
+            if (!(await this.#store.saveIfUnchanged(expected, session)))
+              throw new RecoveryWriteConflictError();
+            expected = structuredClone(session);
+            if (afterFingerprint !== fingerprint) {
+              await lease.replace(afterFiles);
+              fingerprint = afterFingerprint;
+            }
+          }
+
+          if (prepared === null) {
+            this.#finalizeUnconfirmedToolResponse(
+              session,
+              pending.assistantItemIndex,
+              "The content package changed after Runtime confirmed this tool response but before it could prepare publication. The calls were not replayed against the different tree; read the current tree again before editing.",
+            );
+          } else if (fingerprint === prepared.afterFingerprint) {
+            this.#finalizeSettlement(session, prepared);
+          } else {
+            this.#finalizeUnconfirmedToolResponse(
+              session,
+              prepared.assistantItemIndex,
+              "The content package no longer matches either the original or prepared revision for this tool response. No claimed change is being treated as authoritative; read the current tree again before editing.",
+            );
+          }
+          markInterruptedAfterRestart(session);
+          session.updatedAt = Date.now();
+          if (!(await this.#store.saveIfUnchanged(expected, session)))
+            throw new RecoveryWriteConflictError();
+        } catch (error: unknown) {
+          if (error instanceof RecoveryWriteConflictError) retry = true;
+          else throw error;
+        }
+      } finally {
+        lease.release();
       }
+      if (retry)
+        return this.#recoverIfNeeded(await this.#store.read(session.sessionId));
       return session;
     }
-    if (pendingTools && lastAssistant?.kind === "assistant") {
-      const draft = this.#openDraft(session);
-      const before = contentFingerprint(draft.files());
-      const results = draft.execute(lastAssistant.toolCalls);
-      const after = contentFingerprint(draft.files());
-      session.draft = draft.persist();
-      session.review = draft.review();
-      if (before !== after) session.draftVersion += 1;
-      session.toolCalls += lastAssistant.toolCalls.length;
-      for (const result of results)
-        session.modelItems.push({
-          kind: "tool",
-          toolCallId: result.toolCallId,
-          markdown: result.markdown,
-          ...(result.isError ? { isError: true } : {}),
-        });
+
+    if (session.runStatus === "running") {
+      markInterruptedAfterRestart(session);
+      session.updatedAt = Date.now();
+    } else {
+      return session;
     }
-    const interruptedRequestId = session.activeRequestId;
-    session.runStatus = "interrupted";
-    session.activeRequestId = null;
-    if (interruptedRequestId !== null)
-      session.completedRequestIds = rememberRequest(
-        session.completedRequestIds,
-        interruptedRequestId,
-      );
-    session.lastFailure =
-      "The previous model request did not finish before Runtime stopped. The last complete draft was retained; send another message to continue.";
-    session.updatedAt = Date.now();
-    await this.#store.save(session);
-    return session;
+    if (await this.#store.saveIfUnchanged(expected, session)) return session;
+    return this.#recoverIfNeeded(await this.#store.read(session.sessionId));
   }
 
-  #upgradeRuntimeContract(
+  #finalizeUnconfirmedToolResponse(
     session: StoredSettingImprovementSession,
-    contentPackageTitle: string,
-  ): boolean {
-    if (session.lifecycle !== "open" || session.playPreset === undefined)
-      return false;
-    const tools = settingImprovementToolDefinitions(session.locale);
-    const runtimeContract = settingImprovementRuntimeContract(session.locale);
-    const currentRuntimeContract = session.bootstrap.logicalMessages.find(
-      ({ role }) => role === "runtime_system",
-    )?.markdown;
-    if (
-      session.contentPackageTitle === contentPackageTitle &&
-      currentRuntimeContract === runtimeContract &&
-      JSON.stringify(session.bootstrap.toolUniverse) === JSON.stringify(tools)
-    )
-      return false;
-    const authorPrompt = session.bootstrap.logicalMessages.find(
-      ({ role }) => role === "author_instruction",
-    )?.markdown;
-    if (authorPrompt === undefined) return false;
-    const compiler = new FileNativePromptCompiler({
-      locale: session.locale,
-      toolStrategy: session.bootstrap.toolStrategy,
-    });
-    session.bootstrap = compiler.compileSettingImprovement({
-      contentPackageTitle,
-      runtimeContract,
-      authorPrompt,
-      playPreset: session.playPreset,
-      modelBinding: session.modelBinding,
-      tools,
-    });
-    session.contentPackageTitle = contentPackageTitle;
-    return true;
+    assistantItemIndex: number,
+    message: string,
+  ): void {
+    const assistant = assistantAt(session, assistantItemIndex);
+    for (const call of assistant.toolCalls)
+      session.modelItems.push({
+        kind: "tool",
+        toolCallId: call.id,
+        markdown: `# Current-tree settlement could not be confirmed\n\n${message}`,
+        isError: true,
+        changes: [],
+      });
+    session.authorization = null;
+    session.toolCalls += assistant.toolCalls.length;
+    session.pendingSettlement = null;
   }
 
-  #openDraft(
-    session: StoredSettingImprovementSession,
-  ): SettingImprovementDraft {
-    return new SettingImprovementDraft({
-      baseFiles: session.baseFiles,
-      locale: session.locale,
-      preview: (snapshot) =>
-        this.#preview(snapshot, session.modelBinding, session.playPreset),
-      persisted: session.draft,
-    });
+  #statusView(
+    summary: StoredSettingImprovementSummary,
+  ): NonNullable<V1SettingImprovementStatus["selected"]> {
+    const live = this.#runs.get(summary.sessionId);
+    return {
+      sessionId: summary.sessionId,
+      runStatus: live === undefined ? summary.runStatus : "running",
+      progress: {
+        exchange: summary.exchange,
+        toolCalls: summary.toolCalls,
+        streaming: live === undefined ? null : structuredClone(live.streaming),
+        updatedAt: summary.updatedAt,
+      },
+    };
   }
 
-  async #view(
-    session: StoredSettingImprovementSession,
-    knownBaseStatus?: "current" | "stale",
-  ): Promise<SettingImprovementView> {
+  #view(session: StoredSettingImprovementSession): SettingImprovementView {
     const live =
       session.runStatus === "running"
         ? this.#runs.get(session.sessionId)
         : undefined;
-    const currentFingerprint =
-      knownBaseStatus === undefined
-        ? contentFingerprint(
-            (
-              await this.#content.readCurrentTreeContentPackage(
-                session.packageId,
-              )
-            ).files,
-          )
-        : null;
-    const baseStatus =
-      knownBaseStatus ??
-      (currentFingerprint === session.baseFingerprint ||
-      (session.lifecycle === "applied" &&
-        currentFingerprint === contentFingerprint(session.draft.files))
-        ? "current"
-        : "stale");
     return {
       sessionId: session.sessionId,
       packageId: session.packageId,
-      lifecycle: session.lifecycle,
       runStatus: live === undefined ? session.runStatus : "running",
-      baseStatus,
-      draftVersion: session.draftVersion,
       messages: structuredClone(session.messages),
-      review: structuredClone(session.review),
+      turns: settingConversationTurns(session),
+      legacyDraft:
+        session.legacyDraft === null
+          ? null
+          : structuredClone(session.legacyDraft),
       usage: structuredClone(session.usage),
       progress: {
         exchange: session.exchange,
@@ -590,13 +677,6 @@ export class SettingImprovementSession {
         updatedAt: session.updatedAt,
       },
       lastFailure: session.lastFailure,
-      canApply:
-        session.lifecycle === "open" &&
-        live === undefined &&
-        session.runStatus !== "running" &&
-        baseStatus === "current" &&
-        session.review.status === "usable" &&
-        session.review.diff.length > 0,
     };
   }
 
@@ -633,6 +713,54 @@ function assertUniqueToolCallIds(
   }
 }
 
+function assertPackage(
+  session: StoredSettingImprovementSession,
+  packageId: string,
+): void {
+  if (session.packageId !== packageId)
+    throw new Error(
+      "The setting-improvement conversation does not belong to this content package",
+    );
+}
+
+function assistantAt(
+  session: StoredSettingImprovementSession,
+  itemIndex: number,
+): Extract<
+  StoredSettingImprovementSession["modelItems"][number],
+  { kind: "assistant" }
+> {
+  const item = session.modelItems[itemIndex];
+  if (item?.kind !== "assistant" || item.toolCalls.length === 0)
+    throw new Error("Pending setting-improvement settlement is damaged");
+  return item;
+}
+
+function lastPendingAssistant(
+  session: StoredSettingImprovementSession,
+): { itemIndex: number; toolCalls: ModelHostToolCall[] } | null {
+  const itemIndex = session.modelItems.length - 1;
+  const item = session.modelItems[itemIndex];
+  return item?.kind === "assistant" && item.toolCalls.length > 0
+    ? { itemIndex, toolCalls: item.toolCalls }
+    : null;
+}
+
+function markInterruptedAfterRestart(
+  session: StoredSettingImprovementSession,
+): void {
+  const requestId = session.activeRequestId;
+  session.runStatus = "interrupted";
+  session.activeRequestId = null;
+  if (requestId !== null)
+    session.completedRequestIds = rememberRequest(
+      session.completedRequestIds,
+      requestId,
+    );
+  session.lastFailure =
+    "The previous model request stopped before its next complete response. Every settled current-tree change and complete tool result was retained; continue this conversation when ready.";
+}
+
 function emptyStreaming(): NonNullable<
   SettingImprovementView["progress"]["streaming"]
 > {
@@ -641,15 +769,24 @@ function emptyStreaming(): NonNullable<
     textChars: 0,
     toolChars: 0,
     tail: "",
+    reasoningText: "",
+    visibleText: "",
+    toolFragment: "",
     receivedAt: Date.now(),
   };
 }
 
 function recordDelta(live: LiveRun, delta: ModelHostDelta): void {
-  if (delta.kind === "reasoning")
+  if (delta.kind === "reasoning") {
     live.streaming.reasoningChars += delta.text.length;
-  else if (delta.kind === "text") live.streaming.textChars += delta.text.length;
-  else live.streaming.toolChars += delta.text.length;
+    live.streaming.reasoningText = `${live.streaming.reasoningText ?? ""}${delta.text}`;
+  } else if (delta.kind === "text") {
+    live.streaming.textChars += delta.text.length;
+    live.streaming.visibleText = `${live.streaming.visibleText ?? ""}${delta.text}`;
+  } else {
+    live.streaming.toolChars += delta.text.length;
+    live.streaming.toolFragment = `${live.streaming.toolFragment ?? ""}${delta.text}`;
+  }
   if (delta.kind === "text")
     live.streaming.tail = `${live.streaming.tail}${delta.text}`.slice(
       -maximumStreamTailCharacters,
@@ -659,7 +796,7 @@ function recordDelta(live: LiveRun, delta: ModelHostDelta): void {
 
 function describeFailure(error: unknown): string {
   if (error instanceof ModelHostCancelledError)
-    return "The setting-improvement response was cancelled. The last complete draft was retained.";
+    return "The setting-improvement response was cancelled. Complete tool responses already published to the current tree were retained.";
   return error instanceof Error
     ? error.message
     : "The setting-improvement response was interrupted";
@@ -689,24 +826,99 @@ function rememberRequest(
   ];
 }
 
-export function contentFingerprint(files: readonly ContentTreeFile[]): string {
-  return createHash("sha256")
-    .update(
-      JSON.stringify(
-        [...files]
-          .map(({ path, contents, encoding }) => ({
-            path,
-            contents,
-            ...(encoding === undefined ? {} : { encoding }),
-          }))
-          .sort((left, right) =>
-            left.path === right.path ? 0 : left.path < right.path ? -1 : 1,
-          ),
-      ),
-    )
-    .digest("hex");
+function settingConversationTurns(
+  session: StoredSettingImprovementSession,
+): V1SettingConversationTurn[] {
+  const userMessages = session.messages.filter(({ role }) => role === "user");
+  const turns: V1SettingConversationTurn[] = [];
+  let userIndex = 0;
+  let exchange = 0;
+  let current: V1SettingConversationTurn | null = null;
+  let pendingToolCalls = new Map<
+    string,
+    V1SettingConversationTurn["exchanges"][number]["toolCalls"][number]
+  >();
+
+  for (const [itemIndex, item] of session.modelItems.entries()) {
+    if (item.kind === "user") {
+      const persisted = userMessages[userIndex];
+      userIndex += 1;
+      current = {
+        id: persisted?.id ?? `${session.sessionId}:turn:${itemIndex}`,
+        user:
+          persisted === undefined
+            ? {
+                id: `${session.sessionId}:user:${itemIndex}`,
+                role: "user",
+                text: item.text,
+                createdAt: session.createdAt,
+              }
+            : structuredClone(persisted),
+        exchanges: [],
+      };
+      turns.push(current);
+      pendingToolCalls = new Map();
+      continue;
+    }
+    if (item.kind === "assistant") {
+      if (current === null) continue;
+      exchange += 1;
+      const toolCalls = item.toolCalls.map((call) => ({
+        callId: call.id,
+        name: call.name,
+        arguments: structuredClone(call.arguments),
+        result: null,
+      }));
+      current.exchanges.push({
+        id: `${session.sessionId}:exchange:${itemIndex}`,
+        exchange,
+        text: item.text,
+        ...(item.reasoningContent === undefined
+          ? {}
+          : { reasoning: item.reasoningContent }),
+        toolCalls,
+      });
+      pendingToolCalls = new Map(
+        toolCalls.map((call) => [call.callId, call] as const),
+      );
+      continue;
+    }
+    if (item.kind === "tool") {
+      const call = pendingToolCalls.get(item.toolCallId);
+      if (call?.result === null)
+        call.result = {
+          markdown: item.markdown,
+          isError: item.isError === true,
+          changes: structuredClone(item.changes),
+        };
+    }
+  }
+  return turns;
 }
 
-function cloneFiles(files: readonly ContentTreeFile[]): ContentTreeFile[] {
-  return files.map((file) => structuredClone(file));
+function settingImprovementHistoryItem(
+  summary: StoredSettingImprovementSummary,
+): V1SettingImprovementHistoryItem {
+  return {
+    sessionId: summary.sessionId,
+    runStatus: summary.runStatus,
+    createdAt: summary.createdAt,
+    updatedAt: summary.updatedAt,
+    excerpt: summary.excerpt,
+    turnCount: summary.turnCount,
+    exchangeCount: summary.exchangeCount,
+    toolCallCount: summary.toolCallCount,
+    changedFileCount: summary.changedFileCount,
+  };
+}
+
+function compareStoredSummaries(
+  left: StoredSettingImprovementSummary,
+  right: StoredSettingImprovementSummary,
+): number {
+  return (
+    right.updatedAt - left.updatedAt ||
+    right.createdAt - left.createdAt ||
+    right.sessionId.localeCompare(left.sessionId)
+  );
 }

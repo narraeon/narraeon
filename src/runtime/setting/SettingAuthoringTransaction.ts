@@ -33,20 +33,20 @@ export const settingImprovementToolNames = [
 export type SettingImprovementToolName =
   (typeof settingImprovementToolNames)[number];
 
-export interface SettingDraftDiff {
+export interface SettingAuthoringDiff {
   path: string;
   kind: "create" | "modify" | "delete";
   before: string | null;
   after: string | null;
 }
 
-export interface SettingDraftDiagnostic {
+export interface SettingAuthoringDiagnostic {
   code: string;
   path: string;
   message: string;
 }
 
-export type SettingDraftPlayAccess =
+export type SettingAuthoringPlayAccess =
   | "full_injected"
   | "node_injected"
   | "catalog_summary"
@@ -58,7 +58,7 @@ export type SettingDraftPlayAccess =
   | "player_view"
   | "removed";
 
-export interface SettingDraftPlayCoverage {
+export interface SettingAuthoringPlayCoverage {
   totals: {
     fullInjected: number;
     nodeInjected: number;
@@ -68,30 +68,32 @@ export interface SettingDraftPlayCoverage {
   };
   changed: {
     path: string;
-    access: SettingDraftPlayAccess;
+    access: SettingAuthoringPlayAccess;
     detail: string;
   }[];
 }
 
-export interface SettingDraftReview {
+export interface SettingAuthoringReview {
   status: "usable" | "needs_repair";
-  diff: SettingDraftDiff[];
-  diagnostics: SettingDraftDiagnostic[];
+  diff: SettingAuthoringDiff[];
+  diagnostics: SettingAuthoringDiagnostic[];
   preview: PromptPreview | null;
-  playCoverage: SettingDraftPlayCoverage | null;
+  playCoverage: SettingAuthoringPlayCoverage | null;
 }
 
-export interface PersistedSettingDraftState {
-  files: ContentTreeFile[];
+export interface SettingAuthoringAuthorization {
+  /** Stable fingerprint of the content package current tree. */
+  revision: string;
   readWorldDocumentIds: string[];
   readableDamagedWorldPaths: string[];
   readOpaquePaths: string[];
 }
 
-export interface SettingDraftToolResult {
+export interface SettingAuthoringToolResult {
   toolCallId: string;
   markdown: string;
   isError: boolean;
+  changes: SettingAuthoringDiff[];
 }
 
 const frameExample = `format: narraeon.world-frame/v1
@@ -146,11 +148,11 @@ export function settingImprovementRuntimeContract(locale: AppLocale): string {
   return locale === "zh-CN"
     ? `# Runtime 设定完善对话契约
 
-- 每条用户消息都追加到当前设定完善对话。根据用户当前要求决定直接回复、提出问题、读取草稿或修改草稿；用户要求讨论或规划时给出讨论结果，用户要求落实修改时调用写工具更新隔离草稿。
+- 每条用户消息都追加到所选设定完善对话。默认沿该对话的 Provider 上下文继续；用户显式选择“全新上下文”时，Runtime 才从内容包当前树编译一段新对话。根据用户当前要求决定直接回复、提出问题、读取当前树或修改当前树。
 - 当前请求随附七个读写工具。不调用工具的完整响应会作为普通助手消息显示，并结束本次用户调用。含有工具调用的响应是内部工具步骤；收到全部工具结果后继续处理，最终用一个不调用工具的完整响应答复用户。
-- 工具写入只更新隔离草稿。用户在完整响应结束后审阅草稿并从界面执行“应用”；Runtime 校验所选草稿版本后原子替换内容包当前树。
-- 每个写工具调用独立结算，并按本响应中的调用顺序读取之前已接受的结果。成功调用立即保留在隔离草稿；某个调用失败只在对应的工具结果中返回精确原因，不回滚其他成功调用，后续调用仍会执行。只重试失败的调用。Runtime 在本响应的写调用结算后自动运行内容树检查和真实 Prompt Preview，并把检查结果附在最后一个成功写调用的结果中。
-- 修改既有文件前必须完整读取它。setting_list／setting_search／setting_read 的 cursor 只属于产生它的草稿快照；写入成功后旧 cursor 失效。工具只暴露逻辑路径，不暴露宿主路径。
+- 工具写入直接修改内容包当前树。每个完整 Provider 工具响应中的调用按顺序执行，成功改动在该响应结算时原子发布，发布后立即成为内容包权威，无需另一步确认。
+- 每个写工具调用独立结算，并按本响应中的调用顺序读取之前已接受的结果。某个调用失败只在对应工具结果中返回精确原因，不回滚同一响应内其他成功调用，也不阻止后续调用。Runtime 在写调用结算后自动运行内容树检查和真实 Prompt Preview，并把检查结果附在最后一个成功写调用的结果中。
+- 修改既有文件前必须完整读取它。setting_list／setting_search／setting_read 的 cursor 和读取授权只属于产生它们的当前树 revision；任何其他对话或手动编辑改变当前树后，必须重新读取再写。工具只暴露逻辑路径，不暴露宿主路径。
 - world/ 下只写 .yaml 或 .md 世界文档；专用文件只允许 opening.md、control/frame.yaml、control/player-views.yaml 和 control/blocks/*.md。人物、地点、规则与当前情境放在 world/，本世界特有的主持要求放在 control/。
 - opening.md 是玩家看见的第一页，不得替玩家决定行动、台词或内心。会继续约束首次行动的事实也必须写入自然承载它的世界文档。
 - 新建 world 文档使用 setting_create：ref 由你提供，并同时提供路径、标题、摘要、别名与不含技术头的正文。ref 必须是唯一的 2～32 位小写 ASCII 短句柄；Runtime 自行完成技术存储。既有文档选择值会在读取时自动投影为对应的 @ref；跨文档引用和 control 中的文档选择只使用 @ref。
@@ -159,7 +161,7 @@ export function settingImprovementRuntimeContract(locale: AppLocale): string {
 
 ## 内容包在游玩中的生命周期
 
-- 编辑对象是用于创建世界的内容包模板；应用会替换这份内容包的当前树。每个已经创建的世界持有创建时复制的状态、控制与历史，并从此独立演化。
+- 编辑对象是用于创建世界的内容包当前树；成功工具写入会直接替换这份当前树。每个已经创建的世界持有创建时复制的状态、控制与历史，并从此独立演化。
 - 创建世界时，world/* 逐份成为可持续修改的 state/*，control/* 成为世界控制，opening.md 逐字成为第一条已提交主持叙事。
 - opening.md 的正文只在创建时作为 genesis 提交。全新游玩上下文由世界控制与当前世界状态编译，并追加本次玩家输入；会继续约束首次行动的事实同时写入自然承载它的 world 文档。
 
@@ -177,11 +179,11 @@ export function settingImprovementRuntimeContract(locale: AppLocale): string {
 - 机械检查通过不代表内容在游玩中容易发现。新增或重组重要信息时，必须同时决定自然所有者、初始注入或发现路径、未来更新位置和玩家显示方式。`
     : `# Runtime setting-improvement conversation contract
 
-- Every user message is appended to the current setting-improvement conversation. Decide from the user's current request whether to reply directly, ask a question, read the draft, or change it. When the user asks to discuss or plan, return that discussion; when the user asks to implement changes, update the isolated draft with write tools.
+- Every user message is appended to the selected setting-improvement conversation. Continue its Provider context by default; only an explicit Fresh context choice compiles a new conversation from the content package's current tree. Decide whether to reply, ask, read the current tree, or change it from the user's current request.
 - The current request includes seven read/write tools. A complete response with no tool calls is shown as an ordinary assistant message and settles this user invocation. A response containing tool calls is an internal tool step; continue after all results and eventually answer with a complete tool-free response.
-- Tool writes update only the isolated draft. After a complete response, the user reviews the draft and invokes Apply from the interface. Runtime validates that exact draft version and atomically replaces the content package's current tree.
-- Every write tool call settles independently and, in this response's call order, sees earlier accepted results. A successful call remains in the isolated draft. A failure returns its precise cause only in that call's tool result, does not roll back other successful calls, and does not prevent later calls from running. Retry only failed calls. After this response's writes settle, Runtime runs content-tree checks and a real Prompt Preview and appends that review to the last successful write result.
-- Read an existing file completely before changing it. Cursors from setting_list, setting_search, and setting_read belong only to the draft snapshot that produced them; a successful write invalidates them. Tools expose logical paths, never host paths.
+- Tool writes directly modify the content package's current tree. Calls in one complete Provider tool response execute in order; its successful changes publish atomically when that response settles, immediately become authoritative, and require no second confirmation.
+- Every write tool call settles independently and sees earlier accepted calls in response order. A failure returns its precise cause only in that call's result, does not roll back successful siblings, and does not stop later calls. Runtime automatically runs content-tree checks and a real Prompt Preview after writes and appends that review to the last successful write result.
+- Read an existing file completely before changing it. Cursors and read authorization from setting_list, setting_search, and setting_read belong only to the current-tree revision that produced them. Re-read after another conversation or a manual edit changes the current tree. Tools expose logical paths, never host paths.
 - World documents are .yaml or .md files under world/. Special writes are limited to opening.md, control/frame.yaml, control/player-views.yaml, and control/blocks/*.md. Put characters, places, rules, and the current situation under world/, and world-specific hosting guidance under control/.
 - opening.md is the first page shown to the player. Never decide the player's action, dialogue, or inner thoughts. Facts that constrain the first action must also live in the world document that naturally owns them.
 - Create a world document with setting_create. You provide its unique 2-to-32-character lowercase ASCII ref, path, title, summary, aliases, and body without a technical header; Runtime completes the technical storage. Existing document selectors are automatically projected to their @refs when read. Cross-document references and control selectors use only @refs.
@@ -190,7 +192,7 @@ export function settingImprovementRuntimeContract(locale: AppLocale): string {
 
 ## Content-package lifecycle during play
 
-- The editing target is a content-package template used to create worlds. Apply replaces this package's current tree. Each world already created from it retains the state, control, and history copied at creation and evolves independently from then on.
+- The editing target is the current tree of a content-package template used to create worlds. Successful tool writes replace that current tree directly. Each world already created from it retains the state, control, and history copied at creation and evolves independently from then on.
 - When a world is created, world/* becomes independently mutable state/*, control/* becomes world control, and opening.md is committed verbatim as the first host narrative.
 - The opening.md body is committed only as genesis during world creation. A fresh play context is compiled from world control and current world state, then appends the current player input. Every fact that still constrains the first action also lives in the world document that naturally owns it.
 
@@ -337,9 +339,9 @@ export function settingImprovementToolDefinitions(
 
 const toolDescriptionsEn: Record<SettingImprovementToolName, string> = {
   setting_list:
-    "List the world root or a world/ subdirectory from the isolated draft. The root also lists opening and control files. A cursor is valid only for the same query and draft snapshot.",
+    "List the world root or a world/ subdirectory from the content package's current tree. The root also lists opening and control files. A cursor is valid only for the same query and current-tree revision.",
   setting_search:
-    "Search literal source text in world documents in the isolated draft. within may be world, a world/ directory or path, or @ref.",
+    "Search literal source text in world documents in the content package's current tree. within may be world, a world/ directory or path, or @ref.",
   setting_read:
     "Read a world document by world/ path or @ref, or read an exact opening/control path. Existing document selectors are projected to @refs. Read every page before overwriting an existing file.",
   setting_create:
@@ -354,9 +356,9 @@ const toolDescriptionsEn: Record<SettingImprovementToolName, string> = {
 
 const toolDescriptionsZhCN: Record<SettingImprovementToolName, string> = {
   setting_list:
-    "列出隔离草稿的 world 根目录或 world/ 子目录；根目录同时列出 opening 和 control 专用文件。cursor 只对同一查询和草稿快照有效。",
+    "列出内容包当前树的 world 根目录或 world/ 子目录；根目录同时列出 opening 和 control 专用文件。cursor 只对同一查询和当前树 revision 有效。",
   setting_search:
-    "在隔离草稿的 world 文档中按原文字面搜索；within 可为 world、world/ 目录或路径或 @ref。",
+    "在内容包当前树的 world 文档中按原文字面搜索；within 可为 world、world/ 目录或路径或 @ref。",
   setting_read:
     "按 world/ 路径或 @ref 读取世界文档，或按精确路径读取 opening/control；既有文档选择值自动投影为 @ref。覆盖既有文件前必须读完全部分页。",
   setting_create:
@@ -385,35 +387,42 @@ interface QueryResult {
   markdown: string;
 }
 
-export class SettingImprovementDraft {
+export class SettingAuthoringTransaction {
   readonly #baseFiles: ContentTreeFile[];
   readonly #locale: AppLocale;
   readonly #preview: (snapshot: WorldDocumentStore) => PromptPreview;
+  readonly #validateFiles: (files: readonly ContentTreeFile[]) => void;
   #snapshot: WorldDocumentStore;
   #reads: ReadAuthorizations;
-  #review: SettingDraftReview;
+  #review: SettingAuthoringReview;
 
   constructor(input: {
     baseFiles: readonly ContentTreeFile[];
     locale?: AppLocale;
     preview: (snapshot: WorldDocumentStore) => PromptPreview;
-    persisted?: PersistedSettingDraftState;
+    validateFiles?: (files: readonly ContentTreeFile[]) => void;
+    authorization?: SettingAuthoringAuthorization | null;
+    revision?: string;
   }) {
     this.#baseFiles = cloneFiles(input.baseFiles);
     this.#locale = input.locale ?? defaultAppLocale;
     this.#preview = input.preview;
-    const files = input.persisted?.files ?? input.baseFiles;
+    this.#validateFiles = input.validateFiles ?? (() => undefined);
     this.#snapshot = WorldDocumentStore.open({
       layout: "content_package",
-      files: cloneFiles(files),
+      files: cloneFiles(input.baseFiles),
     });
+    const authorization =
+      input.authorization?.revision === (input.revision ?? this.#snapshot.id)
+        ? input.authorization
+        : null;
     this.#reads = {
       snapshotId: this.#snapshot.id,
-      worldDocumentIds: new Set(input.persisted?.readWorldDocumentIds ?? []),
+      worldDocumentIds: new Set(authorization?.readWorldDocumentIds ?? []),
       damagedWorldPaths: new Set(
-        input.persisted?.readableDamagedWorldPaths ?? [],
+        authorization?.readableDamagedWorldPaths ?? [],
       ),
-      opaquePaths: new Set(input.persisted?.readOpaquePaths ?? []),
+      opaquePaths: new Set(authorization?.readOpaquePaths ?? []),
       pendingWorldReads: new Map(),
     };
     this.#review = this.#inspect();
@@ -423,31 +432,38 @@ export class SettingImprovementDraft {
     return cloneFiles(this.#snapshot.files);
   }
 
-  review(): SettingDraftReview {
+  review(): SettingAuthoringReview {
     return structuredClone(this.#review);
   }
 
-  persist(): PersistedSettingDraftState {
+  authorization(revision: string): SettingAuthoringAuthorization {
     return {
-      files: this.files(),
+      revision,
       readWorldDocumentIds: [...this.#reads.worldDocumentIds].sort(),
       readableDamagedWorldPaths: [...this.#reads.damagedWorldPaths].sort(),
       readOpaquePaths: [...this.#reads.opaquePaths].sort(),
     };
   }
 
-  execute(calls: readonly ModelHostToolCall[]): SettingDraftToolResult[] {
+  execute(calls: readonly ModelHostToolCall[]): SettingAuthoringToolResult[] {
     const normalized = calls.map(normalizeCall);
-    const results: SettingDraftToolResult[] = [];
+    const results: SettingAuthoringToolResult[] = [];
     let lastSuccessfulWrite = -1;
 
     for (const call of normalized) {
+      const before = this.files();
       if (isReadTool(call.name)) {
-        results.push(toToolResult(call.id, this.#executeRead(call)));
+        results.push(toToolResult(call.id, this.#executeRead(call), []));
         continue;
       }
       const result = this.#executeWrite(call);
-      results.push(toToolResult(call.id, result));
+      results.push(
+        toToolResult(
+          call.id,
+          result,
+          result.ok ? fileDiff(before, this.#snapshot.files) : [],
+        ),
+      );
       if (result.ok) lastSuccessfulWrite = results.length - 1;
     }
 
@@ -490,14 +506,14 @@ export class SettingImprovementDraft {
           commands: [worldRevisionCommand(snapshot, call, this.#locale)],
         });
         if (!revised.ok)
-          throw new SettingDraftError(
+          throw new SettingAuthoringError(
             renderRevisionFailure(revised.diagnostics, this.#locale),
           );
         if (
           requestedRef !== null &&
           revised.changes.some(({ shortRef }) => shortRef !== requestedRef)
         )
-          throw new SettingDraftError(
+          throw new SettingAuthoringError(
             localized(
               this.#locale,
               `ref @${requestedRef} already exists; choose a different ref`,
@@ -510,6 +526,7 @@ export class SettingImprovementDraft {
           revised.changes,
           this.#locale,
         );
+        this.#validateFiles(revised.snapshot.files);
         rebaseReads(reads, revised.snapshot);
         for (const change of revised.changes)
           reads.worldDocumentIds.add(change.documentId);
@@ -518,19 +535,22 @@ export class SettingImprovementDraft {
         return success(renderWorldWriteSuccess(revised.changes, this.#locale));
       }
       if (call.name !== "setting_write_file")
-        throw new SettingDraftError(`Unsupported write tool: ${call.name}`);
+        throw new SettingAuthoringError(`Unsupported write tool: ${call.name}`);
       const changed = writeOpaque(snapshot, call, reads, this.#locale);
+      this.#validateFiles(changed.snapshot.files);
       this.#snapshot = changed.snapshot;
       this.#reads = reads;
       return success(changed.markdown);
     } catch (error: unknown) {
       const message =
-        error instanceof Error ? error.message : "The draft write failed";
+        error instanceof Error
+          ? error.message
+          : "The content-package write failed";
       return failure(message, this.#locale);
     }
   }
 
-  #inspect(): SettingDraftReview {
+  #inspect(): SettingAuthoringReview {
     const inspection = inspectContentPackageCurrentTree(this.#snapshot.files, {
       worldDocumentSnapshot: this.#snapshot,
     });
@@ -554,7 +574,7 @@ export class SettingImprovementDraft {
         diff,
         diagnostics: [],
         preview,
-        playCoverage: buildSettingDraftPlayCoverage(
+        playCoverage: buildSettingAuthoringPlayCoverage(
           this.#snapshot,
           preview,
           diff,
@@ -571,7 +591,7 @@ export class SettingImprovementDraft {
             message:
               error instanceof Error
                 ? error.message
-                : "Prompt Preview failed for the isolated draft",
+                : "Prompt Preview failed for the current content tree",
           },
         ],
         preview: null,
@@ -582,20 +602,20 @@ export class SettingImprovementDraft {
 }
 
 function renderAutomaticReview(
-  review: SettingDraftReview,
+  review: SettingAuthoringReview,
   locale: AppLocale,
 ): string {
   if (review.status === "usable")
     return `${localized(
       locale,
-      `# Automatic draft review passed\n\nContent-tree validation and the real Prompt Preview both passed. The isolated draft currently changes ${review.diff.length} file(s). Use this review and the coverage below to decide whether the current user request is satisfied or further edits are needed.`,
-      `# 草稿自动检查通过\n\n内容树校验和真实 Prompt Preview 均已通过；隔离草稿当前改动 ${review.diff.length} 个文件。请根据本次检查与下方覆盖报告判断当前用户要求是否已经满足，或是否还需修改。`,
+      `# Current-tree review passed\n\nContent-tree validation and the real Prompt Preview both passed. This tool response changes ${review.diff.length} file(s) directly in the content package. Use this review and the coverage below to decide whether the current user request is satisfied or further edits are needed.`,
+      `# 当前树自动检查通过\n\n内容树校验和真实 Prompt Preview 均已通过；本次工具响应直接修改内容包中的 ${review.diff.length} 个文件。请根据本次检查与下方覆盖报告判断当前用户要求是否已经满足，或是否还需修改。`,
     )}\n\n${renderPlayCoverage(review.playCoverage, locale)}`;
   return [
     localized(
       locale,
-      "# Automatic draft review needs repair",
-      "# 草稿自动检查需要修复",
+      "# Current-tree review needs repair",
+      "# 当前树自动检查需要修复",
     ),
     "",
     ...review.diagnostics.map(
@@ -610,11 +630,11 @@ function renderAutomaticReview(
   ].join("\n");
 }
 
-function buildSettingDraftPlayCoverage(
+function buildSettingAuthoringPlayCoverage(
   snapshot: WorldDocumentStore,
   preview: PromptPreview,
-  diff: readonly SettingDraftDiff[],
-): SettingDraftPlayCoverage {
+  diff: readonly SettingAuthoringDiff[],
+): SettingAuthoringPlayCoverage {
   const documents = listQueryableWorldDocuments(snapshot);
   const byShortRef = new Map(
     documents.map((document) => [document.shortRef, document]),
@@ -672,8 +692,8 @@ function buildSettingDraftPlayCoverage(
       ),
   );
 
-  const accessByPath = new Map<string, SettingDraftPlayAccess>();
-  const totals: SettingDraftPlayCoverage["totals"] = {
+  const accessByPath = new Map<string, SettingAuthoringPlayAccess>();
+  const totals: SettingAuthoringPlayCoverage["totals"] = {
     fullInjected: 0,
     nodeInjected: 0,
     catalogSummary: 0,
@@ -749,9 +769,9 @@ function listQueryableWorldDocuments(
 function changedPathPlayAccess(
   path: string,
   after: string | null,
-  accessByPath: ReadonlyMap<string, SettingDraftPlayAccess>,
+  accessByPath: ReadonlyMap<string, SettingAuthoringPlayAccess>,
   enabledWorldInstructionPaths: ReadonlySet<string>,
-): SettingDraftPlayAccess {
+): SettingAuthoringPlayAccess {
   if (after === null) return "removed";
   if (path === "opening.md") return "opening_genesis";
   if (path === "control/player-views.yaml") return "player_view";
@@ -764,8 +784,8 @@ function changedPathPlayAccess(
 }
 
 function incrementPlayCoverageTotal(
-  totals: SettingDraftPlayCoverage["totals"],
-  access: SettingDraftPlayAccess,
+  totals: SettingAuthoringPlayCoverage["totals"],
+  access: SettingAuthoringPlayAccess,
 ): void {
   if (access === "full_injected") totals.fullInjected += 1;
   else if (access === "node_injected") totals.nodeInjected += 1;
@@ -775,8 +795,8 @@ function incrementPlayCoverageTotal(
   else if (access === "on_demand") totals.onDemand += 1;
 }
 
-function playAccessDetail(access: SettingDraftPlayAccess): string {
-  const details: Record<SettingDraftPlayAccess, string> = {
+function playAccessDetail(access: SettingAuthoringPlayAccess): string {
+  const details: Record<SettingAuthoringPlayAccess, string> = {
     full_injected: "complete body is injected into every fresh play context",
     node_injected: "only a selected node is injected into fresh play context",
     catalog_summary: "catalog injects title, summary, and short reference only",
@@ -790,13 +810,13 @@ function playAccessDetail(access: SettingDraftPlayAccess): string {
     unused_control:
       "not enabled by control/frame.yaml and unavailable to ordinary play AI",
     player_view: "projected through exact player-view selectors",
-    removed: "removed from the candidate content package",
+    removed: "removed from the content package current tree",
   };
   return details[access];
 }
 
 function renderPlayCoverage(
-  coverage: SettingDraftPlayCoverage | null,
+  coverage: SettingAuthoringPlayCoverage | null,
   locale: AppLocale,
 ): string {
   if (coverage === null)
@@ -805,7 +825,7 @@ function renderPlayCoverage(
       "# Play-consumption coverage\n\nCoverage is unavailable until the real Prompt Preview succeeds.",
       "# 游玩读取覆盖\n\n真实 Prompt Preview 通过后才会提供覆盖报告。",
     );
-  const labels: Record<SettingDraftPlayAccess, string> =
+  const labels: Record<SettingAuthoringPlayAccess, string> =
     locale === "zh-CN"
       ? {
           full_injected: "全文注入",
@@ -817,7 +837,7 @@ function renderPlayCoverage(
           play_control: "游玩控制",
           unused_control: "未被 control/frame.yaml 启用",
           player_view: "玩家视图精确投影",
-          removed: "已从候选内容包删除",
+          removed: "已从内容包当前树删除",
         }
       : {
           full_injected: "full text injected",
@@ -829,7 +849,7 @@ function renderPlayCoverage(
           play_control: "play-author control",
           unused_control: "not enabled by control/frame.yaml",
           player_view: "exact player-view projection",
-          removed: "removed from the candidate package",
+          removed: "removed from the content package current tree",
         };
   const maximumReportedChanges = 64;
   const reportedChanges = coverage.changed.slice(0, maximumReportedChanges);
@@ -892,10 +912,10 @@ interface NormalizedCall {
   arguments: Record<string, unknown>;
 }
 
-class SettingDraftError extends Error {
+class SettingAuthoringError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = "SettingDraftError";
+    this.name = "SettingAuthoringError";
   }
 }
 
@@ -947,7 +967,7 @@ function worldRevisionCommand(
         "body",
       ])
     )
-      throw new SettingDraftError(
+      throw new SettingAuthoringError(
         "setting_create accepts only path, ref, title, summary, aliases, and body",
       );
     const logicalPath = safeWorldDocumentPath(
@@ -996,7 +1016,7 @@ function worldRevisionCommand(
   if (call.name === "setting_move") {
     const toLogicalPath = safePath(requiredString(call.arguments.to, "to"));
     if (!/^world\/.+\.(?:ya?ml|md)$/u.test(toLogicalPath))
-      throw new SettingDraftError(
+      throw new SettingAuthoringError(
         "setting_move.to must be a world/ .yaml or .md path",
       );
     return {
@@ -1021,7 +1041,7 @@ function worldRevisionCommand(
       };
     }
     if (op !== "add" && op !== "replace")
-      throw new SettingDraftError(
+      throw new SettingAuthoringError(
         "setting_patch.op must be add, replace, or set_metadata",
       );
     const locator = requiredStringArray(call.arguments.locator, "locator");
@@ -1045,13 +1065,13 @@ function worldRevisionCommand(
       ],
     };
   }
-  throw new SettingDraftError(`Unsupported write tool: ${call.name}`);
+  throw new SettingAuthoringError(`Unsupported write tool: ${call.name}`);
 }
 
 function safeWorldDocumentPath(path: string, locale: AppLocale): string {
   const logicalPath = safePath(path);
   if (!/^world\/.+\.(?:ya?ml|md)$/u.test(logicalPath))
-    throw new SettingDraftError(
+    throw new SettingAuthoringError(
       localized(
         locale,
         "World files must be .yaml or .md documents below world/",
@@ -1070,7 +1090,7 @@ function worldWriteContents(
   if (
     !hasOnly(args, ["path", "contents", "ref", "title", "summary", "aliases"])
   )
-    throw new SettingDraftError(
+    throw new SettingAuthoringError(
       "setting_write_file accepts only its declared arguments",
     );
   const body = requiredString(args.contents, "contents");
@@ -1082,7 +1102,7 @@ function worldWriteContents(
   );
   if (provided.length === 0) {
     if (!existingFile && !containsTechnicalDocumentHeader(logicalPath, body))
-      throw new SettingDraftError(
+      throw new SettingAuthoringError(
         localized(
           locale,
           "Create a new world document with setting_create",
@@ -1094,7 +1114,7 @@ function worldWriteContents(
       !existingDocument &&
       !containsTechnicalDocumentHeader(logicalPath, body)
     )
-      throw new SettingDraftError(
+      throw new SettingAuthoringError(
         localized(
           locale,
           "Repair a damaged document by providing ref, title, summary, and aliases with its body",
@@ -1104,7 +1124,7 @@ function worldWriteContents(
     return body;
   }
   if (provided.length !== metadataKeys.length)
-    throw new SettingDraftError(
+    throw new SettingAuthoringError(
       localized(
         locale,
         "Repair metadata must provide ref, title, summary, and aliases together",
@@ -1112,7 +1132,7 @@ function worldWriteContents(
       ),
     );
   if (!existingFile)
-    throw new SettingDraftError(
+    throw new SettingAuthoringError(
       localized(
         locale,
         "Create a new world document with setting_create",
@@ -1120,7 +1140,7 @@ function worldWriteContents(
       ),
     );
   if (existingDocument)
-    throw new SettingDraftError(
+    throw new SettingAuthoringError(
       localized(
         locale,
         "Repair metadata is only for a damaged document; update valid metadata with setting_patch set_metadata",
@@ -1180,7 +1200,9 @@ function recoverStoredDocumentId(
 function revisionTarget(value: string): WorldDocumentRevisionTarget {
   const selector = documentSelector(value);
   if (selector === null)
-    throw new SettingDraftError(`Invalid world-document selector: ${value}`);
+    throw new SettingAuthoringError(
+      `Invalid world-document selector: ${value}`,
+    );
   return selector;
 }
 
@@ -1191,12 +1213,12 @@ function writeOpaque(
   locale: AppLocale,
 ): { snapshot: WorldDocumentStore; markdown: string } {
   if (!hasOnly(call.arguments, ["path", "contents"]))
-    throw new SettingDraftError(
+    throw new SettingAuthoringError(
       "Special-file writes accept only path and contents",
     );
   const path = safePath(requiredString(call.arguments.path, "path"));
   if (!writableOpaquePath(path))
-    throw new SettingDraftError(
+    throw new SettingAuthoringError(
       localized(
         locale,
         "Special-file writes accept only opening.md, control/frame.yaml, control/player-views.yaml, or control/blocks/*.md",
@@ -1209,7 +1231,7 @@ function writeOpaque(
   const next = cloneFiles(snapshot.files);
   const existing = next.find((file) => file.path === path);
   if (existing !== undefined && !reads.opaquePaths.has(path))
-    throw new SettingDraftError(
+    throw new SettingAuthoringError(
       localized(
         locale,
         `Read ${path} completely before replacing it`,
@@ -1231,8 +1253,8 @@ function writeOpaque(
     snapshot: revised,
     markdown: localized(
       locale,
-      `# Draft write accepted\n\n${existing === undefined ? "Created" : "Updated"} ${path} in the isolated draft. This file is already fully read; do not read it again unless a later decision needs Runtime's exact serialization.`,
-      `# 草稿写入已接受\n\n已在隔离草稿中${existing === undefined ? "创建" : "更新"} ${path}。该文件已视为完整读取；除非后续判断依赖 Runtime 的精确序列化结果，否则不要再次读取。`,
+      `# Current-tree write accepted\n\n${existing === undefined ? "Created" : "Updated"} ${path} in the content package's current tree. This file is already fully read; do not read it again unless a later decision needs Runtime's exact serialization.`,
+      `# 当前树写入已接受\n\n已在内容包当前树中${existing === undefined ? "创建" : "更新"} ${path}。该文件已视为完整读取；除非后续判断依赖 Runtime 的精确序列化结果，否则不要再次读取。`,
     ),
   };
 }
@@ -1253,7 +1275,9 @@ function assertWorldWritesAuthorized(
   locale: AppLocale,
 ): void {
   if (reads.snapshotId !== snapshotId)
-    throw new Error("Draft read authorization belongs to another snapshot");
+    throw new Error(
+      "Read authorization belongs to another current-tree revision",
+    );
   for (const change of changes) {
     if (
       change.before === null ||
@@ -1261,7 +1285,7 @@ function assertWorldWritesAuthorized(
       reads.damagedWorldPaths.has(change.before.logicalPath)
     )
       continue;
-    throw new SettingDraftError(
+    throw new SettingAuthoringError(
       localized(
         locale,
         `Read @${change.shortRef} completely before changing it`,
@@ -1276,7 +1300,11 @@ function renderWorldWriteSuccess(
   locale: AppLocale,
 ): string {
   return [
-    localized(locale, "# Draft revision accepted", "# 草稿 revision 已接受"),
+    localized(
+      locale,
+      "# Current-tree revision accepted",
+      "# 当前树 revision 已接受",
+    ),
     "",
     ...(changes.length === 0
       ? [localized(locale, "- No file changed", "- 没有文件发生变化")]
@@ -1692,8 +1720,17 @@ function failure(message: string, locale: AppLocale): QueryResult {
   };
 }
 
-function toToolResult(id: string, result: QueryResult): SettingDraftToolResult {
-  return { toolCallId: id, markdown: result.markdown, isError: !result.ok };
+function toToolResult(
+  id: string,
+  result: QueryResult,
+  changes: SettingAuthoringDiff[],
+): SettingAuthoringToolResult {
+  return {
+    toolCallId: id,
+    markdown: result.markdown,
+    isError: !result.ok,
+    changes,
+  };
 }
 
 function cloneReads(source: ReadAuthorizations): ReadAuthorizations {
@@ -1722,12 +1759,12 @@ function rebaseReads(
 function fileDiff(
   baseFiles: readonly ContentTreeFile[],
   draftFiles: readonly ContentTreeFile[],
-): SettingDraftDiff[] {
+): SettingAuthoringDiff[] {
   const before = new Map(baseFiles.map((file) => [file.path, file]));
   const after = new Map(draftFiles.map((file) => [file.path, file]));
   return [...new Set([...before.keys(), ...after.keys()])]
     .sort()
-    .flatMap((path): SettingDraftDiff[] => {
+    .flatMap((path): SettingAuthoringDiff[] => {
       const left = before.get(path) ?? null;
       const right = after.get(path) ?? null;
       if (
@@ -1754,13 +1791,13 @@ function safePath(path: string): string {
       .split("/")
       .some((part) => part === "." || part === ".." || part.length === 0)
   )
-    throw new SettingDraftError(`Unsafe candidate path: ${path}`);
+    throw new SettingAuthoringError(`Unsafe content-package path: ${path}`);
   return path;
 }
 
 function requiredString(value: unknown, name: string): string {
   if (typeof value !== "string" || value.length === 0)
-    throw new SettingDraftError(`${name} must be a non-empty string`);
+    throw new SettingAuthoringError(`${name} must be a non-empty string`);
   return value;
 }
 
@@ -1771,7 +1808,7 @@ function requiredSettingRef(value: unknown, locale: AppLocale): string {
     value.length > 32 ||
     !/^[a-z][a-z0-9-]*$/u.test(value)
   )
-    throw new SettingDraftError(
+    throw new SettingAuthoringError(
       localized(
         locale,
         "ref must be 2 to 32 lowercase ASCII letters, digits, or hyphens, beginning with a letter",
@@ -1792,7 +1829,7 @@ function requiredAliases(value: unknown): string[] {
         [...item].length <= 64,
     )
   )
-    throw new SettingDraftError(
+    throw new SettingAuthoringError(
       "aliases must be an array of at most 16 strings, each 1 to 64 characters",
     );
   return value.filter(
@@ -1808,7 +1845,7 @@ function assertNoLiteralUnicodeEscapes(
   const walk = (candidate: unknown): void => {
     if (typeof candidate === "string") {
       if (/\\u[0-9a-f]{4}/iu.test(candidate))
-        throw new SettingDraftError(
+        throw new SettingAuthoringError(
           localized(
             locale,
             "Persisted text contains a literal Unicode escape such as \\u4f60. Resend real Unicode characters instead of a double-escaped string",
@@ -1838,7 +1875,7 @@ function requiredStringArray(value: unknown, name: string): string[] {
     value.length === 0 ||
     !value.every((item) => typeof item === "string" && item.length > 0)
   )
-    throw new SettingDraftError(`${name} must be a non-empty string array`);
+    throw new SettingAuthoringError(`${name} must be a non-empty string array`);
   return value.filter(
     (item: unknown): item is string => typeof item === "string",
   );

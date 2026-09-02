@@ -3,73 +3,164 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { expect, test } from "vitest";
 
 import { emptyAggregatedModelUsage } from "../../src/protocol/modelUsage.ts";
-import type { V1SettingPromptPreview } from "../../src/protocol/v1.ts";
+import type { V1SettingImprovementHistoryItem } from "../../src/protocol/v1.ts";
 import {
   SettingImprovementPanel,
   type SettingImprovementView,
 } from "../../src/web/SettingImprovementPanel.tsx";
 
-test("设定完善首屏就是普通对话输入，不再提供计划／生成分支", () => {
-  const html = renderToStaticMarkup(
-    createElement(SettingImprovementPanel, {
-      packageName: "雨夜码头",
-      modelConfigured: true,
-      hasUnsavedFileDraft: false,
-      loading: false,
-      view: null,
-      requestFailure: null,
-      now: Date.now(),
-      onSend: () => Promise.resolve(),
-      onCancel: () => Promise.resolve(),
-      onApply: () => Promise.resolve(),
-      onDiscard: () => Promise.resolve(),
-      onConfigureModel: () => undefined,
+test("首屏说明直接写当前树，并提供显式全新上下文而没有 Apply 或放弃", () => {
+  const html = renderWith({ value: null, latestSessionId: null, history: [] });
+
+  expect(html).toContain("直接说你现在想做什么");
+  expect(html).toContain("全新上下文");
+  expect(html).toContain("没有隔离草稿或应用步骤");
+  expect(html).toContain(">发送<");
+  expect(html).not.toContain("应用当前草稿");
+  expect(html).not.toContain("放弃对话");
+  expect(html).not.toContain("生成候选");
+});
+
+test("对话按模型交换展示 Provider 推理、工具收据和已生效红绿 diff", () => {
+  const html = render(
+    view({
+      turns: [
+        {
+          id: "turn-1",
+          user: {
+            id: "user-1",
+            role: "user",
+            text: "修改开场",
+            createdAt: 1,
+          },
+          exchanges: [
+            {
+              id: "exchange-1",
+              exchange: 1,
+              text: "",
+              reasoning: "先检查开场白与当前情境。",
+              toolCalls: [
+                {
+                  callId: "write-opening",
+                  name: "setting_write_file",
+                  arguments: { path: "opening.md" },
+                  result: {
+                    markdown: "# Current-tree write accepted",
+                    isError: false,
+                    changes: [
+                      {
+                        path: "opening.md",
+                        kind: "modify",
+                        before: "Old opening",
+                        after: "New opening",
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+            {
+              id: "exchange-2",
+              exchange: 2,
+              text: "修改已经生效。",
+              toolCalls: [],
+            },
+          ],
+        },
+      ],
     }),
   );
 
-  expect(html).toContain("直接说你现在想做什么");
-  expect(html).toContain("先帮我梳理一下人物关系");
-  expect(html).toContain(">发送<");
-  expect(html).not.toContain("生成候选");
-  expect(html).not.toContain("确认计划");
-  expect(html).not.toContain("跳过计划");
+  expect(html).toContain("Provider 返回推理（不等同隐藏思维链）");
+  expect(html).toContain("先检查开场白与当前情境");
+  expect(html).toContain("setting_write_file");
+  expect(html).toContain("已生效 · 1 个文件");
+  expect(html).toContain("unified-diff-remove");
+  expect(html).toContain("unified-diff-add");
+  expect(html).toContain("Old opening");
+  expect(html).toContain("New opening");
+  expect(html).toContain('role="columnheader">原文件行号');
+  expect(html).toContain('aria-label="原文件第 1 行"');
+  expect(html).toContain('aria-label="新文件第 1 行"');
 });
 
-test("运行中显示停止回复，完整草稿显示精确版本 Apply 和自动检查", () => {
-  const running = render(view({ runStatus: "running", canApply: false }));
-  expect(running).toContain("AI 正在处理");
-  expect(running).toContain("停止回复");
+test("任意历史对话都显示可继续，选择旧记录不会进入只读模式", () => {
+  const historical = view({ sessionId: "setting-old" });
+  const html = renderWith({
+    value: historical,
+    latestSessionId: "setting-latest",
+    history: [
+      historyItem({
+        sessionId: "setting-latest",
+        excerpt: "最近的对话",
+      }),
+      historyItem({ sessionId: "setting-old", excerpt: "雨夜码头" }),
+    ],
+  });
 
-  const ready = render(
+  expect(html).toContain("设定完善对话历史");
+  expect(html).toContain("雨夜码头");
+  expect(html).toContain("正在继续历史对话");
+  expect(html).toContain("继续这段对话");
+  expect(html).toContain(">发送<");
+  expect(html).not.toContain("历史对话为只读回顾");
+});
+
+test("迁移前未应用隔离草稿只作为历史差异明确标注", () => {
+  const html = render(
     view({
-      runStatus: "ready",
-      canApply: true,
-      draftVersion: 3,
-      review: {
-        status: "usable",
-        diagnostics: [],
-        preview: promptPreview,
-        diff: [
+      legacyDraft: {
+        outcome: "unapplied_dropped",
+        changes: [
           {
             path: "opening.md",
             kind: "modify",
-            before: "Old opening",
-            after: "New opening",
+            before: "Live",
+            after: "Old candidate",
           },
         ],
       },
     }),
   );
-  expect(ready).toContain("版本 3");
-  expect(ready).toContain("已通过");
-  expect(ready).toContain("opening.md");
-  expect(ready).toContain("应用当前草稿");
-  expect(ready).toContain("讨论本身不会修改当前树");
-  expect(ready).toContain("真实提示词预览");
-  expect(ready).toContain("查看最终 Provider 请求结构");
+  expect(html).toContain("迁移前的隔离草稿记录（仅回顾）");
+  expect(html).toContain("没有自动应用");
+});
+
+test("旧 Apply 收据无法确认时不把历史差异冒认为已生效", () => {
+  const html = render(
+    view({
+      legacyDraft: {
+        outcome: "apply_outcome_unknown",
+        changes: [
+          {
+            path: "opening.md",
+            kind: "modify",
+            before: "Base",
+            after: "Old Apply target",
+          },
+        ],
+      },
+    }),
+  );
+
+  expect(html).toContain("结果无法确认");
+  expect(html).toContain("迁移前草稿差异（结果未知）");
+  expect(html).not.toContain("迁移前已应用的差异");
 });
 
 function render(value: SettingImprovementView): string {
+  return renderWith({ value, latestSessionId: value.sessionId, history: [] });
+}
+
+function renderWith({
+  value,
+  latestSessionId,
+  history,
+}: {
+  value: SettingImprovementView | null;
+  latestSessionId: string | null;
+  history: V1SettingImprovementHistoryItem[];
+}): string {
   return renderToStaticMarkup(
     createElement(SettingImprovementPanel, {
       packageName: "Test",
@@ -77,12 +168,14 @@ function render(value: SettingImprovementView): string {
       hasUnsavedFileDraft: false,
       loading: false,
       view: value,
+      history,
+      latestSessionId,
       requestFailure: null,
       now: Date.now(),
       onSend: () => Promise.resolve(),
       onCancel: () => Promise.resolve(),
-      onApply: () => Promise.resolve(),
-      onDiscard: () => Promise.resolve(),
+      onFreshContext: () => undefined,
+      onSelectSession: () => Promise.resolve(),
       onConfigureModel: () => undefined,
     }),
   );
@@ -94,92 +187,51 @@ function view(
   return {
     sessionId: "setting-test",
     packageId: "package-test",
-    lifecycle: "open",
     runStatus: "ready",
-    baseStatus: "current",
-    draftVersion: 0,
     messages: [
+      { id: "user-1", role: "user", text: "先讨论", createdAt: 1 },
+      { id: "assistant-1", role: "assistant", text: "可以。", createdAt: 2 },
+    ],
+    turns: [
       {
-        id: "user-1",
-        role: "user",
-        text: "先讨论",
-        createdAt: 1,
-      },
-      {
-        id: "assistant-1",
-        role: "assistant",
-        text: "可以。",
-        createdAt: 2,
+        id: "turn-1",
+        user: {
+          id: "user-1",
+          role: "user",
+          text: "先讨论",
+          createdAt: 1,
+        },
+        exchanges: [
+          { id: "exchange-1", exchange: 1, text: "可以。", toolCalls: [] },
+        ],
       },
     ],
-    review: { status: "usable", diff: [], diagnostics: [], preview: null },
+    legacyDraft: null,
     usage: emptyAggregatedModelUsage(),
     progress: {
-      exchange: 2,
-      toolCalls: 1,
-      streaming: {
-        reasoningChars: 10,
-        textChars: 5,
-        toolChars: 3,
-        tail: "正在检查",
-        receivedAt: Date.now(),
-      },
-      updatedAt: Date.now(),
+      exchange: 1,
+      toolCalls: 0,
+      streaming: null,
+      updatedAt: 2,
     },
     lastFailure: null,
-    canApply: false,
     ...overrides,
   };
 }
 
-const promptPreview: V1SettingPromptPreview = {
-  diagnosticBinding: {
-    endpoint: "setting-draft",
-    commit: "draft",
-    hostPresetId: "setting-draft",
-    controlFingerprint: "control:test",
-    modelId: "model:test",
-  },
-  compilation: {
-    logicalMessages: [
-      {
-        role: "runtime_system",
-        markdown: "# Runtime contract",
-        blocks: [
-          {
-            source: "runtime:builtin/setting-improvement",
-            markdown: "Contract",
-          },
-        ],
-      },
-    ],
-    provider: { protocol: "chat_completions", messages: [] },
-    tools: [
-      {
-        name: "setting_read",
-        description: "Read",
-        inputSchema: { type: "object" },
-      },
-    ],
-    coverage: [],
-    budget: {
-      estimator: "disabled",
-      messageTokens: 0,
-      toolTokens: 0,
-      outputReserveTokens: 4096,
-      forcedTailReserveTokens: 0,
-      safetyMarginTokens: 0,
-      requiredTokens: 0,
-      contextWindowTokens: 32_000,
-      status: "not_checked",
-    },
-    cache: {
-      strategy: "provider_managed",
-      stablePrefixFingerprint: "cache:test",
-      breakpoints: [],
-      estimatedCacheableBytes: 0,
-      firstDynamicByte: 0,
-    },
-  },
-  leakage: { status: "clean", checkedFields: [] },
-};
+function historyItem(
+  overrides: Partial<V1SettingImprovementHistoryItem> = {},
+): V1SettingImprovementHistoryItem {
+  return {
+    sessionId: "setting-history",
+    runStatus: "ready",
+    createdAt: 1,
+    updatedAt: 2,
+    excerpt: "历史对话",
+    turnCount: 1,
+    exchangeCount: 2,
+    toolCallCount: 1,
+    changedFileCount: 1,
+    ...overrides,
+  };
+}

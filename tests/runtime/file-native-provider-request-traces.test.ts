@@ -8,10 +8,12 @@ import {
   type ModelHostAppendItem,
 } from "../../src/runtime/model/ModelHost.ts";
 import {
+  compileSettingImprovementLegacyCurrentTreeBootstrap,
   createMinimalFileNativePreviewInput,
   FileNativePromptCompiler,
   fileNativeToolsForNames,
 } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
+import { settingImprovementToolDefinitions } from "../../src/runtime/setting/SettingAuthoringTransaction.ts";
 test.each([
   "chat_completions",
   "anthropic_messages",
@@ -90,6 +92,112 @@ test.each([
     JSON.parse(fetch_.mock.calls[0]?.[1]?.body as string),
   );
   expect(serialized).toContain("# Author instruction");
+});
+
+test.each([
+  "chat_completions",
+  "anthropic_messages",
+  "openai_responses",
+] as const)("%s 把旧设定会话写入契约以系统层级发送", async (provider) => {
+  const responseBody =
+    provider === "chat_completions"
+      ? {
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: "Complete",
+                tool_calls: [],
+              },
+            },
+          ],
+        }
+      : provider === "anthropic_messages"
+        ? { content: [{ type: "text", text: "Complete" }] }
+        : {
+            output: [
+              {
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text: "Complete" }],
+              },
+            ],
+          };
+  const fetch_ = vi
+    .fn<typeof fetch>()
+    .mockResolvedValue(
+      new Response(JSON.stringify(responseBody), { status: 200 }),
+    );
+  const adapter = new FileNativeModelHost(
+    {
+      provider,
+      baseUrl: "https://provider.invalid/v1",
+      apiKey: "secret",
+      modelId: "legacy-setting-system-test",
+      contextWindowTokens: 32_000,
+      maxOutputTokens: 2_000,
+    },
+    fetch_,
+  );
+  const legacy = new FileNativePromptCompiler().compileBootstrap(
+    createMinimalFileNativePreviewInput({
+      provider,
+      modelId: "legacy-setting-system-test",
+      contextWindowTokens: 32_000,
+      maxOutputTokens: 2_000,
+      playerInput: "Legacy context.",
+      playerInputPlacement: "bootstrap",
+    }),
+  );
+  const oldSystem =
+    "# Legacy isolated draft\n\nAll writes enter an isolated draft and require Apply.";
+  const logicalSystem = legacy.logicalMessages.find(
+    ({ role }) => role === "runtime_system",
+  )!;
+  logicalSystem.markdown = oldSystem;
+  logicalSystem.blocks = [
+    { source: "runtime:setting-draft-boundary", markdown: oldSystem },
+  ];
+  if (provider === "anthropic_messages") {
+    legacy.provider.system = [{ type: "text", text: oldSystem }];
+  } else {
+    legacy.provider.messages = [
+      { role: "system", content: oldSystem },
+      ...legacy.provider.messages.filter(({ role }) => role !== "system"),
+    ];
+  }
+  const bootstrap = compileSettingImprovementLegacyCurrentTreeBootstrap(
+    legacy,
+    "en",
+    settingImprovementToolDefinitions("en"),
+  );
+
+  await adapter.exchange({
+    bootstrap,
+    toolUniverse: bootstrap.toolUniverse,
+    allowedTools: bootstrap.toolUniverse.map(({ name }) => name),
+    toolStrategy: bootstrap.toolStrategy,
+    tools: bootstrap.tools,
+    appended: [{ kind: "user", text: "Continue this conversation." }],
+    maxOutputTokens: 2_000,
+  });
+
+  const body = JSON.parse(fetch_.mock.calls[0]?.[1]?.body as string) as Record<
+    string,
+    unknown
+  >;
+  const systemEntries =
+    provider === "anthropic_messages"
+      ? (body.system as unknown[])
+      : (
+          (provider === "openai_responses" ? body.input : body.messages) as {
+            role?: string;
+          }[]
+        ).filter(({ role }) => role === "system");
+  expect(JSON.stringify(systemEntries[0])).toContain("Legacy isolated draft");
+  expect(JSON.stringify(systemEntries.at(-1))).toContain(
+    "Runtime system contract replaces",
+  );
 });
 
 test("OpenAI Responses 使用扁平工具定义并逐次原样重放 output items", async () => {

@@ -26,7 +26,15 @@ import {
   type ModelThinkingMode,
   type SaveModelConnectionInput,
 } from "../../protocol/modelConnections.ts";
-import type { FileNativeModelConnection } from "./FileNativeModelAdapters.ts";
+import {
+  FileNativeModelHost,
+  type FileNativeModelConnection,
+} from "./FileNativeModelAdapters.ts";
+import {
+  equalModelHostBinding,
+  ModelHostBindingMismatchError,
+  type ModelHostBinding,
+} from "./ModelHost.ts";
 
 const libraryFileName = "model-connections-v1.json";
 const maxModelListBytes = 1024 * 1024;
@@ -164,6 +172,27 @@ export class ModelConnectionStore {
     );
     if (connection === undefined) throw new ModelConnectionUnavailableError();
     return toBinding(connection);
+  }
+
+  /** Resolve a frozen logical operation without changing the active model. */
+  async bindMatching(
+    binding: ModelHostBinding,
+  ): Promise<FileNativeModelConnection> {
+    await this.#mutationTail;
+    const document = await this.#readDocument();
+    for (const connection of document.connections) {
+      const candidate = toBinding(connection);
+      if (
+        equalModelHostBinding(
+          new FileNativeModelHost(candidate).binding(),
+          binding,
+        )
+      )
+        return candidate;
+    }
+    throw new ModelHostBindingMismatchError(
+      "No saved model connection matches this setting-improvement conversation",
+    );
   }
 
   async listModels(

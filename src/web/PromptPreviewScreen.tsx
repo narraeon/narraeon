@@ -298,7 +298,7 @@ export function PromptPreviewScreen({
             <h4 id="prompt-preview-title">{uiText("全新上下文会发送什么")}</h4>
           </div>
           <p>
-            {uiText("真实编译，0 次模型调用，不会创建候选或写入权威状态。")}
+            {uiText("真实编译，0 次模型调用，不会创建对话或写入权威状态。")}
           </p>
         </header>
       ) : (
@@ -318,7 +318,7 @@ export function PromptPreviewScreen({
           >
             <span>{uiText("只读检查")}</span>
             <strong>{uiText("0 次模型调用")}</strong>
-            <small>{uiText("不会创建候选或写入权威状态")}</small>
+            <small>{uiText("不会创建对话或写入权威状态")}</small>
           </div>
         </header>
       )}

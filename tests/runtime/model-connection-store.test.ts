@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, expect, test, vi } from "vitest";
 
+import { FileNativeModelHost } from "../../src/runtime/model/FileNativeModelAdapters.ts";
 import { ModelConnectionStore } from "../../src/runtime/model/ModelConnectionStore.ts";
 import { V1Runtime } from "../../src/runtime/V1Runtime.ts";
 
@@ -104,6 +105,47 @@ test("保存多份模型配置、显式切换并且不向浏览器返回 API Key
     connections: { apiKey: string }[];
   };
   expect(persisted.connections[0]?.apiKey).toBe("openai-secret");
+});
+
+test("历史对话按冻结 binding 找回已保存模型，且不切换当前配置", async () => {
+  const root = await temporaryRoot();
+  const store = new ModelConnectionStore(root);
+  await store.save({
+    name: "历史对话模型",
+    presetId: "openai",
+    provider: "openai_responses",
+    baseUrl: "https://api.openai.com/v1",
+    apiKey: "historical-secret",
+    modelId: "gpt-historical",
+    contextWindowTokens: 128_000,
+    maxOutputTokens: 16_000,
+  });
+  const frozenBinding = new FileNativeModelHost(await store.bind()).binding();
+  const current = await store.save({
+    name: "当前模型",
+    presetId: "custom",
+    provider: "chat_completions",
+    baseUrl: "http://127.0.0.1:4317/v1",
+    apiKey: "current-secret",
+    modelId: "current-model",
+    contextWindowTokens: 32_000,
+    maxOutputTokens: 4_096,
+  });
+
+  await expect(store.bindMatching(frozenBinding)).resolves.toMatchObject({
+    apiKey: "historical-secret",
+    modelId: "gpt-historical",
+  });
+  await expect(store.bind()).resolves.toMatchObject({
+    apiKey: "current-secret",
+    modelId: "current-model",
+  });
+  expect((await store.view()).activeConnectionId).toBe(
+    current.activeConnectionId,
+  );
+  await expect(
+    store.bindMatching({ ...frozenBinding, modelId: "missing-frozen-model" }),
+  ).rejects.toThrow("No saved model connection matches");
 });
 
 test("克隆模型配置会复制本机凭据但保持当前配置不变", async () => {

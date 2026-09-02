@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 
 import { inspectContentPackageCurrentTree } from "../../src/runtime/content/FileNativeContentTree.ts";
-import { settingAuthorContractExamples } from "../../src/runtime/setting/SettingImprovementDraft.ts";
+import { settingAuthorContractExamples } from "../../src/runtime/setting/SettingAuthoringTransaction.ts";
 
 test("slot 多带参数时报出参数名而不是 kind，避免作者去删整个 slot", () => {
   const messages = controlIssues({

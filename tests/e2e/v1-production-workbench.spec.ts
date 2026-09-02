@@ -249,37 +249,68 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   ).toBeVisible();
 
   responses.push(
-    chatTools([
-      tool("setting_read", { path: damagedPath }),
-      tool("setting_write_file", {
-        path: damagedPath,
-        ref: "damaged",
-        title: "Damaged Character",
-        summary: "Character document repaired in the isolated candidate.",
-        aliases: [],
-        contents: "status: repaired\n",
-      }),
-    ]),
-    chatText(
-      "The damaged character document is repaired in the isolated draft.",
+    chatTools(
+      [
+        tool("setting_read", { path: damagedPath }),
+        tool("setting_write_file", {
+          path: damagedPath,
+          ref: "damaged",
+          title: "Damaged Character",
+          summary: "Character document repaired in the current tree.",
+          aliases: [],
+          contents: "status: repaired\n",
+        }),
+      ],
+      null,
+      "Read the damaged document before repairing the current tree.",
     ),
+    chatText("The damaged character document is repaired in the current tree."),
   );
   await page.getByRole("button", { name: "AI 完善" }).click();
   await page
-    .getByLabel("给 AI 发消息")
+    .getByLabel("用全新上下文给 AI 发消息")
     .fill("Repair the damaged character document.");
   await page.getByRole("button", { name: "发送" }).click();
   await expect(page.locator(".setting-conversation-assistant")).toContainText(
     "damaged character document is repaired",
   );
-  await expect(page.locator(".setting-draft-summary")).toContainText(
-    damagedPath,
+  const repairedTurn = page.locator(".setting-conversation-turn").last();
+  await expect(
+    repairedTurn.locator(".setting-exchange-reasoning"),
+  ).toContainText("Read the damaged document before repairing");
+  const settingRead = repairedTurn
+    .locator(".setting-exchange-tool")
+    .filter({ hasText: "setting_read" });
+  await expect(settingRead).toContainText("拒绝／失败");
+  await settingRead.locator("summary").click();
+  await expect(settingRead).toContainText(damagedPath);
+  const repairedDiff = page
+    .locator(".setting-change-diff")
+    .filter({ hasText: damagedPath });
+  await expect(repairedDiff.locator(".unified-diff-remove")).toContainText(
+    "not: [valid",
   );
-  await page.getByRole("button", { name: "应用当前草稿" }).click();
-  await expect(page.getByRole("status")).toContainText("隔离草稿已整批应用");
+  await expect(
+    repairedDiff.locator(".unified-diff-add").filter({
+      hasText: "status: repaired",
+    }),
+  ).toBeVisible();
+  await expect(page.locator(".setting-current-tree-notice")).toContainText(
+    "已经生效",
+  );
+  const settingHistory = page.locator(".setting-conversation-history");
+  const repairedHistory = settingHistory
+    .locator("button")
+    .filter({ hasText: "Repair the damaged character document." });
+  await expect(repairedHistory).toContainText("当前所选");
+  await page.getByRole("button", { name: "全新上下文" }).click();
+  await expect(page.getByText("下一条消息将开启全新上下文")).toBeVisible();
 
   responses.push(
-    chatText(plan()),
+    chatText(
+      plan(),
+      "Compare the requested experience before proposing the authoring plan.",
+    ),
     chatTools([
       tool("setting_read", { path: "world/current-situation.yaml" }),
       tool("setting_read", { path: "world/characters/alex.yaml" }),
@@ -326,14 +357,22 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
       }),
     ]),
     chatText(
-      "The agreed changes are now in the isolated draft and pass the automatic review.",
+      "The agreed changes are live in the current tree and pass the automatic review.",
     ),
   );
-  await page.getByRole("button", { name: "AI 完善" }).click();
   await page
-    .getByLabel("给 AI 发消息")
+    .getByLabel("用全新上下文给 AI 发消息")
     .fill("先讨论一个保留宿舍体验的修改计划，暂时不要改文件。");
+  providerDelayMs = 1200;
   await page.getByRole("button", { name: "发送" }).click();
+  const freshRunProgress = page.locator(".setting-conversation-running");
+  await expect(freshRunProgress).toContainText("AI 正在处理");
+  await expect(freshRunProgress).toContainText(/已接收 \d+ 字/u);
+  await expect(
+    freshRunProgress.locator(".setting-live-trace").first(),
+  ).toContainText("Compare the requested experience");
+  await expect(page.getByRole("button", { name: "停止回复" })).toBeVisible();
+  providerDelayMs = 0;
   await expect(page.locator(".setting-conversation-assistant")).toContainText(
     "创作计划",
   );
@@ -354,32 +393,42 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     "setting_patch",
     "setting_move",
   ]);
-  await page.getByLabel("给 AI 发消息").fill("按刚才讨论的方向更新隔离草稿。");
+  await page
+    .getByLabel("继续这段对话")
+    .fill("按刚才讨论的方向直接更新当前内容树。");
   await page.getByRole("button", { name: "发送" }).click();
   await expect(
     page.locator(".setting-conversation-assistant").last(),
   ).toContainText("pass the automatic review");
-  await expect(page.locator(".setting-draft-summary")).toContainText(
-    "world/events/training.yaml",
+  const acceptedChanges = page.locator(".setting-accepted-changes");
+  await expect(
+    acceptedChanges.filter({ hasText: "world/events/training.yaml" }),
+  ).toBeVisible();
+  await expect(acceptedChanges.filter({ hasText: "opening.md" })).toBeVisible();
+  await expect(
+    acceptedChanges.filter({ hasText: "control/blocks/world.md" }),
+  ).toBeVisible();
+  await expect(
+    page
+      .locator(".setting-exchange-tool")
+      .filter({ hasText: /当前树自动检查通过|Current-tree review passed/u }),
+  ).toBeVisible();
+  await expect(page.locator(".setting-current-tree-notice")).toContainText(
+    "已经生效",
   );
-  await expect(page.locator(".setting-draft-summary")).toContainText(
-    "opening.md",
-  );
-  await expect(page.locator(".setting-draft-summary")).toContainText(
-    "control/blocks/world.md",
-  );
-  await expect(page.locator(".setting-draft-summary")).toContainText("已通过");
-  await page.getByRole("button", { name: "应用当前草稿" }).click();
-  await expect(page.getByRole("status")).toContainText("隔离草稿已整批应用");
 
   responses.push(
-    chatTools([
-      tool("setting_read", { path: "control/frame.yaml" }),
-      tool("setting_write_file", {
-        path: "control/frame.yaml",
-        contents: "invalid: true\n",
-      }),
-    ]),
+    chatTools(
+      [
+        tool("setting_read", { path: "control/frame.yaml" }),
+        tool("setting_write_file", {
+          path: "control/frame.yaml",
+          contents: "invalid: true\n",
+        }),
+      ],
+      null,
+      "Inspect the frame before repairing its bindings.",
+    ),
     chatTools([
       tool("setting_write_file", {
         path: "control/frame.yaml",
@@ -389,7 +438,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     ]),
     chatText("The frame was repaired and the automatic review now passes."),
   );
-  await page.getByLabel("给 AI 发消息").fill("直接检查当前树并修复 frame。");
+  await page.getByLabel("继续这段对话").fill("直接检查当前树并修复 frame。");
   providerDelayMs = 1200;
   await page.getByRole("button", { name: "发送" }).click();
   // Progress moves while the ordinary conversation message is active; the
@@ -400,6 +449,9 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   // While the first round is still streaming, the UI shows received characters
   // rather than inactivity. This number can only come from live server increments.
   await expect(runProgress).toContainText(/已接收 \d+ 字/u);
+  await expect(
+    runProgress.locator(".setting-live-trace").first(),
+  ).toContainText("Inspect the frame");
   providerDelayMs = 0;
   await expect(
     page.locator(".setting-conversation-assistant").last(),
@@ -415,8 +467,11 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     "setting_patch",
     "setting_move",
   ]);
-  await page.getByRole("button", { name: "放弃对话" }).click();
-  await expect(page.getByRole("status")).toContainText("当前树未改变");
+  await page.getByRole("button", { name: "全新上下文" }).click();
+  await expect(page.getByText("下一条消息将开启全新上下文")).toBeVisible();
+  await repairedHistory.click();
+  await expect(page.getByText("正在继续历史对话")).toBeVisible();
+  await expect(page.getByLabel("继续这段对话")).toBeVisible();
 
   await page.getByRole("button", { name: "返回工作区" }).click();
   await page.getByRole("button", { name: "提示词预览" }).click();
@@ -950,8 +1005,24 @@ function chatText(text: string, reasoningContent?: string) {
   };
 }
 
-function chatTools(toolCalls: object[], content: string | null = null) {
-  return { choices: [{ message: { content, tool_calls: toolCalls } }] };
+function chatTools(
+  toolCalls: object[],
+  content: string | null = null,
+  reasoningContent?: string,
+) {
+  return {
+    choices: [
+      {
+        message: {
+          content,
+          tool_calls: toolCalls,
+          ...(reasoningContent === undefined
+            ? {}
+            : { reasoning_content: reasoningContent }),
+        },
+      },
+    ],
+  };
 }
 
 /** Rewrite a non-streaming chat response as equivalent SSE delta frames. */

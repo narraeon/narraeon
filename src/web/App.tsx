@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { maxPortableContentArchiveBytes } from "../protocol/contentTree.ts";
 import type { ModelConnectionLibraryView } from "../protocol/modelConnections.ts";
@@ -7,7 +7,12 @@ import {
   type AppLocale,
   type AppPreferences,
 } from "../protocol/appPreferences.ts";
-import type { ContentTreeFile } from "../protocol/v1.ts";
+import type {
+  ContentTreeFile,
+  V1SettingImprovementHistoryItem,
+  V1SettingImprovementOverview,
+  V1SettingImprovementStatus,
+} from "../protocol/v1.ts";
 import { firstPartyPlayPresetTemplatesForLocale } from "../shared/first-party-play-preset-templates.ts";
 import type { RuntimeClient } from "./runtimeClient.ts";
 import { createClientId } from "./ClientId.ts";
@@ -85,6 +90,15 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const [importPending, setImportPending] = useState(false);
   const [improvementView, setImprovementView] =
     useState<SettingImprovementView | null>(null);
+  const [improvementHistory, setImprovementHistory] = useState<
+    V1SettingImprovementHistoryItem[]
+  >([]);
+  const [improvementHistoryView, setImprovementHistoryView] =
+    useState<SettingImprovementView | null>(null);
+  const [improvementStartingFresh, setImprovementStartingFresh] =
+    useState(false);
+  const [improvementHistoryLoading, setImprovementHistoryLoading] =
+    useState(false);
   const [improvementLoading, setImprovementLoading] = useState(false);
   const [improvementRequestFailure, setImprovementRequestFailure] = useState<
     string | null
@@ -93,6 +107,18 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const [worldId, setWorldId] = useState("");
   const [notice, setNotice] = useState(uiText("正在读取工作区…"));
   const [localeSaving, setLocaleSaving] = useState(false);
+  const packageOpenRequest = useRef(0);
+  const improvementPollScope = useRef(0);
+  const improvementHistoryRequest = useRef(0);
+  const improvementSelection = useRef<
+    | string
+    | {
+        kind: "fresh";
+        previousSessionId: string | null;
+        requestStarted: boolean;
+      }
+    | null
+  >(null);
 
   async function refresh(): Promise<void> {
     const next = await client.request<Workspace>({ type: "workspace.read" });
@@ -106,24 +132,83 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     setNotice("");
   }
 
-  // The durable Runtime view is the only saved setting-improvement state.
-  // Polling restores it after navigation or refresh and exposes live provider
-  // progress while a message request remains open.
+  // Poll a lightweight status projection. Full transcripts are fetched only
+  // when durable conversation history changes; live Provider deltas overlay
+  // the currently selected conversation without resending content files.
   useEffect(() => {
     if (screen !== "content" || contentMode !== "improve" || selected === "")
       return;
     let active = true;
+    let pollPending = false;
+    let loadedRevision = "";
+    const pollScope = improvementPollScope.current;
     const poll = async (): Promise<void> => {
+      if (pollPending) return;
+      pollPending = true;
       try {
-        const next = await client.request<SettingImprovementView | null>({
-          type: "setting-improvement.read",
+        const status = await client.request<V1SettingImprovementStatus>({
+          type: "setting-improvement.status",
           packageId: selected,
+          ...(typeof improvementSelection.current === "string"
+            ? { sessionId: improvementSelection.current }
+            : {}),
         });
-        if (active) setImprovementView(next);
+        if (!active || improvementPollScope.current !== pollScope) return;
+        if (status.revision !== loadedRevision) {
+          const next = await client.request<V1SettingImprovementOverview>({
+            type: "setting-improvement.overview",
+            packageId: selected,
+          });
+          if (!active || improvementPollScope.current !== pollScope) return;
+          setImprovementView(next.latest);
+          setImprovementHistory(next.history);
+          const selectedSessionId = improvementSelection.current;
+          if (
+            typeof selectedSessionId === "string" &&
+            selectedSessionId !== next.latest?.sessionId
+          ) {
+            const selectedView = await client.request<SettingImprovementView>({
+              type: "setting-improvement.session.read",
+              packageId: selected,
+              sessionId: selectedSessionId,
+            });
+            if (!active || improvementPollScope.current !== pollScope) return;
+            setImprovementHistoryView(selectedView);
+          } else if (
+            typeof selectedSessionId === "object" &&
+            selectedSessionId !== null &&
+            selectedSessionId.kind === "fresh" &&
+            selectedSessionId.requestStarted &&
+            next.latest !== null &&
+            next.latest.sessionId !== selectedSessionId.previousSessionId
+          ) {
+            setImprovementHistoryView(null);
+            setImprovementStartingFresh(false);
+            improvementSelection.current = next.latest.sessionId;
+          } else if (selectedSessionId === null) {
+            setImprovementHistoryView(null);
+            if (next.latest !== null)
+              improvementSelection.current = next.latest.sessionId;
+          }
+          loadedRevision = status.revision;
+        } else if (status.selected !== null) {
+          const selectedStatus = status.selected;
+          const overlay = (current: SettingImprovementView | null) =>
+            current?.sessionId !== selectedStatus.sessionId
+              ? current
+              : {
+                  ...current,
+                  runStatus: selectedStatus.runStatus,
+                  progress: selectedStatus.progress,
+                };
+          setImprovementView(overlay);
+          setImprovementHistoryView(overlay);
+        }
       } catch {
         // Keep the last authoritative snapshot when one poll fails.
       } finally {
-        if (active) {
+        pollPending = false;
+        if (active && improvementPollScope.current === pollScope) {
           setImprovementNow(Date.now());
           setImprovementLoading(false);
         }
@@ -186,23 +271,33 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     packageId: string,
     nextMode: ContentMode = "files",
   ): Promise<void> {
+    const requestVersion = packageOpenRequest.current + 1;
+    packageOpenRequest.current = requestVersion;
+    improvementHistoryRequest.current += 1;
     try {
       const package_ = await client.request<PackageDetail>({
         type: "content.read",
         packageId,
       });
+      if (packageOpenRequest.current !== requestVersion) return;
+      if (packageId !== selected) improvementPollScope.current += 1;
       const packageFiles = package_.files;
       setSelected(packageId);
       setPackageDetail(package_);
       setCurrentPackageFiles(packageFiles.map((file) => ({ ...file })));
       setImprovementView(null);
+      setImprovementHistory([]);
+      setImprovementHistoryView(null);
+      setImprovementStartingFresh(false);
+      improvementSelection.current = null;
+      setImprovementHistoryLoading(false);
       setImprovementRequestFailure(null);
       setFiles(packageFiles.map((file) => ({ ...file })));
       setFilesDirty(false);
       setContentMode(nextMode);
       setScreen("content");
     } catch (error: unknown) {
-      report(error);
+      if (packageOpenRequest.current === requestVersion) report(error);
     }
   }
 
@@ -317,14 +412,48 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     }
     setImprovementRequestFailure(null);
     setNotice("");
+    if (
+      improvementStartingFresh &&
+      typeof improvementSelection.current === "object" &&
+      improvementSelection.current !== null
+    )
+      improvementSelection.current = {
+        ...improvementSelection.current,
+        requestStarted: true,
+      };
+    const selectedConversation = improvementStartingFresh
+      ? null
+      : (improvementHistoryView ?? improvementView);
     try {
       const next = await client.request<SettingImprovementView>({
         type: "setting-improvement.message",
         packageId: selected,
         requestId: createClientId("setting-message"),
         message,
+        continuation:
+          selectedConversation === null
+            ? { kind: "fresh_context" }
+            : {
+                kind: "continue_context",
+                sessionId: selectedConversation.sessionId,
+              },
       });
       setImprovementView(next);
+      setImprovementHistoryView(null);
+      setImprovementStartingFresh(false);
+      improvementSelection.current = next.sessionId;
+      try {
+        const package_ = await client.request<PackageDetail>({
+          type: "content.read",
+          packageId: selected,
+        });
+        setPackageDetail(package_);
+        setFiles(package_.files.map((file) => ({ ...file })));
+        setCurrentPackageFiles(package_.files.map((file) => ({ ...file })));
+        await refresh();
+      } catch (refreshError: unknown) {
+        report(refreshError);
+      }
     } catch (error: unknown) {
       setImprovementRequestFailure(
         error instanceof Error ? error.message : uiText("操作失败"),
@@ -335,14 +464,18 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   }
 
   async function cancelImprovement(): Promise<void> {
-    if (improvementView === null) return;
+    const selectedConversation = improvementStartingFresh
+      ? null
+      : (improvementHistoryView ?? improvementView);
+    if (selectedConversation === null) return;
     setImprovementRequestFailure(null);
     try {
       const next = await client.request<SettingImprovementView>({
         type: "setting-improvement.cancel",
-        sessionId: improvementView.sessionId,
+        sessionId: selectedConversation.sessionId,
       });
-      setImprovementView(next);
+      if (improvementHistoryView === null) setImprovementView(next);
+      else setImprovementHistoryView(next);
     } catch (error: unknown) {
       setImprovementRequestFailure(
         error instanceof Error ? error.message : uiText("操作失败"),
@@ -351,45 +484,51 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     }
   }
 
-  async function applyImprovement(draftVersion: number): Promise<void> {
-    if (improvementView === null) return;
+  async function selectImprovementSession(sessionId: string): Promise<void> {
+    const requestVersion = improvementHistoryRequest.current + 1;
+    improvementHistoryRequest.current = requestVersion;
+    setImprovementStartingFresh(false);
+    improvementSelection.current = sessionId;
+    if (improvementView?.sessionId === sessionId) {
+      setImprovementHistoryView(null);
+      return;
+    }
+    setImprovementHistoryLoading(true);
     setImprovementRequestFailure(null);
     try {
-      await client.request<SettingImprovementView>({
-        type: "setting-improvement.apply",
-        sessionId: improvementView.sessionId,
-        expectedDraftVersion: draftVersion,
+      const historical = await client.request<SettingImprovementView>({
+        type: "setting-improvement.session.read",
+        packageId: selected,
+        sessionId,
       });
-      setImprovementView(null);
-      setImprovementRequestFailure(null);
-      await refresh();
-      await openPackage(selected, "improve");
-      setNotice(uiText("隔离草稿已整批应用到内容包当前树。"));
+      if (improvementHistoryRequest.current !== requestVersion) return;
+      setImprovementHistoryView(historical);
     } catch (error: unknown) {
+      if (improvementHistoryRequest.current !== requestVersion) return;
       setImprovementRequestFailure(
         error instanceof Error ? error.message : uiText("操作失败"),
       );
       report(error);
+    } finally {
+      if (improvementHistoryRequest.current === requestVersion)
+        setImprovementHistoryLoading(false);
     }
   }
 
-  async function discardImprovement(): Promise<void> {
-    if (improvementView === null) return;
+  function startFreshImprovementContext(): void {
+    const selectedConversation = improvementHistoryView ?? improvementView;
+    if (selectedConversation?.runStatus === "running") return;
+    improvementHistoryRequest.current += 1;
+    setImprovementHistoryLoading(false);
+    setImprovementHistoryView(null);
+    setImprovementStartingFresh(true);
+    improvementSelection.current = {
+      kind: "fresh",
+      previousSessionId:
+        improvementView?.sessionId ?? improvementHistory[0]?.sessionId ?? null,
+      requestStarted: false,
+    };
     setImprovementRequestFailure(null);
-    try {
-      await client.request({
-        type: "setting-improvement.discard",
-        sessionId: improvementView.sessionId,
-      });
-      setImprovementView(null);
-      setImprovementRequestFailure(null);
-      setNotice(uiText("设定完善对话和隔离草稿已放弃，当前树未改变。"));
-    } catch (error: unknown) {
-      setImprovementRequestFailure(
-        error instanceof Error ? error.message : uiText("操作失败"),
-      );
-      report(error);
-    }
   }
 
   function openPromptPreview(target?: {
@@ -497,7 +636,10 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   );
   const selectedPackageDetail =
     packageDetail?.localId === selected ? packageDetail : null;
-  const improvementActive = improvementView?.runStatus === "running";
+  const displayedImprovementView = improvementStartingFresh
+    ? null
+    : (improvementHistoryView ?? improvementView);
+  const improvementActive = displayedImprovementView?.runStatus === "running";
   const selectedWorld = workspace.worlds.find(
     (world) => world.worldId === worldId,
   );
@@ -710,14 +852,20 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
               packageName={selectedPackage?.title ?? selected}
               modelConfigured={workspace.model.configured}
               hasUnsavedFileDraft={filesDirty}
-              loading={improvementLoading}
-              view={improvementView}
+              loading={improvementLoading || improvementHistoryLoading}
+              view={displayedImprovementView}
+              history={improvementHistory}
+              latestSessionId={
+                improvementView?.sessionId ??
+                improvementHistory[0]?.sessionId ??
+                null
+              }
               requestFailure={improvementRequestFailure}
               now={improvementNow}
               onSend={sendImprovement}
               onCancel={cancelImprovement}
-              onApply={applyImprovement}
-              onDiscard={discardImprovement}
+              onFreshContext={startFreshImprovementContext}
+              onSelectSession={selectImprovementSession}
               onConfigureModel={() => setScreen("model")}
             />
           )}

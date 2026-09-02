@@ -54,18 +54,26 @@ export type V1Request =
   | { type: "content.export"; packageId: string }
   | { type: "setting-improvement.read"; packageId: string }
   | {
+      type: "setting-improvement.status";
+      packageId: string;
+      sessionId?: string;
+    }
+  | { type: "setting-improvement.overview"; packageId: string }
+  | {
+      type: "setting-improvement.session.read";
+      packageId: string;
+      sessionId: string;
+    }
+  | {
       type: "setting-improvement.message";
       packageId: string;
       requestId: string;
       message: string;
+      continuation:
+        | { kind: "fresh_context" }
+        | { kind: "continue_context"; sessionId: string };
     }
   | { type: "setting-improvement.cancel"; sessionId: string }
-  | {
-      type: "setting-improvement.apply";
-      sessionId: string;
-      expectedDraftVersion: number;
-    }
-  | { type: "setting-improvement.discard"; sessionId: string }
   | { type: "play.read" }
   | { type: "play.create"; name: string; files?: Record<string, string> }
   | { type: "play.copy"; presetId: string }
@@ -218,7 +226,61 @@ export interface V1SettingConversationMessage {
   createdAt: number;
 }
 
-export interface V1SettingDraftDiff {
+export interface V1SettingConversationToolCall {
+  callId: string;
+  name: string;
+  arguments: unknown;
+  result: {
+    markdown: string;
+    isError: boolean;
+    /** Changes already published to the content package current tree. */
+    changes: V1SettingAuthoringDiff[];
+  } | null;
+}
+
+export interface V1SettingConversationExchange {
+  id: string;
+  exchange: number;
+  text: string;
+  /** Exact Provider-returned reasoning only; never inferred chain of thought. */
+  reasoning?: string;
+  toolCalls: V1SettingConversationToolCall[];
+}
+
+export interface V1SettingConversationTurn {
+  id: string;
+  user: V1SettingConversationMessage;
+  exchanges: V1SettingConversationExchange[];
+}
+
+export interface V1SettingImprovementHistoryItem {
+  sessionId: string;
+  runStatus: "ready" | "running" | "interrupted";
+  createdAt: number;
+  updatedAt: number;
+  excerpt: string;
+  turnCount: number;
+  exchangeCount: number;
+  toolCallCount: number;
+  changedFileCount: number;
+}
+
+export interface V1SettingImprovementOverview {
+  latest: V1SettingImprovementView | null;
+  history: V1SettingImprovementHistoryItem[];
+}
+
+export interface V1SettingImprovementStatus {
+  /** Changes only when durable conversation/history state changes. */
+  revision: string;
+  selected: null | {
+    sessionId: string;
+    runStatus: "ready" | "running" | "interrupted";
+    progress: V1SettingImprovementView["progress"];
+  };
+}
+
+export interface V1SettingAuthoringDiff {
   path: string;
   kind: "create" | "modify" | "delete";
   before: string | null;
@@ -317,41 +379,14 @@ export interface V1PlayContextReadingView {
 export interface V1SettingImprovementView {
   sessionId: string;
   packageId: string;
-  lifecycle: "open" | "applied" | "discarded";
   runStatus: "ready" | "running" | "interrupted";
-  baseStatus: "current" | "stale";
-  draftVersion: number;
   messages: V1SettingConversationMessage[];
-  review: {
-    status: "usable" | "needs_repair";
-    diff: V1SettingDraftDiff[];
-    diagnostics: { code: string; path: string; message: string }[];
-    preview: V1SettingPromptPreview | null;
-    /** Absent only on views persisted before deterministic coverage shipped. */
-    playCoverage?: {
-      totals: {
-        fullInjected: number;
-        nodeInjected: number;
-        catalogSummary: number;
-        referencedFromInjected: number;
-        onDemand: number;
-      };
-      changed: {
-        path: string;
-        access:
-          | "full_injected"
-          | "node_injected"
-          | "catalog_summary"
-          | "referenced_from_injected"
-          | "on_demand"
-          | "opening_genesis"
-          | "play_control"
-          | "unused_control"
-          | "player_view"
-          | "removed";
-        detail: string;
-      }[];
-    } | null;
+  turns: V1SettingConversationTurn[];
+  /** Audit-only changes from a pre-v2 isolated draft; never auto-applied. */
+  legacyDraft: null | {
+    outcome:
+      "applied" | "discarded" | "unapplied_dropped" | "apply_outcome_unknown";
+    changes: V1SettingAuthoringDiff[];
   };
   usage: ModelUsage;
   progress: {
@@ -362,12 +397,17 @@ export interface V1SettingImprovementView {
       textChars: number;
       toolChars: number;
       tail: string;
+      /** Current incomplete Provider-returned reasoning, available in-process. */
+      reasoningText?: string;
+      /** Current incomplete visible model text, available in-process. */
+      visibleText?: string;
+      /** Current incomplete tool-call argument fragments, available in-process. */
+      toolFragment?: string;
       receivedAt: number;
     } | null;
     updatedAt: number;
   };
   lastFailure: string | null;
-  canApply: boolean;
 }
 
 export type V1PlayCallChainStatus = "ready" | "running" | "interrupted";
@@ -641,17 +681,19 @@ const requiredFields: Record<
   "content.import": { archiveBase64: "string" },
   "content.export": { packageId: "string" },
   "setting-improvement.read": { packageId: "string" },
+  "setting-improvement.status": { packageId: "string" },
+  "setting-improvement.overview": { packageId: "string" },
+  "setting-improvement.session.read": {
+    packageId: "string",
+    sessionId: "string",
+  },
   "setting-improvement.message": {
     packageId: "string",
     requestId: "string",
     message: "string",
+    continuation: "object",
   },
   "setting-improvement.cancel": { sessionId: "string" },
-  "setting-improvement.apply": {
-    sessionId: "string",
-    expectedDraftVersion: "number",
-  },
-  "setting-improvement.discard": { sessionId: "string" },
   "play.create": { name: "string" },
   "play.copy": { presetId: "string" },
   "play.save": { presetId: "string", name: "string", files: "object" },
@@ -982,15 +1024,21 @@ function validateRequestFields(request: Record<string, unknown>): void {
       "invalid_request",
       "world.surface.read.surface is invalid",
     );
-  if (
-    request.type === "setting-improvement.apply" &&
-    (!Number.isSafeInteger(request.expectedDraftVersion) ||
-      Number(request.expectedDraftVersion) < 0)
-  )
-    throw new V1ProtocolError(
-      "invalid_request",
-      "setting-improvement.apply.expectedDraftVersion is invalid",
-    );
+  if (request.type === "setting-improvement.message") {
+    const continuation = request.continuation;
+    if (
+      !isRecord(continuation) ||
+      (continuation.kind !== "fresh_context" &&
+        continuation.kind !== "continue_context") ||
+      (continuation.kind === "continue_context" &&
+        typeof continuation.sessionId !== "string") ||
+      (continuation.kind === "fresh_context" && "sessionId" in continuation)
+    )
+      throw new V1ProtocolError(
+        "invalid_request",
+        "setting-improvement.message.continuation is invalid",
+      );
+  }
 }
 
 const requestTypes = new Set([
@@ -1012,10 +1060,11 @@ const requestTypes = new Set([
   "content.import",
   "content.export",
   "setting-improvement.read",
+  "setting-improvement.status",
+  "setting-improvement.overview",
+  "setting-improvement.session.read",
   "setting-improvement.message",
   "setting-improvement.cancel",
-  "setting-improvement.apply",
-  "setting-improvement.discard",
   "play.read",
   "play.create",
   "play.copy",

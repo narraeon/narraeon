@@ -323,10 +323,10 @@ export class FileNativePromptCompiler {
       input.playPreset,
       this.#locale,
     );
-    const draftBoundary =
+    const currentTreeBoundary =
       this.#locale === "zh-CN"
-        ? "# 隔离草稿\n\n当前内容包只可通过随附工具读取和修改。所有修改先进入隔离草稿；只有用户在界面中点击应用，Runtime 才会替换内容包当前树。"
-        : "# Isolated draft\n\nThe current content package can be read and changed only through the attached tools. Every change first enters an isolated draft; Runtime replaces the package's current tree only when the user clicks Apply in the interface.";
+        ? "# 内容包当前树写入边界\n\n当前内容包只可通过随附工具读取和修改。完整工具响应中的成功变化由 Runtime 原子发布后立即生效，发布后无需另一步确认。"
+        : "# Content-package current-tree write boundary\n\nThe current content package can be read and changed only through the attached tools. Successful changes in a complete tool response take effect as soon as Runtime publishes them atomically, with no second confirmation after publication.";
     const worldContextBlocks = [
       {
         source: "content-package:title",
@@ -340,8 +340,8 @@ export class FileNativePromptCompiler {
         markdown: presetReference,
       },
       {
-        source: "runtime:setting-draft-boundary",
-        markdown: draftBoundary,
+        source: "runtime:setting-current-tree-boundary",
+        markdown: currentTreeBoundary,
       },
     ];
     const logicalMessages: PromptCompilation["logicalMessages"] = [
@@ -793,9 +793,9 @@ function playCallChainNarrativeGuidance(
 /**
  * Freeze the enabled play-author semantics as reference material for setting
  * design. World instructions stay behind setting tools because they belong to
- * the evolving draft; the current host and narrative blocks are immutable for
- * this conversation and must be visible if the authoring model is expected to
- * avoid duplicating or contradicting them.
+ * the evolving current tree; the current host and narrative blocks are
+ * immutable for this conversation and must be visible if the authoring model
+ * is expected to avoid duplicating or contradicting them.
  */
 function settingContentPackageIdentity(
   title: string,
@@ -834,8 +834,8 @@ function settingImprovementPresetReference(
     source: "content-package:control/frame.yaml#instructions",
     markdown:
       locale === "zh-CN"
-        ? "未来游玩在此位置按 control/frame.yaml 的声明顺序展开当前内容包启用的世界指令块。请通过设定读取工具检查隔离草稿中的实际 frame 和块正文；这段文字只描述它们在提示词中的拼装位置。"
-        : "During future play, this position expands the world-instruction blocks enabled by control/frame.yaml in their declared order. Inspect the actual frame and block bodies in the isolated draft through the setting read tools; this text describes only their position in the compiled prompt.",
+        ? "未来游玩在此位置按 control/frame.yaml 的声明顺序展开当前内容包启用的世界指令块。请通过设定读取工具检查当前树中的实际 frame 和块正文；这段文字只描述它们在提示词中的拼装位置。"
+        : "During future play, this position expands the world-instruction blocks enabled by control/frame.yaml in their declared order. Inspect the actual frame and block bodies in the current tree through the setting read tools; this text describes only their position in the compiled prompt.",
   };
   const authorBlocks = compileHostRoles(
     binding.definition.files,
@@ -852,8 +852,8 @@ function settingImprovementPresetReference(
       : "# Read-only author reference from the frozen play preset";
   const explanation =
     locale === "zh-CN"
-      ? "以下是未来游玩 AI 实际接收的已启用主持与叙事作者语义。这些块在本轮作为内容设计约束，用来让内容包配合玩法语义并避免重复或冲突。本轮回复面向设定讨论或隔离草稿编辑；玩家可见故事由未来游玩调用链生成。"
-      : "These are the enabled host and narrative author semantics that future play AI actually receives. In this conversation they are content-design constraints used to keep the package compatible with play semantics and avoid duplication or conflict. Replies here address setting discussion or isolated-draft editing; the future play call chain generates player-visible story.";
+      ? "以下是未来游玩 AI 实际接收的已启用主持与叙事作者语义。这些块在本轮作为内容设计约束，用来让内容包配合玩法语义并避免重复或冲突。本轮回复面向设定讨论或内容包当前树编辑；玩家可见故事由未来游玩调用链生成。"
+      : "These are the enabled host and narrative author semantics that future play AI actually receives. In this conversation they are content-design constraints used to keep the package compatible with play semantics and avoid duplication or conflict. Replies here address setting discussion or current-tree editing; the future play call chain generates player-visible story.";
   const none =
     locale === "zh-CN"
       ? "（当前预设没有启用主持或叙事作者块。）"
@@ -1015,6 +1015,73 @@ function cloneLogicalMessages(
       markdown,
     })),
   }));
+}
+
+/**
+ * Upgrade a released draft-era setting bootstrap at its authoritative
+ * Runtime-system layer. Provider-native assistant state remains untouched, but
+ * the obsolete write lifecycle cannot outrank its replacement on later turns.
+ */
+export function compileSettingImprovementLegacyCurrentTreeBootstrap(
+  bootstrap: PromptCompilation,
+  locale: AppLocale,
+  tools: PromptCompilation["tools"],
+): PromptCompilation {
+  const markdown =
+    locale === "zh-CN"
+      ? "# 设定写入方式更新\n\n本 Runtime 系统契约取代该会话早期关于隔离草稿、候选、Apply 或 Discard 的写入说明；那些说明只是历史记录，不再支配后续消息。写工具只操作内容包当时的当前树，每个成功变化由 Runtime 原子发布后立即生效。写入前先重新读取当前树；不要要求用户应用或放弃草稿。"
+      : "# Setting write-mode update\n\nThis Runtime system contract replaces the conversation's earlier write instructions about an isolated draft, candidate, Apply, or Discard; those instructions are historical and no longer govern later messages. Write tools operate only on the content package's then-current tree, and Runtime publishes every accepted change atomically so it takes effect immediately. Re-read the current tree before writing; do not ask the user to apply or discard a draft.";
+  const logicalMessages = cloneLogicalMessages(bootstrap.logicalMessages);
+  const runtimeSystem = logicalMessages.find(
+    ({ role }) => role === "runtime_system",
+  );
+  if (runtimeSystem === undefined)
+    throw new PromptCompilationError(
+      "legacy_setting_bootstrap_invalid",
+      "Legacy setting bootstrap has no Runtime-system message",
+    );
+  runtimeSystem.markdown = `${runtimeSystem.markdown}\n\n${markdown}`;
+  runtimeSystem.blocks.push({
+    source: "runtime:setting-legacy-current-tree-transition",
+    markdown,
+  });
+
+  const provider = structuredClone(bootstrap.provider);
+  if (provider.protocol === "anthropic_messages") {
+    provider.system = [
+      ...(provider.system ?? []),
+      { type: "text", text: markdown, cache_control: { type: "ephemeral" } },
+    ];
+  } else {
+    const firstUser = provider.messages.findIndex(
+      ({ role }) => role === "user",
+    );
+    provider.messages.splice(
+      firstUser < 0 ? provider.messages.length : firstUser,
+      0,
+      {
+        role: "system",
+        content: markdown,
+      },
+    );
+  }
+
+  const toolUniverse = structuredClone(tools);
+  return {
+    ...structuredClone(bootstrap),
+    logicalMessages,
+    provider,
+    tools: structuredClone(tools),
+    toolUniverse,
+    cache: {
+      ...structuredClone(bootstrap.cache),
+      ...stableCacheBoundary(
+        cacheStableText(logicalMessages),
+        toolUniverse,
+        bootstrap.toolStrategy,
+      ),
+    },
+  };
 }
 
 /**

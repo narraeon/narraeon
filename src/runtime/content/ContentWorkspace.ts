@@ -16,6 +16,7 @@ import {
   type CurrentTreeContentPackageOperationLease,
   type CurrentTreeContentLibraryOptions,
   InvalidContentTreeError,
+  normalizeCurrentContentTreeFiles,
 } from "./CurrentTreeContentLibrary.ts";
 import type { ContentTreeFile } from "./ContentTreeFile.ts";
 import {
@@ -127,6 +128,15 @@ export class ContentWorkspace {
 
   inspectCurrentTreeContentPackage(files: readonly ContentTreeFile[]) {
     return inspectContentPackageCurrentTree(files);
+  }
+
+  /**
+   * Apply the exact storage boundary used by current-tree publication without
+   * mutating Authority. Model-directed transactions use this after every write
+   * so one over-limit call cannot invalidate accepted sibling calls.
+   */
+  validateCurrentTreeContentPackage(files: readonly ContentTreeFile[]): void {
+    normalizeCurrentContentTreeFiles(files, this.#limits);
   }
 
   replaceCurrentTreeContentPackage(

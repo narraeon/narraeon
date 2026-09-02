@@ -10,10 +10,10 @@ import {
   type PromptPreview,
 } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
 import {
-  SettingImprovementDraft,
+  SettingAuthoringTransaction,
   settingImprovementRuntimeContract,
   settingImprovementToolDefinitions,
-} from "../../src/runtime/setting/SettingImprovementDraft.ts";
+} from "../../src/runtime/setting/SettingAuthoringTransaction.ts";
 import type { WorldDocumentStore } from "../../src/runtime/world/WorldDocumentStore.ts";
 
 const preview = {
@@ -21,7 +21,7 @@ const preview = {
   leakage: { status: "clean", checkedFields: [] },
 } as unknown as PromptPreview;
 
-test("设定完善契约只描述当前对话、工具与应用行为", () => {
+test("设定完善契约描述显式上下文和直接当前树工具行为", () => {
   expect(
     settingImprovementToolDefinitions("zh-CN").map(({ name }) => name),
   ).toEqual([
@@ -34,11 +34,14 @@ test("设定完善契约只描述当前对话、工具与应用行为", () => {
     "setting_move",
   ]);
   const contract = settingImprovementRuntimeContract("zh-CN");
-  expect(contract).toContain("每条用户消息都追加到当前设定完善对话");
-  expect(contract).toContain("用户要求讨论或规划时给出讨论结果");
+  expect(contract).toContain("每条用户消息都追加到所选设定完善对话");
+  expect(contract).toContain("显式选择“全新上下文”");
   expect(contract).toContain("不调用工具的完整响应");
+  expect(contract).toContain("工具写入直接修改内容包当前树");
+  expect(contract).toContain("发布后立即成为内容包权威");
+  expect(contract).toContain("无需另一步确认");
   expect(contract).toContain("每个写工具调用独立结算");
-  expect(contract).toContain("失败只在对应的工具结果中返回");
+  expect(contract).toContain("失败只在对应工具结果中返回");
   expect(contract).toContain("ref 由你提供");
   expect(contract).toContain('{ $ref: "@alex" }');
   expect(contract).not.toContain("$document.id");
@@ -57,12 +60,12 @@ test("设定完善契约只描述当前对话、工具与应用行为", () => {
 
 test("自动检查把改动文档在真实游玩提示中的覆盖方式返回给模型", () => {
   const baseFiles = minimalFileNativeContentScaffold("en");
-  const draft = new SettingImprovementDraft({
+  const transaction = new SettingAuthoringTransaction({
     baseFiles,
     locale: "en",
     preview: productionPreview,
   });
-  const results = draft.execute([
+  const results = transaction.execute([
     {
       id: "create-character",
       name: "setting_create",
@@ -112,7 +115,7 @@ test("自动检查把改动文档在真实游玩提示中的覆盖方式返回�
     "consider adding a catalog, injected reference, or world instruction",
   );
   expect(results.at(-1)?.markdown).not.toContain("finish tool");
-  expect(draft.review().playCoverage).toMatchObject({
+  expect(transaction.review().playCoverage).toMatchObject({
     changed: [
       { path: "control/blocks/unused.md", access: "unused_control" },
       {
@@ -126,13 +129,13 @@ test("自动检查把改动文档在真实游玩提示中的覆盖方式返回�
 
 test("每个写调用独立结算，失败只回到对应调用且不回滚成功调用", () => {
   const baseFiles = minimalFileNativeContentScaffold("en");
-  const draft = new SettingImprovementDraft({
+  const transaction = new SettingAuthoringTransaction({
     baseFiles,
     locale: "en",
     preview: () => preview,
   });
   const opening = baseFiles.find(({ path }) => path === "opening.md")!;
-  const results = draft.execute([
+  const results = transaction.execute([
     {
       id: "read-opening",
       name: "setting_read",
@@ -163,7 +166,7 @@ test("每个写调用独立结算，失败只回到对应调用且不回滚成�
   expect(results[1]?.markdown).not.toContain("private/runtime.txt");
   expect(results[2]?.markdown).toContain("Special-file writes accept only");
   expect(results[2]?.markdown).not.toContain("rolled back");
-  expect(draft.review()).toMatchObject({
+  expect(transaction.review()).toMatchObject({
     status: "usable",
     diff: [{ path: "opening.md", kind: "modify" }],
   });
@@ -171,13 +174,13 @@ test("每个写调用独立结算，失败只回到对应调用且不回滚成�
 
 test("AI 用 ref 和正文新建文档，Runtime 隐藏 id，后续调用可直接更新", () => {
   const baseFiles = minimalFileNativeContentScaffold("en");
-  const draft = new SettingImprovementDraft({
+  const transaction = new SettingAuthoringTransaction({
     baseFiles,
     locale: "en",
     preview: () => preview,
   });
 
-  const results = draft.execute([
+  const results = transaction.execute([
     {
       id: "create-alex",
       name: "setting_create",
@@ -227,7 +230,7 @@ test("AI 用 ref 和正文新建文档，Runtime 隐藏 id，后续调用可直�
     "Updated @alex · world/characters/alex.yaml",
   );
 
-  const source = draft
+  const source = transaction
     .files()
     .find(({ path }) => path === "world/characters/alex.yaml")?.contents;
   expect(source).toMatch(/id: doc\.[a-f0-9]{32}/u);
@@ -238,7 +241,7 @@ test("AI 用 ref 和正文新建文档，Runtime 隐藏 id，后续调用可直�
   );
   expect(source).toContain("status: ready");
 
-  const read = draft.execute([
+  const read = transaction.execute([
     {
       id: "read-alex",
       name: "setting_read",
@@ -252,13 +255,13 @@ test("AI 用 ref 和正文新建文档，Runtime 隐藏 id，后续调用可直�
 
 test("无效 ref 和字面 Unicode 转义只拒绝各自调用，既有成功写入保留", () => {
   const baseFiles = minimalFileNativeContentScaffold("en");
-  const draft = new SettingImprovementDraft({
+  const transaction = new SettingAuthoringTransaction({
     baseFiles,
     locale: "en",
     preview: () => preview,
   });
   const opening = baseFiles.find(({ path }) => path === "opening.md")!;
-  draft.execute([
+  transaction.execute([
     {
       id: "read-opening",
       name: "setting_read",
@@ -266,7 +269,7 @@ test("无效 ref 和字面 Unicode 转义只拒绝各自调用，既有成功写
     },
   ]);
 
-  const results = draft.execute([
+  const results = transaction.execute([
     {
       id: "write-opening",
       name: "setting_write_file",
@@ -321,16 +324,16 @@ test("无效 ref 和字面 Unicode 转义只拒绝各自调用，既有成功写
   expect(results[2]?.markdown).not.toContain("literal Unicode escape");
   expect(results[3]?.markdown).toContain("literal Unicode escape");
   expect(results[3]?.markdown).not.toContain("ref must be 2 to 32");
-  expect(draft.review().diff).toMatchObject([
+  expect(transaction.review().diff).toMatchObject([
     { path: "opening.md", kind: "modify" },
   ]);
-  expect(draft.files().some(({ path }) => path.endsWith("escaped.md"))).toBe(
-    false,
-  );
+  expect(
+    transaction.files().some(({ path }) => path.endsWith("escaped.md")),
+  ).toBe(false);
 });
 
 test("重复 ref 精确拒绝，不由 Runtime 静默改成带后缀的新 ref", () => {
-  const draft = new SettingImprovementDraft({
+  const transaction = new SettingAuthoringTransaction({
     baseFiles: minimalFileNativeContentScaffold("en"),
     locale: "en",
     preview: () => preview,
@@ -348,7 +351,7 @@ test("重复 ref 精确拒绝，不由 Runtime 静默改成带后缀的新 ref",
     },
   });
 
-  const results = draft.execute([
+  const results = transaction.execute([
     create("first", "world/notes/first.yaml", "shared-ref"),
     create("duplicate", "world/notes/duplicate.yaml", "shared-ref"),
     create("third", "world/notes/third.yaml", "third-ref"),
@@ -357,11 +360,13 @@ test("重复 ref 精确拒绝，不由 Runtime 静默改成带后缀的新 ref",
   expect(results.map(({ isError }) => isError)).toEqual([false, true, false]);
   expect(results[1]?.markdown).toContain("ref @shared-ref already exists");
   expect(
-    draft.files().some(({ contents }) => contents.includes("shared-ref-2")),
+    transaction
+      .files()
+      .some(({ contents }) => contents.includes("shared-ref-2")),
   ).toBe(false);
-  expect(draft.files().some(({ path }) => path.endsWith("third.yaml"))).toBe(
-    true,
-  );
+  expect(
+    transaction.files().some(({ path }) => path.endsWith("third.yaml")),
+  ).toBe(true);
 });
 
 test("修复损坏文档只需公开 ref 和元信息，Runtime 自动保留可恢复 id", () => {
@@ -378,13 +383,15 @@ test("修复损坏文档只需公开 ref 和元信息，Runtime 自动保留可�
         "$document:\n  id: note.holder\n  ref: holder\n  title: Holder\n  summary: Keeps a reference to the damaged character.\n  aliases: []\ntarget:\n  $ref: character.damaged\n",
     },
   ];
-  const draft = new SettingImprovementDraft({
+  const transaction = new SettingAuthoringTransaction({
     baseFiles,
     locale: "en",
     preview: () => preview,
   });
-  expect(JSON.stringify(draft.review().diagnostics)).not.toContain("$document");
-  const damagedRead = draft.execute([
+  expect(JSON.stringify(transaction.review().diagnostics)).not.toContain(
+    "$document",
+  );
+  const damagedRead = transaction.execute([
     {
       id: "read-damaged",
       name: "setting_read",
@@ -395,7 +402,7 @@ test("修复损坏文档只需公开 ref 和元信息，Runtime 自动保留可�
   expect(damagedRead[0]?.markdown).toContain("Document ref must be");
   expect(damagedRead[0]?.markdown).not.toContain("$document");
 
-  const result = draft.execute([
+  const result = transaction.execute([
     {
       id: "repair-damaged",
       name: "setting_write_file",
@@ -412,12 +419,12 @@ test("修复损坏文档只需公开 ref 和元信息，Runtime 自动保留可�
 
   expect(result).toMatchObject([{ isError: false }]);
   expect(result[0]?.markdown).not.toContain("character.damaged");
-  const repaired = draft
+  const repaired = transaction
     .files()
     .find(({ path }) => path.endsWith("damaged.yaml"))?.contents;
   expect(repaired).toContain("id: character.damaged");
   expect(repaired).toContain("ref: damaged");
-  expect(draft.review().status).toBe("usable");
+  expect(transaction.review().status).toBe("usable");
 });
 
 test("设定模型只能用 @ref 或逻辑路径，既有正文与控制文件中的 id 自动投影为 @ref", () => {
@@ -445,13 +452,13 @@ test("设定模型只能用 @ref 或逻辑路径，既有正文与控制文件�
         "$document:\n  id: note.holder\n  ref: holder\n  title: Holder\n  summary: Holds one legacy persisted reference.\n  aliases: []\ntarget:\n  $ref: situation.current\n",
     },
   ];
-  const draft = new SettingImprovementDraft({
+  const transaction = new SettingAuthoringTransaction({
     baseFiles: legacyFiles,
     locale: "en",
     preview: () => preview,
   });
 
-  const results = draft.execute([
+  const results = transaction.execute([
     {
       id: "raw-id-read",
       name: "setting_read",
@@ -524,18 +531,22 @@ test("设定模型只能用 @ref 或逻辑路径，既有正文与控制文件�
   expect(results[6]?.markdown).not.toContain("situation.current");
   expect(results[7]).toMatchObject({ isError: false });
   expect(
-    draft.files().find(({ path }) => path === "control/frame.yaml")?.contents,
+    transaction.files().find(({ path }) => path === "control/frame.yaml")
+      ?.contents,
   ).toContain('currentSituation: "@current-situation"');
   expect(
-    draft.files().find(({ path }) => path === "control/frame.yaml")?.contents,
+    transaction.files().find(({ path }) => path === "control/frame.yaml")
+      ?.contents,
   ).not.toContain("situation.current");
 });
 
-test("草稿读取授权和内容可持久化后恢复", () => {
+test("当前树读取授权可按精确 revision 恢复", () => {
   const baseFiles = minimalFileNativeContentScaffold("en");
-  const first = new SettingImprovementDraft({
+  const revision = "current-tree-revision";
+  const first = new SettingAuthoringTransaction({
     baseFiles,
     locale: "en",
+    revision,
     preview: () => preview,
   });
   first.execute([
@@ -545,11 +556,12 @@ test("草稿读取授权和内容可持久化后恢复", () => {
       arguments: { path: "opening.md" },
     },
   ]);
-  const restored = new SettingImprovementDraft({
-    baseFiles,
+  const restored = new SettingAuthoringTransaction({
+    baseFiles: first.files(),
     locale: "en",
+    revision,
     preview: () => preview,
-    persisted: first.persist(),
+    authorization: first.authorization(revision),
   });
   const result = restored.execute([
     {
@@ -564,7 +576,7 @@ test("草稿读取授权和内容可持久化后恢复", () => {
 
 test("无效 cursor 不会把正常世界文档误授权为可覆盖的损坏文档", () => {
   const baseFiles = minimalFileNativeContentScaffold("en");
-  const draft = new SettingImprovementDraft({
+  const transaction = new SettingAuthoringTransaction({
     baseFiles,
     locale: "en",
     preview: () => preview,
@@ -574,7 +586,7 @@ test("无效 cursor 不会把正常世界文档误授权为可覆盖的损坏文
   expect(source).toBeTypeOf("string");
 
   expect(
-    draft.execute([
+    transaction.execute([
       {
         id: "bad-cursor",
         name: "setting_read",
@@ -583,7 +595,7 @@ test("无效 cursor 不会把正常世界文档误授权为可覆盖的损坏文
     ]),
   ).toMatchObject([{ isError: true }]);
   expect(
-    draft.execute([
+    transaction.execute([
       {
         id: "unauthorized-write",
         name: "setting_write_file",
@@ -602,14 +614,14 @@ test("无效 cursor 不会把正常世界文档误授权为可覆盖的损坏文
 function productionPreview(snapshot: WorldDocumentStore): PromptPreview {
   const playPreset = builtinDefaultPlayPresetBinding("en");
   const compiler = new FileNativePromptCompiler({ locale: "en" });
-  const openingMessage = "setting-draft.message.genesis.narrator";
+  const openingMessage = "setting-transaction.message.genesis.narrator";
   const opening = snapshot.files.find(({ path }) => path === "opening.md");
   return compiler.preview(
     {
-      endpoint: { id: "setting-draft", commit: "draft" },
+      endpoint: { id: "setting-authoring", commit: "current-tree" },
       hostBinding: presetHostBinding(playPreset),
       world: {
-        controlFingerprint: "setting-draft",
+        controlFingerprint: "setting-authoring",
         documentSnapshot: snapshot,
         history: { [openingMessage]: opening?.contents ?? "" },
         additionalMaterials: [
@@ -617,7 +629,7 @@ function productionPreview(snapshot: WorldDocumentStore): PromptPreview {
         ],
       },
       playerInputPlacement: "append",
-      playerInput: "Preview the setting draft.",
+      playerInput: "Preview the setting transaction.",
       modelBinding: {
         provider: "chat_completions",
         modelId: "preview-model",

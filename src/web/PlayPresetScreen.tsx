@@ -1326,7 +1326,7 @@ function SettingImprovementPromptEditor({
         <strong>{uiText("工具为什么不在这里？")}</strong>
         <p>
           {uiText(
-            "Runtime 继续内置 setting_* 工具定义、参数、说明、只读／写入阶段边界和候选终态协议。预设只能编辑创作语义，不能替换这些机械契约。",
+            "Runtime 继续内置 setting_* 工具定义、参数、说明和当前树直接结算协议。预设只能编辑创作语义，不能替换这些机械契约。",
           )}
         </p>
       </div>

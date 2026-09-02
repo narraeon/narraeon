@@ -104,33 +104,36 @@ export class V1Runtime {
       compiler: this.#compiler,
     });
     this.#settingImprovements = new SettingImprovementSession({
-      store: new FileNativeSettingImprovementStore(input.dataRoot),
+      store: new FileNativeSettingImprovementStore(input.dataRoot, {
+        content: this.#content,
+      }),
       content: this.#content,
       compiler: this.#compiler,
       locale: () => this.#locale,
       bindModelHost: () => this.#modelHost(),
+      bindExistingModelHost: (binding) => this.#matchingModelHost(binding),
       bindPlayPreset: () => this.#playPresets.freeze(),
       preview: (snapshot, modelBinding, playPreset) =>
         this.#compiler.preview(
           {
-            endpoint: { id: "setting-draft", commit: "draft" },
+            endpoint: { id: "setting-authoring", commit: "current-tree" },
             hostBinding:
               playPreset === undefined
                 ? {
-                    hostPresetId: "legacy-setting-draft",
+                    hostPresetId: "legacy-setting-authoring",
                     files: defaultSettingPreviewHost(),
                   }
                 : presetHostBinding(playPreset),
             world: previewWorld(
               snapshot,
-              "setting-draft.message.genesis.narrator",
-              "setting-draft",
+              "setting-authoring.message.genesis.narrator",
+              "setting-authoring",
             ),
             playerInputPlacement: "append",
             playerInput:
               this.#locale === "zh-CN"
-                ? "预览设定草稿。"
-                : "Preview the setting draft.",
+                ? "检查内容包当前树。"
+                : "Inspect the content package current tree.",
             modelBinding,
           },
           playPreset,
@@ -240,17 +243,22 @@ export class V1Runtime {
       }
       case "setting-improvement.read":
         return this.#settingImprovements.read(request.packageId);
+      case "setting-improvement.status":
+        return this.#settingImprovements.status(
+          request.packageId,
+          request.sessionId,
+        );
+      case "setting-improvement.overview":
+        return this.#settingImprovements.overview(request.packageId);
+      case "setting-improvement.session.read":
+        return this.#settingImprovements.readSession(
+          request.packageId,
+          request.sessionId,
+        );
       case "setting-improvement.message":
         return this.#settingImprovements.send(request);
       case "setting-improvement.cancel":
         return this.#settingImprovements.cancel(request.sessionId);
-      case "setting-improvement.apply":
-        return this.#settingImprovements.apply(
-          request.sessionId,
-          request.expectedDraftVersion,
-        );
-      case "setting-improvement.discard":
-        return this.#settingImprovements.discard(request.sessionId);
       case "play.read":
         return this.#playPresets.list();
       case "play.create":
@@ -632,6 +640,16 @@ export class V1Runtime {
   async #modelHost(): Promise<FileNativeModelHost> {
     return new FileNativeModelHost(
       await this.#models.bind(),
+      fetch,
+      this.#failureLog,
+    );
+  }
+
+  async #matchingModelHost(
+    binding: ModelHostBinding,
+  ): Promise<FileNativeModelHost> {
+    return new FileNativeModelHost(
+      await this.#models.bindMatching(binding),
       fetch,
       this.#failureLog,
     );

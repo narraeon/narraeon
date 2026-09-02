@@ -1,30 +1,26 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, expect, test } from "vitest";
 
 import { ContentWorkspace } from "../../src/runtime/content/ContentWorkspace.ts";
-import { FileNativeModelHost } from "../../src/runtime/model/FileNativeModelAdapters.ts";
+import { contentTreeFingerprint } from "../../src/runtime/content/ContentTreeFingerprint.ts";
 import {
   ScriptedModelHost,
   type ModelHost,
   type ModelHostBinding,
   type ScriptedModelHostStep,
 } from "../../src/runtime/model/ModelHost.ts";
-import { FileNativePromptCompiler } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
 import {
   builtinDefaultPlayPresetBinding,
-  parsePlayPresetFiles,
   presetHostBinding,
-  revisionForPlayPresetFiles,
   type PlayPresetBinding,
 } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
+import { FileNativePromptCompiler } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
 import { FileNativeSettingImprovementStore } from "../../src/runtime/setting/FileNativeSettingImprovementStore.ts";
-import {
-  SettingImprovementSession,
-  contentFingerprint,
-} from "../../src/runtime/setting/SettingImprovementSession.ts";
+import { SettingAuthoringTransaction } from "../../src/runtime/setting/SettingAuthoringTransaction.ts";
+import { SettingImprovementSession } from "../../src/runtime/setting/SettingImprovementSession.ts";
 
 const roots: string[] = [];
 
@@ -44,11 +40,12 @@ const binding: ModelHostBinding = {
   cacheStrategy: "provider_managed",
 };
 
-test("普通消息直接形成持久对话；首轮工具全集不随讨论或修改意图变化", async () => {
+test("全新上下文创建持久对话，普通回复不产生候选或快照", async () => {
   const fixture = await createFixture([
     {
       outcome: "response",
-      text: "我们可以先梳理人物关系，不需要现在修改文件。",
+      text: "We can discuss the relationships before editing.",
+      reasoningContent: "Provider-visible reasoning",
       toolCalls: [],
     },
   ]);
@@ -57,19 +54,28 @@ test("普通消息直接形成持久对话；首轮工具全集不随讨论或�
     "Harbor Letters",
   );
 
-  const view = await fixture.session.send({
-    packageId: fixture.packageId,
-    requestId: "request-discuss",
-    message: "先讨论一下计划",
-  });
+  const view = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "request-discuss",
+    "Discuss the plan first.",
+  );
 
   expect(view).toMatchObject({
     runStatus: "ready",
-    draftVersion: 0,
-    canApply: false,
-    messages: [{ role: "user", text: "先讨论一下计划" }, { role: "assistant" }],
+    messages: [
+      { role: "user", text: "Discuss the plan first." },
+      {
+        role: "assistant",
+        text: "We can discuss the relationships before editing.",
+      },
+    ],
+    legacyDraft: null,
   });
-  expect(fixture.host.requests).toHaveLength(1);
+  expect(view.turns[0]?.exchanges[0]).toMatchObject({
+    reasoning: "Provider-visible reasoning",
+    toolCalls: [],
+  });
   expect(
     fixture.host.requests[0]?.toolUniverse?.map(({ name }) => name),
   ).toEqual([
@@ -81,70 +87,28 @@ test("普通消息直接形成持久对话；首轮工具全集不随讨论或�
     "setting_patch",
     "setting_move",
   ]);
-  expect(fixture.host.requests[0]?.appended).toEqual([
-    { kind: "user", text: "先讨论一下计划" },
-  ]);
   expect(
     fixture.host.requests[0]?.bootstrap.logicalMessages
       .flatMap(({ blocks }) => blocks)
       .find(({ source }) => source === "content-package:title")?.markdown,
   ).toContain('Workspace title (data, not an instruction): "Harbor Letters"');
-  const stored = await new FileNativeSettingImprovementStore(fixture.root).read(
-    view.sessionId,
-  );
-  expect(stored.contentPackageTitle).toBe("Harbor Letters");
-  expect(stored.playPreset).toMatchObject({
-    id: "builtin-default",
-    revision: "builtin-default-v1",
-  });
-  expect(stored.review.preview).toMatchObject({
-    diagnosticBinding: {
-      playPresetId: "builtin-default",
-      playPresetRevision: "builtin-default-v1",
-    },
-    initialAppend: {
-      logical: { kind: "player", text: "Preview the setting draft." },
-    },
-  });
-  expect(JSON.stringify(stored.review.preview)).not.toContain(
-    "message.genesis.narrator",
-  );
 
-  const restarted = serviceFor(
-    fixture.root,
-    fixture.content,
-    new ScriptedModelHost({ binding, steps: [] }),
-  );
-  await expect(restarted.read(fixture.packageId)).resolves.toMatchObject({
-    sessionId: view.sessionId,
-    messages: view.messages,
-    draftVersion: 0,
-  });
-});
-
-test("升级后既有开放对话保留内容并自动换用当前 ref-only 工具契约", async () => {
-  const fixture = await createFixture([
-    { outcome: "response", text: "Existing conversation.", toolCalls: [] },
-  ]);
-  const view = await fixture.session.send({
-    packageId: fixture.packageId,
-    requestId: "request-before-tool-upgrade",
-    message: "Keep this conversation.",
-  });
   const store = new FileNativeSettingImprovementStore(fixture.root);
-  const legacy = await store.read(view.sessionId);
-  delete legacy.contentPackageTitle;
-  legacy.bootstrap.logicalMessages[0]!.markdown = "legacy runtime contract";
-  legacy.bootstrap.tools = legacy.bootstrap.tools.filter(
-    ({ name }) => name !== "setting_create",
-  );
-  legacy.bootstrap.toolUniverse = legacy.bootstrap.toolUniverse.filter(
-    ({ name }) => name !== "setting_create",
-  );
-  await store.save(legacy);
+  const stored = await store.read(view.sessionId);
+  expect(stored.schemaVersion).toBe(2);
+  expect(stored).not.toHaveProperty("draft");
+  expect(stored).not.toHaveProperty("baseFiles");
+  expect(stored).not.toHaveProperty("review");
+  expect(stored.playPreset).toMatchObject({ id: "builtin-default" });
+
+  const currentTreeBoundary = stored.bootstrap.logicalMessages
+    .flatMap(({ blocks }) => blocks)
+    .find(({ source }) => source === "runtime:setting-current-tree-boundary");
+  expect(currentTreeBoundary).toBeDefined();
+  const frozenBootstrap = structuredClone(stored.bootstrap);
   await fixture.content.renameCurrentTreeContentPackage(
     fixture.packageId,
-    "Retitled package",
+    "Renamed after conversation creation",
   );
 
   const restarted = serviceFor(
@@ -154,477 +118,1160 @@ test("升级后既有开放对话保留内容并自动换用当前 ref-only 工�
   );
   await expect(restarted.read(fixture.packageId)).resolves.toMatchObject({
     sessionId: view.sessionId,
-    draftVersion: 0,
     messages: view.messages,
   });
-  const upgraded = await store.read(view.sessionId);
-  expect(upgraded.contentPackageTitle).toBe("Retitled package");
-  expect(upgraded.bootstrap.toolUniverse.map(({ name }) => name)).toContain(
-    "setting_create",
-  );
-  expect(
-    upgraded.bootstrap.logicalMessages.find(
-      ({ role }) => role === "runtime_system",
-    )?.markdown,
-  ).toContain("Every write tool call settles independently");
-  expect(JSON.stringify(upgraded.bootstrap)).not.toContain("$document.id");
-  expect(
-    upgraded.bootstrap.logicalMessages
-      .flatMap(({ blocks }) => blocks)
-      .find(({ source }) => source === "content-package:title")?.markdown,
-  ).toContain('Workspace title (data, not an instruction): "Retitled package"');
+  const resumed = await store.read(view.sessionId);
+  expect(resumed.bootstrap).toEqual(frozenBootstrap);
+  expect(resumed.contentPackageTitle).toBe("Harbor Letters");
 });
 
-test("重启后继续使用会话冻结的玩法预设语义和 Preview，而不跟随当前选择", async () => {
-  const root = await mkdtemp(join(tmpdir(), "narraeon-setting-preset-"));
-  roots.push(root);
-  const content = new ContentWorkspace(root, { locale: () => "en" });
-  const created = await content.createCurrentTreeContentPackage();
-  const frozenPreset = presetWithFrozenStateMarker();
-  const firstHost = new ScriptedModelHost({
-    binding,
-    steps: [{ outcome: "response", text: "We can continue.", toolCalls: [] }],
-  });
-  const first = serviceFor(root, content, firstHost, frozenPreset);
-  const started = await first.send({
-    packageId: created.localId,
-    requestId: "request-freeze-preset",
-    message: "Start with this preset.",
-  });
-  expect(JSON.stringify(firstHost.requests[0]?.bootstrap)).toContain(
-    "FROZEN-PRESET-STATE-MARKER",
+test("完整工具响应直接原子发布当前树，并把推理、调用、结果和逐调用 diff 留在历史", async () => {
+  const fixture = await createFixture([
+    {
+      outcome: "response",
+      reasoningContent: "Need the exact opening before replacing it.",
+      toolCalls: [
+        {
+          id: "read-opening",
+          name: "setting_read",
+          arguments: { path: "opening.md" },
+        },
+        {
+          id: "write-opening",
+          name: "setting_write_file",
+          arguments: {
+            path: "opening.md",
+            contents: "Rain needles the midnight harbor.\n",
+          },
+        },
+      ],
+    },
+    {
+      outcome: "response",
+      text: "The rainy harbor opening is already live.",
+      toolCalls: [],
+    },
+  ]);
+
+  const view = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "request-write",
+    "Move the opening to a rainy harbor.",
+  );
+  const package_ = await fixture.content.readCurrentTreeContentPackage(
+    fixture.packageId,
   );
 
-  const nextHost = new ScriptedModelHost({
+  expect(
+    package_.files.find(({ path }) => path === "opening.md")?.contents,
+  ).toBe("Rain needles the midnight harbor.\n");
+  expect(view.turns[0]?.exchanges[0]).toMatchObject({
+    reasoning: "Need the exact opening before replacing it.",
+    toolCalls: [
+      { callId: "read-opening", result: { isError: false, changes: [] } },
+      {
+        callId: "write-opening",
+        result: {
+          isError: false,
+          changes: [
+            {
+              path: "opening.md",
+              kind: "modify",
+              after: "Rain needles the midnight harbor.\n",
+            },
+          ],
+        },
+      },
+    ],
+  });
+  expect(view.turns[0]?.exchanges[0]?.toolCalls[1]?.result?.markdown).toContain(
+    "Current-tree review passed",
+  );
+  expect(view.messages.at(-1)?.text).toContain("already live");
+});
+
+test("默认可继续精确历史上下文，显式全新上下文创建第二段对话", async () => {
+  const fixture = await createFixture([
+    { outcome: "response", text: "First answer.", toolCalls: [] },
+    { outcome: "response", text: "Fresh answer.", toolCalls: [] },
+    { outcome: "response", text: "Continued first answer.", toolCalls: [] },
+  ]);
+  const first = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "request-first",
+    "First context",
+  );
+  const fresh = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "request-fresh",
+    "Fresh context",
+  );
+  expect(fresh.sessionId).not.toBe(first.sessionId);
+
+  const resumed = await fixture.session.send({
+    packageId: fixture.packageId,
+    requestId: "request-resume-first",
+    message: "Continue the first context",
+    continuation: { kind: "continue_context", sessionId: first.sessionId },
+  });
+  expect(resumed.sessionId).toBe(first.sessionId);
+  expect(resumed.messages.map(({ text }) => text)).toEqual([
+    "First context",
+    "First answer.",
+    "Continue the first context",
+    "Continued first answer.",
+  ]);
+  expect(fixture.host.requests[2]?.appended).toEqual(
+    expect.arrayContaining([
+      { kind: "user", text: "First context" },
+      expect.objectContaining({ kind: "assistant", text: "First answer." }),
+      { kind: "user", text: "Continue the first context" },
+    ]),
+  );
+
+  const overview = await fixture.session.overview(fixture.packageId);
+  expect(overview.latest?.sessionId).toBe(first.sessionId);
+  expect(overview.history.map(({ sessionId }) => sessionId)).toEqual([
+    first.sessionId,
+    fresh.sessionId,
+  ]);
+  await expect(
+    fixture.session.readSession(fixture.packageId, fresh.sessionId),
+  ).resolves.toMatchObject({ sessionId: fresh.sessionId });
+});
+
+test("另一个对话改动当前树后，旧对话的读取授权失效并要求重新读取", async () => {
+  const fixture = await createFixture([
+    {
+      outcome: "response",
+      toolCalls: [
+        {
+          id: "a-read-opening",
+          name: "setting_read",
+          arguments: { path: "opening.md" },
+        },
+      ],
+    },
+    { outcome: "response", text: "I read it.", toolCalls: [] },
+    {
+      outcome: "response",
+      toolCalls: [
+        {
+          id: "b-read-opening",
+          name: "setting_read",
+          arguments: { path: "opening.md" },
+        },
+        {
+          id: "b-write-opening",
+          name: "setting_write_file",
+          arguments: { path: "opening.md", contents: "Changed by B.\n" },
+        },
+      ],
+    },
+    { outcome: "response", text: "B changed it.", toolCalls: [] },
+    {
+      outcome: "response",
+      toolCalls: [
+        {
+          id: "a-stale-write",
+          name: "setting_write_file",
+          arguments: { path: "opening.md", contents: "Stale A write.\n" },
+        },
+      ],
+    },
+    { outcome: "response", text: "I need to reread it.", toolCalls: [] },
+  ]);
+  const conversationA = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "request-a-read",
+    "Read the opening",
+  );
+  await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "request-b-write",
+    "Change the opening",
+  );
+  const resumedA = await fixture.session.send({
+    packageId: fixture.packageId,
+    requestId: "request-a-stale-write",
+    message: "Now replace it without reading again",
+    continuation: {
+      kind: "continue_context",
+      sessionId: conversationA.sessionId,
+    },
+  });
+
+  expect(
+    resumedA.turns.at(-1)?.exchanges[0]?.toolCalls[0]?.result,
+  ).toMatchObject({ isError: true, changes: [] });
+  expect(
+    resumedA.turns.at(-1)?.exchanges[0]?.toolCalls[0]?.result?.markdown,
+  ).toContain("Read opening.md completely before replacing it");
+  const package_ = await fixture.content.readCurrentTreeContentPackage(
+    fixture.packageId,
+  );
+  expect(
+    package_.files.find(({ path }) => path === "opening.md")?.contents,
+  ).toBe("Changed by B.\n");
+});
+
+test("全新上下文的 requestId 可幂等重试且不会创建重复历史", async () => {
+  const fixture = await createFixture([
+    { outcome: "response", text: "Only once.", toolCalls: [] },
+  ]);
+  const first = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "request-idempotent",
+    "Only once",
+  );
+  const retry = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "request-idempotent",
+    "Only once",
+  );
+  expect(retry.sessionId).toBe(first.sessionId);
+  expect(fixture.host.requests).toHaveLength(1);
+  expect(
+    (await fixture.session.overview(fixture.packageId)).history,
+  ).toHaveLength(1);
+});
+
+test("完整工具响应若缺少原树结算意图，恢复会失败关闭而不在更新的树上重放", async () => {
+  const fixture = await createFixture([
+    { outcome: "response", text: "Seed response.", toolCalls: [] },
+  ]);
+  const view = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "request-unconfirmed-seed",
+    "Seed a conversation",
+  );
+  const store = new FileNativeSettingImprovementStore(fixture.root);
+  const damaged = await store.read(view.sessionId);
+  const seedAssistant = damaged.modelItems.find(
+    (item) => item.kind === "assistant",
+  );
+  if (
+    seedAssistant?.kind !== "assistant" ||
+    seedAssistant.providerState === undefined
+  )
+    throw new Error("Seed response did not retain Provider continuation state");
+  const now = Date.now();
+  damaged.messages.push({
+    id: "message-unconfirmed-tool-step",
+    role: "user",
+    text: "Replace the opening",
+    createdAt: now,
+  });
+  damaged.modelItems.push(
+    { kind: "user", text: "Replace the opening" },
+    {
+      kind: "assistant",
+      text: "",
+      providerState: seedAssistant.providerState,
+      toolCalls: [
+        {
+          id: "unconfirmed-write",
+          name: "setting_write_file",
+          arguments: {
+            path: "opening.md",
+            contents: "Must never be replayed.\n",
+          },
+        },
+      ],
+    },
+  );
+  damaged.runStatus = "running";
+  damaged.activeRequestId = "request-unconfirmed-write";
+  damaged.pendingSettlement = null;
+  damaged.updatedAt = now;
+  await store.save(damaged);
+
+  const current = await fixture.content.readCurrentTreeContentPackage(
+    fixture.packageId,
+  );
+  await fixture.content.replaceCurrentTreeContentPackage(
+    fixture.packageId,
+    current.files.map((file) =>
+      file.path === "opening.md"
+        ? { ...file, contents: "Newer current-tree edit.\n" }
+        : file,
+    ),
+  );
+
+  const recovered = await serviceFor(
+    fixture.root,
+    fixture.content,
+    new ScriptedModelHost({ binding, steps: [] }),
+  ).readSession(fixture.packageId, view.sessionId);
+  expect(
+    (
+      await fixture.content.readCurrentTreeContentPackage(fixture.packageId)
+    ).files.find(({ path }) => path === "opening.md")?.contents,
+  ).toBe("Newer current-tree edit.\n");
+  expect(recovered.turns.at(-1)?.exchanges[0]?.toolCalls[0]).toMatchObject({
+    callId: "unconfirmed-write",
+    result: {
+      isError: true,
+      changes: [],
+    },
+  });
+  expect(
+    recovered.turns.at(-1)?.exchanges[0]?.toolCalls[0]?.result?.markdown,
+  ).toContain("without the persisted current-tree revision");
+  expect((await store.read(view.sessionId)).pendingSettlement).toBeNull();
+});
+
+test("完整工具响应和原树指纹落盘后，重启只在该 revision 上继续结算", async () => {
+  const fixture = await createFixture([
+    { outcome: "response", text: "Seed response.", toolCalls: [] },
+  ]);
+  const view = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "request-confirmed-seed",
+    "Seed a conversation",
+  );
+  const store = new FileNativeSettingImprovementStore(fixture.root);
+  const confirmed = await store.read(view.sessionId);
+  const seedAssistant = confirmed.modelItems.find(
+    (item) => item.kind === "assistant",
+  );
+  if (
+    seedAssistant?.kind !== "assistant" ||
+    seedAssistant.providerState === undefined
+  )
+    throw new Error("Seed response did not retain Provider continuation state");
+  const files = (
+    await fixture.content.readCurrentTreeContentPackage(fixture.packageId)
+  ).files;
+  const now = Date.now();
+  confirmed.messages.push({
+    id: "message-confirmed-tool-step",
+    role: "user",
+    text: "Replace the opening",
+    createdAt: now,
+  });
+  confirmed.modelItems.push({ kind: "user", text: "Replace the opening" });
+  const assistantItemIndex = confirmed.modelItems.length;
+  confirmed.modelItems.push({
+    kind: "assistant",
+    text: "",
+    providerState: seedAssistant.providerState,
+    toolCalls: [
+      {
+        id: "confirmed-read",
+        name: "setting_read",
+        arguments: { path: "opening.md" },
+      },
+      {
+        id: "confirmed-write",
+        name: "setting_write_file",
+        arguments: {
+          path: "opening.md",
+          contents: "Recovered from confirmed response.\n",
+        },
+      },
+    ],
+  });
+  confirmed.runStatus = "running";
+  confirmed.activeRequestId = "request-confirmed-tool-step";
+  confirmed.pendingSettlement = {
+    phase: "response_confirmed",
+    assistantItemIndex,
+    beforeFingerprint: contentTreeFingerprint(files),
+  };
+  confirmed.updatedAt = now;
+  await store.save(confirmed);
+
+  const recovered = await serviceFor(
+    fixture.root,
+    fixture.content,
+    new ScriptedModelHost({ binding, steps: [] }),
+  ).readSession(fixture.packageId, view.sessionId);
+  expect(
+    (
+      await fixture.content.readCurrentTreeContentPackage(fixture.packageId)
+    ).files.find(({ path }) => path === "opening.md")?.contents,
+  ).toBe("Recovered from confirmed response.\n");
+  expect(recovered.turns.at(-1)?.exchanges[0]?.toolCalls[1]).toMatchObject({
+    callId: "confirmed-write",
+    result: {
+      isError: false,
+      changes: [
+        { path: "opening.md", after: "Recovered from confirmed response.\n" },
+      ],
+    },
+  });
+  expect((await store.read(view.sessionId)).pendingSettlement).toBeNull();
+});
+
+test("发布前中断留下结算意图；重启只重放完整工具响应并补齐收据", async () => {
+  const root = await temporaryRoot("narraeon-setting-recovery-");
+  let failPublish = true;
+  const interruptedContent = new ContentWorkspace(root, {
+    locale: () => "en",
+    currentTree: {
+      beforeCurrentTreeReplace: () => {
+        if (!failPublish) return;
+        failPublish = false;
+        throw new Error("simulated crash before current-tree publish");
+      },
+    },
+  });
+  const created = await interruptedContent.createCurrentTreeContentPackage();
+  const host = new ScriptedModelHost({
     binding,
     steps: [
       {
         outcome: "response",
         toolCalls: [
           {
-            id: "create-recovery-lore",
-            name: "setting_create",
-            arguments: {
-              path: "world/lore/recovery.md",
-              ref: "recovery",
-              title: "Recovery",
-              summary: "Confirms the frozen preset survives restart.",
-              aliases: [],
-              body: "# Recovery\n\nStill frozen.\n",
-            },
+            id: "read-before-crash",
+            name: "setting_read",
+            arguments: { path: "opening.md" },
+          },
+          {
+            id: "write-before-crash",
+            name: "setting_write_file",
+            arguments: { path: "opening.md", contents: "Recovered change.\n" },
           },
         ],
       },
-      { outcome: "response", text: "The draft is updated.", toolCalls: [] },
     ],
   });
-  const restartedWithDifferentCurrentPreset = serviceFor(
-    root,
-    content,
-    nextHost,
-    builtinDefaultPlayPresetBinding("en"),
+  const interrupted = serviceFor(root, interruptedContent, host);
+  const failed = await sendFresh(
+    interrupted,
+    created.localId,
+    "request-crash",
+    "Change the opening",
   );
-  const continued = await restartedWithDifferentCurrentPreset.send({
-    packageId: created.localId,
-    requestId: "request-after-preset-change",
-    message: "Add one recovery note.",
-  });
+  expect(failed.runStatus).toBe("interrupted");
+  const pending = await new FileNativeSettingImprovementStore(root).read(
+    failed.sessionId,
+  );
+  expect(pending.pendingSettlement).not.toBeNull();
 
-  expect(continued.sessionId).toBe(started.sessionId);
-  expect(JSON.stringify(nextHost.requests[0]?.bootstrap)).toContain(
-    "FROZEN-PRESET-STATE-MARKER",
+  const recoveredContent = new ContentWorkspace(root, { locale: () => "en" });
+  const restarted = serviceFor(
+    root,
+    recoveredContent,
+    new ScriptedModelHost({ binding, steps: [] }),
   );
-  expect(continued.review.preview?.diagnosticBinding).toMatchObject({
-    playPresetId: frozenPreset.id,
-    playPresetRevision: frozenPreset.revision,
+  const recovered = await restarted.readSession(
+    created.localId,
+    failed.sessionId,
+  );
+  expect(recovered.runStatus).toBe("interrupted");
+  const recoveredCalls = recovered.turns[0]?.exchanges[0]?.toolCalls;
+  expect(recoveredCalls?.[0]).toMatchObject({
+    callId: "read-before-crash",
+    result: { isError: false },
   });
+  expect(recoveredCalls?.[1]).toMatchObject({
+    callId: "write-before-crash",
+    result: {
+      isError: false,
+      changes: [{ path: "opening.md" }],
+    },
+  });
+  const package_ = await recoveredContent.readCurrentTreeContentPackage(
+    created.localId,
+  );
+  expect(
+    package_.files.find(({ path }) => path === "opening.md")?.contents,
+  ).toBe("Recovered change.\n");
+  expect(
+    (await new FileNativeSettingImprovementStore(root).read(failed.sessionId))
+      .pendingSettlement,
+  ).toBeNull();
 });
 
-test("工具响应更新隔离草稿、自动检查，再由用户精确版本 Apply", async () => {
-  const fixture = await createFixture([
-    {
-      outcome: "response",
-      text: "",
-      toolCalls: [
+test("当前树已发布但收据未落盘时，重启确认既有结算而不重复发布", async () => {
+  const root = await temporaryRoot("narraeon-setting-after-publish-");
+  let interruptPublish = true;
+  const interruptedContent = new ContentWorkspace(root, {
+    locale: () => "en",
+    currentTree: {
+      beforeCurrentTreeReplace: () => {
+        if (!interruptPublish) return;
+        interruptPublish = false;
+        throw new Error("simulated crash after settlement intent");
+      },
+    },
+  });
+  const created = await interruptedContent.createCurrentTreeContentPackage();
+  const interrupted = serviceFor(
+    root,
+    interruptedContent,
+    new ScriptedModelHost({
+      binding,
+      steps: [
         {
-          id: "read-opening",
-          name: "setting_read",
-          arguments: { path: "opening.md" },
-        },
-        {
-          id: "write-opening",
-          name: "setting_write_file",
-          arguments: {
-            path: "opening.md",
-            contents:
-              "Rain needles the night wharf. A ferryman raises his lamp.",
-          },
+          outcome: "response",
+          toolCalls: [
+            {
+              id: "read-published-opening",
+              name: "setting_read",
+              arguments: { path: "opening.md" },
+            },
+            {
+              id: "write-published-opening",
+              name: "setting_write_file",
+              arguments: {
+                path: "opening.md",
+                contents: "Already published change.\n",
+              },
+            },
+          ],
         },
       ],
-    },
-    {
-      outcome: "response",
-      text: "已经把开场改成雨夜码头，草稿检查通过。",
-      toolCalls: [],
-    },
-  ]);
-  const before = await fixture.content.readCurrentTreeContentPackage(
-    fixture.packageId,
+    }),
+  );
+  const failed = await sendFresh(
+    interrupted,
+    created.localId,
+    "request-after-publish",
+    "Change the opening",
+  );
+  const store = new FileNativeSettingImprovementStore(root);
+  const pending = await store.read(failed.sessionId);
+  expect(pending.pendingSettlement).not.toBeNull();
+
+  const before = await interruptedContent.readCurrentTreeContentPackage(
+    created.localId,
+  );
+  await interruptedContent.replaceCurrentTreeContentPackage(
+    created.localId,
+    before.files.map((file) =>
+      file.path === "opening.md"
+        ? { ...file, contents: "Already published change.\n" }
+        : file,
+    ),
   );
 
-  const view = await fixture.session.send({
-    packageId: fixture.packageId,
-    requestId: "request-write",
-    message: "直接把开场改成雨夜码头",
-  });
-
-  expect(view).toMatchObject({
-    runStatus: "ready",
-    draftVersion: 1,
-    canApply: true,
-    review: {
-      status: "usable",
-      diff: [{ path: "opening.md", kind: "modify" }],
+  let repeatedPublish = false;
+  const recoveredContent = new ContentWorkspace(root, {
+    locale: () => "en",
+    currentTree: {
+      beforeCurrentTreeReplace: () => {
+        repeatedPublish = true;
+        throw new Error("recovery must not publish an already-current tree");
+      },
     },
   });
-  expect(fixture.host.requests).toHaveLength(2);
-  expect(
-    fixture.host.requests[1]?.appended.filter(({ kind }) => kind === "tool"),
-  ).toHaveLength(2);
-  expect(
-    (await fixture.content.readCurrentTreeContentPackage(fixture.packageId))
-      .files,
-  ).toEqual(before.files);
+  const recovered = await serviceFor(
+    root,
+    recoveredContent,
+    new ScriptedModelHost({ binding, steps: [] }),
+  ).readSession(created.localId, failed.sessionId);
 
-  const applied = await fixture.session.apply(
-    view.sessionId,
-    view.draftVersion,
-  );
-  expect(applied.lifecycle).toBe("applied");
-  expect(
-    (
-      await fixture.content.readCurrentTreeContentPackage(fixture.packageId)
-    ).files.find(({ path }) => path === "opening.md")?.contents,
-  ).toContain("night wharf");
-  await expect(
-    fixture.session.apply(view.sessionId, view.draftVersion),
-  ).resolves.toMatchObject({ lifecycle: "applied" });
+  expect(repeatedPublish).toBe(false);
+  expect(recovered.turns[0]?.exchanges[0]?.toolCalls[1]).toMatchObject({
+    callId: "write-published-opening",
+    result: {
+      isError: false,
+      changes: [{ path: "opening.md", after: "Already published change.\n" }],
+    },
+  });
+  expect((await store.read(failed.sessionId)).pendingSettlement).toBeNull();
 });
 
-test("Provider 失败不会删除会话或最后完整草稿，重启后可继续发普通消息", async () => {
-  const fixture = await createFixture([
-    { outcome: "failure", message: "Anthropic SSE content block did not end" },
-  ]);
-  const failed = await fixture.session.send({
-    packageId: fixture.packageId,
-    requestId: "request-broken-stream",
-    message: "继续完善",
+test("当前树限制只拒绝越界调用，不回滚同响应中已接受的写入", async () => {
+  const root = await temporaryRoot("narraeon-setting-limit-rejection-");
+  const content = new ContentWorkspace(root, {
+    locale: () => "en",
+    limits: { maxFileBytes: 1_024, maxTotalBytes: 8_192 },
   });
-  expect(failed).toMatchObject({
-    runStatus: "interrupted",
-    draftVersion: 0,
-    lastFailure: "Anthropic SSE content block did not end",
-    messages: [{ role: "user", text: "继续完善" }],
-  });
-
-  const nextHost = new ScriptedModelHost({
+  const created = await content.createCurrentTreeContentPackage();
+  const openingBefore = (
+    await content.readCurrentTreeContentPackage(created.localId)
+  ).files.find(({ path }) => path === "opening.md")!.contents;
+  const host = new ScriptedModelHost({
     binding,
     steps: [
       {
         outcome: "response",
-        text: "上次回复中断了；草稿没有丢，我们可以从这里继续。",
+        toolCalls: [
+          {
+            id: "read-before-oversized-write",
+            name: "setting_read",
+            arguments: { path: "opening.md" },
+          },
+          {
+            id: "accepted-write",
+            name: "setting_write_file",
+            arguments: {
+              path: "opening.md",
+              contents: "Accepted sibling change.\n",
+            },
+          },
+          {
+            id: "oversized-write",
+            name: "setting_write_file",
+            arguments: { path: "opening.md", contents: "x".repeat(1_100) },
+          },
+        ],
+      },
+      {
+        outcome: "response",
+        text: "The valid edit is live; the oversized sibling was rejected.",
         toolCalls: [],
       },
     ],
   });
-  const restarted = serviceFor(fixture.root, fixture.content, nextHost);
-  await expect(restarted.read(fixture.packageId)).resolves.toMatchObject({
-    sessionId: failed.sessionId,
-    runStatus: "interrupted",
-    draftVersion: 0,
-  });
-  const continued = await restarted.send({
-    packageId: fixture.packageId,
-    requestId: "request-after-restart",
-    message: "那就继续",
-  });
-  expect(continued).toMatchObject({
-    runStatus: "ready",
-    messages: [
-      { role: "user" },
-      { role: "user", text: "那就继续" },
-      { role: "assistant" },
-    ],
-  });
-});
-
-test("真实共享 ModelHost 的 Anthropic 未闭合 content block 不执行草稿工具", async () => {
-  const root = await mkdtemp(join(tmpdir(), "narraeon-setting-anthropic-sse-"));
-  roots.push(root);
-  const content = new ContentWorkspace(root, { locale: () => "en" });
-  const created = await content.createCurrentTreeContentPackage();
-  const before = await content.readCurrentTreeContentPackage(created.localId);
-  const event = (name: string, value: unknown): string =>
-    `event: ${name}\ndata: ${JSON.stringify(value)}\n\n`;
-  const fetch_ = vi.fn<typeof fetch>().mockResolvedValue(
-    new Response(
-      [
-        event("message_start", {
-          type: "message_start",
-          message: {
-            id: "incomplete-setting-response",
-            role: "assistant",
-            model: "claude-test",
-            content: [],
-            usage: { input_tokens: 1, output_tokens: 1 },
-          },
-        }),
-        event("content_block_start", {
-          type: "content_block_start",
-          index: 0,
-          content_block: {
-            type: "tool_use",
-            id: "partial-write",
-            name: "setting_write_file",
-            input: {},
-          },
-        }),
-        event("content_block_delta", {
-          type: "content_block_delta",
-          index: 0,
-          delta: {
-            type: "input_json_delta",
-            partial_json:
-              '{"path":"opening.md","contents":"must not be applied"}',
-          },
-        }),
-        event("message_delta", {
-          type: "message_delta",
-          delta: { stop_reason: "tool_use", stop_sequence: null },
-          usage: { output_tokens: 4 },
-        }),
-        event("message_stop", { type: "message_stop" }),
-      ].join(""),
-      { status: 200, headers: { "content-type": "text/event-stream" } },
-    ),
+  const view = await sendFresh(
+    serviceFor(root, content, host),
+    created.localId,
+    "request-oversized-write",
+    "Replace the opening with a very long draft",
   );
-  const host = new FileNativeModelHost(
-    {
-      provider: "anthropic_messages",
-      baseUrl: "https://provider.invalid/v1",
-      apiKey: "secret",
-      modelId: "claude-test",
-      contextWindowTokens: 32_000,
-      maxOutputTokens: 4_096,
-    },
-    fetch_,
-  );
-  const session = serviceFor(root, content, host);
 
-  await expect(
-    session.send({
-      packageId: created.localId,
-      requestId: "request-incomplete-anthropic",
-      message: "修改开场",
-    }),
-  ).resolves.toMatchObject({
-    runStatus: "interrupted",
-    draftVersion: 0,
-    review: { diff: [] },
-    lastFailure:
-      "Anthropic Messages was dispatched but its streaming response could not be confirmed",
-  });
-  expect(fetch_).toHaveBeenCalledOnce();
+  expect(openingBefore).not.toBe("Accepted sibling change.\n");
   expect(
-    (await content.readCurrentTreeContentPackage(created.localId)).files,
-  ).toEqual(before.files);
+    (await content.readCurrentTreeContentPackage(created.localId)).files.find(
+      ({ path }) => path === "opening.md",
+    )?.contents,
+  ).toBe("Accepted sibling change.\n");
+  expect(view.turns[0]?.exchanges[0]?.toolCalls).toMatchObject([
+    { callId: "read-before-oversized-write", result: { isError: false } },
+    {
+      callId: "accepted-write",
+      result: {
+        isError: false,
+        changes: [{ path: "opening.md", after: "Accepted sibling change.\n" }],
+      },
+    },
+    {
+      callId: "oversized-write",
+      result: { isError: true, changes: [] },
+    },
+  ]);
+  expect(view.turns[0]?.exchanges[0]?.toolCalls[2]?.result?.markdown).toContain(
+    "size limit",
+  );
+  expect(host.requests[1]?.appended.at(-1)).toMatchObject({
+    kind: "tool",
+    toolCallId: "oversized-write",
+    isError: true,
+  });
+  expect(
+    (await new FileNativeSettingImprovementStore(root).read(view.sessionId))
+      .pendingSettlement,
+  ).toBeNull();
 });
 
-test("内容包基线在对话外变化后，Apply fail-closed 且不覆盖新内容", async () => {
+test("schema-v1 隔离草稿严格迁移为审计历史，不改当前树", async () => {
   const fixture = await createFixture([
-    {
-      outcome: "response",
-      toolCalls: [
+    { outcome: "response", text: "Legacy seed.", toolCalls: [] },
+  ]);
+  const current = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "request-legacy-seed",
+    "Seed",
+  );
+  const store = new FileNativeSettingImprovementStore(fixture.root);
+  const v2 = await store.read(current.sessionId);
+  const packageBefore = await fixture.content.readCurrentTreeContentPackage(
+    fixture.packageId,
+  );
+  const openingBefore = packageBefore.files.find(
+    ({ path }) => path === "opening.md",
+  )!.contents;
+  const legacyDraftFiles = packageBefore.files.map((file) =>
+    file.path === "opening.md"
+      ? { ...file, contents: "Unapplied legacy candidate.\n" }
+      : file,
+  );
+  const legacyPreset = builtinDefaultPlayPresetBinding("en");
+  const legacyPreview = new SettingAuthoringTransaction({
+    baseFiles: legacyDraftFiles,
+    locale: "en",
+    preview: (snapshot) => {
+      const openingMessage = "legacy-setting-authoring.genesis";
+      const opening = snapshot.files.find(({ path }) => path === "opening.md");
+      return new FileNativePromptCompiler({ locale: "en" }).preview(
         {
-          id: "read-opening",
-          name: "setting_read",
-          arguments: { path: "opening.md" },
+          endpoint: { id: "legacy-setting", commit: "draft-v1" },
+          hostBinding: presetHostBinding(legacyPreset),
+          world: {
+            controlFingerprint: "legacy-setting",
+            documentSnapshot: snapshot,
+            history: { [openingMessage]: opening?.contents ?? "" },
+            additionalMaterials: [
+              { kind: "history_message", message: openingMessage },
+            ],
+          },
+          playerInputPlacement: "append",
+          playerInput: "Inspect the legacy setting draft.",
+          modelBinding: binding,
         },
+        legacyPreset,
+      );
+    },
+  }).review().preview;
+  expect(legacyPreview).not.toBeNull();
+  const legacyBootstrap = structuredClone(v2.bootstrap);
+  const legacyRuntime = legacyBootstrap.logicalMessages.find(
+    ({ role }) => role === "runtime_system",
+  )!;
+  legacyRuntime.markdown =
+    "# Legacy isolated draft\n\nAll writes enter an isolated draft and require Apply.";
+  legacyRuntime.blocks = [
+    {
+      source: "runtime:setting-draft-boundary",
+      markdown: legacyRuntime.markdown,
+    },
+  ];
+  legacyBootstrap.provider.messages = [
+    {
+      role: "system",
+      content:
+        "# Legacy isolated draft\n\nAll writes enter an isolated draft and require Apply.",
+    },
+    ...legacyBootstrap.provider.messages.filter(
+      ({ role }) => role !== "system",
+    ),
+  ];
+  const legacy = {
+    schemaVersion: 1,
+    sessionId: v2.sessionId,
+    packageId: v2.packageId,
+    contentPackageTitle: v2.contentPackageTitle,
+    locale: v2.locale,
+    lifecycle: "open",
+    runStatus: "running",
+    createdAt: v2.createdAt,
+    updatedAt: v2.updatedAt,
+    baseFingerprint: contentTreeFingerprint(packageBefore.files),
+    baseFiles: packageBefore.files,
+    draftVersion: 1,
+    draft: {
+      files: legacyDraftFiles,
+      readWorldDocumentIds: [],
+      readableDamagedWorldPaths: [],
+      readOpaquePaths: ["opening.md"],
+    },
+    review: {
+      status: "usable",
+      diff: [
         {
-          id: "write-opening",
-          name: "setting_write_file",
-          arguments: { path: "opening.md", contents: "Draft opening." },
+          path: "opening.md",
+          kind: "modify",
+          before: openingBefore,
+          after: "Unapplied legacy candidate.\n",
         },
       ],
+      diagnostics: [],
+      preview: legacyPreview,
+      playCoverage: null,
     },
-    { outcome: "response", text: "草稿已更新。", toolCalls: [] },
-  ]);
-  const view = await fixture.session.send({
-    packageId: fixture.packageId,
-    requestId: "request-stale",
-    message: "修改开场",
-  });
-  const external = await fixture.content.readCurrentTreeContentPackage(
-    fixture.packageId,
+    bootstrap: legacyBootstrap,
+    modelBinding: v2.modelBinding,
+    modelItems: v2.modelItems,
+    messages: v2.messages,
+    usage: v2.usage,
+    exchange: v2.exchange,
+    toolCalls: v2.toolCalls,
+    activeRequestId: "legacy-in-flight-request",
+    completedRequestIds: v2.completedRequestIds,
+    lastFailure: null,
+    applyRequest: null,
+    appliedAt: null,
+  };
+  const path = join(
+    fixture.root,
+    "setting-improvements",
+    "sessions",
+    `${v2.sessionId}.json`,
   );
-  const opening = external.files.find(({ path }) => path === "opening.md")!;
-  opening.contents = "A newer manual edit.";
-  await fixture.content.replaceCurrentTreeContentPackage(
-    fixture.packageId,
-    external.files,
-  );
+  await mkdir(dirname(path), { recursive: true });
+  const malformedLegacySources = [
+    { ...legacy, lifecycle: "unknown" },
+    {
+      ...legacy,
+      review: { ...legacy.review, diff: [{ path: 7 }] },
+    },
+    {
+      ...legacy,
+      modelItems: [
+        ...legacy.modelItems,
+        { kind: "assistant", text: "Missing required toolCalls" },
+      ],
+    },
+  ];
+  for (const malformed of malformedLegacySources) {
+    await writeFile(path, `${JSON.stringify(malformed)}\n`, "utf8");
+    await expect(
+      new FileNativeSettingImprovementStore(fixture.root).read(v2.sessionId),
+    ).rejects.toThrow("Legacy setting-improvement conversation is damaged");
+    await expect(
+      readFile(
+        join(
+          fixture.root,
+          "setting-improvements",
+          "sessions",
+          `${v2.sessionId}.schema-v1.json`,
+        ),
+        "utf8",
+      ),
+    ).rejects.toThrow();
+  }
+  const legacySource = `${JSON.stringify(legacy)}\n`;
+  await writeFile(path, legacySource, "utf8");
 
-  await expect(
-    fixture.session.apply(view.sessionId, view.draftVersion),
-  ).rejects.toThrow(/changed after this conversation started/u);
+  const continuedHost = new ScriptedModelHost({
+    binding,
+    steps: [
+      {
+        outcome: "response",
+        text: "Continued against the current tree.",
+        toolCalls: [],
+      },
+    ],
+  });
+  const restarted = serviceFor(fixture.root, fixture.content, continuedHost);
+  const migrated = await restarted.readSession(fixture.packageId, v2.sessionId);
+  expect(migrated.legacyDraft).toMatchObject({
+    outcome: "unapplied_dropped",
+    changes: [{ path: "opening.md", after: "Unapplied legacy candidate.\n" }],
+  });
+  expect(migrated.runStatus).toBe("interrupted");
+  const packageAfter = await fixture.content.readCurrentTreeContentPackage(
+    fixture.packageId,
+  );
   expect(
-    (
-      await fixture.content.readCurrentTreeContentPackage(fixture.packageId)
-    ).files.find(({ path }) => path === "opening.md")?.contents,
-  ).toBe("A newer manual edit.");
+    packageAfter.files.find(({ path }) => path === "opening.md")?.contents,
+  ).toBe(openingBefore);
+  await expect(
+    readFile(
+      join(
+        fixture.root,
+        "setting-improvements",
+        "sessions",
+        `${v2.sessionId}.schema-v1.json`,
+      ),
+      "utf8",
+    ),
+  ).resolves.toBe(legacySource);
+  expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({
+    schemaVersion: 2,
+  });
+  const migratedStored = await new FileNativeSettingImprovementStore(
+    fixture.root,
+  ).read(v2.sessionId);
+  expect(migratedStored.completedRequestIds).toContain(
+    "legacy-in-flight-request",
+  );
+  expect(migratedStored.playPreset).toBeUndefined();
+  expect(JSON.stringify(migratedStored.bootstrap)).toContain(
+    "Legacy isolated draft",
+  );
+  expect(migratedStored.modelItems).toEqual(v2.modelItems);
+  const migratedSystemMessages = migratedStored.bootstrap.provider.messages
+    .filter(({ role }) => role === "system")
+    .map(({ content }) => String(content));
+  expect(migratedSystemMessages).toEqual([
+    expect.stringContaining("Legacy isolated draft"),
+    expect.stringContaining("Runtime system contract replaces"),
+  ]);
+  expect(
+    migratedStored.bootstrap.logicalMessages.find(
+      ({ role }) => role === "runtime_system",
+    )?.markdown,
+  ).toContain("Runtime system contract replaces");
+
+  await restarted.send({
+    packageId: fixture.packageId,
+    requestId: "legacy-in-flight-request",
+    message: "Do not resend this unknown legacy request",
+    continuation: { kind: "continue_context", sessionId: v2.sessionId },
+  });
+  expect(continuedHost.requests).toHaveLength(0);
+
+  await restarted.send({
+    packageId: fixture.packageId,
+    requestId: "request-continue-migrated",
+    message: "Continue this old conversation",
+    continuation: { kind: "continue_context", sessionId: v2.sessionId },
+  });
+  expect(continuedHost.requests[0]?.bootstrap).toEqual(
+    migratedStored.bootstrap,
+  );
+  expect(continuedHost.requests[0]?.appended.at(-1)).toEqual({
+    kind: "user",
+    text: "Continue this old conversation",
+  });
+
+  const receiptCases = [
+    { current: "base", expected: "unapplied_dropped" },
+    { current: "draft", expected: "applied" },
+    { current: "other", expected: "apply_outcome_unknown" },
+  ] as const;
+  for (const receiptCase of receiptCases) {
+    const created = await fixture.content.createCurrentTreeContentPackage();
+    const base = await fixture.content.readCurrentTreeContentPackage(
+      created.localId,
+    );
+    const baseOpening = base.files.find(
+      ({ path }) => path === "opening.md",
+    )!.contents;
+    const draftFiles = base.files.map((file) =>
+      file.path === "opening.md"
+        ? { ...file, contents: "Legacy Apply target.\n" }
+        : file,
+    );
+    const otherFiles = base.files.map((file) =>
+      file.path === "opening.md"
+        ? { ...file, contents: "Unrelated later current tree.\n" }
+        : file,
+    );
+    if (receiptCase.current !== "base")
+      await fixture.content.replaceCurrentTreeContentPackage(
+        created.localId,
+        receiptCase.current === "draft" ? draftFiles : otherFiles,
+      );
+    const receiptSessionId = store.createId();
+    const receiptLegacy = {
+      ...legacy,
+      sessionId: receiptSessionId,
+      packageId: created.localId,
+      contentPackageTitle: created.title,
+      runStatus: "ready",
+      baseFingerprint: contentTreeFingerprint(base.files),
+      baseFiles: base.files,
+      draft: {
+        ...legacy.draft,
+        files: draftFiles,
+      },
+      review: {
+        ...legacy.review,
+        diff: [
+          {
+            path: "opening.md",
+            kind: "modify",
+            before: baseOpening,
+            after: "Legacy Apply target.\n",
+          },
+        ],
+      },
+      activeRequestId: null,
+      completedRequestIds: [],
+      applyRequest: {
+        expectedDraftVersion: legacy.draftVersion,
+        draftFingerprint: contentTreeFingerprint(draftFiles),
+      },
+    };
+    const receiptPath = join(
+      fixture.root,
+      "setting-improvements",
+      "sessions",
+      `${receiptSessionId}.json`,
+    );
+    await writeFile(receiptPath, `${JSON.stringify(receiptLegacy)}\n`, "utf8");
+    const currentBeforeMigration = contentTreeFingerprint(
+      (await fixture.content.readCurrentTreeContentPackage(created.localId))
+        .files,
+    );
+
+    const receiptMigrated = await new FileNativeSettingImprovementStore(
+      fixture.root,
+      { content: fixture.content },
+    ).read(receiptSessionId);
+
+    expect(receiptMigrated.legacyDraft?.outcome).toBe(receiptCase.expected);
+    expect(
+      contentTreeFingerprint(
+        (await fixture.content.readCurrentTreeContentPackage(created.localId))
+          .files,
+      ),
+    ).toBe(currentBeforeMigration);
+    if (receiptCase.expected === "apply_outcome_unknown")
+      expect(receiptMigrated.lastFailure).toContain("cannot be proven");
+  }
 });
 
-test("重启会结算已持久化的完整工具响应且只执行一次", async () => {
+test("状态轮询只返回所选对话的轻量进度和持久 revision", async () => {
   const fixture = await createFixture([
-    { outcome: "response", text: "可以，等你决定。", toolCalls: [] },
+    { outcome: "response", text: "Done.", toolCalls: [] },
   ]);
-  const initial = await fixture.session.send({
-    packageId: fixture.packageId,
-    requestId: "request-before-crash",
-    message: "先讨论",
+  const view = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "request-status",
+    "Status",
+  );
+  const status = await fixture.session.status(
+    fixture.packageId,
+    view.sessionId,
+  );
+  expect(status).toMatchObject({
+    selected: {
+      sessionId: view.sessionId,
+      runStatus: "ready",
+      progress: { exchange: 1, toolCalls: 0 },
+    },
   });
-  const store = new FileNativeSettingImprovementStore(fixture.root);
-  const stored = await store.read(initial.sessionId);
-  stored.messages.push({
-    id: "message-crashed-user",
-    role: "user",
-    text: "现在修改开场",
-    createdAt: Date.now(),
-  });
-  stored.modelItems.push(
-    { kind: "user", text: "现在修改开场" },
+  expect(status.revision).not.toBe("");
+  expect(JSON.stringify(status)).not.toContain("Done.");
+  expect(JSON.stringify(status)).not.toContain("opening.md");
+});
+
+test("schema-v2 对未知字段和损坏的非 opaque 结构 fail closed", async () => {
+  const fixture = await createFixture([
+    { outcome: "response", text: "Codec seed.", toolCalls: [] },
+  ]);
+  const view = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "request-v2-codec",
+    "Create a strict codec fixture",
+  );
+  const stored = await new FileNativeSettingImprovementStore(fixture.root).read(
+    view.sessionId,
+  );
+  const path = join(
+    fixture.root,
+    "setting-improvements",
+    "sessions",
+    `${view.sessionId}.json`,
+  );
+  const pendingModelItems = [
+    ...stored.modelItems,
+    { kind: "user", text: "Pending write" } as const,
     {
       kind: "assistant",
       text: "",
       providerState: {
         protocol: "chat_completions",
-        assistantMessage: {
-          role: "assistant",
-          content: "",
-          tool_calls: [
-            {
-              id: "recovery-read",
-              type: "function",
-              function: {
-                name: "setting_read",
-                arguments: '{"path":"opening.md"}',
-              },
-            },
-            {
-              id: "recovery-write",
-              type: "function",
-              function: {
-                name: "setting_write_file",
-                arguments:
-                  '{"path":"opening.md","contents":"Recovered draft opening."}',
-              },
-            },
-          ],
-        },
+        assistantMessage: { role: "assistant", content: null },
       },
       toolCalls: [
         {
-          id: "recovery-read",
-          name: "setting_read",
-          arguments: { path: "opening.md" },
-        },
-        {
-          id: "recovery-write",
+          id: "pending-write",
           name: "setting_write_file",
-          arguments: {
-            path: "opening.md",
-            contents: "Recovered draft opening.",
-          },
+          arguments: { path: "opening.md", contents: "Pending\n" },
         },
       ],
+    } as const,
+  ];
+  const validPreparedSettlement = {
+    phase: "publication_prepared" as const,
+    assistantItemIndex: pendingModelItems.length - 1,
+    beforeFingerprint: "sha256:before",
+    afterFingerprint: "sha256:after",
+    toolResults: [
+      {
+        toolCallId: "pending-write",
+        markdown: "# Current-tree write accepted",
+        isError: false,
+        changes: [],
+      },
+    ],
+    authorization: {
+      revision: "sha256:after",
+      readWorldDocumentIds: [],
+      readableDamagedWorldPaths: [],
+      readOpaquePaths: ["opening.md"],
     },
-  );
-  stored.runStatus = "running";
-  stored.activeRequestId = "request-crashed-after-response";
-  await store.save(stored);
-
-  const restarted = serviceFor(
-    fixture.root,
-    fixture.content,
-    new ScriptedModelHost({ binding, steps: [] }),
-  );
-  const recovered = await restarted.read(fixture.packageId);
-  expect(recovered).toMatchObject({
-    runStatus: "interrupted",
-    draftVersion: 1,
-    progress: { toolCalls: 2 },
-    review: {
-      status: "usable",
-      diff: [{ path: "opening.md", after: "Recovered draft opening." }],
+  };
+  const validPendingSession = {
+    ...stored,
+    runStatus: "interrupted" as const,
+    modelItems: pendingModelItems,
+    pendingSettlement: validPreparedSettlement,
+  };
+  await writeFile(path, `${JSON.stringify(validPendingSession)}\n`, "utf8");
+  await expect(
+    new FileNativeSettingImprovementStore(fixture.root).read(view.sessionId),
+  ).resolves.toMatchObject({
+    pendingSettlement: { phase: "publication_prepared" },
+  });
+  const damaged: unknown[] = [
+    { ...stored, unknownRootField: true },
+    { ...stored, bootstrap: { ...stored.bootstrap, unknownBootstrapField: 1 } },
+    { ...stored, usage: { ...stored.usage, totalTokens: "invalid" } },
+    {
+      ...stored,
+      pendingSettlement: {
+        phase: "response_confirmed",
+        assistantItemIndex: 0,
+        beforeFingerprint: "sha256:before",
+        unknownSettlementField: true,
+      },
     },
-  });
-  await expect(restarted.read(fixture.packageId)).resolves.toMatchObject({
-    draftVersion: 1,
-    progress: { toolCalls: 2 },
-  });
+    {
+      ...validPendingSession,
+      pendingSettlement: {
+        ...validPreparedSettlement,
+        toolResults: [
+          {
+            ...validPreparedSettlement.toolResults[0],
+            toolCallId: "different-call",
+          },
+        ],
+      },
+    },
+    {
+      ...validPendingSession,
+      pendingSettlement: {
+        ...validPreparedSettlement,
+        authorization: {
+          ...validPreparedSettlement.authorization,
+          revision: "sha256:not-after",
+        },
+      },
+    },
+  ];
+  for (const value of damaged) {
+    await writeFile(path, `${JSON.stringify(value)}\n`, "utf8");
+    await expect(
+      new FileNativeSettingImprovementStore(fixture.root).read(view.sessionId),
+    ).rejects.toThrow(
+      "Setting-improvement conversation does not match its durable schema",
+    );
+  }
 });
 
-test("重启会把已替换当前树但未写回执的 Apply 恢复为已应用", async () => {
+test("恢复写入使用 CAS，过期副本不能覆盖更新后的对话", async () => {
   const fixture = await createFixture([
-    {
-      outcome: "response",
-      toolCalls: [
-        {
-          id: "read-opening",
-          name: "setting_read",
-          arguments: { path: "opening.md" },
-        },
-        {
-          id: "write-opening",
-          name: "setting_write_file",
-          arguments: { path: "opening.md", contents: "Applied before crash." },
-        },
-      ],
-    },
-    { outcome: "response", text: "草稿已更新。", toolCalls: [] },
+    { outcome: "response", text: "Durable answer.", toolCalls: [] },
   ]);
-  const view = await fixture.session.send({
-    packageId: fixture.packageId,
-    requestId: "request-apply-recovery",
-    message: "修改开场",
-  });
-  const store = new FileNativeSettingImprovementStore(fixture.root);
-  const stored = await store.read(view.sessionId);
-  stored.applyRequest = {
-    expectedDraftVersion: stored.draftVersion,
-    draftFingerprint: contentFingerprint(stored.draft.files),
-  };
-  await store.save(stored);
-  await fixture.content.replaceCurrentTreeContentPackage(
+  const view = await sendFresh(
+    fixture.session,
     fixture.packageId,
-    stored.draft.files,
+    "request-cas",
+    "Create one durable conversation",
   );
+  const store = new FileNativeSettingImprovementStore(fixture.root);
+  const stale = await store.read(view.sessionId);
+  const newer = structuredClone(stale);
+  newer.lastFailure = "newer state";
+  newer.updatedAt += 1;
+  await store.save(newer);
+  const staleRecovery = structuredClone(stale);
+  staleRecovery.lastFailure = "stale recovery";
+  staleRecovery.updatedAt += 2;
 
-  const restarted = serviceFor(
-    fixture.root,
-    fixture.content,
-    new ScriptedModelHost({ binding, steps: [] }),
+  await expect(store.saveIfUnchanged(stale, staleRecovery)).resolves.toBe(
+    false,
   );
-  await expect(restarted.read(fixture.packageId)).resolves.toMatchObject({
-    lifecycle: "applied",
-    baseStatus: "current",
+  await expect(store.read(view.sessionId)).resolves.toMatchObject({
+    lastFailure: "newer state",
   });
-  await expect(restarted.read(fixture.packageId)).resolves.toBeNull();
 });
 
 async function createFixture(steps: ScriptedModelHostStep[]) {
-  const root = await mkdtemp(join(tmpdir(), "narraeon-setting-conversation-"));
-  roots.push(root);
+  const root = await temporaryRoot("narraeon-setting-conversation-");
   const content = new ContentWorkspace(root, { locale: () => "en" });
   const created = await content.createCurrentTreeContentPackage();
   const host = new ScriptedModelHost({ binding, steps });
@@ -635,6 +1282,26 @@ async function createFixture(steps: ScriptedModelHostStep[]) {
     host,
     session: serviceFor(root, content, host),
   };
+}
+
+async function temporaryRoot(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  roots.push(root);
+  return root;
+}
+
+function sendFresh(
+  session: SettingImprovementSession,
+  packageId: string,
+  requestId: string,
+  message: string,
+) {
+  return session.send({
+    packageId,
+    requestId,
+    message,
+    continuation: { kind: "fresh_context" },
+  });
 }
 
 function serviceFor(
@@ -650,20 +1317,25 @@ function serviceFor(
     compiler,
     locale: () => "en",
     bindModelHost: () => Promise.resolve(host),
+    bindExistingModelHost: (frozenBinding) => {
+      if (JSON.stringify(frozenBinding) !== JSON.stringify(host.binding()))
+        throw new Error("Frozen model binding is unavailable");
+      return Promise.resolve(host);
+    },
     bindPlayPreset: () => Promise.resolve(structuredClone(playPreset)),
     preview: (snapshot, modelBinding, frozenPreset) => {
       if (frozenPreset === undefined)
         throw new Error(
-          "New setting-improvement sessions must freeze a preset",
+          "New setting-improvement conversations freeze a preset",
         );
-      const openingMessage = "setting-draft.message.genesis.narrator";
+      const openingMessage = "setting-authoring.message.genesis.narrator";
       const opening = snapshot.files.find(({ path }) => path === "opening.md");
       return compiler.preview(
         {
-          endpoint: { id: "setting-draft", commit: "draft" },
+          endpoint: { id: "setting-authoring", commit: "current-tree" },
           hostBinding: presetHostBinding(frozenPreset),
           world: {
-            controlFingerprint: "setting-draft",
+            controlFingerprint: "setting-authoring",
             documentSnapshot: snapshot,
             history: { [openingMessage]: opening?.contents ?? "" },
             additionalMaterials: [
@@ -671,28 +1343,11 @@ function serviceFor(
             ],
           },
           playerInputPlacement: "append",
-          playerInput: "Preview the setting draft.",
+          playerInput: "Inspect the content package current tree.",
           modelBinding,
         },
         frozenPreset,
       );
     },
   });
-}
-
-function presetWithFrozenStateMarker(): PlayPresetBinding {
-  const base = builtinDefaultPlayPresetBinding("en");
-  const files = structuredClone(base.files);
-  files["blocks/state.md"] =
-    `${files["blocks/state.md"]}\n\nFROZEN-PRESET-STATE-MARKER\n`;
-  const parsed = parsePlayPresetFiles(files);
-  if (parsed.kind !== "valid") throw parsed.error;
-  return {
-    id: "preset-frozen-test",
-    name: "Frozen test preset",
-    revision: revisionForPlayPresetFiles(files),
-    definition: parsed.definition,
-    files,
-    scriptsEnabled: true,
-  };
 }
