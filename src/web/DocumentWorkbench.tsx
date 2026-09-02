@@ -181,7 +181,7 @@ export function DocumentWorkbench({
           </span>
         </header>
         <label className="content-file-filter">
-          {uiText("筛选文件")}
+          <span>{uiText("筛选文件")}</span>
           <input
             type="search"
             value={query}
@@ -243,9 +243,11 @@ export function DocumentWorkbench({
                           </span>
                           {workspace.kind === "world-correction" ? (
                             <span className="world-document-list-copy">
-                              <strong>{presentation.title}</strong>
+                              <span className="world-document-list-heading">
+                                <strong>{presentation.title}</strong>
+                                <code>{file.path}</code>
+                              </span>
                               <small>{presentation.summary}</small>
-                              <code>{file.path}</code>
                             </span>
                           ) : (
                             <code>{file.path}</code>

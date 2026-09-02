@@ -852,14 +852,22 @@ test("世界修订保持紧凑编辑区且世界管理可以纵向滚动", async
     const workbench = root.querySelector(
       ".document-workbench-world-correction",
     );
+    const sidebar = root.querySelector(".content-file-sidebar");
+    const selectedFile = root.querySelector(
+      '.content-file-list button[aria-pressed="true"]',
+    );
     const editor = root.querySelector(".content-file-editor");
+    const editorHeader = root.querySelector(".content-file-editor-header");
     const textarea = root.querySelector(".content-source-editor textarea");
     const review = root.querySelector(".document-workbench-review");
     if (
       header === null ||
       navigation === null ||
       workbench === null ||
+      sidebar === null ||
+      selectedFile === null ||
       editor === null ||
+      editorHeader === null ||
       textarea === null ||
       review === null
     )
@@ -867,14 +875,23 @@ test("世界修订保持紧凑编辑区且世界管理可以纵向滚动", async
     const headerBox = header.getBoundingClientRect();
     const navigationBox = navigation.getBoundingClientRect();
     const workbenchBox = workbench.getBoundingClientRect();
+    const selectedFileBox = selectedFile.getBoundingClientRect();
     const editorBox = editor.getBoundingClientRect();
+    const editorHeaderBox = editorHeader.getBoundingClientRect();
     const textareaBox = textarea.getBoundingClientRect();
     const reviewBox = review.getBoundingClientRect();
     return {
       headerHeight: headerBox.height,
       workbenchGap: workbenchBox.top - navigationBox.bottom,
+      sidebarPaddingTop: Number.parseFloat(
+        getComputedStyle(sidebar).paddingTop,
+      ),
+      selectedFileHeight: selectedFileBox.height,
+      editorPaddingTop: Number.parseFloat(getComputedStyle(editor).paddingTop),
+      editorHeaderHeight: editorHeaderBox.height,
       editorOverflowY: getComputedStyle(editor).overflowY,
       editorScrollRange: editor.scrollHeight - editor.clientHeight,
+      reviewHeight: reviewBox.height,
       textareaReviewOverlap: textareaBox.bottom - reviewBox.top,
       visibleTextareaHeight:
         Math.min(textareaBox.bottom, reviewBox.top, editorBox.bottom) -
@@ -884,8 +901,13 @@ test("世界修订保持紧凑编辑区且世界管理可以纵向滚动", async
   expect(revisionLayout).not.toBeNull();
   expect.soft(revisionLayout?.headerHeight).toBeLessThanOrEqual(88);
   expect.soft(revisionLayout?.workbenchGap).toBeLessThanOrEqual(16);
+  expect.soft(revisionLayout?.sidebarPaddingTop).toBeLessThanOrEqual(10);
+  expect.soft(revisionLayout?.selectedFileHeight).toBeLessThanOrEqual(48);
+  expect.soft(revisionLayout?.editorPaddingTop).toBeLessThanOrEqual(10);
+  expect.soft(revisionLayout?.editorHeaderHeight).toBeLessThanOrEqual(44);
   expect.soft(revisionLayout?.editorOverflowY).toBe("hidden");
   expect.soft(revisionLayout?.editorScrollRange).toBeLessThanOrEqual(1);
+  expect.soft(revisionLayout?.reviewHeight).toBeLessThanOrEqual(44);
   expect.soft(revisionLayout?.textareaReviewOverlap).toBeLessThanOrEqual(0);
   expect
     .soft(revisionLayout?.visibleTextareaHeight)

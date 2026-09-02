@@ -8813,8 +8813,8 @@ summary:focus-visible {
   display: flex;
   min-height: 0;
   flex-direction: column;
-  gap: 0.4rem;
-  padding: 0.5rem 0.65rem 0.65rem;
+  gap: 0.25rem;
+  padding: 0.35rem 0.45rem 0.45rem;
   overflow: hidden;
 }
 
@@ -8822,9 +8822,9 @@ summary:focus-visible {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.65rem;
+  gap: 0.45rem;
   flex: none;
-  padding: 0.3rem 0.45rem;
+  padding: 0.22rem 0.35rem;
   border-left: 3px solid var(--accent);
   background: rgb(158 229 209 / 6%);
 }
@@ -8836,18 +8836,18 @@ summary:focus-visible {
 
 .world-revision-dirty-bar button {
   flex: none;
-  padding: 0.3rem 0.5rem;
-  font-size: 0.62rem;
+  padding: 0.24rem 0.42rem;
+  font-size: 0.58rem;
 }
 
 .document-workbench-world-correction {
   flex: 1 1 auto;
   min-height: 0;
   height: auto;
-  grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr);
+  grid-template-columns: minmax(12.5rem, 15.5rem) minmax(0, 1fr);
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 0.85rem;
+  border-radius: 0.65rem;
   background: #06110f;
 }
 
@@ -8856,17 +8856,123 @@ summary:focus-visible {
   min-height: 0;
 }
 
+.document-workbench-world-correction .content-file-sidebar {
+  padding: 0.6rem;
+}
+
+.document-workbench-world-correction .content-file-sidebar > header {
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.document-workbench-world-correction .content-file-sidebar > header > div,
+.document-workbench-world-correction .content-file-editor-header > div {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.08rem 0.4rem;
+}
+
+.document-workbench-world-correction .content-file-sidebar h4,
+.document-workbench-world-correction .content-file-list h5,
+.document-workbench-world-correction .content-file-editor-header h4 {
+  margin: 0;
+}
+
+.document-workbench-world-correction .content-file-sidebar h4 {
+  font-size: 0.88rem;
+  line-height: 1.2;
+}
+
+.document-workbench-world-correction .content-file-sidebar > header > span {
+  font-size: 0.62rem;
+}
+
+.document-workbench-world-correction .content-editor-kicker {
+  margin: 0;
+  font-size: 0.56rem;
+  letter-spacing: 0.06em;
+}
+
+.document-workbench-world-correction .content-file-filter {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.4rem;
+  font-size: 0.6rem;
+}
+
+.document-workbench-world-correction .content-file-filter input {
+  padding: 0.36rem 0.45rem;
+  border-radius: 0.42rem;
+  font-size: 0.7rem;
+}
+
+.document-workbench-world-correction .content-file-list {
+  margin-top: 0.4rem;
+}
+
+.document-workbench-world-correction .content-file-list section + section {
+  margin-top: 0.45rem;
+}
+
+.document-workbench-world-correction .content-file-list h5 {
+  gap: 0.3rem;
+  padding: 0 0.3rem 0.18rem;
+  font-size: 0.6rem;
+}
+
+.document-workbench-world-correction .content-file-list ul {
+  gap: 0.12rem;
+}
+
+.document-workbench-world-correction .content-file-list button {
+  grid-template-columns: 1.8rem minmax(0, 1fr) auto;
+  gap: 0.35rem;
+  padding: 0.28rem 0.32rem;
+  border-radius: 0.42rem;
+}
+
+.document-workbench-world-correction .content-file-kind {
+  padding: 0.08rem 0.16rem;
+  border-radius: 0.24rem;
+  font-size: 0.52rem;
+}
+
 .document-workbench-world-correction .content-file-editor {
   display: flex;
   flex-direction: column;
   align-content: normal;
-  padding: 0.75rem 0.85rem 0.65rem;
+  padding: 0.5rem 0.6rem 0.45rem;
   overflow: hidden;
 }
 
 .document-workbench-world-correction .content-file-editor-header {
   flex: none;
+  gap: 0.6rem;
   margin-bottom: 0;
+}
+
+.document-workbench-world-correction .content-file-editor-header h4 {
+  font-size: 1.05rem;
+  line-height: 1.2;
+}
+
+.document-workbench-world-correction .content-file-editor-header small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.55rem;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.document-workbench-world-correction .document-workbench-dirty {
+  padding: 0.14rem 0.3rem;
+  font-size: 0.5rem;
 }
 
 .document-workbench-world-correction .content-file-list,
@@ -8878,13 +8984,28 @@ summary:focus-visible {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
-  margin-top: 0.45rem;
+  gap: 0.25rem;
+  margin-top: 0.3rem;
+}
+
+.document-workbench-world-correction .content-source-editor > span {
+  gap: 0.5rem;
+  font-size: 0.62rem;
+  line-height: 1.25;
+}
+
+.document-workbench-world-correction .content-source-editor small {
+  font-size: 0.56rem;
 }
 
 .document-workbench-world-correction .content-source-editor textarea {
   flex: 1 1 auto;
   height: auto;
   min-height: 0;
+  padding: 0.65rem 0.7rem;
+  border-radius: 0.4rem;
+  font-size: 0.82rem;
+  line-height: 1.45;
   resize: none;
 }
 
@@ -8895,7 +9016,10 @@ summary:focus-visible {
 }
 
 .document-workbench-world-correction .content-source-meta {
-  margin-top: 0.25rem;
+  gap: 0.45rem;
+  margin-top: 0.18rem;
+  font-size: 0.58rem;
+  line-height: 1.2;
 }
 
 .world-document-list-copy {
@@ -8913,30 +9037,42 @@ summary:focus-visible {
   white-space: nowrap;
 }
 
+.world-document-list-heading {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.8fr);
+  align-items: baseline;
+  gap: 0.3rem;
+}
+
 .world-document-list-copy strong {
   color: #dfeae6;
-  font-size: 0.69rem;
+  font-size: 0.65rem;
+  line-height: 1.25;
 }
 
 .world-document-list-copy small {
-  margin-top: 0.12rem;
+  margin-top: 0.06rem;
   color: var(--muted);
-  font-size: 0.57rem;
+  font-size: 0.53rem;
+  line-height: 1.25;
 }
 
 .world-document-list-copy code {
-  margin-top: 0.2rem;
+  margin-top: 0;
   opacity: 0.52;
-  font-size: 0.53rem;
+  font-size: 0.49rem;
+  line-height: 1.25;
+  text-align: right;
 }
 
 .world-correction-scope-note {
   margin: 0;
-  padding: 0.55rem 0.65rem;
+  padding: 0.35rem 0.45rem;
   border-top: 1px solid var(--border);
   color: var(--muted);
-  font-size: 0.57rem;
-  line-height: 1.45;
+  font-size: 0.53rem;
+  line-height: 1.3;
 }
 
 .document-workbench-dirty {
@@ -8984,9 +9120,9 @@ summary:focus-visible {
 }
 
 .document-workbench-world-correction .document-workbench-review {
-  gap: 0.5rem;
-  margin-top: 0.35rem;
-  padding: 0.4rem 0.5rem;
+  gap: 0.4rem;
+  margin-top: 0.25rem;
+  padding: 0.3rem 0.4rem;
 }
 
 .document-workbench-world-correction .document-workbench-review > div {
@@ -9002,7 +9138,8 @@ summary:focus-visible {
 }
 
 .document-workbench-world-correction .document-workbench-review button {
-  padding: 0.38rem 0.58rem;
+  padding: 0.3rem 0.48rem;
+  font-size: 0.6rem;
 }
 
 .world-correction-review,
@@ -9154,7 +9291,7 @@ summary:focus-visible {
 
   .document-workbench-world-correction {
     flex: none;
-    min-height: 32rem;
+    min-height: 30rem;
   }
 }
 
@@ -9200,18 +9337,18 @@ summary:focus-visible {
 
   .document-workbench-world-correction {
     flex: none;
-    min-height: 42rem;
+    min-height: 39rem;
   }
 
   .document-workbench-world-correction .content-file-sidebar {
     grid-template-rows: auto auto minmax(0, 1fr) auto;
-    height: 13rem;
-    max-height: 13rem;
+    height: 11rem;
+    max-height: 11rem;
     overflow: hidden;
   }
 
   .document-workbench-world-correction .content-file-editor {
-    min-height: 29rem;
+    min-height: 28rem;
   }
 
   .world-management-body .control-card {
