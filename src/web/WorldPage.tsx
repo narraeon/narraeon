@@ -1,5 +1,6 @@
 import { uiText } from "./i18n.ts";
 import {
+  Fragment,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -1661,19 +1662,76 @@ function PlayTimeline({
     continuation: PlayerRevisionContinuation,
   ) => void;
 }): React.JSX.Element {
-  const traceEvents = items.flatMap((item) =>
-    item.kind === "event" && timelineEventHasTrace(item.event) ? [item] : [],
-  );
+  const groups = groupPlayTimelineItems(items);
   return (
     <ol
       className="call-chain-events play-timeline-events"
       aria-label={uiText("模型调用链")}
     >
-      {items.map((item) => {
+      {groups.map((group) => {
+        if (group.kind === "turn") {
+          const traceEvents = group.items.filter(({ event }) =>
+            timelineEventHasTrace(event),
+          );
+          return (
+            <Fragment key={group.key}>
+              {group.items.map((item) =>
+                timelineEventBelongsInStory(item.event) ? (
+                  <TimelineEvent
+                    key={`${item.chainId}:${item.event.id}`}
+                    client={client}
+                    worldId={worldId}
+                    chainId={item.chainId}
+                    event={item.event}
+                    restartDisabled={restartDisabled}
+                    freshContextDisabled={freshContextDisabled}
+                    onRestartFrom={onRestartFrom}
+                    onEditPlayer={onEditPlayer}
+                    presentation="story"
+                  />
+                ) : null,
+              )}
+              {traceEvents.length === 0 ? null : (
+                <li className="world-timeline-trace">
+                  <details>
+                    <summary>
+                      <span>{uiText("本段调用详情")}</span>
+                      <small>
+                        {uiText("{count} 项记录", {
+                          count: traceEvents.length,
+                        })}
+                      </small>
+                    </summary>
+                    <ol
+                      className="world-timeline-trace-events"
+                      aria-label={uiText("本段模型调用详情")}
+                    >
+                      {traceEvents.map((item) => (
+                        <TimelineEvent
+                          key={`trace:${item.chainId}:${item.event.id}`}
+                          client={client}
+                          worldId={worldId}
+                          chainId={item.chainId}
+                          event={item.event}
+                          restartDisabled={restartDisabled}
+                          freshContextDisabled={freshContextDisabled}
+                          onRestartFrom={onRestartFrom}
+                          onEditPlayer={onEditPlayer}
+                          presentation="trace"
+                        />
+                      ))}
+                    </ol>
+                  </details>
+                </li>
+              )}
+            </Fragment>
+          );
+        }
+        const item = group.item;
         if (item.kind === "context_boundary")
           return (
             <li
-              key={`context:${item.chainId}`}
+              key={group.key}
               className="story-context-boundary"
               role="separator"
               aria-label={uiText("全新上下文从这里开始")}
@@ -1701,10 +1759,7 @@ function PlayTimeline({
           );
         if (item.kind === "genesis")
           return (
-            <li
-              key={`genesis:${item.messageId}`}
-              className={`${item.role}-message`}
-            >
+            <li key={group.key} className={`${item.role}-message`}>
               <article>
                 <header>
                   <strong>
@@ -1715,54 +1770,76 @@ function PlayTimeline({
               </article>
             </li>
           );
-        if (!timelineEventBelongsInStory(item.event)) return null;
-        return (
-          <TimelineEvent
-            key={`${item.chainId}:${item.event.id}`}
-            client={client}
-            worldId={worldId}
-            chainId={item.chainId}
-            event={item.event}
-            restartDisabled={restartDisabled}
-            freshContextDisabled={freshContextDisabled}
-            onRestartFrom={onRestartFrom}
-            onEditPlayer={onEditPlayer}
-            presentation="story"
-          />
-        );
+        return null;
       })}
-      {traceEvents.length === 0 ? null : (
-        <li className="world-timeline-trace">
-          <details>
-            <summary>
-              <span>{uiText("本段调用详情")}</span>
-              <small>
-                {uiText("{count} 项记录", { count: traceEvents.length })}
-              </small>
-            </summary>
-            <ol
-              className="world-timeline-trace-events"
-              aria-label={uiText("本段模型调用详情")}
-            >
-              {traceEvents.map((item) => (
-                <TimelineEvent
-                  key={`trace:${item.chainId}:${item.event.id}`}
-                  client={client}
-                  worldId={worldId}
-                  chainId={item.chainId}
-                  event={item.event}
-                  restartDisabled={restartDisabled}
-                  freshContextDisabled={freshContextDisabled}
-                  onRestartFrom={onRestartFrom}
-                  onEditPlayer={onEditPlayer}
-                  presentation="trace"
-                />
-              ))}
-            </ol>
-          </details>
-        </li>
-      )}
     </ol>
+  );
+}
+
+type PlayTimelineEventItem = Extract<V1PlayTimelineItem, { kind: "event" }>;
+type PlayTimelineStandaloneItem = Exclude<
+  V1PlayTimelineItem,
+  { kind: "event" }
+>;
+type PlayTimelineGroup =
+  | {
+      kind: "standalone";
+      key: string;
+      item: PlayTimelineStandaloneItem;
+    }
+  | {
+      kind: "turn";
+      key: string;
+      items: PlayTimelineEventItem[];
+    };
+
+function groupPlayTimelineItems(
+  items: readonly V1PlayTimelineItem[],
+): PlayTimelineGroup[] {
+  const groups: PlayTimelineGroup[] = [];
+  let turn: PlayTimelineEventItem[] = [];
+  const flushTurn = (): void => {
+    const first = turn[0];
+    if (first === undefined) return;
+    groups.push({
+      kind: "turn",
+      key: `turn:${first.chainId}:${first.event.id}`,
+      items: turn,
+    });
+    turn = [];
+  };
+
+  for (const item of items) {
+    if (item.kind !== "event") {
+      flushTurn();
+      groups.push({
+        kind: "standalone",
+        key:
+          item.kind === "context_boundary"
+            ? `context:${item.chainId}`
+            : `genesis:${item.messageId}`,
+        item,
+      });
+      continue;
+    }
+    const beginsTurn =
+      item.event.kind === "player" ||
+      (item.event.kind === "assistant" && turnHasCompletedNarrative(turn));
+    if (beginsTurn) flushTurn();
+    turn.push(item);
+  }
+  flushTurn();
+  return groups;
+}
+
+function turnHasCompletedNarrative(
+  items: readonly PlayTimelineEventItem[],
+): boolean {
+  return items.some(
+    ({ event }) =>
+      event.kind === "assistant" &&
+      event.status === "completed" &&
+      assistantResponseKind(event) === "narrative",
   );
 }
 

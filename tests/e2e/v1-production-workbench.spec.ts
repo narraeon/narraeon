@@ -600,6 +600,13 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(
     contextsAfterFresh.locator(".call-chain-assistant-diagnostics"),
   ).toHaveCount(2);
+  await expect(
+    contextsAfterFresh.getByText("本段调用详情", { exact: true }),
+  ).toHaveCount(2);
+  await contextsAfterFresh
+    .getByText("本段调用详情", { exact: true })
+    .last()
+    .click();
   const freshReasoning = contextsAfterFresh
     .locator(".call-chain-assistant-diagnostics")
     .last()

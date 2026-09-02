@@ -555,6 +555,96 @@ describe("世界游玩页面", () => {
     expect(start?.exchangeId).toMatch(/^play-exchange-/u);
   });
 
+  test("每轮对话都在对应回复后显示自己的调用详情", async () => {
+    const chain = playChainView(
+      "play-chain-two-turns",
+      "exchange-first",
+      "First player action.",
+    );
+    chain.events.push(
+      {
+        id: 5,
+        kind: "player",
+        exchangeId: "exchange-second",
+        text: "Second player action.",
+        context: "append",
+        committedHead: "commit:4",
+      },
+      {
+        id: 6,
+        kind: "assistant",
+        text: "Second narration.",
+        reasoning: "Reasoning for only the second turn.",
+        status: "completed",
+        responseKind: "narrative",
+        exchange: 3,
+        attempt: 1,
+        committedHead: "commit:5",
+      },
+      {
+        id: 7,
+        kind: "assistant",
+        text: "Continuation narration.",
+        reasoning: "Reasoning for the continuation call.",
+        status: "completed",
+        responseKind: "narrative",
+        exchange: 4,
+        attempt: 1,
+        committedHead: "commit:6",
+      },
+    );
+    chain.parentHead = "commit:6";
+    const client = {
+      request: vi.fn(<T>(request: V1Request) => {
+        if (request.type === "world.read")
+          return Promise.resolve(worldView(chain) as T);
+        if (request.type === "artifacts.debug") return Promise.resolve([] as T);
+        if (request.type === "play.chain.inspect")
+          return Promise.resolve(chain as T);
+        return Promise.reject(new Error(`Unexpected request: ${request.type}`));
+      }),
+    };
+
+    renderWorld(client);
+    const firstNarration = await screen.findByText(
+      "Alex opens the door and lets you go first.",
+    );
+    const secondPlayer = screen.getByText("Second player action.");
+    const secondNarration = screen.getByText("Second narration.");
+    const continuationNarration = screen.getByText("Continuation narration.");
+    const traces = screen
+      .getAllByText("本段调用详情")
+      .map((summary) => summary.closest("details"));
+
+    expect(traces).toHaveLength(3);
+    expect(traces[0]).not.toBeNull();
+    expect(traces[1]).not.toBeNull();
+    expect(traces[2]).not.toBeNull();
+    expect(
+      firstNarration.compareDocumentPosition(traces[0]!) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0);
+    expect(
+      traces[0]!.compareDocumentPosition(secondPlayer) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0);
+    expect(
+      secondNarration.compareDocumentPosition(traces[1]!) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0);
+    expect(
+      traces[1]!.compareDocumentPosition(continuationNarration) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0);
+    expect(
+      continuationNarration.compareDocumentPosition(traces[2]!) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0);
+    expect(within(traces[0]!).getByText("调用 world_patch")).toBeTruthy();
+    expect(within(traces[1]!).queryByText("调用 world_patch")).toBeNull();
+    expect(within(traces[2]!).queryByText("调用 world_patch")).toBeNull();
+  });
+
   test("模型响应始终显示输入、缓存读写、推理和输出 token 明细", async () => {
     const chain = playChainView(
       "play-chain-usage",
