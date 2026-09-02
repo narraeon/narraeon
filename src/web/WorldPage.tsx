@@ -1333,7 +1333,7 @@ export function WorldPage({
                 </p>
               </div>
             )}
-            {activeChainStale ? (
+            {activeChainStale && playIdle ? (
               <div className="world-fresh-context-note" role="note">
                 {uiText("世界已在故事外修订；下一次行动会从新上下文开始。")}
               </div>

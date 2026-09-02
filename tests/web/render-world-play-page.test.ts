@@ -431,6 +431,9 @@ describe("世界游玩页面", () => {
       ),
     ).toBeTruthy();
     expect(
+      screen.getByText("世界已在故事外修订；下一次行动会从新上下文开始。"),
+    ).toBeTruthy();
+    expect(
       screen.getByRole<HTMLButtonElement>("button", { name: "追加上下文" })
         .disabled,
     ).toBe(true);
@@ -944,6 +947,9 @@ describe("世界游玩页面", () => {
     expect(screen.getByText("接收中 · 第 1 次派发")).toBeTruthy();
     expect(screen.getByText("待定输出；响应完成前不会进入故事")).toBeTruthy();
     expect(screen.getByText("响应完成后可查看模型诊断详情")).toBeTruthy();
+    expect(
+      screen.queryByText("世界已在故事外修订；下一次行动会从新上下文开始。"),
+    ).toBeNull();
     expect(screen.queryByText("查看模型诊断详情")).toBeNull();
     expect(
       screen.queryByText("First confirm that the doorway is clear."),
@@ -1572,6 +1578,9 @@ describe("世界游玩页面", () => {
           name: "全新上下文从这里开始",
         }),
       ).toHaveLength(0);
+      expect(
+        screen.queryByText("世界已在故事外修订；下一次行动会从新上下文开始。"),
+      ).toBeNull();
     } finally {
       await act(async () => {
         finishStream?.();
