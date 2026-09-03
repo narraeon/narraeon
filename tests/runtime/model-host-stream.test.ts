@@ -3,10 +3,10 @@ import { expect, test, vi } from "vitest";
 import { FileNativeModelHost } from "../../src/runtime/model/FileNativeModelAdapters.ts";
 import {
   ModelHostCancelledError,
-  ModelHostFailureError,
   ModelHostOutcomeUnknownError,
   type ModelHostDelta,
   type ModelHostExchange,
+  type ModelHostFailureError,
 } from "../../src/runtime/model/ModelHost.ts";
 import {
   createMinimalFileNativePreviewInput,
