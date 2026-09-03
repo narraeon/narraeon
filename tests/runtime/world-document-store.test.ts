@@ -647,6 +647,80 @@ describe("WorldDocumentStore open/query Interface", () => {
     ).toBe(true);
   });
 
+  test("声明的空目录参与 catalog 的层级、排序与分页，但不成为持久文件", () => {
+    const snapshot = WorldDocumentStore.open({
+      layout: "world_state",
+      files: [
+        {
+          path: "state/current.yaml",
+          contents: yamlDocument({
+            id: "situation.current",
+            ref: "current",
+            title: "当前情境",
+          }),
+        },
+      ],
+    });
+    const query = {
+      kind: "catalog" as const,
+      declaredDirectories: ["lore/factions", "items", "items"],
+      limit: 2,
+    };
+
+    const first = snapshot.query(query);
+    if (first.kind !== "catalog" || !first.ok)
+      throw new Error("The declared-directory catalog page failed");
+    expect(first).toMatchObject({
+      page: { start: 0, end: 2, total: 3, complete: false },
+      entries: [
+        { kind: "document", logicalPath: "state/current.yaml" },
+        { kind: "directory", logicalPath: "state/items" },
+      ],
+    });
+    expect(
+      snapshot.query({ ...query, cursor: first.page.nextCursor }),
+    ).toMatchObject({
+      kind: "catalog",
+      ok: true,
+      page: { start: 2, end: 3, total: 3, complete: true },
+      entries: [{ kind: "directory", logicalPath: "state/lore" }],
+    });
+    expect(
+      snapshot.query({
+        ...query,
+        declaredDirectories: ["items"],
+        cursor: first.page.nextCursor,
+      }),
+    ).toMatchObject({
+      kind: "error",
+      diagnostics: [expect.objectContaining({ code: "cursor_invalid" })],
+    });
+    expect(
+      snapshot.query({
+        kind: "catalog",
+        directory: "lore",
+        declaredDirectories: query.declaredDirectories,
+      }),
+    ).toMatchObject({
+      kind: "catalog",
+      ok: true,
+      entries: [{ kind: "directory", logicalPath: "state/lore/factions" }],
+    });
+    expect(snapshot.files).toEqual([
+      expect.objectContaining({ path: "state/current.yaml" }),
+    ]);
+    for (const declaredDirectories of ["items", ["../items"]])
+      expect(
+        snapshot.query({
+          kind: "catalog",
+          declaredDirectories,
+        } as never),
+      ).toMatchObject({
+        kind: "error",
+        diagnostics: [expect.objectContaining({ code: "query_invalid" })],
+      });
+  });
+
   test("opaque cursor 绑定快照及 catalog、search、read 的全部分页条件", () => {
     const files = [
       {

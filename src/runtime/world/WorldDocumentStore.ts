@@ -89,6 +89,12 @@ export interface WorldDocumentDiagnostic {
 export interface WorldDocumentCatalogQuery {
   readonly kind: "catalog";
   readonly directory?: string;
+  /**
+   * Logical directories declared outside the persisted document tree. They
+   * participate in the same deterministic listing and cursor as directories
+   * inferred from files, but do not create storage entries of their own.
+   */
+  readonly declaredDirectories?: readonly string[];
   readonly limit?: number;
   readonly cursor?: string | null;
 }
@@ -1673,7 +1679,15 @@ export class WorldDocumentStore {
   #catalog(
     request: WorldDocumentCatalogQuery,
   ): WorldDocumentCatalogResult | WorldDocumentQueryFailure {
-    if (!hasOnlyKeys(request, ["kind", "directory", "limit", "cursor"]))
+    if (
+      !hasOnlyKeys(request, [
+        "kind",
+        "directory",
+        "declaredDirectories",
+        "limit",
+        "cursor",
+      ])
+    )
       return this.#failure("catalog", request, [
         diagnostic({
           code: "query_invalid",
@@ -1681,9 +1695,11 @@ export class WorldDocumentStore {
         }),
       ]);
     const directory = request.directory ?? "";
+    const declaredDirectories: unknown = request.declaredDirectories ?? [];
     const limit = request.limit ?? 20;
     if (
       (directory !== "" && !validRelativePath(directory)) ||
+      !validDeclaredDirectories(declaredDirectories) ||
       !Number.isInteger(limit) ||
       limit < 1 ||
       limit > 100
@@ -1692,9 +1708,12 @@ export class WorldDocumentStore {
         diagnostic({
           code: "query_invalid",
           message:
-            "Catalog directory must be within the layout root, and limit must be 1 to 100",
+            "Catalog directories must be within the layout root, and limit must be 1 to 100",
         }),
       ]);
+    const normalizedDeclaredDirectories = [
+      ...new Set(declaredDirectories),
+    ].sort((left, right) => left.localeCompare(right));
     const relativePrefix = directory === "" ? "" : `${directory}/`;
     const prefix = `${this.logicalRoot}/${relativePrefix}`;
     const entries = new Map<string, WorldDocumentCatalogEntry>();
@@ -1729,6 +1748,20 @@ export class WorldDocumentStore {
         );
       }
     }
+    for (const declaredDirectory of normalizedDeclaredDirectories) {
+      if (!declaredDirectory.startsWith(relativePrefix)) continue;
+      const relative = declaredDirectory.slice(relativePrefix.length);
+      if (relative === "") continue;
+      const slash = relative.indexOf("/");
+      const child = slash < 0 ? relative : relative.slice(0, slash);
+      entries.set(
+        `directory:${child}`,
+        freeze({
+          kind: "directory" as const,
+          logicalPath: `${prefix}${child}`,
+        }),
+      );
+    }
     const ordered = [...entries.values()].sort((left, right) =>
       left.logicalPath.localeCompare(right.logicalPath),
     );
@@ -1737,6 +1770,7 @@ export class WorldDocumentStore {
       layout: this.layout,
       logicalRoot: this.logicalRoot,
       directory,
+      declaredDirectories: normalizedDeclaredDirectories,
       limit,
     });
     const offset = this.#cursorOffset(request.cursor, cursorScope);
@@ -4228,6 +4262,16 @@ function validRelativePath(path: string): boolean {
     path
       .split("/")
       .every((segment) => segment !== "" && segment !== "." && segment !== "..")
+  );
+}
+
+function validDeclaredDirectories(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (candidate: unknown) =>
+        typeof candidate === "string" && validRelativePath(candidate),
+    )
   );
 }
 

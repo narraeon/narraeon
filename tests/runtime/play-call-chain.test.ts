@@ -1319,6 +1319,111 @@ test("world_patch no-op 保留匹配的紧凑工具结果且不推进世界", as
   });
 });
 
+test("游玩调用链可在 frame 声明的空 catalog 中创建首份文档", async () => {
+  const packageFiles = worldFiles().map((file) =>
+    file.path === "control/frame.yaml"
+      ? {
+          ...file,
+          contents: file.contents.replace(
+            "  - slot: { kind: history, recent: 2 }",
+            `  - slot: { kind: catalog, directory: items, maxEntries: 24, required: false }
+  - slot: { kind: history, recent: 2 }`,
+          ),
+        }
+      : file,
+  );
+  const { worlds, worldId } = await createWorld(
+    "play-chain-empty-declared-catalog",
+    packageFiles,
+  );
+  const firstHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "list-empty-items",
+            name: "state_list",
+            arguments: { parent: "@dir-/" },
+          },
+        ],
+      },
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "create-first-item",
+            name: "world_create",
+            arguments: {
+              parent: "@dir-/items",
+              codec: "yaml",
+              refHint: "lantern",
+              title: "提灯",
+              summary: "一盏可持续追踪的提灯。",
+              aliases: [],
+              body: "状态: 完好\n",
+            },
+          },
+        ],
+      },
+      { outcome: "response", text: "The lantern is now part of the world." },
+    ],
+  });
+  const chains = new PlayCallChain(worlds);
+
+  const completed = await chains.start({
+    worldId,
+    chainId: "play-chain-empty-declared-catalog",
+    exchangeId: "play-chain-empty-declared-catalog-player",
+    playerText: "Create a lantern.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: firstHost,
+  });
+
+  expect(completed.status).toBe("ready");
+  const listResult = firstHost.requests[1]?.appended.at(-1);
+  expect(listResult).toMatchObject({
+    kind: "tool",
+    toolCallId: "list-empty-items",
+  });
+  expect(listResult?.kind === "tool" ? listResult.markdown : "").toContain(
+    "Directory @dir-/items",
+  );
+  expect(firstHost.requests[2]?.appended.at(-1)).toEqual({
+    kind: "tool",
+    toolCallId: "create-first-item",
+    markdown: "@lantern write succeeded",
+  });
+  expect(
+    (await worlds.recoverEndpoint(worldId)).state.find(
+      ({ path }) => path === "items/lantern.yaml",
+    )?.contents,
+  ).toContain("状态: 完好");
+
+  const freshHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [{ outcome: "response", text: "The lantern remains indexed." }],
+  });
+  await chains.start({
+    worldId,
+    chainId: "play-chain-after-first-catalog-document",
+    exchangeId: "play-chain-after-first-catalog-document-player",
+    playerText: "Inspect the lantern.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: freshHost,
+  });
+  expect(
+    freshHost.requests[0]?.bootstrap.logicalMessages.find(
+      ({ role }) => role === "world_context",
+    )?.markdown,
+  ).toContain("提灯 [ref: @lantern] — 一盏可持续追踪的提灯。");
+});
+
 test("冷启动恢复 world_create 授予的写权限，后续无需重新读取即可 patch", async () => {
   const { worlds, worldId } = await createWorld(
     "play-chain-create-authorization-cold-recovery",
@@ -3203,7 +3308,10 @@ test("AI 工具被 Runtime 拒绝时保存产生该调用的原始交换与 reas
   ).not.toContain("I will patch the record before presenting the scene.");
 });
 
-async function createWorld(label: string): Promise<{
+async function createWorld(
+  label: string,
+  packageFiles: ContentTreeFile[] = worldFiles(),
+): Promise<{
   worlds: FileNativeWorldStore;
   worldId: string;
   root: string;
@@ -3215,7 +3323,7 @@ async function createWorld(label: string): Promise<{
     operationId: `create-${label}-world`,
     sourcePackageId: `${label}-package`,
     sourcePackageTitle: `${label} package`,
-    packageFiles: worldFiles(),
+    packageFiles,
     prompt: { hostBinding: hostBinding(), modelBinding: modelBinding() },
   });
   if (created.outcome !== "created") throw new Error("world was not created");

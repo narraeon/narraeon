@@ -48,11 +48,14 @@ test("设定完善契约描述显式上下文和直接当前树工具行为", ()
   expect(contract).toContain("内容包在游玩中的生命周期");
   expect(contract).toContain("world/*");
   expect(contract).toContain("state_list");
+  expect(contract).toContain("空状态目录");
+  expect(contract).toContain("world_create 目标");
   expect(contract).toContain("全新游玩上下文由世界控制与当前世界状态编译");
   expect(contract).toContain("精确 selector");
   expect(contract).not.toMatch(/计划阶段|生成阶段|结束工具|preview 或 finish/u);
 
   const englishContract = settingImprovementRuntimeContract("en");
+  expect(englishContract).toContain("remains available through state_list");
   expect(englishContract).not.toMatch(
     /planning phase|generation phase|finish tool|preview and finish tools/iu,
   );

@@ -309,7 +309,7 @@ const toolDescriptions: Record<
 > = {
   en: {
     state_list:
-      "List document and state directory handles known to Runtime. parent must be @dir-/ for the state root or an @dir-* handle returned by an earlier state_list result; descend only through returned directory handles. A cursor is valid only for the same state snapshot, parent, and limit. Pass returned document handles to context_read. This tool never lists committed history.",
+      "List document and state directory handles known to Runtime. parent must be @dir-/ for the state root or an @dir-* handle returned by an earlier state_list result; descend only through returned directory handles. Catalog directories declared by the frozen world frame remain listed and usable when empty. A cursor is valid only for the same state snapshot, parent, and limit. Pass returned document handles to context_read. This tool never lists committed history.",
     history_list:
       "List handles for committed history messages known to Runtime. order must be newest_first or oldest_first. A cursor is valid only for the same committed-history snapshot, order, and limit. Pass returned @history-message-* handles to context_read. This tool never lists the mutable state directory.",
     context_search:
@@ -319,7 +319,7 @@ const toolDescriptions: Record<
     world_patch:
       'Update a document that has been read precisely or whose complete body was injected with write authorization. target must be an @short-ref. When title, summary, or aliases are stale, use set_metadata and include only the title, summary, or aliases that must change. At least one is required; Runtime preserves omitted fields from the current candidate document. A YAML edit uses locator:{yaml:["field","child"]}, for example {op:"replace",locator:{yaml:["status"]},value:"new value"}. A YAML value may reference a whole document only as {$ref:"@short-ref"}; the short reference must come from a Runtime list, read, or create result. Never invent a document id. If no handle is available, use ordinary text when semantically correct or call world_create first and use its returned @short-ref. To add an item to the end of an existing sequence, use append with the locator pointing to that sequence; add creates only a map key or list index that does not exist. A Markdown locator excludes the document level-one heading: {markdown:["Responsibilities"]} points exactly to ## Responsibilities, and replace_section.markdown must begin with the same heading at the same level. Use replace_preamble for text after the level-one heading and before the first level-two heading; send only that text. Use replace_body to replace the whole Markdown body and retain the original level-one heading. Success reports only whether the document changed and does not echo the body. Call context_read again only when a later decision depends on Runtime\'s exact serialized body or current metadata. Do not use path, JSON Pointer, set, or a file name.',
     world_create:
-      'Create a document inside a state directory returned by Runtime. parent must be an @dir-* handle returned by state_list, such as @dir-/characters; use @dir-/ for the root. refHint is a lowercase ASCII short-reference hint, not a world/ path. A YAML body may reference a whole document only as {$ref:"@short-ref"}, and the short reference must come from a Runtime list, read, or create result. Never invent a document id.',
+      'Create a document inside a Runtime-known state directory. parent must be an @dir-* handle listed by state_list, such as @dir-/characters; catalog directories declared by the frozen world frame remain available when empty, and @dir-/ is the root. A syntactically valid but unknown directory is rejected. refHint is a lowercase ASCII short-reference hint, not a world/ path. A YAML body may reference a whole document only as {$ref:"@short-ref"}, and the short reference must come from a Runtime list, read, or create result. Never invent a document id.',
     artifact_emit:
       "Submit an artifact declared in advance for this follow-up request. Supply only the output name and payload; Runtime fixes the channel, key, content type, renderer, retention policy, and authority meaning in the contract.",
     artifact_clear:
@@ -327,7 +327,7 @@ const toolDescriptions: Record<
   },
   "zh-CN": {
     state_list:
-      "列出 Runtime 已知的文档与状态目录句柄。状态根目录的 parent 使用 @dir-/；继续下级时只能使用先前 state_list 结果返回的 @dir-*。cursor 只对同一状态快照、parent 和 limit 有效。返回的文档句柄交给 context_read；本工具不列出已提交历史。",
+      "列出 Runtime 已知的文档与状态目录句柄。状态根目录的 parent 使用 @dir-/；继续下级时只能使用先前 state_list 结果返回的 @dir-*。冻结世界 frame 声明的 catalog 目录即使为空，也会继续列出并可用。cursor 只对同一状态快照、parent 和 limit 有效。返回的文档句柄交给 context_read；本工具不列出已提交历史。",
     history_list:
       "列出 Runtime 已知的已提交历史消息句柄。order 必须是 newest_first 或 oldest_first；cursor 只对同一历史快照、order 和 limit 有效。返回的 @history-message-* 交给 context_read；本工具不列出可变状态目录。",
     context_search:
@@ -337,7 +337,7 @@ const toolDescriptions: Record<
     world_patch:
       '更新已精确读取，或已随写入资格注入完整正文的文档。target 必须使用 @短引用；文档 title、summary 或 aliases 过时时使用 set_metadata，只提供需要改变的 title、summary 或 aliases。至少提供一项；未提供的字段由 Runtime 从当前候选文档保留。YAML edit 使用 locator:{yaml:["字段","子字段"]}，例如 {op:"replace",locator:{yaml:["情况"]},value:"新值"}。YAML value 需要引用整份文档时只能写 {$ref:"@短引用"}，短引用必须来自 Runtime 的 list、read 或 create 结果；不得自行编造文档 id。没有可用句柄时，根据语义使用普通文本，或先 world_create 后使用其返回的 @短引用。向已存在的 sequence 末尾加一项必须使用 append 并把 locator 指向该 sequence；add 只创建尚不存在的 map key 或 list index。Markdown locator 不包含文档 # 一级标题：{markdown:["职责"]} 精确指向 ## 职责，replace_section.markdown 必须从同级同名标题开始。修改 # 标题下、第一个 ## 前的文字用 replace_preamble（只传该段文字）；替换整个 Markdown 正文用 replace_body，且 markdown 必须保留原 # 一级标题。成功结果只报告文档是否发生变化，不回显正文；只有后续决策依赖 Runtime 序列化后的精确正文或当前元数据时才重新 context_read。不要使用 path、JSON Pointer、set 或文件名。',
     world_create:
-      '在 Runtime 返回的状态目录中创建文档。parent 必须是 state_list 返回的 @dir-*，例如 @dir-/characters；根目录使用 @dir-/。refHint 是小写 ASCII 短引用，不要传 world/ 路径。YAML body 需要引用整份文档时只能写 {$ref:"@短引用"}，且短引用必须来自 Runtime 的 list、read 或 create 结果；不得自行编造文档 id。',
+      '在 Runtime 已知的状态目录中创建文档。parent 必须是 state_list 列出的 @dir-*，例如 @dir-/characters；冻结世界 frame 声明的 catalog 目录为空时仍然可用，根目录使用 @dir-/。只有句柄形式正确但 Runtime 并不知道的目录会被拒绝。refHint 是小写 ASCII 短引用，不要传 world/ 路径。YAML body 需要引用整份文档时只能写 {$ref:"@短引用"}，且短引用必须来自 Runtime 的 list、read 或 create 结果；不得自行编造文档 id。',
     artifact_emit:
       "提交本次后置请求预先声明的产物。只能传 output name 与 payload；频道、key、内容类型、renderer、保存策略和权威含义由 Runtime contract 固定。",
     artifact_clear:

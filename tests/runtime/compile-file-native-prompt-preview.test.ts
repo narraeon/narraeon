@@ -864,9 +864,13 @@ context:
     expect(patch?.description).toContain("Call context_read again only when");
     expect(stateList?.description).toContain("@dir-/");
     expect(stateList?.description).toContain("state directory");
+    expect(stateList?.description).toContain(
+      "remain listed and usable when empty",
+    );
     expect(historyList?.description).toContain("newest_first");
     expect(historyList?.description).toContain("committed history");
     expect(create?.description).toContain("state_list");
+    expect(create?.description).toContain("unknown directory is rejected");
     expect(create?.description).not.toContain("context_list");
 
     const chinese = fileNativeToolsForNames(
@@ -875,6 +879,7 @@ context:
     );
     expect(chinese[0]?.description).toContain("状态目录");
     expect(chinese[0]?.description).toContain("@dir-*");
+    expect(chinese[0]?.description).toContain("即使为空");
     expect(chinese[1]?.description).toContain("已提交历史");
     expect(chinese[1]?.description).toContain("oldest_first");
   });
@@ -911,6 +916,69 @@ context:
     expect(
       call("context_list", { source: "history", order: "oldest_first" }),
     ).toMatchObject({ ok: true });
+  });
+
+  test("frame 声明的空 catalog 目录可发现、可创建，未声明目录不可伪造", () => {
+    const source = input();
+    const files = snapshotRecord(source);
+    files["control/frame.yaml"] = files["control/frame.yaml"]!.replace(
+      "  - slot: { kind: additional_materials }",
+      `  - slot: { kind: catalog, directory: items, maxEntries: 24, required: false }
+  - slot: { kind: additional_materials }`,
+    );
+    const documents = new FileNativePlayDocuments(files);
+    source.world.documentSnapshot = documents.snapshot;
+    documents.bindBootstrap(
+      new FileNativePromptCompiler().compileBootstrap(source),
+    );
+    const call = (name: string, arguments_: Record<string, unknown>) =>
+      documents.execute({ id: name, name, arguments: arguments_ }, []);
+
+    const root = call("state_list", { parent: "@dir-/" });
+    expect(root).toMatchObject({ ok: true });
+    expect(root.markdown).toContain("Directory @dir-/items");
+    const emptyItems = call("state_list", { parent: "@dir-/items" });
+    expect(emptyItems).toMatchObject({ ok: true });
+    expect(emptyItems.markdown).toContain("(empty)");
+    expect(
+      call("context_list", { source: "state", parent: "@dir-/" }).markdown,
+    ).toContain("Directory @dir-/items");
+    expect(call("state_list", { parent: "@dir-/invented" })).toMatchObject({
+      ok: false,
+    });
+    expect(
+      call("world_create", {
+        parent: "@dir-/invented",
+        codec: "yaml",
+        refHint: "forged",
+        title: "伪造文档",
+        summary: "不应当被创建。",
+        aliases: [],
+        body: "状态: 不存在",
+      }),
+    ).toMatchObject({ ok: false });
+
+    expect(
+      call("world_create", {
+        parent: "@dir-/items",
+        codec: "yaml",
+        refHint: "lantern",
+        title: "提灯",
+        summary: "一盏可持续追踪的提灯。",
+        aliases: [],
+        body: "状态: 完好",
+      }),
+    ).toMatchObject({ ok: true });
+    expect(call("state_list", { parent: "@dir-/items" }).markdown).toContain(
+      "Document @lantern",
+    );
+
+    source.world.documentSnapshot = documents.snapshot;
+    const recompiled = new FileNativePromptCompiler().compileBootstrap(source);
+    expect(
+      recompiled.logicalMessages.find(({ role }) => role === "world_context")
+        ?.markdown,
+    ).toContain("提灯 [ref: @lantern] — 一盏可持续追踪的提灯。");
   });
 
   test("已注入完整正文的文档可只更新 summary 并保留未展示的 aliases", () => {

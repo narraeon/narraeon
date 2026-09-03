@@ -92,6 +92,7 @@ class PlayDocumentToolFailure extends Error {
 export class FileNativePlayDocuments {
   readonly #candidate: PlayCandidate;
   #reads: WriteAuthorizations;
+  #declaredDirectories: string[] = [];
 
   constructor(files: Readonly<Record<string, string>>) {
     this.#candidate = openPlayCandidate({ ...files });
@@ -108,6 +109,7 @@ export class FileNativePlayDocuments {
 
   bindBootstrap(bootstrap: PromptCompilation): void {
     this.#reads = bootstrapAuthorizations(bootstrap, this.#candidate.snapshot);
+    this.#declaredDirectories = declaredStateDirectories(bootstrap);
   }
 
   authorizationCheckpoint(): PlayDocumentAuthorizationCheckpoint {
@@ -185,6 +187,7 @@ export class FileNativePlayDocuments {
       this.#candidate.snapshot,
       history,
       call,
+      this.#declaredDirectories,
     );
     if (preview === null) return null;
     const retryParameter = call.name === "context_read" ? "max_bytes" : "limit";
@@ -221,6 +224,7 @@ export class FileNativePlayDocuments {
       this.#candidate.snapshot,
       history,
       retryCall,
+      this.#declaredDirectories,
     );
     if (preview === null)
       throw new TypeError("context tool retry preview requires a read tool");
@@ -242,6 +246,7 @@ export class FileNativePlayDocuments {
         this.#candidate.snapshot,
         history,
         call.arguments,
+        this.#declaredDirectories,
       );
     if (call.name === "history_list")
       return executeHistoryList(
@@ -256,6 +261,7 @@ export class FileNativePlayDocuments {
         this.#candidate.snapshot,
         history,
         call.arguments,
+        this.#declaredDirectories,
       );
     if (call.name === "context_read") {
       const result = executeContextRead(
@@ -277,6 +283,7 @@ export class FileNativePlayDocuments {
         this.#candidate,
         this.#reads,
         call.arguments,
+        this.#declaredDirectories,
       );
     return toolFailure(
       `The current document context does not accept ${call.name}`,
@@ -353,6 +360,19 @@ function bootstrapAuthorizations(
     }
   }
   return result;
+}
+
+function declaredStateDirectories(bootstrap: PromptCompilation): string[] {
+  // Catalog coverage is the durable compiler projection shared by current
+  // state_list contexts and legacy context_list contexts.
+  return [
+    ...new Set(
+      bootstrap.coverage
+        .filter(({ slot }) => slot === "catalog")
+        .map(({ source }) => source)
+        .filter(validStateDirectory),
+    ),
+  ].sort((left, right) => left.localeCompare(right));
 }
 
 function authorizeRead(
@@ -618,6 +638,7 @@ function applyPlayCandidateCreate(
   candidate: PlayCandidate,
   authorizations: WriteAuthorizations,
   args: unknown,
+  declaredDirectories: readonly string[],
 ): PlayDocumentToolResult {
   try {
     const parentDirectory =
@@ -638,6 +659,16 @@ function applyPlayCandidateCreate(
       typeof args.body !== "string"
     )
       throw new PlayDocumentToolFailure("world_create arguments are invalid");
+    if (
+      !knownStateDirectory(
+        candidate.snapshot,
+        parentDirectory,
+        declaredDirectories,
+      )
+    )
+      throw new PlayDocumentToolFailure(
+        "world_create parent is not a Runtime-known state directory; call state_list and use one of its directory handles",
+      );
     const suppliedBytes = Buffer.byteLength(args.body, "utf8");
     if (suppliedBytes > 64 * 1024)
       throw new PlayDocumentToolFailure("The world_create body exceeds 64 KiB");
@@ -791,13 +822,24 @@ function previewContextToolResult(
   snapshot: WorldDocumentStore,
   history: { path: string; contents: string }[],
   call: ModelHostToolCall,
+  declaredDirectories: readonly string[],
 ): ContextToolResult | null {
   if (call.name === "state_list")
-    return executeStateList(snapshot, history, call.arguments);
+    return executeStateList(
+      snapshot,
+      history,
+      call.arguments,
+      declaredDirectories,
+    );
   if (call.name === "history_list")
     return executeHistoryList(snapshot, history, call.arguments);
   if (call.name === "context_list")
-    return executeContextList(snapshot, history, call.arguments);
+    return executeContextList(
+      snapshot,
+      history,
+      call.arguments,
+      declaredDirectories,
+    );
   if (call.name === "context_search")
     return executeContextSearch(snapshot, history, call.arguments);
   if (call.name === "context_read")
@@ -1010,10 +1052,40 @@ function parseStateDirectoryHandle(handle: string): string | null {
   }
 }
 
+function validStateDirectory(directory: string): boolean {
+  if (directory.length === 0) return false;
+  try {
+    return (
+      parseStateDirectoryHandle(stateDirectoryHandle(directory)) === directory
+    );
+  } catch {
+    return false;
+  }
+}
+
+function knownStateDirectory(
+  snapshot: WorldDocumentStore,
+  directory: string,
+  declaredDirectories: readonly string[],
+): boolean {
+  if (directory === "") return true;
+  const relativePrefix = `${directory}/`;
+  if (
+    declaredDirectories.some(
+      (declared) =>
+        declared === directory || declared.startsWith(relativePrefix),
+    )
+  )
+    return true;
+  const logicalPrefix = `${snapshot.logicalRoot}/${relativePrefix}`;
+  return snapshot.files.some(({ path }) => path.startsWith(logicalPrefix));
+}
+
 function executeStateList(
   snapshot: WorldDocumentStore,
   history: { path: string; contents: string }[],
   args: unknown,
+  declaredDirectories: readonly string[],
 ): ContextToolResult {
   if (
     !record(args) ||
@@ -1028,7 +1100,12 @@ function executeStateList(
       markdown:
         "# Runtime argument error\n\nstate_list requires an @dir-* parent returned by Runtime and accepts only cursor and limit in addition; use history_list for committed history.",
     };
-  return executeContextList(snapshot, history, { ...args, source: "state" });
+  return executeContextList(
+    snapshot,
+    history,
+    { ...args, source: "state" },
+    declaredDirectories,
+  );
 }
 
 function executeHistoryList(
@@ -1055,6 +1132,7 @@ function executeContextList(
   snapshot: WorldDocumentStore,
   history: { path: string; contents: string }[],
   args: unknown,
+  declaredDirectories: readonly string[] = [],
 ): ContextToolResult {
   if (!record(args) || (args.source !== "state" && args.source !== "history"))
     return {
@@ -1094,9 +1172,16 @@ function executeContextList(
     const parent = args.parent as string;
     const directory = parseStateDirectoryHandle(parent);
     if (directory === null) return unexpectedStateQueryResult();
+    if (!knownStateDirectory(snapshot, directory, declaredDirectories))
+      return {
+        ok: false,
+        markdown:
+          "# Runtime argument error\n\nThe parent is not a Runtime-known state directory; call state_list and descend only through its returned directory handles.",
+      };
     const result = snapshot.query({
       kind: "catalog",
       directory,
+      declaredDirectories,
       limit,
       ...(typeof args.cursor === "string" || args.cursor === null
         ? { cursor: args.cursor }
