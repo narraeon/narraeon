@@ -253,12 +253,14 @@ AI 使用受管的文档 create／write／patch／move／delete 操作修改 YAM
 
 设定完善会话、完整 Provider 续传、Provider 返回推理、工具参数、工具结果、逐调用已生效差异、失败和结算恢复状态由 Runtime 持久保存；浏览器断线不取消生成，不完整 Provider 响应不进入 transcript、也不执行其中工具。Runtime 在“完整 Provider 工具响应与原树指纹已保存／当前树已发布／工具收据已追加”三者之间保存可恢复结算意图；重启后只补齐已确认的发布或从该精确原树重放完整响应，绝不从流式片段或任意更新的树猜测工具。当前会话 schema 对所有非 opaque 字段使用完整 codec，未知或损坏结构 fail closed。旧 schema 的隔离草稿迁移时先严格验证完整已发布结构，再保留不可变旧源、transcript 和历史差异，未应用草稿绝不静默写入当前树；待定旧 Apply 收据在内容包租约内按 base/draft/当前树指纹记为已应用、未应用或结果未知，迁移本身不写树。迁移后的 bootstrap 在 Runtime-system 层追加当前树写入契约并换用当前工具定义，使旧高优先级草稿指令无法支配后续消息；原 Provider assistant 续传载荷仍原样保留。界面在每个工具结果下直接显示与该调用对应的统一 diff：删除为红色、新增为绿色；不存在另一个 Apply、Discard 或候选预览表面。
 
+每条成功且非空的历史工具差异同时获得稳定的改动集身份，作者可以从该 diff 显式回滚此次 AI 修改。回滚不调用模型，也不回到整份内容包快照：Runtime 在内容包租约内逐路径核对当前树仍精确等于该改动集的修改后像，再把 create／modify／delete（包括 move 的两个路径）一起原子恢复为修改前像。全部路径已是修改前像时返回幂等成功；任一路径出现后续手动修改或其他 AI 修改时拒绝整次回滚，绝不覆盖后来工作；逆向删除新建世界文档时还要通过与 `setting_delete` 相同的 currentSituation、frame、player-view 和跨文档 `$ref` 引用完整性检查。原 Provider 对话、工具回执和当时差异保持 append-only；删除一段对话会同时失去其中的回滚入口，但不会隐式改变当前树。
+
 ## 目标模块边界
 
 - `ContentWorkspace` 拥有内容包本地身份、独立标题、当前树、安全导入／导出和当前树原子替换。
 - `WorldDocumentStore` 拥有世界文档身份、受限 codec、精确读取、候选 patch／create／retire、引用索引和当前树物化。
 - `PromptCompiler` 拥有主持／世界 bootstrap 的确定性编译、Runtime 机械说明、slot 绑定、Markdown 渲染、role 映射、Provider 参数、缓存报告和真实预览；生产游玩调用方只提交编译输入，不另行构造提示词或材料 DTO。
-- `SettingImprovementSession` 拥有设定完善对话、显式继续／全新上下文、稳定工具全集、逐响应当前树结算、自动检查、模型调用轨迹和失败恢复；`FileNativeSettingImprovementStore` 只保存可恢复会话、读取授权、结算意图与工具回执，不保存第二棵内容树。
+- `SettingImprovementSession` 拥有设定完善对话、显式继续／全新上下文、稳定工具全集、逐响应当前树结算、历史改动集安全回滚、自动检查、模型调用轨迹和失败恢复；`FileNativeSettingImprovementStore` 只保存可恢复会话、读取授权、结算意图与工具回执，不保存第二棵内容树。
 - `PlayCallChain` 拥有两个提交动作、空输入续写、模型／工具循环、浏览器增量投影、tool-call 幂等、逐响应 Authority 衔接和中断请求原样重发。
 - `FileNativePlayTimelineStore` 拥有跨全新上下文的页面时间线、稳定游标摘要页、单事件详情和可恢复的追加投影。
 - `FileNativePlayAdvanceStore` 拥有冻结请求、完整 Provider 结果、精确响应结算和已结算端点等不可变游玩推进事实。

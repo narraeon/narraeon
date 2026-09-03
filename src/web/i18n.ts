@@ -851,10 +851,10 @@ const settingImprovementEnglishMessages: Record<string, string> = {
   内容包文件视图: "Content-package file view",
   对话历史: "Conversation history",
   "删除对话：{title}": "Delete conversation: {title}",
-  "删除对话“{title}”？只会删除这份对话记录；已经写入内容包当前树的改动不会回滚。此操作无法撤销。":
-    "Delete conversation “{title}”? This removes only the conversation record. Changes already written to the current content-package tree will not be rolled back. This cannot be undone.",
-  "对话历史已删除；内容包当前树没有回滚。":
-    "Conversation history deleted; the current content-package tree was not rolled back.",
+  "删除对话“{title}”？内容包当前树不会改变，但这段历史中的一键回滚入口也会一并删除。此操作无法撤销。":
+    "Delete conversation “{title}”? The current content-package tree will not change, but the one-click rollback entries in this history will also be deleted. This cannot be undone.",
+  "对话历史及其中的一键回滚入口已删除；内容包当前树没有改变。":
+    "Conversation history and its one-click rollback entries were deleted; the current content-package tree did not change.",
   正在预览未保存的文件草稿: "Previewing the unsaved file draft",
   正在预览已保存的当前树: "Previewing the saved current tree",
   "{count} 份文件": "{count} files",
@@ -953,8 +953,22 @@ const settingImprovementEnglishMessages: Record<string, string> = {
   继续这段对话: "Continue this conversation",
   "可以讨论、要求它检查某份设定，也可以直接让它修改内容包。":
     "You can discuss, ask it to inspect part of the setting, or tell it to edit the content package directly.",
-  "已生效 · {count} 个文件": "Effective · {count} files",
-  已生效差异: "Effective changes",
+  "当时生效 · {count} 个文件": "Effective at the time · {count} files",
+  当时已生效差异: "Changes applied at the time",
+  "回滚这次 AI 修改？此次工具调用涉及的 {count} 个文件会一起恢复到修改前版本；对话历史仍会保留。":
+    "Roll back this AI edit? The {count} files involved in this tool call will be restored together to their prior versions; conversation history will remain.",
+  "正在回滚…": "Rolling back…",
+  "回滚这次 AI 修改": "Roll back this AI edit",
+  当前树已回到这次修改前的版本:
+    "The current tree is already at the version before this edit",
+  "相关文件后来又有改动，不能直接回滚":
+    "Affected files changed later and cannot be rolled back directly",
+  "已回滚这次 AI 修改；对话历史仍然保留。":
+    "This AI edit was rolled back; conversation history remains.",
+  "这些文件已经处于这次修改前的版本。":
+    "These files are already at the version before this edit.",
+  "Runtime 已确认回滚结果，但重新读取内容包失败：{message}":
+    "Runtime confirmed the rollback result, but reloading the content package failed: {message}",
   "迁移前的隔离草稿记录（仅回顾）":
     "Pre-migration isolated draft record (history only)",
   迁移前已应用的差异: "Changes applied before migration",

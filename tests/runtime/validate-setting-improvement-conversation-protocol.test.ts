@@ -92,3 +92,28 @@ test("历史读取和所选对话状态保留，Apply 与 Discard 已从协议�
       }),
     ).toThrow(/does not support command/u);
 });
+
+test("设定完善回滚必须精确绑定内容包、对话和历史改动集", () => {
+  const rollback = {
+    type: "setting-improvement.rollback",
+    packageId: "package-1",
+    sessionId: "setting-00000000-0000-4000-8000-000000000000",
+    changeSetId: "change-set:12",
+  } as const;
+  expect(
+    parseV1Envelope({ protocol: v1Protocol, request: rollback }).request,
+  ).toEqual(rollback);
+
+  for (const changeSetId of [undefined, "", "change-set:-1", "change-set:01"])
+    expect(() =>
+      parseV1Envelope({
+        protocol: v1Protocol,
+        request: {
+          type: "setting-improvement.rollback",
+          packageId: "package-1",
+          sessionId: "setting-1",
+          ...(changeSetId === undefined ? {} : { changeSetId }),
+        },
+      }),
+    ).toThrow(/changeSetId|missing required field/u);
+});

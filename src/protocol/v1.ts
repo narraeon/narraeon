@@ -70,6 +70,12 @@ export type V1Request =
       sessionId: string;
     }
   | {
+      type: "setting-improvement.rollback";
+      packageId: string;
+      sessionId: string;
+      changeSetId: string;
+    }
+  | {
       type: "setting-improvement.message";
       packageId: string;
       requestId: string;
@@ -240,6 +246,8 @@ export interface V1SettingConversationToolCall {
     isError: boolean;
     /** Changes already published to the content package current tree. */
     changes: V1SettingAuthoringDiff[];
+    /** Stable identity of this successful, non-empty historical change set. */
+    changeSetId: string | null;
   } | null;
 }
 
@@ -290,6 +298,13 @@ export interface V1SettingAuthoringDiff {
   kind: "create" | "modify" | "delete";
   before: string | null;
   after: string | null;
+}
+
+export interface V1SettingImprovementRollbackResult {
+  status: "rolled_back" | "already_rolled_back";
+  changeSetId: string;
+  /** The inverse diff published by this rollback; empty for an idempotent retry. */
+  changes: V1SettingAuthoringDiff[];
 }
 
 export interface V1SettingPromptPreview {
@@ -696,6 +711,11 @@ const requiredFields: Record<
     packageId: "string",
     sessionId: "string",
   },
+  "setting-improvement.rollback": {
+    packageId: "string",
+    sessionId: "string",
+    changeSetId: "string",
+  },
   "setting-improvement.message": {
     packageId: "string",
     requestId: "string",
@@ -1048,6 +1068,15 @@ function validateRequestFields(request: Record<string, unknown>): void {
         "setting-improvement.message.continuation is invalid",
       );
   }
+  if (
+    request.type === "setting-improvement.rollback" &&
+    (typeof request.changeSetId !== "string" ||
+      !/^change-set:(0|[1-9][0-9]*)$/u.test(request.changeSetId))
+  )
+    throw new V1ProtocolError(
+      "invalid_request",
+      "setting-improvement.rollback.changeSetId is invalid",
+    );
 }
 
 const requestTypes = new Set([
@@ -1073,6 +1102,7 @@ const requestTypes = new Set([
   "setting-improvement.overview",
   "setting-improvement.session.read",
   "setting-improvement.session.delete",
+  "setting-improvement.rollback",
   "setting-improvement.message",
   "setting-improvement.cancel",
   "play.read",

@@ -466,6 +466,38 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     "已经生效",
   );
 
+  const worldRuleWrite = authoredTurn
+    .locator(".setting-exchange-tool")
+    .filter({ hasText: "setting_write_file" })
+    .filter({ hasText: "control/blocks/world.md" });
+  await worldRuleWrite.locator(":scope > summary").click();
+  page.once("dialog", (dialog) => dialog.accept());
+  await worldRuleWrite
+    .getByRole("button", { name: "回滚这次 AI 修改" })
+    .click();
+  await expect(page.locator(".setting-workspace-feedback")).toContainText(
+    "已回滚这次 AI 修改；对话历史仍然保留",
+  );
+  await expect(worldRuleWrite).toContainText("当前树已回到这次修改前的版本");
+  await page
+    .getByRole("navigation", { name: "设定完善工具" })
+    .getByRole("button", { name: "文件", exact: true })
+    .click();
+  const rolledBackPreview = page.getByRole("complementary", {
+    name: "内容包文件预览",
+  });
+  await rolledBackPreview
+    .getByRole("navigation", { name: "内容包文件树" })
+    .getByRole("button", { name: "control/blocks/world.md" })
+    .click();
+  await expect(rolledBackPreview).toContainText(
+    "Write persistent outcomes back to their natural owner.",
+  );
+  await expect(rolledBackPreview).not.toContainText(
+    "advance training plans according to character choices",
+  );
+  await page.getByRole("button", { name: "收起文件面板" }).click();
+
   responses.push(
     chatTools(
       [
@@ -546,7 +578,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     })
     .click();
   await expect(page.locator(".setting-workspace-feedback")).toContainText(
-    "内容包当前树没有回滚",
+    "内容包当前树没有改变",
   );
   await expect(
     page.getByRole("button", {

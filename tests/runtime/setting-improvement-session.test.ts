@@ -192,6 +192,264 @@ test("完整工具响应直接原子发布当前树，并把推理、调用、�
   expect(view.messages.at(-1)?.text).toContain("already live");
 });
 
+test("历史 AI 修改可原子回滚到精确前像，重试保持幂等且对话历史不变", async () => {
+  const fixture = await createFixture([
+    {
+      outcome: "response",
+      toolCalls: [
+        {
+          id: "rollback-read-opening",
+          name: "setting_read",
+          arguments: { path: "opening.md" },
+        },
+        {
+          id: "rollback-write-opening",
+          name: "setting_write_file",
+          arguments: { path: "opening.md", contents: "AI changed opening.\n" },
+        },
+      ],
+    },
+    { outcome: "response", text: "The edit is live.", toolCalls: [] },
+  ]);
+  const before = await fixture.content.readCurrentTreeContentPackage(
+    fixture.packageId,
+  );
+  const beforeOpening = before.files.find(
+    ({ path }) => path === "opening.md",
+  )!.contents;
+  const view = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "request-rollback",
+    "Change the opening",
+  );
+  const changeSetId =
+    view.turns[0]?.exchanges[0]?.toolCalls[1]?.result?.changeSetId;
+  expect(changeSetId).toMatch(/^change-set:[0-9]+$/u);
+  if (changeSetId === null || changeSetId === undefined)
+    throw new Error("The accepted write did not expose a rollback identity");
+
+  const rolledBack = await fixture.session.rollback({
+    packageId: fixture.packageId,
+    sessionId: view.sessionId,
+    changeSetId,
+  });
+  expect(rolledBack).toEqual({
+    status: "rolled_back",
+    changeSetId,
+    changes: [
+      {
+        path: "opening.md",
+        kind: "modify",
+        before: "AI changed opening.\n",
+        after: beforeOpening,
+      },
+    ],
+  });
+  expect(
+    (
+      await fixture.content.readCurrentTreeContentPackage(fixture.packageId)
+    ).files.find(({ path }) => path === "opening.md")?.contents,
+  ).toBe(beforeOpening);
+  await expect(
+    fixture.session.rollback({
+      packageId: fixture.packageId,
+      sessionId: view.sessionId,
+      changeSetId,
+    }),
+  ).resolves.toEqual({
+    status: "already_rolled_back",
+    changeSetId,
+    changes: [],
+  });
+  await expect(
+    fixture.session.readSession(fixture.packageId, view.sessionId),
+  ).resolves.toMatchObject({ turns: view.turns });
+});
+
+test("回滚拒绝覆盖同一文件后来的修改", async () => {
+  const fixture = await createFixture([
+    {
+      outcome: "response",
+      toolCalls: [
+        {
+          id: "conflict-read-opening",
+          name: "setting_read",
+          arguments: { path: "opening.md" },
+        },
+        {
+          id: "conflict-write-opening",
+          name: "setting_write_file",
+          arguments: { path: "opening.md", contents: "AI edit.\n" },
+        },
+      ],
+    },
+    { outcome: "response", text: "Done.", toolCalls: [] },
+  ]);
+  const view = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "request-conflicting-rollback",
+    "Change the opening",
+  );
+  const changeSetId =
+    view.turns[0]?.exchanges[0]?.toolCalls[1]?.result?.changeSetId;
+  if (changeSetId === null || changeSetId === undefined)
+    throw new Error("The accepted write did not expose a rollback identity");
+  const current = await fixture.content.readCurrentTreeContentPackage(
+    fixture.packageId,
+  );
+  await fixture.content.replaceCurrentTreeContentPackage(
+    fixture.packageId,
+    current.files.map((file) =>
+      file.path === "opening.md"
+        ? { ...file, contents: "Later manual edit.\n" }
+        : file,
+    ),
+  );
+
+  await expect(
+    fixture.session.rollback({
+      packageId: fixture.packageId,
+      sessionId: view.sessionId,
+      changeSetId,
+    }),
+  ).rejects.toThrow("refused to overwrite the later work");
+  expect(
+    (
+      await fixture.content.readCurrentTreeContentPackage(fixture.packageId)
+    ).files.find(({ path }) => path === "opening.md")?.contents,
+  ).toBe("Later manual edit.\n");
+});
+
+test("一次 move 的两个文件变化作为一个改动集共同回滚", async () => {
+  const fixture = await createFixture([
+    {
+      outcome: "response",
+      toolCalls: [
+        {
+          id: "create-rollback-note",
+          name: "setting_create",
+          arguments: {
+            path: "world/notes/rollback.yaml",
+            ref: "rollback-note",
+            title: "Rollback note",
+            summary: "A note used to verify atomic move rollback.",
+            aliases: [],
+            body: "status: active\n",
+          },
+        },
+        {
+          id: "move-rollback-note",
+          name: "setting_move",
+          arguments: {
+            from: "@rollback-note",
+            to: "world/archive/rollback.yaml",
+          },
+        },
+      ],
+    },
+    { outcome: "response", text: "Moved.", toolCalls: [] },
+  ]);
+  const view = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "request-move-rollback",
+    "Create and move a note",
+  );
+  const move = view.turns[0]?.exchanges[0]?.toolCalls[1]?.result;
+  expect(move?.changes).toHaveLength(2);
+  if (move?.changeSetId === null || move?.changeSetId === undefined)
+    throw new Error("The accepted move did not expose a rollback identity");
+
+  await fixture.session.rollback({
+    packageId: fixture.packageId,
+    sessionId: view.sessionId,
+    changeSetId: move.changeSetId,
+  });
+  const paths = (
+    await fixture.content.readCurrentTreeContentPackage(fixture.packageId)
+  ).files.map(({ path }) => path);
+  expect(paths).toContain("world/notes/rollback.yaml");
+  expect(paths).not.toContain("world/archive/rollback.yaml");
+});
+
+test("回滚文档创建沿用删除引用完整性，不留下后来加入的悬空引用", async () => {
+  const fixture = await createFixture([
+    {
+      outcome: "response",
+      toolCalls: [
+        {
+          id: "create-referenced-rollback-note",
+          name: "setting_create",
+          arguments: {
+            path: "world/notes/referenced-rollback.yaml",
+            ref: "referenced-rollback",
+            title: "Referenced rollback note",
+            summary: "A note that receives a later reference.",
+            aliases: [],
+            body: "status: active\n",
+          },
+        },
+      ],
+    },
+    { outcome: "response", text: "Created.", toolCalls: [] },
+    {
+      outcome: "response",
+      toolCalls: [
+        {
+          id: "read-situation-before-reference",
+          name: "setting_read",
+          arguments: { path: "@current-situation" },
+        },
+        {
+          id: "add-later-reference",
+          name: "setting_patch",
+          arguments: {
+            document: "@current-situation",
+            op: "add",
+            locator: ["rollbackReference"],
+            value: { $ref: "@referenced-rollback" },
+          },
+        },
+      ],
+    },
+    { outcome: "response", text: "Referenced.", toolCalls: [] },
+  ]);
+  const created = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "request-create-referenced-rollback",
+    "Create the note",
+  );
+  const changeSetId =
+    created.turns[0]?.exchanges[0]?.toolCalls[0]?.result?.changeSetId;
+  if (changeSetId === null || changeSetId === undefined)
+    throw new Error("The accepted create did not expose a rollback identity");
+  await fixture.session.send({
+    packageId: fixture.packageId,
+    requestId: "request-add-later-reference",
+    message: "Reference the note",
+    continuation: {
+      kind: "continue_context",
+      sessionId: created.sessionId,
+    },
+  });
+
+  await expect(
+    fixture.session.rollback({
+      packageId: fixture.packageId,
+      sessionId: created.sessionId,
+      changeSetId,
+    }),
+  ).rejects.toThrow(/remove or redirect every later reference/u);
+  expect(
+    (
+      await fixture.content.readCurrentTreeContentPackage(fixture.packageId)
+    ).files.some(({ path }) => path === "world/notes/referenced-rollback.yaml"),
+  ).toBe(true);
+});
+
 test("默认可继续精确历史上下文，显式全新上下文创建第二段对话", async () => {
   const fixture = await createFixture([
     { outcome: "response", text: "First answer.", toolCalls: [] },

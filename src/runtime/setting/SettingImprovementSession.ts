@@ -6,9 +6,11 @@ import {
   emptyAggregatedModelUsage,
 } from "../../protocol/modelUsage.ts";
 import type {
+  V1SettingAuthoringDiff,
   V1SettingConversationTurn,
   V1SettingImprovementHistoryItem,
   V1SettingImprovementOverview,
+  V1SettingImprovementRollbackResult,
   V1SettingImprovementStatus,
   V1SettingImprovementView,
 } from "../../protocol/v1.ts";
@@ -37,7 +39,7 @@ import type {
   FileNativePromptCompiler,
   PromptPreview,
 } from "../prompt/FileNativePromptCompiler.ts";
-import type { WorldDocumentStore } from "../world/WorldDocumentStore.ts";
+import { WorldDocumentStore } from "../world/WorldDocumentStore.ts";
 import {
   summarizeStoredSettingImprovementSession,
   type FileNativeSettingImprovementStore,
@@ -47,6 +49,7 @@ import {
 } from "./FileNativeSettingImprovementStore.ts";
 import {
   SettingAuthoringTransaction,
+  settingDocumentDeletionBlockers,
   settingImprovementRuntimeContract,
   settingImprovementToolDefinitions,
 } from "./SettingAuthoringTransaction.ts";
@@ -71,6 +74,13 @@ interface ActiveTransaction {
 }
 
 class RecoveryWriteConflictError extends Error {}
+
+export class SettingImprovementRollbackError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "SettingImprovementRollbackError";
+  }
+}
 
 export class SettingImprovementSession {
   readonly #store: FileNativeSettingImprovementStore;
@@ -211,6 +221,69 @@ export class SettingImprovementSession {
       await this.#store.deleteSession(packageId, sessionId);
     });
     return this.overview(packageId);
+  }
+
+  /**
+   * Restore one historical AI tool call as an atomic inverse current-tree
+   * transaction. The transcript remains append-only; its recorded diff is the
+   * optimistic precondition that prevents this action from erasing later work.
+   */
+  async rollback(input: {
+    packageId: string;
+    sessionId: string;
+    changeSetId: string;
+  }): Promise<V1SettingImprovementRollbackResult> {
+    return this.#mutate(async () => {
+      if (this.#runs.has(input.sessionId))
+        throw new SettingImprovementRollbackError(
+          "A running setting-improvement conversation cannot be rolled back",
+        );
+      let session = await this.#store.read(input.sessionId);
+      if (session.packageId !== input.packageId)
+        throw new SettingImprovementRollbackError(
+          "The setting-improvement conversation does not belong to this content package",
+        );
+      session = await this.#recoverIfNeeded(session);
+      const changes = rollbackChangesFor(session, input.changeSetId);
+      const lease = await this.#content.beginCurrentTreeContentPackageOperation(
+        input.packageId,
+      );
+      try {
+        if (treeMatchesChangeSide(lease.package.files, changes, "before"))
+          return {
+            status: "already_rolled_back",
+            changeSetId: input.changeSetId,
+            changes: [],
+          };
+        if (!treeMatchesChangeSide(lease.package.files, changes, "after"))
+          throw new SettingImprovementRollbackError(
+            "The affected files changed after this AI edit, so Runtime refused to overwrite the later work",
+          );
+
+        assertRollbackDeletionsAreUnreferenced(lease.package.files, changes);
+        const restoredFiles = restoreChangeSetBefore(
+          lease.package.files,
+          changes,
+        );
+        try {
+          this.#content.validateCurrentTreeContentPackage(restoredFiles);
+          await lease.replace(restoredFiles);
+        } catch (error: unknown) {
+          if (!(error instanceof InvalidContentTreeError)) throw error;
+          throw new SettingImprovementRollbackError(
+            "The recorded previous files no longer satisfy the current storage boundary",
+            { cause: error },
+          );
+        }
+        return {
+          status: "rolled_back",
+          changeSetId: input.changeSetId,
+          changes: inverseChanges(changes),
+        };
+      } finally {
+        lease.release();
+      }
+    });
   }
 
   async send(input: {
@@ -907,10 +980,146 @@ function settingConversationTurns(
           markdown: item.markdown,
           isError: item.isError === true,
           changes: structuredClone(item.changes),
+          changeSetId:
+            item.isError === true || item.changes.length === 0
+              ? null
+              : changeSetIdForItem(itemIndex),
         };
     }
   }
   return turns;
+}
+
+function changeSetIdForItem(itemIndex: number): string {
+  return `change-set:${itemIndex}`;
+}
+
+function rollbackChangesFor(
+  session: StoredSettingImprovementSession,
+  changeSetId: string,
+): V1SettingAuthoringDiff[] {
+  const result = settingConversationTurns(session)
+    .flatMap(({ exchanges }) => exchanges)
+    .flatMap(({ toolCalls }) => toolCalls)
+    .map(({ result }) => result)
+    .find((candidate) => candidate?.changeSetId === changeSetId);
+  if (
+    result === undefined ||
+    result === null ||
+    result.isError ||
+    result.changes.length === 0
+  )
+    throw new SettingImprovementRollbackError(
+      "The requested AI change set does not exist in this conversation",
+    );
+
+  const paths = new Set<string>();
+  for (const change of result.changes) {
+    if (
+      paths.has(change.path) ||
+      (change.kind === "create" &&
+        (change.before !== null || change.after === null)) ||
+      (change.kind === "modify" &&
+        (change.before === null ||
+          change.after === null ||
+          change.before === change.after)) ||
+      (change.kind === "delete" &&
+        (change.before === null || change.after !== null))
+    )
+      throw new SettingImprovementRollbackError(
+        "The recorded AI change set is damaged and cannot be rolled back",
+      );
+    paths.add(change.path);
+  }
+  return structuredClone(result.changes);
+}
+
+function treeMatchesChangeSide(
+  files: readonly ContentTreeFile[],
+  changes: readonly V1SettingAuthoringDiff[],
+  side: "before" | "after",
+): boolean {
+  const byPath = new Map(files.map((file) => [file.path, file] as const));
+  return changes.every((change) => {
+    const expected = change[side];
+    const current = byPath.get(change.path);
+    if (expected === null) return current === undefined;
+    return (
+      current !== undefined &&
+      current.encoding === undefined &&
+      current.contents === expected
+    );
+  });
+}
+
+function restoreChangeSetBefore(
+  files: readonly ContentTreeFile[],
+  changes: readonly V1SettingAuthoringDiff[],
+): ContentTreeFile[] {
+  const restored = new Map(
+    files.map((file) => [file.path, structuredClone(file)] as const),
+  );
+  for (const change of changes) {
+    if (change.before === null) restored.delete(change.path);
+    else
+      restored.set(change.path, { path: change.path, contents: change.before });
+  }
+  return [...restored.values()].sort((left, right) =>
+    left.path.localeCompare(right.path),
+  );
+}
+
+function assertRollbackDeletionsAreUnreferenced(
+  files: readonly ContentTreeFile[],
+  changes: readonly V1SettingAuthoringDiff[],
+): void {
+  const deletedWorldPaths = changes.flatMap((change) =>
+    change.kind === "create" && change.path.startsWith("world/")
+      ? [change.path]
+      : [],
+  );
+  if (deletedWorldPaths.length === 0) return;
+  const snapshot = WorldDocumentStore.open({
+    layout: "content_package",
+    files,
+  });
+  for (const logicalPath of deletedWorldPaths) {
+    const resolved = snapshot.query({
+      kind: "read_document",
+      document: { logicalPath },
+      maxBytes: 4,
+    });
+    if (resolved.kind !== "read_document")
+      throw new SettingImprovementRollbackError(
+        "The created world document can no longer be resolved safely for rollback",
+      );
+    const blockers = settingDocumentDeletionBlockers(
+      snapshot,
+      resolved.document,
+    );
+    if (blockers.length === 0) continue;
+    throw new SettingImprovementRollbackError(
+      `Cannot roll back creation of @${resolved.document.shortRef}; remove or redirect every later reference first:\n${blockers
+        .map(({ path, locator }) => `- ${path} · ${locator}`)
+        .join("\n")}`,
+    );
+  }
+}
+
+function inverseChanges(
+  changes: readonly V1SettingAuthoringDiff[],
+): V1SettingAuthoringDiff[] {
+  return changes.map((change) => ({
+    path: change.path,
+    kind:
+      change.kind === "create"
+        ? "delete"
+        : change.kind === "delete"
+          ? "create"
+          : "modify",
+    before: change.after,
+    after: change.before,
+  }));
 }
 
 function settingImprovementHistoryItem(

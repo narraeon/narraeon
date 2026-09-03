@@ -47,6 +47,7 @@ test("对话按模型交换展示 Provider 推理、工具收据和已生效红�
                   result: {
                     markdown: "# Current-tree write accepted",
                     isError: false,
+                    changeSetId: "change-set:3",
                     changes: [
                       {
                         path: "opening.md",
@@ -74,7 +75,9 @@ test("对话按模型交换展示 Provider 推理、工具收据和已生效红�
   expect(html).toContain("Provider 返回推理（不等同隐藏思维链）");
   expect(html).toContain("先检查开场白与当前情境");
   expect(html).toContain("setting_write_file");
-  expect(html).toContain("已生效 · 1 个文件");
+  expect(html).toContain("当时生效 · 1 个文件");
+  expect(html).toContain("当时已生效差异");
+  expect(html).toContain("相关文件后来又有改动，不能直接回滚");
   expect(html).toContain("unified-diff-remove");
   expect(html).toContain("unified-diff-add");
   expect(html).toContain("Old opening");
@@ -192,6 +195,12 @@ function renderWith({
       onFreshContext: () => undefined,
       onSelectSession: () => Promise.resolve(),
       onDeleteSession: () => Promise.resolve(),
+      onRollbackChangeSet: (_sessionId: string, changeSetId: string) =>
+        Promise.resolve({
+          status: "rolled_back" as const,
+          changeSetId,
+          changes: [],
+        }),
       onConfigureModel: () => undefined,
       onBack: () => undefined,
     }),

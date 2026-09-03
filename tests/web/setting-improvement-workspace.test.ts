@@ -11,6 +11,7 @@ import { createElement } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 
 import { emptyAggregatedModelUsage } from "../../src/protocol/modelUsage.ts";
+import type { V1SettingImprovementRollbackResult } from "../../src/protocol/v1.ts";
 import { SettingImprovementPanel } from "../../src/web/SettingImprovementPanel.tsx";
 
 afterEach(() => {
@@ -91,9 +92,47 @@ test("左右侧栏承载历史删除、文件预览和同一份文件编辑器",
   expect(screen.getByLabelText("编辑 opening.md")).toBeTruthy();
 });
 
+test("当前文件仍匹配 AI 修改后像时，可以从历史 diff 原子回滚", async () => {
+  const onRollbackChangeSet = vi.fn((_sessionId: string, changeSetId: string) =>
+    Promise.resolve({
+      status: "rolled_back" as const,
+      changeSetId,
+      changes: [],
+    }),
+  );
+  const confirm = vi.fn(() => true);
+  vi.stubGlobal("confirm", confirm);
+  renderPanel(undefined, {
+    currentFileContents: "New opening",
+    onRollbackChangeSet,
+  });
+
+  fireEvent.click(screen.getByText("本段调用详情"));
+  fireEvent.click(screen.getByText("第 1 次模型交换"));
+  fireEvent.click(screen.getByText("调用 setting_write_file"));
+  fireEvent.click(screen.getByRole("button", { name: "回滚这次 AI 修改" }));
+
+  await waitFor(() =>
+    expect(onRollbackChangeSet).toHaveBeenCalledWith(
+      "setting-test",
+      "change-set:3",
+    ),
+  );
+  expect(confirm).toHaveBeenCalledWith(
+    expect.stringContaining("1 个文件会一起恢复"),
+  );
+});
+
 function renderPanel(
   onDeleteSession: (sessionId: string) => Promise<void> = () =>
     Promise.resolve(),
+  options: {
+    currentFileContents?: string;
+    onRollbackChangeSet?: (
+      sessionId: string,
+      changeSetId: string,
+    ) => Promise<V1SettingImprovementRollbackResult>;
+  } = {},
 ): void {
   render(
     createElement(SettingImprovementPanel, {
@@ -129,6 +168,7 @@ function renderPanel(
                     result: {
                       markdown: "Write accepted",
                       isError: false,
+                      changeSetId: "change-set:3",
                       changes: [
                         {
                           path: "opening.md",
@@ -172,7 +212,12 @@ function renderPanel(
       requestFailure: null,
       now: 2,
       contentEditor: {
-        files: [{ path: "opening.md", contents: "Opening preview text" }],
+        files: [
+          {
+            path: "opening.md",
+            contents: options.currentFileContents ?? "Opening preview text",
+          },
+        ],
         status: "usable",
         issues: [],
         dirty: false,
@@ -190,6 +235,14 @@ function renderPanel(
       onFreshContext: () => undefined,
       onSelectSession: () => Promise.resolve(),
       onDeleteSession,
+      onRollbackChangeSet:
+        options.onRollbackChangeSet ??
+        ((_sessionId: string, changeSetId: string) =>
+          Promise.resolve({
+            status: "rolled_back" as const,
+            changeSetId,
+            changes: [],
+          })),
       onConfigureModel: () => undefined,
       onBack: () => undefined,
     }),

@@ -55,7 +55,10 @@ import {
 } from "./extension/PlayerViewPanelProjector.ts";
 import { FileNativePromptCompiler } from "./prompt/FileNativePromptCompiler.ts";
 import { FileNativeSettingImprovementStore } from "./setting/FileNativeSettingImprovementStore.ts";
-import { SettingImprovementSession } from "./setting/SettingImprovementSession.ts";
+import {
+  SettingImprovementRollbackError,
+  SettingImprovementSession,
+} from "./setting/SettingImprovementSession.ts";
 import { FileNativeWorldStore } from "./world/FileNativeWorldStore.ts";
 import { WorldDocumentStore } from "./world/WorldDocumentStore.ts";
 import { FileNativeAiFailureLog } from "./model/AiFailureLog.ts";
@@ -260,6 +263,16 @@ export class V1Runtime {
           request.packageId,
           request.sessionId,
         );
+      case "setting-improvement.rollback":
+        try {
+          return await this.#settingImprovements.rollback(request);
+        } catch (error: unknown) {
+          if (error instanceof SettingImprovementRollbackError)
+            throw new V1ProtocolError("invalid_request", error.message, {
+              cause: error,
+            });
+          throw error;
+        }
       case "setting-improvement.message":
         return this.#settingImprovements.send(request);
       case "setting-improvement.cancel":

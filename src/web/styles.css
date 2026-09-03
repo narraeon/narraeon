@@ -7928,6 +7928,25 @@ summary:focus-visible {
   color: var(--accent);
 }
 
+.setting-change-rollback {
+  display: flex;
+  align-items: center;
+  min-height: 2.4rem;
+  margin: 0.7rem 0.6rem 0.6rem;
+  padding-top: 0.65rem;
+  border-top: 1px dashed var(--border);
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.setting-change-rollback.is-conflicted {
+  color: #f5dda3;
+}
+
+.setting-change-rollback.is-already_rolled_back {
+  color: #bdf5d9;
+}
+
 .setting-legacy-draft-history {
   padding: 0.8rem;
   border: 1px dashed rgb(241 196 96 / 44%);

@@ -11,6 +11,7 @@ import type {
   ContentTreeFile,
   V1SettingImprovementHistoryItem,
   V1SettingImprovementOverview,
+  V1SettingImprovementRollbackResult,
   V1SettingImprovementStatus,
 } from "../protocol/v1.ts";
 import { firstPartyPlayPresetTemplatesForLocale } from "../shared/first-party-play-preset-templates.ts";
@@ -562,7 +563,9 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         setImprovementHistoryView(null);
         improvementSelection.current = next.latest?.sessionId ?? null;
       }
-      setNotice(uiText("对话历史已删除；内容包当前树没有回滚。"));
+      setNotice(
+        uiText("对话历史及其中的一键回滚入口已删除；内容包当前树没有改变。"),
+      );
     } catch (error: unknown) {
       improvementHistoryRequest.current += 1;
       improvementSelection.current = previousSelection;
@@ -574,6 +577,59 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     } finally {
       setImprovementHistoryLoading(false);
     }
+  }
+
+  async function rollbackImprovementChangeSet(
+    sessionId: string,
+    changeSetId: string,
+  ): Promise<V1SettingImprovementRollbackResult> {
+    if (filesDirty) {
+      const error = new Error(uiText("请先保存或放弃文件编辑中的未保存修改。"));
+      report(error);
+      throw error;
+    }
+    setImprovementRequestFailure(null);
+    setNotice("");
+    let result: V1SettingImprovementRollbackResult;
+    try {
+      result = await client.request<V1SettingImprovementRollbackResult>({
+        type: "setting-improvement.rollback",
+        packageId: selected,
+        sessionId,
+        changeSetId,
+      });
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? error.message : uiText("操作失败");
+      setImprovementRequestFailure(message);
+      report(error);
+      throw error;
+    }
+    try {
+      const package_ = await client.request<PackageDetail>({
+        type: "content.read",
+        packageId: selected,
+      });
+      setPackageDetail(package_);
+      setFiles(package_.files.map((file) => ({ ...file })));
+      setCurrentPackageFiles(package_.files.map((file) => ({ ...file })));
+      setFilesDirty(false);
+      await refresh();
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? error.message : uiText("操作失败");
+      setImprovementRequestFailure(
+        uiText("Runtime 已确认回滚结果，但重新读取内容包失败：{message}", {
+          message,
+        }),
+      );
+    }
+    setNotice(
+      result.status === "rolled_back"
+        ? uiText("已回滚这次 AI 修改；对话历史仍然保留。")
+        : uiText("这些文件已经处于这次修改前的版本。"),
+    );
+    return result;
   }
 
   function startFreshImprovementContext(): void {
@@ -777,6 +833,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         onFreshContext={startFreshImprovementContext}
         onSelectSession={selectImprovementSession}
         onDeleteSession={deleteImprovementSession}
+        onRollbackChangeSet={rollbackImprovementChangeSet}
         onConfigureModel={() => setScreen("model")}
         onBack={() => setScreen("home")}
       />

@@ -6,6 +6,7 @@ import type {
   V1SettingConversationTurn,
   V1SettingAuthoringDiff,
   V1SettingImprovementHistoryItem,
+  V1SettingImprovementRollbackResult,
   V1SettingImprovementView,
 } from "../protocol/v1.ts";
 import {
@@ -35,6 +36,10 @@ interface SettingImprovementPanelProps {
   onFreshContext: () => void;
   onSelectSession: (sessionId: string) => Promise<void>;
   onDeleteSession: (sessionId: string) => Promise<void>;
+  onRollbackChangeSet: (
+    sessionId: string,
+    changeSetId: string,
+  ) => Promise<V1SettingImprovementRollbackResult>;
   onConfigureModel: () => void;
   onBack: () => void;
 }
@@ -58,6 +63,7 @@ export function SettingImprovementPanel({
   onFreshContext,
   onSelectSession,
   onDeleteSession,
+  onRollbackChangeSet,
   onConfigureModel,
   onBack,
 }: SettingImprovementPanelProps): React.JSX.Element {
@@ -70,15 +76,21 @@ export function SettingImprovementPanel({
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(
     null,
   );
+  const [rollingBackChangeSetId, setRollingBackChangeSetId] = useState<
+    string | null
+  >(null);
   const conversationRef = useRef<HTMLElement>(null);
   const running = view?.runStatus === "running" || submitting;
+  const rollbackRunning = rollingBackChangeSetId !== null;
+  const interactionLocked = running || rollbackRunning;
   const startingFresh = view === null;
   const continuingHistory =
     view !== null &&
     latestSessionId !== null &&
     view.sessionId !== latestSessionId;
   const disabled =
-    loading || running || !modelConfigured || hasUnsavedFileDraft;
+    loading || interactionLocked || !modelConfigured || hasUnsavedFileDraft;
+  const rollbackDisabled = loading || interactionLocked || hasUnsavedFileDraft;
 
   const send = async (): Promise<void> => {
     const text = message;
@@ -96,7 +108,7 @@ export function SettingImprovementPanel({
   };
 
   const openFileRail = (mode: FileRailMode): void => {
-    if (mode === "edit" && running) return;
+    if (mode === "edit" && interactionLocked) return;
     setFileRailMode(mode);
     setRightRailOpen(true);
     setLeftRailOpen(false);
@@ -117,7 +129,7 @@ export function SettingImprovementPanel({
       deletingSessionId !== null ||
       !globalThis.confirm(
         uiText(
-          "删除对话“{title}”？只会删除这份对话记录；已经写入内容包当前树的改动不会回滚。此操作无法撤销。",
+          "删除对话“{title}”？内容包当前树不会改变，但这段历史中的一键回滚入口也会一并删除。此操作无法撤销。",
           { title: item.excerpt || uiText("未命名对话") },
         ),
       )
@@ -133,6 +145,33 @@ export function SettingImprovementPanel({
     }
   };
 
+  const rollbackChangeSet = async (
+    changeSetId: string,
+    changes: readonly V1SettingAuthoringDiff[],
+  ): Promise<void> => {
+    if (
+      view === null ||
+      rollbackDisabled ||
+      !globalThis.confirm(
+        uiText(
+          "回滚这次 AI 修改？此次工具调用涉及的 {count} 个文件会一起恢复到修改前版本；对话历史仍会保留。",
+          { count: changes.length },
+        ),
+      )
+    )
+      return;
+    setLeftRailOpen(false);
+    setRightRailOpen(false);
+    setRollingBackChangeSetId(changeSetId);
+    try {
+      await onRollbackChangeSet(view.sessionId, changeSetId);
+    } catch {
+      // The parent projects the Runtime failure into the conversation surface.
+    } finally {
+      setRollingBackChangeSetId(null);
+    }
+  };
+
   return (
     <main
       className="setting-reader-page"
@@ -145,7 +184,7 @@ export function SettingImprovementPanel({
         >
           <button
             type="button"
-            disabled={running || hasUnsavedFileDraft}
+            disabled={interactionLocked || hasUnsavedFileDraft}
             onClick={onBack}
             aria-label={uiText("返回工作区")}
           >
@@ -190,7 +229,7 @@ export function SettingImprovementPanel({
             className={
               rightRailOpen && fileRailMode === "edit" ? "is-current" : ""
             }
-            disabled={running}
+            disabled={interactionLocked}
             onClick={() => openFileRail("edit")}
           >
             {uiText("编辑")}
@@ -198,7 +237,11 @@ export function SettingImprovementPanel({
           <button type="button" onClick={collapseAllTraces}>
             {uiText("全部收起")}
           </button>
-          <button type="button" disabled={running} onClick={onFreshContext}>
+          <button
+            type="button"
+            disabled={interactionLocked}
+            onClick={onFreshContext}
+          >
             {uiText("全新上下文")}
           </button>
         </nav>
@@ -211,7 +254,7 @@ export function SettingImprovementPanel({
           <article
             className="setting-story-column"
             aria-live="polite"
-            aria-busy={running}
+            aria-busy={interactionLocked}
           >
             <header className="setting-conversation-intro">
               <span className="eyebrow">AUTHORING CONVERSATION</span>
@@ -294,7 +337,14 @@ export function SettingImprovementPanel({
                 </div>
               ) : (
                 view.turns.map((turn) => (
-                  <SettingConversationTurnView key={turn.id} turn={turn} />
+                  <SettingConversationTurnView
+                    key={turn.id}
+                    turn={turn}
+                    currentFiles={contentEditor.files}
+                    rollbackDisabled={rollbackDisabled}
+                    rollingBackChangeSetId={rollingBackChangeSetId}
+                    onRollbackChangeSet={rollbackChangeSet}
+                  />
                 ))
               )}
 
@@ -416,7 +466,7 @@ export function SettingImprovementPanel({
               history={history}
               latestSessionId={latestSessionId}
               selectedSessionId={view?.sessionId ?? null}
-              loading={loading}
+              loading={loading || rollbackRunning}
               deletingSessionId={deletingSessionId}
               onSelectSession={async (sessionId) => {
                 await onSelectSession(sessionId);
@@ -466,7 +516,7 @@ export function SettingImprovementPanel({
             <button
               type="button"
               className={fileRailMode === "edit" ? "is-current" : ""}
-              disabled={running}
+              disabled={interactionLocked}
               onClick={() => setFileRailMode("edit")}
             >
               {uiText("编辑")}
@@ -480,7 +530,7 @@ export function SettingImprovementPanel({
                 selectedPath={selectedFilePath}
                 onSelect={setSelectedFilePath}
                 onEdit={() => setFileRailMode("edit")}
-                editDisabled={running}
+                editDisabled={interactionLocked}
               />
             ) : (
               <ContentTreeEditor
@@ -697,8 +747,19 @@ function SettingContentPreview({
 
 function SettingConversationTurnView({
   turn,
+  currentFiles,
+  rollbackDisabled,
+  rollingBackChangeSetId,
+  onRollbackChangeSet,
 }: {
   turn: V1SettingConversationTurn;
+  currentFiles: readonly ContentTreeFile[];
+  rollbackDisabled: boolean;
+  rollingBackChangeSetId: string | null;
+  onRollbackChangeSet: (
+    changeSetId: string,
+    changes: readonly V1SettingAuthoringDiff[],
+  ) => Promise<void>;
 }): React.JSX.Element {
   const traces = turn.exchanges.filter(exchangeHasTrace);
   const traceCount = traces.reduce(
@@ -741,6 +802,10 @@ function SettingConversationTurnView({
               <SettingConversationExchangeTrace
                 key={exchange.id}
                 exchange={exchange}
+                currentFiles={currentFiles}
+                rollbackDisabled={rollbackDisabled}
+                rollingBackChangeSetId={rollingBackChangeSetId}
+                onRollbackChangeSet={onRollbackChangeSet}
               />
             ))}
           </div>
@@ -756,8 +821,19 @@ function exchangeHasTrace(exchange: V1SettingConversationExchange): boolean {
 
 function SettingConversationExchangeTrace({
   exchange,
+  currentFiles,
+  rollbackDisabled,
+  rollingBackChangeSetId,
+  onRollbackChangeSet,
 }: {
   exchange: V1SettingConversationExchange;
+  currentFiles: readonly ContentTreeFile[];
+  rollbackDisabled: boolean;
+  rollingBackChangeSetId: string | null;
+  onRollbackChangeSet: (
+    changeSetId: string,
+    changes: readonly V1SettingAuthoringDiff[],
+  ) => Promise<void>;
 }): React.JSX.Element {
   return (
     <details className="setting-conversation-trace">
@@ -800,7 +876,7 @@ function SettingConversationExchangeTrace({
                   : call.result.isError
                     ? uiText("拒绝／失败")
                     : call.result.changes.length > 0
-                      ? uiText("已生效 · {count} 个文件", {
+                      ? uiText("当时生效 · {count} 个文件", {
                           count: call.result.changes.length,
                         })
                       : uiText("成功")}
@@ -813,6 +889,16 @@ function SettingConversationExchangeTrace({
                 <h5>{uiText("Runtime 工具结果")}</h5>
                 <pre>{call.result.markdown}</pre>
                 <AcceptedChanges changes={call.result.changes} />
+                {call.result.changeSetId === null ? null : (
+                  <ChangeSetRollbackControl
+                    changeSetId={call.result.changeSetId}
+                    changes={call.result.changes}
+                    currentFiles={currentFiles}
+                    disabled={rollbackDisabled}
+                    rolling={rollingBackChangeSetId === call.result.changeSetId}
+                    onRollback={onRollbackChangeSet}
+                  />
+                )}
               </>
             )}
           </details>
@@ -824,7 +910,7 @@ function SettingConversationExchangeTrace({
 
 function AcceptedChanges({
   changes,
-  heading = uiText("已生效差异"),
+  heading = uiText("当时已生效差异"),
 }: {
   changes: readonly V1SettingAuthoringDiff[];
   heading?: string;
@@ -857,6 +943,74 @@ function AcceptedChanges({
       ))}
     </section>
   );
+}
+
+function ChangeSetRollbackControl({
+  changeSetId,
+  changes,
+  currentFiles,
+  disabled,
+  rolling,
+  onRollback,
+}: {
+  changeSetId: string;
+  changes: readonly V1SettingAuthoringDiff[];
+  currentFiles: readonly ContentTreeFile[];
+  disabled: boolean;
+  rolling: boolean;
+  onRollback: (
+    changeSetId: string,
+    changes: readonly V1SettingAuthoringDiff[],
+  ) => Promise<void>;
+}): React.JSX.Element {
+  const state = currentTreeChangeSetState(currentFiles, changes);
+  return (
+    <div className={`setting-change-rollback is-${state}`}>
+      {state === "available" ? (
+        <button
+          type="button"
+          className="secondary-button"
+          disabled={disabled}
+          onClick={() => void onRollback(changeSetId, changes)}
+        >
+          {rolling ? uiText("正在回滚…") : uiText("回滚这次 AI 修改")}
+        </button>
+      ) : state === "already_rolled_back" ? (
+        <span>{uiText("当前树已回到这次修改前的版本")}</span>
+      ) : (
+        <span>{uiText("相关文件后来又有改动，不能直接回滚")}</span>
+      )}
+    </div>
+  );
+}
+
+function currentTreeChangeSetState(
+  files: readonly ContentTreeFile[],
+  changes: readonly V1SettingAuthoringDiff[],
+): "available" | "already_rolled_back" | "conflicted" {
+  if (treeMatchesDiffSide(files, changes, "before"))
+    return "already_rolled_back";
+  return treeMatchesDiffSide(files, changes, "after")
+    ? "available"
+    : "conflicted";
+}
+
+function treeMatchesDiffSide(
+  files: readonly ContentTreeFile[],
+  changes: readonly V1SettingAuthoringDiff[],
+  side: "before" | "after",
+): boolean {
+  const byPath = new Map(files.map((file) => [file.path, file] as const));
+  return changes.every((change) => {
+    const expected = change[side];
+    const current = byPath.get(change.path);
+    if (expected === null) return current === undefined;
+    return (
+      current !== undefined &&
+      current.encoding === undefined &&
+      current.contents === expected
+    );
+  });
 }
 
 function LegacyDraftHistory({
