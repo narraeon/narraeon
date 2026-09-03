@@ -169,12 +169,19 @@ export class ModelHostContinuationError extends Error {
 }
 
 /** A deterministic provider failure: the operation may be failed safely. */
+export interface ModelHostFailureOptions extends ErrorOptions {
+  /** Sanitized Provider fields that diagnostics may persist without reparsing wire bytes. */
+  details?: unknown;
+}
+
 export class ModelHostFailureError extends Error {
   readonly kind = "failed" as const;
+  readonly details?: unknown;
 
-  constructor(message: string, options?: ErrorOptions) {
+  constructor(message: string, options?: ModelHostFailureOptions) {
     super(message, options);
     this.name = "ModelHostFailureError";
+    if (options?.details !== undefined) this.details = options.details;
   }
 }
 

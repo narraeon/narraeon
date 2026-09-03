@@ -35,9 +35,13 @@ export async function aggregateChatModelStream(
     }
     const payload = streamRecord(event.data);
     sawPayload = true;
-    if (isRecord(payload.error))
-      throw new ModelHostFailureError(
-        "Provider SSE returned an explicit error",
+    if (isPresent(payload.error))
+      throw providerSseFailure(
+        "chat_completions",
+        "Chat Completions",
+        event.event ?? "error",
+        payload,
+        payload.error,
       );
     if (!Array.isArray(payload.choices))
       throw new Error("Chat SSE choices are invalid");
@@ -355,8 +359,12 @@ export async function aggregateAnthropicModelStream(
       case "ping":
         break;
       case "error":
-        throw new ModelHostFailureError(
-          "Anthropic SSE returned an explicit error",
+        throw providerSseFailure(
+          "anthropic_messages",
+          "Anthropic",
+          payload.type,
+          payload,
+          payload.error,
         );
       default:
         // Anthropic may add top-level event types. Unknown events do not alter
@@ -488,6 +496,48 @@ function parseStreamJson(source: string): unknown {
   }
 }
 
+function providerSseFailure(
+  provider: "chat_completions" | "anthropic_messages",
+  label: string,
+  eventType: string,
+  payload: Record<string, unknown>,
+  errorValue: unknown,
+): ModelHostFailureError {
+  const error = isRecord(errorValue) ? errorValue : {};
+  const type = boundedNonEmptyString(error.type, 256);
+  const code = boundedStringOrNumber(error.code, 256);
+  const message =
+    boundedNonEmptyString(error.message, 4096) ??
+    boundedNonEmptyString(payload.message, 4096) ??
+    boundedStringOrNumber(errorValue, 4096);
+  const requestId =
+    boundedNonEmptyString(payload.request_id, 256) ??
+    boundedNonEmptyString(error.request_id, 256);
+  const identity = [...new Set([type, code].filter(isDefined))].join("/");
+  const summary =
+    identity !== "" && message !== undefined
+      ? `${identity}: ${message}`
+      : identity !== ""
+        ? identity
+        : message;
+  const details = {
+    provider,
+    eventType,
+    ...(type === undefined ? {} : { type }),
+    ...(code === undefined ? {} : { code }),
+    ...(message === undefined ? {} : { message }),
+    ...(requestId === undefined ? {} : { requestId }),
+  };
+  const requestSuffix =
+    requestId === undefined ? "" : ` (request_id: ${requestId})`;
+  return new ModelHostFailureError(
+    summary === undefined
+      ? `${label} SSE returned an explicit error${requestSuffix}`
+      : `${label} SSE error: ${summary}${requestSuffix}`,
+    { details },
+  );
+}
+
 function streamIndex(value: unknown): number {
   if (!Number.isSafeInteger(value) || (value as number) < 0)
     throw new Error("Provider SSE content index is invalid");
@@ -530,6 +580,28 @@ function mergeUsage(target: Record<string, unknown>, value: unknown): void {
 
 function stringOrUndefined(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function boundedNonEmptyString(
+  value: unknown,
+  maximumLength: number,
+): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed === "" ? undefined : trimmed.slice(0, maximumLength);
+}
+
+function boundedStringOrNumber(
+  value: unknown,
+  maximumLength: number,
+): string | undefined {
+  if (typeof value === "number" && Number.isFinite(value))
+    return String(value).slice(0, maximumLength);
+  return boundedNonEmptyString(value, maximumLength);
+}
+
+function isDefined<Value>(value: Value | undefined): value is Value {
+  return value !== undefined;
 }
 
 function isPresent(value: unknown): boolean {

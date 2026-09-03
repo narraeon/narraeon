@@ -651,6 +651,10 @@ async function capturedProviderOperation<Value extends object>(
           error instanceof Error
             ? error.message
             : "Provider request processing failed.",
+        ...(error instanceof ModelHostFailureError &&
+        error.details !== undefined
+          ? { details: error.details }
+          : {}),
         error: errorDescription(error),
       };
       await failureLog.recordFailure({ exchange, failures: [failure] });

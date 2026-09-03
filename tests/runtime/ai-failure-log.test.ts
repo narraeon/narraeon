@@ -138,6 +138,92 @@ test("Provider 流格式失败会自动保存原始 request、response 与已返
   expect((await stat(join(logRoot, name!))).mode & 0o777).toBe(0o600);
 });
 
+test("Provider SSE 明确拒绝会保存可读消息与结构化错误详情", async () => {
+  const root = await mkdtemp(join(tmpdir(), "narraeon-ai-sse-rejection-"));
+  roots.push(root);
+  const logRoot = join(root, "logs");
+  const rawResponse = [
+    "event: error\n",
+    `data: ${JSON.stringify({
+      type: "error",
+      error: {
+        type: "overloaded_error",
+        message: "Provider capacity is exhausted",
+      },
+      request_id: "req-failure-log",
+    })}\n\n`,
+  ].join("");
+  const fetch_ = vi.fn<typeof fetch>().mockResolvedValue(
+    new Response(rawResponse, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    }),
+  );
+  const host = new FileNativeModelHost(
+    {
+      provider: "anthropic_messages",
+      baseUrl: "https://provider.invalid/v1",
+      apiKey: "top-secret-api-key",
+      modelId: "failure-log-model",
+      contextWindowTokens: 32_000,
+      maxOutputTokens: 2_000,
+    },
+    fetch_,
+    new FileNativeAiFailureLog(logRoot),
+  );
+  const bootstrap = new FileNativePromptCompiler().compileBootstrap(
+    createMinimalFileNativePreviewInput({
+      provider: "anthropic_messages",
+      modelId: "failure-log-model",
+      contextWindowTokens: 32_000,
+      maxOutputTokens: 2_000,
+      playerInput: "Check the explicit SSE failure.",
+      playerInputPlacement: "bootstrap",
+    }),
+  );
+
+  await expect(
+    host.exchange({
+      bootstrap,
+      tools: bootstrap.tools,
+      appended: [],
+      requestId: "failure-log-request",
+      operationId: "failure-log-operation",
+      requestAttempt: 1,
+      exchange: 1,
+      maxOutputTokens: 2_000,
+    }),
+  ).rejects.toThrow(
+    "Anthropic SSE error: overloaded_error: Provider capacity is exhausted (request_id: req-failure-log)",
+  );
+
+  const entries = await readOnlyFailure(logRoot);
+  expect(entries[1]).toMatchObject({
+    type: "exchange",
+    exchange: {
+      provider: "anthropic_messages",
+      response: { body: rawResponse, bodyComplete: true },
+    },
+  });
+  expect(entries[2]).toMatchObject({
+    type: "failure",
+    failures: [
+      {
+        kind: "provider_rejection",
+        message:
+          "Anthropic SSE error: overloaded_error: Provider capacity is exhausted (request_id: req-failure-log)",
+        details: {
+          provider: "anthropic_messages",
+          eventType: "error",
+          type: "overloaded_error",
+          message: "Provider capacity is exhausted",
+          requestId: "req-failure-log",
+        },
+      },
+    ],
+  });
+});
+
 test("错误后的记录窗口跨 Runtime 重建继续，修复成功后才关闭", async () => {
   const root = await mkdtemp(join(tmpdir(), "narraeon-ai-failure-window-"));
   roots.push(root);

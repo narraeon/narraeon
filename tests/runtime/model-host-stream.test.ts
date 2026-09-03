@@ -3,6 +3,7 @@ import { expect, test, vi } from "vitest";
 import { FileNativeModelHost } from "../../src/runtime/model/FileNativeModelAdapters.ts";
 import {
   ModelHostCancelledError,
+  ModelHostFailureError,
   ModelHostOutcomeUnknownError,
   type ModelHostDelta,
   type ModelHostExchange,
@@ -522,6 +523,73 @@ test("Anthropic Messages 游玩请求用 SSE 保留 thinking 签名与完整 con
       ],
     },
   });
+});
+
+test("Anthropic Messages SSE 错误保留 Provider 类型、消息与请求 ID", async () => {
+  const host = modelHost(
+    "anthropic_messages",
+    vi.fn<typeof fetch>().mockResolvedValue(
+      sseResponse([
+        namedData("error", {
+          type: "error",
+          error: {
+            type: "overloaded_error",
+            message: "Provider capacity is exhausted",
+          },
+          request_id: "req-anthropic-overloaded",
+        }),
+      ]),
+    ),
+  );
+
+  await expect(host.exchange(exchange("anthropic_messages"))).rejects.toEqual(
+    expect.objectContaining({
+      name: "ModelHostFailureError",
+      message:
+        "Anthropic SSE error: overloaded_error: Provider capacity is exhausted (request_id: req-anthropic-overloaded)",
+      details: {
+        provider: "anthropic_messages",
+        eventType: "error",
+        type: "overloaded_error",
+        message: "Provider capacity is exhausted",
+        requestId: "req-anthropic-overloaded",
+      },
+    } satisfies Partial<ModelHostFailureError>),
+  );
+});
+
+test("Chat Completions SSE 错误保留 Provider 错误字段", async () => {
+  const host = modelHost(
+    "chat_completions",
+    vi.fn<typeof fetch>().mockResolvedValue(
+      sseResponse([
+        data({
+          error: {
+            type: "invalid_request_error",
+            code: "context_length_exceeded",
+            message: "Maximum context length exceeded",
+          },
+          request_id: "req-chat-context",
+        }),
+      ]),
+    ),
+  );
+
+  await expect(host.exchange(exchange("chat_completions"))).rejects.toEqual(
+    expect.objectContaining({
+      name: "ModelHostFailureError",
+      message:
+        "Chat Completions SSE error: invalid_request_error/context_length_exceeded: Maximum context length exceeded (request_id: req-chat-context)",
+      details: {
+        provider: "chat_completions",
+        eventType: "error",
+        type: "invalid_request_error",
+        code: "context_length_exceeded",
+        message: "Maximum context length exceeded",
+        requestId: "req-chat-context",
+      },
+    } satisfies Partial<ModelHostFailureError>),
+  );
 });
 
 test.each([
