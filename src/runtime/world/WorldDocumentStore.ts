@@ -33,6 +33,8 @@ export interface WorldDocumentDescriptor {
   readonly title: string;
   readonly summary: string;
   readonly aliases: readonly string[];
+  /** Retired state documents remain addressable but leave frame catalogs. */
+  readonly retired: boolean;
   readonly codec: WorldDocumentCodec;
   readonly logicalPath: string;
 }
@@ -89,6 +91,8 @@ export interface WorldDocumentDiagnostic {
 export interface WorldDocumentCatalogQuery {
   readonly kind: "catalog";
   readonly directory?: string;
+  /** Defaults to true; frame catalog injection opts out explicitly. */
+  readonly includeRetired?: boolean;
   /**
    * Logical directories declared outside the persisted document tree. They
    * participate in the same deterministic listing and cursor as directories
@@ -438,17 +442,26 @@ export interface WorldDocumentWriteRevisionCommand {
   readonly contents: string;
 }
 
+/** Toggle catalog participation without destroying narrative state. */
+export interface WorldDocumentRetireRevisionCommand {
+  readonly kind: "retire";
+  readonly document: WorldDocumentRevisionTarget;
+  readonly retired: boolean;
+}
+
 export type WorldDocumentRevisionCommand =
   | WorldDocumentCreateRevisionCommand
   | WorldDocumentMoveRevisionCommand
   | WorldDocumentPatchRevisionCommand
   | WorldDocumentReplaceRevisionCommand
+  | WorldDocumentRetireRevisionCommand
   | WorldDocumentWriteRevisionCommand;
 
 /**
  * An ephemeral candidate-tree expansion against one fixed document snapshot.
  * Content packages allow create/move/patch/replace under `world`; world state
- * allows create/patch/replace under `state`. It never publishes authority.
+ * allows create/patch/replace/retire under `state`. It never publishes
+ * authority.
  */
 export interface WorldDocumentRevisionRequest {
   readonly commands: readonly WorldDocumentRevisionCommand[];
@@ -939,6 +952,7 @@ export class WorldDocumentStore {
               title: source.metadata.title,
               summary: source.metadata.summary,
               aliases: [...source.metadata.aliases],
+              ...(previous?.retired === true ? { retired: true } : {}),
             },
           };
           let contents: string;
@@ -986,6 +1000,33 @@ export class WorldDocumentStore {
             existing.lastCommandIndex = commandIndex;
           }
           touchedPath = writePath;
+        } else if (command.kind === "retire") {
+          if (
+            this.layout !== "world_state" ||
+            !hasOnlyKeys(command, ["kind", "document", "retired"]) ||
+            typeof command.retired !== "boolean"
+          )
+            return this.#revisionFailure(commandIndex, {
+              code: "query_invalid",
+              message:
+                "A retire command requires a world-state target and boolean retired value",
+            });
+          const target = this.#resolveRevisionTarget(
+            current,
+            working,
+            command.document,
+          );
+          if ("diagnostics" in target)
+            return this.#revisionFailure(commandIndex, target.diagnostics);
+          if (target.entry.descriptor.retired !== command.retired)
+            target.working.file.contents = setDocumentRetired(
+              target.working.file.contents,
+              target.entry.descriptor.codec,
+              command.retired,
+            );
+          delete target.working.file.encoding;
+          target.working.lastCommandIndex = commandIndex;
+          touchedPath = target.working.file.path;
         } else if (command.kind === "patch") {
           if (
             !hasOnlyKeys(command, ["kind", "document", "edits"]) ||
@@ -1683,6 +1724,7 @@ export class WorldDocumentStore {
       !hasOnlyKeys(request, [
         "kind",
         "directory",
+        "includeRetired",
         "declaredDirectories",
         "limit",
         "cursor",
@@ -1695,10 +1737,12 @@ export class WorldDocumentStore {
         }),
       ]);
     const directory = request.directory ?? "";
+    const includeRetired = request.includeRetired ?? true;
     const declaredDirectories: unknown = request.declaredDirectories ?? [];
     const limit = request.limit ?? 20;
     if (
       (directory !== "" && !validRelativePath(directory)) ||
+      typeof includeRetired !== "boolean" ||
       !validDeclaredDirectories(declaredDirectories) ||
       !Number.isInteger(limit) ||
       limit < 1 ||
@@ -1717,6 +1761,7 @@ export class WorldDocumentStore {
     const relativePrefix = directory === "" ? "" : `${directory}/`;
     const prefix = `${this.logicalRoot}/${relativePrefix}`;
     const entries = new Map<string, WorldDocumentCatalogEntry>();
+    let excludedDocuments = 0;
     for (const entry of this.#entries) {
       if (!entry.file.path.startsWith(prefix)) continue;
       const relative = entry.file.path.slice(prefix.length);
@@ -1731,6 +1776,10 @@ export class WorldDocumentStore {
           }),
         );
       } else {
+        if (entry.descriptor?.retired === true && !includeRetired) {
+          excludedDocuments += 1;
+          continue;
+        }
         entries.set(
           `document:${relative}`,
           freeze({
@@ -1771,6 +1820,7 @@ export class WorldDocumentStore {
       logicalRoot: this.logicalRoot,
       directory,
       declaredDirectories: normalizedDeclaredDirectories,
+      includeRetired,
       limit,
     });
     const offset = this.#cursorOffset(request.cursor, cursorScope);
@@ -1791,7 +1841,7 @@ export class WorldDocumentStore {
       }),
       coverage: freeze({
         status: "complete" as const,
-        excludedDocuments: 0,
+        excludedDocuments,
       }),
       page: freeze({
         unit: "entries" as const,
@@ -3097,9 +3147,11 @@ function readHeader(
   }
   const header = first.value;
   const pairs = stringPairMap(header);
-  const allowed = new Set(["id", "ref", "title", "summary", "aliases"]);
+  const required = new Set(["id", "ref", "title", "summary", "aliases"]);
+  const allowed = new Set([...required, "retired"]);
   const exactShape =
-    pairs.size === allowed.size &&
+    (pairs.size === required.size || pairs.size === allowed.size) &&
+    [...required].every((key) => pairs.has(key)) &&
     [...pairs.keys()].every((key) => allowed.has(key)) &&
     (!headerOnly || parsed.root.items.length === 1);
   const idPair = pairs.get("id");
@@ -3107,12 +3159,15 @@ function readHeader(
   const titlePair = pairs.get("title");
   const summaryPair = pairs.get("summary");
   const aliasesPair = pairs.get("aliases");
+  const retiredPair = pairs.get("retired");
   const id = scalarString(idPair?.value);
   const shortRef = scalarString(refPair?.value);
   const title = scalarString(titlePair?.value);
   const summary = scalarString(summaryPair?.value);
   const aliases = stringSequence(aliasesPair?.value);
-  let valid = exactShape;
+  const retired =
+    retiredPair === undefined ? false : scalarBoolean(retiredPair.value);
+  let valid = exactShape && retired !== null;
 
   if (
     id === null ||
@@ -3186,7 +3241,7 @@ function readHeader(
           : {}),
         range: nodeRange(entry.file.contents, header, parsed.baseOffset),
         message:
-          "$document must contain only valid id, ref, title, summary, and aliases",
+          "$document must contain valid id, ref, title, summary, aliases, and an optional boolean retired flag",
       }),
     );
     return null;
@@ -3198,6 +3253,7 @@ function readHeader(
     title: title!,
     summary: summary!,
     aliases: freeze(aliases!),
+    retired: retired!,
     codec: entry.codec!,
     logicalPath: entry.file.path,
   });
@@ -3899,6 +3955,33 @@ function markdownEnvelope(source: string):
   return { header, bodyStart: end + 5 };
 }
 
+function setDocumentRetired(
+  source: string,
+  codec: WorldDocumentCodec,
+  retired: boolean,
+): string {
+  if (codec === "yaml") {
+    const document = parseDocument(source, {
+      schema: "core",
+      uniqueKeys: true,
+      strict: true,
+    });
+    if (retired) document.setIn(["$document", "retired"], true);
+    else document.deleteIn(["$document", "retired"]);
+    return document.toString({ indent: 2, lineWidth: 0 });
+  }
+
+  const headerEnd = source.indexOf("\n---\n", 4);
+  const header = parseDocument(source.slice(4, headerEnd), {
+    schema: "core",
+    uniqueKeys: true,
+    strict: true,
+  });
+  if (retired) header.setIn(["$document", "retired"], true);
+  else header.deleteIn(["$document", "retired"]);
+  return `---\n${header.toString({ indent: 2, lineWidth: 0 }).trimEnd()}${source.slice(headerEnd)}`;
+}
+
 function markdownRevisionSection(
   source: string,
   locator: readonly string[],
@@ -4022,6 +4105,12 @@ function scalarEquals(value: unknown, expected: string): boolean {
 
 function scalarString(value: unknown): string | null {
   return isScalar(value) && typeof value.value === "string"
+    ? value.value
+    : null;
+}
+
+function scalarBoolean(value: unknown): boolean | null {
+  return isScalar(value) && typeof value.value === "boolean"
     ? value.value
     : null;
 }

@@ -73,6 +73,7 @@ test.each([
       "setting_write_file",
       "setting_patch",
       "setting_move",
+      "setting_delete",
     ])
       expect(serialized).toContain(name);
     expect(serialized).not.toContain("$document.id");

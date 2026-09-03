@@ -86,6 +86,7 @@ test("全新上下文创建持久对话，普通回复不产生候选或快照",
     "setting_write_file",
     "setting_patch",
     "setting_move",
+    "setting_delete",
   ]);
   expect(
     fixture.host.requests[0]?.bootstrap.logicalMessages

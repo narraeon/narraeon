@@ -1393,7 +1393,108 @@ $document:
     ]);
   });
 
-  test("revise rejects world state move and every delete command", () => {
+  test("world state retirement preserves YAML and Markdown documents while filtering frame catalogs", () => {
+    const source = WorldDocumentStore.open({
+      layout: "world_state",
+      files: [
+        {
+          path: "state/archive/hero.yaml",
+          contents: yamlDocument({
+            id: "character.hero",
+            ref: "hero",
+            title: "旅人",
+            body: "衣着: 灰色斗篷\n",
+          }),
+        },
+        {
+          path: "state/archive/lore.md",
+          contents: markdownDocument({
+            id: "rule.lore",
+            ref: "lore",
+            title: "旧规则",
+            body: "## 规则\n\n旧城仍记得这条规则。",
+          }),
+        },
+      ],
+    });
+
+    const retired = source.revise({
+      commands: [
+        {
+          kind: "retire",
+          document: { shortRef: "hero" },
+          retired: true,
+        },
+        {
+          kind: "retire",
+          document: { shortRef: "lore" },
+          retired: true,
+        },
+      ],
+    });
+    expect(retired).toMatchObject({ kind: "revision", ok: true });
+    if (!retired.ok) throw new Error("retirement revision failed");
+    expect(retired.changes).toHaveLength(2);
+    expect(retired.changes[0]?.after.contents).toContain("retired: true");
+    expect(retired.changes[1]?.after.contents).toContain("retired: true");
+    expect(
+      retired.snapshot.query({
+        kind: "catalog",
+        directory: "archive",
+        includeRetired: false,
+        limit: 10,
+      }),
+    ).toMatchObject({
+      kind: "catalog",
+      ok: true,
+      coverage: { excludedDocuments: 2 },
+      page: { total: 0 },
+      entries: [],
+    });
+    expect(
+      retired.snapshot.query({
+        kind: "catalog",
+        directory: "archive",
+        limit: 10,
+      }),
+    ).toMatchObject({
+      kind: "catalog",
+      ok: true,
+      page: { total: 2 },
+      entries: [
+        { document: { shortRef: "hero", retired: true } },
+        { document: { shortRef: "lore", retired: true } },
+      ],
+    });
+
+    const restored = retired.snapshot.revise({
+      commands: [
+        {
+          kind: "retire",
+          document: { shortRef: "lore" },
+          retired: false,
+        },
+      ],
+    });
+    expect(restored).toMatchObject({ kind: "revision", ok: true });
+    if (!restored.ok) throw new Error("restoration revision failed");
+    expect(restored.changes[0]?.after.contents).not.toContain("retired:");
+    const restoredRead = restored.snapshot.query({
+      kind: "read_document",
+      document: { shortRef: "lore" },
+      maxBytes: 8192,
+    });
+    expect(restoredRead).toMatchObject({
+      kind: "read_document",
+      ok: true,
+      document: { retired: false },
+    });
+    if (restoredRead.kind !== "read_document" || !restoredRead.ok)
+      throw new Error("restored Markdown document cannot be read");
+    expect(restoredRead.body).toContain("旧城仍记得这条规则");
+  });
+
+  test("revise rejects world state move and every physical delete command", () => {
     const state = WorldDocumentStore.open({
       layout: "world_state",
       files: [

@@ -28,6 +28,7 @@ export const settingImprovementToolNames = [
   "setting_write_file",
   "setting_patch",
   "setting_move",
+  "setting_delete",
 ] as const;
 
 export type SettingImprovementToolName =
@@ -149,7 +150,7 @@ export function settingImprovementRuntimeContract(locale: AppLocale): string {
     ? `# Runtime 设定完善对话契约
 
 - 每条用户消息都追加到所选设定完善对话。默认沿该对话的 Provider 上下文继续；用户显式选择“全新上下文”时，Runtime 才从内容包当前树编译一段新对话。根据用户当前要求决定直接回复、提出问题、读取当前树或修改当前树。
-- 当前请求随附七个读写工具。不调用工具的完整响应会作为普通助手消息显示，并结束本次用户调用。含有工具调用的响应是内部工具步骤；收到全部工具结果后继续处理，最终用一个不调用工具的完整响应答复用户。
+- 当前请求随附八个读写工具。不调用工具的完整响应会作为普通助手消息显示，并结束本次用户调用。含有工具调用的响应是内部工具步骤；收到全部工具结果后继续处理，最终用一个不调用工具的完整响应答复用户。
 - 工具写入直接修改内容包当前树。每个完整 Provider 工具响应中的调用按顺序执行，成功改动在该响应结算时原子发布，发布后立即成为内容包权威，无需另一步确认。
 - 每个写工具调用独立结算，并按本响应中的调用顺序读取之前已接受的结果。某个调用失败只在对应工具结果中返回精确原因，不回滚同一响应内其他成功调用，也不阻止后续调用。Runtime 在写调用结算后自动运行内容树检查和真实 Prompt Preview，并把检查结果附在最后一个成功写调用的结果中。
 - 修改既有文件前必须完整读取它。setting_list／setting_search／setting_read 的 cursor 和读取授权只属于产生它们的当前树 revision；任何其他对话或手动编辑改变当前树后，必须重新读取再写。工具只暴露逻辑路径，不暴露宿主路径。
@@ -157,6 +158,8 @@ export function settingImprovementRuntimeContract(locale: AppLocale): string {
 - opening.md 是玩家看见的第一页，不得替玩家决定行动、台词或内心。会继续约束首次行动的事实也必须写入自然承载它的世界文档。
 - 新建 world 文档使用 setting_create：ref 由你提供，并同时提供路径、标题、摘要、别名与不含技术头的正文。ref 必须是唯一的 2～32 位小写 ASCII 短句柄；Runtime 自行完成技术存储。既有文档选择值会在读取时自动投影为对应的 @ref；跨文档引用和 control 中的文档选择只使用 @ref。
 - YAML 中指向整份文档的机械引用只写成单键 map，例如 { $ref: "@alex" }；普通字符串中的 @alex 仍只是文字。frame 与 player-view selector 的 document 值也写成 "@alex"，局部位置另用 locator 表达。
+- YAML locator 可混合 map key 与从 0 开始的数组下标。用 remove 删除一个既有节点；用 append 追加数组项；不要为了删一个键或改一条数组项而整份重写文档。
+- 删除不再需要的 world 文档用 setting_delete。Runtime 仅在它不是 currentSituation、没有被 frame 或 player-view 选择、也没有被其他文档以 $ref 指向时才接受，并精确返回所有阻挡位置。
 - 任何准备持久化的字符串中若仍包含字面的 \\uXXXX，说明工具参数被重复转义；该调用会被拒绝。请重新发送真实 Unicode 字符，不要要求 Runtime 猜测解码。
 
 ## 内容包在游玩中的生命周期
@@ -175,13 +178,13 @@ export function settingImprovementRuntimeContract(locale: AppLocale): string {
 
 ## 游玩怎样更新设定
 
-- 游玩 AI 的世界写入范围是 state/*：在正文已经注入或完整读取后用 world_patch 修改既有文档，也可用 world_create 创建新文档。opening.md 的创作发生在内容包阶段；control/* 的调整属于世界外控制编辑。
+- 游玩 AI 的世界写入范围是 state/*：在正文已经注入或完整读取后用 world_patch 细粒度增改或删除节点，也可用 world_create 创建新文档；对象退出常驻 catalog 时用 world_retire 退役而不销毁，之后仍可读取并恢复。opening.md 的创作发生在内容包阶段；control/* 的调整属于世界外控制编辑。
 - Runtime 负责提交持续状态与叙事。需要跨下一次行动保持的结果写回自然所有者；只约束眼前、没有单一所有者的局面写入当前情境；无需作为当前状态持续保存的细节留在已提交叙事。
 - 机械检查通过不代表内容在游玩中容易发现。新增或重组重要信息时，必须同时决定自然所有者、初始注入或发现路径、未来更新位置和玩家显示方式。`
     : `# Runtime setting-improvement conversation contract
 
 - Every user message is appended to the selected setting-improvement conversation. Continue its Provider context by default; only an explicit Fresh context choice compiles a new conversation from the content package's current tree. Decide whether to reply, ask, read the current tree, or change it from the user's current request.
-- The current request includes seven read/write tools. A complete response with no tool calls is shown as an ordinary assistant message and settles this user invocation. A response containing tool calls is an internal tool step; continue after all results and eventually answer with a complete tool-free response.
+- The current request includes eight read/write tools. A complete response with no tool calls is shown as an ordinary assistant message and settles this user invocation. A response containing tool calls is an internal tool step; continue after all results and eventually answer with a complete tool-free response.
 - Tool writes directly modify the content package's current tree. Calls in one complete Provider tool response execute in order; its successful changes publish atomically when that response settles, immediately become authoritative, and require no second confirmation.
 - Every write tool call settles independently and sees earlier accepted calls in response order. A failure returns its precise cause only in that call's result, does not roll back successful siblings, and does not stop later calls. Runtime automatically runs content-tree checks and a real Prompt Preview after writes and appends that review to the last successful write result.
 - Read an existing file completely before changing it. Cursors and read authorization from setting_list, setting_search, and setting_read belong only to the current-tree revision that produced them. Re-read after another conversation or a manual edit changes the current tree. Tools expose logical paths, never host paths.
@@ -189,6 +192,8 @@ export function settingImprovementRuntimeContract(locale: AppLocale): string {
 - opening.md is the first page shown to the player. Never decide the player's action, dialogue, or inner thoughts. Facts that constrain the first action must also live in the world document that naturally owns them.
 - Create a world document with setting_create. You provide its unique 2-to-32-character lowercase ASCII ref, path, title, summary, aliases, and body without a technical header; Runtime completes the technical storage. Existing document selectors are automatically projected to their @refs when read. Cross-document references and control selectors use only @refs.
 - A mechanical YAML reference to one whole document is a one-key map such as { $ref: "@alex" }; @alex inside an ordinary string is still only text. The document value in frame and player-view selectors is likewise "@alex", with any local position expressed separately by a locator.
+- A YAML locator may mix map keys and zero-based array indexes. Use remove for one existing node and append for a new array item; never rewrite a whole document merely to delete one key or change one array item.
+- Delete an obsolete world document with setting_delete. Runtime accepts it only when it is not currentSituation, no frame or player-view selects it, and no other document points to it with $ref; every blocking location is returned precisely.
 - If any string to be persisted still contains a literal \\uXXXX sequence, its tool arguments were double-escaped and that call is rejected. Resend real Unicode characters; Runtime will not guess-decode them.
 
 ## Content-package lifecycle during play
@@ -207,7 +212,7 @@ export function settingImprovementRuntimeContract(locale: AppLocale): string {
 
 ## How play updates the setting
 
-- Play AI writes only within state/*: after a document body is injected or completely read, world_patch changes an existing document and world_create creates a new one. opening.md is authored at the content-package stage; control/* changes belong to world-external control editing.
+- Play AI writes only within state/*: after a document body is injected or completely read, world_patch adds, changes, or removes exact nodes and world_create creates a new document. Use world_retire when an entity leaves the active catalog without destroying it; the document remains readable and restorable. opening.md is authored at the content-package stage; control/* changes belong to world-external control editing.
 - Runtime commits durable state and narrative. Write results that must survive the next action to their natural owner; put short-lived cross-object situations with no single owner in the current situation; leave details that do not need to remain current in committed narrative.
 - Passing mechanical checks does not make content discoverable during play. Whenever important information is created or reorganized, decide its natural owner, initial injection or discovery path, future update location, and player-visible projection together.`;
 }
@@ -313,11 +318,14 @@ export function settingImprovementToolDefinitions(
       inputSchema: schema(
         {
           document: text,
-          op: { type: "string", enum: ["add", "replace", "set_metadata"] },
+          op: {
+            type: "string",
+            enum: ["add", "replace", "append", "remove", "set_metadata"],
+          },
           locator: {
             type: "array",
             minItems: 1,
-            items: { type: "string", minLength: 1 },
+            items: { type: ["string", "integer"] },
           },
           value: {},
           title: { type: "string", minLength: 1, maxLength: 120 },
@@ -336,6 +344,11 @@ export function settingImprovementToolDefinitions(
       description: descriptions.setting_move,
       inputSchema: schema({ from: text, to: path }, ["from", "to"]),
     },
+    {
+      name: "setting_delete",
+      description: descriptions.setting_delete,
+      inputSchema: schema({ document: text }, ["document"]),
+    },
   ];
 }
 
@@ -351,9 +364,11 @@ const toolDescriptionsEn: Record<SettingImprovementToolName, string> = {
   setting_write_file:
     "Replace a completely read world/ .yaml or .md document body while preserving its identity and metadata, or create/replace opening.md, control/frame.yaml, control/player-views.yaml, or control/blocks/*.md. To repair a damaged world document, also provide ref, title, summary, and aliases; Runtime preserves any recoverable storage identity. Create new world documents with setting_create.",
   setting_patch:
-    'Update a completely read world document. For YAML, add or replace one map node with locator as a non-empty map-key array. When title, summary, or aliases are stale, update all three together with op "set_metadata". Rewrite Markdown bodies with setting_write_file.',
+    'Update a completely read YAML world document without rewriting unrelated content. locator is a non-empty path whose segments are map keys or zero-based array indexes. Use add for a missing map key or array index, replace for an existing node, append for the end of an existing array, and remove for an existing map key or array item. When title, summary, or aliases are stale, update all three together with op "set_metadata". Rewrite Markdown bodies with setting_write_file.',
   setting_move:
     "Move a completely read world document to a new world/ .yaml or .md logical path while preserving its identity and contents.",
+  setting_delete:
+    "Permanently delete a completely read world document from the content-package current tree. Runtime rejects deletion while currentSituation, a frame slot, a player-view selector, or another document's $ref still points to it, and reports every blocking location. Delete or redirect those references first.",
 };
 
 const toolDescriptionsZhCN: Record<SettingImprovementToolName, string> = {
@@ -368,9 +383,11 @@ const toolDescriptionsZhCN: Record<SettingImprovementToolName, string> = {
   setting_write_file:
     "整份替换已完整读取的 world/ .yaml 或 .md 正文并保留身份和元信息，或创建／替换 opening.md、control/frame.yaml、control/player-views.yaml、control/blocks/*.md。修复损坏世界文档时同时提供 ref、title、summary、aliases，Runtime 会保留仍可恢复的存储身份。新建世界文档使用 setting_create。",
   setting_patch:
-    '更新已完整读取的世界文档。YAML 用 add／replace 更新一个 map 节点，locator 是非空 map-key 数组；title、summary 或 aliases 过时时用 op "set_metadata" 整组更新三项。Markdown 正文用 setting_write_file 整份重写。',
+    '细粒度更新已完整读取的 YAML 世界文档，不重写无关内容。locator 是非空路径，每段可以是 map key 或从 0 开始的数组下标；add 新建 map key 或数组位置，replace 更新既有节点，append 追加既有数组，remove 删除既有 map key 或数组项。title、summary 或 aliases 过时时用 op "set_metadata" 整组更新三项。Markdown 正文用 setting_write_file 整份重写。',
   setting_move:
     "把已完整读取的世界文档移动到新的 world/ .yaml 或 .md 逻辑路径，并保留身份与内容。",
+  setting_delete:
+    "从内容包当前树永久删除一份已完整读取的 world 文档。若 currentSituation、frame slot、player-view selector 或其他文档的 $ref 仍指向它，Runtime 会拒绝并返回全部精确阻挡位置；请先删除或改向这些引用。",
 };
 
 interface ReadAuthorizations {
@@ -500,6 +517,18 @@ export class SettingAuthoringTransaction {
     const reads = cloneReads(this.#reads);
     try {
       if (isWorldWriteCall(call)) {
+        if (call.name === "setting_delete") {
+          const deleted = deleteWorldDocument(
+            snapshot,
+            call,
+            reads,
+            this.#locale,
+          );
+          this.#validateFiles(deleted.snapshot.files);
+          this.#snapshot = deleted.snapshot;
+          this.#reads = reads;
+          return success(deleted.markdown);
+        }
         const requestedRef =
           call.name === "setting_create"
             ? requiredSettingRef(call.arguments.ref, this.#locale)
@@ -943,7 +972,8 @@ function isWorldWriteCall(call: NormalizedCall): boolean {
   if (
     call.name === "setting_create" ||
     call.name === "setting_patch" ||
-    call.name === "setting_move"
+    call.name === "setting_move" ||
+    call.name === "setting_delete"
   )
     return true;
   return (
@@ -1042,11 +1072,32 @@ function worldRevisionCommand(
         edits: [{ op: "set_metadata", title, summary, aliases }],
       };
     }
-    if (op !== "add" && op !== "replace")
+    if (op !== "add" && op !== "replace" && op !== "append" && op !== "remove")
       throw new SettingAuthoringError(
-        "setting_patch.op must be add, replace, or set_metadata",
+        "setting_patch.op must be add, replace, append, remove, or set_metadata",
       );
-    const locator = requiredStringArray(call.arguments.locator, "locator");
+    const locator = requiredYamlLocatorPath(call.arguments.locator, "locator");
+    if (op === "remove") {
+      if (!hasOnly(call.arguments, ["document", "op", "locator"]))
+        throw new SettingAuthoringError(
+          "setting_patch remove accepts only document, op, and locator",
+        );
+      assertNoLiteralUnicodeEscapes(locator, locale);
+      return {
+        kind: "patch",
+        document: revisionTarget(
+          requiredString(call.arguments.document, "document"),
+        ),
+        edits: [{ op: "remove", locator: { yaml: locator } }],
+      };
+    }
+    if (
+      !hasOnly(call.arguments, ["document", "op", "locator", "value"]) ||
+      !Object.hasOwn(call.arguments, "value")
+    )
+      throw new SettingAuthoringError(
+        `setting_patch ${op} requires document, op, locator, and value`,
+      );
     const value = structuredClone(
       call.arguments.value,
     ) as WorldDocumentRevisionYamlValue;
@@ -1206,6 +1257,189 @@ function revisionTarget(value: string): WorldDocumentRevisionTarget {
       `Invalid world-document selector: ${value}`,
     );
   return selector;
+}
+
+interface SettingDocumentDeletionBlocker {
+  path: string;
+  locator: string;
+}
+
+function deleteWorldDocument(
+  snapshot: WorldDocumentStore,
+  call: NormalizedCall,
+  reads: ReadAuthorizations,
+  locale: AppLocale,
+): { snapshot: WorldDocumentStore; markdown: string } {
+  if (!hasOnly(call.arguments, ["document"]))
+    throw new SettingAuthoringError(
+      "setting_delete accepts only the document argument",
+    );
+  const supplied = requiredString(call.arguments.document, "document");
+  const selector = documentSelector(supplied);
+  if (selector === null)
+    throw new SettingAuthoringError(
+      localized(
+        locale,
+        "setting_delete.document must be an @ref or world/ document path",
+        "setting_delete.document 必须是 @ref 或 world/ 文档路径",
+      ),
+    );
+  const resolved = snapshot.query({
+    kind: "read_document",
+    document: selector,
+    maxBytes: 4,
+  });
+  if (resolved.kind === "error")
+    throw new SettingAuthoringError(
+      renderRevisionFailure(resolved.diagnostics, locale),
+    );
+  if (resolved.kind !== "read_document")
+    throw new Error("Unexpected world-document delete lookup result");
+  const target = resolved.document;
+  if (
+    reads.snapshotId !== snapshot.id ||
+    !reads.worldDocumentIds.has(target.documentId)
+  )
+    throw new SettingAuthoringError(
+      localized(
+        locale,
+        `Read @${target.shortRef} completely before deleting it`,
+        `删除 @${target.shortRef} 前必须完整读取该文档`,
+      ),
+    );
+  const blockers = settingDocumentDeletionBlockers(snapshot, target);
+  if (blockers.length > 0) {
+    const locations = blockers
+      .map(({ path, locator }) => `- ${path} · ${locator}`)
+      .join("\n");
+    throw new SettingAuthoringError(
+      localized(
+        locale,
+        `Cannot delete @${target.shortRef}; remove or redirect every reference first:\n${locations}`,
+        `无法删除 @${target.shortRef}；请先删除或改向全部引用：\n${locations}`,
+      ),
+    );
+  }
+  const revised = WorldDocumentStore.open({
+    layout: "content_package",
+    files: sortFiles(
+      snapshot.files.filter(({ path }) => path !== target.logicalPath),
+    ),
+  });
+  rebaseReads(reads, revised);
+  reads.worldDocumentIds.delete(target.documentId);
+  reads.damagedWorldPaths.delete(target.logicalPath);
+  return {
+    snapshot: revised,
+    markdown: localized(
+      locale,
+      `# Current-tree deletion accepted\n\nDeleted @${target.shortRef} · ${target.logicalPath}. No currentSituation binding, frame slot, player-view selector, or cross-document $ref points to it.`,
+      `# 当前树删除已接受\n\n已删除 @${target.shortRef} · ${target.logicalPath}。没有 currentSituation、frame slot、player-view selector 或跨文档 $ref 指向它。`,
+    ),
+  };
+}
+
+function settingDocumentDeletionBlockers(
+  snapshot: WorldDocumentStore,
+  target: WorldDocumentDescriptor,
+): SettingDocumentDeletionBlocker[] {
+  const blockers: SettingDocumentDeletionBlocker[] = [];
+  for (const document of listQueryableWorldDocuments(snapshot)) {
+    if (document.documentId === target.documentId || document.codec !== "yaml")
+      continue;
+    const selected = snapshot.query({
+      kind: "select_node",
+      document: { documentId: document.documentId },
+      locator: { yaml: [] },
+    });
+    if (selected.kind !== "select_node") continue;
+    for (const reference of selected.references)
+      if (reference.target.documentId === target.documentId)
+        blockers.push({
+          path: document.logicalPath,
+          locator: deletionLocator(reference.locator),
+        });
+  }
+  blockers.push(
+    ...controlDocumentDeletionBlockers(snapshot, target, "control/frame.yaml"),
+    ...controlDocumentDeletionBlockers(
+      snapshot,
+      target,
+      "control/player-views.yaml",
+    ),
+  );
+  return [
+    ...new Map(
+      blockers.map((item) => [`${item.path}\0${item.locator}`, item]),
+    ).values(),
+  ].sort(
+    (left, right) =>
+      left.path.localeCompare(right.path) ||
+      left.locator.localeCompare(right.locator),
+  );
+}
+
+function controlDocumentDeletionBlockers(
+  snapshot: WorldDocumentStore,
+  target: WorldDocumentDescriptor,
+  path: "control/frame.yaml" | "control/player-views.yaml",
+): SettingDocumentDeletionBlocker[] {
+  const stored = snapshot.files.find((file) => file.path === path);
+  if (stored === undefined || stored.encoding !== undefined) return [];
+  const source = projectOpaqueDocumentIds(snapshot, path, stored.contents);
+  const document = parseDocument(source, {
+    schema: "core",
+    uniqueKeys: true,
+    strict: true,
+  });
+  if (document.errors.length > 0 || document.warnings.length > 0) return [];
+  const expected = `@${target.shortRef}`;
+  const blockers: SettingDocumentDeletionBlocker[] = [];
+  const recordIfTarget = (
+    selectorPath: readonly (string | number)[],
+    label: string,
+  ): void => {
+    const node = document.getIn(selectorPath, true);
+    if (isScalar(node) && node.value === expected)
+      blockers.push({ path, locator: label });
+  };
+  if (path === "control/frame.yaml") {
+    recordIfTarget(
+      ["bindings", "currentSituation"],
+      "bindings.currentSituation",
+    );
+    const context = document.getIn(["context"], true);
+    if (isSeq(context))
+      for (const index of context.items.keys()) {
+        recordIfTarget(
+          ["context", index, "slot", "document"],
+          `context[${index}].slot.document`,
+        );
+        recordIfTarget(
+          ["context", index, "slot", "from", "document"],
+          `context[${index}].slot.from.document`,
+        );
+      }
+  } else {
+    const views = document.getIn(["views"], true);
+    if (isSeq(views))
+      for (const viewIndex of views.items.keys()) {
+        const items = document.getIn(["views", viewIndex, "items"], true);
+        if (!isSeq(items)) continue;
+        for (const itemIndex of items.items.keys())
+          recordIfTarget(
+            ["views", viewIndex, "items", itemIndex, "select", "document"],
+            `views[${viewIndex}].items[${itemIndex}].select.document`,
+          );
+      }
+  }
+  return blockers;
+}
+
+function deletionLocator(locator: WorldDocumentLocator): string {
+  return "yaml" in locator
+    ? `yaml:${JSON.stringify(locator.yaml)}`
+    : `markdown:${JSON.stringify(locator.markdown)}`;
 }
 
 function writeOpaque(
@@ -1871,15 +2105,25 @@ function assertNoLiteralUnicodeEscapes(
   walk(value);
 }
 
-function requiredStringArray(value: unknown, name: string): string[] {
+function requiredYamlLocatorPath(
+  value: unknown,
+  name: string,
+): (string | number)[] {
   if (
     !Array.isArray(value) ||
     value.length === 0 ||
-    !value.every((item) => typeof item === "string" && item.length > 0)
+    !value.every(
+      (item) =>
+        (typeof item === "string" && item.length > 0) ||
+        (typeof item === "number" && Number.isInteger(item) && item >= 0),
+    )
   )
-    throw new SettingAuthoringError(`${name} must be a non-empty string array`);
+    throw new SettingAuthoringError(
+      `${name} must be a non-empty array of map keys or zero-based array indexes`,
+    );
   return value.filter(
-    (item: unknown): item is string => typeof item === "string",
+    (item: unknown): item is string | number =>
+      typeof item === "string" || typeof item === "number",
   );
 }
 

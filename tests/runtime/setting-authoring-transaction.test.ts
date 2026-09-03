@@ -32,6 +32,23 @@ test("设定完善契约描述显式上下文和直接当前树工具行为", ()
     "setting_write_file",
     "setting_patch",
     "setting_move",
+    "setting_delete",
+  ]);
+  const patch = settingImprovementToolDefinitions("zh-CN").find(
+    ({ name }) => name === "setting_patch",
+  );
+  expect(patch?.description).toContain("remove");
+  expect(patch?.description).toContain("数组下标");
+  const patchSchema = patch?.inputSchema as {
+    properties?: {
+      op?: { enum?: string[] };
+      locator?: { items?: { type?: string[] } };
+    };
+  };
+  expect(patchSchema.properties?.op?.enum).toContain("remove");
+  expect(patchSchema.properties?.locator?.items?.type).toEqual([
+    "string",
+    "integer",
   ]);
   const contract = settingImprovementRuntimeContract("zh-CN");
   expect(contract).toContain("每条用户消息都追加到所选设定完善对话");
@@ -254,6 +271,196 @@ test("AI 用 ref 和正文新建文档，Runtime 隐藏 id，后续调用可直�
   expect(read).toMatchObject([{ isError: false }]);
   expect(read[0]?.markdown).toContain("# Exact read @alex");
   expect(read[0]?.markdown).not.toMatch(/\$document|doc\.[a-f0-9]+/u);
+});
+
+test("设定工具可删除 YAML 节点、按数组下标修改，并删除无引用文档", () => {
+  const transaction = new SettingAuthoringTransaction({
+    baseFiles: minimalFileNativeContentScaffold("zh-CN"),
+    locale: "zh-CN",
+    preview: () => preview,
+  });
+
+  const results = transaction.execute([
+    {
+      id: "create-note",
+      name: "setting_create",
+      arguments: {
+        path: "world/notes/temporary.yaml",
+        ref: "temporary-note",
+        title: "临时记录",
+        summary: "用于验证细粒度删除和数组定位。",
+        aliases: [],
+        body: "临时标记: true\n事件:\n  - 第一条\n  - 第二条\n",
+      },
+    },
+    {
+      id: "remove-key",
+      name: "setting_patch",
+      arguments: {
+        document: "@temporary-note",
+        op: "remove",
+        locator: ["临时标记"],
+      },
+    },
+    {
+      id: "replace-array-item",
+      name: "setting_patch",
+      arguments: {
+        document: "@temporary-note",
+        op: "replace",
+        locator: ["事件", 0],
+        value: "第一条（已修改）",
+      },
+    },
+    {
+      id: "delete-note",
+      name: "setting_delete",
+      arguments: { document: "@temporary-note" },
+    },
+  ]);
+
+  expect(results.map(({ isError }) => isError)).toEqual([
+    false,
+    false,
+    false,
+    false,
+  ]);
+  expect(results[1]?.markdown).toContain("@temporary-note");
+  expect(results[2]?.markdown).toContain("@temporary-note");
+  expect(results[3]?.markdown).toContain("已删除 @temporary-note");
+  expect(
+    transaction.files().some(({ path }) => path.endsWith("temporary.yaml")),
+  ).toBe(false);
+});
+
+test("设定文档删除精确报告 currentSituation 与跨文档引用阻挡者", () => {
+  const transaction = new SettingAuthoringTransaction({
+    baseFiles: minimalFileNativeContentScaffold("zh-CN"),
+    locale: "zh-CN",
+    preview: () => preview,
+  });
+  const created = transaction.execute([
+    {
+      id: "read-current-situation",
+      name: "setting_read",
+      arguments: { path: "@current-situation", maxBytes: 65_536 },
+    },
+    {
+      id: "create-target",
+      name: "setting_create",
+      arguments: {
+        path: "world/notes/target.yaml",
+        ref: "delete-target",
+        title: "被引用记录",
+        summary: "删除时应被引用完整性阻止。",
+        aliases: [],
+        body: "状态: 存在\n",
+      },
+    },
+    {
+      id: "create-holder",
+      name: "setting_create",
+      arguments: {
+        path: "world/notes/holder.yaml",
+        ref: "delete-holder",
+        title: "引用持有者",
+        summary: "持有指向待删除记录的机械引用。",
+        aliases: [],
+        body: '目标:\n  $ref: "@delete-target"\n',
+      },
+    },
+  ]);
+  expect(created.map(({ isError }) => isError)).toEqual([false, false, false]);
+
+  const blocked = transaction.execute([
+    {
+      id: "delete-current-situation",
+      name: "setting_delete",
+      arguments: { document: "@current-situation" },
+    },
+    {
+      id: "delete-referenced",
+      name: "setting_delete",
+      arguments: { document: "@delete-target" },
+    },
+  ]);
+
+  expect(blocked[0]).toMatchObject({ isError: true });
+  expect(blocked[0]?.markdown).toContain("control/frame.yaml");
+  expect(blocked[0]?.markdown).toContain("bindings.currentSituation");
+  expect(blocked[1]).toMatchObject({ isError: true });
+  expect(blocked[1]?.markdown).toContain("world/notes/holder.yaml");
+  expect(blocked[1]?.markdown).toContain("目标");
+});
+
+test("设定文档删除会同时报告 frame slot 与 player-view selector", () => {
+  const baseFiles = minimalFileNativeContentScaffold("zh-CN").map((file) => {
+    if (file.path === "control/frame.yaml")
+      return {
+        ...file,
+        contents: file.contents.replace(
+          "context:\n",
+          'context:\n  - slot: { kind: document, document: "@guard" }\n',
+        ),
+      };
+    if (file.path === "control/player-views.yaml")
+      return {
+        ...file,
+        contents: `format: narraeon.player-views/v1
+views:
+  - id: status
+    title: 当前状态
+    items:
+      - id: guard-state
+        label: 守卫状态
+        select:
+          document: "@guard"
+          locator: { yaml: [状态] }
+`,
+      };
+    return file;
+  });
+  baseFiles.push({
+    path: "world/characters/guard.yaml",
+    contents: `$document:
+  id: character.guard
+  ref: guard
+  title: 守卫
+  summary: 被两个控制选择器使用的守卫。
+  aliases: []
+状态: 值勤
+`,
+  });
+  const transaction = new SettingAuthoringTransaction({
+    baseFiles,
+    locale: "zh-CN",
+    preview: () => preview,
+  });
+
+  expect(
+    transaction.execute([
+      {
+        id: "read-guard",
+        name: "setting_read",
+        arguments: { path: "@guard", maxBytes: 65_536 },
+      },
+    ])[0],
+  ).toMatchObject({ isError: false });
+  const deletion = transaction.execute([
+    {
+      id: "delete-guard",
+      name: "setting_delete",
+      arguments: { document: "@guard" },
+    },
+  ])[0];
+
+  expect(deletion).toMatchObject({ isError: true });
+  expect(deletion?.markdown).toContain(
+    "control/frame.yaml · context[0].slot.document",
+  );
+  expect(deletion?.markdown).toContain(
+    "control/player-views.yaml · views[0].items[0].select.document",
+  );
 });
 
 test("无效 ref 和字面 Unicode 转义只拒绝各自调用，既有成功写入保留", () => {

@@ -72,6 +72,7 @@ const callChainToolNames = new Set([
   "context_read",
   "world_patch",
   "world_create",
+  "world_retire",
 ]);
 const projectedEventTail = 40;
 

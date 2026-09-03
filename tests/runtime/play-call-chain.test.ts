@@ -1051,6 +1051,7 @@ test("工具中间步文本不进入叙事，状态与终态叙事分别推进�
     "context_read",
     "world_patch",
     "world_create",
+    "world_retire",
   ]);
   expect(modelHost.requests[0]?.maxOutputTokens).toBe(
     modelBinding().maxOutputTokens,
@@ -1317,6 +1318,106 @@ test("world_patch no-op 保留匹配的紧凑工具结果且不推进世界", as
     toolCallId: "patch-same-situation",
     markdown: patchDetail.markdown,
   });
+});
+
+test("world_retire 提交退役状态并让后续全新上下文停止注入 catalog 条目", async () => {
+  const packageFiles = [
+    ...worldFiles().map((file) =>
+      file.path === "control/frame.yaml"
+        ? {
+            ...file,
+            contents: file.contents.replace(
+              "context:\n",
+              "context:\n  - slot: { kind: catalog, directory: characters, maxEntries: 24, required: false }\n",
+            ),
+          }
+        : file,
+    ),
+    {
+      path: "world/characters/veteran.yaml",
+      contents: `$document:
+  id: character.veteran
+  ref: veteran
+  title: 退役守卫
+  summary: 已经离开当前舞台的旧城守卫。
+  aliases: []
+经历:
+  - 守卫北门
+  - 离开城镇
+`,
+    },
+  ];
+  const { worlds, worldId } = await createWorld(
+    "play-chain-retire-document",
+    packageFiles,
+  );
+  const modelHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "read-veteran-before-retire",
+            name: "context_read",
+            arguments: { ref: "@veteran", maxBytes: 8192 },
+          },
+        ],
+      },
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "retire-veteran",
+            name: "world_retire",
+            arguments: { target: "@veteran", retired: true },
+          },
+        ],
+      },
+      { outcome: "response", text: "The old guard leaves the active stage." },
+    ],
+  });
+
+  const retired = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "play-chain-retire-document-contract",
+    exchangeId: "play-chain-retire-document-player",
+    playerText: "Let the old guard depart.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+
+  expect(retired.changedDocuments).toContainEqual({
+    kind: "replace",
+    ref: "@veteran",
+    path: "characters/veteran.yaml",
+  });
+  const endpoint = await worlds.recoverEndpoint(worldId);
+  const stored = endpoint.state.find(
+    ({ path }) => path === "characters/veteran.yaml",
+  )?.contents;
+  expect(stored).toContain("retired: true");
+  expect(stored).toContain("守卫北门");
+
+  const freshHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [{ outcome: "response", text: "The square is quiet now." }],
+  });
+  await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "play-chain-after-retirement-contract",
+    exchangeId: "play-chain-after-retirement-player",
+    playerText: "I look across the square.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: freshHost,
+  });
+  expect(
+    JSON.stringify(freshHost.requests[0]?.bootstrap.logicalMessages),
+  ).not.toContain("退役守卫 [ref: @veteran]");
 });
 
 test("游玩调用链可在 frame 声明的空 catalog 中创建首份文档", async () => {

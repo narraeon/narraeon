@@ -774,6 +774,7 @@ context:
       "context_read",
       "world_patch",
       "world_create",
+      "world_retire",
       "artifact_emit",
       "artifact_clear",
     ]);
@@ -857,6 +858,8 @@ context:
     );
     expect(patch?.description).toContain("replace_body");
     expect(patch?.description).toContain("use append");
+    expect(patch?.description).toContain("remove");
+    expect(patch?.description).toContain("zero-based array index");
     expect(patch?.description).toContain(
       "Success reports only whether the document changed",
     );
@@ -872,6 +875,7 @@ context:
     expect(create?.description).toContain("state_list");
     expect(create?.description).toContain("unknown directory is rejected");
     expect(create?.description).not.toContain("context_list");
+    expect(compiled.tools.map(({ name }) => name)).toContain("world_retire");
 
     const chinese = fileNativeToolsForNames(
       ["state_list", "history_list"],
@@ -979,6 +983,99 @@ context:
       recompiled.logicalMessages.find(({ role }) => role === "world_context")
         ?.markdown,
     ).toContain("提灯 [ref: @lantern] — 一盏可持续追踪的提灯。");
+  });
+
+  test("游玩工具可细粒度删改数组节点，并让文档退役而不销毁", () => {
+    const source = input();
+    const files = snapshotRecord(source);
+    files["state/characters/veteran.yaml"] = `$document:
+  id: character.veteran
+  ref: veteran
+  title: 退役守卫
+  summary: 已经离开当前舞台的旧城守卫。
+  aliases: []
+临时标记: true
+经历:
+  - 守卫北门
+  - 离开城镇
+`;
+    const documents = new FileNativePlayDocuments(files);
+    source.world.documentSnapshot = documents.snapshot;
+    const initial = new FileNativePromptCompiler().compileBootstrap(source);
+    documents.bindBootstrap(initial);
+    expect(
+      initial.logicalMessages.find(({ role }) => role === "world_context")
+        ?.markdown,
+    ).toContain("退役守卫 [ref: @veteran]");
+
+    expect(
+      documents.execute(
+        {
+          id: "read-veteran",
+          name: "context_read",
+          arguments: { ref: "@veteran", maxBytes: 8192 },
+        },
+        [],
+      ),
+    ).toMatchObject({ ok: true });
+    expect(
+      documents.execute(
+        {
+          id: "patch-veteran",
+          name: "world_patch",
+          arguments: {
+            target: "@veteran",
+            edits: [
+              { op: "remove", locator: { yaml: ["临时标记"] } },
+              {
+                op: "replace",
+                locator: { yaml: ["经历", 0] },
+                value: "曾守卫北门",
+              },
+            ],
+          },
+        },
+        [],
+      ),
+    ).toMatchObject({ ok: true });
+    expect(
+      documents.execute(
+        {
+          id: "retire-veteran",
+          name: "world_retire",
+          arguments: { target: "@veteran", retired: true },
+        },
+        [],
+      ),
+    ).toMatchObject({ ok: true });
+
+    source.world.documentSnapshot = documents.snapshot;
+    const fresh = new FileNativePromptCompiler().compileBootstrap(source);
+    expect(
+      fresh.logicalMessages.find(({ role }) => role === "world_context")
+        ?.markdown,
+    ).not.toContain("退役守卫 [ref: @veteran]");
+    const list = documents.execute(
+      {
+        id: "list-retired",
+        name: "state_list",
+        arguments: { parent: "@dir-/characters" },
+      },
+      [],
+    );
+    expect(list).toMatchObject({ ok: true });
+    expect(list.markdown).toContain("@veteran");
+    expect(list.markdown).toContain("retired");
+    expect(
+      documents.execute(
+        {
+          id: "read-retired",
+          name: "context_read",
+          arguments: { ref: "@veteran", maxBytes: 8192 },
+        },
+        [],
+      ),
+    ).toMatchObject({ ok: true });
   });
 
   test("已注入完整正文的文档可只更新 summary 并保留未展示的 aliases", () => {

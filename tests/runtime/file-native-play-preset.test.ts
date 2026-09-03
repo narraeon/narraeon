@@ -515,6 +515,7 @@ extensions:
       "context_read",
       "world_patch",
       "world_create",
+      "world_retire",
       "artifact_emit",
       "artifact_clear",
     ]);
@@ -605,6 +606,7 @@ extensions:
       "context_read",
       "world_patch",
       "world_create",
+      "world_retire",
       "artifact_emit",
       "artifact_clear",
     ]);
@@ -758,6 +760,7 @@ extensions:
           { name: "context_read" },
           { name: "world_patch" },
           { name: "world_create" },
+          { name: "world_retire" },
         ],
       },
       initialAppend: {

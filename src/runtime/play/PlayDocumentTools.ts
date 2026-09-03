@@ -285,6 +285,12 @@ export class FileNativePlayDocuments {
         call.arguments,
         this.#declaredDirectories,
       );
+    if (call.name === "world_retire")
+      return applyPlayCandidateRetirement(
+        this.#candidate,
+        this.#reads,
+        call.arguments,
+      );
     return toolFailure(
       `The current document context does not accept ${call.name}`,
     );
@@ -583,6 +589,59 @@ function formatToolRevisionReceipt(
   return changes.length === 1
     ? `@${shortRef} pending write`
     : `@${shortRef} unchanged`;
+}
+
+function applyPlayCandidateRetirement(
+  candidate: PlayCandidate,
+  reads: WriteAuthorizations,
+  args: unknown,
+): PlayDocumentToolResult {
+  if (
+    !record(args) ||
+    !hasOnlyToolKeys(args, ["target", "retired"]) ||
+    typeof args.target !== "string" ||
+    typeof args.retired !== "boolean"
+  )
+    return toolFailure(
+      "world_retire requires exactly a target and boolean retired value.",
+    );
+  const ref = args.target.replace(/^@/u, "");
+  const target = documentDescriptorByRef(candidate.snapshot, ref);
+  if (target === null) return toolFailure(`Target @${ref} does not exist.`);
+  if (
+    reads.snapshotId !== candidate.snapshot.id ||
+    reads.documents.get(ref) !== null
+  )
+    return toolFailure(
+      `Read @${ref} exactly, or receive the complete document in bootstrap, before retiring or restoring it.`,
+    );
+
+  const revised = candidate.snapshot.revise({
+    commands: [
+      {
+        kind: "retire",
+        document: { documentId: target.documentId },
+        retired: args.retired,
+      },
+    ],
+  });
+  if (!revised.ok || revised.snapshotStatus !== "usable")
+    return toolFailure(
+      worldDocumentRevisionFailureMessage(revised.diagnostics),
+      "candidate",
+    );
+  const changed = revised.changes.length > 0;
+  const previousSnapshot = candidate.snapshot;
+  acceptWorldStateRevision(candidate, revised);
+  carryWriteAuthorizations(previousSnapshot, candidate, reads, revised.changes);
+  authorizeRead(reads, candidate.snapshot.id, ref, null);
+  return {
+    ok: true,
+    markdown: changed
+      ? `@${target.shortRef} pending ${args.retired ? "retirement" : "restoration"}`
+      : `@${target.shortRef} unchanged`,
+    candidateWrite: { shortRef: target.shortRef, changed },
+  };
 }
 
 function nextAvailableStatePath(
@@ -1181,6 +1240,7 @@ function executeContextList(
     const result = snapshot.query({
       kind: "catalog",
       directory,
+      includeRetired: true,
       declaredDirectories,
       limit,
       ...(typeof args.cursor === "string" || args.cursor === null
@@ -1198,7 +1258,7 @@ function executeContextList(
       }
       if (entry.document === undefined)
         return "- Damaged document (currently not addressable)";
-      return `- Document @${entry.document.shortRef} · ${entry.document.title} · ${entry.document.codec.toUpperCase()} · ${entry.document.summary}${entry.status === "damaged" ? " · needs repair" : ""}`;
+      return `- Document @${entry.document.shortRef} · ${entry.document.title} · ${entry.document.codec.toUpperCase()} · ${entry.document.summary}${entry.document.retired ? " · retired" : ""}${entry.status === "damaged" ? " · needs repair" : ""}`;
     });
     return {
       ok: true,
@@ -1388,10 +1448,11 @@ function renderDocumentMetadata(document: WorldDocumentDescriptor): string {
       title: document.title,
       summary: document.summary,
       aliases: document.aliases,
+      ...(document.retired ? { retired: true } : {}),
     },
     { indent: 2, lineWidth: 0 },
   ).trimEnd();
-  return `[Document metadata: not body content; set_metadata updates one or more fields and preserves omitted fields]\n${metadata}`;
+  return `[Document metadata: not body content; set_metadata updates one or more fields and preserves omitted fields; retired is changed only by world_retire]\n${metadata}`;
 }
 
 function toolWorldDocumentValue(value: WorldDocumentValue): unknown {
