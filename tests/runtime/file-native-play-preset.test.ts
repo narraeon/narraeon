@@ -15,6 +15,7 @@ import {
   applyPlayPresetStructuredEditor,
   parsePlayPresetFiles,
   parsePlayPresetStructuredEditor,
+  revisionForPlayPresetFiles,
   settingImprovementPromptForBinding,
   toPlayPresetStructuredEditor,
   validatePlayPresetFiles,
@@ -79,6 +80,41 @@ describe("文件原生玩法预设", () => {
     expect(library.presets.find(({ id }) => id === original.id)?.files).toEqual(
       defaultPlayPresetFilesForLocale("zh-CN"),
     );
+  });
+
+  test("Runtime-owned default follows a newer shipped prompt revision", async () => {
+    const root = await mkdtemp(join(tmpdir(), "narraeon-play-upgrade-"));
+    roots.push(root);
+    const store = new FileNativePlayPresetStore(root, {
+      locale: () => "en",
+    });
+    await store.initialize();
+
+    const path = join(root, "file-native-play-presets.json");
+    const document = JSON.parse(await readFile(path, "utf8")) as {
+      presets: {
+        currentRevision: string;
+        revisions: Record<string, Record<string, string>>;
+        builtinDefault?: true;
+      }[];
+    };
+    const preset = document.presets[0]!;
+    expect(preset.builtinDefault).toBe(true);
+    const previousFiles = structuredClone(
+      defaultPlayPresetFilesForLocale("en"),
+    );
+    previousFiles[defaultSettingImprovementPromptPath] =
+      "# Previous shipped setting-improvement prompt\n";
+    const previousRevision = revisionForPlayPresetFiles(previousFiles);
+    preset.revisions[previousRevision] = previousFiles;
+    preset.currentRevision = previousRevision;
+    await writeFile(path, JSON.stringify(document), "utf8");
+
+    await store.initialize();
+
+    const upgraded = (await store.list()).presets[0]!;
+    expect(upgraded.revision).not.toBe(previousRevision);
+    expect(upgraded.files).toEqual(defaultPlayPresetFilesForLocale("en"));
   });
 
   test("提示块只接受作者 role，追加消息使用稳定署名", () => {

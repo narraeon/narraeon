@@ -848,28 +848,64 @@ function settingImprovementPresetReference(
     [],
     locale,
   ).author_instruction;
-  const blocks = [...authorBlocks, ...playNarrativeBlocks(binding)];
+  const narrativeBlocks = playNarrativeBlocks(binding);
   const heading =
     locale === "zh-CN"
-      ? "# 当前冻结预设的只读创作参考"
-      : "# Read-only author reference from the frozen play preset";
+      ? "# 未来游玩语义边界（只读；不是设定文档范文）"
+      : "# Future play semantics (read-only; not a setting-document style template)";
   const explanation =
     locale === "zh-CN"
-      ? "以下是未来游玩 AI 实际接收的已启用主持与叙事作者语义。这些块在本轮作为内容设计约束，用来让内容包配合玩法语义并避免重复或冲突。本轮回复面向设定讨论或内容包当前树编辑；玩家可见故事由未来游玩调用链生成。"
-      : "These are the enabled host and narrative author semantics that future play AI actually receives. In this conversation they are content-design constraints used to keep the package compatible with play semantics and avoid duplication or conflict. Replies here address setting discussion or current-tree editing; the future play call chain generates player-visible story.";
+      ? "以下原文说明未来游玩 AI 怎样裁决、维护状态和生成玩家可见叙事。本轮只用它检查内容包是否兼容、是否重复通用规则，以及同一概念是否被过度加权。不要模仿这些块的句式、节奏、动作细节或描写密度写入 world/；不要把其中跨世界通用的规则复制进内容包控制块。需要配合这些语义时，把要求转译成最少的当前事实、稳定不变量，或确属本世界特有的控制约束。本轮回复面向设定讨论或内容包当前树编辑；玩家可见故事由未来游玩调用链生成。"
+      : "The source blocks below describe how future play AI adjudicates, maintains state, and produces player-visible narrative. In this conversation, use them only to check compatibility, duplication of general rules, and excessive weighting of the same concept. Do not imitate their sentences, pacing, staged gestures, or descriptive density in world/ documents, and do not copy their cross-world rules into content-package control blocks. When the package must support these semantics, translate the requirement into the minimum current facts, stable invariants, or genuinely world-specific control constraints. Replies here address setting discussion or current-tree editing; the future play call chain generates player-visible story.";
   const none =
     locale === "zh-CN"
       ? "（当前预设没有启用主持或叙事作者块。）"
       : "(The current preset enables no host or narrative author blocks.)";
-  const rendered = blocks.map(
-    ({ source, markdown }) => `## ${source}\n\n${markdown.trim()}\n\n---`,
-  );
+  const groups = [
+    settingImprovementReferenceGroup(
+      locale === "zh-CN"
+        ? "主持调用链作者语义"
+        : "Host call-chain author semantics",
+      locale === "zh-CN"
+        ? "这些块约束未来游玩的呈现、裁决或状态维护；把它们当作边界，不当作世界事实或设定语体。"
+        : "These blocks constrain presentation, adjudication, or state maintenance during future play. Treat them as boundaries, not world facts or a voice for setting documents.",
+      authorBlocks,
+    ),
+    settingImprovementReferenceGroup(
+      locale === "zh-CN"
+        ? "玩家可见叙事语义"
+        : "Player-visible narrative semantics",
+      locale === "zh-CN"
+        ? "这些块只在未来游玩生成玩家可见正文时生效；不得把它们当作本轮 YAML 或 Markdown 设定正文的范文。"
+        : "These blocks apply only when future play produces player-visible story. Do not use them as prose models for YAML or Markdown setting documents in this conversation.",
+      narrativeBlocks,
+    ),
+  ].filter((group) => group !== null);
   return [
     heading,
     "",
     explanation,
     "",
-    ...(rendered.length > 0 ? rendered : [none]),
+    ...(groups.length > 0 ? groups : [none]),
+  ]
+    .join("\n")
+    .trim();
+}
+
+function settingImprovementReferenceGroup(
+  heading: string,
+  explanation: string,
+  blocks: { source: string; markdown: string }[],
+): string | null {
+  if (blocks.length === 0) return null;
+  return [
+    `## ${heading}`,
+    "",
+    explanation,
+    "",
+    ...blocks.map(
+      ({ source, markdown }) => `### ${source}\n\n${markdown.trim()}\n\n---`,
+    ),
   ]
     .join("\n")
     .trim();

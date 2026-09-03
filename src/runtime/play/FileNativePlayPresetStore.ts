@@ -857,15 +857,10 @@ export class FileNativePlayPresetStore {
     );
     if (preset === undefined || preset.draftRevision !== undefined)
       return false;
-    const current = preset.revisions[preset.currentRevision];
-    if (
-      current === undefined ||
-      (!isDeepStrictEqual(current, defaultPlayPresetFilesForLocale("en")) &&
-        !isDeepStrictEqual(current, defaultPlayPresetFilesForLocale("zh-CN")))
-    ) {
-      delete preset.builtinDefault;
-      return true;
-    }
+    // The marker, not equality with this build's defaults, identifies the
+    // Runtime-owned seed. A prior application version necessarily carries a
+    // different file revision after shipped prompts change. Every user edit or
+    // rename clears the marker before saving, so those presets remain intact.
     const desired = defaultPlayPresetFilesForLocale(this.#locale());
     const revision = revisionForFiles(desired, this.#limits);
     if (preset.currentRevision === revision) return false;

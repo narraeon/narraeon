@@ -9,6 +9,56 @@ import {
 } from "../../src/runtime/setting/SettingAuthoringTransaction.ts";
 
 test.each([
+  {
+    locale: "zh-CN" as const,
+    heading: "未来游玩语义边界（只读；不是设定文档范文）",
+    hostGroup: "主持调用链作者语义",
+    narrativeGroup: "玩家可见叙事语义",
+    warning: "不要模仿这些块的句式、节奏、动作细节或描写密度写入 world/",
+  },
+  {
+    locale: "en" as const,
+    heading:
+      "Future play semantics (read-only; not a setting-document style template)",
+    hostGroup: "Host call-chain author semantics",
+    narrativeGroup: "Player-visible narrative semantics",
+    warning:
+      "Do not imitate their sentences, pacing, staged gestures, or descriptive density in world/ documents",
+  },
+])("$locale 冻结预设原文标作语义边界而不是设定范文", (scenario) => {
+  const host = new FileNativeModelHost({
+    provider: "chat_completions",
+    baseUrl: "https://provider.invalid/v1",
+    apiKey: "secret",
+    modelId: "model",
+    contextWindowTokens: 32_000,
+    maxOutputTokens: 4_096,
+  });
+  const compiler = new FileNativePromptCompiler({ locale: scenario.locale });
+  const tools = settingImprovementToolDefinitions(scenario.locale);
+  const bootstrap = compiler.compileSettingImprovement({
+    contentPackageTitle: "Package",
+    runtimeContract: settingImprovementRuntimeContract(scenario.locale),
+    authorPrompt: "Author setting documents.",
+    playPreset: builtinDefaultPlayPresetBinding(scenario.locale),
+    modelBinding: host.binding(),
+    tools,
+  });
+  const worldContext = bootstrap.logicalMessages
+    .filter(({ role }) => role === "world_context")
+    .map(({ markdown }) => markdown)
+    .join("\n");
+
+  expect(worldContext).toContain(scenario.heading);
+  expect(worldContext).toContain(scenario.hostGroup);
+  expect(worldContext).toContain(scenario.narrativeGroup);
+  expect(worldContext).toContain(scenario.warning);
+  expect(worldContext.indexOf(scenario.hostGroup)).toBeLessThan(
+    worldContext.indexOf(scenario.narrativeGroup),
+  );
+});
+
+test.each([
   "chat_completions",
   "openai_responses",
   "anthropic_messages",
@@ -60,10 +110,27 @@ test.each([
     expect(serialized).toContain("不必保留“当前情境”字样");
     expect(serialized).toContain("内容包在游玩中的生命周期");
     expect(serialized).toContain("内容包当前树写入边界");
-    expect(serialized).toContain("当前冻结预设的只读创作参考");
+    expect(serialized).toContain("未来游玩语义边界（只读；不是设定文档范文）");
+    expect(serialized).toContain("主持调用链作者语义");
+    expect(serialized).toContain("玩家可见叙事语义");
+    expect(serialized).toContain(
+      "不要模仿这些块的句式、节奏、动作细节或描写密度写入 world/",
+    );
+    expect(serialized).toContain(
+      "不得把它们当作本轮 YAML 或 Markdown 设定正文的范文",
+    );
     expect(serialized).toContain("按 control/frame.yaml 的声明顺序");
     expect(serialized).toContain("通用状态维护判据");
     expect(serialized).toContain("玩家可见叙事规则");
+    expect(serialized.indexOf("主持调用链作者语义")).toBeLessThan(
+      serialized.indexOf("通用状态维护判据"),
+    );
+    expect(serialized.indexOf("通用状态维护判据")).toBeLessThan(
+      serialized.indexOf("玩家可见叙事语义"),
+    );
+    expect(serialized.indexOf("玩家可见叙事语义")).toBeLessThan(
+      serialized.indexOf("玩家可见叙事规则"),
+    );
     expect(serialized).not.toContain("UNLISTED-PRESET-BLOCK-MUST-NOT-LEAK");
     for (const name of [
       "setting_list",

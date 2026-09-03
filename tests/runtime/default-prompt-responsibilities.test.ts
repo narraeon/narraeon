@@ -20,7 +20,9 @@ import { firstPartyActionChoicesPresetFiles } from "../../src/shared/first-party
 import { defaultNarrationPrompt } from "../../src/shared/default-play-prompts.ts";
 import {
   defaultSettingImprovementPrompt,
+  defaultSettingImprovementPromptEn,
   defaultSettingImprovementPromptPath,
+  defaultSettingImprovementPromptZhCN,
 } from "../../src/shared/default-setting-improvement-prompt.ts";
 import { firstPartyGenericPanelsPresetFiles } from "../../src/shared/first-party-generic-panels.ts";
 import { firstPartyStatusPanelPresetFiles } from "../../src/shared/first-party-player-view.ts";
@@ -105,6 +107,68 @@ describe("默认提示词职责", () => {
     expect(
       firstPartyGenericPanelsPresetFiles["prompts/panels.md"],
     ).not.toContain("artifact_emit");
+  });
+
+  test("设定完善同时约束覆盖、权重、语句职责与审计模式", () => {
+    expect(defaultSettingImprovementPromptZhCN).toContain(
+      "两把尺子：覆盖与权重",
+    );
+    expect(defaultSettingImprovementPromptZhCN).toContain("同时决定六件事");
+    expect(defaultSettingImprovementPromptZhCN).toContain(
+      "审计范围本身就是“目标真正涉及的部分”",
+    );
+    expect(defaultSettingImprovementPromptZhCN).toContain(
+      "同一语义只保留一个权威所有者",
+    );
+    expect(defaultSettingImprovementPromptZhCN).toContain(
+      "不要笼统假设所有世界文档都会每回合全文注入",
+    );
+    expect(defaultSettingImprovementPromptZhCN).toContain(
+      "本节只约束 opening.md",
+    );
+    expect(defaultSettingImprovementPromptZhCN).toContain(
+      "control/blocks/ 作者材料回答主持者应该怎样",
+    );
+    expect(defaultSettingImprovementPromptZhCN).toContain(
+      "不要预写阶段、进度条、时间表",
+    );
+    expect(defaultSettingImprovementPromptZhCN).toContain(
+      "审计时先按概念、再按句子检查",
+    );
+    expect(defaultSettingImprovementPromptZhCN).not.toContain(
+      "setting_write_file",
+    );
+
+    expect(defaultSettingImprovementPromptEn).toContain(
+      "Two measures: coverage and weight",
+    );
+    expect(defaultSettingImprovementPromptEn).toContain(
+      "decide six things together",
+    );
+    expect(defaultSettingImprovementPromptEn).toContain(
+      "the audit scope itself is what the goal affects",
+    );
+    expect(defaultSettingImprovementPromptEn).toContain(
+      "Keep one authoritative owner for each meaning",
+    );
+    expect(defaultSettingImprovementPromptEn).toContain(
+      "Do not assume that every world document is injected in full",
+    );
+    expect(defaultSettingImprovementPromptEn).toContain(
+      "This section governs opening.md only",
+    );
+    expect(defaultSettingImprovementPromptEn).toContain(
+      "Author material under control/blocks/ tells the host how",
+    );
+    expect(defaultSettingImprovementPromptEn).toContain(
+      "Do not prewrite stages, progress tracks, timetables",
+    );
+    expect(defaultSettingImprovementPromptEn).toContain(
+      "Audit concepts before sentences",
+    );
+    expect(defaultSettingImprovementPromptEn).not.toContain(
+      "setting_write_file",
+    );
   });
 
   test("主持层承担通用状态判据，世界 scaffold 只承担世界特有语义", () => {
