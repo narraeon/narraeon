@@ -99,6 +99,7 @@ test("设定完善回滚必须精确绑定内容包、对话和历史改动集",
     packageId: "package-1",
     sessionId: "setting-00000000-0000-4000-8000-000000000000",
     changeSetId: "change-set:12",
+    path: "opening.md",
   } as const;
   expect(
     parseV1Envelope({ protocol: v1Protocol, request: rollback }).request,
@@ -112,8 +113,21 @@ test("设定完善回滚必须精确绑定内容包、对话和历史改动集",
           type: "setting-improvement.rollback",
           packageId: "package-1",
           sessionId: "setting-1",
+          path: "opening.md",
           ...(changeSetId === undefined ? {} : { changeSetId }),
         },
       }),
     ).toThrow(/changeSetId|missing required field/u);
+
+  expect(() =>
+    parseV1Envelope({
+      protocol: v1Protocol,
+      request: {
+        type: "setting-improvement.rollback",
+        packageId: "package-1",
+        sessionId: "setting-1",
+        changeSetId: "change-set:1",
+      },
+    }),
+  ).toThrow(/path|missing required field/u);
 });

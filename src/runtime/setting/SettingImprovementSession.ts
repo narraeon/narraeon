@@ -39,7 +39,7 @@ import type {
   FileNativePromptCompiler,
   PromptPreview,
 } from "../prompt/FileNativePromptCompiler.ts";
-import { WorldDocumentStore } from "../world/WorldDocumentStore.ts";
+import type { WorldDocumentStore } from "../world/WorldDocumentStore.ts";
 import {
   summarizeStoredSettingImprovementSession,
   type FileNativeSettingImprovementStore,
@@ -49,7 +49,6 @@ import {
 } from "./FileNativeSettingImprovementStore.ts";
 import {
   SettingAuthoringTransaction,
-  settingDocumentDeletionBlockers,
   settingImprovementRuntimeContract,
   settingImprovementToolDefinitions,
 } from "./SettingAuthoringTransaction.ts";
@@ -224,14 +223,15 @@ export class SettingImprovementSession {
   }
 
   /**
-   * Restore one historical AI tool call as an atomic inverse current-tree
-   * transaction. The transcript remains append-only; its recorded diff is the
-   * optimistic precondition that prevents this action from erasing later work.
+   * Restore one selected file from a historical AI tool call. The explicit
+   * rollback wins over the file's current contents; the transcript remains
+   * append-only.
    */
   async rollback(input: {
     packageId: string;
     sessionId: string;
     changeSetId: string;
+    path: string;
   }): Promise<V1SettingImprovementRollbackResult> {
     return this.#mutate(async () => {
       if (this.#runs.has(input.sessionId))
@@ -244,27 +244,20 @@ export class SettingImprovementSession {
           "The setting-improvement conversation does not belong to this content package",
         );
       session = await this.#recoverIfNeeded(session);
-      const changes = rollbackChangesFor(session, input.changeSetId);
+      const change = rollbackChangeFor(session, input.changeSetId, input.path);
       const lease = await this.#content.beginCurrentTreeContentPackageOperation(
         input.packageId,
       );
       try {
-        if (treeMatchesChangeSide(lease.package.files, changes, "before"))
+        if (treeMatchesChangeBefore(lease.package.files, change))
           return {
             status: "already_rolled_back",
             changeSetId: input.changeSetId,
+            path: input.path,
             changes: [],
           };
-        if (!treeMatchesChangeSide(lease.package.files, changes, "after"))
-          throw new SettingImprovementRollbackError(
-            "The affected files changed after this AI edit, so Runtime refused to overwrite the later work",
-          );
-
-        assertRollbackDeletionsAreUnreferenced(lease.package.files, changes);
-        const restoredFiles = restoreChangeSetBefore(
-          lease.package.files,
-          changes,
-        );
+        const rollbackDiff = diffForRollback(lease.package.files, change);
+        const restoredFiles = restoreChangeBefore(lease.package.files, change);
         try {
           this.#content.validateCurrentTreeContentPackage(restoredFiles);
           await lease.replace(restoredFiles);
@@ -278,7 +271,8 @@ export class SettingImprovementSession {
         return {
           status: "rolled_back",
           changeSetId: input.changeSetId,
-          changes: inverseChanges(changes),
+          path: input.path,
+          changes: [rollbackDiff],
         };
       } finally {
         lease.release();
@@ -994,10 +988,11 @@ function changeSetIdForItem(itemIndex: number): string {
   return `change-set:${itemIndex}`;
 }
 
-function rollbackChangesFor(
+function rollbackChangeFor(
   session: StoredSettingImprovementSession,
   changeSetId: string,
-): V1SettingAuthoringDiff[] {
+  path: string,
+): V1SettingAuthoringDiff {
   const result = settingConversationTurns(session)
     .flatMap(({ exchanges }) => exchanges)
     .flatMap(({ toolCalls }) => toolCalls)
@@ -1013,113 +1008,69 @@ function rollbackChangesFor(
       "The requested AI change set does not exist in this conversation",
     );
 
-  const paths = new Set<string>();
-  for (const change of result.changes) {
-    if (
-      paths.has(change.path) ||
-      (change.kind === "create" &&
-        (change.before !== null || change.after === null)) ||
-      (change.kind === "modify" &&
-        (change.before === null ||
-          change.after === null ||
-          change.before === change.after)) ||
-      (change.kind === "delete" &&
-        (change.before === null || change.after !== null))
-    )
-      throw new SettingImprovementRollbackError(
-        "The recorded AI change set is damaged and cannot be rolled back",
-      );
-    paths.add(change.path);
-  }
-  return structuredClone(result.changes);
+  const matches = result.changes.filter((change) => change.path === path);
+  const change = matches[0];
+  if (
+    matches.length !== 1 ||
+    change === undefined ||
+    (change.kind === "create" &&
+      (change.before !== null || change.after === null)) ||
+    (change.kind === "modify" &&
+      (change.before === null ||
+        change.after === null ||
+        change.before === change.after)) ||
+    (change.kind === "delete" &&
+      (change.before === null || change.after !== null))
+  )
+    throw new SettingImprovementRollbackError(
+      "The requested file does not exist in this AI change set",
+    );
+  return structuredClone(change);
 }
 
-function treeMatchesChangeSide(
+function treeMatchesChangeBefore(
   files: readonly ContentTreeFile[],
-  changes: readonly V1SettingAuthoringDiff[],
-  side: "before" | "after",
+  change: V1SettingAuthoringDiff,
 ): boolean {
   const byPath = new Map(files.map((file) => [file.path, file] as const));
-  return changes.every((change) => {
-    const expected = change[side];
-    const current = byPath.get(change.path);
-    if (expected === null) return current === undefined;
-    return (
-      current !== undefined &&
-      current.encoding === undefined &&
-      current.contents === expected
-    );
-  });
+  const expected = change.before;
+  const current = byPath.get(change.path);
+  if (expected === null) return current === undefined;
+  return (
+    current !== undefined &&
+    current.encoding === undefined &&
+    current.contents === expected
+  );
 }
 
-function restoreChangeSetBefore(
+function restoreChangeBefore(
   files: readonly ContentTreeFile[],
-  changes: readonly V1SettingAuthoringDiff[],
+  change: V1SettingAuthoringDiff,
 ): ContentTreeFile[] {
   const restored = new Map(
     files.map((file) => [file.path, structuredClone(file)] as const),
   );
-  for (const change of changes) {
-    if (change.before === null) restored.delete(change.path);
-    else
-      restored.set(change.path, { path: change.path, contents: change.before });
-  }
+  if (change.before === null) restored.delete(change.path);
+  else
+    restored.set(change.path, { path: change.path, contents: change.before });
   return [...restored.values()].sort((left, right) =>
     left.path.localeCompare(right.path),
   );
 }
 
-function assertRollbackDeletionsAreUnreferenced(
+function diffForRollback(
   files: readonly ContentTreeFile[],
-  changes: readonly V1SettingAuthoringDiff[],
-): void {
-  const deletedWorldPaths = changes.flatMap((change) =>
-    change.kind === "create" && change.path.startsWith("world/")
-      ? [change.path]
-      : [],
-  );
-  if (deletedWorldPaths.length === 0) return;
-  const snapshot = WorldDocumentStore.open({
-    layout: "content_package",
-    files,
-  });
-  for (const logicalPath of deletedWorldPaths) {
-    const resolved = snapshot.query({
-      kind: "read_document",
-      document: { logicalPath },
-      maxBytes: 4,
-    });
-    if (resolved.kind !== "read_document")
-      throw new SettingImprovementRollbackError(
-        "The created world document can no longer be resolved safely for rollback",
-      );
-    const blockers = settingDocumentDeletionBlockers(
-      snapshot,
-      resolved.document,
-    );
-    if (blockers.length === 0) continue;
-    throw new SettingImprovementRollbackError(
-      `Cannot roll back creation of @${resolved.document.shortRef}; remove or redirect every later reference first:\n${blockers
-        .map(({ path, locator }) => `- ${path} · ${locator}`)
-        .join("\n")}`,
-    );
-  }
-}
-
-function inverseChanges(
-  changes: readonly V1SettingAuthoringDiff[],
-): V1SettingAuthoringDiff[] {
-  return changes.map((change) => ({
+  change: V1SettingAuthoringDiff,
+): V1SettingAuthoringDiff {
+  const current = files.find(({ path }) => path === change.path);
+  const before = current?.contents ?? null;
+  const after = change.before;
+  return {
     path: change.path,
-    kind:
-      change.kind === "create"
-        ? "delete"
-        : change.kind === "delete"
-          ? "create"
-          : "modify",
-    before: change.after,
-    after: change.before,
-  }));
+    kind: before === null ? "create" : after === null ? "delete" : "modify",
+    before,
+    after,
+  };
 }
 
 function settingImprovementHistoryItem(

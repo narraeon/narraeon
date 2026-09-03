@@ -192,7 +192,7 @@ test("完整工具响应直接原子发布当前树，并把推理、调用、�
   expect(view.messages.at(-1)?.text).toContain("already live");
 });
 
-test("历史 AI 修改可原子回滚到精确前像，重试保持幂等且对话历史不变", async () => {
+test("历史 AI 修改可按文件回滚到精确前像，重试保持幂等且对话历史不变", async () => {
   const fixture = await createFixture([
     {
       outcome: "response",
@@ -233,10 +233,12 @@ test("历史 AI 修改可原子回滚到精确前像，重试保持幂等且对�
     packageId: fixture.packageId,
     sessionId: view.sessionId,
     changeSetId,
+    path: "opening.md",
   });
   expect(rolledBack).toEqual({
     status: "rolled_back",
     changeSetId,
+    path: "opening.md",
     changes: [
       {
         path: "opening.md",
@@ -256,10 +258,12 @@ test("历史 AI 修改可原子回滚到精确前像，重试保持幂等且对�
       packageId: fixture.packageId,
       sessionId: view.sessionId,
       changeSetId,
+      path: "opening.md",
     }),
   ).resolves.toEqual({
     status: "already_rolled_back",
     changeSetId,
+    path: "opening.md",
     changes: [],
   });
   await expect(
@@ -267,7 +271,7 @@ test("历史 AI 修改可原子回滚到精确前像，重试保持幂等且对�
   ).resolves.toMatchObject({ turns: view.turns });
 });
 
-test("回滚拒绝覆盖同一文件后来的修改", async () => {
+test("所选文件后来被修改时仍直接覆盖为历史前像", async () => {
   const fixture = await createFixture([
     {
       outcome: "response",
@@ -294,8 +298,12 @@ test("回滚拒绝覆盖同一文件后来的修改", async () => {
   );
   const changeSetId =
     view.turns[0]?.exchanges[0]?.toolCalls[1]?.result?.changeSetId;
+  const beforeOpening =
+    view.turns[0]?.exchanges[0]?.toolCalls[1]?.result?.changes[0]?.before;
   if (changeSetId === null || changeSetId === undefined)
     throw new Error("The accepted write did not expose a rollback identity");
+  if (beforeOpening === null || beforeOpening === undefined)
+    throw new Error("The accepted write did not retain its previous file");
   const current = await fixture.content.readCurrentTreeContentPackage(
     fixture.packageId,
   );
@@ -313,16 +321,29 @@ test("回滚拒绝覆盖同一文件后来的修改", async () => {
       packageId: fixture.packageId,
       sessionId: view.sessionId,
       changeSetId,
+      path: "opening.md",
     }),
-  ).rejects.toThrow("refused to overwrite the later work");
+  ).resolves.toEqual({
+    status: "rolled_back",
+    changeSetId,
+    path: "opening.md",
+    changes: [
+      {
+        path: "opening.md",
+        kind: "modify",
+        before: "Later manual edit.\n",
+        after: beforeOpening,
+      },
+    ],
+  });
   expect(
     (
       await fixture.content.readCurrentTreeContentPackage(fixture.packageId)
     ).files.find(({ path }) => path === "opening.md")?.contents,
-  ).toBe("Later manual edit.\n");
+  ).toBe(beforeOpening);
 });
 
-test("一次 move 的两个文件变化作为一个改动集共同回滚", async () => {
+test("move 的两个文件变化可以分别选择回滚", async () => {
   const fixture = await createFixture([
     {
       outcome: "response",
@@ -366,15 +387,103 @@ test("一次 move 的两个文件变化作为一个改动集共同回滚", async
     packageId: fixture.packageId,
     sessionId: view.sessionId,
     changeSetId: move.changeSetId,
+    path: "world/notes/rollback.yaml",
   });
-  const paths = (
+  const afterSourceRollback = (
     await fixture.content.readCurrentTreeContentPackage(fixture.packageId)
   ).files.map(({ path }) => path);
-  expect(paths).toContain("world/notes/rollback.yaml");
-  expect(paths).not.toContain("world/archive/rollback.yaml");
+  expect(afterSourceRollback).toContain("world/notes/rollback.yaml");
+  expect(afterSourceRollback).toContain("world/archive/rollback.yaml");
+
+  await fixture.session.rollback({
+    packageId: fixture.packageId,
+    sessionId: view.sessionId,
+    changeSetId: move.changeSetId,
+    path: "world/archive/rollback.yaml",
+  });
+  const afterDestinationRollback = (
+    await fixture.content.readCurrentTreeContentPackage(fixture.packageId)
+  ).files.map(({ path }) => path);
+  expect(afterDestinationRollback).toContain("world/notes/rollback.yaml");
+  expect(afterDestinationRollback).not.toContain("world/archive/rollback.yaml");
 });
 
-test("回滚文档创建沿用删除引用完整性，不留下后来加入的悬空引用", async () => {
+test("回滚所选删除文件会直接恢复历史前像", async () => {
+  const path = "world/notes/deleted-rollback.yaml";
+  const fixture = await createFixture([
+    {
+      outcome: "response",
+      toolCalls: [
+        {
+          id: "create-delete-rollback-note",
+          name: "setting_create",
+          arguments: {
+            path,
+            ref: "deleted-rollback",
+            title: "Deleted rollback note",
+            summary: "A note used to verify delete rollback.",
+            aliases: [],
+            body: "status: active\n",
+          },
+        },
+      ],
+    },
+    { outcome: "response", text: "Created.", toolCalls: [] },
+    {
+      outcome: "response",
+      toolCalls: [
+        {
+          id: "delete-rollback-note",
+          name: "setting_delete",
+          arguments: { document: "@deleted-rollback" },
+        },
+      ],
+    },
+    { outcome: "response", text: "Deleted.", toolCalls: [] },
+  ]);
+  const created = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "request-create-delete-rollback",
+    "Create a temporary note",
+  );
+  const deleted = await fixture.session.send({
+    packageId: fixture.packageId,
+    requestId: "request-delete-rollback",
+    message: "Delete the temporary note",
+    continuation: {
+      kind: "continue_context",
+      sessionId: created.sessionId,
+    },
+  });
+  const deletion = deleted.turns[1]?.exchanges[0]?.toolCalls[0]?.result;
+  const before = deletion?.changes[0]?.before;
+  if (deletion?.changeSetId === null || deletion?.changeSetId === undefined)
+    throw new Error("The accepted delete did not expose a rollback identity");
+  if (before === null || before === undefined)
+    throw new Error("The accepted delete did not retain its previous file");
+
+  await expect(
+    fixture.session.rollback({
+      packageId: fixture.packageId,
+      sessionId: deleted.sessionId,
+      changeSetId: deletion.changeSetId,
+      path,
+    }),
+  ).resolves.toEqual({
+    status: "rolled_back",
+    changeSetId: deletion.changeSetId,
+    path,
+    changes: [{ path, kind: "create", before: null, after: before }],
+  });
+  expect(
+    (
+      await fixture.content.readCurrentTreeContentPackage(fixture.packageId)
+    ).files.find((file) => file.path === path)?.contents,
+  ).toBe(before);
+});
+
+test("所选创建文件即使已有后来引用也直接回滚", async () => {
   const fixture = await createFixture([
     {
       outcome: "response",
@@ -441,13 +550,17 @@ test("回滚文档创建沿用删除引用完整性，不留下后来加入的�
       packageId: fixture.packageId,
       sessionId: created.sessionId,
       changeSetId,
+      path: "world/notes/referenced-rollback.yaml",
     }),
-  ).rejects.toThrow(/remove or redirect every later reference/u);
+  ).resolves.toMatchObject({
+    status: "rolled_back",
+    path: "world/notes/referenced-rollback.yaml",
+  });
   expect(
     (
       await fixture.content.readCurrentTreeContentPackage(fixture.packageId)
     ).files.some(({ path }) => path === "world/notes/referenced-rollback.yaml"),
-  ).toBe(true);
+  ).toBe(false);
 });
 
 test("默认可继续精确历史上下文，显式全新上下文创建第二段对话", async () => {

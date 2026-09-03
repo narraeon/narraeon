@@ -77,7 +77,7 @@ test("对话按模型交换展示 Provider 推理、工具收据和已生效红�
   expect(html).toContain("setting_write_file");
   expect(html).toContain("当时生效 · 1 个文件");
   expect(html).toContain("当时已生效差异");
-  expect(html).toContain("相关文件后来又有改动，不能直接回滚");
+  expect(html).toContain("回滚这个文件");
   expect(html).toContain("unified-diff-remove");
   expect(html).toContain("unified-diff-add");
   expect(html).toContain("Old opening");
@@ -195,10 +195,11 @@ function renderWith({
       onFreshContext: () => undefined,
       onSelectSession: () => Promise.resolve(),
       onDeleteSession: () => Promise.resolve(),
-      onRollbackChangeSet: (_sessionId: string, changeSetId: string) =>
+      onRollbackFile: (_sessionId: string, changeSetId: string, path: string) =>
         Promise.resolve({
           status: "rolled_back" as const,
           changeSetId,
+          path,
           changes: [],
         }),
       onConfigureModel: () => undefined,

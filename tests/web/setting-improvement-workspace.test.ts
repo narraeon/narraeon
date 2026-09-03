@@ -92,34 +92,37 @@ test("左右侧栏承载历史删除、文件预览和同一份文件编辑器",
   expect(screen.getByLabelText("编辑 opening.md")).toBeTruthy();
 });
 
-test("当前文件仍匹配 AI 修改后像时，可以从历史 diff 原子回滚", async () => {
-  const onRollbackChangeSet = vi.fn((_sessionId: string, changeSetId: string) =>
-    Promise.resolve({
-      status: "rolled_back" as const,
-      changeSetId,
-      changes: [],
-    }),
+test("每份历史 diff 都可单独直接回滚", async () => {
+  const onRollbackFile = vi.fn(
+    (_sessionId: string, changeSetId: string, path: string) =>
+      Promise.resolve({
+        status: "rolled_back" as const,
+        changeSetId,
+        path,
+        changes: [],
+      }),
   );
-  const confirm = vi.fn(() => true);
-  vi.stubGlobal("confirm", confirm);
   renderPanel(undefined, {
     currentFileContents: "New opening",
-    onRollbackChangeSet,
+    onRollbackFile,
   });
 
   fireEvent.click(screen.getByText("本段调用详情"));
   fireEvent.click(screen.getByText("第 1 次模型交换"));
   fireEvent.click(screen.getByText("调用 setting_write_file"));
-  fireEvent.click(screen.getByRole("button", { name: "回滚这次 AI 修改" }));
+  fireEvent.click(
+    document
+      .querySelector<HTMLDetailsElement>(".setting-change-diff")!
+      .querySelector("summary")!,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "回滚这个文件" }));
 
   await waitFor(() =>
-    expect(onRollbackChangeSet).toHaveBeenCalledWith(
+    expect(onRollbackFile).toHaveBeenCalledWith(
       "setting-test",
       "change-set:3",
+      "opening.md",
     ),
-  );
-  expect(confirm).toHaveBeenCalledWith(
-    expect.stringContaining("1 个文件会一起恢复"),
   );
 });
 
@@ -128,9 +131,10 @@ function renderPanel(
     Promise.resolve(),
   options: {
     currentFileContents?: string;
-    onRollbackChangeSet?: (
+    onRollbackFile?: (
       sessionId: string,
       changeSetId: string,
+      path: string,
     ) => Promise<V1SettingImprovementRollbackResult>;
   } = {},
 ): void {
@@ -235,12 +239,13 @@ function renderPanel(
       onFreshContext: () => undefined,
       onSelectSession: () => Promise.resolve(),
       onDeleteSession,
-      onRollbackChangeSet:
-        options.onRollbackChangeSet ??
-        ((_sessionId: string, changeSetId: string) =>
+      onRollbackFile:
+        options.onRollbackFile ??
+        ((_sessionId: string, changeSetId: string, path: string) =>
           Promise.resolve({
             status: "rolled_back" as const,
             changeSetId,
+            path,
             changes: [],
           })),
       onConfigureModel: () => undefined,

@@ -471,14 +471,13 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     .filter({ hasText: "setting_write_file" })
     .filter({ hasText: "control/blocks/world.md" });
   await worldRuleWrite.locator(":scope > summary").click();
-  page.once("dialog", (dialog) => dialog.accept());
-  await worldRuleWrite
-    .getByRole("button", { name: "回滚这次 AI 修改" })
-    .click();
+  const worldRuleDiff = worldRuleWrite.locator(".setting-change-diff");
+  await worldRuleDiff.locator(":scope > summary").click();
+  await worldRuleDiff.getByRole("button", { name: "回滚这个文件" }).click();
   await expect(page.locator(".setting-workspace-feedback")).toContainText(
-    "已回滚这次 AI 修改；对话历史仍然保留",
+    "已回滚这个文件；对话历史仍然保留",
   );
-  await expect(worldRuleWrite).toContainText("当前树已回到这次修改前的版本");
+  await expect(worldRuleWrite).toContainText("当前文件已是修改前版本");
   await page
     .getByRole("navigation", { name: "设定完善工具" })
     .getByRole("button", { name: "文件", exact: true })
@@ -578,7 +577,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     })
     .click();
   await expect(page.locator(".setting-workspace-feedback")).toContainText(
-    "内容包当前树没有改变",
+    "内容包当前树没有回滚",
   );
   await expect(
     page.getByRole("button", {

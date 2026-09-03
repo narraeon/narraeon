@@ -7939,10 +7939,6 @@ summary:focus-visible {
   font-size: 0.72rem;
 }
 
-.setting-change-rollback.is-conflicted {
-  color: #f5dda3;
-}
-
 .setting-change-rollback.is-already_rolled_back {
   color: #bdf5d9;
 }

@@ -74,6 +74,7 @@ export type V1Request =
       packageId: string;
       sessionId: string;
       changeSetId: string;
+      path: string;
     }
   | {
       type: "setting-improvement.message";
@@ -303,6 +304,7 @@ export interface V1SettingAuthoringDiff {
 export interface V1SettingImprovementRollbackResult {
   status: "rolled_back" | "already_rolled_back";
   changeSetId: string;
+  path: string;
   /** The inverse diff published by this rollback; empty for an idempotent retry. */
   changes: V1SettingAuthoringDiff[];
 }
@@ -715,6 +717,7 @@ const requiredFields: Record<
     packageId: "string",
     sessionId: "string",
     changeSetId: "string",
+    path: "string",
   },
   "setting-improvement.message": {
     packageId: "string",

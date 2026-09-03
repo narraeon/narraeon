@@ -563,9 +563,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         setImprovementHistoryView(null);
         improvementSelection.current = next.latest?.sessionId ?? null;
       }
-      setNotice(
-        uiText("对话历史及其中的一键回滚入口已删除；内容包当前树没有改变。"),
-      );
+      setNotice(uiText("对话历史已删除；内容包当前树没有回滚。"));
     } catch (error: unknown) {
       improvementHistoryRequest.current += 1;
       improvementSelection.current = previousSelection;
@@ -579,9 +577,10 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     }
   }
 
-  async function rollbackImprovementChangeSet(
+  async function rollbackImprovementFile(
     sessionId: string,
     changeSetId: string,
+    path: string,
   ): Promise<V1SettingImprovementRollbackResult> {
     if (filesDirty) {
       const error = new Error(uiText("请先保存或放弃文件编辑中的未保存修改。"));
@@ -597,6 +596,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         packageId: selected,
         sessionId,
         changeSetId,
+        path,
       });
     } catch (error: unknown) {
       const message =
@@ -626,8 +626,8 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     }
     setNotice(
       result.status === "rolled_back"
-        ? uiText("已回滚这次 AI 修改；对话历史仍然保留。")
-        : uiText("这些文件已经处于这次修改前的版本。"),
+        ? uiText("已回滚这个文件；对话历史仍然保留。")
+        : uiText("当前文件已是修改前版本。"),
     );
     return result;
   }
@@ -833,7 +833,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         onFreshContext={startFreshImprovementContext}
         onSelectSession={selectImprovementSession}
         onDeleteSession={deleteImprovementSession}
-        onRollbackChangeSet={rollbackImprovementChangeSet}
+        onRollbackFile={rollbackImprovementFile}
         onConfigureModel={() => setScreen("model")}
         onBack={() => setScreen("home")}
       />

@@ -36,9 +36,10 @@ interface SettingImprovementPanelProps {
   onFreshContext: () => void;
   onSelectSession: (sessionId: string) => Promise<void>;
   onDeleteSession: (sessionId: string) => Promise<void>;
-  onRollbackChangeSet: (
+  onRollbackFile: (
     sessionId: string,
     changeSetId: string,
+    path: string,
   ) => Promise<V1SettingImprovementRollbackResult>;
   onConfigureModel: () => void;
   onBack: () => void;
@@ -63,7 +64,7 @@ export function SettingImprovementPanel({
   onFreshContext,
   onSelectSession,
   onDeleteSession,
-  onRollbackChangeSet,
+  onRollbackFile,
   onConfigureModel,
   onBack,
 }: SettingImprovementPanelProps): React.JSX.Element {
@@ -76,12 +77,13 @@ export function SettingImprovementPanel({
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(
     null,
   );
-  const [rollingBackChangeSetId, setRollingBackChangeSetId] = useState<
-    string | null
-  >(null);
+  const [rollingBackFile, setRollingBackFile] = useState<{
+    changeSetId: string;
+    path: string;
+  } | null>(null);
   const conversationRef = useRef<HTMLElement>(null);
   const running = view?.runStatus === "running" || submitting;
-  const rollbackRunning = rollingBackChangeSetId !== null;
+  const rollbackRunning = rollingBackFile !== null;
   const interactionLocked = running || rollbackRunning;
   const startingFresh = view === null;
   const continuingHistory =
@@ -129,7 +131,7 @@ export function SettingImprovementPanel({
       deletingSessionId !== null ||
       !globalThis.confirm(
         uiText(
-          "删除对话“{title}”？内容包当前树不会改变，但这段历史中的一键回滚入口也会一并删除。此操作无法撤销。",
+          "删除对话“{title}”？只会删除这份对话记录；已经写入内容包当前树的改动不会回滚。此操作无法撤销。",
           { title: item.excerpt || uiText("未命名对话") },
         ),
       )
@@ -145,30 +147,20 @@ export function SettingImprovementPanel({
     }
   };
 
-  const rollbackChangeSet = async (
+  const rollbackFile = async (
     changeSetId: string,
-    changes: readonly V1SettingAuthoringDiff[],
+    path: string,
   ): Promise<void> => {
-    if (
-      view === null ||
-      rollbackDisabled ||
-      !globalThis.confirm(
-        uiText(
-          "回滚这次 AI 修改？此次工具调用涉及的 {count} 个文件会一起恢复到修改前版本；对话历史仍会保留。",
-          { count: changes.length },
-        ),
-      )
-    )
-      return;
+    if (view === null || rollbackDisabled) return;
     setLeftRailOpen(false);
     setRightRailOpen(false);
-    setRollingBackChangeSetId(changeSetId);
+    setRollingBackFile({ changeSetId, path });
     try {
-      await onRollbackChangeSet(view.sessionId, changeSetId);
+      await onRollbackFile(view.sessionId, changeSetId, path);
     } catch {
       // The parent projects the Runtime failure into the conversation surface.
     } finally {
-      setRollingBackChangeSetId(null);
+      setRollingBackFile(null);
     }
   };
 
@@ -342,8 +334,8 @@ export function SettingImprovementPanel({
                     turn={turn}
                     currentFiles={contentEditor.files}
                     rollbackDisabled={rollbackDisabled}
-                    rollingBackChangeSetId={rollingBackChangeSetId}
-                    onRollbackChangeSet={rollbackChangeSet}
+                    rollingBackFile={rollingBackFile}
+                    onRollbackFile={rollbackFile}
                   />
                 ))
               )}
@@ -749,17 +741,14 @@ function SettingConversationTurnView({
   turn,
   currentFiles,
   rollbackDisabled,
-  rollingBackChangeSetId,
-  onRollbackChangeSet,
+  rollingBackFile,
+  onRollbackFile,
 }: {
   turn: V1SettingConversationTurn;
   currentFiles: readonly ContentTreeFile[];
   rollbackDisabled: boolean;
-  rollingBackChangeSetId: string | null;
-  onRollbackChangeSet: (
-    changeSetId: string,
-    changes: readonly V1SettingAuthoringDiff[],
-  ) => Promise<void>;
+  rollingBackFile: { changeSetId: string; path: string } | null;
+  onRollbackFile: (changeSetId: string, path: string) => Promise<void>;
 }): React.JSX.Element {
   const traces = turn.exchanges.filter(exchangeHasTrace);
   const traceCount = traces.reduce(
@@ -804,8 +793,8 @@ function SettingConversationTurnView({
                 exchange={exchange}
                 currentFiles={currentFiles}
                 rollbackDisabled={rollbackDisabled}
-                rollingBackChangeSetId={rollingBackChangeSetId}
-                onRollbackChangeSet={onRollbackChangeSet}
+                rollingBackFile={rollingBackFile}
+                onRollbackFile={onRollbackFile}
               />
             ))}
           </div>
@@ -823,17 +812,14 @@ function SettingConversationExchangeTrace({
   exchange,
   currentFiles,
   rollbackDisabled,
-  rollingBackChangeSetId,
-  onRollbackChangeSet,
+  rollingBackFile,
+  onRollbackFile,
 }: {
   exchange: V1SettingConversationExchange;
   currentFiles: readonly ContentTreeFile[];
   rollbackDisabled: boolean;
-  rollingBackChangeSetId: string | null;
-  onRollbackChangeSet: (
-    changeSetId: string,
-    changes: readonly V1SettingAuthoringDiff[],
-  ) => Promise<void>;
+  rollingBackFile: { changeSetId: string; path: string } | null;
+  onRollbackFile: (changeSetId: string, path: string) => Promise<void>;
 }): React.JSX.Element {
   return (
     <details className="setting-conversation-trace">
@@ -888,17 +874,20 @@ function SettingConversationExchangeTrace({
               <>
                 <h5>{uiText("Runtime 工具结果")}</h5>
                 <pre>{call.result.markdown}</pre>
-                <AcceptedChanges changes={call.result.changes} />
-                {call.result.changeSetId === null ? null : (
-                  <ChangeSetRollbackControl
-                    changeSetId={call.result.changeSetId}
-                    changes={call.result.changes}
-                    currentFiles={currentFiles}
-                    disabled={rollbackDisabled}
-                    rolling={rollingBackChangeSetId === call.result.changeSetId}
-                    onRollback={onRollbackChangeSet}
-                  />
-                )}
+                <AcceptedChanges
+                  changes={call.result.changes}
+                  rollback={
+                    call.result.changeSetId === null
+                      ? undefined
+                      : {
+                          changeSetId: call.result.changeSetId,
+                          currentFiles,
+                          disabled: rollbackDisabled,
+                          rollingBackFile,
+                          onRollbackFile,
+                        }
+                  }
+                />
               </>
             )}
           </details>
@@ -911,9 +900,19 @@ function SettingConversationExchangeTrace({
 function AcceptedChanges({
   changes,
   heading = uiText("当时已生效差异"),
+  rollback,
 }: {
   changes: readonly V1SettingAuthoringDiff[];
   heading?: string;
+  rollback?:
+    | {
+        changeSetId: string;
+        currentFiles: readonly ContentTreeFile[];
+        disabled: boolean;
+        rollingBackFile: { changeSetId: string; path: string } | null;
+        onRollbackFile: (changeSetId: string, path: string) => Promise<void>;
+      }
+    | undefined;
 }): React.JSX.Element | null {
   if (changes.length === 0) return null;
   return (
@@ -939,78 +938,75 @@ function AcceptedChanges({
             after={diff.after}
             label={uiText("{path} 的完整差异", { path: diff.path })}
           />
+          {rollback === undefined ? null : (
+            <FileRollbackControl
+              changeSetId={rollback.changeSetId}
+              change={diff}
+              currentFiles={rollback.currentFiles}
+              disabled={rollback.disabled}
+              rolling={
+                rollback.rollingBackFile?.changeSetId ===
+                  rollback.changeSetId &&
+                rollback.rollingBackFile.path === diff.path
+              }
+              onRollback={rollback.onRollbackFile}
+            />
+          )}
         </details>
       ))}
     </section>
   );
 }
 
-function ChangeSetRollbackControl({
+function FileRollbackControl({
   changeSetId,
-  changes,
+  change,
   currentFiles,
   disabled,
   rolling,
   onRollback,
 }: {
   changeSetId: string;
-  changes: readonly V1SettingAuthoringDiff[];
+  change: V1SettingAuthoringDiff;
   currentFiles: readonly ContentTreeFile[];
   disabled: boolean;
   rolling: boolean;
-  onRollback: (
-    changeSetId: string,
-    changes: readonly V1SettingAuthoringDiff[],
-  ) => Promise<void>;
+  onRollback: (changeSetId: string, path: string) => Promise<void>;
 }): React.JSX.Element {
-  const state = currentTreeChangeSetState(currentFiles, changes);
+  const alreadyRolledBack = fileMatchesDiffBefore(currentFiles, change);
   return (
-    <div className={`setting-change-rollback is-${state}`}>
-      {state === "available" ? (
+    <div
+      className={`setting-change-rollback ${alreadyRolledBack ? "is-already_rolled_back" : ""}`}
+    >
+      {alreadyRolledBack ? (
+        <span>{uiText("当前文件已是修改前版本")}</span>
+      ) : (
         <button
           type="button"
           className="secondary-button"
           disabled={disabled}
-          onClick={() => void onRollback(changeSetId, changes)}
+          onClick={() => void onRollback(changeSetId, change.path)}
         >
-          {rolling ? uiText("正在回滚…") : uiText("回滚这次 AI 修改")}
+          {rolling ? uiText("正在回滚…") : uiText("回滚这个文件")}
         </button>
-      ) : state === "already_rolled_back" ? (
-        <span>{uiText("当前树已回到这次修改前的版本")}</span>
-      ) : (
-        <span>{uiText("相关文件后来又有改动，不能直接回滚")}</span>
       )}
     </div>
   );
 }
 
-function currentTreeChangeSetState(
+function fileMatchesDiffBefore(
   files: readonly ContentTreeFile[],
-  changes: readonly V1SettingAuthoringDiff[],
-): "available" | "already_rolled_back" | "conflicted" {
-  if (treeMatchesDiffSide(files, changes, "before"))
-    return "already_rolled_back";
-  return treeMatchesDiffSide(files, changes, "after")
-    ? "available"
-    : "conflicted";
-}
-
-function treeMatchesDiffSide(
-  files: readonly ContentTreeFile[],
-  changes: readonly V1SettingAuthoringDiff[],
-  side: "before" | "after",
+  change: V1SettingAuthoringDiff,
 ): boolean {
   const byPath = new Map(files.map((file) => [file.path, file] as const));
-  return changes.every((change) => {
-    const expected = change[side];
-    const current = byPath.get(change.path);
-    if (expected === null) return current === undefined;
-    return (
-      current !== undefined &&
-      current.encoding === undefined &&
-      current.contents === expected
-    );
-  });
+  const expected = change.before;
+  const current = byPath.get(change.path);
+  if (expected === null) return current === undefined;
+  return (
+    current !== undefined &&
+    current.encoding === undefined &&
+    current.contents === expected
+  );
 }
 
 function LegacyDraftHistory({
