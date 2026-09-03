@@ -65,6 +65,11 @@ export type V1Request =
       sessionId: string;
     }
   | {
+      type: "setting-improvement.session.delete";
+      packageId: string;
+      sessionId: string;
+    }
+  | {
       type: "setting-improvement.message";
       packageId: string;
       requestId: string;
@@ -687,6 +692,10 @@ const requiredFields: Record<
     packageId: "string",
     sessionId: "string",
   },
+  "setting-improvement.session.delete": {
+    packageId: "string",
+    sessionId: "string",
+  },
   "setting-improvement.message": {
     packageId: "string",
     requestId: "string",
@@ -1063,6 +1072,7 @@ const requestTypes = new Set([
   "setting-improvement.status",
   "setting-improvement.overview",
   "setting-improvement.session.read",
+  "setting-improvement.session.delete",
   "setting-improvement.message",
   "setting-improvement.cancel",
   "play.read",

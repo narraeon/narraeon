@@ -1,12 +1,17 @@
-import { useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import type {
+  ContentTreeFile,
   V1SettingConversationExchange,
   V1SettingConversationTurn,
   V1SettingAuthoringDiff,
   V1SettingImprovementHistoryItem,
   V1SettingImprovementView,
 } from "../protocol/v1.ts";
+import {
+  ContentTreeEditor,
+  type ContentTreeEditorProps,
+} from "./ContentTreeEditor.tsx";
 import { ModelUsageBreakdown } from "./ModelUsageBreakdown.tsx";
 import { getWebLocale, uiText } from "./i18n.ts";
 import { UnifiedTextDiff } from "./UnifiedTextDiff.tsx";
@@ -21,14 +26,20 @@ interface SettingImprovementPanelProps {
   view: SettingImprovementView | null;
   history: V1SettingImprovementHistoryItem[];
   latestSessionId: string | null;
+  notice: string;
   requestFailure: string | null;
   now: number;
+  contentEditor: ContentTreeEditorProps;
   onSend: (message: string) => Promise<void>;
   onCancel: () => Promise<void>;
   onFreshContext: () => void;
   onSelectSession: (sessionId: string) => Promise<void>;
+  onDeleteSession: (sessionId: string) => Promise<void>;
   onConfigureModel: () => void;
+  onBack: () => void;
 }
+
+type FileRailMode = "preview" | "edit";
 
 export function SettingImprovementPanel({
   packageName,
@@ -38,16 +49,28 @@ export function SettingImprovementPanel({
   view,
   history,
   latestSessionId,
+  notice,
   requestFailure,
   now,
+  contentEditor,
   onSend,
   onCancel,
   onFreshContext,
   onSelectSession,
+  onDeleteSession,
   onConfigureModel,
+  onBack,
 }: SettingImprovementPanelProps): React.JSX.Element {
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [leftRailOpen, setLeftRailOpen] = useState(false);
+  const [rightRailOpen, setRightRailOpen] = useState(false);
+  const [fileRailMode, setFileRailMode] = useState<FileRailMode>("preview");
+  const [selectedFilePath, setSelectedFilePath] = useState("");
+  const [deletingSessionId, setDeletingSessionId] = useState<string | null>(
+    null,
+  );
+  const conversationRef = useRef<HTMLElement>(null);
   const running = view?.runStatus === "running" || submitting;
   const startingFresh = view === null;
   const continuingHistory =
@@ -62,6 +85,7 @@ export function SettingImprovementPanel({
     if (disabled || text.trim().length === 0) return;
     setSubmitting(true);
     setMessage("");
+    setRightRailOpen(false);
     try {
       await onSend(text);
     } catch {
@@ -71,144 +95,248 @@ export function SettingImprovementPanel({
     }
   };
 
+  const openFileRail = (mode: FileRailMode): void => {
+    if (mode === "edit" && running) return;
+    setFileRailMode(mode);
+    setRightRailOpen(true);
+    setLeftRailOpen(false);
+  };
+
+  const collapseAllTraces = (): void => {
+    for (const detail of conversationRef.current?.querySelectorAll(
+      "details[open]",
+    ) ?? [])
+      detail.removeAttribute("open");
+  };
+
+  const deleteSession = async (
+    item: V1SettingImprovementHistoryItem,
+  ): Promise<void> => {
+    if (
+      item.runStatus === "running" ||
+      deletingSessionId !== null ||
+      !globalThis.confirm(
+        uiText(
+          "删除对话“{title}”？只会删除这份对话记录；已经写入内容包当前树的改动不会回滚。此操作无法撤销。",
+          { title: item.excerpt || uiText("未命名对话") },
+        ),
+      )
+    )
+      return;
+    setDeletingSessionId(item.sessionId);
+    try {
+      await onDeleteSession(item.sessionId);
+    } catch {
+      // The parent projects the Runtime failure into the conversation surface.
+    } finally {
+      setDeletingSessionId(null);
+    }
+  };
+
   return (
-    <section
-      className="setting-improvement-workspace setting-conversation-workspace"
+    <main
+      className="setting-reader-page"
       aria-labelledby="setting-improvement-title"
     >
-      <header className="setting-improvement-header">
-        <div>
-          <h2 id="setting-improvement-title">{uiText("AI 设定完善")}</h2>
-          <p className="setting-improvement-intro">
-            {uiText(
-              "和 AI 边聊边修改 {packageName}。成功的工具改动会像游玩一样直接写入内容包当前树。",
-              { packageName },
-            )}
-          </p>
-        </div>
-        <button
-          type="button"
-          className="secondary-button"
-          disabled={running}
-          onClick={onFreshContext}
+      <div className="setting-reader-shell">
+        <nav
+          className="world-floating-chrome world-floating-chrome-left setting-floating-chrome"
+          aria-label={uiText("设定完善导航")}
         >
-          {uiText("全新上下文")}
-        </button>
-      </header>
-
-      {!modelConfigured ? (
-        <section className="setting-improvement-blocker" role="status">
-          <p>{uiText("先配置并启用模型，才能开始设定完善对话。")}</p>
-          <button type="button" onClick={onConfigureModel}>
-            {uiText("配置模型")}
+          <button
+            type="button"
+            disabled={running || hasUnsavedFileDraft}
+            onClick={onBack}
+            aria-label={uiText("返回工作区")}
+          >
+            ←
           </button>
-        </section>
-      ) : null}
+          <button
+            type="button"
+            className={leftRailOpen ? "is-current" : ""}
+            aria-pressed={leftRailOpen}
+            onClick={() => {
+              setLeftRailOpen((open) => !open);
+              setRightRailOpen(false);
+            }}
+          >
+            {uiText("历史")}
+          </button>
+        </nav>
 
-      {hasUnsavedFileDraft ? (
-        <p className="setting-improvement-warning" role="status">
-          {uiText("请先保存或放弃文件编辑中的未保存修改。")}
-        </p>
-      ) : null}
+        <h1
+          id="setting-improvement-title"
+          className="world-floating-title setting-floating-title"
+          title={packageName}
+        >
+          {packageName} · {uiText("AI 设定完善")}
+        </h1>
 
-      <p className="setting-current-tree-notice" role="status">
-        {uiText(
-          "这里没有隔离草稿或应用步骤：每个已完成工具响应的绿色新增和红色删除都已经生效。",
-        )}
-      </p>
+        <nav
+          className="world-floating-chrome world-floating-chrome-right setting-floating-chrome"
+          aria-label={uiText("设定完善工具")}
+        >
+          <button
+            type="button"
+            className={
+              rightRailOpen && fileRailMode === "preview" ? "is-current" : ""
+            }
+            onClick={() => openFileRail("preview")}
+          >
+            {uiText("文件")}
+          </button>
+          <button
+            type="button"
+            className={
+              rightRailOpen && fileRailMode === "edit" ? "is-current" : ""
+            }
+            disabled={running}
+            onClick={() => openFileRail("edit")}
+          >
+            {uiText("编辑")}
+          </button>
+          <button type="button" onClick={collapseAllTraces}>
+            {uiText("全部收起")}
+          </button>
+          <button type="button" disabled={running} onClick={onFreshContext}>
+            {uiText("全新上下文")}
+          </button>
+        </nav>
 
-      <SettingConversationHistory
-        history={history}
-        latestSessionId={latestSessionId}
-        selectedSessionId={view?.sessionId ?? null}
-        loading={loading}
-        onSelectSession={onSelectSession}
-      />
-
-      {startingFresh && history.length > 0 ? (
-        <div className="setting-history-review-banner" role="status">
-          <div>
-            <strong>{uiText("下一条消息将开启全新上下文")}</strong>
-            <p>
-              {uiText(
-                "新对话会从内容包当前树重新编译；原有对话仍保留在历史中。",
-              )}
-            </p>
-          </div>
-        </div>
-      ) : continuingHistory ? (
-        <div className="setting-history-review-banner" role="status">
-          <div>
-            <strong>{uiText("正在继续历史对话")}</strong>
-            <p>
-              {uiText(
-                "下一条消息会追加到这段历史的原 Provider 上下文；写入仍以此刻的内容包当前树为准。",
-              )}
-            </p>
-          </div>
-        </div>
-      ) : null}
-
-      <div className="setting-conversation-layout">
-        <div className="setting-conversation-main">
-          <div
-            className="setting-conversation-messages"
+        <section
+          ref={conversationRef}
+          className="setting-reader-scroll"
+          aria-label={uiText("设定完善对话")}
+        >
+          <article
+            className="setting-story-column"
             aria-live="polite"
             aria-busy={running}
           >
-            {loading ? (
-              <p className="setting-conversation-empty">
-                {uiText("正在恢复设定完善对话…")}
+            <header className="setting-conversation-intro">
+              <span className="eyebrow">AUTHORING CONVERSATION</span>
+              <h2>{uiText("和 AI 边聊边改")}</h2>
+              <p>
+                {uiText(
+                  "成功的工具改动直接写入内容包当前树；需要核对或手动修改时，从右侧打开文件。",
+                )}
               </p>
-            ) : view === null || view.turns.length === 0 ? (
-              <div className="setting-conversation-empty">
-                <p>{uiText("直接说你现在想做什么。")}</p>
-                <p>
-                  {uiText(
-                    "例如：先帮我梳理人物关系；或者直接把开场改成雨夜码头，并同步当前情境。",
-                  )}
-                </p>
-              </div>
-            ) : (
-              view.turns.map((turn) => (
-                <SettingConversationTurnView key={turn.id} turn={turn} />
-              ))
+            </header>
+
+            {notice.length === 0 ? null : (
+              <p className="setting-workspace-feedback" role="status">
+                {notice}
+              </p>
             )}
 
-            {running ? (
-              <SettingConversationProgress view={view} now={now} />
+            {!modelConfigured ? (
+              <section className="setting-improvement-blocker" role="status">
+                <p>{uiText("先配置并启用模型，才能开始设定完善对话。")}</p>
+                <button
+                  type="button"
+                  disabled={hasUnsavedFileDraft}
+                  onClick={onConfigureModel}
+                >
+                  {uiText("配置模型")}
+                </button>
+              </section>
             ) : null}
-            {view?.legacyDraft !== null && view?.legacyDraft !== undefined ? (
-              <LegacyDraftHistory legacy={view.legacyDraft} />
-            ) : null}
-            {view?.lastFailure !== null && view?.lastFailure !== undefined ? (
-              <div className="setting-conversation-failure" role="alert">
-                <strong>{uiText("上一次操作未完成")}</strong>
-                <p>{view.lastFailure}</p>
-                <p>
-                  {uiText(
-                    "完整对话和已经结算的当前树改动都已保留，可以直接继续说。",
-                  )}
-                </p>
-              </div>
-            ) : null}
-            {requestFailure !== null ? (
-              <div className="setting-conversation-failure" role="alert">
-                {requestFailure}
-              </div>
-            ) : null}
-            {view === null ? null : <ModelUsageBreakdown usage={view.usage} />}
-          </div>
 
-          <div className="setting-conversation-composer">
-            <label htmlFor="setting-conversation-input">
-              {startingFresh
-                ? uiText("用全新上下文给 AI 发消息")
-                : uiText("继续这段对话")}
-            </label>
+            {hasUnsavedFileDraft ? (
+              <p className="setting-improvement-warning" role="status">
+                {uiText("请先保存或放弃文件编辑中的未保存修改。")}
+              </p>
+            ) : null}
+
+            <p className="setting-current-tree-notice" role="note">
+              {uiText(
+                "这里没有隔离草稿或应用步骤：每个已完成工具响应的绿色新增和红色删除都已经生效。",
+              )}
+            </p>
+
+            {startingFresh && history.length > 0 ? (
+              <div className="setting-history-review-banner" role="status">
+                <div>
+                  <strong>{uiText("下一条消息将开启全新上下文")}</strong>
+                  <p>
+                    {uiText(
+                      "新对话会从内容包当前树重新编译；原有对话仍保留在历史中。",
+                    )}
+                  </p>
+                </div>
+              </div>
+            ) : continuingHistory ? (
+              <div className="setting-history-review-banner" role="status">
+                <div>
+                  <strong>{uiText("正在继续历史对话")}</strong>
+                  <p>
+                    {uiText(
+                      "下一条消息会追加到这段历史的原 Provider 上下文；写入仍以此刻的内容包当前树为准。",
+                    )}
+                  </p>
+                </div>
+              </div>
+            ) : null}
+
+            <div className="setting-conversation-messages">
+              {loading ? (
+                <p className="setting-conversation-empty">
+                  {uiText("正在恢复设定完善对话…")}
+                </p>
+              ) : view === null || view.turns.length === 0 ? (
+                <div className="setting-conversation-empty">
+                  <p>{uiText("直接说你现在想做什么。")}</p>
+                  <p>
+                    {uiText(
+                      "例如：先帮我梳理人物关系；或者直接把开场改成雨夜码头，并同步当前情境。",
+                    )}
+                  </p>
+                </div>
+              ) : (
+                view.turns.map((turn) => (
+                  <SettingConversationTurnView key={turn.id} turn={turn} />
+                ))
+              )}
+
+              {running ? (
+                <SettingConversationProgress view={view} now={now} />
+              ) : null}
+              {view?.legacyDraft !== null && view?.legacyDraft !== undefined ? (
+                <LegacyDraftHistory legacy={view.legacyDraft} />
+              ) : null}
+              {view?.lastFailure !== null && view?.lastFailure !== undefined ? (
+                <div className="setting-conversation-failure" role="alert">
+                  <strong>{uiText("上一次操作未完成")}</strong>
+                  <p>{view.lastFailure}</p>
+                  <p>
+                    {uiText(
+                      "完整对话和已经结算的当前树改动都已保留，可以直接继续说。",
+                    )}
+                  </p>
+                </div>
+              ) : null}
+              {requestFailure !== null ? (
+                <div className="setting-conversation-failure" role="alert">
+                  {requestFailure}
+                </div>
+              ) : null}
+              {view === null ? null : (
+                <ModelUsageBreakdown usage={view.usage} />
+              )}
+            </div>
+          </article>
+        </section>
+
+        <footer className="setting-conversation-composer">
+          <label htmlFor="setting-conversation-input">
+            {startingFresh
+              ? uiText("用全新上下文给 AI 发消息")
+              : uiText("继续这段对话")}
+          </label>
+          <div className="setting-conversation-composer-row">
             <textarea
               id="setting-conversation-input"
-              rows={4}
+              rows={2}
               value={message}
               disabled={disabled}
               placeholder={uiText(
@@ -222,32 +350,150 @@ export function SettingImprovementPanel({
                 }
               }}
             />
-            <div className="setting-conversation-composer-actions">
-              <span className="field-note">
-                {uiText("Enter 发送，Shift + Enter 换行")}
-              </span>
-              {running && view !== null ? (
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => void onCancel()}
-                >
-                  {uiText("停止回复")}
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  disabled={disabled || message.trim().length === 0}
-                  onClick={() => void send()}
-                >
-                  {uiText("发送")}
-                </button>
-              )}
-            </div>
+            {running && view !== null ? (
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => void onCancel()}
+              >
+                {uiText("停止回复")}
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={disabled || message.trim().length === 0}
+                onClick={() => void send()}
+              >
+                {uiText("发送")}
+              </button>
+            )}
           </div>
-        </div>
+          <span className="field-note">
+            {uiText("Enter 发送，Shift + Enter 换行")}
+          </span>
+        </footer>
+
+        <button
+          type="button"
+          className={
+            leftRailOpen || rightRailOpen
+              ? "setting-panel-scrim is-visible"
+              : "setting-panel-scrim"
+          }
+          aria-label={uiText("收起侧栏")}
+          aria-hidden={!leftRailOpen && !rightRailOpen}
+          tabIndex={leftRailOpen || rightRailOpen ? 0 : -1}
+          onClick={() => {
+            setLeftRailOpen(false);
+            setRightRailOpen(false);
+          }}
+        />
+
+        <aside
+          className={
+            leftRailOpen
+              ? "setting-overlay-rail setting-overlay-rail-left is-open"
+              : "setting-overlay-rail setting-overlay-rail-left"
+          }
+          aria-hidden={!leftRailOpen}
+          aria-label={uiText("设定完善对话历史")}
+        >
+          <header>
+            <div>
+              <span>CONVERSATIONS</span>
+              <strong>{uiText("历史")}</strong>
+            </div>
+            <button
+              type="button"
+              aria-label={uiText("收起对话历史")}
+              onClick={() => setLeftRailOpen(false)}
+            >
+              ×
+            </button>
+          </header>
+          <div className="setting-overlay-rail-body">
+            <SettingConversationHistory
+              history={history}
+              latestSessionId={latestSessionId}
+              selectedSessionId={view?.sessionId ?? null}
+              loading={loading}
+              deletingSessionId={deletingSessionId}
+              onSelectSession={async (sessionId) => {
+                await onSelectSession(sessionId);
+                setLeftRailOpen(false);
+              }}
+              onDeleteSession={deleteSession}
+            />
+          </div>
+        </aside>
+
+        <aside
+          className={`setting-overlay-rail setting-overlay-rail-right ${
+            fileRailMode === "edit" ? "is-editing" : ""
+          } ${rightRailOpen ? "is-open" : ""}`}
+          aria-hidden={!rightRailOpen}
+          aria-label={
+            fileRailMode === "edit"
+              ? uiText("内容包文件编辑")
+              : uiText("内容包文件预览")
+          }
+        >
+          <header>
+            <div>
+              <span>CONTENT TREE</span>
+              <strong>
+                {fileRailMode === "edit"
+                  ? uiText("编辑文件")
+                  : uiText("预览文件")}
+              </strong>
+            </div>
+            <button
+              type="button"
+              aria-label={uiText("收起文件面板")}
+              onClick={() => setRightRailOpen(false)}
+            >
+              ×
+            </button>
+          </header>
+          <nav aria-label={uiText("内容包文件视图")}>
+            <button
+              type="button"
+              className={fileRailMode === "preview" ? "is-current" : ""}
+              onClick={() => setFileRailMode("preview")}
+            >
+              {uiText("预览")}
+            </button>
+            <button
+              type="button"
+              className={fileRailMode === "edit" ? "is-current" : ""}
+              disabled={running}
+              onClick={() => setFileRailMode("edit")}
+            >
+              {uiText("编辑")}
+            </button>
+          </nav>
+          <div className="setting-overlay-rail-body">
+            {fileRailMode === "preview" ? (
+              <SettingContentPreview
+                files={contentEditor.files}
+                dirty={contentEditor.dirty}
+                selectedPath={selectedFilePath}
+                onSelect={setSelectedFilePath}
+                onEdit={() => setFileRailMode("edit")}
+                editDisabled={running}
+              />
+            ) : (
+              <ContentTreeEditor
+                {...contentEditor}
+                selectedPath={selectedFilePath}
+                onSelectedPathChange={setSelectedFilePath}
+                embedded
+              />
+            )}
+          </div>
+        </aside>
       </div>
-    </section>
+    </main>
   );
 }
 
@@ -256,13 +502,17 @@ function SettingConversationHistory({
   latestSessionId,
   selectedSessionId,
   loading,
+  deletingSessionId,
   onSelectSession,
+  onDeleteSession,
 }: {
   history: readonly V1SettingImprovementHistoryItem[];
   latestSessionId: string | null;
   selectedSessionId: string | null;
   loading: boolean;
+  deletingSessionId: string | null;
   onSelectSession: (sessionId: string) => Promise<void>;
+  onDeleteSession: (item: V1SettingImprovementHistoryItem) => Promise<void>;
 }): React.JSX.Element {
   return (
     <section
@@ -271,10 +521,8 @@ function SettingConversationHistory({
     >
       <header>
         <div>
-          <span className="eyebrow">{uiText("内容包记录")}</span>
-          <h3 id="setting-conversation-history-title">
-            {uiText("设定完善对话历史")}
-          </h3>
+          <span className="eyebrow">CONTENT PACKAGE</span>
+          <h2 id="setting-conversation-history-title">{uiText("对话历史")}</h2>
         </div>
         <span>{uiText("{count} 次对话", { count: history.length })}</span>
       </header>
@@ -286,13 +534,18 @@ function SettingConversationHistory({
         <ol aria-label={uiText("设定完善对话历史")}>
           {history.map((item) => {
             const selected = item.sessionId === selectedSessionId;
+            const deleting = item.sessionId === deletingSessionId;
             return (
               <li key={item.sessionId}>
                 <button
                   type="button"
-                  className={selected ? "is-selected" : ""}
+                  className={
+                    selected
+                      ? "setting-history-select is-selected"
+                      : "setting-history-select"
+                  }
                   aria-pressed={selected}
-                  disabled={loading}
+                  disabled={loading || deleting}
                   onClick={() => void onSelectSession(item.sessionId)}
                 >
                   <span className="setting-history-item-main">
@@ -321,6 +574,21 @@ function SettingConversationHistory({
                     )}
                   </small>
                 </button>
+                <button
+                  type="button"
+                  className="setting-history-delete"
+                  aria-label={uiText("删除对话：{title}", {
+                    title: item.excerpt || uiText("未命名对话"),
+                  })}
+                  disabled={
+                    loading ||
+                    deletingSessionId !== null ||
+                    item.runStatus === "running"
+                  }
+                  onClick={() => void onDeleteSession(item)}
+                >
+                  {deleting ? "…" : uiText("删除")}
+                </button>
               </li>
             );
           })}
@@ -330,101 +598,227 @@ function SettingConversationHistory({
   );
 }
 
+function SettingContentPreview({
+  files,
+  dirty,
+  selectedPath,
+  onSelect,
+  onEdit,
+  editDisabled,
+}: {
+  files: readonly ContentTreeFile[];
+  dirty: boolean;
+  selectedPath: string;
+  onSelect: (path: string) => void;
+  onEdit: () => void;
+  editDisabled: boolean;
+}): React.JSX.Element {
+  const [query, setQuery] = useState("");
+  const ordered = useMemo(
+    () => [...files].sort((left, right) => left.path.localeCompare(right.path)),
+    [files],
+  );
+  const selected =
+    ordered.find(({ path }) => path === selectedPath) ??
+    ordered.find(({ path }) => path === "opening.md") ??
+    ordered[0];
+  const normalizedQuery = query.trim().toLocaleLowerCase("zh-CN");
+  const visible =
+    normalizedQuery.length === 0
+      ? ordered
+      : ordered.filter(({ path }) =>
+          path.toLocaleLowerCase("zh-CN").includes(normalizedQuery),
+        );
+
+  return (
+    <div className="setting-content-preview">
+      <header>
+        <div>
+          <strong>{uiText("内容包当前树")}</strong>
+          <small>
+            {dirty
+              ? uiText("正在预览未保存的文件草稿")
+              : uiText("正在预览已保存的当前树")}
+          </small>
+        </div>
+        <span>{uiText("{count} 份文件", { count: files.length })}</span>
+      </header>
+      <label>
+        <span>{uiText("筛选文件")}</span>
+        <input
+          type="search"
+          value={query}
+          placeholder={uiText("人物、地点或文件名")}
+          onChange={(event) => setQuery(event.currentTarget.value)}
+        />
+      </label>
+      <nav aria-label={uiText("内容包文件树")}>
+        {visible.length === 0 ? (
+          <p>{uiText("没有匹配的文件。")}</p>
+        ) : (
+          visible.map((file) => (
+            <button
+              type="button"
+              key={file.path}
+              className={file.path === selected?.path ? "is-current" : ""}
+              aria-pressed={file.path === selected?.path}
+              onClick={() => onSelect(file.path)}
+            >
+              <code>{file.path}</code>
+            </button>
+          ))
+        )}
+      </nav>
+      {selected === undefined ? (
+        <div className="setting-content-preview-empty">
+          <p>{uiText("当前内容包还没有文件。")}</p>
+          <button type="button" disabled={editDisabled} onClick={onEdit}>
+            {uiText("新建第一份文件")}
+          </button>
+        </div>
+      ) : (
+        <article>
+          <header>
+            <code>{selected.path}</code>
+            <button type="button" disabled={editDisabled} onClick={onEdit}>
+              {uiText("编辑这份文件")}
+            </button>
+          </header>
+          {selected.encoding === "base64" ? (
+            <p>{uiText("二进制资源不在文本预览中展开。")}</p>
+          ) : (
+            <pre>{selected.contents}</pre>
+          )}
+        </article>
+      )}
+    </div>
+  );
+}
+
 function SettingConversationTurnView({
   turn,
 }: {
   turn: V1SettingConversationTurn;
 }): React.JSX.Element {
+  const traces = turn.exchanges.filter(exchangeHasTrace);
+  const traceCount = traces.reduce(
+    (count, exchange) =>
+      count +
+      exchange.toolCalls.length +
+      (exchange.reasoning?.length ? 1 : 0) +
+      (exchange.toolCalls.length > 0 && exchange.text.length > 0 ? 1 : 0),
+    0,
+  );
   return (
     <section className="setting-conversation-turn">
       <article className="setting-conversation-message setting-conversation-user">
         <span className="setting-conversation-role">{uiText("你")}</span>
         <p>{turn.user.text}</p>
       </article>
-      {turn.exchanges.map((exchange) => (
-        <SettingConversationExchangeView
-          key={exchange.id}
-          exchange={exchange}
-        />
-      ))}
+      {turn.exchanges.map((exchange) =>
+        exchange.toolCalls.length === 0 && exchange.text.length > 0 ? (
+          <article
+            className="setting-conversation-message setting-conversation-assistant"
+            key={`text:${exchange.id}`}
+          >
+            <span className="setting-conversation-role">{uiText("AI")}</span>
+            <p>{exchange.text}</p>
+          </article>
+        ) : null,
+      )}
+      {traces.length === 0 ? null : (
+        <details className="setting-turn-trace">
+          <summary>
+            <span>{uiText("本段调用详情")}</span>
+            <small>
+              {uiText("{count} 项记录", {
+                count: traceCount,
+              })}
+            </small>
+          </summary>
+          <div className="setting-turn-trace-exchanges">
+            {traces.map((exchange) => (
+              <SettingConversationExchangeTrace
+                key={exchange.id}
+                exchange={exchange}
+              />
+            ))}
+          </div>
+        </details>
+      )}
     </section>
   );
 }
 
-function SettingConversationExchangeView({
+function exchangeHasTrace(exchange: V1SettingConversationExchange): boolean {
+  return (exchange.reasoning?.length ?? 0) > 0 || exchange.toolCalls.length > 0;
+}
+
+function SettingConversationExchangeTrace({
   exchange,
 }: {
   exchange: V1SettingConversationExchange;
 }): React.JSX.Element {
-  const hasTrace =
-    (exchange.reasoning?.length ?? 0) > 0 || exchange.toolCalls.length > 0;
   return (
-    <div className="setting-conversation-exchange">
-      {hasTrace ? (
-        <section className="setting-conversation-trace">
-          <header>
-            <strong>
-              {uiText("第 {exchange} 次模型交换", {
-                exchange: exchange.exchange,
-              })}
-            </strong>
-            <span>
-              {uiText("{count} 次工具调用", {
-                count: exchange.toolCalls.length,
-              })}
-            </span>
-          </header>
-          {exchange.reasoning === undefined ||
-          exchange.reasoning.length === 0 ? null : (
-            <div className="setting-exchange-reasoning">
-              <strong>{uiText("Provider 返回推理（不等同隐藏思维链）")}</strong>
-              <pre>{exchange.reasoning}</pre>
-            </div>
-          )}
-          {exchange.toolCalls.map((call) => (
-            <details
-              className={`setting-exchange-tool ${call.result?.isError === true ? "is-error" : "is-ok"}`}
-              key={call.callId}
-              open={(call.result?.changes.length ?? 0) > 0}
-            >
-              <summary>
-                <strong>{uiText("调用 {tool}", { tool: call.name })}</strong>
-                <span>
-                  {call.result === null
-                    ? uiText("等待 Runtime 结果")
-                    : call.result.isError
-                      ? uiText("拒绝／失败")
-                      : call.result.changes.length > 0
-                        ? uiText("已生效 · {count} 个文件", {
-                            count: call.result.changes.length,
-                          })
-                        : uiText("成功")}
-                </span>
-              </summary>
-              <h5>{uiText("工具参数")}</h5>
-              <pre>{safeJson(call.arguments)}</pre>
-              {call.result === null ? null : (
-                <>
-                  <h5>{uiText("Runtime 工具结果")}</h5>
-                  <pre>{call.result.markdown}</pre>
-                  <AcceptedChanges changes={call.result.changes} />
-                </>
-              )}
-            </details>
-          ))}
-        </section>
-      ) : null}
-      {exchange.text.length === 0 ? null : (
-        <article className="setting-conversation-message setting-conversation-assistant">
-          <span className="setting-conversation-role">
-            {exchange.toolCalls.length > 0
-              ? uiText("AI · 工具步骤文本")
-              : uiText("AI")}
-          </span>
-          <p>{exchange.text}</p>
-        </article>
-      )}
-    </div>
+    <details className="setting-conversation-trace">
+      <summary>
+        <strong>
+          {uiText("第 {exchange} 次模型交换", {
+            exchange: exchange.exchange,
+          })}
+        </strong>
+        <span>
+          {uiText("{count} 次工具调用", {
+            count: exchange.toolCalls.length,
+          })}
+        </span>
+      </summary>
+      <div className="setting-conversation-trace-body">
+        {exchange.reasoning === undefined ||
+        exchange.reasoning.length === 0 ? null : (
+          <details className="setting-exchange-reasoning">
+            <summary>{uiText("Provider 返回推理（不等同隐藏思维链）")}</summary>
+            <pre>{exchange.reasoning}</pre>
+          </details>
+        )}
+        {exchange.toolCalls.length > 0 && exchange.text.length > 0 ? (
+          <details className="setting-exchange-step-text">
+            <summary>{uiText("查看工具步骤文本（未进入最终回复）")}</summary>
+            <p>{exchange.text}</p>
+          </details>
+        ) : null}
+        {exchange.toolCalls.map((call) => (
+          <details
+            className={`setting-exchange-tool ${call.result?.isError === true ? "is-error" : "is-ok"}`}
+            key={call.callId}
+          >
+            <summary>
+              <strong>{uiText("调用 {tool}", { tool: call.name })}</strong>
+              <span>
+                {call.result === null
+                  ? uiText("等待 Runtime 结果")
+                  : call.result.isError
+                    ? uiText("拒绝／失败")
+                    : call.result.changes.length > 0
+                      ? uiText("已生效 · {count} 个文件", {
+                          count: call.result.changes.length,
+                        })
+                      : uiText("成功")}
+              </span>
+            </summary>
+            <h5>{uiText("工具参数")}</h5>
+            <pre>{safeJson(call.arguments)}</pre>
+            {call.result === null ? null : (
+              <>
+                <h5>{uiText("Runtime 工具结果")}</h5>
+                <pre>{call.result.markdown}</pre>
+                <AcceptedChanges changes={call.result.changes} />
+              </>
+            )}
+          </details>
+        ))}
+      </div>
+    </details>
   );
 }
 
@@ -443,7 +837,6 @@ function AcceptedChanges({
         <details
           key={`${diff.kind}-${diff.path}`}
           className="setting-change-diff"
-          open
         >
           <summary>
             <span className={`setting-diff-kind setting-diff-${diff.kind}`}>
@@ -514,6 +907,9 @@ function SettingConversationProgress({
     stream === null || stream === undefined
       ? 0
       : stream.reasoningChars + stream.textChars + stream.toolChars;
+  const hasLiveTrace =
+    (stream?.reasoningText?.length ?? 0) > 0 ||
+    (stream?.toolFragment?.length ?? 0) > 0;
   return (
     <div className="setting-conversation-running" role="status">
       <span className="setting-conversation-spinner" aria-hidden="true" />
@@ -539,22 +935,29 @@ function SettingConversationProgress({
         {!stream?.visibleText?.length && stream?.tail.trim() ? (
           <p>{stream.tail}</p>
         ) : null}
-        {stream?.reasoningText?.length ? (
-          <div className="setting-live-trace">
-            <strong>{uiText("Provider 返回推理（不等同隐藏思维链）")}</strong>
-            <pre>{stream.reasoningText}</pre>
-          </div>
-        ) : null}
         {stream?.visibleText?.length ? (
-          <div className="setting-live-trace">
+          <div className="setting-live-response">
             <strong>{uiText("正在接收的正文")}</strong>
             <pre>{stream.visibleText}</pre>
           </div>
         ) : null}
-        {stream?.toolFragment?.length ? (
-          <details className="setting-live-trace">
-            <summary>{uiText("正在接收的工具调用片段")}</summary>
-            <pre>{stream.toolFragment}</pre>
+        {hasLiveTrace ? (
+          <details className="setting-live-trace-group">
+            <summary>{uiText("正在接收调用详情")}</summary>
+            {stream?.reasoningText?.length ? (
+              <details className="setting-live-trace">
+                <summary>
+                  {uiText("Provider 返回推理（不等同隐藏思维链）")}
+                </summary>
+                <pre>{stream.reasoningText}</pre>
+              </details>
+            ) : null}
+            {stream?.toolFragment?.length ? (
+              <details className="setting-live-trace">
+                <summary>{uiText("正在接收的工具调用片段")}</summary>
+                <pre>{stream.toolFragment}</pre>
+              </details>
+            ) : null}
           </details>
         ) : null}
       </div>

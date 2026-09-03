@@ -196,6 +196,23 @@ export class SettingImprovementSession {
     });
   }
 
+  async deleteSession(
+    packageId: string,
+    sessionId: string,
+  ): Promise<V1SettingImprovementOverview> {
+    await this.#mutate(async () => {
+      if (this.#runs.has(sessionId))
+        throw new Error(
+          "A running setting-improvement conversation cannot be deleted",
+        );
+      const stored = await this.#store.read(sessionId);
+      assertPackage(stored, packageId);
+      await this.#recoverIfNeeded(stored);
+      await this.#store.deleteSession(packageId, sessionId);
+    });
+    return this.overview(packageId);
+  }
+
   async send(input: {
     packageId: string;
     requestId: string;

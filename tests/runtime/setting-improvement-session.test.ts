@@ -1126,6 +1126,87 @@ test("状态轮询只返回所选对话的轻量进度和持久 revision", async
   expect(JSON.stringify(status)).not.toContain("opening.md");
 });
 
+test("删除历史对话只移除会话文件，不改内容包当前树", async () => {
+  const fixture = await createFixture([
+    { outcome: "response", text: "First conversation.", toolCalls: [] },
+    { outcome: "response", text: "Second conversation.", toolCalls: [] },
+  ]);
+  const first = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "request-delete-first",
+    "Keep this first conversation",
+  );
+  const second = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "request-delete-second",
+    "Keep this second conversation",
+  );
+  const before = contentTreeFingerprint(
+    (await fixture.content.readCurrentTreeContentPackage(fixture.packageId))
+      .files,
+  );
+
+  const overview = await fixture.session.deleteSession(
+    fixture.packageId,
+    first.sessionId,
+  );
+
+  expect(overview.latest?.sessionId).toBe(second.sessionId);
+  expect(overview.history.map(({ sessionId }) => sessionId)).toEqual([
+    second.sessionId,
+  ]);
+  await expect(
+    new FileNativeSettingImprovementStore(fixture.root).read(first.sessionId),
+  ).rejects.toThrow("does not exist");
+  expect(
+    contentTreeFingerprint(
+      (await fixture.content.readCurrentTreeContentPackage(fixture.packageId))
+        .files,
+    ),
+  ).toBe(before);
+});
+
+test("正在接收 Provider 响应的对话不能被历史删除", async () => {
+  const root = await temporaryRoot("narraeon-setting-delete-running-");
+  const content = new ContentWorkspace(root, { locale: () => "en" });
+  const created = await content.createCurrentTreeContentPackage();
+  const started = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const scripted = new ScriptedModelHost({
+    binding,
+    steps: [{ outcome: "response", text: "Finished.", toolCalls: [] }],
+  });
+  const host: ModelHost = {
+    binding: () => scripted.binding(),
+    exchange: (request, observer) => {
+      started.resolve();
+      return release.promise.then(() => scripted.exchange(request, observer));
+    },
+  };
+  const session = serviceFor(root, content, host);
+  const sending = sendFresh(
+    session,
+    created.localId,
+    "request-delete-running",
+    "Wait before answering",
+  );
+  await started.promise;
+  const running = await session.overview(created.localId);
+  const sessionId = running.latest?.sessionId;
+  if (sessionId === undefined) throw new Error("Running session was not saved");
+
+  await expect(
+    session.deleteSession(created.localId, sessionId),
+  ).rejects.toThrow("cannot be deleted");
+  release.resolve();
+  await sending;
+  await expect(
+    session.deleteSession(created.localId, sessionId),
+  ).resolves.toMatchObject({ latest: null, history: [] });
+});
+
 test("schema-v2 对未知字段和损坏的非 opaque 结构 fail closed", async () => {
   const fixture = await createFixture([
     { outcome: "response", text: "Codec seed.", toolCalls: [] },

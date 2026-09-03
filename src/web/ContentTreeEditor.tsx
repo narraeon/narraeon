@@ -9,7 +9,7 @@ import { uiText } from "./i18n.ts";
 
 export type ContentTreeIssue = DocumentWorkbenchIssue;
 
-interface ContentTreeEditorProps {
+export interface ContentTreeEditorProps {
   files: readonly ContentTreeFile[];
   status: "usable" | "needs_repair";
   issues: readonly ContentTreeIssue[];
@@ -22,6 +22,9 @@ interface ContentTreeEditorProps {
   onDelete: () => void;
   title: string;
   onRename: (title: string) => void;
+  selectedPath?: string;
+  onSelectedPathChange?: (path: string) => void;
+  embedded?: boolean;
 }
 
 export function ContentTreeEditor({
@@ -37,6 +40,9 @@ export function ContentTreeEditor({
   onDelete,
   title,
   onRename,
+  selectedPath,
+  onSelectedPathChange,
+  embedded = false,
 }: ContentTreeEditorProps): React.JSX.Element {
   const [titleDraft, setTitleDraft] = useState(title);
   const [lastTitle, setLastTitle] = useState(title);
@@ -53,7 +59,13 @@ export function ContentTreeEditor({
   const openingCount = files.filter(({ path }) => path === "opening.md").length;
 
   return (
-    <section className="panel-card content-tree-editor">
+    <section
+      className={
+        embedded
+          ? "panel-card content-tree-editor is-embedded"
+          : "panel-card content-tree-editor"
+      }
+    >
       <header className="section-heading-row content-tree-heading">
         <div>
           <h3>{uiText("内容包当前树")}</h3>
@@ -97,6 +109,10 @@ export function ContentTreeEditor({
       </dl>
 
       <DocumentWorkbench
+        {...(selectedPath === undefined ? {} : { selectedPath })}
+        {...(onSelectedPathChange === undefined
+          ? {}
+          : { onSelectedPathChange })}
         workspace={{
           kind: "content-package",
           files,

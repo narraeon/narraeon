@@ -285,6 +285,21 @@ export class FileNativeSettingImprovementStore {
     });
   }
 
+  deleteSession(packageId: string, sessionId: string): Promise<void> {
+    return this.#mutate(async () => {
+      const session = await this.#read(sessionId);
+      if (session.packageId !== packageId)
+        throw new Error(
+          "The setting-improvement conversation does not belong to this content package",
+        );
+      await rm(this.#path(sessionId));
+      await rm(join(this.#sessionsRoot, `${sessionId}.schema-v1.json`), {
+        force: true,
+      });
+      await this.#recordDeletedSession(session);
+    });
+  }
+
   async #refreshSummaryIndex(): Promise<void> {
     for (;;) {
       const revision = await directoryRevision(this.#sessionsRoot);
@@ -329,6 +344,35 @@ export class FileNativeSettingImprovementStore {
       this.#summaryIndex === null
         ? undefined
         : await directoryRevision(this.#sessionsRoot);
+  }
+
+  async #recordDeletedSession(
+    session: StoredSettingImprovementSession,
+  ): Promise<void> {
+    if (this.#summaryIndex === null) return;
+    const previous = this.#summaryIndex.get(session.sessionId);
+    if (previous === undefined) {
+      // The directory changed outside this instance after its last scan.
+      this.#summaryIndex = null;
+      this.#summaryIndexRevision = undefined;
+      this.#summariesByPackage.clear();
+      this.#latestByPackage.clear();
+      this.#packageRevisions.clear();
+      return;
+    }
+    this.#summaryIndex.delete(session.sessionId);
+    removeFromNestedMap(
+      this.#summariesByPackage,
+      previous.packageId,
+      previous.sessionId,
+    );
+    if (
+      this.#latestByPackage.get(previous.packageId)?.sessionId ===
+      previous.sessionId
+    )
+      this.#recomputeLatest(previous.packageId);
+    this.#packageRevisions.set(previous.packageId, randomUUID());
+    this.#summaryIndexRevision = await directoryRevision(this.#sessionsRoot);
   }
 
   #replaceSummaryIndex(

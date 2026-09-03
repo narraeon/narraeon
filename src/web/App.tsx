@@ -17,10 +17,7 @@ import { firstPartyPlayPresetTemplatesForLocale } from "../shared/first-party-pl
 import type { RuntimeClient } from "./runtimeClient.ts";
 import { createClientId } from "./ClientId.ts";
 import { setWebLocale, uiText } from "./i18n.ts";
-import {
-  ContentTreeEditor,
-  type ContentTreeIssue,
-} from "./ContentTreeEditor.tsx";
+import type { ContentTreeIssue } from "./ContentTreeEditor.tsx";
 import { HomeScreen } from "./HomeScreen.tsx";
 import { ModelConnectionScreen } from "./ModelConnectionScreen.tsx";
 import { PlayPresetScreen } from "./PlayPresetScreen.tsx";
@@ -65,12 +62,9 @@ interface PackageDetail extends PackageSummary {
 
 type Screen =
   "home" | "content" | "plays" | "model" | "create" | "preview" | "world";
-type ContentMode = "files" | "improve";
-
 export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [screen, setScreen] = useState<Screen>("home");
-  const [contentMode, setContentMode] = useState<ContentMode>("files");
   const [selected, setSelected] = useState<string>("");
   const [files, setFiles] = useState<ContentTreeFile[]>([]);
   const [currentPackageFiles, setCurrentPackageFiles] = useState<
@@ -136,8 +130,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   // when durable conversation history changes; live Provider deltas overlay
   // the currently selected conversation without resending content files.
   useEffect(() => {
-    if (screen !== "content" || contentMode !== "improve" || selected === "")
-      return;
+    if (screen !== "content" || selected === "") return;
     let active = true;
     let pollPending = false;
     let loadedRevision = "";
@@ -145,6 +138,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     const poll = async (): Promise<void> => {
       if (pollPending) return;
       pollPending = true;
+      const historyRequestVersion = improvementHistoryRequest.current;
       try {
         const status = await client.request<V1SettingImprovementStatus>({
           type: "setting-improvement.status",
@@ -153,13 +147,23 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             ? { sessionId: improvementSelection.current }
             : {}),
         });
-        if (!active || improvementPollScope.current !== pollScope) return;
+        if (
+          !active ||
+          improvementPollScope.current !== pollScope ||
+          improvementHistoryRequest.current !== historyRequestVersion
+        )
+          return;
         if (status.revision !== loadedRevision) {
           const next = await client.request<V1SettingImprovementOverview>({
             type: "setting-improvement.overview",
             packageId: selected,
           });
-          if (!active || improvementPollScope.current !== pollScope) return;
+          if (
+            !active ||
+            improvementPollScope.current !== pollScope ||
+            improvementHistoryRequest.current !== historyRequestVersion
+          )
+            return;
           setImprovementView(next.latest);
           setImprovementHistory(next.history);
           const selectedSessionId = improvementSelection.current;
@@ -172,7 +176,12 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
               packageId: selected,
               sessionId: selectedSessionId,
             });
-            if (!active || improvementPollScope.current !== pollScope) return;
+            if (
+              !active ||
+              improvementPollScope.current !== pollScope ||
+              improvementHistoryRequest.current !== historyRequestVersion
+            )
+              return;
             setImprovementHistoryView(selectedView);
           } else if (
             typeof selectedSessionId === "object" &&
@@ -225,7 +234,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       clearTimeout(initialPoll);
       clearInterval(timer);
     };
-  }, [client, contentMode, screen, selected]);
+  }, [client, screen, selected]);
 
   useEffect(() => {
     let active = true;
@@ -267,10 +276,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     }
   }
 
-  async function openPackage(
-    packageId: string,
-    nextMode: ContentMode = "files",
-  ): Promise<void> {
+  async function openPackage(packageId: string): Promise<void> {
     const requestVersion = packageOpenRequest.current + 1;
     packageOpenRequest.current = requestVersion;
     improvementHistoryRequest.current += 1;
@@ -294,7 +300,6 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       setImprovementRequestFailure(null);
       setFiles(packageFiles.map((file) => ({ ...file })));
       setFilesDirty(false);
-      setContentMode(nextMode);
       setScreen("content");
     } catch (error: unknown) {
       if (packageOpenRequest.current === requestVersion) report(error);
@@ -406,7 +411,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
 
   async function sendImprovement(message: string): Promise<void> {
     if (filesDirty) {
-      const error = new Error(uiText("请先保存手动编辑，再继续 AI 设定完善。"));
+      const error = new Error(uiText("请先保存文件编辑，再继续 AI 设定完善。"));
       report(error);
       throw error;
     }
@@ -512,6 +517,62 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     } finally {
       if (improvementHistoryRequest.current === requestVersion)
         setImprovementHistoryLoading(false);
+    }
+  }
+
+  async function deleteImprovementSession(sessionId: string): Promise<void> {
+    const selectedSessionId = improvementStartingFresh
+      ? null
+      : (improvementHistoryView?.sessionId ??
+        improvementView?.sessionId ??
+        null);
+    const deletingSelected = selectedSessionId === sessionId;
+    const previousSelection = improvementSelection.current;
+    improvementHistoryRequest.current += 1;
+    if (deletingSelected) improvementSelection.current = null;
+    setImprovementHistoryLoading(true);
+    setImprovementRequestFailure(null);
+    try {
+      const next = await client.request<V1SettingImprovementOverview>({
+        type: "setting-improvement.session.delete",
+        packageId: selected,
+        sessionId,
+      });
+      improvementHistoryRequest.current += 1;
+      setImprovementView(next.latest);
+      setImprovementHistory(next.history);
+      if (improvementStartingFresh) {
+        setImprovementHistoryView(null);
+        improvementSelection.current = {
+          kind: "fresh",
+          previousSessionId: next.latest?.sessionId ?? null,
+          requestStarted: false,
+        };
+      } else if (deletingSelected) {
+        setImprovementHistoryView(null);
+        improvementSelection.current = next.latest?.sessionId ?? null;
+      } else if (
+        typeof previousSelection === "string" &&
+        next.history.some(({ sessionId: id }) => id === previousSelection)
+      ) {
+        improvementSelection.current = previousSelection;
+        if (next.latest?.sessionId === previousSelection)
+          setImprovementHistoryView(null);
+      } else {
+        setImprovementHistoryView(null);
+        improvementSelection.current = next.latest?.sessionId ?? null;
+      }
+      setNotice(uiText("对话历史已删除；内容包当前树没有回滚。"));
+    } catch (error: unknown) {
+      improvementHistoryRequest.current += 1;
+      improvementSelection.current = previousSelection;
+      const message =
+        error instanceof Error ? error.message : uiText("操作失败");
+      setImprovementRequestFailure(message);
+      report(error);
+      throw error;
+    } finally {
+      setImprovementHistoryLoading(false);
     }
   }
 
@@ -672,6 +733,55 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       />
     );
 
+  if (screen === "content")
+    return (
+      <SettingImprovementPanel
+        packageName={selectedPackage?.title ?? selected}
+        modelConfigured={workspace.model.configured}
+        hasUnsavedFileDraft={filesDirty}
+        loading={improvementLoading || improvementHistoryLoading}
+        view={displayedImprovementView}
+        history={improvementHistory}
+        latestSessionId={
+          improvementView?.sessionId ?? improvementHistory[0]?.sessionId ?? null
+        }
+        notice={notice}
+        requestFailure={improvementRequestFailure}
+        now={improvementNow}
+        contentEditor={{
+          files,
+          status:
+            selectedPackageDetail?.status ??
+            selectedPackage?.status ??
+            "needs_repair",
+          issues: selectedPackageDetail?.issues ?? [],
+          dirty: filesDirty,
+          onFilesChange: (nextFiles) => {
+            setFiles(nextFiles);
+            setFilesDirty(true);
+          },
+          onSave: () => void savePackage(),
+          onReset: () => {
+            setFiles(currentPackageFiles.map((file) => ({ ...file })));
+            setFilesDirty(false);
+            setNotice(uiText("已放弃未保存修改；内容包当前树未改变。"));
+          },
+          onCopy: () => void contentCommand("content.copy"),
+          onExport: () => void exportPackage(),
+          onDelete: () => void contentCommand("content.delete"),
+          title: selectedPackage?.title ?? selected,
+          onRename: (name) => void renamePackage(name),
+        }}
+        onSend={sendImprovement}
+        onCancel={cancelImprovement}
+        onFreshContext={startFreshImprovementContext}
+        onSelectSession={selectImprovementSession}
+        onDeleteSession={deleteImprovementSession}
+        onConfigureModel={() => setScreen("model")}
+        onBack={() => setScreen("home")}
+      />
+    );
+
   return (
     <main className="workspace-shell">
       <header className="workspace-header">
@@ -778,98 +888,6 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
           }
           onDeleteWorld={(world) => void deleteWorld(world)}
         />
-      )}
-      {screen === "content" && (
-        <section
-          className="content-workbench"
-          aria-labelledby="content-workbench-title"
-        >
-          <header className="content-workbench-header">
-            <div>
-              <p className="eyebrow">CONTENT PACKAGE</p>
-              <h2 id="content-workbench-title">
-                {selectedPackage?.title ?? uiText("内容包")}
-              </h2>
-            </div>
-            <div
-              className="content-mode-switch"
-              aria-label={uiText("内容包编辑方式")}
-            >
-              <button
-                type="button"
-                className={
-                  contentMode === "files" ? "selected-mode" : "secondary-button"
-                }
-                aria-pressed={contentMode === "files"}
-                disabled={improvementActive}
-                onClick={() => setContentMode("files")}
-              >
-                {uiText("手动编辑")}
-              </button>
-              <button
-                type="button"
-                className={
-                  contentMode === "improve"
-                    ? "selected-mode"
-                    : "secondary-button"
-                }
-                aria-pressed={contentMode === "improve"}
-                onClick={() => setContentMode("improve")}
-              >
-                {uiText("AI 完善")}
-              </button>
-            </div>
-          </header>
-
-          {contentMode === "files" ? (
-            <ContentTreeEditor
-              files={files}
-              status={
-                selectedPackageDetail?.status ??
-                selectedPackage?.status ??
-                "needs_repair"
-              }
-              issues={selectedPackageDetail?.issues ?? []}
-              dirty={filesDirty}
-              onFilesChange={(nextFiles) => {
-                setFiles(nextFiles);
-                setFilesDirty(true);
-              }}
-              onSave={() => void savePackage()}
-              onReset={() => {
-                setFiles(currentPackageFiles.map((file) => ({ ...file })));
-                setFilesDirty(false);
-                setNotice(uiText("已放弃未保存修改；内容包当前树未改变。"));
-              }}
-              onCopy={() => void contentCommand("content.copy")}
-              onExport={() => void exportPackage()}
-              onDelete={() => void contentCommand("content.delete")}
-              title={selectedPackage?.title ?? selected}
-              onRename={(name) => void renamePackage(name)}
-            />
-          ) : (
-            <SettingImprovementPanel
-              packageName={selectedPackage?.title ?? selected}
-              modelConfigured={workspace.model.configured}
-              hasUnsavedFileDraft={filesDirty}
-              loading={improvementLoading || improvementHistoryLoading}
-              view={displayedImprovementView}
-              history={improvementHistory}
-              latestSessionId={
-                improvementView?.sessionId ??
-                improvementHistory[0]?.sessionId ??
-                null
-              }
-              requestFailure={improvementRequestFailure}
-              now={improvementNow}
-              onSend={sendImprovement}
-              onCancel={cancelImprovement}
-              onFreshContext={startFreshImprovementContext}
-              onSelectSession={selectImprovementSession}
-              onConfigureModel={() => setScreen("model")}
-            />
-          )}
-        </section>
       )}
       {screen === "plays" && (
         <PlayPresetScreen

@@ -132,15 +132,13 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   });
   await expect(page.getByText(/dormitory-world\.zip/u)).toBeVisible();
   await page.getByRole("button", { name: "导入 ZIP" }).click();
-  await expect(page.getByRole("status")).toContainText(
+  await expect(page.locator(".setting-workspace-feedback")).toContainText(
     "ZIP 内容包已导入为新的本地身份",
   );
   await expect(
-    page.getByRole("heading", { name: "内容包当前树" }),
+    page.getByRole("heading", { name: /dormitory-world · AI 设定完善/u }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "dormitory-world" }),
-  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "手动编辑" })).toHaveCount(0);
   await page.getByRole("button", { name: "返回工作区" }).click();
 
   await page.getByRole("button", { name: "模型连接" }).click();
@@ -202,11 +200,15 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await page.getByRole("button", { name: "返回工作区" }).click();
 
   await page.getByRole("button", { name: "新建内容包" }).click();
+  await page
+    .getByRole("navigation", { name: "设定完善工具" })
+    .getByRole("button", { name: "编辑", exact: true })
+    .click();
   await expect(
     page.getByRole("heading", { name: "内容包当前树" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("complementary", { name: "内容包文件" }),
+    page.getByRole("complementary", { name: "内容包文件", exact: true }),
   ).toBeVisible();
   for (const file of [
     ...files(),
@@ -236,7 +238,9 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   }
   await expect(page.getByRole("button", { name: "返回工作区" })).toBeDisabled();
   await page.getByRole("button", { name: "整批保存" }).click();
-  await expect(page.getByRole("status")).toContainText("已整批保存");
+  await expect(page.locator(".setting-workspace-feedback")).toContainText(
+    "已整批保存",
+  );
   await expect(page.getByRole("button", { name: "返回工作区" })).toBeEnabled();
   const packageActions = page.locator(".content-package-actions");
   await packageActions.locator("summary").click();
@@ -245,8 +249,17 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     .fill("Dormitory Content Package");
   await packageActions.getByRole("button", { name: "重命名" }).click();
   await expect(
-    page.getByRole("heading", { name: "Dormitory Content Package" }),
+    page.getByRole("heading", { name: /Dormitory Content Package/u }),
   ).toBeVisible();
+  await page
+    .getByRole("complementary", { name: "内容包文件编辑" })
+    .getByRole("button", { name: "预览", exact: true })
+    .click();
+  const contentPreview = page.getByRole("complementary", {
+    name: "内容包文件预览",
+  });
+  await expect(contentPreview).toContainText(damagedPath);
+  await expect(contentPreview).toContainText("not: [valid");
 
   responses.push(
     chatTools(
@@ -266,7 +279,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     ),
     chatText("The damaged character document is repaired in the current tree."),
   );
-  await page.getByRole("button", { name: "AI 完善" }).click();
+  await page.getByRole("button", { name: "收起文件面板" }).click();
   await page
     .getByLabel("用全新上下文给 AI 发消息")
     .fill("Repair the damaged character document.");
@@ -275,18 +288,36 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     "damaged character document is repaired",
   );
   const repairedTurn = page.locator(".setting-conversation-turn").last();
-  await expect(
-    repairedTurn.locator(".setting-exchange-reasoning"),
-  ).toContainText("Read the damaged document before repairing");
+  const repairedTrace = repairedTurn.locator(".setting-turn-trace");
+  await expect(repairedTrace).not.toHaveAttribute("open", "");
+  await repairedTrace.locator(":scope > summary").click();
+  const repairedExchange = repairedTrace
+    .locator(".setting-conversation-trace")
+    .first();
+  await expect(repairedExchange).not.toHaveAttribute("open", "");
+  await repairedExchange.locator(":scope > summary").click();
+  const repairedReasoning = repairedExchange.locator(
+    ".setting-exchange-reasoning",
+  );
+  await expect(repairedReasoning).not.toHaveAttribute("open", "");
+  await repairedReasoning.locator("summary").click();
+  await expect(repairedReasoning).toContainText(
+    "Read the damaged document before repairing",
+  );
   const settingRead = repairedTurn
     .locator(".setting-exchange-tool")
     .filter({ hasText: "setting_read" });
   await expect(settingRead).toContainText("拒绝／失败");
   await settingRead.locator("summary").click();
   await expect(settingRead).toContainText(damagedPath);
-  const repairedDiff = page
-    .locator(".setting-change-diff")
+  const settingWrite = repairedTurn
+    .locator(".setting-exchange-tool")
+    .filter({ hasText: "setting_write_file" })
     .filter({ hasText: damagedPath });
+  await settingWrite.locator(":scope > summary").click();
+  const repairedDiff = settingWrite.locator(".setting-change-diff");
+  await expect(repairedDiff).not.toHaveAttribute("open", "");
+  await repairedDiff.locator("summary").click();
   await expect(repairedDiff.locator(".unified-diff-remove")).toContainText(
     "not: [valid",
   );
@@ -298,11 +329,15 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(page.locator(".setting-current-tree-notice")).toContainText(
     "已经生效",
   );
+  await page.getByRole("button", { name: "全部收起" }).click();
+  await expect(repairedTrace).not.toHaveAttribute("open", "");
+  await page.getByRole("button", { name: "历史" }).click();
   const settingHistory = page.locator(".setting-conversation-history");
   const repairedHistory = settingHistory
     .locator("button")
     .filter({ hasText: "Repair the damaged character document." });
   await expect(repairedHistory).toContainText("当前所选");
+  await page.getByRole("button", { name: "收起对话历史" }).click();
   await page.getByRole("button", { name: "全新上下文" }).click();
   await expect(page.getByText("下一条消息将开启全新上下文")).toBeVisible();
 
@@ -368,9 +403,17 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   const freshRunProgress = page.locator(".setting-conversation-running");
   await expect(freshRunProgress).toContainText("AI 正在处理");
   await expect(freshRunProgress).toContainText(/已接收 \d+ 字/u);
-  await expect(
-    freshRunProgress.locator(".setting-live-trace").first(),
-  ).toContainText("Compare the requested experience");
+  const freshLiveTrace = freshRunProgress.locator(".setting-live-trace-group");
+  await expect(freshLiveTrace).not.toHaveAttribute("open", "");
+  await freshLiveTrace.locator(":scope > summary").click();
+  const freshLiveReasoning = freshLiveTrace
+    .locator(".setting-live-trace")
+    .first();
+  await expect(freshLiveReasoning).not.toHaveAttribute("open", "");
+  await freshLiveReasoning.locator("summary").click();
+  await expect(freshLiveReasoning).toContainText(
+    "Compare the requested experience",
+  );
   await expect(page.getByRole("button", { name: "停止回复" })).toBeVisible();
   providerDelayMs = 0;
   await expect(page.locator(".setting-conversation-assistant")).toContainText(
@@ -400,19 +443,24 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(
     page.locator(".setting-conversation-assistant").last(),
   ).toContainText("pass the automatic review");
+  const authoredTurn = page.locator(".setting-conversation-turn").last();
+  await authoredTurn.locator(".setting-turn-trace > summary").click();
+  await authoredTurn.locator(".setting-conversation-trace > summary").click();
   const acceptedChanges = page.locator(".setting-accepted-changes");
   await expect(
     acceptedChanges.filter({ hasText: "world/events/training.yaml" }),
-  ).toBeVisible();
-  await expect(acceptedChanges.filter({ hasText: "opening.md" })).toBeVisible();
+  ).toHaveCount(1);
+  await expect(acceptedChanges.filter({ hasText: "opening.md" })).toHaveCount(
+    1,
+  );
   await expect(
     acceptedChanges.filter({ hasText: "control/blocks/world.md" }),
-  ).toBeVisible();
+  ).toHaveCount(1);
   await expect(
     page
       .locator(".setting-exchange-tool")
       .filter({ hasText: /当前树自动检查通过|Current-tree review passed/u }),
-  ).toBeVisible();
+  ).toHaveCount(1);
   await expect(page.locator(".setting-current-tree-notice")).toContainText(
     "已经生效",
   );
@@ -449,9 +497,14 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   // While the first round is still streaming, the UI shows received characters
   // rather than inactivity. This number can only come from live server increments.
   await expect(runProgress).toContainText(/已接收 \d+ 字/u);
-  await expect(
-    runProgress.locator(".setting-live-trace").first(),
-  ).toContainText("Inspect the frame");
+  const frameLiveTrace = runProgress.locator(".setting-live-trace-group");
+  await expect(frameLiveTrace).not.toHaveAttribute("open", "");
+  await frameLiveTrace.locator(":scope > summary").click();
+  const frameLiveReasoning = frameLiveTrace
+    .locator(".setting-live-trace")
+    .first();
+  await frameLiveReasoning.locator("summary").click();
+  await expect(frameLiveReasoning).toContainText("Inspect the frame");
   providerDelayMs = 0;
   await expect(
     page.locator(".setting-conversation-assistant").last(),
@@ -467,11 +520,38 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     "setting_patch",
     "setting_move",
   ]);
+  const documentScrollRange = await page.evaluate(() => {
+    const root = document.scrollingElement;
+    return root === null ? -1 : root.scrollHeight - root.clientHeight;
+  });
+  expect(documentScrollRange).toBeLessThanOrEqual(1);
+  await expectCanScrollVertically(
+    page.getByRole("region", { name: "设定完善对话", exact: true }),
+  );
+
   await page.getByRole("button", { name: "全新上下文" }).click();
   await expect(page.getByText("下一条消息将开启全新上下文")).toBeVisible();
+  await page.getByRole("button", { name: "历史" }).click();
   await repairedHistory.click();
   await expect(page.getByText("正在继续历史对话")).toBeVisible();
   await expect(page.getByLabel("继续这段对话")).toBeVisible();
+
+  await page.getByRole("button", { name: "历史" }).click();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page
+    .getByRole("button", {
+      name: "删除对话：Repair the damaged character document.",
+    })
+    .click();
+  await expect(page.locator(".setting-workspace-feedback")).toContainText(
+    "内容包当前树没有回滚",
+  );
+  await expect(
+    page.getByRole("button", {
+      name: "删除对话：Repair the damaged character document.",
+    }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "收起对话历史" }).click();
 
   await page.getByRole("button", { name: "返回工作区" }).click();
   await page.getByRole("button", { name: "提示词预览" }).click();

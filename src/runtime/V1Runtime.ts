@@ -255,6 +255,11 @@ export class V1Runtime {
           request.packageId,
           request.sessionId,
         );
+      case "setting-improvement.session.delete":
+        return this.#settingImprovements.deleteSession(
+          request.packageId,
+          request.sessionId,
+        );
       case "setting-improvement.message":
         return this.#settingImprovements.send(request);
       case "setting-improvement.cancel":

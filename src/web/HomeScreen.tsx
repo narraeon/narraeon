@@ -262,7 +262,9 @@ export function HomeScreen({
           <TaskCard
             index="01"
             title={uiText("内容编辑")}
-            description={uiText("编辑内容包里的开场、世界文档与控制文件。")}
+            description={uiText(
+              "和 AI 边聊边完善内容包，也可随时打开文件编辑与预览。",
+            )}
             detail={
               contentPackages.length > 0
                 ? uiText("{count} 份内容包", {

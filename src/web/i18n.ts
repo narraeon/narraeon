@@ -229,6 +229,8 @@ const englishMessages: Record<string, string> = {
     "Each of the four entries has one job. Open active worlds directly above.",
   四个任务入口: "Four task entries",
   内容编辑: "Content editing",
+  "和 AI 边聊边完善内容包，也可随时打开文件编辑与预览。":
+    "Discuss and improve a content package with AI, while keeping file editing and preview one click away.",
   "编辑内容包里的开场、世界文档与控制文件。":
     "Edit a content package's opening, world documents, and control files.",
   从空白内容包开始: "Start with a blank content package",
@@ -834,6 +836,41 @@ const promptPreviewEnglishMessages: Record<string, string> = {
 Object.assign(englishMessages, promptPreviewEnglishMessages);
 
 const settingImprovementEnglishMessages: Record<string, string> = {
+  设定完善导航: "Setting-improvement navigation",
+  设定完善工具: "Setting-improvement tools",
+  设定完善对话: "Setting-improvement conversation",
+  历史: "History",
+  全部收起: "Collapse all",
+  预览: "Preview",
+  编辑文件: "Edit files",
+  预览文件: "Preview files",
+  收起对话历史: "Close conversation history",
+  收起文件面板: "Close file panel",
+  内容包文件编辑: "Content-package file editing",
+  内容包文件预览: "Content-package file preview",
+  内容包文件视图: "Content-package file view",
+  对话历史: "Conversation history",
+  "删除对话：{title}": "Delete conversation: {title}",
+  "删除对话“{title}”？只会删除这份对话记录；已经写入内容包当前树的改动不会回滚。此操作无法撤销。":
+    "Delete conversation “{title}”? This removes only the conversation record. Changes already written to the current content-package tree will not be rolled back. This cannot be undone.",
+  "对话历史已删除；内容包当前树没有回滚。":
+    "Conversation history deleted; the current content-package tree was not rolled back.",
+  正在预览未保存的文件草稿: "Previewing the unsaved file draft",
+  正在预览已保存的当前树: "Previewing the saved current tree",
+  "{count} 份文件": "{count} files",
+  "当前内容包还没有文件。": "This content package has no files yet.",
+  新建第一份文件: "Create the first file",
+  编辑这份文件: "Edit this file",
+  "二进制资源不在文本预览中展开。":
+    "Binary resources are not expanded in the text preview.",
+  "和 AI 边聊边改": "Discuss and edit with AI",
+  "成功的工具改动直接写入内容包当前树；需要核对或手动修改时，从右侧打开文件。":
+    "Successful tool changes write directly to the current content-package tree. Open files on the right to inspect or edit them manually.",
+  "查看工具步骤文本（未进入最终回复）":
+    "View tool-step text (not included in the final reply)",
+  正在接收调用详情: "Receiving call details",
+  "请先保存文件编辑，再继续 AI 设定完善。":
+    "Save the file edits before continuing setting improvement.",
   模型: "Model",
   逻辑消息: "Logical messages",
   工具: "Tools",
