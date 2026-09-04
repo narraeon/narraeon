@@ -810,11 +810,14 @@ context:
     );
   });
 
-  test("state_list 与 history_list 各自暴露简单且完整的模型工具提示", () => {
+  test("list 工具保留集合分页，context_read 只暴露完整精确读取", () => {
     const compiled = new FileNativePromptCompiler().compileBootstrap(input());
     const stateList = compiled.tools.find(({ name }) => name === "state_list");
     const historyList = compiled.tools.find(
       ({ name }) => name === "history_list",
+    );
+    const contextRead = compiled.tools.find(
+      ({ name }) => name === "context_read",
     );
 
     expect(stateList?.inputSchema).toEqual({
@@ -837,6 +840,17 @@ context:
         limit: { type: "integer", minimum: 1, maximum: 100 },
       },
     });
+    expect(contextRead?.inputSchema).toEqual({
+      type: "object",
+      additionalProperties: false,
+      required: ["ref"],
+      properties: {
+        ref: { type: "string", minLength: 1 },
+      },
+    });
+    expect(contextRead?.description).toContain(
+      "Results are never truncated or paginated",
+    );
     expect(JSON.stringify([stateList, historyList])).not.toMatch(
       /"(?:oneOf|allOf|anyOf)"/u,
     );
@@ -853,6 +867,13 @@ context:
     const create = compiled.tools.find(({ name }) => name === "world_create");
     expect(create?.description).toContain('{$ref:"@short-ref"}');
     expect(create?.description).toContain("Never invent a document id");
+    expect(
+      (
+        create?.inputSchema as {
+          properties?: { body?: Record<string, unknown> };
+        }
+      ).properties?.body,
+    ).toEqual({ type: "string" });
     expect(compiled.logicalMessages[0]?.markdown).toContain(
       "Only Runtime can formally write an operation into the world",
     );
@@ -919,6 +940,150 @@ context:
     ).toMatchObject({ ok: true });
     expect(
       call("context_list", { source: "history", order: "oldest_first" }),
+    ).toMatchObject({ ok: true });
+  });
+
+  test("context_read 完整返回长文档、兼容旧分页参数并立即授权不限大小的写入", () => {
+    const source = input();
+    const files = snapshotRecord(source);
+    const originalTail = "ORIGINAL-TAIL-MUST-BE-READ";
+    files["state/rules/long-record.md"] = `---
+$document:
+  id: rule.long-record
+  ref: long-record
+  title: Long record
+  summary: A document longer than the former read page.
+  aliases: []
+---
+# Long record
+
+## Archive
+
+${"original material\n".repeat(1_000)}${originalTail}
+`;
+    const documents = new FileNativePlayDocuments(files);
+    source.world.documentSnapshot = documents.snapshot;
+    documents.bindBootstrap(
+      new FileNativePromptCompiler().compileBootstrap(source),
+    );
+
+    const read = documents.execute(
+      {
+        id: "legacy-shaped-read",
+        name: "context_read",
+        arguments: {
+          ref: "@long-record",
+          cursor: "obsolete-cursor-is-ignored",
+          maxBytes: 4,
+        },
+      },
+      [],
+    );
+    expect(read).toMatchObject({
+      ok: true,
+      readAuthorization: { shortRef: "long-record", locator: null },
+    });
+    expect(read.markdown).toContain(originalTail);
+    expect(read.markdown).toContain("Complete: yes");
+    expect(read.markdown).not.toMatch(/This page|Next-page cursor/u);
+    expect(
+      documents.execute(
+        {
+          id: "current-shaped-read",
+          name: "context_read",
+          arguments: { ref: "@long-record" },
+        },
+        [],
+      ).markdown,
+    ).toBe(read.markdown);
+
+    const nodeRead = documents.execute(
+      {
+        id: "legacy-shaped-node-read",
+        name: "context_read",
+        arguments: {
+          ref: "@long-record#/Archive",
+          cursor: "obsolete-cursor-is-ignored",
+          maxBytes: 4,
+        },
+      },
+      [],
+    );
+    expect(nodeRead).toMatchObject({
+      ok: true,
+      readAuthorization: {
+        shortRef: "long-record",
+        locator: { markdown: ["Archive"] },
+      },
+    });
+    expect(nodeRead.markdown).toContain(originalTail);
+    expect(nodeRead.markdown).not.toMatch(/This page|Next-page cursor/u);
+
+    const historyTail = "HISTORY-TAIL-MUST-BE-READ";
+    const historyRead = documents.execute(
+      {
+        id: "legacy-shaped-history-read",
+        name: "context_read",
+        arguments: {
+          ref: "@history-message-00000001-01-narrator-aaa",
+          cursor: "obsolete-cursor-is-ignored",
+          maxBytes: 4,
+        },
+      },
+      [
+        {
+          path: "00000001-01-narrator-aaa.md",
+          contents: `${"old narrative\n".repeat(1_000)}${historyTail}`,
+        },
+      ],
+    );
+    expect(historyRead).toMatchObject({ ok: true });
+    expect(historyRead.markdown).toContain(historyTail);
+    expect(historyRead.markdown).not.toMatch(/This page|Next-page cursor/u);
+
+    const replacementTail = "REPLACEMENT-TAIL-MUST-BE-WRITTEN";
+    const replacement = `# Long record\n\n${"replacement material\n".repeat(4_000)}${replacementTail}\n`;
+    expect(Buffer.byteLength(replacement, "utf8")).toBeGreaterThan(64 * 1024);
+    expect(
+      documents.execute(
+        {
+          id: "large-patch",
+          name: "world_patch",
+          arguments: {
+            target: "@long-record",
+            edits: [{ op: "replace_body", markdown: replacement }],
+          },
+        },
+        [],
+      ),
+    ).toMatchObject({ ok: true });
+    const revised = documents.snapshot.query({
+      kind: "read_document",
+      document: { shortRef: "long-record" },
+    });
+    if (revised.kind !== "read_document")
+      throw new Error("The large replacement was not readable");
+    expect(revised.body).toContain(replacementTail);
+
+    const createdBody = `# Created large record\n\n${"created material\n".repeat(20_000)}`;
+    expect(Buffer.byteLength(createdBody, "utf8")).toBeGreaterThan(256 * 1024);
+    expect(
+      documents.execute(
+        {
+          id: "large-create",
+          name: "world_create",
+          arguments: {
+            parent: "@dir-/",
+            codec: "markdown",
+            refHint: "created-large-record",
+            title: "Created large record",
+            summary: "A write larger than the former operation cap.",
+            aliases: [],
+            body: createdBody,
+          },
+        },
+        [],
+      ),
     ).toMatchObject({ ok: true });
   });
 
@@ -1112,7 +1277,6 @@ context:
       documents.snapshot.query({
         kind: "read_document",
         document: { shortRef: "current-situation" },
-        maxBytes: 8_192,
       }),
     ).toMatchObject({
       kind: "read_document",

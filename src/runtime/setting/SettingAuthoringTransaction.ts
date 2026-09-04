@@ -153,7 +153,7 @@ export function settingImprovementRuntimeContract(locale: AppLocale): string {
 - 当前请求随附八个读写工具。不调用工具的完整响应会作为普通助手消息显示，并结束本次用户调用。含有工具调用的响应是内部工具步骤；收到全部工具结果后继续处理，最终用一个不调用工具的完整响应答复用户。
 - 工具写入直接修改内容包当前树。每个完整 Provider 工具响应中的调用按顺序执行，成功改动在该响应结算时原子发布，发布后立即成为内容包权威，无需另一步确认。
 - 每个写工具调用独立结算，并按本响应中的调用顺序读取之前已接受的结果。某个调用失败只在对应工具结果中返回精确原因，不回滚同一响应内其他成功调用，也不阻止后续调用。Runtime 在写调用结算后自动运行内容树检查和真实 Prompt Preview，并把检查结果附在最后一个成功写调用的结果中。
-- 修改既有文件前必须完整读取它。setting_list／setting_search／setting_read 的 cursor 和读取授权只属于产生它们的当前树 revision；任何其他对话或手动编辑改变当前树后，必须重新读取再写。工具只暴露逻辑路径，不暴露宿主路径。
+- 修改既有文件前必须完整读取它。setting_list／setting_search 的 cursor，以及 setting_read 的读取授权，只属于产生它们的当前树 revision；任何其他对话或手动编辑改变当前树后，必须重新读取再写。setting_read 总是完整返回精确文件，不截断、不分页。工具只暴露逻辑路径，不暴露宿主路径。
 - world/ 下只写 .yaml 或 .md 世界文档；专用文件只允许 opening.md、control/frame.yaml、control/player-views.yaml 和 control/blocks/*.md。人物、地点、规则与当前情境放在 world/，本世界特有的主持要求放在 control/。
 - opening.md 是玩家看见的第一页，不得替玩家决定行动、台词或内心。会继续约束首次行动的事实也必须写入自然承载它的世界文档。
 - 新建 world 文档使用 setting_create：ref 由你提供，并同时提供路径、标题、摘要、别名与不含技术头的正文。ref 必须是唯一的 2～32 位小写 ASCII 短句柄；Runtime 自行完成技术存储。既有文档选择值会在读取时自动投影为对应的 @ref；跨文档引用和 control 中的文档选择只使用 @ref。
@@ -187,7 +187,7 @@ export function settingImprovementRuntimeContract(locale: AppLocale): string {
 - The current request includes eight read/write tools. A complete response with no tool calls is shown as an ordinary assistant message and settles this user invocation. A response containing tool calls is an internal tool step; continue after all results and eventually answer with a complete tool-free response.
 - Tool writes directly modify the content package's current tree. Calls in one complete Provider tool response execute in order; its successful changes publish atomically when that response settles, immediately become authoritative, and require no second confirmation.
 - Every write tool call settles independently and sees earlier accepted calls in response order. A failure returns its precise cause only in that call's result, does not roll back successful siblings, and does not stop later calls. Runtime automatically runs content-tree checks and a real Prompt Preview after writes and appends that review to the last successful write result.
-- Read an existing file completely before changing it. Cursors and read authorization from setting_list, setting_search, and setting_read belong only to the current-tree revision that produced them. Re-read after another conversation or a manual edit changes the current tree. Tools expose logical paths, never host paths.
+- Read an existing file completely before changing it. Cursors from setting_list and setting_search, and read authorization from setting_read, belong only to the current-tree revision that produced them. setting_read always returns the complete exact file without truncation or pagination. Re-read after another conversation or a manual edit changes the current tree. Tools expose logical paths, never host paths.
 - World documents are .yaml or .md files under world/. Special writes are limited to opening.md, control/frame.yaml, control/player-views.yaml, and control/blocks/*.md. Put characters, places, rules, and the current situation under world/, and world-specific hosting guidance under control/.
 - opening.md is the first page shown to the player. Never decide the player's action, dialogue, or inner thoughts. Facts that constrain the first action must also live in the world document that naturally owns them.
 - Create a world document with setting_create. You provide its unique 2-to-32-character lowercase ASCII ref, path, title, summary, aliases, and body without a technical header; Runtime completes the technical storage. Existing document selectors are automatically projected to their @refs when read. Cross-document references and control selectors use only @refs.
@@ -262,14 +262,7 @@ export function settingImprovementToolDefinitions(
     {
       name: "setting_read",
       description: descriptions.setting_read,
-      inputSchema: schema(
-        {
-          path,
-          maxBytes: { type: "integer", minimum: 4, maximum: 65_536 },
-          cursor,
-        },
-        ["path"],
-      ),
+      inputSchema: schema({ path }, ["path"]),
     },
     {
       name: "setting_create",
@@ -288,7 +281,7 @@ export function settingImprovementToolDefinitions(
             maxItems: 16,
             items: { type: "string", minLength: 1, maxLength: 64 },
           },
-          body: { type: "string", minLength: 1, maxLength: 65_536 },
+          body: { type: "string", minLength: 1 },
         },
         ["path", "ref", "title", "summary", "aliases", "body"],
       ),
@@ -358,7 +351,7 @@ const toolDescriptionsEn: Record<SettingImprovementToolName, string> = {
   setting_search:
     "Search literal source text in world documents in the content package's current tree. within may be world, a world/ directory or path, or @ref.",
   setting_read:
-    "Read a world document by world/ path or @ref, or read an exact opening/control path. Existing document selectors are projected to @refs. Read every page before overwriting an existing file.",
+    "Read a complete world document by world/ path or @ref, or read a complete opening/control file by exact path. Existing document selectors are projected to @refs. The result is never truncated or paginated.",
   setting_create:
     "Create one world/ .yaml or .md document. Supply a unique lowercase ASCII ref, title, summary, aliases, and body without a technical header; Runtime completes the storage envelope. The created document is already fully read.",
   setting_write_file:
@@ -377,7 +370,7 @@ const toolDescriptionsZhCN: Record<SettingImprovementToolName, string> = {
   setting_search:
     "在内容包当前树的 world 文档中按原文字面搜索；within 可为 world、world/ 目录或路径或 @ref。",
   setting_read:
-    "按 world/ 路径或 @ref 读取世界文档，或按精确路径读取 opening/control；既有文档选择值自动投影为 @ref。覆盖既有文件前必须读完全部分页。",
+    "按 world/ 路径或 @ref 完整读取世界文档，或按精确路径完整读取 opening/control；既有文档选择值自动投影为 @ref。结果不会截断或分页。",
   setting_create:
     "创建一份 world/ 下的 .yaml 或 .md 文档；提供唯一的小写 ASCII ref、标题、摘要、别名和不含技术头的正文，Runtime 自行完成存储封装。创建成功的文档视为已经完整读取。",
   setting_write_file:
@@ -395,10 +388,6 @@ interface ReadAuthorizations {
   worldDocumentIds: Set<string>;
   damagedWorldPaths: Set<string>;
   opaquePaths: Set<string>;
-  pendingWorldReads: Map<
-    string,
-    { documentId: string; nextOffset: number; totalBytes: number }
-  >;
 }
 
 interface QueryResult {
@@ -442,7 +431,6 @@ export class SettingAuthoringTransaction {
         authorization?.readableDamagedWorldPaths ?? [],
       ),
       opaquePaths: new Set(authorization?.readOpaquePaths ?? []),
-      pendingWorldReads: new Map(),
     };
     this.#review = this.#inspect();
   }
@@ -1287,7 +1275,6 @@ function deleteWorldDocument(
   const resolved = snapshot.query({
     kind: "read_document",
     document: selector,
-    maxBytes: 4,
   });
   if (resolved.kind === "error")
     throw new SettingAuthoringError(
@@ -1705,19 +1692,14 @@ function readDocument(
   if (
     !hasOnly(args, ["path", "maxBytes", "cursor"]) ||
     typeof path !== "string" ||
-    path.length === 0 ||
-    !validCursor(args.cursor)
+    path.length === 0
   )
     return failure("Invalid setting_read arguments", locale);
   const opaque = snapshot.files.find(
     (file) => file.path === path && !file.path.startsWith("world/"),
   );
   if (opaque !== undefined) {
-    if (
-      args.cursor !== undefined ||
-      args.maxBytes !== undefined ||
-      opaque.encoding !== undefined
-    )
+    if (opaque.encoding !== undefined)
       return failure("Special files require one complete text read", locale);
     reads.opaquePaths.add(path);
     const projected = projectOpaqueDocumentIds(snapshot, path, opaque.contents);
@@ -1726,26 +1708,17 @@ function readDocument(
     );
   }
   const selector = documentSelector(path);
-  const maxBytes = args.maxBytes ?? 8192;
-  if (
-    selector === null ||
-    typeof maxBytes !== "number" ||
-    !Number.isInteger(maxBytes) ||
-    maxBytes < 4 ||
-    maxBytes > 65_536
-  )
+  if (selector === null)
     return failure(
       selector === null && typeof path === "string" && !path.includes("/")
         ? "Use @ref or a world/ logical path"
-        : "Invalid setting_read path or maxBytes",
+        : "Invalid setting_read path",
       locale,
     );
   const result = snapshot.query({
     kind: "read_document",
     document: selector,
-    maxBytes,
     referenceProjection: "short_ref",
-    ...(args.cursor === undefined ? {} : { cursor: args.cursor }),
   });
   if (result.kind === "error") {
     if (repairableDamagedWorldRead(snapshot, path, result))
@@ -1754,9 +1727,9 @@ function readDocument(
   }
   if (result.kind !== "read_document")
     throw new Error("Unexpected read result");
-  authorizeReadPage(reads, result.document, selector, maxBytes, result.page);
+  reads.worldDocumentIds.add(result.document.documentId);
   return success(
-    `# ${localized(locale, "Exact read", "精确读取")} @${result.document.shortRef}\n\ntitle: ${result.document.title}\nsummary: ${result.document.summary}\ncodec: ${result.document.codec}\nlogicalPath: ${result.document.logicalPath}\n[body]\n${result.body.trimEnd()}\n[/body${result.page.complete ? "" : " continues"}]\n\n${pageFooter(result.page, locale)}`,
+    `# ${localized(locale, "Exact read", "精确读取")} @${result.document.shortRef}\n\ntitle: ${result.document.title}\nsummary: ${result.document.summary}\ncodec: ${result.document.codec}\nlogicalPath: ${result.document.logicalPath}\n[body]\n${result.body.trimEnd()}\n[/body]\n\n---\nComplete: yes`,
   );
 }
 
@@ -1771,8 +1744,8 @@ function repairableDamagedWorldRead(
   )
     return false;
   // A failed exact read authorizes replacement only when the source itself is
-  // malformed. Bad cursors, bad selectors, missing documents, and ambiguity
-  // must never turn into a read-before-write bypass.
+  // malformed. Bad selectors, missing documents, and ambiguity must never
+  // turn into a read-before-write bypass.
   return result.diagnostics.some(
     ({ code }) =>
       code !== "cursor_invalid" &&
@@ -1843,37 +1816,6 @@ function projectOpaqueDocumentIds(
       }
   }
   return changed ? document.toString({ indent: 2, lineWidth: 0 }) : source;
-}
-
-function authorizeReadPage(
-  reads: ReadAuthorizations,
-  document: WorldDocumentDescriptor,
-  selector: WorldDocumentSelector,
-  maxBytes: number,
-  page: { start: number; end: number; total: number; complete: boolean },
-): void {
-  const key = JSON.stringify({ selector, maxBytes });
-  if (page.start === 0)
-    reads.pendingWorldReads.set(key, {
-      documentId: document.documentId,
-      nextOffset: page.end,
-      totalBytes: page.total,
-    });
-  else {
-    const pending = reads.pendingWorldReads.get(key);
-    if (
-      pending?.documentId !== document.documentId ||
-      pending.nextOffset !== page.start ||
-      pending.totalBytes !== page.total
-    )
-      return;
-    pending.nextOffset = page.end;
-  }
-  const pending = reads.pendingWorldReads.get(key);
-  if (pending?.nextOffset === pending?.totalBytes && page.complete) {
-    reads.worldDocumentIds.add(document.documentId);
-    reads.pendingWorldReads.delete(key);
-  }
 }
 
 function renderQueryFailure(
@@ -1975,12 +1917,6 @@ function cloneReads(source: ReadAuthorizations): ReadAuthorizations {
     worldDocumentIds: new Set(source.worldDocumentIds),
     damagedWorldPaths: new Set(source.damagedWorldPaths),
     opaquePaths: new Set(source.opaquePaths),
-    pendingWorldReads: new Map(
-      [...source.pendingWorldReads].map(([key, value]) => [
-        key,
-        structuredClone(value),
-      ]),
-    ),
   };
 }
 
@@ -1989,7 +1925,6 @@ function rebaseReads(
   snapshot: WorldDocumentStore,
 ): void {
   reads.snapshotId = snapshot.id;
-  reads.pendingWorldReads.clear();
 }
 
 function fileDiff(

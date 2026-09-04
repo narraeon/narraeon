@@ -5,6 +5,7 @@ import {
   equalModelHostBinding,
   ModelHostFailureError,
   ModelHostOutcomeUnknownError,
+  modelHostFailureRequiresFreshContext,
   ScriptedModelHost,
   type ModelHostBinding,
   type ModelHostExchange,
@@ -536,6 +537,33 @@ test("ScriptedModelHost 区分确定失败与结果未知", async () => {
   await expect(unknown.exchange(exchange())).rejects.toBeInstanceOf(
     ModelHostOutcomeUnknownError,
   );
+});
+
+test("Provider 上下文溢出只由明确错误证据分类", () => {
+  expect(
+    modelHostFailureRequiresFreshContext(
+      new ModelHostFailureError("Provider request failed: 400", {
+        details: { error: { code: "context_length_exceeded" } },
+      }),
+    ),
+  ).toBe(true);
+  expect(
+    modelHostFailureRequiresFreshContext(
+      new ModelHostFailureError(
+        "This model's maximum context length has been reached.",
+      ),
+    ),
+  ).toBe(true);
+  expect(
+    modelHostFailureRequiresFreshContext(
+      new ModelHostFailureError("Provider 在生成前拒绝了请求。"),
+    ),
+  ).toBe(false);
+  expect(
+    modelHostFailureRequiresFreshContext(
+      new ModelHostOutcomeUnknownError("maximum context length"),
+    ),
+  ).toBe(false);
 });
 
 function exchange(): ModelHostExchange {

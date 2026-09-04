@@ -37,6 +37,20 @@ test("设定完善契约描述显式上下文和直接当前树工具行为", ()
   const patch = settingImprovementToolDefinitions("zh-CN").find(
     ({ name }) => name === "setting_patch",
   );
+  const read = settingImprovementToolDefinitions("zh-CN").find(
+    ({ name }) => name === "setting_read",
+  );
+  const create = settingImprovementToolDefinitions("zh-CN").find(
+    ({ name }) => name === "setting_create",
+  );
+  const readSchema = read?.inputSchema as {
+    properties?: Record<string, unknown>;
+  };
+  const createSchema = create?.inputSchema as {
+    properties?: { body?: { maxLength?: number } };
+  };
+  expect(Object.keys(readSchema.properties ?? {})).toEqual(["path"]);
+  expect(createSchema.properties?.body?.maxLength).toBeUndefined();
   expect(patch?.description).toContain("remove");
   expect(patch?.description).toContain("数组下标");
   const patchSchema = patch?.inputSchema as {
@@ -784,7 +798,7 @@ test("当前树读取授权可按精确 revision 恢复", () => {
   expect(restored.review().diff).toHaveLength(1);
 });
 
-test("无效 cursor 不会把正常世界文档误授权为可覆盖的损坏文档", () => {
+test("旧 setting_read 分页参数被忽略并改为完整读取授权", () => {
   const baseFiles = minimalFileNativeContentScaffold("en");
   const transaction = new SettingAuthoringTransaction({
     baseFiles,
@@ -795,19 +809,19 @@ test("无效 cursor 不会把正常世界文档误授权为可覆盖的损坏文
   const source = baseFiles.find((file) => file.path === path)?.contents;
   expect(source).toBeTypeOf("string");
 
+  const [read] = transaction.execute([
+    {
+      id: "legacy-paged-read",
+      name: "setting_read",
+      arguments: { path, cursor: "not-a-cursor", maxBytes: 4 },
+    },
+  ]);
+  expect(read).toMatchObject({ isError: false });
+  expect(read?.markdown).toContain("short_term_continuity: []");
   expect(
     transaction.execute([
       {
-        id: "bad-cursor",
-        name: "setting_read",
-        arguments: { path, cursor: "not-a-cursor" },
-      },
-    ]),
-  ).toMatchObject([{ isError: true }]);
-  expect(
-    transaction.execute([
-      {
-        id: "unauthorized-write",
+        id: "authorized-write",
         name: "setting_write_file",
         arguments: {
           path,
@@ -818,7 +832,7 @@ test("无效 cursor 不会把正常世界文档误授权为可覆盖的损坏文
         },
       },
     ]),
-  ).toMatchObject([{ isError: true }]);
+  ).toMatchObject([{ isError: false }]);
 });
 
 function productionPreview(snapshot: WorldDocumentStore): PromptPreview {

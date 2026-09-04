@@ -7,7 +7,6 @@ import type {
 import type {
   WorldDocumentLocator,
   WorldDocumentQueryFailure,
-  WorldDocumentReadResult,
   WorldDocumentSelectNodeResult,
   WorldDocumentSelector,
   WorldDocumentStore,
@@ -38,7 +37,6 @@ type ItemResolution =
 const maxItemsPerView = 128;
 const maxRenderedBytesPerView = 64 * 1024;
 const maxRenderedDepth = 16;
-const maxDocumentReadBytes = 65_536;
 
 export class PlayerViewRenderer {
   render(input: PlayerViewRenderInput): {
@@ -232,7 +230,6 @@ function resolveWholeDocument(
   const read = snapshot.query({
     kind: "read_document",
     document: selector,
-    maxBytes: maxDocumentReadBytes,
   });
   if (read.kind === "error") return selectionFailure(read, handle);
   if (read.kind !== "read_document")
@@ -247,49 +244,8 @@ function resolveWholeDocument(
       code: "unresolved_selector",
       message: "The selector codec does not match the target document",
     };
-  if (read.codec === "markdown")
-    return readWholeMarkdown(snapshot, selector, handle, read);
+  if (read.codec === "markdown") return { ok: true, value: read.body.trim() };
   return selectYamlRoot(snapshot, selector, handle);
-}
-
-function readWholeMarkdown(
-  snapshot: WorldDocumentStore,
-  selector: WorldDocumentSelector,
-  handle: string,
-  firstPage: WorldDocumentReadResult,
-):
-  | { ok: true; value: string }
-  | {
-      ok: false;
-      code: PlayerViewDiagnostic["code"];
-      message: string;
-    } {
-  let page = firstPage;
-  const chunks = [page.body];
-  while (!page.page.complete) {
-    if (page.page.nextCursor === null)
-      return {
-        ok: false,
-        code: "unresolved_selector",
-        message: "The exact selector cannot currently be resolved",
-      };
-    const nextPage = snapshot.query({
-      kind: "read_document",
-      document: selector,
-      maxBytes: maxDocumentReadBytes,
-      cursor: page.page.nextCursor,
-    });
-    if (nextPage.kind === "error") return selectionFailure(nextPage, handle);
-    if (nextPage.kind !== "read_document" || nextPage.codec !== "markdown")
-      return {
-        ok: false,
-        code: "unresolved_selector",
-        message: "The exact selector cannot currently be resolved",
-      };
-    chunks.push(nextPage.body);
-    page = nextPage;
-  }
-  return { ok: true, value: chunks.join("").trim() };
 }
 
 function selectYamlRoot(

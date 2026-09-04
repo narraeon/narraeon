@@ -1,9 +1,4 @@
-import {
-  createHash,
-  createHmac,
-  randomBytes,
-  timingSafeEqual,
-} from "node:crypto";
+import { createHash } from "node:crypto";
 
 import { stringify } from "yaml";
 
@@ -57,20 +52,6 @@ export interface PlayDocumentAuthorizationCheckpoint {
   }[];
 }
 
-export interface ContextToolBudgetRequest {
-  requestedResultBytes: number;
-  previewMarkdown: string;
-  retryParameter: "max_bytes" | "limit";
-  retryMinimum: number;
-  retryMaximum: number;
-  restartWithoutCursor: boolean;
-}
-
-export interface ContextToolRetryPreview {
-  call: ModelHostToolCall;
-  markdown: string;
-}
-
 class PlayDocumentToolFailure extends Error {
   readonly failureKind: "protocol" | "candidate";
 
@@ -99,7 +80,6 @@ export class FileNativePlayDocuments {
     this.#reads = {
       snapshotId: this.#candidate.snapshot.id,
       documents: new Map(),
-      pendingReads: new Map(),
     };
   }
 
@@ -173,62 +153,7 @@ export class FileNativePlayDocuments {
     this.#reads = {
       snapshotId: this.#candidate.snapshot.id,
       documents,
-      // Provider cursors are deliberately snapshot-local. A partial read has
-      // granted no write authority yet, so it restarts after cold recovery.
-      pendingReads: new Map(),
     };
-  }
-
-  contextToolBudgetRequest(
-    call: ModelHostToolCall,
-    history: { path: string; contents: string }[],
-  ): ContextToolBudgetRequest | null {
-    const preview = previewContextToolResult(
-      this.#candidate.snapshot,
-      history,
-      call,
-      this.#declaredDirectories,
-    );
-    if (preview === null) return null;
-    const retryParameter = call.name === "context_read" ? "max_bytes" : "limit";
-    return {
-      requestedResultBytes: Buffer.byteLength(preview.markdown, "utf8"),
-      previewMarkdown: preview.markdown,
-      retryParameter,
-      retryMinimum: call.name === "context_read" ? 4 : 1,
-      retryMaximum: contextToolRetryMaximum(call),
-      restartWithoutCursor:
-        record(call.arguments) && typeof call.arguments.cursor === "string",
-    };
-  }
-
-  contextToolRetryPreview(
-    call: ModelHostToolCall,
-    history: { path: string; contents: string }[],
-    retryValue: number,
-  ): ContextToolRetryPreview {
-    const argumentsWithoutCursor = record(call.arguments)
-      ? Object.fromEntries(
-          Object.entries(call.arguments).filter(([key]) => key !== "cursor"),
-        )
-      : {};
-    const retryCall: ModelHostToolCall = {
-      ...structuredClone(call),
-      id: `${call.id}-budget-retry`,
-      arguments: {
-        ...argumentsWithoutCursor,
-        [call.name === "context_read" ? "maxBytes" : "limit"]: retryValue,
-      },
-    };
-    const preview = previewContextToolResult(
-      this.#candidate.snapshot,
-      history,
-      retryCall,
-      this.#declaredDirectories,
-    );
-    if (preview === null)
-      throw new TypeError("context tool retry preview requires a read tool");
-    return { call: retryCall, markdown: preview.markdown };
   }
 
   execute(
@@ -307,27 +232,15 @@ export class FileNativePlayDocuments {
    */
   acceptCommittedState(): void {
     this.#candidate.changes.clear();
-    this.#candidate.suppliedBytes = 0;
   }
 }
 
-interface PlayCandidate extends WorldStateRevision {
-  suppliedBytes: number;
-}
+type PlayCandidate = WorldStateRevision;
 
 type AuthorizedLocator = WorldDocumentLocator;
 interface WriteAuthorizations {
   snapshotId: string;
   documents: Map<string, AuthorizedLocator[] | null>;
-  pendingReads: Map<
-    string,
-    {
-      shortRef: string;
-      locator: AuthorizedLocator | null;
-      nextOffset: number;
-      totalBytes: number;
-    }
-  >;
 }
 
 function bootstrapAuthorizations(
@@ -337,7 +250,6 @@ function bootstrapAuthorizations(
   const result: WriteAuthorizations = {
     snapshotId: snapshot.id,
     documents: new Map(),
-    pendingReads: new Map(),
   };
   for (const { status, complete, readAuthorization } of bootstrap.coverage) {
     if (status !== "resolved" || !complete || readAuthorization === undefined)
@@ -346,7 +258,6 @@ function bootstrapAuthorizations(
       const resolved = snapshot.query({
         kind: "read_document",
         document: { shortRef: readAuthorization.shortRef },
-        maxBytes: 4,
       });
       if (resolved.kind === "read_document" && resolved.ok)
         authorizeRead(result, snapshot.id, resolved.document.shortRef, null);
@@ -407,35 +318,12 @@ function authorizeToolRead(
     authorizations.snapshotId !== snapshot.id
   )
     return;
-  const { page } = authorization;
-  let progress = authorizations.pendingReads.get(authorization.readKey);
-  if (page.start === 0) {
-    progress = {
-      shortRef: authorization.shortRef,
-      locator: authorization.locator,
-      nextOffset: page.end,
-      totalBytes: page.total,
-    };
-    authorizations.pendingReads.set(authorization.readKey, progress);
-  } else {
-    if (progress === undefined) return;
-    if (
-      progress.shortRef !== authorization.shortRef ||
-      !sameLocator(progress.locator, authorization.locator) ||
-      progress.nextOffset !== page.start ||
-      progress.totalBytes !== page.total
-    )
-      return;
-    progress.nextOffset = page.end;
-  }
-  if (progress.nextOffset !== progress.totalBytes) return;
   authorizeRead(
     authorizations,
     snapshot.id,
-    progress.shortRef,
-    progress.locator,
+    authorization.shortRef,
+    authorization.locator,
   );
-  authorizations.pendingReads.delete(authorization.readKey);
 }
 
 function sameLocator(
@@ -457,10 +345,7 @@ function parseYamlHandleSegment(segment: string): string | number {
 }
 
 function openPlayCandidate(files: Record<string, string>): PlayCandidate {
-  return {
-    ...beginWorldStateRevision(files),
-    suppliedBytes: 0,
-  };
+  return beginWorldStateRevision(files);
 }
 
 function documentDescriptorByRef(
@@ -470,7 +355,6 @@ function documentDescriptorByRef(
   const result = snapshot.query({
     kind: "read_document",
     document: { shortRef: ref },
-    maxBytes: 4,
   });
   return result.kind === "read_document" && result.ok ? result.document : null;
 }
@@ -501,13 +385,6 @@ function applyPlayCandidatePatch(
       `Read @${ref} exactly, or receive the complete document in bootstrap, before writing it.`,
     );
   try {
-    const suppliedBytes = Buffer.byteLength(JSON.stringify(args.edits), "utf8");
-    if (suppliedBytes > 64 * 1024)
-      throw new PlayDocumentToolFailure("A single patch body exceeds 64 KiB");
-    if (candidate.suppliedBytes + suppliedBytes > 256 * 1024)
-      throw new PlayDocumentToolFailure(
-        "New body content for this model operation exceeds 256 KiB in total",
-      );
     assertToolReferenceHandles(args.edits);
     const revised = candidate.snapshot.revise({
       commands: [
@@ -527,7 +404,6 @@ function applyPlayCandidatePatch(
     const receipt = formatToolRevisionReceipt(target.shortRef, revised.changes);
     const previousSnapshot = candidate.snapshot;
     acceptWorldStateRevision(candidate, revised);
-    candidate.suppliedBytes += suppliedBytes;
     carryWriteAuthorizations(
       previousSnapshot,
       candidate,
@@ -728,13 +604,6 @@ function applyPlayCandidateCreate(
       throw new PlayDocumentToolFailure(
         "world_create parent is not a Runtime-known state directory; call state_list and use one of its directory handles",
       );
-    const suppliedBytes = Buffer.byteLength(args.body, "utf8");
-    if (suppliedBytes > 64 * 1024)
-      throw new PlayDocumentToolFailure("The world_create body exceeds 64 KiB");
-    if (candidate.suppliedBytes + suppliedBytes > 256 * 1024)
-      throw new PlayDocumentToolFailure(
-        "New body content for this model operation exceeds 256 KiB in total",
-      );
     const path = nextAvailableStatePath(
       candidate,
       parentDirectory,
@@ -793,7 +662,6 @@ function applyPlayCandidateCreate(
       created.shortRef,
       null,
     );
-    candidate.suppliedBytes += suppliedBytes;
     return {
       ok: true,
       markdown: `@${created.shortRef} pending write`,
@@ -826,9 +694,6 @@ function carryWriteAuthorizations(
   }
   authorizations.snapshotId = candidate.snapshot.id;
   for (const ref of stale) authorizations.documents.delete(ref);
-  for (const [readKey, progress] of authorizations.pendingReads)
-    if (stale.has(progress.shortRef))
-      authorizations.pendingReads.delete(readKey);
 }
 
 function playCandidateStateChanges(
@@ -844,7 +709,6 @@ function documentById(
   const result = snapshot.query({
     kind: "read_document",
     document: { documentId: id },
-    maxBytes: 4,
   });
   return result.kind === "read_document" && result.ok ? result.document : null;
 }
@@ -866,61 +730,9 @@ interface ContextToolResult {
   failureKind?: "protocol" | "candidate";
   readAuthorization?: {
     snapshotId: string;
-    readKey: string;
     shortRef: string;
     locator: AuthorizedLocator | null;
-    page: {
-      start: number;
-      end: number;
-      total: number;
-    };
   };
-}
-
-function previewContextToolResult(
-  snapshot: WorldDocumentStore,
-  history: { path: string; contents: string }[],
-  call: ModelHostToolCall,
-  declaredDirectories: readonly string[],
-): ContextToolResult | null {
-  if (call.name === "state_list")
-    return executeStateList(
-      snapshot,
-      history,
-      call.arguments,
-      declaredDirectories,
-    );
-  if (call.name === "history_list")
-    return executeHistoryList(snapshot, history, call.arguments);
-  if (call.name === "context_list")
-    return executeContextList(
-      snapshot,
-      history,
-      call.arguments,
-      declaredDirectories,
-    );
-  if (call.name === "context_search")
-    return executeContextSearch(snapshot, history, call.arguments);
-  if (call.name === "context_read")
-    return executeContextRead(snapshot, history, call.arguments);
-  return null;
-}
-
-function contextToolRetryMaximum(call: ModelHostToolCall): number {
-  if (!record(call.arguments)) return call.name === "context_read" ? 8_192 : 1;
-  if (call.name === "context_read")
-    return Number.isInteger(call.arguments.maxBytes) &&
-      Number(call.arguments.maxBytes) >= 4 &&
-      Number(call.arguments.maxBytes) <= 8_192
-      ? Number(call.arguments.maxBytes)
-      : 8_192;
-  const defaultLimit = call.name === "context_search" ? 10 : 20;
-  const maximumLimit = call.name === "context_search" ? 50 : 100;
-  return Number.isInteger(call.arguments.limit) &&
-    Number(call.arguments.limit) >= 1 &&
-    Number(call.arguments.limit) <= maximumLimit
-    ? Number(call.arguments.limit)
-    : defaultLimit;
 }
 
 function executeContextSearch(
@@ -1304,34 +1116,26 @@ function executeContextRead(
 ): ContextToolResult {
   if (
     !record(args) ||
+    // Frozen contexts created before complete exact reads still advertise
+    // cursor/maxBytes. Accept and ignore those obsolete arguments so an
+    // existing Provider continuation can cross the upgrade boundary.
     !hasOnlyToolKeys(args, ["ref", "cursor", "maxBytes"]) ||
-    typeof args.ref !== "string" ||
-    (args.maxBytes !== undefined && typeof args.maxBytes !== "number") ||
-    !validOptionalCursor(args.cursor)
+    typeof args.ref !== "string"
   )
     return {
       ok: false,
       markdown:
         "# Runtime argument error\n\nA stable ref returned by list or search is required.",
     };
-  const maxBytes = typeof args.maxBytes === "number" ? args.maxBytes : 8192;
-  if (!Number.isInteger(maxBytes) || maxBytes < 4 || maxBytes > 8192)
-    return {
-      ok: false,
-      markdown:
-        "# Runtime argument error\n\nmaxBytes must be between 4 and 8192.",
-    };
   const historyRefValue = args.ref.replace(/^@/u, "");
   const historyEntry = history.find(
     ({ path }) => historyRef(path) === historyRefValue,
   );
   if (historyEntry !== undefined)
-    return pagedRead(
-      historyRefValue,
-      historyEntry.contents,
-      maxBytes,
-      args.cursor,
-    );
+    return {
+      ok: true,
+      markdown: `# Exact read @${historyRefValue}\n\n${historyEntry.contents}\n\n---\nSource: @${historyRefValue}\nComplete: yes`,
+    };
 
   const handle = parseStateReadHandle(args.ref);
   if (handle === null)
@@ -1343,20 +1147,17 @@ function executeContextRead(
   const resolved = snapshot.query({
     kind: "read_document",
     document: { shortRef: handle.shortRef },
-    maxBytes: 4,
   });
   if (resolved.kind === "error") return renderStateQueryFailure(resolved);
   if (resolved.kind !== "read_document") return unexpectedStateQueryResult();
   if (handle.path === null)
     return resolved.codec === "markdown"
-      ? readMarkdownDocument(snapshot, resolved.document, maxBytes, args.cursor)
+      ? readMarkdownDocument(snapshot, resolved.document)
       : readProjectedNode(
           snapshot,
           resolved.document,
           { yaml: [] },
           args.ref,
-          maxBytes,
-          args.cursor,
           true,
         );
   const locator: WorldDocumentLocator =
@@ -1368,8 +1169,6 @@ function executeContextRead(
     resolved.document,
     locator,
     args.ref,
-    maxBytes,
-    args.cursor,
     false,
   );
 }
@@ -1377,30 +1176,20 @@ function executeContextRead(
 function readMarkdownDocument(
   snapshot: WorldDocumentStore,
   document: WorldDocumentDescriptor,
-  maxBytes: number,
-  cursor: unknown,
 ): ContextToolResult {
   const result = snapshot.query({
     kind: "read_document",
     document: { shortRef: document.shortRef },
-    maxBytes,
-    ...(typeof cursor === "string" || cursor === null ? { cursor } : {}),
   });
   if (result.kind === "error") return renderStateQueryFailure(result);
   if (result.kind !== "read_document") return unexpectedStateQueryResult();
   return {
     ok: true,
-    markdown: `# Exact read @${document.shortRef}\n\n${renderDocumentMetadata(document)}\n[Writable body starts; locators are relative to this point]\n${result.body.trimEnd()}\n[Writable body ${result.page.complete ? "ends" : "continues"}]\n\n---\nScope: state · @${document.shortRef}\nThis page: ${result.page.start}..${result.page.end} / ${result.page.total} bytes\nComplete: ${result.page.complete ? "yes" : "no"}${result.page.nextCursor === null ? "" : `\nNext-page cursor: ${result.page.nextCursor}`}`,
+    markdown: `# Exact read @${document.shortRef}\n\n${renderDocumentMetadata(document)}\n[Writable body starts; locators are relative to this point]\n${result.body.trimEnd()}\n[Writable body ends]\n\n---\nScope: state · @${document.shortRef}\nComplete: yes`,
     readAuthorization: {
       snapshotId: snapshot.id,
-      readKey: readAuthorizationKey(document.shortRef, null, maxBytes),
       shortRef: document.shortRef,
       locator: null,
-      page: {
-        start: result.page.start,
-        end: result.page.end,
-        total: result.page.total,
-      },
     },
   };
 }
@@ -1410,8 +1199,6 @@ function readProjectedNode(
   document: WorldDocumentDescriptor,
   locator: WorldDocumentLocator,
   requestedHandle: string,
-  maxBytes: number,
-  cursor: unknown,
   wholeDocument: boolean,
 ): ContextToolResult {
   const result = snapshot.query({
@@ -1431,15 +1218,15 @@ function readProjectedNode(
   const text = wholeDocument
     ? `${renderDocumentMetadata(document)}\n[Writable body starts; locators are relative to this point]\n${body}\n[Writable body ends]\n`
     : `# ${document.title} · ${renderLocator(result.node.locator)} [${requestedHandle}]\n\n${body}\n`;
-  return pagedStateProjection(
-    snapshot,
-    requestedHandle,
-    text,
-    maxBytes,
-    cursor,
-    document.shortRef,
-    wholeDocument ? null : result.node.locator,
-  );
+  return {
+    ok: true,
+    markdown: `# Exact read ${requestedHandle}\n\n${text.trimEnd()}\n\n---\nScope: state · ${requestedHandle}\nComplete: yes`,
+    readAuthorization: {
+      snapshotId: snapshot.id,
+      shortRef: document.shortRef,
+      locator: wholeDocument ? null : result.node.locator,
+    },
+  };
 }
 
 function renderDocumentMetadata(document: WorldDocumentDescriptor): string {
@@ -1470,121 +1257,6 @@ function toolWorldDocumentValue(value: WorldDocumentValue): unknown {
       toolWorldDocumentValue(child),
     ]),
   );
-}
-
-function pagedStateProjection(
-  snapshot: WorldDocumentStore,
-  handle: string,
-  text: string,
-  maxBytes: number,
-  cursor: unknown,
-  shortRef: string,
-  locator: AuthorizedLocator | null,
-): ContextToolResult {
-  const scope = JSON.stringify({
-    kind: "state_projected_read",
-    snapshotId: snapshot.id,
-    handle,
-    maxBytes,
-  });
-  const offset = parseStateProjectionCursor(snapshot, cursor, scope);
-  const bytes = Buffer.from(text, "utf8");
-  if (offset === null || offset > bytes.length)
-    return {
-      ok: false,
-      markdown:
-        "# Runtime argument error\n\nThe cursor does not match the current snapshot or complete query criteria.",
-    };
-  const end = safeUtf8ReadEnd(bytes, offset, maxBytes);
-  const complete = end === bytes.length;
-  const page = bytes.subarray(offset, end).toString("utf8");
-  return {
-    ok: true,
-    markdown: `# Exact read ${handle}\n\n${page}\n\n---\nScope: state · ${handle}\nThis page: ${offset}..${end} / ${bytes.length} bytes\nComplete: ${complete ? "yes" : "no"}${complete ? "" : `\nNext-page cursor: ${stateProjectionCursorFor(snapshot, scope, end)}`}`,
-    readAuthorization: {
-      snapshotId: snapshot.id,
-      readKey: readAuthorizationKey(shortRef, locator, maxBytes),
-      shortRef,
-      locator,
-      page: { start: offset, end, total: bytes.length },
-    },
-  };
-}
-
-function readAuthorizationKey(
-  shortRef: string,
-  locator: AuthorizedLocator | null,
-  maxBytes: number,
-): string {
-  return JSON.stringify({ shortRef, locator, maxBytes });
-}
-
-const stateProjectionCursorSecrets = new WeakMap<WorldDocumentStore, Buffer>();
-
-function stateProjectionCursorFor(
-  snapshot: WorldDocumentStore,
-  scope: string,
-  offset: number,
-): string {
-  const payload = Buffer.from(JSON.stringify({ offset }), "utf8").toString(
-    "base64url",
-  );
-  const signature = createHmac("sha256", stateProjectionCursorSecret(snapshot))
-    .update(snapshot.id)
-    .update("\0")
-    .update(scope)
-    .update("\0")
-    .update(payload)
-    .digest("base64url");
-  return `${payload}.${signature}`;
-}
-
-function parseStateProjectionCursor(
-  snapshot: WorldDocumentStore,
-  cursor: unknown,
-  scope: string,
-): number | null {
-  if (cursor === undefined || cursor === null) return 0;
-  if (typeof cursor !== "string") return null;
-  const parts = cursor.split(".");
-  if (parts.length !== 2) return null;
-  const [payload, suppliedSignature] = parts;
-  if (payload === undefined || suppliedSignature === undefined) return null;
-  try {
-    const supplied = Buffer.from(suppliedSignature, "base64url");
-    if (supplied.toString("base64url") !== suppliedSignature) return null;
-    const expected = createHmac("sha256", stateProjectionCursorSecret(snapshot))
-      .update(snapshot.id)
-      .update("\0")
-      .update(scope)
-      .update("\0")
-      .update(payload)
-      .digest();
-    if (
-      supplied.length !== expected.length ||
-      !timingSafeEqual(supplied, expected)
-    )
-      return null;
-    const decoded = Buffer.from(payload, "base64url");
-    if (decoded.toString("base64url") !== payload) return null;
-    const value: unknown = JSON.parse(decoded.toString("utf8"));
-    return record(value) &&
-      Object.keys(value).length === 1 &&
-      Number.isSafeInteger(value.offset) &&
-      Number(value.offset) >= 0
-      ? Number(value.offset)
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function stateProjectionCursorSecret(snapshot: WorldDocumentStore): Buffer {
-  const existing = stateProjectionCursorSecrets.get(snapshot);
-  if (existing !== undefined) return existing;
-  const created = randomBytes(32);
-  stateProjectionCursorSecrets.set(snapshot, created);
-  return created;
 }
 
 function parseStateReadHandle(
@@ -1663,45 +1335,6 @@ function snippet(text: string, query: string): string {
 
 function historyRef(path: string): string {
   return `history-message-${path.replace(/\.md$/u, "")}`;
-}
-
-function pagedRead(
-  ref: string,
-  text: string,
-  maxBytes: number,
-  cursor: unknown,
-): { ok: boolean; markdown: string } {
-  const scope = JSON.stringify({
-    kind: "read",
-    ref,
-    sha256: createHash("sha256").update(text).digest("hex"),
-    maxBytes,
-  });
-  const offset = parseCursor(cursor, scope);
-  if (offset === null)
-    return {
-      ok: false,
-      markdown:
-        "# Runtime argument error\n\nThe cursor does not match the current read.",
-    };
-  const bytes = Buffer.from(text, "utf8");
-  const end = safeUtf8ReadEnd(bytes, offset, maxBytes);
-  const page = bytes.subarray(offset, end).toString("utf8");
-  return {
-    ok: true,
-    markdown: `# Exact read @${ref}\n\n${page}\n\n---\nSource: @${ref}\nThis page: ${offset}..${end} bytes\nComplete: ${end === bytes.length ? "yes" : "no"}\n${end === bytes.length ? "" : `Next-page cursor: ${cursorFor(scope, end)}`}`,
-  };
-}
-
-function safeUtf8ReadEnd(
-  bytes: Buffer,
-  offset: number,
-  maxBytes: number,
-): number {
-  let end = Math.min(bytes.length, offset + maxBytes);
-  while (end > offset && (bytes[end] ?? 0) >= 0x80 && (bytes[end] ?? 0) < 0xc0)
-    end -= 1;
-  return end;
 }
 
 function cursorFor(scope: string, offset: number): string {

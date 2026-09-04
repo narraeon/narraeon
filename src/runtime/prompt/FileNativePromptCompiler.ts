@@ -1334,42 +1334,22 @@ function readCompleteDocument(
   snapshot: FileNativeWorldDocumentSnapshot,
   selector: WorldDocumentSelector,
 ): CompleteDocumentRead | WorldDocumentQueryFailure {
-  let cursor: string | null = null;
-  let descriptor: WorldDocumentDescriptor | null = null;
-  let codec: CompleteDocumentRead["codec"] | null = null;
-  let body = "";
-  do {
-    const result = snapshot.query({
-      kind: "read_document",
-      document: selector,
-      maxBytes: 65_536,
-      cursor,
-    });
-    if (result.kind === "error") return result;
-    if (result.kind !== "read_document")
-      throw new PromptCompilationError(
-        "world_document_query_failed",
-        "World-document snapshot returned the wrong whole-document query type",
-      );
-    descriptor ??= result.document;
-    codec ??= result.codec;
-    if (
-      descriptor.documentId !== result.document.documentId ||
-      codec !== result.codec
-    )
-      throw new PromptCompilationError(
-        "world_document_query_failed",
-        "Whole-document pagination changed targets within one snapshot",
-      );
-    body += result.body;
-    cursor = result.page.nextCursor;
-  } while (cursor !== null);
-  if (descriptor === null || codec === null)
+  const result = snapshot.query({
+    kind: "read_document",
+    document: selector,
+  });
+  if (result.kind === "error") return result;
+  if (result.kind !== "read_document")
     throw new PromptCompilationError(
       "world_document_query_failed",
-      "Whole-document query did not return a target",
+      "World-document snapshot returned the wrong whole-document query type",
     );
-  return { kind: "complete_document", descriptor, codec, body };
+  return {
+    kind: "complete_document",
+    descriptor: result.document,
+    codec: result.codec,
+    body: result.body,
+  };
 }
 
 function selectSnapshotNode(

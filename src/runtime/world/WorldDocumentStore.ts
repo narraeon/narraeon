@@ -123,8 +123,6 @@ export interface WorldDocumentLiteralSearchQuery {
 export interface WorldDocumentReadQuery {
   readonly kind: "read_document";
   readonly document: WorldDocumentSelector;
-  readonly maxBytes?: number;
-  readonly cursor?: string | null;
   /** Replace persisted reference identities with quoted @short-ref values. */
   readonly referenceProjection?: "short_ref";
 }
@@ -248,14 +246,6 @@ export interface WorldDocumentReadResult {
   readonly document: WorldDocumentDescriptor;
   readonly codec: WorldDocumentCodec;
   readonly body: string;
-  readonly page: {
-    readonly unit: "utf8_bytes";
-    readonly start: number;
-    readonly end: number;
-    readonly total: number;
-    readonly complete: boolean;
-    readonly nextCursor: string | null;
-  };
   readonly diagnostics: readonly WorldDocumentDiagnostic[];
 }
 
@@ -579,11 +569,9 @@ interface RevisionWorkingFile {
 const documentIdPattern = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u;
 const shortRefPattern = /^[a-z][a-z0-9-]*$/u;
 const base64UrlPattern = /^[A-Za-z0-9_-]+$/u;
-const maxWorldDocumentBytes = 4 * 1024 * 1024;
 const maxYamlDepth = 64;
 const maxYamlNodes = 100_000;
 const maxLiteralSearchMatches = 10_000;
-const maxSelectedNodeBytes = 1024 * 1024;
 
 export class WorldDocumentStore {
   static open(input: {
@@ -2099,34 +2087,22 @@ export class WorldDocumentStore {
   #readDocument(
     request: WorldDocumentReadQuery,
   ): WorldDocumentReadResult | WorldDocumentQueryFailure {
-    if (
-      !hasOnlyKeys(request, [
-        "kind",
-        "document",
-        "maxBytes",
-        "cursor",
-        "referenceProjection",
-      ])
-    )
+    if (!hasOnlyKeys(request, ["kind", "document", "referenceProjection"]))
       return this.#failure("read_document", request, [
         diagnostic({
           code: "query_invalid",
           message: "read_document contains undeclared query conditions",
         }),
       ]);
-    const maxBytes = request.maxBytes ?? 8192;
     if (
-      !Number.isInteger(maxBytes) ||
-      maxBytes < 4 ||
-      maxBytes > 65_536 ||
-      (request.referenceProjection !== undefined &&
-        request.referenceProjection !== "short_ref")
+      request.referenceProjection !== undefined &&
+      request.referenceProjection !== "short_ref"
     )
       return this.#failure("read_document", request, [
         diagnostic({
           code: "query_invalid",
           message:
-            "read_document maxBytes must be 4 to 65536 and referenceProjection, when present, must be short_ref",
+            "read_document referenceProjection, when present, must be short_ref",
         }),
       ]);
     const resolved = this.#resolveSelector(request.document);
@@ -2165,21 +2141,6 @@ export class WorldDocumentStore {
             bodyRange.start.offset,
             bodyRange.end.offset,
           );
-    const bytes = Buffer.from(completeBody, "utf8");
-    const cursorScope = JSON.stringify({
-      kind: "read_document",
-      layout: this.layout,
-      logicalRoot: this.logicalRoot,
-      document: request.document,
-      maxBytes,
-      referenceProjection: request.referenceProjection ?? null,
-    });
-    const offset = this.#cursorOffset(request.cursor, cursorScope);
-    if (offset === null || offset > bytes.length)
-      return this.#cursorFailure("read_document", request);
-    const end = safeUtf8PageEnd(bytes, offset, maxBytes);
-    const body = bytes.subarray(offset, end).toString("utf8");
-    const complete = end === bytes.length;
     return freeze({
       kind: "read_document" as const,
       ok: true as const,
@@ -2196,15 +2157,7 @@ export class WorldDocumentStore {
       }),
       document: resolved.entry.descriptor!,
       codec: resolved.entry.codec!,
-      body,
-      page: freeze({
-        unit: "utf8_bytes" as const,
-        start: offset,
-        end,
-        total: bytes.length,
-        complete,
-        nextCursor: complete ? null : this.#cursor(cursorScope, end),
-      }),
+      body: completeBody,
       diagnostics: freeze([]),
     });
   }
@@ -2263,28 +2216,6 @@ export class WorldDocumentStore {
       if (value === unresolved || node === undefined)
         return this.#locatorFailure(entry, publicLocator, "locator_not_found");
       const projected = projectYamlValue(value, this.#descriptorIndex());
-      const isWholeDocumentProjection = locator.yaml.length === 0;
-      if (
-        !isWholeDocumentProjection &&
-        Buffer.byteLength(JSON.stringify(projected), "utf8") >
-          maxSelectedNodeBytes
-      )
-        return this.#failure(
-          "select_node",
-          request,
-          [
-            diagnostic({
-              code: "capacity_exceeded",
-              logicalPath: entry.file.path,
-              documentId: entry.descriptor!.documentId,
-              locator: publicLocator,
-              range: node.range,
-              message:
-                "Exact-node projection exceeds the capacity of one query",
-            }),
-          ],
-          entry.descriptor,
-        );
       return this.#selected(
         entry,
         publicLocator,
@@ -2318,23 +2249,6 @@ export class WorldDocumentStore {
         heading.range.start.offset,
         heading.range.end.offset,
       );
-      if (Buffer.byteLength(markdown, "utf8") > maxSelectedNodeBytes)
-        return this.#failure(
-          "select_node",
-          request,
-          [
-            diagnostic({
-              code: "capacity_exceeded",
-              logicalPath: entry.file.path,
-              documentId: entry.descriptor!.documentId,
-              locator: publicLocator,
-              range: heading.range,
-              message:
-                "Exact-node projection exceeds the capacity of one query",
-            }),
-          ],
-          entry.descriptor,
-        );
       return this.#selected(
         entry,
         publicLocator,
@@ -2645,17 +2559,6 @@ export class WorldDocumentStore {
           logicalPath: file.path,
           range: sourceRange(file.contents, 0, file.contents.length),
           message: "World documents accept only .yaml, .yml, or .md codecs",
-        }),
-      );
-      return entry;
-    }
-    if (Buffer.byteLength(file.contents, "utf8") > maxWorldDocumentBytes) {
-      entry.diagnostics.push(
-        diagnostic({
-          code: "capacity_exceeded",
-          logicalPath: file.path,
-          range: sourceRange(file.contents, 0, file.contents.length),
-          message: "One world document cannot exceed 4 MiB",
         }),
       );
       return entry;
@@ -3616,17 +3519,6 @@ function lineExcerptRange(
   const start = Math.max(lineStart, matchStart - 160);
   const end = Math.min(lineEnd, matchEnd + 160);
   return sourceRange(source, start, end);
-}
-
-function safeUtf8PageEnd(
-  bytes: Buffer,
-  offset: number,
-  maxBytes: number,
-): number {
-  let end = Math.min(bytes.length, offset + maxBytes);
-  while (end > offset && (bytes[end] ?? 0) >= 0x80 && (bytes[end] ?? 0) < 0xc0)
-    end -= 1;
-  return end;
 }
 
 interface MarkdownHeadingScan {

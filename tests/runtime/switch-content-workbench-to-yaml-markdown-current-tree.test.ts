@@ -357,11 +357,6 @@ describe("YAML/Markdown 内容包当前树", () => {
       code: "invalid_opening",
     },
     {
-      label: "超过 64 KiB",
-      openingFiles: [{ path: "opening.md", contents: "开".repeat(22_000) }],
-      code: "invalid_opening",
-    },
-    {
       label: "重复",
       openingFiles: [
         { path: "opening.md", contents: opening() },
@@ -392,6 +387,28 @@ describe("YAML/Markdown 内容包当前树", () => {
     expect(inspection.issues).toContainEqual(
       expect.objectContaining({ code, path: "opening.md" }),
     );
+  });
+
+  test("opening.md 不因上下文字节预算被判为无效", () => {
+    const workspace = new ContentWorkspace("/unused");
+    const inspection = workspace.inspectCurrentTreeContentPackage([
+      { path: "opening.md", contents: `# 开场\n\n${"开".repeat(22_000)}` },
+      { path: "world/characters/alex.yaml", contents: character() },
+      { path: "world/current-situation.yaml", contents: currentSituation() },
+      { path: "control/frame.yaml", contents: frame() },
+      {
+        path: "control/blocks/world.md",
+        contents: "# World Narration Rules\n",
+      },
+      { path: "control/player-views.yaml", contents: playerView() },
+    ]);
+
+    expect(inspection.opening).toBe("valid");
+    expect(
+      inspection.issues.some(
+        ({ code, path }) => code === "invalid_opening" && path === "opening.md",
+      ),
+    ).toBe(false);
   });
 
   test("未手动改名的内容包标题也不随当前情境文档标题漂移", async () => {

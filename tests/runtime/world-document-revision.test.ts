@@ -535,7 +535,6 @@ $document:
       revised.snapshot.query({
         kind: "read_document",
         document: { shortRef: "current-situation" },
-        maxBytes: 8_192,
       }),
     ).toMatchObject({
       kind: "read_document",
@@ -549,7 +548,6 @@ $document:
     const lore = revised.snapshot.query({
       kind: "read_document",
       document: { shortRef: "lore" },
-      maxBytes: 8_192,
     });
     expect(lore).toMatchObject({
       kind: "read_document",
@@ -1482,7 +1480,6 @@ $document:
     const restoredRead = restored.snapshot.query({
       kind: "read_document",
       document: { shortRef: "lore" },
-      maxBytes: 8192,
     });
     expect(restoredRead).toMatchObject({
       kind: "read_document",

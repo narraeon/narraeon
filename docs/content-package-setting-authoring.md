@@ -72,7 +72,7 @@ content-package/opening.md -> world/history 的 genesis 第一条主持原文
 
 ### 写好 `opening.md`
 
-每个可用内容包必须有且只有一份根级 `opening.md`。它是普通 UTF-8 Markdown 原文，不带 `$document` 头，不能为空，最大 64 KiB。例如：
+每个可用内容包必须有且只有一份根级 `opening.md`。它是普通 UTF-8 Markdown 原文，不带 `$document` 头，不能为空。例如：
 
 ```markdown
 雨水沿着廊檐砸在你脚边。紧闭的药铺门内传来第二声撞击，街角巡夜人的灯正朝这里靠近。你只有片刻决定如何回应。

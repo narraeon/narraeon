@@ -2943,7 +2943,7 @@ test("Provider 结果未知时禁止重放已派发请求，并要求全新上�
       modelHost,
     }),
   ).rejects.toThrow(
-    "Call-chain processing failed, and there is no model context to continue.",
+    "The current model context cannot continue; use a fresh context.",
   );
   expect(requests).toHaveLength(1);
   const endpoint = await worlds.recoverEndpoint(worldId);
@@ -3004,6 +3004,56 @@ test("确定性 Provider 拒绝后只重放原样保存的请求", async () => {
   expect(completed).toMatchObject({ status: "ready", canRetry: false });
   expect(requests).toHaveLength(2);
   expect(requests[1]).toEqual(requests[0]);
+});
+
+test("Provider 明确报告上下文溢出时禁止重试并要求全新上下文", async () => {
+  const { worlds, worldId } = await createWorld("play-chain-context-overflow");
+  const requests: ModelHostExchange[] = [];
+  const modelHost: ModelHost = {
+    binding: modelBinding,
+    exchange(request) {
+      requests.push(structuredClone(request));
+      return Promise.reject(
+        new ModelHostFailureError("Provider request failed: 400", {
+          details: {
+            error: {
+              code: "context_length_exceeded",
+              message: "This model's maximum context length was exceeded.",
+            },
+          },
+        }),
+      );
+    },
+  };
+  const chains = new PlayCallChain(worlds);
+  const interrupted = await chains.start({
+    worldId,
+    chainId: "play-chain-context-overflow-contract",
+    exchangeId: "exchange-context-overflow",
+    playerText: "I ask Alex to open the door.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+
+  expect(interrupted).toMatchObject({
+    status: "interrupted",
+    canRetry: false,
+    lastFailure: "Provider request failed: 400",
+  });
+  await expect(
+    chains.append({
+      worldId,
+      chainId: interrupted.chainId,
+      exchangeId: "retry-context-overflow",
+      playerText: "",
+      modelHost,
+    }),
+  ).rejects.toThrow(
+    "The current model context cannot continue; use a fresh context.",
+  );
+  expect(requests).toHaveLength(1);
 });
 
 test("空输入追加会从完整逻辑 transcript 继续生成，并把 Provider 文本增量实时投影", async () => {

@@ -447,32 +447,20 @@ function readCompleteDocument(
     ? [{ shortRef: requested }]
     : [{ documentId: requested }, { shortRef: requested }];
   for (const selector of selectors) {
-    let cursor: string | null = null;
-    let descriptor: WorldDocumentDescriptor | null = null;
-    do {
-      const result = snapshot.query({
-        kind: "read_document",
-        document: selector,
-        maxBytes: 65_536,
-        cursor,
-      });
-      if (result.kind === "error") {
-        if (
-          result.diagnostics.every(({ code }) => code === "document_not_found")
-        )
-          break;
-        throw new Error(
-          worldDocumentRevisionFailureMessage(result.diagnostics),
-        );
-      }
-      if (result.kind !== "read_document")
-        throw new Error(
-          "The correction document's exact read returned the wrong query result",
-        );
-      descriptor = result.document;
-      cursor = result.page.nextCursor;
-    } while (cursor !== null);
-    if (descriptor !== null) return descriptor;
+    const result = snapshot.query({
+      kind: "read_document",
+      document: selector,
+    });
+    if (result.kind === "error") {
+      if (result.diagnostics.every(({ code }) => code === "document_not_found"))
+        continue;
+      throw new Error(worldDocumentRevisionFailureMessage(result.diagnostics));
+    }
+    if (result.kind !== "read_document")
+      throw new Error(
+        "The correction document's exact read returned the wrong query result",
+      );
+    return result.document;
   }
   throw new Error(`Correction document ${handle} does not exist`);
 }

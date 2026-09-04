@@ -185,6 +185,37 @@ export class ModelHostFailureError extends Error {
   }
 }
 
+/** A Provider has rejected the complete request because its context is full. */
+export function modelHostFailureRequiresFreshContext(error: unknown): boolean {
+  if (!(error instanceof ModelHostFailureError)) return false;
+  const evidence = [error.message, ...failureDetailStrings(error.details)]
+    .join("\n")
+    .toLocaleLowerCase("und");
+  return [
+    /context[_ -](?:length|window)[_ -](?:exceeded|overflow)/u,
+    /maximum context length/u,
+    /prompt[_ -](?:is[_ -])?too[_ -]long/u,
+    /too many input tokens/u,
+    /input (?:is )?too long/u,
+  ].some((pattern) => pattern.test(evidence));
+}
+
+function failureDetailStrings(
+  value: unknown,
+  depth = 0,
+  seen = new WeakSet<object>(),
+): string[] {
+  if (typeof value === "string" || typeof value === "number")
+    return [String(value)];
+  if (value === null || typeof value !== "object" || depth >= 4) return [];
+  if (seen.has(value)) return [];
+  seen.add(value);
+  const children = Array.isArray(value) ? value : Object.values(value);
+  return children
+    .slice(0, 64)
+    .flatMap((child) => failureDetailStrings(child, depth + 1, seen));
+}
+
 /** The provider outcome cannot be replayed without risking a duplicate response. */
 export class ModelHostOutcomeUnknownError extends Error {
   readonly kind = "unknown" as const;

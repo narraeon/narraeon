@@ -56,8 +56,6 @@ export interface FileNativeContentInspection {
   worldDocumentSnapshot: WorldDocumentStore;
 }
 
-const maxOpeningBytes = 64 * 1024;
-
 export function isContentPackageWorldDocumentPath(path: string): boolean {
   return path.startsWith("world/");
 }
@@ -116,7 +114,6 @@ export function inspectContentPackageCurrentTree(
     if (
       openingFile.encoding !== undefined ||
       openingFile.contents.trim().length === 0 ||
-      Buffer.byteLength(openingFile.contents, "utf8") > maxOpeningBytes ||
       Buffer.from(openingFile.contents, "utf8").toString("utf8") !==
         openingFile.contents
     ) {
@@ -125,7 +122,7 @@ export function inspectContentPackageCurrentTree(
         issues,
         "invalid_opening",
         "opening.md",
-        "The introduction must be non-empty, well-formed UTF-8 text no larger than 64 KiB",
+        "The introduction must be non-empty, well-formed UTF-8 text",
       );
     } else opening = "valid";
   }

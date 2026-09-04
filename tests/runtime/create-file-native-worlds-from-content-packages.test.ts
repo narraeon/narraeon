@@ -190,7 +190,6 @@ describe("从内容包创建文件原生世界", () => {
       stateSnapshot.query({
         kind: "read_document",
         document: { documentId: "character.alex" },
-        maxBytes: 65_536,
       }),
     ).toMatchObject({
       ok: true,

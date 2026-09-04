@@ -21,6 +21,7 @@ import {
   ModelHostContinuationError,
   ModelHostFailureError,
   ModelHostOutcomeUnknownError,
+  modelHostFailureRequiresFreshContext,
 } from "../model/ModelHost.ts";
 import {
   FileNativePromptCompiler,
@@ -339,7 +340,7 @@ export class PlayCallChain {
       if (session.status === "interrupted") {
         if (!session.canRetry || session.lastRequest === null)
           throw new PlayCallChainError(
-            "Call-chain processing failed, and there is no model context to continue.",
+            "The current model context cannot continue; use a fresh context.",
           );
         return this.#dispatch(
           session,
@@ -1915,7 +1916,8 @@ export class PlayCallChain {
         session.status = "interrupted";
         const requiresFreshContext =
           error instanceof ModelHostContinuationError ||
-          error instanceof ModelHostOutcomeUnknownError;
+          error instanceof ModelHostOutcomeUnknownError ||
+          modelHostFailureRequiresFreshContext(error);
         session.canRetry =
           !requiresFreshContext && error instanceof ModelHostFailureError;
         session.lastFailure = message;
@@ -2801,17 +2803,27 @@ function projectContextReads(
       ref: call.ref,
       ok: event.ok,
       complete:
-        result === undefined
-          ? null
-          : result.readAuthorization === undefined
-            ? /(?:^|\n)Complete: yes(?:\n|$)/u.test(result.markdown)
-            : result.readAuthorization.page.end ===
-              result.readAuthorization.page.total,
+        result === undefined ? null : completedContextReadIsComplete(result),
       markdown: result?.markdown ?? null,
       locator: result?.readAuthorization?.locator ?? null,
     });
   }
   return reads;
+}
+
+function completedContextReadIsComplete(
+  result: PersistedPlayCallChain["completedTools"][number]["result"],
+): boolean {
+  if (result.readAuthorization === undefined)
+    return /(?:^|\n)Complete: yes(?:\n|$)/u.test(result.markdown);
+  const legacyAuthorization: unknown = result.readAuthorization;
+  if (!isRecord(legacyAuthorization) || !isRecord(legacyAuthorization.page))
+    return true;
+  return (
+    typeof legacyAuthorization.page.end === "number" &&
+    typeof legacyAuthorization.page.total === "number" &&
+    legacyAuthorization.page.end === legacyAuthorization.page.total
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

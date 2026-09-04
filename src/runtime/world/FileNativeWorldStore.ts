@@ -1987,7 +1987,6 @@ function assertEquivalentWorldDocumentSnapshots(
         document: {
           logicalPath: `state/${document.path.slice("world/".length)}`,
         },
-        maxBytes: 4,
       });
       return (
         !result.ok ||

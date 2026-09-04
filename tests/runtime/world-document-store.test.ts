@@ -371,7 +371,6 @@ describe("WorldDocumentStore open/query Interface", () => {
     const read = snapshot.query({
       kind: "read_document",
       document: { shortRef: "hero" },
-      maxBytes: 65_536,
     });
     expect(read).toMatchObject({
       kind: "read_document",
@@ -391,36 +390,11 @@ describe("WorldDocumentStore open/query Interface", () => {
   - 名称: 水晶
     数量: 2
 `,
-      page: {
-        unit: "utf8_bytes",
-        start: 0,
-        end: Buffer.byteLength(
-          `衣着: Ａ级斗篷
-盟友: { $ref: place.gate }
-背包:
-  - 名称: 水晶
-    数量: 2
-`,
-          "utf8",
-        ),
-        total: Buffer.byteLength(
-          `衣着: Ａ级斗篷
-盟友: { $ref: place.gate }
-背包:
-  - 名称: 水晶
-    数量: 2
-`,
-          "utf8",
-        ),
-        complete: true,
-        nextCursor: null,
-      },
     });
 
     const projectedRead = snapshot.query({
       kind: "read_document",
       document: { shortRef: "hero" },
-      maxBytes: 65_536,
       referenceProjection: "short_ref",
     });
     expect(projectedRead.kind).toBe("read_document");
@@ -721,7 +695,7 @@ describe("WorldDocumentStore open/query Interface", () => {
       });
   });
 
-  test("opaque cursor 绑定快照及 catalog、search、read 的全部分页条件", () => {
+  test("opaque cursor 只绑定 catalog 与 search，精确文档读取始终完整", () => {
     const files = [
       {
         path: "state/a.yaml",
@@ -838,39 +812,25 @@ describe("WorldDocumentStore open/query Interface", () => {
       diagnostics: [expect.objectContaining({ code: "cursor_invalid" })],
     });
 
-    const firstRead = snapshot.query({
+    const exactRead = snapshot.query({
       kind: "read_document",
       document: { shortRef: "alpha" },
-      maxBytes: 16,
     });
-    if (firstRead.kind !== "read_document" || !firstRead.ok)
-      throw new Error("The first read page failed");
-    expect(firstRead.page).toMatchObject({
-      start: 0,
-      complete: false,
+    expect(exactRead).toMatchObject({
+      kind: "read_document",
+      ok: true,
+      body: "描述: 红色斗篷在门边。\n",
     });
-    expect(typeof firstRead.page.nextCursor).toBe("string");
+    expect("page" in exactRead).toBe(false);
     expect(
       snapshot.query({
         kind: "read_document",
         document: { shortRef: "alpha" },
-        maxBytes: 32,
-        cursor: firstRead.page.nextCursor,
-      }),
+        maxBytes: 16,
+      } as never),
     ).toMatchObject({
       kind: "error",
-      diagnostics: [expect.objectContaining({ code: "cursor_invalid" })],
-    });
-    const secondRead = snapshot.query({
-      kind: "read_document",
-      document: { shortRef: "alpha" },
-      maxBytes: 16,
-      cursor: firstRead.page.nextCursor,
-    });
-    expect(secondRead).toMatchObject({
-      kind: "read_document",
-      ok: true,
-      page: { start: firstRead.page.end },
+      diagnostics: [expect.objectContaining({ code: "query_invalid" })],
     });
 
     expect(snapshot.query({ kind: "unknown" } as never)).toMatchObject({
@@ -878,6 +838,55 @@ describe("WorldDocumentStore open/query Interface", () => {
       requestKind: null,
       diagnostics: [expect.objectContaining({ code: "query_invalid" })],
     });
+  });
+
+  test("文档与逻辑节点不因字节大小被拒绝或截断", () => {
+    const tail = "COMPLETE-LARGE-DOCUMENT-TAIL";
+    const largeSection = `${"x".repeat(4 * 1024 * 1024 + 1)}${tail}`;
+    const snapshot = WorldDocumentStore.open({
+      layout: "world_state",
+      files: [
+        {
+          path: "state/large.md",
+          contents: `---
+$document:
+  id: rule.large
+  ref: large
+  title: Large document
+  summary: Larger than the former document and node byte limits.
+  aliases: []
+---
+# Large document
+
+## Archive
+
+${largeSection}
+`,
+        },
+      ],
+    });
+
+    expect(snapshot.status).toBe("usable");
+    const read = snapshot.query({
+      kind: "read_document",
+      document: { shortRef: "large" },
+    });
+    if (read.kind !== "read_document")
+      throw new Error("The large document was not readable");
+    expect(read.body.endsWith(`${tail}\n`)).toBe(true);
+    expect("page" in read).toBe(false);
+
+    const selected = snapshot.query({
+      kind: "select_node",
+      document: { shortRef: "large" },
+      locator: { markdown: ["Archive"] },
+    });
+    if (selected.kind !== "select_node" || selected.node.codec !== "markdown")
+      throw new Error("The large Markdown node was not selectable");
+    expect(selected.node.markdown).toContain(tail);
+    expect(Buffer.byteLength(selected.node.markdown, "utf8")).toBeGreaterThan(
+      4 * 1024 * 1024,
+    );
   });
 
   test("封闭请求拒绝额外字段，locator 诊断稳定且查询不冻结调用方输入", () => {
