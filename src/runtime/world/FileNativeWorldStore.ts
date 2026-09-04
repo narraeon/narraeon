@@ -41,6 +41,7 @@ import {
   FileNativeWorldOperationCoordinator,
   WorldOperationBusyError,
   type ContinuityCorrectionWorldClaimHandle,
+  type WorldRevisionLockHandle,
 } from "./WorldOperationCoordinator.ts";
 import {
   fileNativeHistoryMessageIdFromProjectionPath,
@@ -216,6 +217,7 @@ export class FileNativeWorldStore {
   readonly #operationsRoot: string;
   readonly #promptCompiler: FileNativePromptCompiler;
   readonly #activeControlUsers = new Map<string, Set<string>>();
+  readonly #openingWorldRevisions = new Set<string>();
   readonly operations: FileNativeWorldOperationCoordinator;
   readonly playTimeline: FileNativePlayTimelineStore;
   readonly playAdvances: FileNativePlayAdvanceStore;
@@ -636,17 +638,151 @@ export class FileNativeWorldStore {
     files: readonly ContentTreeFile[],
   ): Promise<{ fingerprint: string }> {
     assertIdentity(worldId, "World ID");
-    await this.ensureCurrentStorage(worldId);
-    const root = join(this.#worldsRoot, worldId);
-    await readPublicationAt(root);
     for (const file of files) assertRelativePath(file.path);
-    const staging = join(root, `runtime/.control-draft-${randomUUID()}`);
-    await writeSurface(staging, "control", files);
-    const final = join(root, "runtime/control-draft");
-    await rm(final, { recursive: true, force: true });
-    await rename(join(staging, "control"), final);
-    await rm(staging, { recursive: true, force: true });
-    return { fingerprint: fingerprint(files) };
+    try {
+      return await this.operations.withExclusiveWorldStateMutation(
+        worldId,
+        async () => {
+          await this.ensureCurrentStorage(worldId);
+          const root = join(this.#worldsRoot, worldId);
+          await readPublicationAt(root);
+          const staging = join(root, `runtime/.control-draft-${randomUUID()}`);
+          await writeSurface(staging, "control", files);
+          const final = join(root, "runtime/control-draft");
+          await rm(final, { recursive: true, force: true });
+          await rename(join(staging, "control"), final);
+          await rm(staging, { recursive: true, force: true });
+          return { fingerprint: fingerprint(files) };
+        },
+      );
+    } catch (error: unknown) {
+      if (error instanceof WorldOperationBusyError)
+        throw new FileNativeWorldCreationError(
+          "operation_conflict",
+          "World control drafts are locked while a world revision is open",
+        );
+      throw error;
+    }
+  }
+
+  async acquireWorldRevisionLock(worldId: string, epochId: string) {
+    if (
+      (this.#activeControlUsers.get(worldId)?.size ?? 0) > 0 ||
+      this.#openingWorldRevisions.has(worldId)
+    )
+      return { kind: "busy" } as const;
+    this.#openingWorldRevisions.add(worldId);
+    try {
+      return await this.operations.acquireWorldRevision(worldId, epochId);
+    } finally {
+      this.#openingWorldRevisions.delete(worldId);
+    }
+  }
+
+  readWorldRevisionLock(worldId: string) {
+    return this.operations.readWorldRevisionLock(worldId);
+  }
+
+  releaseWorldRevisionLock(handle: WorldRevisionLockHandle): Promise<void> {
+    return this.operations.releaseWorldRevision(handle);
+  }
+
+  async assertWorldRevisionUnlocked(worldId: string): Promise<void> {
+    try {
+      await this.operations.assertWorldRevisionUnlocked(worldId);
+    } catch (error: unknown) {
+      if (error instanceof WorldOperationBusyError)
+        throw new FileNativeWorldCreationError(
+          "operation_conflict",
+          "World play and other changes are locked while a world revision is open",
+        );
+      throw error;
+    }
+  }
+
+  async bindWorldRevision(
+    handle: WorldRevisionLockHandle,
+  ): Promise<FileNativePlayBinding> {
+    return this.operations.withWorldRevisionLock(handle, () =>
+      this.bindPlayCallChain(handle.worldId),
+    );
+  }
+
+  /** Replace control while the matching revision epoch retains exclusive ownership. */
+  async replaceWorldRevisionControl(input: {
+    handle: WorldRevisionLockHandle;
+    expectedFingerprint: string;
+    files: readonly ContentTreeFile[];
+  }): Promise<{ fingerprint: string }> {
+    for (const file of input.files) assertRelativePath(file.path);
+    return this.operations.withWorldRevisionLock(input.handle, async () => {
+      if ((this.#activeControlUsers.get(input.handle.worldId)?.size ?? 0) > 0)
+        throw new FileNativeWorldCreationError(
+          "operation_conflict",
+          "World control is frozen by another operation",
+        );
+      const root = join(this.#worldsRoot, input.handle.worldId);
+      const currentPath = join(root, "control");
+      const runtimeRoot = join(root, "runtime");
+      const stagingRoot = join(
+        runtimeRoot,
+        `.revision-control-${input.handle.epochId}-next`,
+      );
+      const stagedPath = join(stagingRoot, "control");
+      const previousPath = join(
+        runtimeRoot,
+        `.revision-control-${input.handle.epochId}-previous`,
+      );
+      let current = await readTree(currentPath);
+      let currentFingerprint = fingerprint(current);
+      const nextFingerprint = fingerprint(input.files);
+      if (currentFingerprint === nextFingerprint) {
+        await rm(stagingRoot, { recursive: true, force: true });
+        await rm(previousPath, { recursive: true, force: true });
+        await syncDirectory(runtimeRoot);
+        return { fingerprint: nextFingerprint };
+      }
+      const previous = await readTree(previousPath);
+      const staged = await readTree(stagedPath);
+      if (
+        current.length === 0 &&
+        fingerprint(previous) === input.expectedFingerprint
+      ) {
+        if (fingerprint(staged) === nextFingerprint) {
+          await rename(stagedPath, currentPath);
+          await syncDirectory(root);
+          await syncDirectory(stagingRoot);
+          await rm(previousPath, { recursive: true, force: true });
+          await rm(stagingRoot, { recursive: true, force: true });
+          await syncDirectory(runtimeRoot);
+          return { fingerprint: nextFingerprint };
+        }
+        await rename(previousPath, currentPath);
+        await syncDirectory(root);
+        await syncDirectory(runtimeRoot);
+        current = await readTree(currentPath);
+        currentFingerprint = fingerprint(current);
+      }
+      if (currentFingerprint !== input.expectedFingerprint)
+        throw new FileNativeWorldCreationError(
+          "operation_conflict",
+          "World control changed after this revision epoch opened",
+        );
+      await rm(stagingRoot, { recursive: true, force: true });
+      await rm(previousPath, { recursive: true, force: true });
+      await writeSurface(stagingRoot, "control", input.files);
+      await durableTree(stagingRoot);
+      await rename(currentPath, previousPath);
+      await syncDirectory(root);
+      await syncDirectory(runtimeRoot);
+      await rename(stagedPath, currentPath);
+      await syncDirectory(root);
+      await syncDirectory(stagingRoot);
+      await rm(previousPath, { recursive: true, force: true });
+      await rm(stagingRoot, { recursive: true, force: true });
+      await syncDirectory(runtimeRoot);
+      return { fingerprint: nextFingerprint };
+    });
   }
 
   async previewControlDraft(
@@ -745,6 +881,11 @@ export class FileNativeWorldStore {
   freezeControl(worldId: string, operationId: string): void {
     assertIdentity(worldId, "World ID");
     assertIdentity(operationId, "operation ID");
+    if (this.#openingWorldRevisions.has(worldId))
+      throw new FileNativeWorldCreationError(
+        "operation_conflict",
+        "World control is locked while a world revision opens",
+      );
     const users = this.#activeControlUsers.get(worldId) ?? new Set<string>();
     users.add(operationId);
     this.#activeControlUsers.set(worldId, users);
@@ -1340,6 +1481,35 @@ export class FileNativeWorldStore {
       throw new TypeError("Timeline-revision request fingerprint is invalid");
     await this.ensureCurrentStorage(input.worldId);
 
+    try {
+      return await this.operations.withExclusiveWorldStateMutation(
+        input.worldId,
+        () => this.#reviseTimelineUnlocked(input),
+      );
+    } catch (error: unknown) {
+      if (error instanceof WorldOperationBusyError)
+        throw new FileNativeWorldCreationError(
+          "operation_conflict",
+          "Timeline editing is locked while a world revision is open",
+        );
+      throw error;
+    }
+  }
+
+  async #reviseTimelineUnlocked(input: {
+    operationId: string;
+    worldId: string;
+    expectedCurrentHead: string;
+    restoresHead: string;
+    replacesHead: string;
+    replacementText: string;
+    requestFingerprint: string;
+  }): Promise<
+    Extract<
+      FileNativeOperationOutcome,
+      { outcome: "committed" | "committed_materialization_pending" }
+    >
+  > {
     const existing = await this.getOperationOutcome(input.operationId);
     if (isCommittedOutcome(existing)) {
       const fact = await new FileNativeAuthorityV3(
@@ -1409,6 +1579,8 @@ export class FileNativeWorldStore {
     nextMaterials: MaterialSelection[];
     stateChanges: FileNativeStateChange[];
     stateOperationClaim?: ContinuityCorrectionWorldClaimHandle;
+    worldRevisionLock?: WorldRevisionLockHandle;
+    validationControl?: readonly ContentTreeFile[];
   }): Promise<
     Extract<
       FileNativeOperationOutcome,
@@ -1436,17 +1608,32 @@ export class FileNativeWorldStore {
           mode: "correction",
           historyAppend: [],
           operationReserved,
+          ...(input.validationControl === undefined
+            ? {}
+            : { validationControl: input.validationControl }),
         });
       };
-      return input.stateOperationClaim === undefined
-        ? await this.operations.withExclusiveWorldStateMutation(
-            input.worldId,
-            commit,
-          )
-        : await this.operations.withCorrectionWorldClaim(
-            input.stateOperationClaim,
-            commit,
-          );
+      if (
+        input.stateOperationClaim !== undefined &&
+        input.worldRevisionLock !== undefined
+      )
+        throw new TypeError(
+          "A correction cannot use two world-operation claims",
+        );
+      if (input.worldRevisionLock !== undefined)
+        return await this.operations.withWorldRevisionLock(
+          input.worldRevisionLock,
+          commit,
+        );
+      if (input.stateOperationClaim !== undefined)
+        return await this.operations.withCorrectionWorldClaim(
+          input.stateOperationClaim,
+          commit,
+        );
+      return await this.operations.withExclusiveWorldStateMutation(
+        input.worldId,
+        commit,
+      );
     } catch (error: unknown) {
       if (error instanceof WorldOperationBusyError)
         throw new FileNativeWorldCreationError(
@@ -1480,11 +1667,27 @@ export class FileNativeWorldStore {
       throw new TypeError(
         "A call-chain commit cannot omit both narrative and state changes",
       );
-    return this.#commitHistoryChange({
-      ...input,
-      nextMaterials: worldNeutralMaterials(input.worldId, input.nextMaterials),
-      mode: "play",
-    });
+    try {
+      return await this.operations.withExclusiveWorldStateMutation(
+        input.worldId,
+        () =>
+          this.#commitHistoryChange({
+            ...input,
+            nextMaterials: worldNeutralMaterials(
+              input.worldId,
+              input.nextMaterials,
+            ),
+            mode: "play",
+          }),
+      );
+    } catch (error: unknown) {
+      if (error instanceof WorldOperationBusyError)
+        throw new FileNativeWorldCreationError(
+          "operation_conflict",
+          "Play is locked while a world revision is open",
+        );
+      throw error;
+    }
   }
 
   async #commitHistoryChange(input: {
@@ -1497,6 +1700,7 @@ export class FileNativeWorldStore {
     mode: "play" | "correction" | "timeline_revision";
     timelineRevision?: FileNativeAuthorityTimelineRevision;
     operationReserved?: boolean;
+    validationControl?: readonly ContentTreeFile[];
   }): Promise<
     Extract<
       FileNativeOperationOutcome,
@@ -1605,7 +1809,7 @@ export class FileNativeWorldStore {
               "operation_conflict",
               "The world has accepted but unrepaired materialization; new competing writes are forbidden",
             );
-          const [basisState, currentControl] = await Promise.all([
+          const [basisState, storedControl] = await Promise.all([
             authorityStore.recoverState(
               input.timelineRevision?.restoresHead ?? authority.head,
             ),
@@ -1654,10 +1858,12 @@ export class FileNativeWorldStore {
                 path: `world/${path}`,
                 contents,
               })),
-              ...currentControl.map(({ path, contents }) => ({
-                path: `control/${path}`,
-                contents,
-              })),
+              ...(input.validationControl ?? storedControl).map(
+                ({ path, contents }) => ({
+                  path: `control/${path}`,
+                  contents,
+                }),
+              ),
             ],
             { requireOpening: false },
           );

@@ -136,6 +136,50 @@ export type V1Request =
     }
   | { type: "world.control-draft.preview"; worldId: string }
   | { type: "world.control-draft.apply"; worldId: string }
+  | { type: "world.revision.open"; worldId: string }
+  | { type: "world.revision.overview"; worldId: string }
+  | { type: "world.revision.status"; worldId: string; sessionId?: string }
+  | {
+      type: "world.revision.session.read";
+      worldId: string;
+      sessionId: string;
+    }
+  | {
+      type: "world.revision.session.delete";
+      worldId: string;
+      sessionId: string;
+    }
+  | {
+      type: "world.revision.message";
+      worldId: string;
+      requestId: string;
+      message: string;
+      continuation:
+        | { kind: "fresh_context" }
+        | { kind: "continue_context"; sessionId: string };
+    }
+  | { type: "world.revision.cancel"; sessionId: string }
+  | {
+      type: "world.revision.files.replace";
+      worldId: string;
+      epochId: string;
+      expectedRevision: string;
+      files: ContentTreeFile[];
+    }
+  | {
+      type: "world.revision.rollback";
+      worldId: string;
+      epochId: string;
+      changeSetId: string;
+      path: string;
+    }
+  | {
+      type: "world.revision.apply";
+      worldId: string;
+      epochId: string;
+      expectedRevision: string;
+    }
+  | { type: "world.revision.discard"; worldId: string; epochId: string }
   | {
       type: "world.derive";
       operationId: string;
@@ -430,6 +474,75 @@ export interface V1SettingImprovementView {
     updatedAt: number;
   };
   lastFailure: string | null;
+}
+
+export interface V1WorldRevisionChangeSet {
+  changeSetId: string;
+  source: "manual" | "ai" | "rollback";
+  createdAt: number;
+  changes: V1SettingAuthoringDiff[];
+}
+
+export interface V1WorldRevisionEpochView {
+  epochId: string;
+  worldId: string;
+  lifecycle: "active" | "applying" | "applied" | "discarded";
+  locked: boolean;
+  baseHead: string;
+  revision: string;
+  files: ContentTreeFile[];
+  diff: V1SettingAuthoringDiff[];
+  diagnostics: { code: string; path: string; message: string }[];
+  changes: V1WorldRevisionChangeSet[];
+  createdAt: number;
+  updatedAt: number;
+  finishedAt: number | null;
+  appliedHead: string | null;
+}
+
+export interface V1WorldRevisionHistoryItem extends V1SettingImprovementHistoryItem {
+  epochId: string;
+}
+
+export interface V1WorldRevisionSealedEpochView {
+  epochId: string;
+  worldId: string;
+  lifecycle: "applied" | "discarded";
+  baseHead: string;
+  diff: V1SettingAuthoringDiff[];
+  changes: V1WorldRevisionChangeSet[];
+  createdAt: number;
+  finishedAt: number;
+  appliedHead: string | null;
+}
+
+export interface V1WorldRevisionView {
+  sessionId: string;
+  worldId: string;
+  epochId: string;
+  runStatus: "ready" | "running" | "interrupted";
+  messages: V1SettingConversationMessage[];
+  turns: V1SettingConversationTurn[];
+  usage: ModelUsage;
+  progress: V1SettingImprovementView["progress"];
+  lastFailure: string | null;
+}
+
+export interface V1WorldRevisionOverview {
+  epoch: V1WorldRevisionEpochView | null;
+  sealedEpochs: V1WorldRevisionSealedEpochView[];
+  latest: V1WorldRevisionView | null;
+  history: V1WorldRevisionHistoryItem[];
+}
+
+export interface V1WorldRevisionStatus {
+  /** Changes only when durable epoch or conversation history changes. */
+  revision: string;
+  selected: null | {
+    sessionId: string;
+    runStatus: "ready" | "running" | "interrupted";
+    progress: V1WorldRevisionView["progress"];
+  };
 }
 
 export type V1PlayCallChainStatus = "ready" | "running" | "interrupted";
@@ -757,6 +870,42 @@ const requiredFields: Record<
   "world.control-draft.save": { worldId: "string", files: "array" },
   "world.control-draft.preview": { worldId: "string" },
   "world.control-draft.apply": { worldId: "string" },
+  "world.revision.open": { worldId: "string" },
+  "world.revision.overview": { worldId: "string" },
+  "world.revision.status": { worldId: "string" },
+  "world.revision.session.read": {
+    worldId: "string",
+    sessionId: "string",
+  },
+  "world.revision.session.delete": {
+    worldId: "string",
+    sessionId: "string",
+  },
+  "world.revision.message": {
+    worldId: "string",
+    requestId: "string",
+    message: "string",
+    continuation: "object",
+  },
+  "world.revision.cancel": { sessionId: "string" },
+  "world.revision.files.replace": {
+    worldId: "string",
+    epochId: "string",
+    expectedRevision: "string",
+    files: "array",
+  },
+  "world.revision.rollback": {
+    worldId: "string",
+    epochId: "string",
+    changeSetId: "string",
+    path: "string",
+  },
+  "world.revision.apply": {
+    worldId: "string",
+    epochId: "string",
+    expectedRevision: "string",
+  },
+  "world.revision.discard": { worldId: "string", epochId: "string" },
   "world.derive": {
     operationId: "string",
     sourceWorldId: "string",
@@ -1056,7 +1205,19 @@ function validateRequestFields(request: Record<string, unknown>): void {
       "invalid_request",
       "world.surface.read.surface is invalid",
     );
-  if (request.type === "setting-improvement.message") {
+  if (
+    request.type === "world.revision.status" &&
+    request.sessionId !== undefined &&
+    (typeof request.sessionId !== "string" || request.sessionId.length === 0)
+  )
+    throw new V1ProtocolError(
+      "invalid_request",
+      "world.revision.status.sessionId is invalid",
+    );
+  if (
+    request.type === "setting-improvement.message" ||
+    request.type === "world.revision.message"
+  ) {
     const continuation = request.continuation;
     if (
       !isRecord(continuation) ||
@@ -1068,7 +1229,7 @@ function validateRequestFields(request: Record<string, unknown>): void {
     )
       throw new V1ProtocolError(
         "invalid_request",
-        "setting-improvement.message.continuation is invalid",
+        `${request.type}.continuation is invalid`,
       );
   }
   if (
@@ -1079,6 +1240,33 @@ function validateRequestFields(request: Record<string, unknown>): void {
     throw new V1ProtocolError(
       "invalid_request",
       "setting-improvement.rollback.changeSetId is invalid",
+    );
+  if (
+    (request.type === "world.revision.files.replace" ||
+      request.type === "world.revision.rollback" ||
+      request.type === "world.revision.apply" ||
+      request.type === "world.revision.discard") &&
+    (typeof request.epochId !== "string" ||
+      !/^revision-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(
+        request.epochId,
+      ))
+  )
+    throw new V1ProtocolError(
+      "invalid_request",
+      `${request.type}.epochId is invalid`,
+    );
+  if (
+    request.type === "world.revision.rollback" &&
+    (typeof request.changeSetId !== "string" ||
+      !/^change-set:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(
+        request.changeSetId,
+      ) ||
+      typeof request.path !== "string" ||
+      request.path.length === 0)
+  )
+    throw new V1ProtocolError(
+      "invalid_request",
+      "world.revision.rollback target is invalid",
     );
 }
 
@@ -1132,6 +1320,17 @@ const requestTypes = new Set([
   "world.control-draft.save",
   "world.control-draft.preview",
   "world.control-draft.apply",
+  "world.revision.open",
+  "world.revision.overview",
+  "world.revision.status",
+  "world.revision.session.read",
+  "world.revision.session.delete",
+  "world.revision.message",
+  "world.revision.cancel",
+  "world.revision.files.replace",
+  "world.revision.rollback",
+  "world.revision.apply",
+  "world.revision.discard",
   "world.derive",
   "play.chain.revise-player",
   "play.chain.start",

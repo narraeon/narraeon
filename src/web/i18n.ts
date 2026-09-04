@@ -1516,6 +1516,101 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
 
 Object.assign(englishMessages, playWorkspaceEnglishMessages);
 
+const worldRevisionEnglishMessages: Record<string, string> = {
+  世界修订: "World revision",
+  世界修订导航: "World-revision navigation",
+  世界修订工具: "World-revision tools",
+  世界修订对话: "World-revision conversation",
+  世界修订工作树: "World-revision worktree",
+  世界修订文件: "World-revision files",
+  世界修订文件树: "World-revision file tree",
+  世界修订文件编辑: "Edit world-revision files",
+  世界修订文件预览: "Preview world-revision files",
+  世界修订文件视图: "World-revision file view",
+  世界修订状态: "World-revision status",
+  世界修订文件统计: "World-revision file counts",
+  世界修订对话历史: "World-revision conversation history",
+  没有未保存修改: "No unsaved changes",
+  "世界修订只接受 state 下的 YAML／Markdown，以及受支持的 control 文件。":
+    "World revision accepts YAML or Markdown under state, plus the supported control files.",
+  "既有状态文档的路径和身份在修订中保持不变。":
+    "An existing state document keeps its path and identity during revision.",
+  世界状态: "World state",
+  修订工作树: "Revision worktree",
+  "手动编辑和 AI 共用一份修订": "Manual edits and the model share one revision",
+  "手动编辑与 AI 共用这棵 state／control 工作树；保存后仍可逐次回滚，应用才会提交世界。":
+    "Manual edits and model changes share this state/control worktree. Saved changes remain individually reversible; only Apply commits the world.",
+  "state 和 control 已锁定到这份工作树；可逐次回滚，应用或放弃后才会解锁游玩。":
+    "State and control are locked to this worktree. Changes can be rolled back individually; play unlocks only after Apply or Discard.",
+  "先配置并启用模型，才能让 AI 参与或应用世界修订；手动编辑和放弃仍然可用。":
+    "Configure and enable a model to involve it in or apply the revision. Manual editing and Discard remain available.",
+  "所有绿色新增和红色删除都只在锁定工作树中；“应用并解锁”才会提交世界，关闭页面不会丢失修订。":
+    "Every green addition and red deletion remains in the locked worktree. Apply and unlock commits the world; closing this page does not lose the revision.",
+  世界游玩已锁定: "World play is locked",
+  "当前累计改动 {count} 个文件。可以继续聊天、手动编辑或按文件回滚。":
+    "The revision currently changes {count} file(s). You can keep chatting, edit manually, or roll back individual files.",
+  修订记录: "Revision history",
+  "{count} 次修改": "{count} change(s)",
+  已封存修订: "Sealed revisions",
+  "{count} 次记录": "{count} record(s)",
+  已应用修订: "Applied revision",
+  已放弃修订: "Discarded revision",
+  封存时的完整差异: "Complete diff when sealed",
+  "AI 修改": "Model edit",
+  回滚: "Rollback",
+  这次修改的完整差异: "Complete diff for this change",
+  "新对话会从当前修订工作树开始；原有对话仍保留在历史中。":
+    "The new conversation starts from the current revision worktree. Earlier conversations remain in history.",
+  "下一条消息会追加到原 Provider 上下文；若修订 epoch 已变化，Runtime 会要求 AI 重新读取。":
+    "The next message continues the original provider context. If the revision epoch changed, Runtime requires the model to read again.",
+  "正在恢复世界修订…": "Restoring the world revision…",
+  "例如：先检查人物关系是否自洽；或者把当前地点改成雨夜码头，并同步控制规则。":
+    "For example: check whether the relationships are coherent, or move the current location to a rainy wharf and update the control rules with it.",
+  "可以讨论、要求它检查状态，也可以直接让它修改当前世界修订。":
+    "Discuss the world, ask the model to inspect its state, or have it edit the active revision.",
+  "删除对话“{title}”？只会删除对话记录；修订工作树中的改动不会回滚。此操作无法撤销。":
+    "Delete conversation “{title}”? This deletes only the conversation record; worktree changes are not rolled back. This cannot be undone.",
+  "开始后，对话、Provider 返回内容和修订差异会保留在这里。":
+    "Conversations, provider responses, and revision diffs are retained here.",
+  正在预览已保存的修订工作树: "Previewing the saved revision worktree",
+  "当前修订工作树还没有文件。": "The revision worktree has no files yet.",
+  "从左侧新建状态或控制文件。": "Create a state or control file from the left.",
+  "Ctrl / ⌘ + S 保存到修订工作树":
+    "Ctrl / ⌘ + S saves to the revision worktree",
+  "工作树：": "Worktree:",
+  修订工作树已保存: "Revision worktree saved",
+  "保存只更新锁定工作树并留下可回滚记录，不会提交世界。":
+    "Saving updates only the locked worktree and records a reversible change. It does not commit the world.",
+  保存到修订: "Save to revision",
+  "正在应用…": "Applying…",
+  应用并解锁: "Apply and unlock",
+  放弃: "Discard",
+  "世界已锁定到这份修订；关闭页面也会保留工作树。":
+    "The world is locked to this revision. Closing the page still preserves the worktree.",
+  "手动修改已保存到修订工作树，可以继续编辑或回滚。":
+    "Manual changes were saved to the revision worktree. You can keep editing or roll them back.",
+  "这个文件已经是该次修改前的版本。":
+    "This file already matches its version before that change.",
+  "已回滚所选文件；其他修订保持不变。":
+    "The selected file was rolled back; other revision changes remain.",
+  "世界修订已应用并解锁。再次继续原对话时，AI 会先重新读取当前世界。":
+    "The world revision was applied and unlocked. Continuing the same conversation later requires the model to read the current world again.",
+  "放弃这次世界修订？所有尚未应用的手动和 AI 修改都会丢失。":
+    "Discard this world revision? Every unapplied manual and model change will be lost.",
+  "这次世界修订已放弃，原世界保持不变并已解锁。":
+    "This world revision was discarded. The original world is unchanged and unlocked.",
+  "世界正在修订，游玩和其他世界修改已锁定；应用或放弃后会解锁。":
+    "The world is being revised, so play and other world changes are locked until you apply or discard it.",
+  "世界修订期间，分叉和控制变更已锁定；本地显示名称仍可修改。":
+    "Forking and control changes are locked during world revision. The local display name remains editable.",
+  继续修订: "Continue revision",
+  "Runtime 证据": "Runtime evidence",
+  "这里只查看上下文证据，不会开启修订或锁定世界。":
+    "This view only inspects context evidence; it does not start a revision or lock the world.",
+};
+
+Object.assign(englishMessages, worldRevisionEnglishMessages);
+
 const dynamicEnglishMessages: Record<string, string> = {
   开场: "Opening",
   控制: "Control",

@@ -19,6 +19,11 @@ import type {
   V1PlayTimelineItem,
   V1PlayTimelinePage,
   V1Request,
+  V1SettingImprovementRollbackResult,
+  V1WorldRevisionEpochView,
+  V1WorldRevisionOverview,
+  V1WorldRevisionStatus,
+  V1WorldRevisionView,
 } from "../protocol/v1.ts";
 import {
   defaultAppReadingPreferences,
@@ -29,14 +34,12 @@ import type {
   RenderedPlayerView,
 } from "../protocol/playerViews.ts";
 import { createClientId } from "./ClientId.ts";
-import type { CorrectionPreviewView } from "./FileNativeCorrectionPanel.tsx";
-import { worldDocumentPresentation } from "./worldDocumentPresentation.ts";
 import {
+  AiReadingDialog,
   AiReadingRail,
   ReadingPreferencesPopover,
   WorldDocumentRail,
   WorldManagementDialog,
-  WorldRevisionDialog,
 } from "./WorldPlayWorkspacePanels.tsx";
 import {
   ArtifactExtensionHost,
@@ -53,6 +56,10 @@ import { projectUncoveredPlayerViews } from "./PlayerViewFallback.ts";
 import { ModelUsageBreakdown } from "./ModelUsageBreakdown.tsx";
 import { PlayRunProgress } from "./PlayRunProgress.tsx";
 import {
+  SettingImprovementPanel,
+  type SettingImprovementView,
+} from "./SettingImprovementPanel.tsx";
+import {
   activePlayExchangeId,
   createPlayRunProgress,
   progressAfterFrame,
@@ -61,7 +68,7 @@ import {
 } from "./PlayRunProgressState.ts";
 
 type RightRailTab = "documents" | "ai-reading";
-type WorldDialog = "revision" | "manage" | null;
+type WorldDialog = "revision" | "reading" | "manage" | null;
 type PlayerRevisionContinuation = Extract<
   V1Request,
   { type: "play.chain.revise-player" }
@@ -72,9 +79,6 @@ type PendingAction =
   | "timeline-page"
   | "control-preview"
   | "control-apply"
-  | "correction-preview"
-  | "correction-apply"
-  | "correction-cancel"
   | "rename"
   | "revise"
   | "derive";
@@ -104,6 +108,7 @@ interface WorldReadView {
   committedMessages: WorldMessage[];
   playCallChain: V1PlayCallChainView | null;
   playTimeline?: V1PlayTimelinePage;
+  worldRevision?: V1WorldRevisionEpochView | null;
 }
 
 interface WorldPlayDecorationsView {
@@ -156,9 +161,6 @@ export function WorldPage({
   const [rightRailTab, setRightRailTab] = useState<RightRailTab>("documents");
   const [readingOpen, setReadingOpen] = useState(false);
   const [dialog, setDialog] = useState<WorldDialog>(null);
-  const [revisionTab, setRevisionTab] = useState<"manual" | "ai-reading">(
-    "manual",
-  );
   const [readingPreferences, setReadingPreferences] = useState(
     initialReadingPreferences,
   );
@@ -189,16 +191,24 @@ export function WorldPage({
   const [controlFiles, setControlFiles] = useState("[]");
   const [controlDirty, setControlDirty] = useState(false);
   const [controlPreview, setControlPreview] = useState<unknown>(null);
-  const [correction, setCorrection] = useState<{
-    candidateId: string;
-    version: number;
-  } | null>(null);
-  const [correctionPreview, setCorrectionPreview] =
-    useState<CorrectionPreviewView | null>(null);
-  const [correctionBaseFiles, setCorrectionBaseFiles] = useState<
+  const [revisionOverview, setRevisionOverview] =
+    useState<V1WorldRevisionOverview | null>(null);
+  const [revisionView, setRevisionView] = useState<V1WorldRevisionView | null>(
+    null,
+  );
+  const [revisionFiles, setRevisionFiles] = useState<ContentTreeFile[]>([]);
+  const [savedRevisionFiles, setSavedRevisionFiles] = useState<
     ContentTreeFile[]
   >([]);
-  const [correctionFiles, setCorrectionFiles] = useState<ContentTreeFile[]>([]);
+  const [revisionLoading, setRevisionLoading] = useState(false);
+  const [revisionStartingFresh, setRevisionStartingFresh] = useState(false);
+  const [revisionRequestFailure, setRevisionRequestFailure] = useState<
+    string | null
+  >(null);
+  const [revisionNotice, setRevisionNotice] = useState("");
+  const [revisionApplying, setRevisionApplying] = useState(false);
+  const [revisionNow, setRevisionNow] = useState(Date.now());
+  const revisionDirtyRef = useRef(false);
   const [aiReading, setAiReading] = useState<V1PlayContextReadingView | null>(
     null,
   );
@@ -212,7 +222,8 @@ export function WorldPage({
   const [composerHeight, setComposerHeight] = useState(72);
   const worldHead = world?.head;
   const openedWorldId = world?.worldId;
-  const correctionDirty = !sameTextFiles(correctionBaseFiles, correctionFiles);
+  const revisionDirty = !sameTextFiles(savedRevisionFiles, revisionFiles);
+  revisionDirtyRef.current = revisionDirty;
 
   useEffect(() => {
     let active = true;
@@ -346,10 +357,6 @@ export function WorldPage({
           current === null ? null : { ...current, state, control, runtime },
         );
         setSelectedDocument((current) => selectedStateDocument(state, current));
-        if (!correctionDirty) {
-          setCorrectionBaseFiles(cloneTextFiles(state));
-          setCorrectionFiles(cloneTextFiles(state));
-        }
         if (!controlDirty) setControlFiles(JSON.stringify(control, null, 2));
       } catch (reason: unknown) {
         if (active) setFeedback({ kind: "error", text: errorMessage(reason) });
@@ -359,15 +366,7 @@ export function WorldPage({
     return () => {
       active = false;
     };
-  }, [
-    client,
-    controlDirty,
-    correctionDirty,
-    dialog,
-    rightRailOpen,
-    world,
-    worldId,
-  ]);
+  }, [client, controlDirty, dialog, rightRailOpen, world, worldId]);
 
   useEffect(() => {
     if (
@@ -405,6 +404,78 @@ export function WorldPage({
     worldHead,
     worldId,
   ]);
+
+  useEffect(() => {
+    if (dialog !== "revision") return;
+    let active = true;
+    let polling = false;
+    let loadedRevision: string | null = null;
+    const selectedSessionId = revisionStartingFresh
+      ? undefined
+      : revisionView?.sessionId;
+    const poll = async (): Promise<void> => {
+      if (polling) return;
+      polling = true;
+      try {
+        const status = await requestRuntime<V1WorldRevisionStatus>(client, {
+          type: "world.revision.status",
+          worldId,
+          ...(selectedSessionId === undefined
+            ? {}
+            : { sessionId: selectedSessionId }),
+        });
+        if (!active) return;
+        const selectedStatus = status.selected;
+        if (!revisionStartingFresh && selectedStatus !== null) {
+          setRevisionView((current) =>
+            current?.sessionId !== selectedStatus.sessionId
+              ? current
+              : {
+                  ...current,
+                  runStatus: selectedStatus.runStatus,
+                  progress: selectedStatus.progress,
+                },
+          );
+        }
+        setRevisionNow(Date.now());
+        if (status.revision === loadedRevision) return;
+        const next = await requestRuntime<V1WorldRevisionOverview>(client, {
+          type: "world.revision.overview",
+          worldId,
+        });
+        if (!active) return;
+        loadedRevision = status.revision;
+        setRevisionOverview(next);
+        setRevisionView((current) =>
+          current === null || current.sessionId === next.latest?.sessionId
+            ? next.latest
+            : current,
+        );
+        if (!revisionDirtyRef.current && next.epoch !== null) {
+          setRevisionFiles(cloneTextFiles(next.epoch.files));
+          setSavedRevisionFiles(cloneTextFiles(next.epoch.files));
+        }
+        setWorld((current) =>
+          current === null
+            ? null
+            : {
+                ...current,
+                worldRevision: next.epoch?.locked === true ? next.epoch : null,
+              },
+        );
+      } catch {
+        // Polling is observational; explicit actions surface their own errors.
+      } finally {
+        polling = false;
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 800);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [client, dialog, revisionStartingFresh, revisionView?.sessionId, worldId]);
 
   useLayoutEffect(() => {
     const textarea = composerTextareaRef.current;
@@ -476,6 +547,11 @@ export function WorldPage({
     playCallChain?.chainId ?? playTimeline?.activeChainId ?? null;
   const activeCanRetry =
     playCallChain?.canRetry ?? playTimeline?.activeCanRetry ?? false;
+  const activeRevisionEpoch =
+    revisionOverview?.epoch?.locked === true
+      ? revisionOverview.epoch
+      : (world?.worldRevision ?? null);
+  const worldRevisionLocked = activeRevisionEpoch?.locked === true;
   const activeChainStale =
     forceFreshContext ||
     (world !== null &&
@@ -483,7 +559,8 @@ export function WorldPage({
       playCallChain.parentHead !== world.head);
   const playProgressActive = playProgress !== null;
   const hasPlayerText = playerText.trim().length > 0;
-  const playIdle = pending === null && activeStatus !== "running";
+  const playIdle =
+    pending === null && activeStatus !== "running" && !worldRevisionLocked;
   const canStartFresh = hasPlayerText && playIdle;
   const canAppend =
     playIdle &&
@@ -763,176 +840,278 @@ export function WorldPage({
     }
   }
 
-  async function previewCorrection(): Promise<void> {
-    const changed = changedTextFiles(correctionBaseFiles, correctionFiles);
-    if (changed.length === 0 || activeStatus === "running") return;
-    setPending("correction-preview");
-    let activeCandidate: { candidateId: string; version: number } | null = null;
+  async function openRevision(path?: string): Promise<void> {
+    if (path !== undefined) setSelectedDocument(path);
+    setDialog("revision");
+    setRightRailOpen(false);
+    setReadingOpen(false);
+    setRevisionLoading(true);
+    setRevisionRequestFailure(null);
     try {
-      if (correction !== null)
-        await client.request({
-          type: "correction.cancel",
-          candidateId: correction.candidateId,
-          expectedVersion: correction.version,
-        });
-      const started = await requestRuntime<{
-        candidateId: string;
-        version: number;
-        parentHead: string;
-      }>(client, {
-        type: "correction.begin",
+      const next = await requestRuntime<V1WorldRevisionOverview>(client, {
+        type: "world.revision.open",
         worldId,
-        operationId: createClientId("correction"),
       });
-      activeCandidate = {
-        candidateId: started.candidateId,
-        version: started.version,
-      };
-      setCorrection(activeCandidate);
-      for (const nextFile of changed) {
-        const baseFile = correctionBaseFiles.find(
-          ({ path }) => path === nextFile.path,
-        );
-        if (baseFile === undefined)
-          throw new Error("World correction cannot create a new document.");
-        const handle = `@${worldDocumentPresentation(baseFile).ref}`;
-        const read = await requestRuntime<{
-          hash: string;
-          contents: string;
-        }>(client, {
-          type: "correction.read",
-          candidateId: activeCandidate.candidateId,
-          document: handle,
-        });
-        if (read.contents !== baseFile.contents)
-          throw new Error(
-            "The current world changed after this editor opened. Reopen the revision workbench before applying edits.",
-          );
-        const replaced: { version: number } = await requestRuntime<{
-          version: number;
-        }>(client, {
-          type: "correction.replace",
-          candidateId: activeCandidate.candidateId,
-          expectedVersion: activeCandidate.version,
-          target: handle,
-          expectedHash: read.hash,
-          contents: nextFile.contents,
-        });
-        activeCandidate = {
-          candidateId: activeCandidate.candidateId,
-          version: replaced.version,
-        };
-        setCorrection(activeCandidate);
+      setRevisionOverview(next);
+      setRevisionView(next.latest);
+      setRevisionStartingFresh(next.latest === null);
+      if (next.epoch !== null) {
+        setRevisionFiles(cloneTextFiles(next.epoch.files));
+        setSavedRevisionFiles(cloneTextFiles(next.epoch.files));
       }
-      const preview = await requestRuntime<CorrectionPreviewView>(client, {
-        type: "correction.preview",
-        candidateId: activeCandidate.candidateId,
-        expectedVersion: activeCandidate.version,
-      });
-      setCorrectionPreview(preview);
-      setFeedback({
-        kind: "status",
-        text: uiText("修订草稿已预览；应用前当前世界没有变化。"),
-      });
+      setWorld((current) =>
+        current === null
+          ? null
+          : {
+              ...current,
+              worldRevision: next.epoch?.locked === true ? next.epoch : null,
+            },
+      );
+      setRevisionNotice(
+        uiText("世界已锁定到这份修订；关闭页面也会保留工作树。"),
+      );
     } catch (reason: unknown) {
-      if (activeCandidate !== null)
-        await client
-          .request({
-            type: "correction.cancel",
-            candidateId: activeCandidate.candidateId,
-            expectedVersion: activeCandidate.version,
-          })
-          .catch(() => undefined);
-      setCorrection(null);
-      setCorrectionPreview(null);
+      setDialog(null);
       setFeedback({ kind: "error", text: errorMessage(reason) });
     } finally {
-      setPending(null);
+      setRevisionLoading(false);
     }
   }
 
-  async function applyCorrection(): Promise<void> {
-    if (correction === null || correctionPreview === null) return;
-    setPending("correction-apply");
+  async function saveRevisionFiles(): Promise<void> {
+    const epoch = revisionOverview?.epoch;
+    if (
+      epoch === null ||
+      epoch === undefined ||
+      !epoch.locked ||
+      !revisionDirty
+    )
+      return;
+    setRevisionLoading(true);
+    setRevisionRequestFailure(null);
     try {
-      await client.request({
-        type: "correction.apply",
-        candidateId: correction.candidateId,
-        expectedVersion: correction.version,
+      const next = await requestRuntime<V1WorldRevisionOverview>(client, {
+        type: "world.revision.files.replace",
+        worldId,
+        epochId: epoch.epochId,
+        expectedRevision: epoch.revision,
+        files: revisionFiles,
       });
-      setCorrection(null);
-      setCorrectionPreview(null);
-      setCorrectionBaseFiles([]);
-      setCorrectionFiles([]);
-      setDialog(null);
-      setRightRailTab("documents");
-      setRightRailOpen(true);
-      setForceFreshContext(true);
-      const refreshed = await refreshWorld();
-      if (refreshed.state.length > 0) {
-        setCorrectionBaseFiles(cloneTextFiles(refreshed.state));
-        setCorrectionFiles(cloneTextFiles(refreshed.state));
+      setRevisionOverview(next);
+      if (next.epoch !== null) {
+        setRevisionFiles(cloneTextFiles(next.epoch.files));
+        setSavedRevisionFiles(cloneTextFiles(next.epoch.files));
       }
+      setRevisionNotice(
+        uiText("手动修改已保存到修订工作树，可以继续编辑或回滚。"),
+      );
+    } catch (reason: unknown) {
+      setRevisionRequestFailure(errorMessage(reason));
+      throw reason;
+    } finally {
+      setRevisionLoading(false);
+    }
+  }
+
+  async function sendRevisionMessage(message: string): Promise<void> {
+    if (revisionDirty) return;
+    const selected = revisionStartingFresh ? null : revisionView;
+    setRevisionStartingFresh(false);
+    setRevisionRequestFailure(null);
+    setRevisionNotice("");
+    try {
+      const nextView = await requestRuntime<V1WorldRevisionView>(client, {
+        type: "world.revision.message",
+        worldId,
+        requestId: createClientId("world-revision-message"),
+        message,
+        continuation:
+          selected === null
+            ? { kind: "fresh_context" }
+            : {
+                kind: "continue_context",
+                sessionId: selected.sessionId,
+              },
+      });
+      setRevisionView(nextView);
+      const next = await requestRuntime<V1WorldRevisionOverview>(client, {
+        type: "world.revision.overview",
+        worldId,
+      });
+      setRevisionOverview(next);
+      if (next.epoch !== null) {
+        setRevisionFiles(cloneTextFiles(next.epoch.files));
+        setSavedRevisionFiles(cloneTextFiles(next.epoch.files));
+      }
+    } catch (reason: unknown) {
+      setRevisionRequestFailure(errorMessage(reason));
+      throw reason;
+    }
+  }
+
+  async function cancelRevisionMessage(): Promise<void> {
+    if (revisionView === null) return;
+    try {
+      setRevisionView(
+        await requestRuntime<V1WorldRevisionView>(client, {
+          type: "world.revision.cancel",
+          sessionId: revisionView.sessionId,
+        }),
+      );
+    } catch (reason: unknown) {
+      setRevisionRequestFailure(errorMessage(reason));
+    }
+  }
+
+  async function selectRevisionSession(sessionId: string): Promise<void> {
+    setRevisionLoading(true);
+    setRevisionRequestFailure(null);
+    try {
+      setRevisionView(
+        await requestRuntime<V1WorldRevisionView>(client, {
+          type: "world.revision.session.read",
+          worldId,
+          sessionId,
+        }),
+      );
+      setRevisionStartingFresh(false);
+    } catch (reason: unknown) {
+      setRevisionRequestFailure(errorMessage(reason));
+    } finally {
+      setRevisionLoading(false);
+    }
+  }
+
+  async function deleteRevisionSession(sessionId: string): Promise<void> {
+    setRevisionLoading(true);
+    setRevisionRequestFailure(null);
+    try {
+      const next = await requestRuntime<V1WorldRevisionOverview>(client, {
+        type: "world.revision.session.delete",
+        worldId,
+        sessionId,
+      });
+      setRevisionOverview(next);
+      if (revisionView?.sessionId === sessionId) setRevisionView(next.latest);
+      setRevisionStartingFresh(next.latest === null);
+    } catch (reason: unknown) {
+      setRevisionRequestFailure(errorMessage(reason));
+    } finally {
+      setRevisionLoading(false);
+    }
+  }
+
+  async function rollbackRevisionFile(
+    _sessionId: string,
+    changeSetId: string,
+    path: string,
+  ): Promise<V1SettingImprovementRollbackResult> {
+    const epoch = revisionOverview?.epoch;
+    if (!epoch?.locked)
+      throw new Error("The world-revision epoch is no longer active");
+    setRevisionRequestFailure(null);
+    try {
+      const result = await requestRuntime<V1SettingImprovementRollbackResult>(
+        client,
+        {
+          type: "world.revision.rollback",
+          worldId,
+          epochId: epoch.epochId,
+          changeSetId,
+          path,
+        },
+      );
+      const next = await requestRuntime<V1WorldRevisionOverview>(client, {
+        type: "world.revision.overview",
+        worldId,
+      });
+      setRevisionOverview(next);
+      if (next.epoch !== null) {
+        setRevisionFiles(cloneTextFiles(next.epoch.files));
+        setSavedRevisionFiles(cloneTextFiles(next.epoch.files));
+      }
+      setRevisionNotice(
+        result.status === "already_rolled_back"
+          ? uiText("这个文件已经是该次修改前的版本。")
+          : uiText("已回滚所选文件；其他修订保持不变。"),
+      );
+      return result;
+    } catch (reason: unknown) {
+      setRevisionRequestFailure(errorMessage(reason));
+      throw reason;
+    }
+  }
+
+  async function applyRevision(): Promise<void> {
+    const epoch = revisionOverview?.epoch;
+    if (
+      epoch === null ||
+      epoch === undefined ||
+      !epoch.locked ||
+      revisionDirty ||
+      epoch.diagnostics.length > 0
+    )
+      return;
+    setRevisionApplying(true);
+    setRevisionRequestFailure(null);
+    try {
+      await requestRuntime<V1WorldRevisionOverview>(client, {
+        type: "world.revision.apply",
+        worldId,
+        epochId: epoch.epochId,
+        expectedRevision: epoch.revision,
+      });
+      setDialog(null);
+      setRevisionOverview(null);
+      setRevisionFiles([]);
+      setSavedRevisionFiles([]);
+      if (epoch.diff.length > 0) setForceFreshContext(true);
+      await refreshWorld(false);
       setFeedback({
         kind: "status",
         text: uiText(
-          "世界修订已提交。现有追加上下文已过期，下一次行动会自动使用全新上下文。",
+          "世界修订已应用并解锁。再次继续原对话时，AI 会先重新读取当前世界。",
         ),
       });
     } catch (reason: unknown) {
-      setFeedback({ kind: "error", text: errorMessage(reason) });
+      setRevisionRequestFailure(errorMessage(reason));
     } finally {
-      setPending(null);
+      setRevisionApplying(false);
     }
   }
 
-  async function cancelCorrection(): Promise<void> {
-    if (correction === null) {
-      setCorrectionPreview(null);
-      setCorrectionFiles(cloneTextFiles(correctionBaseFiles));
-      setDialog(null);
+  async function discardRevision(): Promise<void> {
+    const epoch = revisionOverview?.epoch;
+    if (
+      epoch === null ||
+      epoch === undefined ||
+      !epoch.locked ||
+      !globalThis.confirm(
+        uiText("放弃这次世界修订？所有尚未应用的手动和 AI 修改都会丢失。"),
+      )
+    )
       return;
-    }
-    setPending("correction-cancel");
+    setRevisionApplying(true);
+    setRevisionRequestFailure(null);
     try {
-      await client.request({
-        type: "correction.cancel",
-        candidateId: correction.candidateId,
-        expectedVersion: correction.version,
+      await requestRuntime<V1WorldRevisionOverview>(client, {
+        type: "world.revision.discard",
+        worldId,
+        epochId: epoch.epochId,
       });
-      setCorrection(null);
-      setCorrectionPreview(null);
-      setCorrectionFiles(cloneTextFiles(correctionBaseFiles));
       setDialog(null);
+      setRevisionOverview(null);
+      setRevisionFiles([]);
+      setSavedRevisionFiles([]);
+      await refreshWorld(false);
       setFeedback({
         kind: "status",
-        text: uiText("修订草稿已放弃，世界端点没有推进。"),
+        text: uiText("这次世界修订已放弃，原世界保持不变并已解锁。"),
       });
     } catch (reason: unknown) {
-      setFeedback({ kind: "error", text: errorMessage(reason) });
+      setRevisionRequestFailure(errorMessage(reason));
     } finally {
-      setPending(null);
-    }
-  }
-
-  async function returnToCorrectionEditor(): Promise<void> {
-    if (correction === null) {
-      setCorrectionPreview(null);
-      return;
-    }
-    setPending("correction-cancel");
-    try {
-      await client.request({
-        type: "correction.cancel",
-        candidateId: correction.candidateId,
-        expectedVersion: correction.version,
-      });
-      setCorrection(null);
-      setCorrectionPreview(null);
-    } catch (reason: unknown) {
-      setFeedback({ kind: "error", text: errorMessage(reason) });
-    } finally {
-      setPending(null);
+      setRevisionApplying(false);
     }
   }
   async function deriveWorld(sourceHead = world?.head): Promise<void> {
@@ -1051,21 +1230,6 @@ export function WorldPage({
     void submitPlayChain(activeChainStale ? "fresh" : "append");
   }
 
-  function openRevision(tab: "manual" | "ai-reading", path?: string): void {
-    if (path !== undefined) setSelectedDocument(path);
-    if (
-      tab === "manual" &&
-      correction === null &&
-      !correctionDirty &&
-      documents.length > 0
-    ) {
-      setCorrectionBaseFiles(cloneTextFiles(documents));
-      setCorrectionFiles(cloneTextFiles(documents));
-    }
-    setRevisionTab(tab);
-    setDialog("revision");
-  }
-
   async function saveReadingPreferences(
     next: AppReadingPreferences,
   ): Promise<void> {
@@ -1109,6 +1273,96 @@ export function WorldPage({
       </main>
     );
 
+  if (dialog === "revision") {
+    const epoch = revisionOverview?.epoch ?? activeRevisionEpoch;
+    const panelView: SettingImprovementView | null =
+      revisionStartingFresh || revisionView === null
+        ? null
+        : {
+            ...revisionView,
+            packageId: worldId,
+            legacyDraft: null,
+          };
+    return (
+      <SettingImprovementPanel
+        target="world-revision"
+        packageName={worldTitle}
+        modelConfigured={modelConfigured}
+        hasUnsavedFileDraft={revisionDirty}
+        loading={revisionLoading}
+        view={panelView}
+        history={revisionOverview?.history ?? []}
+        latestSessionId={revisionOverview?.latest?.sessionId ?? null}
+        notice={revisionNotice}
+        requestFailure={revisionRequestFailure}
+        now={revisionNow}
+        contentEditor={{
+          mode: "world-revision",
+          files: revisionFiles,
+          ...(selectedDocument === ""
+            ? {}
+            : {
+                selectedPath: selectedDocument.startsWith("state/")
+                  ? selectedDocument
+                  : `state/${selectedDocument}`,
+              }),
+          status:
+            (epoch?.diagnostics.length ?? 0) === 0 ? "usable" : "needs_repair",
+          issues: epoch?.diagnostics ?? [],
+          immutablePaths:
+            epoch?.files
+              .filter(
+                ({ path }) =>
+                  path.startsWith("state/") &&
+                  !epoch.diff.some(
+                    (change) =>
+                      change.path === path && change.kind === "create",
+                  ),
+              )
+              .map(({ path }) => path) ?? [],
+          dirty: revisionDirty,
+          onFilesChange: setRevisionFiles,
+          onSave: () => void saveRevisionFiles(),
+          onReset: () => setRevisionFiles(cloneTextFiles(savedRevisionFiles)),
+          onCopy: () => undefined,
+          onExport: () => undefined,
+          onDelete: () => undefined,
+          title: worldTitle,
+          onRename: () => undefined,
+        }}
+        onSend={sendRevisionMessage}
+        onCancel={cancelRevisionMessage}
+        onFreshContext={() => {
+          setRevisionStartingFresh(true);
+          setRevisionView(null);
+          setRevisionRequestFailure(null);
+        }}
+        onSelectSession={selectRevisionSession}
+        onDeleteSession={deleteRevisionSession}
+        onRollbackFile={rollbackRevisionFile}
+        onConfigureModel={onConfigureModel}
+        onBack={() => {
+          setDialog(null);
+          setRevisionRequestFailure(null);
+          void refreshWorld(false);
+        }}
+        {...(epoch?.locked === true
+          ? {
+              revisionActions: {
+                changedFileCount: epoch.diff.length,
+                canApply: modelConfigured && epoch.diagnostics.length === 0,
+                applying: revisionApplying,
+                changes: epoch.changes,
+                sealedEpochs: revisionOverview?.sealedEpochs ?? [],
+                onApply: applyRevision,
+                onDiscard: discardRevision,
+              },
+            }
+          : {})}
+      />
+    );
+  }
+
   const defaultSubmitFresh = activeChainId === null || activeChainStale;
   const defaultSubmitEnabled = defaultSubmitFresh ? canStartFresh : canAppend;
 
@@ -1142,7 +1396,7 @@ export function WorldPage({
         artifacts={world.artifacts ?? []}
         playerViewPanels={world.playerViewPanels ?? []}
         playerViews={world.playerViews}
-        interactionDisabled={pending !== null}
+        interactionDisabled={pending !== null || worldRevisionLocked}
         onSetComposerDraft={setPlayerText}
         onRefresh={async () => {
           await refreshWorld();
@@ -1264,7 +1518,7 @@ export function WorldPage({
                   client={client}
                   worldId={worldId}
                   items={playTimeline.items}
-                  restartDisabled={pending !== null}
+                  restartDisabled={pending !== null || worldRevisionLocked}
                   freshContextDisabled={!modelConfigured}
                   onRestartFrom={(head) => void deriveWorld(head)}
                   onEditPlayer={(chainId, eventId, editedText, continuation) =>
@@ -1288,7 +1542,7 @@ export function WorldPage({
                     ...message,
                     pending: false,
                   }))}
-                  restartDisabled={pending !== null}
+                  restartDisabled={pending !== null || worldRevisionLocked}
                   onRestartFrom={(head) => void deriveWorld(head)}
                 />
               )}
@@ -1305,6 +1559,18 @@ export function WorldPage({
 
           <footer ref={composerRef} className="world-composer-dock">
             <ArtifactExtensionMount mount="composer_above" />
+            {worldRevisionLocked ? (
+              <div className="model-required-callout" role="status">
+                <p>
+                  {uiText(
+                    "世界正在修订，游玩和其他世界修改已锁定；应用或放弃后会解锁。",
+                  )}
+                </p>
+                <button type="button" onClick={() => void openRevision()}>
+                  {uiText("继续修订")}
+                </button>
+              </div>
+            ) : null}
             {!modelConfigured ? (
               <div className="model-required-callout">
                 <p>{uiText("需要先配置模型连接才能游玩。")}</p>
@@ -1383,7 +1649,8 @@ export function WorldPage({
                   disabled={
                     pending !== null ||
                     !modelConfigured ||
-                    activeStatus === "running"
+                    activeStatus === "running" ||
+                    worldRevisionLocked
                   }
                   onChange={(event) => setPlayerText(event.target.value)}
                   onKeyDown={(event) => {
@@ -1538,19 +1805,26 @@ export function WorldPage({
                   documents={documents}
                   selectedPath={selectedDocument}
                   onSelect={setSelectedDocument}
-                  onRevise={(path) => openRevision("manual", path)}
+                  onRevise={(path) => void openRevision(path)}
+                  revisionDisabled={
+                    pending !== null || activeStatus === "running"
+                  }
                 />
               ) : (
                 <AiReadingRail
                   reading={aiReading}
                   loading={aiReadingLoading}
                   documents={documents}
-                  onOpenFull={() => openRevision("ai-reading")}
+                  onOpenFull={() => setDialog("reading")}
                 />
               )}
             </div>
             <footer>
-              <button type="button" onClick={() => openRevision("manual")}>
+              <button
+                type="button"
+                disabled={pending !== null || activeStatus === "running"}
+                onClick={() => void openRevision()}
+              >
                 {uiText("修订当前世界")}
               </button>
               <button type="button" onClick={() => setDialog("manage")}>
@@ -1568,27 +1842,11 @@ export function WorldPage({
             />
           ) : null}
 
-          {dialog === "revision" ? (
-            <WorldRevisionDialog
-              files={revisionTab === "ai-reading" ? documents : correctionFiles}
-              selectedPath={selectedDocument}
-              dirty={correctionDirty}
-              preview={correctionPreview}
+          {dialog === "reading" ? (
+            <AiReadingDialog
               reading={aiReading}
-              tab={revisionTab}
-              pending={pending !== null}
-              onFilesChange={setCorrectionFiles}
-              onSelectedPathChange={setSelectedDocument}
-              onTab={setRevisionTab}
-              onPreview={() => void previewCorrection()}
-              onApply={() => void applyCorrection()}
-              onBack={() => void returnToCorrectionEditor()}
-              onDiscard={() => void cancelCorrection()}
-              onClose={() => {
-                if (correction !== null)
-                  void returnToCorrectionEditor().then(() => setDialog(null));
-                else setDialog(null);
-              }}
+              documents={documents}
+              onClose={() => setDialog(null)}
             />
           ) : null}
 
@@ -1614,6 +1872,7 @@ export function WorldPage({
               onApplyControl={() => void applyControl()}
               onClose={() => setDialog(null)}
               modelConfigured={modelConfigured}
+              revisionLocked={worldRevisionLocked}
             />
           ) : null}
 
@@ -2465,15 +2724,6 @@ function sameTextFiles(
   );
 }
 
-function changedTextFiles(
-  before: readonly ContentTreeFile[],
-  after: readonly ContentTreeFile[],
-): ContentTreeFile[] {
-  return after.filter((file) => {
-    const previous = before.find(({ path }) => path === file.path);
-    return previous?.contents !== file.contents;
-  });
-}
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

@@ -8,12 +8,7 @@ import type {
   ContentTreeFile,
   V1PlayContextReadingView,
 } from "../protocol/v1.ts";
-import { DocumentWorkbench } from "./DocumentWorkbench.tsx";
 import { worldDocumentPresentation } from "./worldDocumentPresentation.ts";
-import {
-  FileNativeCorrectionPanel,
-  type CorrectionPreviewView,
-} from "./FileNativeCorrectionPanel.tsx";
 import { uiText } from "./i18n.ts";
 
 export function WorldDocumentRail({
@@ -21,11 +16,13 @@ export function WorldDocumentRail({
   selectedPath,
   onSelect,
   onRevise,
+  revisionDisabled = false,
 }: {
   documents: readonly ContentTreeFile[];
   selectedPath: string;
   onSelect: (path: string) => void;
   onRevise: (path: string) => void;
+  revisionDisabled?: boolean;
 }): React.JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -129,7 +126,11 @@ export function WorldDocumentRail({
               <strong>{worldDocumentPresentation(selected).title}</strong>
               <small>{worldDocumentPresentation(selected).summary}</small>
             </div>
-            <button type="button" onClick={() => onRevise(selected.path)}>
+            <button
+              type="button"
+              disabled={revisionDisabled}
+              onClick={() => onRevise(selected.path)}
+            >
               {uiText("修订")}
             </button>
           </header>
@@ -198,6 +199,39 @@ export function AiReadingRail({
       <button type="button" onClick={onOpenFull}>
         {uiText("展开完整读取记录")}
       </button>
+    </div>
+  );
+}
+
+export function AiReadingDialog({
+  reading,
+  documents,
+  onClose,
+}: {
+  reading: V1PlayContextReadingView | null;
+  documents: readonly ContentTreeFile[];
+  onClose: () => void;
+}): React.JSX.Element {
+  return (
+    <div className="world-dialog-scrim">
+      <section
+        className="world-workbench-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="ai-reading-audit-title"
+      >
+        <header>
+          <div>
+            <span>{uiText("Runtime 证据")}</span>
+            <h2 id="ai-reading-audit-title">{uiText("AI 如何读取")}</h2>
+            <p>{uiText("这里只查看上下文证据，不会开启修订或锁定世界。")}</p>
+          </div>
+          <button type="button" onClick={onClose} aria-label={uiText("关闭")}>
+            ×
+          </button>
+        </header>
+        <AiReadingAudit reading={reading} documents={documents} />
+      </section>
     </div>
   );
 }
@@ -323,119 +357,6 @@ function ReadingRange({
         onChange={(event) => onChange(Number(event.currentTarget.value))}
       />
     </label>
-  );
-}
-
-export function WorldRevisionDialog({
-  files,
-  selectedPath,
-  dirty,
-  preview,
-  reading,
-  tab,
-  pending,
-  onFilesChange,
-  onSelectedPathChange,
-  onTab,
-  onPreview,
-  onApply,
-  onBack,
-  onDiscard,
-  onClose,
-}: {
-  files: readonly ContentTreeFile[];
-  selectedPath: string;
-  dirty: boolean;
-  preview: CorrectionPreviewView | null;
-  reading: V1PlayContextReadingView | null;
-  tab: "manual" | "ai-reading";
-  pending: boolean;
-  onFilesChange: (files: ContentTreeFile[]) => void;
-  onSelectedPathChange: (path: string) => void;
-  onTab: (tab: "manual" | "ai-reading") => void;
-  onPreview: () => void;
-  onApply: () => void;
-  onBack: () => void;
-  onDiscard: () => void;
-  onClose: () => void;
-}): React.JSX.Element {
-  return (
-    <div className="world-dialog-scrim">
-      <section
-        className="world-workbench-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="world-revision-title"
-      >
-        <header>
-          <div>
-            <span>{uiText("故事之外")}</span>
-            <h2 id="world-revision-title">{uiText("修订当前世界")}</h2>
-            <p>{uiText("只改变从现在起成立的事实；旧叙事保持原样。")}</p>
-          </div>
-          <button type="button" onClick={onClose} aria-label={uiText("关闭")}>
-            ×
-          </button>
-        </header>
-        <nav aria-label={uiText("修订工作台")}>
-          <button
-            type="button"
-            className={tab === "manual" ? "is-current" : ""}
-            onClick={() => onTab("manual")}
-          >
-            {uiText("手动修正")}
-          </button>
-          <button
-            type="button"
-            className={tab === "ai-reading" ? "is-current" : ""}
-            onClick={() => onTab("ai-reading")}
-          >
-            {uiText("AI 如何读取")}
-          </button>
-        </nav>
-        {tab === "ai-reading" ? (
-          <AiReadingAudit reading={reading} documents={files} />
-        ) : preview === null ? (
-          <div className="world-manual-revision">
-            {dirty ? (
-              <div className="world-revision-dirty-bar">
-                <span>{uiText("有尚未预览的修改")}</span>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  disabled={pending}
-                  onClick={onDiscard}
-                >
-                  {uiText("放弃本地修改")}
-                </button>
-              </div>
-            ) : null}
-            <DocumentWorkbench
-              selectedPath={selectedPath}
-              onSelectedPathChange={onSelectedPathChange}
-              workspace={{
-                kind: "world-correction",
-                files,
-                dirty,
-                pending,
-                onFilesChange,
-                onPreview,
-              }}
-            />
-          </div>
-        ) : (
-          <div className="world-correction-review">
-            <FileNativeCorrectionPanel
-              preview={preview}
-              pending={pending}
-              onApply={onApply}
-              onBack={onBack}
-              onCancel={onDiscard}
-            />
-          </div>
-        )}
-      </section>
-    </div>
   );
 }
 
@@ -673,6 +594,7 @@ export function WorldManagementDialog({
   onApplyControl,
   onClose,
   modelConfigured,
+  revisionLocked,
 }: {
   world: { worldId: string; head: string; runtime: unknown };
   worldTitle: string;
@@ -690,6 +612,7 @@ export function WorldManagementDialog({
   onApplyControl: () => void;
   onClose: () => void;
   modelConfigured: boolean;
+  revisionLocked: boolean;
 }): React.JSX.Element {
   return (
     <div className="world-dialog-scrim">
@@ -710,6 +633,13 @@ export function WorldManagementDialog({
           </button>
         </header>
         <div className="world-management-body">
+          {revisionLocked ? (
+            <p className="setting-improvement-warning" role="status">
+              {uiText(
+                "世界修订期间，分叉和控制变更已锁定；本地显示名称仍可修改。",
+              )}
+            </p>
+          ) : null}
           <article className="manage-card world-name-card">
             <div className="manage-card-copy">
               <h3>{uiText("世界名称")}</h3>
@@ -751,7 +681,9 @@ export function WorldManagementDialog({
             </div>
             <button
               type="button"
-              disabled={pending !== null || activeStatus === "running"}
+              disabled={
+                pending !== null || activeStatus === "running" || revisionLocked
+              }
               onClick={onDerive}
             >
               {uiText("创建分叉")}
@@ -774,13 +706,16 @@ export function WorldManagementDialog({
               <textarea
                 rows={18}
                 value={controlFiles}
+                disabled={revisionLocked}
                 onChange={(event) => onControlFiles(event.currentTarget.value)}
               />
             </label>
             <div className="button-row">
               <button
                 type="button"
-                disabled={pending !== null || !modelConfigured}
+                disabled={
+                  pending !== null || !modelConfigured || revisionLocked
+                }
                 onClick={onPreviewControl}
               >
                 {uiText("预览世界控制")}
@@ -790,7 +725,8 @@ export function WorldManagementDialog({
                 disabled={
                   pending !== null ||
                   controlPreview === null ||
-                  activeStatus === "running"
+                  activeStatus === "running" ||
+                  revisionLocked
                 }
                 onClick={onApplyControl}
               >

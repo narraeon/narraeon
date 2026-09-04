@@ -17,6 +17,12 @@ export interface ContinuityCorrectionWorldClaimHandle {
   owner: string;
 }
 
+/** Durable, non-expiring ownership of one world-revision epoch. */
+export interface WorldRevisionLockHandle {
+  worldId: string;
+  epochId: string;
+}
+
 export class WorldOperationClaimLostError extends Error {
   constructor() {
     super("world operation claim was lost");
@@ -40,6 +46,12 @@ interface CorrectionClaimRecord extends ContinuityCorrectionWorldClaimHandle {
   renewalCount: number;
 }
 
+interface WorldRevisionLockRecord extends WorldRevisionLockHandle {
+  schemaVersion: 1;
+  kind: "world_revision_lock";
+  acquiredAt: number;
+}
+
 interface WorldLockOwnerRecord {
   schemaVersion: 1;
   kind: "world_operation_lock_owner";
@@ -60,6 +72,7 @@ const worldLockHeartbeatStaleMilliseconds = 30_000;
  */
 export class FileNativeWorldOperationCoordinator {
   readonly #correctionClaimsRoot: string;
+  readonly #revisionLocksRoot: string;
   readonly #locksRoot: string;
   readonly #authorityLocksRoot: string;
   readonly #now: () => number;
@@ -76,6 +89,7 @@ export class FileNativeWorldOperationCoordinator {
   ) {
     const root = join(resolve(dataRoot), "operations");
     this.#correctionClaimsRoot = join(root, "correction-claims");
+    this.#revisionLocksRoot = join(root, "world-revision-locks");
     this.#locksRoot = join(root, "world-locks");
     this.#authorityLocksRoot = join(root, "authority-locks");
     this.#now = options.now ?? Date.now;
@@ -103,7 +117,10 @@ export class FileNativeWorldOperationCoordinator {
     assertNonEmptyIdentity(worldId, "world ID");
     assertNonEmptyIdentity(operationId, "correction operation ID");
     return this.#withWorldLock(worldId, async () => {
-      if ((await this.#reconcileCorrectionClaim(worldId)) !== null)
+      if (
+        (await this.#reconcileCorrectionClaim(worldId)) !== null ||
+        (await this.#readRevisionLock(worldId)) !== null
+      )
         return { kind: "busy" };
       const now = this.#now();
       const record: CorrectionClaimRecord = {
@@ -178,9 +195,85 @@ export class FileNativeWorldOperationCoordinator {
   ): Promise<Value> {
     assertNonEmptyIdentity(worldId, "world ID");
     return this.#withWorldLock(worldId, async () => {
-      if ((await this.#reconcileCorrectionClaim(worldId)) !== null)
+      if (
+        (await this.#reconcileCorrectionClaim(worldId)) !== null ||
+        (await this.#readRevisionLock(worldId)) !== null
+      )
         throw new WorldOperationBusyError();
       return action();
+    });
+  }
+
+  /**
+   * Acquire or resume a persistent revision lock. The lock deliberately has no
+   * lease timeout: only Apply or Discard may release its epoch.
+   */
+  async acquireWorldRevision(
+    worldId: string,
+    epochId: string,
+  ): Promise<
+    | { kind: "acquired"; handle: WorldRevisionLockHandle }
+    | { kind: "busy"; epochId?: string }
+  > {
+    assertNonEmptyIdentity(worldId, "world ID");
+    assertNonEmptyIdentity(epochId, "world-revision epoch ID");
+    return this.#withWorldLock(worldId, async () => {
+      const existing = await this.#readRevisionLock(worldId);
+      if (existing !== null)
+        return existing.epochId === epochId
+          ? {
+              kind: "acquired",
+              handle: revisionLockHandle(existing),
+            }
+          : { kind: "busy", epochId: existing.epochId };
+      if ((await this.#reconcileCorrectionClaim(worldId)) !== null)
+        return { kind: "busy" };
+      const record: WorldRevisionLockRecord = {
+        schemaVersion: 1,
+        kind: "world_revision_lock",
+        worldId,
+        epochId,
+        acquiredAt: this.#now(),
+      };
+      await publishJson(this.#revisionLockPath(worldId), record);
+      return { kind: "acquired", handle: revisionLockHandle(record) };
+    });
+  }
+
+  async readWorldRevisionLock(
+    worldId: string,
+  ): Promise<WorldRevisionLockHandle | null> {
+    assertNonEmptyIdentity(worldId, "world ID");
+    const record = await this.#readRevisionLock(worldId);
+    return record === null ? null : revisionLockHandle(record);
+  }
+
+  async assertWorldRevisionUnlocked(worldId: string): Promise<void> {
+    assertNonEmptyIdentity(worldId, "world ID");
+    if ((await this.#readRevisionLock(worldId)) !== null)
+      throw new WorldOperationBusyError();
+  }
+
+  async withWorldRevisionLock<Value>(
+    handle: WorldRevisionLockHandle,
+    action: () => Promise<Value>,
+  ): Promise<Value> {
+    assertWorldRevisionLockHandle(handle);
+    return this.#withWorldLock(handle.worldId, async () => {
+      const current = await this.#readRevisionLock(handle.worldId);
+      if (current?.epochId !== handle.epochId)
+        throw new WorldOperationClaimLostError();
+      return action();
+    });
+  }
+
+  async releaseWorldRevision(handle: WorldRevisionLockHandle): Promise<void> {
+    assertWorldRevisionLockHandle(handle);
+    await this.#withWorldLock(handle.worldId, async () => {
+      const current = await this.#readRevisionLock(handle.worldId);
+      if (current?.epochId !== handle.epochId) return;
+      await rm(this.#revisionLockPath(handle.worldId), { force: true });
+      await syncDirectory(this.#revisionLocksRoot);
     });
   }
 
@@ -219,6 +312,23 @@ export class FileNativeWorldOperationCoordinator {
     }
     if (!isCorrectionClaimRecord(value) || value.worldId !== worldId)
       throw new Error("invalid continuity correction claim");
+    return value;
+  }
+
+  async #readRevisionLock(
+    worldId: string,
+  ): Promise<WorldRevisionLockRecord | null> {
+    let value: unknown;
+    try {
+      value = JSON.parse(
+        await readFile(this.#revisionLockPath(worldId), "utf8"),
+      );
+    } catch (error: unknown) {
+      if (isNodeError(error) && error.code === "ENOENT") return null;
+      throw error;
+    }
+    if (!isWorldRevisionLockRecord(value) || value.worldId !== worldId)
+      throw new Error("invalid world revision lock");
     return value;
   }
 
@@ -316,6 +426,41 @@ export class FileNativeWorldOperationCoordinator {
   #correctionClaimPath(worldId: string): string {
     return join(this.#correctionClaimsRoot, `${digest(worldId)}.json`);
   }
+
+  #revisionLockPath(worldId: string): string {
+    return join(this.#revisionLocksRoot, `${digest(worldId)}.json`);
+  }
+}
+
+function isWorldRevisionLockRecord(
+  value: unknown,
+): value is WorldRevisionLockRecord {
+  return (
+    record(value) &&
+    hasExactKeys(value, [
+      "schemaVersion",
+      "kind",
+      "worldId",
+      "epochId",
+      "acquiredAt",
+    ]) &&
+    value.schemaVersion === 1 &&
+    value.kind === "world_revision_lock" &&
+    nonEmptyString(value.worldId) &&
+    nonEmptyString(value.epochId) &&
+    finiteNumber(value.acquiredAt)
+  );
+}
+
+function assertWorldRevisionLockHandle(handle: WorldRevisionLockHandle): void {
+  assertNonEmptyIdentity(handle.worldId, "world ID");
+  assertNonEmptyIdentity(handle.epochId, "world-revision epoch ID");
+}
+
+function revisionLockHandle(
+  record: WorldRevisionLockRecord,
+): WorldRevisionLockHandle {
+  return { worldId: record.worldId, epochId: record.epochId };
 }
 
 function isCorrectionClaimRecord(

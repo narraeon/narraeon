@@ -137,6 +137,26 @@ export interface SettingImprovementPromptInput {
   tools: PromptCompilation["tools"];
 }
 
+export interface WorldRevisionPromptInput {
+  worldTitle: string;
+  runtimeContract: string;
+  authorPrompt: string;
+  playPreset: PlayPresetBinding;
+  modelBinding: FileNativePromptInput["modelBinding"];
+  tools: PromptCompilation["tools"];
+}
+
+interface AuthoringConversationPromptInput {
+  identity: { source: string; markdown: string };
+  boundary: { source: string; markdown: string };
+  runtimeSource: string;
+  runtimeContract: string;
+  authorPrompt: string;
+  playPreset: PlayPresetBinding;
+  modelBinding: FileNativePromptInput["modelBinding"];
+  tools: PromptCompilation["tools"];
+}
+
 export interface PromptPreview {
   diagnosticBinding: {
     endpoint: string;
@@ -321,31 +341,70 @@ export class FileNativePromptCompiler {
   compileSettingImprovement(
     input: SettingImprovementPromptInput,
   ): PromptCompilation {
-    validateModel(input.modelBinding);
-    const presetReference = settingImprovementPresetReference(
-      input.playPreset,
-      this.#locale,
-    );
     const currentTreeBoundary =
       this.#locale === "zh-CN"
         ? "# 内容包当前树写入边界\n\n当前内容包只可通过随附工具读取和修改。完整工具响应中的成功变化由 Runtime 原子发布后立即生效，发布后无需另一步确认。"
         : "# Content-package current-tree write boundary\n\nThe current content package can be read and changed only through the attached tools. Successful changes in a complete tool response take effect as soon as Runtime publishes them atomically, with no second confirmation after publication.";
-    const worldContextBlocks = [
-      {
+    return this.#compileAuthoringConversation({
+      identity: {
         source: "content-package:title",
         markdown: settingContentPackageIdentity(
           input.contentPackageTitle,
           this.#locale,
         ),
       },
+      boundary: {
+        source: "runtime:setting-current-tree-boundary",
+        markdown: currentTreeBoundary,
+      },
+      runtimeSource: "runtime:builtin/setting-improvement",
+      runtimeContract: input.runtimeContract,
+      authorPrompt: input.authorPrompt,
+      playPreset: input.playPreset,
+      modelBinding: input.modelBinding,
+      tools: input.tools,
+    });
+  }
+
+  compileWorldRevision(input: WorldRevisionPromptInput): PromptCompilation {
+    const identity =
+      this.#locale === "zh-CN"
+        ? `# 当前修订世界\n\n${input.worldTitle}`
+        : `# World being revised\n\n${input.worldTitle}`;
+    const boundary =
+      this.#locale === "zh-CN"
+        ? "# 世界修订工作树边界\n\n随附工具只读写当前锁定 epoch 的 state/* 与 control/* 工作树。成功工具调用尚未进入世界 Authority；只有玩家点击应用才会整体提交并解锁。"
+        : "# World-revision worktree boundary\n\nThe attached tools read and write only state/* and control/* in the current locked epoch. Successful tool calls do not enter world Authority until the player applies the complete revision and unlocks it.";
+    return this.#compileAuthoringConversation({
+      identity: { source: "world-revision:title", markdown: identity },
+      boundary: {
+        source: "runtime:world-revision-worktree-boundary",
+        markdown: boundary,
+      },
+      runtimeSource: "runtime:builtin/world-revision",
+      runtimeContract: input.runtimeContract,
+      authorPrompt: input.authorPrompt,
+      playPreset: input.playPreset,
+      modelBinding: input.modelBinding,
+      tools: input.tools,
+    });
+  }
+
+  #compileAuthoringConversation(
+    input: AuthoringConversationPromptInput,
+  ): PromptCompilation {
+    validateModel(input.modelBinding);
+    const presetReference = settingImprovementPresetReference(
+      input.playPreset,
+      this.#locale,
+    );
+    const worldContextBlocks = [
+      input.identity,
       {
         source: "play-preset:author-reference",
         markdown: presetReference,
       },
-      {
-        source: "runtime:setting-current-tree-boundary",
-        markdown: currentTreeBoundary,
-      },
+      input.boundary,
     ];
     const logicalMessages: PromptCompilation["logicalMessages"] = [
       {
@@ -353,7 +412,7 @@ export class FileNativePromptCompiler {
         markdown: input.runtimeContract.trim(),
         blocks: [
           {
-            source: "runtime:builtin/setting-improvement",
+            source: input.runtimeSource,
             markdown: input.runtimeContract.trim(),
           },
         ],

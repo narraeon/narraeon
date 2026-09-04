@@ -23,6 +23,7 @@ import {
   ContentWorkspace,
   InvalidContentTreeError,
 } from "./content/ContentWorkspace.ts";
+import { contentTreeFingerprint } from "./content/ContentTreeFingerprint.ts";
 import { inspectContentPackageCurrentTree } from "./content/FileNativeContentTree.ts";
 import { FileNativeModelHost } from "./model/FileNativeModelAdapters.ts";
 import { type ModelHostBinding } from "./model/ModelHost.ts";
@@ -63,6 +64,12 @@ import { FileNativeWorldStore } from "./world/FileNativeWorldStore.ts";
 import { WorldDocumentStore } from "./world/WorldDocumentStore.ts";
 import { FileNativeAiFailureLog } from "./model/AiFailureLog.ts";
 import { AppPreferencesStore } from "./config/AppPreferencesStore.ts";
+import { FileNativeWorldRevisionStore } from "./world-revision/FileNativeWorldRevisionStore.ts";
+import { WorldRevisionSession } from "./world-revision/WorldRevisionSession.ts";
+import {
+  WorldRevisionWorkspace,
+  WorldRevisionWorkspaceError,
+} from "./world-revision/WorldRevisionWorkspace.ts";
 
 export class V1Runtime {
   readonly #content: ContentWorkspace;
@@ -75,6 +82,7 @@ export class V1Runtime {
   readonly #failureLog: FileNativeAiFailureLog | undefined;
   readonly #preferences: AppPreferencesStore;
   readonly #settingImprovements: SettingImprovementSession;
+  readonly #worldRevisions: WorldRevisionSession;
   readonly #compiler = new FileNativePromptCompiler();
   #locale: AppLocale = defaultAppLocale;
 
@@ -137,6 +145,49 @@ export class V1Runtime {
               this.#locale === "zh-CN"
                 ? "检查内容包当前树。"
                 : "Inspect the content package current tree.",
+            modelBinding,
+          },
+          playPreset,
+        ),
+    });
+    const worldRevisionStore = new FileNativeWorldRevisionStore(input.dataRoot);
+    const worldRevisionWorkspace = new WorldRevisionWorkspace({
+      store: worldRevisionStore,
+      worlds: this.#worlds,
+    });
+    this.#worldRevisions = new WorldRevisionSession({
+      store: worldRevisionStore,
+      workspace: worldRevisionWorkspace,
+      worlds: this.#worlds,
+      compiler: this.#compiler,
+      locale: () => this.#locale,
+      bindModelHost: () => this.#modelHost(),
+      bindExistingModelHost: (binding) => this.#matchingModelHost(binding),
+      bindPlayPreset: () => this.#playPresets.freeze(),
+      preview: ({ snapshot, modelBinding, playPreset, binding, epoch }) =>
+        this.#compiler.preview(
+          {
+            endpoint: {
+              id: `${epoch.worldId}:${epoch.baseHead}:revision`,
+              commit: `worktree:${contentTreeFingerprint(snapshot.files)}`,
+              operationId: epoch.epochId,
+            },
+            hostBinding: presetHostBinding(playPreset),
+            world: {
+              controlFingerprint: fingerprintControl(
+                Object.fromEntries(
+                  snapshot.files.map(({ path, contents }) => [path, contents]),
+                ),
+              ),
+              documentSnapshot: snapshot,
+              history: structuredClone(binding.history),
+              additionalMaterials: structuredClone(binding.additionalMaterials),
+            },
+            playerInputPlacement: "append",
+            playerInput:
+              this.#locale === "zh-CN"
+                ? "检查世界修订工作树。"
+                : "Inspect the world-revision worktree.",
             modelBinding,
           },
           playPreset,
@@ -399,6 +450,7 @@ export class V1Runtime {
         return this.#worlds.renameWorld(request.worldId, request.name);
       case "world.delete":
         return playCall(async () => {
+          await this.#worlds.assertWorldRevisionUnlocked(request.worldId);
           this.#playCallChains.forgetWorld(request.worldId);
           return this.#worlds.deleteWorld(request.worldId);
         });
@@ -408,10 +460,12 @@ export class V1Runtime {
           request.worldId,
           head,
         );
-        const [playerViewPanels, playTimeline] = await Promise.all([
-          this.#frontendPlayerViewPanels(request.worldId, head, playerViews),
-          this.#worlds.playTimeline.readPage(request.worldId, 40),
-        ]);
+        const [playerViewPanels, playTimeline, revisionEpoch] =
+          await Promise.all([
+            this.#frontendPlayerViewPanels(request.worldId, head, playerViews),
+            this.#worlds.playTimeline.readPage(request.worldId, 40),
+            this.#worldRevisions.activeEpoch(request.worldId),
+          ]);
         return {
           worldId: request.worldId,
           head,
@@ -427,6 +481,7 @@ export class V1Runtime {
           artifactDebug: [],
           playCallChain: null,
           playTimeline,
+          worldRevision: revisionEpoch,
         };
       }
       case "world.surface.read":
@@ -456,6 +511,7 @@ export class V1Runtime {
         return result;
       }
       case "world.control-draft.save":
+        await this.#worlds.assertWorldRevisionUnlocked(request.worldId);
         return this.#worlds.saveControlDraft(request.worldId, request.files);
       case "world.control-draft.preview": {
         const prompt = {
@@ -477,6 +533,56 @@ export class V1Runtime {
         };
         return this.#worlds.applyControlDraft(request.worldId, prompt);
       }
+      case "world.revision.open":
+        return this.#worldRevisionCall(() =>
+          this.#worldRevisions.open(request.worldId),
+        );
+      case "world.revision.overview":
+        return this.#worldRevisionCall(() =>
+          this.#worldRevisions.overview(request.worldId),
+        );
+      case "world.revision.status":
+        return this.#worldRevisionCall(() =>
+          this.#worldRevisions.status(request.worldId, request.sessionId),
+        );
+      case "world.revision.session.read":
+        return this.#worldRevisionCall(() =>
+          this.#worldRevisions.readSession(request.worldId, request.sessionId),
+        );
+      case "world.revision.session.delete":
+        return this.#worldRevisionCall(() =>
+          this.#worldRevisions.deleteSession(
+            request.worldId,
+            request.sessionId,
+          ),
+        );
+      case "world.revision.message":
+        return this.#worldRevisionCall(() =>
+          this.#worldRevisions.send(request),
+        );
+      case "world.revision.cancel":
+        return this.#worldRevisionCall(() =>
+          this.#worldRevisions.cancel(request.sessionId),
+        );
+      case "world.revision.files.replace":
+        return this.#worldRevisionCall(() =>
+          this.#worldRevisions.replaceFiles(request),
+        );
+      case "world.revision.rollback":
+        return this.#worldRevisionCall(() =>
+          this.#worldRevisions.rollback(request),
+        );
+      case "world.revision.apply": {
+        const result = await this.#worldRevisionCall(() =>
+          this.#worldRevisions.apply(request),
+        );
+        await this.#reconcileArtifacts(request.worldId);
+        return result;
+      }
+      case "world.revision.discard":
+        return this.#worldRevisionCall(() =>
+          this.#worldRevisions.discard(request),
+        );
       case "world.derive": {
         const preset = await this.#playPresets.bindCurrent();
         const result = await this.#playCallChains.deriveWorld({
@@ -498,6 +604,7 @@ export class V1Runtime {
           replacementText: request.replacementText,
         };
         const result = await playCall(async () => {
+          await this.#worlds.assertWorldRevisionUnlocked(request.worldId);
           if (request.continuation === "continue_context")
             return this.#playCallChains.revisePlayer({
               ...base,
@@ -515,6 +622,7 @@ export class V1Runtime {
         return result;
       }
       case "play.chain.start": {
+        await this.#worlds.assertWorldRevisionUnlocked(request.worldId);
         const { modelHost, hostBinding, playPreset, modelBinding } =
           await this.#continuousBinding();
         return playCall(() =>
@@ -534,8 +642,9 @@ export class V1Runtime {
         );
       }
       case "play.chain.append":
-        return playCall(async () =>
-          this.#playCallChains.append({
+        return playCall(async () => {
+          await this.#worlds.assertWorldRevisionUnlocked(request.worldId);
+          return this.#playCallChains.append({
             worldId: request.worldId,
             chainId: request.chainId,
             exchangeId: request.exchangeId,
@@ -544,8 +653,8 @@ export class V1Runtime {
             ...(playCallChainObserver === undefined
               ? {}
               : { observer: playCallChainObserver }),
-          }),
-        );
+          });
+        });
       case "play.chain.cancel":
         return playCall(() =>
           this.#playCallChains.cancel({
@@ -661,6 +770,20 @@ export class V1Runtime {
       fetch,
       this.#failureLog,
     );
+  }
+
+  async #worldRevisionCall<Value>(
+    operation: () => Promise<Value>,
+  ): Promise<Value> {
+    try {
+      return await operation();
+    } catch (error: unknown) {
+      if (error instanceof WorldRevisionWorkspaceError)
+        throw new V1ProtocolError("invalid_request", error.message, {
+          cause: error,
+        });
+      throw error;
+    }
   }
 
   async #matchingModelHost(

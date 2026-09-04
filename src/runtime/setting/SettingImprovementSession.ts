@@ -1,10 +1,5 @@
-import { randomUUID } from "node:crypto";
-
 import type { AppLocale } from "../../protocol/appPreferences.ts";
-import {
-  aggregateModelUsage,
-  emptyAggregatedModelUsage,
-} from "../../protocol/modelUsage.ts";
+import { emptyAggregatedModelUsage } from "../../protocol/modelUsage.ts";
 import type {
   V1SettingAuthoringDiff,
   V1SettingConversationTurn,
@@ -23,14 +18,9 @@ import { contentTreeFingerprint } from "../content/ContentTreeFingerprint.ts";
 import type {
   ModelHost,
   ModelHostBinding,
-  ModelHostDelta,
-  ModelHostResponse,
   ModelHostToolCall,
 } from "../model/ModelHost.ts";
-import {
-  equalModelHostBinding,
-  ModelHostCancelledError,
-} from "../model/ModelHost.ts";
+import { equalModelHostBinding } from "../model/ModelHost.ts";
 import {
   settingImprovementPromptForBinding,
   type PlayPresetBinding,
@@ -40,6 +30,11 @@ import type {
   PromptPreview,
 } from "../prompt/FileNativePromptCompiler.ts";
 import type { WorldDocumentStore } from "../world/WorldDocumentStore.ts";
+import {
+  appendAuthoringUserMessage,
+  ModelToolConversation,
+  rememberAuthoringRequest,
+} from "../authoring/ModelToolConversation.ts";
 import {
   summarizeStoredSettingImprovementSession,
   type FileNativeSettingImprovementStore,
@@ -53,19 +48,9 @@ import {
   settingImprovementToolDefinitions,
 } from "./SettingAuthoringTransaction.ts";
 
-const maximumExchangesPerMessage = 64;
-const maximumStreamTailCharacters = 240;
-
 export type SettingImprovementView = V1SettingImprovementView;
 export type SettingImprovementContinuation =
   { kind: "fresh_context" } | { kind: "continue_context"; sessionId: string };
-
-interface LiveRun {
-  requestId: string;
-  controller: AbortController;
-  promise: Promise<SettingImprovementView>;
-  streaming: NonNullable<SettingImprovementView["progress"]["streaming"]>;
-}
 
 interface ActiveTransaction {
   revision: string;
@@ -96,7 +81,10 @@ export class SettingImprovementSession {
     modelBinding: ModelHostBinding,
     playPreset: PlayPresetBinding | undefined,
   ) => PromptPreview;
-  readonly #runs = new Map<string, LiveRun>();
+  readonly #conversation = new ModelToolConversation<
+    StoredSettingImprovementSession,
+    SettingImprovementView
+  >();
   #mutationTail: Promise<void> = Promise.resolve();
 
   constructor(input: {
@@ -179,7 +167,7 @@ export class SettingImprovementSession {
       let selected = status.selected;
       if (
         selected?.needsRecovery === true &&
-        !this.#runs.has(selected.sessionId)
+        !this.#conversation.isRunning(selected.sessionId)
       ) {
         const recovered = await this.#recoverIfNeeded(
           await this.#store.read(selected.sessionId),
@@ -210,7 +198,7 @@ export class SettingImprovementSession {
     sessionId: string,
   ): Promise<V1SettingImprovementOverview> {
     await this.#mutate(async () => {
-      if (this.#runs.has(sessionId))
+      if (this.#conversation.isRunning(sessionId))
         throw new Error(
           "A running setting-improvement conversation cannot be deleted",
         );
@@ -234,7 +222,7 @@ export class SettingImprovementSession {
     path: string;
   }): Promise<V1SettingImprovementRollbackResult> {
     return this.#mutate(async () => {
-      if (this.#runs.has(input.sessionId))
+      if (this.#conversation.isRunning(input.sessionId))
         throw new SettingImprovementRollbackError(
           "A running setting-improvement conversation cannot be rolled back",
         );
@@ -302,60 +290,30 @@ export class SettingImprovementSession {
       }
       session = await this.#recoverIfNeeded(session);
       if (session.completedRequestIds.includes(requestId))
-        return { session, run: null as LiveRun | null };
-      const running = this.#runs.get(session.sessionId);
-      if (running !== undefined) {
+        return { session, run: null as Promise<SettingImprovementView> | null };
+      const running = this.#conversation.running(session.sessionId);
+      if (running !== null) {
         if (running.requestId !== requestId)
           throw new Error(
             "Another message in this setting-improvement conversation is still running",
           );
-        return { session, run: running };
+        return { session, run: running.promise };
       }
       const host = await this.#bindExistingModelHost(session.modelBinding);
       if (!equalModelHostBinding(session.modelBinding, host.binding()))
         throw new Error(
           "No saved model connection matches this setting-improvement conversation",
         );
-      const now = Date.now();
-      session.messages.push({
-        id: `message-${randomUUID()}`,
-        role: "user",
-        text: message,
-        createdAt: now,
-      });
-      session.modelItems.push({ kind: "user", text: message });
-      session.runStatus = "running";
-      session.activeRequestId = requestId;
-      session.lastFailure = null;
-      session.updatedAt = now;
+      appendAuthoringUserMessage(session, message, requestId);
       await this.#store.save(session);
-      const controller = new AbortController();
-      const live = {
-        requestId,
-        controller,
-        promise: Promise.resolve(
-          undefined as unknown as SettingImprovementView,
-        ),
-        streaming: emptyStreaming(),
-      } satisfies LiveRun;
-      live.promise = this.#run(session, host, live).finally(() => {
-        if (this.#runs.get(session.sessionId) === live)
-          this.#runs.delete(session.sessionId);
-      });
-      this.#runs.set(session.sessionId, live);
-      return { session, run: live };
+      return { session, run: this.#startRun(session, host, requestId) };
     });
-    return prepared.run === null
-      ? this.#view(prepared.session)
-      : prepared.run.promise;
+    return prepared.run ?? this.#view(prepared.session);
   }
 
   async cancel(sessionId: string): Promise<SettingImprovementView> {
-    const running = this.#runs.get(sessionId);
-    if (running !== undefined) {
-      running.controller.abort();
-      return running.promise;
-    }
+    const running = this.#conversation.cancel(sessionId);
+    if (running !== null) return running;
     return this.#mutate(async () =>
       this.#view(
         await this.#recoverIfNeeded(await this.#store.read(sessionId)),
@@ -413,98 +371,36 @@ export class SettingImprovementSession {
     return session;
   }
 
-  async #run(
+  #startRun(
     session: StoredSettingImprovementSession,
     host: ModelHost,
-    live: LiveRun,
+    requestId: string,
   ): Promise<SettingImprovementView> {
     let activeTransaction: ActiveTransaction | null = null;
-    try {
-      for (let round = 0; round < maximumExchangesPerMessage; round += 1) {
-        session.exchange += 1;
-        live.streaming = emptyStreaming();
-        session.updatedAt = Date.now();
-        await this.#store.save(session);
-        const response = await host.exchange(
-          {
-            bootstrap: session.bootstrap,
-            toolUniverse: session.bootstrap.toolUniverse,
-            allowedTools: session.bootstrap.toolUniverse.map(
-              ({ name }) => name,
-            ),
-            toolStrategy: session.bootstrap.toolStrategy,
-            tools: session.bootstrap.tools,
-            appended: session.modelItems,
-            requestId: live.requestId,
-            operationId: session.sessionId,
-            requestAttempt: 1,
-            exchange: session.exchange,
-            maxOutputTokens: session.modelBinding.maxOutputTokens,
-          },
-          {
-            signal: live.controller.signal,
-            onDelta: (delta) => recordDelta(live, delta),
-          },
-        );
-        assertCompleteResponse(response);
-        const toolCalls = response.toolCalls ?? [];
-        assertUniqueToolCallIds(toolCalls);
-        const visibleText = response.text ?? "";
-        if (toolCalls.length === 0 && visibleText.trim().length === 0)
-          throw new Error(
-            "The model returned an empty tool-free authoring response",
-          );
-        session.usage = aggregateModelUsage(session.usage, response.usage);
-        session.modelItems.push({
-          kind: "assistant",
-          text: visibleText,
-          ...(response.reasoningContent === undefined
-            ? {}
-            : { reasoningContent: response.reasoningContent }),
-          providerState: response.providerState!,
-          toolCalls: structuredClone(toolCalls),
-        });
-        session.updatedAt = Date.now();
-        if (toolCalls.length === 0) {
-          session.messages.push({
-            id: `message-${randomUUID()}`,
-            role: "assistant",
-            text: visibleText,
-            createdAt: session.updatedAt,
-          });
-          session.runStatus = "ready";
-          session.activeRequestId = null;
-          session.completedRequestIds = rememberRequest(
-            session.completedRequestIds,
-            live.requestId,
-          );
-          session.lastFailure = null;
-          await this.#store.save(session);
-          return this.#view(session);
-        }
-
+    return this.#conversation.run({
+      session,
+      host,
+      requestId,
+      save: (next) => this.#store.save(next),
+      settleToolResponse: async (next, assistantItemIndex, toolCalls) => {
         activeTransaction = await this.#settleToolResponse(
-          session,
-          session.modelItems.length - 1,
+          next,
+          assistantItemIndex,
           toolCalls,
           activeTransaction,
         );
-      }
-      throw new Error(
-        `Setting improvement exceeded ${maximumExchangesPerMessage} model exchanges for one user message`,
-      );
-    } catch (error: unknown) {
-      session.runStatus = "interrupted";
-      session.activeRequestId = null;
-      session.completedRequestIds = rememberRequest(
-        session.completedRequestIds,
-        live.requestId,
-      );
-      session.lastFailure = describeFailure(error);
-      session.updatedAt = Date.now();
-      await this.#store.save(session);
-      return this.#view(session);
-    }
+      },
+      view: (next) => this.#view(next),
+      failure: {
+        emptyResponse:
+          "The model returned an empty tool-free authoring response",
+        exchangeLimit:
+          "Setting improvement exceeded 64 model exchanges for one user message",
+        cancelled:
+          "The setting-improvement response was cancelled. Complete tool responses already published to the current tree were retained.",
+        interrupted: "The setting-improvement response was interrupted",
+      },
+    });
   }
 
   async #settleToolResponse(
@@ -606,7 +502,7 @@ export class SettingImprovementSession {
   async #recoverIfNeeded(
     original: StoredSettingImprovementSession,
   ): Promise<StoredSettingImprovementSession> {
-    if (this.#runs.has(original.sessionId)) return original;
+    if (this.#conversation.isRunning(original.sessionId)) return original;
     let expected = original;
     const session = structuredClone(original);
     const pendingAssistant = lastPendingAssistant(session);
@@ -725,28 +621,28 @@ export class SettingImprovementSession {
   #statusView(
     summary: StoredSettingImprovementSummary,
   ): NonNullable<V1SettingImprovementStatus["selected"]> {
-    const live = this.#runs.get(summary.sessionId);
+    const streaming = this.#conversation.streaming(summary.sessionId);
     return {
       sessionId: summary.sessionId,
-      runStatus: live === undefined ? summary.runStatus : "running",
+      runStatus: streaming === null ? summary.runStatus : "running",
       progress: {
         exchange: summary.exchange,
         toolCalls: summary.toolCalls,
-        streaming: live === undefined ? null : structuredClone(live.streaming),
+        streaming,
         updatedAt: summary.updatedAt,
       },
     };
   }
 
   #view(session: StoredSettingImprovementSession): SettingImprovementView {
-    const live =
+    const streaming =
       session.runStatus === "running"
-        ? this.#runs.get(session.sessionId)
-        : undefined;
+        ? this.#conversation.streaming(session.sessionId)
+        : null;
     return {
       sessionId: session.sessionId,
       packageId: session.packageId,
-      runStatus: live === undefined ? session.runStatus : "running",
+      runStatus: streaming === null ? session.runStatus : "running",
       messages: structuredClone(session.messages),
       turns: settingConversationTurns(session),
       legacyDraft:
@@ -757,7 +653,7 @@ export class SettingImprovementSession {
       progress: {
         exchange: session.exchange,
         toolCalls: session.toolCalls,
-        streaming: live === undefined ? null : structuredClone(live.streaming),
+        streaming,
         updatedAt: session.updatedAt,
       },
       lastFailure: session.lastFailure,
@@ -776,24 +672,6 @@ export class SettingImprovementSession {
     } finally {
       release();
     }
-  }
-}
-
-function assertCompleteResponse(response: ModelHostResponse): void {
-  if (response.providerState === undefined)
-    throw new Error(
-      "The complete authoring response is missing provider continuation state",
-    );
-}
-
-function assertUniqueToolCallIds(
-  calls: readonly { id: string; name: string }[],
-): void {
-  const ids = new Set<string>();
-  for (const call of calls) {
-    if (call.id.length === 0 || call.name.length === 0 || ids.has(call.id))
-      throw new Error("The model returned invalid or duplicate tool-call IDs");
-    ids.add(call.id);
   }
 }
 
@@ -837,53 +715,12 @@ function markInterruptedAfterRestart(
   session.runStatus = "interrupted";
   session.activeRequestId = null;
   if (requestId !== null)
-    session.completedRequestIds = rememberRequest(
+    session.completedRequestIds = rememberAuthoringRequest(
       session.completedRequestIds,
       requestId,
     );
   session.lastFailure =
     "The previous model request stopped before its next complete response. Every settled current-tree change and complete tool result was retained; continue this conversation when ready.";
-}
-
-function emptyStreaming(): NonNullable<
-  SettingImprovementView["progress"]["streaming"]
-> {
-  return {
-    reasoningChars: 0,
-    textChars: 0,
-    toolChars: 0,
-    tail: "",
-    reasoningText: "",
-    visibleText: "",
-    toolFragment: "",
-    receivedAt: Date.now(),
-  };
-}
-
-function recordDelta(live: LiveRun, delta: ModelHostDelta): void {
-  if (delta.kind === "reasoning") {
-    live.streaming.reasoningChars += delta.text.length;
-    live.streaming.reasoningText = `${live.streaming.reasoningText ?? ""}${delta.text}`;
-  } else if (delta.kind === "text") {
-    live.streaming.textChars += delta.text.length;
-    live.streaming.visibleText = `${live.streaming.visibleText ?? ""}${delta.text}`;
-  } else {
-    live.streaming.toolChars += delta.text.length;
-    live.streaming.toolFragment = `${live.streaming.toolFragment ?? ""}${delta.text}`;
-  }
-  if (delta.kind === "text")
-    live.streaming.tail = `${live.streaming.tail}${delta.text}`.slice(
-      -maximumStreamTailCharacters,
-    );
-  live.streaming.receivedAt = Date.now();
-}
-
-function describeFailure(error: unknown): string {
-  if (error instanceof ModelHostCancelledError)
-    return "The setting-improvement response was cancelled. Complete tool responses already published to the current tree were retained.";
-  return error instanceof Error
-    ? error.message
-    : "The setting-improvement response was interrupted";
 }
 
 function requiredMessage(message: string): string {
@@ -898,16 +735,6 @@ function requiredRequestId(requestId: string): string {
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(requestId))
     throw new Error("Invalid setting-improvement request ID");
   return requestId;
-}
-
-function rememberRequest(
-  existing: readonly string[],
-  requestId: string,
-): string[] {
-  return [
-    ...existing.filter((candidate) => candidate !== requestId),
-    requestId,
-  ];
 }
 
 function settingConversationTurns(

@@ -901,25 +901,84 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     .getByRole("complementary", { name: "当前世界" })
     .getByRole("button", { name: "修订当前世界" })
     .click();
-  const correctionDialog = page.getByRole("dialog", {
-    name: "修订当前世界",
-  });
-  await correctionDialog
-    .getByRole("button", { name: "打开 characters/alex.yaml" })
+  await expect(
+    page.getByRole("heading", { name: /Dormitory World.*世界修订/u }),
+  ).toBeVisible();
+  await expect(page.getByText("手动编辑和 AI 共用一份修订")).toBeVisible();
+
+  responses.push(
+    chatTools(
+      [
+        tool("world_revision_read", {
+          path: "control/blocks/world.md",
+        }),
+        tool("world_revision_write_file", {
+          path: "control/blocks/world.md",
+          contents:
+            "# World Narration Rules\n\nWrite persistent outcomes back to their natural owner. Keep this temporary revision concise.\n",
+        }),
+      ],
+      null,
+      "Read the current world control before revising it.",
+    ),
+    chatText("The temporary world-control revision is ready for review."),
+  );
+  await page
+    .getByLabel("用全新上下文给 AI 发消息")
+    .fill("Temporarily make the world narration rule more concise.");
+  await page.getByRole("button", { name: "发送" }).click();
+  await expect(
+    page.locator(".setting-conversation-assistant").last(),
+  ).toContainText("temporary world-control revision");
+  const worldRevisionTurn = page.locator(".setting-conversation-turn").last();
+  await worldRevisionTurn.locator(".setting-turn-trace > summary").click();
+  await worldRevisionTurn
+    .locator(".setting-conversation-trace")
+    .first()
+    .locator(":scope > summary")
     .click();
-  const alexEditor = correctionDialog.getByLabel("编辑 characters/alex.yaml");
+  const worldRevisionWrite = worldRevisionTurn
+    .locator(".setting-exchange-tool")
+    .filter({ hasText: "world_revision_write_file" })
+    .filter({ hasText: "control/blocks/world.md" });
+  await worldRevisionWrite.locator(":scope > summary").click();
+  const worldRevisionDiff = worldRevisionWrite.locator(".setting-change-diff");
+  await worldRevisionDiff.locator(":scope > summary").click();
+  await worldRevisionDiff.getByRole("button", { name: "回滚这个文件" }).click();
+  await expect(page.locator(".setting-workspace-feedback")).toContainText(
+    "已回滚所选文件；其他修订保持不变",
+  );
+  await expect(worldRevisionWrite).toContainText("当前文件已是修改前版本");
+
+  await page
+    .getByRole("navigation", { name: "世界修订工具" })
+    .getByRole("button", { name: "编辑", exact: true })
+    .click();
+  const revisionEditor = page.getByRole("complementary", {
+    name: "世界修订文件编辑",
+  });
+  await revisionEditor
+    .getByRole("button", { name: "打开 state/characters/alex.yaml" })
+    .click();
+  const alexEditor = revisionEditor.getByLabel(
+    "编辑 state/characters/alex.yaml",
+  );
   await alexEditor.fill(
     (await alexEditor.inputValue()).replace(
       "Dark blue athletic tank top",
       "Blue training jacket",
     ),
   );
-  await correctionDialog.getByRole("button", { name: "预览修订" }).click();
-  await expect(
-    correctionDialog.getByRole("heading", { name: "确认修正内容" }),
-  ).toBeVisible();
-  await correctionDialog.getByRole("button", { name: "应用这笔修正" }).click();
-  await page.getByRole("button", { name: "收起世界栏" }).click();
+  await revisionEditor.getByRole("button", { name: "保存到修订" }).click();
+  await expect(page.getByText("手动编辑", { exact: true })).toBeVisible();
+  await revisionEditor.getByRole("button", { name: "收起文件面板" }).click();
+  await page
+    .getByRole("navigation", { name: "世界修订工具" })
+    .getByRole("button", { name: "应用并解锁" })
+    .click();
+  await expect(page.locator(".world-feedback.status")).toContainText(
+    "世界修订已应用并解锁",
+  );
   await page.getByRole("button", { name: "此刻" }).click();
   await expect(page.getByLabel("当前情景")).toContainText(
     "Blue training jacket",
@@ -981,7 +1040,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   ).toBeVisible();
 });
 
-test("世界修订保持紧凑编辑区且世界管理可以纵向滚动", async ({ page }) => {
+test("世界修订复用统一编辑工作区且世界管理可以纵向滚动", async ({ page }) => {
   await page.setViewportSize({ width: 700, height: 500 });
   await page.goto("/");
   await page.locator(".workspace-locale-picker select").selectOption("zh-CN");
@@ -1011,86 +1070,29 @@ test("世界修订保持紧凑编辑区且世界管理可以纵向滚动", async
     .getByRole("complementary", { name: "当前世界" })
     .getByRole("button", { name: "修订当前世界" })
     .click();
-  const revisionDialog = page.getByRole("dialog", {
-    name: "修订当前世界",
+  await expect(page.getByRole("main", { name: /世界修订/u })).toBeVisible();
+  await expect(page.getByText("手动编辑和 AI 共用一份修订")).toBeVisible();
+  await page
+    .getByRole("navigation", { name: "世界修订工具" })
+    .getByRole("button", { name: "编辑", exact: true })
+    .click();
+  const editorRail = page.getByRole("complementary", {
+    name: "世界修订文件编辑",
   });
-  const revisionLayout = await revisionDialog.evaluate((root) => {
-    const header = root.querySelector(":scope > header");
-    const navigation = root.querySelector(":scope > nav");
-    const workbench = root.querySelector(
-      ".document-workbench-world-correction",
-    );
-    const sidebar = root.querySelector(".content-file-sidebar");
-    const selectedFile = root.querySelector(
-      '.content-file-list button[aria-pressed="true"]',
-    );
-    const editor = root.querySelector(".content-file-editor");
-    const editorHeader = root.querySelector(".content-file-editor-header");
-    const textarea = root.querySelector(".content-source-editor textarea");
-    const review = root.querySelector(".document-workbench-review");
-    if (
-      header === null ||
-      navigation === null ||
-      workbench === null ||
-      sidebar === null ||
-      selectedFile === null ||
-      editor === null ||
-      editorHeader === null ||
-      textarea === null ||
-      review === null
-    )
-      return null;
-    const headerBox = header.getBoundingClientRect();
-    const navigationBox = navigation.getBoundingClientRect();
-    const workbenchBox = workbench.getBoundingClientRect();
-    const selectedFileBox = selectedFile.getBoundingClientRect();
-    const editorBox = editor.getBoundingClientRect();
-    const editorHeaderBox = editorHeader.getBoundingClientRect();
-    const textareaBox = textarea.getBoundingClientRect();
-    const reviewBox = review.getBoundingClientRect();
-    return {
-      headerHeight: headerBox.height,
-      workbenchGap: workbenchBox.top - navigationBox.bottom,
-      sidebarPaddingTop: Number.parseFloat(
-        getComputedStyle(sidebar).paddingTop,
-      ),
-      selectedFileHeight: selectedFileBox.height,
-      editorPaddingTop: Number.parseFloat(getComputedStyle(editor).paddingTop),
-      editorHeaderHeight: editorHeaderBox.height,
-      editorOverflowY: getComputedStyle(editor).overflowY,
-      editorScrollRange: editor.scrollHeight - editor.clientHeight,
-      reviewHeight: reviewBox.height,
-      textareaReviewOverlap: textareaBox.bottom - reviewBox.top,
-      visibleTextareaHeight:
-        Math.min(textareaBox.bottom, reviewBox.top, editorBox.bottom) -
-        Math.max(textareaBox.top, editorBox.top),
-    };
-  });
-  expect(revisionLayout).not.toBeNull();
-  expect.soft(revisionLayout?.headerHeight).toBeLessThanOrEqual(88);
-  expect.soft(revisionLayout?.workbenchGap).toBeLessThanOrEqual(16);
-  expect.soft(revisionLayout?.sidebarPaddingTop).toBeLessThanOrEqual(10);
-  expect.soft(revisionLayout?.selectedFileHeight).toBeLessThanOrEqual(48);
-  expect.soft(revisionLayout?.editorPaddingTop).toBeLessThanOrEqual(10);
-  expect.soft(revisionLayout?.editorHeaderHeight).toBeLessThanOrEqual(44);
-  expect.soft(revisionLayout?.editorOverflowY).toBe("hidden");
-  expect.soft(revisionLayout?.editorScrollRange).toBeLessThanOrEqual(1);
-  expect.soft(revisionLayout?.reviewHeight).toBeLessThanOrEqual(44);
-  expect.soft(revisionLayout?.textareaReviewOverlap).toBeLessThanOrEqual(0);
-  expect
-    .soft(revisionLayout?.visibleTextareaHeight)
-    .toBeGreaterThanOrEqual(260);
-  await expectCanScrollVertically(
-    revisionDialog.locator(".world-manual-revision"),
-  );
-  const revisionEditor = revisionDialog.locator(
-    ".content-source-editor textarea",
-  );
+  await expect(editorRail).toBeVisible();
+  const revisionEditor = editorRail.locator(".content-source-editor textarea");
   await revisionEditor.fill(
     Array.from({ length: 80 }, (_, index) => `line-${index + 1}`).join("\n"),
   );
   await expectCanScrollVertically(revisionEditor);
-  await revisionDialog.getByRole("button", { name: "关闭" }).click();
+  await editorRail.getByRole("button", { name: "放弃未保存修改" }).click();
+  await editorRail.getByRole("button", { name: "收起文件面板" }).click();
+  page.once("dialog", (dialog) => void dialog.accept());
+  await page
+    .getByRole("navigation", { name: "世界修订工具" })
+    .getByRole("button", { name: "放弃", exact: true })
+    .click();
+  await expect(page.getByLabel("你的行动")).toBeVisible();
 
   await page
     .getByRole("navigation", { name: "世界阅读工具" })

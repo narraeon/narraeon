@@ -211,7 +211,7 @@ Prompt Preview 必须调用真实编译器，并展示：
 - 去除凭据后的真实 HTTP method、endpoint path、header 名称与 request body；
 - 内部 DTO 字段泄漏扫描。
 
-内容包和设定完善的生产 Preview 必须明确显示 `opening.md` 不进入 bootstrap，并把预览玩家原文单列为紧随 bootstrap 的首条普通 user 追加；它不能制造一条权威玩家历史。
+内容包设定完善与世界修订的生产 Preview 必须明确显示 `opening.md` 不进入 bootstrap，并把预览玩家原文单列为紧随 bootstrap 的首条普通 user 追加；它不能制造一条权威玩家历史。
 
 预览不调用模型、不创建设定对话、不写入内容树，也不能维护一套近似拼装逻辑。
 
@@ -239,6 +239,16 @@ V1 继续只用 genesis anchor 加不可变 Authority 事实作为正确性来�
 
 连续性修正仍只针对当前端点的文档或材料清单，追加普通 correction 提交；它不替换玩家消息，也不改变活动调用轨迹。时间线修订、连续性修正和创建分叉是三种不同授权，界面不得用同一个含混的“重新开始”动作代替。
 
+## 世界修订
+
+运行中世界的创作入口使用一份持久世界修订 epoch，而不是把内容包设定完善直接指向 Authority，也不为每条手动或 AI 修改建立独立候选。开启入口时，Runtime 从当时的当前端点和控制指纹建立唯一的 `state/*`／`control/*` 工作树并取得非过期独占锁；`opening.md` 已经成为 genesis 主持原文，没有对应的可写当前世界文件。锁存在期间，游玩、时间线修订、连续性修正、控制草稿发布、创建分叉和删除世界都必须在产生世界效果前失败；只读检查和本地世界名称修改仍然可用。浏览器关闭或 Runtime 重启只恢复同一 epoch，不释放锁，也不把工作树重建到更新的世界上。
+
+手动保存和每份完整 AI 工具响应都针对同一工作树 revision 串行结算，并把精确逐文件 before／after 追加到同一改动历史；二者使用同一文件编辑、对话、历史与 diff 界面，不存在“手动修订”和“AI 修订”两个模式。历史中的任一文件可以在活动 epoch 内显式恢复为某次改动的 before-image，即使它后来又被修改；这次恢复本身继续追加为一笔 rollback 改动，不删除模型 transcript 或旧差异。因此玩家可以保留早先若干次修改而只撤销最后一次，不需要整批接受或拒绝一个草稿。epoch 封存后历史继续可读，但所有回滚入口失效。
+
+“应用”先验证整棵工作树及生产等价 Prompt Preview，再用稳定 operation ID 将全部 state 变化作为一次 correction 推进 Authority，随后用确定的 staging／previous 路径幂等发布 control；Runtime 持久记录 prepared、state committed 与 control published 阶段，只有 epoch 已可恢复地标记 applied 后才释放锁。进程在任一阶段中断时只补齐同一操作，不重复推进 Authority，也不把半份 control 当作成功。“放弃”只把 epoch 标记 discarded 并释放锁，不改变 Authority、state 或 control。两种结果都封存此前回滚能力。
+
+世界修订 AI 会话复用设定完善的 Provider／工具循环，但世界工作树、锁、应用和恢复由独立目标模块拥有。会话可以在应用或放弃后继续；下一条新消息会从届时最新世界创建新的 epoch，在 Runtime-system 层追加明确的 epoch 边界，并清空此前 list／search cursor 和完整读取授权。旧 Provider 续传和工具历史原样保留，AI 必须重新读取现有文件后才能写入。浏览器轮询只读取轻量运行状态；durable revision 变化后才重新取得完整工作树和 transcript。
+
 ## 设定完善
 
 设定完善只面向内容包设定，不修改运行中世界状态、已提交叙事、人物当前认知或历史。它和游玩一样使用人类可读 Markdown 输入和 append-only 模型会话，不把完整旧对话反复嵌套进 JSON。
@@ -261,10 +271,12 @@ AI 使用受管的文档 create／write／patch／move／delete 操作修改 YAM
 - `WorldDocumentStore` 拥有世界文档身份、受限 codec、精确读取、候选 patch／create／retire、引用索引和当前树物化。
 - `PromptCompiler` 拥有主持／世界 bootstrap 的确定性编译、Runtime 机械说明、slot 绑定、Markdown 渲染、role 映射、Provider 参数、缓存报告和真实预览；生产游玩调用方只提交编译输入，不另行构造提示词或材料 DTO。
 - `SettingImprovementSession` 拥有设定完善对话、显式继续／全新上下文、稳定工具全集、逐响应当前树结算、历史差异的单文件直接回滚、自动检查、模型调用轨迹和失败恢复；`FileNativeSettingImprovementStore` 只保存可恢复会话、读取授权、结算意图与工具回执，不保存第二棵内容树。
+- `ModelToolConversation` 只拥有作者型 Provider／工具交换、流式观察、取消和请求幂等；内容包与世界修订各自在其结算 seam 后拥有目标树的发布语义。
+- `WorldRevisionWorkspace` 拥有独占 epoch、共享 `state`／`control` 工作树、统一改动历史、逐文件回滚和可恢复 Apply／Discard；`WorldRevisionSession` 拥有跨 epoch 对话、工具授权与重新读取边界，`FileNativeWorldRevisionStore` 保存二者的 durable 状态。
 - `PlayCallChain` 拥有两个提交动作、空输入续写、模型／工具循环、浏览器增量投影、tool-call 幂等、逐响应 Authority 衔接和中断请求原样重发。
 - `FileNativePlayTimelineStore` 拥有跨全新上下文的页面时间线、稳定游标摘要页、单事件详情和可恢复的追加投影。
 - `FileNativePlayAdvanceStore` 拥有冻结请求、完整 Provider 结果、精确响应结算和已结算端点等不可变游玩推进事实。
-- `FileNativeAuthorityV3` 拥有世界中立不可变事实、双父关系、直接结果 root、物理闭包复制和小 continuity head；`FileNativeWorldStore` 拥有世界外壳、operation receipt、投影物化、时间线修订与原子分叉 staging；两者都不向模型暴露提交 DTO。
+- `FileNativeAuthorityV3` 拥有世界中立不可变事实、双父关系、直接结果 root、物理闭包复制和小 continuity head；`FileNativeWorldStore` 拥有世界外壳、operation receipt、投影物化、时间线修订、原子分叉 staging 与修订 control 发布；`FileNativeWorldOperationCoordinator` 在世界语义写入和持久修订锁之间仲裁。它们都不向模型暴露提交 DTO。
 - `FileNativeArtifactStore` 拥有后置请求产物的 pending 记录、结算、保留策略和活动投影；玩法产物不混入世界 Authority。
 - `ModelHost` 与 provider adapter 只拥有协议编码、流式交换和续传，不拥有世界事实或提示词语义。
 - `Runtime` 协调这些深模块，是唯一业务权威。

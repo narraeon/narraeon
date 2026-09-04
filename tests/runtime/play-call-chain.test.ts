@@ -45,6 +45,8 @@ import {
 } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
 import { V1Runtime } from "../../src/runtime/V1Runtime.ts";
 import { FileNativeWorldStore } from "../../src/runtime/world/FileNativeWorldStore.ts";
+import { FileNativeWorldRevisionStore } from "../../src/runtime/world-revision/FileNativeWorldRevisionStore.ts";
+import { WorldRevisionWorkspace } from "../../src/runtime/world-revision/WorldRevisionWorkspace.ts";
 
 const roots: string[] = [];
 
@@ -285,6 +287,62 @@ test("玩家取消会终止当前 Provider 派发并保留已提交玩家原文"
     "门外传来三声短促的铃响。\n",
     "I ask Alex to wait while I reconsider.",
   ]);
+});
+
+test("Provider 游玩调用持有世界使用权，结束前不能开启修订 epoch", async () => {
+  const { worlds, worldId, root } = await createWorld(
+    "play-chain-world-revision-lock",
+  );
+  let markExchangeStarted: (() => void) | undefined;
+  const exchangeStarted = new Promise<void>((resolve) => {
+    markExchangeStarted = resolve;
+  });
+  let finishExchange: (() => void) | undefined;
+  const providerRelease = new Promise<void>((resolve) => {
+    finishExchange = resolve;
+  });
+  const text = "Alex waits until the world revision can safely begin.";
+  const modelHost: ModelHost = {
+    binding: modelBinding,
+    async exchange() {
+      markExchangeStarted?.();
+      await providerRelease;
+      return {
+        text,
+        providerState: {
+          protocol: "chat_completions",
+          assistantMessage: { role: "assistant", content: text },
+        },
+      };
+    },
+  };
+  const chains = new PlayCallChain(worlds);
+  const running = chains.start({
+    worldId,
+    chainId: "play-chain-world-revision-lock-contract",
+    exchangeId: "exchange-world-revision-lock",
+    playerText: "I wait before revising the world.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+  await exchangeStarted;
+
+  const workspace = new WorldRevisionWorkspace({
+    store: new FileNativeWorldRevisionStore(root),
+    worlds,
+  });
+  await expect(workspace.open(worldId)).rejects.toThrow(
+    /operation is still finishing/u,
+  );
+  expect(await worlds.readWorldRevisionLock(worldId)).toBeNull();
+
+  finishExchange?.();
+  await expect(running).resolves.toMatchObject({ status: "ready" });
+  const epoch = await workspace.open(worldId);
+  expect(epoch.lifecycle).toBe("active");
+  await workspace.discard({ worldId, epochId: epoch.epochId });
 });
 
 test("浏览器进度流断开不会隐式取消 Runtime 调用或改变 Authority", async () => {

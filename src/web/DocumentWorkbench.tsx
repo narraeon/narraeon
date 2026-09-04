@@ -30,12 +30,27 @@ interface WorldCorrectionWorkspace {
   onPreview: () => void;
 }
 
+interface WorldRevisionWorkspace {
+  kind: "world-revision";
+  files: readonly ContentTreeFile[];
+  dirty: boolean;
+  pending: boolean;
+  issues: readonly DocumentWorkbenchIssue[];
+  immutablePaths: readonly string[];
+  onFilesChange: (files: ContentTreeFile[]) => void;
+  onSave: () => void;
+}
+
+type DocumentWorkspace =
+  ContentPackageWorkspace | WorldCorrectionWorkspace | WorldRevisionWorkspace;
+type DocumentWorkspaceKind = DocumentWorkspace["kind"];
+
 export function DocumentWorkbench({
   workspace,
   selectedPath: controlledPath,
   onSelectedPathChange,
 }: {
-  workspace: ContentPackageWorkspace | WorldCorrectionWorkspace;
+  workspace: DocumentWorkspace;
   selectedPath?: string;
   onSelectedPathChange?: (path: string) => void;
 }): React.JSX.Element {
@@ -52,6 +67,7 @@ export function DocumentWorkbench({
       ),
     [files, workspace.kind],
   );
+  const managesTree = workspace.kind !== "world-correction";
   const preferredPath =
     workspace.kind === "content-package"
       ? (orderedFiles.find(({ path }) => path === "opening.md")?.path ??
@@ -59,18 +75,27 @@ export function DocumentWorkbench({
           ?.path ??
         orderedFiles[0]?.path ??
         "")
-      : (orderedFiles.find(({ path }) => path === "current-situation.yaml")
-          ?.path ??
-        orderedFiles[0]?.path ??
-        "");
+      : workspace.kind === "world-revision"
+        ? (orderedFiles.find(
+            ({ path }) => path === "state/current-situation.yaml",
+          )?.path ??
+          orderedFiles[0]?.path ??
+          "")
+        : (orderedFiles.find(({ path }) => path === "current-situation.yaml")
+            ?.path ??
+          orderedFiles[0]?.path ??
+          "");
   const requested = controlledPath ?? requestedPath;
   const selectedPath = files.some(({ path }) => path === requested)
     ? requested
     : preferredPath;
   const selectedFile = files.find(({ path }) => path === selectedPath);
+  const selectedPathLocked =
+    workspace.kind === "world-revision" &&
+    workspace.immutablePaths.includes(selectedPath);
   const pathDraft =
     pathEdit.sourcePath === selectedPath ? pathEdit.value : selectedPath;
-  const issues = workspace.kind === "content-package" ? workspace.issues : [];
+  const issues = workspace.kind === "world-correction" ? [] : workspace.issues;
   const normalizedQuery = query.trim().toLocaleLowerCase("zh-CN");
   const visibleFiles =
     normalizedQuery.length === 0
@@ -83,13 +108,12 @@ export function DocumentWorkbench({
   const groups = groupsFor(workspace.kind, visibleFiles);
   const selectedIssues = issues.filter(({ path }) => path === selectedPath);
   const pathError =
-    workspace.kind === "content-package" && selectedFile !== undefined
-      ? validateDraftPath(pathDraft, selectedFile.path, files)
+    managesTree && selectedFile !== undefined
+      ? validateDraftPath(pathDraft, selectedFile.path, files, workspace.kind)
       : "";
-  const newPathError =
-    workspace.kind === "content-package"
-      ? validateDraftPath(newPath, undefined, files)
-      : "";
+  const newPathError = managesTree
+    ? validateDraftPath(newPath, undefined, files, workspace.kind)
+    : "";
 
   function select(path: string): void {
     if (controlledPath === undefined) setRequestedPath(path);
@@ -107,8 +131,9 @@ export function DocumentWorkbench({
 
   function renameSelected(): void {
     if (
-      workspace.kind !== "content-package" ||
+      !managesTree ||
       selectedFile === undefined ||
+      selectedPathLocked ||
       pathError.length > 0
     )
       return;
@@ -126,7 +151,7 @@ export function DocumentWorkbench({
   }
 
   function addFile(): void {
-    if (workspace.kind !== "content-package") return;
+    if (!managesTree) return;
     setNewPathTouched(true);
     if (newPathError.length > 0) return;
     const path = newPath.trim();
@@ -140,7 +165,7 @@ export function DocumentWorkbench({
   }
 
   function removeSelected(): void {
-    if (workspace.kind !== "content-package" || selectedFile === undefined)
+    if (!managesTree || selectedFile === undefined || selectedPathLocked)
       return;
     const remaining = files
       .filter(({ path }) => path !== selectedFile.path)
@@ -151,8 +176,10 @@ export function DocumentWorkbench({
 
   function saveShortcut(): void {
     if (!workspace.dirty) return;
-    if (workspace.kind === "content-package") workspace.onSave();
-    else if (!workspace.pending) workspace.onPreview();
+    if (workspace.kind === "world-correction") {
+      if (!workspace.pending) workspace.onPreview();
+    } else if (workspace.kind === "content-package" || !workspace.pending)
+      workspace.onSave();
   }
 
   return (
@@ -164,7 +191,9 @@ export function DocumentWorkbench({
         aria-label={
           workspace.kind === "content-package"
             ? uiText("内容包文件")
-            : uiText("当前世界文档")
+            : workspace.kind === "world-revision"
+              ? uiText("世界修订文件")
+              : uiText("当前世界文档")
         }
       >
         <header>
@@ -172,7 +201,9 @@ export function DocumentWorkbench({
             <span className="content-editor-kicker">
               {workspace.kind === "content-package"
                 ? uiText("当前草稿")
-                : uiText("当前世界")}
+                : workspace.kind === "world-revision"
+                  ? uiText("修订工作树")
+                  : uiText("当前世界")}
             </span>
             <h4>{uiText("文件")}</h4>
           </div>
@@ -198,7 +229,9 @@ export function DocumentWorkbench({
           aria-label={
             workspace.kind === "content-package"
               ? uiText("内容包文件树")
-              : uiText("当前世界文档")
+              : workspace.kind === "world-revision"
+                ? uiText("世界修订文件树")
+                : uiText("当前世界文档")
           }
         >
           {visibleFiles.length === 0 ? (
@@ -266,7 +299,7 @@ export function DocumentWorkbench({
             ))
           )}
         </nav>
-        {workspace.kind === "content-package" ? (
+        {managesTree ? (
           <details className="content-new-file">
             <summary>{uiText("新建文件")}</summary>
             <div>
@@ -274,7 +307,11 @@ export function DocumentWorkbench({
                 {uiText("新文件路径")}
                 <input
                   value={newPath}
-                  placeholder="world/characters/name.yaml"
+                  placeholder={
+                    workspace.kind === "world-revision"
+                      ? "state/characters/name.yaml"
+                      : "world/characters/name.yaml"
+                  }
                   onChange={(event) => {
                     setNewPath(event.target.value);
                     setNewPathTouched(true);
@@ -320,7 +357,9 @@ export function DocumentWorkbench({
             <p>
               {workspace.kind === "content-package"
                 ? uiText("从左侧新建第一份文件，或返回工作区导入已有内容包。")
-                : uiText("当前世界没有可修订的状态文档。")}
+                : workspace.kind === "world-revision"
+                  ? uiText("从左侧新建状态或控制文件。")
+                  : uiText("当前世界没有可修订的状态文档。")}
             </p>
           </div>
         ) : (
@@ -328,12 +367,14 @@ export function DocumentWorkbench({
             <header className="content-file-editor-header">
               <div>
                 <span className="content-editor-kicker">
-                  {workspace.kind === "content-package"
+                  {workspace.kind === "content-package" ||
+                  workspace.kind === "world-revision"
                     ? describeFile(selectedFile)
                     : uiText("全文编辑")}
                 </span>
                 <h4>
-                  {workspace.kind === "content-package"
+                  {workspace.kind === "content-package" ||
+                  workspace.kind === "world-revision"
                     ? leafName(selectedFile.path)
                     : worldDocumentPresentation(selectedFile).title}
                 </h4>
@@ -341,10 +382,11 @@ export function DocumentWorkbench({
                   <small>{selectedFile.path}</small>
                 ) : null}
               </div>
-              {workspace.kind === "content-package" ? (
+              {managesTree ? (
                 <button
                   type="button"
                   className="danger-button content-remove-file"
+                  disabled={selectedPathLocked}
                   onClick={removeSelected}
                 >
                   {uiText("从草稿移除")}
@@ -363,13 +405,14 @@ export function DocumentWorkbench({
                 </span>
               )}
             </header>
-            {workspace.kind === "content-package" ? (
+            {managesTree ? (
               <>
                 <div className="content-path-editor">
                   <label>
                     {uiText("文件路径")}
                     <input
                       value={pathDraft}
+                      disabled={selectedPathLocked}
                       onChange={(event) =>
                         setPathEdit({
                           sourcePath: selectedFile.path,
@@ -382,6 +425,7 @@ export function DocumentWorkbench({
                     type="button"
                     className="secondary-button"
                     disabled={
+                      selectedPathLocked ||
                       pathError.length > 0 ||
                       pathDraft.trim() === selectedFile.path
                     }
@@ -390,7 +434,11 @@ export function DocumentWorkbench({
                     {uiText("应用新路径")}
                   </button>
                 </div>
-                {pathError.length > 0 && <p role="alert">{pathError}</p>}
+                {pathError.length > 0 ? (
+                  <p role="alert">{pathError}</p>
+                ) : selectedPathLocked ? (
+                  <p>{uiText("既有状态文档的路径和身份在修订中保持不变。")}</p>
+                ) : null}
               </>
             ) : null}
             {selectedFile.encoding === "base64" ? (
@@ -402,8 +450,7 @@ export function DocumentWorkbench({
                   )}
                 </span>
               </div>
-            ) : workspace.kind === "content-package" &&
-              selectedFile.path === "control/frame.yaml" ? (
+            ) : managesTree && selectedFile.path === "control/frame.yaml" ? (
               <WorldFrameEditor
                 contents={selectedFile.contents}
                 files={files}
@@ -418,7 +465,9 @@ export function DocumentWorkbench({
                   <small>
                     {workspace.kind === "content-package"
                       ? uiText("Ctrl / ⌘ + S 整批保存")
-                      : uiText("Ctrl / ⌘ + S 预览整笔修订")}
+                      : workspace.kind === "world-revision"
+                        ? uiText("Ctrl / ⌘ + S 保存到修订工作树")
+                        : uiText("Ctrl / ⌘ + S 预览整笔修订")}
                   </small>
                 </span>
                 <textarea
@@ -505,16 +554,16 @@ export function DocumentWorkbench({
 }
 
 function searchableText(
-  kind: ContentPackageWorkspace["kind"] | WorldCorrectionWorkspace["kind"],
+  kind: DocumentWorkspaceKind,
   file: ContentTreeFile,
 ): string {
-  if (kind === "content-package") return file.path;
+  if (kind !== "world-correction") return file.path;
   const presentation = worldDocumentPresentation(file);
   return `${file.path}\n${presentation.title}\n${presentation.summary}\n${presentation.ref}`;
 }
 
 function groupsFor(
-  kind: ContentPackageWorkspace["kind"] | WorldCorrectionWorkspace["kind"],
+  kind: DocumentWorkspaceKind,
   files: readonly ContentTreeFile[],
 ): { id: string; label: string; files: ContentTreeFile[] }[] {
   const definitions =
@@ -525,15 +574,21 @@ function groupsFor(
           ["control", "控制"],
           ["other", "其他资源"],
         ]
-      : [
-          ["current", "当前情境"],
-          ["characters", "人物"],
-          ["locations", "地点"],
-          ["relationships", "关系"],
-          ["items", "物品"],
-          ["rules", "规则"],
-          ["other", "其他"],
-        ];
+      : kind === "world-revision"
+        ? [
+            ["state", "世界状态"],
+            ["control", "控制"],
+            ["other", "其他"],
+          ]
+        : [
+            ["current", "当前情境"],
+            ["characters", "人物"],
+            ["locations", "地点"],
+            ["relationships", "关系"],
+            ["items", "物品"],
+            ["rules", "规则"],
+            ["other", "其他"],
+          ];
   return definitions.flatMap(([id, label]) => {
     const selected = files.filter(({ path }) => groupFor(kind, path) === id);
     return selected.length === 0
@@ -542,13 +597,15 @@ function groupsFor(
   });
 }
 
-function groupFor(
-  kind: ContentPackageWorkspace["kind"] | WorldCorrectionWorkspace["kind"],
-  path: string,
-): string {
+function groupFor(kind: DocumentWorkspaceKind, path: string): string {
   if (kind === "content-package") {
     if (path === "opening.md") return "opening";
     if (path.startsWith("world/")) return "world";
+    if (path.startsWith("control/")) return "control";
+    return "other";
+  }
+  if (kind === "world-revision") {
+    if (path.startsWith("state/")) return "state";
     if (path.startsWith("control/")) return "control";
     return "other";
   }
@@ -568,6 +625,7 @@ function validateDraftPath(
   rawPath: string,
   currentPath: string | undefined,
   files: readonly ContentTreeFile[],
+  kind: DocumentWorkspaceKind,
 ): string {
   const path = rawPath.trim();
   if (path.length === 0) return uiText("请输入文件路径。");
@@ -587,6 +645,16 @@ function validateDraftPath(
     return uiText("路径不能包含空目录、. 或 ..。");
   if (/\.json$/iu.test(path))
     return uiText("当前文件原生 V1 不接受 manifest 或 JSON 内容文件。");
+  if (
+    kind === "world-revision" &&
+    !/^state\/.+\.(?:ya?ml|md)$/u.test(path) &&
+    path !== "control/frame.yaml" &&
+    path !== "control/player-views.yaml" &&
+    !/^control\/blocks\/.+\.md$/u.test(path)
+  )
+    return uiText(
+      "世界修订只接受 state 下的 YAML／Markdown，以及受支持的 control 文件。",
+    );
   const portablePath = path.normalize("NFC").toLocaleLowerCase("en-US");
   const duplicate = files.some(
     (file) =>
@@ -598,7 +666,7 @@ function validateDraftPath(
 }
 
 function comparePaths(
-  kind: ContentPackageWorkspace["kind"] | WorldCorrectionWorkspace["kind"],
+  kind: DocumentWorkspaceKind,
   left: ContentTreeFile,
   right: ContentTreeFile,
 ): number {
@@ -610,6 +678,13 @@ function comparePaths(
       if (path === "control/frame.yaml") return 3;
       if (path.startsWith("control/")) return 4;
       return 5;
+    }
+    if (kind === "world-revision") {
+      if (path === "state/current-situation.yaml") return 0;
+      if (path.startsWith("state/")) return 1;
+      if (path === "control/frame.yaml") return 2;
+      if (path.startsWith("control/")) return 3;
+      return 4;
     }
     const groups = [
       "current",
@@ -630,7 +705,7 @@ function comparePaths(
 function nextSelectedPath(
   remaining: readonly ContentTreeFile[],
   removedPath: string,
-  kind: ContentPackageWorkspace["kind"] | WorldCorrectionWorkspace["kind"],
+  kind: DocumentWorkspaceKind,
 ): string {
   const ordered = [...remaining].sort((left, right) =>
     comparePaths(kind, left, right),
@@ -662,18 +737,21 @@ function describeFile(file: ContentTreeFile): string {
   return uiText("内容包文本资源");
 }
 
-function editorPlaceholder(
-  path: string,
-  kind: ContentPackageWorkspace["kind"] | WorldCorrectionWorkspace["kind"],
-): string {
+function editorPlaceholder(path: string, kind: DocumentWorkspaceKind): string {
   if (kind === "world-correction") return uiText("输入完整 UTF-8 文档内容……");
   if (path === "opening.md")
     return uiText("写下玩家首次行动前立即看到的局面……");
-  if (path.startsWith("world/") && /\.ya?ml$/iu.test(path))
+  if (
+    (path.startsWith("world/") || path.startsWith("state/")) &&
+    /\.ya?ml$/iu.test(path)
+  )
     return uiText(
       "$document:\n  id: character.example\n  ref: example\n  title: 示例人物\n  summary: 一句话稳定简介。\n  aliases: []\n",
     );
-  if (path.startsWith("world/") && /\.md$/iu.test(path))
+  if (
+    (path.startsWith("world/") || path.startsWith("state/")) &&
+    /\.md$/iu.test(path)
+  )
     return uiText(
       "---\n$document:\n  id: rule.example\n  ref: example\n  title: 示例规则\n  summary: 一句话稳定简介。\n  aliases: []\n---\n\n# 示例规则\n",
     );

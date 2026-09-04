@@ -20,6 +20,9 @@ import type {
   V1PlayTimelinePage,
   V1Request,
   V1SettingPromptPreview,
+  V1WorldRevisionEpochView,
+  V1WorldRevisionOverview,
+  V1WorldRevisionSealedEpochView,
 } from "../../src/protocol/v1.ts";
 import { projectUncoveredPlayerViews } from "../../src/web/PlayerViewFallback.ts";
 import { WorldPage } from "../../src/web/WorldPage.tsx";
@@ -282,7 +285,12 @@ describe("世界游玩页面", () => {
     fireEvent.click(
       within(rail).getByRole("button", { name: "展开完整读取记录" }),
     );
-    const dialog = screen.getByRole("dialog", { name: "修订当前世界" });
+    const dialog = screen.getByRole("dialog", { name: "AI 如何读取" });
+    expect(
+      within(dialog).getByText(
+        "这里只查看上下文证据，不会开启修订或锁定世界。",
+      ),
+    ).toBeTruthy();
     expect(within(dialog).getByText("AI 实际收到了哪些世界内容")).toBeTruthy();
     expect(within(dialog).getByText("标题 + 摘要")).toBeTruthy();
     fireEvent.click(within(dialog).getByText("查看按需读取返回的完整记录"));
@@ -292,7 +300,7 @@ describe("世界游玩页面", () => {
     ).toBeGreaterThan(0);
   });
 
-  test("世界修订复用全文工作台，并把多文档改动作为一个候选预览和提交", async () => {
+  test("世界修订把手动编辑、历史、应用和游玩锁放在同一工作区", async () => {
     const chain = playChainView(
       "play-chain-correction",
       "exchange-correction",
@@ -307,10 +315,17 @@ describe("世界游玩页面", () => {
       "设施:\n  独立卫生间: false\n  独立淋浴间: false\n",
     );
     const original = [...worldView(chain).state, dorm];
-    let version = 0;
+    const revisionFiles = [
+      ...original.map((file) => ({ ...file, path: `state/${file.path}` })),
+      ...worldView(chain).control.map((file) => ({
+        ...file,
+        path: `control/${file.path}`,
+      })),
+    ];
+    let opened = false;
     let applied = false;
-    const replacements: Extract<V1Request, { type: "correction.replace" }>[] =
-      [];
+    let epoch = worldRevisionEpoch(revisionFiles);
+    let sealedEpochs: V1WorldRevisionSealedEpochView[] = [];
     const client = {
       request: vi.fn(<T>(request: V1Request) => {
         if (request.type === "world.read")
@@ -318,55 +333,90 @@ describe("世界游玩页面", () => {
             ...worldView(chain),
             head: applied ? "commit:4" : "commit:3",
             state: original,
+            worldRevision: opened && !applied ? epoch : null,
           } as T);
         if (request.type === "artifacts.debug") return Promise.resolve([] as T);
-        if (request.type === "correction.begin")
-          return Promise.resolve({
-            candidateId: "candidate-one",
-            version: 0,
-            parentHead: "commit:3",
-          } as T);
-        if (request.type === "correction.read") {
-          const file = request.document === "@dorm-404" ? dorm : original[0]!;
-          return Promise.resolve({
-            hash: `hash-${request.document}`,
-            contents: file.contents,
-          } as T);
+        if (request.type === "world.revision.open") {
+          opened = true;
+          if (applied && epoch.lifecycle !== "active")
+            epoch = {
+              ...worldRevisionEpoch(revisionFiles),
+              epochId: "revision-00000000-0000-4000-8000-000000000002",
+              baseHead: "commit:4",
+            };
+          return Promise.resolve(
+            worldRevisionOverview(epoch, sealedEpochs) as T,
+          );
         }
-        if (request.type === "correction.replace") {
-          expect(request.expectedVersion).toBe(version);
-          replacements.push(request);
-          version += 1;
-          return Promise.resolve({ version } as T);
+        if (request.type === "world.revision.overview")
+          return Promise.resolve(
+            worldRevisionOverview(epoch, sealedEpochs) as T,
+          );
+        if (request.type === "world.revision.files.replace") {
+          const before = epoch.files.find(
+            ({ path }) => path === "state/current-situation.yaml",
+          )?.contents;
+          const after = request.files.find(
+            ({ path }) => path === "state/current-situation.yaml",
+          )?.contents;
+          const change = {
+            path: "state/current-situation.yaml",
+            kind: "modify" as const,
+            before: before ?? null,
+            after: after ?? null,
+          };
+          epoch = {
+            ...epoch,
+            revision: "revision-files-2",
+            files: request.files,
+            diff: [change],
+            changes: [
+              {
+                changeSetId: "change-set:00000000-0000-4000-8000-000000000001",
+                source: "manual",
+                createdAt: 2,
+                changes: [change],
+              },
+            ],
+          };
+          return Promise.resolve(
+            worldRevisionOverview(epoch, sealedEpochs) as T,
+          );
         }
-        if (request.type === "correction.preview")
-          return Promise.resolve({
-            parentHead: "commit:3",
-            candidateVersion: version,
-            diffs: replacements.map((replacement) => ({
-              documentId: replacement.target.slice(1),
-              path:
-                replacement.target === "@dorm-404"
-                  ? dorm.path
-                  : original[0]!.path,
-              beforeHash: `hash-${replacement.target}`,
-              afterHash: `next-${replacement.target}`,
-              before:
-                replacement.target === "@dorm-404"
-                  ? dorm.contents
-                  : original[0]!.contents,
-              after: replacement.contents,
-            })),
-            materials: { before: [], after: [] },
-            nextPrompt: promptPreviewFixture(),
-          } as T);
-        if (request.type === "correction.apply") {
+        if (request.type === "world.revision.apply") {
           applied = true;
-          return Promise.resolve({
-            outcome: "committed",
-            head: "commit:4",
-          } as T);
+          opened = false;
+          epoch = {
+            ...epoch,
+            lifecycle: "applied",
+            locked: false,
+            appliedHead: "commit:4",
+            finishedAt: 3,
+          };
+          sealedEpochs = [
+            {
+              epochId: epoch.epochId,
+              worldId: epoch.worldId,
+              lifecycle: "applied",
+              baseHead: epoch.baseHead,
+              diff: epoch.diff,
+              changes: epoch.changes,
+              createdAt: epoch.createdAt,
+              finishedAt: 3,
+              appliedHead: epoch.appliedHead,
+            },
+          ];
+          return Promise.resolve(
+            worldRevisionOverview(epoch, sealedEpochs) as T,
+          );
         }
+        if (request.type === "world.play-decorations.read")
+          return Promise.resolve({
+            head: applied ? "commit:4" : "commit:3",
+            artifacts: [],
+            extensions: [],
+            artifactDebug: [],
+          } as T);
         return Promise.reject(new Error(`Unexpected request: ${request.type}`));
       }),
     };
@@ -375,14 +425,51 @@ describe("世界游玩页面", () => {
     await screen.findByRole("heading", { name: "宿舍世界" });
     fireEvent.click(screen.getByRole("button", { name: "世界" }));
     fireEvent.click(screen.getByRole("button", { name: "修订当前世界" }));
-    const dialog = await screen.findByRole("dialog", {
-      name: "修订当前世界",
-    });
     expect(
-      within(dialog).queryByText("和内容包共用同一套文档工作台"),
-    ).toBeNull();
+      await screen.findByRole("heading", { name: /宿舍世界.*世界修订/u }),
+    ).toBeTruthy();
+    expect(screen.getByText("手动编辑和 AI 共用一份修订")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "手动修正" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "返回工作区" }));
+    expect(
+      await screen.findByText(/世界正在修订，游玩和其他世界修改已锁定/u),
+    ).toBeTruthy();
+    expect(
+      screen.getByLabelText<HTMLTextAreaElement>("你的行动").disabled,
+    ).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "世界管理" }));
+    const lockedManagement = screen.getByRole("dialog", { name: "世界管理" });
+    expect(
+      within(lockedManagement).getByText(
+        "世界修订期间，分叉和控制变更已锁定；本地显示名称仍可修改。",
+      ),
+    ).toBeTruthy();
+    expect(
+      within(lockedManagement).getByRole<HTMLButtonElement>("button", {
+        name: "创建分叉",
+      }).disabled,
+    ).toBe(true);
+    expect(
+      within(lockedManagement).getByLabelText<HTMLTextAreaElement>(
+        "世界控制文件（JSON）",
+      ).disabled,
+    ).toBe(true);
+    fireEvent.click(
+      within(lockedManagement).getByRole("button", { name: "关闭" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "继续修订" }));
+    await screen.findByRole("heading", { name: /宿舍世界.*世界修订/u });
+    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+    expect(
+      screen.getByRole<HTMLButtonElement>("button", { name: "从草稿移除" })
+        .disabled,
+    ).toBe(true);
+    expect(screen.getByLabelText<HTMLInputElement>("文件路径").disabled).toBe(
+      true,
+    );
     fireEvent.change(
-      within(dialog).getByLabelText("编辑 current-situation.yaml"),
+      screen.getByLabelText("编辑 state/current-situation.yaml"),
       {
         target: {
           value: original[0]!.contents.replace(
@@ -392,42 +479,18 @@ describe("世界游玩页面", () => {
         },
       },
     );
-    expect(within(dialog).getByText("有尚未预览的修改")).toBeTruthy();
+    expect(screen.getByText("有未保存修改")).toBeTruthy();
     expect(
-      within(dialog).getByRole("button", { name: "放弃本地修改" }),
-    ).toBeTruthy();
-    fireEvent.click(
-      within(dialog).getByRole("button", {
-        name: "打开 locations/dorm-404.yaml",
-      }),
-    );
-    fireEvent.change(
-      within(dialog).getByLabelText("编辑 locations/dorm-404.yaml"),
-      {
-        target: {
-          value: dorm.contents.replaceAll("false", "true"),
-        },
-      },
-    );
-    fireEvent.click(within(dialog).getByRole("button", { name: "预览修订" }));
-
-    expect(
-      await within(dialog).findByRole("heading", { name: "确认修正内容" }),
-    ).toBeTruthy();
-    expect(replacements.map(({ target }) => target)).toEqual([
-      "@current-situation",
-      "@dorm-404",
-    ]);
-    expect(replacements.map(({ expectedVersion }) => expectedVersion)).toEqual([
-      0, 1,
-    ]);
-    expect(within(dialog).getByText("2 份文档会变化")).toBeTruthy();
-    fireEvent.click(
-      within(dialog).getByRole("button", { name: "应用这笔修正" }),
-    );
+      screen.getByRole<HTMLButtonElement>("button", { name: "应用并解锁" })
+        .disabled,
+    ).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "保存到修订" }));
+    expect(await screen.findByText("手动编辑")).toBeTruthy();
+    expect(screen.getByText("修订记录")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "应用并解锁" }));
     expect(
       await screen.findByText(
-        "世界修订已提交。现有追加上下文已过期，下一次行动会自动使用全新上下文。",
+        "世界修订已应用并解锁。再次继续原对话时，AI 会先重新读取当前世界。",
       ),
     ).toBeTruthy();
     expect(
@@ -437,6 +500,12 @@ describe("世界游玩页面", () => {
       screen.getByRole<HTMLButtonElement>("button", { name: "追加上下文" })
         .disabled,
     ).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "世界" }));
+    fireEvent.click(screen.getByRole("button", { name: "修订当前世界" }));
+    expect(await screen.findByText("已封存修订")).toBeTruthy();
+    fireEvent.click(screen.getByText("已封存修订"));
+    fireEvent.click(screen.getByText("已应用修订"));
+    expect(screen.getByText("封存时的完整差异")).toBeTruthy();
   });
 
   test("浏览器没有 randomUUID 时仍能启动全新上下文", async () => {
@@ -2316,6 +2385,34 @@ function worldView(playCallChain: V1PlayCallChainView | null) {
     committedMessages,
     playCallChain,
   };
+}
+
+function worldRevisionEpoch(
+  files: ContentTreeFile[],
+): V1WorldRevisionEpochView {
+  return {
+    epochId: "revision-00000000-0000-4000-8000-000000000000",
+    worldId: "world-one",
+    lifecycle: "active",
+    locked: true,
+    baseHead: "commit:3",
+    revision: "revision-files-1",
+    files,
+    diff: [],
+    diagnostics: [],
+    changes: [],
+    createdAt: 1,
+    updatedAt: 1,
+    finishedAt: null,
+    appliedHead: null,
+  };
+}
+
+function worldRevisionOverview(
+  epoch: V1WorldRevisionEpochView,
+  sealedEpochs: V1WorldRevisionSealedEpochView[] = [],
+): V1WorldRevisionOverview {
+  return { epoch, sealedEpochs, latest: null, history: [] };
 }
 
 function committedChainMessages(

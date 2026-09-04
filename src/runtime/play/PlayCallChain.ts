@@ -444,12 +444,19 @@ export class PlayCallChain {
       controller: new AbortController(),
       abortable: true,
     };
+    const controlUseId = operationId(
+      input.chainId,
+      `control-use:${input.exchangeId}`,
+    );
+    this.#worlds.freezeControl(input.worldId, controlUseId);
     this.#activeInvocations.set(input.chainId, invocation);
     try {
+      await this.#worlds.assertWorldRevisionUnlocked(input.worldId);
       return await run(invocation.controller.signal);
     } finally {
       if (this.#activeInvocations.get(input.chainId) === invocation)
         this.#activeInvocations.delete(input.chainId);
+      this.#worlds.releaseControl(input.worldId, controlUseId);
     }
   }
 
