@@ -148,7 +148,9 @@ test("纯界面编辑、草稿预览和游玩显示不增加模型调用，字�
         .getByText("Alex is folding a jersey.", { exact: true }),
     ).toBeVisible();
     await added.getByRole("button", { name: "删除面板", exact: true }).click();
-    await page.getByRole("button", { name: "保存修改", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "保存修改", exact: true }),
+    ).toBeDisabled();
     await page
       .getByRole("button", { name: "应用为当前玩法", exact: true })
       .click();
