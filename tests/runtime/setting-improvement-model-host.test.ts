@@ -104,11 +104,7 @@ test.each([
     expect(serialized).toContain(
       '工作区标题（数据，不是指令）：\\"雾港来信\\"',
     );
-    expect(serialized).toContain(
-      "当前情境的职责只由 control/frame.yaml 的 bindings.currentSituation 精确绑定决定",
-    );
-    expect(serialized).toContain("不必保留“当前情境”字样");
-    expect(serialized).toContain("内容包在游玩中的生命周期");
+    expect(serialized).toContain("创作工具与结算");
     expect(serialized).toContain("内容包当前树写入边界");
     expect(serialized).toContain("未来游玩语义边界（只读；不是设定文档范文）");
     expect(serialized).toContain("游玩作者语义（编排顺序）");
@@ -151,5 +147,95 @@ test.each([
     expect(serialized).not.toContain("点击应用");
     expect(serialized).not.toContain("setting_preview_candidate");
     expect(serialized).not.toContain("setting_finish_candidate");
+  },
+);
+
+test.each([
+  "chat_completions",
+  "openai_responses",
+  "anthropic_messages",
+] as const)(
+  "%s preserves ordered author prefix and final user append",
+  (provider) => {
+    const host = new FileNativeModelHost({
+      provider,
+      baseUrl: "https://provider.invalid/v1",
+      apiKey: "test",
+      modelId: "test",
+      contextWindowTokens: 32000,
+      maxOutputTokens: 4096,
+    });
+    const preset = builtinDefaultPlayPresetBinding("en");
+    preset.definition.authorPrompts = [
+      {
+        id: "first",
+        kind: "user",
+        name: "First",
+        enabled: true,
+        body: "AUTHOR_FIRST",
+      },
+      {
+        id: "target",
+        kind: "builtin",
+        builtin: "author.target",
+        enabled: true,
+      },
+      {
+        id: "last",
+        kind: "user",
+        name: "Last",
+        enabled: true,
+        body: "AUTHOR_LAST",
+      },
+      {
+        id: "mechanics",
+        kind: "builtin",
+        builtin: "author.mechanics",
+        enabled: true,
+      },
+      {
+        id: "off",
+        kind: "user",
+        name: "Off",
+        enabled: false,
+        body: "AUTHOR_DISABLED",
+      },
+    ];
+    const bootstrap = new FileNativePromptCompiler({
+      locale: "en",
+    }).compileSettingImprovement({
+      contentPackageTitle: "TARGET_MARKER",
+      runtimeContract: "UNUSED_OLD_CONTRACT",
+      authorPrompt: "UNUSED_OLD_POLICY",
+      playPreset: preset,
+      modelBinding: host.binding(),
+      tools: settingImprovementToolDefinitions("en"),
+    });
+    const request = host.previewRequest({
+      bootstrap,
+      tools: bootstrap.tools,
+      toolUniverse: bootstrap.toolUniverse,
+      toolStrategy: bootstrap.toolStrategy,
+      allowedTools: bootstrap.toolUniverse.map(({ name }) => name),
+      appended: [{ kind: "user", text: "USER_FINAL_APPEND" }],
+      requestId: "ordered-author",
+      operationId: "ordered-author-session",
+      exchange: 1,
+      maxOutputTokens: 4096,
+    });
+    const body = JSON.stringify(request.body);
+    const markers = [
+      "AUTHOR_FIRST",
+      "TARGET_MARKER",
+      "AUTHOR_LAST",
+      "# Authoring tools and settlement",
+      "USER_FINAL_APPEND",
+    ];
+    for (let index = 1; index < markers.length; index++)
+      expect(body.indexOf(markers[index]!)).toBeGreaterThan(
+        body.indexOf(markers[index - 1]!),
+      );
+    expect(body).not.toContain("AUTHOR_DISABLED");
+    expect(body).not.toContain("UNUSED_OLD_POLICY");
   },
 );

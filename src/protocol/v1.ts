@@ -30,6 +30,12 @@ export interface V1Envelope {
 }
 
 export type V1Request =
+  | { type: "world.revision.preview"; worldId: string; sessionId?: string }
+  | {
+      type: "setting-improvement.preview";
+      packageId: string;
+      sessionId?: string;
+    }
   | { type: "workspace.read" }
   | { type: "preferences.read" }
   | {
@@ -456,7 +462,14 @@ export interface V1PlayContextReadingView {
   } | null;
 }
 
+export interface V1AuthoringRequestPreview {
+  legacyBootstrap?: boolean;
+  requestId: string;
+  compilation: V1SettingPromptPreview["compilation"];
+}
+
 export interface V1SettingImprovementView {
+  requestPreviews?: V1AuthoringRequestPreview[];
   sessionId: string;
   packageId: string;
   runStatus: "ready" | "running" | "interrupted";
@@ -531,6 +544,7 @@ export interface V1WorldRevisionSealedEpochView {
 }
 
 export interface V1WorldRevisionView {
+  requestPreviews?: V1AuthoringRequestPreview[];
   sessionId: string;
   worldId: string;
   epochId: string;
@@ -832,6 +846,7 @@ const requiredFields: Record<
   "content.import": { archiveBase64: "string" },
   "content.export": { packageId: "string" },
   "setting-improvement.read": { packageId: "string" },
+  "setting-improvement.preview": { packageId: "string" },
   "setting-improvement.status": { packageId: "string" },
   "setting-improvement.overview": { packageId: "string" },
   "setting-improvement.session.read": {
@@ -888,6 +903,7 @@ const requiredFields: Record<
   "world.control-draft.apply": { worldId: "string" },
   "world.revision.open": { worldId: "string" },
   "world.revision.overview": { worldId: "string" },
+  "world.revision.preview": { worldId: "string" },
   "world.revision.status": { worldId: "string" },
   "world.revision.session.read": {
     worldId: "string",
@@ -1245,6 +1261,16 @@ function validateRequestFields(request: Record<string, unknown>): void {
       "world.surface.read.surface is invalid",
     );
   if (
+    (request.type === "setting-improvement.preview" ||
+      request.type === "world.revision.preview") &&
+    request.sessionId !== undefined &&
+    (typeof request.sessionId !== "string" || request.sessionId.length === 0)
+  )
+    throw new V1ProtocolError(
+      "invalid_request",
+      "Authoring preview sessionId is invalid",
+    );
+  if (
     request.type === "world.revision.status" &&
     request.sessionId !== undefined &&
     (typeof request.sessionId !== "string" || request.sessionId.length === 0)
@@ -1328,6 +1354,7 @@ const requestTypes = new Set([
   "content.import",
   "content.export",
   "setting-improvement.read",
+  "setting-improvement.preview",
   "setting-improvement.status",
   "setting-improvement.overview",
   "setting-improvement.session.read",
@@ -1361,6 +1388,7 @@ const requestTypes = new Set([
   "world.control-draft.apply",
   "world.revision.open",
   "world.revision.overview",
+  "world.revision.preview",
   "world.revision.status",
   "world.revision.session.read",
   "world.revision.session.delete",
