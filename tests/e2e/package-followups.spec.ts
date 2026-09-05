@@ -240,8 +240,12 @@ test("普通作者编辑包后置请求后创建世界，经真实 Runtime 派�
     await page
       .getByRole("button", { name: "从全新上下文发送行动", exact: true })
       .click();
-    const panel = () => page.frameLocator('iframe[title="output_1"]');
-    const scriptPanel = () => page.frameLocator('iframe[title="output_2"]');
+    const reply = () =>
+      page.locator(".call-chain-assistant").filter({
+        hasText: "The world opens its door.",
+      });
+    const panel = () => reply().frameLocator('iframe[title="output_1"]');
+    const scriptPanel = () => reply().frameLocator('iframe[title="output_2"]');
     await expect(panel().getByText("Package original renderer")).toBeVisible();
     await expect(panel().getByText("PACKAGE BROWSER OUTPUT")).toBeVisible();
     await expect(panel().getByText("Package original renderer")).toHaveCSS(
@@ -251,6 +255,49 @@ test("普通作者编辑包后置请求后创建世界，经真实 Runtime 派�
     await expect(
       scriptPanel().getByText("Script off", { exact: true }),
     ).toBeVisible();
+    await expect(reply()).toHaveCount(1);
+    await expect(reply().locator("iframe")).toHaveCount(2);
+    const assertPermissions = async (
+      targetWorldId: string,
+      enabled: boolean,
+    ) => {
+      for (const type of ["artifacts.read", "artifacts.debug"] as const) {
+        const records = await runtime<
+          {
+            output: string;
+            attachment: {
+              contextId: string;
+              eventId: number;
+              runId: string;
+              head: string;
+            };
+            frozenPresentation: { files: Record<string, string> };
+            frontend: {
+              trustedLocalCode: boolean;
+              renderer: { document: string };
+            };
+          }[]
+        >(page, { type, worldId: targetWorldId });
+        expect(records).toHaveLength(2);
+        expect(records[0]!.attachment).toEqual(records[1]!.attachment);
+        expect(records[0]!.attachment.runId).not.toBe("");
+        expect(
+          records.find((record) => record.output === "output_2")!.frontend
+            .trustedLocalCode,
+        ).toBe(enabled);
+        expect(
+          records.find((record) => record.output === "output_1")!.frontend
+            .renderer.document,
+        ).toContain("Package original renderer");
+        expect(
+          Object.values(
+            records.find((record) => record.output === "output_2")!
+              .frozenPresentation.files,
+          ).join("\n"),
+        ).toContain("Package script executed");
+      }
+    };
+    await assertPermissions(worldId, false);
     expect(requests).toBe(2);
     expect(requestBodies[1]).toContain("PACKAGE BROWSER PROMPT");
     const before = await runtime<{ head: string }>(page, {
@@ -275,6 +322,18 @@ test("普通作者编辑包后置请求后创建世界，经真实 Runtime 派�
         .head,
     ).toBe(before.head);
     expect(requests).toBe(2);
+    await assertPermissions(worldId, true);
+    const fork = await runtime<{ world: { worldId: string } }>(page, {
+      type: "world.derive",
+      operationId: "package-artifact-fork",
+      sourceWorldId: worldId,
+      sourceHead: before.head,
+    });
+    await runtime(page, {
+      type: "world.rename",
+      worldId: fork.world.worldId,
+      name: "Package artifact fork",
+    });
     await stop();
     await start();
     await open();
@@ -299,6 +358,46 @@ test("普通作者编辑包后置请求后创建世界，经真实 Runtime 派�
     await expect(
       scriptPanel().getByText("Script off", { exact: true }),
     ).toBeVisible();
+    await assertPermissions(worldId, false);
+    await assertPermissions(fork.world.worldId, true);
+    await runtime(page, { type: "world.delete", worldId });
+    await stop();
+    await start();
+    const openFork = async () => {
+      await page.goto(url);
+      await page
+        .getByRole("button", {
+          name: "打开世界：Package artifact fork",
+          exact: true,
+        })
+        .click();
+    };
+    await openFork();
+    await expect(reply()).toHaveCount(1);
+    await expect(reply().locator("iframe")).toHaveCount(2);
+    await expect(panel().getByText("PACKAGE BROWSER OUTPUT")).toBeVisible();
+    await expect(
+      scriptPanel().getByText("Package script executed", { exact: true }),
+    ).toBeVisible();
+    await assertPermissions(fork.world.worldId, true);
+    await runtime(page, {
+      type: "world.package-scripts.set",
+      worldId: fork.world.worldId,
+      enabled: false,
+    });
+    await openFork();
+    await expect(
+      scriptPanel().getByText("Script off", { exact: true }),
+    ).toBeVisible();
+    await assertPermissions(fork.world.worldId, false);
+    expect(
+      (
+        await runtime<{ head: string }>(page, {
+          type: "world.read",
+          worldId: fork.world.worldId,
+        })
+      ).head,
+    ).toBe(before.head);
     expect(requests).toBe(2);
   } finally {
     await page.goto("about:blank").catch(() => undefined);

@@ -60,6 +60,7 @@ export interface FrontendExtensionBundle {
 }
 
 export interface FrontendArtifactProjection extends ArtifactProjectionItem {
+  reply?: { chainId: string; eventId: number };
   frontend: FrontendExtensionBundle;
 }
 

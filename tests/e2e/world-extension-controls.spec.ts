@@ -146,7 +146,7 @@ test("真实世界扩展菜单阻止派发、取消在途、隐藏全部输出�
               artifacts: ["one", "two"].map((name) => ({
                 name,
                 channel: name,
-                strategy: "replace",
+                strategy: "append",
                 contentType: "text/html",
                 save: "commit",
                 invalidation: "explicit_clear",
@@ -236,9 +236,35 @@ test("真实世界扩展菜单阻止派发、取消在途、隐藏全部输出�
           .frameLocator(`iframe[title="${name}"]`)
           .getByText(`VISIBLE ${name}`, { exact: true }),
       ).toBeVisible();
+    await expect(page.getByLabel("你的行动")).toBeEnabled();
+    await page.getByLabel("你的行动").fill("Fourth action");
+    await page.getByRole("button", { name: "追加行动", exact: true }).click();
+    for (const name of ["one", "two"])
+      await expect(page.locator(`iframe[title="${name}"]`)).toHaveCount(2);
+    for (const narrative of [3, 4]) {
+      const reply = page
+        .locator(".call-chain-assistant")
+        .filter({ hasText: `Committed narrative ${narrative}` });
+      await expect(reply).toHaveCount(1);
+      await expect(reply.locator("iframe")).toHaveCount(2);
+    }
+    await expect(page.getByLabel("你的行动")).toBeEnabled();
+    const retainedFork = await api<{ world: { worldId: string } }>(page, {
+      type: "world.derive",
+      sourceWorldId: worldId,
+      sourceHead: (
+        await api<{ head: string }>(page, { type: "world.read", worldId })
+      ).head,
+      operationId: "fork-retained-attachments",
+    });
+    await api(page, {
+      type: "world.rename",
+      worldId: retainedFork.world.worldId,
+      name: "Retained attachments",
+    });
     const observer = await context.newPage();
     await open(observer);
-    await expect(observer.locator('iframe[title="one"]')).toHaveCount(1);
+    await expect(observer.locator('iframe[title="one"]')).toHaveCount(2);
     await setChecked(group, false);
     await expect(group).toBeEnabled();
     await expect(request).toBeChecked();
@@ -248,7 +274,7 @@ test("真实世界扩展菜单阻止派发、取消在途、隐藏全部输出�
     await setChecked(group, true);
     await expect(group).toBeEnabled();
     await expect(page.locator('iframe[title="one"]')).toHaveCount(0);
-    expect(followupCount).toBe(2);
+    expect(followupCount).toBe(3);
     await page.getByRole("button", { name: "此刻", exact: true }).click();
     await expect(page.getByText("Not set", { exact: true })).toBeVisible();
     await setChecked(
@@ -261,8 +287,8 @@ test("真实世界扩展菜单阻止派发、取消在途、隐藏全部输出�
       true,
     );
     await expect(page.getByText("Not set", { exact: true })).toBeVisible();
-    expect(mainCount).toBe(3);
-    expect(followupCount).toBe(2);
+    expect(mainCount).toBe(4);
+    expect(followupCount).toBe(3);
     await setChecked(request, false);
     await expect(request).toBeEnabled();
     expect(
@@ -299,8 +325,60 @@ test("真实世界扩展菜单阻止派发、取消在途、隐藏全部输出�
     expect(
       forkView.items.find((item) => item.key === "package:review")?.enabled,
     ).toBe(true);
-    expect(mainCount).toBe(3);
-    expect(followupCount).toBe(2);
+    expect(
+      await api(page, { type: "artifacts.read", worldId: fork.world.worldId }),
+    ).toEqual([]);
+    await api(page, { type: "world.delete", worldId });
+    await page.goto("about:blank");
+    const sourceDeletedExit = once(child, "exit");
+    child.kill("SIGKILL");
+    await sourceDeletedExit;
+    child = await servers.start(root, port);
+    await page.goto(url);
+    await page
+      .getByRole("button", {
+        name: "打开世界：Retained attachments",
+        exact: true,
+      })
+      .click();
+    for (const narrative of [3, 4]) {
+      const reply = page
+        .locator(".call-chain-assistant")
+        .filter({ hasText: `Committed narrative ${narrative}` });
+      await expect(reply).toHaveCount(1);
+      await expect(reply.locator("iframe")).toHaveCount(2);
+    }
+    const retainedWorldId = retainedFork.world.worldId;
+    const retainedHead = (
+      await api<{ head: string }>(page, {
+        type: "world.read",
+        worldId: retainedWorldId,
+      })
+    ).head;
+    await menu.locator("summary").click();
+    await setChecked(request, false);
+    await expect(page.locator('iframe[title="one"]')).toHaveCount(0);
+    await expect(page.locator('iframe[title="two"]')).toHaveCount(0);
+    await setChecked(request, true);
+    expect(
+      await api(page, { type: "artifacts.read", worldId: retainedWorldId }),
+    ).toEqual([]);
+    expect(
+      (
+        await api<{ head: string }>(page, {
+          type: "world.read",
+          worldId: retainedWorldId,
+        })
+      ).head,
+    ).toBe(retainedHead);
+    expect(
+      await api(page, {
+        type: "world.package-scripts.read",
+        worldId: retainedWorldId,
+      }),
+    ).toEqual({ enabled: false });
+    expect(mainCount).toBe(4);
+    expect(followupCount).toBe(3);
   } finally {
     await page.goto("about:blank").catch(() => undefined);
     await servers.stopAll();

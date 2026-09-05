@@ -38,6 +38,80 @@ afterEach(() => {
 });
 
 describe("世界游玩页面", () => {
+  test("正文产物只挂实际回复，早期分页不误挂或重复，旧无归属产物不挂载", async () => {
+    const chain = playChainView("attached-chain", "send", "行动");
+    const decorations = playDecorations(
+      "属于早期回复",
+      "world-one",
+      "commit:3",
+    );
+    decorations.artifacts[0]!.frontend.mount = "story";
+    decorations.artifacts[0]!.reply = { chainId: chain.chainId, eventId: 4 };
+    const legacy = structuredClone(decorations.artifacts[0]!);
+    legacy.recordId = "unproven-legacy";
+    legacy.payload = "不能猜测归属";
+    delete legacy.reply;
+    decorations.artifacts.push(legacy);
+    const early: V1PlayTimelinePage = {
+      worldId: "world-one",
+      activeLastFailure: null,
+      generation: "page-gen",
+      items: [
+        {
+          kind: "event",
+          chainId: chain.chainId,
+          current: true,
+          event: {
+            id: 4,
+            kind: "assistant",
+            text: "早期 AI 原文",
+            status: "completed",
+            responseKind: "narrative",
+            exchange: 2,
+            attempt: 1,
+            committedHead: "commit:3",
+            hasReasoning: false,
+            hasToolFragment: false,
+            hasUsage: false,
+            detailsAvailable: false,
+          },
+        },
+      ],
+      nextCursor: null,
+      activeChainId: chain.chainId,
+      activeStatus: "ready",
+      activeCanRetry: false,
+    };
+    const late: V1PlayTimelinePage = {
+      ...early,
+      items: [],
+      nextCursor: "earlier",
+    };
+    const client = {
+      request: vi.fn(<T>(request: V1Request): Promise<T> => {
+        if (request.type === "world.play-decorations.read")
+          return Promise.resolve(decorations as T);
+        if (request.type === "play.timeline.page")
+          return Promise.resolve(early as T);
+        if (request.type === "artifacts.debug") return Promise.resolve([] as T);
+        return Promise.resolve({
+          ...worldView(chain),
+          playTimeline: late,
+        } as T);
+      }),
+    };
+    renderWorld(client);
+    await screen.findByRole("heading", { name: "宿舍世界" });
+    expect(screen.queryByTitle("panel")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "加载更早的故事" }));
+    await screen.findByText("早期 AI 原文");
+    await waitFor(() => expect(screen.getAllByTitle("panel")).toHaveLength(1));
+    const reply = screen.getByText("早期 AI 原文").closest("article")!;
+    expect(within(reply).getByTitle("panel").getAttribute("srcdoc")).toContain(
+      "属于早期回复",
+    );
+  });
+
   test("只由 exact source view 的 panel 承接 fallback，其余 view 与 diagnostics 仍显示", () => {
     const fallback = projectUncoveredPlayerViews(
       {
@@ -3019,7 +3093,7 @@ function playDecorations(
             frontend: {
               status: "ready",
               preset: { id: "preset-one", revision: "rev-one" },
-              mount: "story",
+              mount: "sidebar",
               regex: [],
               trustedLocalCode: false,
               fallback: "none",

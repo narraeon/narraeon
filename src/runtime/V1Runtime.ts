@@ -54,7 +54,6 @@ import {
   projectDebugArtifactForFrontend,
   type FrontendBundleFailure,
   type FrontendArtifactDebugRecord,
-  type FrontendArtifactProjection,
 } from "./extension/FrontendExtensionBundle.ts";
 import {
   projectPlayerViewPanels,
@@ -659,9 +658,8 @@ export class V1Runtime {
             request.worldId,
           );
           const head = await this.#reconcileArtifacts(request.worldId);
-          const [artifacts, extensions, artifactDebug] = await Promise.all([
-            this.#frontendProjection(request.worldId),
-            this.#artifacts.readExtensionSummaries(request.worldId),
+          const [projection, artifactDebug] = await Promise.all([
+            this.#frontendDecorations(request.worldId),
             this.#frontendDebug(request.worldId),
           ]);
           const playerViews = await this.#worlds.renderPlayerViewsAtHead(
@@ -685,8 +683,7 @@ export class V1Runtime {
             continue;
           return {
             head,
-            artifacts,
-            extensions,
+            ...projection,
             artifactDebug,
             playerViews,
             playerViewPanels,
@@ -697,7 +694,9 @@ export class V1Runtime {
       }
       case "artifacts.read":
         await this.#reconcileArtifacts(request.worldId);
-        return this.#frontendProjection(request.worldId, request.channel);
+        return (
+          await this.#frontendDecorations(request.worldId, request.channel)
+        ).artifacts;
       case "artifacts.debug":
         await this.#reconcileArtifacts(request.worldId);
         return this.#frontendDebug(request.worldId, request.operationId);
@@ -1076,40 +1075,78 @@ export class V1Runtime {
     return head;
   }
 
-  async #frontendProjection(
-    worldId: string,
-    channel?: string,
-  ): Promise<FrontendArtifactProjection[]> {
+  async #frontendDecorations(worldId: string, channel?: string) {
     await this.#currentExtensionControls(worldId);
+    const summaries = await this.#artifacts.readExtensionSummaries(worldId);
+    const targets = await this.#worlds.playTimeline.resolveReplies(
+      worldId,
+      summaries.flatMap((item) =>
+        item.attachment === undefined ? [] : [item.attachment],
+      ),
+    );
+    const matches = (attachment: {
+      contextId: string;
+      eventId: number;
+      head: string;
+    }) =>
+      targets.find(
+        (target) =>
+          target.contextId === attachment.contextId &&
+          target.eventId === attachment.eventId &&
+          target.head === attachment.head,
+      );
+    const extensions = summaries
+      .filter(
+        (item) =>
+          item.attachment === undefined ||
+          matches(item.attachment) !== undefined,
+      )
+      .sort(
+        (left, right) =>
+          Number(left.head?.replace("commit:", "") ?? 0) -
+          Number(right.head?.replace("commit:", "") ?? 0),
+      );
     const artifacts = await this.#artifacts.readActiveProjection(
       worldId,
       channel,
+      targets,
     );
-    return Promise.all(
-      artifacts.map(async (artifact) => {
-        const { renderer, ...safeArtifact } = artifact;
-        void renderer;
-        const resolved = await this.#frontendBinding(
-          artifact.playPresetId,
-          artifact.playPresetRevision,
-        );
-        return {
-          ...safeArtifact,
-          frontend: projectArtifactForFrontend(
-            artifact,
-            resolved.binding,
-            resolved.failure,
-            artifact.requestId.startsWith("package:") &&
-              artifact.frozenPresentation !== undefined &&
-              (await this.#worlds.readPackageScriptGrants(worldId)).includes(
-                PackageScriptPermissions.fingerprint(
-                  artifact.frozenPresentation.files,
+    const projected = (
+      await Promise.all(
+        artifacts.map(async (artifact) => {
+          const { renderer, ...safeArtifact } = artifact;
+          void renderer;
+          const resolved = await this.#frontendBinding(
+            artifact.playPresetId,
+            artifact.playPresetRevision,
+          );
+          return {
+            ...safeArtifact,
+            ...(artifact.attachment === undefined
+              ? {}
+              : {
+                  reply: matches(artifact.attachment)!,
+                }),
+            frontend: projectArtifactForFrontend(
+              artifact,
+              resolved.binding,
+              resolved.failure,
+              artifact.requestId.startsWith("package:") &&
+                artifact.frozenPresentation !== undefined &&
+                (await this.#worlds.readPackageScriptGrants(worldId)).includes(
+                  PackageScriptPermissions.fingerprint(
+                    artifact.frozenPresentation.files,
+                  ),
                 ),
-              ),
-          ),
-        };
-      }),
+            ),
+          };
+        }),
+      )
+    ).filter(
+      (artifact) =>
+        artifact.frontend.mount !== "story" || artifact.reply !== undefined,
     );
+    return { artifacts: projected, extensions };
   }
 
   async #currentExtensionControls(

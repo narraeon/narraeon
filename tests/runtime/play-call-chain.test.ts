@@ -5459,6 +5459,79 @@ test("后置请求失败不影响已提交的主链，玩家仍可继续", async
   ]);
 });
 
+test("可选产物工具被拒绝会显示失败并保留允许的旧结果", async () => {
+  const { worlds, root, worldId } = await createWorld(
+    "optional-artifact-failure",
+  );
+  const artifacts = new FileNativeArtifactStore(root);
+  const preset = followupPlayPreset();
+  preset.definition.followups = preset.definition.followups.slice(0, 1);
+  preset.definition.followups[0]!.artifacts[0]!.required = false;
+  preset.definition.followups[0]!.artifacts[0]!.invalidation = "never";
+  const chains = new PlayCallChain(
+    worlds,
+    new FileNativePromptCompiler(),
+    artifacts,
+  );
+  const first = await chains.start({
+    worldId,
+    chainId: "optional-panels",
+    exchangeId: "first",
+    playerText: "Open.",
+    hostBinding: hostBinding(),
+    playPreset: preset,
+    modelBinding: modelBinding(),
+    modelHost: new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [
+        { outcome: "response", text: "Alex opens." },
+        {
+          outcome: "response",
+          toolCalls: [
+            {
+              id: "valid-panel",
+              name: "artifact_emit",
+              arguments: { output: "status_bar", payload: { hp: 9 } },
+            },
+          ],
+        },
+      ],
+    }),
+  });
+  await chains.append({
+    worldId,
+    chainId: first.chainId,
+    exchangeId: "second",
+    playerText: "Wait.",
+    modelHost: new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [
+        { outcome: "response", text: "Alex waits." },
+        {
+          outcome: "response",
+          toolCalls: [
+            {
+              id: "invalid-panel",
+              name: "artifact_emit",
+              arguments: { output: "undeclared", payload: { hp: 0 } },
+            },
+          ],
+        },
+      ],
+    }),
+  });
+  expect(await artifacts.readActiveProjection(worldId)).toMatchObject([
+    { payload: { hp: 9 } },
+  ]);
+  expect(
+    (await artifacts.readExtensionSummaries(worldId)).flatMap(
+      (item) => item.requests ?? [],
+    ),
+  ).toContainEqual(
+    expect.objectContaining({ requestId: "status", status: "failed" }),
+  );
+});
+
 test("后置结算通知可读取同端点产物，失败和冷 Runtime 恢复不推进 Authority", async () => {
   const { worlds, root, worldId } = await createWorld("followup-observation");
   const artifacts = new FileNativeArtifactStore(root);
@@ -5550,7 +5623,8 @@ test("后置结算通知可读取同端点产物，失败和冷 Runtime 恢复�
   ]);
   expect(await worlds.currentHead(worldId)).toBe(head);
   releaseFailure();
-  expect((await run).events).toContainEqual(
+  const completed = await run;
+  expect(completed.events).toContainEqual(
     expect.objectContaining({
       kind: "followup",
       followupId: "options",
@@ -5567,7 +5641,17 @@ test("后置结算通知可读取同端点产物，失败和冷 Runtime 恢复�
   ).toMatchObject({
     result: {
       head,
-      artifacts: [{ payload: { hp: 9 } }],
+      artifacts: [
+        {
+          payload: { hp: 9 },
+          reply: { chainId: "observed-panels", eventId: 2 },
+          attachment: {
+            contextId: "observed-panels",
+            eventId: 2,
+            runId: expect.any(String) as unknown,
+          },
+        },
+      ],
       extensions: [{ status: "recovery_required" }],
     },
   });
@@ -5575,6 +5659,66 @@ test("后置结算通知可读取同端点产物，失败和冷 Runtime 恢复�
     (await runtime.handle({ type: "world.read", worldId })).result,
   ).toMatchObject({ head, artifacts: [] });
   expect(await worlds.currentHead(worldId)).toBe(head);
+  const fork = await chains.deriveWorld({
+    operationId: "artifact-fork",
+    sourceWorldId: worldId,
+    sourceHead: head,
+    hostPresetId: "host-main",
+  });
+  const forkId = fork.world.worldId;
+  const forkDecorations = await runtime.handle({
+    type: "world.play-decorations.read",
+    worldId: forkId,
+  });
+  expect(forkDecorations).toMatchObject({
+    result: {
+      head,
+      artifacts: [
+        {
+          payload: { hp: 9 },
+          reply: { eventId: 2 },
+          frontend: { status: "ready" },
+        },
+      ],
+    },
+  });
+  const player = completed.events.find((event) => event.kind === "player")!;
+  await chains.revisePlayer({
+    operationId: "artifact-revise",
+    worldId,
+    chainId: completed.chainId,
+    eventId: player.id,
+    replacementExchangeId: "replacement",
+    replacementText: "Stay outside.",
+    continuation: "continue_context",
+  });
+  expect(
+    await runtime.handle({ type: "artifacts.read", worldId }),
+  ).toMatchObject({ result: [] });
+  expect(
+    await runtime.handle({ type: "artifacts.debug", worldId }),
+  ).toMatchObject({ result: [{ payload: { hp: 9 } }] });
+  await worlds.deleteWorld(worldId);
+  const cold = new V1Runtime({
+    dataRoot: root,
+    configRoot: join(root, "config"),
+  });
+  await cold.initialize();
+  expect(
+    await cold.handle({ type: "world.play-decorations.read", worldId: forkId }),
+  ).toMatchObject({
+    result: {
+      head,
+      artifacts: [
+        {
+          payload: { hp: 9 },
+          reply: { eventId: 2 },
+          frontend: { status: "ready" },
+        },
+      ],
+    },
+  });
+  expect(await worlds.currentHead(forkId)).toBe(head);
   expect(calls).toBe(3);
 });
 

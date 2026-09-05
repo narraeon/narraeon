@@ -11,11 +11,12 @@ import { defaultPlayPresetFiles } from "../../src/runtime/play/FileNativePlayPre
 test("浏览器多产物编辑、停用及后置内容同端点刷新、观察重连和冷重启恢复", async ({
   page,
 }) => {
-  test.setTimeout(90_000);
+  test.setTimeout(120_000);
   page.setDefaultTimeout(15_000);
   const root = await mkdtemp(join(tmpdir(), "narraeon-extension-browser-"));
   const pending: ServerResponse[] = [];
   let requests = 0;
+  let paginationMode = false;
   const requestBodies: string[] = [];
   const provider = createServer((request, response) => {
     let body = "";
@@ -25,8 +26,12 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
     request.on("end", () => {
       requests += 1;
       requestBodies.push(body);
-      if (requests === 1 || requests === 4 || requests === 5)
+      if (paginationMode)
+        send(response, { content: `Later narrative ${requests}` });
+      else if (requests === 1 || requests === 4)
         send(response, { content: "Alex opens the door." });
+      else if (requests === 5)
+        send(response, { content: "Alex records the scene before leaving." });
       else if (requests === 6)
         send(response, {
           tool_calls: [
@@ -131,7 +136,7 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
       .fill("Edited multi-output request");
     await page
       .getByLabel("这次额外请求要做什么")
-      .fill("Emit panel and output_2 from the settled story.");
+      .fill("Emit panel and output_3 from the settled story.");
     await page.getByText("编辑渲染资源", { exact: true }).first().click();
     await page
       .getByRole("button", { name: "添加 样式与资源", exact: true })
@@ -142,7 +147,7 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
       .first()
       .fill("body { color: rgb(34, 56, 78); }");
     await page.getByRole("button", { name: "新增产物", exact: true }).click();
-    await page.getByLabel("output_2 显示位置").selectOption("sidebar");
+    await page.getByLabel("output_3 显示位置").selectOption("sidebar");
     await page.getByText("编辑渲染资源", { exact: true }).last().click();
     await page
       .getByRole("button", { name: "添加 HTML 模板", exact: true })
@@ -150,6 +155,7 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
       .click();
     await page
       .getByLabel("HTML 模板 1", { exact: true })
+      .last()
       .fill("<main><h2>Edited renderer</h2><!-- narraeon:content --></main>");
     await page
       .getByRole("button", { name: "添加 样式与资源", exact: true })
@@ -217,7 +223,7 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
     await expect.poll(() => pending.length).toBe(1);
     const settledHead = await head();
     expect(requestBodies[1]).toContain(
-      "Emit panel and output_2 from the settled story.",
+      "Emit panel and output_3 from the settled story.",
     );
     // Reopen while the follow-up is pending: a new real SSE subscription
     // restores the already committed narrative at the same endpoint.
@@ -226,13 +232,25 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
     send(pending.shift()!, {
       tool_calls: [
         {
+          index: 2,
+          id: "emit-suggestions",
+          type: "function",
+          function: {
+            name: "artifact_emit",
+            arguments: JSON.stringify({
+              output: "suggestions",
+              payload: "I knock and ask.",
+            }),
+          },
+        },
+        {
           index: 1,
           id: "emit-extra",
           type: "function",
           function: {
             name: "artifact_emit",
             arguments: JSON.stringify({
-              output: "output_2",
+              output: "output_3",
               payload: "Second edited artifact",
             }),
           },
@@ -258,12 +276,12 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
     ).toBeVisible();
     await expect(
       page
-        .frameLocator('iframe[title="output_2"]')
+        .frameLocator('iframe[title="output_3"]')
         .getByText("Second edited artifact", { exact: true }),
     ).toBeVisible();
     await expect(
       page
-        .frameLocator('iframe[title="output_2"]')
+        .frameLocator('iframe[title="output_3"]')
         .getByText("Edited renderer", { exact: true }),
     ).toBeVisible();
     await expect(
@@ -272,11 +290,11 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
     expect(await head()).toBe(settledHead);
     await expect(
       page
-        .frameLocator('iframe[title="output_2"]')
+        .frameLocator('iframe[title="output_3"]')
         .getByRole("heading", { name: "Edited renderer" }),
     ).toHaveCSS("color", "rgb(12, 34, 56)");
     const renderedHeading = page
-      .frameLocator('iframe[title="output_2"]')
+      .frameLocator('iframe[title="output_3"]')
       .getByRole("heading", { name: "Edited renderer" });
     expect(
       await renderedHeading.evaluate(
@@ -290,6 +308,33 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
           null,
       ),
     ).toBe(true);
+    expect(
+      (
+        await runtime<{ extensions: unknown }>(page, {
+          type: "world.play-decorations.read",
+          worldId,
+        })
+      ).extensions,
+    ).toMatchObject([
+      {
+        requests: [
+          {
+            displayName: "Edited multi-output request",
+            mounts: expect.arrayContaining(["sidebar"]),
+            status: "completed",
+          },
+          { displayName: "second", status: "running" },
+        ],
+      },
+    ]);
+    await expect(
+      page
+        .locator('[data-extension-mount="sidebar"]')
+        .getByText("Edited multi-output request · 已更新", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("second · 生成中", { exact: true }),
+    ).toBeVisible();
     // A second follow-up fails after the first content has become visible.
     send(pending.shift()!, { content: "No required artifact emitted." });
     await expect(
@@ -310,10 +355,33 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
       panel.getByText("Saved panel at the same head", { exact: true }),
     ).toBeVisible();
     expect(await head()).toBe(settledHead);
+    const owner = page
+      .locator(".call-chain-assistant")
+      .filter({ hasText: "Alex opens the door." });
+    await expect(owner.locator('iframe[title="panel"]')).toHaveCount(1);
+    await expect(
+      owner
+        .frameLocator('iframe[title="panel"]')
+        .getByText("Saved panel at the same head", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.locator(
+        '[data-extension-mount="composer_above"] iframe[title="suggestions"]',
+      ),
+    ).toHaveCount(1);
+    await page
+      .frameLocator('iframe[title="suggestions"]')
+      .getByRole("button", { name: "敲门询问" })
+      .click();
+    await expect(page.getByLabel("你的行动")).toHaveValue("I knock and ask.");
+    expect(await head()).toBe(settledHead);
     expect(requests).toBe(3);
+    await expect(
+      page.getByText("second · 生成失败", { exact: true }),
+    ).toBeVisible();
     expect(requestBodies[2]).not.toContain("Second edited artifact");
     expect(requestBodies[2]).not.toContain(
-      "Emit panel and output_2 from the settled story.",
+      "Emit panel and output_3 from the settled story.",
     );
     await page.goto(url);
     await page.getByRole("button", { name: "预设", exact: true }).click();
@@ -358,7 +426,75 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
     await start();
     await open();
     await expect(recap()).toBeVisible();
-    expect(requests).toBe(6);
+    const finalHead = await head();
+    await page.goto(url);
+    await page.getByRole("button", { name: "预设", exact: true }).click();
+    await page.getByLabel("启用 场景回顾（系统示例）").uncheck();
+    await page.getByRole("button", { name: "保存修改", exact: true }).click();
+    await expect(
+      page.getByText("玩法文件与结构化草稿已保存。", { exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "应用为当前玩法", exact: true })
+      .click();
+    await open();
+    paginationMode = true;
+    for (let index = 0; index < 21; index += 1) {
+      await page.getByLabel("你的行动").fill(`Later action ${index}`);
+      await page.getByRole("button", { name: "追加行动", exact: true }).click();
+      await expect(
+        page.getByRole("button", { name: "追加行动", exact: true }),
+      ).toBeEnabled();
+    }
+    await open();
+    await expect(page.locator('iframe[title="recap"]')).toHaveCount(0);
+    await page.getByRole("button", { name: "加载更早的故事" }).click();
+    await expect(page.locator('iframe[title="recap"]')).toHaveCount(1);
+    await expect(
+      page
+        .locator(".call-chain-assistant")
+        .filter({ hasText: "Alex records the scene before leaving." })
+        .frameLocator('iframe[title="recap"]')
+        .getByText("Builtin identity survived execution", { exact: true }),
+    ).toBeVisible();
+
+    const fork = await runtime<{ world: { worldId: string } }>(page, {
+      type: "world.derive",
+      operationId: "browser-artifact-fork",
+      sourceWorldId: worldId,
+      sourceHead: finalHead,
+    });
+    await runtime(page, {
+      type: "world.rename",
+      worldId: fork.world.worldId,
+      name: "Artifact fork",
+    });
+    await runtime(page, { type: "world.delete", worldId });
+    await stop();
+    await start();
+    await page.goto(url);
+    await page
+      .getByRole("button", { name: "打开世界：Artifact fork", exact: true })
+      .click();
+    await expect(recap()).toBeVisible();
+    await expect(
+      page
+        .locator(".call-chain-assistant")
+        .last()
+        .frameLocator('iframe[title="recap"]')
+        .getByText("Builtin identity survived execution", { exact: true }),
+    ).toBeVisible();
+    expect(
+      (
+        await runtime<{ head: string }>(page, {
+          type: "world.read",
+          worldId: fork.world.worldId,
+        })
+      ).head,
+    ).toBe(finalHead);
+    expect(requests).toBe(27);
+  } catch (error: unknown) {
+    throw new Error(serverLog, { cause: error });
   } finally {
     await page.goto("about:blank").catch(() => undefined);
     await stop();
@@ -382,7 +518,7 @@ function presetFiles(): Record<string, string> {
   return {
     ...defaultPlayPresetFiles,
     "preset.yaml":
-      "format: narraeon.play-preset/v1\nname: panels\ncallChain: call-chain.yaml\nmounts:\n  panel: story\nextensions: []\n",
+      "format: narraeon.play-preset/v1\nname: panels\ncallChain: call-chain.yaml\nmounts:\n  panel: story\n  suggestions: composer_above\n  failed-panel: sidebar\nextensions: [renderers/actions.html]\n",
     "call-chain.yaml": `format: narraeon.play-call-chain/v1
 narrative:
   - markdown: prompts/narrate.md
@@ -395,16 +531,32 @@ ${["first", "second"]
     maxArtifactBytes: 32768
     artifacts:
       - name: panel
-        channel: panel
+        channel: ${id === "first" ? "panel" : "failed-panel"}
         strategy: replace
         contentType: text/plain
         save: commit
-        invalidation: new_operation
+        invalidation: never
         required: true
         maxEmits: 1
-`,
+${
+  id === "first"
+    ? `      - name: suggestions
+        channel: suggestions
+        strategy: replace
+        contentType: text/plain
+        renderer: renderers/actions.html
+        rendererRevision: actions-v1
+        rendererMode: app
+        save: commit
+        invalidation: new_operation
+        required: false
+        maxEmits: 1
+`
+    : ""
+}`,
   )
   .join("")}`,
+    "renderers/actions.html": `<button id="suggest">敲门询问</button><script>document.getElementById("suggest").onclick=()=>parent.postMessage({namespace:"narraeon.extension.v1",command:"composer.set_draft",instanceId:document.documentElement.dataset.narraeonInstance,nonce:document.documentElement.dataset.narraeonNonce,requestId:"suggestion",payload:{text:"I knock and ask."}},"*");</script>`,
     "prompts/first.md": "Write the panel.\n",
     "prompts/second.md": "Write the second panel.\n",
   };

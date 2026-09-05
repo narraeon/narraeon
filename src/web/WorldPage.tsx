@@ -1593,6 +1593,7 @@ export function WorldPage({
         playerViewPanels={
           displayedDecorations?.playerViewPanels ?? world.playerViewPanels ?? []
         }
+        extensions={displayedDecorations?.extensions ?? []}
         playerViews={world.playerViews}
         interactionDisabled={pending !== null || worldRevisionLocked}
         onSetComposerDraft={setPlayerText}
@@ -2695,6 +2696,12 @@ function TimelineEvent({
                     : uiText("（本次响应没有文本）")}
             </p>
           )}
+          {presentation === "story" && event.committedHead !== undefined ? (
+            <ArtifactExtensionMount
+              mount="story"
+              reply={{ chainId, eventId: event.id }}
+            />
+          ) : null}
           {responseKind === "pending" ? (
             <small>{uiText("待定输出；响应完成前不会进入故事")}</small>
           ) : null}

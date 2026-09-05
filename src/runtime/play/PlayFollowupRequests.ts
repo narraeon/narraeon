@@ -1,4 +1,5 @@
 import type { WorldExtensionRequests } from "../extension/WorldExtensionRequests.ts";
+import type { FrozenArtifactPresentation } from "./FileNativePlayPresetStore.ts";
 import type {
   ArtifactExtensionSummary,
   ArtifactOperationContext,
@@ -53,6 +54,7 @@ export interface PlayFollowupObserver {
 
 export interface PlayFollowupInput {
   controls?: WorldExtensionRequests;
+  presentations?: Record<string, Record<string, FrozenArtifactPresentation>>;
   artifacts: ArtifactStore;
   modelHost: ModelHost;
   followups: readonly PlayFollowupCompilation[];
@@ -174,7 +176,11 @@ async function runOne(
     ...(followup.extensionControl === undefined
       ? {}
       : { extensionControl: structuredClone(followup.extensionControl) }),
+    ...(input.presentations?.[followup.id] === undefined
+      ? {}
+      : { frozenPresentations: input.presentations[followup.id] }),
     requestId: followup.id,
+    displayName: followup.displayName,
     requestAttempt: 1,
     maxArtifactBytes: followup.maxArtifactBytes,
     declarations: structuredClone(followup.artifacts),
@@ -244,6 +250,8 @@ async function runOne(
       });
     }
     const failedTools = outcome.toolCalls.filter(({ ok }) => !ok);
+    if (failedTools.length > 0)
+      outcome.failure = `Follow-up request ${followup.id} could not save its artifacts.`;
     if (failedTools.length > 0 && response.diagnostics !== undefined)
       await input.failureLog?.recordFailure({
         exchange: response.diagnostics,
@@ -300,6 +308,10 @@ async function runOne(
         ],
       });
   }
+  await input.artifacts.finishRequest?.(
+    requestContext,
+    outcome.failure !== undefined,
+  );
   return outcome;
 }
 

@@ -428,6 +428,10 @@ export class FileNativePlayTimelineStore {
         "A play context identity is bound to different frozen data",
       );
 
+    await publishImmutableJson(join(root, "reply-context.json"), {
+      contextId: value.continuityContextId ?? value.chainId,
+    });
+
     const supplied = cursor ?? emptyPersistenceCursor();
     // Recovery may replace the unresolved tail (for example, a generic crash
     // failure becomes the already-returned Provider response). Numbered files
@@ -769,6 +773,69 @@ export class FileNativePlayTimelineStore {
       previous = loaded.value.previousChainId;
     }
     return reverse.reverse();
+  }
+
+  /** Resolve only requested reply summaries; decoration reads never load Provider transcripts. */
+  async resolveReplies(
+    worldId: string,
+    targets: readonly { contextId: string; eventId: number; head: string }[],
+  ): Promise<
+    { contextId: string; eventId: number; head: string; chainId: string }[]
+  > {
+    if (targets.length === 0) return [];
+    const result: {
+      contextId: string;
+      eventId: number;
+      head: string;
+      chainId: string;
+    }[] = [];
+    let chainId = (await this.#readTimelineHead(worldId))?.chainId ?? null;
+    while (chainId !== null) {
+      const metadata = await this.#readContextMetadata(worldId, chainId);
+      if (metadata === null)
+        throw new Error("Play timeline points to a missing context");
+      const identity = await readOptionalJson<unknown>(
+        join(metadata.root, "reply-context.json"),
+      );
+      if (
+        identity !== null &&
+        (!isRecord(identity) || typeof identity.contextId !== "string")
+      )
+        throw new Error("Play reply context identity is invalid");
+      const contextId =
+        identity === null
+          ? null
+          : (identity as { contextId: string }).contextId;
+      for (const target of targets.filter(
+        (item) =>
+          item.contextId === contextId &&
+          item.eventId <= metadata.state.eventCount,
+      )) {
+        const event = await readJson<unknown>(
+          join(metadata.root, "summaries", numbered(target.eventId)),
+        );
+        assertTimelineEventSummary(event);
+        if (
+          event.id === target.eventId &&
+          event.kind === "assistant" &&
+          event.committedHead === target.head
+        )
+          result.push({ ...target, chainId });
+      }
+      if (
+        targets.every((target) =>
+          result.some(
+            (item) =>
+              item.contextId === target.contextId &&
+              item.eventId === target.eventId &&
+              item.head === target.head,
+          ),
+        )
+      )
+        break;
+      chainId = metadata.index.previousChainId;
+    }
+    return result;
   }
 
   async readPage(
