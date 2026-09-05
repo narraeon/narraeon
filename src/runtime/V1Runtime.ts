@@ -27,7 +27,10 @@ import {
 import { contentTreeFingerprint } from "./content/ContentTreeFingerprint.ts";
 import { inspectContentPackageCurrentTree } from "./content/FileNativeContentTree.ts";
 import { FileNativeModelHost } from "./model/FileNativeModelAdapters.ts";
-import { type ModelHostBinding } from "./model/ModelHost.ts";
+import {
+  equalModelHostBinding,
+  type ModelHostBinding,
+} from "./model/ModelHost.ts";
 import { ModelConnectionStore } from "./model/ModelConnectionStore.ts";
 import { FileNativeContinuityCorrection } from "./play/FileNativeContinuityCorrection.ts";
 import { fingerprintControl } from "./play/PlayDocumentTools.ts";
@@ -744,6 +747,7 @@ export class V1Runtime {
             exchangeId: request.exchangeId,
             playerText: request.playerText,
             modelHost: await this.#modelHost(),
+            resolvePrompt: () => this.#continuousBinding(),
             ...(playCallChainObserver === undefined
               ? {}
               : { observer: playCallChainObserver }),
@@ -789,6 +793,22 @@ export class V1Runtime {
           };
         const { modelHost, hostBinding, playPreset, modelBinding } =
           await this.#continuousBinding();
+        const persisted =
+          currentContext === null
+            ? null
+            : await this.#worlds.playTimeline.readCurrent(request.worldId);
+        const frozenBinding = persisted?.value.modelBinding;
+        const continueContext =
+          currentContext !== null &&
+          !currentContext.stale &&
+          frozenBinding !== undefined &&
+          equalModelHostBinding(frozenBinding, modelBinding);
+        const baseline = continueContext
+          ? await this.#worlds.bindPlayCallChainAt(
+              request.worldId,
+              currentContext.baselineHead,
+            )
+          : binding;
         const preview = this.#compiler.preview(
           {
             endpoint: {
@@ -806,7 +826,10 @@ export class V1Runtime {
               }),
               additionalMaterials: structuredClone(binding.additionalMaterials),
               history: structuredClone(binding.history),
-              narrativeCheckpoint: binding.narrativeCheckpoint,
+              narrativeCheckpoint: baseline.narrativeCheckpoint,
+              historyAlreadyAppended: Object.keys(binding.history).filter(
+                (key) => !(key in baseline.history),
+              ),
               ...(await this.#worlds.inspectDocumentMaintenance(
                 request.worldId,
                 binding.parentHead,
@@ -825,15 +848,21 @@ export class V1Runtime {
           toolUniverse: tools,
           allowedTools: tools.map(({ name }) => name),
           toolStrategy: preview.compilation.toolStrategy,
-          appended: [],
-          operationId: "next-fresh-context-preview",
+          appended: continueContext ? (persisted?.value.transcript ?? []) : [],
+          operationId: continueContext
+            ? currentContext.chainId
+            : "next-fresh-context-preview",
           maxOutputTokens: modelBinding.maxOutputTokens,
         });
         const currentEncoding =
           currentContext === null
             ? null
             : await this.#worlds.playTimeline
-                .readInitialEncoding(request.worldId, currentContext.chainId)
+                .readInitialEncoding(
+                  request.worldId,
+                  currentContext.chainId,
+                  currentContext.requestExchange,
+                )
                 .catch(() => null);
         const prefixDiagnostics = comparePromptPrefixes(
           currentContext === null
@@ -849,6 +878,7 @@ export class V1Runtime {
           worldHead: binding.parentHead,
           currentContext,
           nextFreshContext: {
+            contextMode: continueContext ? "append" : "fresh",
             head: binding.parentHead,
             preview,
             prefixDiagnostics,

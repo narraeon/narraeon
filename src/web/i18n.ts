@@ -7,6 +7,32 @@ import {
 let activeLocale: AppLocale = defaultAppLocale;
 
 const englishMessages: Record<string, string> = {
+  最近一次请求材料: "Latest request materials",
+  "下一次发送将采用当前预设和世界材料；原生对话保留。":
+    "The next send uses the current preset and world materials while preserving the native conversation.",
+  "每次正常发送重新编译，工具往返使用本轮快照":
+    "Each normal send recompiles; tool exchanges use the same run snapshot.",
+  下一次发送候选: "Next send candidate",
+  "分别展示最近一次请求、累计当时读取和下一次候选；旧读取不代表当前字段值。":
+    "Inspect the latest request, accumulated historical reads, and next candidate separately. Past reads do not prove current field values.",
+  本次请求快照的真实覆盖: "Actual coverage of this request snapshot",
+  "查看下一次发送候选的完整 Prompt Preview":
+    "Inspect the complete next-send Prompt Preview",
+  "游玩在下一次正常发送生效，原样重试保留旧请求":
+    "Play changes take effect on the next normal send; exact retries retain the saved request.",
+  "· 游玩修改在下一次正常发送生效":
+    "· Play changes take effect on the next normal send",
+  "保留原生对话，重新编译当前提示和材料":
+    "Preserve the native conversation and recompile current prompts and materials",
+  "累计实际读取（当时内容）": "Accumulated reads (historical content)",
+  "累计读取的当时内容，不代表当前字段值":
+    "Historical content read at the time, not current field values",
+  查看各次请求保存的提示材料: "Inspect saved prompt materials for each request",
+  "原样重试使用已保存请求，不采用新预设。":
+    "Exact retry uses the saved request and does not apply a new preset.",
+  "正常发送和空输入续写使用最新预设；本轮工具执行期间保持不变。":
+    "Normal sends and empty continuations use the latest preset; it stays fixed during this tool loop.",
+
   "对话连接已断开，正在重新连接…": "Conversation disconnected. Reconnecting…",
   "对话同步失败，请重新打开此页面。":
     "Conversation synchronization failed. Reopen this page to reconnect.",

@@ -1790,7 +1790,9 @@ export function WorldPage({
                     }}
                   >
                     <strong>{uiText("追加当前上下文")}</strong>
-                    <span>{uiText("保留这条调用链已经看到的内容")}</span>
+                    <span>
+                      {uiText("保留原生对话，重新编译当前提示和材料")}
+                    </span>
                   </button>
                   <button
                     type="button"
@@ -1843,6 +1845,13 @@ export function WorldPage({
                   : "↑"}
               </button>
             </div>
+            <p className="world-composer-hint">
+              {uiText(
+                activeCanRetry
+                  ? "原样重试使用已保存请求，不采用新预设。"
+                  : "正常发送和空输入续写使用最新预设；本轮工具执行期间保持不变。",
+              )}
+            </p>
             <ArtifactExtensionMount mount="composer_below" />
           </footer>
 

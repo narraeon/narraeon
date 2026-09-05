@@ -81,6 +81,8 @@ export interface FileNativePromptInput {
     history?: Record<string, string>;
     narrativeCheckpoint?: NarrativeCheckpoint | undefined;
     replayHistory?: boolean;
+    /** Exact history identities already represented by the native conversation. */
+    historyAlreadyAppended?: string[];
     documentMaintenance?: Readonly<Record<string, WorldDocumentMaintenance>>;
     documentMaintenanceUnavailableReason?: string | undefined;
     additionalMaterials: MaterialSelection[];
@@ -1238,16 +1240,36 @@ function withoutAppendedContextGenesis(
   input: FileNativePromptInput,
 ): FileNativePromptInput {
   if (input.playerInputPlacement !== "append") return input;
+  const excluded = new Set(input.world.historyAlreadyAppended ?? []);
+  const history = input.world.history ?? {};
   const additionalMaterials = input.world.additionalMaterials.filter(
-    (material) =>
-      material.kind !== "history_message" ||
-      !material.message.endsWith("message.genesis.narrator"),
+    (material) => {
+      if (
+        material.kind === "history_message" &&
+        material.message.endsWith("message.genesis.narrator")
+      )
+        return false;
+      if (
+        material.kind !== "history_message" &&
+        material.kind !== "history_commit"
+      )
+        return true;
+      const matches = Object.keys(history).filter((key) =>
+        historyMaterialMatches(material, key),
+      );
+      // Invalid references still reach the compiler's required-slot validation.
+      return matches.length === 0 || matches.some((key) => !excluded.has(key));
+    },
   );
-  if (additionalMaterials.length === input.world.additionalMaterials.length)
-    return input;
   return {
     ...input,
-    world: { ...input.world, additionalMaterials },
+    world: {
+      ...input.world,
+      additionalMaterials,
+      history: Object.fromEntries(
+        Object.entries(history).filter(([key]) => !excluded.has(key)),
+      ),
+    },
   };
 }
 
@@ -2311,19 +2333,7 @@ function resolveAdditionalMaterials(
           ? material.message
           : material.commit;
       const matches = Object.entries(history).filter(([key]) =>
-        material.kind === "history_message"
-          ? historyMaterialIdentity(key) === historyMaterialIdentity(ref)
-          : ref.startsWith("commit:")
-            ? historyMaterialIdentity(key).startsWith(
-                `message.${ref.slice(7)}.`,
-              )
-            : ref === "genesis"
-              ? historyMaterialIdentity(key).startsWith("message.genesis.")
-              : key.startsWith(
-                  ref
-                    .replace(/^@?history-commit-/u, "history-message-")
-                    .concat("-"),
-                ),
+        historyMaterialMatches(material, key),
       );
       if (matches.length === 0)
         throw new PromptCompilationError(
@@ -2355,6 +2365,27 @@ function resolveAdditionalMaterials(
       });
     }
   }
+}
+
+function historyMaterialMatches(
+  material: Extract<
+    MaterialSelection,
+    { kind: "history_message" | "history_commit" }
+  >,
+  key: string,
+): boolean {
+  if (material.kind === "history_message")
+    return (
+      historyMaterialIdentity(key) === historyMaterialIdentity(material.message)
+    );
+  const ref = material.commit;
+  return ref.startsWith("commit:")
+    ? historyMaterialIdentity(key).startsWith(`message.${ref.slice(7)}.`)
+    : ref === "genesis"
+      ? historyMaterialIdentity(key).startsWith("message.genesis.")
+      : key.startsWith(
+          ref.replace(/^@?history-commit-/u, "history-message-").concat("-"),
+        );
 }
 
 function historyMaterialIdentity(ref: string): string {

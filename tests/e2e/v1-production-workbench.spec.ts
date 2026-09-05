@@ -902,12 +902,48 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     freshRequest.messages?.filter(({ role }) => role === "tool"),
   ).toHaveLength(0);
 
+  await page.getByRole("button", { name: "返回工作区" }).click();
+  await page.getByRole("button", { name: "预设", exact: true }).click();
+  await page.getByRole("button", { name: "Before world", exact: true }).click();
+  await page
+    .getByLabel("提示词正文", { exact: true })
+    .fill("LIVE_NEXT_SEND_RULE");
+  await page.getByRole("button", { name: "保存修改", exact: true }).click();
+  await page
+    .getByRole("button", { name: "应用为当前玩法", exact: true })
+    .click();
+  await page.getByRole("button", { name: "返回工作区" }).click();
+  await page
+    .getByRole("button", { name: "打开世界：Dormitory World", exact: true })
+    .click();
+  await expect(
+    page.getByText(
+      "正常发送和空输入续写使用最新预设；本轮工具执行期间保持不变。",
+      { exact: true },
+    ),
+  ).toBeVisible();
   responses.push(chatText("We are heading to the court at eight."));
   await page.getByLabel("你的行动").fill("What time are we leaving?");
   await page.getByRole("button", { name: "追加行动" }).click();
   await expect(
     page.getByText("We are heading to the court at eight."),
   ).toBeVisible();
+
+  const liveRequest = providerRequest();
+  expect(JSON.stringify(liveRequest)).toContain("LIVE_NEXT_SEND_RULE");
+  expect(JSON.stringify(liveRequest)).not.toContain("ORDERED_BEFORE_WORLD");
+  expect(
+    liveRequest.messages?.filter(({ role }) => role === "assistant"),
+  ).toEqual([
+    expect.objectContaining({
+      content: "Alex saves the training time on the phone.",
+    }),
+  ]);
+  await page.getByRole("button", { name: "AI 读取", exact: true }).click();
+  await expect(
+    page.getByText("最近一次请求材料", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "AI 读取", exact: true }).click();
 
   responses.push(
     chatText(
