@@ -70,12 +70,7 @@ followups: []
 `,
     "scripts/player-view-status.js": `(function () {
   var root = document.getElementById("player-view-panel-root");
-  var styleSource = window.__NARRAEON_ASSETS__ && window.__NARRAEON_ASSETS__["assets/player-view-status.css"];
-  if (typeof styleSource === "string") {
-    var style = document.createElement("style");
-    style.textContent = styleSource;
-    document.head.append(style);
-  }
+
   function valueNode(value) {
     if (value === null || value === undefined) return document.createTextNode("—");
     if (typeof value === "object") {

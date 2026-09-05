@@ -147,6 +147,9 @@ async function runOne(
     requestAttempt: 1,
     maxArtifactBytes: followup.maxArtifactBytes,
     declarations: structuredClone(followup.artifacts),
+    ...(followup.frozenResources === undefined
+      ? {}
+      : { frozenResources: structuredClone(followup.frozenResources) }),
   };
   let responseDiagnostics: AiExchangeDiagnostics | undefined;
   try {

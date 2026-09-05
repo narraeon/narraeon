@@ -122,6 +122,7 @@ test("纯界面编辑、草稿预览和游玩显示不增加模型调用，字�
       "color",
       "rgb(120, 0, 120)",
     );
+    await expect(preview.locator("style")).toHaveCount(1);
     expect(requests).toBe(0);
     await page.getByLabel("玩家视图面板 1 标题").fill("已保存状态栏42");
     await expect(

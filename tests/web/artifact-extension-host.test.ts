@@ -6,6 +6,7 @@ import {
   applyRegexPipeline,
   artifactInstanceKey,
   buildDocumentSrcDoc,
+  buildAppSrcDoc,
   buildDocumentTemplateSrcDoc,
   isExtensionBridgeMessage,
   isExtensionBridgeResponse,
@@ -239,4 +240,52 @@ describe("ArtifactExtensionHost pipeline", () => {
       }),
     ).toThrow("content marker");
   });
+});
+
+test("document 与 app 都应用 CSS 资源，样式不能结束 style 注入 HTML", () => {
+  const renderer = {
+    mode: "document" as const,
+    document:
+      "<html><head></head><body><!-- narraeon:content --></body></html>",
+    scripts: [],
+    assets: [
+      {
+        id: "assets/theme.css",
+        source:
+          'h2 { color: rgb(12, 34, 56); }\n[data-text="<"] { --label: "</style><script data-escaped>bad()</script>"; }',
+      },
+    ],
+    trustedLocalCode: false,
+  };
+  for (const html of [
+    buildDocumentSrcDoc("<h2>Title</h2>", "text/markdown", renderer),
+    buildAppSrcDoc({
+      renderer: { ...renderer, mode: "app" },
+      instanceId: "test",
+      nonce: "nonce",
+    }),
+  ]) {
+    const document = new DOMParser().parseFromString(html, "text/html");
+    expect(document.querySelectorAll("style")).toHaveLength(1);
+    expect(document.querySelector("style")!.textContent).toContain(
+      "h2 { color: rgb(12, 34, 56); }",
+    );
+    expect(document.querySelector("script[data-escaped]")).toBeNull();
+    expect(document.querySelector("style")!.textContent).toContain(
+      "\\3c /style>",
+    );
+  }
+});
+
+test("仅 CSS 的作者规则位于默认样式之后", () => {
+  const html = buildDocumentSrcDoc("Hello", "text/plain", {
+    mode: "document",
+    scripts: [],
+    assets: [{ id: "assets/theme.css", source: "body { color: red; }" }],
+    trustedLocalCode: false,
+  });
+  const document = new DOMParser().parseFromString(html, "text/html");
+  const styles = document.querySelectorAll("style");
+  expect(styles).toHaveLength(2);
+  expect(styles[1]!.textContent).toBe("body { color: red; }");
 });

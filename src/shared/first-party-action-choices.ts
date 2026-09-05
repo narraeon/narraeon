@@ -109,12 +109,7 @@ Use only information the player can already know, and suggest only actions the p
     "scripts/player-options.js": `(function () {
   var root = document.getElementById("player-options-root");
   var pending = new Map();
-  var styleSource = window.__NARRAEON_ASSETS__ && window.__NARRAEON_ASSETS__["assets/player-options.css"];
-  if (typeof styleSource === "string") {
-    var style = document.createElement("style");
-    style.textContent = styleSource;
-    document.head.append(style);
-  }
+
   function post(command, payload) {
     var requestId = "draft-" + Math.random().toString(36).slice(2);
     parent.postMessage({

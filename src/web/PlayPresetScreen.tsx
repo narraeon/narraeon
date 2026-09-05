@@ -1,3 +1,9 @@
+import { FollowupResourcesEditor } from "./FollowupResourcesEditor.tsx";
+import { FollowupListEditor } from "./FollowupListEditor.tsx";
+import {
+  defaultFollowupItems,
+  type FollowupItem,
+} from "../shared/ordered-followups.ts";
 import {
   PlayerViewPanelsEditor,
   type PlayPresetPlayerViewPanel,
@@ -167,7 +173,7 @@ interface PlayPresetArtifactDefinition {
   payloadContract?: Record<string, unknown>;
 }
 
-interface PlayPresetFollowupDefinition {
+export interface PlayPresetFollowupDefinition {
   id: string;
   displayName: string;
   prompt: PlayPresetPromptRef;
@@ -176,6 +182,7 @@ interface PlayPresetFollowupDefinition {
 }
 
 interface PlayPresetStructuredEditor {
+  followupItems?: FollowupItem[];
   playPrompts?: OrderedPlayPrompt[];
   authorPrompts?: OrderedPlayPrompt[];
   migrationNotice?: string;
@@ -1466,33 +1473,39 @@ function PlayPresetStructuredEditorPanel({
     }));
   }
 
-  function addFollowup(): void {
-    const used = new Set(structure.followups.map(({ id }) => id));
-    let suffix = structure.followups.length + 1;
-    let id = `followup_${suffix}`;
-    while (used.has(id)) {
-      suffix += 1;
-      id = `followup_${suffix}`;
-    }
+  function addFollowup(
+    clone?: PlayPresetFollowupDefinition,
+    body?: string,
+  ): void {
+    const id = `followup_${crypto.randomUUID().replaceAll("-", "")}`;
     const path = uniquePresetPath(files, `prompts/${id}.md`);
     const artifactName = `${id}_output`;
     const channel = `${id}.output`;
     onCreateFile(
       path,
-      uiText(
-        "# 新后置请求\n\n说明主调用链完成后，需要额外整理成什么界面内容。\n",
-      ),
+      body ??
+        uiText(
+          "# 新后置请求\n\n说明主调用链完成后，需要额外整理成什么界面内容。\n",
+        ),
     );
     onChange((current) => ({
       ...current,
       mounts: [...current.mounts, { channel, mount: "story" }],
+      followupItems: [
+        ...(current.followupItems ?? defaultFollowupItems(current.followups)),
+        { id, kind: "user", enabled: true },
+      ],
       followups: [
         ...current.followups,
         {
           id,
-          displayName: uiText("新后置请求"),
+          displayName: clone
+            ? `${clone.displayName} ${uiText("副本")}`
+            : uiText("新后置请求"),
           prompt: { role: "author_instruction", path },
-          artifacts: [defaultArtifact(artifactName, channel)],
+          artifacts: clone
+            ? clone.artifacts.map((artifact) => ({ ...artifact, channel }))
+            : [defaultArtifact(artifactName, channel)],
           maxArtifactBytes: 32_768,
         },
       ],
@@ -1783,7 +1796,7 @@ function PlayPresetStructuredEditorPanel({
           <hr />
           <div className="play-preset-section-header">
             <h4>{uiText("后置请求")}</h4>
-            <button type="button" onClick={addFollowup}>
+            <button type="button" onClick={() => addFollowup()}>
               {uiText("新增后置请求")}
             </button>
           </div>
@@ -1795,12 +1808,15 @@ function PlayPresetStructuredEditorPanel({
           {structure.followups.length === 0 ? (
             <p>{uiText("没有后置请求；主调用链完成后不会再派发额外请求。")}</p>
           ) : null}
-          <ol aria-label={uiText("后置请求")}>
-            {structure.followups.map((followup, index) => (
-              <li
-                className="play-preset-followup-card"
-                key={`followup-${followup.id}-${index}`}
-              >
+          <FollowupListEditor
+            definitions={structure.followups}
+            items={structure.followupItems}
+            onItemsChange={(followupItems) =>
+              onChange((current) => ({ ...current, followupItems }))
+            }
+            onClone={addFollowup}
+            renderUser={(followup, index) => (
+              <article className="play-preset-followup-card">
                 <label>
                   {uiText("显示名")}
                   <input
@@ -1817,21 +1833,20 @@ function PlayPresetStructuredEditorPanel({
                     }}
                   />
                 </label>
-                <PromptReferenceEditor
-                  label={uiText("这次额外请求要做什么")}
-                  path={followup.prompt.path}
-                  paths={promptPaths}
-                  files={files}
-                  onPathChange={(path) =>
-                    updateFollowup(index, (current) => ({
-                      ...current,
-                      prompt: { ...current.prompt, path },
-                    }))
-                  }
-                  onContentsChange={(contents) =>
-                    onFileChange(followup.prompt.path, contents)
-                  }
-                />
+                <label>
+                  {uiText("提示词")}
+                  <textarea
+                    aria-label={uiText("这次额外请求要做什么")}
+                    rows={10}
+                    value={files[followup.prompt.path] ?? ""}
+                    onChange={(event) =>
+                      onFileChange(
+                        followup.prompt.path,
+                        event.currentTarget.value,
+                      )
+                    }
+                  />
+                </label>
                 <div className="play-preset-section-header">
                   <div>
                     <h5>{uiText("输出到界面的产物")}</h5>
@@ -1877,6 +1892,49 @@ function PlayPresetStructuredEditorPanel({
                   <ol className="play-preset-artifact-editor-list">
                     {followup.artifacts.map((artifact, artifactIndex) => (
                       <li key={`${artifact.name}-${artifactIndex}`}>
+                        <label>
+                          {uiText("显示位置")}
+                          <MountSelect
+                            ariaLabel={`${artifact.name} ${uiText("显示位置")}`}
+                            value={
+                              structure.mounts.find(
+                                (mount) => mount.channel === artifact.channel,
+                              )?.mount ?? ""
+                            }
+                            allowNone
+                            onChange={(mount) =>
+                              setChannelMount(artifact.channel, mount)
+                            }
+                          />
+                        </label>
+                        <FollowupResourcesEditor
+                          files={files}
+                          renderer={artifact.renderer}
+                          scripts={artifact.scripts}
+                          assets={artifact.assets}
+                          onWrite={onFileChange}
+                          onAttach={(kind, path, body) => {
+                            onCreateFile(path, body);
+                            onChange((current) => ({
+                              ...current,
+                              extensionRefs: [
+                                ...new Set([...current.extensionRefs, path]),
+                              ],
+                            }));
+                            updateArtifact(index, artifactIndex, (current) =>
+                              kind === "renderer"
+                                ? {
+                                    ...current,
+                                    renderer: path,
+                                    rendererRevision: crypto.randomUUID(),
+                                  }
+                                : {
+                                    ...current,
+                                    [kind]: [...(current[kind] ?? []), path],
+                                  },
+                            );
+                          }}
+                        />
                         <ArtifactDefinitionEditor
                           artifact={artifact}
                           files={files}
@@ -1939,13 +1997,7 @@ function PlayPresetStructuredEditorPanel({
                           index: index + 1,
                         })}
                         value={followup.id}
-                        onChange={(event) => {
-                          const id = event.currentTarget.value;
-                          updateFollowup(index, (current) => ({
-                            ...current,
-                            id,
-                          }));
-                        }}
+                        readOnly
                       />
                     </label>
                     <label>
@@ -1991,6 +2043,12 @@ function PlayPresetStructuredEditorPanel({
                       return {
                         ...current,
                         followups,
+                        followupItems: (
+                          current.followupItems ??
+                          defaultFollowupItems(current.followups)
+                        ).filter(
+                          (item) => item.id !== current.followups[index]?.id,
+                        ),
                         mounts: current.mounts.filter(
                           ({ channel }) =>
                             !removingChannels.has(channel) ||
@@ -2002,9 +2060,9 @@ function PlayPresetStructuredEditorPanel({
                 >
                   {uiText("删除")}
                 </button>
-              </li>
-            ))}
-          </ol>
+              </article>
+            )}
+          />
           {workbenchPending ? <p>{uiText("正在读取产物预览……")}</p> : null}
         </div>
       ) : null}

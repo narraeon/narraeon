@@ -1,4 +1,9 @@
 import {
+  defaultFollowupItems,
+  type FollowupItem,
+} from "../../shared/ordered-followups.ts";
+import { parseFollowupItems } from "./OrderedFollowups.ts";
+import {
   builtinAuthorPrompts,
   defaultOrderedAuthorPrompts,
 } from "../../shared/ordered-author-prompts.ts";
@@ -112,7 +117,7 @@ export interface PlayPresetArtifactDeclaration {
 
 /**
  * One derived request dispatched after the main call chain settles. Follow-ups
- * have no order relative to each other, no terminal tool, and no place in the
+ * run in declared order without data dependencies, have no terminal tool or place in the
  * chain transcript. Each is sent once against the frozen main-chain prefix and
  * may only emit the artifacts it declares.
  */
@@ -122,6 +127,56 @@ export interface PlayPresetFollowupDefinition {
   prompt: PlayPresetPromptBlock;
   artifacts: PlayPresetArtifactDeclaration[];
   maxArtifactBytes: number;
+}
+
+/** Resolved application-owned presentation, retained with each generated artifact. */
+export interface FrozenArtifactPresentation {
+  declaration: PlayPresetArtifactDeclaration;
+  files: Record<string, string>;
+  mount: PlayPresetMount["mount"];
+}
+
+export function isFrozenArtifactPresentation(
+  value: unknown,
+): value is FrozenArtifactPresentation {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ["declaration", "files", "mount"]) ||
+    !isRecord(value.declaration) ||
+    !isRecord(value.files) ||
+    !Object.values(value.files).every((body) => typeof body === "string")
+  )
+    return false;
+  try {
+    const original = value.declaration;
+    const parsed = parseArtifacts(
+      [
+        {
+          ...original,
+          ...(original.channel === "builtin:summary"
+            ? { channel: "frozen.presentation" }
+            : {}),
+        },
+      ],
+      value.files as Record<string, string>,
+      "frozen artifact",
+    )[0]!;
+    parsed.channel = String(original.channel);
+    return (
+      isDeepStrictEqual(parsed, original) &&
+      typeof value.mount === "string" &&
+      [
+        "story",
+        "sidebar",
+        "composer_above",
+        "composer_below",
+        "overlay",
+        "debug",
+      ].includes(String(value.mount))
+    );
+  } catch {
+    return false;
+  }
 }
 
 export interface PlayPresetMount {
@@ -177,6 +232,7 @@ export interface PlayPresetPlayerViewPanel {
 }
 
 export interface PlayPresetDefinition {
+  followupItems?: FollowupItem[];
   format: "narraeon.play-preset/v1" | "narraeon.play-preset/v2";
   playPrompts?: OrderedPlayPrompt[];
   authorPrompts?: OrderedPlayPrompt[];
@@ -217,6 +273,7 @@ export function presetHostBinding(binding: PlayPresetBinding): {
  * definition without the normal parser/validator pass.
  */
 export interface PlayPresetStructuredEditor {
+  followupItems?: FollowupItem[];
   playPrompts?: OrderedPlayPrompt[];
   authorPrompts?: OrderedPlayPrompt[];
   migrationNotice?: string;
@@ -558,6 +615,21 @@ export class FileNativePlayPresetStore {
       const previous = parsePlayPresetFiles(
         stored.revisions[stored.currentRevision]!,
       );
+      if (
+        previous.kind === "valid" &&
+        previous.definition.followupItems !== undefined
+      ) {
+        const candidate = readYaml(files, "call-chain.yaml", "call-chain.yaml");
+        if (candidate.format !== "narraeon.play-call-chain/v2")
+          throw new FileNativePlayPresetError(
+            "readonly_followup_removed",
+            "Ordered followups cannot downgrade to v1",
+          );
+        parseFollowupItems(
+          candidate.followupItems,
+          parseFollowups(candidate.followups, files),
+        );
+      }
       if (
         previous.kind === "valid" &&
         previous.definition.playPrompts !== undefined
@@ -1108,6 +1180,9 @@ export function toPlayPresetStructuredEditor(
     extensionRefs: [...definition.extensionRefs],
     narrativePrompts: structuredClone(definition.narrativePrompts),
     followups: structuredClone(definition.followups),
+    followupItems: structuredClone(
+      definition.followupItems ?? defaultFollowupItems(definition.followups),
+    ),
   };
 }
 
@@ -1174,6 +1249,13 @@ export function applyPlayPresetStructuredEditor(
       markdown: path,
     })),
   );
+  if (input.followupItems !== undefined) {
+    callChain.set("format", "narraeon.play-call-chain/v2");
+    callChain.set(
+      "followupItems",
+      parseFollowupItems(input.followupItems, input.followups),
+    );
+  }
   callChain.set(
     "followups",
     input.followups.map((followup) => ({
@@ -1308,6 +1390,9 @@ export function parsePlayPresetStructuredEditor(
       "Structured play playerViewPanels must be an array of maps",
     );
   return {
+    ...(value.followupItems === undefined
+      ? {}
+      : { followupItems: parseFollowupItems(value.followupItems, followups) }),
     name: value.name,
     ...(value.authorPrompts === undefined
       ? {}
@@ -1394,10 +1479,13 @@ export function parsePlayPresetFiles(
     assertNoEditableMechanics(callChain, callChainPath);
     assertKnownKeys(
       callChain,
-      ["format", "narrative", "followups"],
+      ["format", "narrative", "followups", "followupItems"],
       callChainPath,
     );
-    if (callChain.format !== "narraeon.play-call-chain/v1")
+    if (
+      callChain.format !== "narraeon.play-call-chain/v1" &&
+      callChain.format !== "narraeon.play-call-chain/v2"
+    )
       invalid(
         "call_chain_format_invalid",
         "call-chain.yaml format must be narraeon.play-call-chain/v1",
@@ -1420,6 +1508,19 @@ export function parsePlayPresetFiles(
             "preset.yaml#settingImprovement",
           )[0];
     const followups = parseFollowups(callChain.followups, files);
+    if (
+      callChain.format === "narraeon.play-call-chain/v1" &&
+      callChain.followupItems !== undefined
+    )
+      invalid(
+        "followups_invalid",
+        "Ordered followups require call-chain v2",
+        callChainPath,
+      );
+    const followupItems =
+      callChain.format === "narraeon.play-call-chain/v2"
+        ? parseFollowupItems(callChain.followupItems, followups)
+        : undefined;
     const mounts = parseMounts(preset.mounts);
     const playerViewPanels = parsePlayerViewPanels(
       preset.playerViewPanels,
@@ -1431,6 +1532,7 @@ export function parsePlayPresetFiles(
     return {
       kind: "valid",
       definition: {
+        ...(followupItems === undefined ? {} : { followupItems }),
         format: preset.format,
         ...(preset.format === "narraeon.play-preset/v2"
           ? { playPrompts: parseOrderedPlayPrompts(preset.playPrompts) }
@@ -1511,7 +1613,7 @@ function parsePromptBlocks(
 }
 
 /**
- * Follow-ups have no ordering contract. The parser needs only each request's
+ * User definitions retain their resources independently of order and enablement. The parser needs each request's
  * identity, its single author prompt, and the artifacts it may emit.
  */
 function parseFollowups(
@@ -1599,7 +1701,7 @@ function parseFollowups(
     );
   // One channel has one projection meaning. Two followups writing the same
   // channel with different strategies would make the visible set depend on
-  // dispatch order, which followups deliberately do not have.
+  // dispatch order; ordering must not create a data dependency.
   const strategies = new Map<string, string>();
   for (const { artifacts } of followups)
     for (const { channel, strategy } of artifacts) {

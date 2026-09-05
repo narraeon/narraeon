@@ -5,15 +5,35 @@ import { isWorldPromptMaintenance } from "../../protocol/worldMaintenance.ts";
 export function validPlayFollowup(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, [
-      "id",
-      "displayName",
-      "logicalMessages",
-      "tools",
-      "allowedTools",
-      "artifacts",
-      "maxArtifactBytes",
-    ]) &&
+    hasExactKeys(
+      value,
+      [
+        "id",
+        "displayName",
+        "logicalMessages",
+        "tools",
+        "allowedTools",
+        "artifacts",
+        "maxArtifactBytes",
+      ],
+      ["frozenResources"],
+    ) &&
+    (value.frozenResources === undefined ||
+      (isRecord(value.frozenResources) &&
+        hasExactKeys(value.frozenResources, ["files", "mount"]) &&
+        isRecord(value.frozenResources.files) &&
+        Object.values(value.frozenResources.files).every(
+          (body) => typeof body === "string",
+        ) &&
+        typeof value.frozenResources.mount === "string" &&
+        [
+          "story",
+          "sidebar",
+          "composer_above",
+          "composer_below",
+          "overlay",
+          "debug",
+        ].includes(String(value.frozenResources.mount)))) &&
     typeof value.id === "string" &&
     typeof value.displayName === "string" &&
     validLogicalMessages(value.logicalMessages) &&
