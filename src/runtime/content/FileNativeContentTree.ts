@@ -178,10 +178,17 @@ export function inspectContentPackageCurrentTree(
       isRecord(frame) &&
       frame.format === "narraeon.world-frame/v1" &&
       Object.keys(frame).every((key) =>
-        ["format", "bindings", "instructions", "context"].includes(key),
+        [
+          "format",
+          "bindings",
+          "instructions",
+          "context",
+          "maintenance",
+        ].includes(key),
       ) &&
       isRecord(frame.bindings) &&
-      Object.keys(frame.bindings).length === 1
+      Object.keys(frame.bindings).length === 1 &&
+      validMaintenance(frame)
     ) {
       worldFrame = "valid";
       const binding = isRecord(frame.bindings)
@@ -265,6 +272,15 @@ export function inspectContentPackageCurrentTree(
     control: { worldFrame, currentSituation, playerView },
     worldDocumentSnapshot,
   };
+}
+
+function validMaintenance(frame: Record<string, unknown>): boolean {
+  try {
+    worldMaintenanceSettings(frame);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function worldDocumentSnapshotDocuments(
@@ -635,7 +651,8 @@ function validateFrameContext(
     // Naming the offending key matters: reporting the kind reads as "this slot
     // does not exist" and sends the author off deleting a valid slot.
     const unknownKeys = Object.keys(entry.slot).filter(
-      (key) => !allowed.includes(key),
+      (key) =>
+        !allowed.includes(key) && key !== "id" && key !== "advisoryBytes",
     );
     if (unknownKeys.length > 0) {
       issue(
@@ -839,3 +856,4 @@ function issue(
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+import { worldMaintenanceSettings } from "../prompt/WorldMaintenanceReport.ts";

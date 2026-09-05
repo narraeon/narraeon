@@ -9,7 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 
 import { minimalFileNativeContentScaffold } from "../../src/runtime/content/ContentWorkspace.ts";
 import { contentTreeFingerprint } from "../../src/runtime/content/ContentTreeFingerprint.ts";
@@ -30,6 +30,8 @@ import {
 import { WorldRevisionSession } from "../../src/runtime/world-revision/WorldRevisionSession.ts";
 import { WorldRevisionWorkspace } from "../../src/runtime/world-revision/WorldRevisionWorkspace.ts";
 import { FileNativeWorldStore } from "../../src/runtime/world/FileNativeWorldStore.ts";
+import { FileNativeModelHost } from "../../src/runtime/model/FileNativeModelAdapters.ts";
+import { V1Runtime } from "../../src/runtime/V1Runtime.ts";
 
 const roots: string[] = [];
 
@@ -827,7 +829,159 @@ test("AI 对话写入同一工作树，应用后继续原对话会收到新 epoc
   });
 });
 
-async function createdWorld() {
+test("世界修订预览保留检查点与增长基准，应用记录显式世界时间", async () => {
+  const files = minimalFileNativeContentScaffold("zh-CN").map((file) => ({
+    ...file,
+    contents:
+      file.path === "world/current-situation.yaml"
+        ? `${file.contents}时间: 第1天08:00\n`
+        : file.path === "control/frame.yaml"
+          ? `${file.contents}\nmaintenance:\n  clock: { document: '@current-situation', locator: { yaml: [时间] } }\n`
+          : file.contents,
+  }));
+  const { root, worlds, worldId, workspace } = await createdWorld(files);
+  const checkpoint = await worlds.commitPlayStep({
+    operationId: "revision-checkpoint",
+    worldId,
+    parentHead: "genesis",
+    historyAppend: [
+      { role: "player", exactText: "检查点前的输入。" },
+      { role: "narrator", exactText: "检查点前的叙事。" },
+    ],
+    nextMaterials: [],
+    stateChanges: [],
+    narrativeCheckpoint: {
+      contextId: "revision-checkpoint-context",
+      completedPlayerRounds: 1,
+    },
+  });
+  await worlds.commitPlayStep({
+    operationId: "revision-after-checkpoint",
+    worldId,
+    parentHead: checkpoint.head,
+    historyAppend: [
+      { role: "player", exactText: "检查点后的输入。" },
+      { role: "narrator", exactText: "检查点后的叙事。" },
+    ],
+    nextMaterials: [],
+    stateChanges: [],
+  });
+  const runtime = new V1Runtime({
+    dataRoot: root,
+    configRoot: join(root, "config"),
+  });
+  await runtime.initialize();
+  await runtime.handle({
+    type: "model.save",
+    connection: {
+      name: "Revision integration model",
+      presetId: "custom",
+      provider: "chat_completions",
+      baseUrl: "https://provider.invalid/v1",
+      apiKey: "test-key",
+      modelId: modelBinding.modelId,
+      contextWindowTokens: 32_000,
+      maxOutputTokens: 4_096,
+    },
+  });
+  const host = new ScriptedModelHost({
+    binding: modelBinding,
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "read-clock",
+            name: "world_revision_read",
+            arguments: { path: "state/current-situation.yaml" },
+          },
+          {
+            id: "patch-clock",
+            name: "world_revision_patch",
+            arguments: {
+              document: "@current-situation",
+              op: "replace",
+              locator: ["时间"],
+              value: "第2天08:00",
+            },
+          },
+        ],
+      },
+      { outcome: "response", text: "已修订工作树中的时间，等待应用。" },
+    ],
+  });
+  const exchange = vi
+    .spyOn(FileNativeModelHost.prototype, "exchange")
+    .mockImplementation((request, observer) =>
+      host.exchange(request, observer),
+    );
+  const previews = vi.spyOn(FileNativePromptCompiler.prototype, "preview");
+  try {
+    const response = await runtime.handle({
+      type: "world.revision.message",
+      worldId,
+      requestId: "revision-clock-message",
+      continuation: { kind: "fresh_context" },
+      message: "将世界时间修正为第2天08:00。",
+    });
+    expect(response.result).toMatchObject({ runStatus: "ready" });
+    const inspected = previews.mock.results.at(-1);
+    if (inspected?.type !== "return") throw new Error("Preview did not return");
+    const compilation = inspected.value.compilation;
+    const materials = compilation.logicalMessages
+      .filter(({ role }) => role === "world_context")
+      .map(({ markdown }) => markdown)
+      .join("\n");
+    expect(materials).toContain("检查点后的叙事。");
+    expect(materials).not.toContain("检查点前的叙事。");
+    expect(compilation.maintenance?.documents).toContainEqual(
+      expect.objectContaining({
+        shortRef: "current-situation",
+        baselineKind: "world_origin",
+      }),
+    );
+    const epoch = await workspace.active(worldId);
+    if (epoch === null) throw new Error("Missing active revision");
+    expect(
+      epoch.files.find(({ path }) => path === "state/current-situation.yaml")
+        ?.contents,
+    ).toContain("时间: 第2天08:00");
+    const diagnosticFailure = vi
+      .spyOn(FileNativeWorldStore.prototype, "readDocumentMaintenance")
+      .mockRejectedValue(new Error("maintenance unavailable"));
+    try {
+      await runtime.handle({
+        type: "world.revision.apply",
+        worldId,
+        epochId: epoch.epochId,
+        expectedRevision: epoch.revision,
+      });
+      const degraded = previews.mock.results.at(-1);
+      expect(
+        degraded?.type === "return"
+          ? degraded.value.compilation.maintenance?.unavailableReason
+          : null,
+      ).toBe("maintenance unavailable");
+    } finally {
+      diagnosticFailure.mockRestore();
+    }
+    expect(await worlds.readWorldRevisionLock(worldId)).toBeNull();
+    const facts = await new FileNativeWorldStore(root).readDocumentMaintenance(
+      worldId,
+    );
+    expect(facts["current-situation"]?.lastBodyWrite).toMatchObject({
+      kind: "correction",
+      worldTime: "第2天08:00",
+    });
+  } finally {
+    exchange.mockRestore();
+    previews.mockRestore();
+  }
+});
+
+async function createdWorld(
+  packageFiles = minimalFileNativeContentScaffold("zh-CN"),
+) {
   const root = await mkdtemp(join(tmpdir(), "narraeon-world-revision-"));
   roots.push(root);
   const worlds = new FileNativeWorldStore(root);
@@ -835,7 +989,7 @@ async function createdWorld() {
     operationId: `create-${roots.length}`,
     sourcePackageId: "revision-package",
     sourcePackageTitle: "Revision test world",
-    packageFiles: minimalFileNativeContentScaffold("zh-CN"),
+    packageFiles,
     prompt: prompt(),
   });
   return {

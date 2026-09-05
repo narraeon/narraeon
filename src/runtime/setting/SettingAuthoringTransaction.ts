@@ -1,9 +1,12 @@
+import { renderWorldMaintenanceReport } from "../prompt/WorldMaintenanceReport.ts";
+import { listWorldDocuments as listQueryableWorldDocuments } from "../prompt/WorldMaintenanceReport.ts";
 import type { AppLocale } from "../../protocol/appPreferences.ts";
 import { defaultAppLocale } from "../../protocol/appPreferences.ts";
 import { isScalar, isSeq, parseDocument, stringify } from "yaml";
 import type { ContentTreeFile } from "../content/ContentTreeFile.ts";
 import { inspectContentPackageCurrentTree } from "../content/FileNativeContentTree.ts";
 import type { ModelHostToolCall } from "../model/ModelHost.ts";
+import { worldMaterialCoverage } from "../prompt/WorldMaterialCoverage.ts";
 import type {
   PromptCompilation,
   PromptPreview,
@@ -171,6 +174,7 @@ export function settingImprovementRuntimeContract(locale: AppLocale): string {
 ## 游玩怎样读取并使用设定
 
 - control/frame.yaml 的 instructions 把世界专属提示块作为作者指令；context 只按声明顺序执行确定性材料选择。
+- 可在 frame.maintenance.documents 中用 @短引用声明正文建议 UTF-8 字节数；slot 可声明唯一稳定 id 和 advisoryBytes。超限只提示，不截断或拒绝写入。frame.maintenance.clock 可明确绑定 {document: "@ref", locator: {yaml: [时间]}}；只记录该次写入时的标量或 Markdown 文本，不推断时钟。
 - current_situation、document 和 reference_targets 选择的整份正文会直接注入；node 只注入精确节点。catalog 只注入该目录直接子文档的 title、summary 与 @短引用，不注入正文；history 与 additional_materials 也只按精确声明注入。
 - frame 声明的 catalog 目录即使当前没有文档，也会作为空状态目录由 state_list 返回，并可作为 world_create 目标；目录声明不是另一份持久状态。
 - 其余世界文档由游玩 AI 按需发现：用 state_list 浏览 Runtime 返回的目录句柄，用 context_search 做原文字面搜索，再用 context_read 精确读取。可发现路径由目录、字面搜索和精确读取组成；字面 0 命中不证明事实不存在。
@@ -205,6 +209,7 @@ export function settingImprovementRuntimeContract(locale: AppLocale): string {
 ## How play reads and uses the setting
 
 - control/frame.yaml instructions insert world-specific prompt blocks as author instructions. Its context entries perform deterministic material selections in their declared order.
+- Optional frame.maintenance.documents maps @short-refs to advisory body UTF-8 byte counts; slots can declare a unique stable id and advisoryBytes. Excess size only produces advice. Optional frame.maintenance.clock binds {document: "@ref", locator: {yaml: [time]}} to record scalar or Markdown world time at actual writes, without inferring a clock.
 - current_situation, document, and reference_targets selections inject whole bodies; node injects only one exact node. A catalog injects only title, summary, and @short-ref for direct child documents, never their bodies. History and additional materials are likewise exact selections.
 - A catalog directory declared by the frame remains available through state_list as an empty state directory and as a world_create destination even when it currently contains no documents. The declaration is not a second piece of persistent state.
 - Play AI discovers the remaining world documents on demand: state_list browses Runtime-provided directory handles, context_search searches literal source text, and context_read reads an exact handle. Discovery consists of directory browsing, literal search, and exact reads; zero literal matches do not prove that a fact is absent.
@@ -629,7 +634,7 @@ function renderAutomaticReview(
       locale,
       `# Current-tree review passed\n\nContent-tree validation and the real Prompt Preview both passed. This tool response changes ${review.diff.length} file(s) directly in the content package. Use this review and the coverage below to decide whether the current user request is satisfied or further edits are needed.`,
       `# 当前树自动检查通过\n\n内容树校验和真实 Prompt Preview 均已通过；本次工具响应直接修改内容包中的 ${review.diff.length} 个文件。请根据本次检查与下方覆盖报告判断当前用户要求是否已经满足，或是否还需修改。`,
-    )}\n\n${renderPlayCoverage(review.playCoverage, locale)}`;
+    )}\n\n${renderPlayCoverage(review.playCoverage, locale)}\n\n${renderWorldMaintenanceReport(review.preview?.compilation.maintenance, locale)}`;
   return [
     localized(
       locale,
@@ -658,30 +663,8 @@ function buildSettingAuthoringPlayCoverage(
   const byShortRef = new Map(
     documents.map((document) => [document.shortRef, document]),
   );
-  const fullInjected = new Set<string>();
-  const nodeInjected = new Set<string>();
-  const catalogSummary = new Set<string>();
-  const injectedSelections: {
-    shortRef: string;
-    locator: WorldDocumentLocator | null;
-  }[] = [];
-  const compilationCoverage = preview.compilation.coverage;
-
-  for (const entry of compilationCoverage) {
-    const authorization = entry.readAuthorization;
-    if (authorization !== undefined) {
-      const selection = {
-        shortRef: authorization.shortRef,
-        locator: authorization.locator,
-      };
-      injectedSelections.push(selection);
-      if (authorization.locator === null)
-        fullInjected.add(authorization.shortRef);
-      else nodeInjected.add(authorization.shortRef);
-    }
-    for (const shortRef of entry.catalogEntries ?? [])
-      catalogSummary.add(shortRef);
-  }
+  const { fullInjected, nodeInjected, catalogSummary, injectedSelections } =
+    worldMaterialCoverage(preview.compilation.coverage);
 
   const referencedFromInjected = new Set<string>();
   for (const selection of injectedSelections) {
@@ -745,44 +728,6 @@ function buildSettingAuthoringPlayCoverage(
       return { path, access, detail: playAccessDetail(access) };
     }),
   };
-}
-
-function listQueryableWorldDocuments(
-  snapshot: WorldDocumentStore,
-): WorldDocumentDescriptor[] {
-  const documents: WorldDocumentDescriptor[] = [];
-  const pending = [""];
-  const visited = new Set<string>();
-  while (pending.length > 0) {
-    const directory = pending.shift();
-    if (directory === undefined || visited.has(directory)) continue;
-    visited.add(directory);
-    let cursor: string | null = null;
-    do {
-      const result = snapshot.query({
-        kind: "catalog",
-        directory,
-        limit: 100,
-        cursor,
-      });
-      if (result.kind !== "catalog")
-        throw new Error(
-          `Play-coverage catalog failed for ${directory || snapshot.logicalRoot}`,
-        );
-      for (const entry of result.entries) {
-        if (entry.kind === "directory") {
-          const prefix = `${snapshot.logicalRoot}/`;
-          if (!entry.logicalPath.startsWith(prefix))
-            throw new Error("Play-coverage catalog escaped the logical root");
-          pending.push(entry.logicalPath.slice(prefix.length));
-        } else if (entry.document !== undefined) documents.push(entry.document);
-      }
-      cursor = result.page.nextCursor;
-    } while (cursor !== null);
-  }
-  return documents.sort((left, right) =>
-    left.logicalPath.localeCompare(right.logicalPath),
-  );
 }
 
 function changedPathPlayAccess(
@@ -1394,6 +1339,10 @@ function controlDocumentDeletionBlockers(
     recordIfTarget(
       ["bindings", "currentSituation"],
       "bindings.currentSituation",
+    );
+    recordIfTarget(
+      ["maintenance", "clock", "document"],
+      "maintenance.clock.document",
     );
     const context = document.getIn(["context"], true);
     if (isSeq(context))

@@ -64,6 +64,9 @@ interface WorldRevisionPreviewInput {
   playPreset: PlayPresetBinding;
   binding: FileNativePlayBinding;
   epoch: StoredWorldRevisionEpoch;
+  maintenance: Awaited<
+    ReturnType<FileNativeWorldStore["inspectDocumentMaintenance"]>
+  >;
 }
 
 /** Conversation orchestration over the shared locked revision worktree. */
@@ -438,7 +441,7 @@ export class WorldRevisionSession {
     const transaction =
       active?.revision === beforeRevision
         ? active.transaction
-        : this.#openTransaction(session, epoch, binding);
+        : await this.#openTransaction(session, epoch, binding);
     const rawResults = transaction.execute(calls);
     const files = transaction.files();
     const afterRevision = contentTreeFingerprint(files);
@@ -481,11 +484,15 @@ export class WorldRevisionSession {
     return { revision: afterRevision, transaction };
   }
 
-  #openTransaction(
+  async #openTransaction(
     session: StoredWorldRevisionSession,
     epoch: StoredWorldRevisionEpoch,
     binding: FileNativePlayBinding,
-  ): WorldRevisionAuthoringTransaction {
+  ): Promise<WorldRevisionAuthoringTransaction> {
+    const maintenance = await this.#worlds.inspectDocumentMaintenance(
+      epoch.worldId,
+      epoch.baseHead,
+    );
     return new WorldRevisionAuthoringTransaction({
       baseFiles: epoch.files,
       immutableBaseFiles: epoch.baseFiles,
@@ -499,18 +506,20 @@ export class WorldRevisionSession {
           playPreset: session.playPreset,
           binding,
           epoch,
+          maintenance,
         }),
     });
   }
 
   async #validateApply(epoch: StoredWorldRevisionEpoch): Promise<void> {
-    const [host, playPreset, binding] = await Promise.all([
+    const [host, playPreset, binding, maintenance] = await Promise.all([
       this.#bindModelHost(),
       this.#bindPlayPreset(),
       this.#worlds.bindWorldRevision({
         worldId: epoch.worldId,
         epochId: epoch.epochId,
       }),
+      this.#worlds.inspectDocumentMaintenance(epoch.worldId, epoch.baseHead),
     ]);
     const snapshot = WorldDocumentStore.open({
       layout: "world_state",
@@ -527,6 +536,7 @@ export class WorldRevisionSession {
         playPreset,
         binding,
         epoch,
+        maintenance,
       });
     } catch (error: unknown) {
       throw new WorldRevisionWorkspaceError(

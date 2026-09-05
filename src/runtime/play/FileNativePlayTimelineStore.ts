@@ -24,6 +24,7 @@ import type {
   ModelHostAppendItem,
   ModelHostBinding,
   ModelHostExchange,
+  ModelHostWireRequest,
 } from "../model/ModelHost.ts";
 import type {
   MaterialSelection,
@@ -49,6 +50,8 @@ export interface PersistedDocumentAuthorizationCheckpoint {
 }
 
 export interface PersistedPlayCallChainContext {
+  /** Narrative context identity survives transport chain renaming on forks. */
+  continuityContextId?: string;
   chainId: string;
   baselineHead: string;
   baselineHistoryLength?: number;
@@ -102,6 +105,7 @@ interface PersistedContextIndex {
 }
 
 interface PersistedContextBase {
+  continuityContextId?: string;
   schemaVersion: 3;
   kind: "play_context_frozen";
   worldId: string;
@@ -310,6 +314,21 @@ export class FileNativePlayTimelineStore {
       input.source.documentAuthorizationCheckpoints ?? [],
       input.target.documentAuthorizationCheckpoints ?? [],
     );
+    if (
+      input.target.events.some(
+        (event) => event.kind === "assistant" && event.status === "completed",
+      )
+    ) {
+      const encoding = await this.readInitialEncoding(
+        input.sourceWorldId,
+        input.source.chainId,
+      ).catch(() => null);
+      if (encoding !== null)
+        await publishImmutableJson(
+          join(targetRoot, "initial-request-encoding.json"),
+          encoding,
+        );
+    }
     await Promise.all([
       cloneNumberedPrefix({
         sourceRoot,
@@ -588,6 +607,9 @@ export class FileNativePlayTimelineStore {
       chainId,
       previousChainId: indexValue.previousChainId,
       timelineGeneration: indexValue.timelineGeneration,
+      ...(baseValue.continuityContextId === undefined
+        ? {}
+        : { continuityContextId: baseValue.continuityContextId }),
       baselineHead: baseValue.baselineHead,
       parentHead: stateValue.parentHead,
       ...(baseValue.baselineHistoryLength === undefined
@@ -639,6 +661,45 @@ export class FileNativePlayTimelineStore {
         authorizationCheckpointCount: stateValue.authorizationCheckpointCount,
       },
     };
+  }
+
+  /** The first dispatched request encoding is diagnostic evidence, not Authority. */
+  async recordInitialEncoding(
+    worldId: string,
+    chainId: string,
+    encoding: ModelHostWireRequest,
+  ): Promise<void> {
+    const path = join(
+      this.#contextRoot(worldId, chainId),
+      "initial-request-encoding.json",
+    );
+    await publishImmutableJson(path, encoding);
+  }
+
+  async readInitialEncoding(
+    worldId: string,
+    chainId: string,
+  ): Promise<ModelHostWireRequest | null> {
+    const value = await readOptionalJson<unknown>(
+      join(
+        this.#contextRoot(worldId, chainId),
+        "initial-request-encoding.json",
+      ),
+    );
+    if (value === null) return null;
+    if (
+      !isRecord(value) ||
+      value.method !== "POST" ||
+      !["chat_completions", "openai_responses", "anthropic_messages"].includes(
+        String(value.provider),
+      ) ||
+      !isRecord(value.body) ||
+      typeof value.endpointPath !== "string" ||
+      !Array.isArray(value.headerNames) ||
+      !value.headerNames.every((name: unknown) => typeof name === "string")
+    )
+      throw new Error("Initial request encoding has an invalid shape");
+    return value as unknown as ModelHostWireRequest;
   }
 
   async readAllContexts(
@@ -943,6 +1004,9 @@ function contextBase(value: PersistedPlayCallChain): PersistedContextBase {
     kind: "play_context_frozen",
     worldId: value.worldId,
     chainId: value.chainId,
+    ...(value.continuityContextId === undefined
+      ? {}
+      : { continuityContextId: value.continuityContextId }),
     baselineHead: value.baselineHead,
     ...(value.baselineHistoryLength === undefined
       ? {}
@@ -1078,6 +1142,9 @@ function assertContextBase(
     typeof value.worldId !== "string" ||
     typeof value.chainId !== "string" ||
     typeof value.baselineHead !== "string" ||
+    (value.continuityContextId !== undefined &&
+      (typeof value.continuityContextId !== "string" ||
+        value.continuityContextId.length === 0)) ||
     (value.modelBinding !== undefined &&
       !validModelHostBinding(value.modelBinding)) ||
     !isRecord(value.bootstrap) ||
@@ -1171,6 +1238,9 @@ function isReleasedPlayContext(
   if (
     typeof value.chainId !== "string" ||
     typeof value.baselineHead !== "string" ||
+    (value.continuityContextId !== undefined &&
+      (typeof value.continuityContextId !== "string" ||
+        value.continuityContextId.length === 0)) ||
     (value.baselineHistoryLength !== undefined &&
       !validCount(value.baselineHistoryLength)) ||
     typeof value.parentHead !== "string" ||
@@ -1454,6 +1524,11 @@ function assertTimelineEventSummary(
 
 function validAssistantEventCore(value: Record<string, unknown>): boolean {
   return (
+    (value.checkpoint === undefined ||
+      (value.checkpoint === true &&
+        value.status === "completed" &&
+        value.responseKind === "narrative" &&
+        typeof value.committedHead === "string")) &&
     typeof value.text === "string" &&
     (value.status === "streaming" ||
       value.status === "completed" ||

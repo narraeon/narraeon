@@ -1,3 +1,4 @@
+import { FileNativeModelHost } from "../../src/runtime/model/FileNativeModelAdapters.ts";
 import { createHash } from "node:crypto";
 import {
   mkdtemp,
@@ -1083,7 +1084,8 @@ test("工具中间步文本不进入叙事，状态与终态叙事分别推进�
   );
   expect(patchDetail).toMatchObject({
     kind: "tool_result",
-    markdown: "@current-situation write succeeded",
+    markdown:
+      "@current-situation write succeeded\nIf a fresh context started now: full body",
   });
   if (patchDetail.kind !== "tool_result")
     throw new Error("Expected a tool-result timeline detail");
@@ -1110,11 +1112,13 @@ test("工具中间步文本不进入叙事，状态与终态叙事分别推进�
     "world_patch",
     "world_create",
     "world_retire",
+    "world_checkpoint",
   ]);
   expect(modelHost.requests[0]?.maxOutputTokens).toBe(
     modelBinding().maxOutputTokens,
   );
   expect(modelHost.requests[0]?.appended).toEqual([
+    expectedRoundMarker(0),
     { kind: "player", text: "I signal Alex to open the door." },
   ]);
   expect(
@@ -1182,6 +1186,750 @@ test("工具中间步文本不进入叙事，状态与终态叙事分别推进�
     endpoint.state.find(({ path }) => path === "current-situation.yaml")
       ?.contents,
   ).toContain("Alex已经把宿舍门打开。");
+});
+
+test("整理检查点随最终叙事提交，冷启动保留边界并补入跨上下文原文", async () => {
+  const { worlds, worldId } = await createWorld("narrative-checkpoint");
+  const firstHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          { id: "checkpoint", name: "world_checkpoint", arguments: {} },
+        ],
+      },
+      { outcome: "response", text: "此事已经告一段落。" },
+    ],
+  });
+  const start = (
+    chains: PlayCallChain,
+    chainId: string,
+    playerText: string,
+    modelHost: ScriptedModelHost,
+  ) =>
+    chains.start({
+      worldId,
+      chainId,
+      exchangeId: chainId,
+      playerText,
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: modelBinding(),
+      modelHost,
+    });
+  await start(
+    new PlayCallChain(worlds),
+    "checkpoint-first",
+    "我们结束讨论。",
+    firstHost,
+  );
+  expect(firstHost.requests[1]?.appended.at(-1)).toMatchObject({
+    kind: "tool",
+    toolCallId: "checkpoint",
+    markdown: expect.stringContaining("registered") as unknown,
+  });
+  expect(await worlds.recoverEndpoint(worldId)).toMatchObject({
+    narrativeCheckpoint: {
+      head: "commit:2",
+      historyMessageId: "message.2.1.narrator",
+      completedPlayerRounds: 1,
+    },
+  });
+  const secondHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [{ outcome: "response", text: "  你拿起窗边的蓝色花瓶。\n" }],
+  });
+  await start(
+    new PlayCallChain(worlds),
+    "checkpoint-second",
+    "  我拿起蓝色花瓶。\n",
+    secondHost,
+  );
+  expect(JSON.stringify(secondHost.requests[0]?.appended)).toContain(
+    "Completed player rounds since the last checkpoint: 0",
+  );
+  const thirdHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [{ outcome: "response", text: "你将花瓶递给 Alex。" }],
+  });
+  await start(
+    new PlayCallChain(worlds),
+    "checkpoint-third",
+    "递给 Alex。",
+    thirdHost,
+  );
+  const replay = thirdHost.requests[0]?.bootstrap.logicalMessages
+    .flatMap(({ blocks }) => blocks)
+    .filter(({ source }) => source.startsWith("runtime:checkpoint-history"));
+  expect(replay?.map(({ markdown }) => markdown).join("\n")).toContain(
+    "  我拿起蓝色花瓶。\n",
+  );
+  expect(replay?.map(({ markdown }) => markdown).join("\n")).toContain(
+    "  你拿起窗边的蓝色花瓶。\n",
+  );
+  expect(JSON.stringify(replay)).not.toContain("我们结束讨论");
+  expect(JSON.stringify(replay)).not.toContain("world_checkpoint");
+  expect(JSON.stringify(thirdHost.requests[0]?.appended)).toContain(
+    "Completed player rounds since the last checkpoint: 1",
+  );
+});
+
+test("检查点登记尚未生效，最终叙事接受后崩溃仍只恢复一次检查点", async () => {
+  const { worlds, worldId } = await createWorld("checkpoint-crash");
+  const scripted = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          { id: "checkpoint", name: "world_checkpoint", arguments: {} },
+        ],
+      },
+      { outcome: "response", text: "整理后的一段完整叙事。" },
+    ],
+  });
+  const modelHost: ModelHost = {
+    binding: () => scripted.binding(),
+    async exchange(request, observer) {
+      if (request.exchange === 2) {
+        expect(
+          (await worlds.recoverEndpoint(worldId)).narrativeCheckpoint,
+        ).toBeUndefined();
+        process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE =
+          "after_authority_accepted";
+      }
+      return scripted.exchange(request, observer);
+    },
+  };
+  await expect(
+    new PlayCallChain(worlds).start({
+      worldId,
+      chainId: "checkpoint-crash",
+      exchangeId: "first",
+      playerText: "整理这一段。",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: modelBinding(),
+      modelHost,
+    }),
+  ).rejects.toThrow("after_authority_accepted");
+  delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE;
+  const recovered = await new PlayCallChain(worlds).inspectWorld(worldId);
+  expect(
+    recovered?.events.filter(
+      (event) => event.kind === "assistant" && event.checkpoint === true,
+    ),
+  ).toHaveLength(1);
+  expect(
+    (await worlds.readAuthorityHistory(worldId)).commits.filter(
+      ({ narrativeCheckpoint }) => narrativeCheckpoint !== undefined,
+    ),
+  ).toHaveLength(1);
+  expect(scripted.requests).toHaveLength(2);
+  const before = await worlds.deriveWorld({
+    operationId: "checkpoint-before",
+    sourceWorldId: worldId,
+    sourceHead: "commit:1",
+    hostPresetId: "host-main",
+  });
+  const after = await worlds.deriveWorld({
+    operationId: "checkpoint-after",
+    sourceWorldId: worldId,
+    sourceHead: "commit:2",
+    hostPresetId: "host-main",
+  });
+  expect(
+    (await worlds.recoverEndpoint(before.world.worldId)).narrativeCheckpoint,
+  ).toBeUndefined();
+  expect(
+    (await worlds.recoverEndpoint(after.world.worldId)).narrativeCheckpoint,
+  ).toMatchObject({
+    head: "commit:2",
+    historyMessageId: "message.2.1.narrator",
+  });
+});
+
+test("仅登记检查点后重启可原样继续，空输入叙事进入重放但不增加玩家回合", async () => {
+  const { worlds, worldId } = await createWorld(
+    "checkpoint-registration-restart",
+  );
+  const scripted = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          { id: "checkpoint", name: "world_checkpoint", arguments: {} },
+        ],
+      },
+    ],
+  });
+  const modelHost: ModelHost = {
+    binding: () => scripted.binding(),
+    exchange(request, observer) {
+      process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE =
+        "after_timeline_settled";
+      return scripted.exchange(request, observer);
+    },
+  };
+  const interrupted = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "checkpoint-registration-restart",
+    exchangeId: "first",
+    playerText: "把事情整理好。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+  expect(interrupted).toMatchObject({
+    status: "interrupted",
+    lastFailure: expect.stringContaining("after_timeline_settled") as unknown,
+  });
+  delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE;
+  expect(
+    (await worlds.recoverEndpoint(worldId)).narrativeCheckpoint,
+  ).toBeUndefined();
+  const restored = new PlayCallChain(worlds);
+  const continuation = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      { outcome: "response", text: "Alex 合上笔记本。" },
+      { outcome: "response", text: "窗外的灯亮了起来。" },
+    ],
+  });
+  await restored.append({
+    worldId,
+    chainId: "checkpoint-registration-restart",
+    exchangeId: "retry",
+    playerText: "",
+    modelHost: continuation,
+  });
+  expect(
+    (await worlds.recoverEndpoint(worldId)).narrativeCheckpoint,
+  ).toMatchObject({ completedPlayerRounds: 1 });
+  const prefix = continuation.requests[0]!.appended;
+  await restored.append({
+    worldId,
+    chainId: "checkpoint-registration-restart",
+    exchangeId: "continue",
+    playerText: "",
+    modelHost: continuation,
+  });
+  expect(continuation.requests[1]!.appended.slice(0, prefix.length)).toEqual(
+    prefix,
+  );
+  expect(
+    continuation.requests[1]!.appended.filter(
+      ({ kind }) => kind === "runtime_notice",
+    ),
+  ).toHaveLength(1);
+  const next = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [{ outcome: "response", text: "你看向窗外。" }],
+  });
+  await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "checkpoint-after-empty",
+    exchangeId: "new",
+    playerText: "看看外面。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: next,
+  });
+  expect(next.requests[0]!.appended[0]).toEqual(expectedRoundMarker(0));
+  expect(
+    next.requests[0]!.bootstrap.logicalMessages.flatMap(({ blocks }) => blocks)
+      .filter(({ source }) => source.startsWith("runtime:checkpoint-history"))
+      .map(({ markdown }) => markdown)
+      .join("\n"),
+  ).toContain("窗外的灯亮了起来。");
+});
+
+test("已提交写入回执报告下次真实目录覆盖并回显更新后的摘要", async () => {
+  const files = worldFiles();
+  files.find(({ path }) => path === "control/frame.yaml")!.contents +=
+    "  - slot: { kind: catalog, directory: records, maxEntries: 1 }\n";
+  files.push({
+    path: "world/records/ledger.yaml",
+    contents:
+      "$document:\n  id: ledger\n  ref: ledger\n  title: 账本\n  summary: 旧摘要\n  aliases: []\n金币: 10\n",
+  });
+  const { worlds, worldId } = await createWorld("write-coverage", files);
+  const modelHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          { id: "read", name: "context_read", arguments: { ref: "@ledger" } },
+        ],
+      },
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "write",
+            name: "world_patch",
+            arguments: {
+              target: "@ledger",
+              edits: [
+                { op: "replace", locator: { yaml: ["金币"] }, value: 8 },
+                { op: "set_metadata", summary: "当前金币与未结清借款" },
+              ],
+            },
+          },
+        ],
+      },
+      { outcome: "response", text: "你付了两枚金币。" },
+    ],
+  });
+  const first = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "write-coverage",
+    exchangeId: "first",
+    playerText: "付两枚金币。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+  const receipt = modelHost.requests[2]!.appended.at(-1);
+  expect(receipt).toMatchObject({ kind: "tool", toolCallId: "write" });
+  if (receipt?.kind !== "tool")
+    throw new Error("Missing committed write receipt");
+  expect(receipt.markdown).toContain("@ledger write succeeded");
+  expect(receipt.markdown).toContain(
+    "If a fresh context started now: catalog summary only",
+  );
+  expect(receipt.markdown).toContain("Summary: 当前金币与未结清借款");
+  expect(receipt.markdown).not.toContain("金币: 8");
+  const event = first.events.find(
+    (item) => item.kind === "tool_result" && item.callId === "write",
+  );
+  const persisted = await worlds.playTimeline.readDetail(
+    worldId,
+    first.chainId,
+    event!.id,
+  );
+  expect(persisted).toMatchObject({ markdown: receipt.markdown });
+});
+
+test("维护诊断失败不阻断已提交写入、终态叙事或冷恢复", async () => {
+  const { worlds, worldId } = await createWorld("maintenance-failure");
+  const original = worlds.readDocumentMaintenance.bind(worlds);
+  let reads = 0;
+  vi.spyOn(worlds, "readDocumentMaintenance").mockImplementation((...args) =>
+    ++reads === 1
+      ? original(...args)
+      : Promise.reject(new Error("maintenance unavailable")),
+  );
+  const host = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "write",
+            name: "world_patch",
+            arguments: {
+              target: "@current-situation",
+              edits: [
+                {
+                  op: "replace",
+                  locator: { yaml: ["情况"] },
+                  value: "Alex 已打开门。",
+                },
+              ],
+            },
+          },
+        ],
+      },
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "read",
+            name: "context_read",
+            arguments: { ref: "@current-situation" },
+          },
+        ],
+      },
+      { outcome: "response", text: "Alex 推开门。" },
+    ],
+  });
+  const completed = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "maintenance-failure",
+    exchangeId: "first",
+    playerText: "打开门。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: host,
+  });
+  expect(completed.status).toBe("ready");
+  expect(completed.parentHead).toBe("commit:3");
+  expect(host.requests).toHaveLength(3);
+  expect(JSON.stringify(host.requests.at(-1)?.appended.at(-1))).toContain(
+    "maintenance unavailable",
+  );
+  expect((await new PlayCallChain(worlds).inspectWorld(worldId))?.status).toBe(
+    "ready",
+  );
+});
+
+test("增长基准与正文写入位置跨重启和分叉保留，摘要修改不刷新正文位置", async () => {
+  const files = worldFiles();
+  files.find(({ path }) => path === "world/current-situation.yaml")!.contents +=
+    "时间: 黄昏\n";
+  files.find(({ path }) => path === "control/frame.yaml")!.contents +=
+    "maintenance:\n  documents:\n    '@current-situation': 10\n  clock:\n    document: '@current-situation'\n    locator: { yaml: [时间] }\n";
+  const { worlds, worldId, root } = await createWorld(
+    "document-maintenance",
+    files,
+  );
+  const host = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "time",
+            name: "world_patch",
+            arguments: {
+              target: "@current-situation",
+              edits: [
+                { op: "replace", locator: { yaml: ["时间"] }, value: "午夜" },
+              ],
+            },
+          },
+        ],
+      },
+      { outcome: "response", text: "你一直等到午夜。" },
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "summary",
+            name: "world_patch",
+            arguments: {
+              target: "@current-situation",
+              edits: [{ op: "set_metadata", summary: "午夜的门边" }],
+            },
+          },
+        ],
+      },
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "read-position",
+            name: "context_read",
+            arguments: { ref: "@current-situation" },
+          },
+        ],
+      },
+      { outcome: "response", text: "Alex 从门边走来。" },
+    ],
+  });
+  const chains = new PlayCallChain(worlds);
+  await chains.start({
+    worldId,
+    chainId: "document-maintenance",
+    exchangeId: "first",
+    playerText: "等到午夜。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: host,
+  });
+  expect(JSON.stringify(host.requests[1]!.appended.at(-1))).toContain(
+    "advisory limit 10",
+  );
+  const first = (await worlds.readDocumentMaintenance(worldId))[
+    "current-situation"
+  ]!;
+  expect(first).toMatchObject({
+    baselineKind: "world_origin",
+    lastBodyWrite: { kind: "play", context: 1, round: 1, worldTime: "午夜" },
+    bodyChangedContexts: 1,
+  });
+  await chains.append({
+    worldId,
+    chainId: "document-maintenance",
+    exchangeId: "second",
+    playerText: "整理一下这段的摘要。",
+    modelHost: host,
+  });
+  const after = (await worlds.readDocumentMaintenance(worldId))[
+    "current-situation"
+  ]!;
+  expect(after.lastBodyWrite).toEqual(first.lastBodyWrite);
+  const readPosition = JSON.stringify(host.requests.at(-1)?.appended.at(-1));
+  expect(readPosition).toContain("Body: Context 1 · round 1");
+  expect(readPosition).toContain("Metadata: Context 1 · round 2");
+  expect(readPosition).toContain("World time at write: 午夜");
+  expect(after.lastMetadataWrite).toMatchObject({
+    context: 1,
+    round: 2,
+    worldTime: "午夜",
+  });
+  expect(after.baselineBytes).toBe(first.baselineBytes);
+  expect(after.bodyChangedContexts).toBe(1);
+  const restarted = new FileNativeWorldStore(root);
+  expect(
+    (await restarted.readDocumentMaintenance(worldId))["current-situation"],
+  ).toEqual(after);
+  const fork = await chains.deriveWorld({
+    operationId: "maintenance-fork",
+    sourceWorldId: worldId,
+    sourceHead: "commit:6",
+    hostPresetId: "host-main",
+  });
+  expect(
+    (await worlds.readDocumentMaintenance(fork.world.worldId))[
+      "current-situation"
+    ],
+  ).toEqual(after);
+  const forkContext = await chains.inspectWorld(fork.world.worldId);
+  const forkHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "fork-time",
+            name: "world_patch",
+            arguments: {
+              target: "@current-situation",
+              edits: [
+                { op: "replace", locator: { yaml: ["时间"] }, value: "凌晨" },
+              ],
+            },
+          },
+        ],
+      },
+      { outcome: "response", text: "天色将明。" },
+    ],
+  });
+  const forkThird = await chains.append({
+    worldId: fork.world.worldId,
+    chainId: forkContext!.chainId,
+    exchangeId: "fork-third",
+    playerText: "等一阵。",
+    modelHost: forkHost,
+  });
+  expect(
+    (await worlds.readDocumentMaintenance(fork.world.worldId))[
+      "current-situation"
+    ],
+  ).toMatchObject({
+    lastBodyWrite: { context: 1, round: 3 },
+    bodyChangedContexts: 1,
+    observedContexts: 1,
+  });
+  const thirdPlayer = forkThird.events.findLast(
+    (event) => event.kind === "player",
+  )!;
+  const revision = await chains.revisePlayer({
+    operationId: "maintenance-revision",
+    worldId: fork.world.worldId,
+    chainId: forkThird.chainId,
+    eventId: thirdPlayer.id,
+    replacementExchangeId: "revised-third",
+    replacementText: "再等一会。",
+    continuation: "continue_context",
+  });
+  const revisedHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "revised-time",
+            name: "world_patch",
+            arguments: {
+              target: "@current-situation",
+              edits: [
+                { op: "replace", locator: { yaml: ["时间"] }, value: "清晨" },
+              ],
+            },
+          },
+        ],
+      },
+      { outcome: "response", text: "窗边透进晨光。" },
+    ],
+  });
+  const resumed = await new PlayCallChain(worlds).append({
+    worldId: fork.world.worldId,
+    chainId: revision.playCallChain.chainId,
+    exchangeId: "resume-third",
+    playerText: "",
+    modelHost: revisedHost,
+  });
+  expect(
+    (await worlds.readDocumentMaintenance(fork.world.worldId))[
+      "current-situation"
+    ],
+  ).toMatchObject({
+    lastBodyWrite: { context: 1, round: 3 },
+    bodyChangedContexts: 1,
+    observedContexts: 1,
+  });
+  const nestedFork = await chains.deriveWorld({
+    operationId: "maintenance-nested-fork",
+    sourceWorldId: fork.world.worldId,
+    sourceHead: resumed.parentHead,
+    hostPresetId: "host-main",
+  });
+  const nestedContext = await chains.inspectWorld(nestedFork.world.worldId);
+  const nestedHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "nested-time",
+            name: "world_patch",
+            arguments: {
+              target: "@current-situation",
+              edits: [
+                { op: "replace", locator: { yaml: ["时间"] }, value: "日出" },
+              ],
+            },
+          },
+        ],
+      },
+      { outcome: "response", text: "太阳升起来。" },
+    ],
+  });
+  await chains.append({
+    worldId: nestedFork.world.worldId,
+    chainId: nestedContext!.chainId,
+    exchangeId: "fourth",
+    playerText: "等到日出。",
+    modelHost: nestedHost,
+  });
+  expect(
+    (await worlds.readDocumentMaintenance(nestedFork.world.worldId))[
+      "current-situation"
+    ],
+  ).toMatchObject({
+    lastBodyWrite: { context: 1, round: 4 },
+    bodyChangedContexts: 1,
+    observedContexts: 1,
+  });
+  const noOpHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "same-time",
+            name: "world_patch",
+            arguments: {
+              target: "@current-situation",
+              edits: [
+                { op: "replace", locator: { yaml: ["时间"] }, value: "午夜" },
+              ],
+            },
+          },
+        ],
+      },
+      { outcome: "response", text: "仍是午夜。" },
+    ],
+  });
+  await chains.append({
+    worldId,
+    chainId: "document-maintenance",
+    exchangeId: "third",
+    playerText: "确认时间。",
+    modelHost: noOpHost,
+  });
+  expect(
+    (await worlds.readDocumentMaintenance(worldId))["current-situation"],
+  ).toEqual(after);
+});
+
+test("相邻上下文诊断保存实际编码，重启后仍能对照缓存键和 Provider usage", async () => {
+  const { worlds, worldId, root } = await createWorld("prefix-diagnostics");
+  const sent: unknown[] = [];
+  const host = new FileNativeModelHost(
+    {
+      provider: "chat_completions",
+      dialect: "cliproxyapi",
+      baseUrl: "https://provider.invalid/v1",
+      apiKey: "diagnostic-secret",
+      modelId: "prefix-model",
+      contextWindowTokens: 32000,
+      maxOutputTokens: 2000,
+    },
+    (_url, options) => {
+      if (typeof options?.body !== "string")
+        throw new Error("Expected JSON request text");
+      sent.push(JSON.parse(options.body) as unknown);
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: { role: "assistant", content: "你走到了门边。" },
+                finish_reason: "stop",
+              },
+            ],
+            usage: {
+              prompt_tokens: 20,
+              completion_tokens: 5,
+              total_tokens: 25,
+              prompt_tokens_details: { cached_tokens: 4 },
+            },
+          }),
+        ),
+      );
+    },
+  );
+  const chains = new PlayCallChain(worlds);
+  for (const chainId of ["prefix-first", "prefix-second"])
+    await chains.start({
+      worldId,
+      chainId,
+      exchangeId: chainId,
+      playerText: "走到门边。",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: host.binding(),
+      modelHost: host,
+    });
+  expect(
+    (await worlds.playTimeline.readInitialEncoding(worldId, "prefix-first"))
+      ?.body,
+  ).toEqual(sent[0]);
+  expect(
+    (await worlds.playTimeline.readInitialEncoding(worldId, "prefix-second"))
+      ?.body,
+  ).toEqual(sent[1]);
+  const restarted = new PlayCallChain(new FileNativeWorldStore(root));
+  const view = await restarted.inspectWorld(worldId);
+  const reading = await restarted.inspectReading(worldId, view!.parentHead);
+  expect(
+    reading?.prefixDiagnostics?.logical?.changedSources.length,
+  ).toBeGreaterThan(0);
+  expect(reading?.prefixDiagnostics?.encoding.cacheKey).toBe("different");
+  expect(
+    reading?.prefixDiagnostics?.providerUsage.current?.cacheReadTokens,
+  ).toBe(4);
+  expect(JSON.stringify(reading?.prefixDiagnostics)).not.toContain(
+    "diagnostic-secret",
+  );
 });
 
 test("AI 读取证据返回冻结 bootstrap、已结算全文读取与下一次真实 Prompt Preview", async () => {
@@ -1303,6 +2051,21 @@ test("AI 读取证据返回冻结 bootstrap、已结算全文读取与下一次�
   expect(reading.nextFreshContext?.preview.compilation.coverage).toContainEqual(
     expect.objectContaining({ catalogEntries: ["dorm-404"] }),
   );
+  const diagnostics = vi
+    .spyOn(FileNativeWorldStore.prototype, "readDocumentMaintenance")
+    .mockRejectedValue(new Error("maintenance unavailable"));
+  try {
+    const degraded = (
+      await runtime.handle({ type: "world.play-context.read", worldId })
+    ).result as V1PlayContextReadingView;
+    expect(degraded.currentContext?.bootstrap).toEqual(direct?.bootstrap);
+    expect(
+      degraded.nextFreshContext?.preview.compilation.maintenance
+        ?.unavailableReason,
+    ).toBe("maintenance unavailable");
+  } finally {
+    diagnostics.mockRestore();
+  }
 });
 
 test("world_patch no-op 保留匹配的紧凑工具结果且不推进世界", async () => {
@@ -1367,7 +2130,8 @@ test("world_patch no-op 保留匹配的紧凑工具结果且不推进世界", as
   );
   expect(patchDetail).toMatchObject({
     kind: "tool_result",
-    markdown: "@current-situation unchanged",
+    markdown:
+      "@current-situation unchanged\nIf a fresh context started now: full body",
   });
   if (patchDetail.kind !== "tool_result")
     throw new Error("Expected a tool-result timeline detail");
@@ -1551,10 +2315,17 @@ test("游玩调用链可在 frame 声明的空 catalog 中创建首份文档", a
   expect(listResult?.kind === "tool" ? listResult.markdown : "").toContain(
     "Directory @dir-/items",
   );
+  expect((await worlds.readDocumentMaintenance(worldId)).lantern).toMatchObject(
+    {
+      baselineKind: "document_creation",
+      baselineBytes: Buffer.byteLength("状态: 完好\n", "utf8"),
+    },
+  );
   expect(firstHost.requests[2]?.appended.at(-1)).toEqual({
     kind: "tool",
     toolCallId: "create-first-item",
-    markdown: "@lantern write succeeded",
+    markdown:
+      "@lantern write succeeded\nIf a fresh context started now: catalog summary only\nSummary: 一盏可持续追踪的提灯。",
   });
   expect(
     (await worlds.recoverEndpoint(worldId)).state.find(
@@ -1629,7 +2400,8 @@ test("冷启动恢复 world_create 授予的写权限，后续无需重新读取
   expect(interruptedHost.requests[1]?.appended.at(-1)).toEqual({
     kind: "tool",
     toolCallId: "create-cold-character",
-    markdown: "@cold-character write succeeded",
+    markdown:
+      "@cold-character write succeeded\nIf a fresh context started now: not directly injected; read on demand",
   });
 
   const recoveredHost = new ScriptedModelHost({
@@ -1899,6 +2671,7 @@ test("全新上下文只重建模型上下文，持久保留此前调用轨迹�
   const withHistory = second;
 
   expect(secondHost.requests[0]?.appended).toEqual([
+    expectedRoundMarker(1),
     { kind: "player", text: "Player input for the new context." },
   ]);
   expect(withHistory.previousContexts).toEqual([]);
@@ -2266,7 +3039,7 @@ test("从调用链节点派生会保留截至该节点的调用轨迹，并可�
   });
   expect(
     continuedToolHost.requests[0]?.appended.map(({ kind }) => kind),
-  ).toEqual(["player", "assistant", "tool"]);
+  ).toEqual(["runtime_notice", "player", "assistant", "tool"]);
 
   const playerBranch = (
     await runtime.handle({
@@ -2332,6 +3105,7 @@ test("从调用链节点派生会保留截至该节点的调用轨迹，并可�
   });
   expect(regenerated.status).toBe("ready");
   expect(regeneratedHost.requests[0]?.appended).toEqual([
+    expectedRoundMarker(0),
     { kind: "player", text: "I signal Alex to open the door." },
   ]);
   expect(
@@ -2583,6 +3357,7 @@ test("修改历史玩家提交会在同一世界追加时间线修订，并从�
     "Alex nods and says he will arrive five minutes early.",
   ]);
   expect(replacementHost.requests[0]?.appended).toEqual([
+    expectedRoundMarker(0),
     { kind: "player", text: "I ask Alex when we are meeting." },
     {
       kind: "assistant",
@@ -2596,6 +3371,7 @@ test("修改历史玩家提交会在同一世界追加时间线修订，并从�
       },
       toolCalls: [],
     },
+    expectedRoundMarker(1),
     { kind: "player", text: "Then let's meet fifteen minutes early." },
   ]);
   const authority = await worlds.readAuthorityHistory(worldId);
@@ -2717,6 +3493,7 @@ test("修改第一条玩家消息可把修改稿保存为不继承旧续传的�
     modelHost: replacementHost,
   });
   expect(replacementHost.requests[0]?.appended).toEqual([
+    expectedRoundMarker(0),
     { kind: "player", text: "I take the western path." },
   ]);
   expect(
@@ -2912,6 +3689,7 @@ test("把上下文中较后的修改稿另存为全新上下文时保留页面�
     modelHost: replacementHost,
   });
   expect(replacementHost.requests[0]?.appended).toEqual([
+    expectedRoundMarker(1),
     { kind: "player", text: "I take the western path instead." },
   ]);
 });
@@ -3178,6 +3956,7 @@ test("空输入追加会从完整逻辑 transcript 继续生成，并把 Provide
     1,
   );
   expect(modelHost.requests[1]?.appended).toEqual([
+    expectedRoundMarker(0),
     { kind: "player", text: "I signal Alex to open the door." },
     {
       kind: "assistant",
@@ -3772,6 +4551,7 @@ test("后置请求在整轮结束后各跑一次，共享同一主链前缀且�
   // Only the first request belongs to the main chain. Both follow-ups must use
   // the exact transcript at main-chain completion and cannot see each other.
   const mainPrefix = [
+    expectedRoundMarker(0),
     { kind: "player", text: "I signal Alex to open the door." },
     {
       kind: "assistant",
@@ -3788,11 +4568,11 @@ test("后置请求在整轮结束后各跑一次，共享同一主链前缀且�
   ];
   const statusRequest = modelHost.requests[1]!;
   const optionsRequest = modelHost.requests[2]!;
-  expect(statusRequest.appended.slice(0, 2)).toEqual(mainPrefix);
-  expect(optionsRequest.appended.slice(0, 2)).toEqual(mainPrefix);
-  expect(statusRequest.appended).toHaveLength(3);
-  expect(optionsRequest.appended).toHaveLength(3);
-  expect(optionsRequest.appended[2]).not.toEqual(statusRequest.appended[2]);
+  expect(statusRequest.appended.slice(0, 3)).toEqual(mainPrefix);
+  expect(optionsRequest.appended.slice(0, 3)).toEqual(mainPrefix);
+  expect(statusRequest.appended).toHaveLength(4);
+  expect(optionsRequest.appended).toHaveLength(4);
+  expect(optionsRequest.appended[3]).not.toEqual(statusRequest.appended[3]);
   expect(JSON.stringify(optionsRequest.appended)).not.toContain("status_bar");
   expect(JSON.stringify(statusRequest.appended)).not.toContain(
     "The panel is ready",
@@ -3870,6 +4650,7 @@ test("后置请求在整轮结束后各跑一次，共享同一主链前缀且�
   });
   expect(nextHost.requests[0]!.appended).toEqual([
     ...mainPrefix,
+    expectedRoundMarker(1),
     { kind: "player", text: "I follow." },
   ]);
 
@@ -4002,4 +4783,14 @@ async function readUtf8Tree(root: string): Promise<string> {
     }),
   );
   return contents.join("\n");
+}
+
+function expectedRoundMarker(rounds: number): unknown {
+  return expect.objectContaining({
+    kind: "runtime_notice",
+    notice: "checkpoint_rounds",
+    text: expect.stringContaining(
+      `Completed player rounds since the last checkpoint: ${rounds}.`,
+    ) as unknown,
+  });
 }

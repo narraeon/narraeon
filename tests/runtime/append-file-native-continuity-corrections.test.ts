@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 
 import type { ContentTreeFile } from "../../src/runtime/content/ContentWorkspace.ts";
 import { FileNativeContinuityCorrection } from "../../src/runtime/play/FileNativeContinuityCorrection.ts";
@@ -15,6 +15,59 @@ afterEach(async () => {
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
   );
+});
+
+test("维护诊断不可用时修正仍可预览、取消并释放世界锁", async () => {
+  const { store, corrections, worldId } = await world();
+  vi.spyOn(store, "readDocumentMaintenance").mockRejectedValue(
+    new Error("maintenance unavailable"),
+  );
+  const started = await corrections.begin({
+    worldId,
+    operationId: "correction-without-diagnostics",
+    mode: "documents",
+  });
+  const preview = corrections.preview({
+    candidateId: started.candidateId,
+    expectedVersion: started.version,
+    prompt: prompt(),
+  });
+  expect(preview.nextPrompt.compilation.maintenance?.unavailableReason).toBe(
+    "maintenance unavailable",
+  );
+  expect(
+    JSON.stringify(preview.nextPrompt.compilation.logicalMessages),
+  ).toContain("maintenance unavailable");
+  await corrections.cancel(started.candidateId, started.version);
+  const next = await corrections.begin({
+    worldId,
+    operationId: "correction-after-unavailable-diagnostics",
+    mode: "documents",
+  });
+  await corrections.cancel(next.candidateId, next.version);
+});
+
+test("修正初始化异常清理续租和预留，可用同一操作重试", async () => {
+  const { store, corrections, worldId } = await world();
+  const heartbeatCleanup = vi.spyOn(globalThis, "clearInterval");
+  vi.spyOn(store, "inspectDocumentMaintenance").mockRejectedValueOnce(
+    new Error("candidate initialization failed"),
+  );
+  const input = {
+    worldId,
+    operationId: "correction-initialization-retry",
+    mode: "documents" as const,
+  };
+  try {
+    await expect(corrections.begin(input)).rejects.toThrow(
+      "candidate initialization failed",
+    );
+    expect(heartbeatCleanup).toHaveBeenCalled();
+    const retried = await corrections.begin(input);
+    await corrections.cancel(retried.candidateId, retried.version);
+  } finally {
+    heartbeatCleanup.mockRestore();
+  }
 });
 
 test("文档修正先读后 patch、Preview并追加 correction commit", async () => {

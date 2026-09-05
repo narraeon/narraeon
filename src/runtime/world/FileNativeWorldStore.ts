@@ -137,6 +137,7 @@ export interface FileNativePlayBinding {
   files: Record<string, string>;
   additionalMaterials: MaterialSelection[];
   history: Record<string, string>;
+  narrativeCheckpoint?: NarrativeCheckpoint | undefined;
 }
 
 export interface FileNativeStateChange {
@@ -192,6 +193,7 @@ export interface FileNativeRecoveredEndpoint {
     exactText: string;
   }[];
   additionalMaterials: MaterialSelection[];
+  narrativeCheckpoint?: NarrativeCheckpoint | undefined;
 }
 
 export type FileNativeDerivationOutcome =
@@ -213,6 +215,10 @@ interface FileNativeWorldDerivationInput {
 }
 
 export class FileNativeWorldStore {
+  readonly #documentMaintenanceCache = new Map<
+    string,
+    Map<string, DocumentMaintenanceState>
+  >();
   readonly #worldsRoot: string;
   readonly #operationsRoot: string;
   readonly #promptCompiler: FileNativePromptCompiler;
@@ -1010,6 +1016,7 @@ export class FileNativeWorldStore {
           ),
           additionalMaterials: materials?.items ?? [],
           history: materializedHistoryRecord(history),
+          narrativeCheckpoint: await authorityStore.readNarrativeCheckpoint(),
         };
       });
     } catch (error: unknown) {
@@ -1049,6 +1056,7 @@ export class FileNativeWorldStore {
         {},
       ),
       additionalMaterials: structuredClone(endpoint.additionalMaterials),
+      narrativeCheckpoint: endpoint.narrativeCheckpoint,
       history: Object.fromEntries(
         endpoint.history.map(({ messageId, exactText }) => [
           messageId,
@@ -1111,6 +1119,7 @@ export class FileNativeWorldStore {
         state: recovered.state,
         history: recovered.history,
         additionalMaterials: recovered.additionalMaterials,
+        narrativeCheckpoint: recovered.narrativeCheckpoint,
       };
     } catch (error: unknown) {
       if (error instanceof FileNativeWorldCreationError) throw error;
@@ -1573,6 +1582,7 @@ export class FileNativeWorldStore {
   }
 
   async commitCorrection(input: {
+    worldClock?: string;
     operationId: string;
     worldId: string;
     parentHead: string;
@@ -1597,6 +1607,9 @@ export class FileNativeWorldStore {
             operationReserved = await this.reserveOperation(input.operationId);
         }
         return this.#commitHistoryChange({
+          ...(input.worldClock === undefined
+            ? {}
+            : { worldClock: input.worldClock }),
           operationId: input.operationId,
           worldId: input.worldId,
           parentHead: input.parentHead,
@@ -1650,12 +1663,15 @@ export class FileNativeWorldStore {
    * separate commits; there is no synthetic call-chain-wide settlement boundary.
    */
   async commitPlayStep(input: {
+    playContext?: string;
+    worldClock?: string;
     operationId: string;
     worldId: string;
     parentHead: string;
     historyAppend: { role: "player" | "narrator"; exactText: string }[];
     nextMaterials: MaterialSelection[];
     stateChanges: FileNativeStateChange[];
+    narrativeCheckpoint?: NarrativeCheckpointDeclaration;
   }): Promise<
     Extract<
       FileNativeOperationOutcome,
@@ -1691,12 +1707,15 @@ export class FileNativeWorldStore {
   }
 
   async #commitHistoryChange(input: {
+    playContext?: string;
+    worldClock?: string;
     operationId: string;
     worldId: string;
     parentHead: string;
     historyAppend: { role: "player" | "narrator"; exactText: string }[];
     nextMaterials: MaterialSelection[];
     stateChanges: FileNativeStateChange[];
+    narrativeCheckpoint?: NarrativeCheckpointDeclaration;
     mode: "play" | "correction" | "timeline_revision";
     timelineRevision?: FileNativeAuthorityTimelineRevision;
     operationReserved?: boolean;
@@ -1876,6 +1895,12 @@ export class FileNativeWorldStore {
             await authorityStore.discardUnacceptedNextEpoch();
           crashAtFileNativeAuthorityEdge("before_commit_acceptance");
           const preparedAppend = await authorityStore.prepareAppend({
+            ...(input.playContext === undefined
+              ? {}
+              : { playContext: input.playContext }),
+            ...(input.worldClock === undefined
+              ? {}
+              : { worldClock: input.worldClock }),
             operationId: input.operationId,
             parentHead: input.parentHead,
             ...(input.timelineRevision === undefined
@@ -1885,6 +1910,9 @@ export class FileNativeWorldStore {
             historyAppend: input.historyAppend,
             stateChanges: structuredClone(input.stateChanges),
             nextMaterials: input.nextMaterials,
+            ...(input.narrativeCheckpoint === undefined
+              ? {}
+              : { narrativeCheckpoint: input.narrativeCheckpoint }),
             ...(input.mode === "correction"
               ? {
                   correctionTargets: input.stateChanges.map(
@@ -1980,6 +2008,50 @@ export class FileNativeWorldStore {
     await readPublicationAt(root);
     const authority = await new FileNativeAuthorityV3(root).readHistory();
     return structuredClone(authority);
+  }
+
+  async inspectDocumentMaintenance(
+    worldId: string,
+    head?: string,
+  ): Promise<{
+    documentMaintenance: Record<string, WorldDocumentMaintenance>;
+    documentMaintenanceUnavailableReason?: string;
+  }> {
+    try {
+      return {
+        documentMaintenance: await this.readDocumentMaintenance(worldId, head),
+      };
+    } catch (error: unknown) {
+      return {
+        documentMaintenance: {},
+        documentMaintenanceUnavailableReason:
+          error instanceof Error
+            ? error.message
+            : "Document diagnostics unavailable",
+      };
+    }
+  }
+
+  async readDocumentMaintenance(
+    worldId: string,
+    head?: string,
+  ): Promise<Record<string, WorldDocumentMaintenance>> {
+    assertIdentity(worldId, "World ID");
+    await this.ensureCurrentStorage(worldId);
+    const root = join(this.#worldsRoot, worldId);
+    await readPublicationAt(root);
+    const authority = new FileNativeAuthorityV3(root);
+    const selectedHead = head ?? (await authority.readHead()).head;
+    let cache = this.#documentMaintenanceCache.get(worldId);
+    if (cache === undefined) {
+      cache = new Map();
+      if (this.#documentMaintenanceCache.size >= 8)
+        this.#documentMaintenanceCache.delete(
+          this.#documentMaintenanceCache.keys().next().value!,
+        );
+      this.#documentMaintenanceCache.set(worldId, cache);
+    }
+    return readDocumentMaintenanceFacts(authority, selectedHead, cache);
   }
 
   async readAuthorityEndpoint(
@@ -2847,12 +2919,15 @@ function worldNeutralMaterials(
 function authorityCommitMatchesInput(
   commit: FileNativeAuthorityCommitV3,
   input: {
+    playContext?: string;
+    worldClock?: string;
     parentHead: string;
     historyAppend: { role: "player" | "narrator"; exactText: string }[];
     nextMaterials: MaterialSelection[];
     stateChanges: FileNativeStateChange[];
     mode: "play" | "correction" | "timeline_revision";
     timelineRevision?: FileNativeAuthorityTimelineRevision;
+    narrativeCheckpoint?: NarrativeCheckpointDeclaration;
   },
 ): boolean {
   const stateChangesMatch =
@@ -2882,6 +2957,8 @@ function authorityCommitMatchesInput(
       : undefined;
   return (
     commit.mode === input.mode &&
+    commit.playContext === input.playContext &&
+    commit.worldClock === input.worldClock &&
     commit.auditParent.head === input.parentHead &&
     commit.timelineParent.head ===
       (input.timelineRevision?.restoresHead ?? input.parentHead) &&
@@ -2892,6 +2969,7 @@ function authorityCommitMatchesInput(
     stateChangesMatch &&
     isDeepStrictEqual(commit.nextAdditionalMaterials, input.nextMaterials) &&
     isDeepStrictEqual(commit.timelineRevision, input.timelineRevision) &&
+    isDeepStrictEqual(commit.narrativeCheckpoint, input.narrativeCheckpoint) &&
     isDeepStrictEqual(commit.correctionTargets, expectedCorrection) &&
     commit.corrects ===
       (input.mode === "correction" ? input.parentHead : undefined)
@@ -3188,3 +3266,12 @@ function crashAtFileNativeAuthorityEdge(edge: string): void {
     process.kill(process.pid, "SIGKILL");
   }
 }
+import type {
+  NarrativeCheckpoint,
+  NarrativeCheckpointDeclaration,
+} from "../play/PlayContinuity.ts";
+import type { WorldDocumentMaintenance } from "../../protocol/worldMaintenance.ts";
+import {
+  readDocumentMaintenanceFacts,
+  type DocumentMaintenanceState,
+} from "./WorldDocumentMaintenance.ts";

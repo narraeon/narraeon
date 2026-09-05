@@ -1,3 +1,4 @@
+import { comparePromptPrefixes } from "./prompt/WorldPromptDiagnostics.ts";
 import { join } from "node:path";
 
 import {
@@ -164,7 +165,14 @@ export class V1Runtime {
       bindModelHost: () => this.#modelHost(),
       bindExistingModelHost: (binding) => this.#matchingModelHost(binding),
       bindPlayPreset: () => this.#playPresets.freeze(),
-      preview: ({ snapshot, modelBinding, playPreset, binding, epoch }) =>
+      preview: ({
+        snapshot,
+        modelBinding,
+        playPreset,
+        binding,
+        epoch,
+        maintenance,
+      }) =>
         this.#compiler.preview(
           {
             endpoint: {
@@ -181,6 +189,8 @@ export class V1Runtime {
               ),
               documentSnapshot: snapshot,
               history: structuredClone(binding.history),
+              narrativeCheckpoint: binding.narrativeCheckpoint,
+              ...maintenance,
               additionalMaterials: structuredClone(binding.additionalMaterials),
             },
             playerInputPlacement: "append",
@@ -414,6 +424,9 @@ export class V1Runtime {
               preview.initialAppend === undefined
                 ? []
                 : [
+                    ...(preview.initialAppend.beforePlayer === undefined
+                      ? []
+                      : [preview.initialAppend.beforePlayer.logical]),
                     {
                       kind: "player" as const,
                       text: preview.initialAppend.logical.text,
@@ -693,7 +706,7 @@ export class V1Runtime {
             currentContext,
             nextFreshContext: null,
           };
-        const { hostBinding, playPreset, modelBinding } =
+        const { modelHost, hostBinding, playPreset, modelBinding } =
           await this.#continuousBinding();
         const preview = this.#compiler.preview(
           {
@@ -712,6 +725,11 @@ export class V1Runtime {
               }),
               additionalMaterials: structuredClone(binding.additionalMaterials),
               history: structuredClone(binding.history),
+              narrativeCheckpoint: binding.narrativeCheckpoint,
+              ...(await this.#worlds.inspectDocumentMaintenance(
+                request.worldId,
+                binding.parentHead,
+              )),
             },
             playerInputPlacement: "append",
             playerInput: "",
@@ -719,11 +737,41 @@ export class V1Runtime {
           },
           playPreset,
         );
+        const tools = preview.compilation.toolUniverse;
+        const nextEncoding = modelHost.previewRequest({
+          bootstrap: preview.compilation,
+          tools,
+          toolUniverse: tools,
+          allowedTools: tools.map(({ name }) => name),
+          toolStrategy: preview.compilation.toolStrategy,
+          appended: [],
+          operationId: "next-fresh-context-preview",
+          maxOutputTokens: modelBinding.maxOutputTokens,
+        });
+        const currentEncoding =
+          currentContext === null
+            ? null
+            : await this.#worlds.playTimeline
+                .readInitialEncoding(request.worldId, currentContext.chainId)
+                .catch(() => null);
+        const prefixDiagnostics = comparePromptPrefixes(
+          currentContext === null
+            ? null
+            : {
+                bootstrap: currentContext.bootstrap,
+                encoding: currentEncoding,
+              },
+          { bootstrap: preview.compilation, encoding: nextEncoding },
+        );
         return {
           worldId: request.worldId,
           worldHead: binding.parentHead,
           currentContext,
-          nextFreshContext: { head: binding.parentHead, preview },
+          nextFreshContext: {
+            head: binding.parentHead,
+            preview,
+            prefixDiagnostics,
+          },
         };
       }
       case "correction.begin":

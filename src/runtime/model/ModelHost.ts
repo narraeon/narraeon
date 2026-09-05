@@ -59,6 +59,12 @@ export function equalModelHostBinding(
 
 export type ModelHostAppendItem =
   | {
+      /** A mechanical Runtime fact, separate from player originals and author prompts. */
+      kind: "runtime_notice";
+      notice: "checkpoint_rounds";
+      text: string;
+    }
+  | {
       kind: "prompt_delta";
       logicalMessages: PromptCompilation["logicalMessages"];
     }
@@ -141,6 +147,8 @@ export interface ModelHostWireRequest {
 }
 
 export interface ModelHost {
+  /** Optional credential-free production encoding, used only for request diagnostics. */
+  previewRequest?(request: ModelHostExchange): ModelHostWireRequest;
   binding(): ModelHostBinding;
   exchange(
     request: ModelHostExchange,

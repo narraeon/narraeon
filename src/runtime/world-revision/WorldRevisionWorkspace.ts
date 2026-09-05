@@ -4,6 +4,7 @@ import type { V1SettingAuthoringDiff } from "../../protocol/v1.ts";
 import type { V1WorldRevisionSealedEpochView } from "../../protocol/v1.ts";
 import type { ContentTreeFile } from "../content/ContentTreeFile.ts";
 import { contentTreeFingerprint } from "../content/ContentTreeFingerprint.ts";
+import { readDeclaredWorldClock } from "../prompt/WorldMaintenanceReport.ts";
 import type {
   FileNativeOperationOutcome,
   FileNativeStateChange,
@@ -286,7 +287,14 @@ export class WorldRevisionWorkspace {
 
     if (epoch.apply?.phase === "prepared") {
       const binding = await this.#worlds.bindWorldRevision(handle);
+      const worldClock = readDeclaredWorldClock(
+        WorldDocumentStore.open({
+          layout: "world_state",
+          files: epoch.files,
+        }),
+      );
       const outcome = await this.#worlds.commitCorrection({
+        ...(worldClock === undefined ? {} : { worldClock }),
         operationId: epoch.apply.operationId,
         worldId: epoch.worldId,
         parentHead: epoch.baseHead,

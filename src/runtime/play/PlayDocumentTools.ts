@@ -1,6 +1,10 @@
+import type { AppLocale } from "../../protocol/appPreferences.ts";
+import type { WorldDocumentMaintenance } from "../../protocol/worldMaintenance.ts";
+import { renderDocumentWritePosition } from "../prompt/WorldMaintenanceReport.ts";
 import { createHash } from "node:crypto";
 
 import { stringify } from "yaml";
+import { renderPlayerViewBindings } from "../world/PlayerViewBindings.ts";
 
 import type { ModelHostToolCall } from "../model/ModelHost.ts";
 
@@ -33,6 +37,7 @@ export interface PlayDocumentToolResult extends ContextToolResult {
   candidateWrite?: {
     shortRef: string;
     changed: boolean;
+    freshContextCoverage?: string;
   };
 }
 
@@ -72,11 +77,36 @@ class PlayDocumentToolFailure extends Error {
  */
 export class FileNativePlayDocuments {
   readonly #candidate: PlayCandidate;
+  #committedSnapshot: WorldDocumentStore;
   #reads: WriteAuthorizations;
   #declaredDirectories: string[] = [];
+  #maintenanceWarning: string | undefined;
+
+  get maintenanceWarning(): string | undefined {
+    return this.#maintenanceWarning;
+  }
+
+  bindMaintenanceUnavailable(reason: string, locale: AppLocale): void {
+    this.#maintenance = {};
+    this.#maintenanceLocale = locale;
+    this.#maintenanceWarning = reason;
+  }
+
+  #maintenanceLocale: AppLocale = "en";
+  #maintenance: Readonly<Record<string, WorldDocumentMaintenance>> = {};
+
+  bindMaintenance(
+    facts: Readonly<Record<string, WorldDocumentMaintenance>>,
+    locale: AppLocale = "en",
+  ): void {
+    this.#maintenanceWarning = undefined;
+    this.#maintenance = structuredClone(facts);
+    this.#maintenanceLocale = locale;
+  }
 
   constructor(files: Readonly<Record<string, string>>) {
     this.#candidate = openPlayCandidate({ ...files });
+    this.#committedSnapshot = this.#candidate.snapshot;
     this.#reads = {
       snapshotId: this.#candidate.snapshot.id,
       documents: new Map(),
@@ -85,6 +115,10 @@ export class FileNativePlayDocuments {
 
   get snapshot(): WorldDocumentStore {
     return this.#candidate.snapshot;
+  }
+
+  get committedSnapshot(): WorldDocumentStore {
+    return this.#committedSnapshot;
   }
 
   bindBootstrap(bootstrap: PromptCompilation): void {
@@ -195,6 +229,9 @@ export class FileNativePlayDocuments {
         call.arguments,
       );
       authorizeToolRead(this.#reads, this.#candidate.snapshot, result);
+      const ref = result.readAuthorization?.shortRef;
+      if (ref !== undefined && result.markdown !== undefined)
+        result.markdown += `\n\n${this.#maintenanceWarning === undefined ? renderDocumentWritePosition(ref, this.#maintenance[ref], this.#maintenanceLocale) : `${this.#maintenanceLocale === "zh-CN" ? "最近写入位置暂时不可用" : "Last committed write unavailable"}: ${this.#maintenanceWarning}`}`;
       return result;
     }
     if (call.name === "world_patch")
@@ -231,6 +268,7 @@ export class FileNativePlayDocuments {
    * this new committed baseline instead of replaying the old diff.
    */
   acceptCommittedState(): void {
+    this.#committedSnapshot = this.#candidate.snapshot;
     this.#candidate.changes.clear();
   }
 }
@@ -1185,7 +1223,7 @@ function readMarkdownDocument(
   if (result.kind !== "read_document") return unexpectedStateQueryResult();
   return {
     ok: true,
-    markdown: `# Exact read @${document.shortRef}\n\n${renderDocumentMetadata(document)}\n[Writable body starts; locators are relative to this point]\n${result.body.trimEnd()}\n[Writable body ends]\n\n---\nScope: state · @${document.shortRef}\nComplete: yes`,
+    markdown: `# Exact read @${document.shortRef}\n\n${renderDocumentMetadata(document)}\n[Writable body starts; locators are relative to this point]\n${result.body.trimEnd()}\n[Writable body ends]\n\n${renderPlayerViewBindings(snapshot, document.shortRef)}\n\n---\nScope: state · @${document.shortRef}\nComplete: yes`,
     readAuthorization: {
       snapshotId: snapshot.id,
       shortRef: document.shortRef,
@@ -1220,7 +1258,7 @@ function readProjectedNode(
     : `# ${document.title} · ${renderLocator(result.node.locator)} [${requestedHandle}]\n\n${body}\n`;
   return {
     ok: true,
-    markdown: `# Exact read ${requestedHandle}\n\n${text.trimEnd()}\n\n---\nScope: state · ${requestedHandle}\nComplete: yes`,
+    markdown: `# Exact read ${requestedHandle}\n\n${text.trimEnd()}\n\n${renderPlayerViewBindings(snapshot, document.shortRef)}\n\n---\nScope: state · ${requestedHandle}\nComplete: yes`,
     readAuthorization: {
       snapshotId: snapshot.id,
       shortRef: document.shortRef,

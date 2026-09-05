@@ -977,7 +977,11 @@ function promptCacheKey(
 
 function chatAppend(request: ModelHostExchange): unknown[] {
   return items(request).flatMap((item): unknown[] => {
-    if (item.kind === "player" || item.kind === "user")
+    if (
+      item.kind === "player" ||
+      item.kind === "user" ||
+      item.kind === "runtime_notice"
+    )
       return [{ role: "user", content: item.text }];
     if (item.kind === "prompt_delta")
       return promptDeltaProviderMessages(item.logicalMessages);
@@ -1017,7 +1021,11 @@ function anthropicAppend(request: ModelHostExchange): unknown[] {
       continue;
     }
     flushToolResults();
-    if (item.kind === "player" || item.kind === "user") {
+    if (
+      item.kind === "player" ||
+      item.kind === "user" ||
+      item.kind === "runtime_notice"
+    ) {
       messages.push({ role: "user", content: item.text });
       continue;
     }
@@ -1043,7 +1051,11 @@ function anthropicAppend(request: ModelHostExchange): unknown[] {
 
 function responsesAppend(request: ModelHostExchange): unknown[] {
   return items(request).flatMap((item) => {
-    if (item.kind === "player" || item.kind === "user")
+    if (
+      item.kind === "player" ||
+      item.kind === "user" ||
+      item.kind === "runtime_notice"
+    )
       return [{ role: "user", content: item.text }];
     if (item.kind === "prompt_delta")
       return promptDeltaProviderMessages(item.logicalMessages);

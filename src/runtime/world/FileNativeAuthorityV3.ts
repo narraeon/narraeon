@@ -15,6 +15,10 @@ import { isDeepStrictEqual } from "node:util";
 import { cloneFilePhysically } from "../FileNativePhysicalClone.ts";
 import type { ContentTreeFile } from "../content/ContentWorkspace.ts";
 import type { MaterialSelection } from "../prompt/MaterialSelection.ts";
+import type {
+  NarrativeCheckpoint,
+  NarrativeCheckpointDeclaration,
+} from "../play/PlayContinuity.ts";
 
 export const continuityHeadFile = "continuity-head.json";
 export const authorityV3Directory = "authority-v3";
@@ -55,6 +59,8 @@ export interface FileNativeAuthorityTimelineRevision {
 }
 
 export interface FileNativeAuthorityCommitV3 {
+  playContext?: string;
+  worldClock?: string;
   schemaVersion: 3;
   type: "file_native_authority_commit";
   sequence: number;
@@ -69,6 +75,7 @@ export interface FileNativeAuthorityCommitV3 {
   correctionTargets?: readonly string[];
   corrects?: string;
   timelineRevision?: FileNativeAuthorityTimelineRevision;
+  narrativeCheckpoint?: NarrativeCheckpointDeclaration;
 }
 
 export interface FileNativeAuthorityHeadV3 {
@@ -122,6 +129,7 @@ interface FileNativeAuthorityEndpointV3 {
   history: FileNativeAuthorityObjectRef | null;
   historyLength: number;
   materials: FileNativeAuthorityObjectRef;
+  narrativeCheckpoint?: NarrativeCheckpoint;
 }
 
 export interface FileNativeAuthorityRecoveredEndpoint {
@@ -130,6 +138,7 @@ export interface FileNativeAuthorityRecoveredEndpoint {
   history: FileNativeAuthorityHistoryMessage[];
   additionalMaterials: MaterialSelection[];
   result: FileNativeAuthorityObjectRef;
+  narrativeCheckpoint?: NarrativeCheckpoint;
 }
 
 export interface FileNativeAuthorityPreparedAppend {
@@ -273,6 +282,8 @@ export class FileNativeAuthorityV3 {
   }
 
   async prepareAppend(input: {
+    playContext?: string;
+    worldClock?: string;
     operationId: string;
     parentHead: string;
     timelineParentHead?: string;
@@ -286,6 +297,7 @@ export class FileNativeAuthorityV3 {
     correctionTargets?: readonly string[];
     corrects?: string;
     timelineRevision?: FileNativeAuthorityTimelineRevision;
+    narrativeCheckpoint?: NarrativeCheckpointDeclaration;
   }): Promise<FileNativeAuthorityPreparedAppend> {
     const current = await this.readHead();
     if (current.head !== input.parentHead)
@@ -340,6 +352,17 @@ export class FileNativeAuthorityV3 {
       history,
       historyLength: basis.historyLength + historyAppend.length,
       materials,
+      ...(input.narrativeCheckpoint === undefined
+        ? basis.narrativeCheckpoint === undefined
+          ? {}
+          : { narrativeCheckpoint: basis.narrativeCheckpoint }
+        : {
+            narrativeCheckpoint: {
+              ...input.narrativeCheckpoint,
+              head,
+              historyMessageId: historyAppend.at(-1)?.messageId ?? "",
+            },
+          }),
     };
     assertEndpoint(endpointValue);
     const endpoint = await this.#writeObject<FileNativeAuthorityEndpointV3>(
@@ -367,6 +390,12 @@ export class FileNativeAuthorityV3 {
     };
     const timelineParent = await this.#authorityRefAt(basisHead);
     const commit: FileNativeAuthorityCommitV3 = {
+      ...(input.playContext === undefined
+        ? {}
+        : { playContext: input.playContext }),
+      ...(input.worldClock === undefined
+        ? {}
+        : { worldClock: input.worldClock }),
       schemaVersion: 3,
       type: "file_native_authority_commit",
       sequence,
@@ -378,6 +407,9 @@ export class FileNativeAuthorityV3 {
       stateChanges: storedChanges,
       nextAdditionalMaterials: structuredClone(input.nextMaterials),
       result: endpoint,
+      ...(input.narrativeCheckpoint === undefined
+        ? {}
+        : { narrativeCheckpoint: structuredClone(input.narrativeCheckpoint) }),
       ...(input.correctionTargets === undefined
         ? {}
         : { correctionTargets: structuredClone(input.correctionTargets) }),
@@ -465,7 +497,24 @@ export class FileNativeAuthorityV3 {
       history,
       additionalMaterials: structuredClone([...materials.items]),
       result,
+      ...(endpoint.narrativeCheckpoint === undefined
+        ? {}
+        : {
+            narrativeCheckpoint: structuredClone(endpoint.narrativeCheckpoint),
+          }),
     };
+  }
+
+  async readNarrativeCheckpoint(
+    head?: string,
+  ): Promise<NarrativeCheckpoint | undefined> {
+    const current = await this.readHead();
+    const endpoint = await this.#readEndpoint(
+      head === undefined || head === current.head
+        ? current.result
+        : await this.#resultRefAt(head),
+    );
+    return structuredClone(endpoint.narrativeCheckpoint);
   }
 
   async recoverState(head?: string): Promise<ContentTreeFile[]> {
@@ -527,6 +576,25 @@ export class FileNativeAuthorityV3 {
         "Continuity head does not match the immutable Authority chain",
       );
     return { head: head.head, commits };
+  }
+
+  /** Exact bytes of an accepted state change, with the same digest check as recovery. */
+  async readStateChangeContents(
+    change: FileNativeAuthorityStoredStateChange,
+  ): Promise<string> {
+    const blob = change.nextBlob;
+    if (!isBlobRef(blob)) throw corruptShape("State-change blob");
+    const contents = await readFile(
+      join(this.#epochRoot(blob.epoch), "blobs", `${blob.digest}.txt`),
+      "utf8",
+    );
+    if (
+      hashHex(contents) !== blob.digest ||
+      hashWithPrefix(contents) !== change.nextHash ||
+      blob.sha256 !== change.nextHash
+    )
+      throw corruptShape("State-change blob digest");
+    return contents;
   }
 
   async commitAt(head: string): Promise<FileNativeAuthorityCommitV3 | null> {
@@ -1039,6 +1107,9 @@ function assertEndpoint(
       "history",
       "historyLength",
       "materials",
+      ...(value.narrativeCheckpoint === undefined
+        ? []
+        : ["narrativeCheckpoint"]),
     ]) ||
     value.schemaVersion !== 3 ||
     value.type !== "file_native_authority_endpoint" ||
@@ -1046,7 +1117,9 @@ function assertEndpoint(
     (value.history !== null && !isObjectRef(value.history)) ||
     !Number.isSafeInteger(value.historyLength) ||
     Number(value.historyLength) < 0 ||
-    !isObjectRef(value.materials)
+    !isObjectRef(value.materials) ||
+    (value.narrativeCheckpoint !== undefined &&
+      !isNarrativeCheckpoint(value.narrativeCheckpoint, true))
   )
     throw corruptShape("Authority endpoint");
 }
@@ -1131,6 +1204,18 @@ function assertCommit(
   if (!isRecord(value)) throw corruptShape("Authority commit");
   const correction = value.mode === "correction";
   const revision = value.mode === "timeline_revision";
+  const lastHistory: unknown = Array.isArray(value.historyAppend)
+    ? value.historyAppend.at(-1)
+    : undefined;
+  if (
+    value.narrativeCheckpoint !== undefined &&
+    (!isNarrativeCheckpoint(value.narrativeCheckpoint, false) ||
+      value.mode !== "play" ||
+      !Array.isArray(value.historyAppend) ||
+      !isRecord(lastHistory) ||
+      lastHistory.role !== "narrator")
+  )
+    throw corruptShape("Narrative checkpoint declaration");
   if (
     !hasExactKeys(value, [
       "schemaVersion",
@@ -1139,6 +1224,11 @@ function assertCommit(
       "head",
       "auditParent",
       "timelineParent",
+      ...(value.playContext === undefined ? [] : ["playContext"]),
+      ...(value.worldClock === undefined ? [] : ["worldClock"]),
+      ...(value.narrativeCheckpoint === undefined
+        ? []
+        : ["narrativeCheckpoint"]),
       "mode",
       "historyAppend",
       "stateChanges",
@@ -1149,6 +1239,10 @@ function assertCommit(
     ]) ||
     value.schemaVersion !== 3 ||
     value.type !== "file_native_authority_commit" ||
+    (value.playContext !== undefined &&
+      (typeof value.playContext !== "string" ||
+        value.playContext.length === 0)) ||
+    (value.worldClock !== undefined && typeof value.worldClock !== "string") ||
     !Number.isSafeInteger(value.sequence) ||
     Number(value.sequence) < 1 ||
     value.head !== `commit:${String(value.sequence)}` ||
@@ -1414,6 +1508,34 @@ function hasExactKeys(
   return (
     Object.keys(value).length === keys.length &&
     keys.every((key) => Object.hasOwn(value, key))
+  );
+}
+
+function isNarrativeCheckpoint(value: unknown, effective: boolean): boolean {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "contextId",
+      "completedPlayerRounds",
+      ...(effective ? ["head", "historyMessageId"] : []),
+    ]) ||
+    typeof value.contextId !== "string" ||
+    value.contextId.length === 0 ||
+    !Number.isSafeInteger(value.completedPlayerRounds) ||
+    Number(value.completedPlayerRounds) < 0
+  )
+    return false;
+  return (
+    !effective ||
+    (typeof value.head === "string" &&
+      /^commit:[1-9][0-9]*$/u.test(value.head) &&
+      typeof value.historyMessageId === "string" &&
+      value.historyMessageId.startsWith(
+        `message.${value.head.slice("commit:".length)}.`,
+      ) &&
+      /^message\.[1-9][0-9]*\.[1-9][0-9]*\.narrator$/u.test(
+        value.historyMessageId,
+      ))
   );
 }
 

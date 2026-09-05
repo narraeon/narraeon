@@ -11,6 +11,188 @@ import {
 } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
 import { WorldDocumentStore } from "../../src/runtime/world/WorldDocumentStore.ts";
 
+test("玩家视图的实际节点绑定在提示词和精确读取中标记且不进入可写正文", () => {
+  const request = input();
+  const files = [
+    ...request.world.documentSnapshot.files,
+    {
+      path: "control/player-views.yaml",
+      contents: `format: narraeon.player-views/v1
+views:
+  - id: status
+    title: 状态
+    items:
+      - id: place
+        label: 当前地点
+        select: { document: situation.current, locator: { yaml: [地点] } }
+      - id: clothes
+        label: 衣着
+        select: { document: '@alex', locator: { yaml: [衣着] } }
+`,
+    },
+  ];
+  request.world.documentSnapshot = WorldDocumentStore.open({
+    layout: "world_state",
+    files,
+  });
+  const compiled = new FileNativePromptCompiler().compileBootstrap(request);
+  const block = compiled.logicalMessages
+    .flatMap(({ blocks }) => blocks)
+    .find(({ source }) => source === "runtime:player-view-bindings");
+  expect(block?.markdown).toContain(
+    '当前地点 → @current-situation#yaml:["地点"]',
+  );
+  expect(block?.markdown).toContain('衣着 → @alex#yaml:["衣着"]');
+  const documents = new FileNativePlayDocuments(
+    Object.fromEntries(files.map(({ path, contents }) => [path, contents])),
+  );
+  const result = documents.execute(
+    {
+      id: "read",
+      name: "context_read",
+      arguments: { ref: "@current-situation" },
+    },
+    [],
+  );
+  expect(result.ok).toBe(true);
+  expect(result.markdown).toContain(
+    '当前地点 → @current-situation#yaml:["地点"]',
+  );
+  const body = result.markdown
+    .split("[Writable body starts; locators are relative to this point]")[1]
+    ?.split("[Writable body ends]")[0];
+  expect(body).not.toContain("当前地点 →");
+  expect(result.markdown).not.toContain("衣着 →");
+});
+
+test("检查点原文按消息身份去重，完整保留大段和相同文本的不同消息", () => {
+  const request = input({ playerInputPlacement: "append" });
+  const text = "  未被写入状态的细节。".repeat(20000) + "\n\n";
+  request.world.history = {
+    "message.genesis.narrator": "开场不重放",
+    "message.1.1.player": "同一句输入",
+    "message.2.1.narrator": text,
+    "message.3.1.player": "同一句输入",
+  };
+  request.world.additionalMaterials = [
+    { kind: "history_message", message: "message.2.1.narrator" },
+    { kind: "history_commit", commit: "commit:2" },
+  ];
+  const compiled = new FileNativePromptCompiler().compilePlayCallChain(
+    request,
+    builtinDefaultPlayPresetBinding(),
+  ).bootstrap;
+  const world = compiled.logicalMessages.find(
+    ({ role }) => role === "world_context",
+  )!;
+  expect(
+    world.blocks.filter(
+      ({ source }) =>
+        source === "runtime:checkpoint-history:message.2.1.narrator",
+    ),
+  ).toHaveLength(1);
+  expect(world.markdown.split(text)).toHaveLength(2);
+  expect(world.markdown.split("同一句输入")).toHaveLength(3);
+  expect(world.markdown).not.toContain("开场不重放");
+});
+
+test("真实玩法预览把回合事实放在玩家原文前，原文保持完整", () => {
+  const request = input({
+    playerInputPlacement: "append",
+    playerInput: "  我等一会儿。\n",
+  });
+  request.world.history = {
+    "message.1.1.player": "先前输入",
+    "message.2.1.narrator": "先前叙事",
+  };
+  const preview = new FileNativePromptCompiler({ locale: "zh-CN" }).preview(
+    request,
+    builtinDefaultPlayPresetBinding(),
+  );
+  expect(preview.initialAppend?.beforePlayer?.provider.content).toContain(
+    "距上次检查点已完成 1 回合",
+  );
+  expect(preview.initialAppend?.beforePlayer?.logical).toMatchObject({
+    kind: "runtime_notice",
+    notice: "checkpoint_rounds",
+  });
+  expect(preview.initialAppend?.logical.text).toBe("  我等一会儿。\n");
+  expect(preview.initialAppend?.provider.content).toBe("  我等一会儿。\n");
+  expect(JSON.stringify(preview.compilation.provider)).not.toContain(
+    "距上次检查点已完成",
+  );
+});
+
+test("文档软上限只报告 UTF-8 体积，实际注入按去重材料计数", () => {
+  const request = input();
+  request.world.documentSnapshot = WorldDocumentStore.open({
+    layout: "world_state",
+    files: request.world.documentSnapshot.files.map((file) =>
+      file.path === "control/frame.yaml"
+        ? {
+            ...file,
+            contents:
+              file.contents.replace(
+                "kind: current_situation",
+                "kind: current_situation, id: scene, advisoryBytes: 10",
+              ) + "maintenance:\n  documents:\n    '@current-situation': 10\n",
+          }
+        : file,
+    ),
+  });
+  const compiled = new FileNativePromptCompiler().compileBootstrap(request);
+  const report = compiled.maintenance;
+  const read = request.world.documentSnapshot.query({
+    kind: "read_document",
+    document: { shortRef: "current-situation" },
+  });
+  if (read.kind !== "read_document") throw new Error("Missing scene document");
+  expect(report?.unit).toBe("utf8_bytes");
+  expect(
+    report?.documents.find(({ shortRef }) => shortRef === "current-situation"),
+  ).toMatchObject({
+    bodyBytes: Buffer.byteLength(read.body),
+    advisoryBytes: 10,
+    overAdvisory: true,
+    baselineKind: "unavailable",
+    baselineBytes: null,
+    growthBytes: null,
+    growthRatio: null,
+  });
+  expect(report?.slots.find(({ id }) => id === "scene")).toMatchObject({
+    advisoryBytes: 10,
+    overAdvisory: true,
+  });
+  expect(report?.worldMaterialsBytes).toBe(
+    Buffer.byteLength(
+      compiled.logicalMessages.find(({ role }) => role === "world_context")!
+        .markdown,
+    ),
+  );
+  expect(compiled.budget.status).toBe("not_checked");
+  request.world.documentMaintenance = {
+    "current-situation": {
+      baselineKind: "document_creation",
+      baselineBytes: 0,
+      lastBodyWrite: null,
+      lastMetadataWrite: null,
+      bodyChangedContexts: 0,
+      metadataChangedContexts: 0,
+    },
+  };
+  expect(
+    new FileNativePromptCompiler()
+      .compileBootstrap(request)
+      .maintenance?.documents.find(
+        ({ shortRef }) => shortRef === "current-situation",
+      ),
+  ).toMatchObject({
+    baselineKind: "document_creation",
+    baselineBytes: 0,
+    growthRatio: null,
+  });
+});
+
 test("主持块分别约束玩家代理权与默认叙事视角", () => {
   expect(defaultPresetHostFiles["blocks/adjudication.md"]).toContain(
     "What the player must decide",
@@ -775,6 +957,7 @@ context:
       "world_patch",
       "world_create",
       "world_retire",
+      "world_checkpoint",
       "artifact_emit",
       "artifact_clear",
     ]);

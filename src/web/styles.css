@@ -4365,6 +4365,7 @@ summary:focus-visible {
 
 .play-call-failure,
 .play-retry-note,
+.play-checkpoint-note,
 .model-required-callout {
   display: flex;
   align-items: center;
@@ -10271,4 +10272,18 @@ summary:focus-visible {
   .ai-reading-table > div {
     min-width: 36rem;
   }
+}
+
+.maintenance-table-scroll {
+  overflow-x: auto;
+}
+.maintenance-table-scroll table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.maintenance-table-scroll th,
+.maintenance-table-scroll td {
+  padding: 0.5rem;
+  text-align: start;
+  border-bottom: 1px solid var(--border-subtle, #8884);
 }

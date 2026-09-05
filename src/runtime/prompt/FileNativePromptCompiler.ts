@@ -1,4 +1,23 @@
+import { renderDocumentWritePosition } from "./WorldMaintenanceReport.ts";
 import { parseDocument, stringify } from "yaml";
+import type { ModelHostAppendItem } from "../model/ModelHost.ts";
+import type {
+  WorldDocumentMaintenance,
+  WorldPromptMaintenance,
+} from "../../protocol/worldMaintenance.ts";
+import {
+  measureWorldMaterials,
+  refreshMaintenanceTotals,
+  type MeasuredWorldMaterial,
+} from "./WorldMaintenanceReport.ts";
+import { renderPlayerViewBindings } from "../world/PlayerViewBindings.ts";
+import {
+  checkpointHistory,
+  checkpointReplayBlocks,
+  playerInputAppend,
+  isPlayerRoundMarker,
+  type NarrativeCheckpoint,
+} from "../play/PlayContinuity.ts";
 
 import type {
   ModelPromptCacheStrategy,
@@ -58,6 +77,10 @@ export interface FileNativePromptInput {
     controlFingerprint: string;
     documentSnapshot: FileNativeWorldDocumentSnapshot;
     history?: Record<string, string>;
+    narrativeCheckpoint?: NarrativeCheckpoint | undefined;
+    replayHistory?: boolean;
+    documentMaintenance?: Readonly<Record<string, WorldDocumentMaintenance>>;
+    documentMaintenanceUnavailableReason?: string | undefined;
     additionalMaterials: MaterialSelection[];
     hostPath?: string;
   };
@@ -74,6 +97,7 @@ export interface FileNativePromptInput {
 }
 
 export interface PromptCompilation {
+  maintenance?: WorldPromptMaintenance;
   logicalMessages: {
     role: LogicalRole;
     markdown: string;
@@ -171,6 +195,10 @@ export interface PromptPreview {
   initialAppend?: {
     logical: { kind: "player"; text: string };
     provider: { role: "user"; content: string };
+    beforePlayer?: {
+      logical: ModelHostAppendItem;
+      provider: { role: "user"; content: string };
+    };
   };
   playPreset?: PlayPresetPreview;
   leakage: { status: "clean"; checkedFields: string[] };
@@ -270,7 +298,7 @@ const runtimeContracts: Record<
 
 A tool-free response with player-visible story text ends the model/tool loop started by the current player submission. A response that calls any tool is an intermediate step and must not contain player-visible story text; continue from the tool results, then narrate in a later tool-free response.
 
-The player's next submission may choose a fresh context; the old model transcript will not enter that request. Every world write required by the author state-maintenance criteria must be completed before the terminal narrative. Do not defer them to a later request.
+The player's next submission may choose a fresh context; the old model transcript will not enter that request. Fresh contexts include all committed original player inputs and final narratives after the last effective world_checkpoint, excluding tools, reasoning, and the opening. A checkpoint declaration takes effect only after its final narrative commits. Author instructions decide save timing.
 
 Runtime executes only real tool definitions, file validation, and authority commits. This block does not define story content, point of view, style, player agency, or state semantics.`,
   },
@@ -297,7 +325,7 @@ Runtime executes only real tool definitions, file validation, and authority comm
 
 不调用工具且包含玩家可见故事正文的响应会结束本次玩家提交触发的模型／工具循环。只要响应调用了任何工具，它就是工具中间步，不得同时输出玩家可见故事正文；先根据工具结果继续，再用一个不调用工具的后续响应完成叙事。
 
-下一次玩家提交可以选择“全新上下文”；旧模型 transcript 不会进入那个请求。凡作者状态维护判据要求保存的结果，必须在终态叙事之前完成世界写入，不得留待后续请求补写。
+下一次玩家提交可以选择“全新上下文”；旧模型 transcript 不会进入那个请求。新上下文会补入最近一次已生效 world_checkpoint 之后的全部已提交玩家原文与最终叙事，不含工具、推理和开场白。检查点登记只在其最终叙事提交后生效。具体保存时机由作者提示规定。
 
 Runtime 只执行真实工具定义、文件校验和权威提交；本段不规定故事、人称、文风、玩家代理权或状态语义。`,
   },
@@ -311,6 +339,7 @@ const playCallChainToolNames = new Set<RegisteredRuntimeToolName>([
   "world_patch",
   "world_create",
   "world_retire",
+  "world_checkpoint",
 ]);
 
 export type FileNativeToolName = RegisteredRuntimeToolName;
@@ -318,6 +347,10 @@ export type FileNativeToolName = RegisteredRuntimeToolName;
 export class FileNativePromptCompiler {
   readonly #toolStrategyOverride: RuntimeToolDefinitionStrategy | undefined;
   #locale: AppLocale;
+
+  get locale(): AppLocale {
+    return this.#locale;
+  }
 
   constructor(
     options: {
@@ -488,6 +521,71 @@ export class FileNativePromptCompiler {
     return rendered.markdown;
   }
 
+  /** The same selection used by bootstrap, without model or host instructions. */
+  inspectWorldMaterials(world: FileNativePromptInput["world"]): {
+    blocks: { source: string; markdown: string }[];
+    coverage: PromptCompilation["coverage"];
+    maintenance: WorldPromptMaintenance;
+  } {
+    const frame = readYamlRecord(
+      snapshotFiles(world.documentSnapshot)["control/frame.yaml"],
+      "world frame",
+    );
+    requireFormat(frame, "narraeon.world-frame/v1", "world frame");
+    const coverage: PromptCompilation["coverage"] = [];
+    const materials = resolveContext(
+      { world },
+      frame,
+      world.documentSnapshot,
+      coverage,
+      this.#locale,
+    );
+    if (world.documentMaintenanceUnavailableReason !== undefined) {
+      materials.push({
+        key: "runtime:document-write-positions",
+        source: "runtime:document-write-positions",
+        markdown: `${this.#locale === "zh-CN" ? "最近写入位置暂时不可用" : "Last committed write unavailable"}: ${world.documentMaintenanceUnavailableReason}`,
+      });
+    } else if (world.documentMaintenance !== undefined) {
+      const injected = new Set(
+        materials.flatMap(
+          ({ contributions }) =>
+            contributions?.map(({ shortRef }) => shortRef) ?? [],
+        ),
+      );
+      const markdown = [...injected]
+        .map((ref) =>
+          renderDocumentWritePosition(
+            ref,
+            world.documentMaintenance?.[ref],
+            this.#locale,
+          ),
+        )
+        .join("\n\n");
+      if (markdown.length > 0)
+        materials.push({
+          key: "runtime:document-write-positions",
+          source: "runtime:document-write-positions",
+          markdown,
+        });
+    }
+    return {
+      blocks: materials.map(({ source, markdown }) => ({ source, markdown })),
+      coverage,
+      maintenance: {
+        ...measureWorldMaterials(
+          world.documentSnapshot,
+          frame,
+          materials,
+          world.documentMaintenance,
+        ),
+        ...(world.documentMaintenanceUnavailableReason === undefined
+          ? {}
+          : { unavailableReason: world.documentMaintenanceUnavailableReason }),
+      },
+    };
+  }
+
   async sendBootstrap<Result>(
     input: FileNativePromptInput,
     adapter: FileNativeModelAdapter<Result>,
@@ -517,15 +615,12 @@ export class FileNativePromptCompiler {
     requireFormat(hostFrame, "narraeon.host-frame/v1", "host frame");
     requireFormat(worldFrame, "narraeon.world-frame/v1", "world frame");
 
-    const coverage: PromptCompilation["coverage"] = [];
     const instructions = readWorldInstructions(worldFiles, worldFrame);
-    const context = resolveContext(
-      effectiveInput,
-      worldFrame,
-      documentSnapshot,
+    const {
       coverage,
-      this.#locale,
-    );
+      blocks: context,
+      maintenance,
+    } = this.inspectWorldMaterials(effectiveInput.world);
     const hostRoles = compileHostRoles(
       effectiveInput.hostBinding.files,
       hostFrame,
@@ -579,13 +674,14 @@ export class FileNativePromptCompiler {
     const budget = disabledPromptBudget(effectiveInput);
     const stableText = cacheStableText(logicalMessages);
     const cache = stableCacheBoundary(stableText, tools, toolStrategy);
-    return {
+    const compilation: PromptCompilation = {
       logicalMessages,
       provider,
       tools,
       toolUniverse: structuredClone(tools),
       toolStrategy,
       coverage,
+      maintenance,
       budget,
       cache: {
         ...cache,
@@ -598,6 +694,8 @@ export class FileNativePromptCompiler {
               : [],
       },
     };
+    refreshMaintenanceTotals(compilation);
+    return compilation;
   }
 
   preview(
@@ -613,6 +711,7 @@ export class FileNativePromptCompiler {
       playPreset,
       playCompilation?.bootstrap ?? this.compileBootstrap(input),
       playCompilation,
+      this.#locale,
     );
   }
 
@@ -626,6 +725,7 @@ export class FileNativePromptCompiler {
       playPreset,
       playCompilation.bootstrap,
       playCompilation,
+      this.#locale,
     );
   }
 
@@ -668,6 +768,7 @@ export class FileNativePromptCompiler {
         ),
       },
     };
+    refreshMaintenanceTotals(bootstrap);
     return {
       bootstrap,
       toolUniverse: structuredClone(toolUniverse),
@@ -686,12 +787,14 @@ export class FileNativePromptCompiler {
     binding: PlayPresetBinding,
   ): PlayPresetCompilation {
     const bootstrap = this.compilePlayBootstrap(input);
-    return compilePlayPresetCompilation(
+    const compilation = compilePlayPresetCompilation(
       input,
       bootstrap,
       binding,
       this.#locale,
     );
+    refreshMaintenanceTotals(compilation.bootstrap);
+    return compilation;
   }
 
   /**
@@ -701,7 +804,10 @@ export class FileNativePromptCompiler {
   private compilePlayBootstrap(
     input: FileNativePromptInput,
   ): PromptCompilation {
-    const base = this.compileBootstrap(input);
+    const base = this.compileBootstrap({
+      ...input,
+      world: { ...input.world, replayHistory: true },
+    });
     const logicalMessages = base.logicalMessages.map((message) => {
       if (message.role !== "runtime_system") return message;
       const blocks = message.blocks.filter(
@@ -1006,7 +1112,18 @@ function promptPreview(
   playPreset: PlayPresetBinding | undefined,
   compilation: PromptCompilation,
   playCompilation: PlayPresetCompilation | undefined,
+  locale: AppLocale = defaultAppLocale,
 ): PromptPreview {
+  const marker = playerInputAppend({
+    history: input.world.history ?? {},
+    checkpoint: input.world.narrativeCheckpoint,
+    text: input.playerInput,
+    locale,
+    checkpointAvailable:
+      playCompilation?.toolUniverse.some(
+        ({ name }) => name === "world_checkpoint",
+      ) ?? false,
+  })[0];
   const result: PromptPreview = {
     diagnosticBinding: {
       endpoint: input.endpoint.id,
@@ -1027,6 +1144,17 @@ function promptPreview(
           initialAppend: {
             logical: { kind: "player", text: input.playerInput },
             provider: { role: "user", content: input.playerInput },
+            ...(isPlayerRoundMarker(marker)
+              ? {
+                  beforePlayer: {
+                    logical: marker,
+                    provider: {
+                      role: "user" as const,
+                      content: marker.text,
+                    },
+                  },
+                }
+              : {}),
           },
         }
       : {}),
@@ -1526,34 +1654,44 @@ function throwQueryFailure(
   );
 }
 
-interface SelectedMaterial {
+interface SelectedMaterial extends MeasuredWorldMaterial {
   key: string;
-  source: string;
-  markdown: string;
 }
 
 function resolveContext(
-  input: FileNativePromptInput,
+  input: Pick<FileNativePromptInput, "world">,
   worldFrame: Record<string, unknown>,
   snapshot: FileNativeWorldDocumentSnapshot,
   coverage: PromptCompilation["coverage"],
   locale: AppLocale,
-): { source: string; markdown: string }[] {
+): SelectedMaterial[] {
   const context = worldFrame.context;
   if (!Array.isArray(context))
     throw new PromptCompilationError(
       "world_frame_invalid",
       "world frame.context must be an array",
     );
-  const selected: { key: string; source: string; markdown: string }[] = [];
+  const selected: SelectedMaterial[] = [];
   const currentSituation = isRecord(worldFrame.bindings)
     ? worldFrame.bindings.currentSituation
     : undefined;
   // The model's own list must yield to every author slot, however the frame
   // happens to order them, so resolve it last and splice it back into place.
-  let additionalMaterialsAt: { selected: number; coverage: number } | null =
-    null;
+  let additionalMaterialsAt: {
+    selected: number;
+    coverage: number;
+    slotId?: string;
+  } | null = null;
+  const replay =
+    input.world.replayHistory === true
+      ? checkpointReplayBlocks(
+          input.world.history ?? {},
+          input.world.narrativeCheckpoint,
+          locale,
+        )
+      : [];
   for (const entry of context) {
+    const selectionStart = selected.length;
     const slot = isRecord(entry) && isRecord(entry.slot) ? entry.slot : null;
     if (slot === null || typeof slot.kind !== "string")
       throw new PromptCompilationError(
@@ -1575,6 +1713,7 @@ function resolveContext(
       resolveReferenceTargets(slot, snapshot, selected, coverage, locale);
     else if (slot.kind === "catalog")
       resolveCatalog(slot, snapshot, selected, coverage, locale);
+    else if (slot.kind === "history" && replay.length > 0) continue;
     else if (slot.kind === "history")
       resolveRecentHistory(
         slot,
@@ -1587,6 +1726,7 @@ function resolveContext(
       additionalMaterialsAt ??= {
         selected: selected.length,
         coverage: coverage.length,
+        ...(typeof slot.id === "string" ? { slotId: slot.id } : {}),
       };
     else if (slot.kind === "document")
       addDocumentSelection(
@@ -1616,8 +1756,43 @@ function resolveContext(
         "world_frame_invalid",
         `Unsupported slot: ${slot.kind}`,
       );
+    if (typeof slot.id === "string")
+      for (const material of selected.slice(selectionStart))
+        material.slotId = slot.id;
   }
   assertNoOverlap(selected);
+  const bindings = renderPlayerViewBindings(snapshot, undefined, locale);
+  if (bindings.length > 0)
+    selected.push({
+      key: "runtime:player-view-bindings",
+      source: "runtime:player-view-bindings",
+      markdown: bindings,
+    });
+  if (replay.length > 0) {
+    const entries = checkpointHistory(
+      input.world.history ?? {},
+      input.world.narrativeCheckpoint,
+    );
+    selected.push(
+      ...replay.map((block, index) => ({
+        ...block,
+        key:
+          index === 0
+            ? "history:checkpoint-notice"
+            : `history_message:${entries[index - 1]![0]}`,
+      })),
+    );
+    coverage.push({
+      slot: "checkpoint_history",
+      source:
+        locale === "zh-CN"
+          ? `检查点后的 ${entries.length} 条已提交原文`
+          : `${entries.length} committed messages after checkpoint`,
+      status: "resolved",
+      complete: true,
+      continuation: null,
+    });
+  }
   if (additionalMaterialsAt !== null) {
     const withMaterials = [...selected];
     const materialCoverage: PromptCompilation["coverage"] = [];
@@ -1632,11 +1807,16 @@ function resolveContext(
     selected.splice(
       additionalMaterialsAt.selected,
       0,
-      ...withMaterials.slice(selected.length),
+      ...withMaterials.slice(selected.length).map((material) => ({
+        ...material,
+        ...(additionalMaterialsAt?.slotId === undefined
+          ? {}
+          : { slotId: additionalMaterialsAt.slotId }),
+      })),
     );
     coverage.splice(additionalMaterialsAt.coverage, 0, ...materialCoverage);
   }
-  return selected.map(({ source, markdown }) => ({ source, markdown }));
+  return selected;
 }
 
 function addDocumentSelection(
@@ -1678,6 +1858,12 @@ function addDocumentSelection(
     key,
     source: `slot:${slot}:@${document.descriptor.shortRef}`,
     markdown: document.markdown,
+    contributions: [
+      {
+        shortRef: document.descriptor.shortRef,
+        bytes: Buffer.byteLength(document.markdown, "utf8"),
+      },
+    ],
   });
   coverage.push({
     slot,
@@ -1835,6 +2021,13 @@ function resolveCatalog(
     key: `catalog:${directory}`,
     source: `slot:catalog:${directory}`,
     markdown,
+    contributions: page.map((document) => ({
+      shortRef: document.shortRef,
+      bytes: Buffer.byteLength(
+        `- ${document.title} [ref: @${document.shortRef}] — ${document.summary}`,
+        "utf8",
+      ),
+    })),
   });
   coverage.push({
     slot: "catalog",
@@ -1975,27 +2168,35 @@ function resolveAdditionalMaterials(
           : material.commit;
       const matches = Object.entries(history).filter(([key]) =>
         material.kind === "history_message"
-          ? key === ref.replace(/^@/u, "")
-          : key.startsWith(
-              ref
-                .replace(/^@?history-commit-/u, "history-message-")
-                .concat("-"),
-            ),
+          ? historyMaterialIdentity(key) === historyMaterialIdentity(ref)
+          : ref.startsWith("commit:")
+            ? historyMaterialIdentity(key).startsWith(
+                `message.${ref.slice(7)}.`,
+              )
+            : ref === "genesis"
+              ? historyMaterialIdentity(key).startsWith("message.genesis.")
+              : key.startsWith(
+                  ref
+                    .replace(/^@?history-commit-/u, "history-message-")
+                    .concat("-"),
+                ),
       );
       if (matches.length === 0)
         throw new PromptCompilationError(
           "required_slot_missing",
           `Additional history material does not exist: ${ref}`,
         );
-      const key = `${material.kind}:${ref}`;
-      if (overlappingSelection(selected, key) !== null) continue;
-      selected.push({
-        key,
-        source: `slot:additional_materials:${ref}`,
-        markdown: matches
-          .map(([key, text]) => renderHistoryMessage(key, text, locale))
-          .join("\n\n"),
-      });
+      const missing = matches.filter(
+        ([id]) => !selected.some(({ key }) => key === `history_message:${id}`),
+      );
+      if (missing.length === 0) continue;
+      selected.push(
+        ...missing.map(([id, text]) => ({
+          key: `history_message:${id}`,
+          source: `slot:additional_materials:${id}`,
+          markdown: renderHistoryMessage(id, text, locale),
+        })),
+      );
       coverage.push({
         slot: "additional_materials",
         source:
@@ -2010,6 +2211,15 @@ function resolveAdditionalMaterials(
       });
     }
   }
+}
+
+function historyMaterialIdentity(ref: string): string {
+  const value = ref.replace(/^@?(?:history-message-)?/u, "");
+  return (
+    /(?:^|\.)(message\.(?:genesis|[0-9]+)(?:\.[0-9]+)?\.(?:player|narrator))$/u.exec(
+      value,
+    )?.[1] ?? value
+  );
 }
 
 function renderHistoryMessage(
@@ -2117,6 +2327,12 @@ function addNodeSelection(
     key,
     source: `slot:${slot}:@${result.document.shortRef}:${pathKey}`,
     markdown,
+    contributions: [
+      {
+        shortRef: result.document.shortRef,
+        bytes: Buffer.byteLength(markdown, "utf8"),
+      },
+    ],
   });
   coverage.push({
     slot,
@@ -2581,7 +2797,13 @@ function readMarkdown(
 }
 
 function joinBlocks(blocks: { source: string; markdown: string }[]): string {
-  return blocks.map(({ markdown }) => markdown.trim()).join("\n\n");
+  return blocks
+    .map(({ source, markdown }) =>
+      source.startsWith("runtime:checkpoint-history:")
+        ? markdown
+        : markdown.trim(),
+    )
+    .join("\n\n");
 }
 
 function utf8Bytes(value: string): number {

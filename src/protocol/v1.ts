@@ -1,3 +1,5 @@
+import type { WorldPromptPrefixComparison } from "./worldPromptDiagnostics.ts";
+import type { WorldPromptMaintenance } from "./worldMaintenance.ts";
 import type {
   ListProviderModelsInput,
   ModelProviderKind,
@@ -362,6 +364,7 @@ export interface V1SettingPromptPreview {
     modelId: string;
   };
   compilation: {
+    maintenance?: WorldPromptMaintenance;
     logicalMessages: {
       role: string;
       markdown: string;
@@ -413,6 +416,7 @@ export interface V1PlayContextReadingView {
   worldId: string;
   worldHead: string;
   currentContext: {
+    prefixDiagnostics?: WorldPromptPrefixComparison;
     chainId: string;
     baselineHead: string;
     parentHead: string;
@@ -437,6 +441,7 @@ export interface V1PlayContextReadingView {
     }[];
   } | null;
   nextFreshContext: {
+    prefixDiagnostics?: WorldPromptPrefixComparison;
     head: string;
     preview: V1SettingPromptPreview;
   } | null;
@@ -592,6 +597,8 @@ export type V1PlayCallChainEvent =
        * only for timelines written before this classification was persisted.
        */
       responseKind?: V1AssistantResponseKind;
+      /** AI checkpoint declaration made effective by this narrative commit. */
+      checkpoint?: true;
       exchange: number;
       attempt: number;
       reasoning?: string;

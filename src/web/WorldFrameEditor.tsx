@@ -1,4 +1,4 @@
-import { uiText } from "./i18n.ts";
+import { getWebLocale, uiText } from "./i18n.ts";
 import { useMemo, useState } from "react";
 import { parse, stringify } from "yaml";
 
@@ -531,6 +531,16 @@ export function WorldFrameEditor({
             )}
           </section>
 
+          <MaintenanceEditor
+            frame={frame}
+            documents={documents}
+            onChange={(maintenance) =>
+              updateFrame((draft) => {
+                draft.maintenance = maintenance;
+              })
+            }
+          />
+
           <section
             className="world-frame-section"
             aria-labelledby="world-frame-context-title"
@@ -780,6 +790,29 @@ function FrameSlotCard({
           </button>
         </div>
       </header>
+
+      <label>
+        {getWebLocale() === "zh-CN"
+          ? "建议体积（UTF-8 字节，可留空）"
+          : "Advisory size (UTF-8 bytes, optional)"}
+        <input
+          type="number"
+          min={1}
+          step={1}
+          value={
+            typeof slot.advisoryBytes === "number" ? slot.advisoryBytes : ""
+          }
+          onChange={(event) => {
+            const next = { ...slot };
+            if (event.currentTarget.value === "") delete next.advisoryBytes;
+            else {
+              next.advisoryBytes = Number(event.currentTarget.value);
+              next.id ??= `slot-${crypto.randomUUID()}`;
+            }
+            onChange(next);
+          }}
+        />
+      </label>
 
       {slot.kind === "document" && (
         <div className="world-frame-slot-fields">
@@ -1590,4 +1623,88 @@ function stringValue(value: unknown): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function MaintenanceEditor({
+  frame,
+  documents,
+  onChange,
+}: {
+  frame: FrameRecord;
+  documents: readonly DocumentOption[];
+  onChange: (settings: FrameRecord) => void;
+}): React.JSX.Element {
+  const zh = getWebLocale() === "zh-CN";
+  const settings = isRecord(frame.maintenance) ? frame.maintenance : {};
+  const limits = isRecord(settings.documents) ? settings.documents : {};
+  const clock = isRecord(settings.clock) ? settings.clock : {};
+  const clockDocument = findDocument(documents, stringValue(clock.document));
+  return (
+    <details className="world-frame-section">
+      <summary>
+        {zh
+          ? "文档整理提示与世界时间记录"
+          : "Document advice and world-time recording"}
+      </summary>
+      <p>
+        {zh
+          ? "超出建议体积只会提示整理。世界时间仅在明确选择节点后，随真实写入记录；不会自动推进时间。"
+          : "Exceeding advisory sizes only produces advice. World time is recorded with actual writes only when you select an exact node; it never advances automatically."}
+      </p>
+      {documents.map((document) => (
+        <label key={document.ref}>
+          {document.title} · @{document.ref} —{" "}
+          {zh ? "建议字节数" : "Advisory bytes"}
+          <input
+            type="number"
+            min={1}
+            step={1}
+            value={
+              typeof limits[`@${document.ref}`] === "number"
+                ? (limits[`@${document.ref}`] as number)
+                : ""
+            }
+            onChange={(event) => {
+              const next = { ...limits };
+              if (event.currentTarget.value === "")
+                delete next[`@${document.ref}`];
+              else next[`@${document.ref}`] = Number(event.currentTarget.value);
+              onChange({ ...settings, documents: next });
+            }}
+          />
+        </label>
+      ))}
+      <DocumentField
+        label={
+          zh
+            ? "记录写入时世界时间的文档"
+            : "Document containing world time at write"
+        }
+        emptyLabel={zh ? "不记录世界时间" : "Do not record world time"}
+        value={stringValue(clock.document)}
+        documents={documents}
+        onChange={(document) => {
+          const next = { ...settings };
+          if (document === "") delete next.clock;
+          else
+            next.clock = {
+              document,
+              locator: {
+                [findDocument(documents, document)?.codec ?? "yaml"]: [],
+              },
+            };
+          onChange(next);
+        }}
+      />
+      {clockDocument !== undefined && (
+        <LocatorField
+          label={zh ? "世界时间的精确字段路径" : "Exact world-time field path"}
+          locator={readLocator(clock.locator, clockDocument.codec)}
+          onChange={(locator) =>
+            onChange({ ...settings, clock: { ...clock, locator } })
+          }
+        />
+      )}
+    </details>
+  );
 }

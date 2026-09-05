@@ -842,6 +842,12 @@ function validModelItemShape(
   storedToolChanges: boolean,
 ): boolean {
   if (!isRecord(value) || typeof value.kind !== "string") return false;
+  if (value.kind === "runtime_notice")
+    return (
+      hasExactKeys(value, ["kind", "notice", "text"]) &&
+      value.notice === "checkpoint_rounds" &&
+      typeof value.text === "string"
+    );
   if (value.kind === "prompt_delta")
     return (
       hasExactKeys(value, ["kind", "logicalMessages"]) &&
@@ -1111,7 +1117,15 @@ function validDiagnosticBinding(value: unknown): boolean {
 function validInitialAppend(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["logical", "provider"]) &&
+    hasExactKeys(value, ["logical", "provider"], ["beforePlayer"]) &&
+    (value.beforePlayer === undefined ||
+      (isRecord(value.beforePlayer) &&
+        hasExactKeys(value.beforePlayer, ["logical", "provider"]) &&
+        validLegacyModelItem(value.beforePlayer.logical) &&
+        isRecord(value.beforePlayer.provider) &&
+        hasExactKeys(value.beforePlayer.provider, ["role", "content"]) &&
+        value.beforePlayer.provider.role === "user" &&
+        typeof value.beforePlayer.provider.content === "string")) &&
     isRecord(value.logical) &&
     hasExactKeys(value.logical, ["kind", "text"]) &&
     value.logical.kind === "player" &&
@@ -1312,16 +1326,22 @@ function validArtifactPayloadContract(value: unknown): boolean {
 function validPromptCompilation(value: unknown): value is PromptCompilation {
   return (
     isRecord(value) &&
-    hasExactKeys(value, [
-      "logicalMessages",
-      "provider",
-      "tools",
-      "toolUniverse",
-      "toolStrategy",
-      "coverage",
-      "budget",
-      "cache",
-    ]) &&
+    hasExactKeys(
+      value,
+      [
+        "logicalMessages",
+        "provider",
+        "tools",
+        "toolUniverse",
+        "toolStrategy",
+        "coverage",
+        "budget",
+        "cache",
+      ],
+      ["maintenance"],
+    ) &&
+    (value.maintenance === undefined ||
+      isWorldPromptMaintenance(value.maintenance)) &&
     validLogicalMessages(value.logicalMessages) &&
     validPromptProvider(value.provider) &&
     validPromptTools(value.tools) &&
@@ -1848,3 +1868,4 @@ function hasExactKeys(
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error;
 }
+import { isWorldPromptMaintenance } from "../../protocol/worldMaintenance.ts";

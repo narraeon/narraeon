@@ -935,6 +935,10 @@ const settingImprovementEnglishMessages: Record<string, string> = {
   "和 AI 边聊边修改 {packageName}。成功的工具改动会像游玩一样直接写入内容包当前树。":
     "Discuss and revise {packageName} with the model. Successful tool changes write directly to the content package current tree, just like play.",
   全新上下文: "Fresh context",
+  "AI 建议在此开启全新上下文": "The AI suggests starting a fresh context here",
+  下一条消息使用全新上下文: "Use a fresh context for the next message",
+  玩家输入前的回合提示: "Round marker before player input",
+  " + 1 条回合提示": " + 1 round marker",
   "这里没有隔离草稿或应用步骤：每个已完成工具响应的绿色新增和红色删除都已经生效。":
     "There is no isolated draft or Apply step. Green additions and red removals from every completed tool response are already effective.",
   "开始后，对话、Provider 返回内容和已生效差异会保留在这里。":
