@@ -147,6 +147,8 @@ export interface ModelHostWireRequest {
 }
 
 export interface ModelHost {
+  /** Optional credential-free production encoding, used only for request diagnostics. */
+  previewRequest?(request: ModelHostExchange): ModelHostWireRequest;
   binding(): ModelHostBinding;
   exchange(
     request: ModelHostExchange,

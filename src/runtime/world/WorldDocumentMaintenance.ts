@@ -191,6 +191,8 @@ export async function readDocumentMaintenanceFacts(
     }
     previous = next;
   }
+  for (const fact of Object.values(facts))
+    fact.observedContexts = contexts.size;
   if (cache.size >= 8) cache.delete(cache.keys().next().value!);
   cache.set(head, {
     files,

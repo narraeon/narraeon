@@ -224,7 +224,7 @@ NPC 自己动起来产生的结果，和玩家行动产生的结果是同一种�
 
 不必每次行动都把所有人跑一遍。有三种时刻要回头看一眼场外：玩家换了地方，或一段较长的时间过去；玩家再次遇到、提起或找寻某人；某个 NPC 先前有明确的日程、约定或未了的事，而时间已经走到了那个点。
 
-需要他身上的事实才能判断时，先读他的文档再判断；得出的结果写回他自己那一份。不写下来，下次玩家见到他，他就会凭空停在上次离开时的姿势里。
+判断依赖尚未取得的角色事实时，先读他的文档再判断；已有完整材料足够时无需重读。得出的持续结果按保存时机写回他自己那一份，未表露在原文中的重要场外变化当场保存。
 
 ## 可以直接描写的
 
@@ -291,7 +291,7 @@ Runtime 的玩家视图标记说明界面实际读取哪些文档范围。叙事
 
 玩家角色感知不到的变化——别处发生的事、他人心里尚未表露的判断——不必写进叙事，但叙事也不得反过来否认它。
 
-判断结果和构思叙事的先后不限，但实际调用顺序必须先完成需要的文档写入，再输出终态叙事。当前调用链处理完时，两边必须讲的是同一件事，没有哪一边独有的情节。
+判断结果和构思叙事的先后不限，但实际调用顺序必须先完成按上述保存时机本轮必须完成的写入，再输出终态叙事。已经保存的值不得与叙事冲突；其他可恢复结果可在检查点归并，场外未表露的信息不必向玩家公开。
 
 ## 所有有界文档都要回收
 
@@ -299,7 +299,7 @@ Runtime 的玩家视图标记说明界面实际读取哪些文档范围。叙事
 
 ## 当前情境的收敛
 
-每次状态维护后，把当前情境改成所有直接结果和即时反应结束后仍然成立的局面：保留此刻地点、仍在场的人物、仍在进行的事件，以及下一次行动若忽略就会立刻冲突的少量限制；删除已完成动作、已离场人物、已解决问题、已被取代的描述、重复条目、计划、分支和预测。“在场”已经表达谁留下，不再另记谁已经离开；但把一个人移出在场之前，先把他身上仍在继续的事写回他自己那份文档——这里删掉的是这个场面里的他，不是这个人。它不是过程摘要，也不按时间顺序记录刚才发生了什么。正文改变后，如果 title 或 summary 已不能准确指向当前场景，一并更新。
+每个检查点前，把当前情境收敛为所有直接结果和即时反应结束后仍然成立的局面：保留此刻地点、仍在场的人物、仍在进行的事件，以及下一次行动若忽略就会立刻冲突的少量限制；删除已完成动作、已离场人物、已解决问题、已被取代的描述、重复条目、计划、分支和预测。“在场”已经表达谁留下，不再另记谁已经离开；但把一个人移出在场之前，先把他身上仍在继续的事写回他自己那份文档——这里删掉的是这个场面里的他，不是这个人。它不是过程摘要，也不按时间顺序记录刚才发生了什么。正文改变后，如果 title 或 summary 已不能准确指向当前场景，一并更新。
 `,
 };
 
@@ -521,7 +521,7 @@ Being alone with one character means only that others are absent from this passa
 
 You do not need to simulate everyone after every action. Revisit offstage activity at three kinds of moment: the player changes location or substantial time passes; the player meets, mentions, or searches for someone again; or an NPC had an established schedule, promise, or unfinished task whose time has arrived.
 
-When a judgment depends on facts about an NPC, read that NPC's document first, then write the result back to the same document. If it is not recorded, the NPC will appear frozen in the pose they held when the player last left.
+When a judgment depends on missing NPC facts, read that NPC's document first; sufficient acquired bodies need no reread. Save durable results to that owner at the appropriate time, immediately for important offstage changes absent from the originals.
 
 ## What may be described directly
 
@@ -588,7 +588,7 @@ The player reads the narrative and can also see state fields selected by player 
 
 Changes outside the player character's perception—events elsewhere or another person's unexpressed judgment—do not need to appear in the narrative, but the narrative may not contradict them.
 
-Results may be decided and prose may be drafted in either order, but the actual call sequence must complete required document writes before the terminal narrative. When the current call chain finishes, ensure that both describe the same events and neither contains a plot event absent from the other.
+Results may be decided and prose may be drafted in either order, but the actual call sequence must complete writes due this turn under the saving policy before the terminal narrative. Persisted values must not contradict the narrative. Other recoverable results may be consolidated at a checkpoint; unexpressed offstage information need not be revealed to the player.
 
 ## Cleanup applies to all bounded documents
 
@@ -596,7 +596,7 @@ At checkpoints, clean every document declared to hold bounded current state, not
 
 ## Converging the current situation
 
-After state maintenance, rewrite the current situation to contain only what remains true after direct results and immediate reactions finish: the present location, characters still present, events still in progress, and the few restrictions whose omission would immediately conflict with the next action. Remove completed actions, departed characters, resolved problems, superseded descriptions, duplicates, plans, branches, and predictions. “Present” already identifies who remains, so do not also list who left. Before removing a character from the scene, write any activity that continues for them back to their own document—the scene is losing their presence, not the person. The current situation is not a process summary and does not chronologically record what just happened. If the body changes enough that its title or summary no longer identifies the current scene, update them too.
+At each checkpoint, converge the current situation to contain only what remains true after direct results and immediate reactions finish: the present location, characters still present, events still in progress, and the few restrictions whose omission would immediately conflict with the next action. Remove completed actions, departed characters, resolved problems, superseded descriptions, duplicates, plans, branches, and predictions. “Present” already identifies who remains, so do not also list who left. Before removing a character from the scene, write any activity that continues for them back to their own document—the scene is losing their presence, not the person. The current situation is not a process summary and does not chronologically record what just happened. If the body changes enough that its title or summary no longer identifies the current scene, update them too.
 `,
 };
 

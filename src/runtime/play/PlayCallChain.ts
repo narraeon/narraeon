@@ -1,3 +1,4 @@
+import { comparePromptPrefixes } from "../prompt/WorldPromptDiagnostics.ts";
 import { createHash } from "node:crypto";
 import type { AppLocale } from "../../protocol/appPreferences.ts";
 import {
@@ -571,7 +572,52 @@ export class PlayCallChain {
       throw new PlayCallChainError(
         "The current play context could not be inspected.",
       );
+    const previous =
+      session.previousChainId === null
+        ? null
+        : await this.#worlds.playTimeline.readContext(
+            worldId,
+            session.previousChainId,
+          );
+    const [currentEncoding, previousEncoding] = await Promise.all([
+      this.#worlds.playTimeline
+        .readInitialEncoding(worldId, session.chainId)
+        .catch(() => null),
+      previous === null
+        ? null
+        : this.#worlds.playTimeline
+            .readInitialEncoding(worldId, previous.value.chainId)
+            .catch(() => null),
+    ]);
+    const initialUsage = (events: V1PlayCallChainEvent[]) =>
+      events.find(
+        (event) => event.kind === "assistant" && event.status === "completed",
+      );
+    const currentResponse = initialUsage(session.events);
+    const previousResponse =
+      previous === null ? undefined : initialUsage(previous.value.events);
+    const prefixDiagnostics = comparePromptPrefixes(
+      previous === null
+        ? null
+        : {
+            bootstrap: previous.value.bootstrap,
+            encoding: previousEncoding,
+            ...(previousResponse?.kind === "assistant" &&
+            previousResponse.usage !== undefined
+              ? { usage: previousResponse.usage }
+              : {}),
+          },
+      {
+        bootstrap: session.bootstrap,
+        encoding: currentEncoding,
+        ...(currentResponse?.kind === "assistant" &&
+        currentResponse.usage !== undefined
+          ? { usage: currentResponse.usage }
+          : {}),
+      },
+    );
     return {
+      prefixDiagnostics,
       chainId: session.chainId,
       baselineHead: session.baselineHead,
       parentHead: session.parentHead,
@@ -2060,6 +2106,23 @@ export class PlayCallChain {
       let response: Awaited<ReturnType<ModelHost["exchange"]>>;
       try {
         this.#observeInvocation(session.chainId, "waiting", { dispatches: 1 });
+        if (
+          modelHost.previewRequest !== undefined &&
+          request.exchange === 1 &&
+          !request.appended.some(
+            (item) => item.kind === "assistant" || item.kind === "tool",
+          )
+        ) {
+          try {
+            await this.#worlds.playTimeline.recordInitialEncoding(
+              session.worldId,
+              session.chainId,
+              modelHost.previewRequest(request),
+            );
+          } catch {
+            // Optional diagnostics never interrupt a model request or alter its cache key.
+          }
+        }
         response = await modelHost.exchange(request, {
           signal,
           onDelta: (delta) => {

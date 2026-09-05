@@ -11,6 +11,7 @@ export interface WorldDocumentMaintenance {
   baselineBytes: number | null;
   lastBodyWrite: WorldWritePosition | null;
   lastMetadataWrite: WorldWritePosition | null;
+  observedContexts?: number;
   bodyChangedContexts: number;
   metadataChangedContexts: number;
 }
@@ -76,6 +77,7 @@ export function isWorldPromptMaintenance(
         typeof item.overAdvisory === "boolean" &&
         position(item.lastBodyWrite) &&
         position(item.lastMetadataWrite) &&
+        (item.observedContexts === undefined || count(item.observedContexts)) &&
         count(item.bodyChangedContexts) &&
         count(item.metadataChangedContexts),
     ) &&

@@ -44,6 +44,16 @@ export function WorldMaintenancePanel({
           </div>
         ))}
       </dl>
+      {Math.max(
+        0,
+        ...report.documents.map((document) => document.observedContexts ?? 0),
+      ) === 0 && (
+        <p>
+          {zh
+            ? "尚无带上下文标记的历史样本；旧提交不会被猜测归入某个上下文。"
+            : "No history samples with recorded context identities yet; legacy commits are not assigned guessed contexts."}
+        </p>
+      )}
       <div className="maintenance-table-scroll">
         <table>
           <thead>

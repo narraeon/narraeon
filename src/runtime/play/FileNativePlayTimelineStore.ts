@@ -24,6 +24,7 @@ import type {
   ModelHostAppendItem,
   ModelHostBinding,
   ModelHostExchange,
+  ModelHostWireRequest,
 } from "../model/ModelHost.ts";
 import type {
   MaterialSelection,
@@ -310,6 +311,21 @@ export class FileNativePlayTimelineStore {
       input.source.documentAuthorizationCheckpoints ?? [],
       input.target.documentAuthorizationCheckpoints ?? [],
     );
+    if (
+      input.target.events.some(
+        (event) => event.kind === "assistant" && event.status === "completed",
+      )
+    ) {
+      const encoding = await this.readInitialEncoding(
+        input.sourceWorldId,
+        input.source.chainId,
+      ).catch(() => null);
+      if (encoding !== null)
+        await publishImmutableJson(
+          join(targetRoot, "initial-request-encoding.json"),
+          encoding,
+        );
+    }
     await Promise.all([
       cloneNumberedPrefix({
         sourceRoot,
@@ -639,6 +655,45 @@ export class FileNativePlayTimelineStore {
         authorizationCheckpointCount: stateValue.authorizationCheckpointCount,
       },
     };
+  }
+
+  /** The first dispatched request encoding is diagnostic evidence, not Authority. */
+  async recordInitialEncoding(
+    worldId: string,
+    chainId: string,
+    encoding: ModelHostWireRequest,
+  ): Promise<void> {
+    const path = join(
+      this.#contextRoot(worldId, chainId),
+      "initial-request-encoding.json",
+    );
+    await publishImmutableJson(path, encoding);
+  }
+
+  async readInitialEncoding(
+    worldId: string,
+    chainId: string,
+  ): Promise<ModelHostWireRequest | null> {
+    const value = await readOptionalJson<unknown>(
+      join(
+        this.#contextRoot(worldId, chainId),
+        "initial-request-encoding.json",
+      ),
+    );
+    if (value === null) return null;
+    if (
+      !isRecord(value) ||
+      value.method !== "POST" ||
+      !["chat_completions", "openai_responses", "anthropic_messages"].includes(
+        String(value.provider),
+      ) ||
+      !isRecord(value.body) ||
+      typeof value.endpointPath !== "string" ||
+      !Array.isArray(value.headerNames) ||
+      !value.headerNames.every((name: unknown) => typeof name === "string")
+    )
+      throw new Error("Initial request encoding has an invalid shape");
+    return value as unknown as ModelHostWireRequest;
   }
 
   async readAllContexts(

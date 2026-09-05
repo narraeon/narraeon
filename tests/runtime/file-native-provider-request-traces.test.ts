@@ -1565,6 +1565,7 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
       "world_patch",
       "world_create",
       "world_retire",
+      "world_checkpoint",
       "artifact_emit",
       "artifact_clear",
     ]);

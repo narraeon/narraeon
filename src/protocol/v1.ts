@@ -1,3 +1,4 @@
+import type { WorldPromptPrefixComparison } from "./worldPromptDiagnostics.ts";
 import type { WorldPromptMaintenance } from "./worldMaintenance.ts";
 import type {
   ListProviderModelsInput,
@@ -371,6 +372,7 @@ export interface V1PlayContextReadingView {
   worldId: string;
   worldHead: string;
   currentContext: {
+    prefixDiagnostics?: WorldPromptPrefixComparison;
     chainId: string;
     baselineHead: string;
     parentHead: string;
@@ -395,6 +397,7 @@ export interface V1PlayContextReadingView {
     }[];
   } | null;
   nextFreshContext: {
+    prefixDiagnostics?: WorldPromptPrefixComparison;
     head: string;
     preview: V1SettingPromptPreview;
   } | null;

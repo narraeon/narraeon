@@ -1,3 +1,4 @@
+import { WorldPromptDiagnosticsPanel } from "./WorldPromptDiagnosticsPanel.tsx";
 import { WorldMaintenancePanel } from "./WorldMaintenancePanel.tsx";
 import { useMemo, useState } from "react";
 
@@ -493,6 +494,13 @@ function AiReadingAudit({
           <p>{uiText("按当前世界重新运行真实 Prompt 编译")}</p>
         </article>
       </div>
+      <WorldPromptDiagnosticsPanel
+        report={reading.currentContext?.prefixDiagnostics}
+      />
+      <WorldPromptDiagnosticsPanel
+        report={reading.nextFreshContext?.prefixDiagnostics}
+        preview
+      />
       <EvidenceTable title={uiText("当前冻结上下文")} rows={currentRows} />
       <EvidenceTable title={uiText("下一次全新上下文")} rows={nextRows} />
       <WorldMaintenancePanel

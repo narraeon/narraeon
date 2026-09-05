@@ -1736,14 +1736,12 @@ function resolveContext(
     selected.splice(
       additionalMaterialsAt.selected,
       0,
-      ...withMaterials
-        .slice(selected.length)
-        .map((material) => ({
-          ...material,
-          ...(additionalMaterialsAt?.slotId === undefined
-            ? {}
-            : { slotId: additionalMaterialsAt.slotId }),
-        })),
+      ...withMaterials.slice(selected.length).map((material) => ({
+        ...material,
+        ...(additionalMaterialsAt?.slotId === undefined
+          ? {}
+          : { slotId: additionalMaterialsAt.slotId }),
+      })),
     );
     coverage.splice(additionalMaterialsAt.coverage, 0, ...materialCoverage);
   }

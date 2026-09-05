@@ -1,3 +1,4 @@
+import { FileNativeModelHost } from "../../src/runtime/model/FileNativeModelAdapters.ts";
 import { createHash } from "node:crypto";
 import {
   mkdtemp,
@@ -1603,6 +1604,78 @@ test("增长基准与正文写入位置跨重启和分叉保留，摘要修改�
   expect(
     (await worlds.readDocumentMaintenance(worldId))["current-situation"],
   ).toEqual(after);
+});
+
+test("相邻上下文诊断保存实际编码，重启后仍能对照缓存键和 Provider usage", async () => {
+  const { worlds, worldId, root } = await createWorld("prefix-diagnostics");
+  const sent: unknown[] = [];
+  const host = new FileNativeModelHost(
+    {
+      provider: "chat_completions",
+      dialect: "cliproxyapi",
+      baseUrl: "https://provider.invalid/v1",
+      apiKey: "diagnostic-secret",
+      modelId: "prefix-model",
+      contextWindowTokens: 32000,
+      maxOutputTokens: 2000,
+    },
+    (_url, options) => {
+      if (typeof options?.body !== "string")
+        throw new Error("Expected JSON request text");
+      sent.push(JSON.parse(options.body) as unknown);
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: { role: "assistant", content: "你走到了门边。" },
+                finish_reason: "stop",
+              },
+            ],
+            usage: {
+              prompt_tokens: 20,
+              completion_tokens: 5,
+              total_tokens: 25,
+              prompt_tokens_details: { cached_tokens: 4 },
+            },
+          }),
+        ),
+      );
+    },
+  );
+  const chains = new PlayCallChain(worlds);
+  for (const chainId of ["prefix-first", "prefix-second"])
+    await chains.start({
+      worldId,
+      chainId,
+      exchangeId: chainId,
+      playerText: "走到门边。",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: host.binding(),
+      modelHost: host,
+    });
+  expect(
+    (await worlds.playTimeline.readInitialEncoding(worldId, "prefix-first"))
+      ?.body,
+  ).toEqual(sent[0]);
+  expect(
+    (await worlds.playTimeline.readInitialEncoding(worldId, "prefix-second"))
+      ?.body,
+  ).toEqual(sent[1]);
+  const restarted = new PlayCallChain(new FileNativeWorldStore(root));
+  const view = await restarted.inspectWorld(worldId);
+  const reading = await restarted.inspectReading(worldId, view!.parentHead);
+  expect(
+    reading?.prefixDiagnostics?.logical?.changedSources.length,
+  ).toBeGreaterThan(0);
+  expect(reading?.prefixDiagnostics?.encoding.cacheKey).toBe("different");
+  expect(
+    reading?.prefixDiagnostics?.providerUsage.current?.cacheReadTokens,
+  ).toBe(4);
+  expect(JSON.stringify(reading?.prefixDiagnostics)).not.toContain(
+    "diagnostic-secret",
+  );
 });
 
 test("AI 读取证据返回冻结 bootstrap、已结算全文读取与下一次真实 Prompt Preview", async () => {

@@ -1,3 +1,4 @@
+import { comparePromptPrefixes } from "./prompt/WorldPromptDiagnostics.ts";
 import { join } from "node:path";
 
 import {
@@ -587,7 +588,7 @@ export class V1Runtime {
             currentContext,
             nextFreshContext: null,
           };
-        const { hostBinding, playPreset, modelBinding } =
+        const { modelHost, hostBinding, playPreset, modelBinding } =
           await this.#continuousBinding();
         const preview = this.#compiler.preview(
           {
@@ -618,11 +619,41 @@ export class V1Runtime {
           },
           playPreset,
         );
+        const tools = preview.compilation.toolUniverse;
+        const nextEncoding = modelHost.previewRequest({
+          bootstrap: preview.compilation,
+          tools,
+          toolUniverse: tools,
+          allowedTools: tools.map(({ name }) => name),
+          toolStrategy: preview.compilation.toolStrategy,
+          appended: [],
+          operationId: "next-fresh-context-preview",
+          maxOutputTokens: modelBinding.maxOutputTokens,
+        });
+        const currentEncoding =
+          currentContext === null
+            ? null
+            : await this.#worlds.playTimeline
+                .readInitialEncoding(request.worldId, currentContext.chainId)
+                .catch(() => null);
+        const prefixDiagnostics = comparePromptPrefixes(
+          currentContext === null
+            ? null
+            : {
+                bootstrap: currentContext.bootstrap,
+                encoding: currentEncoding,
+              },
+          { bootstrap: preview.compilation, encoding: nextEncoding },
+        );
         return {
           worldId: request.worldId,
           worldHead: binding.parentHead,
           currentContext,
-          nextFreshContext: { head: binding.parentHead, preview },
+          nextFreshContext: {
+            head: binding.parentHead,
+            preview,
+            prefixDiagnostics,
+          },
         };
       }
       case "correction.begin":
