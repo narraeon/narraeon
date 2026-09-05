@@ -4828,6 +4828,111 @@ test("后置请求失败不影响已提交的主链，玩家仍可继续", async
   ]);
 });
 
+test("后置结算通知可读取同端点产物，失败和冷 Runtime 恢复不推进 Authority", async () => {
+  const { worlds, root, worldId } = await createWorld("followup-observation");
+  const artifacts = new FileNativeArtifactStore(root);
+  let releasePanel!: () => void;
+  let releaseFailure!: () => void;
+  const panelGate = new Promise<void>((resolve) => {
+    releasePanel = resolve;
+  });
+  const failureGate = new Promise<void>((resolve) => {
+    releaseFailure = resolve;
+  });
+  let calls = 0;
+  const scripted = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      { outcome: "response", text: "Alex opens the door." },
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "panel",
+            name: "artifact_emit",
+            arguments: { output: "status_bar", payload: { hp: 9 } },
+          },
+        ],
+      },
+      { outcome: "failure", message: "second panel failed" },
+    ],
+  });
+  const modelHost: ModelHost = {
+    binding: () => scripted.binding(),
+    exchange: async (request, options) => {
+      calls += 1;
+      if (calls === 2) await panelGate;
+      if (calls === 3) await failureGate;
+      return scripted.exchange(request, options);
+    },
+  };
+  const changes: Promise<V1PlayCallChainView | null>[] = [];
+  const chains = new PlayCallChain(
+    worlds,
+    new FileNativePromptCompiler(),
+    artifacts,
+    undefined,
+    () => {
+      changes.push(chains.observeWorld(worldId));
+    },
+  );
+  const run = chains.start({
+    worldId,
+    chainId: "observed-panels",
+    exchangeId: "first",
+    playerText: "Open the door.",
+    hostBinding: hostBinding(),
+    playPreset: followupPlayPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+  await vi.waitFor(() => expect(calls).toBe(2));
+  const head = await worlds.currentHead(worldId);
+  expect(await artifacts.readActiveProjection(worldId)).toEqual([]);
+  releasePanel();
+  await vi.waitFor(() => expect(calls).toBe(3));
+  expect(
+    (await Promise.all(changes)).some(
+      (view) =>
+        view?.status === "running" &&
+        view.events.some(
+          (event) => event.kind === "followup" && event.followupId === "status",
+        ),
+    ),
+  ).toBe(true);
+  expect(await artifacts.readActiveProjection(worldId)).toMatchObject([
+    { payload: { hp: 9 }, head },
+  ]);
+  expect(await worlds.currentHead(worldId)).toBe(head);
+  releaseFailure();
+  expect((await run).events).toContainEqual(
+    expect.objectContaining({
+      kind: "followup",
+      followupId: "options",
+      failure: expect.any(String) as unknown,
+    }),
+  );
+  const runtime = new V1Runtime({
+    dataRoot: root,
+    configRoot: join(root, "config"),
+  });
+  await runtime.initialize();
+  expect(
+    await runtime.handle({ type: "world.play-decorations.read", worldId }),
+  ).toMatchObject({
+    result: {
+      head,
+      artifacts: [{ payload: { hp: 9 } }],
+      extensions: [{ status: "recovery_required" }],
+    },
+  });
+  expect(
+    (await runtime.handle({ type: "world.read", worldId })).result,
+  ).toMatchObject({ head, artifacts: [] });
+  expect(await worlds.currentHead(worldId)).toBe(head);
+  expect(calls).toBe(3);
+});
+
 /** Two follow-ups on top of the shipped default call chain. */
 function followupPlayPreset(): PlayPresetBinding {
   const files = structuredClone(defaultPlayPresetFiles);
