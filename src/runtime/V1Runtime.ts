@@ -914,6 +914,11 @@ export class V1Runtime {
           : binding;
         const preview = this.#compiler.preview(
           {
+            extensionControls: await this.#worlds.extensionControls(
+              request.worldId,
+              playPreset,
+              this.#locale,
+            ),
             endpoint: {
               id: `${request.worldId}:${binding.parentHead}`,
               commit: binding.parentHead,

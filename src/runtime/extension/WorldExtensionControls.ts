@@ -76,12 +76,11 @@ export class WorldExtensionControls {
   static async resolve(
     root: string,
     definitions: Definition[],
-    presetId: string,
+    _presetId: string,
     change?: { key: string; value: WorldExtensionChoice },
   ): Promise<WorldExtensionsView> {
     const state = await this.read(root);
     const before = JSON.stringify(state.entries);
-    const currentScope = `preset:${presetId}:`;
     for (const definition of definitions)
       if (!Object.hasOwn(state.entries, definition.key)) {
         const group = definitions.find((item) => item.key === definition.group);
@@ -91,7 +90,9 @@ export class WorldExtensionControls {
             (state.entries[group.key]?.override ?? group.defaultEnabled));
         state.entries[definition.key] = {
           generation: enabled ? 0 : 1,
-          enabled,
+          // Defaults select the next run; only world commands revoke frozen runs.
+          enabled:
+            group === undefined || state.entries[group.key]?.enabled !== false,
         };
       }
     if (change) {
@@ -112,11 +113,17 @@ export class WorldExtensionControls {
       const enabled =
         selected(definition) && (group === undefined || selected(group));
       const previous = state.entries[definition.key];
+      const affected =
+        change !== undefined &&
+        (definition.key === change.key || definition.group === change.key);
+      const gateEnabled = affected
+        ? enabled
+        : enabled || (previous?.enabled ?? true);
       const entry: Entry = {
         generation:
           (previous?.generation ?? 0) +
-          (previous?.enabled === true && !enabled ? 1 : 0),
-        enabled,
+          (previous?.enabled === true && !gateEnabled ? 1 : 0),
+        enabled: gateEnabled,
         ...(previous?.override === undefined
           ? {}
           : { override: previous.override }),
@@ -130,17 +137,17 @@ export class WorldExtensionControls {
         generation: entry.generation,
       };
     });
-    // Removed definitions cannot retain an active generation. Other preset identities
-    // retain both their choices and frozen-run generations across preset selection.
-    for (const [key, entry] of Object.entries(state.entries))
-      if (
-        (!key.startsWith("preset:") || key.startsWith(currentScope)) &&
-        !definitions.some((item) => item.key === key) &&
-        entry.enabled
-      ) {
-        entry.enabled = false;
-        entry.generation++;
-      }
+    // Removing a source definition also belongs to the next run. Retain its
+    // frozen generation; an explicit package-group close still revokes all children.
+    if (
+      change?.key === "group:package" &&
+      state.entries[change.key]?.enabled === false
+    )
+      for (const [key, entry] of Object.entries(state.entries))
+        if (key.startsWith("package:") && entry.enabled) {
+          entry.enabled = false;
+          entry.generation++;
+        }
     if (before !== JSON.stringify(state.entries)) {
       state.revision++;
       await this.write(root, state);

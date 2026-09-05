@@ -311,6 +311,19 @@ export class FileNativeArtifactStore implements ArtifactStore {
     );
   }
 
+  /** Control acceptance and artifact publication share one persistent lock.
+   * Callers holding the Authority lock always acquire it before this lock. */
+  static withWorldControlsMutation<T>(
+    dataRoot: string,
+    worldId: string,
+    action: () => Promise<T>,
+  ): Promise<T> {
+    return withArtifactWorldLock(
+      artifactWorldLockPath(dataRoot, worldId),
+      action,
+    );
+  }
+
   async beginOperation(context: ArtifactOperationContext): Promise<void> {
     return this.#withWorldMutation(context.worldId, () =>
       this.#beginOperation(context),
@@ -1843,7 +1856,7 @@ export class FileNativeArtifactStore implements ArtifactStore {
     const active = this.#mutationContext.getStore();
     if (active?.has(worldId) === true) return action();
     return withArtifactWorldLock(
-      join(this.#root, "locks", identityHash(worldId)),
+      artifactWorldLockPath(dirname(this.#root), worldId),
       () =>
         this.#mutationContext.run(
           new Set([...(active ?? []), worldId]),
@@ -1855,6 +1868,15 @@ export class FileNativeArtifactStore implements ArtifactStore {
   #worldRoot(worldId: string): string {
     return join(this.#root, "worlds", identityHash(worldId));
   }
+}
+
+function artifactWorldLockPath(dataRoot: string, worldId: string): string {
+  return join(
+    resolve(dataRoot),
+    "runtime-locks",
+    "artifacts",
+    identityHash(worldId),
+  );
 }
 
 const artifactWorldLockStaleMilliseconds = 30_000;

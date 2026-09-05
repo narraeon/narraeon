@@ -10381,7 +10381,11 @@ summary:focus-visible {
   width: fit-content;
 }
 .world-extension-options {
-  max-height: 22rem;
+  position: absolute;
+  bottom: calc(100% + 0.5rem);
+  width: 100%;
+  max-height: min(22rem, calc(100dvh - 10rem));
+  background: rgb(7 24 20 / 98%);
   overflow-y: auto;
   padding: 0.7rem;
   border: 1px solid var(--border);

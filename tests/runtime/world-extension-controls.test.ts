@@ -1,4 +1,5 @@
-import { afterEach, expect, test } from "vitest";
+import * as fs from "node:fs/promises";
+import { afterEach, expect, test, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +8,11 @@ import { V1Runtime } from "../../src/runtime/V1Runtime.ts";
 import { FileNativeWorldStore } from "../../src/runtime/world/FileNativeWorldStore.ts";
 import { minimalFileNativeContentScaffold } from "../../src/runtime/content/ContentWorkspace.ts";
 import { createMinimalFileNativePreviewInput } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof fs>();
+  return { ...actual, readFile: vi.fn(actual.readFile) };
+});
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -573,4 +579,325 @@ test("合法子请求名 followups 与内容包组分别控制，关闭组不抹
   expect(
     (await read()).items.find((item) => item.key === "package:followups"),
   ).toMatchObject({ enabled: false, overridden: true });
+});
+
+test("下一次候选预览应用世界覆盖，与实际新发送后置清单一致而不发模型", async () => {
+  const { runtime, worldId } = await setup(["queued"]);
+  await runtime.handle({
+    type: "model.save",
+    connection: {
+      name: "Preview only",
+      presetId: "custom",
+      provider: "chat_completions",
+      baseUrl: "http://127.0.0.1:9/v1",
+      apiKey: "fixture",
+      modelId: "test",
+      contextWindowTokens: 64000,
+      maxOutputTokens: 8192,
+    },
+  });
+  await runtime.handle({
+    type: "world.extensions.set",
+    worldId,
+    key: "package:stable-one",
+    value: "on",
+  });
+  await runtime.handle({
+    type: "world.extensions.set",
+    worldId,
+    key: "package:queued",
+    value: "off",
+  });
+  const result = (
+    await runtime.handle({ type: "world.play-context.read", worldId })
+  ).result as {
+    nextFreshContext: {
+      preview: { playPreset: { followups: { id: string }[] } };
+    };
+  };
+  expect(
+    result.nextFreshContext.preview.playPreset.followups.map((item) => item.id),
+  ).toEqual(["package:stable-one"]);
+});
+
+test("世界关闭与产物清除共享接受顺序，关闭后的旧 clear 不能清除其他请求产物", async () => {
+  const { root, runtime, options, worldId } = await setup(["remaining"]);
+  await runtime.handle({
+    type: "world.extensions.set",
+    worldId,
+    key: "package:stable-one",
+    value: "on",
+  });
+  const preset = await new FileNativePlayPresetStore(
+    options.configRoot,
+  ).bindCurrent();
+  const controls = (
+    await runtime.handle({ type: "world.extensions.read", worldId })
+  ).result as WorldExtensionsView;
+  const store = new FileNativeArtifactStore(root);
+  const operation = {
+    worldId,
+    parentHead: "genesis",
+    operationId: "race-clear",
+    playPresetId: preset.id,
+    playPresetRevision: preset.revision,
+    playPresetScriptsEnabled: false,
+  };
+  const request = (id: string) => ({
+    ...operation,
+    requestId: id,
+    requestAttempt: 1,
+    maxArtifactBytes: 4096,
+    extensionControl: {
+      key: id,
+      generation: controls.items.find((item) => item.key === id)!.generation,
+    },
+    declarations: [
+      {
+        name: "panel",
+        channel: "shared",
+        strategy: "replace" as const,
+        contentType: "text/plain" as const,
+        save: "commit" as const,
+        invalidation: "explicit_clear" as const,
+        required: false,
+        maxEmits: 4,
+      },
+    ],
+  });
+  const old = request("package:stable-one"),
+    remaining = request("package:remaining");
+  await store.beginOperation(operation);
+  await store.markCoreCommitted(operation, "genesis");
+  await store.beginExtension(operation);
+  await store.beginRequestAttempt(old);
+  await store.beginRequestAttempt(remaining);
+  await store.emit({
+    context: remaining,
+    output: "panel",
+    payload: "OTHER",
+    toolCallId: "other",
+  });
+  const checked = Promise.withResolvers<void>(),
+    release = Promise.withResolvers<void>();
+  const originalRead = (await vi.importActual<typeof fs>("node:fs/promises"))
+    .readFile;
+  let pause = true;
+  const spy = vi.spyOn(fs, "readFile").mockImplementation(async (...args) => {
+    const result = await originalRead(...args);
+    if (
+      pause &&
+      typeof args[0] === "string" &&
+      args[0].endsWith("extension-controls.json")
+    ) {
+      pause = false;
+      checked.resolve();
+      await release.promise;
+    }
+    return result;
+  });
+  const accepted: string[] = [];
+  let clear: Promise<unknown> | undefined, close: Promise<unknown> | undefined;
+  try {
+    clear = store
+      .clear({ context: old, output: "panel", toolCallId: "first-clear" })
+      .then((value) => {
+        accepted.push("clear");
+        return value;
+      });
+    await checked.promise;
+    close = runtime
+      .handle({
+        type: "world.extensions.set",
+        worldId,
+        key: "package:stable-one",
+        value: "off",
+      })
+      .then((value) => {
+        accepted.push("off");
+        return value;
+      });
+    // Hold the filesystem read at the authorization edge while the other command
+    // runs. The accepted order must remain clear-then-close, never close-then-clear.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    release.resolve();
+    await Promise.all([clear, close]);
+    expect(accepted).toEqual(["clear", "off"]);
+    await store.emit({
+      context: remaining,
+      output: "panel",
+      payload: "KEEP",
+      toolCallId: "other-again",
+    });
+    await store.clear({
+      context: old,
+      output: "panel",
+      toolCallId: "late-clear",
+    });
+    expect(
+      (await store.readActiveProjection(worldId)).map((item) => item.payload),
+    ).toEqual(["KEEP"]);
+  } finally {
+    release.resolve();
+    await Promise.allSettled([clear, close]);
+    spy.mockRestore();
+  }
+});
+
+test("source default edits and removal preserve frozen requests until an explicit world close", async () => {
+  const { WorldExtensionControls } =
+    await import("../../src/runtime/extension/WorldExtensionControls.ts");
+  const { WorldExtensionRequests } =
+    await import("../../src/runtime/extension/WorldExtensionRequests.ts");
+  const root = await mkdtemp(join(tmpdir(), "world-extension-frozen-"));
+  roots.push(root);
+  const worldId = "frozen-world";
+  const worldRoot = join(root, worldId);
+  await fs.mkdir(worldRoot);
+  const definitions = [
+    {
+      key: "group:package",
+      id: "package:followups",
+      name: "Package",
+      kind: "group" as const,
+      source: "package" as const,
+      defaultEnabled: true,
+    },
+    {
+      key: "package:one",
+      id: "package:one",
+      name: "One",
+      kind: "request" as const,
+      source: "package" as const,
+      group: "group:package",
+      defaultEnabled: true,
+    },
+  ];
+  const initial = await WorldExtensionControls.resolve(
+    worldRoot,
+    definitions,
+    "preset",
+  );
+  const requests = new WorldExtensionRequests(root);
+  const record = {
+    playPresetId: "preset",
+    requestId: "package:one",
+    extensionControl: {
+      key: "package:one",
+      generation: initial.items[1]!.generation,
+    },
+  };
+  const lease = await requests.acquire(worldId, record);
+  try {
+    const next = await WorldExtensionControls.resolve(
+      worldRoot,
+      definitions.map((item) => ({ ...item, defaultEnabled: false })),
+      "preset",
+    );
+    await requests.changed(worldId);
+    expect(next.items.every((item) => !item.enabled)).toBe(true);
+    expect(lease.signal.aborted).toBe(false);
+    expect(await requests.visible(worldId, record)).toBe(true);
+    await WorldExtensionControls.resolve(
+      worldRoot,
+      [definitions[0]!],
+      "preset",
+    );
+    await requests.changed(worldId);
+    expect(lease.signal.aborted).toBe(false);
+    expect(await requests.visible(worldId, record)).toBe(true);
+    await WorldExtensionControls.resolve(
+      worldRoot,
+      [definitions[0]!],
+      "preset",
+      { key: "group:package", value: "off" },
+    );
+    await requests.changed(worldId);
+    expect(lease.signal.aborted).toBe(true);
+    expect(await requests.visible(worldId, record)).toBe(false);
+    await WorldExtensionControls.resolve(worldRoot, definitions, "preset", {
+      key: "group:package",
+      value: "on",
+    });
+    expect(await requests.visible(worldId, record)).toBe(false);
+    const restored = await WorldExtensionControls.resolve(
+      worldRoot,
+      definitions,
+      "preset",
+    );
+    expect(
+      await requests.visible(worldId, {
+        ...record,
+        extensionControl: {
+          key: "package:one",
+          generation: restored.items[1]!.generation,
+        },
+      }),
+    ).toBe(true);
+  } finally {
+    lease.release();
+  }
+});
+
+test("restored defaults can enable new generations without reviving closed output", async () => {
+  const { WorldExtensionControls } =
+    await import("../../src/runtime/extension/WorldExtensionControls.ts");
+  const { WorldExtensionRequests } =
+    await import("../../src/runtime/extension/WorldExtensionRequests.ts");
+  const root = await mkdtemp(join(tmpdir(), "world-extension-defaults-"));
+  roots.push(root);
+  const worldId = "defaults-world";
+  const worldRoot = join(root, worldId);
+  await fs.mkdir(worldRoot);
+  const definition = {
+    key: "preset:p:request:one",
+    id: "one",
+    name: "One",
+    kind: "request" as const,
+    source: "preset" as const,
+    defaultEnabled: true,
+  };
+  const initial = await WorldExtensionControls.resolve(
+    worldRoot,
+    [definition],
+    "p",
+  );
+  const requests = new WorldExtensionRequests(root);
+  const record = {
+    playPresetId: "p",
+    requestId: "one",
+    extensionControl: {
+      key: definition.key,
+      generation: initial.items[0]!.generation,
+    },
+  };
+  await WorldExtensionControls.resolve(worldRoot, [definition], "p", {
+    key: definition.key,
+    value: "off",
+  });
+  await WorldExtensionControls.resolve(
+    worldRoot,
+    [{ ...definition, defaultEnabled: false }],
+    "p",
+    { key: definition.key, value: "default" },
+  );
+  const next = await WorldExtensionControls.resolve(
+    worldRoot,
+    [definition],
+    "p",
+  );
+  expect(next.items[0]).toMatchObject({ enabled: true, overridden: false });
+  expect(await requests.visible(worldId, record)).toBe(false);
+  const lease = await requests.acquire(worldId, {
+    ...record,
+    extensionControl: {
+      key: definition.key,
+      generation: next.items[0]!.generation,
+    },
+  });
+  try {
+    expect(lease.signal.aborted).toBe(false);
+  } finally {
+    lease.release();
+  }
 });

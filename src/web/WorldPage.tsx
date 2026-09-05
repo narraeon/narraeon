@@ -599,7 +599,7 @@ export function WorldPage({
     const observer = new ResizeObserver(publish);
     observer.observe(composer);
     return () => observer.disconnect();
-  }, []);
+  }, [openedWorldId, dialog]);
 
   useEffect(() => {
     if (feedback?.kind !== "status") return;

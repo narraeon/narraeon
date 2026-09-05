@@ -1,3 +1,4 @@
+import { FileNativeArtifactStore } from "../artifact/FileNativeArtifactStore.ts";
 import { WorldExtensionRequests } from "../extension/WorldExtensionRequests.ts";
 import {
   WorldExtensionControls,
@@ -406,16 +407,22 @@ export class FileNativeWorldStore {
       playerViews.views,
       locale,
     );
-    return this.operations.withWorldAuthorityLock(worldId, async () => {
-      const view = await WorldExtensionControls.resolve(
-        join(this.#worldsRoot, worldId),
-        definitions,
-        binding.id,
-        change,
-      );
-      await this.extensionRequests.changed(worldId);
-      return view;
-    });
+    return this.operations.withWorldAuthorityLock(worldId, () =>
+      FileNativeArtifactStore.withWorldControlsMutation(
+        dirname(this.#worldsRoot),
+        worldId,
+        async () => {
+          const view = await WorldExtensionControls.resolve(
+            join(this.#worldsRoot, worldId),
+            definitions,
+            binding.id,
+            change,
+          );
+          await this.extensionRequests.changed(worldId);
+          return view;
+        },
+      ),
+    );
   }
   async extensionControlsRevision(worldId: string): Promise<number> {
     assertIdentity(worldId, "World ID");
