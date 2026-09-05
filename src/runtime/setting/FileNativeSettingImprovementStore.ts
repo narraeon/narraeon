@@ -676,7 +676,11 @@ function validateStoredSession(
     (value.schemaVersion !== 2 && value.schemaVersion !== 3) ||
     (value.schemaVersion === 2
       ? value.requests !== undefined
-      : !validAuthoringRequests(value.requests, validPromptCompilation)) ||
+      : !validAuthoringRequests(value.requests, validPromptCompilation, {
+          modelItems: value.modelItems,
+          activeRequestId: value.activeRequestId,
+          completedRequestIds: value.completedRequestIds,
+        })) ||
     typeof value.sessionId !== "string" ||
     typeof value.packageId !== "string" ||
     !validOptionalTitle(value.contentPackageTitle) ||

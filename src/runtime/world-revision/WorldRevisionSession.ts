@@ -1,3 +1,4 @@
+import { authoringRequestPreviews } from "../authoring/AuthoringRequestSnapshot.ts";
 import { createHash } from "node:crypto";
 
 import type { AppLocale } from "../../protocol/appPreferences.ts";
@@ -337,17 +338,10 @@ export class WorldRevisionSession {
         throw new Error(
           "No saved model connection matches this world-revision conversation",
         );
-      const playPreset = await this.#bindPlayPreset();
-      const locale = this.#locale();
-      const bootstrap = this.#compiler.compileWorldRevision({
-        epoch: { id: epoch.epochId, baseHead: epoch.baseHead },
-        worldTitle: session.worldTitle,
-        runtimeContract: worldRevisionRuntimeContract(locale),
-        authorPrompt: settingImprovementPromptForBinding(playPreset, locale),
-        playPreset,
-        modelBinding: session.modelBinding,
-        tools: worldRevisionToolDefinitions(locale),
-      });
+      const { playPreset, bootstrap } = await this.#compileCurrent(
+        input.worldId,
+        session.modelBinding,
+      );
       session.schemaVersion = 2;
       session.requests ??= [];
       session.requests.push({
@@ -364,6 +358,46 @@ export class WorldRevisionSession {
       };
     });
     return prepared.run ?? this.#view(prepared.session);
+  }
+
+  async preview(worldId: string, sessionId?: string) {
+    const session =
+      sessionId === undefined ? null : await this.#store.readSession(sessionId);
+    if (session !== null) assertWorld(session, worldId);
+    const host =
+      session === null
+        ? await this.#bindModelHost()
+        : await this.#bindExistingModelHost(session.modelBinding);
+    if (
+      session !== null &&
+      !equalModelHostBinding(session.modelBinding, host.binding())
+    )
+      throw new Error(
+        "No compatible saved model connection matches this authoring conversation",
+      );
+    const { bootstrap } = await this.#compileCurrent(worldId, host.binding());
+    return bootstrap;
+  }
+
+  async #compileCurrent(worldId: string, modelBinding: ModelHostBinding) {
+    const epoch = await this.#workspace.active(worldId);
+    const worlds = await this.#worlds.listWorlds();
+    const playPreset = await this.#bindPlayPreset();
+    const locale = this.#locale();
+    const bootstrap = this.#compiler.compileWorldRevision({
+      ...(epoch === null
+        ? {}
+        : { epoch: { id: epoch.epochId, baseHead: epoch.baseHead } }),
+      worldTitle:
+        worlds.find((world) => world.worldId === worldId)?.title ?? worldId,
+      runtimeContract: worldRevisionRuntimeContract(locale),
+      authorPrompt: settingImprovementPromptForBinding(playPreset, locale),
+      playPreset,
+      modelBinding: modelBinding,
+      tools: worldRevisionToolDefinitions(locale),
+    });
+
+    return { bootstrap, playPreset };
   }
 
   async cancel(sessionId: string): Promise<V1WorldRevisionView> {
@@ -691,17 +725,7 @@ export class WorldRevisionSession {
         ? this.#conversation.streaming(session.sessionId)
         : null;
     return {
-      requestPreviews: (
-        session.requests ?? [
-          {
-            requestId: session.creationRequestId,
-            bootstrap: session.bootstrap,
-          },
-        ]
-      ).map(({ requestId, bootstrap }) => ({
-        requestId,
-        compilation: structuredClone(bootstrap),
-      })),
+      requestPreviews: authoringRequestPreviews(session),
       sessionId: session.sessionId,
       worldId: session.worldId,
       epochId: session.epochId,

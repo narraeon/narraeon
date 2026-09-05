@@ -1295,13 +1295,19 @@ function SettingImprovementPromptEditor({
 }): React.JSX.Element {
   if (structure.authorPrompts !== undefined)
     return (
-      <OrderedPlayPromptEditor
-        authoring
-        entries={structure.authorPrompts}
-        onChange={(authorPrompts) =>
-          onChange((current) => ({ ...current, authorPrompts }))
-        }
-      />
+      <section
+        id="play-preset-panel-setting_improvement"
+        role="tabpanel"
+        aria-labelledby="play-preset-tab-setting_improvement"
+      >
+        <OrderedPlayPromptEditor
+          authoring
+          entries={structure.authorPrompts}
+          onChange={(authorPrompts) =>
+            onChange((current) => ({ ...current, authorPrompts }))
+          }
+        />
+      </section>
     );
   const prompt = structure.settingImprovementPrompt;
   return (

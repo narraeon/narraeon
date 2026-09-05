@@ -1188,3 +1188,25 @@ test("world author rules refresh after restart without changing the active tool 
     epochId: epoch!.epochId,
   });
 });
+
+test("world author candidate preview never opens an epoch or dispatches the provider", async () => {
+  const { root, worldId, worlds, workspace } = await createdWorld();
+  const host = new ScriptedModelHost({ binding: modelBinding, steps: [] });
+  const service = new WorldRevisionSession({
+    store: new FileNativeWorldRevisionStore(root),
+    workspace,
+    worlds,
+    compiler: new FileNativePromptCompiler({ locale: "en" }),
+    locale: () => "en",
+    bindModelHost: () => Promise.resolve(host),
+    bindExistingModelHost: () => Promise.resolve(host),
+    bindPlayPreset: () =>
+      Promise.resolve(builtinDefaultPlayPresetBinding("en")),
+    preview: () => preview,
+  });
+  const candidate = await service.preview(worldId);
+  expect(JSON.stringify(candidate)).toContain("durably locked exclusive epoch");
+  expect(host.requests).toHaveLength(0);
+  expect(await workspace.active(worldId)).toBeNull();
+  expect(await worlds.readWorldRevisionLock(worldId)).toBeNull();
+});

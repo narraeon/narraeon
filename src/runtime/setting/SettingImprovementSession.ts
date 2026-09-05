@@ -1,3 +1,4 @@
+import { authoringRequestPreviews } from "../authoring/AuthoringRequestSnapshot.ts";
 import type { AppLocale } from "../../protocol/appPreferences.ts";
 import { emptyAggregatedModelUsage } from "../../protocol/modelUsage.ts";
 import type {
@@ -328,19 +329,10 @@ export class SettingImprovementSession {
         throw new Error(
           "No saved model connection matches this setting-improvement conversation",
         );
-      const playPreset = await this.#bindPlayPreset();
-      const locale = this.#locale();
-      const package_ = await this.#content.readCurrentTreeContentPackage(
+      const { playPreset, bootstrap } = await this.#compileCurrent(
         input.packageId,
+        session.modelBinding,
       );
-      const bootstrap = this.#compiler.compileSettingImprovement({
-        contentPackageTitle: package_.title,
-        runtimeContract: settingImprovementRuntimeContract(locale),
-        authorPrompt: settingImprovementPromptForBinding(playPreset, locale),
-        playPreset,
-        modelBinding: session.modelBinding,
-        tools: settingImprovementToolDefinitions(locale),
-      });
       session.schemaVersion = 3;
       session.requests ??= [];
       session.requests.push({
@@ -354,6 +346,42 @@ export class SettingImprovementSession {
       return { session, run: this.#startRun(session, host, requestId) };
     });
     return prepared.run ?? this.#view(prepared.session);
+  }
+
+  async preview(packageId: string, sessionId?: string) {
+    const session =
+      sessionId === undefined ? null : await this.#store.read(sessionId);
+    if (session !== null) assertPackage(session, packageId);
+    const host =
+      session === null
+        ? await this.#bindModelHost()
+        : await this.#bindExistingModelHost(session.modelBinding);
+    if (
+      session !== null &&
+      !equalModelHostBinding(session.modelBinding, host.binding())
+    )
+      throw new Error(
+        "No compatible saved model connection matches this authoring conversation",
+      );
+    const { bootstrap } = await this.#compileCurrent(packageId, host.binding());
+    return bootstrap;
+  }
+
+  async #compileCurrent(packageId: string, modelBinding: ModelHostBinding) {
+    const playPreset = await this.#bindPlayPreset();
+    const locale = this.#locale();
+    const package_ =
+      await this.#content.readCurrentTreeContentPackage(packageId);
+    const bootstrap = this.#compiler.compileSettingImprovement({
+      contentPackageTitle: package_.title,
+      runtimeContract: settingImprovementRuntimeContract(locale),
+      authorPrompt: settingImprovementPromptForBinding(playPreset, locale),
+      playPreset,
+      modelBinding: modelBinding,
+      tools: settingImprovementToolDefinitions(locale),
+    });
+
+    return { bootstrap, playPreset };
   }
 
   async cancel(sessionId: string): Promise<SettingImprovementView> {
@@ -690,17 +718,7 @@ export class SettingImprovementSession {
         ? this.#conversation.streaming(session.sessionId)
         : null;
     return {
-      requestPreviews: (
-        session.requests ?? [
-          {
-            requestId: session.creationRequestId,
-            bootstrap: session.bootstrap,
-          },
-        ]
-      ).map(({ requestId, bootstrap }) => ({
-        requestId,
-        compilation: structuredClone(bootstrap),
-      })),
+      requestPreviews: authoringRequestPreviews(session),
       sessionId: session.sessionId,
       packageId: session.packageId,
       runStatus: streaming === null ? session.runStatus : "running",

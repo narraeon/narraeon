@@ -149,3 +149,89 @@ test.each([
     expect(serialized).not.toContain("setting_finish_candidate");
   },
 );
+
+test.each([
+  "chat_completions",
+  "openai_responses",
+  "anthropic_messages",
+] as const)(
+  "%s preserves ordered author prefix and final user append",
+  (provider) => {
+    const host = new FileNativeModelHost({
+      provider,
+      baseUrl: "https://provider.invalid/v1",
+      apiKey: "test",
+      modelId: "test",
+      contextWindowTokens: 32000,
+      maxOutputTokens: 4096,
+    });
+    const preset = builtinDefaultPlayPresetBinding("en");
+    preset.definition.authorPrompts = [
+      {
+        id: "first",
+        kind: "user",
+        name: "First",
+        enabled: true,
+        body: "AUTHOR_FIRST",
+      },
+      {
+        id: "target",
+        kind: "builtin",
+        builtin: "author.target",
+        enabled: true,
+      },
+      {
+        id: "last",
+        kind: "user",
+        name: "Last",
+        enabled: true,
+        body: "AUTHOR_LAST",
+      },
+      {
+        id: "mechanics",
+        kind: "builtin",
+        builtin: "author.mechanics",
+        enabled: true,
+      },
+      {
+        id: "off",
+        kind: "user",
+        name: "Off",
+        enabled: false,
+        body: "AUTHOR_DISABLED",
+      },
+    ];
+    const bootstrap = new FileNativePromptCompiler({
+      locale: "en",
+    }).compileSettingImprovement({
+      contentPackageTitle: "TARGET_MARKER",
+      runtimeContract: "UNUSED_OLD_CONTRACT",
+      authorPrompt: "UNUSED_OLD_POLICY",
+      playPreset: preset,
+      modelBinding: host.binding(),
+      tools: settingImprovementToolDefinitions("en"),
+    });
+    const request = host.buildRequest({
+      bootstrap,
+      appended: [{ kind: "user", text: "USER_FINAL_APPEND" }],
+      requestId: "ordered-author",
+      operationId: "ordered-author-session",
+      exchange: 1,
+      maxOutputTokens: 4096,
+    });
+    const body = JSON.stringify(request.body);
+    const markers = [
+      "AUTHOR_FIRST",
+      "TARGET_MARKER",
+      "AUTHOR_LAST",
+      "# Authoring tools and settlement",
+      "USER_FINAL_APPEND",
+    ];
+    for (let index = 1; index < markers.length; index++)
+      expect(body.indexOf(markers[index]!)).toBeGreaterThan(
+        body.indexOf(markers[index - 1]!),
+      );
+    expect(body).not.toContain("AUTHOR_DISABLED");
+    expect(body).not.toContain("UNUSED_OLD_POLICY");
+  },
+);

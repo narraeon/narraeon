@@ -1015,16 +1015,15 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   ).toBeVisible();
   await expect(page.getByText("手动编辑和 AI 共用一份修订")).toBeVisible();
   await expect(page.getByRole("button", { name: "应用并解锁" })).toHaveCount(0);
-  responses.push(chatText("世界修订编排已读取"));
+  const previewRequestCount = providerRequests.length;
   await page
-    .locator(".setting-composer textarea")
-    .fill("检查作者规则，暂不修改");
-  await page.getByRole("button", { name: "发送", exact: true }).click();
-  await expect(page.locator(".setting-conversation-assistant")).toContainText(
-    "世界修订编排已读取",
-  );
-  expect(providerRequests.at(-1)).toContain("ORDERED_AUTHOR_RULE");
-  expect(providerRequests.at(-1)).toContain("世界修订工具只修改持久独占");
+    .getByRole("button", { name: "预览下一次发送", exact: true })
+    .click();
+  await expect(
+    page.getByText("下一次发送候选（未发送）", { exact: true }),
+  ).toBeVisible();
+  expect(providerRequests).toHaveLength(previewRequestCount);
+  await expect(page.getByRole("button", { name: "应用并解锁" })).toHaveCount(0);
 
   responses.push(
     chatTools(
@@ -1054,6 +1053,8 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(
     page.locator(".setting-conversation-assistant").last(),
   ).toContainText("temporary world-control revision");
+  expect(providerRequests.at(-1)).toContain("ORDERED_AUTHOR_RULE");
+  expect(providerRequests.at(-1)).toContain("世界修订工具只修改持久独占");
   const worldRevisionTurn = page.locator(".setting-conversation-turn").last();
   await worldRevisionTurn.locator(".setting-turn-trace > summary").click();
   await worldRevisionTurn
@@ -1213,16 +1214,15 @@ test("世界修订复用统一编辑工作区且世界管理可以纵向滚动",
   ).toBeVisible();
 
   await expect(page.getByRole("button", { name: "应用并解锁" })).toHaveCount(0);
-  responses.push(chatText("世界修订编排已读取"));
+  const previewRequestCount = providerRequests.length;
   await page
-    .locator(".setting-composer textarea")
-    .fill("检查作者规则，暂不修改");
-  await page.getByRole("button", { name: "发送", exact: true }).click();
-  await expect(page.locator(".setting-conversation-assistant")).toContainText(
-    "世界修订编排已读取",
-  );
-  expect(providerRequests.at(-1)).toContain("ORDERED_AUTHOR_RULE");
-  expect(providerRequests.at(-1)).toContain("世界修订工具只修改持久独占");
+    .getByRole("button", { name: "预览下一次发送", exact: true })
+    .click();
+  await expect(
+    page.getByText("下一次发送候选（未发送）", { exact: true }),
+  ).toBeVisible();
+  expect(providerRequests).toHaveLength(previewRequestCount);
+  await expect(page.getByRole("button", { name: "应用并解锁" })).toHaveCount(0);
 
   await page
     .getByRole("navigation", { name: "世界修订工具" })

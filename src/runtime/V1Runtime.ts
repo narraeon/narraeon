@@ -386,6 +386,11 @@ export class V1Runtime {
           base64: exported.archive.toString("base64"),
         };
       }
+      case "setting-improvement.preview":
+        return this.#settingImprovements.preview(
+          request.packageId,
+          request.sessionId,
+        );
       case "setting-improvement.read":
         return this.#settingImprovements.read(request.packageId);
       case "setting-improvement.status":
@@ -635,6 +640,8 @@ export class V1Runtime {
         return this.#worldRevisionCall(() =>
           this.#worldRevisions.overview(request.worldId),
         );
+      case "world.revision.preview":
+        return this.#worldRevisions.preview(request.worldId, request.sessionId);
       case "world.revision.status":
         return this.#worldRevisionCall(() =>
           this.#worldRevisions.status(request.worldId, request.sessionId),

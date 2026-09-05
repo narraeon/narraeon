@@ -10336,3 +10336,10 @@ summary:focus-visible {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+.authoring-prompt-preview pre {
+  max-height: 32rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
