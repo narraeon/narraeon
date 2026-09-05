@@ -86,9 +86,11 @@ export class WorldRevisionSession {
     StoredWorldRevisionSession,
     V1WorldRevisionView
   >();
+  readonly #changed: (id: string, durable: boolean) => void;
   #mutationTail: Promise<void> = Promise.resolve();
 
   constructor(input: {
+    changed?: (id: string, durable: boolean) => void;
     store: FileNativeWorldRevisionStore;
     workspace: WorldRevisionWorkspace;
     worlds: FileNativeWorldStore;
@@ -99,6 +101,11 @@ export class WorldRevisionSession {
     bindPlayPreset: () => Promise<PlayPresetBinding>;
     preview: (input: WorldRevisionPreviewInput) => PromptPreview;
   }) {
+    this.#changed =
+      input.changed ??
+      (() => {
+        /* No observers attached. */
+      });
     this.#store = input.store;
     this.#workspace = input.workspace;
     this.#worlds = input.worlds;
@@ -147,6 +154,21 @@ export class WorldRevisionSession {
         history: sessions.map(historyItem),
       };
     });
+  }
+
+  observeProgress(status: V1WorldRevisionStatus): V1WorldRevisionStatus {
+    const selected = status.selected;
+    if (selected === null) return status;
+    return {
+      ...status,
+      selected: {
+        ...selected,
+        progress: {
+          ...selected.progress,
+          streaming: this.#conversation.streaming(selected.sessionId),
+        },
+      },
+    };
   }
 
   async status(
@@ -395,6 +417,7 @@ export class WorldRevisionSession {
   ): Promise<V1WorldRevisionView> {
     let activeTransaction: ActiveTransaction | null = null;
     return this.#conversation.run({
+      changed: (durable) => this.#changed(session.worldId, durable),
       session,
       host,
       requestId,

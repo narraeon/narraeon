@@ -7,6 +7,9 @@ import {
 let activeLocale: AppLocale = defaultAppLocale;
 
 const englishMessages: Record<string, string> = {
+  "对话连接已断开，正在重新连接…": "Conversation disconnected. Reconnecting…",
+  "对话同步失败，请重新打开此页面。":
+    "Conversation synchronization failed. Reopen this page to reconnect.",
   "正在读取工作区…": "Loading workspace…",
   工作区读取失败: "Failed to load the workspace",
   "内容包当前树已整批保存。": "The content package tree has been saved.",

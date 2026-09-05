@@ -1,3 +1,4 @@
+import { useConversationComposer } from "./useConversationComposer.ts";
 import { useMemo, useRef, useState } from "react";
 
 import type {
@@ -130,6 +131,11 @@ export function SettingImprovementPanel({
       setSubmitting(false);
     }
   };
+
+  const composer = useConversationComposer(
+    !disabled && message.trim().length > 0,
+    send,
+  );
 
   const openFileRail = (mode: FileRailMode): void => {
     if (mode === "edit" && interactionLocked) return;
@@ -544,12 +550,7 @@ export function SettingImprovementPanel({
                   : "可以讨论、要求它检查某份设定，也可以直接让它修改内容包。",
               )}
               onChange={(event) => setMessage(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  void send();
-                }
-              }}
+              onKeyDown={composer.onKeyDown}
             />
             {running && view !== null ? (
               <button
@@ -563,7 +564,7 @@ export function SettingImprovementPanel({
               <button
                 type="button"
                 disabled={disabled || message.trim().length === 0}
-                onClick={() => void send()}
+                onClick={() => void composer.submit()}
               >
                 {uiText("发送")}
               </button>

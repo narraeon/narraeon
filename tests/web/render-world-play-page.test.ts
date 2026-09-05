@@ -1,3 +1,6 @@
+import { emptyAggregatedModelUsage } from "../../src/protocol/modelUsage.ts";
+import type { ConversationTarget } from "../../src/protocol/conversationObservation.ts";
+import type { ObserveConversation } from "../../src/web/ConversationObserver.ts";
 // @vitest-environment jsdom
 
 import {
@@ -22,6 +25,7 @@ import type {
   V1SettingPromptPreview,
   V1WorldRevisionEpochView,
   V1WorldRevisionOverview,
+  V1WorldRevisionView,
   V1WorldRevisionSealedEpochView,
 } from "../../src/protocol/v1.ts";
 import { projectUncoveredPlayerViews } from "../../src/web/PlayerViewFallback.ts";
@@ -973,7 +977,7 @@ describe("世界游玩页面", () => {
           return Promise.resolve(chain as T);
         return Promise.reject(new Error(`Unexpected request: ${request.type}`));
       }),
-      async streamPlayCallChain(
+      async generate(
         request: Extract<
           V1Request,
           { type: "play.chain.start" | "play.chain.append" }
@@ -1087,7 +1091,7 @@ describe("世界游玩页面", () => {
         }
         return Promise.reject(new Error(`Unexpected request: ${request.type}`));
       }),
-      async streamPlayCallChain(
+      async generate(
         request: Extract<
           V1Request,
           { type: "play.chain.start" | "play.chain.append" }
@@ -1308,7 +1312,7 @@ describe("世界游玩页面", () => {
           return Promise.reject(new Error("Timeline refresh unavailable"));
         return Promise.reject(new Error(`Unexpected request: ${request.type}`));
       }),
-      streamPlayCallChain(
+      generate(
         request: Extract<
           V1Request,
           { type: "play.chain.start" | "play.chain.append" }
@@ -1489,7 +1493,7 @@ describe("世界游玩页面", () => {
           return Promise.resolve(chain as T);
         return Promise.reject(new Error(`Unexpected request: ${request.type}`));
       }),
-      async streamPlayCallChain(
+      async generate(
         request: Extract<
           V1Request,
           { type: "play.chain.start" | "play.chain.append" }
@@ -1629,8 +1633,11 @@ describe("世界游玩页面", () => {
           return Promise.resolve(null as T);
         return Promise.reject(new Error(`Unexpected request: ${request.type}`));
       }),
-      async streamPlayCallChain(
-        request: Extract<V1Request, { type: "play.chain.append" }>,
+      async generate(
+        request: Extract<
+          V1Request,
+          { type: "play.chain.start" | "play.chain.append" }
+        >,
         onFrame: (frame: V1PlayCallChainStreamFrame) => void,
       ) {
         const running = {
@@ -2193,6 +2200,14 @@ describe("世界游玩页面", () => {
 function renderWorld(
   client: {
     request(request: V1Request): Promise<unknown>;
+    observeConversation?: ObserveConversation;
+    generate?: (
+      request: Extract<
+        V1Request,
+        { type: "play.chain.start" | "play.chain.append" }
+      >,
+      onFrame: (frame: V1PlayCallChainStreamFrame) => void,
+    ) => Promise<V1PlayCallChainView>;
   },
   onOpenWorld: (worldId: string) => Promise<void> = vi.fn(() =>
     Promise.resolve(),
@@ -2208,9 +2223,63 @@ function renderWorld(
     };
   } = {},
 ) {
+  let receive: Parameters<ObserveConversation>[1] | undefined;
+  let observed: V1PlayCallChainView | null = null;
+  const publish = (frame: V1PlayCallChainStreamFrame): void => {
+    if (frame.kind === "snapshot") observed = structuredClone(frame.value);
+    if (frame.kind === "assistant_delta" && observed !== null) {
+      const event = observed.events.find((item) => item.id === frame.eventId);
+      if (event?.kind === "assistant") {
+        const field =
+          frame.deltaKind === "text"
+            ? "text"
+            : frame.deltaKind === "reasoning"
+              ? "reasoning"
+              : "toolFragment";
+        event[field] = `${event[field] ?? ""}${frame.text}`;
+        observed.updatedAt = frame.updatedAt;
+      }
+    }
+    void receive?.({ kind: "play", value: structuredClone(observed) }, true);
+  };
+  const observedClient = {
+    observeConversation:
+      client.observeConversation ??
+      (((_target, callback) => {
+        receive = callback;
+        return () => {
+          receive = undefined;
+        };
+      }) satisfies ObserveConversation),
+    request: async (request: V1Request): Promise<unknown> => {
+      if (
+        (request.type === "play.chain.start" ||
+          request.type === "play.chain.append") &&
+        client.generate !== undefined
+      ) {
+        const result = await client.generate(request, publish);
+        publish({ kind: "snapshot", value: result, final: true });
+        return result;
+      }
+      const result = await client.request(request);
+      if (request.type === "play.chain.cancel") {
+        const value = (await client.request({
+          type: "play.chain.inspect",
+          worldId: request.worldId,
+        })) as V1PlayCallChainView | null;
+        if (value !== null)
+          publish({
+            kind: "snapshot",
+            value,
+            final: value.status !== "running",
+          });
+      }
+      return result;
+    },
+  };
   return render(
     createElement(WorldPage, {
-      client,
+      client: observedClient,
       worldId: "world-one",
       worldTitle: "宿舍世界",
       modelConfigured: true,
@@ -2593,3 +2662,132 @@ function interruptedChainView(): V1PlayCallChainView {
     updatedAt: 1,
   };
 }
+
+test("世界修订 fresh 订阅不绑定旧 latest，命令完成不覆盖后来选择的历史", async () => {
+  const epoch = worldRevisionEpoch([]);
+  const view = (sessionId: string): V1WorldRevisionView => ({
+    sessionId,
+    worldId: "world-one",
+    epochId: epoch.epochId,
+    runStatus: "ready",
+    messages: [],
+    turns: [],
+    usage: emptyAggregatedModelUsage(),
+    progress: { exchange: 0, toolCalls: 0, streaming: null, updatedAt: 1 },
+    lastFailure: null,
+  });
+  const old = view("old-session");
+  const recent = view("recent-session");
+  const created = view("new-session");
+  let latest = recent;
+  const history = [recent, old].map((item) => ({
+    sessionId: item.sessionId,
+    epochId: epoch.epochId,
+    createdAt: 1,
+    updatedAt: 1,
+    runStatus: item.runStatus,
+    messageCount: 0,
+    turnCount: 0,
+    exchangeCount: 0,
+    toolCallCount: 0,
+    changedFileCount: 0,
+    excerpt: item.sessionId,
+  }));
+  const overview = (): V1WorldRevisionOverview => ({
+    ...worldRevisionOverview(epoch),
+    latest,
+    history,
+  });
+  const subscribers = new Set<{
+    target: ConversationTarget;
+    receive: Parameters<ObserveConversation>[1];
+  }>();
+  let finish!: (value: V1WorldRevisionView) => void;
+  const client = {
+    observeConversation: ((target, receive) => {
+      const item = { target, receive };
+      subscribers.add(item);
+      return () => {
+        subscribers.delete(item);
+      };
+    }) satisfies ObserveConversation,
+    request: vi.fn(async (request: V1Request): Promise<unknown> => {
+      if (request.type === "world.read") return worldView(null);
+      if (request.type === "artifacts.debug") return [];
+      if (
+        request.type === "world.revision.open" ||
+        request.type === "world.revision.overview"
+      )
+        return overview();
+      if (request.type === "world.revision.session.read")
+        return request.sessionId === old.sessionId ? old : latest;
+      if (request.type === "world.revision.message")
+        return await new Promise<V1WorldRevisionView>((resolve) => {
+          finish = resolve;
+        });
+      throw new Error(`Unexpected request ${request.type}`);
+    }),
+  };
+  const publish = async () => {
+    for (const item of [...subscribers])
+      if (item.target.kind === "revision") {
+        const selected = item.target.sessionId === old.sessionId ? old : latest;
+        await item.receive(
+          {
+            kind: "revision",
+            value: {
+              revision: latest.sessionId,
+              selected: {
+                sessionId: selected.sessionId,
+                runStatus: selected.runStatus,
+                progress: selected.progress,
+              },
+            },
+          },
+          true,
+        );
+      }
+  };
+  renderWorld(client);
+  await screen.findByRole("heading", { name: "宿舍世界" });
+  fireEvent.click(screen.getByRole("button", { name: "世界" }));
+  fireEvent.click(screen.getByRole("button", { name: "修订当前世界" }));
+  await screen.findByText("手动编辑和 AI 共用一份修订");
+  fireEvent.click(screen.getByRole("button", { name: "全新上下文" }));
+  fireEvent.change(screen.getByLabelText("用全新上下文给 AI 发消息"), {
+    target: { value: "start fresh" },
+  });
+  fireEvent.keyDown(screen.getByLabelText("用全新上下文给 AI 发消息"), {
+    key: "Enter",
+  });
+  await act(publish);
+  expect(
+    [...subscribers].find(({ target }) => target.kind === "revision")?.target,
+  ).toEqual({ kind: "revision", id: "world-one" });
+  latest = { ...created, runStatus: "running" };
+  await act(publish);
+  expect(
+    [...subscribers].find(({ target }) => target.kind === "revision")?.target,
+  ).toEqual({
+    kind: "revision",
+    id: "world-one",
+    sessionId: created.sessionId,
+  });
+  fireEvent.click(screen.getByRole("button", { name: "历史" }));
+  fireEvent.click(screen.getByRole("button", { name: /^old-session/ }));
+  await waitFor(() =>
+    expect(
+      document.querySelector('.setting-history-select[aria-pressed="true"]')
+        ?.textContent,
+    ).toContain("old-session"),
+  );
+  await act(async () => {
+    latest = created;
+    finish(created);
+    await Promise.resolve();
+  });
+  expect(
+    document.querySelector('.setting-history-select[aria-pressed="true"]')
+      ?.textContent,
+  ).toContain("old-session");
+});

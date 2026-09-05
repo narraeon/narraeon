@@ -1,3 +1,4 @@
+import { registerConversationStream } from "./ConversationStream.ts";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Writable } from "node:stream";
@@ -126,6 +127,7 @@ export async function createServer(input: {
       .header("X-Frame-Options", "DENY");
     done(null, payload);
   });
+  registerConversationStream(server, input.runtime);
   server.get("/health", () => ({
     status: "ok",
     protocol: "narraeon.runtime/v1",

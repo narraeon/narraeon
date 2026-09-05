@@ -131,6 +131,8 @@ function renderPanel(
     Promise.resolve(),
   options: {
     currentFileContents?: string;
+    target?: "content-package" | "world-revision";
+    onSend?: (text: string) => Promise<void>;
     onRollbackFile?: (
       sessionId: string,
       changeSetId: string,
@@ -141,6 +143,7 @@ function renderPanel(
   render(
     createElement(SettingImprovementPanel, {
       packageName: "Test package",
+      ...(options.target === undefined ? {} : { target: options.target }),
       modelConfigured: true,
       hasUnsavedFileDraft: false,
       loading: false,
@@ -234,7 +237,7 @@ function renderPanel(
         title: "Test package",
         onRename: () => undefined,
       },
-      onSend: () => Promise.resolve(),
+      onSend: options.onSend ?? (() => Promise.resolve()),
       onCancel: () => Promise.resolve(),
       onFreshContext: () => undefined,
       onSelectSession: () => Promise.resolve(),
@@ -252,4 +255,31 @@ function renderPanel(
       onBack: () => undefined,
     }),
   );
+}
+
+for (const target of ["content-package", "world-revision"] as const) {
+  test(`${target}: Enter sends once, Shift+Enter and IME confirmation do not send`, async () => {
+    let finish!: () => void;
+    const onSend = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    renderPanel(undefined, { target, onSend });
+    const input = screen.getByLabelText("继续这段对话");
+    fireEvent.change(input, { target: { value: "检查这份内容" } });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+    fireEvent.keyDown(input, { key: "Enter", keyCode: 229 });
+    fireEvent.keyDown(input, { key: "Enter", repeat: true });
+    expect(onSend).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onSend).toHaveBeenCalledExactlyOnceWith("检查这份内容");
+    finish();
+    await waitFor(() =>
+      expect((input as HTMLTextAreaElement).disabled).toBe(false),
+    );
+  });
 }

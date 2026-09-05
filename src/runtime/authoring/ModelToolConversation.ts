@@ -78,6 +78,7 @@ export interface ModelToolConversationRun<
     calls: readonly ModelHostToolCall[],
   ) => Promise<void>;
   view: (session: Session) => View;
+  changed?: (durable: boolean) => void;
   failure?: {
     emptyResponse?: string;
     exchangeLimit?: string;
@@ -136,8 +137,10 @@ export class ModelToolConversation<
     live.promise = this.#execute(input, live).finally(() => {
       if (this.#runs.get(input.session.sessionId) === live)
         this.#runs.delete(input.session.sessionId);
+      input.changed?.(true);
     });
     this.#runs.set(input.session.sessionId, live);
+    input.changed?.(true);
     return live.promise;
   }
 
@@ -159,6 +162,7 @@ export class ModelToolConversation<
         live.streaming = emptyStreaming();
         session.updatedAt = Date.now();
         await input.save(session);
+        input.changed?.(true);
         const response = await input.host.exchange(
           {
             bootstrap: session.bootstrap,
@@ -177,7 +181,10 @@ export class ModelToolConversation<
           },
           {
             signal: live.controller.signal,
-            onDelta: (delta) => recordDelta(live, delta),
+            onDelta: (delta) => {
+              recordDelta(live, delta);
+              input.changed?.(false);
+            },
           },
         );
         assertCompleteResponse(response);
@@ -215,6 +222,7 @@ export class ModelToolConversation<
           );
           session.lastFailure = null;
           await input.save(session);
+          input.changed?.(true);
           return input.view(session);
         }
         await input.settleToolResponse(
@@ -222,6 +230,7 @@ export class ModelToolConversation<
           session.modelItems.length - 1,
           toolCalls,
         );
+        input.changed?.(true);
       }
       throw new Error(
         input.failure?.exchangeLimit ??

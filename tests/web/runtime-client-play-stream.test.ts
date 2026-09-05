@@ -1,98 +1,175 @@
+// @vitest-environment jsdom
 import { afterEach, expect, test, vi } from "vitest";
-
+import { v1Protocol, type V1PlayCallChainView } from "../../src/protocol/v1.ts";
 import {
-  v1Protocol,
-  type V1PlayCallChainStreamFrame,
-  type V1PlayCallChainView,
-} from "../../src/protocol/v1.ts";
+  conversationUpdate,
+  type ConversationState,
+  type ConversationUpdate,
+} from "../../src/protocol/conversationObservation.ts";
 import { RuntimeClient } from "../../src/web/runtimeClient.ts";
 
-afterEach(() => vi.unstubAllGlobals());
-
-test("RuntimeClient 按 NDJSON 增量消费调用链流并返回最终快照", async () => {
-  const running = chainView("running", "");
-  const completed = chainView("ready", "Alex推开了门。");
-  const lines = [
-    {
-      protocol: v1Protocol,
-      frame: { kind: "snapshot", value: running, final: false },
-    },
-    {
-      protocol: v1Protocol,
-      frame: {
-        kind: "assistant_delta",
-        eventId: 2,
-        deltaKind: "reasoning",
-        text: "先确认门口",
-        updatedAt: 2,
-      },
-    },
-    {
-      protocol: v1Protocol,
-      frame: {
-        kind: "assistant_delta",
-        eventId: 2,
-        deltaKind: "text",
-        text: "Alex推",
-        updatedAt: 2,
-      },
-    },
-    {
-      protocol: v1Protocol,
-      frame: { kind: "snapshot", value: completed, final: true },
-    },
-  ]
-    .map((value) => JSON.stringify(value))
-    .join("\n")
-    .concat("\n");
-  const split = Math.floor(lines.length / 2);
-  const encoder = new TextEncoder();
-  const body = new ReadableStream<Uint8Array>({
-    start(controller) {
-      controller.enqueue(encoder.encode(lines.slice(0, split)));
-      controller.enqueue(encoder.encode(lines.slice(split)));
-      controller.close();
-    },
-  });
-  const fetchMock = vi.fn<
-    (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
-  >(() =>
-    Promise.resolve(
-      new Response(body, {
-        status: 200,
-        headers: { "content-type": "application/x-ndjson" },
+class Source extends EventTarget {
+  static CLOSED = 2;
+  static instances: Source[] = [];
+  readyState = 1;
+  onopen: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  readonly url: string;
+  constructor(url: string) {
+    super();
+    this.url = url;
+    Source.instances.push(this);
+  }
+  close() {
+    this.readyState = 2;
+  }
+  update(id: string, update: ConversationUpdate) {
+    this.dispatchEvent(
+      new MessageEvent("observation", {
+        lastEventId: id,
+        data: JSON.stringify({ protocol: v1Protocol, update }),
       }),
-    ),
-  );
-  vi.stubGlobal("fetch", fetchMock);
-  const frames: V1PlayCallChainStreamFrame[] = [];
+    );
+  }
+}
+afterEach(() => {
+  vi.unstubAllGlobals();
+  Source.instances = [];
+});
+const flush = async () => {
+  await Promise.resolve();
+  await Promise.resolve();
+};
 
-  const result = await new RuntimeClient().streamPlayCallChain(
-    {
-      type: "play.chain.start",
-      worldId: "world-one",
-      chainId: "chain-one",
-      exchangeId: "exchange-one",
-      playerText: "I signal Alex to open the door.",
+test("SSE snapshots and append-only deltas reconstruct live text without repeated history", async () => {
+  vi.stubGlobal("EventSource", Source);
+  const receive = vi.fn();
+  const close = new RuntimeClient().observeConversation(
+    { kind: "play", id: "world-one" },
+    receive,
+  );
+  const source = Source.instances[0]!;
+  const first: ConversationState = {
+    kind: "play",
+    value: chainView("running", ""),
+  };
+  const next: ConversationState = {
+    kind: "play",
+    value: chainView("running", "Alex推开门。"),
+  };
+  source.update("first:1", { kind: "snapshot", value: first });
+  await flush();
+  const delta = conversationUpdate(first, next);
+  expect(delta.kind).toBe("play_delta");
+  expect(JSON.stringify(delta)).not.toContain("I signal Alex");
+  source.update("first:2", delta);
+  source.update("first:2", delta);
+  await flush();
+  expect(receive).toHaveBeenCalledTimes(2);
+  expect(receive.mock.calls.at(-1)?.[0]).toEqual(next);
+  const final: ConversationState = {
+    kind: "play",
+    value: chainView("ready", "Alex推开门。"),
+  };
+  source.update("reconnect:1", { kind: "snapshot", value: final });
+  await flush();
+  expect(receive.mock.calls.at(-1)?.[0]).toEqual(final);
+  close();
+  source.update("reconnect:2", { kind: "snapshot", value: first });
+  expect(receive).toHaveBeenCalledTimes(3);
+  expect(source.readyState).toBe(Source.CLOSED);
+});
+
+test("missing deltas reopen observation without posting a model command", async () => {
+  vi.stubGlobal("EventSource", Source);
+  const fetch = vi.fn();
+  vi.stubGlobal("fetch", fetch);
+  const receive = vi.fn();
+  const close = new RuntimeClient().observeConversation(
+    { kind: "play", id: "world-one" },
+    receive,
+  );
+  const first: ConversationState = {
+    kind: "play",
+    value: chainView("running", ""),
+  };
+  const next: ConversationState = {
+    kind: "play",
+    value: chainView("running", "片段"),
+  };
+  const source = Source.instances[0]!;
+  source.update("epoch:1", { kind: "snapshot", value: first });
+  await flush();
+  source.update("epoch:3", conversationUpdate(first, next));
+  expect(Source.instances).toHaveLength(2);
+  expect(source.readyState).toBe(2);
+  Source.instances[1]!.update("new:1", { kind: "snapshot", value: next });
+  await flush();
+  expect(receive.mock.calls.at(-1)?.[0]).toEqual(next);
+  expect(fetch).not.toHaveBeenCalled();
+  close();
+});
+
+test("status updates arriving during hydration are coalesced and delivered afterwards", async () => {
+  vi.stubGlobal("EventSource", Source);
+  let release!: () => void;
+  const received: string[] = [];
+  const close = new RuntimeClient().observeConversation(
+    { kind: "setting", id: "package-one", sessionId: "session-old" },
+    async (state) => {
+      if (state.kind !== "setting") throw new Error("wrong target");
+      received.push(state.value.revision);
+      if (received.length === 1)
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
     },
-    (frame) => frames.push(frame),
   );
+  const source = Source.instances[0]!;
+  expect(source.url).toContain("sessionId=session-old");
+  for (const sequence of [1, 2, 3])
+    source.update(`epoch:${sequence}`, {
+      kind: "snapshot",
+      value: {
+        kind: "setting",
+        value: { revision: `${sequence}`, selected: null },
+      },
+    });
+  expect(received).toEqual(["1"]);
+  release();
+  await flush();
+  expect(received).toEqual(["1", "3"]);
+  close();
+});
 
-  expect(result).toEqual(completed);
-  expect(frames.map(({ kind }) => kind)).toEqual([
-    "snapshot",
-    "assistant_delta",
-    "assistant_delta",
-    "snapshot",
-  ]);
-  expect(fetchMock).toHaveBeenCalledOnce();
-  const [url, requestInit] = fetchMock.mock.calls[0]!;
-  expect(url).toBe("/api/runtime/v1");
-  expect(requestInit?.method).toBe("POST");
-  expect(requestInit?.headers).toEqual({
-    Accept: "application/x-ndjson",
-    "Content-Type": "application/json",
-  });
+test("failed hydration retries the same revision after reconnect", async () => {
+  vi.stubGlobal("EventSource", Source);
+  let first = true;
+  const changes: boolean[] = [];
+  const connection = vi.fn();
+  const close = new RuntimeClient().observeConversation(
+    { kind: "revision", id: "world-one" },
+    (_state, changed) => {
+      changes.push(changed);
+      if (first) {
+        first = false;
+        throw new Error("temporary read failure");
+      }
+    },
+    connection,
+  );
+  const source = Source.instances[0]!;
+  const update: ConversationUpdate = {
+    kind: "snapshot",
+    value: { kind: "revision", value: { revision: "same", selected: null } },
+  };
+  source.update("first:1", update);
+  await flush();
+  source.update("reconnect:1", update);
+  await flush();
+  expect(changes).toEqual([true, true]);
+  expect(connection).toHaveBeenCalledWith("failed", "temporary read failure");
+  close();
 });
 
 function chainView(

@@ -285,7 +285,8 @@ test("检查点建议在叙事后出现，点击只选择下一条消息的新�
   const finalStream = page.waitForResponse(
     (response) =>
       response.url().endsWith("/api/runtime/v1") &&
-      response.request().headers().accept === "application/x-ndjson",
+      (response.request().postDataJSON() as { request?: { type?: string } })
+        .request?.type === "play.chain.start",
   );
   await page.getByLabel("你的行动").fill("走进走廊。");
   await page

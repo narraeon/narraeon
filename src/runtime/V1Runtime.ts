@@ -72,7 +72,14 @@ import {
   WorldRevisionWorkspaceError,
 } from "./world-revision/WorldRevisionWorkspace.ts";
 
+import { ConversationChanges } from "./ConversationChanges.ts";
+import type {
+  ConversationTarget,
+  ConversationState,
+} from "../protocol/conversationObservation.ts";
+
 export class V1Runtime {
+  readonly #conversationChanges = new ConversationChanges();
   readonly #content: ContentWorkspace;
   readonly #playPresets: FileNativePlayPresetStore;
   readonly #worlds: FileNativeWorldStore;
@@ -110,12 +117,15 @@ export class V1Runtime {
       this.#compiler,
       this.#artifacts,
       this.#failureLog,
+      (id) => this.#conversationChanges.publish(`play:${id}`),
     );
     this.#models = new ModelConnectionStore(input.configRoot);
     this.#corrections = new FileNativeContinuityCorrection(this.#worlds, {
       compiler: this.#compiler,
     });
     this.#settingImprovements = new SettingImprovementSession({
+      changed: (id, durable) =>
+        this.#conversationChanges.publish(`setting:${id}`, durable),
       store: new FileNativeSettingImprovementStore(input.dataRoot, {
         content: this.#content,
       }),
@@ -157,6 +167,8 @@ export class V1Runtime {
       worlds: this.#worlds,
     });
     this.#worldRevisions = new WorldRevisionSession({
+      changed: (id, durable) =>
+        this.#conversationChanges.publish(`revision:${id}`, durable),
       store: worldRevisionStore,
       workspace: worldRevisionWorkspace,
       worlds: this.#worlds,
@@ -215,8 +227,77 @@ export class V1Runtime {
     request: V1Request,
     playCallChainObserver?: PlayCallChainObserver,
   ): Promise<V1Response> {
-    const result = await this.#dispatch(request, playCallChainObserver);
-    return { protocol: v1Protocol, result };
+    try {
+      const result = await this.#dispatch(request, playCallChainObserver);
+      return { protocol: v1Protocol, result };
+    } finally {
+      // Explicit commands may partially settle before failing. Readers recover
+      // through the same Runtime projection, never infer success from this signal.
+      if (
+        !/\.(read|status|overview|inspect|page|detail|list|preview)$/.test(
+          request.type,
+        )
+      ) {
+        if ("packageId" in request)
+          this.#conversationChanges.publish(`setting:${request.packageId}`);
+        if ("worldId" in request) {
+          this.#conversationChanges.publish(`play:${request.worldId}`);
+          this.#conversationChanges.publish(`revision:${request.worldId}`);
+        }
+      }
+    }
+  }
+
+  subscribeConversation(
+    target: ConversationTarget,
+    changed: (durable: boolean) => void,
+  ): () => void {
+    return this.#conversationChanges.subscribe(
+      `${target.kind}:${target.id}`,
+      changed,
+    );
+  }
+
+  async readConversation(
+    target: ConversationTarget,
+    previous?: ConversationState,
+  ): Promise<ConversationState> {
+    switch (target.kind) {
+      case "play":
+        return {
+          kind: "play",
+          value: await this.#playCallChains.observeWorld(target.id),
+        };
+      case "setting": {
+        if (previous?.kind === "setting")
+          return {
+            kind: "setting",
+            value: this.#settingImprovements.observeProgress(previous.value),
+          };
+        const status = await this.#settingImprovements.status(
+          target.id,
+          target.sessionId,
+        );
+        const content = await this.#content.readCurrentTreeContentPackage(
+          target.id,
+        );
+        return {
+          kind: "setting",
+          value: {
+            ...status,
+            revision: `${status.revision}:${contentTreeFingerprint(content.files)}`,
+          },
+        };
+      }
+      case "revision":
+        return {
+          kind: "revision",
+          value:
+            previous?.kind === "revision"
+              ? this.#worldRevisions.observeProgress(previous.value)
+              : await this.#worldRevisions.status(target.id, target.sessionId),
+        };
+    }
   }
 
   async #dispatch(
