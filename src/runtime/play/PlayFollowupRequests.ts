@@ -218,6 +218,8 @@ async function runOne(
       });
     }
     const failedTools = outcome.toolCalls.filter(({ ok }) => !ok);
+    if (failedTools.length > 0)
+      outcome.failure = `Follow-up request ${followup.id} could not save its artifacts.`;
     if (failedTools.length > 0 && response.diagnostics !== undefined)
       await input.failureLog?.recordFailure({
         exchange: response.diagnostics,

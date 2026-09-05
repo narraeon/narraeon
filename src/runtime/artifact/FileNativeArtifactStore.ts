@@ -418,6 +418,8 @@ export class FileNativeArtifactStore implements ArtifactStore {
   }
 
   async #restoreFork(worldId: string): Promise<void> {
+    if (dirname(resolve(this.#worldsRoot, worldId)) !== this.#worldsRoot)
+      return;
     const marker = join(this.#worldRoot(worldId), "fork-restored.json");
     try {
       await readFile(marker);
@@ -491,10 +493,28 @@ export class FileNativeArtifactStore implements ArtifactStore {
     // No mutation can start until this idempotent restore finishes under the world lock.
     for (const operation of snapshot.operations)
       await this.#writeOperation(operation);
-    for (const record of snapshot.records) await this.#appendRaw(record);
-    for (const event of snapshot.events) await this.#appendEvent(event);
+    for (const record of snapshot.records)
+      await writeDurableJson(
+        join(
+          this.#worldRoot(worldId),
+          "records",
+          artifactSequenceFileName(record.sequence),
+        ),
+        record,
+        false,
+      );
+    for (const event of snapshot.events)
+      await writeDurableJson(
+        join(
+          this.#worldRoot(worldId),
+          "events",
+          artifactSequenceFileName(event.sequence),
+        ),
+        event,
+        false,
+      );
     await mkdir(this.#worldRoot(worldId), { recursive: true });
-    await writeDurableJson(marker, { schemaVersion: 1 }, true);
+    await writeDurableJson(marker, { schemaVersion: 1 }, false);
   }
 
   async beginOperation(context: ArtifactOperationContext): Promise<void> {

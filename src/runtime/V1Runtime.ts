@@ -607,16 +607,17 @@ export class V1Runtime {
           : this.#worlds.readSurface(request.worldId, request.surface);
       case "world.play-decorations.read": {
         const head = await this.#reconcileArtifacts(request.worldId);
-        const [artifacts, extensions, artifactDebug] = await Promise.all([
-          this.#frontendProjection(request.worldId),
-          this.#frontendExtensions(request.worldId),
+        const [projection, artifactDebug] = await Promise.all([
+          this.#frontendDecorations(request.worldId),
           this.#frontendDebug(request.worldId),
         ]);
-        return { head, artifacts, extensions, artifactDebug };
+        return { head, ...projection, artifactDebug };
       }
       case "artifacts.read":
         await this.#reconcileArtifacts(request.worldId);
-        return this.#frontendProjection(request.worldId, request.channel);
+        return (
+          await this.#frontendDecorations(request.worldId, request.channel)
+        ).artifacts;
       case "artifacts.debug":
         await this.#reconcileArtifacts(request.worldId);
         return this.#frontendDebug(request.worldId, request.operationId);
@@ -990,49 +991,42 @@ export class V1Runtime {
     return head;
   }
 
-  async #frontendExtensions(worldId: string) {
-    const extensions = await this.#artifacts.readExtensionSummaries(worldId);
+  async #frontendDecorations(worldId: string, channel?: string) {
+    const summaries = await this.#artifacts.readExtensionSummaries(worldId);
     const targets = await this.#worlds.playTimeline.resolveReplies(
       worldId,
-      extensions.flatMap((item) =>
+      summaries.flatMap((item) =>
         item.attachment === undefined ? [] : [item.attachment],
       ),
     );
-    return extensions
+    const matches = (attachment: {
+      contextId: string;
+      eventId: number;
+      head: string;
+    }) =>
+      targets.find(
+        (target) =>
+          target.contextId === attachment.contextId &&
+          target.eventId === attachment.eventId &&
+          target.head === attachment.head,
+      );
+    const extensions = summaries
       .filter(
         (item) =>
           item.attachment === undefined ||
-          targets.some(
-            (target) =>
-              target.contextId === item.attachment!.contextId &&
-              target.eventId === item.attachment!.eventId &&
-              target.head === item.attachment!.head,
-          ),
+          matches(item.attachment) !== undefined,
       )
       .sort(
         (left, right) =>
           Number(left.head?.replace("commit:", "") ?? 0) -
           Number(right.head?.replace("commit:", "") ?? 0),
       );
-  }
-
-  async #frontendProjection(
-    worldId: string,
-    channel?: string,
-  ): Promise<FrontendArtifactProjection[]> {
-    const extensions = await this.#artifacts.readExtensionSummaries(worldId);
-    const targets = await this.#worlds.playTimeline.resolveReplies(
-      worldId,
-      extensions.flatMap((extension) =>
-        extension.attachment === undefined ? [] : [extension.attachment],
-      ),
-    );
     const artifacts = await this.#artifacts.readActiveProjection(
       worldId,
       channel,
       targets,
     );
-    return (
+    const projected = (
       await Promise.all(
         artifacts.map(async (artifact) => {
           const { renderer, ...safeArtifact } = artifact;
@@ -1046,12 +1040,7 @@ export class V1Runtime {
             ...(artifact.attachment === undefined
               ? {}
               : {
-                  reply: targets.find(
-                    (target) =>
-                      target.contextId === artifact.attachment!.contextId &&
-                      target.eventId === artifact.attachment!.eventId &&
-                      target.head === artifact.attachment!.head,
-                  )!,
+                  reply: matches(artifact.attachment)!,
                 }),
             frontend: projectArtifactForFrontend(
               artifact,
@@ -1065,6 +1054,7 @@ export class V1Runtime {
       (artifact) =>
         artifact.frontend.mount !== "story" || artifact.reply !== undefined,
     );
+    return { artifacts: projected, extensions };
   }
 
   async #frontendPlayerViewPanels(

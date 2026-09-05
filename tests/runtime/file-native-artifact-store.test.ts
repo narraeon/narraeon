@@ -137,6 +137,21 @@ describe("FileNativeArtifactStore", () => {
           frozenPresentation: { files: { "panel.html": "<b>独立资源</b>" } },
         },
       ]);
+      const importedRoot = join(
+        root,
+        "artifact-store",
+        "worlds",
+        createHash("sha256").update("fork").digest("hex"),
+      );
+      await rm(join(importedRoot, "fork-restored.json"));
+      const importedRecord = (await readdir(join(importedRoot, "records")))[0]!;
+      await writeFile(
+        join(importedRoot, "records", importedRecord),
+        "interrupted import",
+      );
+      expect(
+        await new FileNativeArtifactStore(root).readActiveProjection("fork"),
+      ).toMatchObject([{ payload: "保留正文" }]);
       await cold.beginOperation({
         ...fixture.operation,
         worldId: "fork",

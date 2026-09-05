@@ -428,6 +428,10 @@ export class FileNativePlayTimelineStore {
         "A play context identity is bound to different frozen data",
       );
 
+    await publishImmutableJson(join(root, "reply-context.json"), {
+      contextId: value.continuityContextId ?? value.chainId,
+    });
+
     const supplied = cursor ?? emptyPersistenceCursor();
     // Recovery may replace the unresolved tail (for example, a generic crash
     // failure becomes the already-returned Provider response). Numbered files
@@ -790,10 +794,18 @@ export class FileNativePlayTimelineStore {
       const metadata = await this.#readContextMetadata(worldId, chainId);
       if (metadata === null)
         throw new Error("Play timeline points to a missing context");
-      const base = await readJson<PersistedContextBase>(
-        join(metadata.root, "base.json"),
+      const identity = await readOptionalJson<unknown>(
+        join(metadata.root, "reply-context.json"),
       );
-      const contextId = base.continuityContextId ?? chainId;
+      if (
+        identity !== null &&
+        (!isRecord(identity) || typeof identity.contextId !== "string")
+      )
+        throw new Error("Play reply context identity is invalid");
+      const contextId =
+        identity === null
+          ? null
+          : (identity as { contextId: string }).contextId;
       for (const target of targets.filter(
         (item) =>
           item.contextId === contextId &&
@@ -810,6 +822,17 @@ export class FileNativePlayTimelineStore {
         )
           result.push({ ...target, chainId });
       }
+      if (
+        targets.every((target) =>
+          result.some(
+            (item) =>
+              item.contextId === target.contextId &&
+              item.eventId === target.eventId &&
+              item.head === target.head,
+          ),
+        )
+      )
+        break;
       chainId = metadata.index.previousChainId;
     }
     return result;

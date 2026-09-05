@@ -416,7 +416,16 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
     }
     await open();
     await expect(page.locator('iframe[title="panel"]')).toHaveCount(0);
-    await page.getByRole("button", { name: "加载更早的故事" }).click();
+    for (
+      let pages = 0;
+      pages < 4 && (await page.locator('iframe[title="panel"]').count()) === 0;
+      pages += 1
+    ) {
+      await page.getByRole("button", { name: "加载更早的故事" }).click();
+      await expect(
+        page.getByRole("button", { name: "加载中…", exact: true }),
+      ).toHaveCount(0);
+    }
     await expect(page.locator('iframe[title="panel"]')).toHaveCount(1);
     await expect(
       page

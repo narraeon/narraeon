@@ -5459,6 +5459,80 @@ test("后置请求失败不影响已提交的主链，玩家仍可继续", async
   ]);
 });
 
+test("可选产物工具被拒绝会显示失败并保留允许的旧结果", async () => {
+  const { worlds, root, worldId } = await createWorld(
+    "optional-artifact-failure",
+  );
+  const artifacts = new FileNativeArtifactStore(root);
+  const preset = followupPlayPreset();
+  preset.definition.followups = preset.definition.followups.slice(0, 1);
+  preset.definition.followups[0]!.artifacts[0]!.required = false;
+  preset.definition.followups[0]!.artifacts[0]!.invalidation = "never";
+  const chains = new PlayCallChain(
+    worlds,
+    new FileNativePromptCompiler(),
+    artifacts,
+  );
+  const first = await chains.start({
+    worldId,
+    chainId: "optional-panels",
+    exchangeId: "first",
+    playerText: "Open.",
+    hostBinding: hostBinding(),
+    playPreset: preset,
+    modelBinding: modelBinding(),
+    modelHost: new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [
+        { outcome: "response", text: "Alex opens." },
+        {
+          outcome: "response",
+          toolCalls: [
+            {
+              id: "valid-panel",
+              name: "artifact_emit",
+              arguments: { output: "status_bar", payload: { hp: 9 } },
+            },
+          ],
+        },
+      ],
+    }),
+  });
+  await chains.append({
+    worldId,
+    chainId: first.chainId,
+    exchangeId: "second",
+    playerText: "Wait.",
+    playPreset: preset,
+    modelHost: new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [
+        { outcome: "response", text: "Alex waits." },
+        {
+          outcome: "response",
+          toolCalls: [
+            {
+              id: "invalid-panel",
+              name: "artifact_emit",
+              arguments: { output: "undeclared", payload: { hp: 0 } },
+            },
+          ],
+        },
+      ],
+    }),
+  });
+  expect(await artifacts.readActiveProjection(worldId)).toMatchObject([
+    { payload: { hp: 9 } },
+  ]);
+  expect(
+    (await artifacts.readExtensionSummaries(worldId)).flatMap(
+      (item) => item.requests ?? [],
+    ),
+  ).toContainEqual(
+    expect.objectContaining({ requestId: "status", status: "failed" }),
+  );
+});
+
 test("后置结算通知可读取同端点产物，失败和冷 Runtime 恢复不推进 Authority", async () => {
   const { worlds, root, worldId } = await createWorld("followup-observation");
   const artifacts = new FileNativeArtifactStore(root);
