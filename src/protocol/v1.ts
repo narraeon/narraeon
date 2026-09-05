@@ -115,7 +115,16 @@ export type V1Request =
       name: string;
       files: ContentTreeFile[];
     }
-  | { type: "play.workbench.read"; presetId?: string; revision?: string }
+  | {
+      type: "play.workbench.read";
+      presetId?: string;
+      revision?: string;
+      worldId?: string;
+      draft?: {
+        files: Record<string, string>;
+        structure?: Record<string, unknown>;
+      };
+    }
   | {
       type: "prompt.preview";
       packageId: string;
@@ -1131,6 +1140,29 @@ function validateRequestFields(request: Record<string, unknown>): void {
       "play.save.structure must be a structured map",
     );
   if (request.type === "play.workbench.read") {
+    if (
+      request.draft !== undefined &&
+      (!isRecord(request.draft) ||
+        !isRecord(request.draft.files) ||
+        !Object.values(request.draft.files).every(
+          (value) => typeof value === "string",
+        ) ||
+        (request.draft.structure !== undefined &&
+          !isRecord(request.draft.structure)) ||
+        request.presetId === undefined)
+    )
+      throw new V1ProtocolError(
+        "invalid_request",
+        "play.workbench.read.draft requires presetId, text files and an optional structured map",
+      );
+    if (
+      request.worldId !== undefined &&
+      (typeof request.worldId !== "string" || request.worldId === "")
+    )
+      throw new V1ProtocolError(
+        "invalid_request",
+        "play.workbench.read.worldId is invalid",
+      );
     if (
       request.presetId !== undefined &&
       (typeof request.presetId !== "string" || request.presetId === "")

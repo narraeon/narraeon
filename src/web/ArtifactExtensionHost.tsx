@@ -1,3 +1,4 @@
+import { BuiltinPlayerViewPanel } from "./BuiltinPlayerViewPanel.tsx";
 import { uiText } from "./i18n.ts";
 /* eslint-disable react-refresh/only-export-components */
 
@@ -1106,6 +1107,9 @@ function ArtifactExtensionInstance({
             {disabled ? uiText("恢复此扩展") : uiText("停用此扩展")}
           </button>
         </div>
+      ) : artifact.frontend.source === "player_view" &&
+        renderer === undefined ? (
+        <BuiltinPlayerViewPanel content={content} />
       ) : (
         <>
           {artifact.frontend.trustedLocalCode ? (

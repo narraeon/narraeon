@@ -459,7 +459,22 @@ export class V1Runtime {
                 request.presetId,
                 request.revision,
               );
-        return buildPlayPresetWorkbenchSnapshot(binding);
+        if (request.worldId === undefined)
+          return buildPlayPresetWorkbenchSnapshot(
+            binding,
+            undefined,
+            request.draft,
+          );
+        const head = await this.#worlds.currentHead(request.worldId);
+        const playerViews = await this.#worlds.renderPlayerViewsAtHead(
+          request.worldId,
+          head,
+        );
+        return buildPlayPresetWorkbenchSnapshot(
+          binding,
+          { worldId: request.worldId, head, playerViews },
+          request.draft,
+        );
       }
       case "prompt.preview": {
         const [package_, connection, playPreset] = await Promise.all([
