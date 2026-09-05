@@ -82,6 +82,124 @@ async function beginRequestFixture(fixture: {
 }
 
 describe("FileNativeArtifactStore", () => {
+  test("分叉 staging 保留已关联保存产物，来源删除后冷恢复且后续失效独立", async () => {
+    const root = await mkdtemp(join(tmpdir(), "artifact-fork-"));
+    try {
+      const fixture = context(root, "commit", "append", {
+        invalidation: "new_operation",
+        rendererMode: "document",
+      });
+      const operation = {
+        ...fixture.operation,
+        attachment: {
+          contextId: "ctx",
+          eventId: 2,
+          head: "commit:2",
+          runId: "send",
+        },
+      };
+      await fixture.store.beginOperation(operation);
+      await fixture.store.markCoreCommitted(operation, "commit:2");
+      await fixture.store.beginExtension(operation);
+      const request = {
+        ...fixture.request,
+        ...operation,
+        frozenResources: {
+          files: { "panel.html": "<b>独立资源</b>" },
+          mount: "story" as const,
+        },
+      };
+      await fixture.store.beginRequestAttempt(request);
+      await fixture.store.emit({
+        context: request,
+        output: "panel",
+        payload: "保留正文",
+        toolCallId: "emit",
+      });
+      await fixture.store.completeExtension(operation.operationId, [
+        request.requestId,
+      ]);
+      const staging = join(root, "worlds-file-native", ".staging-fork");
+      await fixture.store.stageFork({
+        sourceWorldId: "world-1",
+        targetWorldId: "fork",
+        targetWorldRoot: staging,
+        timeline: [{ contextId: "ctx", eventId: 2, head: "commit:2" }],
+      });
+      expect(await fixture.store.readActiveProjection("fork")).toEqual([]);
+      await rename(staging, join(root, "worlds-file-native", "fork"));
+      await rm(join(root, "artifact-store"), { recursive: true, force: true });
+      const cold = new FileNativeArtifactStore(root);
+      expect(await cold.readActiveProjection("fork")).toMatchObject([
+        {
+          worldId: "fork",
+          payload: "保留正文",
+          frozenPresentation: { files: { "panel.html": "<b>独立资源</b>" } },
+        },
+      ]);
+      await cold.beginOperation({
+        ...fixture.operation,
+        worldId: "fork",
+        operationId: "fork-next",
+        parentHead: "commit:2",
+      });
+      expect(
+        await new FileNativeArtifactStore(root).readActiveProjection("fork"),
+      ).toEqual([]);
+      expect(await cold.readDebug("fork")).toHaveLength(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("回复归属跨冷恢复保留，当前时间线筛选先于替换投影", async () => {
+    const root = await mkdtemp(join(tmpdir(), "artifact-attachment-"));
+    try {
+      const fixture = context(root, "commit", "replace", {
+        invalidation: "never",
+      });
+      for (const [index, eventId] of [2, 2].entries()) {
+        const operation = {
+          ...fixture.operation,
+          operationId: `attached-${index}`,
+          attachment: {
+            contextId: "context",
+            eventId,
+            head: `commit:${index + 1}`,
+            runId: `run-${index}`,
+          },
+        };
+        await fixture.store.beginOperation(operation);
+        await fixture.store.markCoreCommitted(operation, `commit:${index + 1}`);
+        await fixture.store.beginExtension(operation);
+        const request = { ...fixture.request, ...operation };
+        await fixture.store.beginRequestAttempt(request);
+        await fixture.store.emit({
+          context: request,
+          output: "panel",
+          payload: `reply-${index}`,
+          toolCallId: `emit-${index}`,
+        });
+        await fixture.store.completeExtension(operation.operationId, [
+          request.requestId,
+        ]);
+      }
+      const cold = new FileNativeArtifactStore(root);
+      const projection = await cold.readActiveProjection("world-1", undefined, [
+        { contextId: "context", eventId: 2, head: "commit:1" },
+      ]);
+      expect(projection).toMatchObject([
+        {
+          payload: "reply-0",
+          attachment: { contextId: "context", eventId: 2, runId: "run-0" },
+        },
+      ]);
+      expect(await cold.readDebug("world-1")).toHaveLength(2);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("core 尚运行时 resume 只读当前摘要，不把合法竞态误报为损坏", async () => {
     const root = await mkdtemp(
       join(tmpdir(), "narraeon-artifact-running-resume-"),

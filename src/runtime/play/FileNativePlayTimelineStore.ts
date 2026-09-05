@@ -771,6 +771,50 @@ export class FileNativePlayTimelineStore {
     return reverse.reverse();
   }
 
+  /** Resolve only requested reply summaries; decoration reads never load Provider transcripts. */
+  async resolveReplies(
+    worldId: string,
+    targets: readonly { contextId: string; eventId: number; head: string }[],
+  ): Promise<
+    { contextId: string; eventId: number; head: string; chainId: string }[]
+  > {
+    if (targets.length === 0) return [];
+    const result: {
+      contextId: string;
+      eventId: number;
+      head: string;
+      chainId: string;
+    }[] = [];
+    let chainId = (await this.#readTimelineHead(worldId))?.chainId ?? null;
+    while (chainId !== null) {
+      const metadata = await this.#readContextMetadata(worldId, chainId);
+      if (metadata === null)
+        throw new Error("Play timeline points to a missing context");
+      const base = await readJson<PersistedContextBase>(
+        join(metadata.root, "base.json"),
+      );
+      const contextId = base.continuityContextId ?? chainId;
+      for (const target of targets.filter(
+        (item) =>
+          item.contextId === contextId &&
+          item.eventId <= metadata.state.eventCount,
+      )) {
+        const event = await readJson<unknown>(
+          join(metadata.root, "summaries", numbered(target.eventId)),
+        );
+        assertTimelineEventSummary(event);
+        if (
+          event.id === target.eventId &&
+          event.kind === "assistant" &&
+          event.committedHead === target.head
+        )
+          result.push({ ...target, chainId });
+      }
+      chainId = metadata.index.previousChainId;
+    }
+    return result;
+  }
+
   async readPage(
     worldId: string,
     limit: number,

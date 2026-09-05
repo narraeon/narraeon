@@ -33,6 +33,12 @@ export interface FrontendArtifactDebugRecord {
 }
 
 export interface FrontendArtifactExtensionSummary {
+  requests?: {
+    requestId: string;
+    displayName: string;
+    mounts: string[];
+    status: "running" | "completed" | "failed";
+  }[];
   operationId: string;
   status:
     | "not_started"
@@ -77,6 +83,16 @@ export function ArtifactDebugger({
         <p className="eyebrow">EXTENSION DEBUG</p>
         <h2>{uiText("产物调试器")}</h2>
       </header>
+      {records.some(
+        (record) =>
+          record.frontend.mount === "story" && !("attachment" in record),
+      ) ? (
+        <p role="note">
+          {uiText(
+            "旧产物没有可证明的回复归属，仅保留诊断，无法自动迁移为正文附件。",
+          )}
+        </p>
+      ) : null}
       {extensions.length === 0 ? null : (
         <section
           className="artifact-extension-statuses"

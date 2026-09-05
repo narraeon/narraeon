@@ -609,7 +609,7 @@ export class V1Runtime {
         const head = await this.#reconcileArtifacts(request.worldId);
         const [artifacts, extensions, artifactDebug] = await Promise.all([
           this.#frontendProjection(request.worldId),
-          this.#artifacts.readExtensionSummaries(request.worldId),
+          this.#frontendExtensions(request.worldId),
           this.#frontendDebug(request.worldId),
         ]);
         return { head, artifacts, extensions, artifactDebug };
@@ -990,31 +990,80 @@ export class V1Runtime {
     return head;
   }
 
+  async #frontendExtensions(worldId: string) {
+    const extensions = await this.#artifacts.readExtensionSummaries(worldId);
+    const targets = await this.#worlds.playTimeline.resolveReplies(
+      worldId,
+      extensions.flatMap((item) =>
+        item.attachment === undefined ? [] : [item.attachment],
+      ),
+    );
+    return extensions
+      .filter(
+        (item) =>
+          item.attachment === undefined ||
+          targets.some(
+            (target) =>
+              target.contextId === item.attachment!.contextId &&
+              target.eventId === item.attachment!.eventId &&
+              target.head === item.attachment!.head,
+          ),
+      )
+      .sort(
+        (left, right) =>
+          Number(left.head?.replace("commit:", "") ?? 0) -
+          Number(right.head?.replace("commit:", "") ?? 0),
+      );
+  }
+
   async #frontendProjection(
     worldId: string,
     channel?: string,
   ): Promise<FrontendArtifactProjection[]> {
+    const extensions = await this.#artifacts.readExtensionSummaries(worldId);
+    const targets = await this.#worlds.playTimeline.resolveReplies(
+      worldId,
+      extensions.flatMap((extension) =>
+        extension.attachment === undefined ? [] : [extension.attachment],
+      ),
+    );
     const artifacts = await this.#artifacts.readActiveProjection(
       worldId,
       channel,
+      targets,
     );
-    return Promise.all(
-      artifacts.map(async (artifact) => {
-        const { renderer, ...safeArtifact } = artifact;
-        void renderer;
-        const resolved = await this.#frontendBinding(
-          artifact.playPresetId,
-          artifact.playPresetRevision,
-        );
-        return {
-          ...safeArtifact,
-          frontend: projectArtifactForFrontend(
-            artifact,
-            resolved.binding,
-            resolved.failure,
-          ),
-        };
-      }),
+    return (
+      await Promise.all(
+        artifacts.map(async (artifact) => {
+          const { renderer, ...safeArtifact } = artifact;
+          void renderer;
+          const resolved = await this.#frontendBinding(
+            artifact.playPresetId,
+            artifact.playPresetRevision,
+          );
+          return {
+            ...safeArtifact,
+            ...(artifact.attachment === undefined
+              ? {}
+              : {
+                  reply: targets.find(
+                    (target) =>
+                      target.contextId === artifact.attachment!.contextId &&
+                      target.eventId === artifact.attachment!.eventId &&
+                      target.head === artifact.attachment!.head,
+                  )!,
+                }),
+            frontend: projectArtifactForFrontend(
+              artifact,
+              resolved.binding,
+              resolved.failure,
+            ),
+          };
+        }),
+      )
+    ).filter(
+      (artifact) =>
+        artifact.frontend.mount !== "story" || artifact.reply !== undefined,
     );
   }
 

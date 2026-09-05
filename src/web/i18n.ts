@@ -150,6 +150,13 @@ const englishMessages: Record<string, string> = {
     "A regex rule failed; the instance entered an error state and is showing the raw artifact",
   "document renderer 必须包含唯一 narraeon:content marker":
     "A document renderer must contain exactly one narraeon:content marker",
+  "旧产物没有可证明的回复归属，仅保留诊断，无法自动迁移为正文附件。":
+    "Legacy artifacts have no proven reply attachment. Diagnostics remain available; automatic migration to story attachments is unavailable.",
+  生成失败: "Generation failed",
+  已更新: "Updated",
+  更新中: "Updating",
+  生成中: "Generating",
+  生成未完成: "Generation incomplete",
   "ArtifactExtensionMount 必须位于 ArtifactExtensionHost 内":
     "ArtifactExtensionMount must be inside ArtifactExtensionHost",
   "文档 renderer 无效": "Invalid document renderer",

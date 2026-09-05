@@ -5550,7 +5550,8 @@ test("后置结算通知可读取同端点产物，失败和冷 Runtime 恢复�
   ]);
   expect(await worlds.currentHead(worldId)).toBe(head);
   releaseFailure();
-  expect((await run).events).toContainEqual(
+  const completed = await run;
+  expect(completed.events).toContainEqual(
     expect.objectContaining({
       kind: "followup",
       followupId: "options",
@@ -5567,7 +5568,17 @@ test("后置结算通知可读取同端点产物，失败和冷 Runtime 恢复�
   ).toMatchObject({
     result: {
       head,
-      artifacts: [{ payload: { hp: 9 } }],
+      artifacts: [
+        {
+          payload: { hp: 9 },
+          reply: { chainId: "observed-panels", eventId: 2 },
+          attachment: {
+            contextId: "observed-panels",
+            eventId: 2,
+            runId: expect.any(String) as unknown,
+          },
+        },
+      ],
       extensions: [{ status: "recovery_required" }],
     },
   });
@@ -5575,6 +5586,66 @@ test("后置结算通知可读取同端点产物，失败和冷 Runtime 恢复�
     (await runtime.handle({ type: "world.read", worldId })).result,
   ).toMatchObject({ head, artifacts: [] });
   expect(await worlds.currentHead(worldId)).toBe(head);
+  const fork = await chains.deriveWorld({
+    operationId: "artifact-fork",
+    sourceWorldId: worldId,
+    sourceHead: head,
+    hostPresetId: "host-main",
+  });
+  const forkId = fork.world.worldId;
+  const forkDecorations = await runtime.handle({
+    type: "world.play-decorations.read",
+    worldId: forkId,
+  });
+  expect(forkDecorations).toMatchObject({
+    result: {
+      head,
+      artifacts: [
+        {
+          payload: { hp: 9 },
+          reply: { eventId: 2 },
+          frontend: { status: "ready" },
+        },
+      ],
+    },
+  });
+  const player = completed.events.find((event) => event.kind === "player")!;
+  await chains.revisePlayer({
+    operationId: "artifact-revise",
+    worldId,
+    chainId: completed.chainId,
+    eventId: player.id,
+    replacementExchangeId: "replacement",
+    replacementText: "Stay outside.",
+    continuation: "continue_context",
+  });
+  expect(
+    await runtime.handle({ type: "artifacts.read", worldId }),
+  ).toMatchObject({ result: [] });
+  expect(
+    await runtime.handle({ type: "artifacts.debug", worldId }),
+  ).toMatchObject({ result: [{ payload: { hp: 9 } }] });
+  await worlds.deleteWorld(worldId);
+  const cold = new V1Runtime({
+    dataRoot: root,
+    configRoot: join(root, "config"),
+  });
+  await cold.initialize();
+  expect(
+    await cold.handle({ type: "world.play-decorations.read", worldId: forkId }),
+  ).toMatchObject({
+    result: {
+      head,
+      artifacts: [
+        {
+          payload: { hp: 9 },
+          reply: { eventId: 2 },
+          frontend: { status: "ready" },
+        },
+      ],
+    },
+  });
+  expect(await worlds.currentHead(forkId)).toBe(head);
   expect(calls).toBe(3);
 });
 

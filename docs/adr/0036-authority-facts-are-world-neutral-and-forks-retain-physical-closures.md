@@ -15,3 +15,5 @@ status: accepted
 已发布 Authority v1/v2 与页面时间线 v3 按 [ADR-0034](0034-released-storage-formats-require-atomic-migrations.md) 精确迁移：旧源保持只读，旧世界前缀身份确定性归一为局部身份，所有端点与不透明 Provider／工具证据验证完成后才最后发布 `continuity-head.json`。不认识或无法证明等价的来源 fail closed。
 
 本 ADR 保留 [ADR-0032](0032-player-edits-append-current-world-timeline-revisions.md) 的“修改仍在当前世界追加修订”决定，以及 [ADR-0033](0033-long-timelines-use-immutable-facts-and-rebuildable-projections.md) 的“小 head 与惰性页面投影”决定；它取代二者关于完整 replacement snapshot、世界／operation／消息身份重映射、分叉逐笔遍历提交和逐笔重建投影的实现机制。
+
+后置正文附件属于扩展记录，归属绑定稳定叙事上下文、已提交回复及发送身份，不写入 Authority。分叉同时在世界 staging 冻结保留策略允许的已关联持久产物、声明与呈现资源；目标首次读取在独立产物锁内幂等恢复。这样既保留世界目录原子发布，又沿用产物存储的失效事件机制，避免共享来源的可变投影。无法证明回复归属的旧记录只保留来源诊断，不推测附件位置。
