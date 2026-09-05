@@ -56,7 +56,11 @@ import type {
   FileNativeWorldStore,
 } from "../world/FileNativeWorldStore.ts";
 import type { ArtifactStore } from "../artifact/FileNativeArtifactStore.ts";
-import type { PlayPresetBinding } from "./FileNativePlayPresetStore.ts";
+import {
+  parsePlayPresetFiles,
+  type PlayPresetBinding,
+  type FrozenArtifactPresentation,
+} from "./FileNativePlayPresetStore.ts";
 import {
   runPlayFollowupRequests,
   type PlayFollowupObserver,
@@ -1644,6 +1648,30 @@ export class PlayCallChain {
         source: sourceContext,
         target: structuredClone(derived),
       });
+    if (input.targetWorldRoot !== undefined) {
+      const retainedContexts = [
+        ...input.sourceContexts.slice(0, input.selectedContextIndex),
+        { ...sourceContext, events: input.sourceEvents },
+      ];
+      await this.#artifacts?.stageFork?.({
+        sourceWorldId: input.sourceWorldId,
+        targetWorldId: input.targetWorldId,
+        targetWorldRoot: input.targetWorldRoot,
+        timeline: retainedContexts.flatMap((context) =>
+          context.events.flatMap((event) =>
+            event.kind === "assistant" && event.committedHead !== undefined
+              ? [
+                  {
+                    contextId: context.continuityContextId ?? context.chainId,
+                    eventId: event.id,
+                    head: event.committedHead,
+                  },
+                ]
+              : [],
+          ),
+        ),
+      });
+    }
     return projectView(derived);
   }
 
@@ -2593,6 +2621,13 @@ export class PlayCallChain {
   ): Promise<void> {
     const followups = currentPlayPrompt(session).followups ?? [];
     if (this.#artifacts === undefined || followups.length === 0) return;
+    const reply = session.events.findLast(
+      (event) =>
+        event.kind === "assistant" &&
+        event.committedHead === session.parentHead,
+    );
+    if (reply === undefined)
+      throw new PlayCallChainError("Follow-up reply is not committed");
     const observeFollowupDelta = (
       delta: Parameters<
         NonNullable<PlayFollowupObserver["onProviderDelta"]>
@@ -2630,6 +2665,7 @@ export class PlayCallChain {
     try {
       await runPlayFollowupRequests({
         artifacts: this.#artifacts,
+        presentations: frozenFollowupPresentations(session),
         modelHost,
         followups,
         bootstrap: currentPlayPrompt(session).bootstrap,
@@ -2644,6 +2680,12 @@ export class PlayCallChain {
           worldId: session.worldId,
           parentHead: session.parentHead,
           operationId: followupOperationId(session),
+          attachment: {
+            contextId: session.continuityContextId ?? session.chainId,
+            eventId: reply.id,
+            head: session.parentHead,
+            runId: `${session.chainId}:send:${session.promptRuns?.at(-1)?.firstEventId ?? reply.id}`,
+          },
           playPresetId: currentPlayPrompt(session).playPreset.id,
           playPresetRevision: currentPlayPrompt(session).playPreset.revision,
           playPresetScriptsEnabled:
@@ -3647,4 +3689,55 @@ function crashAtPlayAdvanceEdge(edge: string): void {
     process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE === edge
   )
     throw new Error(`Simulated process exit at play advance edge: ${edge}`);
+}
+
+function frozenFollowupPresentations(
+  session: PlayCallChainSession,
+): Record<string, Record<string, FrozenArtifactPresentation>> {
+  const files = session.promptRuns?.at(-1)?.presetFiles ?? session.presetFiles;
+  if (files === undefined) return {};
+  const parsed = parsePlayPresetFiles(files);
+  if (parsed.kind === "invalid") throw parsed.error;
+  const definition = parsed.definition;
+  return Object.fromEntries(
+    (currentPlayPrompt(session).followups ?? []).map((followup) => [
+      followup.id,
+      Object.fromEntries(
+        followup.artifacts.flatMap((declaration) => {
+          const resources = followup.frozenResources;
+          const mount =
+            resources?.mount ??
+            definition.mounts.find(
+              (item) => item.channel === declaration.channel,
+            )?.mount;
+          return mount === undefined
+            ? []
+            : [
+                [
+                  declaration.name,
+                  {
+                    ...resources,
+                    declaration: structuredClone(declaration),
+                    files:
+                      resources?.files ??
+                      Object.fromEntries(
+                        [
+                          declaration.renderer,
+                          declaration.regex,
+                          ...(declaration.scripts ?? []),
+                          ...(declaration.assets ?? []),
+                        ].flatMap((path) =>
+                          path === undefined
+                            ? []
+                            : [[path, (resources?.files ?? files)[path]!]],
+                        ),
+                      ),
+                    mount,
+                  },
+                ],
+              ];
+        }),
+      ),
+    ]),
+  );
 }

@@ -65,6 +65,49 @@ function host(
 }
 
 describe("ArtifactExtensionHost React lifetime", () => {
+  test("侧栏明确显示生成、更新和失败状态，失败不伪装新结果", () => {
+    const tree = (
+      status: "running" | "failed" | "completed",
+      hasResult: boolean,
+    ) =>
+      createElement(
+        ArtifactExtensionHost,
+        {
+          worldId: "world-1",
+          artifacts: hasResult ? [artifact()] : [],
+          playerViews: { views: [] },
+          onSetComposerDraft: vi.fn(),
+          onRefresh: vi.fn(),
+          extensions: [
+            {
+              operationId: "operation-1",
+              status: "running",
+              completedRequests: [],
+              coreCommitted: true,
+              requests: [
+                {
+                  requestId: "narrate",
+                  displayName: "状态面板",
+                  mounts: ["sidebar"],
+                  status,
+                },
+              ],
+            },
+          ],
+        },
+        createElement(ArtifactExtensionMount, { mount: "sidebar" }),
+      );
+    const view = render(tree("running", false));
+    expect(screen.getByRole("status").textContent).toBe("状态面板 · 生成中");
+    view.rerender(tree("running", true));
+    expect(screen.getByRole("status").textContent).toBe("状态面板 · 更新中");
+    view.rerender(tree("failed", true));
+    expect(screen.getByRole("status").textContent).toBe("状态面板 · 生成失败");
+    expect(screen.getByTitle("panel").getAttribute("srcdoc")).toContain(
+      "hello",
+    );
+  });
+
   test("replace 更新同一 document iframe，append 与多 key 分离", () => {
     const first = artifact();
     const view = render(host([first]));
