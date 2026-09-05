@@ -31,6 +31,7 @@ export function InterfaceExtensionPreview({
   files,
   structure,
   conflict,
+  scriptsEnabled,
 }: {
   client: { request<T>(request: V1Request): Promise<T> };
   presetId: string;
@@ -38,6 +39,7 @@ export function InterfaceExtensionPreview({
   files: Record<string, string>;
   structure: Record<string, unknown> | undefined;
   conflict: boolean;
+  scriptsEnabled: boolean;
 }): React.JSX.Element {
   const [worlds, setWorlds] = useState<{ worldId: string; title: string }[]>(
     [],
@@ -57,7 +59,15 @@ export function InterfaceExtensionPreview({
     structure,
     worldId,
     conflict,
+    scriptsEnabled,
   });
+  const [previousKey, setPreviousKey] = useState(key);
+  if (previousKey !== key) {
+    setPreviousKey(key);
+    setResult(null);
+    setPending(false);
+    setError(null);
+  }
   const visible = result?.key === key ? result.preview : undefined;
   useEffect(() => {
     let active = true;
@@ -74,6 +84,10 @@ export function InterfaceExtensionPreview({
       requestNumber.current += 1;
     };
   }, [client]);
+
+  useEffect(() => {
+    requestNumber.current += 1;
+  }, [key]);
 
   async function preview(): Promise<void> {
     if (worldId === "" || conflict) return;

@@ -1047,6 +1047,7 @@ export function PlayPresetScreen({
                               >)
                         }
                         conflict={structuralConflict}
+                        scriptsEnabled={draft.scriptsEnabled === true}
                       />
                     ) : null
                   }

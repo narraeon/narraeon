@@ -7,6 +7,8 @@ import {
 let activeLocale: AppLocale = defaultAppLocale;
 
 const englishMessages: Record<string, string> = {
+  "玩家视图格式无效，请检查文本处理规则。":
+    "Invalid player-view data. Check the text processing rules.",
   "玩家视图、布局、资源与无模型预览":
     "Player views, layout, resources and model-free preview",
   "直接用已保存的玩家视图配置界面，不需要后置请求。模型产物的位置设置独立保留。":

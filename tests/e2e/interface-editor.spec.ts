@@ -109,6 +109,43 @@ test("纯界面编辑、草稿预览和游玩显示不增加模型调用，字�
       page.locator(".interface-extension-preview iframe"),
     ).toHaveCount(0);
     await page.getByRole("button", { name: "保存修改", exact: true }).click();
+    await page.getByRole("button", { name: "预览界面", exact: true }).click();
+    await expect(
+      preview.getByRole("heading", { name: "已保存状态栏42" }),
+    ).toBeVisible();
+    await page.getByText("预设操作", { exact: true }).click();
+    await page
+      .getByRole("button", { name: "停用 JavaScript", exact: true })
+      .click();
+    await expect(
+      page.locator(".interface-extension-preview iframe"),
+    ).toHaveCount(0);
+    await page
+      .getByRole("button", { name: "启用 JavaScript", exact: true })
+      .click();
+    await expect(
+      page.locator(".interface-extension-preview iframe"),
+    ).toHaveCount(0);
+    await page
+      .getByRole("button", { name: "新增玩家视图面板", exact: true })
+      .click();
+    await page.getByLabel("玩家视图面板 2 标题").fill("内置面板42");
+    await page.getByLabel("玩家视图面板 2 视图").fill("other");
+    const added = page.locator(".play-preset-player-panel-card").nth(1);
+    await added.getByLabel("排列方式").selectOption("grid");
+    await page.getByRole("button", { name: "预览界面", exact: true }).click();
+    await expect(
+      page
+        .locator(".interface-extension-preview")
+        .getByRole("heading", { name: "内置面板42", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page
+        .locator('[data-player-view-layout="grid"]')
+        .getByText("Alex is folding a jersey.", { exact: true }),
+    ).toBeVisible();
+    await added.getByRole("button", { name: "删除面板", exact: true }).click();
+    await page.getByRole("button", { name: "保存修改", exact: true }).click();
     await page
       .getByRole("button", { name: "应用为当前玩法", exact: true })
       .click();
