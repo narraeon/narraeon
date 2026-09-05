@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { createServer } from "node:http";
+import type { PlayPresetScreenLibrary } from "../../src/web/PlayPresetScreen.tsx";
 import type { V1Request } from "../../src/protocol/v1.ts";
 
 test("纯界面编辑、草稿预览和游玩显示不增加模型调用，字段提交后更新", async ({
@@ -76,6 +77,24 @@ test("纯界面编辑、草稿预览和游玩显示不增加模型调用，字�
     await page
       .getByRole("button", { name: "复制推荐状态栏", exact: true })
       .click();
+    // Integration with #38: interface editing must retain both prompt lists.
+    const authorText = `AUTHOR_INTERFACE_ROUNDTRIP_${Date.now()}`;
+    await page.getByRole("tab", { name: /设定完善/u }).click();
+    await page.getByRole("button", { name: "新增提示词", exact: true }).click();
+    await page
+      .getByLabel("提示词名称", { exact: true })
+      .fill("界面组合作者提示");
+    await page.getByLabel("提示词正文", { exact: true }).fill(authorText);
+    await page.getByRole("button", { name: "保存修改", exact: true }).click();
+    const authorLibrary = await runtime<PlayPresetScreenLibrary>(page, {
+      type: "play.read",
+    });
+    const authorPreset = authorLibrary.presets.find((preset) =>
+      (preset.draft ?? preset).structure?.authorPrompts?.some(
+        (entry) => entry.kind === "user" && entry.body === authorText,
+      ),
+    )!;
+    expect(authorPreset).toBeDefined();
     await page.getByRole("tab", { name: /界面扩展/u }).click();
     await expect(page.getByText(/先在“调用链”新增后置请求/u)).toHaveCount(0);
     await page.getByLabel("玩家视图面板 1 标题").fill("未保存状态栏42");
@@ -109,6 +128,18 @@ test("纯界面编辑、草稿预览和游玩显示不增加模型调用，字�
       page.locator(".interface-extension-preview iframe"),
     ).toHaveCount(0);
     await page.getByRole("button", { name: "保存修改", exact: true }).click();
+    const interfaceLibrary = await runtime<PlayPresetScreenLibrary>(page, {
+      type: "play.read",
+    });
+    const interfacePreset = interfaceLibrary.presets.find(
+      (preset) => preset.id === authorPreset.id,
+    )!;
+    expect(
+      (interfacePreset.draft ?? interfacePreset).structure?.authorPrompts,
+    ).toEqual((authorPreset.draft ?? authorPreset).structure?.authorPrompts);
+    expect(
+      (interfacePreset.draft ?? interfacePreset).structure?.playPrompts,
+    ).toEqual((authorPreset.draft ?? authorPreset).structure?.playPrompts);
     await page.getByRole("button", { name: "预览界面", exact: true }).click();
     await expect(
       preview.getByRole("heading", { name: "已保存状态栏42" }),
