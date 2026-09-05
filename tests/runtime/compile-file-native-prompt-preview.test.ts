@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 
 import { defaultPresetHostFiles } from "../../src/shared/default-preset-host.ts";
 import { builtinDefaultPlayPresetBinding } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
@@ -1514,7 +1514,7 @@ ${"original material\n".repeat(1_000)}${originalTail}
     });
   });
 
-  test("发给模型的输出上限就是 Provider 配置，Runtime 不计算预留", async () => {
+  test("提示编译不从 Provider 输出配置计算预留", () => {
     const compiler = new FileNativePromptCompiler();
     const source = input({
       modelBinding: {
@@ -1529,36 +1529,12 @@ ${"original material\n".repeat(1_000)}${originalTail}
       ...source,
       playerInputPlacement: "append",
     });
-    const sendBootstrap = vi.fn(() => Promise.resolve());
-
-    await compiler.sendBootstrap(source, { sendBootstrap });
-
     expect(embedded.budget.outputReserveTokens).toBe(0);
     expect(embedded.budget.forcedTailReserveTokens).toBe(0);
     expect(appended.budget.outputReserveTokens).toBe(0);
     expect(appended.budget.forcedTailReserveTokens).toBe(0);
     expect(embedded.budget.status).toBe("not_checked");
     expect(appended.budget.status).toBe("not_checked");
-    expect(sendBootstrap).toHaveBeenCalledWith(
-      expect.objectContaining({ maxOutputTokens: 16_384 }),
-    );
-  });
-
-  test("真实发送 seam 与 Preview 使用同一次 compileBootstrap 输出", async () => {
-    const compiler = new FileNativePromptCompiler();
-    const source = input();
-    const preview = compiler.preview(source);
-    const sendBootstrap = vi.fn(() => Promise.resolve({ ok: true as const }));
-
-    await expect(
-      compiler.sendBootstrap(source, { sendBootstrap }),
-    ).resolves.toEqual({ ok: true });
-    expect(sendBootstrap).toHaveBeenCalledWith({
-      provider: preview.compilation.provider,
-      tools: preview.compilation.tools,
-      modelId: source.modelBinding.modelId,
-      maxOutputTokens: source.modelBinding.maxOutputTokens,
-    });
   });
 
   test("Preview不改写输入或权威状态", () => {

@@ -242,6 +242,16 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     .getByRole("button")
     .count();
   for (let i = 0; i < promptCount; i++) await mechanics.press("Alt+ArrowDown");
+  const promptOrder = page.getByRole("list", { name: "提示词顺序" });
+  await mechanics.press("Alt+ArrowUp");
+  const keyboardOrder = await promptOrder.getByRole("button").allTextContents();
+  await mechanics.press("Alt+ArrowDown");
+  await promptOrder
+    .getByRole("listitem")
+    .last()
+    .dragTo(promptOrder.getByRole("listitem").nth(promptCount - 2));
+  await expect(promptOrder.getByRole("button")).toHaveText(keyboardOrder);
+  await mechanics.press("Alt+ArrowDown");
   await page.getByRole("tab", { name: /设定完善/u }).click();
   await expect(page.getByLabel("设定完善提示词编排")).toBeVisible();
   await expect(

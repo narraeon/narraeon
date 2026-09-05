@@ -266,15 +266,6 @@ export interface PlayFollowupCompilation {
   maxArtifactBytes: number;
 }
 
-export interface FileNativeModelAdapter<Result = unknown> {
-  sendBootstrap(request: {
-    provider: PromptCompilation["provider"];
-    tools: PromptCompilation["tools"];
-    modelId: string;
-    maxOutputTokens: number;
-  }): Promise<Result>;
-}
-
 export class PromptCompilationError extends Error {
   readonly code: string;
   readonly details: unknown;
@@ -628,19 +619,6 @@ export class FileNativePromptCompiler {
           : { unavailableReason: world.documentMaintenanceUnavailableReason }),
       },
     };
-  }
-
-  async sendBootstrap<Result>(
-    input: FileNativePromptInput,
-    adapter: FileNativeModelAdapter<Result>,
-  ): Promise<Result> {
-    const compiled = this.compileBootstrap(input);
-    return await adapter.sendBootstrap({
-      provider: compiled.provider,
-      tools: compiled.tools,
-      modelId: input.modelBinding.modelId,
-      maxOutputTokens: input.modelBinding.maxOutputTokens,
-    });
   }
 
   compileBootstrap(input: FileNativePromptInput): PromptCompilation {

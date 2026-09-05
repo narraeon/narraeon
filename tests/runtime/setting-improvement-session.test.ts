@@ -2,6 +2,7 @@ import { parseDocument } from "yaml";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { gunzipSync } from "node:zlib";
 
 import { afterEach, expect, test } from "vitest";
 
@@ -42,6 +43,57 @@ const binding: ModelHostBinding = {
   protocolConfigFingerprint: "protocol:test",
   cacheStrategy: "provider_managed",
 };
+
+test("重整前真实 schema-v2 作者会话保留原生工具历史，下一次发送保存当前编排", async () => {
+  const fixture = JSON.parse(
+    gunzipSync(
+      await readFile(
+        new URL("./fixtures/pre38-author.json.gz", import.meta.url),
+      ),
+    ).toString("utf8"),
+  ) as {
+    packageId: string;
+    sessionId: string;
+    files: Record<string, string>;
+    stored: Awaited<ReturnType<FileNativeSettingImprovementStore["read"]>>;
+  };
+  const root = await temporaryRoot("pre38-author-upgrade-");
+  for (const [path, contents] of Object.entries(fixture.files)) {
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await writeFile(join(root, path), contents);
+  }
+  const store = new FileNativeSettingImprovementStore(root);
+  expect(await store.read(fixture.sessionId)).toEqual(fixture.stored);
+  const content = new ContentWorkspace(root, { locale: () => "en" });
+  const before = await content.readCurrentTreeContentPackage(fixture.packageId);
+  const host = new ScriptedModelHost({
+    binding,
+    steps: [{ outcome: "response", text: "Continued after upgrade." }],
+  });
+  const session = serviceFor(root, content, host);
+  const candidate = await session.preview(fixture.packageId, fixture.sessionId);
+  expect(host.requests).toHaveLength(0);
+  await session.send({
+    packageId: fixture.packageId,
+    requestId: "upgrade-next",
+    message: "Continue discussing.",
+    continuation: { kind: "continue_context", sessionId: fixture.sessionId },
+  });
+  expect(
+    host.requests[0]!.appended.slice(0, fixture.stored.modelItems.length),
+  ).toEqual(fixture.stored.modelItems);
+  expect(host.requests[0]!.bootstrap).toEqual(candidate);
+  const upgraded = await store.read(fixture.sessionId);
+  expect(upgraded.schemaVersion).toBe(3);
+  expect(upgraded.bootstrap).toEqual(fixture.stored.bootstrap);
+  expect(upgraded.messages.slice(0, fixture.stored.messages.length)).toEqual(
+    fixture.stored.messages,
+  );
+  expect(
+    (await content.readCurrentTreeContentPackage(fixture.packageId)).files,
+  ).toEqual(before.files);
+  expect(upgraded.requests).toHaveLength(1);
+});
 
 test("全新上下文创建持久对话，普通回复不产生候选或快照", async () => {
   const fixture = await createFixture([
