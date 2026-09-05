@@ -1,3 +1,16 @@
+import {
+  PlayerViewPanelsEditor,
+  type PlayPresetPlayerViewPanel,
+} from "./PlayerViewPanelsEditor.tsx";
+import { InterfaceExtensionPreview } from "./InterfaceExtensionPreview.tsx";
+import { MountSelect, PathChecklist } from "./PlayPresetEditorControls.tsx";
+import {
+  mountLabel,
+  withCurrentPath,
+  markdownTitle,
+  markdownExcerpt,
+  describePresetFile,
+} from "./playPresetEditorLabels.ts";
 import { OrderedPlayPromptEditor } from "./OrderedPlayPromptEditor.tsx";
 import type { OrderedPlayPrompt } from "../shared/ordered-play-prompts.ts";
 import { uiText } from "./i18n.ts";
@@ -162,40 +175,9 @@ interface PlayPresetFollowupDefinition {
   maxArtifactBytes: number;
 }
 
-interface PlayPresetPlayerViewPanelGroup {
-  id: string;
-  label: string;
-  itemIds: string[];
-}
-
-interface PlayPresetPlayerViewPanel {
-  id: string;
-  source: {
-    kind: "player_view";
-    view: string;
-    itemIds?: string[];
-  };
-  channel: string;
-  key: string;
-  mount: PlayPresetMount["mount"];
-  renderer?: string;
-  rendererRevision?: string;
-  rendererMode: "document" | "app";
-  regex?: string;
-  scripts?: string[];
-  assets?: string[];
-  config: {
-    title?: string;
-    layout: "stack" | "grid";
-    theme: string;
-    empty: "hide" | "message" | "show";
-    emptyMessage: string;
-    groups: PlayPresetPlayerViewPanelGroup[];
-  };
-}
-
 interface PlayPresetStructuredEditor {
   playPrompts?: OrderedPlayPrompt[];
+  authorPrompts?: OrderedPlayPrompt[];
   migrationNotice?: string;
   name: string;
   callChainPath: string;
@@ -280,7 +262,7 @@ const playPresetWorkspaceViews: {
   {
     id: "extensions",
     label: "界面扩展",
-    description: "频道挂载、面板与扩展引用",
+    description: "玩家视图、布局、资源与无模型预览",
   },
   {
     id: "blocks",
@@ -1052,6 +1034,26 @@ export function PlayPresetScreen({
                     updateFiles((files) => ({ ...files, [path]: contents }))
                   }
                   onError={setStructuredError}
+                  interfacePreview={
+                    workspaceView === "extensions" ? (
+                      <InterfaceExtensionPreview
+                        client={client}
+                        presetId={draft.id}
+                        revision={draft.revision}
+                        files={draft.files}
+                        structure={
+                          rawStructuralDirty
+                            ? undefined
+                            : (draft.structure as unknown as Record<
+                                string,
+                                unknown
+                              >)
+                        }
+                        conflict={structuralConflict}
+                        scriptsEnabled={draft.scriptsEnabled === true}
+                      />
+                    ) : null
+                  }
                 />
               )}
               {draft.structure !== undefined &&
@@ -1294,6 +1296,22 @@ function SettingImprovementPromptEditor({
   onFileChange: (path: string, contents: string) => void;
   onCreateFile: (path: string, contents: string) => void;
 }): React.JSX.Element {
+  if (structure.authorPrompts !== undefined)
+    return (
+      <section
+        id="play-preset-panel-setting_improvement"
+        role="tabpanel"
+        aria-labelledby="play-preset-tab-setting_improvement"
+      >
+        <OrderedPlayPromptEditor
+          authoring
+          entries={structure.authorPrompts}
+          onChange={(authorPrompts) =>
+            onChange((current) => ({ ...current, authorPrompts }))
+          }
+        />
+      </section>
+    );
   const prompt = structure.settingImprovementPrompt;
   return (
     <section
@@ -1383,6 +1401,7 @@ function SettingImprovementPromptEditor({
 
 interface PlayPresetStructuredEditorPanelProps {
   view: "call_chain" | "extensions";
+  interfacePreview: ReactNode;
   structure: PlayPresetStructuredEditor;
   files: Record<string, string>;
   workbench: PlayPresetWorkbenchSnapshot | null;
@@ -1400,6 +1419,7 @@ interface PlayPresetStructuredEditorPanelProps {
 
 function PlayPresetStructuredEditorPanel({
   view,
+  interfacePreview,
   structure,
   files,
   workbench,
@@ -1564,7 +1584,7 @@ function PlayPresetStructuredEditorPanel({
                 "先编辑 AI 主响应要遵守的文字规则，再按需添加主响应结束后的界面产物。提示内容直接显示，不需要填写文件路径。",
               )
             : uiText(
-                "选择产物显示在哪里，并用普通表单配置玩家视图和扩展文件；无需手写 JSON。",
+                "直接用已保存的玩家视图配置界面，不需要后置请求。模型产物的位置设置独立保留。",
               )}
         </p>
         {workbenchPending ? (
@@ -1593,14 +1613,15 @@ function PlayPresetStructuredEditorPanel({
 
       {view === "extensions" ? (
         <>
-          <div className="play-preset-concept-note">
-            <strong>{uiText("频道是什么？")}</strong>
-            <p>
-              {uiText(
-                "频道只是“产物送到哪里”的内部连线：后置请求产出内容，页面按同名频道把它放到你选择的位置。普通编辑只需选显示位置，技术地址会自动保留。",
-              )}
-            </p>
-          </div>
+          <PlayerViewPanelsEditor
+            panels={structure.playerViewPanels}
+            files={files}
+            onFileChange={onFileChange}
+            onChange={(playerViewPanels) =>
+              onChange((current) => ({ ...current, playerViewPanels }))
+            }
+          />
+          {interfacePreview}
 
           <div className="play-preset-structured-section">
             <div className="play-preset-section-header">
@@ -1611,9 +1632,7 @@ function PlayPresetStructuredEditorPanel({
             </div>
             {artifactOutputs.length === 0 ? (
               <p className="play-preset-empty-copy">
-                {uiText(
-                  "当前没有后置产物。先在“调用链”新增后置请求，这里才会出现可放置的内容。",
-                )}
+                {uiText("当前没有模型产物；玩家视图面板仍可独立使用。")}
               </p>
             ) : (
               <div className="play-preset-placement-list">
@@ -1670,14 +1689,6 @@ function PlayPresetStructuredEditorPanel({
               </details>
             )}
           </div>
-
-          <PlayerViewPanelsEditor
-            panels={structure.playerViewPanels}
-            files={files}
-            onChange={(playerViewPanels) =>
-              onChange((current) => ({ ...current, playerViewPanels }))
-            }
-          />
 
           <div className="play-preset-structured-section">
             <h4>{uiText("随预设加载的界面文件")}</h4>
@@ -2001,56 +2012,6 @@ function PlayPresetStructuredEditorPanel({
   );
 }
 
-const mountChoices: {
-  value: PlayPresetMount["mount"];
-  label: string;
-  description: string;
-}[] = [
-  { value: "story", label: "剧情内容区", description: "跟随剧情正文显示" },
-  { value: "sidebar", label: "右侧栏", description: "适合持续状态面板" },
-  {
-    value: "composer_above",
-    label: "输入框上方",
-    description: "适合行动建议或临时提示",
-  },
-  {
-    value: "composer_below",
-    label: "输入框下方",
-    description: "适合不打断输入的辅助内容",
-  },
-  { value: "overlay", label: "浮层", description: "覆盖在游玩页面上方" },
-  { value: "debug", label: "调试区", description: "只用于检查原始产物" },
-];
-
-function MountSelect({
-  ariaLabel,
-  value,
-  allowNone = false,
-  onChange,
-}: {
-  ariaLabel: string;
-  value: PlayPresetMount["mount"] | "";
-  allowNone?: boolean;
-  onChange: (value: PlayPresetMount["mount"] | "") => void;
-}): React.JSX.Element {
-  return (
-    <select
-      aria-label={ariaLabel}
-      value={value}
-      onChange={(event) =>
-        onChange(event.currentTarget.value as PlayPresetMount["mount"] | "")
-      }
-    >
-      {allowNone ? <option value="">{uiText("不在页面显示")}</option> : null}
-      {mountChoices.map((choice) => (
-        <option key={choice.value} value={choice.value}>
-          {uiText(choice.label)} — {uiText(choice.description)}
-        </option>
-      ))}
-    </select>
-  );
-}
-
 function PromptReferenceEditor({
   label,
   path,
@@ -2104,47 +2065,6 @@ function PromptReferenceEditor({
         />
       )}
     </article>
-  );
-}
-
-function PathChecklist({
-  ariaLabel,
-  paths,
-  selected,
-  emptyText,
-  onChange,
-}: {
-  ariaLabel: string;
-  paths: string[];
-  selected: string[];
-  emptyText: string;
-  onChange: (paths: string[]) => void;
-}): React.JSX.Element {
-  const available = [...new Set([...paths, ...selected])].sort();
-  if (available.length === 0)
-    return <p className="play-preset-empty-copy">{emptyText}</p>;
-  return (
-    <ul className="play-preset-path-checklist" aria-label={ariaLabel}>
-      {available.map((path) => (
-        <li key={path}>
-          <label>
-            <input
-              type="checkbox"
-              checked={selected.includes(path)}
-              onChange={(event) =>
-                onChange(
-                  event.currentTarget.checked
-                    ? [...new Set([...selected, path])].sort()
-                    : selected.filter((candidate) => candidate !== path),
-                )
-              }
-            />
-            <span>{describePresetFile(path, "").title}</span>
-            <code>{path}</code>
-          </label>
-        </li>
-      ))}
-    </ul>
   );
 }
 
@@ -2512,11 +2432,6 @@ function uniqueArtifactName(artifacts: PlayPresetArtifactDefinition[]): string {
   return name;
 }
 
-function mountLabel(mount: PlayPresetMount["mount"]): string {
-  const label = mountChoices.find(({ value }) => value === mount)?.label;
-  return label === undefined ? mount : uiText(label);
-}
-
 function contentTypeLabel(
   contentType: PlayPresetArtifactDefinition["contentType"],
 ): string {
@@ -2528,12 +2443,6 @@ function contentTypeLabel(
       "text/html": "HTML",
     } as const
   )[contentType];
-}
-
-function withCurrentPath(paths: string[], current?: string): string[] {
-  return [
-    ...new Set([...paths, ...(current === undefined ? [] : [current])]),
-  ].sort();
 }
 
 function promptFilePaths(files: Record<string, string>): string[] {
@@ -2565,587 +2474,6 @@ function uniquePresetPath(
   let suffix = 2;
   while (files[`${base}-${suffix}${extension}`] !== undefined) suffix += 1;
   return `${base}-${suffix}${extension}`;
-}
-
-function markdownTitle(contents: string): string {
-  return /^#\s+(.+)$/mu.exec(contents)?.[1]?.trim() ?? uiText("未命名提示内容");
-}
-
-function markdownExcerpt(contents: string): string {
-  const excerpt = contents
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter((line) => line !== "" && !line.startsWith("#"))
-    .join(" ");
-  return excerpt.length > 88 ? `${excerpt.slice(0, 88)}…` : excerpt;
-}
-
-function PlayerViewPanelsEditor({
-  panels,
-  files,
-  onChange,
-}: {
-  panels: PlayPresetPlayerViewPanel[];
-  files: Record<string, string>;
-  onChange: (panels: PlayPresetPlayerViewPanel[]) => void;
-}): React.JSX.Element {
-  const rendererPaths = Object.keys(files)
-    .filter((path) => /^renderers\/.+\.html$/u.test(path))
-    .sort();
-  const regexPaths = Object.keys(files)
-    .filter((path) => /^regex\/.+\.yaml$/u.test(path))
-    .sort();
-  const scriptPaths = Object.keys(files)
-    .filter((path) => /^scripts\/.+\.js$/u.test(path))
-    .sort();
-  const assetPaths = Object.keys(files)
-    .filter((path) => path.startsWith("assets/"))
-    .sort();
-
-  function updatePanel(
-    index: number,
-    update: (panel: PlayPresetPlayerViewPanel) => PlayPresetPlayerViewPanel,
-  ): void {
-    onChange(
-      panels.map((panel, candidateIndex) =>
-        candidateIndex === index ? update(panel) : panel,
-      ),
-    );
-  }
-
-  function addPanel(): void {
-    const used = new Set(panels.map(({ id }) => id));
-    let suffix = panels.length + 1;
-    let id = `panel_${suffix}`;
-    while (used.has(id)) id = `panel_${++suffix}`;
-    onChange([
-      ...panels,
-      {
-        id,
-        source: { kind: "player_view", view: "status" },
-        channel: `player.view.${id}`,
-        key: "current",
-        mount: "sidebar",
-        rendererMode: "document",
-        config: {
-          title: uiText("玩家状态"),
-          layout: "stack",
-          theme: "default",
-          empty: "message",
-          emptyMessage: uiText("当前没有可显示内容。"),
-          groups: [],
-        },
-      },
-    ]);
-  }
-
-  return (
-    <div className="play-preset-structured-section">
-      <div className="play-preset-section-header">
-        <div>
-          <h4>{uiText("玩家视图面板")}</h4>
-          <p>
-            {uiText(
-              "把世界控制里已经定义好的玩家视图，持续显示在游玩页面。它不调用模型，也不改世界。",
-            )}
-          </p>
-        </div>
-        <button type="button" onClick={addPanel}>
-          {uiText("新增玩家视图面板")}
-        </button>
-      </div>
-      {panels.length === 0 ? (
-        <p className="play-preset-empty-copy">
-          {uiText("当前没有玩家视图面板。")}
-        </p>
-      ) : (
-        <ol
-          className="play-preset-panel-editor-list"
-          aria-label={uiText("玩家视图面板")}
-        >
-          {panels.map((panel, index) => (
-            <li key={`${panel.id}-${index}`}>
-              <article className="play-preset-player-panel-card">
-                <header>
-                  <div>
-                    <strong>{panel.config.title ?? panel.id}</strong>
-                    <span>
-                      {uiText("玩家视图")}
-                      {panel.source.view} · {mountLabel(panel.mount)}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    className="danger-button"
-                    onClick={() =>
-                      onChange(
-                        panels.filter(
-                          (_, candidateIndex) => candidateIndex !== index,
-                        ),
-                      )
-                    }
-                  >
-                    {uiText("删除面板")}
-                  </button>
-                </header>
-                <div className="play-preset-form-grid">
-                  <label>
-                    {uiText("面板标题")}
-                    <input
-                      aria-label={uiText("玩家视图面板 {index} 标题", {
-                        index: index + 1,
-                      })}
-                      value={panel.config.title ?? ""}
-                      onChange={(event) => {
-                        const title = event.currentTarget.value;
-                        updatePanel(index, (current) => {
-                          const config = { ...current.config };
-                          if (title === "") delete config.title;
-                          else config.title = title;
-                          return { ...current, config };
-                        });
-                      }}
-                    />
-                  </label>
-                  <label>
-                    {uiText("读取哪个玩家视图")}
-                    <input
-                      aria-label={uiText("玩家视图面板 {index} 视图", {
-                        index: index + 1,
-                      })}
-                      value={panel.source.view}
-                      onChange={(event) => {
-                        const view = event.currentTarget.value;
-                        updatePanel(index, (current) => ({
-                          ...current,
-                          source: {
-                            ...current.source,
-                            view,
-                          },
-                        }));
-                      }}
-                    />
-                  </label>
-                  <label>
-                    {uiText("显示位置")}
-                    <MountSelect
-                      ariaLabel={uiText("玩家视图面板 {index} 显示位置", {
-                        index: index + 1,
-                      })}
-                      value={panel.mount}
-                      onChange={(mount) => {
-                        if (mount !== "")
-                          updatePanel(index, (current) => ({
-                            ...current,
-                            mount,
-                          }));
-                      }}
-                    />
-                  </label>
-                  <label>
-                    {uiText("排列方式")}
-                    <select
-                      value={panel.config.layout}
-                      onChange={(event) => {
-                        const layout = event.currentTarget.value as
-                          "stack" | "grid";
-                        updatePanel(index, (current) => ({
-                          ...current,
-                          config: {
-                            ...current.config,
-                            layout,
-                          },
-                        }));
-                      }}
-                    >
-                      <option value="stack">{uiText("纵向排列")}</option>
-                      <option value="grid">{uiText("网格排列")}</option>
-                    </select>
-                  </label>
-                  <label>
-                    {uiText("没有内容时")}
-                    <select
-                      value={panel.config.empty}
-                      onChange={(event) => {
-                        const empty = event.currentTarget.value as
-                          "hide" | "message" | "show";
-                        updatePanel(index, (current) => ({
-                          ...current,
-                          config: {
-                            ...current.config,
-                            empty,
-                          },
-                        }));
-                      }}
-                    >
-                      <option value="hide">{uiText("隐藏面板")}</option>
-                      <option value="message">{uiText("显示说明")}</option>
-                      <option value="show">{uiText("显示空值")}</option>
-                    </select>
-                  </label>
-                  {panel.config.empty === "hide" ? null : (
-                    <label>
-                      {uiText("空内容说明")}
-                      <input
-                        value={panel.config.emptyMessage}
-                        onChange={(event) => {
-                          const emptyMessage = event.currentTarget.value;
-                          updatePanel(index, (current) => ({
-                            ...current,
-                            config: {
-                              ...current.config,
-                              emptyMessage,
-                            },
-                          }));
-                        }}
-                      />
-                    </label>
-                  )}
-                </div>
-                <details className="play-preset-advanced-card">
-                  <summary>{uiText("高级面板设置")}</summary>
-                  <div className="play-preset-form-grid">
-                    <label>
-                      {uiText("面板稳定标识")}
-                      <input
-                        value={panel.id}
-                        onChange={(event) => {
-                          const id = event.currentTarget.value;
-                          updatePanel(index, (current) => ({
-                            ...current,
-                            id,
-                          }));
-                        }}
-                      />
-                    </label>
-                    <label>
-                      {uiText("技术频道")}
-                      <input
-                        value={panel.channel}
-                        onChange={(event) => {
-                          const channel = event.currentTarget.value;
-                          updatePanel(index, (current) => ({
-                            ...current,
-                            channel,
-                          }));
-                        }}
-                      />
-                    </label>
-                    <label>
-                      {uiText("更新 key")}
-                      <input
-                        value={panel.key}
-                        onChange={(event) => {
-                          const key = event.currentTarget.value;
-                          updatePanel(index, (current) => ({
-                            ...current,
-                            key,
-                          }));
-                        }}
-                      />
-                    </label>
-                    <label>
-                      {uiText("主题标识")}
-                      <input
-                        value={panel.config.theme}
-                        onChange={(event) => {
-                          const theme = event.currentTarget.value;
-                          updatePanel(index, (current) => ({
-                            ...current,
-                            config: {
-                              ...current.config,
-                              theme,
-                            },
-                          }));
-                        }}
-                      />
-                    </label>
-                    <label>
-                      {uiText("只显示这些项目（每行一个，可留空）")}
-                      <textarea
-                        value={(panel.source.itemIds ?? []).join("\n")}
-                        onChange={(event) => {
-                          const itemIds = splitLines(event.currentTarget.value);
-                          updatePanel(index, (current) => {
-                            const source = { ...current.source };
-                            if (itemIds.length === 0) delete source.itemIds;
-                            else source.itemIds = itemIds;
-                            return { ...current, source };
-                          });
-                        }}
-                      />
-                    </label>
-                    <label>
-                      {uiText("界面模板")}
-                      <select
-                        value={panel.renderer ?? ""}
-                        onChange={(event) => {
-                          const value = event.currentTarget.value;
-                          updatePanel(index, (current) => {
-                            const next = { ...current };
-                            if (value === "") {
-                              delete next.renderer;
-                              delete next.rendererRevision;
-                              next.rendererMode = "document";
-                            } else {
-                              next.renderer = value;
-                              next.rendererRevision ??= "v1";
-                              next.rendererMode = "app";
-                            }
-                            return next;
-                          });
-                        }}
-                      >
-                        <option value="">{uiText("使用内置显示")}</option>
-                        {withCurrentPath(rendererPaths, panel.renderer).map(
-                          (path) => (
-                            <option key={path} value={path}>
-                              {path}
-                            </option>
-                          ),
-                        )}
-                      </select>
-                    </label>
-                    {panel.renderer === undefined ? null : (
-                      <>
-                        <label>
-                          {uiText("模板 revision")}
-                          <input
-                            value={panel.rendererRevision ?? ""}
-                            onChange={(event) => {
-                              const rendererRevision =
-                                event.currentTarget.value;
-                              updatePanel(index, (current) => ({
-                                ...current,
-                                rendererRevision,
-                              }));
-                            }}
-                          />
-                        </label>
-                        <label>
-                          {uiText("模板模式")}
-                          <select
-                            value={panel.rendererMode}
-                            onChange={(event) => {
-                              const rendererMode = event.currentTarget.value as
-                                "document" | "app";
-                              updatePanel(index, (current) => ({
-                                ...current,
-                                rendererMode,
-                              }));
-                            }}
-                          >
-                            <option value="document">
-                              {uiText("静态文档")}
-                            </option>
-                            <option value="app">{uiText("可交互 app")}</option>
-                          </select>
-                        </label>
-                      </>
-                    )}
-                    <label>
-                      {uiText("正则处理规则")}
-                      <select
-                        value={panel.regex ?? ""}
-                        onChange={(event) => {
-                          const value = event.currentTarget.value;
-                          updatePanel(index, (current) => {
-                            const next = { ...current };
-                            if (value === "") delete next.regex;
-                            else next.regex = value;
-                            return next;
-                          });
-                        }}
-                      >
-                        <option value="">{uiText("不使用")}</option>
-                        {withCurrentPath(regexPaths, panel.regex).map(
-                          (path) => (
-                            <option key={path} value={path}>
-                              {path}
-                            </option>
-                          ),
-                        )}
-                      </select>
-                    </label>
-                  </div>
-                  <div className="play-preset-resource-columns">
-                    <div>
-                      <h6>{uiText("脚本")}</h6>
-                      <PathChecklist
-                        ariaLabel={uiText("玩家视图面板 {index} 脚本", {
-                          index: index + 1,
-                        })}
-                        paths={scriptPaths}
-                        selected={panel.scripts ?? []}
-                        emptyText={uiText("没有脚本文件。")}
-                        onChange={(scripts) =>
-                          updatePanel(index, (current) => {
-                            const next = { ...current };
-                            if (scripts.length === 0) delete next.scripts;
-                            else next.scripts = scripts;
-                            return next;
-                          })
-                        }
-                      />
-                    </div>
-                    <div>
-                      <h6>{uiText("样式与资源")}</h6>
-                      <PathChecklist
-                        ariaLabel={uiText("玩家视图面板 {index} 资源", {
-                          index: index + 1,
-                        })}
-                        paths={assetPaths}
-                        selected={panel.assets ?? []}
-                        emptyText={uiText("没有资源文件。")}
-                        onChange={(assets) =>
-                          updatePanel(index, (current) => {
-                            const next = { ...current };
-                            if (assets.length === 0) delete next.assets;
-                            else next.assets = assets;
-                            return next;
-                          })
-                        }
-                      />
-                    </div>
-                  </div>
-                  <div className="play-preset-section-header">
-                    <div>
-                      <h6>{uiText("分组")}</h6>
-                      <p>
-                        {uiText("把已选项目按组显示；每个项目 ID 单独一行。")}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        updatePanel(index, (current) => {
-                          const used = new Set(
-                            current.config.groups.map(({ id }) => id),
-                          );
-                          let suffix = current.config.groups.length + 1;
-                          let id = `group_${suffix}`;
-                          while (used.has(id)) id = `group_${++suffix}`;
-                          return {
-                            ...current,
-                            config: {
-                              ...current.config,
-                              groups: [
-                                ...current.config.groups,
-                                { id, label: uiText("新分组"), itemIds: [] },
-                              ],
-                            },
-                          };
-                        })
-                      }
-                    >
-                      {uiText("新增分组")}
-                    </button>
-                  </div>
-                  <ol className="play-preset-group-list">
-                    {panel.config.groups.map((group, groupIndex) => (
-                      <li key={`${group.id}-${groupIndex}`}>
-                        <label>
-                          {uiText("分组标题")}
-                          <input
-                            value={group.label}
-                            onChange={(event) => {
-                              const label = event.currentTarget.value;
-                              updatePanel(index, (current) => ({
-                                ...current,
-                                config: {
-                                  ...current.config,
-                                  groups: current.config.groups.map(
-                                    (entry, candidateIndex) =>
-                                      candidateIndex === groupIndex
-                                        ? {
-                                            ...entry,
-                                            label,
-                                          }
-                                        : entry,
-                                  ),
-                                },
-                              }));
-                            }}
-                          />
-                        </label>
-                        <label>
-                          {uiText("分组标识")}
-                          <input
-                            value={group.id}
-                            onChange={(event) => {
-                              const id = event.currentTarget.value;
-                              updatePanel(index, (current) => ({
-                                ...current,
-                                config: {
-                                  ...current.config,
-                                  groups: current.config.groups.map(
-                                    (entry, candidateIndex) =>
-                                      candidateIndex === groupIndex
-                                        ? {
-                                            ...entry,
-                                            id,
-                                          }
-                                        : entry,
-                                  ),
-                                },
-                              }));
-                            }}
-                          />
-                        </label>
-                        <label>
-                          {uiText("项目 ID（每行一个）")}
-                          <textarea
-                            value={group.itemIds.join("\n")}
-                            onChange={(event) => {
-                              const itemIds = splitLines(
-                                event.currentTarget.value,
-                              );
-                              updatePanel(index, (current) => ({
-                                ...current,
-                                config: {
-                                  ...current.config,
-                                  groups: current.config.groups.map(
-                                    (entry, candidateIndex) =>
-                                      candidateIndex === groupIndex
-                                        ? {
-                                            ...entry,
-                                            itemIds,
-                                          }
-                                        : entry,
-                                  ),
-                                },
-                              }));
-                            }}
-                          />
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            updatePanel(index, (current) => ({
-                              ...current,
-                              config: {
-                                ...current.config,
-                                groups: current.config.groups.filter(
-                                  (_, candidateIndex) =>
-                                    candidateIndex !== groupIndex,
-                                ),
-                              },
-                            }))
-                          }
-                        >
-                          {uiText("删除分组")}
-                        </button>
-                      </li>
-                    ))}
-                  </ol>
-                </details>
-              </article>
-            </li>
-          ))}
-        </ol>
-      )}
-    </div>
-  );
 }
 
 function PresetFileWorkspace({
@@ -3293,120 +2621,6 @@ function PresetFileWorkspace({
       </details>
     </section>
   );
-}
-
-interface PresetFileDescription {
-  path: string;
-  title: string;
-  kind: string;
-  description: string;
-}
-
-function describePresetFile(
-  path: string,
-  contents: string,
-): PresetFileDescription {
-  if (path === "preset.yaml")
-    return {
-      path,
-      title: uiText("预设入口"),
-      kind: uiText("核心 YAML"),
-      description: uiText(
-        "连接设定完善提示、调用链、界面显示位置、玩家视图面板和扩展资源；它回答“这份预设由哪些部分组成”。",
-      ),
-    };
-  if (path === "call-chain.yaml")
-    return {
-      path,
-      title: uiText("调用链与产物"),
-      kind: uiText("核心 YAML"),
-      description: uiText(
-        "声明主响应使用哪些叙事提示、结束后有哪些后置请求，以及每个请求可以生成什么产物。",
-      ),
-    };
-  if (path === "frame.yaml")
-    return {
-      path,
-      title: uiText("主持规则顺序"),
-      kind: uiText("核心 YAML"),
-      description: uiText(
-        "决定 Runtime 机械说明、主持规则块和世界指令以什么顺序进入稳定 bootstrap。",
-      ),
-    };
-  if (path.startsWith("blocks/") && path.endsWith(".md"))
-    return {
-      path,
-      title: markdownTitle(contents),
-      kind: uiText("主持规则"),
-      description: uiText(
-        "跨世界成立的主持语义；是否发送给模型以及发送顺序由“提示内容”页控制。",
-      ),
-    };
-  if (path === defaultSettingImprovementPromptPath)
-    return {
-      path,
-      title: markdownTitle(contents),
-      kind: uiText("设定完善提示"),
-      description: uiText(
-        "约束 AI 怎样理解、规划和创作内容包；工具定义、参数与说明仍由 Runtime 内置。",
-      ),
-    };
-  if (path.startsWith("prompts/") && path.endsWith(".md"))
-    return {
-      path,
-      title: markdownTitle(contents),
-      kind: uiText("调用链提示"),
-      description: uiText(
-        "主响应或某个后置请求实际读取的 Markdown 指令；普通编辑可在“调用链”直接修改。",
-      ),
-    };
-  if (path.startsWith("renderers/"))
-    return {
-      path,
-      title: uiText("界面模板"),
-      kind: "HTML renderer",
-      description: uiText("把产物内容或玩家视图变成页面上的 HTML 结构。"),
-    };
-  if (path.startsWith("scripts/"))
-    return {
-      path,
-      title: uiText("界面交互脚本"),
-      kind: "JavaScript",
-      description: uiText(
-        "为 renderer 添加本地交互；导入预设后默认停用，只有显式信任后才执行。",
-      ),
-    };
-  if (path.startsWith("assets/"))
-    return {
-      path,
-      title: uiText("界面样式或资源"),
-      kind: uiText("扩展资源"),
-      description: uiText("供 renderer 或脚本读取的样式、文字或其他普通资源。"),
-    };
-  if (path.startsWith("regex/"))
-    return {
-      path,
-      title: uiText("产物文本处理规则"),
-      kind: "Regex YAML",
-      description: uiText("在显示前对产物正文执行有界、可预览的正则处理。"),
-    };
-  return {
-    path,
-    title: path.split("/").at(-1) ?? uiText("未命名文件"),
-    kind: uiText("普通文件"),
-    description: uiText("随玩法预设保存和导出的普通业务文件。"),
-  };
-}
-
-function splitLines(value: string): string[] {
-  return [
-    ...new Set(
-      value
-        .split(/\r?\n/u)
-        .map((line) => line.trim())
-        .filter(Boolean),
-    ),
-  ];
 }
 
 function PlayPresetArtifactPreviewPanel({

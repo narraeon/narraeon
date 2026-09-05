@@ -7,6 +7,10 @@ import {
   validCacheStrategy,
   validToolStrategy,
 } from "../prompt/PromptCompilationCodec.ts";
+import {
+  validAuthoringRequests,
+  type AuthoringRequestSnapshot,
+} from "../authoring/AuthoringRequestSnapshot.ts";
 import { randomUUID } from "node:crypto";
 import {
   link,
@@ -132,7 +136,8 @@ interface LegacySettingImprovementSession {
  * the content package current tree is the sole authoring authority.
  */
 export interface StoredSettingImprovementSession {
-  schemaVersion: 2;
+  schemaVersion: 2 | 3;
+  requests?: AuthoringRequestSnapshot[];
   sessionId: string;
   packageId: string;
   contentPackageTitle?: string;
@@ -675,9 +680,16 @@ function validateStoredSession(
         "pendingSettlement",
         "legacyDraft",
       ],
-      ["contentPackageTitle", "playPreset"],
+      ["contentPackageTitle", "playPreset", "requests"],
     ) ||
-    value.schemaVersion !== 2 ||
+    (value.schemaVersion !== 2 && value.schemaVersion !== 3) ||
+    (value.schemaVersion === 2
+      ? value.requests !== undefined
+      : !validAuthoringRequests(value.requests, validPromptCompilation, {
+          modelItems: value.modelItems,
+          activeRequestId: value.activeRequestId,
+          completedRequestIds: value.completedRequestIds,
+        })) ||
     typeof value.sessionId !== "string" ||
     typeof value.packageId !== "string" ||
     !validOptionalTitle(value.contentPackageTitle) ||

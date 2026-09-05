@@ -242,6 +242,22 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     .getByRole("button")
     .count();
   for (let i = 0; i < promptCount; i++) await mechanics.press("Alt+ArrowDown");
+  await page.getByRole("tab", { name: /设定完善/u }).click();
+  await expect(page.getByLabel("设定完善提示词编排")).toBeVisible();
+  await expect(
+    page
+      .getByLabel("设定完善提示词编排")
+      .getByText("后置请求", { exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "新增提示词", exact: true }).click();
+  await page.getByLabel("提示词名称", { exact: true }).fill("Author rule");
+  await page
+    .getByLabel("提示词正文", { exact: true })
+    .fill("ORDERED_AUTHOR_RULE");
+  await page
+    .getByRole("button", { name: "Author rule", exact: true })
+    .press("Alt+ArrowUp");
+  await page.getByRole("tab", { name: /^游玩/u }).click();
   await page.getByRole("button", { name: "保存修改", exact: true }).click();
   await page
     .getByRole("button", { name: "应用为当前玩法", exact: true })
@@ -355,6 +371,11 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await firstComposer.press("Enter");
   await expect(page.locator(".setting-conversation-assistant")).toContainText(
     "damaged character document is repaired",
+  );
+  expect(providerRequests.at(-1)).toContain("ORDERED_AUTHOR_RULE");
+  await page.locator(".setting-request-previews > summary").click();
+  await expect(page.locator(".setting-request-previews")).toContainText(
+    "不是下一次发送预览",
   );
   const repairedTurn = page.locator(".setting-conversation-turn").last();
   const repairedTrace = repairedTurn.locator(".setting-turn-trace");
@@ -1036,6 +1057,15 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   ).toBeVisible();
   await expect(page.getByText("手动编辑和 AI 共用一份修订")).toBeVisible();
   await expect(page.getByRole("button", { name: "应用并解锁" })).toHaveCount(0);
+  const previewRequestCount = providerRequests.length;
+  await page
+    .getByRole("button", { name: "预览下一条请求", exact: true })
+    .click();
+  await expect(
+    page.getByText("下一次发送候选（未发送）", { exact: true }),
+  ).toBeVisible();
+  expect(providerRequests).toHaveLength(previewRequestCount);
+  await expect(page.getByRole("button", { name: "应用并解锁" })).toHaveCount(0);
 
   responses.push(
     chatTools(
@@ -1065,6 +1095,8 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(
     page.locator(".setting-conversation-assistant").last(),
   ).toContainText("temporary world-control revision");
+  expect(providerRequests.at(-1)).toContain("ORDERED_AUTHOR_RULE");
+  expect(providerRequests.at(-1)).toContain("世界修订工具只修改持久独占");
   const worldRevisionTurn = page.locator(".setting-conversation-turn").last();
   await worldRevisionTurn.locator(".setting-turn-trace > summary").click();
   await worldRevisionTurn
@@ -1224,6 +1256,16 @@ test("世界修订复用统一编辑工作区且世界管理可以纵向滚动",
   ).toBeVisible();
 
   await expect(page.getByRole("button", { name: "应用并解锁" })).toHaveCount(0);
+  const previewRequestCount = providerRequests.length;
+  await page
+    .getByRole("button", { name: "预览下一条请求", exact: true })
+    .click();
+  await expect(
+    page.getByText("下一次发送候选（未发送）", { exact: true }),
+  ).toBeVisible();
+  expect(providerRequests).toHaveLength(previewRequestCount);
+  await expect(page.getByRole("button", { name: "应用并解锁" })).toHaveCount(0);
+
   await page
     .getByRole("navigation", { name: "世界修订工具" })
     .getByRole("button", { name: "编辑", exact: true })

@@ -389,6 +389,11 @@ export class V1Runtime {
           base64: exported.archive.toString("base64"),
         };
       }
+      case "setting-improvement.preview":
+        return this.#settingImprovements.preview(
+          request.packageId,
+          request.sessionId,
+        );
       case "setting-improvement.read":
         return this.#settingImprovements.read(request.packageId);
       case "setting-improvement.status":
@@ -457,7 +462,22 @@ export class V1Runtime {
                 request.presetId,
                 request.revision,
               );
-        return buildPlayPresetWorkbenchSnapshot(binding);
+        if (request.worldId === undefined)
+          return buildPlayPresetWorkbenchSnapshot(
+            binding,
+            undefined,
+            request.draft,
+          );
+        const head = await this.#worlds.currentHead(request.worldId);
+        const playerViews = await this.#worlds.renderPlayerViewsAtHead(
+          request.worldId,
+          head,
+        );
+        return buildPlayPresetWorkbenchSnapshot(
+          binding,
+          { worldId: request.worldId, head, playerViews },
+          request.draft,
+        );
       }
       case "prompt.preview": {
         const [package_, connection, playPreset] = await Promise.all([
@@ -638,6 +658,8 @@ export class V1Runtime {
         return this.#worldRevisionCall(() =>
           this.#worldRevisions.overview(request.worldId),
         );
+      case "world.revision.preview":
+        return this.#worldRevisions.preview(request.worldId, request.sessionId);
       case "world.revision.status":
         return this.#worldRevisionCall(() =>
           this.#worldRevisions.status(request.worldId, request.sessionId),

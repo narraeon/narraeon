@@ -26,6 +26,7 @@ import {
   simulateArtifactProjection,
 } from "../../src/runtime/play/PlayPresetWorkbench.ts";
 import { firstPartyActionChoicesPresetFiles } from "../../src/shared/first-party-action-choices.ts";
+import { firstPartyStatusPanelPresetFilesForLocale } from "../../src/shared/first-party-player-view.ts";
 import { firstPartyGenericPanelsPresetFiles } from "../../src/shared/first-party-generic-panels.ts";
 import {
   defaultSettingImprovementPrompt,
@@ -306,6 +307,89 @@ describe("文件原生玩法预设", () => {
       files: rendererOnly,
     });
     expect(inlineRenderer.preset.scriptsEnabled).toBe(false);
+  });
+
+  test("纯界面工作台预览读取所选世界的玩家视图且沿用脚本设置", async () => {
+    const root = await mkdtemp(join(tmpdir(), "narraeon-interface-preview-"));
+    roots.push(root);
+    const store = new FileNativePlayPresetStore(root);
+    await store.initialize();
+    const created = await store.create(
+      "状态栏",
+      firstPartyStatusPanelPresetFilesForLocale("zh-CN"),
+    );
+    const context = {
+      worldId: "world-preview",
+      head: "commit:2",
+      playerViews: {
+        views: [
+          {
+            id: "status",
+            title: "状态",
+            items: [{ id: "clothes", label: "衣着", value: "蓝色外套" }],
+          },
+        ],
+        diagnostics: [],
+      },
+    };
+    const binding = await store.bindRevision(
+      created.preset.id,
+      created.preset.revision,
+    );
+    const snapshot = buildPlayPresetWorkbenchSnapshot(binding, context);
+    const draftStructure = toPlayPresetStructuredEditor(binding.definition);
+    draftStructure.playerViewPanels[0]!.config.title = "未保存标题";
+    draftStructure.playerViewPanels[0]!.mount = "composer_above";
+    const draftFiles = {
+      ...binding.files,
+      "assets/player-view-status.css": "body { color: purple; }",
+    };
+    const draftPreview = buildPlayPresetWorkbenchSnapshot(binding, context, {
+      files: draftFiles,
+      structure: draftStructure,
+    });
+    expect(draftPreview.playerViewPreview?.panels[0]).toMatchObject({
+      payload: { title: "未保存标题" },
+      frontend: {
+        mount: "composer_above",
+        renderer: {
+          assets: [
+            {
+              id: "assets/player-view-status.css",
+              source: "body { color: purple; }",
+            },
+          ],
+        },
+      },
+    });
+    expect(
+      (await store.bindRevision(created.preset.id, created.preset.revision))
+        .files,
+    ).toEqual(binding.files);
+    expect(snapshot.artifactPreviews).toEqual([]);
+    expect(snapshot.playerViewPreview?.panels[0]).toMatchObject({
+      source: { kind: "player_view", viewId: "status" },
+      lifecycle: "current_preset",
+      payload: { items: [{ id: "clothes", value: "蓝色外套" }] },
+      frontend: {
+        mount: "sidebar",
+        renderer: { mode: "app", trustedLocalCode: true },
+      },
+    });
+    expect(
+      buildPlayPresetWorkbenchSnapshot(binding).playerViewPreview,
+    ).toBeUndefined();
+    await store.setScriptsEnabled(created.preset.id, false);
+    const disabled = buildPlayPresetWorkbenchSnapshot(
+      await store.bindRevision(created.preset.id, created.preset.revision),
+      context,
+    );
+    expect(
+      disabled.playerViewPreview?.panels[0]?.frontend.renderer?.scripts,
+    ).toEqual([]);
+    expect(
+      disabled.playerViewPreview?.panels[0]?.frontend.trustedLocalCode,
+    ).toBe(false);
   });
 
   test("工作台产物 preview 只读取冻结文件，包含 regex、renderer、投影与 clear 诊断", async () => {
@@ -1143,6 +1227,19 @@ followups:${Array.from({ length: count }, (_, index) => followup(index)).join(""
         files: { "preset.yaml": "ok", broken: 42 },
       },
       { type: "play.workbench.read", presetId: 42 },
+      { type: "play.workbench.read", worldId: 42 },
+      { type: "play.workbench.read", worldId: "" },
+      { type: "play.workbench.read", draft: { files: {} } },
+      {
+        type: "play.workbench.read",
+        presetId: "p",
+        draft: { files: { "preset.yaml": 42 } },
+      },
+      {
+        type: "play.workbench.read",
+        presetId: "p",
+        draft: { files: {}, structure: [] },
+      },
       { type: "play.workbench.read", revision: "rev-without-preset" },
       { type: "play.workbench.read", presetId: "preset-1", revision: "" },
       { type: "artifacts.debug", worldId: "world-1", operationId: 42 },
