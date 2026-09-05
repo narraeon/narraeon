@@ -451,7 +451,11 @@ function withRendererStyles(
     .filter((asset) => asset.id.endsWith(".css"))
     .map((asset) => `<style>${asset.source.replaceAll("<", "\\3c ")}</style>`)
     .join("");
-  return styles === "" ? source : injectIntoHead(source, styles, "");
+  if (styles === "") return source;
+  const headClose = /<\/head\s*>/iu.exec(source);
+  if (headClose === null) return appendBeforeBodyClose(source, styles);
+  const at = headClose.index;
+  return `${source.slice(0, at)}${styles}${source.slice(at)}`;
 }
 
 export function buildAppSrcDoc(input: {

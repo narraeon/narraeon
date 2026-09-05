@@ -132,6 +132,15 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
     await page
       .getByLabel("这次额外请求要做什么")
       .fill("Emit panel and output_2 from the settled story.");
+    await page.getByText("编辑渲染资源", { exact: true }).first().click();
+    await page
+      .getByRole("button", { name: "添加 样式与资源", exact: true })
+      .first()
+      .click();
+    await page
+      .getByLabel("样式与资源 1", { exact: true })
+      .first()
+      .fill("body { color: rgb(34, 56, 78); }");
     await page.getByRole("button", { name: "新增产物", exact: true }).click();
     await page.getByLabel("output_2 显示位置").selectOption("sidebar");
     await page.getByText("编辑渲染资源", { exact: true }).last().click();
@@ -148,6 +157,7 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
       .click();
     await page
       .getByLabel("样式与资源 1", { exact: true })
+      .last()
       .fill(
         'h2 { color: rgb(12, 34, 56); } h2::after { content: "<"; } /* </style><script data-css-escape>bad()</script> */',
       );
@@ -256,6 +266,9 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
         .frameLocator('iframe[title="output_2"]')
         .getByText("Edited renderer", { exact: true }),
     ).toBeVisible();
+    await expect(
+      panel.getByText("Saved panel at the same head", { exact: true }),
+    ).toHaveCSS("color", "rgb(34, 56, 78)");
     expect(await head()).toBe(settledHead);
     await expect(
       page
@@ -314,6 +327,7 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
       .getByRole("button", { name: "应用为当前玩法", exact: true })
       .click();
     await open();
+    await page.getByRole("button", { name: "全新上下文", exact: true }).click();
     await page
       .getByLabel("你的行动")
       .fill("Continue with saved disabled followups.");
@@ -336,6 +350,7 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
       .getByRole("button", { name: "应用为当前玩法", exact: true })
       .click();
     await open();
+    await page.getByRole("button", { name: "全新上下文", exact: true }).click();
     await page.getByLabel("你的行动").fill("Generate the system recap.");
     await page
       .getByRole("button", { name: "从全新上下文发送行动", exact: true })

@@ -276,3 +276,16 @@ test("document 与 app 都应用 CSS 资源，样式不能结束 style 注入 HT
     );
   }
 });
+
+test("仅 CSS 的作者规则位于默认样式之后", () => {
+  const html = buildDocumentSrcDoc("Hello", "text/plain", {
+    mode: "document",
+    scripts: [],
+    assets: [{ id: "assets/theme.css", source: "body { color: red; }" }],
+    trustedLocalCode: false,
+  });
+  const document = new DOMParser().parseFromString(html, "text/html");
+  const styles = document.querySelectorAll("style");
+  expect(styles).toHaveLength(2);
+  expect(styles[1]!.textContent).toBe("body { color: red; }");
+});

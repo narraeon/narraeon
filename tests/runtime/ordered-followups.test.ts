@@ -1,3 +1,4 @@
+import { buildPlayPresetWorkbenchSnapshot } from "../../src/runtime/play/PlayPresetWorkbench.ts";
 import { FileNativeArtifactStore } from "../../src/runtime/artifact/FileNativeArtifactStore.ts";
 import { ScriptedModelHost } from "../../src/runtime/model/ModelHost.ts";
 import { runPlayFollowupRequests } from "../../src/runtime/play/PlayFollowupRequests.ts";
@@ -373,4 +374,44 @@ test("系统身份实际派发并冷恢复产物；应用修改产物声明不�
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("仅样式的产物在工作台保留与生产相同资源", () => {
+  const parsed = parsePlayPresetFiles(firstPartyActionChoicesPresetFiles);
+  if (parsed.kind !== "valid") throw parsed.error;
+  const structure = toPlayPresetStructuredEditor(parsed.definition);
+  structure.followups[0]!.artifacts = [
+    {
+      ...builtinCatalog.builtinFollowupExample("en").definition.artifacts[0]!,
+      channel: "css.only",
+      assets: ["assets/only.css"],
+    },
+  ];
+  structure.extensionRefs.push("assets/only.css");
+  const files = applyPlayPresetStructuredEditor(
+    {
+      ...firstPartyActionChoicesPresetFiles,
+      "assets/only.css": "body { color: red; }",
+    },
+    structure,
+  );
+  const saved = parsePlayPresetFiles(files);
+  if (saved.kind !== "valid") throw saved.error;
+  const binding = {
+    id: "test",
+    name: "test",
+    revision: "test",
+    files,
+    definition: saved.definition,
+    scriptsEnabled: false,
+  };
+  const preview = buildPlayPresetWorkbenchSnapshot(
+    binding,
+  ).artifactPreviews.find((item) => item.requestId === "player_options")!;
+  expect(preview.renderer).toEqual({
+    mode: "document",
+    scripts: [],
+    assets: [{ id: "assets/only.css", source: "body { color: red; }" }],
+    trustedLocalCode: false,
+  });
 });

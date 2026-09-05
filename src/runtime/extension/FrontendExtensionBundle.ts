@@ -134,7 +134,7 @@ export function projectArtifactForFrontend(
           declaration.regex,
         )
       : [];
-    const renderer = resolveRenderer(declaration, frozenBinding);
+    const renderer = resolveArtifactRenderer(declaration, frozenBinding);
     const mount =
       artifact.frozenPresentation?.mount ??
       binding?.definition.mounts.find(
@@ -285,7 +285,7 @@ function declarationView(
   };
 }
 
-function resolveRenderer(
+export function resolveArtifactRenderer(
   declaration: PlayPresetArtifactDeclaration,
   binding: Pick<PlayPresetBinding, "files" | "scriptsEnabled">,
 ): FrontendExtensionRenderer | undefined {
