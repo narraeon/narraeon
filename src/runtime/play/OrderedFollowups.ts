@@ -1,4 +1,7 @@
-import { readPackageFollowups } from "../content/PackageFollowups.ts";
+import {
+  readPackageFollowups,
+  packageFollowupResources,
+} from "../content/PackageFollowups.ts";
 import type { ContentTreeFile } from "../content/ContentTreeFile.ts";
 import type { FrozenArtifactPresentation } from "./FileNativePlayPresetStore.ts";
 import type {
@@ -86,16 +89,6 @@ export function effectiveFollowupDefinitions(
       return packageSource.followups
         .filter((item) => item.enabled)
         .map(({ definition: entry, mount }) => {
-          const paths = new Set(
-            entry.artifacts.flatMap((artifact) =>
-              [
-                artifact.renderer,
-                artifact.regex,
-                ...(artifact.scripts ?? []),
-                ...(artifact.assets ?? []),
-              ].filter((path): path is string => path !== undefined),
-            ),
-          );
           return {
             definition: {
               ...entry,
@@ -107,9 +100,7 @@ export function effectiveFollowupDefinitions(
             },
             body: packageSource.files[entry.prompt.path],
             frozenResources: {
-              files: Object.fromEntries(
-                [...paths].map((path) => [path, packageSource.files[path]!]),
-              ),
+              files: packageFollowupResources(entry, packageSource.files),
               mount,
             },
           };

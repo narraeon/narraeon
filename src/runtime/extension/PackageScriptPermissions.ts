@@ -1,7 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { open, readFile, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { readPackageFollowups } from "../content/PackageFollowups.ts";
+import {
+  readPackageFollowups,
+  packageFollowupResources,
+} from "../content/PackageFollowups.ts";
 import type { ContentTreeFile } from "../content/ContentTreeFile.ts";
 
 const fileName = "package-script-permissions.json";
@@ -74,23 +77,9 @@ export class PackageScriptPermissions {
     const source = readPackageFollowups(files);
     return [
       ...new Set(
-        source.followups.map(({ definition }) => {
-          const paths = new Set(
-            definition.artifacts.flatMap((artifact) =>
-              [
-                artifact.renderer,
-                artifact.regex,
-                ...(artifact.scripts ?? []),
-                ...(artifact.assets ?? []),
-              ].filter((path): path is string => path !== undefined),
-            ),
-          );
-          return this.fingerprint(
-            Object.fromEntries(
-              [...paths].map((path) => [path, source.files[path]!]),
-            ),
-          );
-        }),
+        source.followups.map(({ definition }) =>
+          this.fingerprint(packageFollowupResources(definition, source.files)),
+        ),
       ),
     ];
   }

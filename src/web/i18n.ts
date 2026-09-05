@@ -7,6 +7,28 @@ import {
 let activeLocale: AppLocale = defaultAppLocale;
 
 const englishMessages: Record<string, string> = {
+  "后置声明无法编辑，请在文件编辑中修复后重试。":
+    "The followup declaration cannot be edited. Repair it in the file editor and try again.",
+  "主剧情完成后按此顺序生成额外内容。关闭保留提示和资源；创建世界后独立保存，后续修改需通过世界修订应用。":
+    "Generate extra content in this order after the main story. Disabling keeps prompts and resources. Created worlds keep independent copies; later changes require applying a world revision.",
+  "根据已完成的剧情，通过 artifact_emit 输出 output_1。":
+    "Use artifact_emit to emit output_1 based on the settled story.",
+  故事正文: "Story content",
+  删除请求: "Delete request",
+  新增包后置请求: "Add package followup",
+  包请求名称: "Package request name",
+  包请求提示词: "Package request prompt",
+  包请求显示位置: "Package request display location",
+  稳定请求身份: "Stable request identity",
+  产物字节上限: "Artifact byte limit",
+  内容包脚本权限: "Package script permissions",
+  "仅授权此处已保存的资源代码。导入不会授权，资源修改后需要重新授权；关闭立即停止此来源脚本，HTML 和样式仍可显示。":
+    "Authorize only the saved resource code here. Imports do not grant permission, and changed resources require authorization again. Revoking permission stops scripts from this source; HTML and styles remain visible.",
+  允许运行内容包脚本: "Allow package scripts",
+  撤销全部包脚本授权: "Revoke all package script permissions",
+  "请先保存修改，再授权资源代码。":
+    "Save your changes before authorizing resource code.",
+
   "JavaScript 仅在 app 模式且已允许脚本时运行。":
     "JavaScript runs only in app mode with scripts enabled.",
   "HTML 模板": "HTML template",

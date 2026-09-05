@@ -104,3 +104,28 @@ export function isPackageFollowupControlPath(path: string): boolean {
     )
   );
 }
+
+/** Authorization and compilation must freeze the exact same request resource closure. */
+export function packageFollowupResources(
+  definition: PlayPresetFollowupDefinition,
+  files: Record<string, string>,
+): Record<string, string> {
+  const paths = new Set(
+    definition.artifacts.flatMap((artifact) =>
+      [
+        artifact.renderer,
+        artifact.regex,
+        ...(artifact.scripts ?? []),
+        ...(artifact.assets ?? []),
+      ].filter((path): path is string => path !== undefined),
+    ),
+  );
+  return Object.fromEntries(
+    [...paths].map((path) => {
+      const source = files[path];
+      if (source === undefined)
+        throw new Error(`Missing package followup resource: ${path}`);
+      return [path, source];
+    }),
+  );
+}
