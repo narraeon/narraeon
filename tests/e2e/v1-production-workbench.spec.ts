@@ -905,6 +905,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     page.getByRole("heading", { name: /Dormitory World.*世界修订/u }),
   ).toBeVisible();
   await expect(page.getByText("手动编辑和 AI 共用一份修订")).toBeVisible();
+  await expect(page.getByRole("button", { name: "应用并解锁" })).toHaveCount(0);
 
   responses.push(
     chatTools(
@@ -1072,6 +1073,15 @@ test("世界修订复用统一编辑工作区且世界管理可以纵向滚动",
     .click();
   await expect(page.getByRole("main", { name: /世界修订/u })).toBeVisible();
   await expect(page.getByText("手动编辑和 AI 共用一份修订")).toBeVisible();
+  await page.getByRole("button", { name: "返回工作区" }).click();
+  await expect(page.getByLabel("你的行动")).toBeEnabled();
+  await page.getByRole("button", { name: "世界", exact: true }).click();
+  await page.getByRole("button", { name: "修订当前世界" }).click();
+  await expect(
+    page.getByText("浏览不会锁定世界；首次编辑或发送消息后才会锁定。"),
+  ).toBeVisible();
+
+  await expect(page.getByRole("button", { name: "应用并解锁" })).toHaveCount(0);
   await page
     .getByRole("navigation", { name: "世界修订工具" })
     .getByRole("button", { name: "编辑", exact: true })
@@ -1080,10 +1090,16 @@ test("世界修订复用统一编辑工作区且世界管理可以纵向滚动",
     name: "世界修订文件编辑",
   });
   await expect(editorRail).toBeVisible();
+  await editorRail
+    .getByRole("button", { name: "control/blocks/world.md" })
+    .click();
   const revisionEditor = editorRail.locator(".content-source-editor textarea");
   await revisionEditor.fill(
     Array.from({ length: 80 }, (_, index) => `line-${index + 1}`).join("\n"),
   );
+  await expect(
+    page.getByText("世界已锁定到这份修订；关闭页面也会保留工作树。"),
+  ).toBeVisible();
   await expectCanScrollVertically(revisionEditor);
   await editorRail.getByRole("button", { name: "放弃未保存修改" }).click();
   await editorRail.getByRole("button", { name: "收起文件面板" }).click();

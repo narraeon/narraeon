@@ -1589,6 +1589,10 @@ const worldRevisionEnglishMessages: Record<string, string> = {
   "正在应用…": "Applying…",
   应用并解锁: "Apply and unlock",
   放弃: "Discard",
+  "浏览不会锁定世界；首次编辑或发送消息后才会锁定。":
+    "Browsing does not lock the world. The first edit or message locks it.",
+  "世界已在浏览期间发生变化；请重置草稿并重新编辑。":
+    "The world changed while you were browsing. Reset the draft and edit again.",
   "世界已锁定到这份修订；关闭页面也会保留工作树。":
     "The world is locked to this revision. Closing the page still preserves the worktree.",
   "手动修改已保存到修订工作树，可以继续编辑或回滚。":

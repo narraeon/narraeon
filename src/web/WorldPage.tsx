@@ -209,6 +209,7 @@ export function WorldPage({
   const [revisionApplying, setRevisionApplying] = useState(false);
   const [revisionNow, setRevisionNow] = useState(Date.now());
   const revisionDirtyRef = useRef(false);
+  const revisionLockRequest = useRef<Promise<void> | null>(null);
   const [aiReading, setAiReading] = useState<V1PlayContextReadingView | null>(
     null,
   );
@@ -451,7 +452,7 @@ export function WorldPage({
             ? next.latest
             : current,
         );
-        if (!revisionDirtyRef.current && next.epoch !== null) {
+        if (!revisionDirtyRef.current && next.epoch?.locked === true) {
           setRevisionFiles(cloneTextFiles(next.epoch.files));
           setSavedRevisionFiles(cloneTextFiles(next.epoch.files));
         }
@@ -849,16 +850,37 @@ export function WorldPage({
     setRevisionRequestFailure(null);
     try {
       const next = await requestRuntime<V1WorldRevisionOverview>(client, {
-        type: "world.revision.open",
+        type: "world.revision.overview",
         worldId,
       });
       setRevisionOverview(next);
       setRevisionView(next.latest);
       setRevisionStartingFresh(next.latest === null);
-      if (next.epoch !== null) {
-        setRevisionFiles(cloneTextFiles(next.epoch.files));
-        setSavedRevisionFiles(cloneTextFiles(next.epoch.files));
-      }
+      const [state, control] = next.epoch?.locked
+        ? [[], []]
+        : await Promise.all([
+            requestRuntime<ContentTreeFile[]>(client, {
+              type: "world.surface.read",
+              worldId,
+              surface: "state",
+            }),
+            requestRuntime<ContentTreeFile[]>(client, {
+              type: "world.surface.read",
+              worldId,
+              surface: "control",
+            }),
+          ]);
+      const files = next.epoch?.locked
+        ? next.epoch.files
+        : [
+            ...state.map((file) => ({ ...file, path: `state/${file.path}` })),
+            ...control.map((file) => ({
+              ...file,
+              path: `control/${file.path}`,
+            })),
+          ];
+      setRevisionFiles(cloneTextFiles(files));
+      setSavedRevisionFiles(cloneTextFiles(files));
       setWorld((current) =>
         current === null
           ? null
@@ -868,7 +890,11 @@ export function WorldPage({
             },
       );
       setRevisionNotice(
-        uiText("世界已锁定到这份修订；关闭页面也会保留工作树。"),
+        uiText(
+          next.epoch?.locked
+            ? "世界已锁定到这份修订；关闭页面也会保留工作树。"
+            : "浏览不会锁定世界；首次编辑或发送消息后才会锁定。",
+        ),
       );
     } catch (reason: unknown) {
       setDialog(null);
@@ -878,18 +904,58 @@ export function WorldPage({
     }
   }
 
-  async function saveRevisionFiles(): Promise<void> {
-    const epoch = revisionOverview?.epoch;
+  function changeRevisionFiles(files: ContentTreeFile[]): void {
+    setRevisionFiles(files);
     if (
-      epoch === null ||
-      epoch === undefined ||
-      !epoch.locked ||
-      !revisionDirty
+      sameTextFiles(savedRevisionFiles, files) ||
+      activeRevisionEpoch?.locked ||
+      revisionLockRequest.current !== null
     )
       return;
     setRevisionLoading(true);
     setRevisionRequestFailure(null);
+    revisionLockRequest.current = (async () => {
+      try {
+        const next = await requestRuntime<V1WorldRevisionOverview>(client, {
+          type: "world.revision.open",
+          worldId,
+        });
+        setRevisionOverview(next);
+        setWorld((current) =>
+          current === null
+            ? null
+            : {
+                ...current,
+                worldRevision: next.epoch?.locked ? next.epoch : null,
+              },
+        );
+        setRevisionNotice(
+          uiText("世界已锁定到这份修订；关闭页面也会保留工作树。"),
+        );
+      } catch (reason: unknown) {
+        setRevisionRequestFailure(errorMessage(reason));
+      } finally {
+        revisionLockRequest.current = null;
+        setRevisionLoading(false);
+      }
+    })();
+  }
+
+  async function saveRevisionFiles(): Promise<void> {
+    const epoch = revisionOverview?.epoch;
+    if (!revisionDirty) return;
+    if (!epoch?.locked) {
+      changeRevisionFiles(revisionFiles);
+      return;
+    }
+    setRevisionLoading(true);
+    setRevisionRequestFailure(null);
     try {
+      if (!sameTextFiles(savedRevisionFiles, epoch.files)) {
+        throw new Error(
+          uiText("世界已在浏览期间发生变化；请重置草稿并重新编辑。"),
+        );
+      }
       const next = await requestRuntime<V1WorldRevisionOverview>(client, {
         type: "world.revision.files.replace",
         worldId,
@@ -907,7 +973,6 @@ export function WorldPage({
       );
     } catch (reason: unknown) {
       setRevisionRequestFailure(errorMessage(reason));
-      throw reason;
     } finally {
       setRevisionLoading(false);
     }
@@ -1274,7 +1339,7 @@ export function WorldPage({
     );
 
   if (dialog === "revision") {
-    const epoch = revisionOverview?.epoch ?? activeRevisionEpoch;
+    const epoch = activeRevisionEpoch;
     const panelView: SettingImprovementView | null =
       revisionStartingFresh || revisionView === null
         ? null
@@ -1310,20 +1375,25 @@ export function WorldPage({
             (epoch?.diagnostics.length ?? 0) === 0 ? "usable" : "needs_repair",
           issues: epoch?.diagnostics ?? [],
           immutablePaths:
-            epoch?.files
+            (epoch?.files ?? savedRevisionFiles)
               .filter(
                 ({ path }) =>
                   path.startsWith("state/") &&
-                  !epoch.diff.some(
+                  !epoch?.diff.some(
                     (change) =>
                       change.path === path && change.kind === "create",
                   ),
               )
               .map(({ path }) => path) ?? [],
           dirty: revisionDirty,
-          onFilesChange: setRevisionFiles,
+          onFilesChange: changeRevisionFiles,
           onSave: () => void saveRevisionFiles(),
-          onReset: () => setRevisionFiles(cloneTextFiles(savedRevisionFiles)),
+          onReset: () => {
+            const files = epoch?.files ?? savedRevisionFiles;
+            setRevisionFiles(cloneTextFiles(files));
+            setSavedRevisionFiles(cloneTextFiles(files));
+            setRevisionRequestFailure(null);
+          },
           onCopy: () => undefined,
           onExport: () => undefined,
           onDelete: () => undefined,
@@ -1346,13 +1416,18 @@ export function WorldPage({
           setRevisionRequestFailure(null);
           void refreshWorld(false);
         }}
-        {...(epoch?.locked === true
+        {...(epoch?.locked === true ||
+        (revisionOverview?.sealedEpochs.length ?? 0) > 0
           ? {
               revisionActions: {
-                changedFileCount: epoch.diff.length,
-                canApply: modelConfigured && epoch.diagnostics.length === 0,
+                active: epoch?.locked === true,
+                changedFileCount: epoch?.diff.length ?? 0,
+                canApply:
+                  epoch?.locked === true &&
+                  modelConfigured &&
+                  epoch.diagnostics.length === 0,
                 applying: revisionApplying,
-                changes: epoch.changes,
+                changes: epoch?.changes ?? [],
                 sealedEpochs: revisionOverview?.sealedEpochs ?? [],
                 onApply: applyRevision,
                 onDiscard: discardRevision,
@@ -2736,10 +2811,11 @@ function sameTextFiles(
   left: readonly ContentTreeFile[],
   right: readonly ContentTreeFile[],
 ): boolean {
+  const byPath = new Map(right.map((file) => [file.path, file]));
   return (
     left.length === right.length &&
-    left.every((file, index) => {
-      const candidate = right[index];
+    left.every((file) => {
+      const candidate = byPath.get(file.path);
       return (
         candidate?.path === file.path &&
         candidate.contents === file.contents &&

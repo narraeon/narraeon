@@ -335,6 +335,14 @@ describe("世界游玩页面", () => {
             state: original,
             worldRevision: opened && !applied ? epoch : null,
           } as T);
+        if (request.type === "world.surface.read")
+          return Promise.resolve(
+            (request.surface === "state"
+              ? original
+              : request.surface === "control"
+                ? worldView(chain).control
+                : {}) as T,
+          );
         if (request.type === "artifacts.debug") return Promise.resolve([] as T);
         if (request.type === "world.revision.open") {
           opened = true;
@@ -350,7 +358,10 @@ describe("世界游玩页面", () => {
         }
         if (request.type === "world.revision.overview")
           return Promise.resolve(
-            worldRevisionOverview(epoch, sealedEpochs) as T,
+            worldRevisionOverview(
+              opened || applied ? epoch : null,
+              sealedEpochs,
+            ) as T,
           );
         if (request.type === "world.revision.files.replace") {
           const before = epoch.files.find(
@@ -431,6 +442,58 @@ describe("世界游玩页面", () => {
     expect(screen.getByText("手动编辑和 AI 共用一份修订")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "手动修正" })).toBeNull();
 
+    expect(
+      client.request.mock.calls.some(
+        ([request]) => request.type === "world.revision.open",
+      ),
+    ).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "返回工作区" }));
+    await screen.findByRole("heading", { name: "宿舍世界" });
+    expect(
+      screen.getByLabelText<HTMLTextAreaElement>("你的行动").disabled,
+    ).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "世界" }));
+    fireEvent.click(screen.getByRole("button", { name: "修订当前世界" }));
+    await screen.findByRole("heading", { name: /宿舍世界.*世界修订/u });
+    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+    expect(
+      screen.getByRole<HTMLButtonElement>("button", { name: "从草稿移除" })
+        .disabled,
+    ).toBe(true);
+    expect(screen.getByLabelText<HTMLInputElement>("文件路径").disabled).toBe(
+      true,
+    );
+    fireEvent.change(
+      screen.getByLabelText("编辑 state/current-situation.yaml"),
+      {
+        target: { value: original[0]!.contents },
+      },
+    );
+    expect(
+      client.request.mock.calls.some(
+        ([request]) => request.type === "world.revision.open",
+      ),
+    ).toBe(false);
+    fireEvent.change(
+      screen.getByLabelText("编辑 state/current-situation.yaml"),
+      {
+        target: {
+          value: original[0]!.contents.replace(
+            "Alex正在整理球衣",
+            "Alex正在浴室门边整理球衣",
+          ),
+        },
+      },
+    );
+    await screen.findByText("世界已锁定到这份修订；关闭页面也会保留工作树。");
+    expect(screen.getByText("有未保存修改")).toBeTruthy();
+    expect(
+      screen.getByRole<HTMLButtonElement>("button", { name: "应用并解锁" })
+        .disabled,
+    ).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "保存到修订" }));
+    expect(await screen.findByText("手动编辑")).toBeTruthy();
+    expect(screen.getByText("修订记录")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "返回工作区" }));
     expect(
       await screen.findByText(/世界正在修订，游玩和其他世界修改已锁定/u),
@@ -460,33 +523,6 @@ describe("世界游玩页面", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "继续修订" }));
     await screen.findByRole("heading", { name: /宿舍世界.*世界修订/u });
-    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
-    expect(
-      screen.getByRole<HTMLButtonElement>("button", { name: "从草稿移除" })
-        .disabled,
-    ).toBe(true);
-    expect(screen.getByLabelText<HTMLInputElement>("文件路径").disabled).toBe(
-      true,
-    );
-    fireEvent.change(
-      screen.getByLabelText("编辑 state/current-situation.yaml"),
-      {
-        target: {
-          value: original[0]!.contents.replace(
-            "Alex正在整理球衣",
-            "Alex正在浴室门边整理球衣",
-          ),
-        },
-      },
-    );
-    expect(screen.getByText("有未保存修改")).toBeTruthy();
-    expect(
-      screen.getByRole<HTMLButtonElement>("button", { name: "应用并解锁" })
-        .disabled,
-    ).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "保存到修订" }));
-    expect(await screen.findByText("手动编辑")).toBeTruthy();
-    expect(screen.getByText("修订记录")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "应用并解锁" }));
     expect(
       await screen.findByText(
@@ -2409,7 +2445,7 @@ function worldRevisionEpoch(
 }
 
 function worldRevisionOverview(
-  epoch: V1WorldRevisionEpochView,
+  epoch: V1WorldRevisionEpochView | null,
   sealedEpochs: V1WorldRevisionSealedEpochView[] = [],
 ): V1WorldRevisionOverview {
   return { epoch, sealedEpochs, latest: null, history: [] };

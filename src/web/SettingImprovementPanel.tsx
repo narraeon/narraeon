@@ -47,6 +47,7 @@ interface SettingImprovementPanelProps {
   onConfigureModel: () => void;
   onBack: () => void;
   revisionActions?: {
+    active?: boolean;
     changedFileCount: number;
     canApply: boolean;
     applying: boolean;
@@ -268,7 +269,12 @@ export function SettingImprovementPanel({
             <button
               type="button"
               className="danger-button"
-              disabled={interactionLocked || hasUnsavedFileDraft}
+              disabled={
+                loading ||
+                interactionLocked ||
+                hasUnsavedFileDraft ||
+                revisionActions.active === false
+              }
               onClick={() => void revisionActions.onDiscard()}
             >
               {uiText("放弃")}
