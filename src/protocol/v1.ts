@@ -431,6 +431,17 @@ export interface V1PlayContextReadingView {
   worldId: string;
   worldHead: string;
   currentContext: {
+    promptHistory?: {
+      exchange: number;
+      head: string;
+      playPreset: V1PlayCallChainContextView["playPreset"];
+      bootstrap: Pick<
+        V1SettingPromptPreview["compilation"],
+        "logicalMessages" | "coverage"
+      >;
+    }[];
+    requestExchange?: number;
+    requestHead?: string;
     prefixDiagnostics?: WorldPromptPrefixComparison;
     chainId: string;
     baselineHead: string;
@@ -456,6 +467,7 @@ export interface V1PlayContextReadingView {
     }[];
   } | null;
   nextFreshContext: {
+    contextMode?: "append" | "fresh";
     prefixDiagnostics?: WorldPromptPrefixComparison;
     head: string;
     preview: V1SettingPromptPreview;

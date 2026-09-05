@@ -63,6 +63,637 @@ afterEach(async () => {
   );
 });
 
+test.each([
+  "chat_completions",
+  "anthropic_messages",
+  "openai_responses",
+] as const)(
+  "%s 的新发送更换提示并保留真实编码中的原生续传",
+  async (provider) => {
+    const { worlds, worldId } = await createWorld(`live-native-${provider}`);
+    const requests: string[] = [];
+    const original =
+      provider === "chat_completions"
+        ? {
+            role: "assistant",
+            content: "Native original.",
+            reasoning_content: "Returned reasoning",
+            provider_extension: { exact: "OPAQUE ORIGINAL" },
+          }
+        : provider === "anthropic_messages"
+          ? [
+              {
+                type: "thinking",
+                thinking: "Returned reasoning",
+                signature: "OPAQUE ORIGINAL",
+              },
+              { type: "text", text: "Native original." },
+            ]
+          : [
+              {
+                type: "reasoning",
+                id: "reasoning-1",
+                encrypted_content: "OPAQUE ORIGINAL",
+                summary: [{ type: "summary_text", text: "Returned reasoning" }],
+              },
+              {
+                type: "message",
+                id: "message-1",
+                role: "assistant",
+                content: [{ type: "output_text", text: "Native original." }],
+              },
+            ];
+    const host = new FileNativeModelHost(
+      {
+        provider,
+        baseUrl: "https://provider.invalid/v1",
+        apiKey: "secret",
+        modelId: "native-model",
+        contextWindowTokens: 64000,
+        maxOutputTokens: 2000,
+      },
+      (_url, options) => {
+        if (typeof options?.body !== "string")
+          throw new Error("Expected a JSON request body");
+        requests.push(options.body);
+        const payload =
+          provider === "chat_completions"
+            ? { choices: [{ message: original, finish_reason: "stop" }] }
+            : provider === "anthropic_messages"
+              ? {
+                  id: "response-1",
+                  type: "message",
+                  role: "assistant",
+                  content: original,
+                  stop_reason: "end_turn",
+                }
+              : { id: "response-1", status: "completed", output: original };
+        return Promise.resolve(new Response(JSON.stringify(payload)));
+      },
+    );
+    const chains = new PlayCallChain(worlds);
+    await chains.start({
+      worldId,
+      chainId: "native-chain",
+      exchangeId: "first",
+      playerText: "Native first input.",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: host.binding(),
+      modelHost: host,
+    });
+    const latest = playPreset();
+    latest.definition.playPrompts!.unshift({
+      kind: "user",
+      id: "new",
+      name: "New",
+      enabled: true,
+      body: "NATIVE UPDATED PROMPT",
+    });
+    const next = await new PlayCallChain(worlds).append({
+      worldId,
+      chainId: "native-chain",
+      exchangeId: "next",
+      playerText: "Native next input.",
+      modelHost: host,
+      resolvePrompt: () =>
+        Promise.resolve({
+          hostBinding: hostBinding(),
+          playPreset: latest,
+        }),
+    });
+    expect(next.status).toBe("ready");
+    expect(requests).toHaveLength(2);
+    expect(requests[1]).toContain("NATIVE UPDATED PROMPT");
+    expect(requests[1]).toContain("OPAQUE ORIGINAL");
+    expect(requests[1]).toContain(JSON.stringify(original).slice(1, -1));
+    const reading = await new PlayCallChain(worlds).inspectReading(
+      worldId,
+      next.parentHead,
+    );
+    expect(reading?.prefixDiagnostics?.logical?.changedSources).toContainEqual(
+      expect.objectContaining({ change: "added" }),
+    );
+    expect(reading?.prefixDiagnostics?.encoding.current?.provider).toBe(
+      provider,
+    );
+    expect(reading?.promptHistory).toHaveLength(2);
+    expect(JSON.stringify(reading?.promptHistory?.[0])).not.toContain(
+      "NATIVE UPDATED PROMPT",
+    );
+    const fresh = await chains.start({
+      worldId,
+      chainId: "native-fresh",
+      exchangeId: "fresh",
+      playerText: "Start another context.",
+      hostBinding: hostBinding(),
+      playPreset: latest,
+      modelBinding: host.binding(),
+      modelHost: host,
+    });
+    const freshReading = await new PlayCallChain(worlds).inspectReading(
+      worldId,
+      fresh.parentHead,
+    );
+    expect(freshReading?.prefixDiagnostics?.encoding.previous).toEqual(
+      reading?.prefixDiagnostics?.encoding.current,
+    );
+    expect(freshReading?.prefixDiagnostics?.logical?.previousBytes).toBe(
+      reading?.prefixDiagnostics?.logical?.currentBytes,
+    );
+  },
+);
+
+test("快照准备后进程退出不冒充已发送请求，下一次发送重新编译", async () => {
+  const { worlds, worldId } = await createWorld("prepared-live-prompt");
+  const host = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      { outcome: "response", text: "First story." },
+      { outcome: "response", text: "Next story." },
+    ],
+  });
+  const chains = new PlayCallChain(worlds);
+  const first = await chains.start({
+    worldId,
+    chainId: "prepared",
+    exchangeId: "first",
+    playerText: "Start.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: host,
+  });
+  const abandoned = playPreset();
+  abandoned.definition.playPrompts!.unshift({
+    kind: "user",
+    id: "abandoned",
+    name: "Abandoned",
+    enabled: true,
+    body: "NEVER SENT RULE",
+  });
+  process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE =
+    "after_prompt_run_prepared";
+  await expect(
+    chains.append({
+      worldId,
+      chainId: "prepared",
+      exchangeId: "abandoned",
+      playerText: "Never submitted.",
+      modelHost: host,
+      resolvePrompt: () =>
+        Promise.resolve({
+          hostBinding: hostBinding(),
+          playPreset: abandoned,
+        }),
+    }),
+  ).rejects.toThrow("after_prompt_run_prepared");
+  delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE;
+  const resumed = new PlayCallChain(worlds);
+  expect(host.requests).toHaveLength(1);
+  expect(
+    JSON.stringify(await resumed.inspectReading(worldId, first.parentHead)),
+  ).not.toContain("NEVER SENT RULE");
+  const next = await resumed.append({
+    worldId,
+    chainId: "prepared",
+    exchangeId: "next",
+    playerText: "Actually submitted.",
+    modelHost: host,
+    resolvePrompt: () =>
+      Promise.resolve({
+        hostBinding: hostBinding(),
+        playPreset: playPreset(),
+      }),
+  });
+  expect(host.requests).toHaveLength(2);
+  expect(JSON.stringify(host.requests[1])).not.toContain("NEVER SENT RULE");
+  const reading = await resumed.inspectReading(worldId, next.parentHead);
+  expect(reading?.promptHistory).toHaveLength(2);
+});
+
+test("后置定义与资源跨冷恢复完整保留，旧请求不解析新预设", async () => {
+  const { worlds, worldId, root } = await createWorld(
+    "live-followup-resources",
+  );
+  const artifacts = new FileNativeArtifactStore(root);
+  const selected = followupPlayPreset();
+  selected.files["assets/run.txt"] = "ORIGINAL RESOURCE";
+  const host = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      { outcome: "response", text: "Before followups are enabled." },
+      { outcome: "failure", message: "Rejected before generation" },
+      { outcome: "response", text: "Main story after retry." },
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "status",
+            name: "artifact_emit",
+            arguments: { output: "status_bar", payload: { hp: 7 } },
+          },
+        ],
+      },
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "options",
+            name: "artifact_emit",
+            arguments: { output: "options", payload: { first: "Wait" } },
+          },
+        ],
+      },
+    ],
+  });
+  const chains = new PlayCallChain(
+    worlds,
+    new FileNativePromptCompiler(),
+    artifacts,
+  );
+  await chains.start({
+    worldId,
+    chainId: "resources",
+    exchangeId: "first",
+    playerText: "Start.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: host,
+  });
+  const interrupted = await chains.append({
+    worldId,
+    chainId: "resources",
+    exchangeId: "second",
+    playerText: "Enable panels.",
+    modelHost: host,
+    resolvePrompt: () =>
+      Promise.resolve({
+        hostBinding: hostBinding(),
+        playPreset: selected,
+      }),
+  });
+  expect(interrupted).toMatchObject({ canRetry: true });
+  selected.files["assets/run.txt"] = "EDITED RESOURCE";
+  selected.definition.followups.length = 0;
+  const durable = await worlds.playTimeline.readCurrent(worldId);
+  expect(durable?.value.promptRuns?.[0]?.presetFiles["assets/run.txt"]).toBe(
+    "ORIGINAL RESOURCE",
+  );
+  expect(durable?.value.promptRuns?.[0]?.followups.map(({ id }) => id)).toEqual(
+    ["status", "options"],
+  );
+  const runPath = join(
+    root,
+    "worlds-file-native",
+    worldId,
+    "runtime",
+    "play-contexts",
+    createHash("sha256").update("resources").digest("hex"),
+    "prompt-runs",
+    "0000000001.json",
+  );
+  const originalRecordText = await readFile(runPath, "utf8");
+  const originalRecord = JSON.parse(originalRecordText) as {
+    run: Record<string, unknown>;
+    digest: string;
+  };
+  for (const invalid of [
+    { playPreset: {} },
+    { bootstrap: [] },
+    { tools: [null] },
+    { followups: [null] },
+    { unknownField: true },
+  ]) {
+    const record = structuredClone(originalRecord);
+    Object.assign(record.run, invalid);
+    record.digest = createHash("sha256")
+      .update(JSON.stringify(record.run))
+      .digest("hex");
+    await writeFile(runPath, JSON.stringify(record));
+    await expect(
+      new PlayCallChain(worlds).inspectWorld(worldId),
+    ).rejects.toThrow("Invalid play prompt run");
+  }
+  await writeFile(runPath, originalRecordText);
+
+  const recovered = await new PlayCallChain(
+    worlds,
+    new FileNativePromptCompiler(),
+    new FileNativeArtifactStore(root),
+  ).append({
+    worldId,
+    chainId: "resources",
+    exchangeId: "retry",
+    playerText: "",
+    modelHost: host,
+    resolvePrompt: () => {
+      throw new Error("Saved request must not resolve current configuration");
+    },
+  });
+  expect(recovered.status).toBe("ready");
+  expect(host.requests).toHaveLength(5);
+  expect(host.requests[2]!.bootstrap).toEqual(host.requests[1]!.bootstrap);
+  expect(
+    (await artifacts.readActiveProjection(worldId)).map(
+      ({ payload }) => payload,
+    ),
+  ).toEqual(expect.arrayContaining([{ hp: 7 }, { first: "Wait" }]));
+});
+
+test("下一次材料与写入授权使用新快照，历史分叉仍恢复当时提示", async () => {
+  const { worlds, worldId } = await createWorld("live-materials");
+  const host = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "patch-first",
+            name: "world_patch",
+            arguments: {
+              target: "@current-situation",
+              edits: [
+                {
+                  op: "replace",
+                  locator: { yaml: ["情况"] },
+                  value: "NEW MATERIAL VALUE",
+                },
+              ],
+            },
+          },
+        ],
+      },
+      { outcome: "response", text: "FIRST NARRATIVE ORIGINAL" },
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "patch-next",
+            name: "world_patch",
+            arguments: {
+              target: "@current-situation",
+              edits: [
+                {
+                  op: "replace",
+                  locator: { yaml: ["情况"] },
+                  value: "LATEST MATERIAL VALUE",
+                },
+              ],
+            },
+          },
+        ],
+      },
+      { outcome: "response", text: "SECOND NARRATIVE ORIGINAL" },
+    ],
+  });
+  const chains = new PlayCallChain(worlds);
+  const first = await chains.start({
+    worldId,
+    chainId: "materials",
+    exchangeId: "first",
+    playerText: "FIRST PLAYER ORIGINAL",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: host,
+  });
+  const latest = playPreset();
+  latest.revision = "material-revision";
+  latest.definition.playPrompts!.unshift({
+    kind: "user",
+    id: "material-rule",
+    name: "Material rule",
+    enabled: true,
+    body: "NEW MATERIAL RULE",
+  });
+  const second = await chains.append({
+    worldId,
+    chainId: "materials",
+    exchangeId: "second",
+    playerText: "SECOND PLAYER ORIGINAL",
+    modelHost: host,
+    resolvePrompt: () =>
+      Promise.resolve({
+        hostBinding: hostBinding(),
+        playPreset: latest,
+      }),
+  });
+  expect(second.status).toBe("ready");
+  expect(JSON.stringify(host.requests[2]!.bootstrap)).toContain(
+    "NEW MATERIAL VALUE",
+  );
+  expect(JSON.stringify(host.requests[2]!.bootstrap)).not.toContain(
+    "FIRST NARRATIVE ORIGINAL",
+  );
+  expect(JSON.stringify(host.requests[2]!.bootstrap)).not.toContain(
+    "FIRST PLAYER ORIGINAL",
+  );
+  expect(host.requests[3]!.bootstrap).toEqual(host.requests[2]!.bootstrap);
+  expect(second.events).toContainEqual(
+    expect.objectContaining({
+      kind: "tool_result",
+      callId: "patch-next",
+      ok: true,
+    }),
+  );
+  const restored = new PlayCallChain(worlds);
+  const reading = await restored.inspectReading(worldId, second.parentHead);
+  expect(JSON.stringify(reading?.bootstrap)).toContain("NEW MATERIAL VALUE");
+  expect(JSON.stringify(reading?.bootstrap)).not.toContain(
+    "LATEST MATERIAL VALUE",
+  );
+  const branch = await restored.deriveWorld({
+    operationId: "fork-live-materials",
+    sourceWorldId: worldId,
+    sourceHead: first.parentHead,
+    hostPresetId: "play-chain-host",
+  });
+  const branched = await restored.inspectWorld(branch.world.worldId);
+  const branchReading = await restored.inspectReading(
+    branch.world.worldId,
+    branched!.parentHead,
+  );
+  expect(JSON.stringify(branchReading?.bootstrap)).not.toContain(
+    "NEW MATERIAL RULE",
+  );
+  expect(branchReading?.playPreset.revision).toBe("builtin-default-v1");
+});
+
+test("工具中编辑不替换快照，拒绝后的冷重试不读取新配置", async () => {
+  const { worlds, worldId } = await createWorld("live-prompt-retry");
+  const preset = playPreset();
+  const resolvePrompt = vi.fn(() =>
+    Promise.resolve({
+      hostBinding: hostBinding(),
+      playPreset: preset,
+    }),
+  );
+  const scripted = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      { outcome: "response", text: "Initial story." },
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "read",
+            name: "context_read",
+            arguments: { ref: "@current-situation" },
+          },
+        ],
+      },
+      { outcome: "failure", message: "Rejected before generation." },
+      { outcome: "response", text: "Recovered story." },
+    ],
+  });
+  const modelHost: ModelHost = {
+    binding: () => scripted.binding(),
+    exchange: async (request, options) => {
+      const result = await scripted.exchange(request, options);
+      if (scripted.requests.length === 2)
+        preset.definition.playPrompts!.push({
+          kind: "user",
+          id: "late",
+          name: "Late",
+          enabled: true,
+          body: "EDIT DURING TOOL LOOP",
+        });
+      return result;
+    },
+  };
+  const chains = new PlayCallChain(worlds);
+  await chains.start({
+    worldId,
+    chainId: "retry",
+    exchangeId: "first",
+    playerText: "Start.",
+    hostBinding: hostBinding(),
+    playPreset: preset,
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+  const interrupted = await chains.append({
+    worldId,
+    chainId: "retry",
+    exchangeId: "second",
+    playerText: "Read.",
+    modelHost,
+    resolvePrompt,
+  });
+  expect(interrupted).toMatchObject({ status: "interrupted", canRetry: true });
+  expect(scripted.requests[2]!.bootstrap).toEqual(
+    scripted.requests[1]!.bootstrap,
+  );
+  expect(JSON.stringify(scripted.requests[2]!.bootstrap)).not.toContain(
+    "EDIT DURING TOOL LOOP",
+  );
+  expect(resolvePrompt).toHaveBeenCalledTimes(1);
+  await new PlayCallChain(worlds).append({
+    worldId,
+    chainId: "retry",
+    exchangeId: "retry-request",
+    playerText: "",
+    modelHost,
+    resolvePrompt: () => {
+      throw new Error("Recovery must not read presets");
+    },
+  });
+  expect(scripted.requests[3]!.bootstrap).toEqual(
+    scripted.requests[2]!.bootstrap,
+  );
+  expect(scripted.requests[3]!.appended).toEqual(
+    scripted.requests[2]!.appended,
+  );
+  expect(scripted.requests[3]!.appended.at(-1)).toMatchObject({
+    kind: "tool",
+    toolCallId: "read",
+  });
+});
+
+test("新的发送与空输入重编译，冷恢复保留原生对话和当轮快照", async () => {
+  const { worlds, worldId } = await createWorld("live-prompts");
+  const modelHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      { outcome: "response", text: "First exact native response." },
+      { outcome: "response", text: "Second exact native response." },
+      { outcome: "response", text: "Third exact native response." },
+    ],
+  });
+  const first = playPreset();
+  const latest = structuredClone(first);
+  latest.id = "latest-preset";
+  latest.revision = "latest-revision";
+  latest.definition.playPrompts!.splice(0, 0, {
+    kind: "user",
+    id: "live-rule",
+    name: "Live rule",
+    enabled: true,
+    body: "LATEST LIVE RULE",
+  });
+  const chains = new PlayCallChain(worlds);
+  await chains.start({
+    worldId,
+    chainId: "live-prompts",
+    exchangeId: "first",
+    playerText: "First input.",
+    hostBinding: hostBinding(),
+    playPreset: first,
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+  await chains.append({
+    worldId,
+    chainId: "live-prompts",
+    exchangeId: "second",
+    playerText: "Second input.",
+    modelHost,
+    resolvePrompt: () =>
+      Promise.resolve({
+        hostBinding: hostBinding(),
+        playPreset: latest,
+      }),
+  });
+  expect(JSON.stringify(modelHost.requests[1]!.bootstrap)).toContain(
+    "LATEST LIVE RULE",
+  );
+  expect(modelHost.requests[1]!.appended.slice(0, 3)).toEqual([
+    ...modelHost.requests[0]!.appended,
+    expect.objectContaining({
+      kind: "assistant",
+      text: "First exact native response.",
+    }),
+  ]);
+  expect(JSON.stringify(modelHost.requests[1]!.bootstrap)).not.toContain(
+    "First exact native response.",
+  );
+  const resumed = new PlayCallChain(worlds);
+  expect(await resumed.inspectWorld(worldId)).toMatchObject({
+    playPreset: { id: "latest-preset" },
+  });
+  await resumed.append({
+    worldId,
+    chainId: "live-prompts",
+    exchangeId: "third",
+    playerText: "",
+    modelHost,
+    resolvePrompt: () =>
+      Promise.resolve({
+        hostBinding: hostBinding(),
+        playPreset: first,
+      }),
+  });
+  expect(JSON.stringify(modelHost.requests[2]!.bootstrap)).not.toContain(
+    "LATEST LIVE RULE",
+  );
+  expect(modelHost.requests[2]!.appended.slice(0, -1)).toEqual(
+    modelHost.requests[1]!.appended,
+  );
+});
+
 test("推进事实先写入、当前指针尚未发布时，可按同一身份恢复而不改写事实", async () => {
   const root = await mkdtemp(join(tmpdir(), "narraeon-play-advance-pointer-"));
   roots.push(root);
@@ -4589,8 +5220,8 @@ test("后置请求的 Provider 派发和增量持续更新同一轮进度", asyn
   });
   let completed: V1PlayCallChainView | undefined;
   try {
-    await vi.waitFor(() => expect(dispatch).toBe(2));
     await followupStarted;
+    expect(dispatch).toBe(2);
     expect(await chains.inspectWorld(worldId)).toMatchObject({
       status: "running",
       activeInvocation: {
@@ -4839,6 +5470,14 @@ test("后置结算通知可读取同端点产物，失败和冷 Runtime 恢复�
   const failureGate = new Promise<void>((resolve) => {
     releaseFailure = resolve;
   });
+  let markPanelStarted!: () => void;
+  let markFailureStarted!: () => void;
+  const panelStarted = new Promise<void>((resolve) => {
+    markPanelStarted = resolve;
+  });
+  const failureStarted = new Promise<void>((resolve) => {
+    markFailureStarted = resolve;
+  });
   let calls = 0;
   const scripted = new ScriptedModelHost({
     binding: modelBinding(),
@@ -4861,8 +5500,14 @@ test("后置结算通知可读取同端点产物，失败和冷 Runtime 恢复�
     binding: () => scripted.binding(),
     exchange: async (request, options) => {
       calls += 1;
-      if (calls === 2) await panelGate;
-      if (calls === 3) await failureGate;
+      if (calls === 2) {
+        markPanelStarted();
+        await panelGate;
+      }
+      if (calls === 3) {
+        markFailureStarted();
+        await failureGate;
+      }
       return scripted.exchange(request, options);
     },
   };
@@ -4886,11 +5531,11 @@ test("后置结算通知可读取同端点产物，失败和冷 Runtime 恢复�
     modelBinding: modelBinding(),
     modelHost,
   });
-  await vi.waitFor(() => expect(calls).toBe(2));
+  await panelStarted;
   const head = await worlds.currentHead(worldId);
   expect(await artifacts.readActiveProjection(worldId)).toEqual([]);
   releasePanel();
-  await vi.waitFor(() => expect(calls).toBe(3));
+  await failureStarted;
   expect(
     (await Promise.all(changes)).some(
       (view) =>

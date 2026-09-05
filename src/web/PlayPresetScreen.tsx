@@ -672,7 +672,9 @@ export function PlayPresetScreen({
         <div className="play-preset-header-fact">
           <span>{uiText("新调用链与设定完善当前使用")}</span>
           <strong>{currentPreset?.name ?? uiText("未选择")}</strong>
-          <small>{uiText("已经开始的模型会话继续使用冻结 revision")}</small>
+          <small>
+            {uiText("游玩在下一次正常发送生效，原样重试保留旧请求")}
+          </small>
         </div>
       </header>
 
@@ -806,7 +808,7 @@ export function PlayPresetScreen({
                   <h3>{draft.name}</h3>
                   <p className="field-note">
                     revision {draft.revision}{" "}
-                    {uiText("· 修改只影响之后开始的全新上下文")}
+                    {uiText("· 游玩修改在下一次正常发送生效")}
                   </p>
                 </div>
                 <div className="play-preset-editor-badges">
