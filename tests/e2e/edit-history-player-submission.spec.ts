@@ -6,7 +6,7 @@ import type { V1Request } from "../../src/protocol/v1.ts";
 
 let provider: Server;
 let providerUrl = "";
-const responses: string[] = [];
+const responses: (string | { checkpoint: true })[] = [];
 const providerRequests: string[] = [];
 
 test.setTimeout(60_000);
@@ -34,7 +34,7 @@ test.beforeAll(async () => {
       response.writeHead(200, { "content-type": "text/event-stream" });
       response.end(
         [
-          `data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`,
+          `data: ${JSON.stringify({ choices: [{ delta: typeof text === "string" ? { content: text } : { tool_calls: [{ index: 0, id: "checkpoint-call", type: "function", function: { name: "world_checkpoint", arguments: "{}" } }] } }] })}\n\n`,
           `data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 120, completion_tokens: 20 } })}\n\n`,
           "data: [DONE]\n\n",
         ].join(""),
@@ -218,6 +218,80 @@ test("修改旧玩家提交可另存为全新上下文，创建分叉才生成�
   await expect(currentTimeline).not.toContainText(
     "Then I will go downstairs five minutes early.",
   );
+});
+
+test("检查点建议在叙事后出现，点击只选择下一条消息的新上下文", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.locator(".workspace-locale-picker select").selectOption("zh-CN");
+  await runtime(page, {
+    type: "model.save",
+    connection: {
+      name: "Checkpoint fixture",
+      presetId: "custom",
+      provider: "chat_completions",
+      baseUrl: providerUrl,
+      apiKey: "fixture-secret",
+      modelId: "checkpoint-model",
+      contextWindowTokens: 64000,
+      maxOutputTokens: 8192,
+    },
+  });
+  const package_ = await runtime<{ localId: string }>(page, {
+    type: "content.create",
+  });
+  await runtime(page, {
+    type: "content.rename",
+    packageId: package_.localId,
+    name: "Checkpoint world",
+  });
+  await runtime(page, {
+    type: "content.replace",
+    packageId: package_.localId,
+    files: contentFiles(),
+  });
+  await runtime(page, {
+    type: "world.create",
+    operationId: "checkpoint-ui-world",
+    packageId: package_.localId,
+    model: {
+      provider: "chat_completions",
+      modelId: "checkpoint-model",
+      contextWindowTokens: 64000,
+      maxOutputTokens: 8192,
+    },
+  });
+  await page.reload();
+  await page
+    .getByRole("button", { name: "打开世界：Checkpoint world", exact: true })
+    .click();
+  responses.push({ checkpoint: true }, "Alex 把整理好的书放回架上。");
+  await page.getByLabel("你的行动").fill("整理这段事情。");
+  await page
+    .getByRole("button", { name: "从全新上下文发送行动", exact: true })
+    .click();
+  await expect(page.getByText("Alex 把整理好的书放回架上。")).toBeVisible();
+  const note = page.locator(".play-checkpoint-note");
+  await expect(note).toContainText("AI 建议在此开启全新上下文");
+  const count = providerRequests.length;
+  await note.getByRole("button", { name: "下一条消息使用全新上下文" }).click();
+  await expect(page.getByLabel("你的行动")).toBeFocused();
+  await expect(
+    page.getByRole("button", { name: "从全新上下文发送行动", exact: true }),
+  ).toBeVisible();
+  expect(providerRequests).toHaveLength(count);
+  responses.push("你们走进走廊。");
+  await page.getByLabel("你的行动").fill("走进走廊。");
+  await page
+    .getByRole("button", { name: "从全新上下文发送行动", exact: true })
+    .click();
+  await expect(page.getByText("你们走进走廊。")).toBeVisible();
+  const sent = JSON.parse(providerRequests.at(-1)!) as {
+    messages: { role: string; content: unknown }[];
+  };
+  expect(JSON.stringify(sent.messages)).toContain("距上次检查点已完成 0 回合");
+  expect(sent.messages.some(({ role }) => role === "tool")).toBe(false);
 });
 
 async function runtime<T = unknown>(

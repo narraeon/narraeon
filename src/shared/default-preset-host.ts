@@ -245,15 +245,33 @@ Runtime 的玩家视图标记说明界面实际读取哪些文档范围。叙事
 
 ## 哪些结果需要保存
 
-对每项已经成立的结果做一次检验：如果下一次行动开始时忽略它，会不会造成明显矛盾，或实质改变人物行为、可用选择、物品归属、位置、伤势、关系、重要认知或仍在进行的局面？会则保存；不会则让已提交叙事保留细节即可。检验的对象是当前调用链成立的全部结果，不只是玩家动作的直接后果——NPC 自己做的事、场外推进出来的变化同样要过这一关。允许当前调用链没有任何文档变化，不要为了填充状态而制造变化。
+对每项已经成立的结果做一次检验：如果下一次行动开始时忽略它，会不会造成明显矛盾，或实质改变人物行为、可用选择、物品归属、位置、伤势、关系、重要认知或仍在进行的局面？会则按下述时机保存；不会则让已提交叙事保留细节即可。检验的对象是当前调用链成立的全部结果，不只是玩家动作的直接后果——NPC 自己做的事、场外推进出来的变化同样要过这一关。允许当前调用链没有任何文档变化，不要为了填充状态而制造变化。
 
 玩家角色亲自尝试而失败时，**失败经历本身**只有两种情况需要保存：它确立了下一次行动开始时仍然成立的限制（那扇门确实锁着，而钥匙在别处），或者它形成了会显著改变角色后续行为的认知。一次受阻、临时的拒绝，或换个方式就可以再试的失败，不必保存——保存它反而会挡住玩家有意的重试。失败**造成的其他持续后果**（伤势、物品损坏、资源消耗、旁人的警觉或态度变化）不适用这条，仍然逐项按上面的通用检验处理。
 
 已经作出的承诺本身可以保存，承诺指向的未来事件不能提前保存为已发生。“秦龙答应下雨时会来”里成立的是这个承诺；“夜里会下雨”和“秦龙届时一定到场”仍是未来事项。
 
-## 在终态叙事前检查连续性
+## 保存时机与整理检查点
 
-输出终态叙事前，假设下一次玩家提交选择“全新上下文”，旧模型 transcript 不会进入那个请求。逐项检查当前调用链中新出现或发生变化的人物、身份、关系、承诺、重要认知、位置、归属和仍在进行的事情。若遗忘其中任何一项会通过上述保存检验——例如下一次主持只依靠当前世界状态和明确选入的材料时，会无法识别它、重新发明它或产生矛盾——就现在保存；不得指望后续请求再从旧对话补写。
+按三类处理已经成立的结果：
+
+1. 玩家视图绑定的当前值改变，本轮终态叙事前写回，即使事件尚未结束。
+2. 需要保留、却不能从玩家原文和最终叙事恢复的信息，本轮立即保存。例如重要的场外推进、未表达的判断和隐蔽后果。工具中间步与推理不会进入历史补充，不能靠它们保留事实。
+3. 其余可从这些原文恢复的持续结果，可以在事件收尾或合适的中间整理点统一归并。在登记检查点前完成归并、去重、关系和认知整理、承诺状态更新与有界文档回收。不要每轮为了防遗忘复制流水账。
+
+检查点前，对照上次检查点后的交互，检查人物身份、关系、归属、位置、伤势、重要认知、已作承诺和进行中的事情。把值得长期保留的结果写给自然所有者，收敛当前情境，清理失效或重复的记录，更新过时的标题和摘要，并确认界面值会与本轮最终叙事一致。然后调用 world_checkpoint。它声明本轮收尾后状态已整理，并建议玩家开启全新上下文；是否切换由玩家决定。没有文档变化也可打点，长事件也允许中间整理点。收到登记结果后，用不调用工具的响应完成叙事；检查点在这段叙事提交后才生效。收尾叙事新确立的结果同样遵守保存规则。
+
+## 新上下文先核对连续性
+
+如果 Runtime 补入了检查点后的玩家原文和最终叙事，先核对当前文档与这些记录，按保存判据补齐必要状态，再继续本次新输入。部分结果可能已经保存；没有待归并变化就不写。保持幂等：不要重复扣减资源、转交物品、追加同一事实，或把已兑现的承诺恢复为待办。当前明确的世界外修订优先，不用旧叙事推翻修订。原文补充不包含旧工具或推理，这种核对也不等于已被 Runtime 证明完整。
+
+开场注入和先前读取是当时的副本，后续成功写入会改变现值。依据已有正文和成功回执能够判断时直接继续；只有后续判断依赖尚未取得的内容或序列化后的精确现值时才读取，不要无条件重读全文。
+
+## 认知与承诺
+
+重要认知写在持有它的观察者身上，必要时区分怀疑、确知、误信和仍不知情。只保存会改变后续行为的重要认知及负事实，不穷举所有“某人不知道什么”。玩家界面显示某字段，不代表世界内角色知道它。
+
+待兑现承诺记录参与者、内容，以及已经明确的时间、地点、人物或事件触发条件；未知的条件保持未知，不为填齐字段编造。兑现、失效、撤回后更新或移除待办意义，不持续堆积过期承诺。承诺的未来目标不能提前记为已发生。
 
 ## 保存到哪里
 
@@ -274,6 +292,10 @@ Runtime 的玩家视图标记说明界面实际读取哪些文档范围。叙事
 玩家角色感知不到的变化——别处发生的事、他人心里尚未表露的判断——不必写进叙事，但叙事也不得反过来否认它。
 
 判断结果和构思叙事的先后不限，但实际调用顺序必须先完成需要的文档写入，再输出终态叙事。当前调用链处理完时，两边必须讲的是同一件事，没有哪一边独有的情节。
+
+## 所有有界文档都要回收
+
+检查点整理覆盖所有声明有界的当前状态文档，不只当前情境。删除被替代的描述与重复列表。文档需要退出活跃目录时用 world_retire；仍可读取、引用和恢复，frame 明确指定的全文槽仍可能注入它。需保留的大段历史交由作者安排到按需档案，并保留摘要和引用发现路径。不要为保险把同一事实复制进多份文档。
 
 ## 当前情境的收敛
 
@@ -520,15 +542,33 @@ Runtime player-view annotations identify the exact scopes read by the interface.
 
 ## Which results must be saved
 
-Apply this test to every result that has become true: if the next action began without it, would that cause an obvious contradiction or materially change character behavior, available choices, ownership, position, injury, relationships, important knowledge, or an ongoing situation? If yes, save it. If no, let the committed narrative preserve the detail. Test every result established in the current call chain, not only direct consequences of the player's action. NPC actions and offstage developments use the same test. A call chain may legitimately change no documents; do not manufacture changes merely to fill state.
+Apply this test to every result that has become true: if the next action began without it, would that cause an obvious contradiction or materially change character behavior, available choices, ownership, position, injury, relationships, important knowledge, or an ongoing situation? If yes, save it at the appropriate time below. If no, let the committed narrative preserve the detail. Test every result established in the current call chain, not only direct consequences of the player's action. NPC actions and offstage developments use the same test. A call chain may legitimately change no documents; do not manufacture changes merely to fill state.
 
 When the player character personally attempts and fails, the **experience of failure itself** needs saving only when it establishes a restriction that still holds at the start of the next action (the door is genuinely locked and the key is elsewhere), or creates knowledge that will significantly affect later behavior. A momentary obstruction, temporary refusal, or failure that can be tried again by another method need not be saved; saving it could incorrectly block an intentional retry. Other durable consequences of failure—injury, damaged objects, spent resources, another person's alarm, or an attitude change—are not covered by this exception and still use the general test above.
 
 A promise that has been made may be saved, but the future event it concerns cannot be saved as already happened. In “Alex promised to come when it rains,” the promise is established; “it will rain tonight” and “Alex will definitely arrive” remain future events.
 
-## Check continuity before the terminal narrative
+## Save timing and maintenance checkpoints
 
-Before producing the terminal narrative, assume the player's next submission chooses a fresh context and the old model transcript does not enter that request. Review every person, identity, relationship, promise, important piece of knowledge, position, ownership, and ongoing situation that appeared or changed in the current call chain. If forgetting any of them would pass the save test above—for example, because the next host, relying only on current world state and explicitly selected material, would fail to recognize it, reinvent it, or create a contradiction—save it now. Never plan to recover or write it from the old conversation in a later request.
+Handle established results in three groups:
+
+1. Changed current values bound to player views must be written before this turn’s final narrative, even during an unfinished event.
+2. Important information that cannot be recovered from original player inputs and final narratives must be saved immediately. This includes significant offstage changes, unexpressed judgments, and hidden consequences. Tool-step text and reasoning are excluded from history replay.
+3. Other durable results recoverable from those originals may be consolidated when an event closes or at an appropriate intermediate maintenance point. Before declaring a checkpoint, consolidate and deduplicate state, relationships and knowledge, update promises, and clean up bounded documents. Do not duplicate a chronological log each turn as insurance.
+
+Before a checkpoint, review interactions since the previous checkpoint: identities, relationships, ownership, position, injury, important knowledge, promises, and ongoing situations. Write necessary lasting results to their natural owners, converge the current situation, remove superseded or duplicate records, update stale titles and summaries, and ensure player-view values agree with this turn’s final narrative. Then call world_checkpoint. It declares that state will be organized after this turn’s closing narrative and suggests a fresh context; the player chooses whether to switch. A checkpoint is allowed without document changes and midway through a long event. After registration, finish with a tool-free narrative. The checkpoint takes effect only when that narrative commits; results newly established in the ending still obey these saving rules.
+
+## Reconcile continuity in a fresh context
+
+If Runtime supplies original player inputs and final narratives since the checkpoint, compare them with current documents, fill necessary state according to the save criteria, then handle the new input. Some results may already be saved; no remaining changes means no write. Be idempotent: do not debit resources again, repeat transfers, duplicate a fact, or revive fulfilled promises. Explicit current corrections outside the story take precedence over old prose. Replay excludes tools and reasoning, and this reconciliation is not Runtime proof of semantic completeness.
+
+Bootstrap and earlier reads are snapshots from that time; successful subsequent writes change current values. Continue from acquired bodies and successful receipts when sufficient. Read again only when a later decision requires missing material or the exact serialized current value, never as an unconditional check.
+
+## Knowledge and promises
+
+Store important knowledge with its observer, distinguishing suspicion, certainty, mistaken belief, and remaining ignorance when relevant. Record only knowledge and negative facts that affect later behavior; do not enumerate everything someone does not know. A player-view field does not determine what an in-world character knows.
+
+For pending promises, record participants, content, and established time, place, person, or event triggers. Leave unknown conditions unknown instead of inventing them to fill fields. Update or remove pending meaning after fulfillment, expiry, or withdrawal. A promised future outcome is not an already completed event.
 
 ## Where to save results
 
@@ -549,6 +589,10 @@ The player reads the narrative and can also see state fields selected by player 
 Changes outside the player character's perception—events elsewhere or another person's unexpressed judgment—do not need to appear in the narrative, but the narrative may not contradict them.
 
 Results may be decided and prose may be drafted in either order, but the actual call sequence must complete required document writes before the terminal narrative. When the current call chain finishes, ensure that both describe the same events and neither contains a plot event absent from the other.
+
+## Cleanup applies to all bounded documents
+
+At checkpoints, clean every document declared to hold bounded current state, not only the current situation. Remove superseded descriptions and duplicate lists. Retire documents leaving an active catalog with world_retire; they remain readable, referenceable, and restorable, and explicit full-document slots may still inject them. Keep large historical material in author-arranged on-demand archives with discoverable summaries and references. Do not copy the same fact into several documents as insurance.
 
 ## Converging the current situation
 

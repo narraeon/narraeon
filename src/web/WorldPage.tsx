@@ -1266,6 +1266,10 @@ export function WorldPage({
                   items={playTimeline.items}
                   restartDisabled={pending !== null}
                   freshContextDisabled={!modelConfigured}
+                  onUseFreshContext={() => {
+                    setForceFreshContext(true);
+                    composerRef.current?.querySelector("textarea")?.focus();
+                  }}
                   onRestartFrom={(head) => void deriveWorld(head)}
                   onEditPlayer={(chainId, eventId, editedText, continuation) =>
                     void reviseEditedPlayer(
@@ -1648,12 +1652,14 @@ function PlayTimeline({
   freshContextDisabled,
   onRestartFrom,
   onEditPlayer,
+  onUseFreshContext,
 }: {
   client: WorldPageClient;
   worldId: string;
   items: readonly V1PlayTimelineItem[];
   restartDisabled: boolean;
   freshContextDisabled: boolean;
+  onUseFreshContext: () => void;
   onRestartFrom: (head: string) => void;
   onEditPlayer: (
     chainId: string,
@@ -1688,6 +1694,7 @@ function PlayTimeline({
                     onRestartFrom={onRestartFrom}
                     onEditPlayer={onEditPlayer}
                     presentation="story"
+                    onUseFreshContext={onUseFreshContext}
                   />
                 ) : null,
               )}
@@ -1718,6 +1725,7 @@ function PlayTimeline({
                           onRestartFrom={onRestartFrom}
                           onEditPlayer={onEditPlayer}
                           presentation="trace"
+                          onUseFreshContext={onUseFreshContext}
                         />
                       ))}
                     </ol>
@@ -1884,6 +1892,7 @@ function TimelineEvent({
   onRestartFrom,
   onEditPlayer,
   presentation,
+  onUseFreshContext,
 }: {
   client: WorldPageClient;
   worldId: string;
@@ -1899,6 +1908,7 @@ function TimelineEvent({
     continuation: PlayerRevisionContinuation,
   ) => void;
   presentation: "story" | "trace";
+  onUseFreshContext: () => void;
 }): React.JSX.Element {
   const [detail, setDetail] = useState<V1PlayCallChainEvent | null>(null);
   const [detailPending, setDetailPending] = useState(false);
@@ -2185,6 +2195,21 @@ function TimelineEvent({
           )}
           {responseKind === "pending" ? (
             <small>{uiText("待定输出；响应完成前不会进入故事")}</small>
+          ) : null}
+          {event.checkpoint === true &&
+          event.status === "completed" &&
+          responseKind === "narrative" ? (
+            <aside className="play-checkpoint-note">
+              <p>{uiText("AI 建议在此开启全新上下文")}</p>
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={restartDisabled || freshContextDisabled}
+                onClick={onUseFreshContext}
+              >
+                {uiText("下一条消息使用全新上下文")}
+              </button>
+            </aside>
           ) : null}
           {presentation === "trace" ? (
             diagnostics

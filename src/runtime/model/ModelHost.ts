@@ -59,6 +59,12 @@ export function equalModelHostBinding(
 
 export type ModelHostAppendItem =
   | {
+      /** A mechanical Runtime fact, separate from player originals and author prompts. */
+      kind: "runtime_notice";
+      notice: "checkpoint_rounds";
+      text: string;
+    }
+  | {
       kind: "prompt_delta";
       logicalMessages: PromptCompilation["logicalMessages"];
     }

@@ -59,6 +59,12 @@ export const defaultSettingImprovementPromptZhCN = `# 系统推荐的设定完�
 
 静态提示材料应尽量稳定；会随游玩持续改写的事实放进当前情境或其他自然承载它的世界文档。只有确实需要固定注入正文的材料才长期占用提示词位置。
 
+## 状态整理与界面时效
+
+区分当前状态、发现索引与历史经过。检查是否把无限追加的事件日志放进常驻全文槽；有必要保留长材料时，由作者安排小的常驻状态文档和大的按需档案，配好摘要、引用和 catalog。不要为了保险复制同一事实；确有不同用途时，每处只保存其职责所需的信息。明确有界的文档都要约定清理被替代描述、重复列表与过期承诺；退役文档仍可读取、引用和恢复，但另行指定的全文槽不会自动移除。
+
+通用保存判据由主持预设负责：界面绑定值改变和重要的原文外信息立即保存，其余可恢复状态在检查点前归并。世界控制只说明本世界的自然所有者、保存位置、时间粒度与文档生命周期，避免重复主持的通用流程。核对玩家视图实际绑定的时间、地点、资源等字段，让更新位置明确。软体积限制只作提示，不要求自动截断或阻止写入。
+
 ## 审计与精简
 
 审计时先按概念、再按句子检查。先列出相关目录，并用多个实际词语做字面搜索；完整读取所有可能表达同一概念的文档，在内部对应“概念—权威所有者—必要投影—实际注入位置”。合并或删除跨文档重复后，再逐句按事实、索引、作者指令、叙事文案或未来剧本分类，把内容保留在正确位置。最后结合写后覆盖报告复查共同注入位置。除非用户要求，不必把这份内部审计表完整复述出来。
@@ -111,6 +117,12 @@ Do not decide the player's action, dialogue, or inner thoughts: there is no play
 The host preset already provides cross-world rules for prose, player agency, adjudication, and state maintenance. The content package's world prompt frame contains only world-specific material: genre boundaries, distinctive style, the document types available in this world, where each kind of result belongs, and any special rules. Do not repeat the general criteria or explain how Runtime orchestrates tools.
 
 Keep static prompt material as stable as possible. Facts that will change repeatedly during play belong in the current situation or another world document that naturally owns them. Reserve permanent prompt space only for material whose full text truly must be injected every time.
+
+## State maintenance and interface freshness
+
+Distinguish current state, discovery indexes, and event history. Check whether unbounded event logs occupy always-injected full-document slots. When long material must remain, arrange small resident state documents and larger on-demand archives with summaries, references, and catalogs. Avoid insurance copies of the same fact; when several uses are necessary, each location holds only its own responsibility. Give all bounded documents a cleanup policy for superseded descriptions, duplicate lists, and expired promises. Retired documents remain readable, referenceable, and restorable; separately configured full-document slots still apply.
+
+General save criteria belong to the host preset: changed interface values and important information absent from replayable originals are saved immediately; other recoverable state is consolidated before checkpoints. World controls specify natural owners, save locations, time granularity, and document lifecycles, without duplicating general hosting procedure. Inspect actual player-view bindings for clock, location, and resources and make their update locations clear. Advisory size limits never imply automatic truncation or write rejection.
 
 ## Auditing and trimming
 

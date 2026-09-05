@@ -136,6 +136,7 @@ export interface FileNativePlayBinding {
   files: Record<string, string>;
   additionalMaterials: MaterialSelection[];
   history: Record<string, string>;
+  narrativeCheckpoint?: NarrativeCheckpoint | undefined;
 }
 
 export interface FileNativeStateChange {
@@ -191,6 +192,7 @@ export interface FileNativeRecoveredEndpoint {
     exactText: string;
   }[];
   additionalMaterials: MaterialSelection[];
+  narrativeCheckpoint?: NarrativeCheckpoint | undefined;
 }
 
 export type FileNativeDerivationOutcome =
@@ -869,6 +871,7 @@ export class FileNativeWorldStore {
           ),
           additionalMaterials: materials?.items ?? [],
           history: materializedHistoryRecord(history),
+          narrativeCheckpoint: await authorityStore.readNarrativeCheckpoint(),
         };
       });
     } catch (error: unknown) {
@@ -908,6 +911,7 @@ export class FileNativeWorldStore {
         {},
       ),
       additionalMaterials: structuredClone(endpoint.additionalMaterials),
+      narrativeCheckpoint: endpoint.narrativeCheckpoint,
       history: Object.fromEntries(
         endpoint.history.map(({ messageId, exactText }) => [
           messageId,
@@ -970,6 +974,7 @@ export class FileNativeWorldStore {
         state: recovered.state,
         history: recovered.history,
         additionalMaterials: recovered.additionalMaterials,
+        narrativeCheckpoint: recovered.narrativeCheckpoint,
       };
     } catch (error: unknown) {
       if (error instanceof FileNativeWorldCreationError) throw error;
@@ -1469,6 +1474,7 @@ export class FileNativeWorldStore {
     historyAppend: { role: "player" | "narrator"; exactText: string }[];
     nextMaterials: MaterialSelection[];
     stateChanges: FileNativeStateChange[];
+    narrativeCheckpoint?: NarrativeCheckpointDeclaration;
   }): Promise<
     Extract<
       FileNativeOperationOutcome,
@@ -1494,6 +1500,7 @@ export class FileNativeWorldStore {
     historyAppend: { role: "player" | "narrator"; exactText: string }[];
     nextMaterials: MaterialSelection[];
     stateChanges: FileNativeStateChange[];
+    narrativeCheckpoint?: NarrativeCheckpointDeclaration;
     mode: "play" | "correction" | "timeline_revision";
     timelineRevision?: FileNativeAuthorityTimelineRevision;
     operationReserved?: boolean;
@@ -1679,6 +1686,9 @@ export class FileNativeWorldStore {
             historyAppend: input.historyAppend,
             stateChanges: structuredClone(input.stateChanges),
             nextMaterials: input.nextMaterials,
+            ...(input.narrativeCheckpoint === undefined
+              ? {}
+              : { narrativeCheckpoint: input.narrativeCheckpoint }),
             ...(input.mode === "correction"
               ? {
                   correctionTargets: input.stateChanges.map(
@@ -2647,6 +2657,7 @@ function authorityCommitMatchesInput(
     stateChanges: FileNativeStateChange[];
     mode: "play" | "correction" | "timeline_revision";
     timelineRevision?: FileNativeAuthorityTimelineRevision;
+    narrativeCheckpoint?: NarrativeCheckpointDeclaration;
   },
 ): boolean {
   const stateChangesMatch =
@@ -2686,6 +2697,7 @@ function authorityCommitMatchesInput(
     stateChangesMatch &&
     isDeepStrictEqual(commit.nextAdditionalMaterials, input.nextMaterials) &&
     isDeepStrictEqual(commit.timelineRevision, input.timelineRevision) &&
+    isDeepStrictEqual(commit.narrativeCheckpoint, input.narrativeCheckpoint) &&
     isDeepStrictEqual(commit.correctionTargets, expectedCorrection) &&
     commit.corrects ===
       (input.mode === "correction" ? input.parentHead : undefined)
@@ -2982,3 +2994,7 @@ function crashAtFileNativeAuthorityEdge(edge: string): void {
     process.kill(process.pid, "SIGKILL");
   }
 }
+import type {
+  NarrativeCheckpoint,
+  NarrativeCheckpointDeclaration,
+} from "../play/PlayContinuity.ts";

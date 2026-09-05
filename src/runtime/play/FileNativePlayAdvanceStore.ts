@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import type { NarrativeCheckpointDeclaration } from "./PlayContinuity.ts";
 import {
   link,
   mkdir,
@@ -24,6 +25,7 @@ import type { PersistedCompletedToolCall } from "./FileNativePlayTimelineStore.t
 export type DurableModelHostResponse = Omit<ModelHostResponse, "diagnostics">;
 
 export interface PreparedPlayResponseSettlement {
+  narrativeCheckpoint?: NarrativeCheckpointDeclaration;
   assistantEvent: Extract<V1PlayCallChainEvent, { kind: "assistant" }>;
   trailingEvents: V1PlayCallChainEvent[];
   transcriptStart: number;

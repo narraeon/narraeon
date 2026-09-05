@@ -94,6 +94,10 @@ export interface PromptPreviewData {
   initialAppend?: {
     logical: { kind: "player"; text: string };
     provider: { role: "user"; content: string };
+    beforePlayer?: {
+      logical: unknown;
+      provider: { role: "user"; content: string };
+    };
   };
   wireRequest?: {
     provider: ModelProviderKind;
@@ -710,6 +714,15 @@ function InitialPlayerAppend({
       </div>
       <div className="provider-message-list">
         <ol>
+          {append.beforePlayer === undefined ? null : (
+            <li>
+              <header>
+                <strong>{uiText("玩家输入前的回合提示")}</strong>
+                <span>{append.beforePlayer.provider.role}</span>
+              </header>
+              <pre>{append.beforePlayer.provider.content}</pre>
+            </li>
+          )}
           <li>
             <header>
               <span>{append.logical.kind}</span>
@@ -1100,6 +1113,9 @@ function ProviderMapping({
           <span>
             {provider.messages.length} {uiText("条 bootstrap")}
             {initialAppend === undefined ? "" : uiText(" + 1 条玩家追加")}
+            {initialAppend?.beforePlayer === undefined
+              ? ""
+              : uiText(" + 1 条回合提示")}
           </span>
         </div>
         <ol>
@@ -1113,6 +1129,14 @@ function ProviderMapping({
             </li>
           ))}
         </ol>
+        {initialAppend?.beforePlayer === undefined ? null : (
+          <div className="provider-message">
+            <strong>{uiText("玩家输入前的回合提示")}</strong>
+            <ProviderContent
+              content={initialAppend.beforePlayer.provider.content}
+            />
+          </div>
+        )}
         {initialAppend === undefined ? null : (
           <>
             <div className="prompt-preview-subsection-heading">

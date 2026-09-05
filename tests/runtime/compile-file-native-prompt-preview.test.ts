@@ -65,6 +65,64 @@ views:
   expect(result.markdown).not.toContain("衣着 →");
 });
 
+test("检查点原文按消息身份去重，完整保留大段和相同文本的不同消息", () => {
+  const request = input({ playerInputPlacement: "append" });
+  const text = "  未被写入状态的细节。".repeat(20000) + "\n\n";
+  request.world.history = {
+    "message.genesis.narrator": "开场不重放",
+    "message.1.1.player": "同一句输入",
+    "message.2.1.narrator": text,
+    "message.3.1.player": "同一句输入",
+  };
+  request.world.additionalMaterials = [
+    { kind: "history_message", message: "message.2.1.narrator" },
+    { kind: "history_commit", commit: "commit:2" },
+  ];
+  const compiled = new FileNativePromptCompiler().compilePlayCallChain(
+    request,
+    builtinDefaultPlayPresetBinding(),
+  ).bootstrap;
+  const world = compiled.logicalMessages.find(
+    ({ role }) => role === "world_context",
+  )!;
+  expect(
+    world.blocks.filter(
+      ({ source }) =>
+        source === "runtime:checkpoint-history:message.2.1.narrator",
+    ),
+  ).toHaveLength(1);
+  expect(world.markdown.split(text)).toHaveLength(2);
+  expect(world.markdown.split("同一句输入")).toHaveLength(3);
+  expect(world.markdown).not.toContain("开场不重放");
+});
+
+test("真实玩法预览把回合事实放在玩家原文前，原文保持完整", () => {
+  const request = input({
+    playerInputPlacement: "append",
+    playerInput: "  我等一会儿。\n",
+  });
+  request.world.history = {
+    "message.1.1.player": "先前输入",
+    "message.2.1.narrator": "先前叙事",
+  };
+  const preview = new FileNativePromptCompiler({ locale: "zh-CN" }).preview(
+    request,
+    builtinDefaultPlayPresetBinding(),
+  );
+  expect(preview.initialAppend?.beforePlayer?.provider.content).toContain(
+    "距上次检查点已完成 1 回合",
+  );
+  expect(preview.initialAppend?.beforePlayer?.logical).toMatchObject({
+    kind: "runtime_notice",
+    notice: "checkpoint_rounds",
+  });
+  expect(preview.initialAppend?.logical.text).toBe("  我等一会儿。\n");
+  expect(preview.initialAppend?.provider.content).toBe("  我等一会儿。\n");
+  expect(JSON.stringify(preview.compilation.provider)).not.toContain(
+    "距上次检查点已完成",
+  );
+});
+
 test("主持块分别约束玩家代理权与默认叙事视角", () => {
   expect(defaultPresetHostFiles["blocks/adjudication.md"]).toContain(
     "What the player must decide",
@@ -829,6 +887,7 @@ context:
       "world_patch",
       "world_create",
       "world_retire",
+      "world_checkpoint",
       "artifact_emit",
       "artifact_clear",
     ]);

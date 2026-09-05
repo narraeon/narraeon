@@ -363,6 +363,9 @@ export class V1Runtime {
               preview.initialAppend === undefined
                 ? []
                 : [
+                    ...(preview.initialAppend.beforePlayer === undefined
+                      ? []
+                      : [preview.initialAppend.beforePlayer.logical]),
                     {
                       kind: "player" as const,
                       text: preview.initialAppend.logical.text,
@@ -603,6 +606,7 @@ export class V1Runtime {
               }),
               additionalMaterials: structuredClone(binding.additionalMaterials),
               history: structuredClone(binding.history),
+              narrativeCheckpoint: binding.narrativeCheckpoint,
             },
             playerInputPlacement: "append",
             playerInput: "",

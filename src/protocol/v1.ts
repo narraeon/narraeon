@@ -479,6 +479,8 @@ export type V1PlayCallChainEvent =
        * only for timelines written before this classification was persisted.
        */
       responseKind?: V1AssistantResponseKind;
+      /** AI checkpoint declaration made effective by this narrative commit. */
+      checkpoint?: true;
       exchange: number;
       attempt: number;
       reasoning?: string;

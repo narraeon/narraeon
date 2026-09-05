@@ -1,5 +1,13 @@
 import { parseDocument, stringify } from "yaml";
+import type { ModelHostAppendItem } from "../model/ModelHost.ts";
 import { renderPlayerViewBindings } from "../world/PlayerViewBindings.ts";
+import {
+  checkpointHistory,
+  checkpointReplayBlocks,
+  playerInputAppend,
+  isPlayerRoundMarker,
+  type NarrativeCheckpoint,
+} from "../play/PlayContinuity.ts";
 
 import type {
   ModelPromptCacheStrategy,
@@ -59,6 +67,8 @@ export interface FileNativePromptInput {
     controlFingerprint: string;
     documentSnapshot: FileNativeWorldDocumentSnapshot;
     history?: Record<string, string>;
+    narrativeCheckpoint?: NarrativeCheckpoint | undefined;
+    replayHistory?: boolean;
     additionalMaterials: MaterialSelection[];
     hostPath?: string;
   };
@@ -152,6 +162,10 @@ export interface PromptPreview {
   initialAppend?: {
     logical: { kind: "player"; text: string };
     provider: { role: "user"; content: string };
+    beforePlayer?: {
+      logical: ModelHostAppendItem;
+      provider: { role: "user"; content: string };
+    };
   };
   playPreset?: PlayPresetPreview;
   leakage: { status: "clean"; checkedFields: string[] };
@@ -251,7 +265,7 @@ const runtimeContracts: Record<
 
 A tool-free response with player-visible story text ends the model/tool loop started by the current player submission. A response that calls any tool is an intermediate step and must not contain player-visible story text; continue from the tool results, then narrate in a later tool-free response.
 
-The player's next submission may choose a fresh context; the old model transcript will not enter that request. Every world write required by the author state-maintenance criteria must be completed before the terminal narrative. Do not defer them to a later request.
+The player's next submission may choose a fresh context; the old model transcript will not enter that request. Fresh contexts include all committed original player inputs and final narratives after the last effective world_checkpoint, excluding tools, reasoning, and the opening. A checkpoint declaration takes effect only after its final narrative commits. Author instructions decide save timing.
 
 Runtime executes only real tool definitions, file validation, and authority commits. This block does not define story content, point of view, style, player agency, or state semantics.`,
   },
@@ -278,7 +292,7 @@ Runtime executes only real tool definitions, file validation, and authority comm
 
 不调用工具且包含玩家可见故事正文的响应会结束本次玩家提交触发的模型／工具循环。只要响应调用了任何工具，它就是工具中间步，不得同时输出玩家可见故事正文；先根据工具结果继续，再用一个不调用工具的后续响应完成叙事。
 
-下一次玩家提交可以选择“全新上下文”；旧模型 transcript 不会进入那个请求。凡作者状态维护判据要求保存的结果，必须在终态叙事之前完成世界写入，不得留待后续请求补写。
+下一次玩家提交可以选择“全新上下文”；旧模型 transcript 不会进入那个请求。新上下文会补入最近一次已生效 world_checkpoint 之后的全部已提交玩家原文与最终叙事，不含工具、推理和开场白。检查点登记只在其最终叙事提交后生效。具体保存时机由作者提示规定。
 
 Runtime 只执行真实工具定义、文件校验和权威提交；本段不规定故事、人称、文风、玩家代理权或状态语义。`,
   },
@@ -292,6 +306,7 @@ const playCallChainToolNames = new Set<RegisteredRuntimeToolName>([
   "world_patch",
   "world_create",
   "world_retire",
+  "world_checkpoint",
 ]);
 
 export type FileNativeToolName = RegisteredRuntimeToolName;
@@ -575,6 +590,7 @@ export class FileNativePromptCompiler {
       playPreset,
       playCompilation?.bootstrap ?? this.compileBootstrap(input),
       playCompilation,
+      this.#locale,
     );
   }
 
@@ -588,6 +604,7 @@ export class FileNativePromptCompiler {
       playPreset,
       playCompilation.bootstrap,
       playCompilation,
+      this.#locale,
     );
   }
 
@@ -663,7 +680,10 @@ export class FileNativePromptCompiler {
   private compilePlayBootstrap(
     input: FileNativePromptInput,
   ): PromptCompilation {
-    const base = this.compileBootstrap(input);
+    const base = this.compileBootstrap({
+      ...input,
+      world: { ...input.world, replayHistory: true },
+    });
     const logicalMessages = base.logicalMessages.map((message) => {
       if (message.role !== "runtime_system") return message;
       const blocks = message.blocks.filter(
@@ -968,7 +988,18 @@ function promptPreview(
   playPreset: PlayPresetBinding | undefined,
   compilation: PromptCompilation,
   playCompilation: PlayPresetCompilation | undefined,
+  locale: AppLocale = defaultAppLocale,
 ): PromptPreview {
+  const marker = playerInputAppend({
+    history: input.world.history ?? {},
+    checkpoint: input.world.narrativeCheckpoint,
+    text: input.playerInput,
+    locale,
+    checkpointAvailable:
+      playCompilation?.toolUniverse.some(
+        ({ name }) => name === "world_checkpoint",
+      ) ?? false,
+  })[0];
   const result: PromptPreview = {
     diagnosticBinding: {
       endpoint: input.endpoint.id,
@@ -989,6 +1020,17 @@ function promptPreview(
           initialAppend: {
             logical: { kind: "player", text: input.playerInput },
             provider: { role: "user", content: input.playerInput },
+            ...(isPlayerRoundMarker(marker)
+              ? {
+                  beforePlayer: {
+                    logical: marker,
+                    provider: {
+                      role: "user" as const,
+                      content: marker.text,
+                    },
+                  },
+                }
+              : {}),
           },
         }
       : {}),
@@ -1515,6 +1557,14 @@ function resolveContext(
   // happens to order them, so resolve it last and splice it back into place.
   let additionalMaterialsAt: { selected: number; coverage: number } | null =
     null;
+  const replay =
+    input.world.replayHistory === true
+      ? checkpointReplayBlocks(
+          input.world.history ?? {},
+          input.world.narrativeCheckpoint,
+          locale,
+        )
+      : [];
   for (const entry of context) {
     const slot = isRecord(entry) && isRecord(entry.slot) ? entry.slot : null;
     if (slot === null || typeof slot.kind !== "string")
@@ -1537,6 +1587,7 @@ function resolveContext(
       resolveReferenceTargets(slot, snapshot, selected, coverage, locale);
     else if (slot.kind === "catalog")
       resolveCatalog(slot, snapshot, selected, coverage, locale);
+    else if (slot.kind === "history" && replay.length > 0) continue;
     else if (slot.kind === "history")
       resolveRecentHistory(
         slot,
@@ -1580,6 +1631,38 @@ function resolveContext(
       );
   }
   assertNoOverlap(selected);
+  const bindings = renderPlayerViewBindings(snapshot, undefined, locale);
+  if (bindings.length > 0)
+    selected.push({
+      key: "runtime:player-view-bindings",
+      source: "runtime:player-view-bindings",
+      markdown: bindings,
+    });
+  if (replay.length > 0) {
+    const entries = checkpointHistory(
+      input.world.history ?? {},
+      input.world.narrativeCheckpoint,
+    );
+    selected.push(
+      ...replay.map((block, index) => ({
+        ...block,
+        key:
+          index === 0
+            ? "history:checkpoint-notice"
+            : `history_message:${entries[index - 1]![0]}`,
+      })),
+    );
+    coverage.push({
+      slot: "checkpoint_history",
+      source:
+        locale === "zh-CN"
+          ? `检查点后的 ${entries.length} 条已提交原文`
+          : `${entries.length} committed messages after checkpoint`,
+      status: "resolved",
+      complete: true,
+      continuation: null,
+    });
+  }
   if (additionalMaterialsAt !== null) {
     const withMaterials = [...selected];
     const materialCoverage: PromptCompilation["coverage"] = [];
@@ -1599,9 +1682,6 @@ function resolveContext(
     coverage.splice(additionalMaterialsAt.coverage, 0, ...materialCoverage);
   }
   const blocks = selected.map(({ source, markdown }) => ({ source, markdown }));
-  const bindings = renderPlayerViewBindings(snapshot, undefined, locale);
-  if (bindings.length > 0)
-    blocks.push({ source: "runtime:player-view-bindings", markdown: bindings });
   return blocks;
 }
 
@@ -1941,27 +2021,35 @@ function resolveAdditionalMaterials(
           : material.commit;
       const matches = Object.entries(history).filter(([key]) =>
         material.kind === "history_message"
-          ? key === ref.replace(/^@/u, "")
-          : key.startsWith(
-              ref
-                .replace(/^@?history-commit-/u, "history-message-")
-                .concat("-"),
-            ),
+          ? historyMaterialIdentity(key) === historyMaterialIdentity(ref)
+          : ref.startsWith("commit:")
+            ? historyMaterialIdentity(key).startsWith(
+                `message.${ref.slice(7)}.`,
+              )
+            : ref === "genesis"
+              ? historyMaterialIdentity(key).startsWith("message.genesis.")
+              : key.startsWith(
+                  ref
+                    .replace(/^@?history-commit-/u, "history-message-")
+                    .concat("-"),
+                ),
       );
       if (matches.length === 0)
         throw new PromptCompilationError(
           "required_slot_missing",
           `Additional history material does not exist: ${ref}`,
         );
-      const key = `${material.kind}:${ref}`;
-      if (overlappingSelection(selected, key) !== null) continue;
-      selected.push({
-        key,
-        source: `slot:additional_materials:${ref}`,
-        markdown: matches
-          .map(([key, text]) => renderHistoryMessage(key, text, locale))
-          .join("\n\n"),
-      });
+      const missing = matches.filter(
+        ([id]) => !selected.some(({ key }) => key === `history_message:${id}`),
+      );
+      if (missing.length === 0) continue;
+      selected.push(
+        ...missing.map(([id, text]) => ({
+          key: `history_message:${id}`,
+          source: `slot:additional_materials:${id}`,
+          markdown: renderHistoryMessage(id, text, locale),
+        })),
+      );
       coverage.push({
         slot: "additional_materials",
         source:
@@ -1976,6 +2064,15 @@ function resolveAdditionalMaterials(
       });
     }
   }
+}
+
+function historyMaterialIdentity(ref: string): string {
+  const value = ref.replace(/^@?(?:history-message-)?/u, "");
+  return (
+    /(?:^|\.)(message\.(?:genesis|[0-9]+)(?:\.[0-9]+)?\.(?:player|narrator))$/u.exec(
+      value,
+    )?.[1] ?? value
+  );
 }
 
 function renderHistoryMessage(
@@ -2547,7 +2644,13 @@ function readMarkdown(
 }
 
 function joinBlocks(blocks: { source: string; markdown: string }[]): string {
-  return blocks.map(({ markdown }) => markdown.trim()).join("\n\n");
+  return blocks
+    .map(({ source, markdown }) =>
+      source.startsWith("runtime:checkpoint-history:")
+        ? markdown
+        : markdown.trim(),
+    )
+    .join("\n\n");
 }
 
 function utf8Bytes(value: string): number {

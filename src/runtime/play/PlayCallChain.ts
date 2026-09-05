@@ -1,4 +1,11 @@
 import { createHash } from "node:crypto";
+import type { AppLocale } from "../../protocol/appPreferences.ts";
+import {
+  completedPlayerRounds,
+  isPlayerRoundMarker,
+  playerInputAppend,
+  type NarrativeCheckpoint,
+} from "./PlayContinuity.ts";
 import { renderFreshContextCoverage } from "../prompt/WorldMaterialCoverage.ts";
 
 import type {
@@ -75,12 +82,14 @@ const callChainToolNames = new Set([
   "world_patch",
   "world_create",
   "world_retire",
+  "world_checkpoint",
 ]);
 const projectedEventTail = 40;
 
 type CompletedToolCall = PersistedCompletedToolCall;
 
 interface PlayCallChainSession extends PersistedPlayCallChain {
+  narrativeCheckpoint?: NarrativeCheckpoint | undefined;
   documentAuthorizationCheckpoints: PersistedDocumentAuthorizationCheckpoint[];
   documents: FileNativePlayDocuments;
   history: { path: string; contents: string }[];
@@ -245,6 +254,7 @@ export class PlayCallChain {
           documentSnapshot: documents.snapshot,
           additionalMaterials: structuredClone(binding.additionalMaterials),
           history: structuredClone(binding.history),
+          narrativeCheckpoint: binding.narrativeCheckpoint,
         },
         playerInputPlacement: "append",
         playerInput: input.playerText,
@@ -300,6 +310,7 @@ export class PlayCallChain {
       updatedAt: now,
       documents,
       history: historyEntries(binding.history),
+      narrativeCheckpoint: binding.narrativeCheckpoint,
       completedToolMap: new Map(),
       persistenceCursor: {
         eventCount: 0,
@@ -857,7 +868,6 @@ export class PlayCallChain {
       sourceContext.transcript,
       prefixEvents,
     );
-    transcript.push({ kind: "player", text: request.replacementText });
     const events: V1PlayCallChainEvent[] = [
       ...prefixEvents,
       {
@@ -875,6 +885,22 @@ export class PlayCallChain {
       this.#worlds.recoverEndpoint(request.worldId, restoresHead),
       this.#worlds.bindPlayCallChain(request.worldId),
     ]);
+    transcript.push(
+      ...playerInputAppend({
+        history: Object.fromEntries(
+          selected.history.map(({ messageId, exactText }) => [
+            messageId,
+            exactText,
+          ]),
+        ),
+        checkpoint: selected.narrativeCheckpoint,
+        text: request.replacementText,
+        locale: this.#compiler.locale,
+        checkpointAvailable: sourceContext.tools.some(
+          ({ name }) => name === "world_checkpoint",
+        ),
+      }),
+    );
     if (binding.parentHead !== outcome.head)
       throw new PlayCallChainError(
         "The timeline revision was committed, but current-world materialization has not reached the new endpoint.",
@@ -1016,6 +1042,7 @@ export class PlayCallChain {
           documentSnapshot: documents.snapshot,
           additionalMaterials: structuredClone(binding.additionalMaterials),
           history: structuredClone(binding.history),
+          narrativeCheckpoint: binding.narrativeCheckpoint,
         },
         playerInputPlacement: "append",
         playerInput: request.replacementText,
@@ -1153,7 +1180,15 @@ export class PlayCallChain {
       canRetry: false,
       bootstrap: structuredClone(fresh.bootstrap),
       tools: structuredClone(fresh.tools),
-      transcript: [{ kind: "player", text: request.replacementText }],
+      transcript: playerInputAppend({
+        history: fresh.binding.history,
+        checkpoint: fresh.binding.narrativeCheckpoint,
+        text: request.replacementText,
+        locale: this.#compiler.locale,
+        checkpointAvailable: fresh.tools.some(
+          ({ name }) => name === "world_checkpoint",
+        ),
+      }),
       events: [
         {
           id: 1,
@@ -1381,7 +1416,17 @@ export class PlayCallChain {
     const exchange = session.exchange + 1;
     const nextRequest = createRequest(session, modelHost, exchange, [
       ...session.transcript,
-      { kind: "player", text: playerText },
+      ...playerInputAppend({
+        history: Object.fromEntries(
+          session.history.map(({ path, contents }) => [path, contents]),
+        ),
+        checkpoint: session.narrativeCheckpoint,
+        text: playerText,
+        locale: this.#compiler.locale,
+        checkpointAvailable: session.tools.some(
+          ({ name }) => name === "world_checkpoint",
+        ),
+      }),
     ]);
     const operationKey = `player:${exchangeId}`;
     const playerOperationId = operationId(session.chainId, operationKey);
@@ -1488,7 +1533,9 @@ export class PlayCallChain {
       );
     session.transcript = [
       ...session.transcript.slice(0, advance.transcriptStart),
-      { kind: "player", text: advance.playerText },
+      ...structuredClone(
+        advance.nextRequest.appended.slice(advance.transcriptStart),
+      ),
     ];
     session.nextEventId = advance.eventId + 1;
     session.parentHead = outcome.head;
@@ -1548,7 +1595,13 @@ export class PlayCallChain {
     const trailingEvents: V1PlayCallChainEvent[] = [];
     let nextEventId = advance.eventId + 1;
     for (const call of calls) {
-      const item = prepareTool(session, workingTools, advance.exchange, call);
+      const item = prepareTool(
+        session,
+        workingTools,
+        advance.exchange,
+        call,
+        this.#compiler.locale,
+      );
       prepared.push(item);
       trailingEvents.push({
         id: nextEventId++,
@@ -1595,6 +1648,36 @@ export class PlayCallChain {
       }
     }
     const visibleText = responseKind === "narrative";
+    const previousNarrative = session.events.findLast(
+      (event) =>
+        event.kind === "assistant" &&
+        event.committedHead !== undefined &&
+        event.responseKind === "narrative",
+    );
+    const previousPlayer = session.events.findLast(
+      (event) => event.kind === "player",
+    );
+    const checkpointRequested =
+      visibleText &&
+      session.events.some(
+        (event) =>
+          event.id >
+            Math.max(previousNarrative?.id ?? 0, previousPlayer?.id ?? 0) &&
+          event.kind === "tool_result" &&
+          event.name === "world_checkpoint" &&
+          event.ok,
+      );
+    const narrativeCheckpoint = checkpointRequested
+      ? {
+          contextId: session.chainId,
+          completedPlayerRounds: completedPlayerRounds({
+            ...Object.fromEntries(
+              session.history.map(({ path, contents }) => [path, contents]),
+            ),
+            "message.pending.narrator": text,
+          }),
+        }
+      : undefined;
     const assistantItem: Extract<ModelHostAppendItem, { kind: "assistant" }> = {
       kind: "assistant",
       text,
@@ -1624,6 +1707,7 @@ export class PlayCallChain {
       authorizationCheckpoint: session.documents.authorizationCheckpoint(),
       stateChanges: structuredClone(stateChanges),
       visibleText,
+      ...(narrativeCheckpoint === undefined ? {} : { narrativeCheckpoint }),
     };
   }
 
@@ -1672,9 +1756,20 @@ export class PlayCallChain {
           : [],
         nextMaterials: structuredClone(session.nextMaterials),
         stateChanges: structuredClone(settlement.stateChanges),
+        ...(settlement.narrativeCheckpoint === undefined
+          ? {}
+          : { narrativeCheckpoint: settlement.narrativeCheckpoint }),
       });
       committedHead = outcome.head;
       settlement.assistantEvent.committedHead = outcome.head;
+      if (settlement.narrativeCheckpoint !== undefined) {
+        settlement.assistantEvent.checkpoint = true;
+        session.narrativeCheckpoint = {
+          ...settlement.narrativeCheckpoint,
+          head: outcome.head,
+          historyMessageId: `message.${outcome.head.slice("commit:".length)}.1.narrator`,
+        };
+      }
       crashAtPlayAdvanceEdge("after_authority_accepted");
       appendCommittedHistory(session, outcome.head, outcome.historyAppend);
     }
@@ -2323,6 +2418,7 @@ export class PlayCallChain {
       nextMaterials: structuredClone(binding.additionalMaterials),
       documents,
       history: historyEntries(binding.history),
+      narrativeCheckpoint: binding.narrativeCheckpoint,
       completedToolMap: new Map(
         persisted.completedTools.map((item) => [
           item.key,
@@ -2561,6 +2657,7 @@ function prepareTool(
   working: Map<string, CompletedToolCall>,
   exchange: number,
   call: ModelHostToolCall,
+  locale: AppLocale,
 ): PreparedToolResult {
   const key = `${exchange}:${call.id}`;
   const signature = JSON.stringify(call.arguments);
@@ -2589,7 +2686,25 @@ function prepareTool(
     };
   } else {
     try {
-      result = session.documents.execute(call, session.history);
+      result =
+        call.name === "world_checkpoint"
+          ? typeof call.arguments === "object" &&
+            call.arguments !== null &&
+            !Array.isArray(call.arguments) &&
+            Object.keys(call.arguments).length === 0
+            ? {
+                ok: true,
+                markdown:
+                  locale === "zh-CN"
+                    ? "检查点已登记，将在本轮最终叙事提交后生效。玩家随后可以选择开启全新上下文。"
+                    : "Checkpoint registered. It becomes effective when this turn’s final narrative commits. The player can then choose a fresh context.",
+              }
+            : {
+                ok: false,
+                failureKind: "protocol",
+                markdown: "world_checkpoint requires an empty argument object.",
+              }
+          : session.documents.execute(call, session.history);
     } catch (error: unknown) {
       result = {
         ok: false,
@@ -2894,6 +3009,11 @@ function transcriptThroughEvents(
   let cursor = 0;
   for (const [index, event] of events.entries()) {
     if (event.kind === "player") {
+      const marker = transcript[cursor];
+      if (isPlayerRoundMarker(marker)) {
+        result.push(structuredClone(marker));
+        cursor += 1;
+      }
       const item = transcript[cursor];
       if (item?.kind !== "player" || item.text !== event.text)
         throw new PlayCallChainError(

@@ -552,6 +552,7 @@ extensions:
       "world_patch",
       "world_create",
       "world_retire",
+      "world_checkpoint",
       "artifact_emit",
       "artifact_clear",
     ]);
@@ -643,6 +644,7 @@ extensions:
       "world_patch",
       "world_create",
       "world_retire",
+      "world_checkpoint",
       "artifact_emit",
       "artifact_clear",
     ]);
@@ -797,6 +799,7 @@ extensions:
           { name: "world_patch" },
           { name: "world_create" },
           { name: "world_retire" },
+          { name: "world_checkpoint" },
         ],
       },
       initialAppend: {

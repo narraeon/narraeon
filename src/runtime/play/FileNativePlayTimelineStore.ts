@@ -1454,6 +1454,11 @@ function assertTimelineEventSummary(
 
 function validAssistantEventCore(value: Record<string, unknown>): boolean {
   return (
+    (value.checkpoint === undefined ||
+      (value.checkpoint === true &&
+        value.status === "completed" &&
+        value.responseKind === "narrative" &&
+        typeof value.committedHead === "string")) &&
     typeof value.text === "string" &&
     (value.status === "streaming" ||
       value.status === "completed" ||

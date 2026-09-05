@@ -4365,6 +4365,7 @@ summary:focus-visible {
 
 .play-call-failure,
 .play-retry-note,
+.play-checkpoint-note,
 .model-required-callout {
   display: flex;
   align-items: center;
