@@ -12,7 +12,6 @@ import type {
   V1SettingImprovementHistoryItem,
   V1SettingImprovementOverview,
   V1SettingImprovementRollbackResult,
-  V1SettingImprovementStatus,
 } from "../protocol/v1.ts";
 import { firstPartyPlayPresetTemplatesForLocale } from "../shared/first-party-play-preset-templates.ts";
 import type { RuntimeClient } from "./runtimeClient.ts";
@@ -95,6 +94,8 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const [improvementHistoryLoading, setImprovementHistoryLoading] =
     useState(false);
   const [improvementLoading, setImprovementLoading] = useState(false);
+  const [improvementObservationFailure, setImprovementObservationFailure] =
+    useState<string | null>(null);
   const [improvementRequestFailure, setImprovementRequestFailure] = useState<
     string | null
   >(null);
@@ -102,8 +103,10 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const [worldId, setWorldId] = useState("");
   const [notice, setNotice] = useState(uiText("正在读取工作区…"));
   const [localeSaving, setLocaleSaving] = useState(false);
+  const filesDirtyRef = useRef(filesDirty);
+  filesDirtyRef.current = filesDirty;
   const packageOpenRequest = useRef(0);
-  const improvementPollScope = useRef(0);
+  const improvementObservationScope = useRef(0);
   const improvementHistoryRequest = useRef(0);
   const improvementSelection = useRef<
     | string
@@ -127,115 +130,144 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     setNotice("");
   }
 
-  // Poll a lightweight status projection. Full transcripts are fetched only
-  // when durable conversation history changes; live Provider deltas overlay
-  // the currently selected conversation without resending content files.
+  const improvementObservedSessionId = improvementStartingFresh
+    ? undefined
+    : (improvementHistoryView?.sessionId ?? improvementView?.sessionId);
+
+  // SSE carries live status; durable revisions trigger transcript hydration.
   useEffect(() => {
     if (screen !== "content" || selected === "") return;
     let active = true;
-    let pollPending = false;
-    let loadedRevision = "";
-    const pollScope = improvementPollScope.current;
-    const poll = async (): Promise<void> => {
-      if (pollPending) return;
-      pollPending = true;
-      const historyRequestVersion = improvementHistoryRequest.current;
-      try {
-        const status = await client.request<V1SettingImprovementStatus>({
-          type: "setting-improvement.status",
-          packageId: selected,
-          ...(typeof improvementSelection.current === "string"
-            ? { sessionId: improvementSelection.current }
-            : {}),
-        });
-        if (
-          !active ||
-          improvementPollScope.current !== pollScope ||
-          improvementHistoryRequest.current !== historyRequestVersion
-        )
-          return;
-        if (status.revision !== loadedRevision) {
-          const next = await client.request<V1SettingImprovementOverview>({
-            type: "setting-improvement.overview",
-            packageId: selected,
-          });
+    const observationScope = improvementObservationScope.current;
+    const unsubscribe = client.observeConversation(
+      {
+        kind: "setting",
+        id: selected,
+        ...(improvementObservedSessionId === undefined
+          ? {}
+          : { sessionId: improvementObservedSessionId }),
+      },
+      async (observation, durableChanged) => {
+        if (observation.kind !== "setting") return;
+        const status = observation.value;
+        const historyRequestVersion = improvementHistoryRequest.current;
+        try {
           if (
             !active ||
-            improvementPollScope.current !== pollScope ||
+            improvementObservationScope.current !== observationScope ||
             improvementHistoryRequest.current !== historyRequestVersion
           )
             return;
-          setImprovementView(next.latest);
-          setImprovementHistory(next.history);
-          const selectedSessionId = improvementSelection.current;
-          if (
-            typeof selectedSessionId === "string" &&
-            selectedSessionId !== next.latest?.sessionId
-          ) {
-            const selectedView = await client.request<SettingImprovementView>({
-              type: "setting-improvement.session.read",
+          if (durableChanged) {
+            const next = await client.request<V1SettingImprovementOverview>({
+              type: "setting-improvement.overview",
               packageId: selected,
-              sessionId: selectedSessionId,
             });
             if (
               !active ||
-              improvementPollScope.current !== pollScope ||
+              improvementObservationScope.current !== observationScope ||
               improvementHistoryRequest.current !== historyRequestVersion
             )
               return;
-            setImprovementHistoryView(selectedView);
-          } else if (
-            typeof selectedSessionId === "object" &&
-            selectedSessionId !== null &&
-            selectedSessionId.kind === "fresh" &&
-            selectedSessionId.requestStarted &&
-            next.latest !== null &&
-            next.latest.sessionId !== selectedSessionId.previousSessionId
-          ) {
-            setImprovementHistoryView(null);
-            setImprovementStartingFresh(false);
-            improvementSelection.current = next.latest.sessionId;
-          } else if (selectedSessionId === null) {
-            setImprovementHistoryView(null);
-            if (next.latest !== null)
+            setImprovementView(next.latest);
+            setImprovementHistory(next.history);
+            const selectedSessionId = improvementSelection.current;
+            if (
+              typeof selectedSessionId === "string" &&
+              selectedSessionId !== next.latest?.sessionId
+            ) {
+              const selectedView = await client.request<SettingImprovementView>(
+                {
+                  type: "setting-improvement.session.read",
+                  packageId: selected,
+                  sessionId: selectedSessionId,
+                },
+              );
+              if (
+                !active ||
+                improvementObservationScope.current !== observationScope ||
+                improvementHistoryRequest.current !== historyRequestVersion
+              )
+                return;
+              setImprovementHistoryView(selectedView);
+            } else if (
+              typeof selectedSessionId === "object" &&
+              selectedSessionId !== null &&
+              selectedSessionId.kind === "fresh" &&
+              selectedSessionId.requestStarted &&
+              next.latest !== null &&
+              next.latest.sessionId !== selectedSessionId.previousSessionId
+            ) {
+              setImprovementHistoryView(null);
+              setImprovementStartingFresh(false);
               improvementSelection.current = next.latest.sessionId;
+            } else if (selectedSessionId === null) {
+              setImprovementHistoryView(null);
+              if (next.latest !== null)
+                improvementSelection.current = next.latest.sessionId;
+            }
+            const currentPackage = await client.request<PackageDetail>({
+              type: "content.read",
+              packageId: selected,
+            });
+            if (
+              !active ||
+              improvementObservationScope.current !== observationScope
+            )
+              return;
+            setPackageDetail(currentPackage);
+            setCurrentPackageFiles(
+              currentPackage.files.map((file) => ({ ...file })),
+            );
+            if (!filesDirtyRef.current)
+              setFiles(currentPackage.files.map((file) => ({ ...file })));
+          } else if (status.selected !== null) {
+            const selectedStatus = status.selected;
+            const overlay = (current: SettingImprovementView | null) =>
+              current?.sessionId !== selectedStatus.sessionId
+                ? current
+                : {
+                    ...current,
+                    runStatus: selectedStatus.runStatus,
+                    progress: selectedStatus.progress,
+                  };
+            setImprovementView(overlay);
+            setImprovementHistoryView(overlay);
           }
-          loadedRevision = status.revision;
-        } else if (status.selected !== null) {
-          const selectedStatus = status.selected;
-          const overlay = (current: SettingImprovementView | null) =>
-            current?.sessionId !== selectedStatus.sessionId
-              ? current
-              : {
-                  ...current,
-                  runStatus: selectedStatus.runStatus,
-                  progress: selectedStatus.progress,
-                };
-          setImprovementView(overlay);
-          setImprovementHistoryView(overlay);
+        } catch {
+          // Keep the last authoritative snapshot if hydration fails.
+          throw new Error(uiText("对话同步失败，请重新打开此页面。"));
+        } finally {
+          if (
+            active &&
+            improvementObservationScope.current === observationScope
+          ) {
+            setImprovementNow(Date.now());
+            setImprovementLoading(false);
+          }
         }
-      } catch {
-        // Keep the last authoritative snapshot when one poll fails.
-      } finally {
-        pollPending = false;
-        if (active && improvementPollScope.current === pollScope) {
-          setImprovementNow(Date.now());
-          setImprovementLoading(false);
-        }
-      }
-    };
-    const initialPoll = window.setTimeout(() => {
-      if (!active) return;
-      setImprovementLoading(true);
-      void poll();
-    }, 0);
-    const timer = setInterval(() => void poll(), 1000);
+      },
+      (connection) => {
+        if (!active) return;
+        setImprovementObservationFailure(
+          connection === "connected"
+            ? null
+            : uiText(
+                connection === "reconnecting"
+                  ? "对话连接已断开，正在重新连接…"
+                  : "对话同步失败，请重新打开此页面。",
+              ),
+        );
+        if (connection === "failed") setImprovementLoading(false);
+      },
+    );
+    const timer = setInterval(() => setImprovementNow(Date.now()), 1000);
     return () => {
       active = false;
-      clearTimeout(initialPoll);
+      unsubscribe();
       clearInterval(timer);
     };
-  }, [client, screen, selected]);
+  }, [client, screen, selected, improvementObservedSessionId]);
 
   useEffect(() => {
     let active = true;
@@ -287,7 +319,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         packageId,
       });
       if (packageOpenRequest.current !== requestVersion) return;
-      if (packageId !== selected) improvementPollScope.current += 1;
+      if (packageId !== selected) improvementObservationScope.current += 1;
       const packageFiles = package_.files;
       setSelected(packageId);
       setPackageDetail(package_);
@@ -411,6 +443,8 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   }
 
   async function sendImprovement(message: string): Promise<void> {
+    const selectionVersion = improvementHistoryRequest.current;
+    const observationScope = improvementObservationScope.current;
     if (filesDirty) {
       const error = new Error(uiText("请先保存文件编辑，再继续 AI 设定完善。"));
       report(error);
@@ -444,17 +478,29 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
                 sessionId: selectedConversation.sessionId,
               },
       });
-      setImprovementView(next);
-      setImprovementHistoryView(null);
-      setImprovementStartingFresh(false);
-      improvementSelection.current = next.sessionId;
+      if (improvementObservationScope.current !== observationScope) return;
+      if (improvementHistoryRequest.current === selectionVersion) {
+        if (
+          selectedConversation !== null &&
+          selectedConversation.sessionId !== improvementView?.sessionId
+        )
+          setImprovementHistoryView(next);
+        else {
+          setImprovementView(next);
+          setImprovementHistoryView(null);
+        }
+        setImprovementStartingFresh(false);
+        improvementSelection.current = next.sessionId;
+      }
       try {
         const package_ = await client.request<PackageDetail>({
           type: "content.read",
           packageId: selected,
         });
+        if (improvementObservationScope.current !== observationScope) return;
         setPackageDetail(package_);
-        setFiles(package_.files.map((file) => ({ ...file })));
+        if (!filesDirtyRef.current)
+          setFiles(package_.files.map((file) => ({ ...file })));
         setCurrentPackageFiles(package_.files.map((file) => ({ ...file })));
         await refresh();
       } catch (refreshError: unknown) {
@@ -802,7 +848,9 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
           improvementView?.sessionId ?? improvementHistory[0]?.sessionId ?? null
         }
         notice={notice}
-        requestFailure={improvementRequestFailure}
+        requestFailure={
+          improvementRequestFailure ?? improvementObservationFailure
+        }
         now={improvementNow}
         contentEditor={{
           files,

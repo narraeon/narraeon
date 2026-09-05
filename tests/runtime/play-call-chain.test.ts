@@ -4794,3 +4794,88 @@ function expectedRoundMarker(rounds: number): unknown {
     ) as unknown,
   });
 }
+
+test("浏览器观察保持40项尾部并恢复活动片段，旧历史仍只能分页读取", async () => {
+  const { worlds, worldId } = await createWorld("play-sse-bounded-observation");
+  const host = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: Array.from({ length: 25 }, (_, index) => ({
+          id: `read-${index}`,
+          name: "state_list",
+          arguments: {},
+        })),
+      },
+      { outcome: "response", text: "Narration after tools" },
+    ],
+  });
+  const chains = new PlayCallChain(worlds);
+  await chains.start({
+    worldId,
+    chainId: "sse-chain",
+    exchangeId: "sse-exchange-0",
+    playerText: "oldest player sentinel",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: host,
+  });
+  const observed = await chains.observeWorld(worldId);
+  expect(observed?.events).toHaveLength(40);
+  expect(observed?.previousContexts).toEqual([]);
+  expect(JSON.stringify(observed)).not.toContain("oldest player sentinel");
+  expect(
+    (await worlds.playTimeline.readPage(worldId, 10)).nextCursor,
+  ).not.toBeNull();
+
+  let started!: () => void;
+  const start = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  let finish!: (response: ModelHostResponse) => void;
+  const result = new Promise<ModelHostResponse>((resolve) => {
+    finish = resolve;
+  });
+  const streaming: ModelHost = {
+    binding: modelBinding,
+    async exchange(_request, observer) {
+      observer?.onDelta?.({
+        kind: "reasoning",
+        text: "Provider-returned reasoning",
+      });
+      observer?.onDelta?.({ kind: "text", text: "Pending live text" });
+      observer?.onDelta?.({ kind: "tool", text: '{"path":' });
+      started();
+      return await result;
+    },
+  };
+  const running = chains.append({
+    worldId,
+    chainId: "sse-chain",
+    exchangeId: "sse-exchange-live",
+    playerText: "Observe the live response",
+    modelHost: streaming,
+  });
+  await start;
+  try {
+    const reconnected = await chains.observeWorld(worldId);
+    expect(reconnected?.events).toHaveLength(40);
+    expect(reconnected?.events.at(-1)).toMatchObject({
+      status: "streaming",
+      text: "Pending live text",
+      reasoning: "Provider-returned reasoning",
+      toolFragment: '{"path":',
+    });
+  } finally {
+    finish({
+      text: "Complete response",
+      providerState: {
+        protocol: "chat_completions",
+        assistantMessage: { role: "assistant", content: "Complete response" },
+      },
+    });
+    await running;
+  }
+});

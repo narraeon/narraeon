@@ -85,9 +85,11 @@ export class SettingImprovementSession {
     StoredSettingImprovementSession,
     SettingImprovementView
   >();
+  readonly #changed: (id: string, durable: boolean) => void;
   #mutationTail: Promise<void> = Promise.resolve();
 
   constructor(input: {
+    changed?: (id: string, durable: boolean) => void;
     store: FileNativeSettingImprovementStore;
     content: ContentWorkspace;
     compiler: FileNativePromptCompiler;
@@ -101,6 +103,11 @@ export class SettingImprovementSession {
       playPreset: PlayPresetBinding | undefined,
     ) => PromptPreview;
   }) {
+    this.#changed =
+      input.changed ??
+      (() => {
+        /* No observers attached. */
+      });
     this.#store = input.store;
     this.#content = input.content;
     this.#compiler = input.compiler;
@@ -153,6 +160,23 @@ export class SettingImprovementSession {
         history: summaries.map(settingImprovementHistoryItem),
       };
     });
+  }
+
+  observeProgress(
+    status: V1SettingImprovementStatus,
+  ): V1SettingImprovementStatus {
+    const selected = status.selected;
+    if (selected === null) return status;
+    return {
+      ...status,
+      selected: {
+        ...selected,
+        progress: {
+          ...selected.progress,
+          streaming: this.#conversation.streaming(selected.sessionId),
+        },
+      },
+    };
   }
 
   async status(
@@ -378,6 +402,7 @@ export class SettingImprovementSession {
   ): Promise<SettingImprovementView> {
     let activeTransaction: ActiveTransaction | null = null;
     return this.#conversation.run({
+      changed: (durable) => this.#changed(session.packageId, durable),
       session,
       host,
       requestId,

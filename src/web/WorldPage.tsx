@@ -1,3 +1,5 @@
+import { useConversationComposer } from "./useConversationComposer.ts";
+import type { ObserveConversation } from "./ConversationObserver.ts";
 import { uiText } from "./i18n.ts";
 import {
   Fragment,
@@ -22,7 +24,6 @@ import type {
   V1SettingImprovementRollbackResult,
   V1WorldRevisionEpochView,
   V1WorldRevisionOverview,
-  V1WorldRevisionStatus,
   V1WorldRevisionView,
 } from "../protocol/v1.ts";
 import {
@@ -62,7 +63,6 @@ import {
 import {
   activePlayExchangeId,
   createPlayRunProgress,
-  progressAfterFrame,
   progressFromCallChain,
   type PlayRunProgressValue,
 } from "./PlayRunProgressState.ts";
@@ -124,14 +124,8 @@ interface Feedback {
 }
 
 interface WorldPageClient {
+  observeConversation?: ObserveConversation;
   request(request: V1Request): Promise<unknown>;
-  streamPlayCallChain?: (
-    request: Extract<
-      V1Request,
-      { type: "play.chain.start" | "play.chain.append" }
-    >,
-    onFrame: (frame: V1PlayCallChainStreamFrame) => void,
-  ) => Promise<V1PlayCallChainView>;
 }
 
 export function WorldPage({
@@ -169,6 +163,9 @@ export function WorldPage({
   const [playerText, setPlayerText] = useState("");
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const [playObservationFailure, setPlayObservationFailure] = useState<
+    string | null
+  >(null);
   const [playFailure, setPlayFailure] = useState<string | null>(null);
   const [playProgress, setPlayProgress] = useState<PlayRunProgressValue | null>(
     null,
@@ -209,6 +206,13 @@ export function WorldPage({
   const [revisionApplying, setRevisionApplying] = useState(false);
   const [revisionNow, setRevisionNow] = useState(Date.now());
   const revisionDirtyRef = useRef(false);
+  const revisionSelectionVersion = useRef(0);
+  const [revisionObservationFailure, setRevisionObservationFailure] = useState<
+    string | null
+  >(null);
+  const revisionFreshRequest = useRef<{
+    previousSessionId: string | null;
+  } | null>(null);
   const [aiReading, setAiReading] = useState<V1PlayContextReadingView | null>(
     null,
   );
@@ -266,21 +270,16 @@ export function WorldPage({
   }, [client, worldHead, worldId]);
 
   useEffect(() => {
-    const chainPending = pending === "play-fresh" || pending === "play-append";
-    if (chainPending && client.streamPlayCallChain !== undefined) return;
-    if (
-      !chainPending &&
-      (playCallChain?.status ?? playTimeline?.activeStatus) !== "running"
-    )
+    if (client.observeConversation === undefined || openedWorldId !== worldId)
       return;
     let active = true;
-    const poll = async (): Promise<void> => {
-      try {
-        const next = await requestRuntime<V1PlayCallChainView | null>(client, {
-          type: "play.chain.inspect",
-          worldId,
-        });
-        if (!active || next === null) return;
+    let hydratedHead: string | undefined;
+    const unsubscribe = client.observeConversation(
+      { kind: "play", id: worldId },
+      async (observation) => {
+        if (!active || observation.kind !== "play") return;
+        const next = observation.value;
+        if (next === null) return;
         setPlayCallChain(next);
         setPlayFailure(playCallFailureMessage(next));
         if (next.status === "running") {
@@ -302,27 +301,55 @@ export function WorldPage({
           cancelledExchangeRef.current !== null &&
           next.status !== "running"
         ) {
-          cancelledExchangeRef.current = null;
           setFeedback({ kind: "status", text: uiText("模型生成已取消。") });
         }
-      } catch {
-        // Inspection is observational. The initiating request remains the
-        // source of truth and the last visible call-chain snapshot stays put.
-      }
-    };
-    void poll();
-    const timer = setInterval(() => void poll(), 1000);
+        if (hydratedHead !== `${next.parentHead}:${next.status}`) {
+          const projection = await requestRuntime<WorldReadView>(client, {
+            type: "world.read",
+            worldId,
+          });
+          if (!active) return;
+          hydratedHead = `${next.parentHead}:${next.status}`;
+          setWorld(projection);
+          const page = projection.playTimeline;
+          if (page !== undefined)
+            setPlayTimeline((current) =>
+              current === null
+                ? page
+                : {
+                    ...current,
+                    items: current.items.map((item) =>
+                      item.kind !== "event"
+                        ? item
+                        : (page.items.find(
+                            (candidate) =>
+                              candidate.kind === "event" &&
+                              candidate.chainId === item.chainId &&
+                              candidate.event.id === item.event.id,
+                          ) ?? item),
+                    ),
+                  },
+            );
+        }
+      },
+      (connection) => {
+        if (active)
+          setPlayObservationFailure(
+            connection === "connected"
+              ? null
+              : uiText(
+                  connection === "reconnecting"
+                    ? "对话连接已断开，正在重新连接…"
+                    : "对话同步失败，请重新打开此页面。",
+                ),
+          );
+      },
+    );
     return () => {
       active = false;
-      clearInterval(timer);
+      unsubscribe();
     };
-  }, [
-    client,
-    pending,
-    playCallChain?.status,
-    playTimeline?.activeStatus,
-    worldId,
-  ]);
+  }, [client, worldId, openedWorldId]);
 
   useEffect(() => {
     if (openedWorldId === undefined) return;
@@ -408,71 +435,98 @@ export function WorldPage({
   useEffect(() => {
     if (dialog !== "revision") return;
     let active = true;
-    let polling = false;
-    let loadedRevision: string | null = null;
     const selectedSessionId = revisionStartingFresh
       ? undefined
       : revisionView?.sessionId;
-    const poll = async (): Promise<void> => {
-      if (polling) return;
-      polling = true;
-      try {
-        const status = await requestRuntime<V1WorldRevisionStatus>(client, {
-          type: "world.revision.status",
-          worldId,
-          ...(selectedSessionId === undefined
-            ? {}
-            : { sessionId: selectedSessionId }),
-        });
-        if (!active) return;
-        const selectedStatus = status.selected;
-        if (!revisionStartingFresh && selectedStatus !== null) {
-          setRevisionView((current) =>
-            current?.sessionId !== selectedStatus.sessionId
-              ? current
+    if (client.observeConversation === undefined) return;
+    const unsubscribe = client.observeConversation(
+      {
+        kind: "revision",
+        id: worldId,
+        ...(selectedSessionId === undefined
+          ? {}
+          : { sessionId: selectedSessionId }),
+      },
+      async (observation, durableChanged) => {
+        if (observation.kind !== "revision") return;
+        const status = observation.value;
+        try {
+          if (!active) return;
+          const selectedStatus = status.selected;
+          if (!revisionStartingFresh && selectedStatus !== null) {
+            setRevisionView((current) =>
+              current?.sessionId !== selectedStatus.sessionId
+                ? current
+                : {
+                    ...current,
+                    runStatus: selectedStatus.runStatus,
+                    progress: selectedStatus.progress,
+                  },
+            );
+          }
+          setRevisionNow(Date.now());
+          if (!durableChanged) return;
+          const next = await requestRuntime<V1WorldRevisionOverview>(client, {
+            type: "world.revision.overview",
+            worldId,
+          });
+          if (!active) return;
+          setRevisionOverview(next);
+          const selectedView =
+            selectedSessionId !== undefined &&
+            selectedSessionId !== next.latest?.sessionId
+              ? await requestRuntime<V1WorldRevisionView>(client, {
+                  type: "world.revision.session.read",
+                  worldId,
+                  sessionId: selectedSessionId,
+                })
+              : next.latest;
+          if (!active) return;
+          const fresh = revisionFreshRequest.current;
+          if (
+            fresh !== null &&
+            next.latest !== null &&
+            next.latest.sessionId !== fresh.previousSessionId
+          ) {
+            revisionFreshRequest.current = null;
+            setRevisionStartingFresh(false);
+            setRevisionView(next.latest);
+          } else if (!revisionStartingFresh && fresh === null)
+            setRevisionView(selectedView);
+          if (!revisionDirtyRef.current && next.epoch !== null) {
+            setRevisionFiles(cloneTextFiles(next.epoch.files));
+            setSavedRevisionFiles(cloneTextFiles(next.epoch.files));
+          }
+          setWorld((current) =>
+            current === null
+              ? null
               : {
                   ...current,
-                  runStatus: selectedStatus.runStatus,
-                  progress: selectedStatus.progress,
+                  worldRevision:
+                    next.epoch?.locked === true ? next.epoch : null,
                 },
           );
+        } catch (error: unknown) {
+          if (active) throw error;
         }
-        setRevisionNow(Date.now());
-        if (status.revision === loadedRevision) return;
-        const next = await requestRuntime<V1WorldRevisionOverview>(client, {
-          type: "world.revision.overview",
-          worldId,
-        });
-        if (!active) return;
-        loadedRevision = status.revision;
-        setRevisionOverview(next);
-        setRevisionView((current) =>
-          current === null || current.sessionId === next.latest?.sessionId
-            ? next.latest
-            : current,
-        );
-        if (!revisionDirtyRef.current && next.epoch !== null) {
-          setRevisionFiles(cloneTextFiles(next.epoch.files));
-          setSavedRevisionFiles(cloneTextFiles(next.epoch.files));
-        }
-        setWorld((current) =>
-          current === null
-            ? null
-            : {
-                ...current,
-                worldRevision: next.epoch?.locked === true ? next.epoch : null,
-              },
-        );
-      } catch {
-        // Polling is observational; explicit actions surface their own errors.
-      } finally {
-        polling = false;
-      }
-    };
-    void poll();
-    const timer = window.setInterval(() => void poll(), 800);
+      },
+      (connection) => {
+        if (active)
+          setRevisionObservationFailure(
+            connection === "connected"
+              ? null
+              : uiText(
+                  connection === "reconnecting"
+                    ? "对话连接已断开，正在重新连接…"
+                    : "对话同步失败，请重新打开此页面。",
+                ),
+          );
+      },
+    );
+    const timer = window.setInterval(() => setRevisionNow(Date.now()), 1000);
     return () => {
       active = false;
+      unsubscribe();
       window.clearInterval(timer);
     };
   }, [client, dialog, revisionStartingFresh, revisionView?.sessionId, worldId]);
@@ -655,13 +709,7 @@ export function WorldPage({
             exchangeId,
             playerText,
           } satisfies Extract<V1Request, { type: "play.chain.append" }>);
-      const next = await requestPlayCallChain(client, request, (frame) => {
-        applyPlayCallChainFrame(frame, setPlayCallChain);
-        applyPlayTimelineFrame(frame, setPlayTimeline);
-        setPlayProgress((current) =>
-          progressAfterFrame(current, frame, chainId, exchangeId),
-        );
-      });
+      const next = await requestRuntime<V1PlayCallChainView>(client, request);
       setPlayCallChain(next);
       if (fresh) setForceFreshContext(false);
       if (hasPlayerText) setPlayerText("");
@@ -915,8 +963,12 @@ export function WorldPage({
 
   async function sendRevisionMessage(message: string): Promise<void> {
     if (revisionDirty) return;
+    const selectionVersion = revisionSelectionVersion.current;
     const selected = revisionStartingFresh ? null : revisionView;
-    setRevisionStartingFresh(false);
+    if (selected === null)
+      revisionFreshRequest.current = {
+        previousSessionId: revisionOverview?.latest?.sessionId ?? null,
+      };
     setRevisionRequestFailure(null);
     setRevisionNotice("");
     try {
@@ -933,13 +985,17 @@ export function WorldPage({
                 sessionId: selected.sessionId,
               },
       });
-      setRevisionView(nextView);
+      if (revisionSelectionVersion.current === selectionVersion) {
+        revisionFreshRequest.current = null;
+        setRevisionStartingFresh(false);
+        setRevisionView(nextView);
+      }
       const next = await requestRuntime<V1WorldRevisionOverview>(client, {
         type: "world.revision.overview",
         worldId,
       });
       setRevisionOverview(next);
-      if (next.epoch !== null) {
+      if (next.epoch !== null && !revisionDirtyRef.current) {
         setRevisionFiles(cloneTextFiles(next.epoch.files));
         setSavedRevisionFiles(cloneTextFiles(next.epoch.files));
       }
@@ -964,16 +1020,18 @@ export function WorldPage({
   }
 
   async function selectRevisionSession(sessionId: string): Promise<void> {
+    const selectionVersion = ++revisionSelectionVersion.current;
+    revisionFreshRequest.current = null;
     setRevisionLoading(true);
     setRevisionRequestFailure(null);
     try {
-      setRevisionView(
-        await requestRuntime<V1WorldRevisionView>(client, {
-          type: "world.revision.session.read",
-          worldId,
-          sessionId,
-        }),
-      );
+      const selected = await requestRuntime<V1WorldRevisionView>(client, {
+        type: "world.revision.session.read",
+        worldId,
+        sessionId,
+      });
+      if (revisionSelectionVersion.current !== selectionVersion) return;
+      setRevisionView(selected);
       setRevisionStartingFresh(false);
     } catch (reason: unknown) {
       setRevisionRequestFailure(errorMessage(reason));
@@ -1190,20 +1248,13 @@ export function WorldPage({
             ? uiText("修改已保存，正在从全新上下文继续生成…")
             : uiText("修改已保存，正在从修改稿继续生成…"),
       });
-      const continued = await requestPlayCallChain(
-        client,
-        {
-          type: "play.chain.append",
-          worldId: world.worldId,
-          chainId: revised.playCallChain.chainId,
-          exchangeId: createClientId("play-exchange"),
-          playerText: "",
-        },
-        (frame) => {
-          applyPlayCallChainFrame(frame, setPlayCallChain);
-          applyPlayTimelineFrame(frame, setPlayTimeline);
-        },
-      );
+      const continued = await requestRuntime<V1PlayCallChainView>(client, {
+        type: "play.chain.append",
+        worldId: world.worldId,
+        chainId: revised.playCallChain.chainId,
+        exchangeId: createClientId("play-exchange"),
+        playerText: "",
+      });
       setPlayCallChain(continued);
       await refreshWorld();
       setFeedback({
@@ -1226,8 +1277,8 @@ export function WorldPage({
     }
   }
 
-  function submitCurrentMode(): void {
-    void submitPlayChain(activeChainStale ? "fresh" : "append");
+  function submitCurrentMode(): Promise<void> {
+    return submitPlayChain(activeChainStale ? "fresh" : "append");
   }
 
   async function saveReadingPreferences(
@@ -1258,6 +1309,12 @@ export function WorldPage({
       setPending(null);
     }
   }
+
+  const composer = useConversationComposer(
+    modelConfigured &&
+      (activeChainId === null || activeChainStale ? canStartFresh : canAppend),
+    submitCurrentMode,
+  );
 
   if (world === null)
     return (
@@ -1294,7 +1351,7 @@ export function WorldPage({
         history={revisionOverview?.history ?? []}
         latestSessionId={revisionOverview?.latest?.sessionId ?? null}
         notice={revisionNotice}
-        requestFailure={revisionRequestFailure}
+        requestFailure={revisionRequestFailure ?? revisionObservationFailure}
         now={revisionNow}
         contentEditor={{
           mode: "world-revision",
@@ -1333,6 +1390,8 @@ export function WorldPage({
         onSend={sendRevisionMessage}
         onCancel={cancelRevisionMessage}
         onFreshContext={() => {
+          revisionSelectionVersion.current += 1;
+          revisionFreshRequest.current = null;
           setRevisionStartingFresh(true);
           setRevisionView(null);
           setRevisionRequestFailure(null);
@@ -1342,6 +1401,8 @@ export function WorldPage({
         onRollbackFile={rollbackRevisionFile}
         onConfigureModel={onConfigureModel}
         onBack={() => {
+          revisionSelectionVersion.current += 1;
+          revisionFreshRequest.current = null;
           setDialog(null);
           setRevisionRequestFailure(null);
           void refreshWorld(false);
@@ -1583,6 +1644,9 @@ export function WorldPage({
                 </button>
               </div>
             ) : null}
+            {playObservationFailure === null ? null : (
+              <p role="status">{playObservationFailure}</p>
+            )}
             {playFailure === null ? null : (
               <div
                 className="play-call-failure"
@@ -1657,15 +1721,8 @@ export function WorldPage({
                     worldRevisionLocked
                   }
                   onChange={(event) => setPlayerText(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (
-                      (event.ctrlKey || event.metaKey) &&
-                      event.key === "Enter"
-                    ) {
-                      event.preventDefault();
-                      submitCurrentMode();
-                    }
-                  }}
+                  onKeyDown={composer.onKeyDown}
+                  title={uiText("Enter 发送，Shift + Enter 换行")}
                 />
               </label>
               <button
@@ -1677,7 +1734,7 @@ export function WorldPage({
                     : uiText("追加行动")
                 }
                 disabled={!defaultSubmitEnabled || !modelConfigured}
-                onClick={submitCurrentMode}
+                onClick={() => void composer.submit()}
               >
                 {pending === "play-fresh" || pending === "play-append"
                   ? "…"
@@ -2787,52 +2844,6 @@ function requestRuntime<T>(
   return client.request(request) as Promise<T>;
 }
 
-function requestPlayCallChain(
-  client: WorldPageClient,
-  request: Extract<
-    V1Request,
-    { type: "play.chain.start" | "play.chain.append" }
-  >,
-  onFrame: (frame: V1PlayCallChainStreamFrame) => void,
-): Promise<V1PlayCallChainView> {
-  return client.streamPlayCallChain === undefined
-    ? requestRuntime<V1PlayCallChainView>(client, request)
-    : client.streamPlayCallChain(request, onFrame);
-}
-
-function applyPlayCallChainFrame(
-  frame: V1PlayCallChainStreamFrame,
-  setChain: Dispatch<SetStateAction<V1PlayCallChainView | null>>,
-): void {
-  if (frame.kind === "snapshot") {
-    setChain(frame.value);
-    return;
-  }
-  if (frame.kind !== "assistant_delta") return;
-  setChain((current) => {
-    if (current === null) return current;
-    return {
-      ...current,
-      updatedAt: frame.updatedAt,
-      events: current.events.map((event) => {
-        if (event.kind !== "assistant" || event.id !== frame.eventId)
-          return event;
-        if (frame.deltaKind === "text")
-          return { ...event, text: event.text + frame.text };
-        if (frame.deltaKind === "reasoning")
-          return {
-            ...event,
-            reasoning: `${event.reasoning ?? ""}${frame.text}`,
-          };
-        return {
-          ...event,
-          toolFragment: `${event.toolFragment ?? ""}${frame.text}`,
-        };
-      }),
-    };
-  });
-}
-
 function applyPlayTimelineFrame(
   frame: V1PlayCallChainStreamFrame,
   setTimeline: Dispatch<SetStateAction<V1PlayTimelinePage | null>>,
@@ -2869,7 +2880,15 @@ function applyPlayTimelineFrame(
           changedDocuments: structuredClone(chain.changedDocuments),
           current: true,
         });
+      const loadedIds = items.flatMap((item) =>
+        item.kind === "event" && item.chainId === chain.chainId
+          ? [item.event.id]
+          : [],
+      );
+      const earliestLoadedId =
+        loadedIds.length === 0 ? 0 : Math.min(...loadedIds);
       for (const event of chain.events) {
+        if (event.id < earliestLoadedId) continue;
         const summary = summarizeTimelineEvent(event);
         const index = items.findIndex(
           (item) =>
@@ -2884,7 +2903,20 @@ function applyPlayTimelineFrame(
           event: summary,
         };
         if (index < 0) items.push(next);
-        else items[index] = next;
+        else {
+          const existing = items[index]!;
+          if (
+            existing.kind === "event" &&
+            existing.event.kind === "assistant" &&
+            summary.kind === "assistant"
+          ) {
+            summary.hasReasoning ||= existing.event.hasReasoning;
+            summary.hasToolFragment ||= existing.event.hasToolFragment;
+            summary.hasUsage ||= existing.event.hasUsage;
+            summary.detailsAvailable ||= existing.event.detailsAvailable;
+          }
+          items[index] = next;
+        }
       }
       return {
         ...current,

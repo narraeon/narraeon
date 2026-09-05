@@ -194,6 +194,7 @@ export interface PlayCallChainObserver {
  * response shape whose non-empty text can become committed narrative.
  */
 export class PlayCallChain {
+  readonly changed: (worldId: string) => void;
   readonly #worlds: FileNativeWorldStore;
   readonly #compiler: FileNativePromptCompiler;
   readonly #artifacts: ArtifactStore | undefined;
@@ -208,7 +209,11 @@ export class PlayCallChain {
     compiler: FileNativePromptCompiler = new FileNativePromptCompiler(),
     artifacts?: ArtifactStore,
     failureLog?: AiFailureRecorder,
+    changed: (worldId: string) => void = () => {
+      /* No observers attached. */
+    },
   ) {
+    this.changed = changed;
     this.#worlds = worlds;
     this.#compiler = compiler;
     this.#artifacts = artifacts;
@@ -476,6 +481,7 @@ export class PlayCallChain {
     );
     this.#worlds.freezeControl(input.worldId, controlUseId);
     this.#activeInvocations.set(input.chainId, invocation);
+    this.changed(input.worldId);
     try {
       await this.#worlds.assertWorldRevisionUnlocked(input.worldId);
       return await run(invocation.controller.signal);
@@ -483,6 +489,7 @@ export class PlayCallChain {
       if (this.#activeInvocations.get(input.chainId) === invocation)
         this.#activeInvocations.delete(input.chainId);
       this.#worlds.releaseControl(input.worldId, controlUseId);
+      this.changed(input.worldId);
     }
   }
 
@@ -509,6 +516,7 @@ export class PlayCallChain {
     active.toolChars += increments.toolChars ?? 0;
     active.toolCalls += increments.toolCalls ?? 0;
     active.dispatches += increments.dispatches ?? 0;
+    this.changed(active.worldId);
   }
 
   #setInvocationAbortable(chainId: string, abortable: boolean): void {
@@ -537,6 +545,7 @@ export class PlayCallChain {
     session: PersistedPlayCallChain,
   ): void {
     try {
+      this.changed(session.worldId);
       observer?.onSnapshot?.(this.#projectActiveView(session));
     } catch {
       // A browser stream may disconnect while the durable model request keeps
@@ -545,6 +554,30 @@ export class PlayCallChain {
   }
 
   async inspectWorld(worldId: string): Promise<V1PlayCallChainView | null> {
+    const session = await this.#worldSession(worldId);
+    return session === null ? null : this.#projectActiveView(session);
+  }
+
+  /** Browser observation never traverses old contexts. History and completed
+   * diagnostics remain behind the paged timeline/detail Interface. */
+  async observeWorld(worldId: string): Promise<V1PlayCallChainView | null> {
+    const session = await this.#worldSession(worldId);
+    if (session === null) return null;
+    const view = this.#projectActiveView({ ...session, previousContexts: [] });
+    const live = new Map(
+      session.events
+        .slice(-projectedEventTail)
+        .map((event) => [event.id, event]),
+    );
+    view.events = view.events.map((event) =>
+      event.kind === "assistant" && event.status === "streaming"
+        ? structuredClone(live.get(event.id)!)
+        : event,
+    );
+    return view;
+  }
+
+  async #worldSession(worldId: string): Promise<PlayCallChainSession | null> {
     const activeId = this.#worldChains.get(worldId);
     const active =
       activeId === undefined ? undefined : this.#active.get(activeId);
@@ -553,7 +586,7 @@ export class PlayCallChain {
         this.#activeInvocations.get(active.chainId)?.worldId !== active.worldId
       )
         await this.#reconcileSessionAdvance(active);
-      return this.#projectActiveView(active);
+      return active;
     }
     const persisted = await this.#readPersisted(worldId);
     if (persisted === null) return null;
@@ -567,7 +600,7 @@ export class PlayCallChain {
     await this.#reconcileSessionAdvance(session, advance);
     if (session.status === "running")
       await this.#interruptAbandonedDispatch(session);
-    return this.#projectActiveView(session);
+    return session;
   }
 
   async inspectReading(
@@ -2153,6 +2186,7 @@ export class PlayCallChain {
             else if (delta.kind === "tool")
               event.toolFragment = `${event.toolFragment ?? ""}${delta.text}`;
             touch(session);
+            this.changed(session.worldId);
             notifyAssistantDelta(observer, {
               eventId: event.id,
               kind: delta.kind,
@@ -2305,6 +2339,7 @@ export class PlayCallChain {
                 "The player cancelled the remaining follow-up generation after the narrative was committed.",
             });
             touch(session);
+            this.changed(session.worldId);
           }
           session.status = "ready";
           await this.#persist(session);

@@ -116,6 +116,25 @@ test.afterAll(async () => {
 test("四任务工作台以文件原生内容创建世界并展示真实 Prompt Preview", async ({
   page,
 }) => {
+  const observationKinds = new Set<string>();
+  const pollingRequests: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/api/runtime/v1/events?"))
+      observationKinds.add(new URL(request.url()).searchParams.get("kind")!);
+    if (
+      request.method() === "POST" &&
+      request.url().endsWith("/api/runtime/v1")
+    ) {
+      const type = (request.postDataJSON() as { request?: { type?: string } })
+        .request?.type;
+      if (
+        type === "setting-improvement.status" ||
+        type === "world.revision.status" ||
+        type === "play.chain.inspect"
+      )
+        pollingRequests.push(type);
+    }
+  });
   const damagedPath = "world/characters/damaged.yaml";
   await page.goto("/");
   await page.locator(".workspace-locale-picker select").selectOption("zh-CN");
@@ -283,7 +302,20 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await page
     .getByLabel("用全新上下文给 AI 发消息")
     .fill("Repair the damaged character document.");
-  await page.getByRole("button", { name: "发送" }).click();
+  const firstComposer = page.getByLabel("用全新上下文给 AI 发消息");
+  await firstComposer.press("Shift+Enter");
+  await expect(firstComposer).toHaveValue(
+    "Repair the damaged character document.\n",
+  );
+  await firstComposer.fill("Repair the damaged character document.");
+  await firstComposer.dispatchEvent("keydown", {
+    key: "Enter",
+    isComposing: true,
+  });
+  await expect(firstComposer).toHaveValue(
+    "Repair the damaged character document.",
+  );
+  await firstComposer.press("Enter");
   await expect(page.locator(".setting-conversation-assistant")).toContainText(
     "damaged character document is repaired",
   );
@@ -693,9 +725,11 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await page
     .getByLabel("你的行动")
     .fill("I ask Alex whether we are training tonight.");
-  await page
-    .getByRole("button", { name: "从全新上下文发送行动", exact: true })
-    .click();
+  await page.getByLabel("你的行动").press("Shift+Enter");
+  await expect(page.getByLabel("你的行动")).toHaveValue(
+    "I ask Alex whether we are training tonight.\n",
+  );
+  await page.getByLabel("你的行动").press("Enter");
   const callChain = page.getByLabel("模型调用链");
   await expect(callChain).toContainText("模型响应中");
   const transcript = page.getByLabel("世界游玩");
@@ -926,7 +960,11 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await page
     .getByLabel("用全新上下文给 AI 发消息")
     .fill("Temporarily make the world narration rule more concise.");
-  await page.getByRole("button", { name: "发送" }).click();
+  await page.getByLabel("用全新上下文给 AI 发消息").press("Shift+Enter");
+  await expect(page.getByLabel("用全新上下文给 AI 发消息")).toHaveValue(
+    "Temporarily make the world narration rule more concise.\n",
+  );
+  await page.getByLabel("用全新上下文给 AI 发消息").press("Enter");
   await expect(
     page.locator(".setting-conversation-assistant").last(),
   ).toContainText("temporary world-control revision");
@@ -1038,6 +1076,14 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(
     page.getByRole("heading", { name: "Dormitory World (fork)" }),
   ).toBeVisible();
+  expect([...observationKinds].sort()).toEqual(["play", "revision", "setting"]);
+  expect(
+    pollingRequests.filter((type) => type !== "play.chain.inspect"),
+  ).toEqual([]);
+  // An explicit failed command may inspect once to reconcile its result.
+  expect(
+    pollingRequests.filter((type) => type === "play.chain.inspect").length,
+  ).toBeLessThanOrEqual(1);
 });
 
 test("世界修订复用统一编辑工作区且世界管理可以纵向滚动", async ({ page }) => {
