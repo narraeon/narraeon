@@ -19,14 +19,28 @@ export type {
 } from "../../protocol/playerViews.ts";
 
 export interface PlayerViewRenderInput {
-  snapshot: WorldDocumentStore;
+  snapshot: Pick<WorldDocumentStore, "query">;
   control: string;
+}
+
+export interface PlayerViewBinding {
+  viewId: string;
+  viewTitle: string;
+  itemId: string;
+  label: string;
+  shortRef: string;
+  locator: WorldDocumentLocator | null;
 }
 
 type RenderedItem = RenderedPlayerView["items"][number];
 
 type ItemResolution =
-  | { ok: true; item: RenderedItem }
+  | {
+      ok: true;
+      item: RenderedItem;
+      shortRef: string;
+      locator: WorldDocumentLocator | null;
+    }
   | {
       ok: false;
       code: PlayerViewDiagnostic["code"];
@@ -43,7 +57,18 @@ export class PlayerViewRenderer {
     views: RenderedPlayerView[];
     diagnostics: PlayerViewDiagnostic[];
   } {
+    const { views, diagnostics } = this.inspect(input);
+    return { views, diagnostics };
+  }
+
+  /** Binding facts come from the exact successful UI selections. */
+  inspect(input: PlayerViewRenderInput): {
+    views: RenderedPlayerView[];
+    diagnostics: PlayerViewDiagnostic[];
+    bindings: PlayerViewBinding[];
+  } {
     const diagnostics: PlayerViewDiagnostic[] = [];
+    const bindings: PlayerViewBinding[] = [];
     const control = parseControlYaml(input.control);
     if (
       !isRecord(control) ||
@@ -52,6 +77,7 @@ export class PlayerViewRenderer {
     ) {
       return {
         views: [],
+        bindings,
         diagnostics: [
           {
             code: "invalid_control",
@@ -122,16 +148,24 @@ export class PlayerViewRenderer {
         }
         renderedBytes += itemBytes;
         view.items.push(resolved.item);
+        bindings.push({
+          viewId: view.id,
+          viewTitle: view.title,
+          itemId: resolved.item.id,
+          label: resolved.item.label,
+          shortRef: resolved.shortRef,
+          locator: resolved.locator,
+        });
       }
       views.push(view);
     }
-    return { views, diagnostics };
+    return { views, diagnostics, bindings };
   }
 }
 
 function resolveItem(
   item: unknown,
-  snapshot: WorldDocumentStore,
+  snapshot: PlayerViewRenderInput["snapshot"],
 ): ItemResolution {
   if (
     !isRecord(item) ||
@@ -162,6 +196,8 @@ function resolveItem(
     return wholeDocument.ok
       ? {
           ok: true,
+          shortRef: wholeDocument.shortRef,
+          locator: null,
           item: {
             id: itemId,
             label: item.label,
@@ -196,6 +232,8 @@ function resolveItem(
     };
   return {
     ok: true,
+    shortRef: selected.scope.document.shortRef,
+    locator: selected.node.locator,
     item: {
       id: itemId,
       label: item.label,
@@ -216,12 +254,12 @@ function playerViewDocumentSelector(handle: string): WorldDocumentSelector {
 }
 
 function resolveWholeDocument(
-  snapshot: WorldDocumentStore,
+  snapshot: PlayerViewRenderInput["snapshot"],
   selector: WorldDocumentSelector,
   handle: string,
   expectedCodec?: "markdown",
 ):
-  | { ok: true; value: unknown }
+  | { ok: true; value: unknown; shortRef: string }
   | {
       ok: false;
       code: PlayerViewDiagnostic["code"];
@@ -244,12 +282,18 @@ function resolveWholeDocument(
       code: "unresolved_selector",
       message: "The selector codec does not match the target document",
     };
-  if (read.codec === "markdown") return { ok: true, value: read.body.trim() };
-  return selectYamlRoot(snapshot, selector, handle);
+  if (read.codec === "markdown")
+    return {
+      ok: true,
+      value: read.body.trim(),
+      shortRef: read.document.shortRef,
+    };
+  const root = selectYamlRoot(snapshot, selector, handle);
+  return root.ok ? { ...root, shortRef: read.document.shortRef } : root;
 }
 
 function selectYamlRoot(
-  snapshot: WorldDocumentStore,
+  snapshot: PlayerViewRenderInput["snapshot"],
   selector: WorldDocumentSelector,
   handle: string,
 ):

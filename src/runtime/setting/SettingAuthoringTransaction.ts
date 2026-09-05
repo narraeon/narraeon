@@ -4,6 +4,7 @@ import { isScalar, isSeq, parseDocument, stringify } from "yaml";
 import type { ContentTreeFile } from "../content/ContentTreeFile.ts";
 import { inspectContentPackageCurrentTree } from "../content/FileNativeContentTree.ts";
 import type { ModelHostToolCall } from "../model/ModelHost.ts";
+import { worldMaterialCoverage } from "../prompt/WorldMaterialCoverage.ts";
 import type {
   PromptCompilation,
   PromptPreview,
@@ -658,30 +659,8 @@ function buildSettingAuthoringPlayCoverage(
   const byShortRef = new Map(
     documents.map((document) => [document.shortRef, document]),
   );
-  const fullInjected = new Set<string>();
-  const nodeInjected = new Set<string>();
-  const catalogSummary = new Set<string>();
-  const injectedSelections: {
-    shortRef: string;
-    locator: WorldDocumentLocator | null;
-  }[] = [];
-  const compilationCoverage = preview.compilation.coverage;
-
-  for (const entry of compilationCoverage) {
-    const authorization = entry.readAuthorization;
-    if (authorization !== undefined) {
-      const selection = {
-        shortRef: authorization.shortRef,
-        locator: authorization.locator,
-      };
-      injectedSelections.push(selection);
-      if (authorization.locator === null)
-        fullInjected.add(authorization.shortRef);
-      else nodeInjected.add(authorization.shortRef);
-    }
-    for (const shortRef of entry.catalogEntries ?? [])
-      catalogSummary.add(shortRef);
-  }
+  const { fullInjected, nodeInjected, catalogSummary, injectedSelections } =
+    worldMaterialCoverage(preview.compilation.coverage);
 
   const referencedFromInjected = new Set<string>();
   for (const selection of injectedSelections) {

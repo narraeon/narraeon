@@ -1025,7 +1025,8 @@ test("工具中间步文本不进入叙事，状态与终态叙事分别推进�
   );
   expect(patchDetail).toMatchObject({
     kind: "tool_result",
-    markdown: "@current-situation write succeeded",
+    markdown:
+      "@current-situation write succeeded\nIf a fresh context started now: full body",
   });
   if (patchDetail.kind !== "tool_result")
     throw new Error("Expected a tool-result timeline detail");
@@ -1124,6 +1125,75 @@ test("工具中间步文本不进入叙事，状态与终态叙事分别推进�
     endpoint.state.find(({ path }) => path === "current-situation.yaml")
       ?.contents,
   ).toContain("Alex已经把宿舍门打开。");
+});
+
+test("已提交写入回执报告下次真实目录覆盖并回显更新后的摘要", async () => {
+  const files = worldFiles();
+  files.find(({ path }) => path === "control/frame.yaml")!.contents +=
+    "  - slot: { kind: catalog, directory: records, maxEntries: 1 }\n";
+  files.push({
+    path: "world/records/ledger.yaml",
+    contents:
+      "$document:\n  id: ledger\n  ref: ledger\n  title: 账本\n  summary: 旧摘要\n  aliases: []\n金币: 10\n",
+  });
+  const { worlds, worldId } = await createWorld("write-coverage", files);
+  const modelHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          { id: "read", name: "context_read", arguments: { ref: "@ledger" } },
+        ],
+      },
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "write",
+            name: "world_patch",
+            arguments: {
+              target: "@ledger",
+              edits: [
+                { op: "replace", locator: { yaml: ["金币"] }, value: 8 },
+                { op: "set_metadata", summary: "当前金币与未结清借款" },
+              ],
+            },
+          },
+        ],
+      },
+      { outcome: "response", text: "你付了两枚金币。" },
+    ],
+  });
+  const first = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "write-coverage",
+    exchangeId: "first",
+    playerText: "付两枚金币。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+  const receipt = modelHost.requests[2]!.appended.at(-1);
+  expect(receipt).toMatchObject({ kind: "tool", toolCallId: "write" });
+  if (receipt?.kind !== "tool")
+    throw new Error("Missing committed write receipt");
+  expect(receipt.markdown).toContain("@ledger write succeeded");
+  expect(receipt.markdown).toContain(
+    "If a fresh context started now: catalog summary only",
+  );
+  expect(receipt.markdown).toContain("Summary: 当前金币与未结清借款");
+  expect(receipt.markdown).not.toContain("金币: 8");
+  const event = first.events.find(
+    (item) => item.kind === "tool_result" && item.callId === "write",
+  );
+  const persisted = await worlds.playTimeline.readDetail(
+    worldId,
+    first.chainId,
+    event!.id,
+  );
+  expect(persisted).toMatchObject({ markdown: receipt.markdown });
 });
 
 test("AI 读取证据返回冻结 bootstrap、已结算全文读取与下一次真实 Prompt Preview", async () => {
@@ -1309,7 +1379,8 @@ test("world_patch no-op 保留匹配的紧凑工具结果且不推进世界", as
   );
   expect(patchDetail).toMatchObject({
     kind: "tool_result",
-    markdown: "@current-situation unchanged",
+    markdown:
+      "@current-situation unchanged\nIf a fresh context started now: full body",
   });
   if (patchDetail.kind !== "tool_result")
     throw new Error("Expected a tool-result timeline detail");
@@ -1496,7 +1567,8 @@ test("游玩调用链可在 frame 声明的空 catalog 中创建首份文档", a
   expect(firstHost.requests[2]?.appended.at(-1)).toEqual({
     kind: "tool",
     toolCallId: "create-first-item",
-    markdown: "@lantern write succeeded",
+    markdown:
+      "@lantern write succeeded\nIf a fresh context started now: catalog summary only\nSummary: 一盏可持续追踪的提灯。",
   });
   expect(
     (await worlds.recoverEndpoint(worldId)).state.find(
@@ -1571,7 +1643,8 @@ test("冷启动恢复 world_create 授予的写权限，后续无需重新读取
   expect(interruptedHost.requests[1]?.appended.at(-1)).toEqual({
     kind: "tool",
     toolCallId: "create-cold-character",
-    markdown: "@cold-character write succeeded",
+    markdown:
+      "@cold-character write succeeded\nIf a fresh context started now: not directly injected; read on demand",
   });
 
   const recoveredHost = new ScriptedModelHost({

@@ -1,4 +1,5 @@
 import { parseDocument, stringify } from "yaml";
+import { renderPlayerViewBindings } from "../world/PlayerViewBindings.ts";
 
 import type {
   ModelPromptCacheStrategy,
@@ -299,6 +300,10 @@ export class FileNativePromptCompiler {
   readonly #toolStrategyOverride: RuntimeToolDefinitionStrategy | undefined;
   #locale: AppLocale;
 
+  get locale(): AppLocale {
+    return this.#locale;
+  }
+
   constructor(
     options: {
       toolStrategy?: RuntimeToolDefinitionStrategy;
@@ -429,6 +434,27 @@ export class FileNativePromptCompiler {
     return rendered.markdown;
   }
 
+  /** The same selection used by bootstrap, without model or host instructions. */
+  inspectWorldMaterials(world: FileNativePromptInput["world"]): {
+    blocks: { source: string; markdown: string }[];
+    coverage: PromptCompilation["coverage"];
+  } {
+    const frame = readYamlRecord(
+      snapshotFiles(world.documentSnapshot)["control/frame.yaml"],
+      "world frame",
+    );
+    requireFormat(frame, "narraeon.world-frame/v1", "world frame");
+    const coverage: PromptCompilation["coverage"] = [];
+    const blocks = resolveContext(
+      { world },
+      frame,
+      world.documentSnapshot,
+      coverage,
+      this.#locale,
+    );
+    return { blocks, coverage };
+  }
+
   async sendBootstrap<Result>(
     input: FileNativePromptInput,
     adapter: FileNativeModelAdapter<Result>,
@@ -458,14 +484,9 @@ export class FileNativePromptCompiler {
     requireFormat(hostFrame, "narraeon.host-frame/v1", "host frame");
     requireFormat(worldFrame, "narraeon.world-frame/v1", "world frame");
 
-    const coverage: PromptCompilation["coverage"] = [];
     const instructions = readWorldInstructions(worldFiles, worldFrame);
-    const context = resolveContext(
-      effectiveInput,
-      worldFrame,
-      documentSnapshot,
-      coverage,
-      this.#locale,
+    const { coverage, blocks: context } = this.inspectWorldMaterials(
+      effectiveInput.world,
     );
     const hostRoles = compileHostRoles(
       effectiveInput.hostBinding.files,
@@ -1474,7 +1495,7 @@ interface SelectedMaterial {
 }
 
 function resolveContext(
-  input: FileNativePromptInput,
+  input: Pick<FileNativePromptInput, "world">,
   worldFrame: Record<string, unknown>,
   snapshot: FileNativeWorldDocumentSnapshot,
   coverage: PromptCompilation["coverage"],
@@ -1577,7 +1598,11 @@ function resolveContext(
     );
     coverage.splice(additionalMaterialsAt.coverage, 0, ...materialCoverage);
   }
-  return selected.map(({ source, markdown }) => ({ source, markdown }));
+  const blocks = selected.map(({ source, markdown }) => ({ source, markdown }));
+  const bindings = renderPlayerViewBindings(snapshot, undefined, locale);
+  if (bindings.length > 0)
+    blocks.push({ source: "runtime:player-view-bindings", markdown: bindings });
+  return blocks;
 }
 
 function addDocumentSelection(

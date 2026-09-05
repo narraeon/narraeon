@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { stringify } from "yaml";
+import { renderPlayerViewBindings } from "../world/PlayerViewBindings.ts";
 
 import type { ModelHostToolCall } from "../model/ModelHost.ts";
 
@@ -33,6 +34,7 @@ export interface PlayDocumentToolResult extends ContextToolResult {
   candidateWrite?: {
     shortRef: string;
     changed: boolean;
+    freshContextCoverage?: string;
   };
 }
 
@@ -1185,7 +1187,7 @@ function readMarkdownDocument(
   if (result.kind !== "read_document") return unexpectedStateQueryResult();
   return {
     ok: true,
-    markdown: `# Exact read @${document.shortRef}\n\n${renderDocumentMetadata(document)}\n[Writable body starts; locators are relative to this point]\n${result.body.trimEnd()}\n[Writable body ends]\n\n---\nScope: state · @${document.shortRef}\nComplete: yes`,
+    markdown: `# Exact read @${document.shortRef}\n\n${renderDocumentMetadata(document)}\n[Writable body starts; locators are relative to this point]\n${result.body.trimEnd()}\n[Writable body ends]\n\n${renderPlayerViewBindings(snapshot, document.shortRef)}\n\n---\nScope: state · @${document.shortRef}\nComplete: yes`,
     readAuthorization: {
       snapshotId: snapshot.id,
       shortRef: document.shortRef,
@@ -1220,7 +1222,7 @@ function readProjectedNode(
     : `# ${document.title} · ${renderLocator(result.node.locator)} [${requestedHandle}]\n\n${body}\n`;
   return {
     ok: true,
-    markdown: `# Exact read ${requestedHandle}\n\n${text.trimEnd()}\n\n---\nScope: state · ${requestedHandle}\nComplete: yes`,
+    markdown: `# Exact read ${requestedHandle}\n\n${text.trimEnd()}\n\n${renderPlayerViewBindings(snapshot, document.shortRef)}\n\n---\nScope: state · ${requestedHandle}\nComplete: yes`,
     readAuthorization: {
       snapshotId: snapshot.id,
       shortRef: document.shortRef,

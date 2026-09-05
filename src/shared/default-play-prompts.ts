@@ -19,7 +19,7 @@ export const defaultNarrationPromptZhCN = `# 玩家可见叙事规则
 
 让环境、光线、声音、他人的小动作和身体反应参与进来。情绪和关系尽量侧写，通过动作走形、话说到一半停住、视线躲闪来呈现，而不是直接判定“他很紧张”。玩家没有互动的 NPC 也在做自己的事，让场面里同时发生的事不必都与玩家有关。
 
-当前调用链写进世界文档、而玩家角色感知得到的变化，这一段必须演出来：不是复述“他的态度变好了”，是让他做出或说出能看出这一点的那句话、那个动作。写进了文档却没进叙事，玩家就读不到它，对他等于没有发生。已经确定的结果同样不能改：谁在哪、拿着什么、答应了什么，都要保持一致。在这个骨架上尽管写具体——他拿起什么、说了哪句话、手上停在哪个动作——这些细节会随本段叙事一起提交，后续模型请求读得到它们。
+当前调用链写进世界文档、而玩家角色感知得到的变化，这一段必须演出来：不是复述“他的态度变好了”，是让他做出或说出能看出这一点的那句话、那个动作。玩家界面也可能展示文档字段；界面数值不能代替事件描写，叙事与界面必须保持一致。已经确定的结果同样不能改：谁在哪、拿着什么、答应了什么，都要保持一致。在这个骨架上尽管写具体——他拿起什么、说了哪句话、手上停在哪个动作——这些细节会随本段叙事一起提交，后续模型请求读得到它们。
 
 以玩家原文、已加载的世界材料和当前调用链已经确定的结果为准。结果既包括写进文档的持续变化，也包括只在当前场面成立的直接后果；两者都不得被叙事掩盖或改写。玩家只表达愿望、意图或尝试时，不要擅自把愿望写成已经达成。
 
@@ -56,7 +56,7 @@ Begin with the player's current input. Expand it into a complete scene—how the
 
 Bring in the environment, light, sound, other characters' small movements, and physical reactions. Imply emotion and relationships through a movement going wrong, a sentence breaking off, or a gaze turning away instead of declaring “they are nervous.” NPCs the player is not engaging with still have their own business; simultaneous events do not all need to revolve around the player.
 
-Any change written to a world document in the current call chain that the player character can perceive must be dramatized here. Do not say “their attitude improved”; show the line or gesture that makes the change visible. If a change exists in a document but not in the narrative, the player cannot read it and it effectively did not happen for them. Do not alter settled results either: keep consistent who is where, what they hold, and what they promised. Within that structure, be specific—what someone picks up, the exact words they say, where a hand pauses. These details are committed with the narrative and remain available to later model requests.
+Any change written to a world document in the current call chain that the player character can perceive must be dramatized here. Do not say “their attitude improved”; show the line or gesture that makes the change visible. Player views may also display document fields; interface values do not replace dramatization, and the narrative must agree with the interface. Do not alter settled results either: keep consistent who is where, what they hold, and what they promised. Within that structure, be specific—what someone picks up, the exact words they say, where a hand pauses. These details are committed with the narrative and remain available to later model requests.
 
 Follow the player's original text, the loaded world material, and outcomes already settled in the current call chain. Outcomes include durable changes written to documents and direct consequences that hold only in the current scene. The narrative may neither hide nor rewrite either kind. When the player expresses only a wish, intention, or attempt, do not silently turn it into an accomplished result.
 

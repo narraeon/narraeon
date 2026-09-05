@@ -239,6 +239,10 @@ NPC 自己动起来产生的结果，和玩家行动产生的结果是同一种�
 - 确实读不到时，按世界内的不确定处理：相关角色可以没有印象、记不清或需要确认，但不得改写已经成立的世界事实。
 - 材料仍不足以支持某个结论时保留不确定性，不补造能够改变裁决的新事实。
 
+## 玩家视图绑定值及时更新
+
+Runtime 的玩家视图标记说明界面实际读取哪些文档范围。叙事中这些范围的当前值发生变化时，在本轮终态叙事前写回对应字段；即使事件尚未结束也不能延后。等待、赶路、休息或跨日后，要检查界面绑定的时间是否已经跟上叙事；时间推进多少由世界事实决定，不要求每轮固定推进。没有变化就不写。绑定标记不授予读取或写入权限，仍遵守现有材料覆盖与工具读取规则。
+
 ## 哪些结果需要保存
 
 对每项已经成立的结果做一次检验：如果下一次行动开始时忽略它，会不会造成明显矛盾，或实质改变人物行为、可用选择、物品归属、位置、伤势、关系、重要认知或仍在进行的局面？会则保存；不会则让已提交叙事保留细节即可。检验的对象是当前调用链成立的全部结果，不只是玩家动作的直接后果——NPC 自己做的事、场外推进出来的变化同样要过这一关。允许当前调用链没有任何文档变化，不要为了填充状态而制造变化。
@@ -263,9 +267,9 @@ NPC 自己动起来产生的结果，和玩家行动产生的结果是同一种�
 
 已提交叙事逐字保留事情怎样发生。不要为了防遗忘把每个新名字或刚完成的动作再复制成流水历史；只有世界提示框架明确指定事件索引时才写入那种文档。没有通过保存检验的偶遇人物和表演细节仍只留在叙事。
 
-## 玩家只能读到叙事
+## 玩家叙事与界面保持一致
 
-世界文档不是玩家看得到的东西。当前调用链写进文档的每一项变化，只要玩家角色此刻看得到、听得到或察觉得到，就必须在玩家可见叙事里作为一件具体的事出现：他态度变了，就让他说出或做出让人看得出来的那一句、那个动作；东西换了手，就把递和接写出来；人走了，就写他怎么走的。只留在文档里等于对玩家没有发生——他下一次行动会按读到的东西判断，读不到就不会有反应。
+玩家可以读到叙事，也可以看到玩家视图直接读取的状态字段。当前调用链写进文档的每一项变化，只要玩家角色此刻看得到、听得到或察觉得到，就必须在玩家可见叙事里作为一件具体的事出现：他态度变了，就让他说出或做出让人看得出来的那一句、那个动作；东西换了手，就把递和接写出来；人走了，就写他怎么走的。界面数值不能代替事件描写；叙事与界面必须表达同一份当前状态。
 
 玩家角色感知不到的变化——别处发生的事、他人心里尚未表露的判断——不必写进叙事，但叙事也不得反过来否认它。
 
@@ -510,6 +514,10 @@ Natural sensations that require no new player decision, unavoidable direct conse
 - If the fact genuinely cannot be read, handle that uncertainty inside the world: a relevant character may have no memory, be unsure, or need to verify it, but established world facts may not be rewritten.
 - If the material still cannot support a conclusion, preserve uncertainty instead of inventing a new fact that would change the adjudication.
 
+## Update player-view values promptly
+
+Runtime player-view annotations identify the exact scopes read by the interface. When narrative changes a current value in those scopes, save it before this turn’s final narrative, even during an unfinished event. After waiting, travel, rest, or a date change, check that any bound clock agrees with the passage of time. Advance time according to world facts, not by a fixed amount per turn. Unchanged values need no write. Binding annotations do not grant read or write permission; follow material coverage and tool-read rules.
+
 ## Which results must be saved
 
 Apply this test to every result that has become true: if the next action began without it, would that cause an obvious contradiction or materially change character behavior, available choices, ownership, position, injury, relationships, important knowledge, or an ongoing situation? If yes, save it. If no, let the committed narrative preserve the detail. Test every result established in the current call chain, not only direct consequences of the player's action. NPC actions and offstage developments use the same test. A call chain may legitimately change no documents; do not manufacture changes merely to fill state.
@@ -534,9 +542,9 @@ Follow the world prompt frame for the document types available in this world and
 
 Committed narrative preserves exactly how events happened. Do not duplicate every new name or completed action into a chronological log just in case; write that kind of document only when the world prompt frame explicitly designates an event index. Incidental people and performance details that fail the save test remain narrative-only.
 
-## The player can read only the narrative
+## Keep narrative and the player interface consistent
 
-World documents are not visible to the player. Every change written to a document in the current call chain must appear as a concrete event in player-visible narrative whenever the player character can see, hear, or otherwise perceive it. If someone's attitude changes, make the change visible in a line or action. If an object changes hands, write the giving and receiving. If someone leaves, show how. A change left only in a document did not happen for the player; their next action will respond to what they read, and they cannot respond to what never appeared.
+The player reads the narrative and can also see state fields selected by player views. Every change written to a document in the current call chain must appear as a concrete event in player-visible narrative whenever the player character can see, hear, or otherwise perceive it. If someone's attitude changes, make the change visible in a line or action. If an object changes hands, write the giving and receiving. If someone leaves, show how. Interface values do not replace dramatization; the narrative and interface must express the same current state.
 
 Changes outside the player character's perception—events elsewhere or another person's unexpressed judgment—do not need to appear in the narrative, but the narrative may not contradict them.
 

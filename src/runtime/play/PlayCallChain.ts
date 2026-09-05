@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { renderFreshContextCoverage } from "../prompt/WorldMaterialCoverage.ts";
 
 import type {
   V1PlayCallChainContextView,
@@ -1561,6 +1562,38 @@ export class PlayCallChain {
       trailingEvents.push(structuredClone(item.event));
     }
     const stateChanges = session.documents.stateChanges();
+    // Resolve once after the entire tool batch. Store the prediction with the
+    // prepared fact so crash recovery publishes exactly the same receipt.
+    const writes = [...workingTools.values()].filter(
+      ({ result }) => result.candidateWrite !== undefined,
+    );
+    if (writes.length > 0) {
+      try {
+        const { coverage } = this.#compiler.inspectWorldMaterials({
+          controlFingerprint: "receipt",
+          documentSnapshot: session.documents.snapshot,
+          history: Object.fromEntries(
+            session.history.map(({ path, contents }) => [path, contents]),
+          ),
+          additionalMaterials: session.nextMaterials,
+        });
+        for (const { result } of writes) {
+          const write = result.candidateWrite!;
+          write.freshContextCoverage = renderFreshContextCoverage(
+            session.documents.snapshot,
+            coverage,
+            write.shortRef,
+            this.#compiler.locale,
+          );
+        }
+      } catch (error: unknown) {
+        // A coverage prediction must never reject an otherwise valid write.
+        const reason =
+          error instanceof Error ? error.message : "Material selection failed";
+        for (const { result } of writes)
+          result.candidateWrite!.freshContextCoverage = `${this.#compiler.locale === "zh-CN" ? "暂时无法判定下次注入；写入结果不受影响。原因" : "Fresh-context coverage unavailable; the write result is unaffected. Reason"}: ${reason}`;
+      }
+    }
     const visibleText = responseKind === "narrative";
     const assistantItem: Extract<ModelHostAppendItem, { kind: "assistant" }> = {
       kind: "assistant",
@@ -2479,10 +2512,13 @@ function finalizePreparedReceipts(
   for (const completed of settlement.completedTools) {
     const candidateWrite = completed.result.candidateWrite;
     if (!completed.result.ok || candidateWrite === undefined) continue;
-    const markdown =
+    const status =
       candidateWrite.changed && committedWriteRefs.has(candidateWrite.shortRef)
         ? `@${candidateWrite.shortRef} write succeeded`
         : `@${candidateWrite.shortRef} unchanged`;
+    const markdown = [status, candidateWrite.freshContextCoverage]
+      .filter(Boolean)
+      .join("\n");
     completed.result.markdown = markdown;
     delete completed.result.candidateWrite;
     const callId = completed.key.slice(completed.key.indexOf(":") + 1);

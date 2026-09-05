@@ -11,6 +11,60 @@ import {
 } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
 import { WorldDocumentStore } from "../../src/runtime/world/WorldDocumentStore.ts";
 
+test("玩家视图的实际节点绑定在提示词和精确读取中标记且不进入可写正文", () => {
+  const request = input();
+  const files = [
+    ...request.world.documentSnapshot.files,
+    {
+      path: "control/player-views.yaml",
+      contents: `format: narraeon.player-views/v1
+views:
+  - id: status
+    title: 状态
+    items:
+      - id: place
+        label: 当前地点
+        select: { document: situation.current, locator: { yaml: [地点] } }
+      - id: clothes
+        label: 衣着
+        select: { document: '@alex', locator: { yaml: [衣着] } }
+`,
+    },
+  ];
+  request.world.documentSnapshot = WorldDocumentStore.open({
+    layout: "world_state",
+    files,
+  });
+  const compiled = new FileNativePromptCompiler().compileBootstrap(request);
+  const block = compiled.logicalMessages
+    .flatMap(({ blocks }) => blocks)
+    .find(({ source }) => source === "runtime:player-view-bindings");
+  expect(block?.markdown).toContain(
+    '当前地点 → @current-situation#yaml:["地点"]',
+  );
+  expect(block?.markdown).toContain('衣着 → @alex#yaml:["衣着"]');
+  const documents = new FileNativePlayDocuments(
+    Object.fromEntries(files.map(({ path, contents }) => [path, contents])),
+  );
+  const result = documents.execute(
+    {
+      id: "read",
+      name: "context_read",
+      arguments: { ref: "@current-situation" },
+    },
+    [],
+  );
+  expect(result.ok).toBe(true);
+  expect(result.markdown).toContain(
+    '当前地点 → @current-situation#yaml:["地点"]',
+  );
+  const body = result.markdown
+    .split("[Writable body starts; locators are relative to this point]")[1]
+    ?.split("[Writable body ends]")[0];
+  expect(body).not.toContain("当前地点 →");
+  expect(result.markdown).not.toContain("衣着 →");
+});
+
 test("主持块分别约束玩家代理权与默认叙事视角", () => {
   expect(defaultPresetHostFiles["blocks/adjudication.md"]).toContain(
     "What the player must decide",
