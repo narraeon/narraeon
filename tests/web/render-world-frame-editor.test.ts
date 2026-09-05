@@ -11,6 +11,37 @@ import { WorldFrameEditor } from "../../src/web/WorldFrameEditor.tsx";
 afterEach(cleanup);
 
 describe("世界提示框架可视化编辑器", () => {
+  test("建议体积保持材料身份，调序不丢失设置，清空可取消建议", () => {
+    const changed = vi.fn<(contents: string) => void>();
+    render(
+      createElement(FrameHarness, {
+        initialContents: frame(),
+        files: files(),
+        onContentsChange: changed,
+        onSave: vi.fn(),
+      }),
+    );
+    fireEvent.change(
+      screen.getAllByLabelText("建议体积（UTF-8 字节，可留空）")[0]!,
+      { target: { value: "1024" } },
+    );
+    const identity = latestFrame(changed).context[0]?.slot.id;
+    expect(identity).toEqual(expect.stringMatching(/^slot-/u));
+    fireEvent.click(screen.getByRole("button", { name: "下移材料 1" }));
+    expect(latestFrame(changed).context[1]?.slot).toMatchObject({
+      id: identity,
+      advisoryBytes: 1024,
+    });
+    fireEvent.change(
+      screen.getAllByLabelText("建议体积（UTF-8 字节，可留空）")[1]!,
+      { target: { value: "" } },
+    );
+    expect(latestFrame(changed).context[1]?.slot).toMatchObject({
+      id: identity,
+    });
+    expect(latestFrame(changed).context[1]?.slot.advisoryBytes).toBeUndefined();
+  });
+
   test("新增最近叙事插槽并调整条数，YAML 里落成 history slot", () => {
     const changed = vi.fn<(contents: string) => void>();
     render(

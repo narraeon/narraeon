@@ -1,3 +1,4 @@
+import { WorldMaintenancePanel } from "./WorldMaintenancePanel.tsx";
 import { useMemo, useState } from "react";
 
 import {
@@ -494,6 +495,9 @@ function AiReadingAudit({
       </div>
       <EvidenceTable title={uiText("当前冻结上下文")} rows={currentRows} />
       <EvidenceTable title={uiText("下一次全新上下文")} rows={nextRows} />
+      <WorldMaintenancePanel
+        report={reading.nextFreshContext?.preview.compilation.maintenance}
+      />
       {reading.currentContext?.reads.length ? (
         <details className="ai-reading-raw">
           <summary>{uiText("查看按需读取返回的完整记录")}</summary>

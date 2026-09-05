@@ -1,3 +1,6 @@
+import type { WorldDocumentMaintenance } from "../../protocol/worldMaintenance.ts";
+import type { NarrativeCheckpoint } from "./PlayContinuity.ts";
+import { readDeclaredWorldClock } from "../prompt/WorldMaintenanceReport.ts";
 import { createHash, randomUUID } from "node:crypto";
 
 import {
@@ -45,6 +48,8 @@ interface Candidate extends WorldStateRevision {
   materials: MaterialSelection[];
   originalMaterials: MaterialSelection[];
   history: Record<string, string>;
+  documentMaintenance: Record<string, WorldDocumentMaintenance>;
+  narrativeCheckpoint: NarrativeCheckpoint | undefined;
   reads: Map<string, { snapshotId: string; hash: string }>;
   previewedVersion: number | null;
   stateOperationClaim: ContinuityCorrectionWorldClaimHandle;
@@ -148,6 +153,11 @@ export class FileNativeContinuityCorrection {
     claimHeartbeat.unref();
     const candidate: Candidate = {
       ...revision,
+      documentMaintenance: await this.#worlds.readDocumentMaintenance(
+        input.worldId,
+        binding.parentHead,
+      ),
+      narrativeCheckpoint: binding.narrativeCheckpoint,
       id: `correction-${randomUUID()}`,
       operationId: input.operationId,
       worldId: input.worldId,
@@ -323,7 +333,9 @@ export class FileNativeContinuityCorrection {
     if (candidate.snapshot.status !== "usable")
       throw new Error("Only a usable revision can commit a correction");
     try {
+      const worldClock = readDeclaredWorldClock(candidate.snapshot);
       return await this.#worlds.commitCorrection({
+        ...(worldClock === undefined ? {} : { worldClock }),
         operationId: candidate.operationId,
         worldId: candidate.worldId,
         parentHead: candidate.parentHead,
@@ -378,6 +390,8 @@ export class FileNativeContinuityCorrection {
           documentSnapshot: candidate.snapshot,
           additionalMaterials: materials,
           history: candidate.history,
+          documentMaintenance: candidate.documentMaintenance,
+          narrativeCheckpoint: candidate.narrativeCheckpoint,
         },
         playerInputPlacement: "append",
         playerInput: "",

@@ -1,3 +1,4 @@
+import type { WorldPromptMaintenance } from "./worldMaintenance.ts";
 import type {
   ListProviderModelsInput,
   ModelProviderKind,
@@ -318,6 +319,7 @@ export interface V1SettingPromptPreview {
     modelId: string;
   };
   compilation: {
+    maintenance?: WorldPromptMaintenance;
     logicalMessages: {
       role: string;
       markdown: string;

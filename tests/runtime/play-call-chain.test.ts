@@ -1458,6 +1458,153 @@ test("已提交写入回执报告下次真实目录覆盖并回显更新后的�
   expect(persisted).toMatchObject({ markdown: receipt.markdown });
 });
 
+test("增长基准与正文写入位置跨重启和分叉保留，摘要修改不刷新正文位置", async () => {
+  const files = worldFiles();
+  files.find(({ path }) => path === "world/current-situation.yaml")!.contents +=
+    "时间: 黄昏\n";
+  files.find(({ path }) => path === "control/frame.yaml")!.contents +=
+    "maintenance:\n  documents:\n    '@current-situation': 10\n  clock:\n    document: '@current-situation'\n    locator: { yaml: [时间] }\n";
+  const { worlds, worldId, root } = await createWorld(
+    "document-maintenance",
+    files,
+  );
+  const host = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "time",
+            name: "world_patch",
+            arguments: {
+              target: "@current-situation",
+              edits: [
+                { op: "replace", locator: { yaml: ["时间"] }, value: "午夜" },
+              ],
+            },
+          },
+        ],
+      },
+      { outcome: "response", text: "你一直等到午夜。" },
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "summary",
+            name: "world_patch",
+            arguments: {
+              target: "@current-situation",
+              edits: [{ op: "set_metadata", summary: "午夜的门边" }],
+            },
+          },
+        ],
+      },
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "read-position",
+            name: "context_read",
+            arguments: { ref: "@current-situation" },
+          },
+        ],
+      },
+      { outcome: "response", text: "Alex 从门边走来。" },
+    ],
+  });
+  const chains = new PlayCallChain(worlds);
+  await chains.start({
+    worldId,
+    chainId: "document-maintenance",
+    exchangeId: "first",
+    playerText: "等到午夜。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: host,
+  });
+  expect(JSON.stringify(host.requests[1]!.appended.at(-1))).toContain(
+    "advisory limit 10",
+  );
+  const first = (await worlds.readDocumentMaintenance(worldId))[
+    "current-situation"
+  ]!;
+  expect(first).toMatchObject({
+    baselineKind: "world_origin",
+    lastBodyWrite: { kind: "play", context: 1, round: 1, worldTime: "午夜" },
+    bodyChangedContexts: 1,
+  });
+  await chains.append({
+    worldId,
+    chainId: "document-maintenance",
+    exchangeId: "second",
+    playerText: "整理一下这段的摘要。",
+    modelHost: host,
+  });
+  const after = (await worlds.readDocumentMaintenance(worldId))[
+    "current-situation"
+  ]!;
+  expect(after.lastBodyWrite).toEqual(first.lastBodyWrite);
+  const readPosition = JSON.stringify(host.requests.at(-1)?.appended.at(-1));
+  expect(readPosition).toContain("Body: Context 1 · round 1");
+  expect(readPosition).toContain("Metadata: Context 1 · round 2");
+  expect(readPosition).toContain("World time at write: 午夜");
+  expect(after.lastMetadataWrite).toMatchObject({
+    context: 1,
+    round: 2,
+    worldTime: "午夜",
+  });
+  expect(after.baselineBytes).toBe(first.baselineBytes);
+  expect(after.bodyChangedContexts).toBe(1);
+  const restarted = new FileNativeWorldStore(root);
+  expect(
+    (await restarted.readDocumentMaintenance(worldId))["current-situation"],
+  ).toEqual(after);
+  const fork = await worlds.deriveWorld({
+    operationId: "maintenance-fork",
+    sourceWorldId: worldId,
+    sourceHead: "commit:6",
+    hostPresetId: "host-main",
+  });
+  expect(
+    (await worlds.readDocumentMaintenance(fork.world.worldId))[
+      "current-situation"
+    ],
+  ).toEqual(after);
+  const noOpHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "same-time",
+            name: "world_patch",
+            arguments: {
+              target: "@current-situation",
+              edits: [
+                { op: "replace", locator: { yaml: ["时间"] }, value: "午夜" },
+              ],
+            },
+          },
+        ],
+      },
+      { outcome: "response", text: "仍是午夜。" },
+    ],
+  });
+  await chains.append({
+    worldId,
+    chainId: "document-maintenance",
+    exchangeId: "third",
+    playerText: "确认时间。",
+    modelHost: noOpHost,
+  });
+  expect(
+    (await worlds.readDocumentMaintenance(worldId))["current-situation"],
+  ).toEqual(after);
+});
+
 test("AI 读取证据返回冻结 bootstrap、已结算全文读取与下一次真实 Prompt Preview", async () => {
   const root = await mkdtemp(join(tmpdir(), "narraeon-play-reading-"));
   roots.push(root);
@@ -1825,6 +1972,12 @@ test("游玩调用链可在 frame 声明的空 catalog 中创建首份文档", a
   });
   expect(listResult?.kind === "tool" ? listResult.markdown : "").toContain(
     "Directory @dir-/items",
+  );
+  expect((await worlds.readDocumentMaintenance(worldId)).lantern).toMatchObject(
+    {
+      baselineKind: "document_creation",
+      baselineBytes: Buffer.byteLength("状态: 完好\n", "utf8"),
+    },
   );
   expect(firstHost.requests[2]?.appended.at(-1)).toEqual({
     kind: "tool",

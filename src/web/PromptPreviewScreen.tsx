@@ -1,3 +1,5 @@
+import type { WorldPromptMaintenance } from "../protocol/worldMaintenance.ts";
+import { WorldMaintenancePanel } from "./WorldMaintenancePanel.tsx";
 import { getWebLocale, uiText } from "./i18n.ts";
 import { useRef, useState } from "react";
 
@@ -41,6 +43,7 @@ export interface PromptPreviewData {
     playPresetRevision?: string;
   };
   compilation: {
+    maintenance?: WorldPromptMaintenance;
     logicalMessages: {
       role: LogicalRole;
       markdown: string;
@@ -674,10 +677,13 @@ function PromptPreviewResult({
         <PlayPresetCallChain callChain={preview.playPreset} />
       ) : null}
       {section === "materials" ? (
-        <MaterialsAndTools
-          coverage={compilation.coverage}
-          tools={compilation.tools}
-        />
+        <>
+          <WorldMaintenancePanel report={compilation.maintenance} />
+          <MaterialsAndTools
+            coverage={compilation.coverage}
+            tools={compilation.tools}
+          />
+        </>
       ) : null}
       {section === "provider" ? (
         <ProviderMapping

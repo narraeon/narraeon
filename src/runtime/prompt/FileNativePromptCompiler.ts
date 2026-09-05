@@ -1,5 +1,15 @@
+import { renderDocumentWritePosition } from "./WorldMaintenanceReport.ts";
 import { parseDocument, stringify } from "yaml";
 import type { ModelHostAppendItem } from "../model/ModelHost.ts";
+import type {
+  WorldDocumentMaintenance,
+  WorldPromptMaintenance,
+} from "../../protocol/worldMaintenance.ts";
+import {
+  measureWorldMaterials,
+  refreshMaintenanceTotals,
+  type MeasuredWorldMaterial,
+} from "./WorldMaintenanceReport.ts";
 import { renderPlayerViewBindings } from "../world/PlayerViewBindings.ts";
 import {
   checkpointHistory,
@@ -69,6 +79,7 @@ export interface FileNativePromptInput {
     history?: Record<string, string>;
     narrativeCheckpoint?: NarrativeCheckpoint | undefined;
     replayHistory?: boolean;
+    documentMaintenance?: Readonly<Record<string, WorldDocumentMaintenance>>;
     additionalMaterials: MaterialSelection[];
     hostPath?: string;
   };
@@ -85,6 +96,7 @@ export interface FileNativePromptInput {
 }
 
 export interface PromptCompilation {
+  maintenance?: WorldPromptMaintenance;
   logicalMessages: {
     role: LogicalRole;
     markdown: string;
@@ -453,6 +465,7 @@ export class FileNativePromptCompiler {
   inspectWorldMaterials(world: FileNativePromptInput["world"]): {
     blocks: { source: string; markdown: string }[];
     coverage: PromptCompilation["coverage"];
+    maintenance: WorldPromptMaintenance;
   } {
     const frame = readYamlRecord(
       snapshotFiles(world.documentSnapshot)["control/frame.yaml"],
@@ -460,14 +473,46 @@ export class FileNativePromptCompiler {
     );
     requireFormat(frame, "narraeon.world-frame/v1", "world frame");
     const coverage: PromptCompilation["coverage"] = [];
-    const blocks = resolveContext(
+    const materials = resolveContext(
       { world },
       frame,
       world.documentSnapshot,
       coverage,
       this.#locale,
     );
-    return { blocks, coverage };
+    if (world.documentMaintenance !== undefined) {
+      const injected = new Set(
+        materials.flatMap(
+          ({ contributions }) =>
+            contributions?.map(({ shortRef }) => shortRef) ?? [],
+        ),
+      );
+      const markdown = [...injected]
+        .map((ref) =>
+          renderDocumentWritePosition(
+            ref,
+            world.documentMaintenance?.[ref],
+            this.#locale,
+          ),
+        )
+        .join("\n\n");
+      if (markdown.length > 0)
+        materials.push({
+          key: "runtime:document-write-positions",
+          source: "runtime:document-write-positions",
+          markdown,
+        });
+    }
+    return {
+      blocks: materials.map(({ source, markdown }) => ({ source, markdown })),
+      coverage,
+      maintenance: measureWorldMaterials(
+        world.documentSnapshot,
+        frame,
+        materials,
+        world.documentMaintenance,
+      ),
+    };
   }
 
   async sendBootstrap<Result>(
@@ -500,9 +545,11 @@ export class FileNativePromptCompiler {
     requireFormat(worldFrame, "narraeon.world-frame/v1", "world frame");
 
     const instructions = readWorldInstructions(worldFiles, worldFrame);
-    const { coverage, blocks: context } = this.inspectWorldMaterials(
-      effectiveInput.world,
-    );
+    const {
+      coverage,
+      blocks: context,
+      maintenance,
+    } = this.inspectWorldMaterials(effectiveInput.world);
     const hostRoles = compileHostRoles(
       effectiveInput.hostBinding.files,
       hostFrame,
@@ -556,13 +603,14 @@ export class FileNativePromptCompiler {
     const budget = disabledPromptBudget(effectiveInput);
     const stableText = cacheStableText(logicalMessages);
     const cache = stableCacheBoundary(stableText, tools, toolStrategy);
-    return {
+    const compilation: PromptCompilation = {
       logicalMessages,
       provider,
       tools,
       toolUniverse: structuredClone(tools),
       toolStrategy,
       coverage,
+      maintenance,
       budget,
       cache: {
         ...cache,
@@ -575,6 +623,8 @@ export class FileNativePromptCompiler {
               : [],
       },
     };
+    refreshMaintenanceTotals(compilation);
+    return compilation;
   }
 
   preview(
@@ -647,6 +697,7 @@ export class FileNativePromptCompiler {
         ),
       },
     };
+    refreshMaintenanceTotals(bootstrap);
     return {
       bootstrap,
       toolUniverse: structuredClone(toolUniverse),
@@ -665,12 +716,14 @@ export class FileNativePromptCompiler {
     binding: PlayPresetBinding,
   ): PlayPresetCompilation {
     const bootstrap = this.compilePlayBootstrap(input);
-    return compilePlayPresetCompilation(
+    const compilation = compilePlayPresetCompilation(
       input,
       bootstrap,
       binding,
       this.#locale,
     );
+    refreshMaintenanceTotals(compilation.bootstrap);
+    return compilation;
   }
 
   /**
@@ -1530,10 +1583,8 @@ function throwQueryFailure(
   );
 }
 
-interface SelectedMaterial {
+interface SelectedMaterial extends MeasuredWorldMaterial {
   key: string;
-  source: string;
-  markdown: string;
 }
 
 function resolveContext(
@@ -1542,21 +1593,24 @@ function resolveContext(
   snapshot: FileNativeWorldDocumentSnapshot,
   coverage: PromptCompilation["coverage"],
   locale: AppLocale,
-): { source: string; markdown: string }[] {
+): SelectedMaterial[] {
   const context = worldFrame.context;
   if (!Array.isArray(context))
     throw new PromptCompilationError(
       "world_frame_invalid",
       "world frame.context must be an array",
     );
-  const selected: { key: string; source: string; markdown: string }[] = [];
+  const selected: SelectedMaterial[] = [];
   const currentSituation = isRecord(worldFrame.bindings)
     ? worldFrame.bindings.currentSituation
     : undefined;
   // The model's own list must yield to every author slot, however the frame
   // happens to order them, so resolve it last and splice it back into place.
-  let additionalMaterialsAt: { selected: number; coverage: number } | null =
-    null;
+  let additionalMaterialsAt: {
+    selected: number;
+    coverage: number;
+    slotId?: string;
+  } | null = null;
   const replay =
     input.world.replayHistory === true
       ? checkpointReplayBlocks(
@@ -1566,6 +1620,7 @@ function resolveContext(
         )
       : [];
   for (const entry of context) {
+    const selectionStart = selected.length;
     const slot = isRecord(entry) && isRecord(entry.slot) ? entry.slot : null;
     if (slot === null || typeof slot.kind !== "string")
       throw new PromptCompilationError(
@@ -1600,6 +1655,7 @@ function resolveContext(
       additionalMaterialsAt ??= {
         selected: selected.length,
         coverage: coverage.length,
+        ...(typeof slot.id === "string" ? { slotId: slot.id } : {}),
       };
     else if (slot.kind === "document")
       addDocumentSelection(
@@ -1629,6 +1685,9 @@ function resolveContext(
         "world_frame_invalid",
         `Unsupported slot: ${slot.kind}`,
       );
+    if (typeof slot.id === "string")
+      for (const material of selected.slice(selectionStart))
+        material.slotId = slot.id;
   }
   assertNoOverlap(selected);
   const bindings = renderPlayerViewBindings(snapshot, undefined, locale);
@@ -1677,12 +1736,18 @@ function resolveContext(
     selected.splice(
       additionalMaterialsAt.selected,
       0,
-      ...withMaterials.slice(selected.length),
+      ...withMaterials
+        .slice(selected.length)
+        .map((material) => ({
+          ...material,
+          ...(additionalMaterialsAt?.slotId === undefined
+            ? {}
+            : { slotId: additionalMaterialsAt.slotId }),
+        })),
     );
     coverage.splice(additionalMaterialsAt.coverage, 0, ...materialCoverage);
   }
-  const blocks = selected.map(({ source, markdown }) => ({ source, markdown }));
-  return blocks;
+  return selected;
 }
 
 function addDocumentSelection(
@@ -1724,6 +1789,12 @@ function addDocumentSelection(
     key,
     source: `slot:${slot}:@${document.descriptor.shortRef}`,
     markdown: document.markdown,
+    contributions: [
+      {
+        shortRef: document.descriptor.shortRef,
+        bytes: Buffer.byteLength(document.markdown, "utf8"),
+      },
+    ],
   });
   coverage.push({
     slot,
@@ -1881,6 +1952,13 @@ function resolveCatalog(
     key: `catalog:${directory}`,
     source: `slot:catalog:${directory}`,
     markdown,
+    contributions: page.map((document) => ({
+      shortRef: document.shortRef,
+      bytes: Buffer.byteLength(
+        `- ${document.title} [ref: @${document.shortRef}] — ${document.summary}`,
+        "utf8",
+      ),
+    })),
   });
   coverage.push({
     slot: "catalog",
@@ -2180,6 +2258,12 @@ function addNodeSelection(
     key,
     source: `slot:${slot}:@${result.document.shortRef}:${pathKey}`,
     markdown,
+    contributions: [
+      {
+        shortRef: result.document.shortRef,
+        bytes: Buffer.byteLength(markdown, "utf8"),
+      },
+    ],
   });
   coverage.push({
     slot,

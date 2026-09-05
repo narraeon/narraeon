@@ -7,6 +7,11 @@ import {
   type NarrativeCheckpoint,
 } from "./PlayContinuity.ts";
 import { renderFreshContextCoverage } from "../prompt/WorldMaterialCoverage.ts";
+import {
+  renderWriteSizeAdvice,
+  readDeclaredWorldClock,
+} from "../prompt/WorldMaintenanceReport.ts";
+import { WorldDocumentStore } from "../world/WorldDocumentStore.ts";
 
 import type {
   V1PlayCallChainContextView,
@@ -241,7 +246,12 @@ export class PlayCallChain {
       );
 
     const binding = await this.#worlds.bindPlayCallChain(input.worldId);
+    const documentMaintenance = await this.#worlds.readDocumentMaintenance(
+      input.worldId,
+      binding.parentHead,
+    );
     const documents = new FileNativePlayDocuments(binding.files);
+    documents.bindMaintenance(documentMaintenance, this.#compiler.locale);
     const compilation = this.#compiler.compilePlayCallChain(
       {
         endpoint: {
@@ -255,6 +265,7 @@ export class PlayCallChain {
           additionalMaterials: structuredClone(binding.additionalMaterials),
           history: structuredClone(binding.history),
           narrativeCheckpoint: binding.narrativeCheckpoint,
+          documentMaintenance,
         },
         playerInputPlacement: "append",
         playerInput: input.playerText,
@@ -1029,7 +1040,12 @@ export class PlayCallChain {
       request.worldId,
       restoresHead,
     );
+    const documentMaintenance = await this.#worlds.readDocumentMaintenance(
+      request.worldId,
+      binding.parentHead,
+    );
     const documents = new FileNativePlayDocuments(binding.files);
+    documents.bindMaintenance(documentMaintenance, this.#compiler.locale);
     const compilation = this.#compiler.compilePlayCallChain(
       {
         endpoint: {
@@ -1043,6 +1059,7 @@ export class PlayCallChain {
           additionalMaterials: structuredClone(binding.additionalMaterials),
           history: structuredClone(binding.history),
           narrativeCheckpoint: binding.narrativeCheckpoint,
+          documentMaintenance,
         },
         playerInputPlacement: "append",
         playerInput: request.replacementText,
@@ -1434,6 +1451,7 @@ export class PlayCallChain {
       schemaVersion: 1,
       kind: "play_advance",
       advanceKind: "player",
+      playContext: session.chainId,
       worldId: session.worldId,
       chainId: session.chainId,
       advanceId: playerOperationId,
@@ -1500,6 +1518,9 @@ export class PlayCallChain {
     advance: Extract<PlayAdvanceBase, { advanceKind: "player" }>,
   ): Promise<void> {
     const outcome = await this.#worlds.commitPlayStep({
+      ...(advance.playContext === undefined
+        ? {}
+        : { playContext: advance.playContext }),
       operationId: advance.operationId,
       worldId: session.worldId,
       parentHead: advance.parentHead,
@@ -1552,11 +1573,11 @@ export class PlayCallChain {
     await this.#worlds.playAdvances.markSettled(advance, outcome.head);
   }
 
-  #prepareResponseSettlement(
+  async #prepareResponseSettlement(
     session: PlayCallChainSession,
     advance: Extract<PlayAdvanceBase, { advanceKind: "response" }>,
     response: DurableModelHostResponse,
-  ): PreparedPlayResponseSettlement {
+  ): Promise<PreparedPlayResponseSettlement> {
     const existing = session.events.find(({ id }) => id === advance.eventId);
     if (existing?.kind !== "assistant")
       throw new PlayCallChainError(
@@ -1620,11 +1641,27 @@ export class PlayCallChain {
     const writes = [...workingTools.values()].filter(
       ({ result }) => result.candidateWrite !== undefined,
     );
+    let worldClock: string | undefined;
     if (writes.length > 0) {
       try {
-        const { coverage } = this.#compiler.inspectWorldMaterials({
+        // Author controls may change while an existing Provider context stays
+        // frozen. Predictions and clock capture use the controls active now.
+        const binding = await this.#worlds.bindPlayCallChain(session.worldId);
+        const snapshot = WorldDocumentStore.open({
+          layout: "world_state",
+          files: [
+            ...session.documents.snapshot.files.filter(({ path }) =>
+              path.startsWith("state/"),
+            ),
+            ...Object.entries(binding.files)
+              .filter(([path]) => path.startsWith("control/"))
+              .map(([path, contents]) => ({ path, contents })),
+          ],
+        });
+        worldClock = readDeclaredWorldClock(snapshot);
+        const { coverage, maintenance } = this.#compiler.inspectWorldMaterials({
           controlFingerprint: "receipt",
-          documentSnapshot: session.documents.snapshot,
+          documentSnapshot: snapshot,
           history: Object.fromEntries(
             session.history.map(({ path, contents }) => [path, contents]),
           ),
@@ -1633,11 +1670,24 @@ export class PlayCallChain {
         for (const { result } of writes) {
           const write = result.candidateWrite!;
           write.freshContextCoverage = renderFreshContextCoverage(
-            session.documents.snapshot,
+            snapshot,
             coverage,
             write.shortRef,
             this.#compiler.locale,
           );
+          const previous = session.documents.committedSnapshot.query({
+            kind: "read_document",
+            document: { shortRef: write.shortRef },
+          });
+          const advice = renderWriteSizeAdvice(
+            maintenance,
+            write.shortRef,
+            previous.kind === "read_document"
+              ? Buffer.byteLength(previous.body, "utf8")
+              : null,
+            this.#compiler.locale,
+          );
+          if (advice.length > 0) write.freshContextCoverage += `\n${advice}`;
         }
       } catch (error: unknown) {
         // A coverage prediction must never reject an otherwise valid write.
@@ -1691,6 +1741,10 @@ export class PlayCallChain {
     };
     return {
       assistantEvent,
+      playContext: session.chainId,
+      ...(worldClock === undefined || stateChanges.length === 0
+        ? {}
+        : { worldClock }),
       trailingEvents,
       transcriptStart: session.transcript.length,
       transcriptAppend: [
@@ -1743,6 +1797,12 @@ export class PlayCallChain {
     let committedHead: string | undefined;
     if (settlement.visibleText || settlement.stateChanges.length > 0) {
       const outcome = await this.#worlds.commitPlayStep({
+        ...(settlement.playContext === undefined
+          ? {}
+          : { playContext: settlement.playContext }),
+        ...(settlement.worldClock === undefined
+          ? {}
+          : { worldClock: settlement.worldClock }),
         operationId: advance.operationId,
         worldId: session.worldId,
         parentHead: advance.parentHead,
@@ -1832,6 +1892,14 @@ export class PlayCallChain {
       }
       mergeChangedDocuments(session, settlement.stateChanges);
     }
+    if (settlement.stateChanges.length > 0)
+      session.documents.bindMaintenance(
+        await this.#worlds.readDocumentMaintenance(
+          session.worldId,
+          session.parentHead,
+        ),
+        this.#compiler.locale,
+      );
 
     session.exchange = Math.max(session.exchange, advance.exchange);
     session.canRetry = false;
@@ -2065,7 +2133,7 @@ export class PlayCallChain {
           durableResponse,
         );
         crashAtPlayAdvanceEdge("after_provider_completed");
-        const settlement = this.#prepareResponseSettlement(
+        const settlement = await this.#prepareResponseSettlement(
           session,
           advance,
           durableResponse,
@@ -2409,6 +2477,13 @@ export class PlayCallChain {
         prepared.authorizationCheckpoint,
       );
     }
+    documents.bindMaintenance(
+      await this.#worlds.readDocumentMaintenance(
+        persisted.worldId,
+        binding.parentHead,
+      ),
+      this.#compiler.locale,
+    );
     return {
       ...structuredClone(persisted),
       documentAuthorizationCheckpoints:
@@ -2459,7 +2534,7 @@ export class PlayCallChain {
     }
     let settlement = current.settlementPrepared?.settlement;
     if (settlement === undefined) {
-      settlement = this.#prepareResponseSettlement(
+      settlement = await this.#prepareResponseSettlement(
         session,
         current.base,
         current.providerCompleted.response,

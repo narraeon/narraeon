@@ -1,3 +1,6 @@
+import type { AppLocale } from "../../protocol/appPreferences.ts";
+import type { WorldDocumentMaintenance } from "../../protocol/worldMaintenance.ts";
+import { renderDocumentWritePosition } from "../prompt/WorldMaintenanceReport.ts";
 import { createHash } from "node:crypto";
 
 import { stringify } from "yaml";
@@ -74,11 +77,23 @@ class PlayDocumentToolFailure extends Error {
  */
 export class FileNativePlayDocuments {
   readonly #candidate: PlayCandidate;
+  #committedSnapshot: WorldDocumentStore;
   #reads: WriteAuthorizations;
   #declaredDirectories: string[] = [];
+  #maintenanceLocale: AppLocale = "en";
+  #maintenance: Readonly<Record<string, WorldDocumentMaintenance>> = {};
+
+  bindMaintenance(
+    facts: Readonly<Record<string, WorldDocumentMaintenance>>,
+    locale: AppLocale = "en",
+  ): void {
+    this.#maintenance = structuredClone(facts);
+    this.#maintenanceLocale = locale;
+  }
 
   constructor(files: Readonly<Record<string, string>>) {
     this.#candidate = openPlayCandidate({ ...files });
+    this.#committedSnapshot = this.#candidate.snapshot;
     this.#reads = {
       snapshotId: this.#candidate.snapshot.id,
       documents: new Map(),
@@ -87,6 +102,10 @@ export class FileNativePlayDocuments {
 
   get snapshot(): WorldDocumentStore {
     return this.#candidate.snapshot;
+  }
+
+  get committedSnapshot(): WorldDocumentStore {
+    return this.#committedSnapshot;
   }
 
   bindBootstrap(bootstrap: PromptCompilation): void {
@@ -197,6 +216,9 @@ export class FileNativePlayDocuments {
         call.arguments,
       );
       authorizeToolRead(this.#reads, this.#candidate.snapshot, result);
+      const ref = result.readAuthorization?.shortRef;
+      if (ref !== undefined && result.markdown !== undefined)
+        result.markdown += `\n\n${renderDocumentWritePosition(ref, this.#maintenance[ref], this.#maintenanceLocale)}`;
       return result;
     }
     if (call.name === "world_patch")
@@ -233,6 +255,7 @@ export class FileNativePlayDocuments {
    * this new committed baseline instead of replaying the old diff.
    */
   acceptCommittedState(): void {
+    this.#committedSnapshot = this.#candidate.snapshot;
     this.#candidate.changes.clear();
   }
 }

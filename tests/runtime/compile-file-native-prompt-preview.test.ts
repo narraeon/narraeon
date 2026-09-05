@@ -123,6 +123,76 @@ test("真实玩法预览把回合事实放在玩家原文前，原文保持完�
   );
 });
 
+test("文档软上限只报告 UTF-8 体积，实际注入按去重材料计数", () => {
+  const request = input();
+  request.world.documentSnapshot = WorldDocumentStore.open({
+    layout: "world_state",
+    files: request.world.documentSnapshot.files.map((file) =>
+      file.path === "control/frame.yaml"
+        ? {
+            ...file,
+            contents:
+              file.contents.replace(
+                "kind: current_situation",
+                "kind: current_situation, id: scene, advisoryBytes: 10",
+              ) + "maintenance:\n  documents:\n    '@current-situation': 10\n",
+          }
+        : file,
+    ),
+  });
+  const compiled = new FileNativePromptCompiler().compileBootstrap(request);
+  const report = compiled.maintenance;
+  const read = request.world.documentSnapshot.query({
+    kind: "read_document",
+    document: { shortRef: "current-situation" },
+  });
+  if (read.kind !== "read_document") throw new Error("Missing scene document");
+  expect(report?.unit).toBe("utf8_bytes");
+  expect(
+    report?.documents.find(({ shortRef }) => shortRef === "current-situation"),
+  ).toMatchObject({
+    bodyBytes: Buffer.byteLength(read.body),
+    advisoryBytes: 10,
+    overAdvisory: true,
+    baselineKind: "unavailable",
+    baselineBytes: null,
+    growthBytes: null,
+    growthRatio: null,
+  });
+  expect(report?.slots.find(({ id }) => id === "scene")).toMatchObject({
+    advisoryBytes: 10,
+    overAdvisory: true,
+  });
+  expect(report?.worldMaterialsBytes).toBe(
+    Buffer.byteLength(
+      compiled.logicalMessages.find(({ role }) => role === "world_context")!
+        .markdown,
+    ),
+  );
+  expect(compiled.budget.status).toBe("not_checked");
+  request.world.documentMaintenance = {
+    "current-situation": {
+      baselineKind: "document_creation",
+      baselineBytes: 0,
+      lastBodyWrite: null,
+      lastMetadataWrite: null,
+      bodyChangedContexts: 0,
+      metadataChangedContexts: 0,
+    },
+  };
+  expect(
+    new FileNativePromptCompiler()
+      .compileBootstrap(request)
+      .maintenance?.documents.find(
+        ({ shortRef }) => shortRef === "current-situation",
+      ),
+  ).toMatchObject({
+    baselineKind: "document_creation",
+    baselineBytes: 0,
+    growthRatio: null,
+  });
+});
+
 test("主持块分别约束玩家代理权与默认叙事视角", () => {
   expect(defaultPresetHostFiles["blocks/adjudication.md"]).toContain(
     "What the player must decide",

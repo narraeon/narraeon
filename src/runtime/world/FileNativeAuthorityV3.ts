@@ -59,6 +59,8 @@ export interface FileNativeAuthorityTimelineRevision {
 }
 
 export interface FileNativeAuthorityCommitV3 {
+  playContext?: string;
+  worldClock?: string;
   schemaVersion: 3;
   type: "file_native_authority_commit";
   sequence: number;
@@ -280,6 +282,8 @@ export class FileNativeAuthorityV3 {
   }
 
   async prepareAppend(input: {
+    playContext?: string;
+    worldClock?: string;
     operationId: string;
     parentHead: string;
     timelineParentHead?: string;
@@ -386,6 +390,12 @@ export class FileNativeAuthorityV3 {
     };
     const timelineParent = await this.#authorityRefAt(basisHead);
     const commit: FileNativeAuthorityCommitV3 = {
+      ...(input.playContext === undefined
+        ? {}
+        : { playContext: input.playContext }),
+      ...(input.worldClock === undefined
+        ? {}
+        : { worldClock: input.worldClock }),
       schemaVersion: 3,
       type: "file_native_authority_commit",
       sequence,
@@ -566,6 +576,25 @@ export class FileNativeAuthorityV3 {
         "Continuity head does not match the immutable Authority chain",
       );
     return { head: head.head, commits };
+  }
+
+  /** Exact bytes of an accepted state change, with the same digest check as recovery. */
+  async readStateChangeContents(
+    change: FileNativeAuthorityStoredStateChange,
+  ): Promise<string> {
+    const blob = change.nextBlob;
+    if (!isBlobRef(blob)) throw corruptShape("State-change blob");
+    const contents = await readFile(
+      join(this.#epochRoot(blob.epoch), "blobs", `${blob.digest}.txt`),
+      "utf8",
+    );
+    if (
+      hashHex(contents) !== blob.digest ||
+      hashWithPrefix(contents) !== change.nextHash ||
+      blob.sha256 !== change.nextHash
+    )
+      throw corruptShape("State-change blob digest");
+    return contents;
   }
 
   async commitAt(head: string): Promise<FileNativeAuthorityCommitV3 | null> {
@@ -1195,6 +1224,8 @@ function assertCommit(
       "head",
       "auditParent",
       "timelineParent",
+      ...(value.playContext === undefined ? [] : ["playContext"]),
+      ...(value.worldClock === undefined ? [] : ["worldClock"]),
       ...(value.narrativeCheckpoint === undefined
         ? []
         : ["narrativeCheckpoint"]),
@@ -1208,6 +1239,10 @@ function assertCommit(
     ]) ||
     value.schemaVersion !== 3 ||
     value.type !== "file_native_authority_commit" ||
+    (value.playContext !== undefined &&
+      (typeof value.playContext !== "string" ||
+        value.playContext.length === 0)) ||
+    (value.worldClock !== undefined && typeof value.worldClock !== "string") ||
     !Number.isSafeInteger(value.sequence) ||
     Number(value.sequence) < 1 ||
     value.head !== `commit:${String(value.sequence)}` ||

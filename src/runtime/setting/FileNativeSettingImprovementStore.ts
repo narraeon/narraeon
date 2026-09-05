@@ -1326,16 +1326,22 @@ function validArtifactPayloadContract(value: unknown): boolean {
 function validPromptCompilation(value: unknown): value is PromptCompilation {
   return (
     isRecord(value) &&
-    hasExactKeys(value, [
-      "logicalMessages",
-      "provider",
-      "tools",
-      "toolUniverse",
-      "toolStrategy",
-      "coverage",
-      "budget",
-      "cache",
-    ]) &&
+    hasExactKeys(
+      value,
+      [
+        "logicalMessages",
+        "provider",
+        "tools",
+        "toolUniverse",
+        "toolStrategy",
+        "coverage",
+        "budget",
+        "cache",
+      ],
+      ["maintenance"],
+    ) &&
+    (value.maintenance === undefined ||
+      isWorldPromptMaintenance(value.maintenance)) &&
     validLogicalMessages(value.logicalMessages) &&
     validPromptProvider(value.provider) &&
     validPromptTools(value.tools) &&
@@ -1862,3 +1868,4 @@ function hasExactKeys(
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error;
 }
+import { isWorldPromptMaintenance } from "../../protocol/worldMaintenance.ts";
