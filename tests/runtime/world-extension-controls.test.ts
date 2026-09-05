@@ -901,3 +901,57 @@ test("restored defaults can enable new generations without reviving closed outpu
     lease.release();
   }
 });
+
+test("world deletion waits for a controls read that initializes persistent defaults", async () => {
+  const { root, runtime, worldId } = await setup();
+  const controlPath = join(
+    root,
+    "worlds-file-native",
+    worldId,
+    "extension-controls.json",
+  );
+  await fs.rm(controlPath, { force: true });
+  const originalRead = (await vi.importActual<typeof fs>("node:fs/promises"))
+    .readFile;
+  const entered = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  let held = false;
+  const spy = vi.mocked(fs.readFile).mockImplementation(async (...args) => {
+    if (!held && args[0] === controlPath) {
+      held = true;
+      entered.resolve();
+      await release.promise;
+    }
+    return originalRead(...args);
+  });
+  const accepted: string[] = [];
+  let reading: Promise<unknown> | undefined;
+  let deleting: Promise<unknown> | undefined;
+  try {
+    reading = runtime
+      .handle({ type: "world.extensions.read", worldId })
+      .then((value) => {
+        accepted.push("read");
+        return value;
+      });
+    await entered.promise;
+    deleting = runtime
+      .handle({ type: "world.delete", worldId })
+      .then((value) => {
+        accepted.push("delete");
+        return value;
+      });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(accepted).toEqual([]);
+    release.resolve();
+    await Promise.all([reading, deleting]);
+    expect(accepted).toEqual(["read", "delete"]);
+    await expect(
+      fs.stat(join(root, "worlds-file-native", worldId)),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    release.resolve();
+    await Promise.allSettled([reading, deleting]);
+    spy.mockRestore();
+  }
+});

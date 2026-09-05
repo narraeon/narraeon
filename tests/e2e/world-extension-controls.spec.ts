@@ -1,5 +1,5 @@
 import { expect, test, type Page, type Locator } from "@playwright/test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { once } from "node:events";
@@ -24,7 +24,17 @@ test("真实世界扩展菜单阻止派发、取消在途、隐藏全部输出�
   const servers = new RuntimeServerPool();
   const port = await availableRuntimePort();
   const url = `http://127.0.0.1:${port}`;
-  let child = await servers.start(root, port);
+  let runtimeOutput = "";
+  const startRuntime = async () => {
+    const runtime = await servers.start(root, port);
+    const capture = (chunk: Buffer) => {
+      runtimeOutput += chunk.toString("utf8");
+    };
+    runtime.stdout?.on("data", capture);
+    runtime.stderr?.on("data", capture);
+    return runtime;
+  };
+  let child = await startRuntime();
   let mainCount = 0,
     followupCount = 0;
   const firstMain = Promise.withResolvers<ServerResponse>();
@@ -313,7 +323,7 @@ test("真实世界扩展菜单阻止派发、取消在途、隐藏全部输出�
     const exited = once(child, "exit");
     child.kill("SIGKILL");
     await exited;
-    child = await servers.start(root, port);
+    child = await startRuntime();
     await open();
     await menu.locator("summary").click();
     await expect(request).not.toBeChecked();
@@ -333,7 +343,7 @@ test("真实世界扩展菜单阻止派发、取消在途、隐藏全部输出�
     const sourceDeletedExit = once(child, "exit");
     child.kill("SIGKILL");
     await sourceDeletedExit;
-    child = await servers.start(root, port);
+    child = await startRuntime();
     await page.goto(url);
     await page
       .getByRole("button", {
@@ -382,6 +392,12 @@ test("真实世界扩展菜单阻止派发、取消在途、隐藏全部输出�
   } finally {
     await page.goto("about:blank").catch(() => undefined);
     await servers.stopAll();
+    const logPath = test.info().outputPath("runtime-output.log");
+    await writeFile(logPath, runtimeOutput);
+    await test.info().attach("runtime-output", {
+      path: logPath,
+      contentType: "text/plain",
+    });
     for (const response of responses) response.destroy();
     provider.closeAllConnections();
     await new Promise<void>((resolve) => provider.close(() => resolve()));

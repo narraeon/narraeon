@@ -379,13 +379,12 @@ export class FileNativeWorldStore {
         throw new FileNativeWorldNotFoundError({ cause: error });
       throw error;
     }
-    return this.operations.withExclusiveWorldStateMutation(
-      worldId,
-      async () => {
+    return this.operations.withExclusiveWorldStateMutation(worldId, () =>
+      this.operations.withWorldAuthorityLock(worldId, async () => {
         await rm(root, { recursive: true, force: true });
         this.#currentStorage.delete(worldId);
         return { deleted: true } as const;
-      },
+      }),
     );
   }
 
@@ -412,6 +411,9 @@ export class FileNativeWorldStore {
         dirname(this.#worldsRoot),
         worldId,
         async () => {
+          // Definitions were loaded before taking the lock; deletion may have
+          // completed while this reader was waiting. Never recreate its shell.
+          await readPublicationAt(join(this.#worldsRoot, worldId));
           const view = await WorldExtensionControls.resolve(
             join(this.#worldsRoot, worldId),
             definitions,
