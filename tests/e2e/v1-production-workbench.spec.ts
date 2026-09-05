@@ -939,11 +939,17 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
       content: "Alex saves the training time on the phone.",
     }),
   ]);
-  await page.getByRole("button", { name: "AI 读取", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "世界阅读工具" })
+    .getByRole("button", { name: "AI 读取", exact: true })
+    .click();
   await expect(
     page.getByText("最近一次请求材料", { exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "AI 读取", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "世界阅读工具" })
+    .getByRole("button", { name: "AI 读取", exact: true })
+    .click();
 
   responses.push(
     chatText(

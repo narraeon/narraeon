@@ -707,12 +707,20 @@ export class PlayCallChain {
             worldId,
             session.previousChainId,
           );
+    const previousContextRun =
+      previousContext === null
+        ? undefined
+        : playPromptRunsThroughEvents(
+            previousContext.value,
+            previousContext.value.events,
+          ).at(-1);
     const previous =
       latestRun !== undefined
         ? (priorRun ?? session)
-        : (previousContext?.value ?? null);
+        : (previousContextRun ?? previousContext?.value ?? null);
     const currentExchange = latestRun?.exchange ?? 1;
-    const previousExchange = priorRun?.exchange ?? 1;
+    const previousExchange =
+      priorRun?.exchange ?? previousContextRun?.exchange ?? 1;
     const [currentEncoding, previousEncoding] = await Promise.all([
       this.#worlds.playTimeline
         .readInitialEncoding(worldId, session.chainId, currentExchange)
@@ -3166,12 +3174,11 @@ function restorePlayDocuments(
   const documents = new FileNativePlayDocuments(files);
   try {
     const checkpoint = documentAuthorizationThroughEvents(context, events);
-    documents.bindBootstrap(
-      currentPlayPrompt({
-        ...context,
-        promptRuns: playPromptRunsThroughEvents(context, events),
-      }).bootstrap,
-    );
+    const runs = playPromptRunsThroughEvents(context, events);
+    if (checkpoint === undefined || runs.length > 0)
+      documents.bindBootstrap(
+        currentPlayPrompt({ ...context, promptRuns: runs }).bootstrap,
+      );
     if (checkpoint !== undefined)
       documents.restoreAuthorizationCheckpoint(checkpoint.authorization);
   } catch (error: unknown) {

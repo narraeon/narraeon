@@ -113,7 +113,9 @@ test.each([
         maxOutputTokens: 2000,
       },
       (_url, options) => {
-        requests.push(String(options?.body));
+        if (typeof options?.body !== "string")
+          throw new Error("Expected a JSON request body");
+        requests.push(options.body);
         const payload =
           provider === "chat_completions"
             ? { choices: [{ message: original, finish_reason: "stop" }] }
@@ -154,10 +156,11 @@ test.each([
       exchangeId: "next",
       playerText: "Native next input.",
       modelHost: host,
-      resolvePrompt: async () => ({
-        hostBinding: hostBinding(),
-        playPreset: latest,
-      }),
+      resolvePrompt: () =>
+        Promise.resolve({
+          hostBinding: hostBinding(),
+          playPreset: latest,
+        }),
     });
     expect(next.status).toBe("ready");
     expect(requests).toHaveLength(2);
@@ -177,6 +180,26 @@ test.each([
     expect(reading?.promptHistory).toHaveLength(2);
     expect(JSON.stringify(reading?.promptHistory?.[0])).not.toContain(
       "NATIVE UPDATED PROMPT",
+    );
+    const fresh = await chains.start({
+      worldId,
+      chainId: "native-fresh",
+      exchangeId: "fresh",
+      playerText: "Start another context.",
+      hostBinding: hostBinding(),
+      playPreset: latest,
+      modelBinding: host.binding(),
+      modelHost: host,
+    });
+    const freshReading = await new PlayCallChain(worlds).inspectReading(
+      worldId,
+      fresh.parentHead,
+    );
+    expect(freshReading?.prefixDiagnostics?.encoding.previous).toEqual(
+      reading?.prefixDiagnostics?.encoding.current,
+    );
+    expect(freshReading?.prefixDiagnostics?.logical?.previousBytes).toBe(
+      reading?.prefixDiagnostics?.logical?.currentBytes,
     );
   },
 );
@@ -218,10 +241,11 @@ test("快照准备后进程退出不冒充已发送请求，下一次发送重�
       exchangeId: "abandoned",
       playerText: "Never submitted.",
       modelHost: host,
-      resolvePrompt: async () => ({
-        hostBinding: hostBinding(),
-        playPreset: abandoned,
-      }),
+      resolvePrompt: () =>
+        Promise.resolve({
+          hostBinding: hostBinding(),
+          playPreset: abandoned,
+        }),
     }),
   ).rejects.toThrow("after_prompt_run_prepared");
   delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE;
@@ -236,10 +260,11 @@ test("快照准备后进程退出不冒充已发送请求，下一次发送重�
     exchangeId: "next",
     playerText: "Actually submitted.",
     modelHost: host,
-    resolvePrompt: async () => ({
-      hostBinding: hostBinding(),
-      playPreset: playPreset(),
-    }),
+    resolvePrompt: () =>
+      Promise.resolve({
+        hostBinding: hostBinding(),
+        playPreset: playPreset(),
+      }),
   });
   expect(host.requests).toHaveLength(2);
   expect(JSON.stringify(host.requests[1])).not.toContain("NEVER SENT RULE");
@@ -303,10 +328,11 @@ test("后置定义与资源跨冷恢复完整保留，旧请求不解析新预�
     exchangeId: "second",
     playerText: "Enable panels.",
     modelHost: host,
-    resolvePrompt: async () => ({
-      hostBinding: hostBinding(),
-      playPreset: selected,
-    }),
+    resolvePrompt: () =>
+      Promise.resolve({
+        hostBinding: hostBinding(),
+        playPreset: selected,
+      }),
   });
   expect(interrupted).toMatchObject({ canRetry: true });
   selected.files["assets/run.txt"] = "EDITED RESOURCE";
@@ -318,6 +344,40 @@ test("后置定义与资源跨冷恢复完整保留，旧请求不解析新预�
   expect(durable?.value.promptRuns?.[0]?.followups.map(({ id }) => id)).toEqual(
     ["status", "options"],
   );
+  const runPath = join(
+    root,
+    "worlds-file-native",
+    worldId,
+    "runtime",
+    "play-contexts",
+    createHash("sha256").update("resources").digest("hex"),
+    "prompt-runs",
+    "0000000001.json",
+  );
+  const originalRecordText = await readFile(runPath, "utf8");
+  const originalRecord = JSON.parse(originalRecordText) as {
+    run: Record<string, unknown>;
+    digest: string;
+  };
+  for (const invalid of [
+    { playPreset: {} },
+    { bootstrap: [] },
+    { tools: [null] },
+    { followups: [null] },
+    { unknownField: true },
+  ]) {
+    const record = structuredClone(originalRecord);
+    Object.assign(record.run, invalid);
+    record.digest = createHash("sha256")
+      .update(JSON.stringify(record.run))
+      .digest("hex");
+    await writeFile(runPath, JSON.stringify(record));
+    await expect(
+      new PlayCallChain(worlds).inspectWorld(worldId),
+    ).rejects.toThrow("Invalid play prompt run");
+  }
+  await writeFile(runPath, originalRecordText);
+
   const recovered = await new PlayCallChain(
     worlds,
     new FileNativePromptCompiler(),
@@ -328,7 +388,7 @@ test("后置定义与资源跨冷恢复完整保留，旧请求不解析新预�
     exchangeId: "retry",
     playerText: "",
     modelHost: host,
-    resolvePrompt: async () => {
+    resolvePrompt: () => {
       throw new Error("Saved request must not resolve current configuration");
     },
   });
@@ -415,10 +475,11 @@ test("下一次材料与写入授权使用新快照，历史分叉仍恢复当�
     exchangeId: "second",
     playerText: "SECOND PLAYER ORIGINAL",
     modelHost: host,
-    resolvePrompt: async () => ({
-      hostBinding: hostBinding(),
-      playPreset: latest,
-    }),
+    resolvePrompt: () =>
+      Promise.resolve({
+        hostBinding: hostBinding(),
+        playPreset: latest,
+      }),
   });
   expect(second.status).toBe("ready");
   expect(JSON.stringify(host.requests[2]!.bootstrap)).toContain(
@@ -464,10 +525,12 @@ test("下一次材料与写入授权使用新快照，历史分叉仍恢复当�
 test("工具中编辑不替换快照，拒绝后的冷重试不读取新配置", async () => {
   const { worlds, worldId } = await createWorld("live-prompt-retry");
   const preset = playPreset();
-  const resolvePrompt = vi.fn(async () => ({
-    hostBinding: hostBinding(),
-    playPreset: preset,
-  }));
+  const resolvePrompt = vi.fn(() =>
+    Promise.resolve({
+      hostBinding: hostBinding(),
+      playPreset: preset,
+    }),
+  );
   const scripted = new ScriptedModelHost({
     binding: modelBinding(),
     steps: [
@@ -534,7 +597,7 @@ test("工具中编辑不替换快照，拒绝后的冷重试不读取新配置",
     exchangeId: "retry-request",
     playerText: "",
     modelHost,
-    resolvePrompt: async () => {
+    resolvePrompt: () => {
       throw new Error("Recovery must not read presets");
     },
   });
@@ -588,10 +651,11 @@ test("新的发送与空输入重编译，冷恢复保留原生对话和当轮�
     exchangeId: "second",
     playerText: "Second input.",
     modelHost,
-    resolvePrompt: async () => ({
-      hostBinding: hostBinding(),
-      playPreset: latest,
-    }),
+    resolvePrompt: () =>
+      Promise.resolve({
+        hostBinding: hostBinding(),
+        playPreset: latest,
+      }),
   });
   expect(JSON.stringify(modelHost.requests[1]!.bootstrap)).toContain(
     "LATEST LIVE RULE",
@@ -616,10 +680,11 @@ test("新的发送与空输入重编译，冷恢复保留原生对话和当轮�
     exchangeId: "third",
     playerText: "",
     modelHost,
-    resolvePrompt: async () => ({
-      hostBinding: hostBinding(),
-      playPreset: first,
-    }),
+    resolvePrompt: () =>
+      Promise.resolve({
+        hostBinding: hostBinding(),
+        playPreset: first,
+      }),
   });
   expect(JSON.stringify(modelHost.requests[2]!.bootstrap)).not.toContain(
     "LATEST LIVE RULE",

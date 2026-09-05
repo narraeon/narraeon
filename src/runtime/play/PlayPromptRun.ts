@@ -1,3 +1,8 @@
+import {
+  validPromptCompilation,
+  validPromptTools,
+  validPlayFollowup,
+} from "../prompt/PromptCompilationCodec.ts";
 import { createHash } from "node:crypto";
 import type { PersistedPlayCallChainContext } from "./FileNativePlayTimelineStore.ts";
 
@@ -62,18 +67,29 @@ export function assertPlayPromptRun(
     throw new Error("Invalid play prompt run");
   const run = value as Record<string, unknown>;
   if (
+    !exactKeys(run, [
+      "schemaVersion",
+      "firstEventId",
+      "head",
+      "exchange",
+      "playPreset",
+      "bootstrap",
+      "tools",
+      "followups",
+      "playPresetScriptsEnabled",
+      "presetFiles",
+    ]) ||
     run.schemaVersion !== 1 ||
     !Number.isSafeInteger(run.firstEventId) ||
     Number(run.firstEventId) < 1 ||
     !Number.isSafeInteger(run.exchange) ||
     Number(run.exchange) < 1 ||
     typeof run.head !== "string" ||
-    typeof run.playPreset !== "object" ||
-    run.playPreset === null ||
-    typeof run.bootstrap !== "object" ||
-    run.bootstrap === null ||
-    !Array.isArray(run.tools) ||
+    !validPresetIdentity(run.playPreset) ||
+    !validPromptCompilation(run.bootstrap) ||
+    !validPromptTools(run.tools) ||
     !Array.isArray(run.followups) ||
+    !run.followups.every(validPlayFollowup) ||
     typeof run.playPresetScriptsEnabled !== "boolean" ||
     typeof run.presetFiles !== "object" ||
     run.presetFiles === null ||
@@ -100,6 +116,7 @@ export function decodePlayPromptRun(value: unknown): PlayPromptRun {
     throw new Error("Invalid play prompt run record");
   const record = value as Record<string, unknown>;
   if (
+    !exactKeys(record, ["kind", "schemaVersion", "run", "digest"]) ||
     record.kind !== "play_prompt_run" ||
     record.schemaVersion !== 1 ||
     record.digest !==
@@ -110,4 +127,23 @@ export function decodePlayPromptRun(value: unknown): PlayPromptRun {
     throw new Error("Play prompt run does not match its durable identity");
   assertPlayPromptRun(record.run);
   return record.run;
+}
+
+function exactKeys(record: Record<string, unknown>, keys: string[]): boolean {
+  return (
+    Object.keys(record).length === keys.length &&
+    keys.every((key) => Object.hasOwn(record, key))
+  );
+}
+
+function validPresetIdentity(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return false;
+  const preset = value as Record<string, unknown>;
+  return (
+    exactKeys(preset, ["id", "name", "revision"]) &&
+    [preset.id, preset.name, preset.revision].every(
+      (part) => typeof part === "string" && part.length > 0,
+    )
+  );
 }
