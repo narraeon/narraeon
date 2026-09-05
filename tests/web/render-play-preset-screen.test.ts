@@ -249,7 +249,7 @@ describe("玩法预设工作台", () => {
     expect(screen.getByText("未保存修改")).toBeTruthy();
     expect(
       screen
-        .getByRole("button", { name: /备用玩法/u })
+        .getByRole("combobox", { name: "切换预设" })
         .hasAttribute("disabled"),
     ).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "撤销未保存修改" }));
@@ -258,7 +258,7 @@ describe("玩法预设工作台", () => {
     );
     expect(
       screen
-        .getByRole("button", { name: /备用玩法/u })
+        .getByRole("combobox", { name: "切换预设" })
         .hasAttribute("disabled"),
     ).toBe(false);
 
@@ -661,7 +661,9 @@ describe("玩法预设工作台", () => {
         revision: first.revision,
       }),
     );
-    fireEvent.click(screen.getByRole("button", { name: /第二玩法/u }));
+    fireEvent.change(screen.getByRole("combobox", { name: "切换预设" }), {
+      target: { value: second.id },
+    });
     await waitFor(() =>
       expect(requests).toContainEqual({
         type: "play.workbench.read",
@@ -750,7 +752,7 @@ describe("玩法预设工作台", () => {
     expect(rawSave).toBeDefined();
     expect(rawSave).not.toHaveProperty("structure");
 
-    fireEvent.click(screen.getByRole("tab", { name: /调用链/u }));
+    fireEvent.click(screen.getByRole("tab", { name: /游玩/u }));
     fireEvent.change(screen.getByLabelText("后置请求 1 显示名"), {
       target: { value: "改过的显示名" },
     });

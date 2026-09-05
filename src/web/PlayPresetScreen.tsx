@@ -1,3 +1,5 @@
+import { OrderedPlayPromptEditor } from "./OrderedPlayPromptEditor.tsx";
+import type { OrderedPlayPrompt } from "../shared/ordered-play-prompts.ts";
 import { uiText } from "./i18n.ts";
 import {
   useCallback,
@@ -193,6 +195,8 @@ interface PlayPresetPlayerViewPanel {
 }
 
 interface PlayPresetStructuredEditor {
+  playPrompts?: OrderedPlayPrompt[];
+  migrationNotice?: string;
   name: string;
   callChainPath: string;
   settingImprovementPrompt?: PlayPresetPromptRef;
@@ -265,7 +269,7 @@ const playPresetWorkspaceViews: {
 }[] = [
   {
     id: "call_chain",
-    label: "调用链",
+    label: "游玩",
     description: "叙事规则、后置请求与工具契约",
   },
   {
@@ -603,7 +607,8 @@ export function PlayPresetScreen({
         presetId: draft.id,
         name: draft.name,
         files: draft.files,
-        ...(draft.structure === undefined || !structuredDirty
+        ...(draft.structure === undefined ||
+        (!structuredDirty && draft.structure.migrationNotice === undefined)
           ? {}
           : {
               structure: draft.structure as unknown as Record<string, unknown>,
@@ -704,92 +709,38 @@ export function PlayPresetScreen({
             className="panel-card play-preset-library"
             aria-label={uiText("玩法预设列表")}
           >
-            <div>
-              <p className="play-preset-section-kicker">PRESET LIBRARY</p>
-              <h3>{uiText("本地预设")}</h3>
-              <p className="field-note">
-                {uiText("选择一个本地身份开始编辑。")}
-              </p>
-            </div>
-            <ul className="play-preset-list">
-              {library.presets.map((preset) => {
-                const selected = preset.id === selectedId;
-                return (
-                  <li key={preset.id}>
-                    <button
-                      className={`play-preset-list-button${selected ? " selected" : ""}`}
-                      type="button"
-                      aria-pressed={selected}
-                      disabled={pending || (dirty && !selected)}
-                      onClick={() => selectDraft(preset.id)}
-                    >
-                      <span className="play-preset-list-name">
-                        {preset.name}
-                      </span>
-                      <span className="play-preset-list-badges">
-                        {preset.id === library.currentPresetId ? (
-                          <span className="play-preset-badge current">
-                            {uiText("当前玩法")}
-                          </span>
-                        ) : null}
-                        <span
-                          className={`play-preset-badge ${preset.validation.status}`}
-                        >
-                          {preset.validation.status === "valid"
-                            ? uiText("结构有效")
-                            : uiText("需要修复")}
-                        </span>
-                        {preset.enabled === false ? (
-                          <span className="play-preset-badge disabled">
-                            {uiText("已停用")}
-                          </span>
-                        ) : null}
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-            <section
-              className="play-preset-library-actions"
-              aria-label={uiText("新建与导入玩法预设")}
-            >
-              <h4>{uiText("新建或导入")}</h4>
-              <input
-                aria-label={uiText("新玩法预设名称")}
-                placeholder={uiText("新玩法预设名称")}
-                value={newName}
-                onChange={(event) => setNewName(event.currentTarget.value)}
-              />
-              <button
-                type="button"
-                disabled={pending || dirty || newName.trim() === ""}
-                onClick={() =>
-                  void run(async () => {
-                    const result = await client.request<{
-                      currentPresetId: string;
-                      preset: PlayPresetScreenPreset;
-                    }>({
-                      type: "play.create",
-                      name: newName.trim(),
-                    });
-                    setNewName("");
-                    await refresh(result.preset.id);
-                    setFeedback({
-                      kind: "status",
-                      text: uiText("已新建普通玩法预设。"),
-                    });
-                  })
-                }
+            <label>
+              {uiText("玩法预设")}
+              <select
+                aria-label={uiText("切换预设")}
+                value={selectedId ?? ""}
+                disabled={pending || dirty}
+                onChange={(event) => selectDraft(event.target.value)}
               >
-                {uiText("新建空白预设")}
-              </button>
-              {recommendedTemplates.map((template) => (
+                {library.presets.map((preset) => (
+                  <option key={preset.id} value={preset.id}>
+                    {preset.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <details>
+              <summary>{uiText("预设管理")}</summary>
+
+              <section
+                className="play-preset-library-actions"
+                aria-label={uiText("新建与导入玩法预设")}
+              >
+                <h4>{uiText("新建或导入")}</h4>
+                <input
+                  aria-label={uiText("新玩法预设名称")}
+                  placeholder={uiText("新玩法预设名称")}
+                  value={newName}
+                  onChange={(event) => setNewName(event.currentTarget.value)}
+                />
                 <button
-                  key={template.id}
                   type="button"
-                  className="secondary-button"
-                  disabled={pending || dirty}
+                  disabled={pending || dirty || newName.trim() === ""}
                   onClick={() =>
                     void run(async () => {
                       const result = await client.request<{
@@ -797,37 +748,64 @@ export function PlayPresetScreen({
                         preset: PlayPresetScreenPreset;
                       }>({
                         type: "play.create",
-                        name: template.name,
-                        files: structuredClone(template.files),
+                        name: newName.trim(),
                       });
+                      setNewName("");
                       await refresh(result.preset.id);
                       setFeedback({
                         kind: "status",
-                        text: uiText("已复制推荐{name}；所有文件均可编辑。", {
-                          name: template.label,
-                        }),
+                        text: uiText("已新建普通玩法预设。"),
                       });
                     })
                   }
                 >
-                  {uiText("复制推荐")}
-                  {template.label}
+                  {uiText("新建空白预设")}
                 </button>
-              ))}
-              <label className="play-preset-import-control">
-                {uiText("导入玩法文件")}
-                <input
-                  aria-label={uiText("导入玩法预设文件")}
-                  type="file"
-                  accept=".json,application/json"
-                  disabled={pending || dirty}
-                  onChange={(event) => {
-                    void importPreset(event.currentTarget.files?.[0]);
-                    event.currentTarget.value = "";
-                  }}
-                />
-              </label>
-            </section>
+                {recommendedTemplates.map((template) => (
+                  <button
+                    key={template.id}
+                    type="button"
+                    className="secondary-button"
+                    disabled={pending || dirty}
+                    onClick={() =>
+                      void run(async () => {
+                        const result = await client.request<{
+                          currentPresetId: string;
+                          preset: PlayPresetScreenPreset;
+                        }>({
+                          type: "play.create",
+                          name: template.name,
+                          files: structuredClone(template.files),
+                        });
+                        await refresh(result.preset.id);
+                        setFeedback({
+                          kind: "status",
+                          text: uiText("已复制推荐{name}；所有文件均可编辑。", {
+                            name: template.label,
+                          }),
+                        });
+                      })
+                    }
+                  >
+                    {uiText("复制推荐")}
+                    {template.label}
+                  </button>
+                ))}
+                <label className="play-preset-import-control">
+                  {uiText("导入玩法文件")}
+                  <input
+                    aria-label={uiText("导入玩法预设文件")}
+                    type="file"
+                    accept=".json,application/json"
+                    disabled={pending || dirty}
+                    onChange={(event) => {
+                      void importPreset(event.currentTarget.files?.[0]);
+                      event.currentTarget.value = "";
+                    }}
+                  />
+                </label>
+              </section>
+            </details>
           </aside>
 
           {draft === null ? (
@@ -1032,21 +1010,27 @@ export function PlayPresetScreen({
                 role="tablist"
                 aria-label={uiText("玩法预设编辑区域")}
               >
-                {playPresetWorkspaceViews.map((view) => (
-                  <button
-                    key={view.id}
-                    id={`play-preset-tab-${view.id}`}
-                    type="button"
-                    role="tab"
-                    aria-controls={`play-preset-panel-${view.id}`}
-                    aria-selected={workspaceView === view.id}
-                    className={workspaceView === view.id ? "selected" : ""}
-                    onClick={() => setWorkspaceView(view.id)}
-                  >
-                    <strong>{uiText(view.label)}</strong>
-                    <span>{uiText(view.description)}</span>
-                  </button>
-                ))}
+                {playPresetWorkspaceViews
+                  .filter(
+                    (view) =>
+                      view.id !== "blocks" ||
+                      draft.structure?.playPrompts === undefined,
+                  )
+                  .map((view) => (
+                    <button
+                      key={view.id}
+                      id={`play-preset-tab-${view.id}`}
+                      type="button"
+                      role="tab"
+                      aria-controls={`play-preset-panel-${view.id}`}
+                      aria-selected={workspaceView === view.id}
+                      className={workspaceView === view.id ? "selected" : ""}
+                      onClick={() => setWorkspaceView(view.id)}
+                    >
+                      <strong>{uiText(view.label)}</strong>
+                      <span>{uiText(view.description)}</span>
+                    </button>
+                  ))}
               </nav>
 
               {draft.structure === undefined ||
@@ -1709,61 +1693,75 @@ function PlayPresetStructuredEditorPanel({
 
       {view === "call_chain" ? (
         <div className="play-preset-structured-section">
-          <div className="play-preset-section-header">
-            <h4>{uiText("叙事提示块")}</h4>
-            <button type="button" onClick={addNarrativePrompt}>
-              {uiText("新增叙事提示块")}
-            </button>
-          </div>
-          <p>
-            {uiText(
-              "这些文字和主持规则一起进入稳定 bootstrap，约束调用链中的玩家可见正文。下方直接显示真实内容。",
-            )}
-          </p>
-          {structure.narrativePrompts.length === 0 ? (
-            <p>{uiText("尚未声明叙事提示块；通用文风仍由主持块提供。")}</p>
-          ) : null}
-          <ol aria-label={uiText("叙事提示块")}>
-            {structure.narrativePrompts.map((prompt, index) => (
-              <li key={`narrative-${index}`}>
-                <PromptReferenceEditor
-                  label={uiText("叙事规则 {index}", { index: index + 1 })}
-                  path={prompt.path}
-                  paths={promptPaths}
-                  files={files}
-                  onPathChange={(path) =>
-                    onChange((current) => ({
-                      ...current,
-                      narrativePrompts: current.narrativePrompts.map(
-                        (entry, entryIndex) =>
-                          entryIndex === index ? { ...entry, path } : entry,
-                      ),
-                    }))
-                  }
-                  onContentsChange={(contents) =>
-                    onFileChange(prompt.path, contents)
-                  }
-                />
-                <button
-                  type="button"
-                  aria-label={uiText("删除叙事提示块 {index}", {
-                    index: index + 1,
-                  })}
-                  onClick={() =>
-                    onChange((current) => ({
-                      ...current,
-                      narrativePrompts: current.narrativePrompts.filter(
-                        (_, entryIndex) => entryIndex !== index,
-                      ),
-                    }))
-                  }
-                >
-                  {uiText("删除")}
+          {structure.playPrompts !== undefined ? (
+            <OrderedPlayPromptEditor
+              entries={structure.playPrompts}
+              {...(structure.migrationNotice === undefined
+                ? {}
+                : { migrationNotice: structure.migrationNotice })}
+              onChange={(playPrompts) =>
+                onChange((current) => ({ ...current, playPrompts }))
+              }
+            />
+          ) : (
+            <>
+              <div className="play-preset-section-header">
+                <h4>{uiText("叙事提示块")}</h4>
+                <button type="button" onClick={addNarrativePrompt}>
+                  {uiText("新增叙事提示块")}
                 </button>
-              </li>
-            ))}
-          </ol>
-
+              </div>
+              <p>
+                {uiText(
+                  "这些文字和主持规则一起进入稳定 bootstrap，约束调用链中的玩家可见正文。下方直接显示真实内容。",
+                )}
+              </p>
+              {structure.narrativePrompts.length === 0 ? (
+                <p>{uiText("尚未声明叙事提示块；通用文风仍由主持块提供。")}</p>
+              ) : null}
+              <ol aria-label={uiText("叙事提示块")}>
+                {structure.narrativePrompts.map((prompt, index) => (
+                  <li key={`narrative-${index}`}>
+                    <PromptReferenceEditor
+                      label={uiText("叙事规则 {index}", { index: index + 1 })}
+                      path={prompt.path}
+                      paths={promptPaths}
+                      files={files}
+                      onPathChange={(path) =>
+                        onChange((current) => ({
+                          ...current,
+                          narrativePrompts: current.narrativePrompts.map(
+                            (entry, entryIndex) =>
+                              entryIndex === index ? { ...entry, path } : entry,
+                          ),
+                        }))
+                      }
+                      onContentsChange={(contents) =>
+                        onFileChange(prompt.path, contents)
+                      }
+                    />
+                    <button
+                      type="button"
+                      aria-label={uiText("删除叙事提示块 {index}", {
+                        index: index + 1,
+                      })}
+                      onClick={() =>
+                        onChange((current) => ({
+                          ...current,
+                          narrativePrompts: current.narrativePrompts.filter(
+                            (_, entryIndex) => entryIndex !== index,
+                          ),
+                        }))
+                      }
+                    >
+                      {uiText("删除")}
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            </>
+          )}
+          <hr />
           <div className="play-preset-section-header">
             <h4>{uiText("后置请求")}</h4>
             <button type="button" onClick={addFollowup}>

@@ -925,13 +925,9 @@ context:
       first.cache.stablePrefixFingerprint,
     );
     expect(first.cache.breakpoints).toContain("world_context");
-    expect(
-      (
-        first.provider.messages[0]?.content as {
-          cache_control?: unknown;
-        }[]
-      )[0],
-    ).toMatchObject({ cache_control: { type: "ephemeral" } });
+    expect(first.provider.system?.at(-1)).toMatchObject({
+      cache_control: { type: "ephemeral" },
+    });
   });
 
   test("append 输入不嵌入 bootstrap 且冻结完整工具全集", () => {
