@@ -53,6 +53,10 @@ export type V1Request =
   | { type: "model.delete"; connectionId: string }
   | ({ type: "model.models" } & ListProviderModelsInput)
   | { type: "content.create" }
+  | { type: "content.scripts.read"; packageId: string }
+  | { type: "content.scripts.set"; packageId: string; enabled: boolean }
+  | { type: "world.package-scripts.read"; worldId: string }
+  | { type: "world.package-scripts.set"; worldId: string; enabled: boolean }
   | { type: "content.read"; packageId: string }
   | { type: "content.replace"; packageId: string; files: ContentTreeFile[] }
   | { type: "content.copy"; packageId: string }
@@ -850,6 +854,10 @@ const requiredFields: Record<
   "model.select": { connectionId: "string" },
   "model.delete": { connectionId: "string" },
   "model.models": { provider: "string", baseUrl: "string" },
+  "content.scripts.read": { packageId: "string" },
+  "content.scripts.set": { packageId: "string", enabled: "boolean" },
+  "world.package-scripts.read": { worldId: "string" },
+  "world.package-scripts.set": { worldId: "string", enabled: "boolean" },
   "content.read": { packageId: "string" },
   "content.replace": { packageId: "string", files: "array" },
   "content.copy": { packageId: "string" },
@@ -1358,6 +1366,10 @@ const requestTypes = new Set([
   "model.delete",
   "model.models",
   "content.create",
+  "content.scripts.read",
+  "content.scripts.set",
+  "world.package-scripts.read",
+  "world.package-scripts.set",
   "content.read",
   "content.replace",
   "content.copy",

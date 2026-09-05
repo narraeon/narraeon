@@ -116,6 +116,14 @@ export class ContentWorkspace {
     return this.#currentTreeLibrary.listPackages();
   }
 
+  readPackageScriptGrants(localId: string) {
+    return this.#currentTreeLibrary.readScriptGrants(localId);
+  }
+
+  packageScriptPermissions(localId: string, enabled?: boolean) {
+    return this.#currentTreeLibrary.scriptPermissions(localId, enabled);
+  }
+
   readCurrentTreeContentPackage(localId: string) {
     return this.#currentTreeLibrary.readPackage(localId);
   }

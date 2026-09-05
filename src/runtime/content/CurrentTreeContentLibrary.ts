@@ -1,3 +1,4 @@
+import { PackageScriptPermissions } from "../extension/PackageScriptPermissions.ts";
 import { randomUUID } from "node:crypto";
 import { readFileSync, unlinkSync } from "node:fs";
 import {
@@ -258,6 +259,34 @@ export class CurrentTreeContentLibrary {
       packages.push(packageSummary(detail));
     }
     return packages;
+  }
+
+  async readScriptGrants(localId: string): Promise<string[]> {
+    await this.readPackage(localId);
+    return PackageScriptPermissions.read(this.#packageRoot(localId));
+  }
+
+  async scriptPermissions(
+    localId: string,
+    enabled?: boolean,
+  ): Promise<{ enabled: boolean }> {
+    const lease = await this.acquireOperationLease(localId, { wait: true });
+    try {
+      const root = this.#packageRoot(localId);
+      if (enabled !== undefined)
+        await PackageScriptPermissions.write(
+          root,
+          enabled
+            ? PackageScriptPermissions.currentGrants(lease.package.files)
+            : [],
+        );
+      return PackageScriptPermissions.status(
+        lease.package.files,
+        await PackageScriptPermissions.read(root),
+      );
+    } finally {
+      lease.release();
+    }
   }
 
   async readPackage(localId: string): Promise<EditableContentPackageDetail> {

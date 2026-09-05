@@ -815,7 +815,11 @@ export class FileNativePromptCompiler {
       bootstrap,
       toolUniverse: structuredClone(toolUniverse),
       toolStrategy: presetCompilation.toolStrategy,
-      followups: compileFollowups(binding, this.#locale),
+      followups: compileFollowups(
+        binding,
+        this.#locale,
+        input.world.documentSnapshot.files,
+      ),
     };
   }
 
@@ -998,44 +1002,48 @@ export class FileNativePromptCompiler {
 function compileFollowups(
   binding: PlayPresetBinding,
   locale: AppLocale,
+  worldFiles: FileNativeWorldDocumentSnapshot["files"],
 ): PlayFollowupCompilation[] {
-  return effectiveFollowupDefinitions(binding.definition, locale).map(
-    ({ definition: followup, body: markdown }) => {
-      if (markdown === undefined || markdown.trim() === "")
-        throw new PromptCompilationError(
-          "play_preset_prompt_missing",
-          `Follow-up prompt block does not exist: ${followup.prompt.path}`,
-        );
-      const blocks = [
+  return effectiveFollowupDefinitions(
+    binding.definition,
+    locale,
+    worldFiles,
+  ).map(({ definition: followup, body: markdown, frozenResources }) => {
+    if (markdown === undefined || markdown.trim() === "")
+      throw new PromptCompilationError(
+        "play_preset_prompt_missing",
+        `Follow-up prompt block does not exist: ${followup.prompt.path}`,
+      );
+    const blocks = [
+      {
+        source: `${followup.id.startsWith("package:") ? "package:control" : "play"}:${followup.prompt.path}`,
+        markdown: markdown.trim(),
+      },
+      {
+        source: `runtime:followup/${followup.id}`,
+        markdown: followupRuntimeContract(followup, locale),
+      },
+    ];
+    return {
+      ...(followup.id === "builtin:summary"
+        ? { frozenResources: { files: {}, mount: "story" as const } }
+        : {}),
+      ...(frozenResources === undefined ? {} : { frozenResources }),
+      id: followup.id,
+      displayName: followup.displayName,
+      logicalMessages: [
         {
-          source: `play:${followup.prompt.path}`,
-          markdown: markdown.trim(),
+          role: "author_instruction" as const,
+          blocks,
+          markdown: joinBlocks(blocks),
         },
-        {
-          source: `runtime:followup/${followup.id}`,
-          markdown: followupRuntimeContract(followup, locale),
-        },
-      ];
-      return {
-        ...(followup.id === "builtin:summary"
-          ? { frozenResources: { files: {}, mount: "story" as const } }
-          : {}),
-        id: followup.id,
-        displayName: followup.displayName,
-        logicalMessages: [
-          {
-            role: "author_instruction" as const,
-            blocks,
-            markdown: joinBlocks(blocks),
-          },
-        ],
-        tools: runtimeToolsForNames(followupToolNames, locale),
-        allowedTools: [...followupToolNames],
-        artifacts: structuredClone(followup.artifacts),
-        maxArtifactBytes: followup.maxArtifactBytes,
-      };
-    },
-  );
+      ],
+      tools: runtimeToolsForNames(followupToolNames, locale),
+      allowedTools: [...followupToolNames],
+      artifacts: structuredClone(followup.artifacts),
+      maxArtifactBytes: followup.maxArtifactBytes,
+    };
+  });
 }
 
 const followupToolNames = [
@@ -1406,7 +1414,7 @@ function createPlayPresetPreview(
  * chain settles.
  */
 function compilePlayPresetCompilation(
-  input: Pick<FileNativePromptInput, "modelBinding">,
+  input: Pick<FileNativePromptInput, "modelBinding" | "world">,
   bootstrap: PromptCompilation,
   binding: PlayPresetBinding,
   locale: AppLocale,
@@ -1437,7 +1445,11 @@ function compilePlayPresetCompilation(
     bootstrap: sessionBootstrap,
     toolUniverse,
     toolStrategy,
-    followups: compileFollowups(binding, locale),
+    followups: compileFollowups(
+      binding,
+      locale,
+      input.world.documentSnapshot.files,
+    ),
   };
 }
 

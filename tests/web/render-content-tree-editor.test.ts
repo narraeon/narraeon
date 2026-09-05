@@ -169,3 +169,43 @@ function files(): ContentTreeFile[] {
     },
   ];
 }
+
+test("普通作者从内容包入口编辑、停用和排序后置请求，完整资源留在草稿", () => {
+  render(
+    createElement(EditorHarness, {
+      initialFiles: files(),
+      issues: [],
+      onSave: vi.fn(),
+    }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "内容包后置请求" }));
+  fireEvent.click(screen.getByRole("button", { name: "新增包后置请求" }));
+  fireEvent.change(screen.getByLabelText("包请求名称"), {
+    target: { value: "旅途回顾" },
+  });
+  fireEvent.change(screen.getByLabelText("包请求提示词"), {
+    target: { value: "输出旅途回顾" },
+  });
+  fireEvent.click(screen.getByText("编辑渲染资源", { exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "添加 HTML 模板" }));
+  fireEvent.change(screen.getByLabelText("HTML 模板 1"), {
+    target: { value: "<h2>旅途</h2>" },
+  });
+  fireEvent.click(screen.getByLabelText("启用 旅途回顾"));
+  expect(screen.getByLabelText<HTMLInputElement>("启用 旅途回顾").checked).toBe(
+    false,
+  );
+  expect(screen.getByLabelText<HTMLTextAreaElement>("HTML 模板 1").value).toBe(
+    "<h2>旅途</h2>",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "新增包后置请求" }));
+  expect(screen.getAllByRole("button", { name: /^上移/ })).toHaveLength(2);
+  fireEvent.click(screen.getAllByRole("button", { name: /^上移/ })[1]!);
+  fireEvent.click(screen.getByRole("button", { name: "旅途回顾" }));
+  expect(screen.getByLabelText<HTMLTextAreaElement>("包请求提示词").value).toBe(
+    "输出旅途回顾",
+  );
+  expect(screen.getByLabelText<HTMLTextAreaElement>("HTML 模板 1").value).toBe(
+    "<h2>旅途</h2>",
+  );
+});

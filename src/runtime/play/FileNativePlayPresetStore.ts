@@ -153,7 +153,9 @@ export function isFrozenArtifactPresentation(
       [
         {
           ...original,
-          ...(original.channel === "builtin:summary"
+          ...(original.channel === "builtin:summary" ||
+          (typeof original.channel === "string" &&
+            /^package:[a-z][a-z0-9._/-]{1,127}$/u.test(original.channel))
             ? { channel: "frozen.presentation" }
             : {}),
         },
@@ -1616,7 +1618,7 @@ function parsePromptBlocks(
  * User definitions retain their resources independently of order and enablement. The parser needs each request's
  * identity, its single author prompt, and the artifacts it may emit.
  */
-function parseFollowups(
+export function parseFollowups(
   value: unknown,
   files: Record<string, string>,
 ): PlayPresetFollowupDefinition[] {
@@ -1799,6 +1801,7 @@ function parseArtifacts(
       );
     const strategy = raw.strategy;
     if (
+      typeof strategy !== "string" ||
       !["append", "replace", "upsert", "transient", "hidden"].includes(
         String(strategy),
       )

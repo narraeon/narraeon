@@ -1,3 +1,4 @@
+import { PackageScriptPermissions } from "./extension/PackageScriptPermissions.ts";
 import { comparePromptPrefixes } from "./prompt/WorldPromptDiagnostics.ts";
 import { join } from "node:path";
 
@@ -345,6 +346,20 @@ export class V1Runtime {
         return this.#models.listModels(request);
       case "content.create":
         return this.#content.createCurrentTreeContentPackage();
+      case "content.scripts.read":
+        return this.#content.packageScriptPermissions(request.packageId);
+      case "content.scripts.set":
+        return this.#content.packageScriptPermissions(
+          request.packageId,
+          request.enabled,
+        );
+      case "world.package-scripts.read":
+        return this.#worlds.packageScriptPermissions(request.worldId);
+      case "world.package-scripts.set":
+        return this.#worlds.packageScriptPermissions(
+          request.worldId,
+          request.enabled,
+        );
       case "content.read":
         return this.#content.readCurrentTreeContentPackage(request.packageId);
       case "content.replace":
@@ -554,6 +569,9 @@ export class V1Runtime {
           operationId: request.operationId,
           sourcePackageId: request.packageId,
           sourcePackageTitle: package_.title,
+          packageScriptGrants: await this.#content.readPackageScriptGrants(
+            request.packageId,
+          ),
           packageFiles: package_.files,
           prompt: {
             hostBinding: presetHostBinding(preset),
@@ -1012,6 +1030,13 @@ export class V1Runtime {
             artifact,
             resolved.binding,
             resolved.failure,
+            artifact.requestId.startsWith("package:") &&
+              artifact.frozenPresentation !== undefined &&
+              (await this.#worlds.readPackageScriptGrants(worldId)).includes(
+                PackageScriptPermissions.fingerprint(
+                  artifact.frozenPresentation.files,
+                ),
+              ),
           ),
         };
       }),
@@ -1062,6 +1087,13 @@ export class V1Runtime {
             record,
             resolved.binding,
             resolved.failure,
+            record.requestId.startsWith("package:") &&
+              record.frozenPresentation !== undefined &&
+              (await this.#worlds.readPackageScriptGrants(worldId)).includes(
+                PackageScriptPermissions.fingerprint(
+                  record.frozenPresentation.files,
+                ),
+              ),
           ),
         };
       }),

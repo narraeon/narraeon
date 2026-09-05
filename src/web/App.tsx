@@ -1,3 +1,4 @@
+import { PackageScriptPermissionControl } from "./PackageScriptPermissionControl.tsx";
 import { useEffect, useRef, useState } from "react";
 
 import { maxPortableContentArchiveBytes } from "../protocol/contentTree.ts";
@@ -863,6 +864,15 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         }
         now={improvementNow}
         contentEditor={{
+          scriptPermission: (
+            <PackageScriptPermissionControl
+              key={selected}
+              client={client}
+              kind="content"
+              id={selected}
+              dirty={filesDirty}
+            />
+          ),
           files,
           status:
             selectedPackageDetail?.status ??
