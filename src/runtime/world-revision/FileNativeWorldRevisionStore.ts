@@ -1,3 +1,7 @@
+import {
+  validAuthoringRequests,
+  type AuthoringRequestSnapshot,
+} from "../authoring/AuthoringRequestSnapshot.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -84,7 +88,8 @@ export type StoredWorldRevisionPendingSettlement =
     };
 
 export interface StoredWorldRevisionSession {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
+  requests?: AuthoringRequestSnapshot[];
   sessionId: string;
   worldId: string;
   worldTitle: string;
@@ -352,32 +357,43 @@ function validateEpoch(value: unknown): StoredWorldRevisionEpoch {
 function validateSession(value: unknown): StoredWorldRevisionSession {
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, [
-      "schemaVersion",
-      "sessionId",
-      "worldId",
-      "worldTitle",
-      "epochId",
-      "locale",
-      "runStatus",
-      "createdAt",
-      "updatedAt",
-      "creationRequestId",
-      "bootstrap",
-      "modelBinding",
-      "playPreset",
-      "modelItems",
-      "messages",
-      "usage",
-      "exchange",
-      "toolCalls",
-      "activeRequestId",
-      "completedRequestIds",
-      "lastFailure",
-      "authorization",
-      "pendingSettlement",
-    ]) ||
-    value.schemaVersion !== 1 ||
+    !hasExactKeys(
+      value,
+      [
+        "schemaVersion",
+        "sessionId",
+        "worldId",
+        "worldTitle",
+        "epochId",
+        "locale",
+        "runStatus",
+        "createdAt",
+        "updatedAt",
+        "creationRequestId",
+        "bootstrap",
+        "modelBinding",
+        "playPreset",
+        "modelItems",
+        "messages",
+        "usage",
+        "exchange",
+        "toolCalls",
+        "activeRequestId",
+        "completedRequestIds",
+        "lastFailure",
+        "authorization",
+        "pendingSettlement",
+      ],
+      ["requests"],
+    ) ||
+    (value.schemaVersion !== 1 && value.schemaVersion !== 2) ||
+    (value.schemaVersion === 1
+      ? value.requests !== undefined
+      : !validAuthoringRequests(value.requests, validPromptCompilation, {
+          modelItems: value.modelItems,
+          activeRequestId: value.activeRequestId,
+          completedRequestIds: value.completedRequestIds,
+        })) ||
     typeof value.sessionId !== "string" ||
     !nonEmptyString(value.worldId) ||
     typeof value.worldTitle !== "string" ||

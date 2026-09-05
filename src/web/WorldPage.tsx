@@ -1434,6 +1434,14 @@ export function WorldPage({
           };
     return (
       <SettingImprovementPanel
+        key={worldId}
+        onPreview={() =>
+          requestRuntime(client, {
+            type: "world.revision.preview",
+            worldId,
+            ...(panelView === null ? {} : { sessionId: panelView.sessionId }),
+          })
+        }
         target="world-revision"
         packageName={worldTitle}
         modelConfigured={modelConfigured}

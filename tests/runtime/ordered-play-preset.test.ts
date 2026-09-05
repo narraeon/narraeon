@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
-import { stringify } from "yaml";
+import { stringify, parseDocument } from "yaml";
 import {
   FileNativePlayPresetStore,
   defaultPlayPresetFiles,
@@ -418,7 +418,7 @@ test("setting improvement and world revision reference enabled ordered play sema
     expect(encoded).toContain("ONLY_ENABLED_PLAY_POLICY");
     expect(encoded).not.toContain("# Player-visible narrative rules");
     expect(encoded).not.toContain("# Tools and response settlement");
-    expect(encoded).toContain("AUTHOR_MECHANICS");
+    expect(encoded).toContain("Authoring tools and settlement");
   }
 });
 
@@ -489,3 +489,90 @@ test.each(["escaped-v2", "unknown"] as const)(
     expect((await store.list()).presets).toHaveLength(1);
   },
 );
+
+test("author arrangement is independent, portable and enforces mandatory target blocks", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ordered-author-"));
+  roots.push(root);
+  const store = new FileNativePlayPresetStore(root);
+  await store.initialize();
+  const preset = await store.importPortable({
+    name: "Author",
+    files: defaultPlayPresetFiles,
+  });
+  expect(preset.preset.structure).toHaveProperty("authorPrompts");
+  const raw = parseDocument(defaultPlayPresetFiles["preset.yaml"]!);
+  raw.setIn(["authorPrompts", 0, "enabled"], false);
+  const files = { ...defaultPlayPresetFiles, "preset.yaml": stringify(raw) };
+  await expect(
+    store.importPortable({ name: "Invalid author", files }),
+  ).rejects.toThrow();
+});
+
+test("disabled author recommendations do not fall back and author saves preserve other arrangements", async () => {
+  const root = await mkdtemp(join(tmpdir(), "author-disabled-"));
+  roots.push(root);
+  const store = new FileNativePlayPresetStore(root);
+  await store.initialize();
+  const original = await store.bindCurrent();
+  const library = await store.list();
+  const structure = library.presets[0]!.structure!;
+  const originalPlay = structuredClone(structure.playPrompts);
+  structure.authorPrompts = structure.authorPrompts!.map((entry) =>
+    entry.kind === "builtin" &&
+    ["author.guidance", "author.play-reference"].includes(entry.builtin)
+      ? { ...entry, enabled: false }
+      : entry,
+  );
+  structure.authorPrompts.push({
+    id: "fixed-copy",
+    kind: "user",
+    name: "Fixed copy",
+    enabled: true,
+    body: "MY_FIXED_AUTHOR_TEXT",
+  });
+  await store.save({
+    presetId: original.id,
+    name: original.name,
+    files: original.files,
+    structure,
+  });
+  await store.select(original.id);
+  const binding = await store.bindCurrent();
+  expect(binding.definition.playPrompts).toEqual(originalPlay);
+  expect(binding.definition.followups).toEqual(original.definition.followups);
+  expect(binding.definition.playerViewPanels).toEqual(
+    original.definition.playerViewPanels,
+  );
+  const compilation = new FileNativePromptCompiler().compileSettingImprovement({
+    contentPackageTitle: "Test",
+    runtimeContract: "NOT_A_FALLBACK",
+    authorPrompt: "NOT_A_FALLBACK",
+    playPreset: binding,
+    modelBinding: {
+      provider: "chat_completions",
+      modelId: "test",
+      contextWindowTokens: 32000,
+      maxOutputTokens: 2000,
+    },
+    tools: [],
+  });
+  const encoded = JSON.stringify(compilation.provider);
+  expect(encoded).toContain("MY_FIXED_AUTHOR_TEXT");
+  expect(encoded).not.toContain("NOT_A_FALLBACK");
+  expect(encoded).not.toContain("Recommended setting-improvement method");
+  expect(encoded).not.toContain("Future play semantics");
+  const removed = {
+    ...structure,
+    authorPrompts: structure.authorPrompts.filter(
+      (item) => item.id !== "author.guidance",
+    ),
+  };
+  await expect(
+    store.save({
+      presetId: original.id,
+      name: original.name,
+      files: binding.files,
+      structure: removed,
+    }),
+  ).rejects.toThrow("cannot be deleted");
+});
