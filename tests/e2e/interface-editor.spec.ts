@@ -121,7 +121,10 @@ test("纯界面编辑、草稿预览和游玩显示不增加模型调用，字�
       page.locator(".interface-extension-preview iframe"),
     ).toHaveCount(0);
     await page
-      .getByRole("button", { name: "启用 JavaScript", exact: true })
+      .getByRole("button", {
+        name: "启用 JavaScript（本地可信代码）",
+        exact: true,
+      })
       .click();
     await expect(
       page.locator(".interface-extension-preview iframe"),
