@@ -14,6 +14,7 @@ import { firstPartyActionChoicesPresetFiles } from "../../src/shared/first-party
 import {
   FileNativePlayPresetStore,
   applyPlayPresetStructuredEditor,
+  isFrozenArtifactPresentation,
   parsePlayPresetFiles,
   toPlayPresetStructuredEditor,
 } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
@@ -297,8 +298,21 @@ test("系统身份实际派发并冷恢复产物；应用修改产物声明不�
     }),
     binding,
   );
-  const frozen = JSON.parse(JSON.stringify(preview.playPreset!.followups[0]));
+  const frozen = structuredClone(preview.playPreset!.followups[0]!);
   expect(validPlayFollowup(frozen)).toBe(true);
+  expect(
+    validPlayFollowup({
+      ...frozen,
+      frozenResources: { files: {}, mount: ["story"] },
+    }),
+  ).toBe(false);
+  expect(
+    isFrozenArtifactPresentation({
+      declaration: frozen.artifacts[0],
+      files: {},
+      mount: ["story"],
+    }),
+  ).toBe(false);
   expect(
     validPlayFollowup({
       ...frozen,
@@ -480,7 +494,7 @@ test("作者、游玩、后置与纯界面连续结构化保存互相保留，�
     structure,
   );
   const interfaceEdit = parse();
-  interfaceEdit.playerViewPanels![0]!.config.title = "Edited interface";
+  interfaceEdit.playerViewPanels[0]!.config.title = "Edited interface";
   files = applyPlayPresetStructuredEditor(files, interfaceEdit);
   const authorEdit = parse();
   expect(authorEdit.authorPrompts).toEqual(structure.authorPrompts);

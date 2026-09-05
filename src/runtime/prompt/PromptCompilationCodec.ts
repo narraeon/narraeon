@@ -25,6 +25,7 @@ export function validPlayFollowup(value: unknown): boolean {
         Object.values(value.frozenResources.files).every(
           (body) => typeof body === "string",
         ) &&
+        typeof value.frozenResources.mount === "string" &&
         [
           "story",
           "sidebar",

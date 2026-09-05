@@ -164,6 +164,7 @@ export function isFrozenArtifactPresentation(
     parsed.channel = String(original.channel);
     return (
       isDeepStrictEqual(parsed, original) &&
+      typeof value.mount === "string" &&
       [
         "story",
         "sidebar",
