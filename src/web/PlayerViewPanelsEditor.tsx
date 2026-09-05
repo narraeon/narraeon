@@ -74,10 +74,7 @@ export function PlayerViewPanelsEditor({
   }
 
   function addPanel(): void {
-    const used = new Set(panels.map(({ id }) => id));
-    let suffix = panels.length + 1;
-    let id = `panel_${suffix}`;
-    while (used.has(id)) id = `panel_${++suffix}`;
+    const id = `panel_${crypto.randomUUID().replaceAll("-", "")}`;
     onChange([
       ...panels,
       {

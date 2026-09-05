@@ -10371,3 +10371,38 @@ summary:focus-visible {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+.world-extension-menu {
+  position: relative;
+  margin-block: 0.4rem;
+}
+.world-extension-menu summary {
+  cursor: pointer;
+  width: fit-content;
+}
+.world-extension-options {
+  max-height: 22rem;
+  overflow-y: auto;
+  padding: 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+}
+.world-extension-options fieldset {
+  margin-block: 0.6rem;
+}
+.world-extension-choice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem;
+}
+.world-extension-choice label {
+  flex: 1 1 12rem;
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+.world-extension-child {
+  margin-inline-start: 1rem;
+}

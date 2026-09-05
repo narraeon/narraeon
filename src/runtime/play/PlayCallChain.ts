@@ -268,6 +268,11 @@ export class PlayCallChain {
     );
     const compilation = this.#compiler.compilePlayCallChain(
       {
+        extensionControls: await this.#worlds.extensionControls(
+          input.worldId,
+          input.playPreset,
+          this.#compiler.locale,
+        ),
         endpoint: {
           id: `${input.worldId}:${binding.parentHead}`,
           commit: binding.parentHead,
@@ -448,6 +453,11 @@ export class PlayCallChain {
     );
     const compilation = this.#compiler.compilePlayCallChain(
       {
+        extensionControls: await this.#worlds.extensionControls(
+          input.worldId,
+          playPreset,
+          this.#compiler.locale,
+        ),
         endpoint: {
           id: `${input.worldId}:${binding.parentHead}`,
           commit: binding.parentHead,
@@ -1276,6 +1286,11 @@ export class PlayCallChain {
     );
     const compilation = this.#compiler.compilePlayCallChain(
       {
+        extensionControls: await this.#worlds.extensionControls(
+          request.worldId,
+          request.freshContext.playPreset,
+          this.#compiler.locale,
+        ),
         endpoint: {
           id: `${request.worldId}:${binding.parentHead}`,
           commit: binding.parentHead,
@@ -2630,6 +2645,7 @@ export class PlayCallChain {
     try {
       await runPlayFollowupRequests({
         artifacts: this.#artifacts,
+        controls: this.#worlds.extensionRequests,
         modelHost,
         followups,
         bootstrap: currentPlayPrompt(session).bootstrap,

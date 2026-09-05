@@ -3028,3 +3028,75 @@ function playDecorations(
         ];
   return { head, artifacts, extensions: [], artifactDebug: [] };
 }
+
+test("世界扩展菜单提交 Runtime 选择；无调用链的同端点通知也刷新纯界面，关闭不被 fallback 补回", async () => {
+  let receive!: Parameters<ObserveConversation>[1];
+  let enabled = true;
+  const controls = () => ({
+    revision: enabled ? 1 : 2,
+    items: [
+      {
+        key: "view:status",
+        id: "status",
+        name: "当前状态",
+        source: "world" as const,
+        kind: "view" as const,
+        defaultEnabled: true,
+        selected: enabled,
+        enabled,
+        overridden: !enabled,
+        generation: enabled ? 0 : 1,
+      },
+    ],
+  });
+  const client = {
+    observeConversation: ((_target, callback) => {
+      receive = callback;
+      return () => undefined;
+    }) satisfies ObserveConversation,
+    request: vi.fn((request: V1Request) => {
+      if (request.type === "world.read")
+        return Promise.resolve({
+          ...worldView(null),
+          extensionControls: controls(),
+        });
+      if (request.type === "world.play-decorations.read")
+        return Promise.resolve({
+          ...playDecorations(null, "world-one", "commit:1"),
+          extensionControls: controls(),
+          playerViews: worldView(null).playerViews,
+          playerViewPanels: [],
+          suppressedPlayerViewIds: enabled ? [] : ["status"],
+        });
+      if (request.type === "world.extensions.set") {
+        enabled = request.value !== "off";
+        return Promise.resolve(controls());
+      }
+      throw new Error(`Unexpected request ${request.type}`);
+    }),
+  };
+  renderWorld(client);
+  await screen.findByRole("heading", { name: "宿舍世界" });
+  fireEvent.click(screen.getByText("世界扩展", { exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "此刻" }));
+  expect(screen.getByText("白色运动背心")).toBeTruthy();
+  fireEvent.click(screen.getByRole("checkbox", { name: "当前状态" }));
+  await waitFor(() => expect(screen.queryByText("白色运动背心")).toBeNull());
+  expect(client.request).toHaveBeenCalledWith({
+    type: "world.extensions.set",
+    worldId: "world-one",
+    key: "view:status",
+    value: "off",
+  });
+  // An independent tab changes the Runtime state while there is no play chain.
+  enabled = true;
+  await act(async () => {
+    await receive({ kind: "play", value: null, extensionsRevision: 3 }, true);
+  });
+  await waitFor(() => expect(screen.getByText("白色运动背心")).toBeTruthy());
+  expect(
+    client.request.mock.calls.some(([request]) =>
+      request.type.startsWith("play.chain"),
+    ),
+  ).toBe(false);
+});

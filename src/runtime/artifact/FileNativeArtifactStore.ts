@@ -1,3 +1,8 @@
+import { WorldExtensionRequests } from "../extension/WorldExtensionRequests.ts";
+import {
+  isWorldExtensionControl,
+  type WorldExtensionControl,
+} from "../../protocol/worldExtensions.ts";
 import { Buffer } from "node:buffer";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
@@ -69,6 +74,7 @@ export interface ArtifactOperationContext {
 }
 
 export interface ArtifactRequestContext extends ArtifactOperationContext {
+  extensionControl?: WorldExtensionControl;
   frozenResources?: Omit<FrozenArtifactPresentation, "declaration">;
   requestId: string;
   requestAttempt: number;
@@ -97,6 +103,7 @@ export interface ArtifactToolResult {
 }
 
 export interface ArtifactProjectionItem {
+  extensionControl?: WorldExtensionControl;
   frozenPresentation?: FrozenArtifactPresentation;
   recordId: string;
   worldId: string;
@@ -120,6 +127,7 @@ export interface ArtifactProjectionItem {
 }
 
 export interface ArtifactDebugRecord {
+  extensionControl?: WorldExtensionControl;
   frozenPresentation?: FrozenArtifactPresentation;
   recordId: string;
   sequence: number;
@@ -207,6 +215,7 @@ export interface ArtifactStore {
 }
 
 interface ArtifactRawRecord {
+  extensionControl?: WorldExtensionControl;
   frozenPresentation?: FrozenArtifactPresentation;
   schemaVersion: 1;
   recordId: string;
@@ -290,12 +299,16 @@ const maxPayloadBytes = 4 * 1024 * 1024;
  */
 export class FileNativeArtifactStore implements ArtifactStore {
   readonly #root: string;
+  readonly #extensionControls: WorldExtensionRequests;
   readonly #memoryRecords = new Map<string, ArtifactRawRecord[]>();
   readonly #memoryEvents = new Map<string, ArtifactEvent[]>();
   readonly #mutationContext = new AsyncLocalStorage<ReadonlySet<string>>();
 
   constructor(dataRoot: string) {
     this.#root = join(resolve(dataRoot), "artifact-store");
+    this.#extensionControls = new WorldExtensionRequests(
+      join(resolve(dataRoot), "worlds-file-native"),
+    );
   }
 
   async beginOperation(context: ArtifactOperationContext): Promise<void> {
@@ -608,7 +621,10 @@ export class FileNativeArtifactStore implements ArtifactStore {
       fingerprint,
       callFingerprint,
     );
-    const stale = isStaleOperation(operation) || staleAttempt;
+    const stale =
+      isStaleOperation(operation) ||
+      staleAttempt ||
+      !(await this.#extensionControls.visible(record.worldId, record));
     if (declaration.save === "none") {
       const records = this.#memoryRecords.get(input.context.operationId) ?? [];
       records.push(record);
@@ -700,7 +716,9 @@ export class FileNativeArtifactStore implements ArtifactStore {
           (head === undefined || event.head === head),
       );
     const stale =
-      isStaleOperation(operation) || currentAttempt !== record.requestAttempt;
+      isStaleOperation(operation) ||
+      currentAttempt !== record.requestAttempt ||
+      !(await this.#extensionControls.visible(record.worldId, record));
     if (stale) {
       if (!hasEvent("supersede"))
         await this.#appendRecordEvent(record, {
@@ -802,7 +820,14 @@ export class FileNativeArtifactStore implements ArtifactStore {
       };
     }
     const staleAttempt = currentAttempt !== input.context.requestAttempt;
-    if (isStaleOperation(operation) || staleAttempt) {
+    if (
+      isStaleOperation(operation) ||
+      staleAttempt ||
+      !(await this.#extensionControls.visible(
+        input.context.worldId,
+        input.context,
+      ))
+    ) {
       const event: ArtifactEvent = {
         schemaVersion: 1,
         kind: "ignored_call",
@@ -1280,7 +1305,14 @@ export class FileNativeArtifactStore implements ArtifactStore {
       if (record.save === "commit" && head === null) return false;
       return true;
     });
-    const selected = selectProjection(active);
+    const visible = await Promise.all(
+      active.map(async (item) =>
+        (await this.#extensionControls.visible(worldId, item.record))
+          ? item
+          : null,
+      ),
+    );
+    const selected = selectProjection(visible.filter((item) => item !== null));
     return selected.map(({ record, head }) => ({
       recordId: record.recordId,
       worldId: record.worldId,
@@ -1298,6 +1330,9 @@ export class FileNativeArtifactStore implements ArtifactStore {
       ...(record.rendererRevision === undefined
         ? {}
         : { rendererRevision: record.rendererRevision }),
+      ...(record.extensionControl === undefined
+        ? {}
+        : { extensionControl: structuredClone(record.extensionControl) }),
       ...(record.frozenPresentation === undefined
         ? {}
         : { frozenPresentation: structuredClone(record.frozenPresentation) }),
@@ -1343,6 +1378,9 @@ export class FileNativeArtifactStore implements ArtifactStore {
         save: record.save,
         projection: record.projection,
         payloadBytes: byteLength(record.payload, record.contentType),
+        ...(record.extensionControl === undefined
+          ? {}
+          : { extensionControl: structuredClone(record.extensionControl) }),
         ...(record.frozenPresentation === undefined
           ? {}
           : { frozenPresentation: structuredClone(record.frozenPresentation) }),
@@ -1384,6 +1422,11 @@ export class FileNativeArtifactStore implements ArtifactStore {
       ...(declaration.rendererRevision === undefined
         ? {}
         : { rendererRevision: declaration.rendererRevision }),
+      ...(input.context.extensionControl === undefined
+        ? {}
+        : {
+            extensionControl: structuredClone(input.context.extensionControl),
+          }),
       ...(input.context.frozenResources === undefined
         ? {}
         : {
@@ -2177,6 +2220,9 @@ function artifactCallFingerprint(
         playPresetId: context.playPresetId,
         playPresetRevision: context.playPresetRevision,
         playPresetScriptsEnabled: context.playPresetScriptsEnabled,
+        ...(context.extensionControl === undefined
+          ? {}
+          : { extensionControl: context.extensionControl }),
         requestId: context.requestId,
         requestAttempt: context.requestAttempt,
         parameters,
@@ -2367,6 +2413,13 @@ function assertRequestContext(context: ArtifactRequestContext): void {
     playPresetScriptsEnabled: context.playPresetScriptsEnabled,
   });
   if (
+    context.extensionControl !== undefined &&
+    !isWorldExtensionControl(context.extensionControl)
+  )
+    throw new ArtifactStoreInvariantError(
+      "Invalid extension control generation",
+    );
+  if (
     context.requestId.trim() === "" ||
     !Number.isInteger(context.requestAttempt)
   )
@@ -2425,8 +2478,16 @@ function assertRawRecord(record: ArtifactRawRecord): void {
         "recordFingerprint",
         "status",
       ],
-      ["key", "renderer", "rendererRevision", "frozenPresentation"],
+      [
+        "key",
+        "renderer",
+        "rendererRevision",
+        "frozenPresentation",
+        "extensionControl",
+      ],
     ) ||
+    (record.extensionControl !== undefined &&
+      !isWorldExtensionControl(record.extensionControl)) ||
     (record.frozenPresentation !== undefined &&
       !isFrozenArtifactPresentation(record.frozenPresentation)) ||
     record.schemaVersion !== 1 ||

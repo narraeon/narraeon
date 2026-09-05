@@ -1,3 +1,4 @@
+import type { WorldExtensionRequests } from "../extension/WorldExtensionRequests.ts";
 import type {
   ArtifactExtensionSummary,
   ArtifactOperationContext,
@@ -51,6 +52,7 @@ export interface PlayFollowupObserver {
 }
 
 export interface PlayFollowupInput {
+  controls?: WorldExtensionRequests;
   artifacts: ArtifactStore;
   modelHost: ModelHost;
   followups: readonly PlayFollowupCompilation[];
@@ -104,7 +106,32 @@ export async function runPlayFollowupRequests(
       failure ??= "The follow-up request was cancelled.";
       break;
     }
-    const outcome = await runOne(input, followup, prefix);
+    const lease = await input.controls?.acquire(
+      input.context.worldId,
+      {
+        playPresetId: input.context.playPresetId,
+        requestId: followup.id,
+        ...(followup.extensionControl === undefined
+          ? {}
+          : { extensionControl: followup.extensionControl }),
+      },
+      input.signal,
+    );
+    if (lease?.signal.aborted) {
+      lease.release();
+      continue;
+    }
+    let outcome: PlayFollowupOutcome;
+    try {
+      outcome = await runOne(
+        input,
+        followup,
+        prefix,
+        lease?.signal ?? input.signal,
+      );
+    } finally {
+      lease?.release();
+    }
     if (signalWasAborted(input.signal)) {
       failure ??= "The follow-up request was cancelled.";
       break;
@@ -134,6 +161,7 @@ async function runOne(
   input: PlayFollowupInput,
   followup: PlayFollowupCompilation,
   prefix: ModelHostAppendItem[],
+  requestSignal?: AbortSignal,
 ): Promise<PlayFollowupOutcome> {
   const outcome: PlayFollowupOutcome = {
     id: followup.id,
@@ -143,6 +171,9 @@ async function runOne(
   };
   const requestContext = {
     ...input.context,
+    ...(followup.extensionControl === undefined
+      ? {}
+      : { extensionControl: structuredClone(followup.extensionControl) }),
     requestId: followup.id,
     requestAttempt: 1,
     maxArtifactBytes: followup.maxArtifactBytes,
@@ -154,6 +185,7 @@ async function runOne(
   let responseDiagnostics: AiExchangeDiagnostics | undefined;
   try {
     await input.artifacts.beginRequestAttempt(requestContext);
+    requestSignal?.throwIfAborted();
     input.observer?.onProviderDispatch?.();
     let response: Awaited<ReturnType<ModelHost["exchange"]>>;
     try {
@@ -180,7 +212,7 @@ async function runOne(
           maxOutputTokens: input.maxOutputTokens,
         },
         {
-          ...(input.signal === undefined ? {} : { signal: input.signal }),
+          ...(requestSignal === undefined ? {} : { signal: requestSignal }),
           onDelta: (delta) => input.observer?.onProviderDelta?.(delta),
         },
       );

@@ -1,3 +1,4 @@
+import { isWorldExtensionControl } from "../../protocol/worldExtensions.ts";
 import type { PromptCompilation } from "./FileNativePromptCompiler.ts";
 import { isWorldPromptMaintenance } from "../../protocol/worldMaintenance.ts";
 
@@ -16,8 +17,10 @@ export function validPlayFollowup(value: unknown): boolean {
         "artifacts",
         "maxArtifactBytes",
       ],
-      ["frozenResources"],
+      ["frozenResources", "extensionControl"],
     ) &&
+    (value.extensionControl === undefined ||
+      isWorldExtensionControl(value.extensionControl)) &&
     (value.frozenResources === undefined ||
       (isRecord(value.frozenResources) &&
         hasExactKeys(value.frozenResources, ["files", "mount"]) &&

@@ -1,3 +1,4 @@
+import type { WorldExtensionChoice } from "./worldExtensions.ts";
 import type { WorldPromptPrefixComparison } from "./worldPromptDiagnostics.ts";
 import type { WorldPromptMaintenance } from "./worldMaintenance.ts";
 import type {
@@ -255,6 +256,13 @@ export type V1Request =
       type: "world.surface.read";
       worldId: string;
       surface: "state" | "control" | "history" | "runtime";
+    }
+  | { type: "world.extensions.read"; worldId: string }
+  | {
+      type: "world.extensions.set";
+      worldId: string;
+      key: string;
+      value: WorldExtensionChoice;
     }
   | { type: "world.play-decorations.read"; worldId: string }
   | { type: "correction.begin"; worldId: string; operationId: string }
@@ -998,6 +1006,8 @@ const requiredFields: Record<
   },
   "world.play-context.read": { worldId: "string" },
   "world.surface.read": { worldId: "string", surface: "string" },
+  "world.extensions.read": { worldId: "string" },
+  "world.extensions.set": { worldId: "string", key: "string", value: "string" },
   "world.play-decorations.read": { worldId: "string" },
   "correction.begin": { worldId: "string", operationId: "string" },
   "correction.read": { candidateId: "string", document: "string" },
@@ -1039,6 +1049,14 @@ function validateRequestFields(request: Record<string, unknown>): void {
         `${String(request.type)}.${field} is invalid`,
       );
   }
+  if (
+    request.type === "world.extensions.set" &&
+    !["on", "off", "default"].includes(String(request.value))
+  )
+    throw new V1ProtocolError(
+      "invalid_request",
+      "Invalid world extension choice",
+    );
   if (request.type === "preferences.save") {
     if (
       (request.locale === undefined && request.reading === undefined) ||
@@ -1432,6 +1450,8 @@ const requestTypes = new Set([
   "play.timeline.detail",
   "world.play-context.read",
   "world.surface.read",
+  "world.extensions.read",
+  "world.extensions.set",
   "world.play-decorations.read",
   "correction.begin",
   "correction.read",

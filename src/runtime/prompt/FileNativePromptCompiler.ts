@@ -1,3 +1,7 @@
+import type {
+  WorldExtensionControl,
+  WorldExtensionsView,
+} from "../../protocol/worldExtensions.ts";
 import { effectiveFollowupDefinitions } from "../play/OrderedFollowups.ts";
 import { legacyAuthorPrompts } from "../play/FileNativePlayPresetStore.ts";
 import {
@@ -76,6 +80,7 @@ export type FileNativeWorldDocumentSnapshot = Pick<
 >;
 
 export interface FileNativePromptInput {
+  extensionControls?: WorldExtensionsView;
   endpoint: { id: string; commit: string; operationId?: string };
   hostBinding: {
     hostPresetId: string;
@@ -246,6 +251,7 @@ export interface PlayPresetCompilation {
 
 /** One post-commit derived request compiled against the main-chain prefix. */
 export interface PlayFollowupCompilation {
+  extensionControl?: WorldExtensionControl;
   frozenResources?: {
     files: Record<string, string>;
     mount: PlayPresetMount["mount"];
@@ -819,6 +825,7 @@ export class FileNativePromptCompiler {
         binding,
         this.#locale,
         input.world.documentSnapshot.files,
+        input.extensionControls,
       ),
     };
   }
@@ -1003,11 +1010,24 @@ function compileFollowups(
   binding: PlayPresetBinding,
   locale: AppLocale,
   worldFiles: FileNativeWorldDocumentSnapshot["files"],
+  controls?: WorldExtensionsView,
 ): PlayFollowupCompilation[] {
   return effectiveFollowupDefinitions(
     binding.definition,
     locale,
     worldFiles,
+    controls === undefined
+      ? undefined
+      : {
+          packageGroup:
+            controls.items.find((item) => item.kind === "group")?.enabled ??
+            false,
+          requests: new Map(
+            controls.items
+              .filter((item) => item.kind === "request")
+              .map((item) => [item.id, item.enabled]),
+          ),
+        },
   ).map(({ definition: followup, body: markdown, frozenResources }) => {
     if (markdown === undefined || markdown.trim() === "")
       throw new PromptCompilationError(
@@ -1029,6 +1049,18 @@ function compileFollowups(
         ? { frozenResources: { files: {}, mount: "story" as const } }
         : {}),
       ...(frozenResources === undefined ? {} : { frozenResources }),
+      ...(controls === undefined
+        ? {}
+        : {
+            extensionControl: {
+              key: controls.items.find(
+                (item) => item.id === followup.id && item.kind === "request",
+              )!.key,
+              generation: controls.items.find(
+                (item) => item.id === followup.id && item.kind === "request",
+              )!.generation,
+            },
+          }),
       id: followup.id,
       displayName: followup.displayName,
       logicalMessages: [
@@ -1414,7 +1446,10 @@ function createPlayPresetPreview(
  * chain settles.
  */
 function compilePlayPresetCompilation(
-  input: Pick<FileNativePromptInput, "modelBinding" | "world">,
+  input: Pick<
+    FileNativePromptInput,
+    "modelBinding" | "world" | "extensionControls"
+  >,
   bootstrap: PromptCompilation,
   binding: PlayPresetBinding,
   locale: AppLocale,
@@ -1449,6 +1484,7 @@ function compilePlayPresetCompilation(
       binding,
       locale,
       input.world.documentSnapshot.files,
+      input.extensionControls,
     ),
   };
 }

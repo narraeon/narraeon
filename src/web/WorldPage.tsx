@@ -1,3 +1,5 @@
+import { WorldExtensionMenu } from "./WorldExtensionMenu.tsx";
+import type { WorldExtensionsView } from "../protocol/worldExtensions.ts";
 import { PackageScriptPermissionControl } from "./PackageScriptPermissionControl.tsx";
 import { PlayerValue } from "./PlayerViewValue.tsx";
 import { useConversationComposer } from "./useConversationComposer.ts";
@@ -93,6 +95,8 @@ interface WorldMessage {
 }
 
 interface WorldReadView {
+  extensionControls?: WorldExtensionsView;
+  suppressedPlayerViewIds?: string[];
   worldId: string;
   head: string;
   state: ContentTreeFile[];
@@ -114,6 +118,10 @@ interface WorldReadView {
 }
 
 interface WorldPlayDecorationsView {
+  extensionControls?: WorldExtensionsView;
+  suppressedPlayerViewIds?: string[];
+  playerViewPanels?: FrontendPlayerViewPanelProjection[];
+  playerViews?: WorldReadView["playerViews"];
   head: string;
   artifacts: FrontendArtifactProjection[];
   extensions: FrontendArtifactExtensionSummary[];
@@ -158,6 +166,7 @@ export function WorldPage({
     (WorldPlayDecorationsView & { worldId: string }) | null
   >(null);
   const [decorationRevision, setDecorationRevision] = useState(0);
+  const decorationRequestId = useRef(0);
   const [leftRailOpen, setLeftRailOpen] = useState(false);
   const [rightRailOpen, setRightRailOpen] = useState(false);
   const [rightRailTab, setRightRailTab] = useState<RightRailTab>("documents");
@@ -265,8 +274,13 @@ export function WorldPage({
     if (world?.worldId !== worldId) return;
     let active = true;
     const expectedHead = world.head;
+    const requestId = ++decorationRequestId.current;
     void requestPlayDecorations(client, worldId).then((next) => {
-      if (active && next?.head === expectedHead)
+      if (
+        active &&
+        requestId === decorationRequestId.current &&
+        next?.head === expectedHead
+      )
         setDecorations({ ...next, worldId });
     });
     return () => {
@@ -285,10 +299,15 @@ export function WorldPage({
     let active = true;
     let hydratedHead: string | undefined;
     let observedDecorations: string | undefined;
+    let observedExtensions: number | undefined;
     const unsubscribe = client.observeConversation(
       { kind: "play", id: worldId },
       async (observation) => {
         if (!active || observation.kind !== "play") return;
+        if (observation.extensionsRevision !== observedExtensions) {
+          observedExtensions = observation.extensionsRevision;
+          setDecorationRevision((current) => current + 1);
+        }
         const next = observation.value;
         if (next === null) return;
         // Ignore token deltas. Follow-up outcomes (including failure/clear),
@@ -590,8 +609,12 @@ export function WorldPage({
 
   const documents = world?.state ?? [];
   const playerViewFallback = projectUncoveredPlayerViews(
-    world?.playerViews ?? { views: [], diagnostics: [] },
-    world?.playerViewPanels ?? [],
+    displayedDecorations?.playerViews ??
+      world?.playerViews ?? { views: [], diagnostics: [] },
+    displayedDecorations?.playerViewPanels ?? world?.playerViewPanels ?? [],
+    displayedDecorations?.suppressedPlayerViewIds ??
+      world?.suppressedPlayerViewIds ??
+      [],
   );
   const timelineCommittedMessages: WorldMessage[] =
     playTimeline?.items.flatMap((item) => {
@@ -1567,7 +1590,9 @@ export function WorldPage({
       <ArtifactExtensionHost
         worldId={world.worldId}
         artifacts={displayedDecorations?.artifacts ?? []}
-        playerViewPanels={world.playerViewPanels ?? []}
+        playerViewPanels={
+          displayedDecorations?.playerViewPanels ?? world.playerViewPanels ?? []
+        }
         playerViews={world.playerViews}
         interactionDisabled={pending !== null || worldRevisionLocked}
         onSetComposerDraft={setPlayerText}
@@ -1736,6 +1761,31 @@ export function WorldPage({
 
           <footer ref={composerRef} className="world-composer-dock">
             <ArtifactExtensionMount mount="composer_above" />
+            {(displayedDecorations?.extensionControls ??
+              world.extensionControls) === undefined ? null : (
+              <WorldExtensionMenu
+                view={
+                  (displayedDecorations?.extensionControls ??
+                    world.extensionControls)!
+                }
+                onChange={async (key, value) => {
+                  const requestId = ++decorationRequestId.current;
+                  await requestRuntime(client, {
+                    type: "world.extensions.set",
+                    worldId,
+                    key,
+                    value,
+                  });
+                  const next = await requestPlayDecorations(client, worldId);
+                  if (
+                    next !== null &&
+                    requestId === decorationRequestId.current
+                  )
+                    setDecorations({ ...next, worldId });
+                  setDecorationRevision((current) => current + 1);
+                }}
+              />
+            )}
             {worldRevisionLocked ? (
               <div className="model-required-callout" role="status">
                 <p>
@@ -2083,7 +2133,11 @@ export function WorldPage({
           <ArtifactDebugger
             records={displayedDecorations?.artifactDebug ?? []}
             extensions={displayedDecorations?.extensions ?? []}
-            playerViewPanels={world.playerViewPanels ?? []}
+            playerViewPanels={
+              displayedDecorations?.playerViewPanels ??
+              world.playerViewPanels ??
+              []
+            }
             bridgeEvents={bridgeEvents}
           />
         </div>

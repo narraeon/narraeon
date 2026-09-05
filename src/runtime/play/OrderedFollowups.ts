@@ -79,15 +79,25 @@ export function effectiveFollowupDefinitions(
   definition: PlayPresetDefinition,
   locale: "en" | "zh-CN",
   worldFiles: readonly ContentTreeFile[] = [],
+  enabled?: { packageGroup: boolean; requests: ReadonlyMap<string, boolean> },
 ): EffectiveFollowup[] {
   const packageSource = readPackageFollowups(worldFiles);
   return (
     definition.followupItems ?? defaultFollowupItems(definition.followups)
   ).flatMap<EffectiveFollowup>((item) => {
-    if (!item.enabled) return [];
+    if (
+      !(item.kind === "content-package"
+        ? (enabled?.packageGroup ?? item.enabled)
+        : (enabled?.requests.get(item.id) ?? item.enabled))
+    )
+      return [];
     if (item.kind === "content-package")
       return packageSource.followups
-        .filter((item) => item.enabled)
+        .filter(
+          (item) =>
+            enabled?.requests.get(`package:${item.definition.id}`) ??
+            item.enabled,
+        )
         .map(({ definition: entry, mount }) => {
           return {
             definition: {
