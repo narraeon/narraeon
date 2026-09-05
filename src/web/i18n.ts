@@ -7,6 +7,27 @@ import {
 let activeLocale: AppLocale = defaultAppLocale;
 
 const englishMessages: Record<string, string> = {
+  "玩家视图、布局、资源与无模型预览":
+    "Player views, layout, resources and model-free preview",
+  "直接用已保存的玩家视图配置界面，不需要后置请求。模型产物的位置设置独立保留。":
+    "Configure displays directly from saved player views. Model-generated outputs have separate placement settings.",
+  "当前没有模型产物；玩家视图面板仍可独立使用。":
+    "There are no model-generated outputs. Player-view panels work independently.",
+  "同一玩家视图由自定义面板接管，其他视图仍显示默认卡片。":
+    "Custom panels replace the default card for their player view. Other views keep their default cards.",
+  纯界面预览: "Interface preview",
+  "使用当前编辑内容与所选世界的已保存玩家视图，不调用模型，也不保存或修改世界。修改后请重新预览。":
+    "Preview the current edits with saved player views from the selected world. This makes no model calls and does not save or change the world. Preview again after editing.",
+  预览世界: "Preview world",
+  选择已有世界: "Select an existing world",
+  预览界面: "Preview interface",
+  "正在读取玩家视图…": "Loading player views\u2026",
+  "请先解决高级文件与结构化编辑冲突，再预览。":
+    "Resolve conflicts between file and structured edits before previewing.",
+  渲染资源: "Rendering resources",
+  "编辑资源 {name}": "Edit resource {name}",
+  "资源内容 {name}": "Resource content {name}",
+
   "对话连接已断开，正在重新连接…": "Conversation disconnected. Reconnecting…",
   "对话同步失败，请重新打开此页面。":
     "Conversation synchronization failed. Reopen this page to reconnect.",
