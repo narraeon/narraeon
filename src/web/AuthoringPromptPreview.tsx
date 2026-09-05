@@ -39,7 +39,7 @@ export function AuthoringPromptPreview({
                 .finally(() => setBusy(false));
             }}
           >
-            {zh ? "预览下一次发送" : "Preview next send"}
+            {zh ? "预览下一条请求" : "Preview next send"}
           </button>
           <p>
             {zh

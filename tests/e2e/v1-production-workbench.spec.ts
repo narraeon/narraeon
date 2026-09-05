@@ -1017,7 +1017,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(page.getByRole("button", { name: "应用并解锁" })).toHaveCount(0);
   const previewRequestCount = providerRequests.length;
   await page
-    .getByRole("button", { name: "预览下一次发送", exact: true })
+    .getByRole("button", { name: "预览下一条请求", exact: true })
     .click();
   await expect(
     page.getByText("下一次发送候选（未发送）", { exact: true }),
@@ -1216,7 +1216,7 @@ test("世界修订复用统一编辑工作区且世界管理可以纵向滚动",
   await expect(page.getByRole("button", { name: "应用并解锁" })).toHaveCount(0);
   const previewRequestCount = providerRequests.length;
   await page
-    .getByRole("button", { name: "预览下一次发送", exact: true })
+    .getByRole("button", { name: "预览下一条请求", exact: true })
     .click();
   await expect(
     page.getByText("下一次发送候选（未发送）", { exact: true }),

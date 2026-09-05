@@ -474,7 +474,7 @@ export function SettingImprovementPanel({
             ) : null}
 
             <AuthoringPromptPreview
-              key={`${packageName}:${view?.sessionId ?? "fresh"}`}
+              key={`${packageName}:${view?.sessionId ?? "fresh"}:${view?.messages.length ?? 0}`}
               requests={view?.requestPreviews ?? []}
               {...(onPreview === undefined ? {} : { onPreview })}
             />

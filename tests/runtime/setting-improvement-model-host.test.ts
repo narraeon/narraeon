@@ -211,8 +211,12 @@ test.each([
       modelBinding: host.binding(),
       tools: settingImprovementToolDefinitions("en"),
     });
-    const request = host.buildRequest({
+    const request = host.previewRequest({
       bootstrap,
+      tools: bootstrap.tools,
+      toolUniverse: bootstrap.toolUniverse,
+      toolStrategy: bootstrap.toolStrategy,
+      allowedTools: bootstrap.toolUniverse.map(({ name }) => name),
       appended: [{ kind: "user", text: "USER_FINAL_APPEND" }],
       requestId: "ordered-author",
       operationId: "ordered-author-session",

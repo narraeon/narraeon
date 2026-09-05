@@ -59,7 +59,7 @@ test("author candidate preview stays separate from retained legacy request evide
       onPreview: () => Promise.resolve(compilation),
     }),
   );
-  fireEvent.click(screen.getByRole("button", { name: "预览下一次发送" }));
+  fireEvent.click(screen.getByRole("button", { name: "预览下一条请求" }));
   await screen.findByText("NEW_AUTHOR_ORDER");
   expect(screen.getByText("OLD_AUTHOR_ORDER")).toBeDefined();
   expect(screen.getByText("旧会话原始提示")).toBeDefined();
