@@ -20,6 +20,54 @@ const englishMessages: Record<string, string> = {
   "系统示例只读；新运行使用应用最新版，克隆后独立保存。":
     "This system example is read-only. New runs use the current application example; clones are saved independently.",
   内容包后置请求: "Content-package followups",
+  最近一次请求材料: "Latest request materials",
+  "下一次发送将采用当前预设和世界材料；原生对话保留。":
+    "The next send uses the current preset and world materials while preserving the native conversation.",
+  "每次正常发送重新编译，工具往返使用本轮快照":
+    "Each normal send recompiles; tool exchanges use the same run snapshot.",
+  下一次发送候选: "Next send candidate",
+  "分别展示最近一次请求、累计当时读取和下一次候选；旧读取不代表当前字段值。":
+    "Inspect the latest request, accumulated historical reads, and next candidate separately. Past reads do not prove current field values.",
+  本次请求快照的真实覆盖: "Actual coverage of this request snapshot",
+  "查看下一次发送候选的完整 Prompt Preview":
+    "Inspect the complete next-send Prompt Preview",
+  "游玩在下一次正常发送生效，原样重试保留旧请求":
+    "Play changes take effect on the next normal send; exact retries retain the saved request.",
+  "· 游玩修改在下一次正常发送生效":
+    "· Play changes take effect on the next normal send",
+  "保留原生对话，重新编译当前提示和材料":
+    "Preserve the native conversation and recompile current prompts and materials",
+  "累计实际读取（当时内容）": "Accumulated reads (historical content)",
+  "累计读取的当时内容，不代表当前字段值":
+    "Historical content read at the time, not current field values",
+  查看各次请求保存的提示材料: "Inspect saved prompt materials for each request",
+  "原样重试使用已保存请求，不采用新预设。":
+    "Exact retry uses the saved request and does not apply a new preset.",
+  "正常发送和空输入续写使用最新预设；本轮工具执行期间保持不变。":
+    "Normal sends and empty continuations use the latest preset; it stays fixed during this tool loop.",
+  "玩家视图格式无效，请检查文本处理规则。":
+    "Invalid player-view data. Check the text processing rules.",
+  "玩家视图、布局、资源与无模型预览":
+    "Player views, layout, resources and model-free preview",
+  "直接用已保存的玩家视图配置界面，不需要后置请求。模型产物的位置设置独立保留。":
+    "Configure displays directly from saved player views. Model-generated outputs have separate placement settings.",
+  "当前没有模型产物；玩家视图面板仍可独立使用。":
+    "There are no model-generated outputs. Player-view panels work independently.",
+  "同一玩家视图由自定义面板接管，其他视图仍显示默认卡片。":
+    "Custom panels replace the default card for their player view. Other views keep their default cards.",
+  纯界面预览: "Interface preview",
+  "使用当前编辑内容与所选世界的已保存玩家视图，不调用模型，也不保存或修改世界。修改后请重新预览。":
+    "Preview the current edits with saved player views from the selected world. This makes no model calls and does not save or change the world. Preview again after editing.",
+  预览世界: "Preview world",
+  选择已有世界: "Select an existing world",
+  预览界面: "Preview interface",
+  "正在读取玩家视图…": "Loading player views\u2026",
+  "请先解决高级文件与结构化编辑冲突，再预览。":
+    "Resolve conflicts between file and structured edits before previewing.",
+  渲染资源: "Rendering resources",
+  "编辑资源 {name}": "Edit resource {name}",
+  "资源内容 {name}": "Resource content {name}",
+
   "对话连接已断开，正在重新连接…": "Conversation disconnected. Reconnecting…",
   "对话同步失败，请重新打开此页面。":
     "Conversation synchronization failed. Reopen this page to reconnect.",

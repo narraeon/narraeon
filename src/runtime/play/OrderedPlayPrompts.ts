@@ -3,10 +3,15 @@ import { parseDocument } from "yaml";
 import {
   builtinPlayPrompts,
   type OrderedPlayPrompt,
+  type BuiltinPlayPrompt,
 } from "../../shared/ordered-play-prompts.ts";
 
 /** The same strict permission gate is used by portable imports and structured saves. */
-export function parseOrderedPlayPrompts(value: unknown): OrderedPlayPrompt[] {
+export function parseOrderedPlayPrompts(
+  value: unknown,
+  catalog: BuiltinPlayPrompt[] = builtinPlayPrompts("en"),
+  worldRequired = true,
+): OrderedPlayPrompt[] {
   const fail = (): never => {
     throw new Error(
       "Invalid ordered play prompts: unique identities, current builtins, enabled mechanics and one world placeholder are required",
@@ -50,9 +55,7 @@ export function parseOrderedPlayPrompts(value: unknown): OrderedPlayPrompt[] {
         enabled: item.enabled,
         body: item.body,
       };
-    const builtin = builtinPlayPrompts("en").find(
-      (entry) => entry.id === item.builtin,
-    );
+    const builtin = catalog.find((entry) => entry.id === item.builtin);
     if (
       item.kind !== "builtin" ||
       !exact(["id", "kind", "builtin", "enabled"]) ||
@@ -70,7 +73,11 @@ export function parseOrderedPlayPrompts(value: unknown): OrderedPlayPrompt[] {
       enabled: item.enabled,
     };
   });
-  if (worlds !== 1 || !builtins.has("play.mechanics")) return fail();
+  if (
+    worlds !== (worldRequired ? 1 : 0) ||
+    catalog.some((item) => item.required && !builtins.has(item.id))
+  )
+    return fail();
   return entries;
 }
 

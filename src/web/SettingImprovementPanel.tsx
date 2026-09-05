@@ -1,3 +1,4 @@
+import { AuthoringPromptPreview } from "./AuthoringPromptPreview.tsx";
 import { useConversationComposer } from "./useConversationComposer.ts";
 import { useMemo, useRef, useState } from "react";
 
@@ -9,6 +10,7 @@ import type {
   V1SettingImprovementHistoryItem,
   V1SettingImprovementRollbackResult,
   V1SettingImprovementView,
+  V1SettingPromptPreview,
   V1WorldRevisionChangeSet,
   V1WorldRevisionSealedEpochView,
 } from "../protocol/v1.ts";
@@ -35,6 +37,7 @@ interface SettingImprovementPanelProps {
   requestFailure: string | null;
   now: number;
   contentEditor: ContentTreeEditorProps;
+  onPreview?: () => Promise<V1SettingPromptPreview["compilation"]>;
   onSend: (message: string) => Promise<void>;
   onCancel: () => Promise<void>;
   onFreshContext: () => void;
@@ -75,6 +78,7 @@ export function SettingImprovementPanel({
   now,
   contentEditor,
   onSend,
+  onPreview,
   onCancel,
   onFreshContext,
   onSelectSession,
@@ -468,6 +472,12 @@ export function SettingImprovementPanel({
                 </div>
               </div>
             ) : null}
+
+            <AuthoringPromptPreview
+              key={`${packageName}:${view?.sessionId ?? "fresh"}:${view?.messages.length ?? 0}`}
+              requests={view?.requestPreviews ?? []}
+              {...(onPreview === undefined ? {} : { onPreview })}
+            />
 
             <div className="setting-conversation-messages">
               {loading ? (

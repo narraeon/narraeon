@@ -1,3 +1,4 @@
+import { PlayerValue } from "./PlayerViewValue.tsx";
 import { useConversationComposer } from "./useConversationComposer.ts";
 import type { ObserveConversation } from "./ConversationObserver.ts";
 import { uiText } from "./i18n.ts";
@@ -1434,6 +1435,14 @@ export function WorldPage({
           };
     return (
       <SettingImprovementPanel
+        key={worldId}
+        onPreview={() =>
+          requestRuntime(client, {
+            type: "world.revision.preview",
+            worldId,
+            ...(panelView === null ? {} : { sessionId: panelView.sessionId }),
+          })
+        }
         target="world-revision"
         packageName={worldTitle}
         modelConfigured={modelConfigured}
@@ -1790,7 +1799,9 @@ export function WorldPage({
                     }}
                   >
                     <strong>{uiText("追加当前上下文")}</strong>
-                    <span>{uiText("保留这条调用链已经看到的内容")}</span>
+                    <span>
+                      {uiText("保留原生对话，重新编译当前提示和材料")}
+                    </span>
                   </button>
                   <button
                     type="button"
@@ -1843,6 +1854,13 @@ export function WorldPage({
                   : "↑"}
               </button>
             </div>
+            <p className="world-composer-hint">
+              {uiText(
+                activeCanRetry
+                  ? "原样重试使用已保存请求，不采用新预设。"
+                  : "正常发送和空输入续写使用最新预设；本轮工具执行期间保持不变。",
+              )}
+            </p>
             <ArtifactExtensionMount mount="composer_below" />
           </footer>
 
@@ -2832,52 +2850,6 @@ function PlayerViewCard({
   );
 }
 
-function PlayerValue({ value }: { value: unknown }): React.JSX.Element {
-  if (value === null || value === undefined)
-    return <span className="empty-value">—</span>;
-  if (typeof value === "string")
-    return <span className="text-value">{value}</span>;
-  if (typeof value === "number" || typeof value === "boolean")
-    return <span>{String(value)}</span>;
-  if (Array.isArray(value)) {
-    const entries = value as unknown[];
-    return (
-      <ul className="player-value-list">
-        {entries.map((entry, index) => (
-          <li key={index}>
-            <PlayerValue value={entry} />
-          </li>
-        ))}
-      </ul>
-    );
-  }
-  if (isRecord(value)) {
-    if (typeof value.$ref === "string")
-      return (
-        <span className="document-reference">
-          {typeof value.title === "string" ? value.title : value.$ref}
-          {typeof value.ref === "string" ? ` · @${value.ref}` : ""}
-        </span>
-      );
-    return (
-      <dl className="player-value-map">
-        {Object.entries(value).map(([key, child]) => (
-          <div key={key}>
-            <dt>{key}</dt>
-            <dd>
-              <PlayerValue value={child} />
-            </dd>
-          </div>
-        ))}
-      </dl>
-    );
-  }
-  if (typeof value === "bigint") return <span>{value.toString()}</span>;
-  if (typeof value === "symbol")
-    return <span>{value.description ?? "Symbol"}</span>;
-  return <span className="empty-value">{uiText("[无法显示]")}</span>;
-}
-
 function selectedStateDocument(
   state: readonly ContentTreeFile[],
   current: string,
@@ -2907,10 +2879,6 @@ function sameTextFiles(
       );
     })
   );
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function errorMessage(reason: unknown): string {

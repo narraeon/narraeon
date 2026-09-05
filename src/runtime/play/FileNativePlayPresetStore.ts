@@ -4,6 +4,10 @@ import {
 } from "../../shared/ordered-followups.ts";
 import { parseFollowupItems } from "./OrderedFollowups.ts";
 import {
+  builtinAuthorPrompts,
+  defaultOrderedAuthorPrompts,
+} from "../../shared/ordered-author-prompts.ts";
+import {
   parseOrderedPlayPrompts,
   migrateLegacyPlayPrompts,
 } from "./OrderedPlayPrompts.ts";
@@ -230,6 +234,7 @@ export interface PlayPresetDefinition {
   followupItems?: FollowupItem[];
   format: "narraeon.play-preset/v1" | "narraeon.play-preset/v2";
   playPrompts?: OrderedPlayPrompt[];
+  authorPrompts?: OrderedPlayPrompt[];
   name: string;
   callChainPath: string;
   /** Optional only so pre-feature v1 presets retain their prior semantics. */
@@ -269,6 +274,7 @@ export function presetHostBinding(binding: PlayPresetBinding): {
 export interface PlayPresetStructuredEditor {
   followupItems?: FollowupItem[];
   playPrompts?: OrderedPlayPrompt[];
+  authorPrompts?: OrderedPlayPrompt[];
   migrationNotice?: string;
   name: string;
   callChainPath: string;
@@ -408,6 +414,7 @@ export function defaultPlayPresetFilesForLocale(
   const preset = parseDocument(files["preset.yaml"]!);
   preset.set("format", "narraeon.play-preset/v2");
   preset.set("playPrompts", defaultOrderedPlayPrompts());
+  preset.set("authorPrompts", defaultOrderedAuthorPrompts());
   files["preset.yaml"] = stringify(preset.toJS());
   return files;
 }
@@ -646,6 +653,25 @@ export class FileNativePlayPresetStore {
             throw new FileNativePlayPresetError(
               "readonly_prompt_removed",
               "System prompts and the world placeholder cannot be deleted or replaced; disable optional prompts or clone them instead",
+            );
+        }
+      }
+      if (
+        previous.kind === "valid" &&
+        previous.definition.authorPrompts !== undefined
+      ) {
+        const candidate = readYaml(files, "preset.yaml", "preset.yaml");
+        const entries = parseOrderedAuthorPrompts(candidate.authorPrompts);
+        for (const entry of previous.definition.authorPrompts) {
+          if (entry.kind !== "builtin") continue;
+          const retained = entries.find((item) => item.id === entry.id);
+          if (
+            retained?.kind !== "builtin" ||
+            retained.builtin !== entry.builtin
+          )
+            throw new FileNativePlayPresetError(
+              "readonly_prompt_removed",
+              "Authoring system prompts cannot be deleted or replaced; disable or clone optional prompts",
             );
         }
       }
@@ -1119,6 +1145,9 @@ export function toPlayPresetStructuredEditor(
 ): PlayPresetStructuredEditor {
   return {
     name: definition.name,
+    authorPrompts: structuredClone(
+      definition.authorPrompts ?? legacyAuthorPrompts(definition),
+    ),
     playPrompts: structuredClone(
       definition.playPrompts ??
         migrateLegacyPlayPrompts(
@@ -1189,6 +1218,8 @@ export function applyPlayPresetStructuredEditor(
       "Structured editing can be applied only to parseable preset/call-chain YAML",
     );
   preset.set("name", input.name);
+  if (input.authorPrompts !== undefined)
+    preset.set("authorPrompts", parseOrderedAuthorPrompts(input.authorPrompts));
   if (input.playPrompts !== undefined) {
     preset.set("format", "narraeon.play-preset/v2");
     preset.set("playPrompts", parseOrderedPlayPrompts(input.playPrompts));
@@ -1362,6 +1393,9 @@ export function parsePlayPresetStructuredEditor(
       ? {}
       : { followupItems: parseFollowupItems(value.followupItems, followups) }),
     name: value.name,
+    ...(value.authorPrompts === undefined
+      ? {}
+      : { authorPrompts: parseOrderedAuthorPrompts(value.authorPrompts) }),
     ...(value.playPrompts === undefined
       ? {}
       : { playPrompts: parseOrderedPlayPrompts(value.playPrompts) }),
@@ -1401,6 +1435,7 @@ export function parsePlayPresetFiles(
         "callChain",
         "settingImprovement",
         "playPrompts",
+        "authorPrompts",
         "mounts",
         "playerViewPanels",
         "extensions",
@@ -1425,7 +1460,7 @@ export function parsePlayPresetFiles(
       );
     if (
       preset.format === "narraeon.play-preset/v1" &&
-      preset.playPrompts !== undefined
+      (preset.playPrompts !== undefined || preset.authorPrompts !== undefined)
     )
       invalid(
         "preset_format_invalid",
@@ -1501,6 +1536,9 @@ export function parsePlayPresetFiles(
         ...(preset.format === "narraeon.play-preset/v2"
           ? { playPrompts: parseOrderedPlayPrompts(preset.playPrompts) }
           : {}),
+        ...(preset.authorPrompts === undefined
+          ? {}
+          : { authorPrompts: parseOrderedAuthorPrompts(preset.authorPrompts) }),
         name: name.trim(),
         callChainPath,
         ...(settingImprovementPrompt === undefined
@@ -3468,4 +3506,24 @@ function hasExactKeys(
     required.every((key) => Object.hasOwn(value, key)) &&
     Object.keys(value).every((key) => allowed.has(key))
   );
+}
+
+export function parseOrderedAuthorPrompts(value: unknown): OrderedPlayPrompt[] {
+  return parseOrderedPlayPrompts(value, builtinAuthorPrompts("en"), false);
+}
+
+export function legacyAuthorPrompts(
+  definition: PlayPresetDefinition,
+): OrderedPlayPrompt[] {
+  const entries = defaultOrderedAuthorPrompts();
+  const path = definition.settingImprovementPrompt?.path;
+  if (path !== undefined)
+    entries[1] = {
+      id: "legacy-author",
+      kind: "user",
+      name: "Authoring",
+      body: definition.files[path]!,
+      enabled: true,
+    };
+  return entries;
 }

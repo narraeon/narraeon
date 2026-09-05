@@ -1,3 +1,5 @@
+import { firstPartyStatusPanelPresetFilesForLocale } from "../../src/shared/first-party-player-view.ts";
+import { validPlayFollowup } from "../../src/runtime/prompt/PromptCompilationCodec.ts";
 import { buildPlayPresetWorkbenchSnapshot } from "../../src/runtime/play/PlayPresetWorkbench.ts";
 import { FileNativeArtifactStore } from "../../src/runtime/artifact/FileNativeArtifactStore.ts";
 import { ScriptedModelHost } from "../../src/runtime/model/ModelHost.ts";
@@ -295,6 +297,20 @@ test("系统身份实际派发并冷恢复产物；应用修改产物声明不�
     }),
     binding,
   );
+  const frozen = JSON.parse(JSON.stringify(preview.playPreset!.followups[0]));
+  expect(validPlayFollowup(frozen)).toBe(true);
+  expect(
+    validPlayFollowup({
+      ...frozen,
+      frozenResources: { files: {}, mount: "invalid" },
+    }),
+  ).toBe(false);
+  expect(
+    validPlayFollowup({
+      ...frozen,
+      frozenResources: { files: { "x.css": 1 }, mount: "story" },
+    }),
+  ).toBe(false);
   const host = new ScriptedModelHost({
     binding: {
       provider: "chat_completions",
@@ -414,4 +430,78 @@ test("仅样式的产物在工作台保留与生产相同资源", () => {
     assets: [{ id: "assets/only.css", source: "body { color: red; }" }],
     trustedLocalCode: false,
   });
+});
+
+test("作者、游玩、后置与纯界面连续结构化保存互相保留，关闭定义及资源可再启用", () => {
+  let files = firstPartyStatusPanelPresetFilesForLocale("en");
+  const parse = () => {
+    const result = parsePlayPresetFiles(files);
+    if (result.kind !== "valid") throw result.error;
+    return toPlayPresetStructuredEditor(result.definition);
+  };
+  const structure = parse();
+  structure.authorPrompts!.push({
+    kind: "user",
+    id: "author-integration",
+    name: "Author",
+    enabled: true,
+    body: "AUTHOR RETAINED",
+  });
+  structure.playPrompts!.push({
+    kind: "user",
+    id: "play-integration",
+    name: "Play",
+    enabled: true,
+    body: "PLAY RETAINED",
+  });
+  const example = builtinCatalog.builtinFollowupExample("en");
+  structure.extensionRefs.push("assets/saved-user.css");
+  structure.followups.push({
+    ...example.definition,
+    id: "saved-user",
+    prompt: { role: "author_instruction", path: "prompts/saved-user.md" },
+    artifacts: example.definition.artifacts.map((artifact) => ({
+      ...artifact,
+      channel: "saved.user",
+      assets: ["assets/saved-user.css"],
+    })),
+  });
+  structure.followupItems!.push({
+    kind: "user",
+    id: "saved-user",
+    enabled: false,
+  });
+  files = applyPlayPresetStructuredEditor(
+    {
+      ...files,
+      "prompts/saved-user.md": "SAVED FOLLOWUP",
+      "assets/saved-user.css": "body { color: red; }",
+    },
+    structure,
+  );
+  const interfaceEdit = parse();
+  interfaceEdit.playerViewPanels![0]!.config.title = "Edited interface";
+  files = applyPlayPresetStructuredEditor(files, interfaceEdit);
+  const authorEdit = parse();
+  expect(authorEdit.authorPrompts).toEqual(structure.authorPrompts);
+  expect(authorEdit.playPrompts).toEqual(structure.playPrompts);
+  expect(authorEdit.followups).toEqual(structure.followups);
+  expect(authorEdit.followupItems).toEqual(structure.followupItems);
+  const author = authorEdit.authorPrompts!.find(
+    (item) => item.id === "author-integration",
+  )!;
+  if (author.kind !== "user") throw new Error("Missing author fixture");
+  author.enabled = false;
+  files = applyPlayPresetStructuredEditor(files, authorEdit);
+  const followupEdit = parse();
+  expect(followupEdit.playerViewPanels).toEqual(interfaceEdit.playerViewPanels);
+  expect(followupEdit.authorPrompts).toEqual(authorEdit.authorPrompts);
+  followupEdit.followupItems!.find(
+    (item) => item.id === "saved-user",
+  )!.enabled = true;
+  files = applyPlayPresetStructuredEditor(files, followupEdit);
+  expect(parse().followups).toEqual(structure.followups);
+  expect(parse().playerViewPanels).toEqual(interfaceEdit.playerViewPanels);
+  expect(files["assets/saved-user.css"]).toBe("body { color: red; }");
+  expect(files["prompts/saved-user.md"]).toBe("SAVED FOLLOWUP");
 });

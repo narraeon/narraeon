@@ -1,3 +1,4 @@
+import { parseDocument } from "yaml";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -14,6 +15,8 @@ import {
 } from "../../src/runtime/model/ModelHost.ts";
 import {
   builtinDefaultPlayPresetBinding,
+  parsePlayPresetFiles,
+  revisionForPlayPresetFiles,
   presetHostBinding,
   type PlayPresetBinding,
 } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
@@ -96,7 +99,7 @@ test("全新上下文创建持久对话，普通回复不产生候选或快照",
 
   const store = new FileNativeSettingImprovementStore(fixture.root);
   const stored = await store.read(view.sessionId);
-  expect(stored.schemaVersion).toBe(2);
+  expect(stored.schemaVersion).toBe(3);
   expect(stored).not.toHaveProperty("draft");
   expect(stored).not.toHaveProperty("baseFiles");
   expect(stored).not.toHaveProperty("review");
@@ -764,6 +767,8 @@ test("完整工具响应若缺少原树结算意图，恢复会失败关闭而�
   damaged.activeRequestId = "request-unconfirmed-write";
   damaged.pendingSettlement = null;
   damaged.updatedAt = now;
+  damaged.schemaVersion = 2;
+  delete damaged.requests; // Released sessions have no per-send snapshots.
   await store.save(damaged);
 
   const current = await fixture.content.readCurrentTreeContentPackage(
@@ -861,6 +866,11 @@ test("完整工具响应和原树指纹落盘后，重启只在该 revision 上�
     beforeFingerprint: contentTreeFingerprint(files),
   };
   confirmed.updatedAt = now;
+  confirmed.requests!.push({
+    ...structuredClone(confirmed.requests![0]!),
+    requestId: confirmed.activeRequestId,
+    modelItemStart: assistantItemIndex - 1,
+  });
   await store.save(confirmed);
 
   const recovered = await serviceFor(
@@ -1377,7 +1387,7 @@ test("schema-v1 隔离草稿严格迁移为审计历史，不改当前树", asyn
     continuation: { kind: "continue_context", sessionId: v2.sessionId },
   });
   expect(continuedHost.requests[0]?.bootstrap).toEqual(
-    migratedStored.bootstrap,
+    (await store.read(v2.sessionId)).requests?.at(-1)?.bootstrap,
   );
   expect(continuedHost.requests[0]?.appended.at(-1)).toEqual({
     kind: "user",
@@ -1804,3 +1814,110 @@ function serviceFor(
     },
   });
 }
+
+test("next author send refreshes rules while retaining bootstrap and native history", async () => {
+  const fixture = await createFixture([]);
+  const preset = builtinDefaultPlayPresetBinding("en");
+  const host = new ScriptedModelHost({
+    binding,
+    steps: [
+      {
+        outcome: "response",
+        text: "First answer",
+        reasoningContent: "Exact provider reasoning",
+        toolCalls: [],
+      },
+      { outcome: "response", text: "Second answer", toolCalls: [] },
+    ],
+  });
+  const session = serviceFor(fixture.root, fixture.content, host, preset);
+  const first = await sendFresh(
+    session,
+    fixture.packageId,
+    "rules-first",
+    "First",
+  );
+  const store = new FileNativeSettingImprovementStore(fixture.root);
+  const before = await store.read(first.sessionId);
+  preset.definition.authorPrompts = [
+    {
+      id: "new-rule",
+      kind: "user",
+      name: "New rule",
+      enabled: true,
+      body: "AUTHOR_RULE_UPDATED",
+    },
+    ...preset.definition.authorPrompts!,
+  ];
+  const raw = parseDocument(preset.files["preset.yaml"]!);
+  raw.set("authorPrompts", preset.definition.authorPrompts);
+  preset.files["preset.yaml"] = raw.toString();
+  const parsed = parsePlayPresetFiles(preset.files);
+  if (parsed.kind !== "valid") throw parsed.error;
+  preset.definition = parsed.definition;
+  preset.revision = revisionForPlayPresetFiles(preset.files);
+  await session.send({
+    packageId: fixture.packageId,
+    requestId: "rules-second",
+    message: "Second",
+    continuation: { kind: "continue_context", sessionId: first.sessionId },
+  });
+  expect(JSON.stringify(host.requests[1]!.bootstrap)).toContain(
+    "AUTHOR_RULE_UPDATED",
+  );
+  expect(JSON.stringify(host.requests[0]!.bootstrap)).not.toContain(
+    "AUTHOR_RULE_UPDATED",
+  );
+  expect(host.requests[1]!.appended.slice(0, before.modelItems.length)).toEqual(
+    before.modelItems,
+  );
+  expect((await store.read(first.sessionId)).bootstrap).toEqual(
+    before.bootstrap,
+  );
+});
+
+test("new author snapshot corruption fails closed and upgrading keeps the old prompt accessible", async () => {
+  const fixture = await createFixture([
+    { outcome: "response", text: "Original", toolCalls: [] },
+    { outcome: "response", text: "Continued", toolCalls: [] },
+  ]);
+  const first = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "snapshot-first",
+    "Original user",
+  );
+  const store = new FileNativeSettingImprovementStore(fixture.root);
+  const saved = await store.read(first.sessionId);
+  for (const index of [1, 999]) {
+    const corrupt = structuredClone(saved);
+    corrupt.requests![0]!.modelItemStart = index;
+    await expect(store.save(corrupt)).rejects.toThrow("durable schema");
+  }
+  await expect(store.save({ ...saved, requests: [] })).rejects.toThrow(
+    "durable schema",
+  );
+  const wrongRequest = structuredClone(saved);
+  wrongRequest.requests![0]!.requestId = "unrelated";
+  await expect(store.save(wrongRequest)).rejects.toThrow("durable schema");
+  const legacy = structuredClone(saved);
+  delete legacy.requests;
+  await store.save({ ...legacy, schemaVersion: 2 });
+  const candidate = await fixture.session.preview(
+    fixture.packageId,
+    first.sessionId,
+  );
+  expect(fixture.host.requests).toHaveLength(1);
+  const next = await fixture.session.send({
+    packageId: fixture.packageId,
+    requestId: "snapshot-next",
+    message: "Next",
+    continuation: { kind: "continue_context", sessionId: first.sessionId },
+  });
+  expect(next.requestPreviews).toHaveLength(2);
+  expect(next.requestPreviews![0]).toMatchObject({
+    legacyBootstrap: true,
+    compilation: saved.bootstrap,
+  });
+  expect(fixture.host.requests[1]!.bootstrap).toEqual(candidate);
+});

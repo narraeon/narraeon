@@ -27,7 +27,10 @@ import {
 import { contentTreeFingerprint } from "./content/ContentTreeFingerprint.ts";
 import { inspectContentPackageCurrentTree } from "./content/FileNativeContentTree.ts";
 import { FileNativeModelHost } from "./model/FileNativeModelAdapters.ts";
-import { type ModelHostBinding } from "./model/ModelHost.ts";
+import {
+  equalModelHostBinding,
+  type ModelHostBinding,
+} from "./model/ModelHost.ts";
 import { ModelConnectionStore } from "./model/ModelConnectionStore.ts";
 import { FileNativeContinuityCorrection } from "./play/FileNativeContinuityCorrection.ts";
 import { fingerprintControl } from "./play/PlayDocumentTools.ts";
@@ -386,6 +389,11 @@ export class V1Runtime {
           base64: exported.archive.toString("base64"),
         };
       }
+      case "setting-improvement.preview":
+        return this.#settingImprovements.preview(
+          request.packageId,
+          request.sessionId,
+        );
       case "setting-improvement.read":
         return this.#settingImprovements.read(request.packageId);
       case "setting-improvement.status":
@@ -454,7 +462,22 @@ export class V1Runtime {
                 request.presetId,
                 request.revision,
               );
-        return buildPlayPresetWorkbenchSnapshot(binding);
+        if (request.worldId === undefined)
+          return buildPlayPresetWorkbenchSnapshot(
+            binding,
+            undefined,
+            request.draft,
+          );
+        const head = await this.#worlds.currentHead(request.worldId);
+        const playerViews = await this.#worlds.renderPlayerViewsAtHead(
+          request.worldId,
+          head,
+        );
+        return buildPlayPresetWorkbenchSnapshot(
+          binding,
+          { worldId: request.worldId, head, playerViews },
+          request.draft,
+        );
       }
       case "prompt.preview": {
         const [package_, connection, playPreset] = await Promise.all([
@@ -635,6 +658,8 @@ export class V1Runtime {
         return this.#worldRevisionCall(() =>
           this.#worldRevisions.overview(request.worldId),
         );
+      case "world.revision.preview":
+        return this.#worldRevisions.preview(request.worldId, request.sessionId);
       case "world.revision.status":
         return this.#worldRevisionCall(() =>
           this.#worldRevisions.status(request.worldId, request.sessionId),
@@ -744,6 +769,7 @@ export class V1Runtime {
             exchangeId: request.exchangeId,
             playerText: request.playerText,
             modelHost: await this.#modelHost(),
+            resolvePrompt: () => this.#continuousBinding(),
             ...(playCallChainObserver === undefined
               ? {}
               : { observer: playCallChainObserver }),
@@ -789,6 +815,22 @@ export class V1Runtime {
           };
         const { modelHost, hostBinding, playPreset, modelBinding } =
           await this.#continuousBinding();
+        const persisted =
+          currentContext === null
+            ? null
+            : await this.#worlds.playTimeline.readCurrent(request.worldId);
+        const frozenBinding = persisted?.value.modelBinding;
+        const continueContext =
+          currentContext !== null &&
+          !currentContext.stale &&
+          frozenBinding !== undefined &&
+          equalModelHostBinding(frozenBinding, modelBinding);
+        const baseline = continueContext
+          ? await this.#worlds.bindPlayCallChainAt(
+              request.worldId,
+              currentContext.baselineHead,
+            )
+          : binding;
         const preview = this.#compiler.preview(
           {
             endpoint: {
@@ -806,7 +848,10 @@ export class V1Runtime {
               }),
               additionalMaterials: structuredClone(binding.additionalMaterials),
               history: structuredClone(binding.history),
-              narrativeCheckpoint: binding.narrativeCheckpoint,
+              narrativeCheckpoint: baseline.narrativeCheckpoint,
+              historyAlreadyAppended: Object.keys(binding.history).filter(
+                (key) => !(key in baseline.history),
+              ),
               ...(await this.#worlds.inspectDocumentMaintenance(
                 request.worldId,
                 binding.parentHead,
@@ -825,15 +870,21 @@ export class V1Runtime {
           toolUniverse: tools,
           allowedTools: tools.map(({ name }) => name),
           toolStrategy: preview.compilation.toolStrategy,
-          appended: [],
-          operationId: "next-fresh-context-preview",
+          appended: continueContext ? (persisted?.value.transcript ?? []) : [],
+          operationId: continueContext
+            ? currentContext.chainId
+            : "next-fresh-context-preview",
           maxOutputTokens: modelBinding.maxOutputTokens,
         });
         const currentEncoding =
           currentContext === null
             ? null
             : await this.#worlds.playTimeline
-                .readInitialEncoding(request.worldId, currentContext.chainId)
+                .readInitialEncoding(
+                  request.worldId,
+                  currentContext.chainId,
+                  currentContext.requestExchange,
+                )
                 .catch(() => null);
         const prefixDiagnostics = comparePromptPrefixes(
           currentContext === null
@@ -849,6 +900,7 @@ export class V1Runtime {
           worldHead: binding.parentHead,
           currentContext,
           nextFreshContext: {
+            contextMode: continueContext ? "append" : "fresh",
             head: binding.parentHead,
             preview,
             prefixDiagnostics,

@@ -78,6 +78,41 @@ function workbenchSnapshot(
 afterEach(cleanup);
 
 describe("玩法预设工作台", () => {
+  test("无后置请求也能发现玩家视图编辑与独立预览", () => {
+    const preset: Preset = {
+      id: "pure",
+      name: "纯界面",
+      revision: "rev-pure",
+      files: structuredClone(firstPartyActionChoicesPresetFiles),
+      structure: { ...editorStructure, followups: [] },
+      validation: { status: "valid" },
+    };
+    const client = {
+      request: () => Promise.resolve({ worlds: [] }),
+    } as unknown as {
+      request<T>(request: V1Request): Promise<T>;
+    };
+    render(
+      createElement(PlayPresetScreen, {
+        client,
+        initialLibrary: { currentPresetId: preset.id, presets: [preset] },
+        recommendedTemplates: [],
+        onLibraryChange: vi.fn(),
+        onDirtyChange: vi.fn(),
+      }),
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /界面扩展/u }));
+    expect(screen.queryByText(/先在“调用链”新增后置请求/u)).toBeNull();
+    expect(screen.getByLabelText("预览世界")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "新增玩家视图面板" }));
+    expect(screen.getByLabelText("玩家视图面板 1 视图")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "同一玩家视图由自定义面板接管，其他视图仍显示默认卡片。",
+      ),
+    ).toBeTruthy();
+  });
+
   test("复制推荐起点后展示普通文件并允许编辑 contract/renderer 文件", async () => {
     const base: Preset = {
       id: "default",
@@ -380,7 +415,7 @@ describe("玩法预设工作台", () => {
     expect(screen.getByText(/工具定义、参数、说明/u)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("tab", { name: /界面扩展/u }));
-    expect(screen.getByText("频道是什么？")).toBeTruthy();
+    expect(screen.getByLabelText("预览世界")).toBeTruthy();
     expect(screen.queryByLabelText("玩家视图面板 JSON")).toBeNull();
     expect(screen.queryByLabelText("扩展引用 JSON")).toBeNull();
     expect(

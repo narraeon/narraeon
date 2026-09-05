@@ -30,11 +30,11 @@ export function WorldPromptDiagnosticsPanel({
       <h3>
         {preview
           ? zh
-            ? "下一次全新上下文的前缀预测"
-            : "Next fresh context prefix preview"
+            ? "下一次发送的前缀预测"
+            : "Next send prefix preview"
           : zh
-            ? "相邻新上下文的实际前缀变化"
-            : "Actual prefix changes between adjacent contexts"}
+            ? "相邻运行请求的实际前缀变化"
+            : "Actual prefix changes between adjacent runs"}
       </h3>
       <p>
         {preview
@@ -42,8 +42,8 @@ export function WorldPromptDiagnosticsPanel({
             ? "按当前世界和配置预测；尚未包含下一条玩家输入，也没有发送此请求。"
             : "Predicted from current world and controls; excludes the next player input and has not been sent."
           : zh
-            ? "比较当前时间线上上一上下文与当前上下文建立时冻结的文本；不会修改既有请求。"
-            : "Compares frozen bootstraps of the previous and current contexts on this timeline; existing requests remain untouched."}
+            ? "比较最近两次运行保存的实际前部；不会修改既有请求或原生对话。"
+            : "Compares saved prefixes from the latest two runs; existing requests and native conversation remain untouched."}
       </p>
       {logical === null ? (
         <p>{zh ? "尚无相邻上下文样本。" : "No adjacent context sample yet."}</p>

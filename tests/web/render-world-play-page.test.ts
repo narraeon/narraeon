@@ -297,11 +297,17 @@ describe("世界游玩页面", () => {
       ),
     ).toBeTruthy();
     expect(within(dialog).getByText("AI 实际收到了哪些世界内容")).toBeTruthy();
-    expect(within(dialog).getByText("标题 + 摘要")).toBeTruthy();
+    expect(
+      within(dialog).getAllByText("最近一次请求材料").length,
+    ).toBeGreaterThan(0);
+    expect(within(dialog).getByText("累计实际读取（当时内容）")).toBeTruthy();
+    expect(within(dialog).getAllByText("标题 + 摘要").length).toBeGreaterThan(
+      0,
+    );
     fireEvent.click(within(dialog).getByText("查看按需读取返回的完整记录"));
     expect(within(dialog).getByText(/独立淋浴间: true/u)).toBeTruthy();
     expect(
-      within(dialog).getAllByText("下一次全新上下文").length,
+      within(dialog).getAllByText("下一次发送候选").length,
     ).toBeGreaterThan(0);
   });
 

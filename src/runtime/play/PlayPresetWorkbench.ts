@@ -1,7 +1,16 @@
 import { resolveArtifactRenderer } from "../extension/FrontendExtensionBundle.ts";
 import { builtinFollowupExample } from "../../shared/ordered-followups.ts";
 import {
+  projectPlayerViewPanels,
+  type PlayerViewPanelProjectionInput,
+  type FrontendPlayerViewPanelProjection,
+} from "../extension/PlayerViewPanelProjector.ts";
+import {
   parsePlayPresetRegexAsset,
+  applyPlayPresetStructuredEditor,
+  parsePlayPresetStructuredEditor,
+  parsePlayPresetFiles,
+  revisionForPlayPresetFiles,
   toPlayPresetStructuredEditor,
   type PlayPresetArtifactDeclaration,
   type PlayPresetArtifactPayloadContract,
@@ -58,6 +67,9 @@ export interface PlayPresetWorkbenchSnapshot {
   revision: string;
   structure: PlayPresetStructuredEditor;
   artifactPreviews: PlayPresetWorkbenchArtifactPreview[];
+  playerViewPreview?: Omit<PlayerViewPanelProjectionInput, "binding"> & {
+    panels: FrontendPlayerViewPanelProjection[];
+  };
   staticErrors: { code: string; message: string; location: string }[];
   trustedLocalCode: boolean;
   scriptsEnabled: boolean;
@@ -70,7 +82,26 @@ export interface PlayPresetWorkbenchSnapshot {
  */
 export function buildPlayPresetWorkbenchSnapshot(
   binding: PlayPresetBinding,
+  playerViewContext?: Omit<PlayerViewPanelProjectionInput, "binding">,
+  draft?: { files: Record<string, string>; structure?: unknown },
 ): PlayPresetWorkbenchSnapshot {
+  if (draft !== undefined) {
+    const files =
+      draft.structure === undefined
+        ? structuredClone(draft.files)
+        : applyPlayPresetStructuredEditor(
+            draft.files,
+            parsePlayPresetStructuredEditor(draft.structure),
+          );
+    const parsed = parsePlayPresetFiles(files);
+    if (parsed.kind === "invalid") throw parsed.error;
+    binding = {
+      ...binding,
+      files,
+      definition: parsed.definition,
+      revision: revisionForPlayPresetFiles(files),
+    };
+  }
   const scriptsEnabled = binding.scriptsEnabled !== false;
   const structure = toPlayPresetStructuredEditor(binding.definition);
   const staticErrors: PlayPresetWorkbenchSnapshot["staticErrors"] = [];
@@ -162,6 +193,14 @@ export function buildPlayPresetWorkbenchSnapshot(
     revision: binding.revision,
     structure,
     artifactPreviews,
+    ...(playerViewContext === undefined
+      ? {}
+      : {
+          playerViewPreview: {
+            ...playerViewContext,
+            panels: projectPlayerViewPanels({ ...playerViewContext, binding }),
+          },
+        }),
     staticErrors,
     trustedLocalCode: artifactPreviews.some(
       ({ renderer }) => renderer?.trustedLocalCode === true,

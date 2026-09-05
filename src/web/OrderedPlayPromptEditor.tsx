@@ -1,3 +1,7 @@
+import {
+  builtinAuthorPrompts,
+  authoringMechanics,
+} from "../shared/ordered-author-prompts.ts";
 import { useState } from "react";
 import {
   builtinPlayPrompts,
@@ -9,17 +13,21 @@ export function OrderedPlayPromptEditor({
   entries,
   onChange,
   migrationNotice,
+  authoring = false,
 }: {
   entries: OrderedPlayPrompt[];
   onChange: (entries: OrderedPlayPrompt[]) => void;
   migrationNotice?: string;
+  authoring?: boolean;
 }) {
   const [selectedId, setSelectedId] = useState(entries[0]?.id);
   const [dragged, setDragged] = useState<string>();
   const locale = getWebLocale();
   const zh = locale === "zh-CN";
   const t = (en: string, cn: string) => (zh ? cn : en);
-  const catalog = builtinPlayPrompts(locale);
+  const catalog = authoring
+    ? builtinAuthorPrompts(locale)
+    : builtinPlayPrompts(locale);
   const selected =
     entries.find((entry) => entry.id === selectedId) ?? entries[0];
   const builtin =
@@ -60,7 +68,13 @@ export function OrderedPlayPromptEditor({
     setSelectedId(entry.id);
   }
   return (
-    <section aria-label={t("Ordered play prompts", "游玩提示词编排")}>
+    <section
+      aria-label={
+        authoring
+          ? t("Ordered authoring prompts", "设定完善提示词编排")
+          : t("Ordered play prompts", "游玩提示词编排")
+      }
+    >
       {migrationNotice && <p role="status">{migrationNotice}</p>}
       <div className="ordered-play-editor">
         <aside>
@@ -224,11 +238,24 @@ export function OrderedPlayPromptEditor({
           </div>
         )}
       </div>
+      {authoring && builtin?.id === "author.mechanics" && (
+        <details>
+          <summary>
+            {t("World revision tool contract", "世界修订工具契约")}
+          </summary>
+          <pre>{authoringMechanics(locale, "world-revision")}</pre>
+        </details>
+      )}
       <p className="field-note">
-        {t(
-          "Dynamic input marker: Runtime appends the current round and checkpoint counters immediately before the player's original input. Existing conversation and tool results retain their order. After saving, apply the preset to use these changes in fresh play contexts.",
-          "动态输入标记：Runtime 在本次玩家原文之前追加当前回合与检查点计数。已有对话及工具结果保留原序。保存后点击“应用为当前玩法”，改动才用于全新游玩上下文。",
-        )}
+        {authoring
+          ? t(
+              "Save and apply the preset: the next author message uses this arrangement. A running tool loop keeps its saved request. Target identity and future-play reference expand in actual requests; old conversation and epoch transition evidence remain unchanged.",
+              "保存并应用预设后，下一条作者消息使用此编排；运行中的工具循环保持已保存请求。创作目标与未来游玩参考在实际请求中展开，旧对话及 epoch 变更证据原样保留。",
+            )
+          : t(
+              "Dynamic input marker: Runtime appends the current round and checkpoint counters immediately before the player's original input. Existing conversation and tool results retain their order. After saving, apply the preset to use these changes in fresh play contexts.",
+              "动态输入标记：Runtime 在本次玩家原文之前追加当前回合与检查点计数。已有对话及工具结果保留原序。保存后点击“应用为当前玩法”，改动才用于全新游玩上下文。",
+            )}
       </p>
     </section>
   );

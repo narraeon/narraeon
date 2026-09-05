@@ -157,7 +157,7 @@ export function AiReadingRail({
   if (loading && reading === null)
     return <p role="status">{uiText("正在核对 Runtime 读取记录…")}</p>;
   if (reading === null) return <p>{uiText("暂时无法读取上下文证据。")}</p>;
-  const rows = documentEvidence(reading, documents, "current");
+  const rows = documentEvidence(reading, documents, "cumulative");
   return (
     <div className="ai-reading-rail">
       {reading.currentContext === null ? (
@@ -173,12 +173,15 @@ export function AiReadingRail({
               : "ai-reading-context-card"
           }
         >
-          <span>{uiText("当前冻结上下文")}</span>
-          <strong>{reading.currentContext.baselineHead}</strong>
+          <span>{uiText("最近一次请求材料")}</span>
+          <strong>
+            {reading.currentContext.requestHead ??
+              reading.currentContext.baselineHead}
+          </strong>
           <p>
             {reading.currentContext.stale
               ? uiText("当前世界已推进；这条追加上下文不能再继续。")
-              : uiText("追加不会重新编译世界材料。")}
+              : uiText("下一次发送将采用当前预设和世界材料；原生对话保留。")}
           </p>
         </section>
       )}
@@ -384,7 +387,7 @@ function AiReadingAudit({
           <strong>{uiText("AI 实际收到了哪些世界内容")}</strong>
           <p>
             {uiText(
-              "依据冻结 bootstrap 与已提交工具读取记录；不会把“世界里有这份文档”误写成“AI 已读”。",
+              "分别展示最近一次请求、累计当时读取和下一次候选；旧读取不代表当前字段值。",
             )}
           </p>
         </div>
@@ -393,9 +396,11 @@ function AiReadingAudit({
         <article>
           <span>{uiText("当前上下文")}</span>
           <strong>
-            {reading.currentContext?.baselineHead ?? uiText("尚未建立")}
+            {reading.currentContext?.requestHead ??
+              reading.currentContext?.baselineHead ??
+              uiText("尚未建立")}
           </strong>
-          <p>{uiText("建立后追加不重新注入世界材料")}</p>
+          <p>{uiText("每次正常发送重新编译，工具往返使用本轮快照")}</p>
         </article>
         <span aria-hidden="true">→</span>
         <article>
@@ -408,7 +413,7 @@ function AiReadingAudit({
         </article>
         <span aria-hidden="true">→</span>
         <article>
-          <span>{uiText("下一次全新上下文")}</span>
+          <span>{uiText("下一次发送候选")}</span>
           <strong>
             {reading.nextFreshContext?.head ?? uiText("模型未配置")}
           </strong>
@@ -422,8 +427,12 @@ function AiReadingAudit({
         report={reading.nextFreshContext?.prefixDiagnostics}
         preview
       />
-      <EvidenceTable title={uiText("当前冻结上下文")} rows={currentRows} />
-      <EvidenceTable title={uiText("下一次全新上下文")} rows={nextRows} />
+      <EvidenceTable title={uiText("最近一次请求材料")} rows={currentRows} />
+      <EvidenceTable title={uiText("下一次发送候选")} rows={nextRows} />
+      <EvidenceTable
+        title={uiText("累计实际读取（当时内容）")}
+        rows={documentEvidence(reading, documents, "cumulative")}
+      />
       <WorldMaintenancePanel
         report={reading.nextFreshContext?.preview.compilation.maintenance}
       />
@@ -446,6 +455,19 @@ function AiReadingAudit({
         </details>
       ) : null}
       <details className="ai-reading-raw">
+        <summary>{uiText("查看各次请求保存的提示材料")}</summary>
+        {reading.currentContext?.promptHistory?.map((request) => (
+          <section key={request.exchange}>
+            <h3>
+              {request.playPreset.name} · {request.head} · {request.exchange}
+            </h3>
+            {request.bootstrap.logicalMessages.map((message, index) => (
+              <pre key={index}>{message.markdown}</pre>
+            ))}
+          </section>
+        ))}
+      </details>
+      <details className="ai-reading-raw">
         <summary>{uiText("查看当前上下文的完整 Runtime 文本块")}</summary>
         {reading.currentContext?.bootstrap.logicalMessages.map((message) => (
           <section key={message.role}>
@@ -460,7 +482,7 @@ function AiReadingAudit({
         )) ?? <p>{uiText("当前还没有冻结上下文。")}</p>}
       </details>
       <details className="ai-reading-raw">
-        <summary>{uiText("查看下一次全新上下文的完整 Prompt Preview")}</summary>
+        <summary>{uiText("查看下一次发送候选的完整 Prompt Preview")}</summary>
         {reading.nextFreshContext?.preview.compilation.logicalMessages.map(
           (message) => (
             <section key={message.role}>
@@ -516,14 +538,14 @@ interface DocumentEvidence {
 function documentEvidence(
   reading: V1PlayContextReadingView,
   documents: readonly ContentTreeFile[],
-  target: "current" | "next",
+  target: "current" | "next" | "cumulative",
 ): DocumentEvidence[] {
   const context =
-    target === "current"
+    target !== "next"
       ? reading.currentContext?.bootstrap
       : reading.nextFreshContext?.preview.compilation;
   const reads =
-    target === "current" ? (reading.currentContext?.reads ?? []) : [];
+    target === "cumulative" ? (reading.currentContext?.reads ?? []) : [];
   return documents.map((document) => {
     const metadata = worldDocumentPresentation(document);
     const directRead = reads.find(
@@ -541,10 +563,16 @@ function documentEvidence(
             : directRead.complete
               ? uiText("精确节点")
               : uiText("节点片段"),
-        detail: uiText("当前链已结算的 context_read 记录"),
+        detail: uiText("累计读取的当时内容，不代表当前字段值"),
         tone: directRead.complete ? "good" : "warning",
       };
-    const direct = context?.coverage.find(
+    const coverage =
+      target === "cumulative"
+        ? (reading.currentContext?.promptHistory?.flatMap(
+            (request) => request.bootstrap.coverage,
+          ) ?? context?.coverage)
+        : context?.coverage;
+    const direct = coverage?.find(
       ({ readAuthorization }) => readAuthorization?.shortRef === metadata.ref,
     );
     if (direct !== undefined)
@@ -556,12 +584,14 @@ function documentEvidence(
             ? uiText("全文")
             : uiText("节点"),
         detail:
-          target === "current"
-            ? uiText("冻结 bootstrap 的真实 coverage")
-            : uiText("下一次 Prompt Preview 的真实 coverage"),
+          target === "cumulative"
+            ? uiText("累计读取的当时内容，不代表当前字段值")
+            : target === "current"
+              ? uiText("本次请求快照的真实覆盖")
+              : uiText("下一次 Prompt Preview 的真实 coverage"),
         tone: direct.complete ? "good" : "warning",
       };
-    const catalog = context?.coverage.find(({ catalogEntries }) =>
+    const catalog = coverage?.find(({ catalogEntries }) =>
       catalogEntries?.includes(metadata.ref),
     );
     if (catalog !== undefined)
