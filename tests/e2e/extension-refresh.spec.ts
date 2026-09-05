@@ -327,13 +327,11 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
       .getByRole("button", { name: "应用为当前玩法", exact: true })
       .click();
     await open();
-    await page.getByRole("button", { name: "全新上下文", exact: true }).click();
     await page
       .getByLabel("你的行动")
       .fill("Continue with saved disabled followups.");
-    await page
-      .getByRole("button", { name: "从全新上下文发送行动", exact: true })
-      .click();
+    await page.getByLabel("选择提交方式").click();
+    await page.getByRole("button", { name: "全新上下文", exact: true }).click();
     await expect(
       page.getByRole("button", { name: "追加行动", exact: true }),
     ).toBeEnabled();
@@ -350,11 +348,9 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
       .getByRole("button", { name: "应用为当前玩法", exact: true })
       .click();
     await open();
-    await page.getByRole("button", { name: "全新上下文", exact: true }).click();
     await page.getByLabel("你的行动").fill("Generate the system recap.");
-    await page
-      .getByRole("button", { name: "从全新上下文发送行动", exact: true })
-      .click();
+    await page.getByLabel("选择提交方式").click();
+    await page.getByRole("button", { name: "全新上下文", exact: true }).click();
     const recap = () =>
       page
         .frameLocator('iframe[title="recap"]')
