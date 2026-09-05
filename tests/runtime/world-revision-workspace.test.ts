@@ -17,7 +17,11 @@ import {
   ScriptedModelHost,
   type ModelHostBinding,
 } from "../../src/runtime/model/ModelHost.ts";
-import { builtinDefaultPlayPresetBinding } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
+import {
+  FileNativePlayPresetStore,
+  toPlayPresetStructuredEditor,
+  builtinDefaultPlayPresetBinding,
+} from "../../src/runtime/play/FileNativePlayPresetStore.ts";
 import type { PromptPreview } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
 import { FileNativePromptCompiler } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
 import { FileNativeWorldRevisionStore } from "../../src/runtime/world-revision/FileNativeWorldRevisionStore.ts";
@@ -1066,3 +1070,121 @@ const modelBinding: ModelHostBinding = {
   protocolConfigFingerprint: "protocol:world-revision-test",
   cacheStrategy: "provider_managed",
 };
+
+test("world author rules refresh after restart without changing the active tool loop or epoch", async () => {
+  const { root, worldId, worlds, workspace } = await createdWorld();
+  const presets = new FileNativePlayPresetStore(join(root, "author-presets"));
+  await presets.initialize();
+  const current = await presets.bindCurrent();
+  const script = new ScriptedModelHost({
+    binding: modelBinding,
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "read",
+            name: "world_revision_read",
+            arguments: { path: "control/blocks/world.md" },
+          },
+          {
+            id: "write",
+            name: "world_revision_write_file",
+            arguments: {
+              path: "control/blocks/world.md",
+              contents: "# Revised control\nFIRST_WORLD_WRITE",
+            },
+          },
+        ],
+      },
+      {
+        outcome: "response",
+        text: "Revision ready",
+        reasoningContent: "Original provider reasoning",
+        toolCalls: [],
+      },
+      { outcome: "response", text: "Continued revision", toolCalls: [] },
+    ],
+  });
+  let updated = false;
+  const host = {
+    binding: () => modelBinding,
+    exchange: async (...args: Parameters<typeof script.exchange>) => {
+      const result = await script.exchange(...args);
+      if (!updated) {
+        updated = true;
+        const structure = toPlayPresetStructuredEditor(current.definition);
+        structure.authorPrompts!.unshift({
+          id: "next",
+          kind: "user",
+          name: "Next",
+          enabled: true,
+          body: "NEXT_WORLD_AUTHOR_RULE",
+        });
+        await presets.save({
+          presetId: current.id,
+          name: current.name,
+          files: current.files,
+          structure,
+        });
+        await presets.select(current.id);
+      }
+      return result;
+    },
+  };
+  const service = () =>
+    new WorldRevisionSession({
+      store: new FileNativeWorldRevisionStore(root),
+      workspace,
+      worlds,
+      compiler: new FileNativePromptCompiler({ locale: "en" }),
+      locale: () => "en",
+      bindModelHost: () => Promise.resolve(host),
+      bindExistingModelHost: () => Promise.resolve(host),
+      bindPlayPreset: () => presets.bindCurrent(),
+      preview: () => preview,
+    });
+  const first = await service().send({
+    worldId,
+    requestId: "author-first",
+    message: "Revise",
+    continuation: { kind: "fresh_context" },
+  });
+  expect(first.runStatus).toBe("ready");
+  expect(script.requests).toHaveLength(2);
+  expect(script.requests[1]!.bootstrap).toEqual(script.requests[0]!.bootstrap);
+  expect(JSON.stringify(script.requests[1]!.bootstrap)).not.toContain(
+    "NEXT_WORLD_AUTHOR_RULE",
+  );
+  const epoch = await workspace.active(worldId);
+  expect(
+    epoch?.files.find(({ path }) => path === "control/blocks/world.md")
+      ?.contents,
+  ).toContain("FIRST_WORLD_WRITE");
+  expect(await worlds.currentHead(worldId)).toBe("genesis");
+  const second = await service().send({
+    worldId,
+    requestId: "author-next",
+    message: "Continue",
+    continuation: { kind: "continue_context", sessionId: first.sessionId },
+  });
+  expect(second.runStatus).toBe("ready");
+  expect(JSON.stringify(script.requests[2]!.bootstrap)).toContain(
+    "NEXT_WORLD_AUTHOR_RULE",
+  );
+  expect(JSON.stringify(script.requests[2]!.bootstrap)).toContain(
+    epoch!.epochId,
+  );
+  expect(script.requests[2]!.appended.slice(0, -1)).toEqual([
+    ...script.requests[1]!.appended,
+    expect.objectContaining({
+      kind: "assistant",
+      reasoningContent: "Original provider reasoning",
+    }),
+  ]);
+  expect(second.requestPreviews).toHaveLength(2);
+  expect(await worlds.readWorldRevisionLock(worldId)).toEqual({
+    worldId,
+    epochId: epoch!.epochId,
+  });
+});

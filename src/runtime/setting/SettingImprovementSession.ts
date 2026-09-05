@@ -328,6 +328,27 @@ export class SettingImprovementSession {
         throw new Error(
           "No saved model connection matches this setting-improvement conversation",
         );
+      const playPreset = await this.#bindPlayPreset();
+      const locale = this.#locale();
+      const package_ = await this.#content.readCurrentTreeContentPackage(
+        input.packageId,
+      );
+      const bootstrap = this.#compiler.compileSettingImprovement({
+        contentPackageTitle: package_.title,
+        runtimeContract: settingImprovementRuntimeContract(locale),
+        authorPrompt: settingImprovementPromptForBinding(playPreset, locale),
+        playPreset,
+        modelBinding: session.modelBinding,
+        tools: settingImprovementToolDefinitions(locale),
+      });
+      session.schemaVersion = 3;
+      session.requests ??= [];
+      session.requests.push({
+        requestId,
+        modelItemStart: session.modelItems.length,
+        bootstrap,
+        playPreset: structuredClone(playPreset),
+      });
       appendAuthoringUserMessage(session, message, requestId);
       await this.#store.save(session);
       return { session, run: this.#startRun(session, host, requestId) };
@@ -503,7 +524,11 @@ export class SettingImprovementSession {
       validateFiles: (files) =>
         this.#content.validateCurrentTreeContentPackage(files),
       preview: (snapshot) =>
-        this.#preview(snapshot, session.modelBinding, session.playPreset),
+        this.#preview(
+          snapshot,
+          session.modelBinding,
+          session.requests?.at(-1)?.playPreset ?? session.playPreset,
+        ),
     });
   }
 
@@ -665,6 +690,17 @@ export class SettingImprovementSession {
         ? this.#conversation.streaming(session.sessionId)
         : null;
     return {
+      requestPreviews: (
+        session.requests ?? [
+          {
+            requestId: session.creationRequestId,
+            bootstrap: session.bootstrap,
+          },
+        ]
+      ).map(({ requestId, bootstrap }) => ({
+        requestId,
+        compilation: structuredClone(bootstrap),
+      })),
       sessionId: session.sessionId,
       packageId: session.packageId,
       runStatus: streaming === null ? session.runStatus : "running",

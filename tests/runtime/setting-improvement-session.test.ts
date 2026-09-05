@@ -1,3 +1,4 @@
+import { parseDocument } from "yaml";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -14,6 +15,8 @@ import {
 } from "../../src/runtime/model/ModelHost.ts";
 import {
   builtinDefaultPlayPresetBinding,
+  parsePlayPresetFiles,
+  revisionForPlayPresetFiles,
   presetHostBinding,
   type PlayPresetBinding,
 } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
@@ -96,7 +99,7 @@ test("全新上下文创建持久对话，普通回复不产生候选或快照",
 
   const store = new FileNativeSettingImprovementStore(fixture.root);
   const stored = await store.read(view.sessionId);
-  expect(stored.schemaVersion).toBe(2);
+  expect(stored.schemaVersion).toBe(3);
   expect(stored).not.toHaveProperty("draft");
   expect(stored).not.toHaveProperty("baseFiles");
   expect(stored).not.toHaveProperty("review");
@@ -1377,7 +1380,7 @@ test("schema-v1 隔离草稿严格迁移为审计历史，不改当前树", asyn
     continuation: { kind: "continue_context", sessionId: v2.sessionId },
   });
   expect(continuedHost.requests[0]?.bootstrap).toEqual(
-    migratedStored.bootstrap,
+    (await store.read(v2.sessionId)).requests?.at(-1)?.bootstrap,
   );
   expect(continuedHost.requests[0]?.appended.at(-1)).toEqual({
     kind: "user",
@@ -1804,3 +1807,64 @@ function serviceFor(
     },
   });
 }
+
+test("next author send refreshes rules while retaining bootstrap and native history", async () => {
+  const fixture = await createFixture([]);
+  const preset = builtinDefaultPlayPresetBinding("en");
+  const host = new ScriptedModelHost({
+    binding,
+    steps: [
+      {
+        outcome: "response",
+        text: "First answer",
+        reasoningContent: "Exact provider reasoning",
+        toolCalls: [],
+      },
+      { outcome: "response", text: "Second answer", toolCalls: [] },
+    ],
+  });
+  const session = serviceFor(fixture.root, fixture.content, host, preset);
+  const first = await sendFresh(
+    session,
+    fixture.packageId,
+    "rules-first",
+    "First",
+  );
+  const store = new FileNativeSettingImprovementStore(fixture.root);
+  const before = await store.read(first.sessionId);
+  preset.definition.authorPrompts = [
+    {
+      id: "new-rule",
+      kind: "user",
+      name: "New rule",
+      enabled: true,
+      body: "AUTHOR_RULE_UPDATED",
+    },
+    ...preset.definition.authorPrompts!,
+  ];
+  const raw = parseDocument(preset.files["preset.yaml"]!);
+  raw.set("authorPrompts", preset.definition.authorPrompts);
+  preset.files["preset.yaml"] = raw.toString();
+  const parsed = parsePlayPresetFiles(preset.files);
+  if (parsed.kind !== "valid") throw parsed.error;
+  preset.definition = parsed.definition;
+  preset.revision = revisionForPlayPresetFiles(preset.files);
+  await session.send({
+    packageId: fixture.packageId,
+    requestId: "rules-second",
+    message: "Second",
+    continuation: { kind: "continue_context", sessionId: first.sessionId },
+  });
+  expect(JSON.stringify(host.requests[1]!.bootstrap)).toContain(
+    "AUTHOR_RULE_UPDATED",
+  );
+  expect(JSON.stringify(host.requests[0]!.bootstrap)).not.toContain(
+    "AUTHOR_RULE_UPDATED",
+  );
+  expect(host.requests[1]!.appended.slice(0, before.modelItems.length)).toEqual(
+    before.modelItems,
+  );
+  expect((await store.read(first.sessionId)).bootstrap).toEqual(
+    before.bootstrap,
+  );
+});

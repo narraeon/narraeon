@@ -469,6 +469,54 @@ export function SettingImprovementPanel({
               </div>
             ) : null}
 
+            {view?.requestPreviews && (
+              <details className="setting-request-previews">
+                <summary>
+                  {getWebLocale() === "zh-CN"
+                    ? "已发送请求的真实提示"
+                    : "Actual sent prompts"}
+                </summary>
+                <p>
+                  {getWebLocale() === "zh-CN"
+                    ? "以下保留每次发送时的实际编排，不是下一次发送预览。保存并应用的预设修改将在下一条消息生效。"
+                    : "These are the actual arrangements saved for each send, not a preview of the next send. Saved and applied preset changes take effect on the next message."}
+                </p>
+                {view.requestPreviews.map((request, index) => (
+                  <details key={request.requestId}>
+                    <summary>
+                      {getWebLocale() === "zh-CN"
+                        ? `发送 ${index + 1}`
+                        : `Send ${index + 1}`}
+                    </summary>
+                    {request.compilation.logicalMessages.map(
+                      (message, position) => (
+                        <article key={position}>
+                          <h4>{message.role}</h4>
+                          <pre>{message.markdown}</pre>
+                        </article>
+                      ),
+                    )}
+                    <details>
+                      <summary>
+                        {getWebLocale() === "zh-CN"
+                          ? "Provider 编码与工具定义"
+                          : "Provider encoding and tools"}
+                      </summary>
+                      <pre>
+                        {JSON.stringify(
+                          {
+                            provider: request.compilation.provider,
+                            tools: request.compilation.tools,
+                          },
+                          null,
+                          2,
+                        )}
+                      </pre>
+                    </details>
+                  </details>
+                ))}
+              </details>
+            )}
             <div className="setting-conversation-messages">
               {loading ? (
                 <p className="setting-conversation-empty">

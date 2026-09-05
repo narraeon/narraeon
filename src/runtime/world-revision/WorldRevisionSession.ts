@@ -337,6 +337,25 @@ export class WorldRevisionSession {
         throw new Error(
           "No saved model connection matches this world-revision conversation",
         );
+      const playPreset = await this.#bindPlayPreset();
+      const locale = this.#locale();
+      const bootstrap = this.#compiler.compileWorldRevision({
+        epoch: { id: epoch.epochId, baseHead: epoch.baseHead },
+        worldTitle: session.worldTitle,
+        runtimeContract: worldRevisionRuntimeContract(locale),
+        authorPrompt: settingImprovementPromptForBinding(playPreset, locale),
+        playPreset,
+        modelBinding: session.modelBinding,
+        tools: worldRevisionToolDefinitions(locale),
+      });
+      session.schemaVersion = 2;
+      session.requests ??= [];
+      session.requests.push({
+        requestId,
+        modelItemStart: session.modelItems.length,
+        bootstrap,
+        playPreset: structuredClone(playPreset),
+      });
       appendAuthoringUserMessage(session, message, requestId);
       await this.#store.saveSession(session);
       return {
@@ -373,6 +392,7 @@ export class WorldRevisionSession {
     const modelBinding = host.binding();
     const tools = worldRevisionToolDefinitions(locale);
     const bootstrap = this.#compiler.compileWorldRevision({
+      epoch: { id: epoch.epochId, baseHead: epoch.baseHead },
       worldTitle,
       runtimeContract: worldRevisionRuntimeContract(locale),
       authorPrompt: settingImprovementPromptForBinding(playPreset, locale),
@@ -526,7 +546,8 @@ export class WorldRevisionSession {
         this.#preview({
           snapshot,
           modelBinding: session.modelBinding,
-          playPreset: session.playPreset,
+          playPreset:
+            session.requests?.at(-1)?.playPreset ?? session.playPreset,
           binding,
           epoch,
           maintenance,
@@ -670,6 +691,17 @@ export class WorldRevisionSession {
         ? this.#conversation.streaming(session.sessionId)
         : null;
     return {
+      requestPreviews: (
+        session.requests ?? [
+          {
+            requestId: session.creationRequestId,
+            bootstrap: session.bootstrap,
+          },
+        ]
+      ).map(({ requestId, bootstrap }) => ({
+        requestId,
+        compilation: structuredClone(bootstrap),
+      })),
       sessionId: session.sessionId,
       worldId: session.worldId,
       epochId: session.epochId,

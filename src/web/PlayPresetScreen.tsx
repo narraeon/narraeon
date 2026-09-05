@@ -196,6 +196,7 @@ interface PlayPresetPlayerViewPanel {
 
 interface PlayPresetStructuredEditor {
   playPrompts?: OrderedPlayPrompt[];
+  authorPrompts?: OrderedPlayPrompt[];
   migrationNotice?: string;
   name: string;
   callChainPath: string;
@@ -1292,6 +1293,16 @@ function SettingImprovementPromptEditor({
   onFileChange: (path: string, contents: string) => void;
   onCreateFile: (path: string, contents: string) => void;
 }): React.JSX.Element {
+  if (structure.authorPrompts !== undefined)
+    return (
+      <OrderedPlayPromptEditor
+        authoring
+        entries={structure.authorPrompts}
+        onChange={(authorPrompts) =>
+          onChange((current) => ({ ...current, authorPrompts }))
+        }
+      />
+    );
   const prompt = structure.settingImprovementPrompt;
   return (
     <section

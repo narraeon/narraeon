@@ -1,3 +1,4 @@
+import type { AuthoringRequestSnapshot } from "./AuthoringRequestSnapshot.ts";
 import { randomUUID } from "node:crypto";
 
 import {
@@ -35,6 +36,7 @@ export interface ModelToolConversationState {
   runStatus: "ready" | "running" | "interrupted";
   updatedAt: number;
   bootstrap: PromptCompilation;
+  requests?: AuthoringRequestSnapshot[];
   modelBinding: ModelHostBinding;
   modelItems: ModelHostAppendItem[];
   messages: AuthoringConversationMessage[];
@@ -156,6 +158,7 @@ export class ModelToolConversation<
     live: LiveRun<View>,
   ): Promise<View> {
     const { session } = input;
+    const bootstrap = session.requests?.at(-1)?.bootstrap ?? session.bootstrap;
     try {
       for (let round = 0; round < maximumExchangesPerMessage; round += 1) {
         session.exchange += 1;
@@ -165,13 +168,11 @@ export class ModelToolConversation<
         input.changed?.(true);
         const response = await input.host.exchange(
           {
-            bootstrap: session.bootstrap,
-            toolUniverse: session.bootstrap.toolUniverse,
-            allowedTools: session.bootstrap.toolUniverse.map(
-              ({ name }) => name,
-            ),
-            toolStrategy: session.bootstrap.toolStrategy,
-            tools: session.bootstrap.tools,
+            bootstrap,
+            toolUniverse: bootstrap.toolUniverse,
+            allowedTools: bootstrap.toolUniverse.map(({ name }) => name),
+            toolStrategy: bootstrap.toolStrategy,
+            tools: bootstrap.tools,
             appended: session.modelItems,
             requestId: live.requestId,
             operationId: session.sessionId,

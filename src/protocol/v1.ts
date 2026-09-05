@@ -447,7 +447,13 @@ export interface V1PlayContextReadingView {
   } | null;
 }
 
+export interface V1AuthoringRequestPreview {
+  requestId: string;
+  compilation: V1SettingPromptPreview["compilation"];
+}
+
 export interface V1SettingImprovementView {
+  requestPreviews?: V1AuthoringRequestPreview[];
   sessionId: string;
   packageId: string;
   runStatus: "ready" | "running" | "interrupted";
@@ -522,6 +528,7 @@ export interface V1WorldRevisionSealedEpochView {
 }
 
 export interface V1WorldRevisionView {
+  requestPreviews?: V1AuthoringRequestPreview[];
   sessionId: string;
   worldId: string;
   epochId: string;
