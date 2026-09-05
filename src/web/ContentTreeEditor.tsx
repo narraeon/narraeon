@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { PackageFollowupsEditor } from "./PackageFollowupsEditor.tsx";
+import { useState, type ReactNode } from "react";
 
 import type { ContentTreeFile } from "../protocol/v1.ts";
 import {
@@ -10,6 +11,7 @@ import { uiText } from "./i18n.ts";
 export type ContentTreeIssue = DocumentWorkbenchIssue;
 
 export interface ContentTreeEditorProps {
+  scriptPermission?: ReactNode;
   mode?: "content-package" | "world-revision";
   files: readonly ContentTreeFile[];
   status: "usable" | "needs_repair";
@@ -30,6 +32,7 @@ export interface ContentTreeEditorProps {
 }
 
 export function ContentTreeEditor({
+  scriptPermission,
   files,
   status,
   issues,
@@ -134,6 +137,9 @@ export function ContentTreeEditor({
           <dd>{controlCount}</dd>
         </div>
       </dl>
+
+      {scriptPermission}
+      <PackageFollowupsEditor files={files} onChange={onFilesChange} />
 
       <DocumentWorkbench
         {...(selectedPath === undefined ? {} : { selectedPath })}

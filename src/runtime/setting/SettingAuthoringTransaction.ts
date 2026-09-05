@@ -1,3 +1,4 @@
+import { isPackageFollowupControlPath } from "../content/PackageFollowups.ts";
 import { renderWorldMaintenanceReport } from "../prompt/WorldMaintenanceReport.ts";
 import { listWorldDocuments as listQueryableWorldDocuments } from "../prompt/WorldMaintenanceReport.ts";
 import type { AppLocale } from "../../protocol/appPreferences.ts";
@@ -157,7 +158,7 @@ export function settingImprovementRuntimeContract(locale: AppLocale): string {
 - 工具写入直接修改内容包当前树。每个完整 Provider 工具响应中的调用按顺序执行，成功改动在该响应结算时原子发布，发布后立即成为内容包权威，无需另一步确认。
 - 每个写工具调用独立结算，并按本响应中的调用顺序读取之前已接受的结果。某个调用失败只在对应工具结果中返回精确原因，不回滚同一响应内其他成功调用，也不阻止后续调用。Runtime 在写调用结算后自动运行内容树检查和真实 Prompt Preview，并把检查结果附在最后一个成功写调用的结果中。
 - 修改既有文件前必须完整读取它。setting_list／setting_search 的 cursor，以及 setting_read 的读取授权，只属于产生它们的当前树 revision；任何其他对话或手动编辑改变当前树后，必须重新读取再写。setting_read 总是完整返回精确文件，不截断、不分页。工具只暴露逻辑路径，不暴露宿主路径。
-- world/ 下只写 .yaml 或 .md 世界文档；专用文件只允许 opening.md、control/frame.yaml、control/player-views.yaml 和 control/blocks/*.md。人物、地点、规则与当前情境放在 world/，本世界特有的主持要求放在 control/。
+- world/ 下只写 .yaml 或 .md 世界文档；专用文件只允许 opening.md、control/frame.yaml、control/player-views.yaml 和 control/blocks/*.md，以及 control/followups.yaml 和其中引用的 prompts/*.md、renderers/*.html、scripts/*.js、regex/*.yaml、assets/* 文本资源。人物、地点、规则与当前情境放在 world/，本世界特有的主持要求放在 control/。
 - opening.md 是玩家看见的第一页，不得替玩家决定行动、台词或内心。会继续约束首次行动的事实也必须写入自然承载它的世界文档。
 - 新建 world 文档使用 setting_create：ref 由你提供，并同时提供路径、标题、摘要、别名与不含技术头的正文。ref 必须是唯一的 2～32 位小写 ASCII 短句柄；Runtime 自行完成技术存储。既有文档选择值会在读取时自动投影为对应的 @ref；跨文档引用和 control 中的文档选择只使用 @ref。
 - YAML 中指向整份文档的机械引用只写成单键 map，例如 { $ref: "@alex" }；普通字符串中的 @alex 仍只是文字。frame 与 player-view selector 的 document 值也写成 "@alex"，局部位置另用 locator 表达。
@@ -178,6 +179,7 @@ export function settingImprovementRuntimeContract(locale: AppLocale): string {
 - current_situation、document 和 reference_targets 选择的整份正文会直接注入；node 只注入精确节点。catalog 只注入该目录直接子文档的 title、summary 与 @短引用，不注入正文；history 与 additional_materials 也只按精确声明注入。
 - frame 声明的 catalog 目录即使当前没有文档，也会作为空状态目录由 state_list 返回，并可作为 world_create 目标；目录声明不是另一份持久状态。
 - 其余世界文档由游玩 AI 按需发现：用 state_list 浏览 Runtime 返回的目录句柄，用 context_search 做原文字面搜索，再用 context_read 精确读取。可发现路径由目录、字面搜索和精确读取组成；字面 0 命中不证明事实不存在。
+- control/followups.yaml 可用 narraeon.package-followups/v1 声明 followups 有序数组；每项包含稳定 id、displayName、enabled、mount、prompt（role: author_instruction、markdown 相对 control/）、artifacts 和 maxArtifactBytes。启停保留定义与资源；它们在主叙事提交后独立生成界面产物，不写世界。脚本授权是用户本地设置，文件不能自授信任。
 - control/player-views.yaml 用精确 selector 投影当前原值。它只负责展示；权限、秘密、人物认知与条件显示由世界语义另行表达。
 
 ## 游玩怎样更新设定
@@ -192,7 +194,7 @@ export function settingImprovementRuntimeContract(locale: AppLocale): string {
 - Tool writes directly modify the content package's current tree. Calls in one complete Provider tool response execute in order; its successful changes publish atomically when that response settles, immediately become authoritative, and require no second confirmation.
 - Every write tool call settles independently and sees earlier accepted calls in response order. A failure returns its precise cause only in that call's result, does not roll back successful siblings, and does not stop later calls. Runtime automatically runs content-tree checks and a real Prompt Preview after writes and appends that review to the last successful write result.
 - Read an existing file completely before changing it. Cursors from setting_list and setting_search, and read authorization from setting_read, belong only to the current-tree revision that produced them. setting_read always returns the complete exact file without truncation or pagination. Re-read after another conversation or a manual edit changes the current tree. Tools expose logical paths, never host paths.
-- World documents are .yaml or .md files under world/. Special writes are limited to opening.md, control/frame.yaml, control/player-views.yaml, and control/blocks/*.md. Put characters, places, rules, and the current situation under world/, and world-specific hosting guidance under control/.
+- World documents are .yaml or .md files under world/. Special writes are limited to opening.md, control/frame.yaml, control/player-views.yaml, and control/blocks/*.md, plus control/followups.yaml and its referenced prompts/*.md, renderers/*.html, scripts/*.js, regex/*.yaml and assets/* text resources. Put characters, places, rules, and the current situation under world/, and world-specific hosting guidance under control/.
 - opening.md is the first page shown to the player. Never decide the player's action, dialogue, or inner thoughts. Facts that constrain the first action must also live in the world document that naturally owns them.
 - Create a world document with setting_create. You provide its unique 2-to-32-character lowercase ASCII ref, path, title, summary, aliases, and body without a technical header; Runtime completes the technical storage. Existing document selectors are automatically projected to their @refs when read. Cross-document references and control selectors use only @refs.
 - A mechanical YAML reference to one whole document is a one-key map such as { $ref: "@alex" }; @alex inside an ordinary string is still only text. The document value in frame and player-view selectors is likewise "@alex", with any local position expressed separately by a locator.
@@ -360,7 +362,7 @@ const toolDescriptionsEn: Record<SettingImprovementToolName, string> = {
   setting_create:
     "Create one world/ .yaml or .md document. Supply a unique lowercase ASCII ref, title, summary, aliases, and body without a technical header; Runtime completes the storage envelope. The created document is already fully read.",
   setting_write_file:
-    "Replace a completely read world/ .yaml or .md document body while preserving its identity and metadata, or create/replace opening.md, control/frame.yaml, control/player-views.yaml, or control/blocks/*.md. To repair a damaged world document, also provide ref, title, summary, and aliases; Runtime preserves any recoverable storage identity. Create new world documents with setting_create.",
+    "Replace a completely read world/ .yaml or .md document body while preserving its identity and metadata, or create/replace opening.md, control/frame.yaml, control/player-views.yaml, or control/blocks/*.md, plus control/followups.yaml and its referenced prompts/*.md, renderers/*.html, scripts/*.js, regex/*.yaml and assets/* text resources. To repair a damaged world document, also provide ref, title, summary, and aliases; Runtime preserves any recoverable storage identity. Create new world documents with setting_create.",
   setting_patch:
     'Update a completely read YAML world document without rewriting unrelated content. locator is a non-empty path whose segments are map keys or zero-based array indexes. Use add for a missing map key or array index, replace for an existing node, append for the end of an existing array, and remove for an existing map key or array item. When title, summary, or aliases are stale, update all three together with op "set_metadata". Rewrite Markdown bodies with setting_write_file.',
   setting_move:
@@ -379,7 +381,7 @@ const toolDescriptionsZhCN: Record<SettingImprovementToolName, string> = {
   setting_create:
     "创建一份 world/ 下的 .yaml 或 .md 文档；提供唯一的小写 ASCII ref、标题、摘要、别名和不含技术头的正文，Runtime 自行完成存储封装。创建成功的文档视为已经完整读取。",
   setting_write_file:
-    "整份替换已完整读取的 world/ .yaml 或 .md 正文并保留身份和元信息，或创建／替换 opening.md、control/frame.yaml、control/player-views.yaml、control/blocks/*.md。修复损坏世界文档时同时提供 ref、title、summary、aliases，Runtime 会保留仍可恢复的存储身份。新建世界文档使用 setting_create。",
+    "整份替换已完整读取的 world/ .yaml 或 .md 正文并保留身份和元信息，或创建／替换 opening.md、control/frame.yaml、control/player-views.yaml、control/blocks/*.md，以及 control/followups.yaml 和其中引用的 prompts/*.md、renderers/*.html、scripts/*.js、regex/*.yaml、assets/* 文本资源。修复损坏世界文档时同时提供 ref、title、summary、aliases，Runtime 会保留仍可恢复的存储身份。新建世界文档使用 setting_create。",
   setting_patch:
     '细粒度更新已完整读取的 YAML 世界文档，不重写无关内容。locator 是非空路径，每段可以是 map key 或从 0 开始的数组下标；add 新建 map key 或数组位置，replace 更新既有节点，append 追加既有数组，remove 删除既有 map key 或数组项。title、summary 或 aliases 过时时用 op "set_metadata" 整组更新三项。Markdown 正文用 setting_write_file 整份重写。',
   setting_move:
@@ -1433,6 +1435,7 @@ function writeOpaque(
 
 function writableOpaquePath(path: string): boolean {
   return (
+    isPackageFollowupControlPath(path) ||
     path === "opening.md" ||
     path === "control/frame.yaml" ||
     path === "control/player-views.yaml" ||

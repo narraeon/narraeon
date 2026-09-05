@@ -1,3 +1,4 @@
+import { readPackageFollowups } from "./PackageFollowups.ts";
 import { parseDocument } from "yaml";
 
 import type { ContentTreeFile } from "./ContentTreeFile.ts";
@@ -9,6 +10,7 @@ import {
 } from "../world/WorldDocumentStore.ts";
 
 export type FileNativeContentIssueCode =
+  | "invalid_package_followups"
   | "binary_world_file"
   | "dangling_reference"
   | "duplicate_id"
@@ -262,6 +264,17 @@ export function inspectContentPackageCurrentTree(
           `${formatProblems.length - maxReportedPlayerViewProblems} more player-view issues were omitted`,
         );
     }
+  }
+
+  try {
+    readPackageFollowups(snapshotFiles);
+  } catch (error) {
+    issue(
+      issues,
+      "invalid_package_followups",
+      "control/followups.yaml",
+      error instanceof Error ? error.message : "Invalid package followups",
+    );
   }
 
   return {

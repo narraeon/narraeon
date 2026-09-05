@@ -1,3 +1,4 @@
+import { PackageScriptPermissionControl } from "./PackageScriptPermissionControl.tsx";
 import { PlayerValue } from "./PlayerViewValue.tsx";
 import { useConversationComposer } from "./useConversationComposer.ts";
 import type { ObserveConversation } from "./ConversationObserver.ts";
@@ -2033,6 +2034,17 @@ export function WorldPage({
 
           {dialog === "manage" ? (
             <WorldManagementDialog
+              packageScriptPermission={
+                <PackageScriptPermissionControl
+                  key={worldId}
+                  client={client}
+                  kind="world"
+                  id={worldId}
+                  onChange={() =>
+                    setDecorationRevision((current) => current + 1)
+                  }
+                />
+              }
               world={world}
               worldTitle={worldTitle}
               worldNameDraft={worldNameDraft}

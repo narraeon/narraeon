@@ -1,3 +1,4 @@
+import { isPackageFollowupControlPath } from "../content/PackageFollowups.ts";
 import {
   validAuthoringRequests,
   type AuthoringRequestSnapshot,
@@ -890,7 +891,8 @@ function validRevisionPath(path: string): boolean {
       );
   return (
     safe &&
-    (/^state\/.+\.(?:ya?ml|md)$/u.test(path) ||
+    (isPackageFollowupControlPath(path) ||
+      /^state\/.+\.(?:ya?ml|md)$/u.test(path) ||
       path === "control/frame.yaml" ||
       path === "control/player-views.yaml" ||
       /^control\/blocks\/.+\.md$/u.test(path))

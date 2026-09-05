@@ -1,6 +1,6 @@
 import { WorldPromptDiagnosticsPanel } from "./WorldPromptDiagnosticsPanel.tsx";
 import { WorldMaintenancePanel } from "./WorldMaintenancePanel.tsx";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 
 import {
   defaultAppReadingPreferences,
@@ -620,6 +620,7 @@ function baseRef(handle: string): string {
 }
 
 export function WorldManagementDialog({
+  packageScriptPermission,
   world,
   worldTitle,
   worldNameDraft,
@@ -638,6 +639,7 @@ export function WorldManagementDialog({
   modelConfigured,
   revisionLocked,
 }: {
+  packageScriptPermission?: ReactNode;
   world: { worldId: string; head: string; runtime: unknown };
   worldTitle: string;
   worldNameDraft: string;
@@ -675,6 +677,7 @@ export function WorldManagementDialog({
           </button>
         </header>
         <div className="world-management-body">
+          {packageScriptPermission}
           {revisionLocked ? (
             <p className="setting-improvement-warning" role="status">
               {uiText(
