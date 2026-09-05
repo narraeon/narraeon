@@ -864,11 +864,8 @@ function LogicalMessages({
 }: {
   messages: PromptPreviewData["compilation"]["logicalMessages"];
 }): React.JSX.Element {
-  const [selectedRole, setSelectedRole] = useState<LogicalRole>(
-    messages[0]?.role ?? "runtime_system",
-  );
-  const selected =
-    messages.find(({ role }) => role === selectedRole) ?? messages[0];
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const selected = messages[selectedIndex] ?? messages[0];
 
   if (selected === undefined)
     return (
@@ -902,14 +899,14 @@ function LogicalMessages({
           {messages.map((message, index) => {
             const label = roleDescriptions[message.role];
             return (
-              <li key={message.role}>
+              <li key={`${index}:${message.role}`}>
                 <button
                   aria-label={uiText("打开第 {index} 条逻辑消息：{title}", {
                     index: index + 1,
                     title: uiText(label.title),
                   })}
-                  aria-pressed={message.role === selected.role}
-                  onClick={() => setSelectedRole(message.role)}
+                  aria-pressed={message === selected}
+                  onClick={() => setSelectedIndex(index)}
                   type="button"
                 >
                   <span>{String(index + 1).padStart(2, "0")}</span>

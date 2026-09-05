@@ -1,9 +1,17 @@
+import {
+  parseOrderedPlayPrompts,
+  migrateLegacyPlayPrompts,
+} from "./OrderedPlayPrompts.ts";
+import {
+  defaultOrderedPlayPrompts,
+  type OrderedPlayPrompt,
+} from "../../shared/ordered-play-prompts.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
-import { parseDocument } from "yaml";
+import { parseDocument, stringify, visit, isAlias } from "yaml";
 
 import {
   defaultPortableContentTreeLimits,
@@ -165,7 +173,8 @@ export interface PlayPresetPlayerViewPanel {
 }
 
 export interface PlayPresetDefinition {
-  format: "narraeon.play-preset/v1";
+  format: "narraeon.play-preset/v1" | "narraeon.play-preset/v2";
+  playPrompts?: OrderedPlayPrompt[];
   name: string;
   callChainPath: string;
   /** Optional only so pre-feature v1 presets retain their prior semantics. */
@@ -203,6 +212,8 @@ export function presetHostBinding(binding: PlayPresetBinding): {
  * definition without the normal parser/validator pass.
  */
 export interface PlayPresetStructuredEditor {
+  playPrompts?: OrderedPlayPrompt[];
+  migrationNotice?: string;
   name: string;
   callChainPath: string;
   settingImprovementPrompt?: PlayPresetPromptBlock;
@@ -263,7 +274,9 @@ export function isPlayPresetBinding(
     value.revision === "builtin-default-v1" &&
     value.scriptsEnabled === true &&
     (isDeepStrictEqual(files, defaultPlayPresetFilesForLocale("en")) ||
-      isDeepStrictEqual(files, defaultPlayPresetFilesForLocale("zh-CN")));
+      isDeepStrictEqual(files, defaultPlayPresetFilesForLocale("zh-CN")) ||
+      isDeepStrictEqual(files, legacyDefaultPlayPresetFilesForLocale("en")) ||
+      isDeepStrictEqual(files, legacyDefaultPlayPresetFilesForLocale("zh-CN")));
   return (
     parsed.kind === "valid" &&
     isDeepStrictEqual(value.definition, parsed.definition) &&
@@ -308,7 +321,7 @@ export class FileNativePlayPresetError extends Error {
   }
 }
 
-export function defaultPlayPresetFilesForLocale(
+export function legacyDefaultPlayPresetFilesForLocale(
   locale: AppLocale,
 ): Record<string, string> {
   return {
@@ -330,6 +343,17 @@ followups: []
     [defaultSettingImprovementPromptPath]:
       defaultSettingImprovementPromptForLocale(locale),
   };
+}
+
+export function defaultPlayPresetFilesForLocale(
+  locale: AppLocale,
+): Record<string, string> {
+  const files = legacyDefaultPlayPresetFilesForLocale(locale);
+  const preset = parseDocument(files["preset.yaml"]!);
+  preset.set("format", "narraeon.play-preset/v2");
+  preset.set("playPrompts", defaultOrderedPlayPrompts());
+  files["preset.yaml"] = stringify(preset.toJS());
+  return files;
 }
 
 export const defaultPlayPresetFiles =
@@ -366,7 +390,7 @@ export function builtinDefaultPlayPresetBinding(
   return {
     id: "builtin-default",
     name: "default",
-    revision: "builtin-default-v1",
+    revision: revisionForPlayPresetFiles(files),
     definition: parsed.definition,
     files,
     scriptsEnabled: true,
@@ -523,6 +547,36 @@ export class FileNativePlayPresetStore {
           input.files,
           parsePlayPresetStructuredEditor(input.structure),
         );
+      }
+      const previous = parsePlayPresetFiles(
+        stored.revisions[stored.currentRevision]!,
+      );
+      if (
+        previous.kind === "valid" &&
+        previous.definition.playPrompts !== undefined
+      ) {
+        const candidate = readYaml(files, "preset.yaml", "preset.yaml");
+        if (candidate.format !== "narraeon.play-preset/v2")
+          throw new FileNativePlayPresetError(
+            "readonly_prompt_removed",
+            "Ordered presets cannot downgrade to v1",
+          );
+        const candidates = parseOrderedPlayPrompts(candidate.playPrompts);
+        for (const entry of previous.definition.playPrompts.filter(
+          (entry) => entry.kind !== "user",
+        )) {
+          const retained = candidates.find((item) => item.id === entry.id);
+          if (
+            retained?.kind !== entry.kind ||
+            (entry.kind === "builtin" &&
+              retained.kind === "builtin" &&
+              retained.builtin !== entry.builtin)
+          )
+            throw new FileNativePlayPresetError(
+              "readonly_prompt_removed",
+              "System prompts and the world placeholder cannot be deleted or replaced; disable optional prompts or clone them instead",
+            );
+        }
       }
       const revision = revisionForFiles(files, this.#limits);
       stored.name = normalizeName(input.name);
@@ -736,6 +790,9 @@ export class FileNativePlayPresetStore {
     files: readonly ContentTreeFile[] | Record<string, string>;
   }): Promise<{ currentPresetId: string; preset: FileNativePlayPresetView }> {
     const files = toFileMap(input.files, this.#limits);
+    const parsed = parsePlayPresetFiles(files, this.#limits);
+    if (parsed.kind === "invalid") throw parsed.error;
+    toPlayPresetStructuredEditor(parsed.definition);
     return this.#change(async () => {
       const document = await this.#read();
       const stored = this.#stored(randomUUID(), input.name, files);
@@ -844,7 +901,9 @@ export class FileNativePlayPresetStore {
     if (
       files === undefined ||
       (!isDeepStrictEqual(files, defaultPlayPresetFilesForLocale("en")) &&
-        !isDeepStrictEqual(files, defaultPlayPresetFilesForLocale("zh-CN")))
+        !isDeepStrictEqual(files, defaultPlayPresetFilesForLocale("zh-CN"))) ||
+      isDeepStrictEqual(files, legacyDefaultPlayPresetFilesForLocale("en")) ||
+      isDeepStrictEqual(files, legacyDefaultPlayPresetFilesForLocale("zh-CN"))
     )
       return false;
     preset.builtinDefault = true;
@@ -894,21 +953,15 @@ export class FileNativePlayPresetStore {
         "store_invalid",
         "The current play-preset revision does not exist",
       );
-    const validation = validatePlayPresetFiles(files, this.#limits);
     const view: FileNativePlayPresetView = {
       id: stored.id,
       name: stored.name,
       revision: stored.currentRevision,
       files: cloneFiles(files),
-      validation,
+      ...editorProjection(files, this.#limits),
       enabled: stored.enabled,
       scriptsEnabled: stored.scriptsEnabled,
     };
-    if (validation.status === "valid") {
-      const parsed = parsePlayPresetFiles(files, this.#limits);
-      if (parsed.kind === "valid")
-        view.structure = toPlayPresetStructuredEditor(parsed.definition);
-    }
     if (stored.draftRevision !== undefined) {
       const draftFiles = stored.revisions[stored.draftRevision];
       if (draftFiles === undefined)
@@ -919,15 +972,8 @@ export class FileNativePlayPresetStore {
       view.draft = {
         revision: stored.draftRevision,
         files: cloneFiles(draftFiles),
-        validation: validatePlayPresetFiles(draftFiles, this.#limits),
+        ...editorProjection(draftFiles, this.#limits),
       };
-      if (view.draft.validation.status === "valid") {
-        const parsedDraft = parsePlayPresetFiles(draftFiles, this.#limits);
-        if (parsedDraft.kind === "valid")
-          view.draft.structure = toPlayPresetStructuredEditor(
-            parsedDraft.definition,
-          );
-      }
     }
     return view;
   }
@@ -969,11 +1015,57 @@ export function validatePlayPresetFiles(
   }
 }
 
+function editorProjection(
+  files: Record<string, string>,
+  limits: PortableContentTreeLimits,
+): Pick<FileNativePlayPresetView, "validation" | "structure"> {
+  const validation = validatePlayPresetFiles(files, limits);
+  if (validation.status === "invalid") return { validation };
+  const parsed = parsePlayPresetFiles(files, limits);
+  if (parsed.kind === "invalid") return { validation };
+  try {
+    return {
+      validation,
+      structure: toPlayPresetStructuredEditor(parsed.definition),
+    };
+  } catch (error: unknown) {
+    return {
+      validation: {
+        status: "invalid",
+        code: "legacy_preset_migration_invalid",
+        location: "frame.yaml",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Legacy preset cannot be migrated",
+      },
+    };
+  }
+}
+
 export function toPlayPresetStructuredEditor(
   definition: PlayPresetDefinition,
 ): PlayPresetStructuredEditor {
   return {
     name: definition.name,
+    playPrompts: structuredClone(
+      definition.playPrompts ??
+        migrateLegacyPlayPrompts(
+          definition.files,
+          definition.narrativePrompts,
+          [
+            definition.settingImprovementPrompt?.path ??
+              defaultSettingImprovementPromptPath,
+            ...definition.followups.map((followup) => followup.prompt.path),
+          ],
+        ),
+    ),
+    ...(definition.playPrompts
+      ? {}
+      : {
+          migrationNotice:
+            "旧世界指令与材料归并到首次世界位置，其他提示相对顺序及正文保留；历史请求不变。保存后采用统一编排。",
+        }),
     callChainPath: definition.callChainPath,
     ...(definition.settingImprovementPrompt === undefined
       ? {}
@@ -1023,6 +1115,10 @@ export function applyPlayPresetStructuredEditor(
       "Structured editing can be applied only to parseable preset/call-chain YAML",
     );
   preset.set("name", input.name);
+  if (input.playPrompts !== undefined) {
+    preset.set("format", "narraeon.play-preset/v2");
+    preset.set("playPrompts", parseOrderedPlayPrompts(input.playPrompts));
+  }
   preset.set("callChain", input.callChainPath);
   if (input.settingImprovementPrompt === undefined)
     preset.delete("settingImprovement");
@@ -1182,6 +1278,9 @@ export function parsePlayPresetStructuredEditor(
     );
   return {
     name: value.name,
+    ...(value.playPrompts === undefined
+      ? {}
+      : { playPrompts: parseOrderedPlayPrompts(value.playPrompts) }),
     callChainPath: value.callChainPath,
     ...(settingImprovementPrompt === undefined
       ? {}
@@ -1217,6 +1316,7 @@ export function parsePlayPresetFiles(
         "name",
         "callChain",
         "settingImprovement",
+        "playPrompts",
         "mounts",
         "playerViewPanels",
         "extensions",
@@ -1230,10 +1330,22 @@ export function parsePlayPresetFiles(
         "Entry callChain must be call-chain.yaml",
         "preset.yaml",
       );
-    if (preset.format !== "narraeon.play-preset/v1")
+    if (
+      preset.format !== "narraeon.play-preset/v1" &&
+      preset.format !== "narraeon.play-preset/v2"
+    )
       invalid(
         "preset_format_invalid",
         "preset.yaml format must be narraeon.play-preset/v1",
+        "preset.yaml",
+      );
+    if (
+      preset.format === "narraeon.play-preset/v1" &&
+      preset.playPrompts !== undefined
+    )
+      invalid(
+        "preset_format_invalid",
+        "Ordered prompts require v2",
         "preset.yaml",
       );
     const name = stringValue(preset.name);
@@ -1284,7 +1396,10 @@ export function parsePlayPresetFiles(
     return {
       kind: "valid",
       definition: {
-        format: "narraeon.play-preset/v1",
+        format: preset.format,
+        ...(preset.format === "narraeon.play-preset/v2"
+          ? { playPrompts: parseOrderedPlayPrompts(preset.playPrompts) }
+          : {}),
         name: name.trim(),
         callChainPath,
         ...(settingImprovementPrompt === undefined
@@ -2820,17 +2935,6 @@ function readYaml(
       `Play-preset file does not exist: ${path}`,
       location,
     );
-  if (
-    /(^|\s)[&*!][^\s,\]}]+/mu.test(source) ||
-    /^\s*<<\s*:/mu.test(source) ||
-    /^---\s*$/mu.test(source) ||
-    /^\.\.\.\s*$/mu.test(source)
-  )
-    invalid(
-      "unsafe_yaml",
-      `Play-preset YAML uses syntax forbidden by the restricted codec: ${path}`,
-      location,
-    );
   const document = parseDocument(source, {
     schema: "core",
     uniqueKeys: true,
@@ -2838,6 +2942,24 @@ function readYaml(
   });
   if (document.errors.length > 0 || document.warnings.length > 0)
     invalid("unsafe_yaml", `Play-preset YAML is invalid: ${path}`, location);
+  visit(document, {
+    Node(_, node) {
+      if (isAlias(node) || ("anchor" in node && node.anchor) || node.tag)
+        invalid(
+          "unsafe_yaml",
+          `Play-preset YAML uses forbidden anchors, aliases or tags: ${path}`,
+          location,
+        );
+    },
+    Pair(_, pair) {
+      if (String(pair.key) === "<<")
+        invalid(
+          "unsafe_yaml",
+          `Play-preset YAML uses forbidden merge keys: ${path}`,
+          location,
+        );
+    },
+  });
   const value: unknown = document.toJS({ maxAliasCount: 0 });
   if (!isRecord(value))
     invalid(

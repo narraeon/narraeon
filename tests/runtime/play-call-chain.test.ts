@@ -32,6 +32,7 @@ import {
 import { FileNativeAiFailureLog } from "../../src/runtime/model/AiFailureLog.ts";
 import {
   defaultPlayPresetFiles,
+  legacyDefaultPlayPresetFilesForLocale,
   parsePlayPresetFiles,
   type PlayPresetBinding,
 } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
@@ -1255,7 +1256,7 @@ test("工具中间步文本不进入叙事，状态与终态叙事分别推进�
       .filter(({ role }) => role === "runtime_system")
       .map(({ markdown }) => markdown)
       .join("\n"),
-  ).toContain("A response that calls any tool is an intermediate step");
+  ).toContain("Responses containing tool calls are intermediate steps");
 
   const continued = await chains.append({
     worldId,
@@ -3512,7 +3513,7 @@ test("修改第一条玩家消息可把修改稿保存为不继承旧续传的�
     exchangeId: "exchange-edit-first-source",
     playerText: "I take the eastern path.",
     hostBinding: hostBinding(),
-    playPreset: playPreset(),
+    playPreset: playPreset(legacyDefaultPlayPresetFilesForLocale("en")),
     modelBinding: modelBinding(),
     modelHost: sourceHost,
   });
@@ -3547,7 +3548,7 @@ test("修改第一条玩家消息可把修改稿保存为不继承旧续传的�
   freshHost.files["blocks/style.md"] =
     "# Fresh edit style\n\nThis bootstrap was compiled for the edited context.\n";
   const freshPreset = {
-    ...playPreset(),
+    ...playPreset(legacyDefaultPlayPresetFilesForLocale("en")),
     name: "fresh edit preset",
     revision: "fresh-edit-preset-v1",
   };
@@ -3651,7 +3652,7 @@ test("全新上下文无法编译时不会先提交玩家消息修订", async ()
     exchangeId: "exchange-edit-fresh-compile-source",
     playerText: "I take the eastern path.",
     hostBinding: hostBinding(),
-    playPreset: playPreset(),
+    playPreset: playPreset(legacyDefaultPlayPresetFilesForLocale("en")),
     modelBinding: modelBinding(),
     modelHost: new ScriptedModelHost({
       binding: modelBinding(),
@@ -3677,7 +3678,7 @@ test("全新上下文无法编译时不会先提交玩家消息修订", async ()
       continuation: "fresh_context",
       freshContext: {
         hostBinding: invalidHost,
-        playPreset: playPreset(),
+        playPreset: playPreset(legacyDefaultPlayPresetFilesForLocale("en")),
         modelBinding: modelBinding(),
       },
     }),
@@ -4428,8 +4429,9 @@ async function createWorld(
   return { worlds, worldId: created.world.worldId, root };
 }
 
-function playPreset(): PlayPresetBinding {
-  const files = structuredClone(defaultPlayPresetFiles);
+function playPreset(
+  files = structuredClone(defaultPlayPresetFiles),
+): PlayPresetBinding {
   const parsed = parsePlayPresetFiles(files);
   if (parsed.kind !== "valid") throw parsed.error;
   return {

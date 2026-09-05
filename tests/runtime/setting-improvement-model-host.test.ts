@@ -12,16 +12,16 @@ test.each([
   {
     locale: "zh-CN" as const,
     heading: "未来游玩语义边界（只读；不是设定文档范文）",
-    hostGroup: "主持调用链作者语义",
-    narrativeGroup: "玩家可见叙事语义",
+    hostGroup: "游玩作者语义（编排顺序）",
+    narrativeGroup: "preset:builtin/play.narrative",
     warning: "不要模仿这些块的句式、节奏、动作细节或描写密度写入 world/",
   },
   {
     locale: "en" as const,
     heading:
       "Future play semantics (read-only; not a setting-document style template)",
-    hostGroup: "Host call-chain author semantics",
-    narrativeGroup: "Player-visible narrative semantics",
+    hostGroup: "Play author semantics (arranged order)",
+    narrativeGroup: "preset:builtin/play.narrative",
     warning:
       "Do not imitate their sentences, pacing, staged gestures, or descriptive density in world/ documents",
   },
@@ -111,24 +111,26 @@ test.each([
     expect(serialized).toContain("内容包在游玩中的生命周期");
     expect(serialized).toContain("内容包当前树写入边界");
     expect(serialized).toContain("未来游玩语义边界（只读；不是设定文档范文）");
-    expect(serialized).toContain("主持调用链作者语义");
-    expect(serialized).toContain("玩家可见叙事语义");
+    expect(serialized).toContain("游玩作者语义（编排顺序）");
+    expect(serialized).toContain("preset:builtin/play.narrative");
     expect(serialized).toContain(
       "不要模仿这些块的句式、节奏、动作细节或描写密度写入 world/",
     );
     expect(serialized).toContain(
-      "不得把它们当作本轮 YAML 或 Markdown 设定正文的范文",
+      "不要把其中跨世界通用的规则复制进内容包控制块",
     );
-    expect(serialized).toContain("按 control/frame.yaml 的声明顺序");
+    expect(serialized).toContain(
+      "完整内容包占位在这里连续展开世界指令和 frame 选定材料",
+    );
     expect(serialized).toContain("通用状态维护判据");
     expect(serialized).toContain("玩家可见叙事规则");
-    expect(serialized.indexOf("主持调用链作者语义")).toBeLessThan(
+    expect(serialized.indexOf("游玩作者语义（编排顺序）")).toBeLessThan(
       serialized.indexOf("通用状态维护判据"),
     );
     expect(serialized.indexOf("通用状态维护判据")).toBeLessThan(
-      serialized.indexOf("玩家可见叙事语义"),
+      serialized.indexOf("preset:builtin/play.narrative"),
     );
-    expect(serialized.indexOf("玩家可见叙事语义")).toBeLessThan(
+    expect(serialized.indexOf("preset:builtin/play.narrative")).toBeLessThan(
       serialized.indexOf("玩家可见叙事规则"),
     );
     expect(serialized).not.toContain("UNLISTED-PRESET-BLOCK-MUST-NOT-LEAK");

@@ -9,6 +9,7 @@ import type { AppLocale } from "../../src/protocol/appPreferences.ts";
 import { parseV1Envelope } from "../../src/protocol/v1.ts";
 import {
   defaultPlayPresetFiles,
+  legacyDefaultPlayPresetFilesForLocale,
   defaultPlayPresetFilesForLocale,
   FileNativePlayPresetStore,
   maxPlayPresetFollowups,
@@ -291,6 +292,10 @@ describe("文件原生玩法预设", () => {
     delete rendererOnly["scripts/player-options.js"];
     rendererOnly["preset.yaml"] = rendererOnly["preset.yaml"]!.replace(
       "  - scripts/player-options.js\n",
+      "",
+    );
+    rendererOnly["call-chain.yaml"] = rendererOnly["call-chain.yaml"]!.replace(
+      "        scripts:\n          - scripts/player-options.js\n",
       "",
     );
     rendererOnly["renderers/player-options.html"] = rendererOnly[
@@ -649,7 +654,7 @@ extensions:
       "artifact_clear",
     ]);
 
-    const shorterFiles = structuredClone(defaultPlayPresetFiles);
+    const shorterFiles = legacyDefaultPlayPresetFilesForLocale("en");
     shorterFiles["prompts/narrate.md"] =
       "# Narrative\n\nA much shorter author instruction.\n";
     const shorter = parsePlayPresetFiles(shorterFiles);
@@ -675,7 +680,7 @@ extensions:
   });
 
   test("任意作者正文不触发 Runtime 机械字段泄漏扫描", async () => {
-    const files = structuredClone(defaultPlayPresetFiles);
+    const files = legacyDefaultPlayPresetFilesForLocale("en");
     files["prompts/narrate.md"] =
       "Authors may discuss cache, operation, revision, and /tmp/author/example as semantic prose.";
     expect(validatePlayPresetFiles(files)).toEqual({ status: "valid" });
@@ -731,7 +736,7 @@ extensions:
       ]),
     ).toThrow(/operationId/u);
 
-    const invalid = structuredClone(defaultPlayPresetFiles);
+    const invalid = legacyDefaultPlayPresetFilesForLocale("en");
     invalid["call-chain.yaml"] = invalid["call-chain.yaml"]!.replace(
       "  - markdown: prompts/narrate.md",
       "  - { role: assistant, markdown: prompts/narrate.md }",

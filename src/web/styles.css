@@ -10287,3 +10287,52 @@ summary:focus-visible {
   text-align: start;
   border-bottom: 1px solid var(--border-subtle, #8884);
 }
+
+/* Preset selection stays above the content-first prompt workbench. */
+.play-preset-layout {
+  grid-template-columns: minmax(0, 1fr);
+}
+.play-preset-library {
+  position: static;
+}
+.ordered-play-editor {
+  display: grid;
+  grid-template-columns: minmax(12rem, 0.35fr) minmax(0, 1fr);
+  gap: 1.25rem;
+}
+.ordered-play-editor ol {
+  padding-left: 1.4rem;
+}
+.ordered-play-editor li {
+  margin-block: 0.5rem;
+}
+.ordered-play-editor li button {
+  width: 100%;
+  text-align: left;
+}
+.ordered-play-editor [aria-pressed="true"] {
+  outline: 2px solid currentColor;
+}
+.ordered-play-content {
+  min-width: 0;
+}
+.ordered-play-content label {
+  display: grid;
+  gap: 0.4rem;
+  margin-block: 0.6rem;
+}
+.ordered-play-content textarea {
+  width: 100%;
+  resize: vertical;
+}
+.ordered-play-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+@media (max-width: 700px) {
+  .ordered-play-editor {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

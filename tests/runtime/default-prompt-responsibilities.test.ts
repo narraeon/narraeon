@@ -5,8 +5,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { minimalFileNativeContentScaffold } from "../../src/runtime/content/ContentWorkspace.ts";
 import { inspectContentPackageCurrentTree } from "../../src/runtime/content/FileNativeContentTree.ts";
 import {
-  builtinDefaultPlayPresetBinding,
-  defaultPlayPresetFiles,
+  legacyDefaultPlayPresetFilesForLocale,
   parsePlayPresetFiles,
   presetHostBinding,
   validatePlayPresetFiles,
@@ -27,6 +26,22 @@ import {
 import { firstPartyGenericPanelsPresetFiles } from "../../src/shared/first-party-generic-panels.ts";
 import { firstPartyStatusPanelPresetFiles } from "../../src/shared/first-party-player-view.ts";
 
+// Released v1 fixtures retain their original compiler path for historical recovery.
+const defaultPlayPresetFiles = legacyDefaultPlayPresetFilesForLocale("en");
+function builtinDefaultPlayPresetBinding(locale: "en" | "zh-CN" = "en") {
+  const files = legacyDefaultPlayPresetFilesForLocale(locale);
+  const parsed = parsePlayPresetFiles(files);
+  if (parsed.kind !== "valid") throw parsed.error;
+  return {
+    id: "legacy-default",
+    name: "Legacy default",
+    revision: "legacy-v1",
+    files,
+    definition: parsed.definition,
+    scriptsEnabled: true,
+  };
+}
+
 const roots: string[] = [];
 
 afterEach(async () => {
@@ -35,7 +50,7 @@ afterEach(async () => {
   );
 });
 
-describe("默认提示词职责", () => {
+describe("旧格式默认提示词职责", () => {
   test("默认与第一方玩法模板逐字共用调用链叙事语义", () => {
     const presets = [
       defaultPlayPresetFiles,
@@ -478,7 +493,7 @@ describe("默认提示词职责", () => {
   });
 });
 
-describe("提示块启用清单", () => {
+describe("旧格式提示块启用清单", () => {
   test("frame.yaml 决定哪些块进入模型，未列出的块留在树里", () => {
     const withExtraStyle: Record<string, string> = {
       ...defaultPlayPresetFiles,
@@ -557,7 +572,7 @@ function authorBlockSources(files: Record<string, string>): string[] {
   );
 }
 
-describe("文风块库", () => {
+describe("旧格式文风块库", () => {
   test("通用块讲变速，六种文风预置在库里但默认不启用", () => {
     const style = defaultPresetHostFiles["blocks/style.md"]!;
     // The general style requires detail where it matters, not only anti-padding.

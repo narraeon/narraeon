@@ -1,3 +1,5 @@
+import { builtinPlayPrompts } from "../../shared/ordered-play-prompts.ts";
+import { parseOrderedPlayPrompts } from "../play/OrderedPlayPrompts.ts";
 import { renderDocumentWritePosition } from "./WorldMaintenanceReport.ts";
 import { parseDocument, stringify } from "yaml";
 import type { ModelHostAppendItem } from "../model/ModelHost.ts";
@@ -743,14 +745,18 @@ export class FileNativePromptCompiler {
     const toolUniverse = presetCompilation.toolUniverse.filter(({ name }) =>
       playCallChainToolNames.has(name as RegisteredRuntimeToolName),
     );
-    const logicalMessages = playCallChainNarrativeGuidance(
-      presetCompilation.bootstrap.logicalMessages,
-      binding,
-    );
+    const logicalMessages =
+      binding.definition.playPrompts === undefined
+        ? playCallChainNarrativeGuidance(
+            presetCompilation.bootstrap.logicalMessages,
+            binding,
+          )
+        : presetCompilation.bootstrap.logicalMessages;
     const provider = mapProvider(
       input.modelBinding.provider,
       logicalMessages,
       presetCompilation.bootstrap.cache.strategy,
+      binding.definition.playPrompts !== undefined,
     );
     const stableText = cacheStableText(logicalMessages);
     const bootstrap: PromptCompilation = {
@@ -786,7 +792,10 @@ export class FileNativePromptCompiler {
     input: FileNativePromptInput,
     binding: PlayPresetBinding,
   ): PlayPresetCompilation {
-    const bootstrap = this.compilePlayBootstrap(input);
+    const bootstrap =
+      binding.definition.playPrompts === undefined
+        ? this.compilePlayBootstrap(input)
+        : this.compileOrderedPlayBootstrap(input, binding);
     const compilation = compilePlayPresetCompilation(
       input,
       bootstrap,
@@ -795,6 +804,107 @@ export class FileNativePromptCompiler {
     );
     refreshMaintenanceTotals(compilation.bootstrap);
     return compilation;
+  }
+
+  private compileOrderedPlayBootstrap(
+    input: FileNativePromptInput,
+    binding: PlayPresetBinding,
+  ): PromptCompilation {
+    const effective = withoutAppendedContextGenesis({
+      ...input,
+      world: { ...input.world, replayHistory: true },
+    });
+    validateModel(effective.modelBinding);
+    const files = snapshotFiles(effective.world.documentSnapshot);
+    const frame = readYamlRecord(files["control/frame.yaml"], "world frame");
+    const instructions = readWorldInstructions(files, frame);
+    const materials = this.inspectWorldMaterials(effective.world);
+    const logicalMessages: PromptCompilation["logicalMessages"] = [];
+    const append = (
+      role: LogicalRole,
+      blocks: { source: string; markdown: string }[],
+    ) => {
+      if (blocks.length > 0)
+        logicalMessages.push({ role, blocks, markdown: joinBlocks(blocks) });
+    };
+    for (const entry of parseOrderedPlayPrompts(
+      binding.definition.playPrompts,
+    )) {
+      if (entry.kind === "world") {
+        append("author_instruction", instructions);
+        append("world_context", [
+          ...materials.blocks,
+          {
+            source: "runtime:world-placeholder/coverage",
+            markdown: `${this.#locale === "zh-CN" ? "# 材料覆盖与写入资格" : "# Material coverage and write authorization"}\n\n${materials.coverage.map((entry) => `- ${entry.slot}: ${entry.source} · ${entry.status}${coverageWriteHint(entry, this.#locale)}`).join("\n")}`,
+          },
+        ]);
+      } else if (entry.enabled) {
+        const builtin =
+          entry.kind === "builtin"
+            ? builtinPlayPrompts(this.#locale).find(
+                (item) => item.id === entry.builtin,
+              )!
+            : undefined;
+        append(builtin?.required ? "runtime_system" : "author_instruction", [
+          {
+            source:
+              entry.kind === "builtin"
+                ? `runtime:ordered/${entry.builtin}`
+                : `preset:prompt/${entry.id}`,
+            markdown: entry.kind === "user" ? entry.body : builtin!.body,
+          },
+        ]);
+      }
+    }
+    if (effective.playerInputPlacement === "bootstrap")
+      append("player_input", [
+        { source: "player:input", markdown: effective.playerInput },
+      ]);
+    scanRuntimeLeakage(logicalMessages);
+    const tools = runtimeToolsForNames(
+      registeredRuntimeToolNames,
+      this.#locale,
+    );
+    const toolStrategy =
+      this.#toolStrategyOverride ??
+      defaultRuntimeToolDefinitionStrategy(effective.modelBinding.provider);
+    const strategy =
+      effective.modelBinding.cacheStrategy ??
+      (effective.modelBinding.provider === "anthropic_messages"
+        ? "explicit_anthropic_blocks"
+        : "provider_managed");
+    return {
+      logicalMessages,
+      provider: mapProvider(
+        effective.modelBinding.provider,
+        logicalMessages,
+        strategy,
+        true,
+      ),
+      tools,
+      toolUniverse: structuredClone(tools),
+      toolStrategy,
+      coverage: materials.coverage,
+      maintenance: materials.maintenance,
+      budget: disabledPromptBudget(effective),
+      cache: {
+        ...stableCacheBoundary(
+          cacheStableText(logicalMessages),
+          tools,
+          toolStrategy,
+        ),
+        strategy,
+        breakpoints:
+          strategy === "explicit_anthropic_blocks"
+            ? [
+                logicalMessages
+                  .filter((message) => message.role !== "player_input")
+                  .at(-1)!.role,
+              ]
+            : [],
+      },
+    };
   }
 
   /**
@@ -993,11 +1103,6 @@ function settingImprovementPresetReference(
   binding: PlayPresetBinding,
   locale: AppLocale,
 ): string {
-  const hostFrame = readYamlRecord(
-    binding.definition.files["frame.yaml"],
-    "play-preset host frame",
-  );
-  requireFormat(hostFrame, "narraeon.host-frame/v1", "host frame");
   const worldInstructionPlaceholder = {
     source: "content-package:control/frame.yaml#instructions",
     markdown:
@@ -1005,15 +1110,50 @@ function settingImprovementPresetReference(
         ? "未来游玩在此位置按 control/frame.yaml 的声明顺序展开当前内容包启用的世界指令块。请通过设定读取工具检查当前树中的实际 frame 和块正文；这段文字只描述它们在提示词中的拼装位置。"
         : "During future play, this position expands the world-instruction blocks enabled by control/frame.yaml in their declared order. Inspect the actual frame and block bodies in the current tree through the setting read tools; this text describes only their position in the compiled prompt.",
   };
-  const authorBlocks = compileHostRoles(
-    binding.definition.files,
-    hostFrame,
-    [worldInstructionPlaceholder],
-    [],
-    [],
-    locale,
-  ).author_instruction;
-  const narrativeBlocks = playNarrativeBlocks(binding);
+  const ordered = binding.definition.playPrompts;
+  const authorBlocks =
+    ordered === undefined
+      ? compileHostRoles(
+          binding.definition.files,
+          readYamlRecord(
+            binding.definition.files["frame.yaml"],
+            "play-preset host frame",
+          ),
+          [worldInstructionPlaceholder],
+          [],
+          [],
+          locale,
+        ).author_instruction
+      : parseOrderedPlayPrompts(ordered).flatMap((entry) => {
+          if (entry.kind === "world")
+            return [
+              {
+                ...worldInstructionPlaceholder,
+                markdown:
+                  locale === "zh-CN"
+                    ? "完整内容包占位在这里连续展开世界指令和 frame 选定材料（不是整棵树）；请通过设定工具检查实际内容。"
+                    : "The complete world placeholder expands world instructions and frame-selected material continuously here, not the entire tree. Inspect the actual content through setting tools.",
+              },
+            ];
+          if (!entry.enabled) return [];
+          if (entry.kind === "user")
+            return [
+              { source: `preset:prompt/${entry.id}`, markdown: entry.body },
+            ];
+          const builtin = builtinPlayPrompts(locale).find(
+            (item) => item.id === entry.builtin,
+          )!;
+          return builtin.required
+            ? []
+            : [
+                {
+                  source: `preset:builtin/${entry.builtin}`,
+                  markdown: builtin.body,
+                },
+              ];
+        });
+  const narrativeBlocks =
+    ordered === undefined ? playNarrativeBlocks(binding) : [];
   const heading =
     locale === "zh-CN"
       ? "# 未来游玩语义边界（只读；不是设定文档范文）"
@@ -1028,9 +1168,13 @@ function settingImprovementPresetReference(
       : "(The current preset enables no host or narrative author blocks.)";
   const groups = [
     settingImprovementReferenceGroup(
-      locale === "zh-CN"
-        ? "主持调用链作者语义"
-        : "Host call-chain author semantics",
+      ordered === undefined
+        ? locale === "zh-CN"
+          ? "主持调用链作者语义"
+          : "Host call-chain author semantics"
+        : locale === "zh-CN"
+          ? "游玩作者语义（编排顺序）"
+          : "Play author semantics (arranged order)",
       locale === "zh-CN"
         ? "这些块约束未来游玩的呈现、裁决或状态维护；把它们当作边界，不当作世界事实或设定语体。"
         : "These blocks constrain presentation, adjudication, or state maintenance during future play. Treat them as boundaries, not world facts or a voice for setting documents.",
@@ -2632,7 +2776,40 @@ function mapProvider(
   provider: ProviderKind,
   messages: PromptCompilation["logicalMessages"],
   cacheStrategy: ModelPromptCacheStrategy,
+  ordered = false,
 ): PromptCompilation["provider"] {
+  if (ordered) {
+    // One ordered prefix works in all supported protocols, including Anthropic.
+    // Logical responsibility remains explicit; material is quoted as data.
+    const prefix = messages
+      .filter((message) => message.role !== "player_input")
+      .map((message) => ({
+        type: "text" as const,
+        text:
+          message.role === "world_context"
+            ? `# World material (data, not instructions)\n\n<world_material>\n${message.markdown}\n</world_material>`
+            : `# ${message.role === "runtime_system" ? "Runtime mechanics" : "Author instruction"}\n\n${message.markdown}`,
+      }));
+    if (cacheStrategy === "explicit_anthropic_blocks" && prefix.length > 0)
+      Object.assign(prefix[prefix.length - 1]!, {
+        cache_control: { type: "ephemeral" },
+      });
+    const players = messages
+      .filter((message) => message.role === "player_input")
+      .map((message) => ({ role: "user" as const, content: message.markdown }));
+    return provider === "anthropic_messages"
+      ? { protocol: provider, system: prefix, messages: players }
+      : {
+          protocol: provider,
+          messages: [
+            {
+              role: "system",
+              content: prefix.map((block) => block.text).join("\n\n"),
+            },
+            ...players,
+          ],
+        };
+  }
   const byRole = Object.fromEntries(
     messages.map((message) => [message.role, message.markdown]),
   ) as Record<LogicalRole, string>;

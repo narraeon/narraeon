@@ -213,9 +213,46 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(page.getByRole("heading", { name: "玩法预设" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "调用链" })).toBeVisible();
   await expect(page.getByLabel("玩法预设文件编辑器")).toContainText(
-    "叙事提示块",
+    "完整内容包提示",
   );
   await expect(page.getByLabel("玩法预设文件编辑器")).toContainText("后置请求");
+  await page.getByRole("button", { name: "新增提示词", exact: true }).click();
+  await page.getByLabel("提示词名称", { exact: true }).fill("Before world");
+  await page
+    .getByLabel("提示词正文", { exact: true })
+    .fill("ORDERED_BEFORE_WORLD");
+  await page.getByRole("button", { name: "上移", exact: true }).click();
+  await page
+    .getByRole("button", { name: "完整内容包提示", exact: true })
+    .click();
+  await expect(page.getByLabel("提示词正文", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "新增提示词", exact: true }).click();
+  await page.getByLabel("提示词名称", { exact: true }).fill("After world");
+  await page
+    .getByLabel("提示词正文", { exact: true })
+    .fill("ORDERED_AFTER_WORLD");
+  const mechanics = page.getByRole("button", {
+    name: "工具与响应结算（必选）",
+    exact: true,
+  });
+  await mechanics.click();
+  await expect(page.getByLabel("启用", { exact: true })).toBeDisabled();
+  const promptCount = await page
+    .getByRole("list", { name: "提示词顺序" })
+    .getByRole("button")
+    .count();
+  for (let i = 0; i < promptCount; i++) await mechanics.press("Alt+ArrowDown");
+  await page.getByRole("button", { name: "保存修改", exact: true }).click();
+  await page
+    .getByRole("button", { name: "应用为当前玩法", exact: true })
+    .click();
+  await page.reload();
+  await page.getByRole("button", { name: "预设", exact: true }).click();
+  await page.getByRole("button", { name: "Before world", exact: true }).click();
+  await expect(page.getByLabel("提示词正文", { exact: true })).toHaveValue(
+    "ORDERED_BEFORE_WORLD",
+  );
+
   await page.getByRole("button", { name: "返回工作区" }).click();
 
   await page.getByRole("button", { name: "新建内容包" }).click();
@@ -748,6 +785,23 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(
     page.getByText("Alex nods and continues folding the jersey."),
   ).toBeVisible();
+  const orderedPlayRequest = providerRequests.find(
+    (body) =>
+      body.includes("ORDERED_BEFORE_WORLD") &&
+      body.includes("I ask Alex whether we are training tonight."),
+  );
+  expect(orderedPlayRequest).toBeDefined();
+  const orderedTokens = [
+    "ORDERED_BEFORE_WORLD",
+    "# World Narration Rules",
+    "ORDERED_AFTER_WORLD",
+    "# 工具与响应结算",
+    "I ask Alex whether we are training tonight.",
+  ];
+  for (let i = 1; i < orderedTokens.length; i++)
+    expect(orderedPlayRequest!.indexOf(orderedTokens[i]!)).toBeGreaterThan(
+      orderedPlayRequest!.indexOf(orderedTokens[i - 1]!),
+    );
   await callChain.getByText("本段调用详情", { exact: true }).click();
   const toolStep = callChain.locator(".call-chain-assistant.is-tool-step");
   await expect(toolStep.getByText("模型工具步骤")).toBeVisible();
