@@ -29,6 +29,7 @@ import type {
   V1WorldRevisionSealedEpochView,
 } from "../../src/protocol/v1.ts";
 import { projectUncoveredPlayerViews } from "../../src/web/PlayerViewFallback.ts";
+import type { FrontendArtifactProjection } from "../../src/web/ArtifactExtensionHost.tsx";
 import { WorldPage } from "../../src/web/WorldPage.tsx";
 
 afterEach(() => {
@@ -2791,3 +2792,233 @@ test("世界修订 fresh 订阅不绑定旧 latest，命令完成不覆盖后来
       ?.textContent,
   ).toContain("old-session");
 });
+
+test("同一端点的后置结算立即显示内容，轻量读取和重连保留及更新产物", async () => {
+  let receive!: Parameters<ObserveConversation>[1];
+  let connection!: NonNullable<Parameters<ObserveConversation>[2]>;
+  let chain = playChainView("chain-panels", "exchange-panels", "open");
+  chain.status = "running";
+  let payload: string | null = null;
+  const client = {
+    observeConversation: ((_target, callback, onConnection) => {
+      receive = callback;
+      connection = onConnection!;
+      return vi.fn();
+    }) satisfies ObserveConversation,
+    request: vi.fn((request: V1Request) => {
+      if (request.type === "world.read")
+        return Promise.resolve(worldView(chain));
+      if (request.type === "world.play-decorations.read")
+        return Promise.resolve(
+          playDecorations(payload, "world-one", chain.parentHead),
+        );
+      throw new Error(`Unexpected request ${request.type}`);
+    }),
+  };
+  renderWorld(client);
+  await screen.findByRole("heading", { name: "宿舍世界" });
+  await waitFor(() => expect(receive).toBeTypeOf("function"));
+  await act(async () => {
+    await receive({ kind: "play", value: chain }, true);
+  });
+  payload = "同端点后置真实内容";
+  chain = {
+    ...chain,
+    events: [
+      ...chain.events,
+      {
+        id: 99,
+        kind: "followup",
+        followupId: "panel",
+        displayName: "panel",
+        text: "",
+        toolCalls: [],
+      },
+    ],
+  };
+  await act(async () => {
+    await receive({ kind: "play", value: chain }, true);
+  });
+  await waitFor(() =>
+    expect(screen.getByTitle("panel").getAttribute("srcdoc")).toContain(
+      "同端点后置真实内容",
+    ),
+  );
+  const readsBeforeDelta = client.request.mock.calls.length;
+  await act(async () => {
+    await receive(
+      { kind: "play", value: { ...chain, updatedAt: chain.updatedAt + 1 } },
+      true,
+    );
+  });
+  expect(client.request.mock.calls).toHaveLength(readsBeforeDelta);
+  chain = { ...chain, status: "ready" };
+  await act(async () => {
+    await receive({ kind: "play", value: chain }, true);
+  });
+  expect(screen.getByTitle("panel").getAttribute("srcdoc")).toContain(
+    "同端点后置真实内容",
+  );
+  payload = "重连恢复的产物";
+  await act(async () => {
+    connection("reconnecting");
+    connection("connected");
+    await receive({ kind: "play", value: chain }, true);
+  });
+  await waitFor(() =>
+    expect(screen.getByTitle("panel").getAttribute("srcdoc")).toContain(
+      "重连恢复的产物",
+    ),
+  );
+  payload = null;
+  chain = {
+    ...chain,
+    events: [
+      ...chain.events,
+      {
+        id: 100,
+        kind: "followup",
+        followupId: "failed",
+        displayName: "failed",
+        text: "",
+        toolCalls: [],
+        failure: "generation failed",
+      },
+    ],
+  };
+  await act(async () => {
+    await receive({ kind: "play", value: chain }, true);
+  });
+  await waitFor(() => expect(screen.queryByTitle("panel")).toBeNull());
+});
+
+test("旧端点和旧世界的延迟扩展响应不能覆盖当前页面", async () => {
+  let receive!: Parameters<ObserveConversation>[1];
+  let chain = playChainView("race-chain", "race-exchange", "open");
+  const reads: {
+    worldId: string;
+    head: string;
+    resolve: (value: unknown) => void;
+  }[] = [];
+  const client = {
+    observeConversation: ((_target, callback) => {
+      receive = callback;
+      return vi.fn();
+    }) satisfies ObserveConversation,
+    request: async (request: V1Request): Promise<unknown> => {
+      if (request.type === "world.read")
+        return { ...worldView(chain), worldId: request.worldId };
+      if (request.type === "world.play-decorations.read")
+        return new Promise((resolve) => {
+          reads.push({
+            worldId: request.worldId,
+            head: chain.parentHead,
+            resolve,
+          });
+        });
+      throw new Error(`Unexpected request ${request.type}`);
+    },
+  };
+  const props = {
+    client,
+    worldId: "world-one",
+    worldTitle: "宿舍世界",
+    modelConfigured: true,
+    onBack: vi.fn(),
+    onConfigureModel: vi.fn(),
+    onRenameWorld: () => Promise.resolve(),
+    onOpenWorld: () => Promise.resolve(),
+  };
+  const rendered = render(createElement(WorldPage, props));
+  await waitFor(() => expect(reads.length).toBe(1));
+  const oldHead = reads[0]!;
+  chain = { ...chain, parentHead: "commit:4" };
+  await act(async () => {
+    await receive({ kind: "play", value: chain }, true);
+  });
+  await waitFor(() => expect(reads.at(-1)?.head).toBe("commit:4"));
+  const newHead = reads.at(-1)!;
+  const resolve = (read: typeof oldHead, payload: string) =>
+    read.resolve(playDecorations(payload, read.worldId, read.head));
+  await act(() => {
+    resolve(newHead, "new head");
+    return Promise.resolve();
+  });
+  await waitFor(() =>
+    expect(screen.getByTitle("panel").getAttribute("srcdoc")).toContain(
+      "new head",
+    ),
+  );
+  await act(() => {
+    resolve(oldHead, "old head");
+    return Promise.resolve();
+  });
+  expect(screen.getByTitle("panel").getAttribute("srcdoc")).toContain(
+    "new head",
+  );
+  // Start another read in the first world, then navigate to a different world
+  // with the same head alias before it resolves.
+  chain = { ...chain, status: "running" };
+  await act(async () => {
+    await receive({ kind: "play", value: chain }, true);
+  });
+  const oldWorld = reads.at(-1)!;
+  rendered.rerender(
+    createElement(WorldPage, { ...props, worldId: "world-two" }),
+  );
+  await waitFor(() => expect(reads.at(-1)?.worldId).toBe("world-two"));
+  await act(() => {
+    resolve(reads.at(-1)!, "new world");
+    return Promise.resolve();
+  });
+  await waitFor(() =>
+    expect(screen.getByTitle("panel").getAttribute("srcdoc")).toContain(
+      "new world",
+    ),
+  );
+  await act(() => {
+    resolve(oldWorld, "old world");
+    return Promise.resolve();
+  });
+  expect(screen.getByTitle("panel").getAttribute("srcdoc")).toContain(
+    "new world",
+  );
+});
+
+function playDecorations(
+  payload: string | null,
+  worldId: string,
+  head: string,
+) {
+  const artifacts: FrontendArtifactProjection[] =
+    payload === null
+      ? []
+      : [
+          {
+            recordId: "panel-record",
+            worldId,
+            head,
+            payload,
+            operationId: "panel-operation",
+            playPresetId: "preset-one",
+            playPresetRevision: "rev-one",
+            requestId: "panel",
+            requestAttempt: 1,
+            output: "panel",
+            channel: "panel",
+            contentType: "text/plain",
+            projection: "replace",
+            save: "commit",
+            sequence: 1,
+            frontend: {
+              status: "ready",
+              preset: { id: "preset-one", revision: "rev-one" },
+              mount: "story",
+              regex: [],
+              trustedLocalCode: false,
+              fallback: "none",
+            },
+          },
+        ];
+  return { head, artifacts, extensions: [], artifactDebug: [] };
+}
