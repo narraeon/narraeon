@@ -1,3 +1,4 @@
+import type { WorldExtensionsView } from "../protocol/worldExtensions.ts";
 import { PackageScriptPermissions } from "./extension/PackageScriptPermissions.ts";
 import { comparePromptPrefixes } from "./prompt/WorldPromptDiagnostics.ts";
 import { join } from "node:path";
@@ -270,6 +271,9 @@ export class V1Runtime {
         return {
           kind: "play",
           value: await this.#playCallChains.observeWorld(target.id),
+          extensionsRevision: await this.#worlds.extensionControlsRevision(
+            target.id,
+          ),
         };
       case "setting": {
         if (previous?.kind === "setting")
@@ -594,9 +598,17 @@ export class V1Runtime {
           request.worldId,
           head,
         );
+        const extensionControls = await this.#currentExtensionControls(
+          request.worldId,
+        );
         const [playerViewPanels, playTimeline, revisionEpoch] =
           await Promise.all([
-            this.#frontendPlayerViewPanels(request.worldId, head, playerViews),
+            this.#frontendPlayerViewPanels(
+              request.worldId,
+              head,
+              playerViews,
+              extensionControls,
+            ),
             this.#worlds.playTimeline.readPage(request.worldId, 40),
             this.#worldRevisions.activeEpoch(request.worldId),
           ]);
@@ -612,6 +624,9 @@ export class V1Runtime {
           artifacts: [],
           extensions: [],
           playerViewPanels,
+          extensionControls,
+          suppressedPlayerViewIds:
+            await this.#suppressedPlayerViewIds(extensionControls),
           artifactDebug: [],
           playCallChain: null,
           playTimeline,
@@ -622,13 +637,60 @@ export class V1Runtime {
         return request.surface === "runtime"
           ? this.#worlds.readSurface(request.worldId, "runtime")
           : this.#worlds.readSurface(request.worldId, request.surface);
+      case "world.extensions.read":
+        return this.#worlds.extensionControls(
+          request.worldId,
+          await this.#playPresets.bindCurrent(),
+          this.#locale,
+        );
+      case "world.extensions.set": {
+        const result = await this.#worlds.extensionControls(
+          request.worldId,
+          await this.#playPresets.bindCurrent(),
+          this.#locale,
+          request,
+        );
+        return result;
+      }
       case "world.play-decorations.read": {
-        const head = await this.#reconcileArtifacts(request.worldId);
-        const [projection, artifactDebug] = await Promise.all([
-          this.#frontendDecorations(request.worldId),
-          this.#frontendDebug(request.worldId),
-        ]);
-        return { head, ...projection, artifactDebug };
+        for (;;) {
+          const extensionControls = await this.#currentExtensionControls(
+            request.worldId,
+          );
+          const head = await this.#reconcileArtifacts(request.worldId);
+          const [projection, artifactDebug] = await Promise.all([
+            this.#frontendDecorations(request.worldId),
+            this.#frontendDebug(request.worldId),
+          ]);
+          const playerViews = await this.#worlds.renderPlayerViewsAtHead(
+            request.worldId,
+            head,
+          );
+          const playerViewPanels = await this.#frontendPlayerViewPanels(
+            request.worldId,
+            head,
+            playerViews,
+            extensionControls,
+          );
+          const suppressedPlayerViewIds =
+            await this.#suppressedPlayerViewIds(extensionControls);
+          // Never attach a newer controls revision to a projection read before
+          // that choice was accepted. Concurrent toggles restart this read.
+          if (
+            (await this.#worlds.extensionControlsRevision(request.worldId)) !==
+            extensionControls.revision
+          )
+            continue;
+          return {
+            head,
+            ...projection,
+            artifactDebug,
+            playerViews,
+            playerViewPanels,
+            extensionControls,
+            suppressedPlayerViewIds,
+          };
+        }
       }
       case "artifacts.read":
         await this.#reconcileArtifacts(request.worldId);
@@ -851,6 +913,11 @@ export class V1Runtime {
           : binding;
         const preview = this.#compiler.preview(
           {
+            extensionControls: await this.#worlds.extensionControls(
+              request.worldId,
+              playPreset,
+              this.#locale,
+            ),
             endpoint: {
               id: `${request.worldId}:${binding.parentHead}`,
               commit: binding.parentHead,
@@ -1009,6 +1076,7 @@ export class V1Runtime {
   }
 
   async #frontendDecorations(worldId: string, channel?: string) {
+    await this.#currentExtensionControls(worldId);
     const summaries = await this.#artifacts.readExtensionSummaries(worldId);
     const targets = await this.#worlds.playTimeline.resolveReplies(
       worldId,
@@ -1081,6 +1149,47 @@ export class V1Runtime {
     return { artifacts: projected, extensions };
   }
 
+  async #currentExtensionControls(
+    worldId: string,
+  ): Promise<WorldExtensionsView> {
+    try {
+      return await this.#worlds.extensionControls(
+        worldId,
+        await this.#playPresets.bindCurrent(),
+        this.#locale,
+      );
+    } catch (error) {
+      if (!(error instanceof FileNativePlayPresetError)) throw error;
+      return {
+        revision: await this.#worlds.extensionControlsRevision(worldId),
+        items: [],
+      };
+    }
+  }
+
+  async #suppressedPlayerViewIds(
+    controls: WorldExtensionsView,
+  ): Promise<string[]> {
+    let binding: PlayPresetBinding;
+    try {
+      binding = await this.#playPresets.bindCurrent();
+    } catch (error) {
+      if (error instanceof FileNativePlayPresetError) return [];
+      throw error;
+    }
+    // Every declared panel owns its view's fallback even while hidden.
+    return [
+      ...new Set([
+        ...binding.definition.playerViewPanels.map(
+          (panel) => panel.source.view,
+        ),
+        ...controls.items
+          .filter((item) => item.kind === "view" && !item.enabled)
+          .map((item) => item.id),
+      ]),
+    ];
+  }
+
   async #frontendPlayerViewPanels(
     worldId: string,
     head: string,
@@ -1088,6 +1197,7 @@ export class V1Runtime {
       views: RenderedPlayerView[];
       diagnostics: PlayerViewDiagnostic[];
     },
+    controls: WorldExtensionsView,
   ): Promise<FrontendPlayerViewPanelProjection[]> {
     try {
       const binding = await this.#playPresets.bindCurrent();
@@ -1096,7 +1206,12 @@ export class V1Runtime {
         head,
         playerViews,
         binding,
-      });
+      }).filter((panel) =>
+        controls.items.some(
+          (item) =>
+            item.kind === "panel" && item.id === panel.panelId && item.enabled,
+        ),
+      );
     } catch (error: unknown) {
       // Panels are decoration on top of a world read. Any unusable preset —
       // disabled, deleted, or written by an older build and now missing a

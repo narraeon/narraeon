@@ -10,7 +10,11 @@ export type ConversationTarget =
   | { kind: "setting" | "revision"; id: string; sessionId?: string };
 
 export type ConversationState =
-  | { kind: "play"; value: V1PlayCallChainView | null }
+  | {
+      kind: "play";
+      value: V1PlayCallChainView | null;
+      extensionsRevision?: number;
+    }
   | { kind: "setting"; value: V1SettingImprovementStatus }
   | { kind: "revision"; value: V1WorldRevisionStatus };
 
@@ -37,6 +41,7 @@ export function conversationUpdate(
   if (
     previous?.kind === "play" &&
     next.kind === "play" &&
+    previous.extensionsRevision === next.extensionsRevision &&
     previous.value !== null &&
     next.value !== null &&
     previous.value.chainId === next.value.chainId
@@ -101,5 +106,5 @@ export function applyConversationUpdate(
   value.updatedAt = update.updatedAt;
   if (update.progress === null) delete value.activeInvocation;
   else value.activeInvocation = update.progress;
-  return { kind: "play", value };
+  return { ...previous, kind: "play", value };
 }

@@ -7,6 +7,14 @@ import {
 let activeLocale: AppLocale = defaultAppLocale;
 
 const englishMessages: Record<string, string> = {
+  已关闭: "Disabled",
+  系统示例: "System example",
+  世界扩展: "World extensions",
+  "界面显示（不调用模型）": "Interface display (no model requests)",
+  "选择仅用于当前世界。后置请求重新开启后，从下一次正常发送生效；界面显示直接读取当前字段。":
+    "Choices apply only to this world. Re-enabled requests take effect on the next normal send; interface displays read current fields immediately.",
+  随组暂停: "Paused by group",
+
   "后置声明无法编辑，请在文件编辑中修复后重试。":
     "The followup declaration cannot be edited. Repair it in the file editor and try again.",
   "主剧情完成后按此顺序生成额外内容。关闭保留提示和资源；创建世界后独立保存，后续修改需通过世界修订应用。":

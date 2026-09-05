@@ -10,12 +10,16 @@ export function projectUncoveredPlayerViews(
     diagnostics: PlayerViewDiagnostic[];
   },
   panels: readonly Pick<FrontendPlayerViewPanelProjection, "source">[],
+  suppressedViewIds: readonly string[] = [],
 ): {
   coveredViewIds: Set<string>;
   views: RenderedPlayerView[];
   diagnostics: PlayerViewDiagnostic[];
 } {
-  const coveredViewIds = new Set(panels.map(({ source }) => source.viewId));
+  const coveredViewIds = new Set([
+    ...panels.map(({ source }) => source.viewId),
+    ...suppressedViewIds,
+  ]);
   return {
     coveredViewIds,
     views: playerViews.views.filter(({ id }) => !coveredViewIds.has(id)),
