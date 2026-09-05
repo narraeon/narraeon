@@ -608,6 +608,7 @@ export function PlayPresetScreen({
         name: draft.name,
         files: draft.files,
         ...(draft.structure === undefined ||
+        rawStructuralDirty ||
         (!structuredDirty && draft.structure.migrationNotice === undefined)
           ? {}
           : {
@@ -1230,7 +1231,12 @@ export function PlayPresetScreen({
                   ) : null}
                   <button
                     type="button"
-                    disabled={pending || !dirty || structuralConflict}
+                    disabled={
+                      pending ||
+                      (!dirty &&
+                        draft.structure?.migrationNotice === undefined) ||
+                      structuralConflict
+                    }
                     onClick={() => void saveDraft()}
                   >
                     {uiText("保存修改")}

@@ -697,7 +697,10 @@ describe("玩法预设工作台", () => {
         "call-chain.yaml": "call chain",
       },
       validation: { status: "valid" },
-      structure: editorStructure,
+      structure: {
+        ...editorStructure,
+        migrationNotice: "Legacy migration pending",
+      },
     };
     const requests: V1Request[] = [];
     let current = base;

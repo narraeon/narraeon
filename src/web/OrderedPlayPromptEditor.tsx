@@ -226,8 +226,8 @@ export function OrderedPlayPromptEditor({
       </div>
       <p className="field-note">
         {t(
-          "Dynamic input marker: Runtime appends the current round and checkpoint counters immediately before the player's original input. Existing conversation and tool results retain their order. Saved changes apply to fresh play contexts.",
-          "动态输入标记：Runtime 在本次玩家原文之前追加当前回合与检查点计数。已有对话及工具结果保留原序。保存的改动用于全新游玩上下文。",
+          "Dynamic input marker: Runtime appends the current round and checkpoint counters immediately before the player's original input. Existing conversation and tool results retain their order. After saving, apply the preset to use these changes in fresh play contexts.",
+          "动态输入标记：Runtime 在本次玩家原文之前追加当前回合与检查点计数。已有对话及工具结果保留原序。保存后点击“应用为当前玩法”，改动才用于全新游玩上下文。",
         )}
       </p>
     </section>

@@ -421,3 +421,71 @@ test("setting improvement and world revision reference enabled ordered play sema
     expect(encoded).toContain("AUTHOR_MECHANICS");
   }
 });
+
+test("one damaged legacy frame stays inspectable without breaking the preset library", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ordered-damaged-"));
+  roots.push(root);
+  const store = new FileNativePlayPresetStore(root);
+  await store.initialize();
+  const current = await store.bindCurrent();
+  const files = legacyDefaultPlayPresetFilesForLocale("en");
+  files["frame.yaml"] = "roles: { runtime_system: 123 }";
+  const imported = await store.create("Repair me", files);
+  expect(imported.preset.validation.status).toBe("invalid");
+  const library = await store.list();
+  expect(library.presets).toHaveLength(2);
+  expect(
+    library.presets.find((entry) => entry.id === imported.preset.id)?.files,
+  ).toEqual(files);
+  expect(await store.bindCurrent()).toEqual(current);
+});
+
+test("legacy derived names are bounded without truncating long or blank-heading originals", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ordered-titles-"));
+  roots.push(root);
+  const store = new FileNativePlayPresetStore(root);
+  await store.initialize();
+  const files = legacyDefaultPlayPresetFilesForLocale("en");
+  files["blocks/style.md"] = `# ${"x".repeat(200)}\n\nExact original text.`;
+  files["blocks/style-noir.md"] = "#    \n\nExact disabled original.";
+  const imported = await store.importPortable({ name: "Legacy", files });
+  const structure = imported.preset.structure!;
+  const saved = await store.save({
+    presetId: imported.preset.id,
+    name: "Legacy",
+    files,
+    structure,
+  });
+  expect(saved.preset.draft?.validation.status).toBe("valid");
+  for (const path of ["blocks/style.md", "blocks/style-noir.md"])
+    expect(
+      structure.playPrompts?.some(
+        (entry) =>
+          entry.kind === "user" &&
+          entry.body === files[path] &&
+          entry.name.length <= 160 &&
+          entry.name.trim().length > 0,
+      ),
+    ).toBe(true);
+});
+
+test.each(["escaped-v2", "unknown"] as const)(
+  "import rejects %s before creating a preset",
+  async (mode) => {
+    const root = await mkdtemp(join(tmpdir(), "ordered-import-gate-"));
+    roots.push(root);
+    const store = new FileNativePlayPresetStore(root);
+    await store.initialize();
+    const files = structuredClone(defaultPlayPresetFiles);
+    files["preset.yaml"] = files["preset.yaml"]!.replace(
+      "format: narraeon.play-preset/v2",
+      mode === "unknown"
+        ? "format: narraeon.play-preset/v99"
+        : 'format: "narraeon.play-preset/v\\x32"',
+    ).replace("enabled: true", "enabled: false");
+    await expect(
+      store.importPortable({ name: "Invalid", files }),
+    ).rejects.toThrow();
+    expect((await store.list()).presets).toHaveLength(1);
+  },
+);

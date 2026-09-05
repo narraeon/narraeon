@@ -80,9 +80,75 @@ export function migrateLegacyPlayPrompts(
   narrative: { path: string }[],
   excludedPaths: string[] = [],
 ): OrderedPlayPrompt[] {
-  const frame = parseDocument(files["frame.yaml"] ?? "").toJS() as {
-    roles?: Record<string, { markdown?: string; include?: string }[]>;
-  };
+  const document = parseDocument(files["frame.yaml"] ?? "", {
+    uniqueKeys: true,
+    strict: true,
+  });
+  const frame: unknown = document.toJS({ maxAliasCount: 0 });
+  const record = (value: unknown): value is Record<string, unknown> =>
+    typeof value === "object" && value !== null && !Array.isArray(value);
+  const roles = ["runtime_system", "author_instruction", "world_context"];
+  if (
+    document.errors.length ||
+    document.warnings.length ||
+    !record(frame) ||
+    frame.format !== "narraeon.host-frame/v1" ||
+    !record(frame.roles) ||
+    Object.keys(frame.roles).length !== 3
+  )
+    throw new Error("Legacy host frame is invalid; repair it before migrating");
+  const items: Record<string, { markdown?: string; include?: string }[]> = {};
+  const runtime = new Set<string>();
+  let worldInstructions = 0;
+  let worldContext = 0;
+  let coverage = 0;
+  for (const role of roles) {
+    items[role] = [];
+    const roleItems: unknown = frame.roles[role];
+    if (!Array.isArray(roleItems))
+      throw new Error("Legacy host role must be an array");
+    for (const item of roleItems as unknown[]) {
+      if (!record(item) || Object.keys(item).length !== 1)
+        throw new Error("Legacy host entry is invalid");
+      if (role === "author_instruction" && typeof item.markdown === "string")
+        items[role].push({ markdown: item.markdown });
+      else if (
+        role === "author_instruction" &&
+        item.include === "world.instructions"
+      ) {
+        worldInstructions++;
+        items[role].push({ include: item.include });
+      } else if (role === "world_context" && item.include === "world.context") {
+        worldContext++;
+        items[role].push({ include: item.include });
+      } else if (
+        role === "world_context" &&
+        item.builtin === "runtime.coverage"
+      )
+        coverage++;
+      else if (
+        role === "runtime_system" &&
+        typeof item.builtin === "string" &&
+        [
+          "runtime.play-contract",
+          "runtime.tool-contract",
+          "runtime.operation-contract",
+        ].includes(item.builtin) &&
+        !runtime.has(item.builtin)
+      )
+        runtime.add(item.builtin);
+      else throw new Error("Legacy host entry is unknown or misplaced");
+    }
+  }
+  if (
+    runtime.size !== 3 ||
+    coverage !== 1 ||
+    worldInstructions !== 1 ||
+    worldContext !== 1
+  )
+    throw new Error(
+      "Legacy host frame is missing or duplicates required includes",
+    );
   const entries: OrderedPlayPrompt[] = [
     {
       id: "play.mechanics",
@@ -104,9 +170,11 @@ export function migrateLegacyPlayPrompts(
     entries.push({
       id: `legacy-${createHash("sha256").update(path).digest("hex").slice(0, 32)}-${occurrence}`,
       kind: "user",
-      name:
-        /^#\s+(.+)$/mu.exec(body)?.[1] ??
-        path.replace(/^.*\//u, "").replace(/\.md$/u, ""),
+      name: (
+        /^#[ \t]+([^\r\n]+)$/mu.exec(body)?.[1]?.trim() ||
+        path.replace(/^.*\//u, "").replace(/\.md$/u, "") ||
+        "Prompt"
+      ).slice(0, 160),
       enabled,
       body,
     });
@@ -116,7 +184,7 @@ export function migrateLegacyPlayPrompts(
     "author_instruction",
     "world_context",
   ]) {
-    for (const item of frame.roles?.[role] ?? []) {
+    for (const item of items[role] ?? []) {
       if (item.markdown) add(item.markdown, true);
       if (item.include?.startsWith("world.") && !world) {
         entries.push({ id: "world", kind: "world" });

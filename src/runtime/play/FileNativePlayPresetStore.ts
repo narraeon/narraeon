@@ -790,10 +790,9 @@ export class FileNativePlayPresetStore {
     files: readonly ContentTreeFile[] | Record<string, string>;
   }): Promise<{ currentPresetId: string; preset: FileNativePlayPresetView }> {
     const files = toFileMap(input.files, this.#limits);
-    if (files["preset.yaml"]?.includes("narraeon.play-preset/v2")) {
-      const parsed = parsePlayPresetFiles(files, this.#limits);
-      if (parsed.kind === "invalid") throw parsed.error;
-    }
+    const parsed = parsePlayPresetFiles(files, this.#limits);
+    if (parsed.kind === "invalid") throw parsed.error;
+    toPlayPresetStructuredEditor(parsed.definition);
     return this.#change(async () => {
       const document = await this.#read();
       const stored = this.#stored(randomUUID(), input.name, files);
@@ -954,21 +953,15 @@ export class FileNativePlayPresetStore {
         "store_invalid",
         "The current play-preset revision does not exist",
       );
-    const validation = validatePlayPresetFiles(files, this.#limits);
     const view: FileNativePlayPresetView = {
       id: stored.id,
       name: stored.name,
       revision: stored.currentRevision,
       files: cloneFiles(files),
-      validation,
+      ...editorProjection(files, this.#limits),
       enabled: stored.enabled,
       scriptsEnabled: stored.scriptsEnabled,
     };
-    if (validation.status === "valid") {
-      const parsed = parsePlayPresetFiles(files, this.#limits);
-      if (parsed.kind === "valid")
-        view.structure = toPlayPresetStructuredEditor(parsed.definition);
-    }
     if (stored.draftRevision !== undefined) {
       const draftFiles = stored.revisions[stored.draftRevision];
       if (draftFiles === undefined)
@@ -979,15 +972,8 @@ export class FileNativePlayPresetStore {
       view.draft = {
         revision: stored.draftRevision,
         files: cloneFiles(draftFiles),
-        validation: validatePlayPresetFiles(draftFiles, this.#limits),
+        ...editorProjection(draftFiles, this.#limits),
       };
-      if (view.draft.validation.status === "valid") {
-        const parsedDraft = parsePlayPresetFiles(draftFiles, this.#limits);
-        if (parsedDraft.kind === "valid")
-          view.draft.structure = toPlayPresetStructuredEditor(
-            parsedDraft.definition,
-          );
-      }
     }
     return view;
   }
@@ -1025,6 +1011,34 @@ export function validatePlayPresetFiles(
       message:
         error instanceof Error ? error.message : "Play preset is invalid",
       location: "preset.yaml",
+    };
+  }
+}
+
+function editorProjection(
+  files: Record<string, string>,
+  limits: PortableContentTreeLimits,
+): Pick<FileNativePlayPresetView, "validation" | "structure"> {
+  const validation = validatePlayPresetFiles(files, limits);
+  if (validation.status === "invalid") return { validation };
+  const parsed = parsePlayPresetFiles(files, limits);
+  if (parsed.kind === "invalid") return { validation };
+  try {
+    return {
+      validation,
+      structure: toPlayPresetStructuredEditor(parsed.definition),
+    };
+  } catch (error: unknown) {
+    return {
+      validation: {
+        status: "invalid",
+        code: "legacy_preset_migration_invalid",
+        location: "frame.yaml",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Legacy preset cannot be migrated",
+      },
     };
   }
 }
