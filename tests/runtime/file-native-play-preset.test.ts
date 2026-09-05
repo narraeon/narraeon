@@ -294,6 +294,10 @@ describe("文件原生玩法预设", () => {
       "  - scripts/player-options.js\n",
       "",
     );
+    rendererOnly["call-chain.yaml"] = rendererOnly["call-chain.yaml"]!.replace(
+      "        scripts:\n          - scripts/player-options.js\n",
+      "",
+    );
     rendererOnly["renderers/player-options.html"] = rendererOnly[
       "renderers/player-options.html"
     ]!.replace("</body>", "<script>parent.__imported = true</script></body>");

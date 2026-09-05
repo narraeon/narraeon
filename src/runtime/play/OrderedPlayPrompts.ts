@@ -167,14 +167,14 @@ export function migrateLegacyPlayPrompts(
     used.add(path);
     const body = files[path];
     if (body === undefined) throw new Error(`Missing legacy prompt: ${path}`);
+    const heading = /^#[ \t]+([^\r\n]+)$/mu.exec(body)?.[1]?.trim() ?? "";
+    const stem = path.replace(/^.*\//u, "").replace(/\.md$/u, "");
+    const name =
+      heading.length > 0 ? heading : stem.length > 0 ? stem : "Prompt";
     entries.push({
       id: `legacy-${createHash("sha256").update(path).digest("hex").slice(0, 32)}-${occurrence}`,
       kind: "user",
-      name: (
-        /^#[ \t]+([^\r\n]+)$/mu.exec(body)?.[1]?.trim() ||
-        path.replace(/^.*\//u, "").replace(/\.md$/u, "") ||
-        "Prompt"
-      ).slice(0, 160),
+      name: name.slice(0, 160),
       enabled,
       body,
     });
