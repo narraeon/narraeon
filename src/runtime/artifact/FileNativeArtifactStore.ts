@@ -16,6 +16,8 @@ import { tmpdir } from "node:os";
 
 import {
   validatePlayPresetArtifactPayload,
+  isFrozenArtifactPresentation,
+  type FrozenArtifactPresentation,
   type PlayPresetArtifactDeclaration,
   type PlayPresetArtifactStrategy,
 } from "../play/FileNativePlayPresetStore.ts";
@@ -67,6 +69,7 @@ export interface ArtifactOperationContext {
 }
 
 export interface ArtifactRequestContext extends ArtifactOperationContext {
+  frozenResources?: Omit<FrozenArtifactPresentation, "declaration">;
   requestId: string;
   requestAttempt: number;
   maxArtifactBytes: number;
@@ -94,6 +97,7 @@ export interface ArtifactToolResult {
 }
 
 export interface ArtifactProjectionItem {
+  frozenPresentation?: FrozenArtifactPresentation;
   recordId: string;
   worldId: string;
   operationId: string;
@@ -116,6 +120,7 @@ export interface ArtifactProjectionItem {
 }
 
 export interface ArtifactDebugRecord {
+  frozenPresentation?: FrozenArtifactPresentation;
   recordId: string;
   sequence: number;
   operationId: string;
@@ -202,6 +207,7 @@ export interface ArtifactStore {
 }
 
 interface ArtifactRawRecord {
+  frozenPresentation?: FrozenArtifactPresentation;
   schemaVersion: 1;
   recordId: string;
   sequence: number;
@@ -1292,6 +1298,9 @@ export class FileNativeArtifactStore implements ArtifactStore {
       ...(record.rendererRevision === undefined
         ? {}
         : { rendererRevision: record.rendererRevision }),
+      ...(record.frozenPresentation === undefined
+        ? {}
+        : { frozenPresentation: structuredClone(record.frozenPresentation) }),
       payload: structuredClone(record.payload),
       projection: record.projection,
       save: record.save,
@@ -1334,6 +1343,9 @@ export class FileNativeArtifactStore implements ArtifactStore {
         save: record.save,
         projection: record.projection,
         payloadBytes: byteLength(record.payload, record.contentType),
+        ...(record.frozenPresentation === undefined
+          ? {}
+          : { frozenPresentation: structuredClone(record.frozenPresentation) }),
         payload: structuredClone(record.payload),
         payloadFingerprint: record.payloadFingerprint,
         status,
@@ -1372,6 +1384,14 @@ export class FileNativeArtifactStore implements ArtifactStore {
       ...(declaration.rendererRevision === undefined
         ? {}
         : { rendererRevision: declaration.rendererRevision }),
+      ...(input.context.frozenResources === undefined
+        ? {}
+        : {
+            frozenPresentation: {
+              ...structuredClone(input.context.frozenResources),
+              declaration: structuredClone(declaration),
+            },
+          }),
       payload: structuredClone(payload),
       save: declaration.save,
       projection: declaration.strategy,
@@ -2405,8 +2425,10 @@ function assertRawRecord(record: ArtifactRawRecord): void {
         "recordFingerprint",
         "status",
       ],
-      ["key", "renderer", "rendererRevision"],
+      ["key", "renderer", "rendererRevision", "frozenPresentation"],
     ) ||
+    (record.frozenPresentation !== undefined &&
+      !isFrozenArtifactPresentation(record.frozenPresentation)) ||
     record.schemaVersion !== 1 ||
     !isNonEmptyString(record.recordId) ||
     !Number.isSafeInteger(record.sequence) ||

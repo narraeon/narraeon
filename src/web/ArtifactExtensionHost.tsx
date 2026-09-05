@@ -389,14 +389,20 @@ export function buildDocumentSrcDoc(
   payload?: ArtifactPayload,
 ): string {
   if (renderer?.mode === "document" && renderer.document !== undefined)
-    return buildDocumentTemplateSrcDoc({
-      template: renderer.document,
-      content,
-      contentType,
-      ...(payload === undefined ? {} : { payload }),
-    });
-  if (contentType === "text/html") return content;
-  return `<!doctype html><meta charset="utf-8"><style>body{font:15px/1.6 system-ui,sans-serif;margin:1rem;color:#202020}pre{white-space:pre-wrap}code{font-family:ui-monospace,monospace}</style><main>${contentType === "text/markdown" ? content : `<pre>${escapeHtml(content)}</pre>`}</main>`;
+    return withRendererStyles(
+      buildDocumentTemplateSrcDoc({
+        template: renderer.document,
+        content,
+        contentType,
+        ...(payload === undefined ? {} : { payload }),
+      }),
+      renderer,
+    );
+  if (contentType === "text/html") return withRendererStyles(content, renderer);
+  return withRendererStyles(
+    `<!doctype html><meta charset="utf-8"><style>body{font:15px/1.6 system-ui,sans-serif;margin:1rem;color:#202020}pre{white-space:pre-wrap}code{font-family:ui-monospace,monospace}</style><main>${contentType === "text/markdown" ? content : `<pre>${escapeHtml(content)}</pre>`}</main>`,
+    renderer,
+  );
 }
 
 /**
@@ -437,12 +443,26 @@ export function buildDocumentTemplateSrcDoc(input: {
   return output;
 }
 
+function withRendererStyles(
+  source: string,
+  renderer: FrontendExtensionBundle["renderer"],
+): string {
+  const styles = (renderer?.assets ?? [])
+    .filter((asset) => asset.id.endsWith(".css"))
+    .map((asset) => `<style>${asset.source.replaceAll("<", "\\3c ")}</style>`)
+    .join("");
+  return styles === "" ? source : injectIntoHead(source, styles, "");
+}
+
 export function buildAppSrcDoc(input: {
   renderer: NonNullable<FrontendExtensionBundle["renderer"]>;
   instanceId: string;
   nonce: string;
 }): string {
-  const source = input.renderer.document ?? "<main></main>";
+  const source = withRendererStyles(
+    input.renderer.document ?? "<main></main>",
+    input.renderer,
+  );
   const scripts = input.renderer.scripts
     .map(
       (script) =>

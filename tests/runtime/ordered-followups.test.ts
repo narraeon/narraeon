@@ -1,3 +1,7 @@
+import { FileNativeArtifactStore } from "../../src/runtime/artifact/FileNativeArtifactStore.ts";
+import { ScriptedModelHost } from "../../src/runtime/model/ModelHost.ts";
+import { runPlayFollowupRequests } from "../../src/runtime/play/PlayFollowupRequests.ts";
+import { projectArtifactForFrontend } from "../../src/runtime/extension/FrontendExtensionBundle.ts";
 import * as builtinCatalog from "../../src/shared/ordered-followups.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -254,5 +258,119 @@ test("内置更新改变新编译，用户克隆及已编译快照仍保留原�
     ).not.toContain("UPDATED APPLICATION EXAMPLE");
   } finally {
     spy.mockRestore();
+  }
+});
+
+test("系统身份实际派发并冷恢复产物；应用修改产物声明不改变历史显示", async () => {
+  const root = await mkdtemp(join(tmpdir(), "narraeon-builtin-followup-"));
+  const parsed = parsePlayPresetFiles(firstPartyActionChoicesPresetFiles);
+  if (parsed.kind !== "valid") throw parsed.error;
+  const structure = toPlayPresetStructuredEditor(parsed.definition);
+  structure.followupItems!.forEach((item) => {
+    item.enabled = item.kind !== "user";
+  });
+  const files = applyPlayPresetStructuredEditor(
+    firstPartyActionChoicesPresetFiles,
+    structure,
+  );
+  const saved = parsePlayPresetFiles(files);
+  if (saved.kind !== "valid") throw saved.error;
+  const binding = {
+    id: "test",
+    name: "test",
+    revision: "test",
+    files,
+    definition: saved.definition,
+    scriptsEnabled: false,
+  };
+  const preview = new FileNativePromptCompiler().previewPlayPreset(
+    createMinimalFileNativePreviewInput({
+      provider: "chat_completions",
+      modelId: "test",
+      contextWindowTokens: 128000,
+      maxOutputTokens: 16000,
+      playerInput: "hello",
+      playerInputPlacement: "append",
+    }),
+    binding,
+  );
+  const host = new ScriptedModelHost({
+    binding: {
+      provider: "chat_completions",
+      endpointFingerprint: "test",
+      modelId: "test",
+      contextWindowTokens: 128000,
+      maxOutputTokens: 16000,
+      protocolConfigFingerprint: "test",
+    },
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "emit",
+            name: "artifact_emit",
+            arguments: { output: "recap", payload: "Frozen recap" },
+          },
+        ],
+      },
+    ],
+  });
+  try {
+    const run = await runPlayFollowupRequests({
+      artifacts: new FileNativeArtifactStore(root),
+      modelHost: host,
+      followups: preview.playPreset!.followups,
+      bootstrap: preview.compilation,
+      prefix: [],
+      toolStrategy: preview.compilation.toolStrategy,
+      context: {
+        worldId: "world",
+        parentHead: "genesis",
+        operationId: "run",
+        playPresetId: binding.id,
+        playPresetRevision: binding.revision,
+        playPresetScriptsEnabled: false,
+      },
+      head: "commit:1",
+      maxOutputTokens: 16000,
+    });
+    expect(run.outcomes).toMatchObject([
+      { id: "builtin:summary", toolCalls: [{ ok: true }] },
+    ]);
+    const example = builtinCatalog.builtinFollowupExample("en");
+    const spy = vi
+      .spyOn(builtinCatalog, "builtinFollowupExample")
+      .mockReturnValue({
+        ...example,
+        definition: {
+          ...example.definition,
+          artifacts: [
+            { ...example.definition.artifacts[0]!, name: "new_output" },
+          ],
+        },
+      });
+    try {
+      const records = await new FileNativeArtifactStore(
+        root,
+      ).readActiveProjection("world");
+      expect(records).toHaveLength(1);
+      expect(records[0]?.requestId).toBe("builtin:summary");
+      expect(projectArtifactForFrontend(records[0]!, binding)).toMatchObject({
+        status: "ready",
+        mount: "story",
+        declaration: { outputName: "recap" },
+      });
+      expect(projectArtifactForFrontend(records[0]!, null)).toMatchObject({
+        status: "ready",
+        mount: "story",
+        declaration: { outputName: "recap" },
+      });
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });

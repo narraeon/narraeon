@@ -125,6 +125,55 @@ export interface PlayPresetFollowupDefinition {
   maxArtifactBytes: number;
 }
 
+/** Resolved application-owned presentation, retained with each generated artifact. */
+export interface FrozenArtifactPresentation {
+  declaration: PlayPresetArtifactDeclaration;
+  files: Record<string, string>;
+  mount: PlayPresetMount["mount"];
+}
+
+export function isFrozenArtifactPresentation(
+  value: unknown,
+): value is FrozenArtifactPresentation {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ["declaration", "files", "mount"]) ||
+    !isRecord(value.declaration) ||
+    !isRecord(value.files) ||
+    !Object.values(value.files).every((body) => typeof body === "string")
+  )
+    return false;
+  try {
+    const original = value.declaration;
+    const parsed = parseArtifacts(
+      [
+        {
+          ...original,
+          ...(original.channel === "builtin:summary"
+            ? { channel: "frozen.presentation" }
+            : {}),
+        },
+      ],
+      value.files as Record<string, string>,
+      "frozen artifact",
+    )[0]!;
+    parsed.channel = String(original.channel);
+    return (
+      isDeepStrictEqual(parsed, original) &&
+      [
+        "story",
+        "sidebar",
+        "composer_above",
+        "composer_below",
+        "overlay",
+        "debug",
+      ].includes(String(value.mount))
+    );
+  } catch {
+    return false;
+  }
+}
+
 export interface PlayPresetMount {
   channel: string;
   mount:
@@ -1525,7 +1574,7 @@ function parsePromptBlocks(
 }
 
 /**
- * Follow-ups have no ordering contract. The parser needs only each request's
+ * User definitions retain their resources independently of order and enablement. The parser needs each request's
  * identity, its single author prompt, and the artifacts it may emit.
  */
 function parseFollowups(

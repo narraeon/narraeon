@@ -25,8 +25,25 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
     request.on("end", () => {
       requests += 1;
       requestBodies.push(body);
-      if (requests === 1 || requests === 4)
+      if (requests === 1 || requests === 4 || requests === 5)
         send(response, { content: "Alex opens the door." });
+      else if (requests === 6)
+        send(response, {
+          tool_calls: [
+            {
+              index: 0,
+              id: "builtin-recap",
+              type: "function",
+              function: {
+                name: "artifact_emit",
+                arguments: JSON.stringify({
+                  output: "recap",
+                  payload: "Builtin identity survived execution",
+                }),
+              },
+            },
+          ],
+        });
       else pending.push(response);
     });
   });
@@ -125,6 +142,15 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
     await page
       .getByLabel("HTML 模板 1", { exact: true })
       .fill("<main><h2>Edited renderer</h2><!-- narraeon:content --></main>");
+    await page
+      .getByRole("button", { name: "添加 样式与资源", exact: true })
+      .last()
+      .click();
+    await page
+      .getByLabel("样式与资源 1", { exact: true })
+      .fill(
+        'h2 { color: rgb(12, 34, 56); } h2::after { content: "<"; } /* </style><script data-css-escape>bad()</script> */',
+      );
     await page.getByRole("button", { name: "保存修改", exact: true }).click();
     await expect(
       page.getByText("玩法文件与结构化草稿已保存。", { exact: true }),
@@ -231,6 +257,26 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
         .getByText("Edited renderer", { exact: true }),
     ).toBeVisible();
     expect(await head()).toBe(settledHead);
+    await expect(
+      page
+        .frameLocator('iframe[title="output_2"]')
+        .getByRole("heading", { name: "Edited renderer" }),
+    ).toHaveCSS("color", "rgb(12, 34, 56)");
+    const renderedHeading = page
+      .frameLocator('iframe[title="output_2"]')
+      .getByRole("heading", { name: "Edited renderer" });
+    expect(
+      await renderedHeading.evaluate(
+        (element) => getComputedStyle(element, "::after").content,
+      ),
+    ).toBe('"<"');
+    expect(
+      await renderedHeading.evaluate(
+        (element) =>
+          element.ownerDocument.querySelector("script[data-css-escape]") ===
+          null,
+      ),
+    ).toBe(true);
     // A second follow-up fails after the first content has become visible.
     send(pending.shift()!, { content: "No required artifact emitted." });
     await expect(
@@ -279,6 +325,31 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
     ).toBeEnabled();
     await expect.poll(() => requests).toBe(4);
     expect(pending).toHaveLength(0);
+    await page.goto(url);
+    await page.getByRole("button", { name: "预设", exact: true }).click();
+    await page.getByLabel("启用 场景回顾（系统示例）").check();
+    await page.getByRole("button", { name: "保存修改", exact: true }).click();
+    await expect(
+      page.getByText("玩法文件与结构化草稿已保存。", { exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "应用为当前玩法", exact: true })
+      .click();
+    await open();
+    await page.getByLabel("你的行动").fill("Generate the system recap.");
+    await page
+      .getByRole("button", { name: "从全新上下文发送行动", exact: true })
+      .click();
+    const recap = () =>
+      page
+        .frameLocator('iframe[title="recap"]')
+        .getByText("Builtin identity survived execution", { exact: true });
+    await expect(recap()).toBeVisible();
+    await stop();
+    await start();
+    await open();
+    await expect(recap()).toBeVisible();
+    expect(requests).toBe(6);
   } finally {
     await page.goto("about:blank").catch(() => undefined);
     await stop();
@@ -311,7 +382,7 @@ ${["first", "second"]
   .map(
     (id) => `  - id: ${id}
     displayName: ${id}
-    prompt: { markdown: prompts/panel.md }
+    prompt: { markdown: prompts/${id}.md }
     maxArtifactBytes: 32768
     artifacts:
       - name: panel
@@ -325,7 +396,8 @@ ${["first", "second"]
 `,
   )
   .join("")}`,
-    "prompts/panel.md": "Write the panel.\n",
+    "prompts/first.md": "Write the panel.\n",
+    "prompts/second.md": "Write the second panel.\n",
   };
 }
 

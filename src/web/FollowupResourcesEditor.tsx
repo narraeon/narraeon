@@ -52,6 +52,9 @@ export function FollowupResourcesEditor({
       {kinds.map((entry) => (
         <section key={entry.kind}>
           <h6>{uiText(entry.label)}</h6>
+          {entry.kind === "scripts" ? (
+            <p>{uiText("JavaScript 仅在 app 模式且已允许脚本时运行。")}</p>
+          ) : null}
           {entry.paths.map((path, index) => (
             <label key={path}>
               {uiText(entry.label)} {index + 1}

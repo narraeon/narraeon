@@ -620,19 +620,16 @@ describe("玩法预设工作台", () => {
       );
     }
     fireEvent.click(
-      screen.getByRole("button", { name: "场景回顾（系统示例）", exact: true }),
+      screen.getByRole("button", { name: "场景回顾（系统示例）" }),
     );
     expect(screen.getByLabelText("系统后置提示词")).toHaveProperty(
       "readOnly",
       true,
     );
     expect(screen.queryByRole("button", { name: /^删除后置请求/ })).toBeNull();
-    fireEvent.click(
-      screen.getByRole("button", { name: "克隆后置请求", exact: true }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "克隆后置请求" }));
     const clone = screen.getByRole("button", {
       name: "场景回顾（系统示例） 副本",
-      exact: true,
     });
     fireEvent.click(clone);
     expect(screen.getByLabelText("这次额外请求要做什么")).toHaveProperty(
@@ -641,11 +638,10 @@ describe("玩法预设工作台", () => {
     );
     const list = screen.getByRole("list", { name: "后置请求" });
     fireEvent.keyDown(clone, { altKey: true, key: "ArrowUp" });
-    expect(list.lastElementChild?.textContent).toContain("内容包后置请求");
+    expect(list.lastElementChild?.textContent).toContain("行动选项");
     fireEvent.click(
       screen.getByRole("button", {
         name: "下移 场景回顾（系统示例） 副本",
-        exact: true,
       }),
     );
     expect(list.lastElementChild?.textContent).toContain(

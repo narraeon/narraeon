@@ -7,6 +7,8 @@ import {
 let activeLocale: AppLocale = defaultAppLocale;
 
 const englishMessages: Record<string, string> = {
+  "JavaScript 仅在 app 模式且已允许脚本时运行。":
+    "JavaScript runs only in app mode with scripts enabled.",
   "HTML 模板": "HTML template",
   编辑渲染资源: "Edit rendering resources",
   "在此位置展开当前世界的内容包后置请求。无声明时为空组，不调用模型；正文由内容包管理。":

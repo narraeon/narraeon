@@ -39,6 +39,7 @@ export function builtinFollowupExample(locale: "en" | "zh-CN") {
           channel: "builtin:summary",
           strategy: "replace" as const,
           contentType: "text/markdown" as const,
+          rendererMode: "document" as const,
           save: "commit" as const,
           invalidation: "explicit_clear" as const,
           required: true,

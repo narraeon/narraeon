@@ -1194,15 +1194,30 @@ function validPlayPresetMount(value: unknown): boolean {
 function validPlayFollowup(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, [
-      "id",
-      "displayName",
-      "logicalMessages",
-      "tools",
-      "allowedTools",
-      "artifacts",
-      "maxArtifactBytes",
-    ]) &&
+    hasExactKeys(
+      value,
+      [
+        "id",
+        "displayName",
+        "logicalMessages",
+        "tools",
+        "allowedTools",
+        "artifacts",
+        "maxArtifactBytes",
+      ],
+      ["frozenResources"],
+    ) &&
+    (value.frozenResources === undefined ||
+      (isRecord(value.frozenResources) &&
+        hasExactKeys(value.frozenResources, ["files", "mount"]) &&
+        isRecord(value.frozenResources.files) &&
+        Object.values(value.frozenResources.files).every(
+          (body) => typeof body === "string",
+        ) &&
+        validPlayPresetMount({
+          channel: "frozen",
+          mount: value.frozenResources.mount,
+        }))) &&
     typeof value.id === "string" &&
     typeof value.displayName === "string" &&
     validLogicalMessages(value.logicalMessages) &&

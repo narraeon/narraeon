@@ -1881,28 +1881,18 @@ function PlayPresetStructuredEditorPanel({
                       <li key={`${artifact.name}-${artifactIndex}`}>
                         <label>
                           {uiText("显示位置")}
-                          <select
-                            aria-label={`${artifact.name} ${uiText("显示位置")}`}
+                          <MountSelect
+                            ariaLabel={`${artifact.name} ${uiText("显示位置")}`}
                             value={
                               structure.mounts.find(
                                 (mount) => mount.channel === artifact.channel,
                               )?.mount ?? ""
                             }
-                            onChange={(event) =>
-                              setChannelMount(
-                                artifact.channel,
-                                event.currentTarget.value as
-                                  PlayPresetMount["mount"] | "",
-                              )
+                            allowNone
+                            onChange={(mount) =>
+                              setChannelMount(artifact.channel, mount)
                             }
-                          >
-                            <option value="">{uiText("不在页面显示")}</option>
-                            {mountChoices.map((choice) => (
-                              <option key={choice.value} value={choice.value}>
-                                {uiText(choice.label)}
-                              </option>
-                            ))}
-                          </select>
+                          />
                         </label>
                         <FollowupResourcesEditor
                           files={files}
@@ -1920,7 +1910,11 @@ function PlayPresetStructuredEditorPanel({
                             }));
                             updateArtifact(index, artifactIndex, (current) =>
                               kind === "renderer"
-                                ? { ...current, renderer: path }
+                                ? {
+                                    ...current,
+                                    renderer: path,
+                                    rendererRevision: crypto.randomUUID(),
+                                  }
                                 : {
                                     ...current,
                                     [kind]: [...(current[kind] ?? []), path],

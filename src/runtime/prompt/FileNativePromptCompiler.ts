@@ -238,6 +238,10 @@ export interface PlayPresetCompilation {
 
 /** One post-commit derived request compiled against the main-chain prefix. */
 export interface PlayFollowupCompilation {
+  frozenResources?: {
+    files: Record<string, string>;
+    mount: PlayPresetMount["mount"];
+  };
   id: string;
   displayName: string;
   /** Author prompt plus the Runtime artifact contract for this request. */
@@ -982,6 +986,9 @@ function compileFollowups(
         },
       ];
       return {
+        ...(followup.id === "builtin:summary"
+          ? { frozenResources: { files: {}, mount: "story" as const } }
+          : {}),
         id: followup.id,
         displayName: followup.displayName,
         logicalMessages: [

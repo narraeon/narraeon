@@ -1,4 +1,3 @@
-import { builtinFollowupExample } from "../../shared/ordered-followups.ts";
 import type {
   ArtifactDebugRecord,
   ArtifactProjectionItem,
@@ -79,15 +78,16 @@ export function projectArtifactForFrontend(
     id: artifact.playPresetId,
     revision: artifact.playPresetRevision,
   };
-  if (binding === null)
+  if (binding === null && artifact.frozenPresentation === undefined)
     return missingBundle(
       preset,
       "The frozen play-preset revision is unavailable and cannot be replaced with the current revision",
       failure,
     );
   if (
-    binding.id !== artifact.playPresetId ||
-    binding.revision !== artifact.playPresetRevision
+    binding !== null &&
+    (binding.id !== artifact.playPresetId ||
+      binding.revision !== artifact.playPresetRevision)
   )
     return missingBundle(
       preset,
@@ -95,13 +95,11 @@ export function projectArtifactForFrontend(
       "invalid_revision",
     );
 
-  const followup =
-    binding.definition.followups.find(({ id }) => id === artifact.requestId) ??
-    (artifact.requestId === "builtin:summary" &&
-    binding.definition.followupItems?.some((item) => item.kind === "builtin")
-      ? builtinFollowupExample("en").definition
-      : undefined);
-  const declaration: PlayPresetArtifactDeclaration | undefined =
+  const followup = binding?.definition.followups.find(
+    ({ id }) => id === artifact.requestId,
+  );
+  const declaration =
+    artifact.frozenPresentation?.declaration ??
     followup?.artifacts.find(({ name }) => name === artifact.output);
   if (declaration === undefined)
     return {
@@ -123,9 +121,9 @@ export function projectArtifactForFrontend(
     };
 
   try {
-    const frozenBinding: PlayPresetBinding = {
-      ...binding,
+    const frozenBinding = {
       scriptsEnabled: artifact.playPresetScriptsEnabled,
+      files: artifact.frozenPresentation?.files ?? binding?.files ?? {},
     };
     const regex = declaration.regex
       ? parsePlayPresetRegexAsset(
@@ -138,11 +136,10 @@ export function projectArtifactForFrontend(
       : [];
     const renderer = resolveRenderer(declaration, frozenBinding);
     const mount =
-      artifact.requestId === "builtin:summary"
-        ? "story"
-        : frozenBinding.definition.mounts.find(
-            ({ channel }) => channel === declaration.channel,
-          )?.mount;
+      artifact.frozenPresentation?.mount ??
+      binding?.definition.mounts.find(
+        ({ channel }) => channel === declaration.channel,
+      )?.mount;
     return {
       status: "ready",
       preset,
@@ -290,7 +287,7 @@ function declarationView(
 
 function resolveRenderer(
   declaration: PlayPresetArtifactDeclaration,
-  binding: PlayPresetBinding,
+  binding: Pick<PlayPresetBinding, "files" | "scriptsEnabled">,
 ): FrontendExtensionRenderer | undefined {
   const mode = declaration.rendererMode ?? "document";
   const rendererSource = declaration.renderer
