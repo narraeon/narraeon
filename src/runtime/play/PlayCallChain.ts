@@ -247,12 +247,12 @@ export class PlayCallChain {
       );
 
     const binding = await this.#worlds.bindPlayCallChain(input.worldId);
-    const documentMaintenance = await this.#worlds.readDocumentMaintenance(
+    const documents = new FileNativePlayDocuments(binding.files);
+    const documentMaintenance = await this.#bindDocumentMaintenance(
+      documents,
       input.worldId,
       binding.parentHead,
     );
-    const documents = new FileNativePlayDocuments(binding.files);
-    documents.bindMaintenance(documentMaintenance, this.#compiler.locale);
     const compilation = this.#compiler.compilePlayCallChain(
       {
         endpoint: {
@@ -267,6 +267,7 @@ export class PlayCallChain {
           history: structuredClone(binding.history),
           narrativeCheckpoint: binding.narrativeCheckpoint,
           documentMaintenance,
+          documentMaintenanceUnavailableReason: documents.maintenanceWarning,
         },
         playerInputPlacement: "append",
         playerInput: input.playerText,
@@ -282,6 +283,7 @@ export class PlayCallChain {
       schemaVersion: 3,
       kind: "play_call_chain",
       chainId: input.chainId,
+      continuityContextId: input.chainId,
       worldId: input.worldId,
       previousContexts: [],
       previousChainId: existing?.chainId ?? null,
@@ -998,6 +1000,8 @@ export class PlayCallChain {
       prefixEvents,
     );
     const revised: PersistedPlayCallChain = {
+      continuityContextId:
+        sourceContext.continuityContextId ?? sourceContext.chainId,
       schemaVersion: 3,
       kind: "play_call_chain",
       chainId: playerRevisionChainId(
@@ -1086,12 +1090,12 @@ export class PlayCallChain {
       request.worldId,
       restoresHead,
     );
-    const documentMaintenance = await this.#worlds.readDocumentMaintenance(
+    const documents = new FileNativePlayDocuments(binding.files);
+    const documentMaintenance = await this.#bindDocumentMaintenance(
+      documents,
       request.worldId,
       binding.parentHead,
     );
-    const documents = new FileNativePlayDocuments(binding.files);
-    documents.bindMaintenance(documentMaintenance, this.#compiler.locale);
     const compilation = this.#compiler.compilePlayCallChain(
       {
         endpoint: {
@@ -1106,6 +1110,7 @@ export class PlayCallChain {
           history: structuredClone(binding.history),
           narrativeCheckpoint: binding.narrativeCheckpoint,
           documentMaintenance,
+          documentMaintenanceUnavailableReason: documents.maintenanceWarning,
         },
         playerInputPlacement: "append",
         playerInput: request.replacementText,
@@ -1156,6 +1161,8 @@ export class PlayCallChain {
         input.prefixEvents,
       );
       const prefix: PersistedPlayCallChain = {
+        continuityContextId:
+          sourceContext.continuityContextId ?? sourceContext.chainId,
         schemaVersion: 3,
         kind: "play_call_chain",
         chainId: derivedChainId(
@@ -1372,6 +1379,8 @@ export class PlayCallChain {
       previousChainId = chainId;
     }
     const derived: PersistedPlayCallChain = {
+      continuityContextId:
+        sourceContext.continuityContextId ?? sourceContext.chainId,
       schemaVersion: 3,
       kind: "play_call_chain",
       chainId: derivedChainId(
@@ -1497,7 +1506,7 @@ export class PlayCallChain {
       schemaVersion: 1,
       kind: "play_advance",
       advanceKind: "player",
-      playContext: session.chainId,
+      playContext: session.continuityContextId ?? session.chainId,
       worldId: session.worldId,
       chainId: session.chainId,
       advanceId: playerOperationId,
@@ -1787,7 +1796,7 @@ export class PlayCallChain {
     };
     return {
       assistantEvent,
-      playContext: session.chainId,
+      playContext: session.continuityContextId ?? session.chainId,
       ...(worldClock === undefined || stateChanges.length === 0
         ? {}
         : { worldClock }),
@@ -1939,12 +1948,10 @@ export class PlayCallChain {
       mergeChangedDocuments(session, settlement.stateChanges);
     }
     if (settlement.stateChanges.length > 0)
-      session.documents.bindMaintenance(
-        await this.#worlds.readDocumentMaintenance(
-          session.worldId,
-          session.parentHead,
-        ),
-        this.#compiler.locale,
+      await this.#bindDocumentMaintenance(
+        session.documents,
+        session.worldId,
+        session.parentHead,
       );
 
     session.exchange = Math.max(session.exchange, advance.exchange);
@@ -2520,6 +2527,28 @@ export class PlayCallChain {
     return session;
   }
 
+  async #bindDocumentMaintenance(
+    documents: FileNativePlayDocuments,
+    worldId: string,
+    head: string,
+  ) {
+    const inspection = await this.#worlds.inspectDocumentMaintenance(
+      worldId,
+      head,
+    );
+    if (inspection.documentMaintenanceUnavailableReason === undefined)
+      documents.bindMaintenance(
+        inspection.documentMaintenance,
+        this.#compiler.locale,
+      );
+    else
+      documents.bindMaintenanceUnavailable(
+        inspection.documentMaintenanceUnavailableReason,
+        this.#compiler.locale,
+      );
+    return inspection.documentMaintenance;
+  }
+
   async #hydrateSession(
     persisted: PersistedPlayCallChain,
     advance: LoadedPlayAdvance | null,
@@ -2540,12 +2569,10 @@ export class PlayCallChain {
         prepared.authorizationCheckpoint,
       );
     }
-    documents.bindMaintenance(
-      await this.#worlds.readDocumentMaintenance(
-        persisted.worldId,
-        binding.parentHead,
-      ),
-      this.#compiler.locale,
+    await this.#bindDocumentMaintenance(
+      documents,
+      persisted.worldId,
+      binding.parentHead,
     );
     return {
       ...structuredClone(persisted),
@@ -2964,6 +2991,7 @@ function independentContextCopy(
   source: PersistedPlayCallChainContext,
 ): PersistedPlayCallChainContext {
   const context = structuredClone(source);
+  context.continuityContextId ??= source.chainId;
   delete context.derivedFrom;
   delete context.branchedBeforePlayer;
   return context;

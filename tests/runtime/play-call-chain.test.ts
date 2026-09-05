@@ -1459,6 +1459,71 @@ test("已提交写入回执报告下次真实目录覆盖并回显更新后的�
   expect(persisted).toMatchObject({ markdown: receipt.markdown });
 });
 
+test("维护诊断失败不阻断已提交写入、终态叙事或冷恢复", async () => {
+  const { worlds, worldId } = await createWorld("maintenance-failure");
+  const original = worlds.readDocumentMaintenance.bind(worlds);
+  let reads = 0;
+  vi.spyOn(worlds, "readDocumentMaintenance").mockImplementation((...args) =>
+    ++reads === 1
+      ? original(...args)
+      : Promise.reject(new Error("maintenance unavailable")),
+  );
+  const host = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "write",
+            name: "world_patch",
+            arguments: {
+              target: "@current-situation",
+              edits: [
+                {
+                  op: "replace",
+                  locator: { yaml: ["情况"] },
+                  value: "Alex 已打开门。",
+                },
+              ],
+            },
+          },
+        ],
+      },
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "read",
+            name: "context_read",
+            arguments: { ref: "@current-situation" },
+          },
+        ],
+      },
+      { outcome: "response", text: "Alex 推开门。" },
+    ],
+  });
+  const completed = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "maintenance-failure",
+    exchangeId: "first",
+    playerText: "打开门。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: host,
+  });
+  expect(completed.status).toBe("ready");
+  expect(completed.parentHead).toBe("commit:3");
+  expect(host.requests).toHaveLength(3);
+  expect(JSON.stringify(host.requests.at(-1)?.appended.at(-1))).toContain(
+    "maintenance unavailable",
+  );
+  expect((await new PlayCallChain(worlds).inspectWorld(worldId))?.status).toBe(
+    "ready",
+  );
+});
+
 test("增长基准与正文写入位置跨重启和分叉保留，摘要修改不刷新正文位置", async () => {
   const files = worldFiles();
   files.find(({ path }) => path === "world/current-situation.yaml")!.contents +=
@@ -1562,7 +1627,7 @@ test("增长基准与正文写入位置跨重启和分叉保留，摘要修改�
   expect(
     (await restarted.readDocumentMaintenance(worldId))["current-situation"],
   ).toEqual(after);
-  const fork = await worlds.deriveWorld({
+  const fork = await chains.deriveWorld({
     operationId: "maintenance-fork",
     sourceWorldId: worldId,
     sourceHead: "commit:6",
@@ -1573,6 +1638,137 @@ test("增长基准与正文写入位置跨重启和分叉保留，摘要修改�
       "current-situation"
     ],
   ).toEqual(after);
+  const forkContext = await chains.inspectWorld(fork.world.worldId);
+  const forkHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "fork-time",
+            name: "world_patch",
+            arguments: {
+              target: "@current-situation",
+              edits: [
+                { op: "replace", locator: { yaml: ["时间"] }, value: "凌晨" },
+              ],
+            },
+          },
+        ],
+      },
+      { outcome: "response", text: "天色将明。" },
+    ],
+  });
+  const forkThird = await chains.append({
+    worldId: fork.world.worldId,
+    chainId: forkContext!.chainId,
+    exchangeId: "fork-third",
+    playerText: "等一阵。",
+    modelHost: forkHost,
+  });
+  expect(
+    (await worlds.readDocumentMaintenance(fork.world.worldId))[
+      "current-situation"
+    ],
+  ).toMatchObject({
+    lastBodyWrite: { context: 1, round: 3 },
+    bodyChangedContexts: 1,
+    observedContexts: 1,
+  });
+  const thirdPlayer = forkThird.events.findLast(
+    (event) => event.kind === "player",
+  )!;
+  const revision = await chains.revisePlayer({
+    operationId: "maintenance-revision",
+    worldId: fork.world.worldId,
+    chainId: forkThird.chainId,
+    eventId: thirdPlayer.id,
+    replacementExchangeId: "revised-third",
+    replacementText: "再等一会。",
+    continuation: "continue_context",
+  });
+  const revisedHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "revised-time",
+            name: "world_patch",
+            arguments: {
+              target: "@current-situation",
+              edits: [
+                { op: "replace", locator: { yaml: ["时间"] }, value: "清晨" },
+              ],
+            },
+          },
+        ],
+      },
+      { outcome: "response", text: "窗边透进晨光。" },
+    ],
+  });
+  const resumed = await new PlayCallChain(worlds).append({
+    worldId: fork.world.worldId,
+    chainId: revision.playCallChain.chainId,
+    exchangeId: "resume-third",
+    playerText: "",
+    modelHost: revisedHost,
+  });
+  expect(
+    (await worlds.readDocumentMaintenance(fork.world.worldId))[
+      "current-situation"
+    ],
+  ).toMatchObject({
+    lastBodyWrite: { context: 1, round: 3 },
+    bodyChangedContexts: 1,
+    observedContexts: 1,
+  });
+  const nestedFork = await chains.deriveWorld({
+    operationId: "maintenance-nested-fork",
+    sourceWorldId: fork.world.worldId,
+    sourceHead: resumed.parentHead,
+    hostPresetId: "host-main",
+  });
+  const nestedContext = await chains.inspectWorld(nestedFork.world.worldId);
+  const nestedHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "nested-time",
+            name: "world_patch",
+            arguments: {
+              target: "@current-situation",
+              edits: [
+                { op: "replace", locator: { yaml: ["时间"] }, value: "日出" },
+              ],
+            },
+          },
+        ],
+      },
+      { outcome: "response", text: "太阳升起来。" },
+    ],
+  });
+  await chains.append({
+    worldId: nestedFork.world.worldId,
+    chainId: nestedContext!.chainId,
+    exchangeId: "fourth",
+    playerText: "等到日出。",
+    modelHost: nestedHost,
+  });
+  expect(
+    (await worlds.readDocumentMaintenance(nestedFork.world.worldId))[
+      "current-situation"
+    ],
+  ).toMatchObject({
+    lastBodyWrite: { context: 1, round: 4 },
+    bodyChangedContexts: 1,
+    observedContexts: 1,
+  });
   const noOpHost = new ScriptedModelHost({
     binding: modelBinding(),
     steps: [
@@ -1797,6 +1993,21 @@ test("AI 读取证据返回冻结 bootstrap、已结算全文读取与下一次�
   expect(reading.nextFreshContext?.preview.compilation.coverage).toContainEqual(
     expect.objectContaining({ catalogEntries: ["dorm-404"] }),
   );
+  const diagnostics = vi
+    .spyOn(FileNativeWorldStore.prototype, "readDocumentMaintenance")
+    .mockRejectedValue(new Error("maintenance unavailable"));
+  try {
+    const degraded = (
+      await runtime.handle({ type: "world.play-context.read", worldId })
+    ).result as V1PlayContextReadingView;
+    expect(degraded.currentContext?.bootstrap).toEqual(direct?.bootstrap);
+    expect(
+      degraded.nextFreshContext?.preview.compilation.maintenance
+        ?.unavailableReason,
+    ).toBe("maintenance unavailable");
+  } finally {
+    diagnostics.mockRestore();
+  }
 });
 
 test("world_patch no-op 保留匹配的紧凑工具结果且不推进世界", async () => {

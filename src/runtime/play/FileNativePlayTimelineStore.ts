@@ -50,6 +50,8 @@ export interface PersistedDocumentAuthorizationCheckpoint {
 }
 
 export interface PersistedPlayCallChainContext {
+  /** Narrative context identity survives transport chain renaming on forks. */
+  continuityContextId?: string;
   chainId: string;
   baselineHead: string;
   baselineHistoryLength?: number;
@@ -103,6 +105,7 @@ interface PersistedContextIndex {
 }
 
 interface PersistedContextBase {
+  continuityContextId?: string;
   schemaVersion: 3;
   kind: "play_context_frozen";
   worldId: string;
@@ -604,6 +607,9 @@ export class FileNativePlayTimelineStore {
       chainId,
       previousChainId: indexValue.previousChainId,
       timelineGeneration: indexValue.timelineGeneration,
+      ...(baseValue.continuityContextId === undefined
+        ? {}
+        : { continuityContextId: baseValue.continuityContextId }),
       baselineHead: baseValue.baselineHead,
       parentHead: stateValue.parentHead,
       ...(baseValue.baselineHistoryLength === undefined
@@ -998,6 +1004,9 @@ function contextBase(value: PersistedPlayCallChain): PersistedContextBase {
     kind: "play_context_frozen",
     worldId: value.worldId,
     chainId: value.chainId,
+    ...(value.continuityContextId === undefined
+      ? {}
+      : { continuityContextId: value.continuityContextId }),
     baselineHead: value.baselineHead,
     ...(value.baselineHistoryLength === undefined
       ? {}
@@ -1133,6 +1142,9 @@ function assertContextBase(
     typeof value.worldId !== "string" ||
     typeof value.chainId !== "string" ||
     typeof value.baselineHead !== "string" ||
+    (value.continuityContextId !== undefined &&
+      (typeof value.continuityContextId !== "string" ||
+        value.continuityContextId.length === 0)) ||
     (value.modelBinding !== undefined &&
       !validModelHostBinding(value.modelBinding)) ||
     !isRecord(value.bootstrap) ||
@@ -1226,6 +1238,9 @@ function isReleasedPlayContext(
   if (
     typeof value.chainId !== "string" ||
     typeof value.baselineHead !== "string" ||
+    (value.continuityContextId !== undefined &&
+      (typeof value.continuityContextId !== "string" ||
+        value.continuityContextId.length === 0)) ||
     (value.baselineHistoryLength !== undefined &&
       !validCount(value.baselineHistoryLength)) ||
     typeof value.parentHead !== "string" ||

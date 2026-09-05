@@ -100,8 +100,11 @@ export async function readDocumentMaintenanceFacts(
         ? undefined
         : contexts.get(commit.playContext);
     if (commit.playContext !== undefined && context === undefined) {
-      context = { ordinal: contexts.size + 1, round: unassignedPlayer ? 1 : 0 };
+      context = { ordinal: contexts.size + 1, round: 0 };
       contexts.set(commit.playContext, context);
+    }
+    if (context !== undefined && unassignedPlayer) {
+      context.round += 1;
       unassignedPlayer = false;
     }
     for (const message of commit.historyAppend) {

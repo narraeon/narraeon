@@ -17,6 +17,7 @@ export interface WorldDocumentMaintenance {
 }
 
 export interface WorldPromptMaintenance {
+  unavailableReason?: string;
   unit: "utf8_bytes";
   worldMaterialsBytes: number;
   checkpointHistoryBytes: number;
@@ -48,6 +49,8 @@ export function isWorldPromptMaintenance(
   if (
     !record(value) ||
     value.unit !== "utf8_bytes" ||
+    (value.unavailableReason !== undefined &&
+      typeof value.unavailableReason !== "string") ||
     ![
       "worldMaterialsBytes",
       "checkpointHistoryBytes",

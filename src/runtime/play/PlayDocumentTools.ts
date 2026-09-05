@@ -80,6 +80,18 @@ export class FileNativePlayDocuments {
   #committedSnapshot: WorldDocumentStore;
   #reads: WriteAuthorizations;
   #declaredDirectories: string[] = [];
+  #maintenanceWarning: string | undefined;
+
+  get maintenanceWarning(): string | undefined {
+    return this.#maintenanceWarning;
+  }
+
+  bindMaintenanceUnavailable(reason: string, locale: AppLocale): void {
+    this.#maintenance = {};
+    this.#maintenanceLocale = locale;
+    this.#maintenanceWarning = reason;
+  }
+
   #maintenanceLocale: AppLocale = "en";
   #maintenance: Readonly<Record<string, WorldDocumentMaintenance>> = {};
 
@@ -87,6 +99,7 @@ export class FileNativePlayDocuments {
     facts: Readonly<Record<string, WorldDocumentMaintenance>>,
     locale: AppLocale = "en",
   ): void {
+    this.#maintenanceWarning = undefined;
     this.#maintenance = structuredClone(facts);
     this.#maintenanceLocale = locale;
   }
@@ -218,7 +231,7 @@ export class FileNativePlayDocuments {
       authorizeToolRead(this.#reads, this.#candidate.snapshot, result);
       const ref = result.readAuthorization?.shortRef;
       if (ref !== undefined && result.markdown !== undefined)
-        result.markdown += `\n\n${renderDocumentWritePosition(ref, this.#maintenance[ref], this.#maintenanceLocale)}`;
+        result.markdown += `\n\n${this.#maintenanceWarning === undefined ? renderDocumentWritePosition(ref, this.#maintenance[ref], this.#maintenanceLocale) : `${this.#maintenanceLocale === "zh-CN" ? "最近写入位置暂时不可用" : "Last committed write unavailable"}: ${this.#maintenanceWarning}`}`;
       return result;
     }
     if (call.name === "world_patch")

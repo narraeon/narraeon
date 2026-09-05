@@ -1804,6 +1804,28 @@ export class FileNativeWorldStore {
     return structuredClone(authority);
   }
 
+  async inspectDocumentMaintenance(
+    worldId: string,
+    head?: string,
+  ): Promise<{
+    documentMaintenance: Record<string, WorldDocumentMaintenance>;
+    documentMaintenanceUnavailableReason?: string;
+  }> {
+    try {
+      return {
+        documentMaintenance: await this.readDocumentMaintenance(worldId, head),
+      };
+    } catch (error: unknown) {
+      return {
+        documentMaintenance: {},
+        documentMaintenanceUnavailableReason:
+          error instanceof Error
+            ? error.message
+            : "Document diagnostics unavailable",
+      };
+    }
+  }
+
   async readDocumentMaintenance(
     worldId: string,
     head?: string,

@@ -608,10 +608,10 @@ export class V1Runtime {
               additionalMaterials: structuredClone(binding.additionalMaterials),
               history: structuredClone(binding.history),
               narrativeCheckpoint: binding.narrativeCheckpoint,
-              documentMaintenance: await this.#worlds.readDocumentMaintenance(
+              ...(await this.#worlds.inspectDocumentMaintenance(
                 request.worldId,
                 binding.parentHead,
-              ),
+              )),
             },
             playerInputPlacement: "append",
             playerInput: "",

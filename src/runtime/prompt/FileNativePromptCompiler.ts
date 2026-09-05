@@ -80,6 +80,7 @@ export interface FileNativePromptInput {
     narrativeCheckpoint?: NarrativeCheckpoint | undefined;
     replayHistory?: boolean;
     documentMaintenance?: Readonly<Record<string, WorldDocumentMaintenance>>;
+    documentMaintenanceUnavailableReason?: string | undefined;
     additionalMaterials: MaterialSelection[];
     hostPath?: string;
   };
@@ -480,7 +481,13 @@ export class FileNativePromptCompiler {
       coverage,
       this.#locale,
     );
-    if (world.documentMaintenance !== undefined) {
+    if (world.documentMaintenanceUnavailableReason !== undefined) {
+      materials.push({
+        key: "runtime:document-write-positions",
+        source: "runtime:document-write-positions",
+        markdown: `${this.#locale === "zh-CN" ? "最近写入位置暂时不可用" : "Last committed write unavailable"}: ${world.documentMaintenanceUnavailableReason}`,
+      });
+    } else if (world.documentMaintenance !== undefined) {
       const injected = new Set(
         materials.flatMap(
           ({ contributions }) =>
@@ -506,12 +513,17 @@ export class FileNativePromptCompiler {
     return {
       blocks: materials.map(({ source, markdown }) => ({ source, markdown })),
       coverage,
-      maintenance: measureWorldMaterials(
-        world.documentSnapshot,
-        frame,
-        materials,
-        world.documentMaintenance,
-      ),
+      maintenance: {
+        ...measureWorldMaterials(
+          world.documentSnapshot,
+          frame,
+          materials,
+          world.documentMaintenance,
+        ),
+        ...(world.documentMaintenanceUnavailableReason === undefined
+          ? {}
+          : { unavailableReason: world.documentMaintenanceUnavailableReason }),
+      },
     };
   }
 

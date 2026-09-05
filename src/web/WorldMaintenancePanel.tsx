@@ -12,6 +12,14 @@ export function WorldMaintenancePanel({
   const zh = locale === "zh-CN";
   return (
     <section className="panel-card prompt-preview-detail">
+      {report.unavailableReason !== undefined && (
+        <p role="status">
+          {zh
+            ? "历史维护诊断暂时不可用"
+            : "Historical maintenance diagnostics unavailable"}
+          : {report.unavailableReason}
+        </p>
+      )}
       <h3>{zh ? "文档体积与维护" : "Document size and maintenance"}</h3>
       <p>
         {zh

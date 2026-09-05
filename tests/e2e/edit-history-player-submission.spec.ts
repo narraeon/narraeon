@@ -282,11 +282,19 @@ test("检查点建议在叙事后出现，点击只选择下一条消息的新�
   ).toBeVisible();
   expect(providerRequests).toHaveLength(count);
   responses.push("你们走进走廊。");
+  const finalStream = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/runtime/v1") &&
+      response.request().headers().accept === "application/x-ndjson",
+  );
   await page.getByLabel("你的行动").fill("走进走廊。");
   await page
     .getByRole("button", { name: "从全新上下文发送行动", exact: true })
     .click();
   await expect(page.getByText("你们走进走廊。")).toBeVisible();
+  // Visible streamed text precedes durable settlement. Finish this request
+  // before another suite removes the shared test world's files.
+  expect(await (await finalStream).finished()).toBeNull();
   const sent = JSON.parse(providerRequests.at(-1)!) as {
     messages: { role: string; content: unknown }[];
   };
