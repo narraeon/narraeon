@@ -1900,7 +1900,8 @@ test("new author snapshot corruption fails closed and upgrading keeps the old pr
   const wrongRequest = structuredClone(saved);
   wrongRequest.requests![0]!.requestId = "unrelated";
   await expect(store.save(wrongRequest)).rejects.toThrow("durable schema");
-  const { requests: _requests, ...legacy } = saved;
+  const legacy = structuredClone(saved);
+  delete legacy.requests;
   await store.save({ ...legacy, schemaVersion: 2 });
   const candidate = await fixture.session.preview(
     fixture.packageId,
