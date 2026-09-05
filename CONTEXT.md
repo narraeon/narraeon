@@ -197,7 +197,7 @@ _Avoid_：材料 DTO 序列化、Runtime 语义规划、JSON user 总包
 _Avoid_：上下文焦点、语义查询、自动最近历史
 
 **Prompt Preview**：
-复用真实提示词编译与 provider 编码过程的只读检查结果；它展示稳定 bootstrap、紧随其后的首条玩家追加、provider role、材料来源、最终 Markdown、工具、Provider 配置、缓存边界，以及去除凭据后的真实 HTTP method、路径、header 名称和 body，但不调用模型或修改世界。
+复用真实提示词编译与 provider 编码过程的只读检查结果；它展示稳定 bootstrap、首条玩家输入前的 Runtime 回合提示、玩家原文追加、provider role、材料来源、最终 Markdown、工具、Provider 配置、缓存边界，以及去除凭据后的真实 HTTP method、路径、header 名称和 body，但不调用模型或修改世界。
 _Avoid_：近似预览、手写示例、调试 JSON 总包
 
 **玩法预设**：
