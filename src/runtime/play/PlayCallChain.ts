@@ -2595,7 +2595,21 @@ export class PlayCallChain {
     persisted: PersistedPlayCallChain,
     advance: LoadedPlayAdvance | null,
   ): Promise<PlayCallChainSession> {
-    const binding = await this.#worlds.bindPlayCallChain(persisted.worldId);
+    const currentBinding = await this.#worlds.bindPlayCallChain(
+      persisted.worldId,
+    );
+    // A completed chain still describes its own immutable endpoint after a
+    // world revision. Restore its reads against that state, not the revised
+    // current tree. An unsettled advance keeps the existing crash-recovery
+    // path because Authority may already contain its prepared result.
+    const binding =
+      currentBinding.parentHead !== persisted.parentHead &&
+      advance?.settled !== null
+        ? await this.#worlds.bindPlayCallChainAt(
+            persisted.worldId,
+            persisted.parentHead,
+          )
+        : currentBinding;
     let documents: FileNativePlayDocuments;
     try {
       documents = restorePlayDocuments(

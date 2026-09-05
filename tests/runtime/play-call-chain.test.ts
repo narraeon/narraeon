@@ -18,6 +18,7 @@ import {
   type V1PlayCallChainView,
   type V1PlayContextReadingView,
 } from "../../src/protocol/v1.ts";
+import { contentTreeFingerprint } from "../../src/runtime/content/ContentTreeFingerprint.ts";
 import type { ContentTreeFile } from "../../src/runtime/content/ContentWorkspace.ts";
 import {
   ModelHostFailureError,
@@ -345,6 +346,115 @@ test("Provider 游玩调用持有世界使用权，结束前不能开启修订 e
   expect(epoch.lifecycle).toBe("active");
   await workspace.discard({ worldId, epochId: epoch.epochId });
 });
+
+test.each(["manual", "ai"] as const)(
+  "%s 世界修订应用后冷恢复旧游玩授权，并允许开启新上下文",
+  async (source) => {
+    const { worlds, worldId, root } = await createWorld(
+      "revision-authorization",
+    );
+    const chains = new PlayCallChain(worlds);
+    const before = await chains.start({
+      worldId,
+      chainId: "before-revision",
+      exchangeId: "before-revision",
+      playerText: "Wait.",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: modelBinding(),
+      modelHost: new ScriptedModelHost({
+        binding: modelBinding(),
+        steps: [{ outcome: "response", text: "Alex waits." }],
+      }),
+    });
+    const workspace = new WorldRevisionWorkspace({
+      store: new FileNativeWorldRevisionStore(root),
+      worlds,
+    });
+    let epoch = await workspace.open(worldId);
+    const path = "state/current-situation.yaml";
+    const beforeContents = epoch.files.find(
+      (file) => file.path === path,
+    )!.contents;
+    const afterContents = beforeContents + "\nrevisionNote: revised\n";
+    const files = epoch.files.map((file) =>
+      file.path === path ? { ...file, contents: afterContents } : file,
+    );
+    const update = {
+      worldId,
+      epochId: epoch.epochId,
+      expectedRevision: epoch.revision,
+      files,
+    };
+    epoch =
+      source === "manual"
+        ? await workspace.replace(update)
+        : await workspace.publishAi({
+            ...update,
+            afterRevision: contentTreeFingerprint(files),
+            toolResults: [
+              {
+                toolCallId: "revision-write",
+                markdown: "updated",
+                isError: false,
+                changeSetId: "change-set:00000000-0000-4000-8000-000000000001",
+                changes: [
+                  {
+                    path,
+                    kind: "modify",
+                    before: beforeContents,
+                    after: afterContents,
+                  },
+                ],
+              },
+            ],
+          });
+    expect(epoch.changes.at(-1)?.source).toBe(source);
+    await workspace.apply({
+      worldId,
+      epochId: epoch.epochId,
+      expectedRevision: epoch.revision,
+    });
+    const revisedHead = await worlds.currentHead(worldId);
+    expect(revisedHead).not.toBe(before.parentHead);
+    const restored = new PlayCallChain(new FileNativeWorldStore(root));
+    await expect(restored.inspectWorld(worldId)).resolves.toMatchObject({
+      chainId: before.chainId,
+      parentHead: before.parentHead,
+      status: "ready",
+    });
+    await expect(restored.observeWorld(worldId)).resolves.toMatchObject({
+      chainId: before.chainId,
+    });
+    await expect(
+      restored.append({
+        worldId,
+        chainId: before.chainId,
+        exchangeId: "stale-append",
+        playerText: "Continue.",
+        modelHost: new ScriptedModelHost({
+          binding: modelBinding(),
+          steps: [],
+        }),
+      }),
+    ).rejects.toThrow(/fresh context/u);
+    await expect(
+      restored.start({
+        worldId,
+        chainId: "after-revision",
+        exchangeId: "after-revision",
+        playerText: "Continue.",
+        hostBinding: hostBinding(),
+        playPreset: playPreset(),
+        modelBinding: modelBinding(),
+        modelHost: new ScriptedModelHost({
+          binding: modelBinding(),
+          steps: [{ outcome: "response", text: "Continued." }],
+        }),
+      }),
+    ).resolves.toMatchObject({ chainId: "after-revision", status: "ready" });
+  },
+);
 
 test("浏览器进度流断开不会隐式取消 Runtime 调用或改变 Authority", async () => {
   const { worlds, worldId } = await createWorld(
