@@ -82,11 +82,24 @@ async function beginRequestFixture(fixture: {
 }
 
 describe("FileNativeArtifactStore", () => {
+  test("无分叉快照的只读查询不创建锁目录", async () => {
+    const root = await mkdtemp(join(tmpdir(), "artifact-read-only-"));
+    try {
+      const store = new FileNativeArtifactStore(root);
+      expect(await store.readActiveProjection("empty")).toEqual([]);
+      expect(await store.readDebug("empty")).toEqual([]);
+      expect(await store.readExtensionSummaries("empty")).toEqual([]);
+      expect(await readdir(root)).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("分叉 staging 保留已关联保存产物，来源删除后冷恢复且后续失效独立", async () => {
     const root = await mkdtemp(join(tmpdir(), "artifact-fork-"));
     try {
-      const fixture = context(root, "commit", "append", {
-        invalidation: "new_operation",
+      const fixture = context(root, "commit", "replace", {
+        invalidation: "never",
         rendererMode: "document",
       });
       const operation = {
@@ -115,6 +128,12 @@ describe("FileNativeArtifactStore", () => {
         output: "panel",
         payload: "保留正文",
         toolCallId: "emit",
+      });
+      await fixture.store.emit({
+        context: request,
+        output: "panel",
+        payload: "保留正文",
+        toolCallId: "emit-second",
       });
       await fixture.store.completeExtension(operation.operationId, [
         request.requestId,
@@ -160,8 +179,31 @@ describe("FileNativeArtifactStore", () => {
       });
       expect(
         await new FileNativeArtifactStore(root).readActiveProjection("fork"),
-      ).toEqual([]);
+      ).toMatchObject([{ payload: "保留正文" }]);
       expect(await cold.readDebug("fork")).toHaveLength(1);
+      const nextOperation = {
+        ...fixture.operation,
+        worldId: "fork",
+        operationId: "fork-next",
+        parentHead: "commit:2",
+      };
+      await cold.markCoreCommitted(nextOperation, "commit:3");
+      await cold.beginExtension(nextOperation);
+      const nextRequest = { ...fixture.request, ...nextOperation };
+      await cold.beginRequestAttempt(nextRequest);
+      await cold.emit({
+        context: nextRequest,
+        output: "panel",
+        payload: "保留正文",
+        toolCallId: "emit-next",
+      });
+      await cold.completeExtension(nextOperation.operationId, [
+        nextRequest.requestId,
+      ]);
+      expect(await cold.readActiveProjection("fork")).toMatchObject([
+        { payload: "保留正文" },
+      ]);
+      expect(await cold.readDebug("fork")).toHaveLength(2);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

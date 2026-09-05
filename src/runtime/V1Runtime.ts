@@ -52,7 +52,6 @@ import {
   projectDebugArtifactForFrontend,
   type FrontendBundleFailure,
   type FrontendArtifactDebugRecord,
-  type FrontendArtifactProjection,
 } from "./extension/FrontendExtensionBundle.ts";
 import {
   projectPlayerViewPanels,

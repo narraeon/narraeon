@@ -28,8 +28,10 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
       requestBodies.push(body);
       if (paginationMode)
         send(response, { content: `Later narrative ${requests}` });
-      else if (requests === 1 || requests === 4 || requests === 5)
+      else if (requests === 1 || requests === 4)
         send(response, { content: "Alex opens the door." });
+      else if (requests === 5)
+        send(response, { content: "Alex records the scene before leaving." });
       else if (requests === 6)
         send(response, {
           tool_calls: [
@@ -306,6 +308,33 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
           null,
       ),
     ).toBe(true);
+    expect(
+      (
+        await runtime<{ extensions: unknown }>(page, {
+          type: "world.play-decorations.read",
+          worldId,
+        })
+      ).extensions,
+    ).toMatchObject([
+      {
+        requests: [
+          {
+            displayName: "Edited multi-output request",
+            mounts: expect.arrayContaining(["sidebar"]),
+            status: "completed",
+          },
+          { displayName: "second", status: "running" },
+        ],
+      },
+    ]);
+    await expect(
+      page
+        .locator('[data-extension-mount="sidebar"]')
+        .getByText("Edited multi-output request · 已更新", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("second · 生成中", { exact: true }),
+    ).toBeVisible();
     // A second follow-up fails after the first content has become visible.
     send(pending.shift()!, { content: "No required artifact emitted." });
     await expect(
@@ -347,6 +376,9 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
     await expect(page.getByLabel("你的行动")).toHaveValue("I knock and ask.");
     expect(await head()).toBe(settledHead);
     expect(requests).toBe(3);
+    await expect(
+      page.getByText("second · 生成失败", { exact: true }),
+    ).toBeVisible();
     expect(requestBodies[2]).not.toContain("Second edited artifact");
     expect(requestBodies[2]).not.toContain(
       "Emit panel and output_3 from the settled story.",
@@ -415,25 +447,15 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
       ).toBeEnabled();
     }
     await open();
-    await expect(page.locator('iframe[title="panel"]')).toHaveCount(0);
-    for (
-      let pages = 0;
-      pages < 4 && (await page.locator('iframe[title="panel"]').count()) === 0;
-      pages += 1
-    ) {
-      await page.getByRole("button", { name: "加载更早的故事" }).click();
-      await expect(
-        page.getByRole("button", { name: "加载中…", exact: true }),
-      ).toHaveCount(0);
-    }
-    await expect(page.locator('iframe[title="panel"]')).toHaveCount(1);
+    await expect(page.locator('iframe[title="recap"]')).toHaveCount(0);
+    await page.getByRole("button", { name: "加载更早的故事" }).click();
+    await expect(page.locator('iframe[title="recap"]')).toHaveCount(1);
     await expect(
       page
         .locator(".call-chain-assistant")
-        .filter({ hasText: "Alex opens the door." })
-        .first()
-        .frameLocator('iframe[title="panel"]')
-        .getByText("Saved panel at the same head", { exact: true }),
+        .filter({ hasText: "Alex records the scene before leaving." })
+        .frameLocator('iframe[title="recap"]')
+        .getByText("Builtin identity survived execution", { exact: true }),
     ).toBeVisible();
 
     const fork = await runtime<{ world: { worldId: string } }>(page, {
@@ -496,7 +518,7 @@ function presetFiles(): Record<string, string> {
   return {
     ...defaultPlayPresetFiles,
     "preset.yaml":
-      "format: narraeon.play-preset/v1\nname: panels\ncallChain: call-chain.yaml\nmounts:\n  panel: story\n  suggestions: composer_above\nextensions: [renderers/actions.html]\n",
+      "format: narraeon.play-preset/v1\nname: panels\ncallChain: call-chain.yaml\nmounts:\n  panel: story\n  suggestions: composer_above\n  failed-panel: sidebar\nextensions: [renderers/actions.html]\n",
     "call-chain.yaml": `format: narraeon.play-call-chain/v1
 narrative:
   - markdown: prompts/narrate.md
@@ -509,7 +531,7 @@ ${["first", "second"]
     maxArtifactBytes: 32768
     artifacts:
       - name: panel
-        channel: panel
+        channel: ${id === "first" ? "panel" : "failed-panel"}
         strategy: replace
         contentType: text/plain
         save: commit

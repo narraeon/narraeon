@@ -5503,7 +5503,6 @@ test("可选产物工具被拒绝会显示失败并保留允许的旧结果", as
     chainId: first.chainId,
     exchangeId: "second",
     playerText: "Wait.",
-    playPreset: preset,
     modelHost: new ScriptedModelHost({
       binding: modelBinding(),
       steps: [

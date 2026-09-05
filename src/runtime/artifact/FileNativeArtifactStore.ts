@@ -359,7 +359,10 @@ export class FileNativeArtifactStore implements ArtifactStore {
       const operations: ArtifactOperationFile[] = [];
       const records: ArtifactRawRecord[] = [];
       const events: ArtifactEvent[] = [];
-      let sequence = 0;
+      let sequence = Math.max(
+        0,
+        ...effective.map(({ record }) => record.sequence),
+      );
       for (const { record, head } of effective) {
         const source = (await this.#readOperation(record.operationId))!;
         const operationId = `artifact-fork:${input.targetWorldId}:${identityHash(record.operationId)}`;
@@ -381,7 +384,7 @@ export class FileNativeArtifactStore implements ArtifactStore {
           ...record,
           worldId: input.targetWorldId,
           operationId,
-          sequence: ++sequence,
+          sequence: record.sequence,
         };
         copy.recordFingerprint = rawRecordFingerprint(copy);
         records.push(copy);
@@ -415,6 +418,26 @@ export class FileNativeArtifactStore implements ArtifactStore {
         true,
       );
     });
+  }
+
+  async #ensureForkRestored(worldId: string): Promise<void> {
+    if (dirname(resolve(this.#worldsRoot, worldId)) !== this.#worldsRoot)
+      return;
+    try {
+      await stat(join(this.#worldRoot(worldId), "fork-restored.json"));
+      return;
+    } catch (error: unknown) {
+      if (!isMissing(error)) throw error;
+    }
+    try {
+      await stat(
+        join(this.#worldsRoot, worldId, "runtime", "artifact-fork.json"),
+      );
+    } catch (error: unknown) {
+      if (isMissing(error)) return;
+      throw error;
+    }
+    await this.#withWorldMutation(worldId, () => Promise.resolve());
   }
 
   async #restoreFork(worldId: string): Promise<void> {
@@ -1460,7 +1483,7 @@ export class FileNativeArtifactStore implements ArtifactStore {
   async readExtensionSummaries(
     worldId: string,
   ): Promise<ArtifactExtensionSummary[]> {
-    await this.#withWorldMutation(worldId, () => Promise.resolve());
+    await this.#ensureForkRestored(worldId);
     return (await this.#operationsForWorld(worldId))
       .filter(
         (operation) =>
@@ -1520,7 +1543,7 @@ export class FileNativeArtifactStore implements ArtifactStore {
     channel?: string,
     timeline?: readonly ArtifactReplyTarget[],
   ): Promise<ArtifactProjectionItem[]> {
-    await this.#withWorldMutation(worldId, () => Promise.resolve());
+    await this.#ensureForkRestored(worldId);
     const effective = await this.#effectiveRecords(worldId);
     const operationStates = new Map<string, ArtifactOperationFile>();
     for (const item of effective)
@@ -1597,7 +1620,7 @@ export class FileNativeArtifactStore implements ArtifactStore {
     worldId: string,
     operationId?: string,
   ): Promise<ArtifactDebugRecord[]> {
-    await this.#withWorldMutation(worldId, () => Promise.resolve());
+    await this.#ensureForkRestored(worldId);
     const effective = await this.#effectiveRecords(worldId);
     const operations = new Map(
       (await this.#operationsForWorld(worldId)).map((operation) => [
