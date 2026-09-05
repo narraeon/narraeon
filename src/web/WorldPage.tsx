@@ -2864,10 +2864,6 @@ function sameTextFiles(
   );
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function errorMessage(reason: unknown): string {
   return reason instanceof Error ? reason.message : uiText("操作失败");
 }
