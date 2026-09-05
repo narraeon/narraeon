@@ -2126,7 +2126,7 @@ function PromptReferenceEditor({
   );
 }
 
-function ArtifactDefinitionEditor({
+export function ArtifactDefinitionEditor({
   artifact,
   files,
   mount,

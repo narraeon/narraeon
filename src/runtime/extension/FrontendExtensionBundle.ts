@@ -74,6 +74,7 @@ export function projectArtifactForFrontend(
   artifact: ArtifactProjectionItem | ArtifactDebugRecord,
   binding: PlayPresetBinding | null,
   failure: FrontendBundleFailure = "missing_revision",
+  packageScriptsEnabled = false,
 ): FrontendExtensionBundle {
   const preset = {
     id: artifact.playPresetId,
@@ -123,7 +124,9 @@ export function projectArtifactForFrontend(
 
   try {
     const frozenBinding = {
-      scriptsEnabled: artifact.playPresetScriptsEnabled,
+      scriptsEnabled: artifact.requestId.startsWith("package:")
+        ? packageScriptsEnabled && declaration.rendererMode === "app"
+        : artifact.playPresetScriptsEnabled,
       files: artifact.frozenPresentation?.files ?? binding?.files ?? {},
     };
     const regex = declaration.regex
@@ -151,7 +154,7 @@ export function projectArtifactForFrontend(
       declaration: declarationView(declaration),
       regex,
       ...(renderer === undefined ? {} : { renderer }),
-      trustedLocalCode: artifact.playPresetScriptsEnabled,
+      trustedLocalCode: frozenBinding.scriptsEnabled,
       fallback: "none",
     };
   } catch {
@@ -262,8 +265,14 @@ export function projectDebugArtifactForFrontend(
   artifact: ArtifactDebugRecord,
   binding: PlayPresetBinding | null,
   failure: FrontendBundleFailure = "missing_revision",
+  packageScriptsEnabled = false,
 ): FrontendExtensionBundle {
-  return projectArtifactForFrontend(artifact, binding, failure);
+  return projectArtifactForFrontend(
+    artifact,
+    binding,
+    failure,
+    packageScriptsEnabled,
+  );
 }
 
 function declarationView(

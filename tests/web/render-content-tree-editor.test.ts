@@ -6,6 +6,7 @@ import {
   render,
   screen,
   within,
+  waitFor,
 } from "@testing-library/react";
 import { createElement, useState } from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -15,6 +16,9 @@ import {
   type ContentTreeIssue,
 } from "../../src/web/ContentTreeEditor.tsx";
 import type { ContentTreeFile } from "../../src/protocol/v1.ts";
+
+import { setWebLocale } from "../../src/web/i18n.ts";
+import { PackageScriptPermissionControl } from "../../src/web/PackageScriptPermissionControl.tsx";
 
 afterEach(cleanup);
 
@@ -169,3 +173,99 @@ function files(): ContentTreeFile[] {
     },
   ];
 }
+
+test("普通作者从内容包入口编辑、停用和排序后置请求，完整资源留在草稿", () => {
+  render(
+    createElement(EditorHarness, {
+      initialFiles: files(),
+      issues: [],
+      onSave: vi.fn(),
+    }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "内容包后置请求" }));
+  fireEvent.click(screen.getByRole("button", { name: "新增包后置请求" }));
+  fireEvent.change(screen.getByLabelText("包请求名称"), {
+    target: { value: "旅途回顾" },
+  });
+  fireEvent.change(screen.getByLabelText("包请求提示词"), {
+    target: { value: "输出旅途回顾" },
+  });
+  fireEvent.click(screen.getByText("编辑渲染资源", { exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "添加 HTML 模板" }));
+  fireEvent.change(screen.getByLabelText("HTML 模板 1"), {
+    target: { value: "<h2>旅途</h2>" },
+  });
+  fireEvent.click(screen.getByLabelText("启用 旅途回顾"));
+  expect(screen.getByLabelText<HTMLInputElement>("启用 旅途回顾").checked).toBe(
+    false,
+  );
+  expect(screen.getByLabelText<HTMLTextAreaElement>("HTML 模板 1").value).toBe(
+    "<h2>旅途</h2>",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "新增包后置请求" }));
+  expect(screen.getAllByRole("button", { name: /^上移/ })).toHaveLength(2);
+  fireEvent.click(screen.getAllByRole("button", { name: /^上移/ })[1]!);
+  fireEvent.click(screen.getByRole("button", { name: "旅途回顾" }));
+  expect(screen.getByLabelText<HTMLTextAreaElement>("包请求提示词").value).toBe(
+    "输出旅途回顾",
+  );
+  expect(screen.getByLabelText<HTMLTextAreaElement>("HTML 模板 1").value).toBe(
+    "<h2>旅途</h2>",
+  );
+});
+
+test("English authors can edit package requests and explicitly grant and revoke script permission", async () => {
+  setWebLocale("en");
+  render(
+    createElement(EditorHarness, {
+      initialFiles: files(),
+      issues: [],
+      onSave: vi.fn(),
+    }),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "Content-package followups" }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Add package followup" }));
+  expect(
+    screen.getByLabelText<HTMLTextAreaElement>("Package request prompt").value,
+  ).toBe("Use artifact_emit to emit output_1 based on the settled story.");
+  expect(screen.getByRole("option", { name: "Story content" })).toBeTruthy();
+  const client = {
+    request: vi
+      .fn()
+      .mockResolvedValueOnce({ enabled: false })
+      .mockResolvedValueOnce({ enabled: true })
+      .mockResolvedValueOnce({ enabled: false }),
+  };
+  render(
+    createElement(PackageScriptPermissionControl, {
+      client,
+      kind: "content",
+      id: "package_test",
+    }),
+  );
+  const checkbox = screen.getByRole<HTMLInputElement>("checkbox", {
+    name: "Allow package scripts",
+  });
+  await waitFor(() => expect(checkbox.disabled).toBe(false));
+  expect(screen.getByText(/Imports do not grant permission/)).toBeTruthy();
+  fireEvent.click(checkbox);
+  await waitFor(() => expect(checkbox.checked).toBe(true));
+  expect(client.request).toHaveBeenLastCalledWith({
+    type: "content.scripts.set",
+    packageId: "package_test",
+    enabled: true,
+  });
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "Revoke all package script permissions",
+    }),
+  );
+  await waitFor(() => expect(checkbox.checked).toBe(false));
+  expect(client.request).toHaveBeenLastCalledWith({
+    type: "content.scripts.set",
+    packageId: "package_test",
+    enabled: false,
+  });
+});

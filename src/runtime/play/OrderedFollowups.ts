@@ -1,8 +1,17 @@
+import {
+  readPackageFollowups,
+  packageFollowupResources,
+} from "../content/PackageFollowups.ts";
+import type { ContentTreeFile } from "../content/ContentTreeFile.ts";
+import type { FrozenArtifactPresentation } from "./FileNativePlayPresetStore.ts";
 import type {
   PlayPresetDefinition,
   PlayPresetFollowupDefinition,
 } from "./FileNativePlayPresetStore.ts";
-import { builtinFollowupExample } from "../../shared/ordered-followups.ts";
+import {
+  builtinFollowupExample,
+  defaultFollowupItems,
+} from "../../shared/ordered-followups.ts";
 import type { FollowupItem } from "../../shared/ordered-followups.ts";
 
 /** Strict portable permissions, shared by import and structured saves. */
@@ -59,24 +68,43 @@ export function parseFollowupItems(
   return items;
 }
 
-/** Empty package groups intentionally expand to nothing until a world supplies definitions. */
+export interface EffectiveFollowup {
+  definition: PlayPresetFollowupDefinition;
+  body: string | undefined;
+  frozenResources?: Omit<FrozenArtifactPresentation, "declaration">;
+}
+
+/** Resolve each source against its own files, before requests become immutable snapshots. */
 export function effectiveFollowupDefinitions(
   definition: PlayPresetDefinition,
   locale: "en" | "zh-CN",
-): {
-  definition: PlayPresetFollowupDefinition;
-  body: string | undefined;
-}[] {
-  if (definition.followupItems === undefined)
-    return definition.followups.map((entry) => ({
-      definition: entry,
-      body: definition.files[entry.prompt.path],
-    }));
-  return definition.followupItems.flatMap<{
-    definition: PlayPresetFollowupDefinition;
-    body: string | undefined;
-  }>((item) => {
-    if (!item.enabled || item.kind === "content-package") return [];
+  worldFiles: readonly ContentTreeFile[] = [],
+): EffectiveFollowup[] {
+  const packageSource = readPackageFollowups(worldFiles);
+  return (
+    definition.followupItems ?? defaultFollowupItems(definition.followups)
+  ).flatMap<EffectiveFollowup>((item) => {
+    if (!item.enabled) return [];
+    if (item.kind === "content-package")
+      return packageSource.followups
+        .filter((item) => item.enabled)
+        .map(({ definition: entry, mount }) => {
+          return {
+            definition: {
+              ...entry,
+              id: `package:${entry.id}`,
+              artifacts: entry.artifacts.map((artifact) => ({
+                ...artifact,
+                channel: `package:${artifact.channel}`,
+              })),
+            },
+            body: packageSource.files[entry.prompt.path],
+            frozenResources: {
+              files: packageFollowupResources(entry, packageSource.files),
+              mount,
+            },
+          };
+        });
     if (item.kind === "builtin") return [builtinFollowupExample(locale)];
     const entry = definition.followups.find((entry) => entry.id === item.id);
     if (entry === undefined)

@@ -1,3 +1,4 @@
+import { PackageScriptPermissions } from "../extension/PackageScriptPermissions.ts";
 import { createHash, randomUUID } from "node:crypto";
 import {
   mkdir,
@@ -79,6 +80,7 @@ export class FileNativeWorldNotFoundError extends Error {
 }
 
 export interface FileNativeWorldCreationInput {
+  packageScriptGrants?: string[];
   operationId: string;
   sourcePackageId: string;
   sourcePackageTitle: string;
@@ -376,6 +378,33 @@ export class FileNativeWorldStore {
     );
   }
 
+  async readPackageScriptGrants(worldId: string): Promise<string[]> {
+    assertIdentity(worldId, "World ID");
+    await this.currentHead(worldId);
+    return PackageScriptPermissions.read(join(this.#worldsRoot, worldId));
+  }
+
+  async packageScriptPermissions(
+    worldId: string,
+    enabled?: boolean,
+  ): Promise<{ enabled: boolean }> {
+    assertIdentity(worldId, "World ID");
+    const files = (await this.readSurface(worldId, "control")).map((file) => ({
+      ...file,
+      path: `control/${file.path}`,
+    }));
+    const root = join(this.#worldsRoot, worldId);
+    if (enabled !== undefined)
+      await PackageScriptPermissions.write(
+        root,
+        enabled ? PackageScriptPermissions.currentGrants(files) : [],
+      );
+    return PackageScriptPermissions.status(
+      files,
+      await PackageScriptPermissions.read(root),
+    );
+  }
+
   async createFromContentPackage(input: FileNativeWorldCreationInput): Promise<{
     outcome: "created";
     world: FileNativeWorldSummary;
@@ -469,6 +498,12 @@ export class FileNativeWorldStore {
       ];
       await writeSurface(stagingRoot, "state", state);
       await writeSurface(stagingRoot, "control", control);
+      await PackageScriptPermissions.write(
+        stagingRoot,
+        (input.packageScriptGrants ?? []).filter((grant) =>
+          PackageScriptPermissions.currentGrants(packageFiles).includes(grant),
+        ),
+      );
       await mkdir(join(stagingRoot, "history"), { recursive: true });
       await mkdir(join(stagingRoot, "runtime"), { recursive: true });
       await writeIdempotentText(
@@ -1255,6 +1290,10 @@ export class FileNativeWorldStore {
         ).recoverHeadResult();
         await writeSurface(staging, "state", selected.state);
         await writeSurface(staging, "control", control);
+        await PackageScriptPermissions.write(
+          staging,
+          await PackageScriptPermissions.read(sourceRoot),
+        );
         await mkdir(join(staging, "history"), { recursive: true });
         for (const file of historySurfaceFiles(selected.history))
           await writeIdempotentText(
