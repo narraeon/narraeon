@@ -150,6 +150,12 @@ export function WorldPage({
   initialReadingPreferences?: AppReadingPreferences;
 }): React.JSX.Element {
   const [world, setWorld] = useState<WorldReadView | null>(null);
+  // Decorations have their own lifetime: lightweight world reads intentionally
+  // contain empty artifact arrays and must not replace this loaded projection.
+  const [decorations, setDecorations] = useState<
+    (WorldPlayDecorationsView & { worldId: string }) | null
+  >(null);
+  const [decorationRevision, setDecorationRevision] = useState(0);
   const [leftRailOpen, setLeftRailOpen] = useState(false);
   const [rightRailOpen, setRightRailOpen] = useState(false);
   const [rightRailTab, setRightRailTab] = useState<RightRailTab>("documents");
@@ -254,33 +260,49 @@ export function WorldPage({
   }, [client, worldId]);
 
   useEffect(() => {
-    if (worldHead === undefined) return;
+    if (world?.worldId !== worldId) return;
     let active = true;
-    const expectedHead = worldHead;
-    void requestPlayDecorations(client, worldId).then((decorations) => {
-      if (!active) return;
-      setWorld((current) =>
-        current?.head !== expectedHead || decorations?.head !== expectedHead
-          ? current
-          : { ...current, ...decorations },
-      );
+    const expectedHead = world.head;
+    void requestPlayDecorations(client, worldId).then((next) => {
+      if (active && next?.head === expectedHead)
+        setDecorations({ ...next, worldId });
     });
     return () => {
       active = false;
     };
-  }, [client, worldHead, worldId]);
+  }, [client, world, worldId, decorationRevision]);
+
+  const displayedDecorations =
+    decorations?.worldId === worldId && decorations.head === worldHead
+      ? decorations
+      : null;
 
   useEffect(() => {
     if (client.observeConversation === undefined || openedWorldId !== worldId)
       return;
     let active = true;
     let hydratedHead: string | undefined;
+    let observedDecorations: string | undefined;
     const unsubscribe = client.observeConversation(
       { kind: "play", id: worldId },
       async (observation) => {
         if (!active || observation.kind !== "play") return;
         const next = observation.value;
         if (next === null) return;
+        // Ignore token deltas. Follow-up outcomes (including failure/clear),
+        // chain transitions and reconnect snapshots invalidate the projection.
+        const revision = JSON.stringify([
+          next.chainId,
+          next.parentHead,
+          next.status,
+          next.events
+            .filter((event) => event.kind === "followup")
+            .map((event) => event.id),
+        ]);
+        if (observedDecorations !== revision) {
+          observedDecorations = revision;
+          setDecorationRevision((current) => current + 1);
+        }
         setPlayCallChain(next);
         setPlayFailure(playCallFailureMessage(next));
         if (next.status === "running") {
@@ -334,6 +356,11 @@ export function WorldPage({
         }
       },
       (connection) => {
+        if (active && connection === "connected") {
+          hydratedHead = undefined;
+          observedDecorations = undefined;
+          setDecorationRevision((current) => current + 1);
+        }
         if (active)
           setPlayObservationFailure(
             connection === "connected"
@@ -1529,7 +1556,7 @@ export function WorldPage({
     >
       <ArtifactExtensionHost
         worldId={world.worldId}
-        artifacts={world.artifacts ?? []}
+        artifacts={displayedDecorations?.artifacts ?? []}
         playerViewPanels={world.playerViewPanels ?? []}
         playerViews={world.playerViews}
         interactionDisabled={pending !== null || worldRevisionLocked}
@@ -2024,8 +2051,8 @@ export function WorldPage({
           <ArtifactExtensionMount mount="overlay" />
           <ArtifactExtensionMount mount="debug" />
           <ArtifactDebugger
-            records={world.artifactDebug ?? []}
-            extensions={world.extensions ?? []}
+            records={displayedDecorations?.artifactDebug ?? []}
+            extensions={displayedDecorations?.extensions ?? []}
             playerViewPanels={world.playerViewPanels ?? []}
             bridgeEvents={bridgeEvents}
           />
