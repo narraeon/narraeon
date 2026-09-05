@@ -8,18 +8,25 @@ import { join } from "node:path";
 import type { V1Request } from "../../src/protocol/v1.ts";
 import { defaultPlayPresetFiles } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
 
-test("后置内容同端点刷新，观察重连和冷重启恢复且不追加模型请求", async ({
+test("浏览器多产物编辑、停用及后置内容同端点刷新、观察重连和冷重启恢复", async ({
   page,
 }) => {
   test.setTimeout(90_000);
+  page.setDefaultTimeout(15_000);
   const root = await mkdtemp(join(tmpdir(), "narraeon-extension-browser-"));
   const pending: ServerResponse[] = [];
   let requests = 0;
+  const requestBodies: string[] = [];
   const provider = createServer((request, response) => {
-    request.resume();
+    let body = "";
+    request.on("data", (chunk) => {
+      body += String(chunk);
+    });
     request.on("end", () => {
       requests += 1;
-      if (requests === 1) send(response, { content: "Alex opens the door." });
+      requestBodies.push(body);
+      if (requests === 1 || requests === 4)
+        send(response, { content: "Alex opens the door." });
       else pending.push(response);
     });
   });
@@ -100,6 +107,38 @@ test("后置内容同端点刷新，观察重连和冷重启恢复且不追加�
       files: presetFiles(),
     });
     await runtime(page, { type: "play.select", presetId: preset.preset.id });
+    await page.reload();
+    await page.getByRole("button", { name: "预设", exact: true }).click();
+    await page
+      .getByLabel("后置请求 1 显示名")
+      .fill("Edited multi-output request");
+    await page
+      .getByLabel("这次额外请求要做什么")
+      .fill("Emit panel and output_2 from the settled story.");
+    await page.getByRole("button", { name: "新增产物", exact: true }).click();
+    await page.getByLabel("output_2 显示位置").selectOption("sidebar");
+    await page.getByText("编辑渲染资源", { exact: true }).last().click();
+    await page
+      .getByRole("button", { name: "添加 HTML 模板", exact: true })
+      .last()
+      .click();
+    await page
+      .getByLabel("HTML 模板 1", { exact: true })
+      .fill("<main><h2>Edited renderer</h2><!-- narraeon:content --></main>");
+    await page.getByRole("button", { name: "保存修改", exact: true }).click();
+    await expect(
+      page.getByText("玩法文件与结构化草稿已保存。", { exact: true }),
+    ).toBeVisible();
+    const savedLibrary = await runtime<{
+      presets: { id: string; draft?: { validation: unknown } }[];
+    }>(page, { type: "play.read" });
+    expect(
+      savedLibrary.presets.find((item) => item.id === preset.preset.id)?.draft
+        ?.validation,
+    ).toEqual({ status: "valid" });
+    await page
+      .getByRole("button", { name: "应用为当前玩法", exact: true })
+      .click();
     const content = await runtime<{ localId: string }>(page, {
       type: "content.create",
     });
@@ -141,12 +180,27 @@ test("后置内容同端点刷新，观察重连和冷重启恢复且不追加�
       .click();
     await expect.poll(() => pending.length).toBe(1);
     const settledHead = await head();
+    expect(requestBodies[1]).toContain(
+      "Emit panel and output_2 from the settled story.",
+    );
     // Reopen while the follow-up is pending: a new real SSE subscription
     // restores the already committed narrative at the same endpoint.
     await open();
     await expect(page.getByText("Alex opens the door.")).toBeVisible();
     send(pending.shift()!, {
       tool_calls: [
+        {
+          index: 1,
+          id: "emit-extra",
+          type: "function",
+          function: {
+            name: "artifact_emit",
+            arguments: JSON.stringify({
+              output: "output_2",
+              payload: "Second edited artifact",
+            }),
+          },
+        },
         {
           index: 0,
           id: "emit-panel",
@@ -165,6 +219,16 @@ test("后置内容同端点刷新，观察重连和冷重启恢复且不追加�
     const panel = page.frameLocator('iframe[title="panel"]');
     await expect(
       panel.getByText("Saved panel at the same head", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page
+        .frameLocator('iframe[title="output_2"]')
+        .getByText("Second edited artifact", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page
+        .frameLocator('iframe[title="output_2"]')
+        .getByText("Edited renderer", { exact: true }),
     ).toBeVisible();
     expect(await head()).toBe(settledHead);
     // A second follow-up fails after the first content has become visible.
@@ -188,8 +252,35 @@ test("后置内容同端点刷新，观察重连和冷重启恢复且不追加�
     ).toBeVisible();
     expect(await head()).toBe(settledHead);
     expect(requests).toBe(3);
+    expect(requestBodies[2]).not.toContain("Second edited artifact");
+    expect(requestBodies[2]).not.toContain(
+      "Emit panel and output_2 from the settled story.",
+    );
+    await page.goto(url);
+    await page.getByRole("button", { name: "预设", exact: true }).click();
+    await page.getByLabel("启用 Edited multi-output request").uncheck();
+    await page.getByLabel("启用 second").uncheck();
+    await page.getByRole("button", { name: "保存修改", exact: true }).click();
+    await expect(
+      page.getByText("玩法文件与结构化草稿已保存。", { exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "应用为当前玩法", exact: true })
+      .click();
+    await open();
+    await page
+      .getByLabel("你的行动")
+      .fill("Continue with saved disabled followups.");
+    await page
+      .getByRole("button", { name: "从全新上下文发送行动", exact: true })
+      .click();
+    await expect(
+      page.getByRole("button", { name: "追加行动", exact: true }),
+    ).toBeEnabled();
+    await expect.poll(() => requests).toBe(4);
+    expect(pending).toHaveLength(0);
   } finally {
-    await page.goto("about:blank");
+    await page.goto("about:blank").catch(() => undefined);
     await stop();
     for (const response of pending) response.destroy();
     provider.closeAllConnections();

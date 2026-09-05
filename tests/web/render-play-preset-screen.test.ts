@@ -366,9 +366,7 @@ describe("玩法预设工作台", () => {
       ).value,
     ).toContain("Player-visible narrative");
     expect(
-      screen.getByLabelText<HTMLTextAreaElement>(
-        "编辑提示内容 prompts/options.md",
-      ).value,
+      screen.getByLabelText<HTMLTextAreaElement>("这次额外请求要做什么").value,
     ).toContain("Next-step ideas");
     expect(screen.queryByText("提示块路径")).toBeNull();
 
@@ -601,6 +599,11 @@ describe("玩法预设工作台", () => {
     fireEvent.change(screen.getByLabelText("后置请求 1 显示名"), {
       target: { value: "行动选项" },
     });
+    fireEvent.click(screen.getByLabelText("启用 行动选项"));
+    expect(screen.getByLabelText("后置请求 1 显示名")).toHaveProperty(
+      "value",
+      "行动选项",
+    );
     fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
     await screen.findByText("玩法文件与结构化草稿已保存。");
     const save = requests.find((request) => request.type === "play.save");
@@ -610,7 +613,44 @@ describe("玩法预设工作台", () => {
       const followups = save.structure?.followups as { displayName: string }[];
       expect(followups).toHaveLength(1);
       expect(followups[0]?.displayName).toBe("行动选项");
+      expect(save.structure?.followupItems).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: "user", enabled: false }),
+        ]),
+      );
     }
+    fireEvent.click(
+      screen.getByRole("button", { name: "场景回顾（系统示例）", exact: true }),
+    );
+    expect(screen.getByLabelText("系统后置提示词")).toHaveProperty(
+      "readOnly",
+      true,
+    );
+    expect(screen.queryByRole("button", { name: /^删除后置请求/ })).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "克隆后置请求", exact: true }),
+    );
+    const clone = screen.getByRole("button", {
+      name: "场景回顾（系统示例） 副本",
+      exact: true,
+    });
+    fireEvent.click(clone);
+    expect(screen.getByLabelText("这次额外请求要做什么")).toHaveProperty(
+      "readOnly",
+      false,
+    );
+    const list = screen.getByRole("list", { name: "后置请求" });
+    fireEvent.keyDown(clone, { altKey: true, key: "ArrowUp" });
+    expect(list.lastElementChild?.textContent).toContain("内容包后置请求");
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "下移 场景回顾（系统示例） 副本",
+        exact: true,
+      }),
+    );
+    expect(list.lastElementChild?.textContent).toContain(
+      "场景回顾（系统示例） 副本",
+    );
   });
 
   test("初始与切换选择会自动加载对应 workbench，并丢弃迟到的旧 revision", async () => {

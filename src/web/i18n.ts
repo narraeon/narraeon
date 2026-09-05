@@ -7,6 +7,17 @@ import {
 let activeLocale: AppLocale = defaultAppLocale;
 
 const englishMessages: Record<string, string> = {
+  "HTML 模板": "HTML template",
+  编辑渲染资源: "Edit rendering resources",
+  "在此位置展开当前世界的内容包后置请求。无声明时为空组，不调用模型；正文由内容包管理。":
+    "The current world’s package followups expand here. An undeclared group is empty and makes no model calls; the package owns its content.",
+  克隆后置请求: "Clone followup",
+  "界面产物：场景回顾，Markdown，剧情内容区；保存到提交，替换上一份，显式清除。":
+    "Artifact: scene recap, Markdown, story area; saved with the commit, replacing the previous result until explicitly cleared.",
+  系统后置提示词: "System followup prompt",
+  "系统示例只读；新运行使用应用最新版，克隆后独立保存。":
+    "This system example is read-only. New runs use the current application example; clones are saved independently.",
+  内容包后置请求: "Content-package followups",
   "对话连接已断开，正在重新连接…": "Conversation disconnected. Reconnecting…",
   "对话同步失败，请重新打开此页面。":
     "Conversation synchronization failed. Reopen this page to reconnect.",

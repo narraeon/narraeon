@@ -10336,3 +10336,32 @@ summary:focus-visible {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+.followup-workbench {
+  display: grid;
+  grid-template-columns: minmax(190px, 1fr) minmax(0, 3fr);
+  gap: 20px;
+}
+.followup-order {
+  list-style: none;
+  padding: 0;
+}
+.followup-order > li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px;
+  border-bottom: 1px solid var(--border-color, #888);
+}
+.followup-order > li > button:first-child {
+  flex-basis: 100%;
+  text-align: left;
+}
+.followup-details textarea {
+  width: 100%;
+}
+@media (max-width: 720px) {
+  .followup-workbench {
+    grid-template-columns: 1fr;
+  }
+}

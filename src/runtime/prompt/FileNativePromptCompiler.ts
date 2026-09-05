@@ -1,3 +1,4 @@
+import { effectiveFollowupDefinitions } from "../play/OrderedFollowups.ts";
 import { builtinPlayPrompts } from "../../shared/ordered-play-prompts.ts";
 import { parseOrderedPlayPrompts } from "../play/OrderedPlayPrompts.ts";
 import { renderDocumentWritePosition } from "./WorldMaintenanceReport.ts";
@@ -963,39 +964,40 @@ function compileFollowups(
   binding: PlayPresetBinding,
   locale: AppLocale,
 ): PlayFollowupCompilation[] {
-  return binding.definition.followups.map((followup) => {
-    const markdown = binding.definition.files[followup.prompt.path];
-    if (markdown === undefined || markdown.trim() === "")
-      throw new PromptCompilationError(
-        "play_preset_prompt_missing",
-        `Follow-up prompt block does not exist: ${followup.prompt.path}`,
-      );
-    const blocks = [
-      {
-        source: `play:${followup.prompt.path}`,
-        markdown: markdown.trim(),
-      },
-      {
-        source: `runtime:followup/${followup.id}`,
-        markdown: followupRuntimeContract(followup, locale),
-      },
-    ];
-    return {
-      id: followup.id,
-      displayName: followup.displayName,
-      logicalMessages: [
+  return effectiveFollowupDefinitions(binding.definition, locale).map(
+    ({ definition: followup, body: markdown }) => {
+      if (markdown === undefined || markdown.trim() === "")
+        throw new PromptCompilationError(
+          "play_preset_prompt_missing",
+          `Follow-up prompt block does not exist: ${followup.prompt.path}`,
+        );
+      const blocks = [
         {
-          role: "author_instruction" as const,
-          blocks,
-          markdown: joinBlocks(blocks),
+          source: `play:${followup.prompt.path}`,
+          markdown: markdown.trim(),
         },
-      ],
-      tools: runtimeToolsForNames(followupToolNames, locale),
-      allowedTools: [...followupToolNames],
-      artifacts: structuredClone(followup.artifacts),
-      maxArtifactBytes: followup.maxArtifactBytes,
-    };
-  });
+        {
+          source: `runtime:followup/${followup.id}`,
+          markdown: followupRuntimeContract(followup, locale),
+        },
+      ];
+      return {
+        id: followup.id,
+        displayName: followup.displayName,
+        logicalMessages: [
+          {
+            role: "author_instruction" as const,
+            blocks,
+            markdown: joinBlocks(blocks),
+          },
+        ],
+        tools: runtimeToolsForNames(followupToolNames, locale),
+        allowedTools: [...followupToolNames],
+        artifacts: structuredClone(followup.artifacts),
+        maxArtifactBytes: followup.maxArtifactBytes,
+      };
+    },
+  );
 }
 
 const followupToolNames = [
@@ -1319,7 +1321,14 @@ function createPlayPresetPreview(
     name: binding.name,
     revision: binding.revision,
     callChainPath: binding.definition.callChainPath,
-    mounts: structuredClone(binding.definition.mounts),
+    mounts: [
+      ...structuredClone(binding.definition.mounts),
+      ...(binding.definition.followupItems?.some(
+        (item) => item.kind === "builtin" && item.enabled,
+      )
+        ? [{ channel: "builtin:summary", mount: "story" as const }]
+        : []),
+    ],
     extensionRefs: [...binding.definition.extensionRefs],
     toolUniverse: compilation.toolUniverse,
     toolStrategy: compilation.toolStrategy,

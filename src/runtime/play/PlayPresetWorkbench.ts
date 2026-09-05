@@ -1,9 +1,11 @@
+import { builtinFollowupExample } from "../../shared/ordered-followups.ts";
 import {
   parsePlayPresetRegexAsset,
   toPlayPresetStructuredEditor,
   type PlayPresetArtifactDeclaration,
   type PlayPresetArtifactPayloadContract,
   type PlayPresetBinding,
+  type PlayPresetFollowupDefinition,
   type PlayPresetRegexRule,
   type PlayPresetStructuredEditor,
 } from "./FileNativePlayPresetStore.ts";
@@ -72,7 +74,13 @@ export function buildPlayPresetWorkbenchSnapshot(
   const structure = toPlayPresetStructuredEditor(binding.definition);
   const staticErrors: PlayPresetWorkbenchSnapshot["staticErrors"] = [];
   const artifactPreviews: PlayPresetWorkbenchArtifactPreview[] = [];
-  for (const followup of binding.definition.followups)
+  const previewFollowups: PlayPresetFollowupDefinition[] = [
+    ...binding.definition.followups,
+    ...(binding.definition.followupItems === undefined
+      ? []
+      : [builtinFollowupExample("en").definition]),
+  ];
+  for (const followup of previewFollowups)
     for (const declaration of followup.artifacts) {
       const diagnostics: string[] = [];
       let regex: PlayPresetRegexRule[] = [];

@@ -1,3 +1,4 @@
+import { builtinFollowupExample } from "../../shared/ordered-followups.ts";
 import type {
   ArtifactDebugRecord,
   ArtifactProjectionItem,
@@ -94,12 +95,14 @@ export function projectArtifactForFrontend(
       "invalid_revision",
     );
 
-  const followup = binding.definition.followups.find(
-    ({ id }) => id === artifact.requestId,
-  );
-  const declaration = followup?.artifacts.find(
-    ({ name }) => name === artifact.output,
-  );
+  const followup =
+    binding.definition.followups.find(({ id }) => id === artifact.requestId) ??
+    (artifact.requestId === "builtin:summary" &&
+    binding.definition.followupItems?.some((item) => item.kind === "builtin")
+      ? builtinFollowupExample("en").definition
+      : undefined);
+  const declaration: PlayPresetArtifactDeclaration | undefined =
+    followup?.artifacts.find(({ name }) => name === artifact.output);
   if (declaration === undefined)
     return {
       ...missingBundle(
@@ -134,9 +137,12 @@ export function projectArtifactForFrontend(
         )
       : [];
     const renderer = resolveRenderer(declaration, frozenBinding);
-    const mount = frozenBinding.definition.mounts.find(
-      ({ channel }) => channel === declaration.channel,
-    )?.mount;
+    const mount =
+      artifact.requestId === "builtin:summary"
+        ? "story"
+        : frozenBinding.definition.mounts.find(
+            ({ channel }) => channel === declaration.channel,
+          )?.mount;
     return {
       status: "ready",
       preset,
