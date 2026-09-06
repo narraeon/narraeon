@@ -54,8 +54,8 @@ export function PackageScriptPermissionControl({
     }
   }
   return (
-    <section className="manage-card package-script-permission">
-      <h4>{uiText("内容包脚本权限")}</h4>
+    <section className="package-script-permission">
+      <h4 className="visually-hidden">{uiText("内容包脚本权限")}</h4>
       <p>
         {uiText(
           "仅授权此处已保存的资源代码。导入不会授权，资源修改后需要重新授权；关闭立即停止此来源脚本，HTML 和样式仍可显示。",
