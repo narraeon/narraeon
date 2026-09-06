@@ -83,7 +83,8 @@ label {
   display: grid;
   gap: 0.45rem;
 }
-button:hover:not(:disabled) {
+/* Clickable backdrops must retain their translucency while hovered. */
+button:hover:not(:disabled, .setting-panel-scrim, .world-panel-scrim) {
   background: var(--surface-selected);
   border-color: #b8b1a3;
 }

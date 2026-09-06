@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import type { ContentTreeFile, V1Request } from "../../src/protocol/v1.ts";
 
 async function runtime<T>(page: Page, request: V1Request): Promise<T> {
@@ -8,6 +8,32 @@ async function runtime<T>(page: Page, request: V1Request): Promise<T> {
   expect(response.ok()).toBe(true);
   const body = (await response.json()) as { result: T };
   return body.result;
+}
+
+async function expectStableBackdrop(
+  scrim: Locator,
+  panel: Locator,
+  panelSide: "left" | "right",
+): Promise<void> {
+  await panel.hover();
+  const background = await scrim.evaluate(
+    (element) => getComputedStyle(element).backgroundColor,
+  );
+  const alpha = Number(/^rgba\(.+,\s*([\d.]+)\)$/u.exec(background)?.[1] ?? 1);
+  expect(alpha).toBeGreaterThan(0);
+  expect(alpha).toBeLessThan(1);
+  const box = await scrim.boundingBox();
+  expect(box).not.toBeNull();
+  const position = {
+    x: panelSide === "left" ? box!.width - 2 : 2,
+    y: box!.height / 2,
+  };
+  await scrim.hover({ position });
+  await expect(scrim).toHaveCSS("background-color", background);
+  await expect(panel).toBeVisible();
+  await scrim.click({ position });
+  await expect(panel).toHaveAttribute("aria-hidden", "true");
+  await expect(panel).toHaveCSS("opacity", "0");
 }
 
 test("手机工作区从明确的内容包快捷创建世界，并保护编辑草稿", async ({
@@ -33,7 +59,10 @@ test("手机工作区从明确的内容包快捷创建世界，并保护编辑�
     },
   });
   const packages: string[] = [];
-  for (const name of ["来源一", "来源二"]) {
+  const names = ["来源一", "来源二"].map(
+    (name) => `${name}-${crypto.randomUUID().slice(0, 8)}`,
+  );
+  for (const name of names) {
     const created = await runtime<{ localId: string }>(page, {
       type: "content.create",
     });
@@ -67,11 +96,26 @@ test("手机工作区从明确的内容包快捷创建世界，并保护编辑�
   ).toHaveCount(0);
   await page.getByRole("button", { name: "切换页面" }).click();
   await page
-    .getByRole("button", { name: "打开内容包：来源二", exact: true })
+    .getByRole("button", { name: `打开内容包：${names[1]}`, exact: true })
     .click();
   await expect(
-    page.getByRole("heading", { name: "来源二 · AI 设定完善" }),
+    page.getByRole("heading", { name: `${names[1]} · AI 设定完善` }),
   ).toBeVisible();
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.getByRole("button", { name: "历史", exact: true }).click();
+    await expectStableBackdrop(
+      page.locator(".setting-panel-scrim"),
+      page.getByLabel("设定完善对话历史", { exact: true }),
+      "left",
+    );
+    await page.getByRole("button", { name: "文件", exact: true }).click();
+    await expectStableBackdrop(
+      page.locator(".setting-panel-scrim"),
+      page.locator(".setting-overlay-rail-right"),
+      "right",
+    );
+  }
   const tools = page.getByRole("navigation", { name: "设定完善工具" });
   await expect(
     tools.getByRole("button", { name: "创建世界", exact: true }),
@@ -100,13 +144,25 @@ test("手机工作区从明确的内容包快捷创建世界，并保护编辑�
   expect(
     ((await creation).postDataJSON() as { request: V1Request }).request,
   ).toMatchObject({ type: "world.create", packageId: packages[1] });
-  await expect(page.locator(".world-floating-title")).toHaveText("来源二");
+  await expect(page.locator(".world-floating-title")).toHaveText(names[1]!);
   await expect(page.locator(".world-floating-title")).toBeVisible();
   await expect(page.getByLabel("故事时间线")).toContainText(
-    "来源二的已保存开场。",
+    `${names[1]}的已保存开场。`,
   );
   await expect(page.getByLabel("故事时间线")).not.toContainText(
     "尚未保存的开场",
+  );
+  await page.getByRole("button", { name: "此刻", exact: true }).click();
+  await expectStableBackdrop(
+    page.locator(".world-panel-scrim"),
+    page.locator(".world-overlay-rail-left"),
+    "left",
+  );
+  await page.getByRole("button", { name: "世界", exact: true }).click();
+  await expectStableBackdrop(
+    page.locator(".world-panel-scrim"),
+    page.locator(".world-overlay-rail-right"),
+    "right",
   );
   await page.getByRole("button", { name: "世界管理", exact: true }).click();
   await page.getByText("世界控制 · 高级编辑", { exact: true }).click();
@@ -130,10 +186,10 @@ test("手机工作区从明确的内容包快捷创建世界，并保护编辑�
     .click();
   await page.getByLabel("创建世界的内容包").selectOption(packages[0]!);
   await expect(page.getByLabel("开场白预览")).toContainText(
-    "来源一的已保存开场。",
+    `${names[0]}的已保存开场。`,
   );
   await expect(page.getByLabel("开场白预览")).not.toContainText(
-    "来源二的已保存开场。",
+    `${names[1]}的已保存开场。`,
   );
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
     390,
