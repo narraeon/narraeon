@@ -834,9 +834,13 @@ test("新的发送与空输入重编译，冷恢复保留原生对话和当轮�
   expect(JSON.stringify(modelHost.requests[2]!.bootstrap)).not.toContain(
     "LATEST LIVE RULE",
   );
-  expect(modelHost.requests[2]!.appended.slice(0, -1)).toEqual(
+  expect(modelHost.requests[2]!.appended.slice(0, -2)).toEqual(
     modelHost.requests[1]!.appended,
   );
+  expect(modelHost.requests[2]!.appended.at(-1)).toMatchObject({
+    kind: "runtime_notice",
+    notice: "continuation",
+  });
 });
 
 test("推进事实先写入、当前指针尚未发布时，可按同一身份恢复而不改写事实", async () => {
@@ -1871,7 +1875,7 @@ test("协议拒绝无界时间线分页、空游标、非法详情事件与未�
 });
 
 test("工具中间步文本不进入叙事，状态与终态叙事分别推进并可追加上下文", async () => {
-  const { worlds, worldId } = await createWorld("play-chain");
+  const { worlds, worldId, root } = await createWorld("play-chain");
   const modelHost = new ScriptedModelHost({
     binding: modelBinding(),
     steps: [
@@ -1978,12 +1982,16 @@ test("工具中间步文本不进入叙事，状态与终态叙事分别推进�
     throw new Error("Expected a tool-result timeline detail");
   expect(patchDetail.markdown).not.toContain("Alex守在宿舍门边。");
   expect(patchDetail.markdown).not.toContain("Alex已经把宿舍门打开。");
-  expect(modelHost.requests[1]?.appended.at(-1)).toEqual({
+  expect(modelHost.requests[1]?.appended.at(-1)).toMatchObject({
+    kind: "runtime_notice",
+    notice: "tool_step",
+  });
+  expect(modelHost.requests[1]?.appended.at(-2)).toEqual({
     kind: "tool",
     toolCallId: "patch-door",
     markdown: patchDetail.markdown,
   });
-  expect(modelHost.requests[1]?.appended.at(-2)).toMatchObject({
+  expect(modelHost.requests[1]?.appended.at(-3)).toMatchObject({
     kind: "assistant",
     text: "I will update the door before narrating the result.",
     toolCalls: [
@@ -2034,7 +2042,8 @@ test("工具中间步文本不进入叙事，状态与终态叙事分别推进�
       .join("\n"),
   ).toContain("Responses containing tool calls are intermediate steps");
 
-  const continued = await chains.append({
+  const restored = new PlayCallChain(new FileNativeWorldStore(root));
+  const continued = await restored.append({
     worldId,
     chainId: first.chainId,
     exchangeId: "exchange-second",
@@ -2048,7 +2057,7 @@ test("工具中间步文本不进入叙事，状态与终态叙事分别推进�
     text: "I walk into the corridor.",
   });
   const requestCount = modelHost.requests.length;
-  const duplicateAppend = await chains.append({
+  const duplicateAppend = await restored.append({
     worldId,
     chainId: first.chainId,
     exchangeId: "exchange-second",
@@ -2399,7 +2408,8 @@ test("仅登记检查点后重启可原样继续，空输入叙事进入重放�
   );
   expect(
     continuation.requests[1]!.appended.filter(
-      ({ kind }) => kind === "runtime_notice",
+      (item) =>
+        item.kind === "runtime_notice" && item.notice === "checkpoint_rounds",
     ),
   ).toHaveLength(1);
   const next = new ScriptedModelHost({
@@ -4948,6 +4958,11 @@ test("空输入追加会从完整逻辑 transcript 继续生成，并把 Provide
         },
       },
       toolCalls: [],
+    },
+    {
+      kind: "runtime_notice",
+      notice: "continuation",
+      text: "[Runtime continuation]\nThis send adds no new player input. Continue generation from the current conversation; existing final narrator messages are already completed history.",
     },
   ]);
   expect(

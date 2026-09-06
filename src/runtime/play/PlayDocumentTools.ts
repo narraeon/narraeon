@@ -546,7 +546,7 @@ function authorizationsAfterEdits(
         return false;
       if (edit.op === "remove" && requested.codec === "yaml") {
         const index = requested.path.length - 1;
-        const removed = requested.path[index];
+        const removed: unknown = requested.path[index];
         const current = path[index];
         if (
           typeof removed === "number" &&

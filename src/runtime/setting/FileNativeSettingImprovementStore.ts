@@ -866,7 +866,9 @@ function validModelItemShape(
   if (value.kind === "runtime_notice")
     return (
       hasExactKeys(value, ["kind", "notice", "text"]) &&
-      value.notice === "checkpoint_rounds" &&
+      (value.notice === "checkpoint_rounds" ||
+        value.notice === "continuation" ||
+        value.notice === "tool_step") &&
       typeof value.text === "string"
     );
   if (value.kind === "prompt_delta")

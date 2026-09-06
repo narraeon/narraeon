@@ -8,8 +8,10 @@ import { createHash } from "node:crypto";
 import type { AppLocale } from "../../protocol/appPreferences.ts";
 import {
   completedPlayerRounds,
+  continuationNotice,
   isPlayerRoundMarker,
   playerInputAppend,
+  toolStepNotice,
   type NarrativeCheckpoint,
 } from "./PlayContinuity.ts";
 import { renderFreshContextCoverage } from "../prompt/WorldMaterialCoverage.ts";
@@ -402,6 +404,13 @@ export class PlayCallChain {
       }
       await this.#refreshPrompt(session, input);
       session.exchange += 1;
+      const last = session.transcript.at(-1);
+      if (
+        last?.kind === "assistant" &&
+        last.toolCalls.length === 0 &&
+        last.text.trim().length > 0
+      )
+        session.transcript.push(continuationNotice(this.#compiler.locale));
       return this.#dispatch(
         session,
         input.modelHost,
@@ -2045,6 +2054,9 @@ export class PlayCallChain {
           ? [assistantItem]
           : []),
         ...prepared.map(({ transcript }) => structuredClone(transcript)),
+        ...(calls.length > 0 && hasText
+          ? [toolStepNotice(this.#compiler.locale)]
+          : []),
       ],
       completedTools: [...workingTools.values()].map((item) =>
         structuredClone(item),
