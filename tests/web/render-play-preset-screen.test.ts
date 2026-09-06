@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { setWebLocale } from "../../src/web/i18n.ts";
 import {
   cleanup,
   fireEvent,
@@ -373,3 +374,92 @@ test("unused named resources can be deleted after unlinking without leaving expo
   expect(Object.keys(save.files).some((p) => p.includes("named-"))).toBe(false);
   expect(JSON.stringify(save.structure)).not.toContain("named-");
 });
+
+test.each(["zh-CN", "en"] as const)(
+  "advanced labels and normal feedback are readable in %s without changing saved enum values",
+  async (locale) => {
+    setWebLocale(locale);
+    const cn = locale === "zh-CN";
+    const request = setup();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: cn ? "新增后置请求" : "Add follow-up request",
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: cn ? "高级设置" : "Advanced",
+      }),
+    );
+    const format = screen.getByLabelText(cn ? "内容格式" : "Content format");
+    expect(
+      within(format)
+        .getByRole("option", {
+          name: cn ? "JSON 结构化数据" : "Structured JSON data",
+        })
+        .getAttribute("value"),
+    ).toBe("application/json");
+    const strategy = screen.getByLabelText(cn ? "更新方式" : "Update policy");
+    expect(
+      within(strategy)
+        .getByRole("option", {
+          name: cn ? "仅在生成期间显示" : "Show only while generating",
+        })
+        .getAttribute("value"),
+    ).toBe("transient");
+    const save = screen.getByLabelText(cn ? "保存范围" : "Save scope");
+    expect(
+      within(save)
+        .getByRole("option", {
+          name: cn ? "随世界进度保存" : "Save with world progress",
+        })
+        .getAttribute("value"),
+    ).toBe("commit");
+    const clearing = screen.getByLabelText(
+      cn ? "清空条件" : "Clearing condition",
+    );
+    expect(
+      within(clearing)
+        .getByRole("option", {
+          name: cn
+            ? "世界状态版本改变时"
+            : "When the world state version changes",
+        })
+        .getAttribute("value"),
+    ).toBe("head_change");
+    fireEvent.change(strategy, { target: { value: "append" } });
+    fireEvent.change(clearing, { target: { value: "never" } });
+    fireEvent.click(
+      screen.getByRole("button", { name: cn ? "保存修改" : "Save changes" }),
+    );
+    await screen.findByText(cn ? "预设已保存。" : "Preset saved.");
+    const saved = request.mock.calls
+      .map(([r]) => r)
+      .find(
+        (r): r is Extract<V1Request, { type: "play.save" }> =>
+          r.type === "play.save",
+      )!;
+    expect(
+      (
+        saved.structure as unknown as NonNullable<
+          PlayPresetScreenPreset["structure"]
+        >
+      ).followups[0]!.artifacts[0],
+    ).toMatchObject({
+      contentType: "text/markdown",
+      strategy: "append",
+      save: "commit",
+      invalidation: "never",
+    });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: cn ? "应用为当前玩法" : "Use as current play preset",
+      }),
+    );
+    await screen.findByText(
+      cn
+        ? "已应用此预设；游玩修改将在下一次正常发送时生效。"
+        : "Preset applied. Play changes take effect on the next normal send.",
+    );
+  },
+);

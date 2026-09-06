@@ -146,8 +146,8 @@ export function PresetDraftPreview({
       </summary>
       <p>
         {t(
-          "当前未保存草稿与本页样例，使用生产显示宿主；不调用模型，不修改真实世界。脚本许可取自此预设实际本地设置。",
-          "Uses the unsaved draft, local samples and production renderer. No model calls or world changes. Script permission comes from this preset's actual local setting.",
+          "预览当前修改与本页样例，不调用模型，也不改变世界。JavaScript 是否运行沿用此预设的脚本设置。",
+          "Preview your current edits with this page's sample data, without model calls or world changes. JavaScript follows this preset's script settings.",
         )}
       </p>
       {error?.key === key ? (

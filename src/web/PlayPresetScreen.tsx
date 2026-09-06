@@ -7,6 +7,7 @@ import { type PlayPresetPlayerViewPanel } from "./PlayerViewPanelsEditor.tsx";
 import { InterfaceExtensionPreview } from "./InterfaceExtensionPreview.tsx";
 import { PathChecklist } from "./PlayPresetEditorControls.tsx";
 import {
+  artifactOptionLabel,
   mountLabel,
   withCurrentPath,
   describePresetFile,
@@ -472,7 +473,7 @@ export function PlayPresetScreen({
       setFeedback({
         kind: "error",
         text: uiText(
-          "preset.yaml/call-chain.yaml 与结构化编辑同时修改；请保留一种编辑方式后再保存，避免静默覆盖。",
+          "预设原文与表单均有修改，请先保留一种编辑结果再保存，以免覆盖当前修改。",
         ),
       });
       return;
@@ -494,7 +495,7 @@ export function PlayPresetScreen({
       await refresh(draft.id);
       setFeedback({
         kind: "status",
-        text: uiText("玩法文件与结构化草稿已保存。"),
+        text: uiText("预设已保存。"),
       });
     });
   }
@@ -514,7 +515,7 @@ export function PlayPresetScreen({
       anchor.download = `${draft.name}.play-preset.json`;
       anchor.click();
       URL.revokeObjectURL(url);
-      setFeedback({ kind: "status", text: uiText("玩法预设业务文件已导出。") });
+      setFeedback({ kind: "status", text: uiText("预设已导出。") });
     });
   }
 
@@ -532,7 +533,9 @@ export function PlayPresetScreen({
             typeof (entry as { contents?: unknown }).contents !== "string",
         )
       )
-        throw new Error(uiText("导入文件必须是 UTF-8 玩法业务文件数组"));
+        throw new Error(
+          uiText("无法识别此预设。请选择通过“导出预设”生成的文件。"),
+        );
       const result = await client.request<{
         preset: PlayPresetScreenPreset;
       }>({
@@ -545,7 +548,7 @@ export function PlayPresetScreen({
       setFeedback({
         kind: "status",
         text: uiText(
-          "玩法预设已导入为新的本地身份；请显式启用其中的 JavaScript。",
+          "预设已导入为独立副本，JavaScript 默认关闭；信任其内容后可在预设操作中启用。",
         ),
       });
     });
@@ -575,13 +578,11 @@ export function PlayPresetScreen({
           <p className="eyebrow">PLAY WORKBENCH · FILE NATIVE</p>
           <h2 id="play-preset-title">{uiText("玩法预设")}</h2>
           <p className="play-preset-lede">
-            {uiText(
-              "在同一处管理设定完善方法、主持规则、调用链、界面产物与可信本地代码。",
-            )}
+            {uiText("在同一处编辑设定完善方法、主持规则、后置请求与界面展示。")}
           </p>
         </div>
         <div className="play-preset-header-fact">
-          <span>{uiText("新调用链与设定完善当前使用")}</span>
+          <span>{uiText("当前使用的预设")}</span>
           <strong>{currentPreset?.name ?? uiText("未选择")}</strong>
           <small>
             {uiText("游玩在下一次正常发送生效，原样重试保留旧请求")}
@@ -678,7 +679,7 @@ export function PlayPresetScreen({
                         await refresh(result.preset.id);
                         setFeedback({
                           kind: "status",
-                          text: uiText("已复制推荐{name}；所有文件均可编辑。", {
+                          text: uiText("已复制推荐{name}，可独立编辑。", {
                             name: template.label,
                           }),
                         });
@@ -690,9 +691,9 @@ export function PlayPresetScreen({
                   </button>
                 ))}
                 <label className="play-preset-import-control">
-                  {uiText("导入玩法文件")}
+                  {uiText("导入预设")}
                   <input
-                    aria-label={uiText("导入玩法预设文件")}
+                    aria-label={uiText("选择要导入的预设")}
                     type="file"
                     accept=".json,application/json"
                     disabled={pending || dirty}
@@ -713,7 +714,7 @@ export function PlayPresetScreen({
           ) : (
             <section
               className="panel-card play-preset-editor"
-              aria-label={uiText("玩法预设文件编辑器")}
+              aria-label={uiText("预设编辑器")}
             >
               <header className="play-preset-editor-header">
                 <div>
@@ -763,7 +764,7 @@ export function PlayPresetScreen({
 
                 <div
                   className="play-preset-management"
-                  aria-label={uiText("玩法预设身份管理")}
+                  aria-label={uiText("预设操作")}
                 >
                   <p>
                     {uiText(
@@ -810,7 +811,7 @@ export function PlayPresetScreen({
                           text:
                             draft.scriptsEnabled === true
                               ? uiText(
-                                  "JavaScript 已停用；raw/document 仍可预览。",
+                                  "JavaScript 已关闭；文本、HTML 和样式仍可预览。",
                                 )
                               : uiText(
                                   "JavaScript 已显式启用（本地可信代码）。",
@@ -835,7 +836,7 @@ export function PlayPresetScreen({
                         await refresh(copied.preset.id);
                         setFeedback({
                           kind: "status",
-                          text: uiText("已复制为独立本地身份。"),
+                          text: uiText("已复制为独立预设。"),
                         });
                       })
                     }
@@ -848,7 +849,7 @@ export function PlayPresetScreen({
                     disabled={pending || dirty}
                     onClick={() => void exportPreset()}
                   >
-                    {uiText("导出业务文件")}
+                    {uiText("导出预设")}
                   </button>
                   <button
                     type="button"
@@ -982,11 +983,11 @@ export function PlayPresetScreen({
                   onWrite={updateFileAtPath}
                   promptPreview={
                     <details className="preset-draft-preview">
-                      <summary>{uiText("真实调用链预览")}</summary>
+                      <summary>{uiText("发送给 AI 的内容预览")}</summary>
                       {dirty ? (
                         <p>
                           {uiText(
-                            "请先保存当前修改；真实预览只编译已冻结的有效 revision。",
+                            "请先保存当前修改；这里预览的是已保存且校验通过的预设，不包含未保存修改。",
                           )}
                         </p>
                       ) : (
@@ -1051,9 +1052,7 @@ export function PlayPresetScreen({
                     setNewFilePath("");
                     setFeedback({
                       kind: "status",
-                      text: uiText(
-                        "已加入普通文件草稿；保存时会通过 codec 校验。",
-                      ),
+                      text: uiText("已加入修复草稿，保存时将检查预设格式。"),
                     });
                   }}
                 />
@@ -1086,7 +1085,7 @@ export function PlayPresetScreen({
                 {structuralConflict ? (
                   <p role="alert" className="workspace-feedback">
                     {uiText(
-                      "preset.yaml/call-chain.yaml 与结构化字段均有未保存修改；请撤销其中一侧后再保存，避免 stale structure 覆盖 raw YAML。",
+                      "预设原文与表单均有修改，请先保留一种编辑结果再保存，以免覆盖当前修改。",
                     )}
                   </p>
                 ) : null}
@@ -1095,7 +1094,7 @@ export function PlayPresetScreen({
                     {dirty
                       ? uiText("草稿尚未保存")
                       : draft.validation.status === "valid"
-                        ? uiText("结构校验通过")
+                        ? uiText("预设检查通过")
                         : uiText("草稿需要修复")}
                   </strong>
                   <span>
@@ -1142,7 +1141,9 @@ export function PlayPresetScreen({
                         await refresh(draft.id);
                         setFeedback({
                           kind: "status",
-                          text: uiText("已将该冻结 revision 设为当前玩法。"),
+                          text: uiText(
+                            "已应用此预设；游玩修改将在下一次正常发送时生效。",
+                          ),
                         });
                       })
                     }
@@ -1280,11 +1281,13 @@ export function ArtifactDefinitionEditor({
               });
             }}
           >
-            <option value="replace">{uiText("替换上一份")}</option>
-            <option value="append">{uiText("追加一份")}</option>
-            <option value="upsert">{uiText("按 key 更新")}</option>
-            <option value="transient">{uiText("仅短暂显示")}</option>
-            <option value="hidden">{uiText("保存但不显示")}</option>
+            <option value="replace">{artifactOptionLabel("replace")}</option>
+            <option value="append">{artifactOptionLabel("append")}</option>
+            <option value="upsert">{artifactOptionLabel("upsert")}</option>
+            <option value="transient">
+              {artifactOptionLabel("transient")}
+            </option>
+            <option value="hidden">{artifactOptionLabel("hidden")}</option>
           </select>
         </label>
         <label className="play-preset-checkbox-field">
@@ -1345,11 +1348,11 @@ export function ArtifactDefinitionEditor({
                 }));
               }}
             >
-              <option value="commit">{uiText("随权威提交保留")}</option>
+              <option value="commit">{artifactOptionLabel("commit")}</option>
               <option value="operation">
-                {uiText("只保留到本次操作结束")}
+                {artifactOptionLabel("operation")}
               </option>
-              <option value="none">{uiText("不持久保存")}</option>
+              <option value="none">{artifactOptionLabel("none")}</option>
             </select>
           </label>
           <label>
@@ -1365,11 +1368,19 @@ export function ArtifactDefinitionEditor({
                 }));
               }}
             >
-              <option value="new_operation">{uiText("下一次操作开始")}</option>
-              <option value="head_change">{uiText("世界端点变化")}</option>
-              <option value="operation_end">{uiText("本次操作结束")}</option>
-              <option value="explicit_clear">{uiText("显式清除")}</option>
-              <option value="never">{uiText("永不自动失效")}</option>
+              <option value="new_operation">
+                {artifactOptionLabel("new_operation")}
+              </option>
+              <option value="head_change">
+                {artifactOptionLabel("head_change")}
+              </option>
+              <option value="operation_end">
+                {artifactOptionLabel("operation_end")}
+              </option>
+              <option value="explicit_clear">
+                {artifactOptionLabel("explicit_clear")}
+              </option>
+              <option value="never">{artifactOptionLabel("never")}</option>
             </select>
           </label>
           <label>
@@ -1417,7 +1428,7 @@ export function ArtifactDefinitionEditor({
           {artifact.renderer === undefined ? null : (
             <>
               <label>
-                {uiText("模板 revision")}
+                {uiText("模板版本标记")}
                 <input
                   value={artifact.rendererRevision ?? ""}
                   onChange={(event) =>
@@ -1488,7 +1499,7 @@ export function ArtifactDefinitionEditor({
             <summary>{uiText("当前严格数据格式（只读）")}</summary>
             <p className="field-note">
               {uiText(
-                "常用设置无需改它；需要重写完整 contract 时再到高级文件编辑 call-chain.yaml。",
+                "这里显示此产物的数据要求。需要修改时，请在当前内容包或世界修订的文件编辑中修改 control/followups.yaml 的对应产物声明。",
               )}
             </p>
             <pre>{JSON.stringify(artifact.payloadContract, null, 2)}</pre>
@@ -1633,7 +1644,7 @@ function PresetFileWorkspace({
         </section>
       </div>
       <details className="play-preset-file-create">
-        <summary>{uiText("新增高级文件")}</summary>
+        <summary>{uiText("新增修复文件")}</summary>
         <div className="play-preset-file-add">
           <label>
             {uiText("新文件路径（prompt/regex/renderer/script/asset）")}

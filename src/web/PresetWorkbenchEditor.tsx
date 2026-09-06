@@ -15,7 +15,7 @@ import type {
 import { PlayerViewPanelsEditor } from "./PlayerViewPanelsEditor.tsx";
 import { PresetDisplayEditor } from "./PresetDisplayEditor.tsx";
 import { MountSelect } from "./PlayPresetEditorControls.tsx";
-import { mountLabel } from "./playPresetEditorLabels.ts";
+import { artifactOptionLabel, mountLabel } from "./playPresetEditorLabels.ts";
 
 const t = (cn: string, en: string) => (getWebLocale() === "zh-CN" ? cn : en);
 export function PresetWorkbenchEditor({
@@ -852,6 +852,7 @@ function ArtifactAdvancedEditor({
       <label>
         {t("内容格式", "Content format")}
         <select
+          aria-label={t("内容格式", "Content format")}
           value={artifact.contentType}
           onChange={(e) => {
             const next = {
@@ -866,7 +867,9 @@ function ArtifactAdvancedEditor({
         >
           {["text/markdown", "text/plain", "application/json", "text/html"].map(
             (type) => (
-              <option key={type}>{type}</option>
+              <option key={type} value={type}>
+                {artifactOptionLabel(type)}
+              </option>
             ),
           )}
         </select>
@@ -875,8 +878,8 @@ function ArtifactAdvancedEditor({
         <>
           <p>
             {t(
-              "约定字段、类型与必填项。要求会说明给模型，提交前由 Runtime 校验；不启用 Provider JSON 模式，不保证模型合法输出，也不自动往返修复。",
-              "Fields, types and required values are explained to the model and checked by Runtime before submission. This does not enable Provider JSON mode, guarantee valid output, or automatically repair responses.",
+              "约定字段、类型与必填项。要求会说明给模型，提交时由应用校验；不为模型开启 JSON 输出模式，不保证模型合法输出，也不自动往返修复。",
+              "Fields, types and required values are explained to the model and checked by the app on submission. This does not enable JSON output mode for the model, guarantee valid output, or automatically repair responses.",
             )}
           </p>
           <label>
@@ -927,10 +930,14 @@ function ArtifactAdvancedEditor({
             t("更新方式", "Update policy"),
             ["replace", "append", "upsert", "transient", "hidden"],
           ],
-          ["save", t("保存到", "Save scope"), ["commit", "operation", "none"]],
+          [
+            "save",
+            t("保存范围", "Save scope"),
+            ["commit", "operation", "none"],
+          ],
           [
             "invalidation",
-            t("何时清空", "Invalidation"),
+            t("清空条件", "Clearing condition"),
             [
               "explicit_clear",
               "new_operation",
@@ -944,18 +951,30 @@ function ArtifactAdvancedEditor({
         <label key={key}>
           {label}
           <select
+            aria-label={label}
             value={artifact[key]}
             onChange={(e) => onChange({ ...artifact, [key]: e.target.value })}
           >
             {options.map((o) => (
-              <option key={o}>{o}</option>
+              <option key={o} value={o}>
+                {artifactOptionLabel(o)}
+              </option>
             ))}
           </select>
         </label>
       ))}
+      <p>
+        {t(
+          "更新方式决定同一产物如何合并：替换只留最新一份，追加保留多份，按标识更新只替换同标识的内容。保存范围、清空条件和生成期间显示的限制共同决定何时可见；关闭世界中的扩展仍会隐藏产物，清空指令仍可清除它。",
+          "The update policy combines results for this output: replace keeps the latest, append keeps multiple results, and keyed updates replace only the matching key. Save scope, clearing conditions and generation-only display limits jointly determine visibility. Disabling the world's extension still hides its outputs, and clear instructions can still remove them.",
+        )}
+      </p>
       {artifact.strategy === "upsert" && (
         <label>
-          {t("更新 key（固定身份）", "Update key (fixed identity)")}
+          {t(
+            "更新标识（相同标识覆盖旧内容）",
+            "Update key (replaces the result with the same key)",
+          )}
           <input
             value={artifact.key ?? ""}
             onChange={(e) => onChange({ ...artifact, key: e.target.value })}

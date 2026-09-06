@@ -156,9 +156,7 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
       'h2 { color: rgb(12, 34, 56); } h2::after { content: "<"; } /* </style><script data-css-escape>bad()</script> */',
     );
     await page.getByRole("button", { name: "保存修改", exact: true }).click();
-    await expect(
-      page.getByText("玩法文件与结构化草稿已保存。", { exact: true }),
-    ).toBeVisible();
+    await expect(page.getByText("预设已保存。", { exact: true })).toBeVisible();
     const savedLibrary = await runtime<{
       presets: { id: string; draft?: { validation: unknown } }[];
     }>(page, { type: "play.read" });
@@ -376,9 +374,7 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
     await page.getByLabel("启用 Edited multi-output request").uncheck();
     await page.getByLabel("启用 second").uncheck();
     await page.getByRole("button", { name: "保存修改", exact: true }).click();
-    await expect(
-      page.getByText("玩法文件与结构化草稿已保存。", { exact: true }),
-    ).toBeVisible();
+    await expect(page.getByText("预设已保存。", { exact: true })).toBeVisible();
     await page
       .getByRole("button", { name: "应用为当前玩法", exact: true })
       .click();
@@ -396,9 +392,7 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
     await page.getByRole("button", { name: "预设", exact: true }).click();
     await page.getByLabel("启用 场景回顾（系统示例）").check();
     await page.getByRole("button", { name: "保存修改", exact: true }).click();
-    await expect(
-      page.getByText("玩法文件与结构化草稿已保存。", { exact: true }),
-    ).toBeVisible();
+    await expect(page.getByText("预设已保存。", { exact: true })).toBeVisible();
     await page
       .getByRole("button", { name: "应用为当前玩法", exact: true })
       .click();
@@ -419,9 +413,7 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
     await page.getByRole("button", { name: "预设", exact: true }).click();
     await page.getByLabel("启用 场景回顾（系统示例）").uncheck();
     await page.getByRole("button", { name: "保存修改", exact: true }).click();
-    await expect(
-      page.getByText("玩法文件与结构化草稿已保存。", { exact: true }),
-    ).toBeVisible();
+    await expect(page.getByText("预设已保存。", { exact: true })).toBeVisible();
     await page
       .getByRole("button", { name: "应用为当前玩法", exact: true })
       .click();

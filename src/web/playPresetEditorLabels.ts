@@ -1,4 +1,4 @@
-import { uiText } from "./i18n.ts";
+import { getWebLocale, uiText } from "./i18n.ts";
 import type { ArtifactMountName } from "./ArtifactExtensionHost.tsx";
 import { defaultSettingImprovementPromptPath } from "../shared/default-setting-improvement-prompt.ts";
 export const mountChoices: {
@@ -90,7 +90,7 @@ export function describePresetFile(
       title: markdownTitle(contents),
       kind: uiText("主持规则"),
       description: uiText(
-        "跨世界成立的主持语义；是否发送给模型以及发送顺序由“提示内容”页控制。",
+        "跨世界使用的主持规则；可在“游玩”左侧目录调整启用状态和顺序。",
       ),
     };
   if (path === defaultSettingImprovementPromptPath)
@@ -108,7 +108,7 @@ export function describePresetFile(
       title: markdownTitle(contents),
       kind: uiText("调用链提示"),
       description: uiText(
-        "主响应或某个后置请求实际读取的 Markdown 指令；普通编辑可在“调用链”直接修改。",
+        "主叙事或后置请求使用的提示词；在“游玩”左侧选择对应条目即可编辑。",
       ),
     };
   if (path.startsWith("renderers/"))
@@ -158,4 +158,34 @@ export function splitLines(value: string): string[] {
         .filter(Boolean),
     ),
   ];
+}
+
+/** Display names only: values retain the artifact store's projection/lifetime contract. */
+export function artifactOptionLabel(value: string): string {
+  const labels: Record<string, readonly [string, string]> = {
+    "text/markdown": ["Markdown 文本", "Markdown text"],
+    "text/plain": ["纯文本", "Plain text"],
+    "application/json": ["JSON 结构化数据", "Structured JSON data"],
+    "text/html": ["HTML 内容", "HTML content"],
+    replace: ["替换上一份", "Replace the previous result"],
+    append: ["追加新内容", "Append a new result"],
+    upsert: ["按固定标识更新", "Update by a fixed key"],
+    transient: ["仅在生成期间显示", "Show only while generating"],
+    hidden: ["仅供检查，不在游玩中显示", "Keep out of the play display"],
+    commit: ["随世界进度保存", "Save with world progress"],
+    operation: [
+      "随本次生成保存，成功结束后隐藏",
+      "Save for this generation; hide after success",
+    ],
+    none: [
+      "临时使用，不持久保存",
+      "Use temporarily without persistent storage",
+    ],
+    explicit_clear: ["收到清空指令时", "When a clear instruction is received"],
+    new_operation: ["下一次生成开始时", "When the next generation starts"],
+    head_change: ["世界状态版本改变时", "When the world state version changes"],
+    operation_end: ["本次生成结束时", "When this generation ends"],
+    never: ["不设置自动清空条件", "No automatic clearing condition"],
+  };
+  return labels[value]?.[getWebLocale() === "zh-CN" ? 0 : 1] ?? value;
 }

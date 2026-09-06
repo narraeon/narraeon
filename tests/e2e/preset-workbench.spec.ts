@@ -237,17 +237,17 @@ test("A 工作台真实保存、独立三产物、正则、JS、导入及下一�
     await page.getByText("预设操作", { exact: true }).click();
     const [download] = await Promise.all([
       page.waitForEvent("download"),
-      page.getByRole("button", { name: "导出业务文件", exact: true }).click(),
+      page.getByRole("button", { name: "导出预设", exact: true }).click(),
     ]);
     const portable = await readFile(await download.path());
     await page.getByText("预设操作", { exact: true }).click();
     await page.getByText("预设管理", { exact: true }).click();
-    await page.getByLabel("导入玩法预设文件").setInputFiles({
+    await page.getByLabel("选择要导入的预设").setInputFiles({
       name: "A45-import.play-preset.json",
       mimeType: "application/json",
       buffer: portable,
     });
-    await expect(page.getByText(/玩法预设已导入为新的本地身份/)).toBeVisible();
+    await expect(page.getByText(/预设已导入为独立副本/)).toBeVisible();
     const imported = (
       await runtime<FileNativePlayPresetLibrary>(page, { type: "play.read" })
     ).presets.find(

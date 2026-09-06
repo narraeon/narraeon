@@ -7,6 +7,47 @@ import {
 let activeLocale: AppLocale = defaultAppLocale;
 
 const englishMessages: Record<string, string> = {
+  预设管理: "Manage presets",
+  预设检查通过: "Preset validated",
+  "预设已导出。": "Preset exported.",
+  "JavaScript 已关闭；文本、HTML 和样式仍可预览。":
+    "JavaScript disabled. Text, HTML and styles can still be previewed.",
+  "已复制为独立预设。": "Copied as an independent preset.",
+  "已复制推荐{name}，可独立编辑。":
+    "Copied the recommended {name} for independent editing.",
+  预设编辑器: "Preset editor",
+  "已加入修复草稿，保存时将检查预设格式。":
+    "Added to the repair draft. The preset format will be checked when saving.",
+
+  "跨世界使用的主持规则；可在“游玩”左侧目录调整启用状态和顺序。":
+    "Narrator rules shared across worlds. Change their order and enabled state in the Play directory.",
+  "主叙事或后置请求使用的提示词；在“游玩”左侧选择对应条目即可编辑。":
+    "Prompts for the main narration or follow-up requests. Select the corresponding item in the Play directory to edit it.",
+  "预设已保存。": "Preset saved.",
+  "已应用此预设；游玩修改将在下一次正常发送时生效。":
+    "Preset applied. Play changes take effect on the next normal send.",
+  导入预设: "Import preset",
+  选择要导入的预设: "Choose a preset to import",
+  "无法识别此预设。请选择通过“导出预设”生成的文件。":
+    "This preset could not be recognized. Choose a file created with Export preset.",
+  导出预设: "Export preset",
+  "预设已导入为独立副本，JavaScript 默认关闭；信任其内容后可在预设操作中启用。":
+    "Preset imported as an independent copy with JavaScript disabled. Enable it in preset actions after reviewing and trusting its contents.",
+  "发送给 AI 的内容预览": "Preview content sent to AI",
+  "请先保存当前修改；这里预览的是已保存且校验通过的预设，不包含未保存修改。":
+    "Save your changes first. This preview uses the saved, validated preset and excludes unsaved changes.",
+  当前使用的预设: "Current preset",
+  "在同一处编辑设定完善方法、主持规则、后置请求与界面展示。":
+    "Edit authoring methods, narrator rules, follow-up requests and displays in one place.",
+  "预设原文与表单均有修改，请先保留一种编辑结果并保存，再预览。":
+    "Both the preset source and forms have changed. Keep one set of edits and save before previewing.",
+  "预设原文与表单均有修改，请先保留一种编辑结果再保存，以免覆盖当前修改。":
+    "Both the preset source and forms have changed. Keep one set of edits before saving to avoid overwriting your changes.",
+  "这里显示此产物的数据要求。需要修改时，请在当前内容包或世界修订的文件编辑中修改 control/followups.yaml 的对应产物声明。":
+    "These are the data requirements for this output. To change them, edit the corresponding output declaration in control/followups.yaml in the current content package or world revision file editor.",
+  模板版本标记: "Template version marker",
+  新增修复文件: "Add a repair file",
+
   已关闭: "Disabled",
   系统示例: "System example",
   世界扩展: "World extensions",

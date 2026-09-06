@@ -154,7 +154,9 @@ export function InterfaceExtensionPreview({
       {pending ? <p role="status">{uiText("正在读取玩家视图…")}</p> : null}
       {conflict ? (
         <p role="alert">
-          {uiText("请先解决高级文件与结构化编辑冲突，再预览。")}
+          {uiText(
+            "预设原文与表单均有修改，请先保留一种编辑结果并保存，再预览。",
+          )}
         </p>
       ) : null}
       {error === null ? null : <p role="alert">{error}</p>}
