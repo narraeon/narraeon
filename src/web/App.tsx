@@ -21,6 +21,7 @@ import { setWebLocale, uiText } from "./i18n.ts";
 import type { ContentTreeIssue } from "./ContentTreeEditor.tsx";
 import { WorkspaceHeader, type WorkspaceScreen } from "./WorkspaceHeader.tsx";
 import { CreateWorldScreen } from "./CreateWorldScreen.tsx";
+import { DismissibleNotice } from "./DismissibleNotice.tsx";
 import { HomeScreen } from "./HomeScreen.tsx";
 import { ModelConnectionScreen } from "./ModelConnectionScreen.tsx";
 import { PlayPresetScreen } from "./PlayPresetScreen.tsx";
@@ -1004,7 +1005,12 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
           screen !== "world" &&
           (notice || workspace.storageNotices.length > 0) && (
             <div className="workspace-feedback">
-              {notice && <p role="status">{notice}</p>}
+              {notice && (
+                <DismissibleNotice
+                  text={notice}
+                  onDismiss={() => setNotice("")}
+                />
+              )}
               {workspace.storageNotices.map((item) => (
                 <p role="alert" key={item.surface}>
                   {item.message}

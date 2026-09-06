@@ -7,6 +7,7 @@ import {
 let activeLocale: AppLocale = defaultAppLocale;
 
 const englishMessages: Record<string, string> = {
+  关闭提示: "Dismiss notification",
   "已保留当前页面的未保存修改，请保存或放弃后再切换。":
     "Your unsaved changes have been kept. Save or discard them before switching pages.",
   "这份内容包正在完善，请在回复完成后创建世界。":

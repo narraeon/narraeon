@@ -2,6 +2,7 @@ import { resourceTitle } from "./preset-resource-names.ts";
 import "./preset-workbench.css";
 import { PresetWorkbenchEditor } from "./PresetWorkbenchEditor.tsx";
 import { PresetDraftPreview } from "./PresetDraftPreview.tsx";
+import { DismissibleNotice } from "./DismissibleNotice.tsx";
 import { type FollowupItem } from "../shared/ordered-followups.ts";
 import { type PlayPresetPlayerViewPanel } from "./PlayerViewPanelsEditor.tsx";
 import { InterfaceExtensionPreview } from "./InterfaceExtensionPreview.tsx";
@@ -591,12 +592,12 @@ export function PlayPresetScreen({
       </header>
 
       {feedback === null ? null : (
-        <div
+        <DismissibleNotice
           className={`play-preset-feedback ${feedback.kind}`}
           role={feedback.kind === "error" ? "alert" : "status"}
-        >
-          {feedback.text}
-        </div>
+          text={feedback.text}
+          onDismiss={() => setFeedback(null)}
+        />
       )}
 
       <fieldset disabled={pending} className="play-preset-workspace">

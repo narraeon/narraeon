@@ -15,8 +15,102 @@ import type { RuntimeClient } from "../../src/web/runtimeClient.ts";
 import type { ObserveConversation } from "../../src/web/ConversationObserver.ts";
 import { App } from "../../src/web/App.tsx";
 import { CreateWorldScreen } from "../../src/web/CreateWorldScreen.tsx";
+import type { ModelConnectionLibraryView } from "../../src/protocol/modelConnections.ts";
+import type { PlayPresetScreenPreset } from "../../src/web/PlayPresetScreen.tsx";
+import { firstPartyActionChoicesPresetFiles } from "../../src/shared/first-party-action-choices.ts";
+import { defaultOrderedPlayPrompts } from "../../src/shared/ordered-play-prompts.ts";
+import { defaultOrderedAuthorPrompts } from "../../src/shared/ordered-author-prompts.ts";
 
 afterEach(cleanup);
+
+test.each(["model", "preset"])(
+  "模型切换与预设删除提示可以各自关闭（先关闭 %s）",
+  async (first) => {
+    const { client, request } = fixture();
+    const original = request.getMockImplementation()!;
+    const initial = (await original({ type: "workspace.read" })) as {
+      model: ModelConnectionLibraryView;
+    };
+    let model = {
+      ...initial.model,
+      connections: [
+        ...initial.model.connections,
+        { ...initial.model.connections[0]!, id: "other", name: "另一配置" },
+      ],
+    };
+    const preset: PlayPresetScreenPreset = {
+      id: "preset",
+      name: "工作台",
+      revision: "rev-original",
+      files: structuredClone(firstPartyActionChoicesPresetFiles),
+      validation: { status: "valid" },
+      scriptsEnabled: false,
+      structure: {
+        name: "workbench",
+        callChainPath: "call-chain.yaml",
+        mounts: [],
+        playerViewPanels: [],
+        extensionRefs: [],
+        narrativePrompts: [],
+        followups: [],
+        playPrompts: defaultOrderedPlayPrompts(),
+        authorPrompts: defaultOrderedAuthorPrompts(),
+      },
+    };
+    let presets = [preset];
+    const library = () => ({ currentPresetId: presets[0]!.id, presets });
+    request.mockImplementation(async (input) => {
+      if (input.type === "workspace.read")
+        return { ...initial, model, playPresets: library() };
+      if (input.type === "model.select") {
+        model = { ...model, activeConnectionId: input.connectionId };
+        return model;
+      }
+      if (input.type === "play.delete") {
+        presets = [{ ...preset, id: "default", name: "默认预设" }];
+        return {};
+      }
+      if (input.type === "play.read") return library();
+      return original(input);
+    });
+    render(createElement(App, { client }));
+    await screen.findByRole("heading", { name: "世界工作区" });
+    fireEvent.click(screen.getByRole("button", { name: "模型连接" }));
+    fireEvent.click(screen.getByRole("button", { name: "切换到此配置" }));
+    const messages = {
+      model: "已切换当前模型配置；Runtime 不会自动故障转移。",
+      preset: "玩法预设已删除；删空后会自动重建默认预设。",
+    };
+    await screen.findByText(messages.model);
+    fireEvent.click(
+      within(screen.getByRole("navigation", { name: "工作区导航" })).getByRole(
+        "button",
+        { name: "预设" },
+      ),
+    );
+    fireEvent.click(screen.getByText("预设操作", { selector: "summary" }));
+    fireEvent.click(screen.getByRole("button", { name: "删除预设" }));
+    await screen.findByText(messages.preset);
+    const callsBeforeClosing = request.mock.calls.length;
+    const order = first === "model" ? ["model", "preset"] : ["preset", "model"];
+    for (const key of order) {
+      const text = messages[key as keyof typeof messages];
+      const notice = screen.getByText(text).closest('[role="status"]')!;
+      fireEvent.click(
+        within(notice as HTMLElement).getByRole("button", { name: "关闭提示" }),
+      );
+      expect(screen.queryByText(text)).toBeNull();
+    }
+    expect(document.querySelector(".workspace-feedback")).toBeNull();
+    expect(document.querySelector(".play-preset-feedback")).toBeNull();
+    expect(request.mock.calls).toHaveLength(callsBeforeClosing);
+    expect(screen.getByLabelText("切换预设")).toHaveProperty(
+      "value",
+      "default",
+    );
+    expect(model.activeConnectionId).toBe("other");
+  },
+);
 
 function fixture() {
   const packages = [
