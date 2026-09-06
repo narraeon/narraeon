@@ -60,7 +60,10 @@ export function authoringMechanics(
       : zh
         ? "世界修订工具只修改持久独占 epoch 的 state/* 与 control/* 工作树。opening.md 不可读取或修改，既有状态文档不可删除或移动。只有玩家应用或放弃才结束 epoch；应用提交世界，放弃不改变世界。跨 epoch 全部旧读取授权失效。"
         : "World-revision tools modify only state/* and control/* in the durably locked exclusive epoch. opening.md cannot be read or changed; existing state documents cannot be deleted or moved. Only player Apply or Discard ends the epoch; Apply commits the world, Discard leaves it unchanged. Every old read authorization expires across epochs.";
-  return `# ${zh ? "创作工具与结算" : "Authoring tools and settlement"}\n\n${common}\n\n${boundary}`;
+  const views = zh
+    ? 'control/player-views.yaml 的 format 为 narraeon.player-views/v1；views 中每项有 id、title 和 items，items 中每项有 id、label、select。精确选择一个 YAML 字段使用 select: {document: "@ref", locator: {yaml: [字段名]}}；Markdown 小节使用 locator: {markdown: [标题]}。document 必须来自实际返回的引用，locator 必须对应已读正文；省略 locator 会展示整份文档，选择容器会递归展示子树。'
+    : 'control/player-views.yaml uses format: narraeon.player-views/v1. Each views entry has id, title and items; each item has id, label and select. Select one YAML field with select: {document: "@ref", locator: {yaml: [field]}}; select a Markdown section with locator: {markdown: [heading]}. Use a returned document reference and a locator from the actual read body. Omitting locator displays the whole document; selecting a container recursively displays its subtree.';
+  return `# ${zh ? "创作工具与结算" : "Authoring tools and settlement"}\n\n${common}\n\n${boundary}\n\n${views}`;
 }
 
 export function defaultOrderedAuthorPrompts(): OrderedPlayPrompt[] {

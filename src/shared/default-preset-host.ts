@@ -267,7 +267,7 @@ NPC 可以按性格、认知、处境和目标继续做事、与别人交谈、�
 
 ## 当前情境的收敛
 
-保留此刻地点、在场者、进行中事件和直接约束下一次行动的少量事项，包括尚待回答的具体问题、邀请或动作；原话决定意义时保留必要原话。不要写成刚才过程的摘要或未来剧情分支。
+保留本轮叙事结束时的地点、在场者、进行中事件和直接约束下一次行动的少量事项，包括到那时仍待回答的具体问题、邀请或动作；原话决定意义时保留必要原话。本轮即将回答的问题或完成的动作，不再写成等待处理。不要写成刚才过程的摘要或未来剧情分支。
 
 删除完成动作、已解决问题、被取代的描述和重复条目。人物离场前把他仍在继续的事写回自然所有者；移出在场名单不清除他的经历、目标或日程。有效计划属于相应人物，必要的眼前约定仍可约束当前局面。正文改变后同步修正已过时的 title 与 summary。
 `,
@@ -534,7 +534,7 @@ Preserve the visible meaning of player-view targets. Containers display their su
 
 ## Converging the current situation
 
-Retain present location, people present, ongoing events and the few immediate constraints on the next action, including a concrete question, invitation or action awaiting a response. Preserve necessary exact wording when it determines meaning. Do not turn this into a process recap or future plot branches.
+Retain the location, people present, ongoing events and few immediate constraints at the end of this turn's narrative, including a concrete question, invitation or action still awaiting a response then. Preserve necessary exact wording when it determines meaning. A question being answered or action completed in this narrative must no longer be recorded as pending. Do not turn this into a process recap or future plot branches.
 
 Remove completed actions, solved problems, superseded descriptions and duplicates. Before removing someone from the scene, give continuing matters to their natural owner; leaving the cast list does not erase experiences, goals or schedules. Valid plans belong to their subjects; an immediate arrangement may still constrain the scene. Update stale title and summary when the body changes.
 `,

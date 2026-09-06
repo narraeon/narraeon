@@ -881,7 +881,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     "当前世界没有更早的玩家原文或主持叙事",
   );
   expect(JSON.stringify(firstPlayRequest)).toContain(
-    "最后一句写某个人做的一件具体的事",
+    "有意义的沉默、独处、休息和等待也可以自然结束",
   );
 
   responses.push(
