@@ -1,3 +1,4 @@
+import { isPackageFollowupControlPath } from "../content/PackageFollowups.ts";
 import type { AppLocale } from "../../protocol/appPreferences.ts";
 import { defaultAppLocale } from "../../protocol/appPreferences.ts";
 import type { ContentTreeFile } from "../content/ContentTreeFile.ts";
@@ -139,7 +140,7 @@ export function worldRevisionRuntimeContract(locale: AppLocale): string {
 - 工具调用修改的是尚未应用的工作树。只有玩家点击“应用修订”才会把当前整棵树提交为新的世界状态和控制并解除锁；“放弃修订”会丢弃工作树并解除锁。你不得宣称自己已经应用或放弃修订。
 - 每个完整工具响应按调用顺序结算。成功调用留下逐文件 before-image，可以由玩家单独回滚；失败调用不会撤销同一响应内其他成功调用。
 - 修改既有文件前必须完整读取。list/search cursor 和 read 授权只属于产生它们的工作树 revision；工作树发生任何手动、AI 或回滚写入后，继续修改前必须重新读取。
-- state/* 只接受 .yaml 或 .md 世界文档；control/* 只接受 frame.yaml、player-views.yaml 和 blocks/*.md。可以创建新状态文档；既有状态文档不能删除或移动，因为 Authority 保留其稳定身份。
+- state/* 只接受 .yaml 或 .md 世界文档；control/* 接受 frame.yaml、player-views.yaml、blocks/*.md，以及 followups.yaml 与后置请求引用的 prompts/*.md、renderers/*.html、scripts/*.js、regex/*.yaml、assets/* 文本资源。可以创建新状态文档；既有状态文档不能删除或移动，因为 Authority 保留其稳定身份。
 - 对话跨越“应用”或“放弃”继续时，Runtime 会明确宣布一个新修订 epoch。此前读取授权全部失效；先重新读取新世界，再继续修改。`
     : `# Runtime world-revision conversation contract
 
@@ -148,7 +149,7 @@ export function worldRevisionRuntimeContract(locale: AppLocale): string {
 - Tools change the unapplied worktree. Only the player can Apply the complete tree to world state/control and unlock it, or Discard the tree and unlock it. Never claim that you applied or discarded the revision yourself.
 - Calls in each complete tool response settle in order. Every successful call retains per-file before-images for selective rollback; a failed sibling does not undo successful calls.
 - Completely read an existing file before changing it. List/search cursors and read authorization belong only to the worktree revision that produced them. Re-read after any manual, AI, or rollback write.
-- state/* accepts only YAML or Markdown world documents. control/* accepts only frame.yaml, player-views.yaml, and blocks/*.md. New state documents are allowed; existing state documents cannot be deleted or moved because Authority retains their stable identity.
+- state/* accepts only YAML or Markdown world documents. control/* accepts frame.yaml, player-views.yaml, blocks/*.md, plus followups.yaml and its referenced prompts/*.md, renderers/*.html, scripts/*.js, regex/*.yaml and assets/* text resources. New state documents are allowed; existing state documents cannot be deleted or moved because Authority retains their stable identity.
 - When a conversation continues after Apply or Discard, Runtime announces a new revision epoch and invalidates every prior read authorization. Re-read the new world before editing.`;
 }
 
@@ -462,6 +463,7 @@ function mapSchema(schema: object): object {
 function isWritableWorldRevisionPath(path: string): boolean {
   if (/^state\/.+\.(?:ya?ml|md)$/u.test(path)) return true;
   return (
+    isPackageFollowupControlPath(path) ||
     path === "control/frame.yaml" ||
     path === "control/player-views.yaml" ||
     /^control\/blocks\/.+\.md$/u.test(path)

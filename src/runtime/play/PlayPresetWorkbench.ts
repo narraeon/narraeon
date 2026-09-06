@@ -1,9 +1,21 @@
+import { resolveArtifactRenderer } from "../extension/FrontendExtensionBundle.ts";
+import { builtinFollowupExample } from "../../shared/ordered-followups.ts";
+import {
+  projectPlayerViewPanels,
+  type PlayerViewPanelProjectionInput,
+  type FrontendPlayerViewPanelProjection,
+} from "../extension/PlayerViewPanelProjector.ts";
 import {
   parsePlayPresetRegexAsset,
+  applyPlayPresetStructuredEditor,
+  parsePlayPresetStructuredEditor,
+  parsePlayPresetFiles,
+  revisionForPlayPresetFiles,
   toPlayPresetStructuredEditor,
   type PlayPresetArtifactDeclaration,
   type PlayPresetArtifactPayloadContract,
   type PlayPresetBinding,
+  type PlayPresetFollowupDefinition,
   type PlayPresetRegexRule,
   type PlayPresetStructuredEditor,
 } from "./FileNativePlayPresetStore.ts";
@@ -55,6 +67,9 @@ export interface PlayPresetWorkbenchSnapshot {
   revision: string;
   structure: PlayPresetStructuredEditor;
   artifactPreviews: PlayPresetWorkbenchArtifactPreview[];
+  playerViewPreview?: Omit<PlayerViewPanelProjectionInput, "binding"> & {
+    panels: FrontendPlayerViewPanelProjection[];
+  };
   staticErrors: { code: string; message: string; location: string }[];
   trustedLocalCode: boolean;
   scriptsEnabled: boolean;
@@ -67,12 +82,37 @@ export interface PlayPresetWorkbenchSnapshot {
  */
 export function buildPlayPresetWorkbenchSnapshot(
   binding: PlayPresetBinding,
+  playerViewContext?: Omit<PlayerViewPanelProjectionInput, "binding">,
+  draft?: { files: Record<string, string>; structure?: unknown },
 ): PlayPresetWorkbenchSnapshot {
+  if (draft !== undefined) {
+    const files =
+      draft.structure === undefined
+        ? structuredClone(draft.files)
+        : applyPlayPresetStructuredEditor(
+            draft.files,
+            parsePlayPresetStructuredEditor(draft.structure),
+          );
+    const parsed = parsePlayPresetFiles(files);
+    if (parsed.kind === "invalid") throw parsed.error;
+    binding = {
+      ...binding,
+      files,
+      definition: parsed.definition,
+      revision: revisionForPlayPresetFiles(files),
+    };
+  }
   const scriptsEnabled = binding.scriptsEnabled !== false;
   const structure = toPlayPresetStructuredEditor(binding.definition);
   const staticErrors: PlayPresetWorkbenchSnapshot["staticErrors"] = [];
   const artifactPreviews: PlayPresetWorkbenchArtifactPreview[] = [];
-  for (const followup of binding.definition.followups)
+  const previewFollowups: PlayPresetFollowupDefinition[] = [
+    ...binding.definition.followups,
+    ...(binding.definition.followupItems === undefined
+      ? []
+      : [builtinFollowupExample("en").definition]),
+  ];
+  for (const followup of previewFollowups)
     for (const declaration of followup.artifacts) {
       const diagnostics: string[] = [];
       let regex: PlayPresetRegexRule[] = [];
@@ -108,57 +148,17 @@ export function buildPlayPresetWorkbenchSnapshot(
               ? "<p>This is a local HTML workbench sample.</p>"
               : "This is a local text workbench sample.";
       let renderer: PlayPresetWorkbenchRendererPreview | undefined;
-      if (declaration.renderer !== undefined) {
-        const source = binding.files[declaration.renderer];
-        if (source === undefined) {
-          const message = `Renderer resource does not exist: ${declaration.renderer}`;
-          diagnostics.push(message);
-          staticErrors.push({
-            code: "renderer_missing",
-            message,
-            location: declaration.renderer,
-          });
-        } else {
-          const scriptSources = (declaration.scripts ?? []).flatMap((path) => {
-            const script = binding.files[path];
-            if (script === undefined) {
-              diagnostics.push(`Script resource does not exist: ${path}`);
-              staticErrors.push({
-                code: "script_missing",
-                message: `Script resource does not exist: ${path}`,
-                location: path,
-              });
-              return [];
-            }
-            return [script];
-          });
-          const assetSources = (declaration.assets ?? []).flatMap((path) => {
-            const asset = binding.files[path];
-            if (asset === undefined) {
-              diagnostics.push(`Asset resource does not exist: ${path}`);
-              staticErrors.push({
-                code: "asset_missing",
-                message: `Asset resource does not exist: ${path}`,
-                location: path,
-              });
-              return [];
-            }
-            return [{ id: path, source: asset }];
-          });
-          renderer = {
-            mode: declaration.rendererMode ?? "document",
-            ...(declaration.rendererRevision === undefined
-              ? {}
-              : { revision: declaration.rendererRevision }),
-            document: source,
-            scripts: scriptsEnabled ? scriptSources : [],
-            assets: assetSources,
-            trustedLocalCode:
-              scriptsEnabled &&
-              (declaration.contentType === "text/html" ||
-                (declaration.scripts?.length ?? 0) > 0),
-          };
-        }
+      try {
+        renderer = resolveArtifactRenderer(declaration, binding);
+      } catch (error: unknown) {
+        const message =
+          error instanceof Error ? error.message : "Invalid renderer resources";
+        diagnostics.push(message);
+        staticErrors.push({
+          code: "renderer_invalid",
+          message,
+          location: declaration.renderer ?? followup.id,
+        });
       }
       artifactPreviews.push({
         requestId: followup.id,
@@ -193,6 +193,14 @@ export function buildPlayPresetWorkbenchSnapshot(
     revision: binding.revision,
     structure,
     artifactPreviews,
+    ...(playerViewContext === undefined
+      ? {}
+      : {
+          playerViewPreview: {
+            ...playerViewContext,
+            panels: projectPlayerViewPanels({ ...playerViewContext, binding }),
+          },
+        }),
     staticErrors,
     trustedLocalCode: artifactPreviews.some(
       ({ renderer }) => renderer?.trustedLocalCode === true,

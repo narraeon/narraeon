@@ -1,3 +1,4 @@
+import { PackageScriptPermissionControl } from "./PackageScriptPermissionControl.tsx";
 import { useEffect, useRef, useState } from "react";
 
 import { maxPortableContentArchiveBytes } from "../protocol/contentTree.ts";
@@ -838,6 +839,16 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   if (screen === "content")
     return (
       <SettingImprovementPanel
+        key={selected}
+        onPreview={() =>
+          client.request({
+            type: "setting-improvement.preview",
+            packageId: selected,
+            ...(displayedImprovementView === null
+              ? {}
+              : { sessionId: displayedImprovementView.sessionId }),
+          })
+        }
         packageName={selectedPackage?.title ?? selected}
         modelConfigured={workspace.model.configured}
         hasUnsavedFileDraft={filesDirty}
@@ -853,6 +864,15 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         }
         now={improvementNow}
         contentEditor={{
+          scriptPermission: (
+            <PackageScriptPermissionControl
+              key={selected}
+              client={client}
+              kind="content"
+              id={selected}
+              dirty={filesDirty}
+            />
+          ),
           files,
           status:
             selectedPackageDetail?.status ??

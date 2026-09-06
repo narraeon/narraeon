@@ -1,3 +1,8 @@
+import {
+  currentPlayPrompt,
+  recordedPlayPrompt,
+  playPromptRunsThroughEvents,
+} from "./PlayPromptRun.ts";
 import { comparePromptPrefixes } from "../prompt/WorldPromptDiagnostics.ts";
 import { createHash } from "node:crypto";
 import type { AppLocale } from "../../protocol/appPreferences.ts";
@@ -51,7 +56,11 @@ import type {
   FileNativeWorldStore,
 } from "../world/FileNativeWorldStore.ts";
 import type { ArtifactStore } from "../artifact/FileNativeArtifactStore.ts";
-import type { PlayPresetBinding } from "./FileNativePlayPresetStore.ts";
+import {
+  parsePlayPresetFiles,
+  type PlayPresetBinding,
+  type FrozenArtifactPresentation,
+} from "./FileNativePlayPresetStore.ts";
 import {
   runPlayFollowupRequests,
   type PlayFollowupObserver,
@@ -125,6 +134,9 @@ interface PlayCallChainStartInput {
 }
 
 interface PlayCallChainAppendInput {
+  resolvePrompt?: () => Promise<
+    Pick<PlayCallChainStartInput, "hostBinding" | "playPreset">
+  >;
   worldId: string;
   chainId: string;
   exchangeId: string;
@@ -260,6 +272,11 @@ export class PlayCallChain {
     );
     const compilation = this.#compiler.compilePlayCallChain(
       {
+        extensionControls: await this.#worlds.extensionControls(
+          input.worldId,
+          input.playPreset,
+          this.#compiler.locale,
+        ),
         endpoint: {
           id: `${input.worldId}:${binding.parentHead}`,
           commit: binding.parentHead,
@@ -305,6 +322,7 @@ export class PlayCallChain {
       },
       followups: structuredClone(compilation.followups ?? []),
       playPresetScriptsEnabled: input.playPreset.scriptsEnabled,
+      presetFiles: structuredClone(input.playPreset.files),
       modelBinding: structuredClone(input.modelBinding),
       status: "ready",
       canRetry: false,
@@ -382,6 +400,7 @@ export class PlayCallChain {
           input.observer,
         );
       }
+      await this.#refreshPrompt(session, input);
       session.exchange += 1;
       return this.#dispatch(
         session,
@@ -407,6 +426,7 @@ export class PlayCallChain {
           ? "The call chain has an incomplete model response; clear the input and append a continuation, or use a fresh context."
           : "The call chain was interrupted; use a fresh context.",
       );
+    await this.#refreshPrompt(session, input);
     return this.#submitPlayer(
       session,
       input.exchangeId,
@@ -416,6 +436,83 @@ export class PlayCallChain {
       signal,
       input.observer,
     );
+  }
+
+  async #refreshPrompt(
+    session: PlayCallChainSession,
+    input: PlayCallChainAppendInput,
+  ): Promise<void> {
+    if (input.resolvePrompt === undefined) return;
+    const { hostBinding, playPreset } = await input.resolvePrompt();
+    const binding = await this.#worlds.bindPlayCallChain(input.worldId);
+    const baseline = await this.#worlds.bindPlayCallChainAt(
+      input.worldId,
+      session.baselineHead,
+    );
+    const documents = new FileNativePlayDocuments(binding.files);
+    const documentMaintenance = await this.#bindDocumentMaintenance(
+      documents,
+      input.worldId,
+      binding.parentHead,
+    );
+    const compilation = this.#compiler.compilePlayCallChain(
+      {
+        extensionControls: await this.#worlds.extensionControls(
+          input.worldId,
+          playPreset,
+          this.#compiler.locale,
+        ),
+        endpoint: {
+          id: `${input.worldId}:${binding.parentHead}`,
+          commit: binding.parentHead,
+        },
+        hostBinding,
+        world: {
+          controlFingerprint: fingerprintControl(binding.files),
+          documentSnapshot: documents.snapshot,
+          additionalMaterials: structuredClone(binding.additionalMaterials),
+          // Only pre-context history belongs in the prefix. Native conversation stays appended.
+          history: structuredClone(binding.history),
+          historyAlreadyAppended: Object.keys(binding.history).filter(
+            (key) => !(key in baseline.history),
+          ),
+          narrativeCheckpoint: baseline.narrativeCheckpoint,
+          documentMaintenance,
+          documentMaintenanceUnavailableReason: documents.maintenanceWarning,
+        },
+        playerInputPlacement: "append",
+        playerInput: input.playerText,
+        modelBinding: input.modelHost.binding(),
+      },
+      playPreset,
+    );
+    documents.bindBootstrap(compilation.bootstrap);
+    session.documents = documents;
+    session.history = historyEntries(binding.history);
+    session.narrativeCheckpoint = binding.narrativeCheckpoint;
+    session.nextMaterials = structuredClone(binding.additionalMaterials);
+    (session.promptRuns ??= []).push({
+      schemaVersion: 1,
+      firstEventId: session.nextEventId,
+      head: binding.parentHead,
+      exchange: session.exchange + 1,
+      playPreset: {
+        id: playPreset.id,
+        name: playPreset.name,
+        revision: playPreset.revision,
+      },
+      bootstrap: structuredClone(compilation.bootstrap),
+      tools: structuredClone(compilation.toolUniverse),
+      followups: structuredClone(compilation.followups ?? []),
+      playPresetScriptsEnabled: playPreset.scriptsEnabled,
+      presetFiles: structuredClone(playPreset.files),
+    });
+    session.documentAuthorizationCheckpoints.push({
+      afterEventId: session.nextEventId,
+      authorization: documents.authorizationCheckpoint(),
+    });
+    await this.#persist(session);
+    crashAtPlayAdvanceEdge("after_prompt_run_prepared");
   }
 
   cancel(input: { worldId: string; chainId: string; exchangeId: string }): {
@@ -614,35 +711,63 @@ export class PlayCallChain {
       throw new PlayCallChainError(
         "The current play context could not be inspected.",
       );
-    const previous =
-      session.previousChainId === null
+    const runs = playPromptRunsThroughEvents(session, session.events);
+    const latestRun = runs.at(-1);
+    const priorRun = runs.at(-2);
+    const previousContext =
+      latestRun !== undefined || session.previousChainId === null
         ? null
         : await this.#worlds.playTimeline.readContext(
             worldId,
             session.previousChainId,
           );
+    const previousContextRun =
+      previousContext === null
+        ? undefined
+        : playPromptRunsThroughEvents(
+            previousContext.value,
+            previousContext.value.events,
+          ).at(-1);
+    const previous =
+      latestRun !== undefined
+        ? (priorRun ?? session)
+        : (previousContextRun ?? previousContext?.value ?? null);
+    const currentExchange = latestRun?.exchange ?? 1;
+    const previousExchange =
+      priorRun?.exchange ?? previousContextRun?.exchange ?? 1;
     const [currentEncoding, previousEncoding] = await Promise.all([
       this.#worlds.playTimeline
-        .readInitialEncoding(worldId, session.chainId)
+        .readInitialEncoding(worldId, session.chainId, currentExchange)
         .catch(() => null),
       previous === null
         ? null
         : this.#worlds.playTimeline
-            .readInitialEncoding(worldId, previous.value.chainId)
+            .readInitialEncoding(
+              worldId,
+              latestRun !== undefined
+                ? session.chainId
+                : previousContext!.value.chainId,
+              previousExchange,
+            )
             .catch(() => null),
     ]);
-    const initialUsage = (events: V1PlayCallChainEvent[]) =>
-      events.find(
-        (event) => event.kind === "assistant" && event.status === "completed",
+    const usageAt = (events: V1PlayCallChainEvent[], exchange: number) =>
+      events.findLast(
+        (event) =>
+          event.kind === "assistant" &&
+          event.status === "completed" &&
+          event.exchange === exchange,
       );
-    const currentResponse = initialUsage(session.events);
-    const previousResponse =
-      previous === null ? undefined : initialUsage(previous.value.events);
+    const currentResponse = usageAt(session.events, currentExchange);
+    const previousResponse = usageAt(
+      previousContext?.value.events ?? session.events,
+      previousExchange,
+    );
     const prefixDiagnostics = comparePromptPrefixes(
       previous === null
         ? null
         : {
-            bootstrap: previous.value.bootstrap,
+            bootstrap: previous.bootstrap,
             encoding: previousEncoding,
             ...(previousResponse?.kind === "assistant" &&
             previousResponse.usage !== undefined
@@ -650,7 +775,7 @@ export class PlayCallChain {
               : {}),
           },
       {
-        bootstrap: session.bootstrap,
+        bootstrap: recordedPlayPrompt(session).bootstrap,
         encoding: currentEncoding,
         ...(currentResponse?.kind === "assistant" &&
         currentResponse.usage !== undefined
@@ -660,15 +785,38 @@ export class PlayCallChain {
     );
     return {
       prefixDiagnostics,
+      promptHistory: [
+        {
+          exchange: 1,
+          head: session.baselineHead,
+          playPreset: session.playPreset,
+          bootstrap: session.bootstrap,
+        },
+        ...runs,
+      ].map(({ exchange, head, playPreset, bootstrap }) => ({
+        exchange,
+        head,
+        playPreset: structuredClone(playPreset),
+        bootstrap: {
+          logicalMessages: structuredClone(bootstrap.logicalMessages),
+          coverage: structuredClone(bootstrap.coverage),
+        },
+      })),
+      requestExchange: currentExchange,
+      requestHead: latestRun?.head ?? session.baselineHead,
       chainId: session.chainId,
       baselineHead: session.baselineHead,
       parentHead: session.parentHead,
       stale: session.parentHead !== worldHead,
-      playPreset: structuredClone(session.playPreset),
+      playPreset: structuredClone(recordedPlayPrompt(session).playPreset),
       updatedAt: session.updatedAt,
       bootstrap: {
-        logicalMessages: structuredClone(session.bootstrap.logicalMessages),
-        coverage: structuredClone(session.bootstrap.coverage),
+        logicalMessages: structuredClone(
+          recordedPlayPrompt(session).bootstrap.logicalMessages,
+        ),
+        coverage: structuredClone(
+          recordedPlayPrompt(session).bootstrap.coverage,
+        ),
       },
       reads: projectContextReads(session),
     };
@@ -1061,6 +1209,10 @@ export class PlayCallChain {
       baselineHistoryLength:
         sourceContext.baselineHistoryLength ?? baseline.history.length,
       parentHead: outcome.head,
+      promptRuns: playPromptRunsThroughEvents(sourceContext, events),
+      ...(sourceContext.presetFiles === undefined
+        ? {}
+        : { presetFiles: structuredClone(sourceContext.presetFiles) }),
       playPreset: structuredClone(sourceContext.playPreset),
       ...(sourceContext.followups === undefined
         ? {}
@@ -1138,6 +1290,11 @@ export class PlayCallChain {
     );
     const compilation = this.#compiler.compilePlayCallChain(
       {
+        extensionControls: await this.#worlds.extensionControls(
+          request.worldId,
+          request.freshContext.playPreset,
+          this.#compiler.locale,
+        ),
         endpoint: {
           id: `${request.worldId}:${binding.parentHead}`,
           commit: binding.parentHead,
@@ -1218,6 +1375,13 @@ export class PlayCallChain {
         baselineHistoryLength:
           sourceContext.baselineHistoryLength ?? input.baseline.history.length,
         parentHead: input.restoresHead,
+        promptRuns: playPromptRunsThroughEvents(
+          sourceContext,
+          input.prefixEvents,
+        ),
+        ...(sourceContext.presetFiles === undefined
+          ? {}
+          : { presetFiles: structuredClone(sourceContext.presetFiles) }),
         playPreset: structuredClone(sourceContext.playPreset),
         ...(sourceContext.followups === undefined
           ? {}
@@ -1285,6 +1449,7 @@ export class PlayCallChain {
       },
       followups: structuredClone(fresh.followups),
       playPresetScriptsEnabled: request.freshContext.playPreset.scriptsEnabled,
+      presetFiles: structuredClone(request.freshContext.playPreset.files),
       modelBinding: structuredClone(request.freshContext.modelBinding),
       status: "ready",
       canRetry: false,
@@ -1436,6 +1601,10 @@ export class PlayCallChain {
       baselineHistoryLength:
         sourceContext.baselineHistoryLength ?? baseline.history.length,
       parentHead: input.sourceHead,
+      promptRuns: playPromptRunsThroughEvents(sourceContext, events),
+      ...(sourceContext.presetFiles === undefined
+        ? {}
+        : { presetFiles: structuredClone(sourceContext.presetFiles) }),
       playPreset: structuredClone(sourceContext.playPreset),
       ...(sourceContext.followups === undefined
         ? {}
@@ -1494,6 +1663,30 @@ export class PlayCallChain {
         source: sourceContext,
         target: structuredClone(derived),
       });
+    if (input.targetWorldRoot !== undefined) {
+      const retainedContexts = [
+        ...input.sourceContexts.slice(0, input.selectedContextIndex),
+        { ...sourceContext, events: input.sourceEvents },
+      ];
+      await this.#artifacts?.stageFork?.({
+        sourceWorldId: input.sourceWorldId,
+        targetWorldId: input.targetWorldId,
+        targetWorldRoot: input.targetWorldRoot,
+        timeline: retainedContexts.flatMap((context) =>
+          context.events.flatMap((event) =>
+            event.kind === "assistant" && event.committedHead !== undefined
+              ? [
+                  {
+                    contextId: context.continuityContextId ?? context.chainId,
+                    eventId: event.id,
+                    head: event.committedHead,
+                  },
+                ]
+              : [],
+          ),
+        ),
+      });
+    }
     return projectView(derived);
   }
 
@@ -1535,7 +1728,7 @@ export class PlayCallChain {
         checkpoint: session.narrativeCheckpoint,
         text: playerText,
         locale: this.#compiler.locale,
-        checkpointAvailable: session.tools.some(
+        checkpointAvailable: currentPlayPrompt(session).tools.some(
           ({ name }) => name === "world_checkpoint",
         ),
       }),
@@ -2155,16 +2348,15 @@ export class PlayCallChain {
         this.#observeInvocation(session.chainId, "waiting", { dispatches: 1 });
         if (
           modelHost.previewRequest !== undefined &&
-          request.exchange === 1 &&
-          !request.appended.some(
-            (item) => item.kind === "assistant" || item.kind === "tool",
-          )
+          (request.exchange === 1 ||
+            request.exchange === session.promptRuns?.at(-1)?.exchange)
         ) {
           try {
             await this.#worlds.playTimeline.recordInitialEncoding(
               session.worldId,
               session.chainId,
               modelHost.previewRequest(request),
+              request.exchange,
             );
           } catch {
             // Optional diagnostics never interrupt a model request or alter its cache key.
@@ -2320,7 +2512,7 @@ export class PlayCallChain {
                 "The play call chain recovered during a later model exchange and completed.",
               details: { parentHead: session.parentHead },
             });
-          if ((session.followups?.length ?? 0) > 0) {
+          if ((currentPlayPrompt(session).followups?.length ?? 0) > 0) {
             // Follow-up artifacts are part of this player-visible invocation.
             // Keep `running` ephemeral: the settled main response remains the
             // durable recovery point if this Runtime process stops here.
@@ -2442,8 +2634,15 @@ export class PlayCallChain {
     signal: AbortSignal,
     observer?: PlayCallChainObserver,
   ): Promise<void> {
-    const followups = session.followups ?? [];
+    const followups = currentPlayPrompt(session).followups ?? [];
     if (this.#artifacts === undefined || followups.length === 0) return;
+    const reply = session.events.findLast(
+      (event) =>
+        event.kind === "assistant" &&
+        event.committedHead === session.parentHead,
+    );
+    if (reply === undefined)
+      throw new PlayCallChainError("Follow-up reply is not committed");
     const observeFollowupDelta = (
       delta: Parameters<
         NonNullable<PlayFollowupObserver["onProviderDelta"]>
@@ -2481,13 +2680,15 @@ export class PlayCallChain {
     try {
       await runPlayFollowupRequests({
         artifacts: this.#artifacts,
+        controls: this.#worlds.extensionRequests,
+        presentations: frozenFollowupPresentations(session),
         modelHost,
         followups,
-        bootstrap: session.bootstrap,
+        bootstrap: currentPlayPrompt(session).bootstrap,
         // Captured once: every followup is dispatched against this exact
         // prefix, so none of them observes another one's prompt or output.
         prefix: structuredClone(session.transcript),
-        toolStrategy: session.bootstrap.toolStrategy,
+        toolStrategy: currentPlayPrompt(session).bootstrap.toolStrategy,
         context: {
           // A follow-up produces no world endpoint of its own, so it starts and
           // ends on the settled exchange's head. Reconciliation keeps panels
@@ -2495,9 +2696,16 @@ export class PlayCallChain {
           worldId: session.worldId,
           parentHead: session.parentHead,
           operationId: followupOperationId(session),
-          playPresetId: session.playPreset.id,
-          playPresetRevision: session.playPreset.revision,
-          playPresetScriptsEnabled: session.playPresetScriptsEnabled ?? true,
+          attachment: {
+            contextId: session.continuityContextId ?? session.chainId,
+            eventId: reply.id,
+            head: session.parentHead,
+            runId: `${session.chainId}:send:${session.promptRuns?.at(-1)?.firstEventId ?? reply.id}`,
+          },
+          playPresetId: currentPlayPrompt(session).playPreset.id,
+          playPresetRevision: currentPlayPrompt(session).playPreset.revision,
+          playPresetScriptsEnabled:
+            currentPlayPrompt(session).playPresetScriptsEnabled ?? true,
         },
         head: session.parentHead,
         maxOutputTokens: modelHost.binding().maxOutputTokens,
@@ -2790,18 +2998,25 @@ function createRequest(
 function createRequestWithMaxOutputTokens(
   session: Pick<
     PlayCallChainSession,
-    "bootstrap" | "tools" | "transcript" | "chainId"
+    | "bootstrap"
+    | "tools"
+    | "transcript"
+    | "chainId"
+    | "promptRuns"
+    | "playPreset"
+    | "followups"
+    | "playPresetScriptsEnabled"
   >,
   maxOutputTokens: number,
   exchange: number,
   appended: readonly ModelHostAppendItem[] = session.transcript,
 ): ModelHostExchange {
   return {
-    bootstrap: structuredClone(session.bootstrap),
-    tools: structuredClone(session.tools),
-    toolUniverse: structuredClone(session.tools),
-    allowedTools: session.tools.map(({ name }) => name),
-    toolStrategy: session.bootstrap.toolStrategy,
+    bootstrap: structuredClone(currentPlayPrompt(session).bootstrap),
+    tools: structuredClone(currentPlayPrompt(session).tools),
+    toolUniverse: structuredClone(currentPlayPrompt(session).tools),
+    allowedTools: currentPlayPrompt(session).tools.map(({ name }) => name),
+    toolStrategy: currentPlayPrompt(session).bootstrap.toolStrategy,
     appended: structuredClone([...appended]),
     requestId: "play_call_chain",
     operationId: session.chainId,
@@ -2898,7 +3113,7 @@ function prepareTool(
           };
   } else if (
     !callChainToolNames.has(call.name) ||
-    !session.tools.some(({ name }) => name === call.name)
+    !currentPlayPrompt(session).tools.some(({ name }) => name === call.name)
   ) {
     result = {
       ok: false,
@@ -3004,15 +3219,26 @@ function restorePlayDocuments(
   files: Readonly<Record<string, string>>,
   context: Pick<
     PersistedPlayCallChainContext,
-    "bootstrap" | "documentAuthorizationCheckpoints"
+    | "bootstrap"
+    | "tools"
+    | "playPreset"
+    | "followups"
+    | "playPresetScriptsEnabled"
+    | "promptRuns"
+    | "documentAuthorizationCheckpoints"
   >,
   events: readonly V1PlayCallChainEvent[],
 ): FileNativePlayDocuments {
   const documents = new FileNativePlayDocuments(files);
   try {
     const checkpoint = documentAuthorizationThroughEvents(context, events);
-    if (checkpoint === undefined) documents.bindBootstrap(context.bootstrap);
-    else documents.restoreAuthorizationCheckpoint(checkpoint.authorization);
+    const runs = playPromptRunsThroughEvents(context, events);
+    if (checkpoint === undefined || runs.length > 0)
+      documents.bindBootstrap(
+        currentPlayPrompt({ ...context, promptRuns: runs }).bootstrap,
+      );
+    if (checkpoint !== undefined)
+      documents.restoreAuthorizationCheckpoint(checkpoint.authorization);
   } catch (error: unknown) {
     throw new PlayCallChainError(
       `Call-chain document authorization could not be restored: ${
@@ -3083,7 +3309,7 @@ function projectContext(
       ? {}
       : { baselineHistoryLength: context.baselineHistoryLength }),
     parentHead: context.parentHead,
-    playPreset: structuredClone(context.playPreset),
+    playPreset: structuredClone(recordedPlayPrompt(context).playPreset),
     status: context.status,
     canRetry: context.canRetry,
     events: context.events
@@ -3479,4 +3705,55 @@ function crashAtPlayAdvanceEdge(edge: string): void {
     process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE === edge
   )
     throw new Error(`Simulated process exit at play advance edge: ${edge}`);
+}
+
+function frozenFollowupPresentations(
+  session: PlayCallChainSession,
+): Record<string, Record<string, FrozenArtifactPresentation>> {
+  const files = session.promptRuns?.at(-1)?.presetFiles ?? session.presetFiles;
+  if (files === undefined) return {};
+  const parsed = parsePlayPresetFiles(files);
+  if (parsed.kind === "invalid") throw parsed.error;
+  const definition = parsed.definition;
+  return Object.fromEntries(
+    (currentPlayPrompt(session).followups ?? []).map((followup) => [
+      followup.id,
+      Object.fromEntries(
+        followup.artifacts.flatMap((declaration) => {
+          const resources = followup.frozenResources;
+          const mount =
+            resources?.mount ??
+            definition.mounts.find(
+              (item) => item.channel === declaration.channel,
+            )?.mount;
+          return mount === undefined
+            ? []
+            : [
+                [
+                  declaration.name,
+                  {
+                    ...resources,
+                    declaration: structuredClone(declaration),
+                    files:
+                      resources?.files ??
+                      Object.fromEntries(
+                        [
+                          declaration.renderer,
+                          declaration.regex,
+                          ...(declaration.scripts ?? []),
+                          ...(declaration.assets ?? []),
+                        ].flatMap((path) =>
+                          path === undefined
+                            ? []
+                            : [[path, (resources?.files ?? files)[path]!]],
+                        ),
+                      ),
+                    mount,
+                  },
+                ],
+              ];
+        }),
+      ),
+    ]),
+  );
 }

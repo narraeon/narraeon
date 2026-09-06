@@ -1,3 +1,5 @@
+import { validPlayFollowup } from "../../src/runtime/prompt/PromptCompilationCodec.ts";
+import { parsePlayPresetRegexAsset } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,8 +11,10 @@ import type { AppLocale } from "../../src/protocol/appPreferences.ts";
 import { parseV1Envelope } from "../../src/protocol/v1.ts";
 import {
   defaultPlayPresetFiles,
+  legacyDefaultPlayPresetFilesForLocale,
   defaultPlayPresetFilesForLocale,
   FileNativePlayPresetStore,
+  isFrozenArtifactPresentation,
   maxPlayPresetFollowups,
   applyPlayPresetStructuredEditor,
   parsePlayPresetFiles,
@@ -25,6 +29,7 @@ import {
   simulateArtifactProjection,
 } from "../../src/runtime/play/PlayPresetWorkbench.ts";
 import { firstPartyActionChoicesPresetFiles } from "../../src/shared/first-party-action-choices.ts";
+import { firstPartyStatusPanelPresetFilesForLocale } from "../../src/shared/first-party-player-view.ts";
 import { firstPartyGenericPanelsPresetFiles } from "../../src/shared/first-party-generic-panels.ts";
 import {
   defaultSettingImprovementPrompt,
@@ -46,6 +51,114 @@ afterEach(async () => {
 });
 
 describe("文件原生玩法预设", () => {
+  test("rule enablement is strict, portable, and absent in unchanged legacy rules", () => {
+    const legacy =
+      "- order: 0\n  scope: raw_text\n  pattern: keep\n  flags: g\n  replace: changed\n  maxMatches: 10\n  errorPolicy: fallback\n";
+    expect(
+      parsePlayPresetRegexAsset(legacy, "regex/test.yaml")[0],
+    ).not.toHaveProperty("enabled");
+    expect(
+      parsePlayPresetRegexAsset(
+        legacy + "  enabled: false\n",
+        "regex/test.yaml",
+      )[0],
+    ).toMatchObject({ enabled: false, pattern: "keep", order: 0 });
+    expect(() =>
+      parsePlayPresetRegexAsset(legacy + "  enabled: yes\n", "regex/test.yaml"),
+    ).toThrow("boolean");
+    expect(() =>
+      parsePlayPresetRegexAsset(
+        legacy + "  unknown: true\n",
+        "regex/test.yaml",
+      ),
+    ).toThrow();
+  });
+
+  test("artifact authoring metadata survives strict save, copy and cold export", async () => {
+    const root = await mkdtemp(join(tmpdir(), "preset-metadata-"));
+    roots.push(root);
+    const store = new FileNativePlayPresetStore(root);
+    await store.initialize();
+    const imported = await store.importPortable({
+      name: "Workbench",
+      files: firstPartyActionChoicesPresetFiles,
+    });
+    const structure = structuredClone(imported.preset.structure!);
+    Object.assign(structure.followups[0]!.artifacts[0]!, {
+      displayName: "行动建议",
+      purpose: "只提供下一步草稿",
+    });
+    const savedMetadata = await store.save({
+      presetId: imported.preset.id,
+      name: "Workbench",
+      files: imported.preset.files,
+      structure,
+    });
+    expect(savedMetadata.preset.draft?.validation).toEqual({ status: "valid" });
+    await store.select(imported.preset.id);
+    const cold = new FileNativePlayPresetStore(root);
+    await cold.initialize();
+    const reopened = (await cold.list()).presets.find(
+      (p) => p.id === imported.preset.id,
+    )!;
+    expect(reopened.validation).toEqual({ status: "valid" });
+    expect(reopened.structure!.followups[0]!.artifacts[0]).toMatchObject({
+      name: "player_options",
+      displayName: "行动建议",
+      purpose: "只提供下一步草稿",
+    });
+    const binding = await cold.bindCurrent();
+    const frozen = {
+      declaration: reopened.structure!.followups[0]!.artifacts[0],
+      files: binding.files,
+      mount: "composer_below",
+    };
+    expect(
+      isFrozenArtifactPresentation(JSON.parse(JSON.stringify(frozen))),
+    ).toBe(true);
+    expect(
+      isFrozenArtifactPresentation({
+        ...frozen,
+        declaration: { ...frozen.declaration, purpose: 42 },
+      }),
+    ).toBe(false);
+    const compiled = new FileNativePromptCompiler().compilePlayPreset(
+      createMinimalFileNativePreviewInput({
+        provider: "chat_completions",
+        modelId: "metadata",
+        contextWindowTokens: 64000,
+        maxOutputTokens: 4096,
+        playerInput: "Continue",
+        playerInputPlacement: "append",
+      }),
+      binding,
+    );
+    const followup = compiled.followups.find((f) => f.id === "player_options")!;
+    expect(
+      followup.logicalMessages.map((m) => m.markdown).join("\n"),
+    ).toContain('purpose="只提供下一步草稿"');
+    expect(validPlayFollowup(JSON.parse(JSON.stringify(followup)))).toBe(true);
+    expect(
+      validPlayFollowup({
+        ...followup,
+        artifacts: [{ ...followup.artifacts[0], displayName: 42 }],
+      }),
+    ).toBe(false);
+    const portable = await cold.exportPortable(reopened.id);
+    const importedAgain = await cold.importPortable({
+      name: "Round trip",
+      files: portable,
+    });
+    expect(importedAgain.preset.structure!.followups[0]!.artifacts).toEqual(
+      reopened.structure!.followups[0]!.artifacts,
+    );
+    expect(importedAgain.preset.scriptsEnabled).toBe(false);
+    const copy = await cold.copy(reopened.id);
+    expect(copy.preset.structure!.followups[0]!.artifacts).toEqual(
+      reopened.structure!.followups[0]!.artifacts,
+    );
+  });
+
   test("only the Runtime-owned default preset follows the saved locale", async () => {
     const root = await mkdtemp(join(tmpdir(), "narraeon-play-locale-"));
     roots.push(root);
@@ -293,6 +406,10 @@ describe("文件原生玩法预设", () => {
       "  - scripts/player-options.js\n",
       "",
     );
+    rendererOnly["call-chain.yaml"] = rendererOnly["call-chain.yaml"]!.replace(
+      "        scripts:\n          - scripts/player-options.js\n",
+      "",
+    );
     rendererOnly["renderers/player-options.html"] = rendererOnly[
       "renderers/player-options.html"
     ]!.replace("</body>", "<script>parent.__imported = true</script></body>");
@@ -301,6 +418,89 @@ describe("文件原生玩法预设", () => {
       files: rendererOnly,
     });
     expect(inlineRenderer.preset.scriptsEnabled).toBe(false);
+  });
+
+  test("纯界面工作台预览读取所选世界的玩家视图且沿用脚本设置", async () => {
+    const root = await mkdtemp(join(tmpdir(), "narraeon-interface-preview-"));
+    roots.push(root);
+    const store = new FileNativePlayPresetStore(root);
+    await store.initialize();
+    const created = await store.create(
+      "状态栏",
+      firstPartyStatusPanelPresetFilesForLocale("zh-CN"),
+    );
+    const context = {
+      worldId: "world-preview",
+      head: "commit:2",
+      playerViews: {
+        views: [
+          {
+            id: "status",
+            title: "状态",
+            items: [{ id: "clothes", label: "衣着", value: "蓝色外套" }],
+          },
+        ],
+        diagnostics: [],
+      },
+    };
+    const binding = await store.bindRevision(
+      created.preset.id,
+      created.preset.revision,
+    );
+    const snapshot = buildPlayPresetWorkbenchSnapshot(binding, context);
+    const draftStructure = toPlayPresetStructuredEditor(binding.definition);
+    draftStructure.playerViewPanels[0]!.config.title = "未保存标题";
+    draftStructure.playerViewPanels[0]!.mount = "composer_above";
+    const draftFiles = {
+      ...binding.files,
+      "assets/player-view-status.css": "body { color: purple; }",
+    };
+    const draftPreview = buildPlayPresetWorkbenchSnapshot(binding, context, {
+      files: draftFiles,
+      structure: draftStructure,
+    });
+    expect(draftPreview.playerViewPreview?.panels[0]).toMatchObject({
+      payload: { title: "未保存标题" },
+      frontend: {
+        mount: "composer_above",
+        renderer: {
+          assets: [
+            {
+              id: "assets/player-view-status.css",
+              source: "body { color: purple; }",
+            },
+          ],
+        },
+      },
+    });
+    expect(
+      (await store.bindRevision(created.preset.id, created.preset.revision))
+        .files,
+    ).toEqual(binding.files);
+    expect(snapshot.artifactPreviews).toEqual([]);
+    expect(snapshot.playerViewPreview?.panels[0]).toMatchObject({
+      source: { kind: "player_view", viewId: "status" },
+      lifecycle: "current_preset",
+      payload: { items: [{ id: "clothes", value: "蓝色外套" }] },
+      frontend: {
+        mount: "sidebar",
+        renderer: { mode: "app", trustedLocalCode: true },
+      },
+    });
+    expect(
+      buildPlayPresetWorkbenchSnapshot(binding).playerViewPreview,
+    ).toBeUndefined();
+    await store.setScriptsEnabled(created.preset.id, false);
+    const disabled = buildPlayPresetWorkbenchSnapshot(
+      await store.bindRevision(created.preset.id, created.preset.revision),
+      context,
+    );
+    expect(
+      disabled.playerViewPreview?.panels[0]?.frontend.renderer?.scripts,
+    ).toEqual([]);
+    expect(
+      disabled.playerViewPreview?.panels[0]?.frontend.trustedLocalCode,
+    ).toBe(false);
   });
 
   test("工作台产物 preview 只读取冻结文件，包含 regex、renderer、投影与 clear 诊断", async () => {
@@ -649,7 +849,7 @@ extensions:
       "artifact_clear",
     ]);
 
-    const shorterFiles = structuredClone(defaultPlayPresetFiles);
+    const shorterFiles = legacyDefaultPlayPresetFilesForLocale("en");
     shorterFiles["prompts/narrate.md"] =
       "# Narrative\n\nA much shorter author instruction.\n";
     const shorter = parsePlayPresetFiles(shorterFiles);
@@ -675,7 +875,7 @@ extensions:
   });
 
   test("任意作者正文不触发 Runtime 机械字段泄漏扫描", async () => {
-    const files = structuredClone(defaultPlayPresetFiles);
+    const files = legacyDefaultPlayPresetFilesForLocale("en");
     files["prompts/narrate.md"] =
       "Authors may discuss cache, operation, revision, and /tmp/author/example as semantic prose.";
     expect(validatePlayPresetFiles(files)).toEqual({ status: "valid" });
@@ -731,7 +931,7 @@ extensions:
       ]),
     ).toThrow(/operationId/u);
 
-    const invalid = structuredClone(defaultPlayPresetFiles);
+    const invalid = legacyDefaultPlayPresetFilesForLocale("en");
     invalid["call-chain.yaml"] = invalid["call-chain.yaml"]!.replace(
       "  - markdown: prompts/narrate.md",
       "  - { role: assistant, markdown: prompts/narrate.md }",
@@ -1138,6 +1338,19 @@ followups:${Array.from({ length: count }, (_, index) => followup(index)).join(""
         files: { "preset.yaml": "ok", broken: 42 },
       },
       { type: "play.workbench.read", presetId: 42 },
+      { type: "play.workbench.read", worldId: 42 },
+      { type: "play.workbench.read", worldId: "" },
+      { type: "play.workbench.read", draft: { files: {} } },
+      {
+        type: "play.workbench.read",
+        presetId: "p",
+        draft: { files: { "preset.yaml": 42 } },
+      },
+      {
+        type: "play.workbench.read",
+        presetId: "p",
+        draft: { files: {}, structure: [] },
+      },
       { type: "play.workbench.read", revision: "rev-without-preset" },
       { type: "play.workbench.read", presetId: "preset-1", revision: "" },
       { type: "artifacts.debug", worldId: "world-1", operationId: 42 },

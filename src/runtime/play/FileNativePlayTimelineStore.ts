@@ -1,3 +1,8 @@
+import {
+  encodePlayPromptRun,
+  decodePlayPromptRun,
+  type PlayPromptRun,
+} from "./PlayPromptRun.ts";
 import { createHash, randomUUID } from "node:crypto";
 import {
   link,
@@ -50,8 +55,10 @@ export interface PersistedDocumentAuthorizationCheckpoint {
 }
 
 export interface PersistedPlayCallChainContext {
+  promptRuns?: PlayPromptRun[];
   /** Narrative context identity survives transport chain renaming on forks. */
   continuityContextId?: string;
+  presetFiles?: Record<string, string>;
   chainId: string;
   baselineHead: string;
   baselineHistoryLength?: number;
@@ -106,6 +113,7 @@ interface PersistedContextIndex {
 
 interface PersistedContextBase {
   continuityContextId?: string;
+  presetFiles?: Record<string, string>;
   schemaVersion: 3;
   kind: "play_context_frozen";
   worldId: string;
@@ -131,6 +139,7 @@ interface PersistedContextState {
   transcriptCount: number;
   completedToolCount: number;
   authorizationCheckpointCount: number;
+  promptRunCount?: number;
   changedDocuments: V1PlayCallChainView["changedDocuments"];
   nextEventId: number;
   exchange: number;
@@ -160,6 +169,7 @@ export interface PlayContextPersistenceCursor {
   transcriptCount: number;
   completedToolCount: number;
   authorizationCheckpointCount: number;
+  promptRunCount?: number;
 }
 
 export interface LoadedPlayContext {
@@ -329,6 +339,18 @@ export class FileNativePlayTimelineStore {
           encoding,
         );
     }
+    for (const run of input.target.promptRuns ?? []) {
+      const encoding = await this.readInitialEncoding(
+        input.sourceWorldId,
+        input.source.chainId,
+        run.exchange,
+      ).catch(() => null);
+      if (encoding !== null)
+        await publishImmutableJson(
+          join(targetRoot, `request-encoding-${run.exchange}.json`),
+          encoding,
+        );
+    }
     await Promise.all([
       cloneNumberedPrefix({
         sourceRoot,
@@ -405,6 +427,10 @@ export class FileNativePlayTimelineStore {
       throw new Error(
         "A play context identity is bound to different frozen data",
       );
+
+    await publishImmutableJson(join(root, "reply-context.json"), {
+      contextId: value.continuityContextId ?? value.chainId,
+    });
 
     const supplied = cursor ?? emptyPersistenceCursor();
     // Recovery may replace the unresolved tail (for example, a generic crash
@@ -485,6 +511,18 @@ export class FileNativePlayTimelineStore {
         checkpoints[index],
       );
 
+    const promptRuns = value.promptRuns ?? [];
+    for (
+      let index = supplied.promptRunCount ?? 0;
+      index < promptRuns.length;
+      index += 1
+    ) {
+      await publishImmutableJson(
+        join(root, "prompt-runs", numbered(index + 1)),
+        encodePlayPromptRun(promptRuns[index]!),
+      );
+    }
+
     const state: PersistedContextState = {
       schemaVersion: 3,
       chainId: value.chainId,
@@ -495,6 +533,7 @@ export class FileNativePlayTimelineStore {
       transcriptCount: value.transcript.length,
       completedToolCount: value.completedTools.length,
       authorizationCheckpointCount: checkpoints.length,
+      promptRunCount: promptRuns.length,
       changedDocuments: structuredClone(value.changedDocuments),
       nextEventId: value.nextEventId,
       exchange: value.exchange,
@@ -516,6 +555,7 @@ export class FileNativePlayTimelineStore {
       transcriptCount: value.transcript.length,
       completedToolCount: value.completedTools.length,
       authorizationCheckpointCount: checkpoints.length,
+      promptRunCount: promptRuns.length,
     };
   }
 
@@ -545,6 +585,7 @@ export class FileNativePlayTimelineStore {
       rawEvents,
       completedTools,
       checkpoints,
+      promptRuns,
     ] = await Promise.all([
       readJson<unknown>(join(root, "base.json")),
       readJson<unknown>(
@@ -567,6 +608,10 @@ export class FileNativePlayTimelineStore {
         join(root, "authorization"),
         stateValue.authorizationCheckpointCount,
       ),
+      readNumbered<unknown>(
+        join(root, "prompt-runs"),
+        stateValue.promptRunCount ?? 0,
+      ).then((records) => records.map(decodePlayPromptRun)),
     ]);
     const events = rawEvents.map(normalizePlayEvent);
     assertContextBase(baseValue);
@@ -610,6 +655,9 @@ export class FileNativePlayTimelineStore {
       ...(baseValue.continuityContextId === undefined
         ? {}
         : { continuityContextId: baseValue.continuityContextId }),
+      ...(baseValue.presetFiles === undefined
+        ? {}
+        : { presetFiles: structuredClone(baseValue.presetFiles) }),
       baselineHead: baseValue.baselineHead,
       parentHead: stateValue.parentHead,
       ...(baseValue.baselineHistoryLength === undefined
@@ -643,6 +691,7 @@ export class FileNativePlayTimelineStore {
       events,
       completedTools,
       documentAuthorizationCheckpoints: checkpoints,
+      promptRuns,
       changedDocuments: structuredClone(stateValue.changedDocuments),
       nextMaterials: structuredClone(continuationValue.nextMaterials),
       nextEventId: stateValue.nextEventId,
@@ -659,6 +708,7 @@ export class FileNativePlayTimelineStore {
         transcriptCount: stateValue.transcriptCount,
         completedToolCount: stateValue.completedToolCount,
         authorizationCheckpointCount: stateValue.authorizationCheckpointCount,
+        promptRunCount: stateValue.promptRunCount ?? 0,
       },
     };
   }
@@ -668,10 +718,13 @@ export class FileNativePlayTimelineStore {
     worldId: string,
     chainId: string,
     encoding: ModelHostWireRequest,
+    exchange = 1,
   ): Promise<void> {
     const path = join(
       this.#contextRoot(worldId, chainId),
-      "initial-request-encoding.json",
+      exchange === 1
+        ? "initial-request-encoding.json"
+        : `request-encoding-${exchange}.json`,
     );
     await publishImmutableJson(path, encoding);
   }
@@ -679,11 +732,14 @@ export class FileNativePlayTimelineStore {
   async readInitialEncoding(
     worldId: string,
     chainId: string,
+    exchange = 1,
   ): Promise<ModelHostWireRequest | null> {
     const value = await readOptionalJson<unknown>(
       join(
         this.#contextRoot(worldId, chainId),
-        "initial-request-encoding.json",
+        exchange === 1
+          ? "initial-request-encoding.json"
+          : `request-encoding-${exchange}.json`,
       ),
     );
     if (value === null) return null;
@@ -717,6 +773,69 @@ export class FileNativePlayTimelineStore {
       previous = loaded.value.previousChainId;
     }
     return reverse.reverse();
+  }
+
+  /** Resolve only requested reply summaries; decoration reads never load Provider transcripts. */
+  async resolveReplies(
+    worldId: string,
+    targets: readonly { contextId: string; eventId: number; head: string }[],
+  ): Promise<
+    { contextId: string; eventId: number; head: string; chainId: string }[]
+  > {
+    if (targets.length === 0) return [];
+    const result: {
+      contextId: string;
+      eventId: number;
+      head: string;
+      chainId: string;
+    }[] = [];
+    let chainId = (await this.#readTimelineHead(worldId))?.chainId ?? null;
+    while (chainId !== null) {
+      const metadata = await this.#readContextMetadata(worldId, chainId);
+      if (metadata === null)
+        throw new Error("Play timeline points to a missing context");
+      const identity = await readOptionalJson<unknown>(
+        join(metadata.root, "reply-context.json"),
+      );
+      if (
+        identity !== null &&
+        (!isRecord(identity) || typeof identity.contextId !== "string")
+      )
+        throw new Error("Play reply context identity is invalid");
+      const contextId =
+        identity === null
+          ? null
+          : (identity as { contextId: string }).contextId;
+      for (const target of targets.filter(
+        (item) =>
+          item.contextId === contextId &&
+          item.eventId <= metadata.state.eventCount,
+      )) {
+        const event = await readJson<unknown>(
+          join(metadata.root, "summaries", numbered(target.eventId)),
+        );
+        assertTimelineEventSummary(event);
+        if (
+          event.id === target.eventId &&
+          event.kind === "assistant" &&
+          event.committedHead === target.head
+        )
+          result.push({ ...target, chainId });
+      }
+      if (
+        targets.every((target) =>
+          result.some(
+            (item) =>
+              item.contextId === target.contextId &&
+              item.eventId === target.eventId &&
+              item.head === target.head,
+          ),
+        )
+      )
+        break;
+      chainId = metadata.index.previousChainId;
+    }
+    return result;
   }
 
   async readPage(
@@ -1007,6 +1126,9 @@ function contextBase(value: PersistedPlayCallChain): PersistedContextBase {
     ...(value.continuityContextId === undefined
       ? {}
       : { continuityContextId: value.continuityContextId }),
+    ...(value.presetFiles === undefined
+      ? {}
+      : { presetFiles: structuredClone(value.presetFiles) }),
     baselineHead: value.baselineHead,
     ...(value.baselineHistoryLength === undefined
       ? {}
@@ -1169,6 +1291,7 @@ function assertContextState(
     !validCount(value.transcriptCount) ||
     !validCount(value.completedToolCount) ||
     !validCount(value.authorizationCheckpointCount) ||
+    (value.promptRunCount !== undefined && !validCount(value.promptRunCount)) ||
     !Array.isArray(value.changedDocuments) ||
     !validCount(value.nextEventId) ||
     !validCount(value.exchange) ||

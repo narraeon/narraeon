@@ -1,3 +1,5 @@
+import type { FrontendArtifactExtensionSummary } from "./ArtifactDebugger.tsx";
+import { BuiltinPlayerViewPanel } from "./BuiltinPlayerViewPanel.tsx";
 import { uiText } from "./i18n.ts";
 /* eslint-disable react-refresh/only-export-components */
 
@@ -19,6 +21,7 @@ export type FrontendRegexScope =
 export type FrontendRegexErrorPolicy = "fallback" | "skip" | "fail";
 
 export interface FrontendRegexRule {
+  enabled?: boolean;
   order: number;
   scope: FrontendRegexScope;
   pattern: string;
@@ -83,6 +86,7 @@ export type ArtifactPayload =
   | { [key: string]: ArtifactPayload };
 
 export interface FrontendArtifactProjection {
+  reply?: { chainId: string; eventId: number };
   recordId: string;
   worldId: string;
   operationId: string;
@@ -260,6 +264,7 @@ export function applyRegexPipeline(input: {
   let transformations = 0;
   let failure: RegexPipelineResult["failure"] = "none";
   for (const rule of rules) {
+    if (rule.enabled === false) continue;
     const current =
       rule.scope === "raw_text"
         ? raw
@@ -389,14 +394,20 @@ export function buildDocumentSrcDoc(
   payload?: ArtifactPayload,
 ): string {
   if (renderer?.mode === "document" && renderer.document !== undefined)
-    return buildDocumentTemplateSrcDoc({
-      template: renderer.document,
-      content,
-      contentType,
-      ...(payload === undefined ? {} : { payload }),
-    });
-  if (contentType === "text/html") return content;
-  return `<!doctype html><meta charset="utf-8"><style>body{font:15px/1.6 system-ui,sans-serif;margin:1rem;color:#202020}pre{white-space:pre-wrap}code{font-family:ui-monospace,monospace}</style><main>${contentType === "text/markdown" ? content : `<pre>${escapeHtml(content)}</pre>`}</main>`;
+    return withRendererStyles(
+      buildDocumentTemplateSrcDoc({
+        template: renderer.document,
+        content,
+        contentType,
+        ...(payload === undefined ? {} : { payload }),
+      }),
+      renderer,
+    );
+  if (contentType === "text/html") return withRendererStyles(content, renderer);
+  return withRendererStyles(
+    `<!doctype html><meta charset="utf-8"><style>body{font:15px/1.6 system-ui,sans-serif;margin:1rem;color:#202020}pre{white-space:pre-wrap}code{font-family:ui-monospace,monospace}</style><main>${contentType === "text/markdown" ? content : `<pre>${escapeHtml(content)}</pre>`}</main>`,
+    renderer,
+  );
 }
 
 /**
@@ -437,12 +448,30 @@ export function buildDocumentTemplateSrcDoc(input: {
   return output;
 }
 
+function withRendererStyles(
+  source: string,
+  renderer: FrontendExtensionBundle["renderer"],
+): string {
+  const styles = (renderer?.assets ?? [])
+    .filter((asset) => asset.id.endsWith(".css"))
+    .map((asset) => `<style>${asset.source.replaceAll("<", "\\3c ")}</style>`)
+    .join("");
+  if (styles === "") return source;
+  const headClose = /<\/head\s*>/iu.exec(source);
+  if (headClose === null) return appendBeforeBodyClose(source, styles);
+  const at = headClose.index;
+  return `${source.slice(0, at)}${styles}${source.slice(at)}`;
+}
+
 export function buildAppSrcDoc(input: {
   renderer: NonNullable<FrontendExtensionBundle["renderer"]>;
   instanceId: string;
   nonce: string;
 }): string {
-  const source = input.renderer.document ?? "<main></main>";
+  const source = withRendererStyles(
+    input.renderer.document ?? "<main></main>",
+    input.renderer,
+  );
   const scripts = input.renderer.scripts
     .map(
       (script) =>
@@ -628,6 +657,7 @@ export function isExtensionBridgeResponse(
 }
 
 export interface ArtifactExtensionHostProps {
+  extensions?: FrontendArtifactExtensionSummary[];
   worldId: string;
   artifacts: FrontendArtifactProjection[];
   playerViewPanels?: FrontendPlayerViewPanelProjection[];
@@ -667,6 +697,7 @@ const ArtifactExtensionContext =
 export function ArtifactExtensionHost({
   worldId,
   artifacts,
+  extensions = [],
   playerViewPanels = [],
   playerViews,
   interactionDisabled = false,
@@ -704,6 +735,7 @@ export function ArtifactExtensionHost({
     () => ({
       worldId,
       artifacts,
+      extensions,
       playerViewPanels,
       playerViews,
       interactionDisabled,
@@ -741,6 +773,7 @@ export function ArtifactExtensionHost({
     }),
     [
       artifacts,
+      extensions,
       bridgeEvents,
       byMount,
       children,
@@ -764,20 +797,58 @@ export function ArtifactExtensionHost({
 
 export function ArtifactExtensionMount({
   mount,
+  reply,
 }: {
   mount: ArtifactMountName;
+  reply?: { chainId: string; eventId: number };
 }): React.JSX.Element {
   const context = useContext(ArtifactExtensionContext);
   if (context === null)
     throw new Error(
       uiText("ArtifactExtensionMount 必须位于 ArtifactExtensionHost 内"),
     );
-  const entries = context.byMount.get(mount) ?? [];
+  const entries = (context.byMount.get(mount) ?? []).filter(
+    (artifact) =>
+      mount !== "story" ||
+      (reply === undefined
+        ? artifact.frontend.source === "player_view"
+        : artifact.reply?.chainId === reply.chainId &&
+          artifact.reply.eventId === reply.eventId),
+  );
+  const progress = new Map<string, { name: string; state: string }>();
+  if (mount !== "story" && mount !== "debug")
+    for (const extension of context.extensions ?? [])
+      for (const request of extension.requests ?? []) {
+        if (
+          !request.mounts.includes(mount) ||
+          extension.status === "superseded"
+        )
+          continue;
+        const hasResult = context.artifacts.some(
+          (artifact) => artifact.requestId === request.requestId,
+        );
+        const state =
+          request.status === "failed"
+            ? "生成失败"
+            : request.status === "completed"
+              ? "已更新"
+              : extension.status === "running"
+                ? hasResult
+                  ? "更新中"
+                  : "生成中"
+                : "生成未完成";
+        progress.set(request.requestId, { name: request.displayName, state });
+      }
   return (
     <div
       className={`artifact-extension-mount artifact-extension-mount-${mount}`}
       data-extension-mount={mount}
     >
+      {[...progress].map(([id, item]) => (
+        <p key={id} role="status" className="artifact-generation-status">
+          {item.name} · {uiText(item.state)}
+        </p>
+      ))}
       {entries.map((artifact) => {
         const key = artifactInstanceKey(artifact);
         return (
@@ -1106,6 +1177,9 @@ function ArtifactExtensionInstance({
             {disabled ? uiText("恢复此扩展") : uiText("停用此扩展")}
           </button>
         </div>
+      ) : artifact.frontend.source === "player_view" &&
+        renderer === undefined ? (
+        <BuiltinPlayerViewPanel content={content} />
       ) : (
         <>
           {artifact.frontend.trustedLocalCode ? (

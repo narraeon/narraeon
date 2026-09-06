@@ -29,6 +29,7 @@ import type {
   V1WorldRevisionSealedEpochView,
 } from "../../src/protocol/v1.ts";
 import { projectUncoveredPlayerViews } from "../../src/web/PlayerViewFallback.ts";
+import type { FrontendArtifactProjection } from "../../src/web/ArtifactExtensionHost.tsx";
 import { WorldPage } from "../../src/web/WorldPage.tsx";
 
 afterEach(() => {
@@ -37,6 +38,80 @@ afterEach(() => {
 });
 
 describe("世界游玩页面", () => {
+  test("正文产物只挂实际回复，早期分页不误挂或重复，旧无归属产物不挂载", async () => {
+    const chain = playChainView("attached-chain", "send", "行动");
+    const decorations = playDecorations(
+      "属于早期回复",
+      "world-one",
+      "commit:3",
+    );
+    decorations.artifacts[0]!.frontend.mount = "story";
+    decorations.artifacts[0]!.reply = { chainId: chain.chainId, eventId: 4 };
+    const legacy = structuredClone(decorations.artifacts[0]!);
+    legacy.recordId = "unproven-legacy";
+    legacy.payload = "不能猜测归属";
+    delete legacy.reply;
+    decorations.artifacts.push(legacy);
+    const early: V1PlayTimelinePage = {
+      worldId: "world-one",
+      activeLastFailure: null,
+      generation: "page-gen",
+      items: [
+        {
+          kind: "event",
+          chainId: chain.chainId,
+          current: true,
+          event: {
+            id: 4,
+            kind: "assistant",
+            text: "早期 AI 原文",
+            status: "completed",
+            responseKind: "narrative",
+            exchange: 2,
+            attempt: 1,
+            committedHead: "commit:3",
+            hasReasoning: false,
+            hasToolFragment: false,
+            hasUsage: false,
+            detailsAvailable: false,
+          },
+        },
+      ],
+      nextCursor: null,
+      activeChainId: chain.chainId,
+      activeStatus: "ready",
+      activeCanRetry: false,
+    };
+    const late: V1PlayTimelinePage = {
+      ...early,
+      items: [],
+      nextCursor: "earlier",
+    };
+    const client = {
+      request: vi.fn(<T>(request: V1Request): Promise<T> => {
+        if (request.type === "world.play-decorations.read")
+          return Promise.resolve(decorations as T);
+        if (request.type === "play.timeline.page")
+          return Promise.resolve(early as T);
+        if (request.type === "artifacts.debug") return Promise.resolve([] as T);
+        return Promise.resolve({
+          ...worldView(chain),
+          playTimeline: late,
+        } as T);
+      }),
+    };
+    renderWorld(client);
+    await screen.findByRole("heading", { name: "宿舍世界" });
+    expect(screen.queryByTitle("panel")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "加载更早的故事" }));
+    await screen.findByText("早期 AI 原文");
+    await waitFor(() => expect(screen.getAllByTitle("panel")).toHaveLength(1));
+    const reply = screen.getByText("早期 AI 原文").closest("article")!;
+    expect(within(reply).getByTitle("panel").getAttribute("srcdoc")).toContain(
+      "属于早期回复",
+    );
+  });
+
   test("只由 exact source view 的 panel 承接 fallback，其余 view 与 diagnostics 仍显示", () => {
     const fallback = projectUncoveredPlayerViews(
       {
@@ -296,11 +371,17 @@ describe("世界游玩页面", () => {
       ),
     ).toBeTruthy();
     expect(within(dialog).getByText("AI 实际收到了哪些世界内容")).toBeTruthy();
-    expect(within(dialog).getByText("标题 + 摘要")).toBeTruthy();
+    expect(
+      within(dialog).getAllByText("最近一次请求材料").length,
+    ).toBeGreaterThan(0);
+    expect(within(dialog).getByText("累计实际读取（当时内容）")).toBeTruthy();
+    expect(within(dialog).getAllByText("标题 + 摘要").length).toBeGreaterThan(
+      0,
+    );
     fireEvent.click(within(dialog).getByText("查看按需读取返回的完整记录"));
     expect(within(dialog).getByText(/独立淋浴间: true/u)).toBeTruthy();
     expect(
-      within(dialog).getAllByText("下一次全新上下文").length,
+      within(dialog).getAllByText("下一次发送候选").length,
     ).toBeGreaterThan(0);
   });
 
@@ -2790,4 +2871,306 @@ test("世界修订 fresh 订阅不绑定旧 latest，命令完成不覆盖后来
     document.querySelector('.setting-history-select[aria-pressed="true"]')
       ?.textContent,
   ).toContain("old-session");
+});
+
+test("同一端点的后置结算立即显示内容，轻量读取和重连保留及更新产物", async () => {
+  let receive!: Parameters<ObserveConversation>[1];
+  let connection!: NonNullable<Parameters<ObserveConversation>[2]>;
+  let chain = playChainView("chain-panels", "exchange-panels", "open");
+  chain.status = "running";
+  let payload: string | null = null;
+  const client = {
+    observeConversation: ((_target, callback, onConnection) => {
+      receive = callback;
+      connection = onConnection!;
+      return vi.fn();
+    }) satisfies ObserveConversation,
+    request: vi.fn((request: V1Request) => {
+      if (request.type === "world.read")
+        return Promise.resolve(worldView(chain));
+      if (request.type === "world.play-decorations.read")
+        return Promise.resolve(
+          playDecorations(payload, "world-one", chain.parentHead),
+        );
+      throw new Error(`Unexpected request ${request.type}`);
+    }),
+  };
+  renderWorld(client);
+  await screen.findByRole("heading", { name: "宿舍世界" });
+  await waitFor(() => expect(receive).toBeTypeOf("function"));
+  await act(async () => {
+    await receive({ kind: "play", value: chain }, true);
+  });
+  payload = "同端点后置真实内容";
+  chain = {
+    ...chain,
+    events: [
+      ...chain.events,
+      {
+        id: 99,
+        kind: "followup",
+        followupId: "panel",
+        displayName: "panel",
+        text: "",
+        toolCalls: [],
+      },
+    ],
+  };
+  await act(async () => {
+    await receive({ kind: "play", value: chain }, true);
+  });
+  await waitFor(() =>
+    expect(screen.getByTitle("panel").getAttribute("srcdoc")).toContain(
+      "同端点后置真实内容",
+    ),
+  );
+  const readsBeforeDelta = client.request.mock.calls.length;
+  await act(async () => {
+    await receive(
+      { kind: "play", value: { ...chain, updatedAt: chain.updatedAt + 1 } },
+      true,
+    );
+  });
+  expect(client.request.mock.calls).toHaveLength(readsBeforeDelta);
+  chain = { ...chain, status: "ready" };
+  await act(async () => {
+    await receive({ kind: "play", value: chain }, true);
+  });
+  expect(screen.getByTitle("panel").getAttribute("srcdoc")).toContain(
+    "同端点后置真实内容",
+  );
+  payload = "重连恢复的产物";
+  await act(async () => {
+    connection("reconnecting");
+    connection("connected");
+    await receive({ kind: "play", value: chain }, true);
+  });
+  await waitFor(() =>
+    expect(screen.getByTitle("panel").getAttribute("srcdoc")).toContain(
+      "重连恢复的产物",
+    ),
+  );
+  payload = null;
+  chain = {
+    ...chain,
+    events: [
+      ...chain.events,
+      {
+        id: 100,
+        kind: "followup",
+        followupId: "failed",
+        displayName: "failed",
+        text: "",
+        toolCalls: [],
+        failure: "generation failed",
+      },
+    ],
+  };
+  await act(async () => {
+    await receive({ kind: "play", value: chain }, true);
+  });
+  await waitFor(() => expect(screen.queryByTitle("panel")).toBeNull());
+});
+
+test("旧端点和旧世界的延迟扩展响应不能覆盖当前页面", async () => {
+  let receive!: Parameters<ObserveConversation>[1];
+  let chain = playChainView("race-chain", "race-exchange", "open");
+  const reads: {
+    worldId: string;
+    head: string;
+    resolve: (value: unknown) => void;
+  }[] = [];
+  const client = {
+    observeConversation: ((_target, callback) => {
+      receive = callback;
+      return vi.fn();
+    }) satisfies ObserveConversation,
+    request: async (request: V1Request): Promise<unknown> => {
+      if (request.type === "world.read")
+        return { ...worldView(chain), worldId: request.worldId };
+      if (request.type === "world.play-decorations.read")
+        return new Promise((resolve) => {
+          reads.push({
+            worldId: request.worldId,
+            head: chain.parentHead,
+            resolve,
+          });
+        });
+      throw new Error(`Unexpected request ${request.type}`);
+    },
+  };
+  const props = {
+    client,
+    worldId: "world-one",
+    worldTitle: "宿舍世界",
+    modelConfigured: true,
+    onBack: vi.fn(),
+    onConfigureModel: vi.fn(),
+    onRenameWorld: () => Promise.resolve(),
+    onOpenWorld: () => Promise.resolve(),
+  };
+  const rendered = render(createElement(WorldPage, props));
+  await waitFor(() => expect(reads.length).toBe(1));
+  const oldHead = reads[0]!;
+  chain = { ...chain, parentHead: "commit:4" };
+  await act(async () => {
+    await receive({ kind: "play", value: chain }, true);
+  });
+  await waitFor(() => expect(reads.at(-1)?.head).toBe("commit:4"));
+  const newHead = reads.at(-1)!;
+  const resolve = (read: typeof oldHead, payload: string) =>
+    read.resolve(playDecorations(payload, read.worldId, read.head));
+  await act(() => {
+    resolve(newHead, "new head");
+    return Promise.resolve();
+  });
+  await waitFor(() =>
+    expect(screen.getByTitle("panel").getAttribute("srcdoc")).toContain(
+      "new head",
+    ),
+  );
+  await act(() => {
+    resolve(oldHead, "old head");
+    return Promise.resolve();
+  });
+  expect(screen.getByTitle("panel").getAttribute("srcdoc")).toContain(
+    "new head",
+  );
+  // Start another read in the first world, then navigate to a different world
+  // with the same head alias before it resolves.
+  chain = { ...chain, status: "running" };
+  await act(async () => {
+    await receive({ kind: "play", value: chain }, true);
+  });
+  const oldWorld = reads.at(-1)!;
+  rendered.rerender(
+    createElement(WorldPage, { ...props, worldId: "world-two" }),
+  );
+  await waitFor(() => expect(reads.at(-1)?.worldId).toBe("world-two"));
+  await act(() => {
+    resolve(reads.at(-1)!, "new world");
+    return Promise.resolve();
+  });
+  await waitFor(() =>
+    expect(screen.getByTitle("panel").getAttribute("srcdoc")).toContain(
+      "new world",
+    ),
+  );
+  await act(() => {
+    resolve(oldWorld, "old world");
+    return Promise.resolve();
+  });
+  expect(screen.getByTitle("panel").getAttribute("srcdoc")).toContain(
+    "new world",
+  );
+});
+
+function playDecorations(
+  payload: string | null,
+  worldId: string,
+  head: string,
+) {
+  const artifacts: FrontendArtifactProjection[] =
+    payload === null
+      ? []
+      : [
+          {
+            recordId: "panel-record",
+            worldId,
+            head,
+            payload,
+            operationId: "panel-operation",
+            playPresetId: "preset-one",
+            playPresetRevision: "rev-one",
+            requestId: "panel",
+            requestAttempt: 1,
+            output: "panel",
+            channel: "panel",
+            contentType: "text/plain",
+            projection: "replace",
+            save: "commit",
+            sequence: 1,
+            frontend: {
+              status: "ready",
+              preset: { id: "preset-one", revision: "rev-one" },
+              mount: "sidebar",
+              regex: [],
+              trustedLocalCode: false,
+              fallback: "none",
+            },
+          },
+        ];
+  return { head, artifacts, extensions: [], artifactDebug: [] };
+}
+
+test("世界扩展菜单提交 Runtime 选择；无调用链的同端点通知也刷新纯界面，关闭不被 fallback 补回", async () => {
+  let receive!: Parameters<ObserveConversation>[1];
+  let enabled = true;
+  const controls = () => ({
+    revision: enabled ? 1 : 2,
+    items: [
+      {
+        key: "view:status",
+        id: "status",
+        name: "当前状态",
+        source: "world" as const,
+        kind: "view" as const,
+        defaultEnabled: true,
+        selected: enabled,
+        enabled,
+        overridden: !enabled,
+        generation: enabled ? 0 : 1,
+      },
+    ],
+  });
+  const client = {
+    observeConversation: ((_target, callback) => {
+      receive = callback;
+      return () => undefined;
+    }) satisfies ObserveConversation,
+    request: vi.fn((request: V1Request) => {
+      if (request.type === "world.read")
+        return Promise.resolve({
+          ...worldView(null),
+          extensionControls: controls(),
+        });
+      if (request.type === "world.play-decorations.read")
+        return Promise.resolve({
+          ...playDecorations(null, "world-one", "commit:1"),
+          extensionControls: controls(),
+          playerViews: worldView(null).playerViews,
+          playerViewPanels: [],
+          suppressedPlayerViewIds: enabled ? [] : ["status"],
+        });
+      if (request.type === "world.extensions.set") {
+        enabled = request.value !== "off";
+        return Promise.resolve(controls());
+      }
+      throw new Error(`Unexpected request ${request.type}`);
+    }),
+  };
+  renderWorld(client);
+  await screen.findByRole("heading", { name: "宿舍世界" });
+  fireEvent.click(screen.getByText("世界扩展", { exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "此刻" }));
+  expect(screen.getByText("白色运动背心")).toBeTruthy();
+  fireEvent.click(screen.getByRole("checkbox", { name: "当前状态" }));
+  await waitFor(() => expect(screen.queryByText("白色运动背心")).toBeNull());
+  expect(client.request).toHaveBeenCalledWith({
+    type: "world.extensions.set",
+    worldId: "world-one",
+    key: "view:status",
+    value: "off",
+  });
+  // An independent tab changes the Runtime state while there is no play chain.
+  enabled = true;
+  await act(async () => {
+    await receive({ kind: "play", value: null, extensionsRevision: 3 }, true);
+  });
+  await waitFor(() => expect(screen.getByText("白色运动背心")).toBeTruthy());
+  expect(
+    client.request.mock.calls.some(([request]) =>
+      request.type.startsWith("play.chain"),
+    ),
+  ).toBe(false);
 });

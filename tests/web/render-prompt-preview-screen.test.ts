@@ -351,3 +351,37 @@ function previewFixture(): PromptPreviewData {
     },
   };
 }
+
+test("同角色的每条有序消息都可以独立打开", async () => {
+  const preview = previewFixture();
+  preview.compilation.logicalMessages.push({
+    role: "author_instruction",
+    markdown: "SECOND_AUTHOR_BODY",
+    blocks: [{ source: "preset:second", markdown: "SECOND_AUTHOR_BODY" }],
+  });
+  render(
+    createElement(PromptPreviewScreen, {
+      client: {
+        request<T = unknown>(): Promise<T> {
+          return Promise.resolve(preview as T);
+        },
+      },
+      packages: [
+        { localId: "package-dormitory", title: "宿舍内容", status: "usable" },
+      ],
+      initialPackageId: "package-dormitory",
+      playPresets: presetLibrary(),
+      model: modelLibrary(),
+      onPackageSelect: vi.fn(),
+    }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "生成真实预览" }));
+  await screen.findByRole("heading", { name: "编译通过" });
+  const buttons = within(
+    screen.getByRole("list", { name: "逻辑消息顺序" }),
+  ).getAllByRole("button");
+  fireEvent.click(buttons.at(-1)!);
+  expect(document.querySelector(".prompt-message-body pre")?.textContent).toBe(
+    "SECOND_AUTHOR_BODY",
+  );
+});

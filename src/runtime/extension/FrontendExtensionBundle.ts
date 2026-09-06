@@ -60,6 +60,7 @@ export interface FrontendExtensionBundle {
 }
 
 export interface FrontendArtifactProjection extends ArtifactProjectionItem {
+  reply?: { chainId: string; eventId: number };
   frontend: FrontendExtensionBundle;
 }
 
@@ -73,20 +74,22 @@ export function projectArtifactForFrontend(
   artifact: ArtifactProjectionItem | ArtifactDebugRecord,
   binding: PlayPresetBinding | null,
   failure: FrontendBundleFailure = "missing_revision",
+  packageScriptsEnabled = false,
 ): FrontendExtensionBundle {
   const preset = {
     id: artifact.playPresetId,
     revision: artifact.playPresetRevision,
   };
-  if (binding === null)
+  if (binding === null && artifact.frozenPresentation === undefined)
     return missingBundle(
       preset,
       "The frozen play-preset revision is unavailable and cannot be replaced with the current revision",
       failure,
     );
   if (
-    binding.id !== artifact.playPresetId ||
-    binding.revision !== artifact.playPresetRevision
+    binding !== null &&
+    (binding.id !== artifact.playPresetId ||
+      binding.revision !== artifact.playPresetRevision)
   )
     return missingBundle(
       preset,
@@ -94,12 +97,12 @@ export function projectArtifactForFrontend(
       "invalid_revision",
     );
 
-  const followup = binding.definition.followups.find(
+  const followup = binding?.definition.followups.find(
     ({ id }) => id === artifact.requestId,
   );
-  const declaration = followup?.artifacts.find(
-    ({ name }) => name === artifact.output,
-  );
+  const declaration =
+    artifact.frozenPresentation?.declaration ??
+    followup?.artifacts.find(({ name }) => name === artifact.output);
   if (declaration === undefined)
     return {
       ...missingBundle(
@@ -120,9 +123,11 @@ export function projectArtifactForFrontend(
     };
 
   try {
-    const frozenBinding: PlayPresetBinding = {
-      ...binding,
-      scriptsEnabled: artifact.playPresetScriptsEnabled,
+    const frozenBinding = {
+      scriptsEnabled: artifact.requestId.startsWith("package:")
+        ? packageScriptsEnabled && declaration.rendererMode === "app"
+        : artifact.playPresetScriptsEnabled,
+      files: artifact.frozenPresentation?.files ?? binding?.files ?? {},
     };
     const regex = declaration.regex
       ? parsePlayPresetRegexAsset(
@@ -133,10 +138,12 @@ export function projectArtifactForFrontend(
           declaration.regex,
         )
       : [];
-    const renderer = resolveRenderer(declaration, frozenBinding);
-    const mount = frozenBinding.definition.mounts.find(
-      ({ channel }) => channel === declaration.channel,
-    )?.mount;
+    const renderer = resolveArtifactRenderer(declaration, frozenBinding);
+    const mount =
+      artifact.frozenPresentation?.mount ??
+      binding?.definition.mounts.find(
+        ({ channel }) => channel === declaration.channel,
+      )?.mount;
     return {
       status: "ready",
       preset,
@@ -147,7 +154,7 @@ export function projectArtifactForFrontend(
       declaration: declarationView(declaration),
       regex,
       ...(renderer === undefined ? {} : { renderer }),
-      trustedLocalCode: artifact.playPresetScriptsEnabled,
+      trustedLocalCode: frozenBinding.scriptsEnabled,
       fallback: "none",
     };
   } catch {
@@ -258,8 +265,14 @@ export function projectDebugArtifactForFrontend(
   artifact: ArtifactDebugRecord,
   binding: PlayPresetBinding | null,
   failure: FrontendBundleFailure = "missing_revision",
+  packageScriptsEnabled = false,
 ): FrontendExtensionBundle {
-  return projectArtifactForFrontend(artifact, binding, failure);
+  return projectArtifactForFrontend(
+    artifact,
+    binding,
+    failure,
+    packageScriptsEnabled,
+  );
 }
 
 function declarationView(
@@ -282,9 +295,9 @@ function declarationView(
   };
 }
 
-function resolveRenderer(
+export function resolveArtifactRenderer(
   declaration: PlayPresetArtifactDeclaration,
-  binding: PlayPresetBinding,
+  binding: Pick<PlayPresetBinding, "files" | "scriptsEnabled">,
 ): FrontendExtensionRenderer | undefined {
   const mode = declaration.rendererMode ?? "document";
   const rendererSource = declaration.renderer

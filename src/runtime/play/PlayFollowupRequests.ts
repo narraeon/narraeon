@@ -1,3 +1,5 @@
+import type { WorldExtensionRequests } from "../extension/WorldExtensionRequests.ts";
+import type { FrozenArtifactPresentation } from "./FileNativePlayPresetStore.ts";
 import type {
   ArtifactExtensionSummary,
   ArtifactOperationContext,
@@ -51,6 +53,8 @@ export interface PlayFollowupObserver {
 }
 
 export interface PlayFollowupInput {
+  controls?: WorldExtensionRequests;
+  presentations?: Record<string, Record<string, FrozenArtifactPresentation>>;
   artifacts: ArtifactStore;
   modelHost: ModelHost;
   followups: readonly PlayFollowupCompilation[];
@@ -104,7 +108,32 @@ export async function runPlayFollowupRequests(
       failure ??= "The follow-up request was cancelled.";
       break;
     }
-    const outcome = await runOne(input, followup, prefix);
+    const lease = await input.controls?.acquire(
+      input.context.worldId,
+      {
+        playPresetId: input.context.playPresetId,
+        requestId: followup.id,
+        ...(followup.extensionControl === undefined
+          ? {}
+          : { extensionControl: followup.extensionControl }),
+      },
+      input.signal,
+    );
+    if (lease?.signal.aborted) {
+      lease.release();
+      continue;
+    }
+    let outcome: PlayFollowupOutcome;
+    try {
+      outcome = await runOne(
+        input,
+        followup,
+        prefix,
+        lease?.signal ?? input.signal,
+      );
+    } finally {
+      lease?.release();
+    }
     if (signalWasAborted(input.signal)) {
       failure ??= "The follow-up request was cancelled.";
       break;
@@ -134,6 +163,7 @@ async function runOne(
   input: PlayFollowupInput,
   followup: PlayFollowupCompilation,
   prefix: ModelHostAppendItem[],
+  requestSignal?: AbortSignal,
 ): Promise<PlayFollowupOutcome> {
   const outcome: PlayFollowupOutcome = {
     id: followup.id,
@@ -143,14 +173,25 @@ async function runOne(
   };
   const requestContext = {
     ...input.context,
+    ...(followup.extensionControl === undefined
+      ? {}
+      : { extensionControl: structuredClone(followup.extensionControl) }),
+    ...(input.presentations?.[followup.id] === undefined
+      ? {}
+      : { frozenPresentations: input.presentations[followup.id] }),
     requestId: followup.id,
+    displayName: followup.displayName,
     requestAttempt: 1,
     maxArtifactBytes: followup.maxArtifactBytes,
     declarations: structuredClone(followup.artifacts),
+    ...(followup.frozenResources === undefined
+      ? {}
+      : { frozenResources: structuredClone(followup.frozenResources) }),
   };
   let responseDiagnostics: AiExchangeDiagnostics | undefined;
   try {
     await input.artifacts.beginRequestAttempt(requestContext);
+    requestSignal?.throwIfAborted();
     input.observer?.onProviderDispatch?.();
     let response: Awaited<ReturnType<ModelHost["exchange"]>>;
     try {
@@ -177,7 +218,7 @@ async function runOne(
           maxOutputTokens: input.maxOutputTokens,
         },
         {
-          ...(input.signal === undefined ? {} : { signal: input.signal }),
+          ...(requestSignal === undefined ? {} : { signal: requestSignal }),
           onDelta: (delta) => input.observer?.onProviderDelta?.(delta),
         },
       );
@@ -209,6 +250,8 @@ async function runOne(
       });
     }
     const failedTools = outcome.toolCalls.filter(({ ok }) => !ok);
+    if (failedTools.length > 0)
+      outcome.failure = `Follow-up request ${followup.id} could not save its artifacts.`;
     if (failedTools.length > 0 && response.diagnostics !== undefined)
       await input.failureLog?.recordFailure({
         exchange: response.diagnostics,
@@ -265,6 +308,10 @@ async function runOne(
         ],
       });
   }
+  await input.artifacts.finishRequest?.(
+    requestContext,
+    outcome.failure !== undefined,
+  );
   return outcome;
 }
 

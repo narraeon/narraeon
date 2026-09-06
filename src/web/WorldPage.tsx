@@ -1,3 +1,7 @@
+import { WorldExtensionMenu } from "./WorldExtensionMenu.tsx";
+import type { WorldExtensionsView } from "../protocol/worldExtensions.ts";
+import { PackageScriptPermissionControl } from "./PackageScriptPermissionControl.tsx";
+import { PlayerValue } from "./PlayerViewValue.tsx";
 import { useConversationComposer } from "./useConversationComposer.ts";
 import type { ObserveConversation } from "./ConversationObserver.ts";
 import { uiText } from "./i18n.ts";
@@ -91,6 +95,8 @@ interface WorldMessage {
 }
 
 interface WorldReadView {
+  extensionControls?: WorldExtensionsView;
+  suppressedPlayerViewIds?: string[];
   worldId: string;
   head: string;
   state: ContentTreeFile[];
@@ -112,6 +118,10 @@ interface WorldReadView {
 }
 
 interface WorldPlayDecorationsView {
+  extensionControls?: WorldExtensionsView;
+  suppressedPlayerViewIds?: string[];
+  playerViewPanels?: FrontendPlayerViewPanelProjection[];
+  playerViews?: WorldReadView["playerViews"];
   head: string;
   artifacts: FrontendArtifactProjection[];
   extensions: FrontendArtifactExtensionSummary[];
@@ -150,6 +160,13 @@ export function WorldPage({
   initialReadingPreferences?: AppReadingPreferences;
 }): React.JSX.Element {
   const [world, setWorld] = useState<WorldReadView | null>(null);
+  // Decorations have their own lifetime: lightweight world reads intentionally
+  // contain empty artifact arrays and must not replace this loaded projection.
+  const [decorations, setDecorations] = useState<
+    (WorldPlayDecorationsView & { worldId: string }) | null
+  >(null);
+  const [decorationRevision, setDecorationRevision] = useState(0);
+  const decorationRequestId = useRef(0);
   const [leftRailOpen, setLeftRailOpen] = useState(false);
   const [rightRailOpen, setRightRailOpen] = useState(false);
   const [rightRailTab, setRightRailTab] = useState<RightRailTab>("documents");
@@ -254,33 +271,59 @@ export function WorldPage({
   }, [client, worldId]);
 
   useEffect(() => {
-    if (worldHead === undefined) return;
+    if (world?.worldId !== worldId) return;
     let active = true;
-    const expectedHead = worldHead;
-    void requestPlayDecorations(client, worldId).then((decorations) => {
-      if (!active) return;
-      setWorld((current) =>
-        current?.head !== expectedHead || decorations?.head !== expectedHead
-          ? current
-          : { ...current, ...decorations },
-      );
+    const expectedHead = world.head;
+    const requestId = ++decorationRequestId.current;
+    void requestPlayDecorations(client, worldId).then((next) => {
+      if (
+        active &&
+        requestId === decorationRequestId.current &&
+        next?.head === expectedHead
+      )
+        setDecorations({ ...next, worldId });
     });
     return () => {
       active = false;
     };
-  }, [client, worldHead, worldId]);
+  }, [client, world, worldId, decorationRevision]);
+
+  const displayedDecorations =
+    decorations?.worldId === worldId && decorations.head === worldHead
+      ? decorations
+      : null;
 
   useEffect(() => {
     if (client.observeConversation === undefined || openedWorldId !== worldId)
       return;
     let active = true;
     let hydratedHead: string | undefined;
+    let observedDecorations: string | undefined;
+    let observedExtensions: number | undefined;
     const unsubscribe = client.observeConversation(
       { kind: "play", id: worldId },
       async (observation) => {
         if (!active || observation.kind !== "play") return;
+        if (observation.extensionsRevision !== observedExtensions) {
+          observedExtensions = observation.extensionsRevision;
+          setDecorationRevision((current) => current + 1);
+        }
         const next = observation.value;
         if (next === null) return;
+        // Ignore token deltas. Follow-up outcomes (including failure/clear),
+        // chain transitions and reconnect snapshots invalidate the projection.
+        const revision = JSON.stringify([
+          next.chainId,
+          next.parentHead,
+          next.status,
+          next.events
+            .filter((event) => event.kind === "followup")
+            .map((event) => event.id),
+        ]);
+        if (observedDecorations !== revision) {
+          observedDecorations = revision;
+          setDecorationRevision((current) => current + 1);
+        }
         setPlayCallChain(next);
         setPlayFailure(playCallFailureMessage(next));
         if (next.status === "running") {
@@ -334,6 +377,11 @@ export function WorldPage({
         }
       },
       (connection) => {
+        if (active && connection === "connected") {
+          hydratedHead = undefined;
+          observedDecorations = undefined;
+          setDecorationRevision((current) => current + 1);
+        }
         if (active)
           setPlayObservationFailure(
             connection === "connected"
@@ -551,7 +599,7 @@ export function WorldPage({
     const observer = new ResizeObserver(publish);
     observer.observe(composer);
     return () => observer.disconnect();
-  }, []);
+  }, [openedWorldId, dialog]);
 
   useEffect(() => {
     if (feedback?.kind !== "status") return;
@@ -561,8 +609,12 @@ export function WorldPage({
 
   const documents = world?.state ?? [];
   const playerViewFallback = projectUncoveredPlayerViews(
-    world?.playerViews ?? { views: [], diagnostics: [] },
-    world?.playerViewPanels ?? [],
+    displayedDecorations?.playerViews ??
+      world?.playerViews ?? { views: [], diagnostics: [] },
+    displayedDecorations?.playerViewPanels ?? world?.playerViewPanels ?? [],
+    displayedDecorations?.suppressedPlayerViewIds ??
+      world?.suppressedPlayerViewIds ??
+      [],
   );
   const timelineCommittedMessages: WorldMessage[] =
     playTimeline?.items.flatMap((item) => {
@@ -1407,6 +1459,14 @@ export function WorldPage({
           };
     return (
       <SettingImprovementPanel
+        key={worldId}
+        onPreview={() =>
+          requestRuntime(client, {
+            type: "world.revision.preview",
+            worldId,
+            ...(panelView === null ? {} : { sessionId: panelView.sessionId }),
+          })
+        }
         target="world-revision"
         packageName={worldTitle}
         modelConfigured={modelConfigured}
@@ -1529,8 +1589,11 @@ export function WorldPage({
     >
       <ArtifactExtensionHost
         worldId={world.worldId}
-        artifacts={world.artifacts ?? []}
-        playerViewPanels={world.playerViewPanels ?? []}
+        artifacts={displayedDecorations?.artifacts ?? []}
+        playerViewPanels={
+          displayedDecorations?.playerViewPanels ?? world.playerViewPanels ?? []
+        }
+        extensions={displayedDecorations?.extensions ?? []}
         playerViews={world.playerViews}
         interactionDisabled={pending !== null || worldRevisionLocked}
         onSetComposerDraft={setPlayerText}
@@ -1699,6 +1762,31 @@ export function WorldPage({
 
           <footer ref={composerRef} className="world-composer-dock">
             <ArtifactExtensionMount mount="composer_above" />
+            {(displayedDecorations?.extensionControls ??
+              world.extensionControls) === undefined ? null : (
+              <WorldExtensionMenu
+                view={
+                  (displayedDecorations?.extensionControls ??
+                    world.extensionControls)!
+                }
+                onChange={async (key, value) => {
+                  const requestId = ++decorationRequestId.current;
+                  await requestRuntime(client, {
+                    type: "world.extensions.set",
+                    worldId,
+                    key,
+                    value,
+                  });
+                  const next = await requestPlayDecorations(client, worldId);
+                  if (
+                    next !== null &&
+                    requestId === decorationRequestId.current
+                  )
+                    setDecorations({ ...next, worldId });
+                  setDecorationRevision((current) => current + 1);
+                }}
+              />
+            )}
             {worldRevisionLocked ? (
               <div className="model-required-callout" role="status">
                 <p>
@@ -1763,7 +1851,9 @@ export function WorldPage({
                     }}
                   >
                     <strong>{uiText("追加当前上下文")}</strong>
-                    <span>{uiText("保留这条调用链已经看到的内容")}</span>
+                    <span>
+                      {uiText("保留原生对话，重新编译当前提示和材料")}
+                    </span>
                   </button>
                   <button
                     type="button"
@@ -1816,6 +1906,13 @@ export function WorldPage({
                   : "↑"}
               </button>
             </div>
+            <p className="world-composer-hint">
+              {uiText(
+                activeCanRetry
+                  ? "原样重试使用已保存请求，不采用新预设。"
+                  : "正常发送和空输入续写使用最新预设；本轮工具执行期间保持不变。",
+              )}
+            </p>
             <ArtifactExtensionMount mount="composer_below" />
           </footer>
 
@@ -1988,6 +2085,17 @@ export function WorldPage({
 
           {dialog === "manage" ? (
             <WorldManagementDialog
+              packageScriptPermission={
+                <PackageScriptPermissionControl
+                  key={worldId}
+                  client={client}
+                  kind="world"
+                  id={worldId}
+                  onChange={() =>
+                    setDecorationRevision((current) => current + 1)
+                  }
+                />
+              }
               world={world}
               worldTitle={worldTitle}
               worldNameDraft={worldNameDraft}
@@ -2024,9 +2132,13 @@ export function WorldPage({
           <ArtifactExtensionMount mount="overlay" />
           <ArtifactExtensionMount mount="debug" />
           <ArtifactDebugger
-            records={world.artifactDebug ?? []}
-            extensions={world.extensions ?? []}
-            playerViewPanels={world.playerViewPanels ?? []}
+            records={displayedDecorations?.artifactDebug ?? []}
+            extensions={displayedDecorations?.extensions ?? []}
+            playerViewPanels={
+              displayedDecorations?.playerViewPanels ??
+              world.playerViewPanels ??
+              []
+            }
             bridgeEvents={bridgeEvents}
           />
         </div>
@@ -2584,6 +2696,12 @@ function TimelineEvent({
                     : uiText("（本次响应没有文本）")}
             </p>
           )}
+          {presentation === "story" && event.committedHead !== undefined ? (
+            <ArtifactExtensionMount
+              mount="story"
+              reply={{ chainId, eventId: event.id }}
+            />
+          ) : null}
           {responseKind === "pending" ? (
             <small>{uiText("待定输出；响应完成前不会进入故事")}</small>
           ) : null}
@@ -2805,52 +2923,6 @@ function PlayerViewCard({
   );
 }
 
-function PlayerValue({ value }: { value: unknown }): React.JSX.Element {
-  if (value === null || value === undefined)
-    return <span className="empty-value">—</span>;
-  if (typeof value === "string")
-    return <span className="text-value">{value}</span>;
-  if (typeof value === "number" || typeof value === "boolean")
-    return <span>{String(value)}</span>;
-  if (Array.isArray(value)) {
-    const entries = value as unknown[];
-    return (
-      <ul className="player-value-list">
-        {entries.map((entry, index) => (
-          <li key={index}>
-            <PlayerValue value={entry} />
-          </li>
-        ))}
-      </ul>
-    );
-  }
-  if (isRecord(value)) {
-    if (typeof value.$ref === "string")
-      return (
-        <span className="document-reference">
-          {typeof value.title === "string" ? value.title : value.$ref}
-          {typeof value.ref === "string" ? ` · @${value.ref}` : ""}
-        </span>
-      );
-    return (
-      <dl className="player-value-map">
-        {Object.entries(value).map(([key, child]) => (
-          <div key={key}>
-            <dt>{key}</dt>
-            <dd>
-              <PlayerValue value={child} />
-            </dd>
-          </div>
-        ))}
-      </dl>
-    );
-  }
-  if (typeof value === "bigint") return <span>{value.toString()}</span>;
-  if (typeof value === "symbol")
-    return <span>{value.description ?? "Symbol"}</span>;
-  return <span className="empty-value">{uiText("[无法显示]")}</span>;
-}
-
 function selectedStateDocument(
   state: readonly ContentTreeFile[],
   current: string,
@@ -2880,10 +2952,6 @@ function sameTextFiles(
       );
     })
   );
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function errorMessage(reason: unknown): string {

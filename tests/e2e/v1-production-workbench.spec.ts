@@ -211,11 +211,72 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
 
   await page.getByRole("button", { name: "预设" }).click();
   await expect(page.getByRole("heading", { name: "玩法预设" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "调用链" })).toBeVisible();
-  await expect(page.getByLabel("玩法预设文件编辑器")).toContainText(
-    "叙事提示块",
+  await expect(page.getByRole("list", { name: "提示词顺序" })).toBeVisible();
+  await expect(page.getByLabel("预设编辑器")).toContainText("完整内容包提示");
+  await expect(page.getByLabel("预设编辑器")).toContainText("后置请求");
+  await page.getByRole("button", { name: "新增提示词", exact: true }).click();
+  await page.getByLabel("提示词名称", { exact: true }).fill("Before world");
+  await page
+    .getByLabel("提示词正文", { exact: true })
+    .fill("ORDERED_BEFORE_WORLD");
+  await page.getByRole("button", { name: "上移", exact: true }).click();
+  await page
+    .getByRole("button", { name: "完整内容包提示", exact: true })
+    .click();
+  await expect(page.getByLabel("提示词正文", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "新增提示词", exact: true }).click();
+  await page.getByLabel("提示词名称", { exact: true }).fill("After world");
+  await page
+    .getByLabel("提示词正文", { exact: true })
+    .fill("ORDERED_AFTER_WORLD");
+  const mechanics = page.getByRole("button", {
+    name: "工具与响应结算（必选）",
+    exact: true,
+  });
+  await mechanics.click();
+  await expect(page.getByLabel("启用", { exact: true })).toBeDisabled();
+  const promptCount = await page
+    .getByRole("list", { name: "提示词顺序" })
+    .getByRole("button")
+    .count();
+  for (let i = 0; i < promptCount; i++) await mechanics.press("Alt+ArrowDown");
+  const promptOrder = page.getByRole("list", { name: "提示词顺序" });
+  await mechanics.press("Alt+ArrowUp");
+  const keyboardOrder = await promptOrder.getByRole("button").allTextContents();
+  await mechanics.press("Alt+ArrowDown");
+  await promptOrder
+    .getByRole("listitem")
+    .last()
+    .dragTo(promptOrder.getByRole("listitem").nth(promptCount - 2));
+  await expect(promptOrder.getByRole("button")).toHaveText(keyboardOrder);
+  await mechanics.press("Alt+ArrowDown");
+  await page.getByRole("tab", { name: /设定完善/u }).click();
+  await expect(page.getByLabel("设定完善提示词编排")).toBeVisible();
+  await expect(
+    page
+      .getByLabel("设定完善提示词编排")
+      .getByText("后置请求", { exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "新增提示词", exact: true }).click();
+  await page.getByLabel("提示词名称", { exact: true }).fill("Author rule");
+  await page
+    .getByLabel("提示词正文", { exact: true })
+    .fill("ORDERED_AUTHOR_RULE");
+  await page
+    .getByRole("button", { name: "Author rule", exact: true })
+    .press("Alt+ArrowUp");
+  await page.getByRole("tab", { name: /^游玩/u }).click();
+  await page.getByRole("button", { name: "保存修改", exact: true }).click();
+  await page
+    .getByRole("button", { name: "应用为当前玩法", exact: true })
+    .click();
+  await page.reload();
+  await page.getByRole("button", { name: "预设", exact: true }).click();
+  await page.getByRole("button", { name: "Before world", exact: true }).click();
+  await expect(page.getByLabel("提示词正文", { exact: true })).toHaveValue(
+    "ORDERED_BEFORE_WORLD",
   );
-  await expect(page.getByLabel("玩法预设文件编辑器")).toContainText("后置请求");
+
   await page.getByRole("button", { name: "返回工作区" }).click();
 
   await page.getByRole("button", { name: "新建内容包" }).click();
@@ -318,6 +379,11 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await firstComposer.press("Enter");
   await expect(page.locator(".setting-conversation-assistant")).toContainText(
     "damaged character document is repaired",
+  );
+  expect(providerRequests.at(-1)).toContain("ORDERED_AUTHOR_RULE");
+  await page.locator(".setting-request-previews > summary").click();
+  await expect(page.locator(".setting-request-previews")).toContainText(
+    "不是下一次发送预览",
   );
   const repairedTurn = page.locator(".setting-conversation-turn").last();
   const repairedTrace = repairedTurn.locator(".setting-turn-trace");
@@ -748,6 +814,23 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(
     page.getByText("Alex nods and continues folding the jersey."),
   ).toBeVisible();
+  const orderedPlayRequest = providerRequests.find(
+    (body) =>
+      body.includes("ORDERED_BEFORE_WORLD") &&
+      body.includes("I ask Alex whether we are training tonight."),
+  );
+  expect(orderedPlayRequest).toBeDefined();
+  const orderedTokens = [
+    "ORDERED_BEFORE_WORLD",
+    "# World Narration Rules",
+    "ORDERED_AFTER_WORLD",
+    "# 工具与响应结算",
+    "I ask Alex whether we are training tonight.",
+  ];
+  for (let i = 1; i < orderedTokens.length; i++)
+    expect(orderedPlayRequest!.indexOf(orderedTokens[i]!)).toBeGreaterThan(
+      orderedPlayRequest!.indexOf(orderedTokens[i - 1]!),
+    );
   await callChain.getByText("本段调用详情", { exact: true }).click();
   const toolStep = callChain.locator(".call-chain-assistant.is-tool-step");
   await expect(toolStep.getByText("模型工具步骤")).toBeVisible();
@@ -848,12 +931,54 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     freshRequest.messages?.filter(({ role }) => role === "tool"),
   ).toHaveLength(0);
 
+  await page.getByRole("button", { name: "返回工作区" }).click();
+  await page.getByRole("button", { name: "预设", exact: true }).click();
+  await page.getByRole("button", { name: "Before world", exact: true }).click();
+  await page
+    .getByLabel("提示词正文", { exact: true })
+    .fill("LIVE_NEXT_SEND_RULE");
+  await page.getByRole("button", { name: "保存修改", exact: true }).click();
+  await page
+    .getByRole("button", { name: "应用为当前玩法", exact: true })
+    .click();
+  await page.getByRole("button", { name: "返回工作区" }).click();
+  await page
+    .getByRole("button", { name: "打开世界：Dormitory World", exact: true })
+    .click();
+  await expect(
+    page.getByText(
+      "正常发送和空输入续写使用最新预设；本轮工具执行期间保持不变。",
+      { exact: true },
+    ),
+  ).toBeVisible();
   responses.push(chatText("We are heading to the court at eight."));
   await page.getByLabel("你的行动").fill("What time are we leaving?");
   await page.getByRole("button", { name: "追加行动" }).click();
   await expect(
     page.getByText("We are heading to the court at eight."),
   ).toBeVisible();
+
+  const liveRequest = providerRequest();
+  expect(JSON.stringify(liveRequest)).toContain("LIVE_NEXT_SEND_RULE");
+  expect(JSON.stringify(liveRequest)).not.toContain("ORDERED_BEFORE_WORLD");
+  expect(
+    liveRequest.messages?.filter(({ role }) => role === "assistant"),
+  ).toEqual([
+    expect.objectContaining({
+      content: "Alex saves the training time on the phone.",
+    }),
+  ]);
+  await page
+    .getByRole("navigation", { name: "世界阅读工具" })
+    .getByRole("button", { name: "AI 读取", exact: true })
+    .click();
+  await expect(
+    page.getByText("最近一次请求材料", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("navigation", { name: "世界阅读工具" })
+    .getByRole("button", { name: "AI 读取", exact: true })
+    .click();
 
   responses.push(
     chatText(
@@ -940,6 +1065,15 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   ).toBeVisible();
   await expect(page.getByText("手动编辑和 AI 共用一份修订")).toBeVisible();
   await expect(page.getByRole("button", { name: "应用并解锁" })).toHaveCount(0);
+  const previewRequestCount = providerRequests.length;
+  await page
+    .getByRole("button", { name: "预览下一条请求", exact: true })
+    .click();
+  await expect(
+    page.getByText("下一次发送候选（未发送）", { exact: true }),
+  ).toBeVisible();
+  expect(providerRequests).toHaveLength(previewRequestCount);
+  await expect(page.getByRole("button", { name: "应用并解锁" })).toHaveCount(0);
 
   responses.push(
     chatTools(
@@ -969,6 +1103,8 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(
     page.locator(".setting-conversation-assistant").last(),
   ).toContainText("temporary world-control revision");
+  expect(providerRequests.at(-1)).toContain("ORDERED_AUTHOR_RULE");
+  expect(providerRequests.at(-1)).toContain("世界修订工具只修改持久独占");
   const worldRevisionTurn = page.locator(".setting-conversation-turn").last();
   await worldRevisionTurn.locator(".setting-turn-trace > summary").click();
   await worldRevisionTurn
@@ -1128,6 +1264,16 @@ test("世界修订复用统一编辑工作区且世界管理可以纵向滚动",
   ).toBeVisible();
 
   await expect(page.getByRole("button", { name: "应用并解锁" })).toHaveCount(0);
+  const previewRequestCount = providerRequests.length;
+  await page
+    .getByRole("button", { name: "预览下一条请求", exact: true })
+    .click();
+  await expect(
+    page.getByText("下一次发送候选（未发送）", { exact: true }),
+  ).toBeVisible();
+  expect(providerRequests).toHaveLength(previewRequestCount);
+  await expect(page.getByRole("button", { name: "应用并解锁" })).toHaveCount(0);
+
   await page
     .getByRole("navigation", { name: "世界修订工具" })
     .getByRole("button", { name: "编辑", exact: true })

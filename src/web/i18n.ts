@@ -7,6 +7,138 @@ import {
 let activeLocale: AppLocale = defaultAppLocale;
 
 const englishMessages: Record<string, string> = {
+  预设管理: "Manage presets",
+  预设检查通过: "Preset validated",
+  "预设已导出。": "Preset exported.",
+  "JavaScript 已关闭；文本、HTML 和样式仍可预览。":
+    "JavaScript disabled. Text, HTML and styles can still be previewed.",
+  "已复制为独立预设。": "Copied as an independent preset.",
+  "已复制推荐{name}，可独立编辑。":
+    "Copied the recommended {name} for independent editing.",
+  预设编辑器: "Preset editor",
+  "已加入修复草稿，保存时将检查预设格式。":
+    "Added to the repair draft. The preset format will be checked when saving.",
+
+  "跨世界使用的主持规则；可在“游玩”左侧目录调整启用状态和顺序。":
+    "Narrator rules shared across worlds. Change their order and enabled state in the Play directory.",
+  "主叙事或后置请求使用的提示词；在“游玩”左侧选择对应条目即可编辑。":
+    "Prompts for the main narration or follow-up requests. Select the corresponding item in the Play directory to edit it.",
+  "预设已保存。": "Preset saved.",
+  "已应用此预设；游玩修改将在下一次正常发送时生效。":
+    "Preset applied. Play changes take effect on the next normal send.",
+  导入预设: "Import preset",
+  选择要导入的预设: "Choose a preset to import",
+  "无法识别此预设。请选择通过“导出预设”生成的文件。":
+    "This preset could not be recognized. Choose a file created with Export preset.",
+  导出预设: "Export preset",
+  "预设已导入为独立副本，JavaScript 默认关闭；信任其内容后可在预设操作中启用。":
+    "Preset imported as an independent copy with JavaScript disabled. Enable it in preset actions after reviewing and trusting its contents.",
+  "发送给 AI 的内容预览": "Preview content sent to AI",
+  "请先保存当前修改；这里预览的是已保存且校验通过的预设，不包含未保存修改。":
+    "Save your changes first. This preview uses the saved, validated preset and excludes unsaved changes.",
+  当前使用的预设: "Current preset",
+  "在同一处编辑设定完善方法、主持规则、后置请求与界面展示。":
+    "Edit authoring methods, narrator rules, follow-up requests and displays in one place.",
+  "预设原文与表单均有修改，请先保留一种编辑结果并保存，再预览。":
+    "Both the preset source and forms have changed. Keep one set of edits and save before previewing.",
+  "预设原文与表单均有修改，请先保留一种编辑结果再保存，以免覆盖当前修改。":
+    "Both the preset source and forms have changed. Keep one set of edits before saving to avoid overwriting your changes.",
+  "这里显示此产物的数据要求。需要修改时，请在当前内容包或世界修订的文件编辑中修改 control/followups.yaml 的对应产物声明。":
+    "These are the data requirements for this output. To change them, edit the corresponding output declaration in control/followups.yaml in the current content package or world revision file editor.",
+  模板版本标记: "Template version marker",
+  新增修复文件: "Add a repair file",
+
+  已关闭: "Disabled",
+  系统示例: "System example",
+  世界扩展: "World extensions",
+  "界面显示（不调用模型）": "Interface display (no model requests)",
+  "选择仅用于当前世界。后置请求重新开启后，从下一次正常发送生效；界面显示直接读取当前字段。":
+    "Choices apply only to this world. Re-enabled requests take effect on the next normal send; interface displays read current fields immediately.",
+  随组暂停: "Paused by group",
+
+  "后置声明无法编辑，请在文件编辑中修复后重试。":
+    "The followup declaration cannot be edited. Repair it in the file editor and try again.",
+  "主剧情完成后按此顺序生成额外内容。关闭保留提示和资源；创建世界后独立保存，后续修改需通过世界修订应用。":
+    "Generate extra content in this order after the main story. Disabling keeps prompts and resources. Created worlds keep independent copies; later changes require applying a world revision.",
+  "根据已完成的剧情，通过 artifact_emit 输出 output_1。":
+    "Use artifact_emit to emit output_1 based on the settled story.",
+  故事正文: "Story content",
+  删除请求: "Delete request",
+  新增包后置请求: "Add package followup",
+  包请求名称: "Package request name",
+  包请求提示词: "Package request prompt",
+  包请求显示位置: "Package request display location",
+  稳定请求身份: "Stable request identity",
+  产物字节上限: "Artifact byte limit",
+  内容包脚本权限: "Package script permissions",
+  "仅授权此处已保存的资源代码。导入不会授权，资源修改后需要重新授权；关闭立即停止此来源脚本，HTML 和样式仍可显示。":
+    "Authorize only the saved resource code here. Imports do not grant permission, and changed resources require authorization again. Revoking permission stops scripts from this source; HTML and styles remain visible.",
+  允许运行内容包脚本: "Allow package scripts",
+  撤销全部包脚本授权: "Revoke all package script permissions",
+  "请先保存修改，再授权资源代码。":
+    "Save your changes before authorizing resource code.",
+
+  "JavaScript 仅在 app 模式且已允许脚本时运行。":
+    "JavaScript runs only in app mode with scripts enabled.",
+  "HTML 模板": "HTML template",
+  编辑渲染资源: "Edit rendering resources",
+  "在此位置展开当前世界的内容包后置请求。无声明时为空组，不调用模型；正文由内容包管理。":
+    "The current world’s package followups expand here. An undeclared group is empty and makes no model calls; the package owns its content.",
+  克隆后置请求: "Clone followup",
+  "界面产物：场景回顾，Markdown，剧情内容区；保存到提交，替换上一份，显式清除。":
+    "Artifact: scene recap, Markdown, story area; saved with the commit, replacing the previous result until explicitly cleared.",
+  系统后置提示词: "System followup prompt",
+  "系统示例只读；新运行使用应用最新版，克隆后独立保存。":
+    "This system example is read-only. New runs use the current application example; clones are saved independently.",
+  内容包后置请求: "Content-package followups",
+  最近一次请求材料: "Latest request materials",
+  "下一次发送将采用当前预设和世界材料；原生对话保留。":
+    "The next send uses the current preset and world materials while preserving the native conversation.",
+  "每次正常发送重新编译，工具往返使用本轮快照":
+    "Each normal send recompiles; tool exchanges use the same run snapshot.",
+  下一次发送候选: "Next send candidate",
+  "分别展示最近一次请求、累计当时读取和下一次候选；旧读取不代表当前字段值。":
+    "Inspect the latest request, accumulated historical reads, and next candidate separately. Past reads do not prove current field values.",
+  本次请求快照的真实覆盖: "Actual coverage of this request snapshot",
+  "查看下一次发送候选的完整 Prompt Preview":
+    "Inspect the complete next-send Prompt Preview",
+  "游玩在下一次正常发送生效，原样重试保留旧请求":
+    "Play changes take effect on the next normal send; exact retries retain the saved request.",
+  "· 游玩修改在下一次正常发送生效":
+    "· Play changes take effect on the next normal send",
+  "保留原生对话，重新编译当前提示和材料":
+    "Preserve the native conversation and recompile current prompts and materials",
+  "累计实际读取（当时内容）": "Accumulated reads (historical content)",
+  "累计读取的当时内容，不代表当前字段值":
+    "Historical content read at the time, not current field values",
+  查看各次请求保存的提示材料: "Inspect saved prompt materials for each request",
+  "原样重试使用已保存请求，不采用新预设。":
+    "Exact retry uses the saved request and does not apply a new preset.",
+  "正常发送和空输入续写使用最新预设；本轮工具执行期间保持不变。":
+    "Normal sends and empty continuations use the latest preset; it stays fixed during this tool loop.",
+  "玩家视图格式无效，请检查文本处理规则。":
+    "Invalid player-view data. Check the text processing rules.",
+  "玩家视图、布局、资源与无模型预览":
+    "Player views, layout, resources and model-free preview",
+  "直接用已保存的玩家视图配置界面，不需要后置请求。模型产物的位置设置独立保留。":
+    "Configure displays directly from saved player views. Model-generated outputs have separate placement settings.",
+  "当前没有模型产物；玩家视图面板仍可独立使用。":
+    "There are no model-generated outputs. Player-view panels work independently.",
+  "同一玩家视图由自定义面板接管，其他视图仍显示默认卡片。":
+    "Custom panels replace the default card for their player view. Other views keep their default cards.",
+  纯界面预览: "Interface preview",
+  "使用当前编辑内容与所选世界的已保存玩家视图，不调用模型，也不保存或修改世界。修改后请重新预览。":
+    "Preview the current edits with saved player views from the selected world. This makes no model calls and does not save or change the world. Preview again after editing.",
+  预览世界: "Preview world",
+  选择已有世界: "Select an existing world",
+  预览界面: "Preview interface",
+  "正在读取玩家视图…": "Loading player views\u2026",
+  "请先解决高级文件与结构化编辑冲突，再预览。":
+    "Resolve conflicts between file and structured edits before previewing.",
+  渲染资源: "Rendering resources",
+  "编辑资源 {name}": "Edit resource {name}",
+  "资源内容 {name}": "Resource content {name}",
+
   "对话连接已断开，正在重新连接…": "Conversation disconnected. Reconnecting…",
   "对话同步失败，请重新打开此页面。":
     "Conversation synchronization failed. Reopen this page to reconnect.",
@@ -89,6 +221,13 @@ const englishMessages: Record<string, string> = {
     "A regex rule failed; the instance entered an error state and is showing the raw artifact",
   "document renderer 必须包含唯一 narraeon:content marker":
     "A document renderer must contain exactly one narraeon:content marker",
+  "旧产物没有可证明的回复归属，仅保留诊断，无法自动迁移为正文附件。":
+    "Legacy artifacts have no proven reply attachment. Diagnostics remain available; automatic migration to story attachments is unavailable.",
+  生成失败: "Generation failed",
+  已更新: "Updated",
+  更新中: "Updating",
+  生成中: "Generating",
+  生成未完成: "Generation incomplete",
   "ArtifactExtensionMount 必须位于 ArtifactExtensionHost 内":
     "ArtifactExtensionMount must be inside ArtifactExtensionHost",
   "文档 renderer 无效": "Invalid document renderer",

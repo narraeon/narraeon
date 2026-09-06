@@ -11,3 +11,5 @@ status: accepted
 只有玩家执行 Apply 或 Discard 才结束 epoch。Apply 用一个稳定 operation ID 将 state 作为单笔 correction 提交，再以确定的 staging／previous 路径幂等发布 control；prepared、state committed 和 control published 阶段都持久保存，锁在 applied 已可恢复之前不会释放。Discard 不改变世界。封存后的历史只读，不再提供回滚。继续原 AI 对话会建立新的 epoch、追加高优先级边界并清空旧读取授权，要求模型重新读取。
 
 这项决定刻意不引入运行时 diff／merge／rebase：锁会暂时牺牲一边游玩一边改世界的能力，却使工作树始终只有一个基线，让回滚、崩溃恢复、Authority 幂等和控制发布都保持可证明。若未来需要多人或并行创作，应另行设计冲突模型，不能让活动世界在本契约下静默漂移。
+
+世界修订复用预设独立作者编排，每次主动发送重编译，按目标解析世界修订机械说明与 epoch 数据；工具循环内固定请求快照。旧 schema 1 会话可精确读取，下一次新发送原子升级到 schema 2 并追加请求快照，原 bootstrap 和 Provider 历史不变。编排变化不会创建或结束 epoch、放宽读取授权或自动应用世界。

@@ -1,3 +1,5 @@
+import type { WorldExtensionsView } from "../protocol/worldExtensions.ts";
+import { PackageScriptPermissions } from "./extension/PackageScriptPermissions.ts";
 import { comparePromptPrefixes } from "./prompt/WorldPromptDiagnostics.ts";
 import { join } from "node:path";
 
@@ -27,7 +29,10 @@ import {
 import { contentTreeFingerprint } from "./content/ContentTreeFingerprint.ts";
 import { inspectContentPackageCurrentTree } from "./content/FileNativeContentTree.ts";
 import { FileNativeModelHost } from "./model/FileNativeModelAdapters.ts";
-import { type ModelHostBinding } from "./model/ModelHost.ts";
+import {
+  equalModelHostBinding,
+  type ModelHostBinding,
+} from "./model/ModelHost.ts";
 import { ModelConnectionStore } from "./model/ModelConnectionStore.ts";
 import { FileNativeContinuityCorrection } from "./play/FileNativeContinuityCorrection.ts";
 import { fingerprintControl } from "./play/PlayDocumentTools.ts";
@@ -49,7 +54,6 @@ import {
   projectDebugArtifactForFrontend,
   type FrontendBundleFailure,
   type FrontendArtifactDebugRecord,
-  type FrontendArtifactProjection,
 } from "./extension/FrontendExtensionBundle.ts";
 import {
   projectPlayerViewPanels,
@@ -267,6 +271,9 @@ export class V1Runtime {
         return {
           kind: "play",
           value: await this.#playCallChains.observeWorld(target.id),
+          extensionsRevision: await this.#worlds.extensionControlsRevision(
+            target.id,
+          ),
         };
       case "setting": {
         if (previous?.kind === "setting")
@@ -342,6 +349,20 @@ export class V1Runtime {
         return this.#models.listModels(request);
       case "content.create":
         return this.#content.createCurrentTreeContentPackage();
+      case "content.scripts.read":
+        return this.#content.packageScriptPermissions(request.packageId);
+      case "content.scripts.set":
+        return this.#content.packageScriptPermissions(
+          request.packageId,
+          request.enabled,
+        );
+      case "world.package-scripts.read":
+        return this.#worlds.packageScriptPermissions(request.worldId);
+      case "world.package-scripts.set":
+        return this.#worlds.packageScriptPermissions(
+          request.worldId,
+          request.enabled,
+        );
       case "content.read":
         return this.#content.readCurrentTreeContentPackage(request.packageId);
       case "content.replace":
@@ -386,6 +407,11 @@ export class V1Runtime {
           base64: exported.archive.toString("base64"),
         };
       }
+      case "setting-improvement.preview":
+        return this.#settingImprovements.preview(
+          request.packageId,
+          request.sessionId,
+        );
       case "setting-improvement.read":
         return this.#settingImprovements.read(request.packageId);
       case "setting-improvement.status":
@@ -454,7 +480,22 @@ export class V1Runtime {
                 request.presetId,
                 request.revision,
               );
-        return buildPlayPresetWorkbenchSnapshot(binding);
+        if (request.worldId === undefined)
+          return buildPlayPresetWorkbenchSnapshot(
+            binding,
+            undefined,
+            request.draft,
+          );
+        const head = await this.#worlds.currentHead(request.worldId);
+        const playerViews = await this.#worlds.renderPlayerViewsAtHead(
+          request.worldId,
+          head,
+        );
+        return buildPlayPresetWorkbenchSnapshot(
+          binding,
+          { worldId: request.worldId, head, playerViews },
+          request.draft,
+        );
       }
       case "prompt.preview": {
         const [package_, connection, playPreset] = await Promise.all([
@@ -531,6 +572,9 @@ export class V1Runtime {
           operationId: request.operationId,
           sourcePackageId: request.packageId,
           sourcePackageTitle: package_.title,
+          packageScriptGrants: await this.#content.readPackageScriptGrants(
+            request.packageId,
+          ),
           packageFiles: package_.files,
           prompt: {
             hostBinding: presetHostBinding(preset),
@@ -554,9 +598,17 @@ export class V1Runtime {
           request.worldId,
           head,
         );
+        const extensionControls = await this.#currentExtensionControls(
+          request.worldId,
+        );
         const [playerViewPanels, playTimeline, revisionEpoch] =
           await Promise.all([
-            this.#frontendPlayerViewPanels(request.worldId, head, playerViews),
+            this.#frontendPlayerViewPanels(
+              request.worldId,
+              head,
+              playerViews,
+              extensionControls,
+            ),
             this.#worlds.playTimeline.readPage(request.worldId, 40),
             this.#worldRevisions.activeEpoch(request.worldId),
           ]);
@@ -572,6 +624,9 @@ export class V1Runtime {
           artifacts: [],
           extensions: [],
           playerViewPanels,
+          extensionControls,
+          suppressedPlayerViewIds:
+            await this.#suppressedPlayerViewIds(extensionControls),
           artifactDebug: [],
           playCallChain: null,
           playTimeline,
@@ -582,18 +637,66 @@ export class V1Runtime {
         return request.surface === "runtime"
           ? this.#worlds.readSurface(request.worldId, "runtime")
           : this.#worlds.readSurface(request.worldId, request.surface);
+      case "world.extensions.read":
+        return this.#worlds.extensionControls(
+          request.worldId,
+          await this.#playPresets.bindCurrent(),
+          this.#locale,
+        );
+      case "world.extensions.set": {
+        const result = await this.#worlds.extensionControls(
+          request.worldId,
+          await this.#playPresets.bindCurrent(),
+          this.#locale,
+          request,
+        );
+        return result;
+      }
       case "world.play-decorations.read": {
-        const head = await this.#reconcileArtifacts(request.worldId);
-        const [artifacts, extensions, artifactDebug] = await Promise.all([
-          this.#frontendProjection(request.worldId),
-          this.#artifacts.readExtensionSummaries(request.worldId),
-          this.#frontendDebug(request.worldId),
-        ]);
-        return { head, artifacts, extensions, artifactDebug };
+        for (;;) {
+          const extensionControls = await this.#currentExtensionControls(
+            request.worldId,
+          );
+          const head = await this.#reconcileArtifacts(request.worldId);
+          const [projection, artifactDebug] = await Promise.all([
+            this.#frontendDecorations(request.worldId),
+            this.#frontendDebug(request.worldId),
+          ]);
+          const playerViews = await this.#worlds.renderPlayerViewsAtHead(
+            request.worldId,
+            head,
+          );
+          const playerViewPanels = await this.#frontendPlayerViewPanels(
+            request.worldId,
+            head,
+            playerViews,
+            extensionControls,
+          );
+          const suppressedPlayerViewIds =
+            await this.#suppressedPlayerViewIds(extensionControls);
+          // Never attach a newer controls revision to a projection read before
+          // that choice was accepted. Concurrent toggles restart this read.
+          if (
+            (await this.#worlds.extensionControlsRevision(request.worldId)) !==
+            extensionControls.revision
+          )
+            continue;
+          return {
+            head,
+            ...projection,
+            artifactDebug,
+            playerViews,
+            playerViewPanels,
+            extensionControls,
+            suppressedPlayerViewIds,
+          };
+        }
       }
       case "artifacts.read":
         await this.#reconcileArtifacts(request.worldId);
-        return this.#frontendProjection(request.worldId, request.channel);
+        return (
+          await this.#frontendDecorations(request.worldId, request.channel)
+        ).artifacts;
       case "artifacts.debug":
         await this.#reconcileArtifacts(request.worldId);
         return this.#frontendDebug(request.worldId, request.operationId);
@@ -635,6 +738,8 @@ export class V1Runtime {
         return this.#worldRevisionCall(() =>
           this.#worldRevisions.overview(request.worldId),
         );
+      case "world.revision.preview":
+        return this.#worldRevisions.preview(request.worldId, request.sessionId);
       case "world.revision.status":
         return this.#worldRevisionCall(() =>
           this.#worldRevisions.status(request.worldId, request.sessionId),
@@ -744,6 +849,7 @@ export class V1Runtime {
             exchangeId: request.exchangeId,
             playerText: request.playerText,
             modelHost: await this.#modelHost(),
+            resolvePrompt: () => this.#continuousBinding(),
             ...(playCallChainObserver === undefined
               ? {}
               : { observer: playCallChainObserver }),
@@ -789,8 +895,29 @@ export class V1Runtime {
           };
         const { modelHost, hostBinding, playPreset, modelBinding } =
           await this.#continuousBinding();
+        const persisted =
+          currentContext === null
+            ? null
+            : await this.#worlds.playTimeline.readCurrent(request.worldId);
+        const frozenBinding = persisted?.value.modelBinding;
+        const continueContext =
+          currentContext !== null &&
+          !currentContext.stale &&
+          frozenBinding !== undefined &&
+          equalModelHostBinding(frozenBinding, modelBinding);
+        const baseline = continueContext
+          ? await this.#worlds.bindPlayCallChainAt(
+              request.worldId,
+              currentContext.baselineHead,
+            )
+          : binding;
         const preview = this.#compiler.preview(
           {
+            extensionControls: await this.#worlds.extensionControls(
+              request.worldId,
+              playPreset,
+              this.#locale,
+            ),
             endpoint: {
               id: `${request.worldId}:${binding.parentHead}`,
               commit: binding.parentHead,
@@ -806,7 +933,10 @@ export class V1Runtime {
               }),
               additionalMaterials: structuredClone(binding.additionalMaterials),
               history: structuredClone(binding.history),
-              narrativeCheckpoint: binding.narrativeCheckpoint,
+              narrativeCheckpoint: baseline.narrativeCheckpoint,
+              historyAlreadyAppended: Object.keys(binding.history).filter(
+                (key) => !(key in baseline.history),
+              ),
               ...(await this.#worlds.inspectDocumentMaintenance(
                 request.worldId,
                 binding.parentHead,
@@ -825,15 +955,21 @@ export class V1Runtime {
           toolUniverse: tools,
           allowedTools: tools.map(({ name }) => name),
           toolStrategy: preview.compilation.toolStrategy,
-          appended: [],
-          operationId: "next-fresh-context-preview",
+          appended: continueContext ? (persisted?.value.transcript ?? []) : [],
+          operationId: continueContext
+            ? currentContext.chainId
+            : "next-fresh-context-preview",
           maxOutputTokens: modelBinding.maxOutputTokens,
         });
         const currentEncoding =
           currentContext === null
             ? null
             : await this.#worlds.playTimeline
-                .readInitialEncoding(request.worldId, currentContext.chainId)
+                .readInitialEncoding(
+                  request.worldId,
+                  currentContext.chainId,
+                  currentContext.requestExchange,
+                )
                 .catch(() => null);
         const prefixDiagnostics = comparePromptPrefixes(
           currentContext === null
@@ -849,6 +985,7 @@ export class V1Runtime {
           worldHead: binding.parentHead,
           currentContext,
           nextFreshContext: {
+            contextMode: continueContext ? "append" : "fresh",
             head: binding.parentHead,
             preview,
             prefixDiagnostics,
@@ -938,32 +1075,119 @@ export class V1Runtime {
     return head;
   }
 
-  async #frontendProjection(
-    worldId: string,
-    channel?: string,
-  ): Promise<FrontendArtifactProjection[]> {
+  async #frontendDecorations(worldId: string, channel?: string) {
+    await this.#currentExtensionControls(worldId);
+    const summaries = await this.#artifacts.readExtensionSummaries(worldId);
+    const targets = await this.#worlds.playTimeline.resolveReplies(
+      worldId,
+      summaries.flatMap((item) =>
+        item.attachment === undefined ? [] : [item.attachment],
+      ),
+    );
+    const matches = (attachment: {
+      contextId: string;
+      eventId: number;
+      head: string;
+    }) =>
+      targets.find(
+        (target) =>
+          target.contextId === attachment.contextId &&
+          target.eventId === attachment.eventId &&
+          target.head === attachment.head,
+      );
+    const extensions = summaries
+      .filter(
+        (item) =>
+          item.attachment === undefined ||
+          matches(item.attachment) !== undefined,
+      )
+      .sort(
+        (left, right) =>
+          Number(left.head?.replace("commit:", "") ?? 0) -
+          Number(right.head?.replace("commit:", "") ?? 0),
+      );
     const artifacts = await this.#artifacts.readActiveProjection(
       worldId,
       channel,
+      targets,
     );
-    return Promise.all(
-      artifacts.map(async (artifact) => {
-        const { renderer, ...safeArtifact } = artifact;
-        void renderer;
-        const resolved = await this.#frontendBinding(
-          artifact.playPresetId,
-          artifact.playPresetRevision,
-        );
-        return {
-          ...safeArtifact,
-          frontend: projectArtifactForFrontend(
-            artifact,
-            resolved.binding,
-            resolved.failure,
-          ),
-        };
-      }),
+    const projected = (
+      await Promise.all(
+        artifacts.map(async (artifact) => {
+          const { renderer, ...safeArtifact } = artifact;
+          void renderer;
+          const resolved = await this.#frontendBinding(
+            artifact.playPresetId,
+            artifact.playPresetRevision,
+          );
+          return {
+            ...safeArtifact,
+            ...(artifact.attachment === undefined
+              ? {}
+              : {
+                  reply: matches(artifact.attachment)!,
+                }),
+            frontend: projectArtifactForFrontend(
+              artifact,
+              resolved.binding,
+              resolved.failure,
+              artifact.requestId.startsWith("package:") &&
+                artifact.frozenPresentation !== undefined &&
+                (await this.#worlds.readPackageScriptGrants(worldId)).includes(
+                  PackageScriptPermissions.fingerprint(
+                    artifact.frozenPresentation.files,
+                  ),
+                ),
+            ),
+          };
+        }),
+      )
+    ).filter(
+      (artifact) =>
+        artifact.frontend.mount !== "story" || artifact.reply !== undefined,
     );
+    return { artifacts: projected, extensions };
+  }
+
+  async #currentExtensionControls(
+    worldId: string,
+  ): Promise<WorldExtensionsView> {
+    try {
+      return await this.#worlds.extensionControls(
+        worldId,
+        await this.#playPresets.bindCurrent(),
+        this.#locale,
+      );
+    } catch (error) {
+      if (!(error instanceof FileNativePlayPresetError)) throw error;
+      return {
+        revision: await this.#worlds.extensionControlsRevision(worldId),
+        items: [],
+      };
+    }
+  }
+
+  async #suppressedPlayerViewIds(
+    controls: WorldExtensionsView,
+  ): Promise<string[]> {
+    let binding: PlayPresetBinding;
+    try {
+      binding = await this.#playPresets.bindCurrent();
+    } catch (error) {
+      if (error instanceof FileNativePlayPresetError) return [];
+      throw error;
+    }
+    // Every declared panel owns its view's fallback even while hidden.
+    return [
+      ...new Set([
+        ...binding.definition.playerViewPanels.map(
+          (panel) => panel.source.view,
+        ),
+        ...controls.items
+          .filter((item) => item.kind === "view" && !item.enabled)
+          .map((item) => item.id),
+      ]),
+    ];
   }
 
   async #frontendPlayerViewPanels(
@@ -973,6 +1197,7 @@ export class V1Runtime {
       views: RenderedPlayerView[];
       diagnostics: PlayerViewDiagnostic[];
     },
+    controls: WorldExtensionsView,
   ): Promise<FrontendPlayerViewPanelProjection[]> {
     try {
       const binding = await this.#playPresets.bindCurrent();
@@ -981,7 +1206,12 @@ export class V1Runtime {
         head,
         playerViews,
         binding,
-      });
+      }).filter((panel) =>
+        controls.items.some(
+          (item) =>
+            item.kind === "panel" && item.id === panel.panelId && item.enabled,
+        ),
+      );
     } catch (error: unknown) {
       // Panels are decoration on top of a world read. Any unusable preset —
       // disabled, deleted, or written by an older build and now missing a
@@ -1010,6 +1240,13 @@ export class V1Runtime {
             record,
             resolved.binding,
             resolved.failure,
+            record.requestId.startsWith("package:") &&
+              record.frozenPresentation !== undefined &&
+              (await this.#worlds.readPackageScriptGrants(worldId)).includes(
+                PackageScriptPermissions.fingerprint(
+                  record.frozenPresentation.files,
+                ),
+              ),
           ),
         };
       }),

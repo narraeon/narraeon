@@ -1,9 +1,39 @@
+import {
+  parseDisplayRegex,
+  DisplayRegexError,
+  type PlayPresetRegexRule,
+} from "../../shared/display-regex.ts";
+export type {
+  PlayPresetRegexRule,
+  PlayPresetRegexScope,
+  PlayPresetRegexErrorPolicy,
+} from "../../shared/display-regex.ts";
+import type { PlayPresetArtifactPayloadContract } from "../../shared/artifact-payload-contract.ts";
+export { validatePlayPresetArtifactPayload } from "../../shared/artifact-payload-contract.ts";
+export type { PlayPresetArtifactPayloadContract } from "../../shared/artifact-payload-contract.ts";
+import {
+  defaultFollowupItems,
+  type FollowupItem,
+} from "../../shared/ordered-followups.ts";
+import { parseFollowupItems } from "./OrderedFollowups.ts";
+import {
+  builtinAuthorPrompts,
+  defaultOrderedAuthorPrompts,
+} from "../../shared/ordered-author-prompts.ts";
+import {
+  parseOrderedPlayPrompts,
+  migrateLegacyPlayPrompts,
+} from "./OrderedPlayPrompts.ts";
+import {
+  defaultOrderedPlayPrompts,
+  type OrderedPlayPrompt,
+} from "../../shared/ordered-play-prompts.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
-import { parseDocument } from "yaml";
+import { parseDocument, stringify, visit, isAlias } from "yaml";
 
 import {
   defaultPortableContentTreeLimits,
@@ -35,21 +65,6 @@ export type PlayPresetArtifactInvalidation =
   | "explicit_clear"
   | "never";
 
-export type PlayPresetRegexScope =
-  "raw_text" | "markdown_html" | "structured_payload";
-
-export type PlayPresetRegexErrorPolicy = "fallback" | "skip" | "fail";
-
-export interface PlayPresetRegexRule {
-  order: number;
-  scope: PlayPresetRegexScope;
-  pattern: string;
-  flags: string;
-  replace: string;
-  maxMatches: number;
-  errorPolicy: PlayPresetRegexErrorPolicy;
-}
-
 export type PlayPresetRendererMode = "document" | "app";
 
 /**
@@ -57,20 +72,6 @@ export type PlayPresetRendererMode = "document" | "app";
  * shape of an artifact payload without exposing Runtime tool schemas or
  * provider protocol details to the preset.
  */
-export interface PlayPresetArtifactPayloadContract {
-  type:
-    "object" | "array" | "string" | "number" | "integer" | "boolean" | "null";
-  properties?: Record<string, PlayPresetArtifactPayloadContract>;
-  required?: string[];
-  additionalProperties?: boolean;
-  items?: PlayPresetArtifactPayloadContract;
-  minItems?: number;
-  maxItems?: number;
-  minLength?: number;
-  maxLength?: number;
-  uniqueBy?: string;
-  maxBytes?: number;
-}
 
 export interface PlayPresetPromptBlock {
   role: PlayPresetPromptRole;
@@ -78,6 +79,8 @@ export interface PlayPresetPromptBlock {
 }
 
 export interface PlayPresetArtifactDeclaration {
+  displayName?: string;
+  purpose?: string;
   /** Stable model-facing output name; the model never chooses the rest. */
   name: string;
   channel: string;
@@ -100,7 +103,7 @@ export interface PlayPresetArtifactDeclaration {
 
 /**
  * One derived request dispatched after the main call chain settles. Follow-ups
- * have no order relative to each other, no terminal tool, and no place in the
+ * run in declared order without data dependencies, have no terminal tool or place in the
  * chain transcript. Each is sent once against the frozen main-chain prefix and
  * may only emit the artifacts it declares.
  */
@@ -110,6 +113,58 @@ export interface PlayPresetFollowupDefinition {
   prompt: PlayPresetPromptBlock;
   artifacts: PlayPresetArtifactDeclaration[];
   maxArtifactBytes: number;
+}
+
+/** Resolved application-owned presentation, retained with each generated artifact. */
+export interface FrozenArtifactPresentation {
+  declaration: PlayPresetArtifactDeclaration;
+  files: Record<string, string>;
+  mount: PlayPresetMount["mount"];
+}
+
+export function isFrozenArtifactPresentation(
+  value: unknown,
+): value is FrozenArtifactPresentation {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ["declaration", "files", "mount"]) ||
+    !isRecord(value.declaration) ||
+    !isRecord(value.files) ||
+    !Object.values(value.files).every((body) => typeof body === "string")
+  )
+    return false;
+  try {
+    const original = value.declaration;
+    const parsed = parseArtifacts(
+      [
+        {
+          ...original,
+          ...(original.channel === "builtin:summary" ||
+          (typeof original.channel === "string" &&
+            /^package:[a-z][a-z0-9._/-]{1,127}$/u.test(original.channel))
+            ? { channel: "frozen.presentation" }
+            : {}),
+        },
+      ],
+      value.files as Record<string, string>,
+      "frozen artifact",
+    )[0]!;
+    parsed.channel = String(original.channel);
+    return (
+      isDeepStrictEqual(parsed, original) &&
+      typeof value.mount === "string" &&
+      [
+        "story",
+        "sidebar",
+        "composer_above",
+        "composer_below",
+        "overlay",
+        "debug",
+      ].includes(String(value.mount))
+    );
+  } catch {
+    return false;
+  }
 }
 
 export interface PlayPresetMount {
@@ -165,7 +220,10 @@ export interface PlayPresetPlayerViewPanel {
 }
 
 export interface PlayPresetDefinition {
-  format: "narraeon.play-preset/v1";
+  followupItems?: FollowupItem[];
+  format: "narraeon.play-preset/v1" | "narraeon.play-preset/v2";
+  playPrompts?: OrderedPlayPrompt[];
+  authorPrompts?: OrderedPlayPrompt[];
   name: string;
   callChainPath: string;
   /** Optional only so pre-feature v1 presets retain their prior semantics. */
@@ -203,6 +261,10 @@ export function presetHostBinding(binding: PlayPresetBinding): {
  * definition without the normal parser/validator pass.
  */
 export interface PlayPresetStructuredEditor {
+  followupItems?: FollowupItem[];
+  playPrompts?: OrderedPlayPrompt[];
+  authorPrompts?: OrderedPlayPrompt[];
+  migrationNotice?: string;
   name: string;
   callChainPath: string;
   settingImprovementPrompt?: PlayPresetPromptBlock;
@@ -263,7 +325,9 @@ export function isPlayPresetBinding(
     value.revision === "builtin-default-v1" &&
     value.scriptsEnabled === true &&
     (isDeepStrictEqual(files, defaultPlayPresetFilesForLocale("en")) ||
-      isDeepStrictEqual(files, defaultPlayPresetFilesForLocale("zh-CN")));
+      isDeepStrictEqual(files, defaultPlayPresetFilesForLocale("zh-CN")) ||
+      isDeepStrictEqual(files, legacyDefaultPlayPresetFilesForLocale("en")) ||
+      isDeepStrictEqual(files, legacyDefaultPlayPresetFilesForLocale("zh-CN")));
   return (
     parsed.kind === "valid" &&
     isDeepStrictEqual(value.definition, parsed.definition) &&
@@ -308,7 +372,7 @@ export class FileNativePlayPresetError extends Error {
   }
 }
 
-export function defaultPlayPresetFilesForLocale(
+export function legacyDefaultPlayPresetFilesForLocale(
   locale: AppLocale,
 ): Record<string, string> {
   return {
@@ -330,6 +394,18 @@ followups: []
     [defaultSettingImprovementPromptPath]:
       defaultSettingImprovementPromptForLocale(locale),
   };
+}
+
+export function defaultPlayPresetFilesForLocale(
+  locale: AppLocale,
+): Record<string, string> {
+  const files = legacyDefaultPlayPresetFilesForLocale(locale);
+  const preset = parseDocument(files["preset.yaml"]!);
+  preset.set("format", "narraeon.play-preset/v2");
+  preset.set("playPrompts", defaultOrderedPlayPrompts());
+  preset.set("authorPrompts", defaultOrderedAuthorPrompts());
+  files["preset.yaml"] = stringify(preset.toJS());
+  return files;
 }
 
 export const defaultPlayPresetFiles =
@@ -366,7 +442,7 @@ export function builtinDefaultPlayPresetBinding(
   return {
     id: "builtin-default",
     name: "default",
-    revision: "builtin-default-v1",
+    revision: revisionForPlayPresetFiles(files),
     definition: parsed.definition,
     files,
     scriptsEnabled: true,
@@ -523,6 +599,70 @@ export class FileNativePlayPresetStore {
           input.files,
           parsePlayPresetStructuredEditor(input.structure),
         );
+      }
+      const previous = parsePlayPresetFiles(
+        stored.revisions[stored.currentRevision]!,
+      );
+      if (
+        previous.kind === "valid" &&
+        previous.definition.followupItems !== undefined
+      ) {
+        const candidate = readYaml(files, "call-chain.yaml", "call-chain.yaml");
+        if (candidate.format !== "narraeon.play-call-chain/v2")
+          throw new FileNativePlayPresetError(
+            "readonly_followup_removed",
+            "Ordered followups cannot downgrade to v1",
+          );
+        parseFollowupItems(
+          candidate.followupItems,
+          parseFollowups(candidate.followups, files),
+        );
+      }
+      if (
+        previous.kind === "valid" &&
+        previous.definition.playPrompts !== undefined
+      ) {
+        const candidate = readYaml(files, "preset.yaml", "preset.yaml");
+        if (candidate.format !== "narraeon.play-preset/v2")
+          throw new FileNativePlayPresetError(
+            "readonly_prompt_removed",
+            "Ordered presets cannot downgrade to v1",
+          );
+        const candidates = parseOrderedPlayPrompts(candidate.playPrompts);
+        for (const entry of previous.definition.playPrompts.filter(
+          (entry) => entry.kind !== "user",
+        )) {
+          const retained = candidates.find((item) => item.id === entry.id);
+          if (
+            retained?.kind !== entry.kind ||
+            (entry.kind === "builtin" &&
+              retained.kind === "builtin" &&
+              retained.builtin !== entry.builtin)
+          )
+            throw new FileNativePlayPresetError(
+              "readonly_prompt_removed",
+              "System prompts and the world placeholder cannot be deleted or replaced; disable optional prompts or clone them instead",
+            );
+        }
+      }
+      if (
+        previous.kind === "valid" &&
+        previous.definition.authorPrompts !== undefined
+      ) {
+        const candidate = readYaml(files, "preset.yaml", "preset.yaml");
+        const entries = parseOrderedAuthorPrompts(candidate.authorPrompts);
+        for (const entry of previous.definition.authorPrompts) {
+          if (entry.kind !== "builtin") continue;
+          const retained = entries.find((item) => item.id === entry.id);
+          if (
+            retained?.kind !== "builtin" ||
+            retained.builtin !== entry.builtin
+          )
+            throw new FileNativePlayPresetError(
+              "readonly_prompt_removed",
+              "Authoring system prompts cannot be deleted or replaced; disable or clone optional prompts",
+            );
+        }
       }
       const revision = revisionForFiles(files, this.#limits);
       stored.name = normalizeName(input.name);
@@ -736,6 +876,9 @@ export class FileNativePlayPresetStore {
     files: readonly ContentTreeFile[] | Record<string, string>;
   }): Promise<{ currentPresetId: string; preset: FileNativePlayPresetView }> {
     const files = toFileMap(input.files, this.#limits);
+    const parsed = parsePlayPresetFiles(files, this.#limits);
+    if (parsed.kind === "invalid") throw parsed.error;
+    toPlayPresetStructuredEditor(parsed.definition);
     return this.#change(async () => {
       const document = await this.#read();
       const stored = this.#stored(randomUUID(), input.name, files);
@@ -844,7 +987,9 @@ export class FileNativePlayPresetStore {
     if (
       files === undefined ||
       (!isDeepStrictEqual(files, defaultPlayPresetFilesForLocale("en")) &&
-        !isDeepStrictEqual(files, defaultPlayPresetFilesForLocale("zh-CN")))
+        !isDeepStrictEqual(files, defaultPlayPresetFilesForLocale("zh-CN"))) ||
+      isDeepStrictEqual(files, legacyDefaultPlayPresetFilesForLocale("en")) ||
+      isDeepStrictEqual(files, legacyDefaultPlayPresetFilesForLocale("zh-CN"))
     )
       return false;
     preset.builtinDefault = true;
@@ -894,21 +1039,15 @@ export class FileNativePlayPresetStore {
         "store_invalid",
         "The current play-preset revision does not exist",
       );
-    const validation = validatePlayPresetFiles(files, this.#limits);
     const view: FileNativePlayPresetView = {
       id: stored.id,
       name: stored.name,
       revision: stored.currentRevision,
       files: cloneFiles(files),
-      validation,
+      ...editorProjection(files, this.#limits),
       enabled: stored.enabled,
       scriptsEnabled: stored.scriptsEnabled,
     };
-    if (validation.status === "valid") {
-      const parsed = parsePlayPresetFiles(files, this.#limits);
-      if (parsed.kind === "valid")
-        view.structure = toPlayPresetStructuredEditor(parsed.definition);
-    }
     if (stored.draftRevision !== undefined) {
       const draftFiles = stored.revisions[stored.draftRevision];
       if (draftFiles === undefined)
@@ -919,15 +1058,8 @@ export class FileNativePlayPresetStore {
       view.draft = {
         revision: stored.draftRevision,
         files: cloneFiles(draftFiles),
-        validation: validatePlayPresetFiles(draftFiles, this.#limits),
+        ...editorProjection(draftFiles, this.#limits),
       };
-      if (view.draft.validation.status === "valid") {
-        const parsedDraft = parsePlayPresetFiles(draftFiles, this.#limits);
-        if (parsedDraft.kind === "valid")
-          view.draft.structure = toPlayPresetStructuredEditor(
-            parsedDraft.definition,
-          );
-      }
     }
     return view;
   }
@@ -969,11 +1101,60 @@ export function validatePlayPresetFiles(
   }
 }
 
+function editorProjection(
+  files: Record<string, string>,
+  limits: PortableContentTreeLimits,
+): Pick<FileNativePlayPresetView, "validation" | "structure"> {
+  const validation = validatePlayPresetFiles(files, limits);
+  if (validation.status === "invalid") return { validation };
+  const parsed = parsePlayPresetFiles(files, limits);
+  if (parsed.kind === "invalid") return { validation };
+  try {
+    return {
+      validation,
+      structure: toPlayPresetStructuredEditor(parsed.definition),
+    };
+  } catch (error: unknown) {
+    return {
+      validation: {
+        status: "invalid",
+        code: "legacy_preset_migration_invalid",
+        location: "frame.yaml",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Legacy preset cannot be migrated",
+      },
+    };
+  }
+}
+
 export function toPlayPresetStructuredEditor(
   definition: PlayPresetDefinition,
 ): PlayPresetStructuredEditor {
   return {
     name: definition.name,
+    authorPrompts: structuredClone(
+      definition.authorPrompts ?? legacyAuthorPrompts(definition),
+    ),
+    playPrompts: structuredClone(
+      definition.playPrompts ??
+        migrateLegacyPlayPrompts(
+          definition.files,
+          definition.narrativePrompts,
+          [
+            definition.settingImprovementPrompt?.path ??
+              defaultSettingImprovementPromptPath,
+            ...definition.followups.map((followup) => followup.prompt.path),
+          ],
+        ),
+    ),
+    ...(definition.playPrompts
+      ? {}
+      : {
+          migrationNotice:
+            "旧世界指令与材料归并到首次世界位置，其他提示相对顺序及正文保留；历史请求不变。保存后采用统一编排。",
+        }),
     callChainPath: definition.callChainPath,
     ...(definition.settingImprovementPrompt === undefined
       ? {}
@@ -987,6 +1168,9 @@ export function toPlayPresetStructuredEditor(
     extensionRefs: [...definition.extensionRefs],
     narrativePrompts: structuredClone(definition.narrativePrompts),
     followups: structuredClone(definition.followups),
+    followupItems: structuredClone(
+      definition.followupItems ?? defaultFollowupItems(definition.followups),
+    ),
   };
 }
 
@@ -1023,6 +1207,12 @@ export function applyPlayPresetStructuredEditor(
       "Structured editing can be applied only to parseable preset/call-chain YAML",
     );
   preset.set("name", input.name);
+  if (input.authorPrompts !== undefined)
+    preset.set("authorPrompts", parseOrderedAuthorPrompts(input.authorPrompts));
+  if (input.playPrompts !== undefined) {
+    preset.set("format", "narraeon.play-preset/v2");
+    preset.set("playPrompts", parseOrderedPlayPrompts(input.playPrompts));
+  }
   preset.set("callChain", input.callChainPath);
   if (input.settingImprovementPrompt === undefined)
     preset.delete("settingImprovement");
@@ -1047,6 +1237,13 @@ export function applyPlayPresetStructuredEditor(
       markdown: path,
     })),
   );
+  if (input.followupItems !== undefined) {
+    callChain.set("format", "narraeon.play-call-chain/v2");
+    callChain.set(
+      "followupItems",
+      parseFollowupItems(input.followupItems, input.followups),
+    );
+  }
   callChain.set(
     "followups",
     input.followups.map((followup) => ({
@@ -1181,7 +1378,16 @@ export function parsePlayPresetStructuredEditor(
       "Structured play playerViewPanels must be an array of maps",
     );
   return {
+    ...(value.followupItems === undefined
+      ? {}
+      : { followupItems: parseFollowupItems(value.followupItems, followups) }),
     name: value.name,
+    ...(value.authorPrompts === undefined
+      ? {}
+      : { authorPrompts: parseOrderedAuthorPrompts(value.authorPrompts) }),
+    ...(value.playPrompts === undefined
+      ? {}
+      : { playPrompts: parseOrderedPlayPrompts(value.playPrompts) }),
     callChainPath: value.callChainPath,
     ...(settingImprovementPrompt === undefined
       ? {}
@@ -1217,6 +1423,8 @@ export function parsePlayPresetFiles(
         "name",
         "callChain",
         "settingImprovement",
+        "playPrompts",
+        "authorPrompts",
         "mounts",
         "playerViewPanels",
         "extensions",
@@ -1230,10 +1438,22 @@ export function parsePlayPresetFiles(
         "Entry callChain must be call-chain.yaml",
         "preset.yaml",
       );
-    if (preset.format !== "narraeon.play-preset/v1")
+    if (
+      preset.format !== "narraeon.play-preset/v1" &&
+      preset.format !== "narraeon.play-preset/v2"
+    )
       invalid(
         "preset_format_invalid",
         "preset.yaml format must be narraeon.play-preset/v1",
+        "preset.yaml",
+      );
+    if (
+      preset.format === "narraeon.play-preset/v1" &&
+      (preset.playPrompts !== undefined || preset.authorPrompts !== undefined)
+    )
+      invalid(
+        "preset_format_invalid",
+        "Ordered prompts require v2",
         "preset.yaml",
       );
     const name = stringValue(preset.name);
@@ -1247,10 +1467,13 @@ export function parsePlayPresetFiles(
     assertNoEditableMechanics(callChain, callChainPath);
     assertKnownKeys(
       callChain,
-      ["format", "narrative", "followups"],
+      ["format", "narrative", "followups", "followupItems"],
       callChainPath,
     );
-    if (callChain.format !== "narraeon.play-call-chain/v1")
+    if (
+      callChain.format !== "narraeon.play-call-chain/v1" &&
+      callChain.format !== "narraeon.play-call-chain/v2"
+    )
       invalid(
         "call_chain_format_invalid",
         "call-chain.yaml format must be narraeon.play-call-chain/v1",
@@ -1273,6 +1496,19 @@ export function parsePlayPresetFiles(
             "preset.yaml#settingImprovement",
           )[0];
     const followups = parseFollowups(callChain.followups, files);
+    if (
+      callChain.format === "narraeon.play-call-chain/v1" &&
+      callChain.followupItems !== undefined
+    )
+      invalid(
+        "followups_invalid",
+        "Ordered followups require call-chain v2",
+        callChainPath,
+      );
+    const followupItems =
+      callChain.format === "narraeon.play-call-chain/v2"
+        ? parseFollowupItems(callChain.followupItems, followups)
+        : undefined;
     const mounts = parseMounts(preset.mounts);
     const playerViewPanels = parsePlayerViewPanels(
       preset.playerViewPanels,
@@ -1284,7 +1520,14 @@ export function parsePlayPresetFiles(
     return {
       kind: "valid",
       definition: {
-        format: "narraeon.play-preset/v1",
+        ...(followupItems === undefined ? {} : { followupItems }),
+        format: preset.format,
+        ...(preset.format === "narraeon.play-preset/v2"
+          ? { playPrompts: parseOrderedPlayPrompts(preset.playPrompts) }
+          : {}),
+        ...(preset.authorPrompts === undefined
+          ? {}
+          : { authorPrompts: parseOrderedAuthorPrompts(preset.authorPrompts) }),
         name: name.trim(),
         callChainPath,
         ...(settingImprovementPrompt === undefined
@@ -1358,10 +1601,10 @@ function parsePromptBlocks(
 }
 
 /**
- * Follow-ups have no ordering contract. The parser needs only each request's
+ * User definitions retain their resources independently of order and enablement. The parser needs each request's
  * identity, its single author prompt, and the artifacts it may emit.
  */
-function parseFollowups(
+export function parseFollowups(
   value: unknown,
   files: Record<string, string>,
 ): PlayPresetFollowupDefinition[] {
@@ -1446,7 +1689,7 @@ function parseFollowups(
     );
   // One channel has one projection meaning. Two followups writing the same
   // channel with different strategies would make the visible set depend on
-  // dispatch order, which followups deliberately do not have.
+  // dispatch order; ordering must not create a data dependency.
   const strategies = new Map<string, string>();
   for (const { artifacts } of followups)
     for (const { channel, strategy } of artifacts) {
@@ -1518,9 +1761,27 @@ function parseArtifacts(
         "required",
         "maxEmits",
         "payloadContract",
+        "displayName",
+        "purpose",
       ],
       artifactLocation,
     );
+    for (const [field, limit] of [
+      ["displayName", 160],
+      ["purpose", 16000],
+    ] as const) {
+      if (
+        raw[field] !== undefined &&
+        (typeof raw[field] !== "string" ||
+          raw[field].length > limit ||
+          raw[field].includes("\0"))
+      )
+        invalid(
+          "artifact_metadata_invalid",
+          `${field} must be text of at most ${limit} characters`,
+          artifactLocation,
+        );
+    }
     const name = stringValue(raw.name).trim();
     if (!/^[a-z][a-z0-9._/-]{1,127}$/u.test(name))
       invalid(
@@ -1544,6 +1805,7 @@ function parseArtifacts(
       );
     const strategy = raw.strategy;
     if (
+      typeof strategy !== "string" ||
       !["append", "replace", "upsert", "transient", "hidden"].includes(
         String(strategy),
       )
@@ -1712,6 +1974,10 @@ function parseArtifacts(
       );
     return {
       name,
+      ...(raw.displayName === undefined
+        ? {}
+        : { displayName: raw.displayName as string }),
+      ...(raw.purpose === undefined ? {} : { purpose: raw.purpose as string }),
       channel,
       strategy: strategy as PlayPresetArtifactStrategy,
       ...(key === undefined ? {} : { key }),
@@ -1757,6 +2023,23 @@ function parseArtifactPayloadContract(
       "payloadContract must be a map",
       location,
     );
+  assertKnownKeys(
+    value,
+    [
+      "type",
+      "properties",
+      "required",
+      "additionalProperties",
+      "items",
+      "minItems",
+      "maxItems",
+      "minLength",
+      "maxLength",
+      "uniqueBy",
+      "maxBytes",
+    ],
+    location,
+  );
   const type = value.type;
   if (
     type !== "object" &&
@@ -2517,130 +2800,13 @@ export function parsePlayPresetRegexAsset(
   source: string,
   path = "regex/inline.yaml",
 ): PlayPresetRegexRule[] {
-  const document = parseDocument(source, {
-    schema: "core",
-    uniqueKeys: true,
-    strict: true,
-  });
-  if (document.errors.length > 0 || document.warnings.length > 0)
-    invalid(
-      "regex_asset_invalid",
-      `Regex-resource YAML is invalid: ${path}`,
-      path,
-    );
-  const value: unknown = document.toJS({ maxAliasCount: 0 });
-  const rules = Array.isArray(value)
-    ? value
-    : isRecord(value) && Array.isArray(value.rules)
-      ? value.rules
-      : null;
-  if (rules === null || rules.length > 256)
-    invalid(
-      "regex_rules_invalid",
-      `A regex resource may contain at most 256 rules: ${path}`,
-      path,
-    );
-  const orders = new Set<number>();
-  const parsed = rules.map((raw, index): PlayPresetRegexRule => {
-    const location = `${path}#rules[${index}]`;
-    if (!isRecord(raw))
-      invalid("regex_rule_invalid", "A regex rule must be a map", location);
-    assertKnownKeys(
-      raw,
-      [
-        "order",
-        "scope",
-        "pattern",
-        "flags",
-        "replace",
-        "maxMatches",
-        "errorPolicy",
-      ],
-      location,
-    );
-    const order = raw.order;
-    if (!Number.isSafeInteger(order) || (order as number) < 0)
-      invalid(
-        "regex_order_invalid",
-        "A regex rule must declare a non-negative integer order",
-        location,
-      );
-    if (orders.has(order as number))
-      invalid(
-        "regex_order_duplicate",
-        "Regex rule order cannot be duplicated",
-        location,
-      );
-    orders.add(order as number);
-    const scope = raw.scope;
-    if (
-      scope !== "raw_text" &&
-      scope !== "markdown_html" &&
-      scope !== "structured_payload"
-    )
-      invalid(
-        "regex_scope_invalid",
-        "A regex rule must declare raw_text, markdown_html, or structured_payload scope",
-        location,
-      );
-    const pattern = raw.pattern;
-    if (
-      typeof pattern !== "string" ||
-      pattern.length === 0 ||
-      pattern.length > 4_096
-    )
-      invalid(
-        "regex_pattern_invalid",
-        "Regex pattern must be a bounded non-empty string",
-        location,
-      );
-    const flags = raw.flags === undefined ? "" : raw.flags;
-    if (typeof flags !== "string" || flags.length > 16)
-      invalid("regex_flags_invalid", "Regex flags are invalid", location);
-    try {
-      new RegExp(pattern, flags);
-    } catch {
-      invalid(
-        "regex_pattern_invalid",
-        "Regex pattern could not be compiled",
-        location,
-      );
-    }
-    if (typeof raw.replace !== "string")
-      invalid("regex_replace_invalid", "Regex replace must be text", location);
-    const maxMatches = raw.maxMatches ?? 1;
-    if (
-      !Number.isSafeInteger(maxMatches) ||
-      (maxMatches as number) < 1 ||
-      (maxMatches as number) > 1_024
-    )
-      invalid(
-        "regex_limit_invalid",
-        "Regex replacement count must be a bounded positive integer",
-        location,
-      );
-    const errorPolicy = raw.errorPolicy;
-    if (
-      errorPolicy !== "fallback" &&
-      errorPolicy !== "skip" &&
-      errorPolicy !== "fail"
-    )
-      invalid(
-        "regex_error_policy_invalid",
-        "A regex rule must declare fallback, skip, or fail errorPolicy",
-        location,
-      );
-    return {
-      order: order as number,
-      scope,
-      pattern,
-      flags,
-      replace: raw.replace,
-      maxMatches: maxMatches as number,
-      errorPolicy,
-    };
-  });
-  return parsed.sort((left, right) => left.order - right.order);
+  try {
+    return parseDisplayRegex(source, path);
+  } catch (error) {
+    if (error instanceof DisplayRegexError)
+      throw new FileNativePlayPresetError(error.code, error.message);
+    throw error;
+  }
 }
 
 function validateRegexAsset(source: string, path: string): void {
@@ -2820,17 +2986,6 @@ function readYaml(
       `Play-preset file does not exist: ${path}`,
       location,
     );
-  if (
-    /(^|\s)[&*!][^\s,\]}]+/mu.test(source) ||
-    /^\s*<<\s*:/mu.test(source) ||
-    /^---\s*$/mu.test(source) ||
-    /^\.\.\.\s*$/mu.test(source)
-  )
-    invalid(
-      "unsafe_yaml",
-      `Play-preset YAML uses syntax forbidden by the restricted codec: ${path}`,
-      location,
-    );
   const document = parseDocument(source, {
     schema: "core",
     uniqueKeys: true,
@@ -2838,6 +2993,24 @@ function readYaml(
   });
   if (document.errors.length > 0 || document.warnings.length > 0)
     invalid("unsafe_yaml", `Play-preset YAML is invalid: ${path}`, location);
+  visit(document, {
+    Node(_, node) {
+      if (isAlias(node) || ("anchor" in node && node.anchor) || node.tag)
+        invalid(
+          "unsafe_yaml",
+          `Play-preset YAML uses forbidden anchors, aliases or tags: ${path}`,
+          location,
+        );
+    },
+    Pair(_, pair) {
+      if (String(pair.key) === "<<")
+        invalid(
+          "unsafe_yaml",
+          `Play-preset YAML uses forbidden merge keys: ${path}`,
+          location,
+        );
+    },
+  });
   const value: unknown = document.toJS({ maxAliasCount: 0 });
   if (!isRecord(value))
     invalid(
@@ -3078,154 +3251,6 @@ function cloneFiles(files: Record<string, string>): Record<string, string> {
   );
 }
 
-export function validatePlayPresetArtifactPayload(
-  contract: PlayPresetArtifactPayloadContract | undefined,
-  value: unknown,
-): { ok: true } | { ok: false; message: string } {
-  if (contract === undefined) return { ok: true };
-  if (!isJsonValueValue(value))
-    return {
-      ok: false,
-      message: "JSON artifact payload must be a valid JSON value",
-    };
-  return validatePayloadNode(contract, value, "$", 0);
-}
-
-function validatePayloadNode(
-  contract: PlayPresetArtifactPayloadContract,
-  value: unknown,
-  path: string,
-  depth: number,
-): { ok: true } | { ok: false; message: string } {
-  if (depth > 32)
-    return { ok: false, message: `${path} payload nesting exceeds 32 levels` };
-  const actual =
-    value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
-  const typeMatches =
-    contract.type === actual ||
-    (contract.type === "number" && actual === "number") ||
-    (contract.type === "integer" &&
-      actual === "number" &&
-      Number.isInteger(value));
-  if (!typeMatches)
-    return {
-      ok: false,
-      message: `${path} payload type must be ${contract.type}; received ${actual}`,
-    };
-  if (contract.maxBytes !== undefined) {
-    const encoded = JSON.stringify(value);
-    if (
-      encoded === undefined ||
-      Buffer.byteLength(encoded, "utf8") > contract.maxBytes
-    )
-      return {
-        ok: false,
-        message: `${path} payload exceeds its declared ${contract.maxBytes}-byte limit`,
-      };
-  }
-  if (contract.type === "string") {
-    const text = value as string;
-    if (
-      contract.minLength !== undefined &&
-      [...text].length < contract.minLength
-    )
-      return {
-        ok: false,
-        message: `${path} text length is less than ${contract.minLength}`,
-      };
-    if (
-      contract.maxLength !== undefined &&
-      [...text].length > contract.maxLength
-    )
-      return {
-        ok: false,
-        message: `${path} text length exceeds ${contract.maxLength}`,
-      };
-  }
-  if (contract.type === "array") {
-    const entries = value as unknown[];
-    if (contract.minItems !== undefined && entries.length < contract.minItems)
-      return {
-        ok: false,
-        message: `${path} has fewer than ${contract.minItems} items`,
-      };
-    if (contract.maxItems !== undefined && entries.length > contract.maxItems)
-      return {
-        ok: false,
-        message: `${path} has more than ${contract.maxItems} items`,
-      };
-    const seen = new Set<string>();
-    for (const [index, entry] of entries.entries()) {
-      if (contract.items !== undefined) {
-        const result = validatePayloadNode(
-          contract.items,
-          entry,
-          `${path}[${index}]`,
-          depth + 1,
-        );
-        if (!result.ok) return result;
-      }
-      if (contract.uniqueBy !== undefined && isRecordValue(entry)) {
-        const unique = entry[contract.uniqueBy];
-        if (
-          typeof unique !== "string" &&
-          typeof unique !== "number" &&
-          typeof unique !== "boolean"
-        )
-          return {
-            ok: false,
-            message: `${path}[${index}].${contract.uniqueBy} must be a uniquely comparable scalar`,
-          };
-        const key = JSON.stringify(unique);
-        if (seen.has(key))
-          return {
-            ok: false,
-            message: `${path} ${contract.uniqueBy} values cannot be duplicated`,
-          };
-        seen.add(key);
-      }
-    }
-  }
-  if (contract.type === "object") {
-    const object = value as Record<string, unknown>;
-    const properties = contract.properties ?? {};
-    for (const required of contract.required ?? [])
-      if (!(required in object))
-        return { ok: false, message: `${path}.${required} is required` };
-    if (contract.additionalProperties === false)
-      for (const key of Object.keys(object))
-        if (!(key in properties))
-          return {
-            ok: false,
-            message: `${path}.${key} is not a declared field`,
-          };
-    for (const [key, child] of Object.entries(properties)) {
-      if (!(key in object)) continue;
-      const result = validatePayloadNode(
-        child,
-        object[key],
-        `${path}.${key}`,
-        depth + 1,
-      );
-      if (!result.ok) return result;
-    }
-  }
-  return { ok: true };
-}
-
-function isJsonValueValue(value: unknown): boolean {
-  if (value === null || typeof value === "string" || typeof value === "boolean")
-    return true;
-  if (typeof value === "number") return Number.isFinite(value);
-  if (Array.isArray(value)) return value.every(isJsonValueValue);
-  if (!isRecordValue(value)) return false;
-  return Object.values(value).every(isJsonValueValue);
-}
-
-function isRecordValue(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function invalid(code: string, message: string, location: string): never {
   void location;
   throw new FileNativePlayPresetError(code, message);
@@ -3245,4 +3270,24 @@ function hasExactKeys(
     required.every((key) => Object.hasOwn(value, key)) &&
     Object.keys(value).every((key) => allowed.has(key))
   );
+}
+
+export function parseOrderedAuthorPrompts(value: unknown): OrderedPlayPrompt[] {
+  return parseOrderedPlayPrompts(value, builtinAuthorPrompts("en"), false);
+}
+
+export function legacyAuthorPrompts(
+  definition: PlayPresetDefinition,
+): OrderedPlayPrompt[] {
+  const entries = defaultOrderedAuthorPrompts();
+  const path = definition.settingImprovementPrompt?.path;
+  if (path !== undefined)
+    entries[1] = {
+      id: "legacy-author",
+      kind: "user",
+      name: "Authoring",
+      body: definition.files[path]!,
+      enabled: true,
+    };
+  return entries;
 }

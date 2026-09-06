@@ -1,3 +1,8 @@
+import { WorldExtensionRequests } from "../extension/WorldExtensionRequests.ts";
+import {
+  isWorldExtensionControl,
+  type WorldExtensionControl,
+} from "../../protocol/worldExtensions.ts";
 import { Buffer } from "node:buffer";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
@@ -16,6 +21,8 @@ import { tmpdir } from "node:os";
 
 import {
   validatePlayPresetArtifactPayload,
+  isFrozenArtifactPresentation,
+  type FrozenArtifactPresentation,
   type PlayPresetArtifactDeclaration,
   type PlayPresetArtifactStrategy,
 } from "../play/FileNativePlayPresetStore.ts";
@@ -56,7 +63,18 @@ export class ArtifactStoreCorruptionError extends ArtifactStoreInvariantError {
   }
 }
 
+export interface ArtifactReplyTarget {
+  head: string;
+  contextId: string;
+  eventId: number;
+}
+
+export interface ArtifactAttachment extends ArtifactReplyTarget {
+  runId: string;
+}
+
 export interface ArtifactOperationContext {
+  attachment?: ArtifactAttachment;
   worldId: string;
   parentHead: string;
   operationId: string;
@@ -67,6 +85,10 @@ export interface ArtifactOperationContext {
 }
 
 export interface ArtifactRequestContext extends ArtifactOperationContext {
+  extensionControl?: WorldExtensionControl;
+  displayName?: string;
+  frozenPresentations?: Record<string, FrozenArtifactPresentation>;
+  frozenResources?: Omit<FrozenArtifactPresentation, "declaration">;
   requestId: string;
   requestAttempt: number;
   maxArtifactBytes: number;
@@ -94,6 +116,9 @@ export interface ArtifactToolResult {
 }
 
 export interface ArtifactProjectionItem {
+  extensionControl?: WorldExtensionControl;
+  attachment?: ArtifactAttachment;
+  frozenPresentation?: FrozenArtifactPresentation;
   recordId: string;
   worldId: string;
   operationId: string;
@@ -116,6 +141,9 @@ export interface ArtifactProjectionItem {
 }
 
 export interface ArtifactDebugRecord {
+  extensionControl?: WorldExtensionControl;
+  attachment?: ArtifactAttachment;
+  frozenPresentation?: FrozenArtifactPresentation;
   recordId: string;
   sequence: number;
   operationId: string;
@@ -141,7 +169,16 @@ export interface ArtifactDebugRecord {
   status: ArtifactRecordStatus;
 }
 
+export interface ArtifactRequestProgress {
+  requestId: string;
+  displayName: string;
+  mounts: string[];
+  status: "running" | "completed" | "failed";
+}
+
 export interface ArtifactExtensionSummary {
+  attachment?: ArtifactAttachment;
+  requests?: ArtifactRequestProgress[];
   operationId: string;
   status: ArtifactExtensionStatus;
   message?: string;
@@ -151,7 +188,19 @@ export interface ArtifactExtensionSummary {
   head?: string;
 }
 
+export interface ArtifactForkInput {
+  sourceWorldId: string;
+  targetWorldId: string;
+  targetWorldRoot: string;
+  timeline: readonly ArtifactReplyTarget[];
+}
+
 export interface ArtifactStore {
+  stageFork?(input: ArtifactForkInput): Promise<void>;
+  finishRequest?(
+    context: ArtifactRequestContext,
+    failed: boolean,
+  ): Promise<void>;
   beginOperation(context: ArtifactOperationContext): Promise<void>;
   /** Register the current monotonic attempt for one follow-up request. */
   beginRequestAttempt(context: ArtifactRequestContext): Promise<void>;
@@ -194,6 +243,7 @@ export interface ArtifactStore {
   readActiveProjection(
     worldId: string,
     channel?: string,
+    timeline?: readonly ArtifactReplyTarget[],
   ): Promise<ArtifactProjectionItem[]>;
   readDebug(
     worldId: string,
@@ -202,6 +252,8 @@ export interface ArtifactStore {
 }
 
 interface ArtifactRawRecord {
+  extensionControl?: WorldExtensionControl;
+  frozenPresentation?: FrozenArtifactPresentation;
   schemaVersion: 1;
   recordId: string;
   sequence: number;
@@ -251,6 +303,7 @@ interface ArtifactEvent {
 }
 
 interface ArtifactOperationFile {
+  requests?: ArtifactRequestProgress[];
   schemaVersion: 1;
   context: ArtifactOperationContext;
   status:
@@ -284,12 +337,233 @@ const maxPayloadBytes = 4 * 1024 * 1024;
  */
 export class FileNativeArtifactStore implements ArtifactStore {
   readonly #root: string;
+  readonly #extensionControls: WorldExtensionRequests;
+  readonly #worldsRoot: string;
   readonly #memoryRecords = new Map<string, ArtifactRawRecord[]>();
   readonly #memoryEvents = new Map<string, ArtifactEvent[]>();
   readonly #mutationContext = new AsyncLocalStorage<ReadonlySet<string>>();
 
   constructor(dataRoot: string) {
     this.#root = join(resolve(dataRoot), "artifact-store");
+    this.#extensionControls = new WorldExtensionRequests(
+      join(resolve(dataRoot), "worlds-file-native"),
+    );
+    this.#worldsRoot = join(resolve(dataRoot), "worlds-file-native");
+  }
+
+  /** Control acceptance and artifact publication share one persistent lock.
+   * Callers holding the Authority lock always acquire it before this lock. */
+  static withWorldControlsMutation<T>(
+    dataRoot: string,
+    worldId: string,
+    action: () => Promise<T>,
+  ): Promise<T> {
+    return withArtifactWorldLock(
+      artifactWorldLockPath(dataRoot, worldId),
+      action,
+    );
+  }
+
+  /** The immutable closure publishes atomically with the derived world. */
+  async stageFork(input: ArtifactForkInput): Promise<void> {
+    await this.#withWorldMutation(input.sourceWorldId, async () => {
+      const projection = await this.readActiveProjection(
+        input.sourceWorldId,
+        undefined,
+        input.timeline,
+      );
+      const retained = new Set(
+        projection
+          .filter(
+            (item) => item.save === "commit" && item.attachment !== undefined,
+          )
+          .map((item) => item.recordId),
+      );
+      const effective = (
+        await this.#effectiveRecords(input.sourceWorldId)
+      ).filter(({ record }) => retained.has(record.recordId));
+      const operations: ArtifactOperationFile[] = [];
+      const records: ArtifactRawRecord[] = [];
+      const events: ArtifactEvent[] = [];
+      let sequence = Math.max(
+        0,
+        ...effective.map(({ record }) => record.sequence),
+      );
+      for (const { record, head } of effective) {
+        const source = (await this.#readOperation(record.operationId))!;
+        const operationId = `artifact-fork:${input.targetWorldId}:${identityHash(record.operationId)}`;
+        if (
+          !operations.some(
+            (operation) => operation.context.operationId === operationId,
+          )
+        ) {
+          operations.push({
+            ...source,
+            context: {
+              ...source.context,
+              worldId: input.targetWorldId,
+              operationId,
+            },
+          });
+        }
+        const copy = {
+          ...record,
+          worldId: input.targetWorldId,
+          operationId,
+          sequence: record.sequence,
+        };
+        copy.recordFingerprint = rawRecordFingerprint(copy);
+        records.push(copy);
+        events.push({
+          schemaVersion: 1,
+          kind: "activate",
+          sequence: ++sequence,
+          operationId,
+          recordId: copy.recordId,
+        });
+        events.push({
+          schemaVersion: 1,
+          kind: "bind_head",
+          sequence: ++sequence,
+          operationId,
+          recordId: copy.recordId,
+          head: head!,
+        });
+      }
+      const snapshot = {
+        schemaVersion: 1,
+        worldId: input.targetWorldId,
+        operations,
+        records,
+        events,
+      };
+      await mkdir(join(input.targetWorldRoot, "runtime"), { recursive: true });
+      await writeDurableJson(
+        join(input.targetWorldRoot, "runtime", "artifact-fork.json"),
+        snapshot,
+        true,
+      );
+    });
+  }
+
+  async #ensureForkRestored(worldId: string): Promise<void> {
+    if (dirname(resolve(this.#worldsRoot, worldId)) !== this.#worldsRoot)
+      return;
+    try {
+      await stat(join(this.#worldRoot(worldId), "fork-restored.json"));
+      return;
+    } catch (error: unknown) {
+      if (!isMissing(error)) throw error;
+    }
+    try {
+      await stat(
+        join(this.#worldsRoot, worldId, "runtime", "artifact-fork.json"),
+      );
+    } catch (error: unknown) {
+      if (isMissing(error)) return;
+      throw error;
+    }
+    await this.#withWorldMutation(worldId, () => Promise.resolve());
+  }
+
+  async #restoreFork(worldId: string): Promise<void> {
+    if (dirname(resolve(this.#worldsRoot, worldId)) !== this.#worldsRoot)
+      return;
+    const marker = join(this.#worldRoot(worldId), "fork-restored.json");
+    try {
+      await readFile(marker);
+      return;
+    } catch (error: unknown) {
+      if (!isMissing(error)) throw error;
+    }
+    let snapshot: {
+      schemaVersion: number;
+      worldId: string;
+      operations: ArtifactOperationFile[];
+      records: ArtifactRawRecord[];
+      events: ArtifactEvent[];
+    };
+    try {
+      snapshot = parseArtifactJson(
+        await readFile(
+          join(this.#worldsRoot, worldId, "runtime", "artifact-fork.json"),
+          "utf8",
+        ),
+        "artifact fork",
+      );
+    } catch (error: unknown) {
+      if (isMissing(error)) return;
+      throw error;
+    }
+    if (
+      !isRecord(snapshot) ||
+      !hasExactKeys(snapshot, [
+        "schemaVersion",
+        "worldId",
+        "operations",
+        "records",
+        "events",
+      ]) ||
+      snapshot.schemaVersion !== 1 ||
+      snapshot.worldId !== worldId ||
+      !Array.isArray(snapshot.operations) ||
+      !Array.isArray(snapshot.records) ||
+      !Array.isArray(snapshot.events)
+    )
+      throw new ArtifactStoreCorruptionError(
+        "Artifact fork snapshot is invalid",
+      );
+    for (const operation of snapshot.operations) {
+      assertOperation(operation);
+      if (operation.context.worldId !== worldId)
+        throw new ArtifactStoreCorruptionError("Artifact fork world mismatch");
+    }
+    for (const record of snapshot.records) {
+      assertRawRecord(record);
+      if (
+        record.worldId !== worldId ||
+        !snapshot.operations.some(
+          (operation) => operation.context.operationId === record.operationId,
+        )
+      )
+        throw new ArtifactStoreCorruptionError("Artifact fork record mismatch");
+    }
+    for (const event of snapshot.events) {
+      assertEvent(event);
+      if (
+        !snapshot.records.some(
+          (record) =>
+            record.recordId === event.recordId &&
+            record.operationId === event.operationId,
+        )
+      )
+        throw new ArtifactStoreCorruptionError("Artifact fork event mismatch");
+    }
+    // No mutation can start until this idempotent restore finishes under the world lock.
+    for (const operation of snapshot.operations)
+      await this.#writeOperation(operation);
+    for (const record of snapshot.records)
+      await writeDurableJson(
+        join(
+          this.#worldRoot(worldId),
+          "records",
+          artifactSequenceFileName(record.sequence),
+        ),
+        record,
+        false,
+      );
+    for (const event of snapshot.events)
+      await writeDurableJson(
+        join(
+          this.#worldRoot(worldId),
+          "events",
+          artifactSequenceFileName(event.sequence),
+        ),
+        event,
+        false,
+      );
+    await mkdir(this.#worldRoot(worldId), { recursive: true });
+    await writeDurableJson(marker, { schemaVersion: 1 }, false);
   }
 
   async beginOperation(context: ArtifactOperationContext): Promise<void> {
@@ -393,6 +667,28 @@ export class FileNativeArtifactStore implements ArtifactStore {
     )
       return;
 
+    const mounts = [
+      ...new Set(
+        Object.values(context.frozenPresentations ?? {})
+          .map((item) => item.mount)
+          .concat(
+            context.frozenResources?.mount === undefined
+              ? []
+              : [context.frozenResources.mount],
+          ),
+      ),
+    ];
+    operation.requests = [
+      ...(operation.requests ?? []).filter(
+        (item) => item.requestId !== context.requestId,
+      ),
+      {
+        requestId: context.requestId,
+        displayName: context.displayName ?? context.requestId,
+        mounts,
+        status: "running",
+      },
+    ];
     const current = operation.requestAttempts[context.requestId];
     if (current !== undefined && context.requestAttempt < current) return;
 
@@ -428,6 +724,27 @@ export class FileNativeArtifactStore implements ArtifactStore {
       };
       await this.#appendRecordEvent(record, event);
     }
+  }
+
+  async finishRequest(
+    context: ArtifactRequestContext,
+    failed: boolean,
+  ): Promise<void> {
+    await this.#withWorldMutation(context.worldId, async () => {
+      const operation = await this.#readOperation(context.operationId);
+      if (
+        operation?.requestAttempts[context.requestId] !== context.requestAttempt
+      )
+        return;
+      await this.#writeOperation({
+        ...operation,
+        requests: (operation.requests ?? []).map((item) =>
+          item.requestId === context.requestId
+            ? { ...item, status: failed ? "failed" : "completed" }
+            : item,
+        ),
+      });
+    });
   }
 
   async reconcileHead(
@@ -602,7 +919,10 @@ export class FileNativeArtifactStore implements ArtifactStore {
       fingerprint,
       callFingerprint,
     );
-    const stale = isStaleOperation(operation) || staleAttempt;
+    const stale =
+      isStaleOperation(operation) ||
+      staleAttempt ||
+      !(await this.#extensionControls.visible(record.worldId, record));
     if (declaration.save === "none") {
       const records = this.#memoryRecords.get(input.context.operationId) ?? [];
       records.push(record);
@@ -694,7 +1014,9 @@ export class FileNativeArtifactStore implements ArtifactStore {
           (head === undefined || event.head === head),
       );
     const stale =
-      isStaleOperation(operation) || currentAttempt !== record.requestAttempt;
+      isStaleOperation(operation) ||
+      currentAttempt !== record.requestAttempt ||
+      !(await this.#extensionControls.visible(record.worldId, record));
     if (stale) {
       if (!hasEvent("supersede"))
         await this.#appendRecordEvent(record, {
@@ -796,7 +1118,14 @@ export class FileNativeArtifactStore implements ArtifactStore {
       };
     }
     const staleAttempt = currentAttempt !== input.context.requestAttempt;
-    if (isStaleOperation(operation) || staleAttempt) {
+    if (
+      isStaleOperation(operation) ||
+      staleAttempt ||
+      !(await this.#extensionControls.visible(
+        input.context.worldId,
+        input.context,
+      ))
+    ) {
       const event: ArtifactEvent = {
         schemaVersion: 1,
         kind: "ignored_call",
@@ -1192,6 +1521,7 @@ export class FileNativeArtifactStore implements ArtifactStore {
   async readExtensionSummaries(
     worldId: string,
   ): Promise<ArtifactExtensionSummary[]> {
+    await this.#ensureForkRestored(worldId);
     return (await this.#operationsForWorld(worldId))
       .filter(
         (operation) =>
@@ -1249,7 +1579,9 @@ export class FileNativeArtifactStore implements ArtifactStore {
   async readActiveProjection(
     worldId: string,
     channel?: string,
+    timeline?: readonly ArtifactReplyTarget[],
   ): Promise<ArtifactProjectionItem[]> {
+    await this.#ensureForkRestored(worldId);
     const effective = await this.#effectiveRecords(worldId);
     const operationStates = new Map<string, ArtifactOperationFile>();
     for (const item of effective)
@@ -1267,6 +1599,17 @@ export class FileNativeArtifactStore implements ArtifactStore {
         operation.artifactProjectionStatus === "superseded"
       )
         return false;
+      if (
+        timeline !== undefined &&
+        operation.context.attachment !== undefined &&
+        !timeline.some(
+          (target) =>
+            target.contextId === operation.context.attachment?.contextId &&
+            target.eventId === operation.context.attachment?.eventId &&
+            target.head === operation.context.attachment?.head,
+        )
+      )
+        return false;
       if (record.projection === "transient" && !isActiveInteraction(operation))
         return false;
       if (record.save === "operation" && operation?.status === "completed")
@@ -1274,8 +1617,23 @@ export class FileNativeArtifactStore implements ArtifactStore {
       if (record.save === "commit" && head === null) return false;
       return true;
     });
-    const selected = selectProjection(active);
+    const visible = await Promise.all(
+      active.map(async (item) =>
+        (await this.#extensionControls.visible(worldId, item.record))
+          ? item
+          : null,
+      ),
+    );
+    const selected = selectProjection(visible.filter((item) => item !== null));
     return selected.map(({ record, head }) => ({
+      ...(operationStates.get(record.operationId)?.context.attachment ===
+      undefined
+        ? {}
+        : {
+            attachment: structuredClone(
+              operationStates.get(record.operationId)!.context.attachment!,
+            ),
+          }),
       recordId: record.recordId,
       worldId: record.worldId,
       operationId: record.operationId,
@@ -1292,6 +1650,12 @@ export class FileNativeArtifactStore implements ArtifactStore {
       ...(record.rendererRevision === undefined
         ? {}
         : { rendererRevision: record.rendererRevision }),
+      ...(record.extensionControl === undefined
+        ? {}
+        : { extensionControl: structuredClone(record.extensionControl) }),
+      ...(record.frozenPresentation === undefined
+        ? {}
+        : { frozenPresentation: structuredClone(record.frozenPresentation) }),
       payload: structuredClone(record.payload),
       projection: record.projection,
       save: record.save,
@@ -1304,7 +1668,14 @@ export class FileNativeArtifactStore implements ArtifactStore {
     worldId: string,
     operationId?: string,
   ): Promise<ArtifactDebugRecord[]> {
+    await this.#ensureForkRestored(worldId);
     const effective = await this.#effectiveRecords(worldId);
+    const operations = new Map(
+      (await this.#operationsForWorld(worldId)).map((operation) => [
+        operation.context.operationId,
+        operation,
+      ]),
+    );
     return effective
       .filter(
         ({ record }) =>
@@ -1312,6 +1683,13 @@ export class FileNativeArtifactStore implements ArtifactStore {
       )
       .sort((left, right) => left.record.sequence - right.record.sequence)
       .map(({ record, status, head }) => ({
+        ...(operations.get(record.operationId)?.context.attachment === undefined
+          ? {}
+          : {
+              attachment: structuredClone(
+                operations.get(record.operationId)!.context.attachment!,
+              ),
+            }),
         recordId: record.recordId,
         sequence: record.sequence,
         operationId: record.operationId,
@@ -1334,6 +1712,12 @@ export class FileNativeArtifactStore implements ArtifactStore {
         save: record.save,
         projection: record.projection,
         payloadBytes: byteLength(record.payload, record.contentType),
+        ...(record.extensionControl === undefined
+          ? {}
+          : { extensionControl: structuredClone(record.extensionControl) }),
+        ...(record.frozenPresentation === undefined
+          ? {}
+          : { frozenPresentation: structuredClone(record.frozenPresentation) }),
         payload: structuredClone(record.payload),
         payloadFingerprint: record.payloadFingerprint,
         status,
@@ -1372,6 +1756,25 @@ export class FileNativeArtifactStore implements ArtifactStore {
       ...(declaration.rendererRevision === undefined
         ? {}
         : { rendererRevision: declaration.rendererRevision }),
+      ...(input.context.extensionControl === undefined
+        ? {}
+        : {
+            extensionControl: structuredClone(input.context.extensionControl),
+          }),
+      ...(input.context.frozenPresentations?.[declaration.name] !== undefined
+        ? {
+            frozenPresentation: structuredClone(
+              input.context.frozenPresentations[declaration.name],
+            ),
+          }
+        : input.context.frozenResources === undefined
+          ? {}
+          : {
+              frozenPresentation: {
+                ...structuredClone(input.context.frozenResources),
+                declaration: structuredClone(declaration),
+              },
+            }),
       payload: structuredClone(payload),
       save: declaration.save,
       projection: declaration.strategy,
@@ -1780,11 +2183,14 @@ export class FileNativeArtifactStore implements ArtifactStore {
     const active = this.#mutationContext.getStore();
     if (active?.has(worldId) === true) return action();
     return withArtifactWorldLock(
-      join(this.#root, "locks", identityHash(worldId)),
+      artifactWorldLockPath(dirname(this.#root), worldId),
       () =>
         this.#mutationContext.run(
           new Set([...(active ?? []), worldId]),
-          action,
+          async () => {
+            await this.#restoreFork(worldId);
+            return action();
+          },
         ),
     );
   }
@@ -1792,6 +2198,15 @@ export class FileNativeArtifactStore implements ArtifactStore {
   #worldRoot(worldId: string): string {
     return join(this.#root, "worlds", identityHash(worldId));
   }
+}
+
+function artifactWorldLockPath(dataRoot: string, worldId: string): string {
+  return join(
+    resolve(dataRoot),
+    "runtime-locks",
+    "artifacts",
+    identityHash(worldId),
+  );
 }
 
 const artifactWorldLockStaleMilliseconds = 30_000;
@@ -2157,6 +2572,9 @@ function artifactCallFingerprint(
         playPresetId: context.playPresetId,
         playPresetRevision: context.playPresetRevision,
         playPresetScriptsEnabled: context.playPresetScriptsEnabled,
+        ...(context.extensionControl === undefined
+          ? {}
+          : { extensionControl: context.extensionControl }),
         requestId: context.requestId,
         requestAttempt: context.requestAttempt,
         parameters,
@@ -2267,6 +2685,12 @@ function artifactSequenceFileName(sequence: number): string {
 
 function summary(operation: ArtifactOperationFile): ArtifactExtensionSummary {
   return {
+    ...(operation.context.attachment === undefined
+      ? {}
+      : { attachment: structuredClone(operation.context.attachment) }),
+    ...(operation.requests === undefined
+      ? {}
+      : { requests: structuredClone(operation.requests) }),
     operationId: operation.context.operationId,
     status: operation.extensionStatus,
     ...(operation.message === undefined ? {} : { message: operation.message }),
@@ -2304,17 +2728,25 @@ function selectProjection(active: EffectiveRecord[]): EffectiveRecord[] {
 function assertContext(context: ArtifactOperationContext): void {
   if (
     !isRecord(context) ||
-    !hasExactKeys(context, [
-      "worldId",
-      "parentHead",
-      "operationId",
-      "playPresetId",
-      "playPresetRevision",
-      "playPresetScriptsEnabled",
-    ])
+    !hasExactKeys(
+      context,
+      [
+        "worldId",
+        "parentHead",
+        "operationId",
+        "playPresetId",
+        "playPresetRevision",
+        "playPresetScriptsEnabled",
+      ],
+      ["attachment"],
+    )
   )
     throw new ArtifactStoreInvariantError(
       "Artifact operation context has an invalid structure",
+    );
+  if (context.attachment !== undefined && !validAttachment(context.attachment))
+    throw new ArtifactStoreInvariantError(
+      "Artifact reply attachment is invalid",
     );
   for (const [key, value] of Object.entries({
     worldId: context.worldId,
@@ -2345,7 +2777,17 @@ function assertRequestContext(context: ArtifactRequestContext): void {
     playPresetId: context.playPresetId,
     playPresetRevision: context.playPresetRevision,
     playPresetScriptsEnabled: context.playPresetScriptsEnabled,
+    ...(context.attachment === undefined
+      ? {}
+      : { attachment: context.attachment }),
   });
+  if (
+    context.extensionControl !== undefined &&
+    !isWorldExtensionControl(context.extensionControl)
+  )
+    throw new ArtifactStoreInvariantError(
+      "Invalid extension control generation",
+    );
   if (
     context.requestId.trim() === "" ||
     !Number.isInteger(context.requestAttempt)
@@ -2364,6 +2806,8 @@ function sameContext(
   right: ArtifactOperationContext,
 ): boolean {
   return (
+    stableSerialize(left.attachment ?? null) ===
+      stableSerialize(right.attachment ?? null) &&
     left.worldId === right.worldId &&
     left.parentHead === right.parentHead &&
     left.operationId === right.operationId &&
@@ -2405,8 +2849,18 @@ function assertRawRecord(record: ArtifactRawRecord): void {
         "recordFingerprint",
         "status",
       ],
-      ["key", "renderer", "rendererRevision"],
+      [
+        "key",
+        "renderer",
+        "rendererRevision",
+        "frozenPresentation",
+        "extensionControl",
+      ],
     ) ||
+    (record.extensionControl !== undefined &&
+      !isWorldExtensionControl(record.extensionControl)) ||
+    (record.frozenPresentation !== undefined &&
+      !isFrozenArtifactPresentation(record.frozenPresentation)) ||
     record.schemaVersion !== 1 ||
     !isNonEmptyString(record.recordId) ||
     !Number.isSafeInteger(record.sequence) ||
@@ -2485,18 +2939,52 @@ function assertOperation(operation: ArtifactOperationFile): void {
         "artifactProjectionStatus",
         "requestAttempts",
       ],
-      ["message", "head"],
+      ["message", "head", "requests"],
     ) ||
+    (operation.requests !== undefined &&
+      (!Array.isArray(operation.requests) ||
+        !operation.requests.every(
+          (item) =>
+            isRecord(item) &&
+            hasExactKeys(item, [
+              "requestId",
+              "displayName",
+              "mounts",
+              "status",
+            ]) &&
+            isNonEmptyString(item.requestId) &&
+            isNonEmptyString(item.displayName) &&
+            Array.isArray(item.mounts) &&
+            item.mounts.every(
+              (mount) =>
+                typeof mount === "string" &&
+                [
+                  "story",
+                  "sidebar",
+                  "composer_above",
+                  "composer_below",
+                  "overlay",
+                  "debug",
+                ].includes(mount),
+            ) &&
+            ["running", "completed", "failed"].includes(item.status),
+        ))) ||
     operation.schemaVersion !== 1 ||
     !isRecord(context) ||
-    !hasExactKeys(context, [
-      "worldId",
-      "parentHead",
-      "operationId",
-      "playPresetId",
-      "playPresetRevision",
-      "playPresetScriptsEnabled",
-    ]) ||
+    !hasExactKeys(
+      context,
+      [
+        "worldId",
+        "parentHead",
+        "operationId",
+        "playPresetId",
+        "playPresetRevision",
+        "playPresetScriptsEnabled",
+      ],
+      ["attachment"],
+    ) ||
+    (context.attachment !== undefined &&
+      !validAttachment(context.attachment)) ||
     !isNonEmptyString(context.worldId) ||
     !isNonEmptyString(context.parentHead) ||
     !isNonEmptyString(context.operationId) ||
@@ -2733,4 +3221,17 @@ function isMissing(error: unknown): boolean {
 
 function isAlreadyExists(error: unknown): boolean {
   return isRecord(error) && error.code === "EEXIST";
+}
+
+function validAttachment(value: unknown): value is ArtifactAttachment {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["contextId", "eventId", "runId", "head"]) &&
+    isNonEmptyString(value.head) &&
+    isNonEmptyString(value.contextId) &&
+    isNonEmptyString(value.runId) &&
+    typeof value.eventId === "number" &&
+    Number.isSafeInteger(value.eventId) &&
+    value.eventId > 0
+  );
 }

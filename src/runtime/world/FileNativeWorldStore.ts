@@ -1,3 +1,13 @@
+import { FileNativeArtifactStore } from "../artifact/FileNativeArtifactStore.ts";
+import { WorldExtensionRequests } from "../extension/WorldExtensionRequests.ts";
+import {
+  WorldExtensionControls,
+  extensionDefinitions,
+} from "../extension/WorldExtensionControls.ts";
+import type { WorldExtensionChoice } from "../../protocol/worldExtensions.ts";
+import type { PlayPresetBinding } from "../play/FileNativePlayPresetStore.ts";
+import type { AppLocale } from "../../protocol/appPreferences.ts";
+import { PackageScriptPermissions } from "../extension/PackageScriptPermissions.ts";
 import { createHash, randomUUID } from "node:crypto";
 import {
   mkdir,
@@ -79,6 +89,7 @@ export class FileNativeWorldNotFoundError extends Error {
 }
 
 export interface FileNativeWorldCreationInput {
+  packageScriptGrants?: string[];
   operationId: string;
   sourcePackageId: string;
   sourcePackageTitle: string;
@@ -215,6 +226,7 @@ interface FileNativeWorldDerivationInput {
 }
 
 export class FileNativeWorldStore {
+  readonly extensionRequests: WorldExtensionRequests;
   readonly #documentMaintenanceCache = new Map<
     string,
     Map<string, DocumentMaintenanceState>
@@ -237,6 +249,7 @@ export class FileNativeWorldStore {
   ) {
     const root = resolve(dataRoot);
     this.#worldsRoot = join(root, "worlds-file-native");
+    this.extensionRequests = new WorldExtensionRequests(this.#worldsRoot);
     this.#operationsRoot = join(root, "operations");
     this.#promptCompiler =
       options.promptCompiler ?? new FileNativePromptCompiler();
@@ -366,13 +379,83 @@ export class FileNativeWorldStore {
         throw new FileNativeWorldNotFoundError({ cause: error });
       throw error;
     }
-    return this.operations.withExclusiveWorldStateMutation(
-      worldId,
-      async () => {
+    return this.operations.withExclusiveWorldStateMutation(worldId, () =>
+      this.operations.withWorldAuthorityLock(worldId, async () => {
         await rm(root, { recursive: true, force: true });
         this.#currentStorage.delete(worldId);
         return { deleted: true } as const;
-      },
+      }),
+    );
+  }
+
+  async extensionControls(
+    worldId: string,
+    binding: PlayPresetBinding,
+    locale: AppLocale,
+    change?: { key: string; value: WorldExtensionChoice },
+  ) {
+    assertIdentity(worldId, "World ID");
+    const head = await this.currentHead(worldId);
+    const [control, playerViews] = await Promise.all([
+      this.readSurface(worldId, "control"),
+      this.renderPlayerViewsAtHead(worldId, head),
+    ]);
+    const definitions = extensionDefinitions(
+      binding,
+      control.map((file) => ({ ...file, path: `control/${file.path}` })),
+      playerViews.views,
+      locale,
+    );
+    return this.operations.withWorldAuthorityLock(worldId, () =>
+      FileNativeArtifactStore.withWorldControlsMutation(
+        dirname(this.#worldsRoot),
+        worldId,
+        async () => {
+          // Definitions were loaded before taking the lock; deletion may have
+          // completed while this reader was waiting. Never recreate its shell.
+          await readPublicationAt(join(this.#worldsRoot, worldId));
+          const view = await WorldExtensionControls.resolve(
+            join(this.#worldsRoot, worldId),
+            definitions,
+            binding.id,
+            change,
+          );
+          await this.extensionRequests.changed(worldId);
+          return view;
+        },
+      ),
+    );
+  }
+  async extensionControlsRevision(worldId: string): Promise<number> {
+    assertIdentity(worldId, "World ID");
+    return (await WorldExtensionControls.read(join(this.#worldsRoot, worldId)))
+      .revision;
+  }
+
+  async readPackageScriptGrants(worldId: string): Promise<string[]> {
+    assertIdentity(worldId, "World ID");
+    await this.currentHead(worldId);
+    return PackageScriptPermissions.read(join(this.#worldsRoot, worldId));
+  }
+
+  async packageScriptPermissions(
+    worldId: string,
+    enabled?: boolean,
+  ): Promise<{ enabled: boolean }> {
+    assertIdentity(worldId, "World ID");
+    const files = (await this.readSurface(worldId, "control")).map((file) => ({
+      ...file,
+      path: `control/${file.path}`,
+    }));
+    const root = join(this.#worldsRoot, worldId);
+    if (enabled !== undefined)
+      await PackageScriptPermissions.write(
+        root,
+        enabled ? PackageScriptPermissions.currentGrants(files) : [],
+      );
+    return PackageScriptPermissions.status(
+      files,
+      await PackageScriptPermissions.read(root),
     );
   }
 
@@ -469,6 +552,12 @@ export class FileNativeWorldStore {
       ];
       await writeSurface(stagingRoot, "state", state);
       await writeSurface(stagingRoot, "control", control);
+      await PackageScriptPermissions.write(
+        stagingRoot,
+        (input.packageScriptGrants ?? []).filter((grant) =>
+          PackageScriptPermissions.currentGrants(packageFiles).includes(grant),
+        ),
+      );
       await mkdir(join(stagingRoot, "history"), { recursive: true });
       await mkdir(join(stagingRoot, "runtime"), { recursive: true });
       await writeIdempotentText(
@@ -1255,6 +1344,11 @@ export class FileNativeWorldStore {
         ).recoverHeadResult();
         await writeSurface(staging, "state", selected.state);
         await writeSurface(staging, "control", control);
+        await PackageScriptPermissions.write(
+          staging,
+          await PackageScriptPermissions.read(sourceRoot),
+        );
+        await WorldExtensionControls.copy(sourceRoot, staging);
         await mkdir(join(staging, "history"), { recursive: true });
         for (const file of historySurfaceFiles(selected.history))
           await writeIdempotentText(
