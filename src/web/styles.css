@@ -3176,7 +3176,7 @@ summary {
 
 .setting-step-active .setting-step-number {
   color: var(--text);
-  background: var(--accent);
+  background: var(--surface-selected);
 }
 
 .setting-step-done {
@@ -4136,7 +4136,7 @@ summary:focus-visible {
 .world-section-tabs .is-current {
   border-color: var(--field-border);
   color: var(--text);
-  background: var(--accent);
+  background: var(--surface-selected);
 }
 
 .world-feedback {
@@ -4452,7 +4452,7 @@ summary:focus-visible {
 
 .history-restart-button:hover:not(:disabled) {
   color: var(--text);
-  background: var(--accent);
+  background: var(--surface-selected);
 }
 
 .history-message-actions {
@@ -5046,7 +5046,7 @@ summary:focus-visible {
 .world-browser-index button.is-selected {
   border-color: var(--border);
   color: var(--text);
-  background: var(--accent);
+  background: var(--surface-selected);
 }
 
 .world-browser-index button.is-selected span {
@@ -5908,7 +5908,7 @@ summary:focus-visible {
 .prompt-preview-nav button:hover,
 .prompt-preview-nav button.active {
   color: var(--text);
-  background: var(--accent);
+  background: var(--surface-selected);
 }
 
 .prompt-preview-nav small {
@@ -6416,7 +6416,7 @@ summary:focus-visible {
   height: 2rem;
   border-radius: 50%;
   color: var(--text);
-  background: var(--accent);
+  background: var(--surface-selected);
   font-weight: 900;
   place-items: center;
 }
@@ -8199,7 +8199,7 @@ summary:focus-visible {
 .world-composer-send {
   border-color: var(--accent);
   color: var(--text);
-  background: var(--accent);
+  background: var(--surface-selected);
 }
 
 .world-composer-mode {
@@ -8722,7 +8722,7 @@ summary:focus-visible {
 
 .world-density-picker button.is-current {
   color: var(--text);
-  background: var(--accent);
+  background: var(--surface-selected);
 }
 
 .world-reading-range {
