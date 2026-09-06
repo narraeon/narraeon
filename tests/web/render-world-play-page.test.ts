@@ -532,7 +532,7 @@ describe("世界游玩页面", () => {
         ([request]) => request.type === "world.revision.open",
       ),
     ).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: "返回工作区" }));
+    fireEvent.click(screen.getByRole("button", { name: "返回游玩" }));
     await screen.findByRole("heading", { name: "宿舍世界" });
     expect(
       screen.getByLabelText<HTMLTextAreaElement>("你的行动").disabled,
@@ -579,7 +579,7 @@ describe("世界游玩页面", () => {
     fireEvent.click(screen.getByRole("button", { name: "保存到修订" }));
     expect(await screen.findByText("手动编辑")).toBeTruthy();
     expect(screen.getByText("修订记录")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "返回工作区" }));
+    fireEvent.click(screen.getByRole("button", { name: "返回游玩" }));
     expect(
       await screen.findByText(/世界正在修订，游玩和其他世界修改已锁定/u),
     ).toBeTruthy();

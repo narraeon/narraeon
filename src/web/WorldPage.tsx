@@ -144,9 +144,11 @@ export function WorldPage({
   worldTitle,
   modelConfigured,
   onBack,
+  showWorkspaceBack = true,
   onConfigureModel,
   onRenameWorld,
   onOpenWorld,
+  onNavigationLockChange,
   initialReadingPreferences = defaultAppReadingPreferences,
 }: {
   client: WorldPageClient;
@@ -154,9 +156,11 @@ export function WorldPage({
   worldTitle: string;
   modelConfigured: boolean;
   onBack: () => void;
+  showWorkspaceBack?: boolean;
   onConfigureModel: () => void;
   onRenameWorld: (name: string) => Promise<void>;
   onOpenWorld: (worldId: string) => Promise<void>;
+  onNavigationLockChange?: (locked: boolean) => void;
   initialReadingPreferences?: AppReadingPreferences;
 }): React.JSX.Element {
   const [world, setWorld] = useState<WorldReadView | null>(null);
@@ -203,6 +207,7 @@ export function WorldPage({
   );
   const [selectedDocument, setSelectedDocument] = useState("");
   const [controlFiles, setControlFiles] = useState("[]");
+  const [authoringLocked, setAuthoringLocked] = useState(false);
   const [controlDirty, setControlDirty] = useState(false);
   const [controlPreview, setControlPreview] = useState<unknown>(null);
   const [revisionOverview, setRevisionOverview] =
@@ -246,6 +251,10 @@ export function WorldPage({
   const openedWorldId = world?.worldId;
   const revisionDirty = !sameTextFiles(savedRevisionFiles, revisionFiles);
   revisionDirtyRef.current = revisionDirty;
+  useEffect(() => {
+    onNavigationLockChange?.(revisionDirty || controlDirty || authoringLocked);
+    return () => onNavigationLockChange?.(false);
+  }, [onNavigationLockChange, revisionDirty, controlDirty, authoringLocked]);
 
   useEffect(() => {
     let active = true;
@@ -1436,9 +1445,14 @@ export function WorldPage({
   if (world === null)
     return (
       <main className="world-reader-page world-page-loading">
-        <button className="world-back-button secondary-button" onClick={onBack}>
-          {uiText("← 返回工作区")}
-        </button>
+        {showWorkspaceBack && (
+          <button
+            className="world-back-button secondary-button"
+            onClick={onBack}
+          >
+            {uiText("← 返回工作区")}
+          </button>
+        )}
         {feedback?.kind === "error" ? (
           <p role="alert">{feedback.text}</p>
         ) : (
@@ -1459,6 +1473,7 @@ export function WorldPage({
           };
     return (
       <SettingImprovementPanel
+        onNavigationLockChange={setAuthoringLocked}
         key={worldId}
         onPreview={() =>
           requestRuntime(client, {
@@ -1612,13 +1627,15 @@ export function WorldPage({
             className="world-floating-chrome world-floating-chrome-left"
             aria-label={uiText("世界与状态")}
           >
-            <button
-              type="button"
-              onClick={onBack}
-              aria-label={uiText("返回工作区")}
-            >
-              ←
-            </button>
+            {showWorkspaceBack && (
+              <button
+                type="button"
+                onClick={onBack}
+                aria-label={uiText("返回工作区")}
+              >
+                ←
+              </button>
+            )}
             <button
               type="button"
               className={leftRailOpen ? "is-current" : ""}
@@ -1941,7 +1958,6 @@ export function WorldPage({
           >
             <header>
               <div>
-                <span>PLAYER VIEW</span>
                 <strong>{uiText("此刻")}</strong>
               </div>
               <button
@@ -2001,7 +2017,6 @@ export function WorldPage({
           >
             <header>
               <div>
-                <span>WORLD CONTEXT</span>
                 <strong>
                   {rightRailTab === "documents"
                     ? uiText("当前世界")
@@ -2108,6 +2123,11 @@ export function WorldPage({
               onControlFiles={(value) => {
                 setControlFiles(value);
                 setControlDirty(true);
+                setControlPreview(null);
+              }}
+              onResetControl={() => {
+                setControlFiles(JSON.stringify(world.control, null, 2));
+                setControlDirty(false);
                 setControlPreview(null);
               }}
               onRename={() => void renameCurrentWorld()}

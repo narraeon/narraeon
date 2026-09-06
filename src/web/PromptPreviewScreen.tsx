@@ -298,54 +298,42 @@ export function PromptPreviewScreen({
       className={`prompt-preview-screen${embedded ? " embedded" : ""}`}
       aria-labelledby="prompt-preview-title"
     >
-      {embedded ? (
-        <header className="prompt-preview-embedded-header">
-          <div>
-            <p className="eyebrow">READ ONLY · REAL COMPILER</p>
+      <header className="prompt-preview-header">
+        <div className="prompt-preview-title-row">
+          {embedded ? (
             <h4 id="prompt-preview-title">{uiText("全新上下文会发送什么")}</h4>
-          </div>
-          <p>
-            {uiText("真实编译，0 次模型调用，不会创建对话或写入权威状态。")}
-          </p>
-        </header>
-      ) : (
-        <header className="prompt-preview-header">
-          <div>
-            <p className="eyebrow">READ ONLY · REAL COMPILER</p>
+          ) : (
             <h2 id="prompt-preview-title">{uiText("提示词预览")}</h2>
-            <p className="prompt-preview-lede">
-              {uiText(
-                "用真实编译器检查全新上下文会发送什么：逻辑 role、Markdown、材料、工具、预算与 Provider 映射。",
-              )}
-            </p>
-          </div>
-          <div
+          )}
+          <span
             className="prompt-preview-readonly"
             aria-label={uiText("预览性质")}
+            title={uiText("不会创建对话或写入权威状态")}
           >
             <span>{uiText("只读检查")}</span>
-            <strong>{uiText("0 次模型调用")}</strong>
-            <small>{uiText("不会创建对话或写入权威状态")}</small>
-          </div>
-        </header>
-      )}
+            <span>{uiText("0 次模型调用")}</span>
+          </span>
+        </div>
+        <p className="prompt-preview-lede">
+          {embedded
+            ? uiText("真实编译，0 次模型调用，不会创建对话或写入权威状态。")
+            : uiText(
+                "用真实编译器检查全新上下文会发送什么：逻辑 role、Markdown、材料、工具、预算与 Provider 映射。",
+              )}
+        </p>
+      </header>
 
       <div className="prompt-preview-setup">
         <section
           className="panel-card prompt-preview-input-card"
           aria-labelledby="prompt-preview-input-title"
         >
-          <div className="prompt-preview-section-heading">
-            <div>
-              <p className="prompt-preview-kicker">PREVIEW INPUT</p>
-              <h3 id="prompt-preview-input-title">
-                {uiText("决定这次检查什么")}
-              </h3>
-            </div>
-            <span className="prompt-preview-mode">
-              {uiText("内容包首轮 · 全新上下文")}
-            </span>
-          </div>
+          <h3 id="prompt-preview-input-title" className="visually-hidden">
+            {uiText("决定这次检查什么")}
+          </h3>
+          <p className="prompt-preview-context">
+            {uiText("内容包首轮 · 全新上下文")}
+          </p>
 
           {packages.length === 0 ? (
             <p className="prompt-preview-empty" role="status">
@@ -355,7 +343,7 @@ export function PromptPreviewScreen({
             </p>
           ) : (
             <>
-              <label>
+              <label className="prompt-preview-package-field">
                 {uiText("内容包")}
                 <select
                   aria-label={uiText("预览内容包")}
@@ -378,7 +366,7 @@ export function PromptPreviewScreen({
                 </select>
               </label>
 
-              <label>
+              <label className="prompt-preview-player-field">
                 {uiText("预览玩家输入")}
                 <textarea
                   aria-label={uiText("预览玩家输入")}
@@ -424,72 +412,77 @@ export function PromptPreviewScreen({
           )}
         </section>
 
-        <section
-          className="panel-card prompt-preview-binding-card"
-          aria-labelledby="prompt-preview-binding-title"
-        >
-          <p className="prompt-preview-kicker">FIXED BINDING</p>
-          <h3 id="prompt-preview-binding-title">{uiText("本次固定绑定")}</h3>
-          <dl>
-            <div>
-              <dt>{uiText("主持预设")}</dt>
-              <dd>
-                <strong>{currentPreset?.name ?? uiText("没有当前预设")}</strong>
-                <span>{uiText("工作区当前选择")}</span>
-              </dd>
-            </div>
-            <div>
-              <dt>{uiText("模型连接")}</dt>
-              <dd>
-                <strong>
-                  {activeConnection?.name ?? uiText("没有当前模型")}
-                </strong>
-                <span>
-                  {activeConnection === undefined
-                    ? uiText("请先配置并启用模型")
-                    : `${activeConnection.modelId} · ${providerLabels[activeConnection.provider]}`}
-                </span>
-              </dd>
-            </div>
-            <div>
-              <dt>{uiText("模型窗口")}</dt>
-              <dd>
-                <strong>
-                  {activeConnection === undefined
-                    ? "—"
-                    : `${formatNumber(activeConnection.contextWindowTokens)} tokens`}
-                </strong>
-                <span>
-                  {activeConnection === undefined
-                    ? "—"
-                    : uiText("最大输出 {count}", {
-                        count: formatNumber(activeConnection.maxOutputTokens),
-                      })}
-                </span>
-              </dd>
-            </div>
-            <div>
-              <dt>{uiText("开场白边界")}</dt>
-              <dd>
-                <strong>{uiText("不作为模型历史注入")}</strong>
-                <span>
-                  {uiText("opening.md 只保留为玩家可见的 genesis 叙事")}
-                </span>
-              </dd>
-            </div>
-            <div>
-              <dt>{uiText("玩法预设")}</dt>
-              <dd>
-                <strong>{currentPlayPreset?.name ?? "default"}</strong>
-                <span>
-                  {currentPlayPreset === undefined
-                    ? uiText("使用内置玩法的完整工具集合")
-                    : `revision ${playPresetTarget?.revision ?? currentPlayPreset.revision}`}
-                </span>
-              </dd>
-            </div>
-          </dl>
-        </section>
+        <details className="preview-bindings-disclosure">
+          <summary>{uiText("当前配置与编译边界")}</summary>
+          <section
+            className="panel-card prompt-preview-binding-card"
+            aria-labelledby="prompt-preview-binding-title"
+          >
+            <p className="prompt-preview-kicker">FIXED BINDING</p>
+            <h3 id="prompt-preview-binding-title">{uiText("本次固定绑定")}</h3>
+            <dl>
+              <div>
+                <dt>{uiText("主持预设")}</dt>
+                <dd>
+                  <strong>
+                    {currentPreset?.name ?? uiText("没有当前预设")}
+                  </strong>
+                  <span>{uiText("工作区当前选择")}</span>
+                </dd>
+              </div>
+              <div>
+                <dt>{uiText("模型连接")}</dt>
+                <dd>
+                  <strong>
+                    {activeConnection?.name ?? uiText("没有当前模型")}
+                  </strong>
+                  <span>
+                    {activeConnection === undefined
+                      ? uiText("请先配置并启用模型")
+                      : `${activeConnection.modelId} · ${providerLabels[activeConnection.provider]}`}
+                  </span>
+                </dd>
+              </div>
+              <div>
+                <dt>{uiText("模型窗口")}</dt>
+                <dd>
+                  <strong>
+                    {activeConnection === undefined
+                      ? "—"
+                      : `${formatNumber(activeConnection.contextWindowTokens)} tokens`}
+                  </strong>
+                  <span>
+                    {activeConnection === undefined
+                      ? "—"
+                      : uiText("最大输出 {count}", {
+                          count: formatNumber(activeConnection.maxOutputTokens),
+                        })}
+                  </span>
+                </dd>
+              </div>
+              <div>
+                <dt>{uiText("开场白边界")}</dt>
+                <dd>
+                  <strong>{uiText("不作为模型历史注入")}</strong>
+                  <span>
+                    {uiText("opening.md 只保留为玩家可见的 genesis 叙事")}
+                  </span>
+                </dd>
+              </div>
+              <div>
+                <dt>{uiText("玩法预设")}</dt>
+                <dd>
+                  <strong>{currentPlayPreset?.name ?? "default"}</strong>
+                  <span>
+                    {currentPlayPreset === undefined
+                      ? uiText("使用内置玩法的完整工具集合")
+                      : `revision ${playPresetTarget?.revision ?? currentPlayPreset.revision}`}
+                  </span>
+                </dd>
+              </div>
+            </dl>
+          </section>
+        </details>
       </div>
 
       {preview === null ? (
@@ -497,11 +490,7 @@ export function PromptPreviewScreen({
           className="prompt-preview-waiting"
           aria-label={uiText("等待生成预览")}
         >
-          <span aria-hidden="true">01 — 04</span>
-          <div>
-            <strong>{uiText("生成后按四个视角检查")}</strong>
-            <p>{uiText("逻辑消息、材料与工具、Provider 映射、预算与诊断。")}</p>
-          </div>
+          <p>{uiText("生成预览后，在这里查看实际发送的消息、材料与工具。")}</p>
         </section>
       ) : (
         <PromptPreviewResult

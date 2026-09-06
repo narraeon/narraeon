@@ -18,8 +18,7 @@ import type { RuntimeClient } from "../../src/web/runtimeClient.ts";
 afterEach(cleanup);
 
 describe("世界工作区主页", () => {
-  test("按游玩、创作任务和内容包整理已有工作区", () => {
-    const onEditContent = vi.fn();
+  test("直接展示世界与内容包，保留明确的进入与管理操作", () => {
     const onOpenWorld = vi.fn();
     const onOpenPackage = vi.fn();
     const onImportPackage = vi.fn();
@@ -49,9 +48,7 @@ describe("世界工作区主页", () => {
         importArchive,
         importPending: false,
         onImportArchiveChange: vi.fn(),
-        onEditContent,
         onCreateWorld: vi.fn(),
-        onOpenPreview: vi.fn(),
         onCreatePackage: vi.fn(),
         onImportPackage,
         onOpenPackage,
@@ -62,14 +59,10 @@ describe("世界工作区主页", () => {
     );
 
     expect(screen.getByRole("heading", { name: "继续游玩" })).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "创作工作台" })).toBeTruthy();
-    for (const name of ["内容编辑", "预设", "新建世界", "提示词预览"])
-      expect(screen.getByRole("button", { name })).toBeTruthy();
-    expect(screen.getByText("1 份 · 1 份待修复")).toBeTruthy();
-    expect(screen.getByText("本地主持模型")).toBeTruthy();
-
-    fireEvent.click(screen.getByRole("button", { name: "内容编辑" }));
-    expect(onEditContent).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("heading", { name: "创作工作台" })).toBeNull();
+    expect(screen.getByRole("button", { name: "新建世界" })).toBeTruthy();
+    expect(screen.getByText(/1 份待修复/u)).toBeTruthy();
+    expect(screen.getByText(/本地主持模型/u)).toBeTruthy();
 
     fireEvent.click(
       screen.getByRole("button", { name: "打开世界：雾港第一夜" }),
@@ -99,9 +92,7 @@ describe("世界工作区主页", () => {
         importArchive: null,
         importPending: false,
         onImportArchiveChange,
-        onEditContent: vi.fn(),
         onCreateWorld: vi.fn(),
-        onOpenPreview: vi.fn(),
         onCreatePackage: vi.fn(),
         onImportPackage: vi.fn(),
         onOpenPackage: vi.fn(),
@@ -113,7 +104,7 @@ describe("世界工作区主页", () => {
 
     expect(screen.getByText("还没有正在游玩的世界")).toBeTruthy();
     expect(screen.getByText("从一组人类可读文件开始")).toBeTruthy();
-    expect(screen.getAllByText("尚未配置").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/尚未配置/u).length).toBeGreaterThan(0);
     expect(
       screen.getByRole("button", { name: "导入 ZIP" }).hasAttribute("disabled"),
     ).toBe(true);
@@ -142,9 +133,7 @@ describe("世界工作区主页", () => {
         importArchive: null,
         importPending: false,
         onImportArchiveChange: vi.fn(),
-        onEditContent: vi.fn(),
         onCreateWorld: vi.fn(),
-        onOpenPreview: vi.fn(),
         onCreatePackage: vi.fn(),
         onImportPackage: vi.fn(),
         onOpenPackage: vi.fn(),

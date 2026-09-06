@@ -142,8 +142,11 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await page.reload();
   await expect(page.getByLabel("界面语言")).toHaveValue("zh-CN");
   for (const name of ["内容编辑", "预设", "新建世界", "提示词预览"])
-    await expect(page.getByRole("button", { name })).toBeVisible();
+    await expect(
+      page.locator(".workspace-navigation").getByRole("button", { name }),
+    ).toBeVisible();
 
+  await page.getByText("导入内容包 ZIP", { exact: true }).click();
   await page.getByLabel("内容包 ZIP 文件").setInputFiles({
     name: "dormitory-world.zip",
     mimeType: "application/zip",
@@ -209,11 +212,13 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(page.locator(".model-active-summary")).toContainText("默认模型");
   await page.getByRole("button", { name: "返回工作区" }).click();
 
-  await page.getByRole("button", { name: "预设" }).click();
-  await expect(page.getByRole("heading", { name: "玩法预设" })).toBeVisible();
+  await page.getByRole("button", { name: "预设", exact: true }).click();
+  await expect(
+    page.getByRole("combobox", { name: "切换预设", exact: true }),
+  ).toBeVisible();
   await expect(page.getByRole("list", { name: "提示词顺序" })).toBeVisible();
   await expect(page.getByLabel("预设编辑器")).toContainText("完整内容包提示");
-  await expect(page.getByLabel("预设编辑器")).toContainText("后置请求");
+  await expect(page.getByLabel("预设编辑器")).toContainText("回复完成后");
   await page.getByRole("button", { name: "新增提示词", exact: true }).click();
   await page.getByLabel("提示词名称", { exact: true }).fill("Before world");
   await page
@@ -709,7 +714,10 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(page.getByText("内部字段泄漏扫描通过")).toBeVisible();
 
   await page.getByRole("button", { name: "返回工作区" }).click();
-  await page.getByRole("button", { name: "新建世界" }).click();
+  await page
+    .locator(".home-world-library")
+    .getByRole("button", { name: "新建世界" })
+    .click();
   await page.getByRole("button", { name: "从当前内容包创建" }).click();
   await expect(
     page.getByRole("heading", { name: "Dormitory Content Package" }),
@@ -726,6 +734,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     .getByRole("button", { name: "关闭" })
     .click();
   await page.getByRole("button", { name: "返回工作区" }).click();
+  await page.getByLabel("世界操作：Night Training Dormitory").click();
   await page
     .getByRole("button", { name: "重命名世界：Night Training Dormitory" })
     .click();
@@ -1165,6 +1174,9 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     .getByRole("button", { name: "世界管理" })
     .click();
   const managementDialog = page.getByRole("dialog", { name: "世界管理" });
+  await managementDialog
+    .getByText("世界控制 · 高级编辑", { exact: true })
+    .click();
   await managementDialog.getByRole("button", { name: "预览世界控制" }).click();
   await managementDialog
     .getByRole("button", { name: "整批应用世界控制" })
@@ -1227,6 +1239,7 @@ test("世界修订复用统一编辑工作区且世界管理可以纵向滚动",
   await page.setViewportSize({ width: 700, height: 500 });
   await page.goto("/");
   await page.locator(".workspace-locale-picker select").selectOption("zh-CN");
+  await page.getByText("导入内容包 ZIP", { exact: true }).click();
   await page.getByLabel("内容包 ZIP 文件").setInputFiles({
     name: "dialog-scroll-world.zip",
     mimeType: "application/zip",
@@ -1244,7 +1257,10 @@ test("世界修订复用统一编辑工作区且世界管理可以纵向滚动",
     await expect(page.getByRole("status")).toContainText("模型连接已保存");
   }
   await page.getByRole("button", { name: "返回工作区" }).click();
-  await page.getByRole("button", { name: "新建世界" }).click();
+  await page
+    .locator(".home-world-library")
+    .getByRole("button", { name: "新建世界" })
+    .click();
   await page.getByRole("button", { name: "从当前内容包创建" }).click();
   await expect(page.getByLabel("你的行动")).toBeVisible();
 
@@ -1255,7 +1271,7 @@ test("世界修订复用统一编辑工作区且世界管理可以纵向滚动",
     .click();
   await expect(page.getByRole("main", { name: /世界修订/u })).toBeVisible();
   await expect(page.getByText("手动编辑和 AI 共用一份修订")).toBeVisible();
-  await page.getByRole("button", { name: "返回工作区" }).click();
+  await page.getByRole("button", { name: "返回游玩" }).click();
   await expect(page.getByLabel("你的行动")).toBeEnabled();
   await page.getByRole("button", { name: "世界", exact: true }).click();
   await page.getByRole("button", { name: "修订当前世界" }).click();

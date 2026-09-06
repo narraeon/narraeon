@@ -376,11 +376,14 @@ export function ModelConnectionScreen({
             <option value="standard">{uiText("协议标准")}</option>
             <option value="cliproxyapi">CLIProxyAPI</option>
           </select>
-          <p className="field-note">
-            {uiText(
-              "CLIProxyAPI 方言只启用代理明确支持的兼容参数；响应仍按所选协议解析，不从可见文本猜测思考块。Claude 的签名 thinking 请选 Responses 或 Anthropic Messages；Chat Completions 通常只有 reasoning_content，不能承诺无损续传签名。模型名的 (high) 等 thinking 后缀会覆盖请求参数，因此 Effort 与 Thinking 都必须保留“Provider 默认”。",
-            )}
-          </p>
+          <details className="parameter-help">
+            <summary>{uiText("参数说明")}</summary>
+            <p className="field-note">
+              {uiText(
+                "CLIProxyAPI 方言只启用代理明确支持的兼容参数；响应仍按所选协议解析，不从可见文本猜测思考块。Claude 的签名 thinking 请选 Responses 或 Anthropic Messages；Chat Completions 通常只有 reasoning_content，不能承诺无损续传签名。模型名的 (high) 等 thinking 后缀会覆盖请求参数，因此 Effort 与 Thinking 都必须保留“Provider 默认”。",
+              )}
+            </p>
+          </details>
 
           <div className="model-reasoning-fields">
             <label htmlFor="model-reasoning-effort">
@@ -499,11 +502,14 @@ export function ModelConnectionScreen({
               />
             </label>
           ) : null}
-          <p className="field-note">
-            {uiText(
-              "Effort 控制整份响应投入；Anthropic Thinking 独立控制思考块，手动预算必须小于最大输出。Thinking 返回内容只进入模型诊断；原生续传块仍会原样保存。",
-            )}
-          </p>
+          <details className="parameter-help">
+            <summary>{uiText("参数说明")}</summary>
+            <p className="field-note">
+              {uiText(
+                "Effort 控制整份响应投入；Anthropic Thinking 独立控制思考块，手动预算必须小于最大输出。Thinking 返回内容只进入模型诊断；原生续传块仍会原样保存。",
+              )}
+            </p>
+          </details>
 
           <label htmlFor="model-base-url">Base URL</label>
           <input
@@ -687,42 +693,45 @@ export function ModelConnectionScreen({
                     <span className="active-config">{uiText("当前使用")}</span>
                   )}
                 </div>
-                <dl>
-                  <div>
-                    <dt>{uiText("模型")}</dt>
-                    <dd>{connection.modelId}</dd>
-                  </div>
-                  <div>
-                    <dt>{uiText("端点")}</dt>
-                    <dd>{connection.baseUrl}</dd>
-                  </div>
-                  <div>
-                    <dt>{uiText("窗口 / 输出")}</dt>
-                    <dd>
-                      {connection.contextWindowTokens.toLocaleString()} /{" "}
-                      {connection.maxOutputTokens.toLocaleString()}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>{uiText("方言 / Effort / Thinking")}</dt>
-                    <dd>
-                      {connection.dialect} / {connection.reasoningEffort} /{" "}
-                      {connection.thinkingMode}
-                      {connection.thinkingBudgetTokens === null
-                        ? ""
-                        : ` (${connection.thinkingBudgetTokens.toLocaleString()} tokens)`}{" "}
-                      / {connection.reasoningSummary}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>{uiText("凭据")}</dt>
-                    <dd>
-                      {connection.hasApiKey
-                        ? uiText("已保存在本机")
-                        : uiText("未配置")}
-                    </dd>
-                  </div>
-                </dl>
+                <details className="model-connection-details">
+                  <summary>{connection.modelId}</summary>
+                  <dl>
+                    <div>
+                      <dt>{uiText("模型")}</dt>
+                      <dd>{connection.modelId}</dd>
+                    </div>
+                    <div>
+                      <dt>{uiText("端点")}</dt>
+                      <dd>{connection.baseUrl}</dd>
+                    </div>
+                    <div>
+                      <dt>{uiText("窗口 / 输出")}</dt>
+                      <dd>
+                        {connection.contextWindowTokens.toLocaleString()} /{" "}
+                        {connection.maxOutputTokens.toLocaleString()}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>{uiText("方言 / Effort / Thinking")}</dt>
+                      <dd>
+                        {connection.dialect} / {connection.reasoningEffort} /{" "}
+                        {connection.thinkingMode}
+                        {connection.thinkingBudgetTokens === null
+                          ? ""
+                          : ` (${connection.thinkingBudgetTokens.toLocaleString()} tokens)`}{" "}
+                        / {connection.reasoningSummary}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>{uiText("凭据")}</dt>
+                      <dd>
+                        {connection.hasApiKey
+                          ? uiText("已保存在本机")
+                          : uiText("未配置")}
+                      </dd>
+                    </div>
+                  </dl>
+                </details>
                 <div className="form-actions">
                   {!isActive && (
                     <button

@@ -1,6 +1,6 @@
 import { AuthoringPromptPreview } from "./AuthoringPromptPreview.tsx";
 import { useConversationComposer } from "./useConversationComposer.ts";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type {
   ContentTreeFile,
@@ -50,6 +50,9 @@ interface SettingImprovementPanelProps {
   ) => Promise<V1SettingImprovementRollbackResult>;
   onConfigureModel: () => void;
   onBack: () => void;
+  showWorkspaceBack?: boolean;
+  onCreateWorld?: () => void;
+  onNavigationLockChange?: (locked: boolean) => void;
   revisionActions?: {
     active?: boolean;
     changedFileCount: number;
@@ -86,6 +89,9 @@ export function SettingImprovementPanel({
   onRollbackFile,
   onConfigureModel,
   onBack,
+  showWorkspaceBack = true,
+  onCreateWorld,
+  onNavigationLockChange,
   revisionActions,
 }: SettingImprovementPanelProps): React.JSX.Element {
   const [message, setMessage] = useState("");
@@ -107,6 +113,12 @@ export function SettingImprovementPanel({
   const running = view?.runStatus === "running" || submitting;
   const rollbackRunning = rollingBackFile !== null;
   const interactionLocked = running || rollbackRunning;
+  useEffect(() => {
+    onNavigationLockChange?.(
+      interactionLocked || hasUnsavedFileDraft || loading,
+    );
+    return () => onNavigationLockChange?.(false);
+  }, [onNavigationLockChange, interactionLocked, hasUnsavedFileDraft, loading]);
   const startingFresh = view === null;
   const continuingHistory =
     view !== null &&
@@ -210,14 +222,16 @@ export function SettingImprovementPanel({
             revisingWorld ? uiText("世界修订导航") : uiText("设定完善导航")
           }
         >
-          <button
-            type="button"
-            disabled={interactionLocked || hasUnsavedFileDraft}
-            onClick={onBack}
-            aria-label={uiText("返回工作区")}
-          >
-            ←
-          </button>
+          {(revisingWorld || showWorkspaceBack) && (
+            <button
+              type="button"
+              disabled={interactionLocked || hasUnsavedFileDraft}
+              onClick={onBack}
+              aria-label={uiText(revisingWorld ? "返回游玩" : "返回工作区")}
+            >
+              ←
+            </button>
+          )}
           <button
             type="button"
             className={leftRailOpen ? "is-current" : ""}
@@ -246,6 +260,21 @@ export function SettingImprovementPanel({
             revisingWorld ? uiText("世界修订工具") : uiText("设定完善工具")
           }
         >
+          {!revisingWorld && onCreateWorld !== undefined && (
+            <button
+              type="button"
+              className="setting-create-world"
+              disabled={
+                loading ||
+                interactionLocked ||
+                hasUnsavedFileDraft ||
+                contentEditor.status !== "usable"
+              }
+              onClick={onCreateWorld}
+            >
+              {uiText("创建世界")}
+            </button>
+          )}
           <button
             type="button"
             className={
@@ -320,23 +349,24 @@ export function SettingImprovementPanel({
             aria-live="polite"
             aria-busy={interactionLocked}
           >
-            <header className="setting-conversation-intro">
-              <span className="eyebrow">AUTHORING CONVERSATION</span>
-              <h2>
-                {revisingWorld
-                  ? uiText("手动编辑和 AI 共用一份修订")
-                  : uiText("和 AI 边聊边改")}
-              </h2>
-              <p>
-                {revisingWorld
-                  ? uiText(
-                      "state 和 control 已锁定到这份工作树；可逐次回滚，应用或放弃后才会解锁游玩。",
-                    )
-                  : uiText(
-                      "成功的工具改动直接写入内容包当前树；需要核对或手动修改时，从右侧打开文件。",
-                    )}
-              </p>
-            </header>
+            {(view === null || view.turns.length === 0) && (
+              <header className="setting-conversation-intro">
+                <h2>
+                  {revisingWorld
+                    ? uiText("手动编辑和 AI 共用一份修订")
+                    : uiText("和 AI 边聊边改")}
+                </h2>
+                <p>
+                  {revisingWorld
+                    ? uiText(
+                        "state 和 control 已锁定到这份工作树；可逐次回滚，应用或放弃后才会解锁游玩。",
+                      )
+                    : uiText(
+                        "成功的工具改动直接写入内容包当前树；需要核对或手动修改时，从右侧打开文件。",
+                      )}
+                </p>
+              </header>
+            )}
 
             {notice.length === 0 ? null : (
               <p className="setting-workspace-feedback" role="status">
@@ -614,8 +644,10 @@ export function SettingImprovementPanel({
         >
           <header>
             <div>
-              <span>CONVERSATIONS</span>
               <strong>{uiText("历史")}</strong>
+              <span className="panel-count">
+                {uiText("{count} 次对话", { count: history.length })}
+              </span>
             </div>
             <button
               type="button"
@@ -655,7 +687,6 @@ export function SettingImprovementPanel({
         >
           <header>
             <div>
-              <span>CONTENT TREE</span>
               <strong>
                 {fileRailMode === "edit"
                   ? uiText("编辑文件")
@@ -742,15 +773,9 @@ function SettingConversationHistory({
       className="setting-conversation-history"
       aria-labelledby="setting-conversation-history-title"
     >
-      <header>
-        <div>
-          <span className="eyebrow">
-            {revisingWorld ? "WORLD REVISION" : "CONTENT PACKAGE"}
-          </span>
-          <h2 id="setting-conversation-history-title">{uiText("对话历史")}</h2>
-        </div>
-        <span>{uiText("{count} 次对话", { count: history.length })}</span>
-      </header>
+      <h2 id="setting-conversation-history-title" className="visually-hidden">
+        {uiText("对话历史")}
+      </h2>
       {history.length === 0 ? (
         <p className="field-note">
           {uiText(

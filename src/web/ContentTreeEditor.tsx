@@ -57,14 +57,6 @@ export function ContentTreeEditor({
     setLastTitle(title);
     setTitleDraft(title);
   }
-  const worldCount = files.filter(({ path }) =>
-    path.startsWith(mode === "world-revision" ? "state/" : "world/"),
-  ).length;
-  const controlCount = files.filter(({ path }) =>
-    path.startsWith("control/"),
-  ).length;
-  const openingCount = files.filter(({ path }) => path === "opening.md").length;
-
   return (
     <section
       className={
@@ -75,20 +67,23 @@ export function ContentTreeEditor({
     >
       <header className="section-heading-row content-tree-heading">
         <div>
-          <h3>
+          <h3 className={embedded ? "visually-hidden" : undefined}>
             {mode === "world-revision"
               ? uiText("世界修订工作树")
               : uiText("内容包当前树")}
           </h3>
-          <p className="field-note">
-            {mode === "world-revision"
-              ? uiText(
-                  "手动编辑与 AI 共用这棵 state／control 工作树；保存后仍可逐次回滚，应用才会提交世界。",
-                )
-              : uiText(
-                  "逐份编辑 YAML／Markdown；整批保存时才原子替换已保存版本。",
-                )}
-          </p>
+          <details className="content-save-help">
+            <summary>{uiText("保存说明")}</summary>
+            <p className="field-note">
+              {mode === "world-revision"
+                ? uiText(
+                    "手动编辑与 AI 共用这棵 state／control 工作树；保存后仍可逐次回滚，应用才会提交世界。",
+                  )
+                : uiText(
+                    "逐份编辑 YAML／Markdown；整批保存时才原子替换已保存版本。",
+                  )}
+            </p>
+          </details>
         </div>
         <div
           className="content-tree-state"
@@ -102,7 +97,7 @@ export function ContentTreeEditor({
               : uiText("已保存版本：")}
             {status === "usable" ? uiText("可用") : uiText("需要修复")}
           </span>
-          <span className={dirty ? "draft-state dirty" : "draft-state"}>
+          <span className={dirty ? "draft-state dirty" : "visually-hidden"}>
             {dirty
               ? uiText("有未保存修改")
               : mode === "world-revision"
@@ -112,34 +107,15 @@ export function ContentTreeEditor({
         </div>
       </header>
 
-      <dl
-        className="content-tree-counts"
-        aria-label={uiText(
-          mode === "world-revision" ? "世界修订文件统计" : "内容包文件统计",
+      <div className="content-tree-tools">
+        {scriptPermission && (
+          <details className="content-permission-disclosure">
+            <summary>{uiText("内容包脚本权限")}</summary>
+            {scriptPermission}
+          </details>
         )}
-      >
-        <div>
-          <dt>{uiText("全部文件")}</dt>
-          <dd>{files.length}</dd>
-        </div>
-        {mode === "content-package" ? (
-          <div>
-            <dt>{uiText("开场白")}</dt>
-            <dd>{openingCount}</dd>
-          </div>
-        ) : null}
-        <div>
-          <dt>{uiText("世界内容")}</dt>
-          <dd>{worldCount}</dd>
-        </div>
-        <div>
-          <dt>{uiText("控制文件")}</dt>
-          <dd>{controlCount}</dd>
-        </div>
-      </dl>
-
-      {scriptPermission}
-      <PackageFollowupsEditor files={files} onChange={onFilesChange} />
+        <PackageFollowupsEditor files={files} onChange={onFilesChange} />
+      </div>
 
       <DocumentWorkbench
         {...(selectedPath === undefined ? {} : { selectedPath })}

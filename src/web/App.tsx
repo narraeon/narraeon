@@ -19,6 +19,9 @@ import type { RuntimeClient } from "./runtimeClient.ts";
 import { createClientId } from "./ClientId.ts";
 import { setWebLocale, uiText } from "./i18n.ts";
 import type { ContentTreeIssue } from "./ContentTreeEditor.tsx";
+import { WorkspaceHeader, type WorkspaceScreen } from "./WorkspaceHeader.tsx";
+import { CreateWorldScreen } from "./CreateWorldScreen.tsx";
+import { DismissibleNotice } from "./DismissibleNotice.tsx";
 import { HomeScreen } from "./HomeScreen.tsx";
 import { ModelConnectionScreen } from "./ModelConnectionScreen.tsx";
 import { PlayPresetScreen } from "./PlayPresetScreen.tsx";
@@ -61,8 +64,7 @@ interface PackageDetail extends PackageSummary {
   issues: ContentTreeIssue[];
 }
 
-type Screen =
-  "home" | "content" | "plays" | "model" | "create" | "preview" | "world";
+type Screen = WorkspaceScreen;
 export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [screen, setScreen] = useState<Screen>("home");
@@ -74,6 +76,9 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const [packageDetail, setPackageDetail] = useState<PackageDetail | null>(
     null,
   );
+  const [creatingWorld, setCreatingWorld] = useState(false);
+  const creatingWorldRef = useRef(false);
+  const [childNavigationLocked, setChildNavigationLocked] = useState(false);
   const [filesDirty, setFilesDirty] = useState(false);
   const [playPresetDraftDirty, setPlayPresetDraftDirty] = useState(false);
   const [modelDraftDirty, setModelDraftDirty] = useState(false);
@@ -107,6 +112,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const filesDirtyRef = useRef(filesDirty);
   filesDirtyRef.current = filesDirty;
   const packageOpenRequest = useRef(0);
+  const navigationDraftLockedRef = useRef(false);
   const improvementObservationScope = useRef(0);
   const improvementHistoryRequest = useRef(0);
   const improvementSelection = useRef<
@@ -320,6 +326,10 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         packageId,
       });
       if (packageOpenRequest.current !== requestVersion) return;
+      if (navigationDraftLockedRef.current) {
+        setNotice(uiText("已保留当前页面的未保存修改，请保存或放弃后再切换。"));
+        return;
+      }
       if (packageId !== selected) improvementObservationScope.current += 1;
       const packageFiles = package_.files;
       setSelected(packageId);
@@ -331,6 +341,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       setImprovementStartingFresh(false);
       improvementSelection.current = null;
       setImprovementHistoryLoading(false);
+      setImprovementLoading(true);
       setImprovementRequestFailure(null);
       setFiles(packageFiles.map((file) => ({ ...file })));
       setFilesDirty(false);
@@ -709,22 +720,58 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   }
 
   async function createWorld(): Promise<void> {
+    if (
+      creatingWorldRef.current ||
+      filesDirtyRef.current ||
+      (improvementHistoryView ?? improvementView)?.runStatus === "running"
+    )
+      return;
+    const source =
+      packageDetail?.localId === selected
+        ? packageDetail
+        : workspace?.contentPackages.find(
+            ({ localId }) => localId === selected,
+          );
+    if (
+      source?.status !== "usable" ||
+      improvementLoading ||
+      improvementHistoryLoading
+    )
+      return;
     if (workspace?.model.configured !== true) {
       setScreen("model");
       setNotice(uiText("请先保存并启用一份模型配置。"));
       return;
     }
+    creatingWorldRef.current = true;
+    setCreatingWorld(true);
+    const packageId = selected;
+    const model = modelBinding();
     try {
+      const authoring = await client.request<V1SettingImprovementOverview>({
+        type: "setting-improvement.overview",
+        packageId,
+      });
+      if (
+        authoring.latest?.runStatus === "running" ||
+        authoring.history.some((session) => session.runStatus === "running")
+      ) {
+        setNotice(uiText("这份内容包正在完善，请在回复完成后创建世界。"));
+        return;
+      }
       const created = await client.request<{ world: { worldId: string } }>({
         type: "world.create",
         operationId: createClientId("create"),
-        packageId: selected,
-        model: modelBinding(),
+        packageId,
+        model,
       });
       await refresh();
       openWorld(created.world.worldId);
     } catch (error: unknown) {
       report(error);
+    } finally {
+      creatingWorldRef.current = false;
+      setCreatingWorld(false);
     }
   }
 
@@ -748,6 +795,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   }
 
   function openWorld(id: string): void {
+    packageOpenRequest.current += 1;
     setWorldId(id);
     setScreen("world");
   }
@@ -815,16 +863,43 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       ({ id }) => id === workspace.playPresets.currentPresetId,
     )?.name ?? null;
 
-  if (screen === "world")
-    return (
+  const navigationLocked =
+    filesDirty ||
+    improvementActive ||
+    playPresetDraftDirty ||
+    modelDraftDirty ||
+    importPending ||
+    creatingWorld ||
+    childNavigationLocked;
+  navigationDraftLockedRef.current =
+    filesDirty ||
+    playPresetDraftDirty ||
+    modelDraftDirty ||
+    childNavigationLocked ||
+    improvementActive;
+  function navigate(next: Screen): void {
+    if (navigationLocked) return;
+    if (next !== "content" || next === screen) packageOpenRequest.current += 1;
+    if (next === screen) return;
+    if (next === "content") {
+      if (selectedPackage === undefined) void createPackage();
+      else void openPackage(selectedPackage.localId);
+    } else if (next === "preview") openPromptPreview();
+    else setScreen(next);
+  }
+
+  const worldContent =
+    screen === "world" ? (
       <WorldPage
+        showWorkspaceBack={false}
         key={worldId}
         client={client}
         worldId={worldId}
         worldTitle={selectedWorld?.title ?? uiText("未命名世界")}
         modelConfigured={workspace.model.configured}
-        onBack={() => setScreen("home")}
-        onConfigureModel={() => setScreen("model")}
+        onBack={() => navigate("home")}
+        onConfigureModel={() => navigate("model")}
+        onNavigationLockChange={setChildNavigationLocked}
         onRenameWorld={(name) => renameWorld(worldId, name)}
         initialReadingPreferences={
           workspace.preferences.reading ?? defaultAppReadingPreferences
@@ -834,11 +909,12 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
           setWorldId(nextWorldId);
         }}
       />
-    );
+    ) : null;
 
-  if (screen === "content")
-    return (
+  const authoringContent =
+    screen === "content" ? (
       <SettingImprovementPanel
+        showWorkspaceBack={false}
         key={selected}
         onPreview={() =>
           client.request({
@@ -852,7 +928,11 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         packageName={selectedPackage?.title ?? selected}
         modelConfigured={workspace.model.configured}
         hasUnsavedFileDraft={filesDirty}
-        loading={improvementLoading || improvementHistoryLoading}
+        loading={
+          improvementLoading || improvementHistoryLoading || creatingWorld
+        }
+        onCreateWorld={() => void createWorld()}
+        onNavigationLockChange={setChildNavigationLocked}
         view={displayedImprovementView}
         history={improvementHistory}
         latestSessionId={
@@ -902,191 +982,138 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         onSelectSession={selectImprovementSession}
         onDeleteSession={deleteImprovementSession}
         onRollbackFile={rollbackImprovementFile}
-        onConfigureModel={() => setScreen("model")}
-        onBack={() => setScreen("home")}
+        onConfigureModel={() => navigate("model")}
+        onBack={() => navigate("home")}
       />
-    );
+    ) : null;
 
   return (
-    <main className="workspace-shell">
-      <header className="workspace-header">
-        <div>
-          <p className="eyebrow">{uiText("Narraeon · 本地优先")}</p>
-          <h1>{uiText("世界工作区")}</h1>
-          {screen === "home" && (
-            <p className="workspace-header-copy">
-              {uiText("创作内容包，连接 AI 主持，让每个世界独立演化。")}
-            </p>
+    <div className="workspace-shell" data-screen={screen}>
+      <WorkspaceHeader
+        screen={screen}
+        locale={workspace.preferences.locale}
+        localeSaving={localeSaving}
+        navigationLocked={navigationLocked}
+        activeModelName={activeModel?.name ?? null}
+        onNavigate={navigate}
+        onLocaleChange={(locale) => void saveLocale(locale)}
+      />
+      <div className="workspace-body">
+        {worldContent}
+        {authoringContent}
+        {screen !== "content" &&
+          screen !== "world" &&
+          (notice || workspace.storageNotices.length > 0) && (
+            <div className="workspace-feedback">
+              {notice && (
+                <DismissibleNotice
+                  text={notice}
+                  onDismiss={() => setNotice("")}
+                />
+              )}
+              {workspace.storageNotices.map((item) => (
+                <p role="alert" key={item.surface}>
+                  {item.message}
+                </p>
+              ))}
+            </div>
           )}
-        </div>
-        <div className="workspace-header-actions">
-          <label className="workspace-locale-picker">
-            <span>{uiText("界面语言")}</span>
-            <select
-              aria-label={uiText("界面语言")}
-              value={workspace.preferences.locale}
-              disabled={localeSaving}
-              onChange={(event) =>
-                void saveLocale(event.target.value as AppLocale)
-              }
-            >
-              <option value="en">English</option>
-              <option value="zh-CN">{uiText("简体中文")}</option>
-            </select>
-          </label>
-          <button
-            className="workspace-model-button secondary-button"
-            aria-label={uiText("模型连接")}
-            disabled={
-              filesDirty ||
-              improvementActive ||
-              playPresetDraftDirty ||
-              modelDraftDirty ||
-              importPending
+        {screen === "home" && (
+          <HomeScreen
+            contentPackages={workspace.contentPackages}
+            worlds={workspace.worlds}
+            selectedPackageId={selected}
+            modelConfigured={workspace.model.configured}
+            activeModelName={activeModel?.name ?? null}
+            currentPresetName={currentPresetName}
+            importArchive={importArchive}
+            importPending={importPending}
+            onImportArchiveChange={(archive) => {
+              setImportArchive(archive);
+              setNotice("");
+            }}
+            onOpenPlayPresets={() => navigate("plays")}
+            onCreateWorld={() => navigate("create")}
+            onCreatePackage={() => void createPackage()}
+            onImportPackage={() => void importPackage()}
+            onOpenPackage={(packageId) => void openPackage(packageId)}
+            onOpenWorld={openWorld}
+            onRenameWorld={(world, name) =>
+              void renameWorld(world.worldId, name).catch(report)
             }
-            onClick={() => setScreen("model")}
-          >
-            <span
-              className={`workspace-model-dot ${workspace.model.configured ? "is-ready" : "needs-attention"}`}
-              aria-hidden="true"
-            />
-            <span>
-              <small>{uiText("模型连接")}</small>
-              <strong>{activeModel?.name ?? uiText("尚未配置")}</strong>
-            </span>
-          </button>
-          {screen !== "home" && (
-            <button
-              className="secondary-button"
-              disabled={
-                filesDirty ||
-                improvementActive ||
-                playPresetDraftDirty ||
-                modelDraftDirty ||
-                importPending
-              }
-              onClick={() => setScreen("home")}
-            >
-              {uiText("返回工作区")}
-            </button>
-          )}
-        </div>
-      </header>
-      {(notice || workspace.storageNotices.length > 0) && (
-        <div className="workspace-feedback">
-          {notice && <p role="status">{notice}</p>}
-          {workspace.storageNotices.map((item) => (
-            <p role="alert" key={item.surface}>
-              {item.message}
-            </p>
-          ))}
-        </div>
-      )}
-      {screen === "home" && (
-        <HomeScreen
-          contentPackages={workspace.contentPackages}
-          worlds={workspace.worlds}
-          selectedPackageId={selected}
-          modelConfigured={workspace.model.configured}
-          activeModelName={activeModel?.name ?? null}
-          currentPresetName={currentPresetName}
-          importArchive={importArchive}
-          importPending={importPending}
-          onImportArchiveChange={(archive) => {
-            setImportArchive(archive);
-            setNotice("");
-          }}
-          onEditContent={() =>
-            selectedPackage === undefined
-              ? void createPackage()
-              : void openPackage(selectedPackage.localId)
-          }
-          onOpenPlayPresets={() => setScreen("plays")}
-          onCreateWorld={() => setScreen("create")}
-          onOpenPreview={openPromptPreview}
-          onCreatePackage={() => void createPackage()}
-          onImportPackage={() => void importPackage()}
-          onOpenPackage={(packageId) => void openPackage(packageId)}
-          onOpenWorld={openWorld}
-          onRenameWorld={(world, name) =>
-            void renameWorld(world.worldId, name).catch(report)
-          }
-          onDeleteWorld={(world) => void deleteWorld(world)}
-        />
-      )}
-      {screen === "plays" && (
-        <PlayPresetScreen
-          client={client}
-          initialLibrary={workspace.playPresets}
-          recommendedTemplates={firstPartyPlayPresetTemplatesForLocale(
-            workspace.preferences.locale,
-          )}
-          onLibraryChange={(playPresets) =>
-            setWorkspace((current) =>
-              current === null ? current : { ...current, playPresets },
-            )
-          }
-          onDirtyChange={setPlayPresetDraftDirty}
-          renderPromptPreview={(target) => (
-            <PromptPreviewScreen
-              key={`${target.presetId}:${target.revision}`}
-              embedded
-              client={client}
-              packages={workspace.contentPackages}
-              initialPackageId={selected}
-              playPresets={workspace.playPresets}
-              model={workspace.model}
-              onPackageSelect={setSelected}
-              playPresetTarget={target}
-            />
-          )}
-        />
-      )}
-      {screen === "model" && (
-        <ModelConnectionScreen
-          client={client}
-          library={workspace.model}
-          onLibraryChange={(model) =>
-            setWorkspace((current) =>
-              current === null ? current : { ...current, model },
-            )
-          }
-          onNotice={setNotice}
-          onDirtyChange={setModelDraftDirty}
-        />
-      )}
-      {screen === "create" && (
-        <section className="panel-card">
-          <h2>{uiText("新建世界")}</h2>
-          <select
-            value={selected}
-            onChange={(event) => setSelected(event.target.value)}
-          >
-            {workspace.contentPackages.map((item) => (
-              <option key={item.localId} value={item.localId}>
-                {item.title}
-              </option>
-            ))}
-          </select>
-          <button disabled={!selected} onClick={() => void createWorld()}>
-            {uiText("从当前内容包创建")}
-          </button>
-        </section>
-      )}
-      {screen === "preview" && (
-        <PromptPreviewScreen
-          client={client}
-          packages={workspace.contentPackages}
-          initialPackageId={selected}
-          playPresets={workspace.playPresets}
-          model={workspace.model}
-          onPackageSelect={setSelected}
-          {...(promptPreviewPlayPreset === null
-            ? {}
-            : { playPresetTarget: promptPreviewPlayPreset })}
-        />
-      )}
-    </main>
+            onDeleteWorld={(world) => void deleteWorld(world)}
+          />
+        )}
+        {screen === "plays" && (
+          <PlayPresetScreen
+            client={client}
+            initialLibrary={workspace.playPresets}
+            recommendedTemplates={firstPartyPlayPresetTemplatesForLocale(
+              workspace.preferences.locale,
+            )}
+            onLibraryChange={(playPresets) =>
+              setWorkspace((current) =>
+                current === null ? current : { ...current, playPresets },
+              )
+            }
+            onDirtyChange={setPlayPresetDraftDirty}
+            renderPromptPreview={(target) => (
+              <PromptPreviewScreen
+                key={`${target.presetId}:${target.revision}`}
+                embedded
+                client={client}
+                packages={workspace.contentPackages}
+                initialPackageId={selected}
+                playPresets={workspace.playPresets}
+                model={workspace.model}
+                onPackageSelect={setSelected}
+                playPresetTarget={target}
+              />
+            )}
+          />
+        )}
+        {screen === "model" && (
+          <ModelConnectionScreen
+            client={client}
+            library={workspace.model}
+            onLibraryChange={(model) =>
+              setWorkspace((current) =>
+                current === null ? current : { ...current, model },
+              )
+            }
+            onNotice={setNotice}
+            onDirtyChange={setModelDraftDirty}
+          />
+        )}
+        {screen === "create" && (
+          <CreateWorldScreen
+            key={selected}
+            client={client}
+            packages={workspace.contentPackages}
+            selectedId={selected}
+            pending={creatingWorld}
+            modelConfigured={workspace.model.configured}
+            onSelect={setSelected}
+            onCreate={() => void createWorld()}
+            onEdit={() => navigate("content")}
+            onConfigureModel={() => navigate("model")}
+          />
+        )}
+        {screen === "preview" && (
+          <PromptPreviewScreen
+            client={client}
+            packages={workspace.contentPackages}
+            initialPackageId={selected}
+            playPresets={workspace.playPresets}
+            model={workspace.model}
+            onPackageSelect={setSelected}
+            {...(promptPreviewPlayPreset === null
+              ? {}
+              : { playPresetTarget: promptPreviewPlayPreset })}
+          />
+        )}
+      </div>
+    </div>
   );
 }
 
