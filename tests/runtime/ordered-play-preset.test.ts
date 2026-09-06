@@ -189,7 +189,7 @@ test.each([
       throw new Error("Expected a serialized request body");
     const expected = [
       "BEFORE_WORLD",
-      "# World-state rules",
+      "# Save locations in this world",
       "Dorm room 302",
       "AFTER_WORLD",
       "# Tools and response settlement",
