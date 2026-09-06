@@ -619,7 +619,7 @@ test("跨发送精读授权在重启、成功写入和空输入刷新后保留�
     {
       path: "world/characters/qin.yaml",
       contents:
-        "$document:\n  id: person.qin\n  ref: qin\n  title: Qin\n  summary: Courier\n  aliases: []\nrelationship: Just met\nprivate: Unknown\n",
+        "$document:\n  id: person.qin\n  ref: qin\n  title: Qin\n  summary: Courier\n  aliases: []\nrelationship: Just met\nprivate: Unknown\npending: Ask for umbrella\n",
     },
   ]);
   const patch = (id: string, key: string, value: string) => ({
@@ -641,6 +641,11 @@ test("跨发送精读授权在重启、成功写入和空输入刷新后保留�
             name: "context_read",
             arguments: { ref: "@qin#/relationship" },
           },
+          {
+            id: "read-pending",
+            name: "context_read",
+            arguments: { ref: "@qin#/pending" },
+          },
         ],
       },
       { outcome: "response", text: "Qin greets you." },
@@ -652,6 +657,14 @@ test("跨发送精读授权在重启、成功写入和空输入刷新后保留�
             "relationship",
             "Trust after lending an umbrella",
           ),
+          {
+            id: "remove-completed",
+            name: "world_patch",
+            arguments: {
+              target: "@qin",
+              edits: [{ op: "remove", locator: { yaml: ["pending"] } }],
+            },
+          },
         ],
       },
       { outcome: "response", text: "Qin accepts the umbrella." },

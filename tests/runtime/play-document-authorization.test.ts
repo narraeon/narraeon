@@ -7,6 +7,7 @@ import {
   presetHostBinding,
 } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
 import { FileNativePromptCompiler } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
+import type { WorldDocumentRevisionEdit } from "../../src/runtime/world/WorldDocumentStore.ts";
 
 function files() {
   return {
@@ -149,4 +150,133 @@ test("a changed state tree or a fresh context cannot reuse an old read proof", (
   const fresh = new FileNativePlayDocuments(files());
   fresh.bindBootstrap(compile(fresh));
   expect(patch(fresh, "relationship", "Unauthorized").ok).toBe(false);
+});
+
+test.each([
+  {
+    name: "removed map node",
+    contents: "pending: Clinic visit\n",
+    ref: "@qin#/pending",
+    edit: { op: "remove", locator: { yaml: ["pending"] } },
+  },
+  {
+    name: "removed array item",
+    contents: "tasks: [Clinic visit, Private delivery]\n",
+    ref: "@qin#/tasks/0",
+    edit: { op: "remove", locator: { yaml: ["tasks", 0] } },
+  },
+  {
+    name: "renamed Markdown section",
+    contents: "# Qin\n\n## Pending\nClinic visit\n\n## Private\nDelivery\n",
+    ref: "@qin#/Pending",
+    edit: {
+      op: "rename_section",
+      locator: { markdown: ["Pending"] },
+      title: "Done",
+    },
+  },
+] satisfies {
+  name: string;
+  contents: string;
+  ref: string;
+  edit: WorldDocumentRevisionEdit;
+}[])("$name cannot leave a stale scope in a durable read proof", (scenario) => {
+  const current: Record<string, string> = files();
+  const header =
+    current["state/characters/qin.yaml"]!.split("relationship:")[0]!;
+  if (scenario.name === "renamed Markdown section") {
+    delete current["state/characters/qin.yaml"];
+    current["state/characters/qin.md"] =
+      `---\n${header}---\n${scenario.contents}`;
+  } else current["state/characters/qin.yaml"] += scenario.contents;
+  const original = new FileNativePlayDocuments(current);
+  original.bindBootstrap(compile(original));
+  expect(
+    original.execute(
+      { id: "read", name: "context_read", arguments: { ref: scenario.ref } },
+      [],
+    ).ok,
+  ).toBe(true);
+  expect(
+    original.execute(
+      {
+        id: "remove",
+        name: "world_patch",
+        arguments: { target: "@qin", edits: [scenario.edit] },
+      },
+      [],
+    ).ok,
+  ).toBe(true);
+  const proof = original.authorizationCheckpoint();
+  expect(
+    proof.documents.find(({ shortRef }) => shortRef === "qin"),
+  ).toBeUndefined();
+  const refreshed = new FileNativePlayDocuments(
+    Object.fromEntries(
+      original.snapshot.files.map(({ path, contents }) => [path, contents]),
+    ),
+  );
+  expect(() =>
+    refreshed.bindBootstrap(compile(refreshed), proof),
+  ).not.toThrow();
+  expect(() => refreshed.restoreAuthorizationCheckpoint(proof)).not.toThrow();
+  expect(patch(refreshed, "knowledge", "Unseen").ok).toBe(false);
+  if (scenario.name === "removed array item") {
+    expect(
+      refreshed.execute(
+        {
+          id: "shifted",
+          name: "world_patch",
+          arguments: {
+            target: "@qin",
+            edits: [
+              {
+                op: "replace",
+                locator: { yaml: ["tasks", 0] },
+                value: "Overwritten",
+              },
+            ],
+          },
+        },
+        [],
+      ).ok,
+    ).toBe(false);
+  }
+});
+
+test("a batch cannot use a removed array scope to overwrite its unread successor", () => {
+  const current = files();
+  current["state/characters/qin.yaml"] +=
+    "tasks: [Clinic visit, Private delivery]\n";
+  const documents = new FileNativePlayDocuments(current);
+  expect(
+    documents.execute(
+      { id: "read", name: "context_read", arguments: { ref: "@qin#/tasks/0" } },
+      [],
+    ).ok,
+  ).toBe(true);
+  expect(
+    documents.execute(
+      {
+        id: "batch",
+        name: "world_patch",
+        arguments: {
+          target: "@qin",
+          edits: [
+            { op: "remove", locator: { yaml: ["tasks", 0] } },
+            {
+              op: "replace",
+              locator: { yaml: ["tasks", 0] },
+              value: "Overwritten",
+            },
+          ],
+        },
+      },
+      [],
+    ).ok,
+  ).toBe(false);
+  expect(
+    documents.snapshot.files.find(({ path }) => path.endsWith("qin.yaml"))!
+      .contents,
+  ).toContain("[Clinic visit, Private delivery]");
 });
