@@ -1,4 +1,17 @@
 import {
+  parseDisplayRegex,
+  DisplayRegexError,
+  type PlayPresetRegexRule,
+} from "../../shared/display-regex.ts";
+export type {
+  PlayPresetRegexRule,
+  PlayPresetRegexScope,
+  PlayPresetRegexErrorPolicy,
+} from "../../shared/display-regex.ts";
+import type { PlayPresetArtifactPayloadContract } from "../../shared/artifact-payload-contract.ts";
+export { validatePlayPresetArtifactPayload } from "../../shared/artifact-payload-contract.ts";
+export type { PlayPresetArtifactPayloadContract } from "../../shared/artifact-payload-contract.ts";
+import {
   defaultFollowupItems,
   type FollowupItem,
 } from "../../shared/ordered-followups.ts";
@@ -52,21 +65,6 @@ export type PlayPresetArtifactInvalidation =
   | "explicit_clear"
   | "never";
 
-export type PlayPresetRegexScope =
-  "raw_text" | "markdown_html" | "structured_payload";
-
-export type PlayPresetRegexErrorPolicy = "fallback" | "skip" | "fail";
-
-export interface PlayPresetRegexRule {
-  order: number;
-  scope: PlayPresetRegexScope;
-  pattern: string;
-  flags: string;
-  replace: string;
-  maxMatches: number;
-  errorPolicy: PlayPresetRegexErrorPolicy;
-}
-
 export type PlayPresetRendererMode = "document" | "app";
 
 /**
@@ -74,20 +72,6 @@ export type PlayPresetRendererMode = "document" | "app";
  * shape of an artifact payload without exposing Runtime tool schemas or
  * provider protocol details to the preset.
  */
-export interface PlayPresetArtifactPayloadContract {
-  type:
-    "object" | "array" | "string" | "number" | "integer" | "boolean" | "null";
-  properties?: Record<string, PlayPresetArtifactPayloadContract>;
-  required?: string[];
-  additionalProperties?: boolean;
-  items?: PlayPresetArtifactPayloadContract;
-  minItems?: number;
-  maxItems?: number;
-  minLength?: number;
-  maxLength?: number;
-  uniqueBy?: string;
-  maxBytes?: number;
-}
 
 export interface PlayPresetPromptBlock {
   role: PlayPresetPromptRole;
@@ -95,6 +79,8 @@ export interface PlayPresetPromptBlock {
 }
 
 export interface PlayPresetArtifactDeclaration {
+  displayName?: string;
+  purpose?: string;
   /** Stable model-facing output name; the model never chooses the rest. */
   name: string;
   channel: string;
@@ -1775,9 +1761,27 @@ function parseArtifacts(
         "required",
         "maxEmits",
         "payloadContract",
+        "displayName",
+        "purpose",
       ],
       artifactLocation,
     );
+    for (const [field, limit] of [
+      ["displayName", 160],
+      ["purpose", 16000],
+    ] as const) {
+      if (
+        raw[field] !== undefined &&
+        (typeof raw[field] !== "string" ||
+          raw[field].length > limit ||
+          raw[field].includes("\0"))
+      )
+        invalid(
+          "artifact_metadata_invalid",
+          `${field} must be text of at most ${limit} characters`,
+          artifactLocation,
+        );
+    }
     const name = stringValue(raw.name).trim();
     if (!/^[a-z][a-z0-9._/-]{1,127}$/u.test(name))
       invalid(
@@ -1970,6 +1974,10 @@ function parseArtifacts(
       );
     return {
       name,
+      ...(raw.displayName === undefined
+        ? {}
+        : { displayName: raw.displayName as string }),
+      ...(raw.purpose === undefined ? {} : { purpose: raw.purpose as string }),
       channel,
       strategy: strategy as PlayPresetArtifactStrategy,
       ...(key === undefined ? {} : { key }),
@@ -2015,6 +2023,23 @@ function parseArtifactPayloadContract(
       "payloadContract must be a map",
       location,
     );
+  assertKnownKeys(
+    value,
+    [
+      "type",
+      "properties",
+      "required",
+      "additionalProperties",
+      "items",
+      "minItems",
+      "maxItems",
+      "minLength",
+      "maxLength",
+      "uniqueBy",
+      "maxBytes",
+    ],
+    location,
+  );
   const type = value.type;
   if (
     type !== "object" &&
@@ -2775,130 +2800,13 @@ export function parsePlayPresetRegexAsset(
   source: string,
   path = "regex/inline.yaml",
 ): PlayPresetRegexRule[] {
-  const document = parseDocument(source, {
-    schema: "core",
-    uniqueKeys: true,
-    strict: true,
-  });
-  if (document.errors.length > 0 || document.warnings.length > 0)
-    invalid(
-      "regex_asset_invalid",
-      `Regex-resource YAML is invalid: ${path}`,
-      path,
-    );
-  const value: unknown = document.toJS({ maxAliasCount: 0 });
-  const rules = Array.isArray(value)
-    ? value
-    : isRecord(value) && Array.isArray(value.rules)
-      ? value.rules
-      : null;
-  if (rules === null || rules.length > 256)
-    invalid(
-      "regex_rules_invalid",
-      `A regex resource may contain at most 256 rules: ${path}`,
-      path,
-    );
-  const orders = new Set<number>();
-  const parsed = rules.map((raw, index): PlayPresetRegexRule => {
-    const location = `${path}#rules[${index}]`;
-    if (!isRecord(raw))
-      invalid("regex_rule_invalid", "A regex rule must be a map", location);
-    assertKnownKeys(
-      raw,
-      [
-        "order",
-        "scope",
-        "pattern",
-        "flags",
-        "replace",
-        "maxMatches",
-        "errorPolicy",
-      ],
-      location,
-    );
-    const order = raw.order;
-    if (!Number.isSafeInteger(order) || (order as number) < 0)
-      invalid(
-        "regex_order_invalid",
-        "A regex rule must declare a non-negative integer order",
-        location,
-      );
-    if (orders.has(order as number))
-      invalid(
-        "regex_order_duplicate",
-        "Regex rule order cannot be duplicated",
-        location,
-      );
-    orders.add(order as number);
-    const scope = raw.scope;
-    if (
-      scope !== "raw_text" &&
-      scope !== "markdown_html" &&
-      scope !== "structured_payload"
-    )
-      invalid(
-        "regex_scope_invalid",
-        "A regex rule must declare raw_text, markdown_html, or structured_payload scope",
-        location,
-      );
-    const pattern = raw.pattern;
-    if (
-      typeof pattern !== "string" ||
-      pattern.length === 0 ||
-      pattern.length > 4_096
-    )
-      invalid(
-        "regex_pattern_invalid",
-        "Regex pattern must be a bounded non-empty string",
-        location,
-      );
-    const flags = raw.flags === undefined ? "" : raw.flags;
-    if (typeof flags !== "string" || flags.length > 16)
-      invalid("regex_flags_invalid", "Regex flags are invalid", location);
-    try {
-      new RegExp(pattern, flags);
-    } catch {
-      invalid(
-        "regex_pattern_invalid",
-        "Regex pattern could not be compiled",
-        location,
-      );
-    }
-    if (typeof raw.replace !== "string")
-      invalid("regex_replace_invalid", "Regex replace must be text", location);
-    const maxMatches = raw.maxMatches ?? 1;
-    if (
-      !Number.isSafeInteger(maxMatches) ||
-      (maxMatches as number) < 1 ||
-      (maxMatches as number) > 1_024
-    )
-      invalid(
-        "regex_limit_invalid",
-        "Regex replacement count must be a bounded positive integer",
-        location,
-      );
-    const errorPolicy = raw.errorPolicy;
-    if (
-      errorPolicy !== "fallback" &&
-      errorPolicy !== "skip" &&
-      errorPolicy !== "fail"
-    )
-      invalid(
-        "regex_error_policy_invalid",
-        "A regex rule must declare fallback, skip, or fail errorPolicy",
-        location,
-      );
-    return {
-      order: order as number,
-      scope,
-      pattern,
-      flags,
-      replace: raw.replace,
-      maxMatches: maxMatches as number,
-      errorPolicy,
-    };
-  });
-  return parsed.sort((left, right) => left.order - right.order);
+  try {
+    return parseDisplayRegex(source, path);
+  } catch (error) {
+    if (error instanceof DisplayRegexError)
+      throw new FileNativePlayPresetError(error.code, error.message);
+    throw error;
+  }
 }
 
 function validateRegexAsset(source: string, path: string): void {
@@ -3341,154 +3249,6 @@ function cloneFiles(files: Record<string, string>): Record<string, string> {
   return Object.fromEntries(
     Object.entries(files).map(([path, contents]) => [path, contents]),
   );
-}
-
-export function validatePlayPresetArtifactPayload(
-  contract: PlayPresetArtifactPayloadContract | undefined,
-  value: unknown,
-): { ok: true } | { ok: false; message: string } {
-  if (contract === undefined) return { ok: true };
-  if (!isJsonValueValue(value))
-    return {
-      ok: false,
-      message: "JSON artifact payload must be a valid JSON value",
-    };
-  return validatePayloadNode(contract, value, "$", 0);
-}
-
-function validatePayloadNode(
-  contract: PlayPresetArtifactPayloadContract,
-  value: unknown,
-  path: string,
-  depth: number,
-): { ok: true } | { ok: false; message: string } {
-  if (depth > 32)
-    return { ok: false, message: `${path} payload nesting exceeds 32 levels` };
-  const actual =
-    value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
-  const typeMatches =
-    contract.type === actual ||
-    (contract.type === "number" && actual === "number") ||
-    (contract.type === "integer" &&
-      actual === "number" &&
-      Number.isInteger(value));
-  if (!typeMatches)
-    return {
-      ok: false,
-      message: `${path} payload type must be ${contract.type}; received ${actual}`,
-    };
-  if (contract.maxBytes !== undefined) {
-    const encoded = JSON.stringify(value);
-    if (
-      encoded === undefined ||
-      Buffer.byteLength(encoded, "utf8") > contract.maxBytes
-    )
-      return {
-        ok: false,
-        message: `${path} payload exceeds its declared ${contract.maxBytes}-byte limit`,
-      };
-  }
-  if (contract.type === "string") {
-    const text = value as string;
-    if (
-      contract.minLength !== undefined &&
-      [...text].length < contract.minLength
-    )
-      return {
-        ok: false,
-        message: `${path} text length is less than ${contract.minLength}`,
-      };
-    if (
-      contract.maxLength !== undefined &&
-      [...text].length > contract.maxLength
-    )
-      return {
-        ok: false,
-        message: `${path} text length exceeds ${contract.maxLength}`,
-      };
-  }
-  if (contract.type === "array") {
-    const entries = value as unknown[];
-    if (contract.minItems !== undefined && entries.length < contract.minItems)
-      return {
-        ok: false,
-        message: `${path} has fewer than ${contract.minItems} items`,
-      };
-    if (contract.maxItems !== undefined && entries.length > contract.maxItems)
-      return {
-        ok: false,
-        message: `${path} has more than ${contract.maxItems} items`,
-      };
-    const seen = new Set<string>();
-    for (const [index, entry] of entries.entries()) {
-      if (contract.items !== undefined) {
-        const result = validatePayloadNode(
-          contract.items,
-          entry,
-          `${path}[${index}]`,
-          depth + 1,
-        );
-        if (!result.ok) return result;
-      }
-      if (contract.uniqueBy !== undefined && isRecordValue(entry)) {
-        const unique = entry[contract.uniqueBy];
-        if (
-          typeof unique !== "string" &&
-          typeof unique !== "number" &&
-          typeof unique !== "boolean"
-        )
-          return {
-            ok: false,
-            message: `${path}[${index}].${contract.uniqueBy} must be a uniquely comparable scalar`,
-          };
-        const key = JSON.stringify(unique);
-        if (seen.has(key))
-          return {
-            ok: false,
-            message: `${path} ${contract.uniqueBy} values cannot be duplicated`,
-          };
-        seen.add(key);
-      }
-    }
-  }
-  if (contract.type === "object") {
-    const object = value as Record<string, unknown>;
-    const properties = contract.properties ?? {};
-    for (const required of contract.required ?? [])
-      if (!(required in object))
-        return { ok: false, message: `${path}.${required} is required` };
-    if (contract.additionalProperties === false)
-      for (const key of Object.keys(object))
-        if (!(key in properties))
-          return {
-            ok: false,
-            message: `${path}.${key} is not a declared field`,
-          };
-    for (const [key, child] of Object.entries(properties)) {
-      if (!(key in object)) continue;
-      const result = validatePayloadNode(
-        child,
-        object[key],
-        `${path}.${key}`,
-        depth + 1,
-      );
-      if (!result.ok) return result;
-    }
-  }
-  return { ok: true };
-}
-
-function isJsonValueValue(value: unknown): boolean {
-  if (value === null || typeof value === "string" || typeof value === "boolean")
-    return true;
-  if (typeof value === "number") return Number.isFinite(value);
-  if (Array.isArray(value)) return value.every(isJsonValueValue);
-  if (!isRecordValue(value)) return false;
-  return Object.values(value).every(isJsonValueValue);
-}
-
-function isRecordValue(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function invalid(code: string, message: string, location: string): never {

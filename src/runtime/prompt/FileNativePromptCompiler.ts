@@ -1090,7 +1090,7 @@ Only the artifacts declared below may be submitted. The model chooses an output 
 ${followup.artifacts
   .map(
     (artifact) =>
-      `- output=${artifact.name}; channel=${artifact.channel}; key=${artifact.key ?? none}; contentType=${artifact.contentType}; renderer=${artifact.renderer ?? "builtin"}@${artifact.rendererRevision ?? "v1"}; save=${artifact.save}; projection=${artifact.strategy}; invalidation=${artifact.invalidation}; required=${artifact.required ? "yes" : "no"}; maxEmits=${artifact.maxEmits}${
+      `- output=${artifact.name}${artifact.purpose === undefined ? "" : `; purpose=${JSON.stringify(artifact.purpose)}`}; channel=${artifact.channel}; key=${artifact.key ?? none}; contentType=${artifact.contentType}; renderer=${artifact.renderer ?? "builtin"}@${artifact.rendererRevision ?? "v1"}; save=${artifact.save}; projection=${artifact.strategy}; invalidation=${artifact.invalidation}; required=${artifact.required ? "yes" : "no"}; maxEmits=${artifact.maxEmits}${
         artifact.payloadContract === undefined
           ? ""
           : `; payloadContract=${payloadContractSummary(artifact.payloadContract)}`

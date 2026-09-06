@@ -289,3 +289,29 @@ test("仅 CSS 的作者规则位于默认样式之后", () => {
   expect(styles).toHaveLength(2);
   expect(styles[1]!.textContent).toBe("body { color: red; }");
 });
+
+test("disabled display rules retain their order but do not transform payloads", () => {
+  const rule = {
+    order: 0,
+    scope: "raw_text" as const,
+    pattern: "original",
+    flags: "g",
+    replace: "changed",
+    maxMatches: 10,
+    errorPolicy: "fallback" as const,
+  };
+  expect(
+    applyRegexPipeline({
+      contentType: "text/plain",
+      payload: "original",
+      rules: [rule],
+    }).final,
+  ).toBe("changed");
+  expect(
+    applyRegexPipeline({
+      contentType: "text/plain",
+      payload: "original",
+      rules: [{ ...rule, enabled: false }],
+    }).final,
+  ).toBe("original");
+});

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { mkdir } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { FileNativePlayPresetLibrary } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
 import type { V1Request } from "../../src/protocol/v1.ts";
@@ -95,17 +96,20 @@ test("纯界面编辑、草稿预览和游玩显示不增加模型调用，字�
       ),
     )!;
     expect(authorPreset).toBeDefined();
-    await page.getByRole("tab", { name: /界面扩展/u }).click();
+    await page.getByRole("tab", { name: /游玩/u }).click();
+    await page
+      .locator(".preset-directory-group")
+      .last()
+      .getByRole("button", { name: "当前状态", exact: true })
+      .click();
     await expect(page.getByText(/先在“调用链”新增后置请求/u)).toHaveCount(0);
     await page.getByLabel("玩家视图面板 1 标题").fill("未保存状态栏42");
     await page
       .getByLabel("玩家视图面板 1 显示位置")
       .selectOption("composer_above");
+    await page.getByText("player-view-status.css", { exact: true }).click();
     await page
-      .getByText("编辑资源 player-view-status.css", { exact: true })
-      .click();
-    await page
-      .getByLabel("资源内容 player-view-status.css")
+      .getByLabel("player-view-status.css", { exact: true })
       .fill("body { color: rgb(120, 0, 120); }");
     await page.getByLabel("预览世界").selectOption(worldId);
     await page.getByRole("button", { name: "预览界面", exact: true }).click();
@@ -118,6 +122,14 @@ test("纯界面编辑、草稿预览和游玩显示不增加模型调用，字�
     await expect(
       preview.getByText("Alex is folding a jersey.", { exact: true }),
     ).toBeVisible();
+    await mkdir("/tmp/narraeon-issue45-evidence", { recursive: true });
+    await page
+      .locator('.interface-extension-preview iframe[title="current_view"]')
+      .scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: "/tmp/narraeon-issue45-evidence/A-interface.png",
+      fullPage: true,
+    });
     await expect(preview.locator("body")).toHaveCSS(
       "color",
       "rgb(120, 0, 120)",
@@ -161,12 +173,10 @@ test("纯界面编辑、草稿预览和游玩显示不增加模型调用，字�
     await expect(
       page.locator(".interface-extension-preview iframe"),
     ).toHaveCount(0);
-    await page
-      .getByRole("button", { name: "新增玩家视图面板", exact: true })
-      .click();
-    await page.getByLabel("玩家视图面板 2 标题").fill("内置面板42");
-    await page.getByLabel("玩家视图面板 2 视图").fill("other");
-    const added = page.locator(".play-preset-player-panel-card").nth(1);
+    await page.getByRole("button", { name: "新增纯界面", exact: true }).click();
+    await page.getByLabel("玩家视图面板 1 标题").fill("内置面板42");
+    await page.getByLabel("玩家视图面板 1 视图").fill("other");
+    const added = page.locator(".play-preset-player-panel-card");
     await added.getByLabel("排列方式").selectOption("grid");
     await page.getByRole("button", { name: "预览界面", exact: true }).click();
     await expect(

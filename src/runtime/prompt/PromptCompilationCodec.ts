@@ -72,9 +72,19 @@ function validPlayArtifact(value: unknown): boolean {
         "scripts",
         "assets",
         "payloadContract",
+        "displayName",
+        "purpose",
       ],
     ) &&
     typeof value.name === "string" &&
+    (value.displayName === undefined ||
+      (typeof value.displayName === "string" &&
+        value.displayName.length <= 160 &&
+        !value.displayName.includes("\0"))) &&
+    (value.purpose === undefined ||
+      (typeof value.purpose === "string" &&
+        value.purpose.length <= 16000 &&
+        !value.purpose.includes("\0"))) &&
     typeof value.channel === "string" &&
     ["append", "replace", "upsert", "transient", "hidden"].includes(
       String(value.strategy),

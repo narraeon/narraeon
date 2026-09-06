@@ -211,11 +211,9 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
 
   await page.getByRole("button", { name: "预设" }).click();
   await expect(page.getByRole("heading", { name: "玩法预设" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "调用链" })).toBeVisible();
-  await expect(page.getByLabel("玩法预设文件编辑器")).toContainText(
-    "完整内容包提示",
-  );
-  await expect(page.getByLabel("玩法预设文件编辑器")).toContainText("后置请求");
+  await expect(page.getByRole("list", { name: "提示词顺序" })).toBeVisible();
+  await expect(page.getByLabel("预设编辑器")).toContainText("完整内容包提示");
+  await expect(page.getByLabel("预设编辑器")).toContainText("后置请求");
   await page.getByRole("button", { name: "新增提示词", exact: true }).click();
   await page.getByLabel("提示词名称", { exact: true }).fill("Before world");
   await page
