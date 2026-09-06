@@ -1,3 +1,4 @@
+import { resourceTitle } from "./preset-resource-names.ts";
 import "./preset-workbench.css";
 import { PresetWorkbenchEditor } from "./PresetWorkbenchEditor.tsx";
 import { PresetDraftPreview } from "./PresetDraftPreview.tsx";
@@ -11,7 +12,7 @@ import {
   describePresetFile,
 } from "./playPresetEditorLabels.ts";
 import type { OrderedPlayPrompt } from "../shared/ordered-play-prompts.ts";
-import { uiText } from "./i18n.ts";
+import { getWebLocale, uiText } from "./i18n.ts";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import type { V1Request } from "../protocol/v1.ts";
@@ -890,9 +891,45 @@ export function PlayPresetScreen({
                     .map((path) => (
                       <details key={path}>
                         <summary>
-                          {describePresetFile(path, draft.files[path] ?? "")
-                            .title ?? path.split("/").at(-1)}
+                          {/^(assets|scripts|renderers|regex)\//u.test(path)
+                            ? resourceTitle(path)
+                            : (describePresetFile(path, draft.files[path] ?? "")
+                                .title ?? path.split("/").at(-1))}
                         </summary>
+                        {/^(assets|scripts|renderers|regex)\//u.test(path) && (
+                          <button
+                            type="button"
+                            disabled={Object.entries(draft.files).some(
+                              ([other, body]) =>
+                                other !== path &&
+                                !structuralPaths.has(other) &&
+                                body.includes(path),
+                            )}
+                            onClick={() =>
+                              setDraft((current) => {
+                                if (!current?.structure || boundPaths.has(path))
+                                  return current;
+                                const files = { ...current.files };
+                                delete files[path];
+                                return {
+                                  ...current,
+                                  files,
+                                  structure: {
+                                    ...current.structure,
+                                    extensionRefs:
+                                      current.structure.extensionRefs.filter(
+                                        (ref) => ref !== path,
+                                      ),
+                                  },
+                                };
+                              })
+                            }
+                          >
+                            {getWebLocale() === "zh-CN"
+                              ? "删除未引用资源"
+                              : "Delete unused resource"}
+                          </button>
+                        )}
                         <textarea
                           aria-label={path.split("/").at(-1)}
                           value={draft.files[path]}

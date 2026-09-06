@@ -1,5 +1,6 @@
+import { resourceTitle } from "./preset-resource-names.ts";
 import { parseDisplayRegex } from "../shared/display-regex.ts";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { parseDocument, stringify } from "yaml";
 import { getWebLocale } from "./i18n.ts";
 import type { FrontendRegexRule } from "./ArtifactExtensionHost.tsx";
@@ -37,7 +38,10 @@ export function PresetDisplayEditor({
       next[kind] = (next[kind] ?? []).filter((p) => p !== path);
     else {
       delete next[kind];
-      if (kind === "renderer") delete next.rendererRevision;
+      if (kind === "renderer") {
+        delete next.rendererRevision;
+        next.rendererMode = "document";
+      }
     }
     onChange(next);
   }
@@ -65,12 +69,17 @@ export function PresetDisplayEditor({
       scripts: "scripts",
       assets: "assets",
     }[kind];
-    const name =
-      Array.from(resourceName.trim())
-        .map((char) =>
-          char.charCodeAt(0) < 32 || '\\/:*?"<>|'.includes(char) ? "-" : char,
-        )
-        .join("") || "resource";
+    // User labels can contain Unicode; the portable reference codec uses ASCII.
+    const name = resourceName.trim()
+      ? "named-" +
+        Array.from(resourceName.trim().slice(0, 24))
+          .map((char) =>
+            /[A-Za-z0-9.-]/u.test(char)
+              ? char
+              : `_u${char.codePointAt(0)!.toString(16)}_`,
+          )
+          .join("")
+      : "resource";
     const path = `${directory}/${name}.${crypto.randomUUID()}.${suffix}`;
     onWrite(path, body);
     attach(kind, path);
@@ -125,6 +134,7 @@ export function PresetDisplayEditor({
       <label>
         {t("运行方式", "Rendering mode")}
         <select
+          aria-label={t("运行方式", "Rendering mode")}
           value={value.rendererMode ?? "document"}
           onChange={(e) =>
             onChange({
@@ -205,6 +215,7 @@ export function PresetDisplayEditor({
         <input
           aria-label={t("资源名称", "Resource name")}
           placeholder={t("资源名称", "Resource name")}
+          maxLength={24}
           value={resourceName}
           onChange={(e) => setResourceName(e.target.value)}
         />
@@ -343,7 +354,7 @@ function RegexEditor({
   source: string;
   onChange: (source: string) => void;
 }) {
-  const authored = useRef<{
+  const [authored, setAuthored] = useState<{
     source: string;
     rules: FrontendRegexRule[];
     wrapped: boolean;
@@ -363,14 +374,14 @@ function RegexEditor({
   } catch (error) {
     failure = String(error);
   }
-  const editing = authored.current?.source === source;
-  if (editing && authored.current) {
-    rules = authored.current.rules;
-    wrapped = authored.current.wrapped;
+  const editing = authored?.source === source;
+  if (editing && authored) {
+    rules = authored.rules;
+    wrapped = authored.wrapped;
   }
   function write(next: FrontendRegexRule[]) {
     const body = stringify(wrapped ? { rules: next } : next);
-    authored.current = { source: body, rules: next, wrapped };
+    setAuthored({ source: body, rules: next, wrapped });
     onChange(body);
   }
   function update(index: number, patch: Partial<FrontendRegexRule>) {
@@ -522,12 +533,5 @@ function RegexEditor({
           );
         })}
     </>
-  );
-}
-
-function resourceTitle(path: string): string {
-  return (path.split("/").at(-1) ?? path).replace(
-    /\.[a-f0-9]{8}-[a-f0-9-]{27}(?=\.)/gu,
-    "",
   );
 }

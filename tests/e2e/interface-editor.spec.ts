@@ -123,6 +123,9 @@ test("纯界面编辑、草稿预览和游玩显示不增加模型调用，字�
       preview.getByText("Alex is folding a jersey.", { exact: true }),
     ).toBeVisible();
     await mkdir("/tmp/narraeon-issue45-evidence", { recursive: true });
+    await page
+      .locator('.interface-extension-preview iframe[title="current_view"]')
+      .scrollIntoViewIfNeeded();
     await page.screenshot({
       path: "/tmp/narraeon-issue45-evidence/A-interface.png",
       fullPage: true,

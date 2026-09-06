@@ -514,6 +514,10 @@ export function PresetWorkbenchEditor({
                         while (
                           followup.artifacts.some(
                             (a) => a.name === `output_${suffix}`,
+                          ) ||
+                          structure.mounts.some(
+                            (m) =>
+                              m.channel === `${followup.id}.output_${suffix}`,
                           )
                         )
                           suffix++;

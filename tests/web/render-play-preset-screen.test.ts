@@ -320,3 +320,50 @@ test("first-party scripts leave bridge.ready to the production host", () => {
     firstPartyActionChoicesPresetFiles["scripts/player-options.js"],
   ).not.toContain('type: "bridge.ready"');
 });
+
+test("unused named resources can be deleted after unlinking without leaving export references", async () => {
+  const request = setup();
+  addFollowup();
+  outputs();
+  fireEvent.change(screen.getByLabelText("资源名称"), {
+    target: { value: "样式 - 雾港" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "新建命名资源" }));
+  const resource = screen
+    .getByText("样式 - 雾港.css", { exact: true, selector: "summary" })
+    .closest("details")!;
+  fireEvent.click(
+    within(resource).getByText("样式 - 雾港.css", {
+      exact: true,
+      selector: "summary",
+    }),
+  );
+  fireEvent.click(within(resource).getByRole("button", { name: "移除此引用" }));
+  fireEvent.click(screen.getByText("预设操作", { exact: true }));
+  fireEvent.click(screen.getByText("保留的资源", { exact: true }));
+  const unused = screen
+    .getByText("样式 - 雾港.css", { exact: true, selector: "summary" })
+    .closest("details")!;
+  fireEvent.click(
+    within(unused).getByText("样式 - 雾港.css", {
+      exact: true,
+      selector: "summary",
+    }),
+  );
+  fireEvent.click(
+    within(unused).getByRole("button", { name: "删除未引用资源" }),
+  );
+  expect(screen.queryByText("样式 - 雾港.css", { exact: true })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+  await waitFor(() =>
+    expect(request.mock.calls.some(([r]) => r.type === "play.save")).toBe(true),
+  );
+  const save = request.mock.calls
+    .map(([r]) => r)
+    .find(
+      (r): r is Extract<V1Request, { type: "play.save" }> =>
+        r.type === "play.save",
+    )!;
+  expect(Object.keys(save.files).some((p) => p.includes("named-"))).toBe(false);
+  expect(JSON.stringify(save.structure)).not.toContain("named-");
+});

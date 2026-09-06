@@ -99,6 +99,10 @@ test("A 工作台真实保存、独立三产物、正则、JS、导入及下一�
     await page
       .getByRole("button", { name: "＋ 新增产物", exact: true })
       .click();
+    await page.getByRole("button", { name: "移除此产物", exact: true }).click();
+    await page
+      .getByRole("button", { name: "＋ 新增产物", exact: true })
+      .click();
     await page.getByLabel("产物名称", { exact: true }).fill("第二份观察");
     await page.getByLabel("产物显示位置").selectOption("sidebar");
     await page
@@ -107,6 +111,28 @@ test("A 工作台真实保存、独立三产物、正则、JS、导入及下一�
     await page
       .getByLabel("HTML", { exact: true })
       .fill("<h2>SECOND TEMPLATE</h2><!-- narraeon:content -->");
+    await page.getByLabel("运行方式", { exact: true }).selectOption("app");
+    await page.getByLabel("显示方式", { exact: true }).selectOption("");
+    await expect(page.getByLabel("运行方式", { exact: true })).toHaveValue(
+      "document",
+    );
+    await page
+      .getByRole("button", { name: "新建 HTML 模板", exact: true })
+      .click();
+    await page
+      .getByLabel("HTML", { exact: true })
+      .fill("<h2>SECOND TEMPLATE</h2><!-- narraeon:content -->");
+    await page.getByLabel("资源名称", { exact: true }).fill("样式 - 雾港");
+    await page
+      .getByRole("button", { name: "新建命名资源", exact: true })
+      .click();
+    await page
+      .locator("summary")
+      .filter({ hasText: /^样式 - 雾港.css$/u })
+      .click();
+    await page
+      .getByLabel("样式 - 雾港.css", { exact: true })
+      .fill("body { color: #223344; }");
     await page
       .getByText("JavaScript 示例 · 新建独立产物", { exact: true })
       .click();
