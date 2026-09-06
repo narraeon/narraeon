@@ -7,6 +7,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import { resourceTitle } from "../../src/web/preset-resource-names.ts";
 import { createElement } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import type { V1Request } from "../../src/protocol/v1.ts";
@@ -329,6 +330,11 @@ test("unused named resources can be deleted after unlinking without leaving expo
     target: { value: "样式 - 雾港" },
   });
   fireEvent.click(screen.getByRole("button", { name: "新建命名资源" }));
+  expect(
+    resourceTitle(
+      "assets/12345678-1234-1234-1234-123456789abc-named-_u6837__u5f0f_.12345678-1234-1234-1234-123456789abc.css",
+    ),
+  ).toBe("样式.css");
   const resource = screen
     .getByText("样式 - 雾港.css", { exact: true, selector: "summary" })
     .closest("details")!;

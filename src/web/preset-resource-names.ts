@@ -1,6 +1,8 @@
 export function resourceTitle(path: string): string {
   const filename = path.split("/").at(-1) ?? path;
-  const title = filename.replace(/\.[a-f0-9]{8}-[a-f0-9-]{27}(?=\.)/gu, "");
+  const title = filename
+    .replace(/^(?:[a-f0-9]{8}-[a-f0-9-]{27}-)+/u, "")
+    .replace(/\.[a-f0-9]{8}-[a-f0-9-]{27}(?=\.)/gu, "");
   return title !== filename && title.startsWith("named-")
     ? title
         .slice(6)
