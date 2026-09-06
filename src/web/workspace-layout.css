@@ -485,11 +485,50 @@
 .setting-overlay-rail-right.is-editing {
   width: min(1260px, calc(100% - 24px));
 }
+.setting-overlay-rail > header > div,
+.world-overlay-rail > header > div {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.setting-overlay-rail .panel-count {
+  font-size: 12px;
+  color: var(--muted);
+}
 .setting-overlay-rail .content-tree-editor.is-embedded {
   padding: 0;
 }
+.content-tree-editor {
+  gap: 0;
+}
 .content-tree-editor .content-tree-heading {
-  padding: 18px 22px;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 22px;
+}
+.content-save-help {
+  font-size: 12px;
+  color: var(--muted);
+}
+.content-save-help .field-note {
+  margin: 8px 0 0;
+}
+.content-tree-editor .content-tree-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.content-rename-file {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.content-rename-file .content-path-editor {
+  margin-top: 10px;
 }
 .content-permission-disclosure,
 .content-tree-editor > .package-followups-editor {
@@ -547,6 +586,20 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 0;
+}
+.world-management-dialog .world-name-editor {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+.world-name-editor > label {
+  flex: 1;
+  min-width: 0;
+}
+.world-management-dialog .world-name-editor > button {
+  flex: 0 0 auto;
+  width: auto;
 }
 .world-management-body > article,
 .manage-disclosure,
@@ -670,9 +723,17 @@
   grid-column: 1 / -1;
 }
 .model-connection-screen .config-form > .section-heading-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
   margin-bottom: 12px;
   border-bottom: 1px solid var(--border);
   padding-bottom: 12px;
+}
+.model-connection-screen .config-form > .section-heading-row h3 {
+  margin: 0;
 }
 .model-connection-screen .config-form > .form-actions {
   padding-top: 16px;
@@ -803,6 +864,13 @@
   padding: 24px;
   min-height: 0;
 }
+.prompt-preview-waiting {
+  min-height: 0;
+  padding: 8px 0;
+  border: 0;
+  background: transparent;
+  font-size: 13px;
+}
 .prompt-preview-result {
   gap: 12px;
 }
@@ -881,7 +949,7 @@
   .play-preset-screen .ordered-play-editor > aside,
   .play-preset-screen .ordered-play-content,
   .play-preset-screen .preset-object-detail {
-    height: calc(100dvh - 222px);
+    height: calc(100dvh - 192px);
   }
 }
 @media (max-width: 960px) {

@@ -67,20 +67,23 @@ export function ContentTreeEditor({
     >
       <header className="section-heading-row content-tree-heading">
         <div>
-          <h3>
+          <h3 className={embedded ? "visually-hidden" : undefined}>
             {mode === "world-revision"
               ? uiText("世界修订工作树")
               : uiText("内容包当前树")}
           </h3>
-          <p className="field-note">
-            {mode === "world-revision"
-              ? uiText(
-                  "手动编辑与 AI 共用这棵 state／control 工作树；保存后仍可逐次回滚，应用才会提交世界。",
-                )
-              : uiText(
-                  "逐份编辑 YAML／Markdown；整批保存时才原子替换已保存版本。",
-                )}
-          </p>
+          <details className="content-save-help">
+            <summary>{uiText("保存说明")}</summary>
+            <p className="field-note">
+              {mode === "world-revision"
+                ? uiText(
+                    "手动编辑与 AI 共用这棵 state／control 工作树；保存后仍可逐次回滚，应用才会提交世界。",
+                  )
+                : uiText(
+                    "逐份编辑 YAML／Markdown；整批保存时才原子替换已保存版本。",
+                  )}
+            </p>
+          </details>
         </div>
         <div
           className="content-tree-state"
@@ -94,7 +97,7 @@ export function ContentTreeEditor({
               : uiText("已保存版本：")}
             {status === "usable" ? uiText("可用") : uiText("需要修复")}
           </span>
-          <span className={dirty ? "draft-state dirty" : "draft-state"}>
+          <span className={dirty ? "draft-state dirty" : "visually-hidden"}>
             {dirty
               ? uiText("有未保存修改")
               : mode === "world-revision"

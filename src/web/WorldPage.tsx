@@ -1958,7 +1958,6 @@ export function WorldPage({
           >
             <header>
               <div>
-                <span>PLAYER VIEW</span>
                 <strong>{uiText("此刻")}</strong>
               </div>
               <button
@@ -2018,7 +2017,6 @@ export function WorldPage({
           >
             <header>
               <div>
-                <span>WORLD CONTEXT</span>
                 <strong>
                   {rightRailTab === "documents"
                     ? uiText("当前世界")

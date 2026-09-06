@@ -502,11 +502,7 @@ export function PromptPreviewScreen({
           className="prompt-preview-waiting"
           aria-label={uiText("等待生成预览")}
         >
-          <span aria-hidden="true">01 — 04</span>
-          <div>
-            <strong>{uiText("生成后按四个视角检查")}</strong>
-            <p>{uiText("逻辑消息、材料与工具、Provider 映射、预算与诊断。")}</p>
-          </div>
+          <p>{uiText("生成预览后，在这里查看实际发送的消息、材料与工具。")}</p>
         </section>
       ) : (
         <PromptPreviewResult

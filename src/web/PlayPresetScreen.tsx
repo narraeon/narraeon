@@ -603,70 +603,43 @@ export function PlayPresetScreen({
       <fieldset disabled={pending} className="play-preset-workspace">
         <legend className="visually-hidden">{uiText("玩法预设工作区")}</legend>
         <div className="play-preset-layout">
-          <aside
-            className="panel-card play-preset-library"
-            aria-label={uiText("玩法预设列表")}
-          >
-            <label>
-              <span role="heading" aria-level={2}>
-                {uiText("玩法预设")}
-              </span>
-              <select
-                aria-label={uiText("切换预设")}
-                value={selectedId ?? ""}
-                disabled={pending || dirty}
-                onChange={(event) => selectDraft(event.target.value)}
-              >
-                {library.presets.map((preset) => (
-                  <option key={preset.id} value={preset.id}>
-                    {preset.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <details ref={libraryMenu}>
-              <summary>{uiText("预设管理")}</summary>
-
-              <section
-                className="play-preset-library-actions"
-                aria-label={uiText("新建与导入玩法预设")}
-              >
-                <h4>{uiText("新建或导入")}</h4>
-                <input
-                  aria-label={uiText("新玩法预设名称")}
-                  placeholder={uiText("新玩法预设名称")}
-                  value={newName}
-                  onChange={(event) => setNewName(event.currentTarget.value)}
-                />
-                <button
-                  type="button"
-                  disabled={pending || dirty || newName.trim() === ""}
-                  onClick={() =>
-                    void run(async () => {
-                      const result = await client.request<{
-                        currentPresetId: string;
-                        preset: PlayPresetScreenPreset;
-                      }>({
-                        type: "play.create",
-                        name: newName.trim(),
-                      });
-                      setNewName("");
-                      await refresh(result.preset.id);
-                      setFeedback({
-                        kind: "status",
-                        text: uiText("已新建普通玩法预设。"),
-                      });
-                    })
-                  }
+          <div className="play-preset-toolbar">
+            <aside
+              className="panel-card play-preset-library"
+              aria-label={uiText("玩法预设列表")}
+            >
+              <label>
+                <span className="visually-hidden">{uiText("玩法预设")}</span>
+                <select
+                  aria-label={uiText("切换预设")}
+                  value={selectedId ?? ""}
+                  disabled={pending || dirty}
+                  onChange={(event) => selectDraft(event.target.value)}
                 >
-                  {uiText("新建空白预设")}
-                </button>
-                {recommendedTemplates.map((template) => (
+                  {library.presets.map((preset) => (
+                    <option key={preset.id} value={preset.id}>
+                      {preset.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <details ref={libraryMenu}>
+                <summary>{uiText("预设管理")}</summary>
+
+                <section
+                  className="play-preset-library-actions"
+                  aria-label={uiText("新建与导入玩法预设")}
+                >
+                  <h4>{uiText("新建或导入")}</h4>
+                  <input
+                    aria-label={uiText("新玩法预设名称")}
+                    placeholder={uiText("新玩法预设名称")}
+                    value={newName}
+                    onChange={(event) => setNewName(event.currentTarget.value)}
+                  />
                   <button
-                    key={template.id}
                     type="button"
-                    className="secondary-button"
-                    disabled={pending || dirty}
+                    disabled={pending || dirty || newName.trim() === ""}
                     onClick={() =>
                       void run(async () => {
                         const result = await client.request<{
@@ -674,39 +647,305 @@ export function PlayPresetScreen({
                           preset: PlayPresetScreenPreset;
                         }>({
                           type: "play.create",
-                          name: template.name,
-                          files: structuredClone(template.files),
+                          name: newName.trim(),
                         });
+                        setNewName("");
                         await refresh(result.preset.id);
                         setFeedback({
                           kind: "status",
-                          text: uiText("已复制推荐{name}，可独立编辑。", {
-                            name: template.label,
-                          }),
+                          text: uiText("已新建普通玩法预设。"),
                         });
                       })
                     }
                   >
-                    {uiText("复制推荐")}
-                    {template.label}
+                    {uiText("新建空白预设")}
                   </button>
-                ))}
-                <label className="play-preset-import-control">
-                  {uiText("导入预设")}
-                  <input
-                    aria-label={uiText("选择要导入的预设")}
-                    type="file"
-                    accept=".json,application/json"
-                    disabled={pending || dirty}
-                    onChange={(event) => {
-                      void importPreset(event.currentTarget.files?.[0]);
-                      event.currentTarget.value = "";
-                    }}
-                  />
-                </label>
-              </section>
-            </details>
-          </aside>
+                  {recommendedTemplates.map((template) => (
+                    <button
+                      key={template.id}
+                      type="button"
+                      className="secondary-button"
+                      disabled={pending || dirty}
+                      onClick={() =>
+                        void run(async () => {
+                          const result = await client.request<{
+                            currentPresetId: string;
+                            preset: PlayPresetScreenPreset;
+                          }>({
+                            type: "play.create",
+                            name: template.name,
+                            files: structuredClone(template.files),
+                          });
+                          await refresh(result.preset.id);
+                          setFeedback({
+                            kind: "status",
+                            text: uiText("已复制推荐{name}，可独立编辑。", {
+                              name: template.label,
+                            }),
+                          });
+                        })
+                      }
+                    >
+                      {uiText("复制推荐")}
+                      {template.label}
+                    </button>
+                  ))}
+                  <label className="play-preset-import-control">
+                    {uiText("导入预设")}
+                    <input
+                      aria-label={uiText("选择要导入的预设")}
+                      type="file"
+                      accept=".json,application/json"
+                      disabled={pending || dirty}
+                      onChange={(event) => {
+                        void importPreset(event.currentTarget.files?.[0]);
+                        event.currentTarget.value = "";
+                      }}
+                    />
+                  </label>
+                </section>
+              </details>
+            </aside>
+            {draft !== null && (
+              <>
+                <nav
+                  className="play-preset-workspace-nav"
+                  role="tablist"
+                  aria-label={uiText("玩法预设编辑区域")}
+                >
+                  {playPresetWorkspaceViews
+                    .filter(
+                      (view) =>
+                        view.id === "call_chain" ||
+                        view.id === "setting_improvement",
+                    )
+                    .map((view) => (
+                      <button
+                        key={view.id}
+                        id={`play-preset-tab-${view.id}`}
+                        type="button"
+                        role="tab"
+                        aria-controls={`play-preset-panel-${view.id}`}
+                        aria-selected={workspaceView === view.id}
+                        className={workspaceView === view.id ? "selected" : ""}
+                        onClick={() => setWorkspaceView(view.id)}
+                      >
+                        <strong>{uiText(view.label)}</strong>
+                        <span>{uiText(view.description)}</span>
+                      </button>
+                    ))}
+                </nav>
+                <details className="play-preset-operations">
+                  <summary>{uiText("预设操作")}</summary>
+                  <div className="play-preset-operations-content">
+                    <label className="play-preset-name-field">
+                      {uiText("预设名称")}
+                      <input
+                        aria-label={uiText("玩法预设名称")}
+                        maxLength={160}
+                        value={draft.name}
+                        onChange={(event) =>
+                          setDraft({
+                            ...draft,
+                            name: event.currentTarget.value,
+                          })
+                        }
+                      />
+                    </label>
+
+                    <div
+                      className="play-preset-management"
+                      aria-label={uiText("预设操作")}
+                    >
+                      <p>
+                        {uiText(
+                          "这些操作只管理这份本地预设；内容编辑和保存仍在页面底部完成。",
+                        )}
+                      </p>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        disabled={pending || dirty}
+                        onClick={() =>
+                          void run(async () => {
+                            await client.request({
+                              type: "play.enable",
+                              presetId: draft.id,
+                              enabled: draft.enabled === false,
+                            });
+                            await refresh(draft.id);
+                            setFeedback({
+                              kind: "status",
+                              text: uiText("玩法预设状态已更新。"),
+                            });
+                          })
+                        }
+                      >
+                        {draft.enabled === false
+                          ? uiText("启用预设")
+                          : uiText("停用预设")}
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        disabled={pending || dirty}
+                        onClick={() =>
+                          void run(async () => {
+                            await client.request({
+                              type: "play.scripts",
+                              presetId: draft.id,
+                              enabled: draft.scriptsEnabled !== true,
+                            });
+                            await refresh(draft.id);
+                            setFeedback({
+                              kind: "status",
+                              text:
+                                draft.scriptsEnabled === true
+                                  ? uiText(
+                                      "JavaScript 已关闭；文本、HTML 和样式仍可预览。",
+                                    )
+                                  : uiText(
+                                      "JavaScript 已显式启用（本地可信代码）。",
+                                    ),
+                            });
+                          })
+                        }
+                      >
+                        {draft.scriptsEnabled === true
+                          ? uiText("停用 JavaScript")
+                          : uiText("启用 JavaScript（本地可信代码）")}
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        disabled={pending || dirty}
+                        onClick={() =>
+                          void run(async () => {
+                            const copied = await client.request<{
+                              preset: PlayPresetScreenPreset;
+                            }>({ type: "play.copy", presetId: draft.id });
+                            await refresh(copied.preset.id);
+                            setFeedback({
+                              kind: "status",
+                              text: uiText("已复制为独立预设。"),
+                            });
+                          })
+                        }
+                      >
+                        {uiText("复制为新预设")}
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        disabled={pending || dirty}
+                        onClick={() => void exportPreset()}
+                      >
+                        {uiText("导出预设")}
+                      </button>
+                      <button
+                        type="button"
+                        className="danger-button"
+                        disabled={pending || dirty}
+                        onClick={() =>
+                          void run(async () => {
+                            await client.request({
+                              type: "play.delete",
+                              presetId: draft.id,
+                            });
+                            await refresh();
+                            setFeedback({
+                              kind: "status",
+                              text: uiText(
+                                "玩法预设已删除；删空后会自动重建默认预设。",
+                              ),
+                            });
+                          })
+                        }
+                      >
+                        {uiText("删除预设")}
+                      </button>
+                    </div>
+                    <p className="field-note">
+                      {uiText(
+                        "导入的 JavaScript 默认停用；启用表示你信任这些本地文件，而不是获得安全沙箱保证。",
+                      )}
+                    </p>
+                    <details>
+                      <summary>{uiText("保留的资源")}</summary>
+                      <p>
+                        {uiText(
+                          "未绑定资源仍随预设保存；可在模板编辑器重新引用。",
+                        )}
+                      </p>
+                      {Object.keys(draft.files)
+                        .filter(
+                          (path) =>
+                            !structuralPaths.has(path) && !boundPaths.has(path),
+                        )
+                        .map((path) => (
+                          <details key={path}>
+                            <summary>
+                              {/^(assets|scripts|renderers|regex)\//u.test(path)
+                                ? resourceTitle(path)
+                                : (describePresetFile(
+                                    path,
+                                    draft.files[path] ?? "",
+                                  ).title ?? path.split("/").at(-1))}
+                            </summary>
+                            {/^(assets|scripts|renderers|regex)\//u.test(
+                              path,
+                            ) && (
+                              <button
+                                type="button"
+                                disabled={Object.entries(draft.files).some(
+                                  ([other, body]) =>
+                                    other !== path &&
+                                    !structuralPaths.has(other) &&
+                                    body.includes(path),
+                                )}
+                                onClick={() =>
+                                  setDraft((current) => {
+                                    if (
+                                      !current?.structure ||
+                                      boundPaths.has(path)
+                                    )
+                                      return current;
+                                    const files = { ...current.files };
+                                    delete files[path];
+                                    return {
+                                      ...current,
+                                      files,
+                                      structure: {
+                                        ...current.structure,
+                                        extensionRefs:
+                                          current.structure.extensionRefs.filter(
+                                            (ref) => ref !== path,
+                                          ),
+                                      },
+                                    };
+                                  })
+                                }
+                              >
+                                {getWebLocale() === "zh-CN"
+                                  ? "删除未引用资源"
+                                  : "Delete unused resource"}
+                              </button>
+                            )}
+                            <textarea
+                              aria-label={path.split("/").at(-1)}
+                              value={draft.files[path]}
+                              onChange={(event) =>
+                                updateFileAtPath(path, event.target.value)
+                              }
+                            />
+                          </details>
+                        ))}
+                    </details>
+                  </div>
+                </details>
+              </>
+            )}
+          </div>
 
           {draft === null ? (
             <section className="panel-card" role="status">
@@ -748,229 +987,6 @@ export function PlayPresetScreen({
                   </span>
                 </div>
               </header>
-
-              <details className="play-preset-operations">
-                <summary>{uiText("预设操作")}</summary>
-                <label className="play-preset-name-field">
-                  {uiText("预设名称")}
-                  <input
-                    aria-label={uiText("玩法预设名称")}
-                    maxLength={160}
-                    value={draft.name}
-                    onChange={(event) =>
-                      setDraft({ ...draft, name: event.currentTarget.value })
-                    }
-                  />
-                </label>
-
-                <div
-                  className="play-preset-management"
-                  aria-label={uiText("预设操作")}
-                >
-                  <p>
-                    {uiText(
-                      "这些操作只管理这份本地预设；内容编辑和保存仍在页面底部完成。",
-                    )}
-                  </p>
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    disabled={pending || dirty}
-                    onClick={() =>
-                      void run(async () => {
-                        await client.request({
-                          type: "play.enable",
-                          presetId: draft.id,
-                          enabled: draft.enabled === false,
-                        });
-                        await refresh(draft.id);
-                        setFeedback({
-                          kind: "status",
-                          text: uiText("玩法预设状态已更新。"),
-                        });
-                      })
-                    }
-                  >
-                    {draft.enabled === false
-                      ? uiText("启用预设")
-                      : uiText("停用预设")}
-                  </button>
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    disabled={pending || dirty}
-                    onClick={() =>
-                      void run(async () => {
-                        await client.request({
-                          type: "play.scripts",
-                          presetId: draft.id,
-                          enabled: draft.scriptsEnabled !== true,
-                        });
-                        await refresh(draft.id);
-                        setFeedback({
-                          kind: "status",
-                          text:
-                            draft.scriptsEnabled === true
-                              ? uiText(
-                                  "JavaScript 已关闭；文本、HTML 和样式仍可预览。",
-                                )
-                              : uiText(
-                                  "JavaScript 已显式启用（本地可信代码）。",
-                                ),
-                        });
-                      })
-                    }
-                  >
-                    {draft.scriptsEnabled === true
-                      ? uiText("停用 JavaScript")
-                      : uiText("启用 JavaScript（本地可信代码）")}
-                  </button>
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    disabled={pending || dirty}
-                    onClick={() =>
-                      void run(async () => {
-                        const copied = await client.request<{
-                          preset: PlayPresetScreenPreset;
-                        }>({ type: "play.copy", presetId: draft.id });
-                        await refresh(copied.preset.id);
-                        setFeedback({
-                          kind: "status",
-                          text: uiText("已复制为独立预设。"),
-                        });
-                      })
-                    }
-                  >
-                    {uiText("复制为新预设")}
-                  </button>
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    disabled={pending || dirty}
-                    onClick={() => void exportPreset()}
-                  >
-                    {uiText("导出预设")}
-                  </button>
-                  <button
-                    type="button"
-                    className="danger-button"
-                    disabled={pending || dirty}
-                    onClick={() =>
-                      void run(async () => {
-                        await client.request({
-                          type: "play.delete",
-                          presetId: draft.id,
-                        });
-                        await refresh();
-                        setFeedback({
-                          kind: "status",
-                          text: uiText(
-                            "玩法预设已删除；删空后会自动重建默认预设。",
-                          ),
-                        });
-                      })
-                    }
-                  >
-                    {uiText("删除预设")}
-                  </button>
-                </div>
-                <p className="field-note">
-                  {uiText(
-                    "导入的 JavaScript 默认停用；启用表示你信任这些本地文件，而不是获得安全沙箱保证。",
-                  )}
-                </p>
-                <details>
-                  <summary>{uiText("保留的资源")}</summary>
-                  <p>
-                    {uiText("未绑定资源仍随预设保存；可在模板编辑器重新引用。")}
-                  </p>
-                  {Object.keys(draft.files)
-                    .filter(
-                      (path) =>
-                        !structuralPaths.has(path) && !boundPaths.has(path),
-                    )
-                    .map((path) => (
-                      <details key={path}>
-                        <summary>
-                          {/^(assets|scripts|renderers|regex)\//u.test(path)
-                            ? resourceTitle(path)
-                            : (describePresetFile(path, draft.files[path] ?? "")
-                                .title ?? path.split("/").at(-1))}
-                        </summary>
-                        {/^(assets|scripts|renderers|regex)\//u.test(path) && (
-                          <button
-                            type="button"
-                            disabled={Object.entries(draft.files).some(
-                              ([other, body]) =>
-                                other !== path &&
-                                !structuralPaths.has(other) &&
-                                body.includes(path),
-                            )}
-                            onClick={() =>
-                              setDraft((current) => {
-                                if (!current?.structure || boundPaths.has(path))
-                                  return current;
-                                const files = { ...current.files };
-                                delete files[path];
-                                return {
-                                  ...current,
-                                  files,
-                                  structure: {
-                                    ...current.structure,
-                                    extensionRefs:
-                                      current.structure.extensionRefs.filter(
-                                        (ref) => ref !== path,
-                                      ),
-                                  },
-                                };
-                              })
-                            }
-                          >
-                            {getWebLocale() === "zh-CN"
-                              ? "删除未引用资源"
-                              : "Delete unused resource"}
-                          </button>
-                        )}
-                        <textarea
-                          aria-label={path.split("/").at(-1)}
-                          value={draft.files[path]}
-                          onChange={(event) =>
-                            updateFileAtPath(path, event.target.value)
-                          }
-                        />
-                      </details>
-                    ))}
-                </details>
-              </details>
-
-              <nav
-                className="play-preset-workspace-nav"
-                role="tablist"
-                aria-label={uiText("玩法预设编辑区域")}
-              >
-                {playPresetWorkspaceViews
-                  .filter(
-                    (view) =>
-                      view.id === "call_chain" ||
-                      view.id === "setting_improvement",
-                  )
-                  .map((view) => (
-                    <button
-                      key={view.id}
-                      id={`play-preset-tab-${view.id}`}
-                      type="button"
-                      role="tab"
-                      aria-controls={`play-preset-panel-${view.id}`}
-                      aria-selected={workspaceView === view.id}
-                      className={workspaceView === view.id ? "selected" : ""}
-                      onClick={() => setWorkspaceView(view.id)}
-                    >
-                      <strong>{uiText(view.label)}</strong>
-                      <span>{uiText(view.description)}</span>
-                    </button>
-                  ))}
-              </nav>
 
               {draft.structure &&
               (workspaceView === "call_chain" ||

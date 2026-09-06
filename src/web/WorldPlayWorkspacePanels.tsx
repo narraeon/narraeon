@@ -670,7 +670,6 @@ export function WorldManagementDialog({
       >
         <header>
           <div>
-            <span>{uiText("故事之外")}</span>
             <h2 id="world-management-title">{uiText("世界管理")}</h2>
             <p>{uiText("管理名称、分叉、控制文件与 Runtime 诊断。")}</p>
           </div>
@@ -703,7 +702,9 @@ export function WorldManagementDialog({
               }}
             >
               <label>
-                {uiText("世界显示名称")}
+                <span className="visually-hidden">
+                  {uiText("世界显示名称")}
+                </span>
                 <input
                   maxLength={160}
                   value={worldNameDraft}

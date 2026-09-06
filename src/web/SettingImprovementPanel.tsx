@@ -644,8 +644,10 @@ export function SettingImprovementPanel({
         >
           <header>
             <div>
-              <span>CONVERSATIONS</span>
               <strong>{uiText("历史")}</strong>
+              <span className="panel-count">
+                {uiText("{count} 次对话", { count: history.length })}
+              </span>
             </div>
             <button
               type="button"
@@ -685,7 +687,6 @@ export function SettingImprovementPanel({
         >
           <header>
             <div>
-              <span>CONTENT TREE</span>
               <strong>
                 {fileRailMode === "edit"
                   ? uiText("编辑文件")
@@ -772,15 +773,9 @@ function SettingConversationHistory({
       className="setting-conversation-history"
       aria-labelledby="setting-conversation-history-title"
     >
-      <header>
-        <div>
-          <span className="eyebrow">
-            {revisingWorld ? "WORLD REVISION" : "CONTENT PACKAGE"}
-          </span>
-          <h2 id="setting-conversation-history-title">{uiText("对话历史")}</h2>
-        </div>
-        <span>{uiText("{count} 次对话", { count: history.length })}</span>
-      </header>
+      <h2 id="setting-conversation-history-title" className="visually-hidden">
+        {uiText("对话历史")}
+      </h2>
       {history.length === 0 ? (
         <p className="field-note">
           {uiText(

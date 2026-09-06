@@ -420,7 +420,8 @@ export function DocumentWorkbench({
               )}
             </header>
             {managesTree ? (
-              <>
+              <details className="content-rename-file" key={selectedFile.path}>
+                <summary>{uiText("重命名文件")}</summary>
                 <div className="content-path-editor">
                   <label>
                     {uiText("文件路径")}
@@ -453,7 +454,7 @@ export function DocumentWorkbench({
                 ) : selectedPathLocked ? (
                   <p>{uiText("既有状态文档的路径和身份在修订中保持不变。")}</p>
                 ) : null}
-              </>
+              </details>
             ) : null}
             {selectedFile.encoding === "base64" ? (
               <div className="content-binary-note" role="note">

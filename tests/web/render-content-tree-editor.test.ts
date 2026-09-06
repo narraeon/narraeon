@@ -66,6 +66,7 @@ describe("内容包手动编辑界面", () => {
     expect((editor as HTMLTextAreaElement).value).toBe("地点: 球场\n");
     expect(screen.getByText("有未保存修改")).toBeTruthy();
 
+    fireEvent.click(screen.getByText("重命名文件", { exact: true }));
     fireEvent.change(screen.getByLabelText("文件路径"), {
       target: { value: "world/situation/current.yaml" },
     });

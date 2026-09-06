@@ -7,6 +7,10 @@ import {
 let activeLocale: AppLocale = defaultAppLocale;
 
 const englishMessages: Record<string, string> = {
+  保存说明: "About saving",
+  重命名文件: "Rename file",
+  "生成预览后，在这里查看实际发送的消息、材料与工具。":
+    "Generate a preview to inspect the messages, materials, and tools sent to the model.",
   关闭提示: "Dismiss notification",
   "已保留当前页面的未保存修改，请保存或放弃后再切换。":
     "Your unsaved changes have been kept. Save or discard them before switching pages.",
