@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -133,6 +134,7 @@ function renderPanel(
     currentFileContents?: string;
     target?: "content-package" | "world-revision";
     onSend?: (text: string) => Promise<void>;
+    onCreateWorld?: () => void;
     onRollbackFile?: (
       sessionId: string,
       changeSetId: string,
@@ -237,6 +239,9 @@ function renderPanel(
         title: "Test package",
         onRename: () => undefined,
       },
+      ...(options.onCreateWorld === undefined
+        ? {}
+        : { onCreateWorld: options.onCreateWorld }),
       onSend: options.onSend ?? (() => Promise.resolve()),
       onCancel: () => Promise.resolve(),
       onFreshContext: () => undefined,
@@ -283,3 +288,31 @@ for (const target of ["content-package", "world-revision"] as const) {
     );
   });
 }
+
+test("发送尚未返回时立即禁用快捷创建，世界修订不显示创建入口", async () => {
+  let finish: () => void = () => undefined;
+  const onCreateWorld = vi.fn();
+  renderPanel(undefined, {
+    onCreateWorld,
+    onSend: () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  });
+  fireEvent.change(screen.getByRole("textbox", { name: "继续这段对话" }), {
+    target: { value: "完善当前场景" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "发送" }));
+  const create = screen.getByRole("button", { name: "创建世界" });
+  expect(create.hasAttribute("disabled")).toBe(true);
+  fireEvent.click(create);
+  expect(onCreateWorld).not.toHaveBeenCalled();
+  await act(async () => {
+    finish();
+    await Promise.resolve();
+  });
+  expect(create.hasAttribute("disabled")).toBe(false);
+  cleanup();
+  renderPanel(undefined, { target: "world-revision", onCreateWorld });
+  expect(screen.queryByRole("button", { name: "创建世界" })).toBeNull();
+});

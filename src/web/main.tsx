@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App.tsx";
 import { RuntimeClient } from "./runtimeClient.ts";
 import "./styles.css";
+import "./workspace-layout.css";
 
 const root = document.querySelector("#root");
 if (root === null) {

@@ -186,6 +186,20 @@ export function DocumentWorkbench({
     <div
       className={`content-file-workspace document-workbench document-workbench-${workspace.kind}`}
     >
+      <label className="content-mobile-file-picker">
+        {uiText("当前文件")}
+        <select
+          aria-label={uiText("选择编辑文件")}
+          value={selectedPath}
+          onChange={(event) => select(event.currentTarget.value)}
+        >
+          {orderedFiles.map((file) => (
+            <option key={file.path} value={file.path}>
+              {file.path}
+            </option>
+          ))}
+        </select>
+      </label>
       <aside
         className="content-file-sidebar"
         aria-label={

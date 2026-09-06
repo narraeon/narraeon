@@ -40,7 +40,11 @@ describe("内容包手动编辑界面", () => {
     const fileTree = screen.getByRole("navigation", { name: "内容包文件树" });
     expect(within(fileTree).getByText("世界内容")).toBeTruthy();
     expect(within(fileTree).getByText("控制")).toBeTruthy();
-    expect(screen.getByLabelText("内容包文件统计").textContent).toContain("3");
+    expect(
+      within(
+        screen.getByRole("complementary", { name: "内容包文件" }),
+      ).getByText("3 / 3"),
+    ).toBeTruthy();
     fireEvent.click(screen.getByText("内容包操作"));
     expect(screen.getByLabelText<HTMLInputElement>("内容包标题").value).toBe(
       "测试内容包",

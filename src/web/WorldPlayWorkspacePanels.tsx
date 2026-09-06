@@ -631,6 +631,7 @@ export function WorldManagementDialog({
   controlDirty,
   controlPreview,
   onControlFiles,
+  onResetControl,
   onRename,
   onDerive,
   onPreviewControl,
@@ -650,6 +651,7 @@ export function WorldManagementDialog({
   controlDirty: boolean;
   controlPreview: unknown;
   onControlFiles: (value: string) => void;
+  onResetControl: () => void;
   onRename: () => void;
   onDerive: () => void;
   onPreviewControl: () => void;
@@ -677,7 +679,10 @@ export function WorldManagementDialog({
           </button>
         </header>
         <div className="world-management-body">
-          {packageScriptPermission}
+          <details className="world-permission-disclosure">
+            <summary>{uiText("内容包脚本权限")}</summary>
+            {packageScriptPermission}
+          </details>
           {revisionLocked ? (
             <p className="setting-improvement-warning" role="status">
               {uiText(
@@ -734,74 +739,92 @@ export function WorldManagementDialog({
               {uiText("创建分叉")}
             </button>
           </article>
-          <article className="manage-card control-card">
-            <div className="manage-card-copy">
-              <h3>{uiText("世界控制")}</h3>
-              <p>
-                {uiText("控制草稿必须经过真实 Prompt Preview 后整批应用。")}
-              </p>
-            </div>
-            <span className="control-draft-state">
-              {controlDirty
-                ? uiText("有尚未预览的修改")
-                : uiText("当前已应用控制")}
-            </span>
-            <label>
-              {uiText("世界控制文件（JSON）")}
-              <textarea
-                rows={18}
-                value={controlFiles}
-                disabled={revisionLocked}
-                onChange={(event) => onControlFiles(event.currentTarget.value)}
-              />
-            </label>
-            <div className="button-row">
-              <button
-                type="button"
-                disabled={
-                  pending !== null || !modelConfigured || revisionLocked
-                }
-                onClick={onPreviewControl}
-              >
-                {uiText("预览世界控制")}
-              </button>
-              <button
-                type="button"
-                disabled={
-                  pending !== null ||
-                  controlPreview === null ||
-                  activeStatus === "running" ||
-                  revisionLocked
-                }
-                onClick={onApplyControl}
-              >
-                {uiText("整批应用世界控制")}
-              </button>
-            </div>
-            {controlPreview === null ? null : (
+          <details className="manage-disclosure">
+            <summary>{uiText("世界控制 · 高级编辑")}</summary>
+            <article className="manage-card control-card">
+              <div className="manage-card-copy">
+                <h3>{uiText("世界控制")}</h3>
+                <p>
+                  {uiText("控制草稿必须经过真实 Prompt Preview 后整批应用。")}
+                </p>
+              </div>
+              <span className="control-draft-state">
+                {controlDirty
+                  ? uiText("有尚未预览的修改")
+                  : uiText("当前已应用控制")}
+              </span>
+              <label>
+                {uiText("世界控制文件（JSON）")}
+                <textarea
+                  rows={18}
+                  value={controlFiles}
+                  disabled={revisionLocked}
+                  onChange={(event) =>
+                    onControlFiles(event.currentTarget.value)
+                  }
+                />
+              </label>
+              <div className="button-row">
+                <button
+                  type="button"
+                  disabled={
+                    pending !== null || !modelConfigured || revisionLocked
+                  }
+                  onClick={onPreviewControl}
+                >
+                  {uiText("预览世界控制")}
+                </button>
+                <button
+                  type="button"
+                  disabled={
+                    pending !== null ||
+                    controlPreview === null ||
+                    activeStatus === "running" ||
+                    revisionLocked
+                  }
+                  onClick={onApplyControl}
+                >
+                  {uiText("整批应用世界控制")}
+                </button>
+                {controlDirty && (
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={pending !== null}
+                    onClick={onResetControl}
+                  >
+                    {uiText("放弃控制修改")}
+                  </button>
+                )}
+              </div>
+              {controlPreview === null ? null : (
+                <details className="technical-details">
+                  <summary>{uiText("查看真实提示词预览结果")}</summary>
+                  <pre>{JSON.stringify(controlPreview, null, 2)}</pre>
+                </details>
+              )}
+            </article>
+          </details>
+          <details className="manage-disclosure">
+            <summary>{uiText("运行详情")}</summary>
+            <article className="manage-card runtime-card">
+              <h3>{uiText("运行详情")}</h3>
+              <dl className="runtime-summary">
+                <div>
+                  <dt>{uiText("当前端点")}</dt>
+                  <dd>{world.head}</dd>
+                </div>
+                <div>
+                  <dt>{uiText("世界 ID")}</dt>
+                  <dd>{world.worldId}</dd>
+                </div>
+              </dl>
               <details className="technical-details">
-                <summary>{uiText("查看真实提示词预览结果")}</summary>
-                <pre>{JSON.stringify(controlPreview, null, 2)}</pre>
+                <summary>{uiText("查看 Runtime 原始诊断")}</summary>
+                <pre>{JSON.stringify(world.runtime, null, 2)}</pre>
               </details>
-            )}
-          </article>
-          <article className="manage-card runtime-card">
-            <h3>{uiText("运行详情")}</h3>
-            <dl className="runtime-summary">
-              <div>
-                <dt>{uiText("当前端点")}</dt>
-                <dd>{world.head}</dd>
-              </div>
-              <div>
-                <dt>{uiText("世界 ID")}</dt>
-                <dd>{world.worldId}</dd>
-              </div>
-            </dl>
-            <details className="technical-details">
-              <summary>{uiText("查看 Runtime 原始诊断")}</summary>
-              <pre>{JSON.stringify(world.runtime, null, 2)}</pre>
-            </details>
-          </article>
+            </article>
+          </details>
         </div>
       </section>
     </div>

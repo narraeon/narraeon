@@ -7,6 +7,38 @@ import {
 let activeLocale: AppLocale = defaultAppLocale;
 
 const englishMessages: Record<string, string> = {
+  放弃控制修改: "Discard control changes",
+  选择编辑文件: "Choose a file to edit",
+  当前文件: "Current file",
+  工作区导航: "Workspace navigation",
+  切换页面: "Switch page",
+  内容包读取失败: "Could not load content package",
+  "选择一份内容包，从它的开场开始。":
+    "Choose a content package and begin with its opening.",
+  "先新建或导入一份内容包。": "Create or import a content package first.",
+  创建世界的内容包: "Content package for the new world",
+  "内容包需要修复后才能创建世界。":
+    "Repair this content package before creating a world.",
+  配置模型连接: "Configure model connection",
+  "正在创建世界…": "Creating world\u2026",
+  "新世界独立保存，之后的游玩不会修改源内容包。":
+    "The new world is saved independently. Playing will not change the source package.",
+  开场白预览: "Opening preview",
+  "这份内容包还没有开场白。": "This content package has no opening yet.",
+  "正在读取开场白…": "Loading opening\u2026",
+  "选择一个世界继续故事，或从内容包开始创作。":
+    "Continue a story in an existing world, or start creating from a content package.",
+  "世界操作：{title}": "World actions: {title}",
+  "先新建或导入一份内容包，再完善开场与世界设定。":
+    "Create or import a content package, then develop its opening and world setting.",
+  "导入内容包 ZIP": "Import content package ZIP",
+  "世界控制 · 高级编辑": "World control \u00b7 Advanced editor",
+  当前配置与编译边界: "Current configuration and compilation boundaries",
+  参数说明: "Parameter details",
+  创建世界: "Create world",
+  完善这份内容包: "Develop this content package",
+  返回游玩: "Return to play",
+
   预设管理: "Manage presets",
   预设检查通过: "Preset validated",
   "预设已导出。": "Preset exported.",

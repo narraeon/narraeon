@@ -424,72 +424,77 @@ export function PromptPreviewScreen({
           )}
         </section>
 
-        <section
-          className="panel-card prompt-preview-binding-card"
-          aria-labelledby="prompt-preview-binding-title"
-        >
-          <p className="prompt-preview-kicker">FIXED BINDING</p>
-          <h3 id="prompt-preview-binding-title">{uiText("本次固定绑定")}</h3>
-          <dl>
-            <div>
-              <dt>{uiText("主持预设")}</dt>
-              <dd>
-                <strong>{currentPreset?.name ?? uiText("没有当前预设")}</strong>
-                <span>{uiText("工作区当前选择")}</span>
-              </dd>
-            </div>
-            <div>
-              <dt>{uiText("模型连接")}</dt>
-              <dd>
-                <strong>
-                  {activeConnection?.name ?? uiText("没有当前模型")}
-                </strong>
-                <span>
-                  {activeConnection === undefined
-                    ? uiText("请先配置并启用模型")
-                    : `${activeConnection.modelId} · ${providerLabels[activeConnection.provider]}`}
-                </span>
-              </dd>
-            </div>
-            <div>
-              <dt>{uiText("模型窗口")}</dt>
-              <dd>
-                <strong>
-                  {activeConnection === undefined
-                    ? "—"
-                    : `${formatNumber(activeConnection.contextWindowTokens)} tokens`}
-                </strong>
-                <span>
-                  {activeConnection === undefined
-                    ? "—"
-                    : uiText("最大输出 {count}", {
-                        count: formatNumber(activeConnection.maxOutputTokens),
-                      })}
-                </span>
-              </dd>
-            </div>
-            <div>
-              <dt>{uiText("开场白边界")}</dt>
-              <dd>
-                <strong>{uiText("不作为模型历史注入")}</strong>
-                <span>
-                  {uiText("opening.md 只保留为玩家可见的 genesis 叙事")}
-                </span>
-              </dd>
-            </div>
-            <div>
-              <dt>{uiText("玩法预设")}</dt>
-              <dd>
-                <strong>{currentPlayPreset?.name ?? "default"}</strong>
-                <span>
-                  {currentPlayPreset === undefined
-                    ? uiText("使用内置玩法的完整工具集合")
-                    : `revision ${playPresetTarget?.revision ?? currentPlayPreset.revision}`}
-                </span>
-              </dd>
-            </div>
-          </dl>
-        </section>
+        <details className="preview-bindings-disclosure">
+          <summary>{uiText("当前配置与编译边界")}</summary>
+          <section
+            className="panel-card prompt-preview-binding-card"
+            aria-labelledby="prompt-preview-binding-title"
+          >
+            <p className="prompt-preview-kicker">FIXED BINDING</p>
+            <h3 id="prompt-preview-binding-title">{uiText("本次固定绑定")}</h3>
+            <dl>
+              <div>
+                <dt>{uiText("主持预设")}</dt>
+                <dd>
+                  <strong>
+                    {currentPreset?.name ?? uiText("没有当前预设")}
+                  </strong>
+                  <span>{uiText("工作区当前选择")}</span>
+                </dd>
+              </div>
+              <div>
+                <dt>{uiText("模型连接")}</dt>
+                <dd>
+                  <strong>
+                    {activeConnection?.name ?? uiText("没有当前模型")}
+                  </strong>
+                  <span>
+                    {activeConnection === undefined
+                      ? uiText("请先配置并启用模型")
+                      : `${activeConnection.modelId} · ${providerLabels[activeConnection.provider]}`}
+                  </span>
+                </dd>
+              </div>
+              <div>
+                <dt>{uiText("模型窗口")}</dt>
+                <dd>
+                  <strong>
+                    {activeConnection === undefined
+                      ? "—"
+                      : `${formatNumber(activeConnection.contextWindowTokens)} tokens`}
+                  </strong>
+                  <span>
+                    {activeConnection === undefined
+                      ? "—"
+                      : uiText("最大输出 {count}", {
+                          count: formatNumber(activeConnection.maxOutputTokens),
+                        })}
+                  </span>
+                </dd>
+              </div>
+              <div>
+                <dt>{uiText("开场白边界")}</dt>
+                <dd>
+                  <strong>{uiText("不作为模型历史注入")}</strong>
+                  <span>
+                    {uiText("opening.md 只保留为玩家可见的 genesis 叙事")}
+                  </span>
+                </dd>
+              </div>
+              <div>
+                <dt>{uiText("玩法预设")}</dt>
+                <dd>
+                  <strong>{currentPlayPreset?.name ?? "default"}</strong>
+                  <span>
+                    {currentPlayPreset === undefined
+                      ? uiText("使用内置玩法的完整工具集合")
+                      : `revision ${playPresetTarget?.revision ?? currentPlayPreset.revision}`}
+                  </span>
+                </dd>
+              </div>
+            </dl>
+          </section>
+        </details>
       </div>
 
       {preview === null ? (

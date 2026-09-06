@@ -308,6 +308,7 @@ test("普通作者编辑包后置请求后创建世界，经真实 Runtime 派�
       .getByRole("button", { name: "世界管理", exact: true })
       .first()
       .click();
+    await page.locator(".world-permission-disclosure > summary").click();
     await page.getByLabel("允许运行内容包脚本").click();
     await expect(page.getByLabel("允许运行内容包脚本")).toBeChecked();
     await page
@@ -345,6 +346,7 @@ test("普通作者编辑包后置请求后创建世界，经真实 Runtime 派�
       .getByRole("button", { name: "世界管理", exact: true })
       .first()
       .click();
+    await page.locator(".world-permission-disclosure > summary").click();
     await page.getByRole("button", { name: "撤销全部包脚本授权" }).click();
     await expect(page.getByLabel("允许运行内容包脚本")).not.toBeChecked();
     await page

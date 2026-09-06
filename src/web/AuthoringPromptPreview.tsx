@@ -41,11 +41,14 @@ export function AuthoringPromptPreview({
           >
             {zh ? "预览下一条请求" : "Preview next send"}
           </button>
-          <p>
-            {zh
-              ? "候选预览读取当前已应用预设，不发送消息、不创建修订锁；发送时重新读取。"
-              : "Candidate preview reads the currently applied preset without sending a message or opening a revision lock. Sending reads it again."}
-          </p>
+          <details className="authoring-preview-help">
+            <summary>{zh ? "预览说明" : "About this preview"}</summary>
+            <p>
+              {zh
+                ? "候选预览读取当前已应用预设，不发送消息、不创建修订锁；发送时重新读取。"
+                : "Candidate preview reads the currently applied preset without sending a message or opening a revision lock. Sending reads it again."}
+            </p>
+          </details>
         </>
       )}
       {failure && <p role="alert">{failure}</p>}

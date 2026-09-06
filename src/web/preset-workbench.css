@@ -1,4 +1,4 @@
-/* The approved manuscript surface is local to the preset editor. */
+/* Manuscript editor layout; shared colors and controls live in styles.css. */
 .play-preset-screen {
   --text: #25313b;
   --muted: #838884;
@@ -422,55 +422,6 @@
     width: min(180px, 100%);
   }
 }
-.workspace-shell:has(.play-preset-screen) {
-  max-width: none;
-  width: 100%;
-  margin: 0;
-  padding: 0;
-  min-height: 100vh;
-  background: #fffefa;
-}
-.workspace-shell:has(.play-preset-screen) > .workspace-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 28px;
-  margin: 0;
-  background: #252b2d;
-  min-height: 56px;
-}
-.workspace-shell:has(.play-preset-screen) > .workspace-header h1 {
-  display: none;
-}
-.workspace-shell:has(.play-preset-screen) .workspace-header .eyebrow {
-  margin: 0;
-  font-size: 13px;
-}
-.workspace-shell:has(.play-preset-screen) .workspace-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.workspace-shell:has(.play-preset-screen) .workspace-header-actions > button {
-  padding: 5px 12px;
-  min-height: 32px;
-  font-size: 12px;
-  border-radius: 3px;
-}
-.workspace-shell:has(.play-preset-screen) .workspace-model-button {
-  display: none;
-}
-.workspace-shell:has(.play-preset-screen) .workspace-locale-picker {
-  font-size: 10px;
-}
-.workspace-shell:has(.play-preset-screen) .workspace-locale-picker select {
-  padding: 4px 8px;
-}
-.workspace-shell:has(.play-preset-screen) > .workspace-feedback {
-  margin: 0;
-  padding: 8px 28px;
-  border-radius: 0;
-}
 .play-preset-screen {
   position: relative;
   border: 0;
@@ -583,9 +534,6 @@
   }
   .play-preset-screen .play-preset-library > label {
     min-width: 180px;
-  }
-  .workspace-shell:has(.play-preset-screen) > .workspace-header {
-    padding-inline: 12px;
   }
   .play-preset-screen .ordered-play-editor > aside,
   .play-preset-screen .ordered-play-content,
