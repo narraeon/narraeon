@@ -1011,7 +1011,7 @@ extensions:
     expect(previewText).not.toContain("player_input");
     expect(previewText).not.toContain("message.genesis.narrator");
     expect(previewText).toContain(
-      "Make the final sentence a specific action someone takes",
+      "meaningful silence, solitude, rest and waiting",
     );
     const copied = await runtime.handle({
       type: "play.copy",

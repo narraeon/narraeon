@@ -61,7 +61,7 @@ export type ModelHostAppendItem =
   | {
       /** A mechanical Runtime fact, separate from player originals and author prompts. */
       kind: "runtime_notice";
-      notice: "checkpoint_rounds";
+      notice: "checkpoint_rounds" | "continuation" | "tool_step";
       text: string;
     }
   | {

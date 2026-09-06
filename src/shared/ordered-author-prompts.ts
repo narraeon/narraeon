@@ -50,8 +50,8 @@ export function authoringMechanics(
 ): string {
   const zh = locale === "zh-CN";
   const common = zh
-    ? `只使用请求随附的工具及其参数契约。含工具调用的响应是中间步；收到全部工具结果后继续，非空且无工具调用的响应结束本次发送。完整工具响应按调用顺序结算，失败调用不撤销成功同级调用。修改既有文件前必须完整读取；cursor 与读取授权只属于产生它们的树 revision，树改变后重新读取。工具返回逻辑路径，不能访问宿主文件。文档引用使用返回的 @ref；YAML 整文档引用为单键 {$ref: "@ref"}，locator 使用 map key 或从零开始的数组下标。成功回执决定当前值，模型文字不构成提交。`
-    : `Use only the attached tools and their parameter contracts. Responses with tool calls are intermediate steps; continue after all results. A nonempty tool-free response ends this send. Complete tool responses settle calls in order; a failed call does not undo successful siblings. Completely read existing files before writing. Cursors and read authorization belong to the tree revision that produced them; re-read after tree changes. Tools expose logical paths, never host files. Use returned @refs for documents; YAML whole-document references are single-key {$ref: "@ref"} maps, and locators use map keys or zero-based array indexes. Actual receipts determine current values; model prose cannot commit changes.`;
+    ? `只使用请求随附的工具及其参数契约。含工具调用的响应是中间步；收到全部工具结果后继续，非空且无工具调用的响应结束本次发送。完整工具响应按调用顺序结算，失败调用不撤销成功同级调用。修改既有文件前必须完整读取；cursor 只属于产生它的树 revision；本事务自身成功修改后的完整读取授权由 Runtime 承接。外部树变化或跨 epoch 后旧授权失效，需要重新读取。工具返回逻辑路径，不能访问宿主文件。文档引用使用返回的 @ref；YAML 整文档引用为单键 {$ref: "@ref"}，locator 使用 map key 或从零开始的数组下标。成功回执决定当前值，模型文字不构成提交。`
+    : `Use only the attached tools and their parameter contracts. Responses with tool calls are intermediate steps; continue after all results. A nonempty tool-free response ends this send. Complete tool responses settle calls in order; a failed call does not undo successful siblings. Completely read existing files before writing. Cursors belong to their producing tree revision. Runtime carries complete-read authorization through this transaction’s own successful changes. External tree changes or an epoch transition invalidate old authorization and require new reads. Tools expose logical paths, never host files. Use returned @refs for documents; YAML whole-document references are single-key {$ref: "@ref"} maps, and locators use map keys or zero-based array indexes. Actual receipts determine current values; model prose cannot commit changes.`;
   const boundary =
     target === "setting"
       ? zh
@@ -60,7 +60,10 @@ export function authoringMechanics(
       : zh
         ? "世界修订工具只修改持久独占 epoch 的 state/* 与 control/* 工作树。opening.md 不可读取或修改，既有状态文档不可删除或移动。只有玩家应用或放弃才结束 epoch；应用提交世界，放弃不改变世界。跨 epoch 全部旧读取授权失效。"
         : "World-revision tools modify only state/* and control/* in the durably locked exclusive epoch. opening.md cannot be read or changed; existing state documents cannot be deleted or moved. Only player Apply or Discard ends the epoch; Apply commits the world, Discard leaves it unchanged. Every old read authorization expires across epochs.";
-  return `# ${zh ? "创作工具与结算" : "Authoring tools and settlement"}\n\n${common}\n\n${boundary}`;
+  const views = zh
+    ? 'control/player-views.yaml 的 format 为 narraeon.player-views/v1；views 中每项有 id、title 和 items，items 中每项有 id、label、select。精确选择一个 YAML 字段使用 select: {document: "@ref", locator: {yaml: [字段名]}}；Markdown 小节使用 locator: {markdown: [标题]}。document 必须来自实际返回的引用，locator 必须对应已读正文；省略 locator 会展示整份文档，选择容器会递归展示子树。'
+    : 'control/player-views.yaml uses format: narraeon.player-views/v1. Each views entry has id, title and items; each item has id, label and select. Select one YAML field with select: {document: "@ref", locator: {yaml: [field]}}; select a Markdown section with locator: {markdown: [heading]}. Use a returned document reference and a locator from the actual read body. Omitting locator displays the whole document; selecting a container recursively displays its subtree.';
+  return `# ${zh ? "创作工具与结算" : "Authoring tools and settlement"}\n\n${common}\n\n${boundary}\n\n${views}`;
 }
 
 export function defaultOrderedAuthorPrompts(): OrderedPlayPrompt[] {

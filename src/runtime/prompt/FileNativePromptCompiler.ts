@@ -187,6 +187,7 @@ export interface WorldRevisionPromptInput {
 }
 
 interface AuthoringConversationPromptInput {
+  target: "setting" | "world-revision";
   identity: { source: string; markdown: string };
   boundary: { source: string; markdown: string };
   runtimeSource: string;
@@ -308,7 +309,7 @@ const runtimeContracts: Record<
 - Runtime performs state commits and saves follow-up artifacts. Tool exchanges and internal processing must never appear in player-visible content.`,
     shell: `# Runtime play boundary
 
-A tool-free response with player-visible story text ends the model/tool loop started by the current player submission. A response that calls any tool is an intermediate step and must not contain player-visible story text; continue from the tool results, then narrate in a later tool-free response.
+A nonempty tool-free response ends the model/tool loop started by the current player submission. A response that calls any tool is an intermediate step and must not contain player-visible story text; continue from the tool results, then finish in a later tool-free response.
 
 The player's next submission may choose a fresh context; the old model transcript will not enter that request. Fresh contexts include all committed original player inputs and final narratives after the last effective world_checkpoint, excluding tools, reasoning, and the opening. A checkpoint declaration takes effect only after its final narrative commits. Author instructions decide save timing.
 
@@ -335,7 +336,7 @@ Runtime executes only real tool definitions, file validation, and authority comm
 - 状态提交与后置产物保存由 Runtime 执行。工具交换与内部处理过程不得混入玩家可见内容。`,
     shell: `# Runtime 游玩边界
 
-不调用工具且包含玩家可见故事正文的响应会结束本次玩家提交触发的模型／工具循环。只要响应调用了任何工具，它就是工具中间步，不得同时输出玩家可见故事正文；先根据工具结果继续，再用一个不调用工具的后续响应完成叙事。
+非空且不调用工具的响应会结束本次玩家提交触发的模型／工具循环。只要响应调用了任何工具，它就是工具中间步，不得同时输出玩家可见故事正文；先根据工具结果继续，再用一个不调用工具的后续响应结束。
 
 下一次玩家提交可以选择“全新上下文”；旧模型 transcript 不会进入那个请求。新上下文会补入最近一次已生效 world_checkpoint 之后的全部已提交玩家原文与最终叙事，不含工具、推理和开场白。检查点登记只在其最终叙事提交后生效。具体保存时机由作者提示规定。
 
@@ -403,6 +404,7 @@ export class FileNativePromptCompiler {
         markdown: currentTreeBoundary,
       },
       runtimeSource: "runtime:builtin/setting-improvement",
+      target: "setting",
       runtimeContract: input.runtimeContract,
       authorPrompt: input.authorPrompt,
       playPreset: input.playPreset,
@@ -434,6 +436,7 @@ export class FileNativePromptCompiler {
         markdown: boundary,
       },
       runtimeSource: "runtime:builtin/world-revision",
+      target: "world-revision",
       runtimeContract: input.runtimeContract,
       authorPrompt: input.authorPrompt,
       playPreset: input.playPreset,
@@ -449,6 +452,7 @@ export class FileNativePromptCompiler {
     const presetReference = settingImprovementPresetReference(
       input.playPreset,
       this.#locale,
+      input.target,
     );
     const logicalMessages: PromptCompilation["logicalMessages"] = [];
     const ordered =
@@ -473,12 +477,7 @@ export class FileNativePromptCompiler {
         blocks = [
           {
             source: input.runtimeSource,
-            markdown: authoringMechanics(
-              this.#locale,
-              input.runtimeSource.endsWith("world-revision")
-                ? "world-revision"
-                : "setting",
-            ),
+            markdown: authoringMechanics(this.#locale, input.target),
           },
         ];
       if (builtin?.id === "author.target")
@@ -1160,13 +1159,15 @@ This title identifies the editing target, not world facts or document titles.`;
 function settingImprovementPresetReference(
   binding: PlayPresetBinding,
   locale: AppLocale,
+  target: AuthoringConversationPromptInput["target"],
 ): string {
+  const revision = target === "world-revision";
   const worldInstructionPlaceholder = {
-    source: "content-package:control/frame.yaml#instructions",
+    source: `${revision ? "world-revision" : "content-package"}:control/frame.yaml#instructions`,
     markdown:
       locale === "zh-CN"
-        ? "未来游玩在此位置按 control/frame.yaml 的声明顺序展开当前内容包启用的世界指令块。请通过设定读取工具检查当前树中的实际 frame 和块正文；这段文字只描述它们在提示词中的拼装位置。"
-        : "During future play, this position expands the world-instruction blocks enabled by control/frame.yaml in their declared order. Inspect the actual frame and block bodies in the current tree through the setting read tools; this text describes only their position in the compiled prompt.",
+        ? "后续游玩在此位置按 control/frame.yaml 的声明顺序展开当前编辑目标启用的世界指令块。通过本轮创作工具检查实际 frame 和块正文；此处仅说明拼装位置。"
+        : "Subsequent play expands the current editing target's enabled world instructions here in control/frame.yaml order. Inspect its actual frame and blocks through the current authoring tools; this only describes assembly position.",
   };
   const ordered = binding.definition.playPrompts;
   const authorBlocks =
@@ -1189,8 +1190,8 @@ function settingImprovementPresetReference(
                 ...worldInstructionPlaceholder,
                 markdown:
                   locale === "zh-CN"
-                    ? "完整内容包占位在这里连续展开世界指令和 frame 选定材料（不是整棵树）；请通过设定工具检查实际内容。"
-                    : "The complete world placeholder expands world instructions and frame-selected material continuously here, not the entire tree. Inspect the actual content through setting tools.",
+                    ? "完整世界提示占位在这里连续展开世界指令和 frame 选定材料（不是整棵树）；请通过本轮创作工具检查实际内容。"
+                    : "The complete world placeholder expands world instructions and frame-selected material continuously here, not the entire tree. Inspect actual content through the current authoring tools.",
               },
             ];
           if (!entry.enabled) return [];
@@ -1214,12 +1215,12 @@ function settingImprovementPresetReference(
     ordered === undefined ? playNarrativeBlocks(binding) : [];
   const heading =
     locale === "zh-CN"
-      ? "# 未来游玩语义边界（只读；不是设定文档范文）"
-      : "# Future play semantics (read-only; not a setting-document style template)";
+      ? `# ${revision ? "继续游玩" : "创建后游玩"}语义边界（只读参考）`
+      : `# ${revision ? "Continued" : "Post-creation"} play semantics (read-only reference)`;
   const explanation =
     locale === "zh-CN"
-      ? "以下原文说明未来游玩 AI 怎样裁决、维护状态和生成玩家可见叙事。本轮只用它检查内容包是否兼容、是否重复通用规则，以及同一概念是否被过度加权。不要模仿这些块的句式、节奏、动作细节或描写密度写入 world/；不要把其中跨世界通用的规则复制进内容包控制块。需要配合这些语义时，把要求转译成最少的当前事实、稳定不变量，或确属本世界特有的控制约束。本轮回复面向设定讨论或内容包当前树编辑；玩家可见故事由未来游玩调用链生成。"
-      : "The source blocks below describe how future play AI adjudicates, maintains state, and produces player-visible narrative. In this conversation, use them only to check compatibility, duplication of general rules, and excessive weighting of the same concept. Do not imitate their sentences, pacing, staged gestures, or descriptive density in world/ documents, and do not copy their cross-world rules into content-package control blocks. When the package must support these semantics, translate the requirement into the minimum current facts, stable invariants, or genuinely world-specific control constraints. Replies here address setting discussion or current-tree editing; the future play call chain generates player-visible story.";
+      ? `以下是当前预设实际启用的游玩作者语义，用于核对兼容性、重复规则和概念权重；未启用的政策不视为已有保证。不要模仿这些块的句式、节奏或镜头写入 ${revision ? "state/" : "world/"}，也不要把跨世界规则复制进 control/。需要配合时，表达最少的当前事实、稳定不变量或本世界特有的控制约束。本轮用于${revision ? "运行中世界的讨论与修订，保留当前时点已演变的事实；应用后继续游玩" : "内容包讨论与当前树编辑；创建世界后开始游玩"}。此参考不要求本轮生成玩家故事。`
+      : `These are the current preset's enabled play-author semantics, used to check compatibility, duplicate rules and conceptual weight. Disabled policies are not guarantees. Do not imitate their sentences, pacing or staged gestures in ${revision ? "state/" : "world/"}, or copy cross-world rules into control/. Express the minimum current facts, stable invariants or world-specific constraints needed. This conversation ${revision ? "discusses and revises a running world at its evolved current time; play continues after Apply" : "discusses and edits the content package; play begins after world creation"}. This reference does not request a player story in this conversation.`;
   const none =
     locale === "zh-CN"
       ? "（当前预设没有启用主持或叙事作者块。）"
@@ -1607,8 +1608,8 @@ context:
 `,
     "control/blocks/world-style.md":
       locale === "zh-CN"
-        ? "# 世界状态规则\n\n只保存已经发生且下一次行动不能忽略的结果；人物变化写入对应人物，眼前未结束的局面写入当前情境。\n"
-        : "# World-state rules\n\nSave only results that have happened and cannot be ignored at the next action. Write character changes to the corresponding character and unfinished immediate circumstances to the current situation.\n",
+        ? "# 本世界的保存位置\n\n人物的衣着和修为写入对应人物文档；宿舍里尚待回应的邀请写入当前情境。\n"
+        : "# Save locations in this world\n\nKeep clothing and cultivation rank in each character's document; put unanswered invitations in the dorm room in the current situation.\n",
     "state/current-situation.yaml": `$document:
   id: situation.current
   ref: current-situation

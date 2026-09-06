@@ -828,6 +828,9 @@ function responsesRequestBody(
             name: tool.name,
             description: tool.description,
             parameters: tool.parameters,
+            // Runtime schemas distinguish absent options from supplied values.
+            // Responses otherwise normalizes compatible schemas to strict mode.
+            strict: false,
           })),
           tool_choice: toolChoice,
         }),

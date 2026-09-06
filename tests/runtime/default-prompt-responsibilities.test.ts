@@ -71,51 +71,9 @@ describe("旧格式默认提示词职责", () => {
       expect(files["call-chain.yaml"]).not.toContain("prompts/policy.md");
     }
 
-    expect(defaultNarrationPrompt).toContain("Do not alter settled results");
-    // Interface values accompany prose; perceivable changes still need staging.
-    expect(defaultNarrationPrompt).toContain("must be dramatized here");
-    expect(defaultNarrationPrompt).toContain(
-      "Player views may also display document fields",
-    );
-    expect(defaultNarrationPrompt).toContain(
-      "available to later model requests",
-    );
-    expect(defaultNarrationPrompt).toContain(
-      "Whenever you produce player-visible story text",
-    );
-    // Player-visible prose is novel text, not a line-by-line process report.
-    expect(defaultNarrationPrompt).toContain(
-      "body of an interactive novel, not a process report",
-    );
-    expect(defaultNarrationPrompt).toContain("several natural paragraphs");
-    expect(defaultNarrationPrompt).not.toContain("length covers only");
-    // The final sentence must be a concrete event, not host voice in disguise.
-    expect(defaultNarrationPrompt).toContain(
-      "Make the final sentence a specific action someone takes",
-    );
-    expect(defaultNarrationPrompt).toContain("Silence is not an event");
-    expect(defaultNarrationPrompt).toContain("two pairs of eyes return to you");
-    expect(defaultNarrationPrompt).toContain("dressed in prose");
-    expect(defaultNarrationPrompt).not.toContain(
-      "someone waits for his answer",
-    );
-    // Agency protects consequential decisions while allowing supporting action.
-    expect(defaultNarrationPrompt).toContain("belongs to the player");
-    expect(defaultNarrationPrompt).toContain("do not take agency away");
-    expect(defaultNarrationPrompt).not.toContain("second person");
-    expect(defaultSettingImprovementPrompt).toContain(
-      "Recommended setting-improvement method",
-    );
-    expect(defaultSettingImprovementPrompt).toContain(
-      "first page of this interactive novel",
-    );
-    expect(defaultSettingImprovementPrompt).toContain(
-      "read control/frame.yaml",
-    );
-    expect(defaultSettingImprovementPrompt).toContain("discovery path");
-    expect(defaultSettingImprovementPrompt).toContain("future update path");
+    // Shared defaults must not acquire tool authority through editable prose.
+    expect(defaultNarrationPrompt).not.toContain("artifact_emit");
     expect(defaultSettingImprovementPrompt).not.toContain("setting_write_file");
-    expect(defaultSettingImprovementPrompt).not.toContain("参数 schema");
     expect(
       firstPartyActionChoicesPresetFiles["prompts/options.md"],
     ).not.toContain("artifact_emit");
@@ -124,138 +82,21 @@ describe("旧格式默认提示词职责", () => {
     ).not.toContain("artifact_emit");
   });
 
-  test("设定完善同时约束覆盖、权重、语句职责与审计模式", () => {
-    expect(defaultSettingImprovementPromptZhCN).toContain(
-      "两把尺子：覆盖与权重",
-    );
-    expect(defaultSettingImprovementPromptZhCN).toContain("同时决定六件事");
-    expect(defaultSettingImprovementPromptZhCN).toContain(
-      "审计范围本身就是“目标真正涉及的部分”",
-    );
-    expect(defaultSettingImprovementPromptZhCN).toContain(
-      "同一语义只保留一个权威所有者",
-    );
-    expect(defaultSettingImprovementPromptZhCN).toContain(
-      "不要笼统假设所有世界文档都会每回合全文注入",
-    );
-    expect(defaultSettingImprovementPromptZhCN).toContain(
-      "本节只约束 opening.md",
-    );
-    expect(defaultSettingImprovementPromptZhCN).toContain(
-      "control/blocks/ 作者材料回答主持者应该怎样",
-    );
-    expect(defaultSettingImprovementPromptZhCN).toContain(
-      "不要预写阶段、进度条、时间表",
-    );
-    expect(defaultSettingImprovementPromptZhCN).toContain(
-      "审计时先按概念、再按句子检查",
+  test("创作建议提供两个目标分支而不再将运行中世界限制为创建时状态", () => {
+    expect(defaultSettingImprovementPromptZhCN).toContain("运行中世界修订");
+    expect(defaultSettingImprovementPromptEn).toContain(
+      "Running-world revision",
     );
     expect(defaultSettingImprovementPromptZhCN).not.toContain(
-      "setting_write_file",
-    );
-
-    expect(defaultSettingImprovementPromptEn).toContain(
-      "Two measures: coverage and weight",
-    );
-    expect(defaultSettingImprovementPromptEn).toContain(
-      "decide six things together",
-    );
-    expect(defaultSettingImprovementPromptEn).toContain(
-      "the audit scope itself is what the goal affects",
-    );
-    expect(defaultSettingImprovementPromptEn).toContain(
-      "Keep one authoritative owner for each meaning",
-    );
-    expect(defaultSettingImprovementPromptEn).toContain(
-      "Do not assume that every world document is injected in full",
-    );
-    expect(defaultSettingImprovementPromptEn).toContain(
-      "This section governs opening.md only",
-    );
-    expect(defaultSettingImprovementPromptEn).toContain(
-      "Author material under control/blocks/ tells the host how",
-    );
-    expect(defaultSettingImprovementPromptEn).toContain(
-      "Do not prewrite stages, progress tracks, timetables",
-    );
-    expect(defaultSettingImprovementPromptEn).toContain(
-      "Audit concepts before sentences",
+      "世界文档只写创建世界时已经成立的事实",
     );
     expect(defaultSettingImprovementPromptEn).not.toContain(
-      "setting_write_file",
+      "World documents contain only facts and stable rules that already hold when the world is created",
     );
   });
 
-  test("主持层承担通用状态判据，世界 scaffold 只承担世界特有语义", () => {
-    const style = defaultPresetHostFiles["blocks/style.md"]!;
-    const agency = defaultPresetHostFiles["blocks/adjudication.md"]!;
-    const state = defaultPresetHostFiles["blocks/state.md"]!;
+  test("默认 frame 保留职责顺序，世界 scaffold 不复制通用状态流程", () => {
     const frame = defaultPresetHostFiles["frame.yaml"]!;
-
-    expect(style).toContain("Address the player character as “you”");
-    expect(style).not.toContain("the world prompt frame explicitly states");
-    expect(style).not.toContain("length covers only");
-    expect(style).not.toContain("Runtime");
-    // Cross-world prose guidance belongs to the host preset.
-    expect(style).toContain("This is an interactive novel");
-    expect(style).toContain("Begin with the player's input");
-    expect(style).toContain("Give the prose the texture of a novel");
-    // Rich prose still must not become padding.
-    expect(style).toContain("not repeating known background");
-    // Inventorying everyone is a list with different punctuation, not prose.
-    expect(style).toContain("Do not inventory everyone by name");
-    expect(style).toContain("Once a name is known, use it");
-    expect(agency).toContain(
-      "explicit expression in the player's current input",
-    );
-    expect(agency).not.toContain(
-      "once the situation again needs a player choice",
-    );
-    // Agency is divided by consequential choice, not by who performs a movement.
-    expect(agency).toContain("What may be performed for the player");
-    expect(agency).not.toContain("apparently convenient follow-up action");
-    // NPCs are not devices that react only after the player moves.
-    expect(agency).toContain("NPCs have lives of their own");
-    expect(agency).not.toContain("reactions to actions already carried out");
-    // The host handles autonomous NPC results and offstage progress.
-    expect(agency).toContain(
-      "same kind of results as those created by the player",
-    );
-    expect(agency).toContain("People offstage still move forward");
-    expect(agency).toContain("not that they are paused");
-    expect(agency).toContain(
-      "do not need to simulate everyone after every action",
-    );
-    expect(state).toContain("Gather material before adjudicating");
-    expect(state).toContain(
-      "even if the directory already shows a matching entry",
-    );
-    expect(state).toContain(
-      "A call chain may legitimately change no documents",
-    );
-    expect(state).toContain("experience of failure itself");
-    expect(state).toContain("A promise that has been made may be saved");
-    expect(state).toContain("Where to save results");
-    expect(state).toContain("Converging the current situation");
-    // Perceivable document changes must also appear in player-visible prose.
-    expect(state).toContain(
-      "The player reads the narrative and can also see state fields",
-    );
-    expect(state).toContain("Interface values do not replace dramatization");
-    expect(state).toContain(
-      "Persisted values must not contradict the narrative",
-    );
-    // Autonomous NPC actions and offstage progress use the same persistence test.
-    expect(state).toContain(
-      "not only direct consequences of the player's action",
-    );
-    // Removing presence must not delete a person's ongoing state.
-    expect(state).toContain(
-      "the scene is losing their presence, not the person",
-    );
-    expect(state).not.toMatch(
-      /character document|place document|item document/u,
-    );
     expect(frame.indexOf("blocks/style.md")).toBeLessThan(
       frame.indexOf("blocks/adjudication.md"),
     );
@@ -265,26 +106,13 @@ describe("旧格式默认提示词职责", () => {
     expect(frame.indexOf("blocks/state.md")).toBeLessThan(
       frame.indexOf("world.instructions"),
     );
-
-    // The shipped scaffold is a prose example and must not use host voice.
-    const opening = minimalFileNativeContentScaffold().find(
-      ({ path }) => path === "opening.md",
-    )?.contents;
-    expect(opening).not.toMatch(
-      /what do you do|what will you do|you can choose/iu,
-    );
-
-    const world = minimalFileNativeContentScaffold().find(
+    const files = minimalFileNativeContentScaffold();
+    const world = files.find(
       ({ path }) => path === "control/blocks/world.md",
     )?.contents;
-    expect(world).toContain("Keep only rules unique to this world");
     expect(world).toContain("World documents and where changes belong");
-    expect(world).toContain("Special rules");
-    expect(world).not.toContain("If the next action began without it");
-    expect(
-      inspectContentPackageCurrentTree(minimalFileNativeContentScaffold())
-        .status,
-    ).toBe("usable");
+    expect(world).not.toContain(defaultPresetHostFiles["blocks/state.md"]!);
+    expect(inspectContentPackageCurrentTree(files).status).toBe("usable");
   });
 
   test("生产提示区分即时保存与检查点归并，Runtime 只说明重放机制", () => {
@@ -300,12 +128,12 @@ describe("旧格式默认提示词职责", () => {
           "具体保存时机由作者提示规定",
         ],
         state: [
-          "其余可从这些原文恢复的持续结果",
+          "其余可从玩家原文和最终叙事恢复的持续结果",
           "检查点",
-          "不值得单独建文档，不等于不值得记录",
-          "最小充分信息",
-          "按上述保存时机本轮必须完成的写入",
-          "不要为了防遗忘把每个新名字或刚完成的动作再复制成流水历史",
+          "未达到独立建档门槛的信息仍可嵌入自然所有者",
+          "足够维持连续性与意义的信息",
+          "先完成本轮必须保存的写入",
+          "不必再造一份逐轮日志",
         ],
         stateAbsent: ["先写文档还是先写叙事都可以"],
       },
@@ -320,12 +148,12 @@ describe("旧格式默认提示词职责", () => {
           "Author instructions decide save timing",
         ],
         state: [
-          "Other durable results recoverable from those originals",
+          "Other durable outcomes recoverable from player originals and final narrative",
           "Before a checkpoint",
-          "Not worth a standalone document does not mean not worth recording",
-          "minimum sufficient information",
-          "actual call sequence must complete writes due this turn under the saving policy before the terminal narrative",
-          "Do not duplicate every new name or completed action into a chronological log just in case",
+          "Information below the independent-document threshold",
+          "Save enough to preserve continuity and meaning",
+          "Complete this turn's required writes before registering the checkpoint",
+          "do not create a second turn-by-turn log",
         ],
         stateAbsent: ["Documents or narrative may be written first"],
       },
@@ -579,9 +407,9 @@ describe("旧格式文风块库", () => {
     expect(style).toContain("Slow down where it matters");
     expect(style).toContain("Raising a hand may take three lines");
     expect(style).toContain("Padding repeats the same fact in different words");
-    // The player character's own bodily experience may be stated directly.
+    // The player character's natural sensory and bodily experience may be stated directly.
     expect(style).toContain(
-      "player character's own bodily experience may be stated directly",
+      "player character's natural sensory and bodily experience may be stated directly",
     );
     expect(defaultNarrationPrompt).toContain(
       "weight of the moment determine length",

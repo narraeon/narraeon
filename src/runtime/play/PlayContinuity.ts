@@ -73,6 +73,32 @@ export function isPlayerRoundMarker(
   return item?.kind === "runtime_notice" && item.notice === "checkpoint_rounds";
 }
 
+export function continuationNotice(
+  locale: AppLocale,
+): Extract<ModelHostAppendItem, { kind: "runtime_notice" }> {
+  return {
+    kind: "runtime_notice",
+    notice: "continuation",
+    text:
+      locale === "zh-CN"
+        ? "[Runtime 续写提示]\n本次发送没有追加新的玩家原文。请从当前对话继续生成；已有的最终主持正文是已经完成的历史。"
+        : "[Runtime continuation]\nThis send adds no new player input. Continue generation from the current conversation; existing final narrator messages are already completed history.",
+  };
+}
+
+export function toolStepNotice(
+  locale: AppLocale,
+): Extract<ModelHostAppendItem, { kind: "runtime_notice" }> {
+  return {
+    kind: "runtime_notice",
+    notice: "tool_step",
+    text:
+      locale === "zh-CN"
+        ? "[Runtime 结算提示]\n上一响应同时调用了工具，其中的文字没有作为最终故事展示或提交。工具已按回执结算；请从已提交结果继续，最终用无工具调用的非空叙事完成本次发送。"
+        : "[Runtime settlement]\nThe previous response called tools, so its text was not displayed or committed as final story. The tools have settled as their receipts state. Continue from committed results, then finish this send with nonempty narrative and no tool calls.",
+  };
+}
+
 export function playerInputAppend(input: {
   history: Readonly<Record<string, string>>;
   checkpoint?: NarrativeCheckpoint | undefined;

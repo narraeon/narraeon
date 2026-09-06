@@ -11,122 +11,82 @@ import type { AppLocale } from "../protocol/appPreferences.ts";
 export const defaultSettingImprovementPromptPath =
   "prompts/setting-improvement.md";
 
-export const defaultSettingImprovementPromptZhCN = `# 系统推荐的设定完善方法
+export const defaultSettingImprovementPromptZhCN = `# 系统推荐的创作方法
 
-以现有内容包和用户当前目标为创作起点。通过工具完整读取的当前文件是已经成立的事实和约束；其他文件也应按需读取。不要为了展示工作、填充结构或显得丰富而制造内容；判断后无需修改也是合法结果。
+以当前编辑目标、已有内容和用户目标为起点。讨论时说明必要判断，落实时定向修改；用户要求审查或重组时，相关结构与重复表达也在范围内。不为填满结构制造内容，无需修改也是合法结果。
 
-## 工作模式与现有内容
+## 编辑目标与世界起点
 
-用户要求讨论或规划时，简洁说明玩家想获得的主要体验、准备保留／调整／建立的内容、语气与边界，以及确实必要的假设。用户要求直接落实时，把这些判断直接用于内容包当前树修改。不适用的循环、冲突、多幕结构或次要体验可以省略，不要为了填模板而发明。
+内容包设定完善定义开场结束处的世界起点，可以包含已有历史、当前状态、持续过程和各人的认知。简单起点足以开玩，普通未定义内容可在游玩中生长；不预写未来必然发生的经历或强制剧情阶段。
 
-默认按用户当前目标定向修改，保留无关且仍然成立的内容。当用户要求审查、精简、去重、瘦身、清理或重构时，审计范围本身就是“目标真正涉及的部分”：比较该范围内所有可能表达同一概念的文档，并允许合并、迁移或删除仍然成立但重复、无效或放错位置的内容。不要让“保留仍然成立的内容”阻止清理。
+运行中世界修订维护当前已经演变的世界，按用户要求调整并保留未受影响的事实、经历与认知，不退回初始取值。此分支不读取或修改 opening.md。明确修订不是世界内事件，不需虚构行动解释它。
 
-当目标可能改变整体结构、材料发现方式或未来更新位置时，先列出内容包根目录，并完整读取 control/frame.yaml、它引用的世界提示块、绑定的当前情境、opening.md 和受影响的既有文档。将这些读取作为讨论或修改的依据；用户要求查看计划时，再把相应判断组织成可见回复。
+涉及结构、材料发现或更新位置时，先列出编辑目标根目录，完整读取 control/frame.yaml、启用的世界提示块、绑定的当前情境及受影响文档。实际操作遵守本轮工具边界。
 
-创建或重组每项信息前，同时决定六件事：它在创建世界时已经成立的内容、自然所有者、游玩 AI 的发现或注入路径、未来持续变化的更新位置、是否需要玩家视图，以及同一语义是否已经由其他位置权威表达。机械格式通过不等于游玩时容易发现；不要留下没有明确发现路径、只能期待模型偶然遍历到的关键事实。
+## 世界信息怎样组织
 
-## 两把尺子：覆盖与权重
+世界文档承载事实与语义：当前值归自然所有者；持续过程记录实际进展与条件；意图、承诺、日程保留主体和已知条件，其目标尚未实现。角色声称、猜测与真实发生的事分开。人物的认知和态度属于各自主体，不随事实变化自动同步，也不互相对称；不代填玩家未表达的感情。
 
-发现路径判断信息够不够，注入权重判断信息多不多。同一语义只保留一个权威所有者；catalog 摘要、当前情境和 opening.md 可以因索引、即时局面或已提交叙事的职责提及它，但不能复制完整规则、人物说明或行为模板。
+重要事件的经过集中承载，需要多人引用、持续追溯或重新解释时安排独立可引用的事件文档。事件记载当时的经过和结果；最新状态、待办与看法留在各自文档，用引用关联，事件不充当滚动状态表。对象保存当前结果，个人保存认知、关系评价与简短依据，引用相关事件而不各抄经过。已经形成的状态和态度也要保存，不能只存事件再让每次游玩重新推算。事件按事情组织，不按回合建档；普通细节可以只留在叙事。
 
-同一概念如果在一次游玩请求会同时出现的多份材料中反复表达，会被模型理解成更强、更常执行的要求。尤其检查全文注入、节点注入、当前情境、世界提示块和叙事提示之间的重叠。不要笼统假设所有世界文档都会每回合全文注入；以实际 frame、目录方式和写后覆盖报告为准。目标是最小充分暴露，不是让每个可能相关的位置都各写一遍。
+这些区别适用于物品、伤病、地点、组织、交易、调查与人物关系，不要求固定目录、字段或数量。独立引用、自身状态或生命周期需要独立文档；小规模信息可集中在合适载体中。当前情境只承接眼前地点、在场者、进行中的事及待回应事项，不承担全部历史或未来分支。
 
-## 开场白
+summary 是目录简介：只写识别文档所需的简短身份、主题或稳定线索，不复述具体状态和事件经过。具体事实放在正文，仅在识别信息改变时更新标题与简介。
 
-本节只约束 opening.md；不要把本节或冻结叙事块的语体带入 world/ 世界文档或 control/ 作者材料。
+## 承载与发现一起安排
 
-开场白是这部互动式小说的第一页，玩家读完它就要写下第一个行动。让环境、光线、声音、他人的动作和正在进行的事把场面铺开，用侧写交代气氛与关系，而不是罗列设定或逐条介绍人物。在场的人各自有手头正在做的事——世界在玩家到来之前已经在运转，不要把所有人定格成等待启动的布景。
+每项持续信息确定自然所有者、更新位置及实际的发现或注入路径。常用当前值按需全文或节点注入；较长事件通过目录和引用按需读取。重要事件应有实际可用的集中承载位置，不能只有无法创建的目录设想。查看真实 frame 和写后覆盖，不假定所有正文都已进入游玩请求。
 
-最后一句写某个人做的一件具体的事，或说的一句具体的话：他问了什么就把原话写出来，他把东西递过来就写他怎么递的。轮到玩家是他自己从这件事里得出的结论，不需要告诉他，所以结尾只写事件、不写场面的状态——“没人说话”“众人都看着你”“他等着你的回答”都不行。也不要在结尾罗列选项，那是主持人的声音，不属于这段小说。
+同一时点、同一含义的事实尽量只维护一份；过去取值、当前结果和不同主体的理解不按重复删去。当前情境、叙事及界面只承担各自用途，避免重复强化同一概念。
 
-不得替玩家决定行动、台词或内心：此刻还没有任何玩家输入可以承接。开场白中会继续约束首次行动的事实，必须同时写入自然承载它的世界文档，不能只存在于开场白。
+world/ 或 state/ 承载虚构事实，control/ 安排本世界的取材、规则运用、保存位置与呈现，不复制当前值。未来游玩参考只代表实际启用的作者块；它不是本轮叙事要求，可选政策也未必始终启用。世界指令补充本世界特有约束，不重复通用规则或工具流程，不擅自改写世界外预设。
 
-## 世界事实与持续状态
+## 开场与整理
 
-- world/ 世界文档只回答虚构世界中什么已经成立：身份、关系、认知、能力、限制、因果规则、刺激条件和持续倾向。用事实、不变量和会改变裁决的差异表达，不把可直接复用的镜头、动作套路或小说句子当作设定。
-- control/blocks/ 作者材料回答主持者应该怎样选择材料、裁决、揭露、更新或呈现；只有本世界特有的“怎么写”才放这里。opening.md 是玩家可见小说正文。catalog 标题和摘要是索引投影，不是第二份事实正文。
-- 人物文档可以写什么会触发他、他知道或相信什么、他倾向怎样选择、什么会约束他；不要规定每次出现都要重复演出的固定动作、句式或镜头。誓言原文、碑文、信件、暗号等措辞本身就是世界事实时，可以原样保存，但不因此要求叙事反复引用。
-- 对每句话询问：删除或合并后，未来裁决、连续性、发现索引或本世界独有的输出边界是否会改变？都不会就删除。
-- 世界文档只写创建世界时已经成立的事实和稳定规则。愿望、意图、尝试、计划、可能性、预测、计划中的转折和未来分支都不是已经发生的事实。
-- 需要渐进揭露时，写当前已经成立的认知与阻力：谁知道、怀疑、否认或误解什么，现存证据是什么，什么关系、能力或环境阻止真相立刻显露。让后续发展由这些事实、玩家选择和主持裁决产生；不要预写阶段、进度条、时间表、指定触发场景、必经桥段或必须发生的揭露顺序。只有阶段本身是疾病、仪式等真实世界机制，并由已定义事实而不是预定剧情推动时，才把它记录为状态。
-- 每项持续信息优先写给它的自然所有者。普通临时对象不必独立建档；只有需要独立引用、转移或追踪生命周期时，才升级为独立文档。
-- 当前情境只保留开场动作和即时反应结束后仍然成立的局面：此刻地点、仍在场的人物、仍在进行的事件，以及首次行动若忽略就会立刻冲突的少量限制。它不是背景摘要、事件日志或未来分支清单。
-- catalog 的摘要要写成足以帮助主持者判断“是否需要继续读取正文”的一句话，而不是“某某的资料”。正文改变后，标题和摘要也要继续准确。
+仅在内容包分支检查 opening.md：写玩家当时可感知的具体局面，保留尚待回答的请求与必要原话，不替玩家决定行动、台词或内心。独处、安静和等待也可形成开场。开场与文档停在同一时点，将约束首次行动的结果写给自然所有者，无需复制整篇叙事。
 
-## 世界提示框架
+整理结束已完成或失效的进程、约定和限制，保留仍有意义的成果、后遗影响、经历与引用。补录、去重和归档不让事情再发生。长材料按需发现，软体积提示不授权截断；暂时离场不等于退役，退役也不会移除显式全文槽。
 
-主持预设已经提供跨世界通用的文风、玩家代理权、裁决和状态维护判据。内容包的世界提示框架只写本世界特有的部分：题材边界、专属文风、本世界有哪些文档类型、某类结果应该写进哪一份，以及专属规则。不要重复通用判据，也不要描述 Runtime 怎样编排工具。
-
-静态提示材料应尽量稳定；会随游玩持续改写的事实放进当前情境或其他自然承载它的世界文档。只有确实需要固定注入正文的材料才长期占用提示词位置。
-
-## 状态整理与界面时效
-
-区分当前状态、发现索引与历史经过。检查是否把无限追加的事件日志放进常驻全文槽；有必要保留长材料时，由作者安排小的常驻状态文档和大的按需档案，配好摘要、引用和 catalog。不要为了保险复制同一事实；确有不同用途时，每处只保存其职责所需的信息。明确有界的文档都要约定清理被替代描述、重复列表与过期承诺；退役文档仍可读取、引用和恢复，但另行指定的全文槽不会自动移除。
-
-通用保存判据由主持预设负责：界面绑定值改变和重要的原文外信息立即保存，其余可恢复状态在检查点前归并。世界控制只说明本世界的自然所有者、保存位置、时间粒度与文档生命周期，避免重复主持的通用流程。核对玩家视图实际绑定的时间、地点、资源等字段，让更新位置明确。软体积限制只作提示，不要求自动截断或阻止写入。
-
-## 审计与精简
-
-审计时先按概念、再按句子检查。先列出相关目录，并用多个实际词语做字面搜索；完整读取所有可能表达同一概念的文档，在内部对应“概念—权威所有者—必要投影—实际注入位置”。合并或删除跨文档重复后，再逐句按事实、索引、作者指令、叙事文案或未来剧本分类，把内容保留在正确位置。最后结合写后覆盖报告复查共同注入位置。除非用户要求，不必把这份内部审计表完整复述出来。
+检查实际玩家视图选择器。容器会显示子树，隐藏认知不能混进公开节点；重组绑定结构时同步更新选择器。审计先对应概念、时间与主体，再处理重复句子；最后用实际写后覆盖检查发现路径，不默认输出整份内部审计表。
 `;
 
-export const defaultSettingImprovementPromptEn = `# Recommended setting-improvement method
+export const defaultSettingImprovementPromptEn = `# Recommended authoring method
 
-Use the existing content package and the user's current goal as the creative starting point. Current files read completely through the tools are established facts and constraints; read other files as needed. Do not manufacture content merely to demonstrate work, fill a structure, or make the package look rich. Concluding that no change is needed is valid.
+Start with the editing target, existing content and the user's goal. Discuss necessary judgments when asked to discuss; apply targeted changes when asked to implement. An audit or restructuring request includes relevant structure and duplicated expression. Do not invent content to fill a structure; no change needed is valid.
 
-## Working mode and existing content
+## Editing target and world starting point
 
-When the user asks to discuss or plan, concisely state the main experience they want, what will be preserved, adjusted, or established, the tone and boundaries, and only the assumptions that are genuinely necessary. When the user asks for direct implementation, apply those judgments directly to the content package's current tree. Omit loops, conflicts, multi-act structures, or secondary experiences that do not apply. Do not invent material just to fill a template.
+Content-package setting improvement defines the world where the opening ends, including established history, current state, ongoing processes and individual knowledge. A simple starting point can be playable and ordinary undefined content can grow during play. Do not prewrite inevitable future experiences or mandatory plot stages.
 
-By default, make a targeted change around the user's current goal and preserve unrelated material that still holds. When the user asks for review, trimming, deduplication, cleanup, or restructuring, the audit scope itself is what the goal affects: compare every document in that scope that may express the same concept, and freely merge, relocate, or delete material that remains true but is redundant, ineffective, or misplaced. Do not let “preserve what still holds” prevent cleanup.
+Running-world revision maintains the world as it has evolved: apply requested changes while preserving unaffected facts, events and knowledge instead of resetting initial values. This branch does not read or modify opening.md. Explicit revision is not an in-world event and needs no invented action to explain it.
 
-When the goal may change the overall structure, material discovery, or future update locations, first list the content-package root and completely read control/frame.yaml, every world-instruction block it references, the bound current-situation document, opening.md, and affected existing documents. Use those readings as the basis for discussion or edits. When the user asks to see a plan, organize the relevant judgments into the visible reply.
+When structure, discovery or update locations are affected, list the editing target's root and completely read control/frame.yaml, enabled world instructions, the bound current situation and affected documents. Follow this request's actual tool boundary.
 
-Before creating or reshaping each piece of information, decide six things together: what is already true when the world is created, its natural owner, its play-time discovery path or injection path, its future update path, whether it needs a player view, and whether the same meaning is already expressed authoritatively somewhere else. Passing mechanical validation does not make material discoverable during play; do not leave important facts reachable only if the model happens to browse into them.
+## Organizing world information
 
-## Two measures: coverage and weight
+World documents carry facts and semantics. Current values belong to natural owners; ongoing processes retain actual progress and conditions; intentions, promises and schedules retain subjects and known conditions while their goals remain unrealized. Separate claims and guesses from what actually happened. Knowledge and attitudes belong to their holders, do not automatically follow world changes, and need not be mutual. Do not invent unexpressed player feelings.
 
-A discovery path determines whether there is enough exposure; injection weight determines whether there is too much. Keep one authoritative owner for each meaning. Catalog summaries, the current situation, and opening.md may mention it to fulfill their distinct responsibilities as an index, immediate situation, or committed narrative, but they must not copy the full rule, character description, or behavior template.
+Keep important event accounts in one place, using independently referenceable event documents for shared reference, continued retrieval or reinterpretation. Events record what happened and the outcomes at that time; latest states, pending work and views stay in their own documents, connected by references rather than copied into a rolling event-state table. Objects retain current outcomes; people retain knowledge, relationship appraisals and a brief basis, linking relevant events instead of copying their accounts. Persist formed states and attitudes too, rather than saving only events and asking each play request to infer everything again. Organize events by what happened, not by turn; ordinary details may remain narrative-only.
 
-When the same concept is repeated across materials that appear together in one play request, the model will treat it as a stronger instruction and perform it more often. Check especially for overlap among full-document injection, node injection, the current situation, world-prompt blocks, and narrative prompts. Do not assume that every world document is injected in full on every turn; use the actual frame, directory mode, and post-write coverage report. Aim for the minimum sufficient exposure instead of writing the same thing everywhere it might be relevant.
+These distinctions apply to objects, injuries, places, organizations, trades, investigations and personal relationships without fixed directories, fields or counts. Independent reference, evolving state or lifecycle tracking warrants a separate document; smaller records may share a suitable home. The current situation holds the immediate location, people present, ongoing matters and unanswered requests, not all history or future branches.
 
-## Opening
+summary is a catalog description: include only a brief identity, topic or stable clue needed to identify the document, not detailed state or event accounts. Concrete facts belong in the body. Update titles and descriptions only when identifying information changes.
 
-This section governs opening.md only. Do not carry the voice of this section or of frozen narrative blocks into world/ documents or control/ author material.
+## Arrange storage and discovery together
 
-The opening is the first page of this interactive novel; after reading it, the player will write their first action. Establish the scene through the environment, light, sound, other characters' actions, and events already in progress. Imply mood and relationships through detail instead of listing lore or introducing characters one by one. Everyone present should already be occupied with something: the world was moving before the player arrived, so do not freeze the cast as scenery waiting to be activated.
+Give each durable fact a natural owner, update location and actual discovery or injection path. Inject frequently needed current values as bodies or nodes when appropriate; retrieve longer event accounts through catalogs and references. Important events need a usable central home, not merely an imagined directory that play cannot create. Check the real frame and post-write coverage instead of assuming every body enters play requests.
 
-Make the last sentence a specific action someone takes or a specific line they say. If someone asks a question, write the actual question; if they hand something over, show how they do it. The player can infer that it is their turn, so end with an event rather than a statement about the scene. Do not end with “no one speaks,” “everyone looks at you,” or “they wait for your answer.” Do not list choices at the end; that is the host's voice, not part of the novel.
+Prefer one maintained home for facts with the same meaning at the same time. Past values, current outcomes and different subjects' interpretations are not duplicates. Let the current situation, prose and interface serve their own purposes without repeatedly overweighting one concept.
 
-Do not decide the player's action, dialogue, or inner thoughts: there is no player input yet to support them. Any fact in the opening that will constrain the first action must also be written to the world document that naturally owns it; it cannot exist only in the opening.
+world/ or state/ carries fictional facts. control/ arranges world-specific material selection, rule use, save locations and presentation without copying current values. Future-play reference reflects only enabled author blocks: it is not this request's narrative instruction, and optional policies may not stay enabled. World instructions add world-specific constraints without repeating general rules or tool procedures or rewriting an external preset.
 
-## World facts and durable state
+## Opening and consolidation
 
-- World documents under world/ answer only what already holds in the fictional world: identities, relationships, knowledge, capabilities, constraints, causal rules, triggers, and durable tendencies. Express facts, invariants, and distinctions that change adjudication; do not treat reusable shots, stock gestures, or novel-ready sentences as setting data.
-- Author material under control/blocks/ tells the host how to select material, adjudicate, reveal, update, or present it; only world-specific instructions about how to write belong there. opening.md is player-visible novel prose. Catalog titles and summaries are index projections, not a second factual body.
-- A character document may state what triggers a character, what they know or believe, how they tend to choose, and what constrains them. Do not prescribe a fixed gesture, line, or shot that must be performed every time they appear. Exact wording may be retained when the wording itself is an in-world fact, such as an oath, inscription, letter, or code phrase, but that does not require the narrative to repeat it.
-- For each statement, ask: would removing or merging it change future adjudication, continuity, discovery indexing, or a world-specific output boundary? If none would change, remove it.
-- World documents contain only facts and stable rules that already hold when the world is created. Wishes, intentions, attempts, plans, possibilities, predictions, planned turns, and future branches are not established facts.
-- For gradual revelation, record present knowledge and resistance: who knows, suspects, denies, or misunderstands what; what evidence already exists; and which relationships, capabilities, or circumstances prevent immediate revelation. Let later developments emerge from those facts, player choices, and host adjudication. Do not prewrite stages, progress tracks, timetables, designated trigger scenes, mandatory beats, or a required reveal order. Record a stage as state only when the stage is itself a real world mechanism, such as a disease or ritual, and defined facts rather than a predetermined plot drive its changes.
-- Write each durable piece of information to its natural owner first. Ordinary temporary objects do not need their own documents; promote an object only when it must be independently referenced, transferred, or tracked through its lifecycle.
-- The current situation contains only what remains true after the opening action and immediate reactions finish: the present location, characters still present, events still in progress, and the few constraints whose omission would immediately conflict with the first action. It is not a background summary, event log, or list of future branches.
-- Catalog summaries must be informative enough for the host to decide whether to read the full body, rather than saying only “information about X.” Titles and summaries must remain accurate after the body changes.
+Inspect opening.md only in the content-package branch. Show a concrete situation the player can perceive, retaining unanswered requests and consequential wording without choosing player action, speech or inner thoughts. Solitude, quiet and waiting can also open a story. Documents and opening stop at the same moment; give outcomes constraining the first action to natural owners without copying the whole narrative.
 
-## World prompt frame
+Consolidation closes completed or expired processes, commitments and restrictions while retaining meaningful results, lasting effects, events and references. Recording, deduplication and archiving do not perform events again. Keep long material discoverable on demand; advisory size limits do not authorize truncation. Temporary absence is not retirement, and retirement does not remove explicit full-document slots.
 
-The host preset already provides cross-world rules for prose, player agency, adjudication, and state maintenance. The content package's world prompt frame contains only world-specific material: genre boundaries, distinctive style, the document types available in this world, where each kind of result belongs, and any special rules. Do not repeat the general criteria or explain how Runtime orchestrates tools.
-
-Keep static prompt material as stable as possible. Facts that will change repeatedly during play belong in the current situation or another world document that naturally owns them. Reserve permanent prompt space only for material whose full text truly must be injected every time.
-
-## State maintenance and interface freshness
-
-Distinguish current state, discovery indexes, and event history. Check whether unbounded event logs occupy always-injected full-document slots. When long material must remain, arrange small resident state documents and larger on-demand archives with summaries, references, and catalogs. Avoid insurance copies of the same fact; when several uses are necessary, each location holds only its own responsibility. Give all bounded documents a cleanup policy for superseded descriptions, duplicate lists, and expired promises. Retired documents remain readable, referenceable, and restorable; separately configured full-document slots still apply.
-
-General save criteria belong to the host preset: changed interface values and important information absent from replayable originals are saved immediately; other recoverable state is consolidated before checkpoints. World controls specify natural owners, save locations, time granularity, and document lifecycles, without duplicating general hosting procedure. Inspect actual player-view bindings for clock, location, and resources and make their update locations clear. Advisory size limits never imply automatic truncation or write rejection.
-
-## Auditing and trimming
-
-Audit concepts before sentences. First list the relevant directories and run literal searches using several concrete terms. Completely read every document that may express the same concept, and internally map “concept — authoritative owner — necessary projections — actual injection locations.” After merging or removing cross-document duplication, classify each statement as fact, index, author instruction, narrative copy, or future script, and keep it only in the proper location. Finally, use the post-write coverage report to recheck materials that appear together. Do not reproduce the full internal audit map unless the user asks for it.
+Check actual player-view selectors. Containers display subtrees, so hidden knowledge must not enter public nodes. Update selectors with any restructuring of bound content. Audit concepts, time and subjects before removing repeated sentences; finish by checking discovery against real post-write coverage without printing a full internal audit by default.
 `;
 
 export const defaultSettingImprovementPrompt =

@@ -121,8 +121,28 @@ export class FileNativePlayDocuments {
     return this.#committedSnapshot;
   }
 
-  bindBootstrap(bootstrap: PromptCompilation): void {
-    this.#reads = bootstrapAuthorizations(bootstrap, this.#candidate.snapshot);
+  bindBootstrap(
+    bootstrap: PromptCompilation,
+    previousAuthorization?: PlayDocumentAuthorizationCheckpoint,
+  ): void {
+    const injected = bootstrapAuthorizations(
+      bootstrap,
+      this.#candidate.snapshot,
+    );
+    this.#reads = injected;
+    // Refreshing a prefix retains the native conversation. Its exact reads
+    // remain valid only on the identical state tree, including our own writes.
+    if (
+      previousAuthorization?.stateFingerprint ===
+      fingerprintStateFiles(this.#candidate.files)
+    ) {
+      this.restoreAuthorizationCheckpoint(previousAuthorization);
+      for (const [ref, locators] of injected.documents) {
+        for (const locator of locators ?? [null])
+          authorizeRead(this.#reads, this.#candidate.snapshot.id, ref, locator);
+      }
+    }
+    // Creation capabilities come from this prefix, not past directory slots.
     this.#declaredDirectories = declaredStateDirectories(bootstrap);
   }
 
@@ -413,11 +433,13 @@ function applyPlayCandidatePatch(
   const ref = args.target.replace(/^@/u, "");
   const target = documentDescriptorByRef(candidate.snapshot, ref);
   if (target === null) return toolFailure(`Target @${ref} does not exist.`);
-  const retainedAuthorization = reads.documents.get(ref);
+  const retainedAuthorization = authorizationsAfterEdits(
+    reads.documents.get(ref),
+    args.edits,
+  );
   if (
     reads.snapshotId !== candidate.snapshot.id ||
-    retainedAuthorization === undefined ||
-    !editsAreAuthorized(retainedAuthorization, args.edits)
+    retainedAuthorization === undefined
   )
     return toolFailure(
       `Read @${ref} exactly, or receive the complete document in bootstrap, before writing it.`,
@@ -451,8 +473,20 @@ function applyPlayCandidatePatch(
     if (retainedAuthorization === null)
       authorizeRead(reads, candidate.snapshot.id, ref, null);
     else
-      for (const locator of retainedAuthorization)
-        authorizeRead(reads, candidate.snapshot.id, ref, locator);
+      for (const locator of retainedAuthorization) {
+        const selected = candidate.snapshot.query({
+          kind: "select_node",
+          document: { shortRef: ref },
+          locator,
+        });
+        if (selected.kind === "select_node" && selected.ok)
+          authorizeRead(
+            reads,
+            candidate.snapshot.id,
+            ref,
+            selected.node.locator,
+          );
+      }
     return {
       ok: true,
       markdown: receipt,
@@ -465,31 +499,67 @@ function applyPlayCandidatePatch(
   }
 }
 
-function editsAreAuthorized(
+function authorizationsAfterEdits(
   authorization: AuthorizedLocator[] | null | undefined,
   edits: unknown[],
-): boolean {
-  if (authorization === null) return true;
-  if (authorization === undefined) return false;
-  return edits.every((edit) => {
+): AuthorizedLocator[] | null | undefined {
+  if (authorization === null || authorization === undefined)
+    return authorization;
+  for (const edit of edits) {
     if (!record(edit) || edit.op === "set_metadata" || !record(edit.locator))
-      return false;
+      return undefined;
     const requested = Array.isArray(edit.locator.yaml)
       ? { codec: "yaml", path: edit.locator.yaml }
       : Array.isArray(edit.locator.markdown)
         ? { codec: "markdown", path: edit.locator.markdown }
         : null;
-    return (
-      requested !== null &&
-      authorization.some((allowed) => {
+    if (
+      requested === null ||
+      !authorization.some((allowed) => {
         const path = "yaml" in allowed ? allowed.yaml : allowed.markdown;
         return (
           requested.codec in allowed &&
           path.every((segment, index) => requested.path[index] === segment)
         );
       })
-    );
-  });
+    )
+      return undefined;
+    // A removed/replaced subtree or shifted array address is no longer proof
+    // about its old descendants. Check each edit before moving to the next so
+    // a batch cannot use a deleted array item to overwrite its unread successor.
+    authorization = authorization.filter((allowed) => {
+      if (!(requested.codec in allowed)) return true;
+      const path = "yaml" in allowed ? allowed.yaml : allowed.markdown;
+      const withinEdit = requested.path.every(
+        (segment, index) => path[index] === segment,
+      );
+      if (
+        withinEdit &&
+        ["remove", "remove_section", "rename_section"].includes(String(edit.op))
+      )
+        return false;
+      if (
+        withinEdit &&
+        path.length > requested.path.length &&
+        ["replace", "replace_section"].includes(String(edit.op))
+      )
+        return false;
+      if (edit.op === "remove" && requested.codec === "yaml") {
+        const index = requested.path.length - 1;
+        const removed: unknown = requested.path[index];
+        const current = path[index];
+        if (
+          typeof removed === "number" &&
+          typeof current === "number" &&
+          current >= removed &&
+          requested.path.slice(0, -1).every((segment, i) => path[i] === segment)
+        )
+          return false;
+      }
+      return true;
+    });
+  }
+  return authorization;
 }
 
 function formatToolRevisionReceipt(

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 
+import { minimalFileNativeContentScaffold } from "../../src/runtime/content/ContentWorkspace.ts";
 import { defaultPresetHostFiles } from "../../src/shared/default-preset-host.ts";
 import { builtinDefaultPlayPresetBinding } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
 import { FileNativePlayDocuments } from "../../src/runtime/play/PlayDocumentTools.ts";
@@ -195,10 +196,10 @@ test("文档软上限只报告 UTF-8 体积，实际注入按去重材料计数"
 
 test("主持块分别约束玩家代理权与默认叙事视角", () => {
   expect(defaultPresetHostFiles["blocks/adjudication.md"]).toContain(
-    "What the player must decide",
+    "Decisions that belong to the player",
   );
   expect(defaultPresetHostFiles["blocks/adjudication.md"]).toContain(
-    "intention, attempt, preparation, or prediction does not mean the goal has been achieved",
+    "an attempt is not success",
   );
   expect(defaultPresetHostFiles["blocks/style.md"]).toContain(
     "Address the player character as “you”",
@@ -1264,6 +1265,53 @@ ${"original material\n".repeat(1_000)}${originalTail}
         [],
       ),
     ).toMatchObject({ ok: true });
+  });
+
+  test("新建内容包允许首个事件建档，并在全新编译中发现", () => {
+    const source = input();
+    const files = Object.fromEntries(
+      minimalFileNativeContentScaffold()
+        .filter(({ path }) => path !== "opening.md")
+        .map(({ path, contents }) => [
+          path.replace(/^world\//u, "state/"),
+          contents,
+        ]),
+    );
+    const documents = new FileNativePlayDocuments(files);
+    source.world.documentSnapshot = documents.snapshot;
+    source.world.additionalMaterials = [];
+    const compiler = new FileNativePromptCompiler();
+    documents.bindBootstrap(compiler.compileBootstrap(source));
+    expect(
+      documents.execute(
+        { id: "list", name: "state_list", arguments: { parent: "@dir-/" } },
+        [],
+      ).markdown,
+    ).toContain("Directory @dir-/events");
+    expect(
+      documents.execute(
+        {
+          id: "first-event",
+          name: "world_create",
+          arguments: {
+            parent: "@dir-/events",
+            codec: "yaml",
+            refHint: "flood-rescue",
+            title: "Flood rescue",
+            summary: "The rescue at the old bridge.",
+            aliases: [],
+            body: "account: A borrowed boat brought the stranded workers ashore.",
+          },
+        },
+        [],
+      ),
+    ).toMatchObject({ ok: true });
+    source.world.documentSnapshot = documents.snapshot;
+    expect(
+      compiler
+        .compileBootstrap(source)
+        .logicalMessages.find(({ role }) => role === "world_context")?.markdown,
+    ).toContain("Flood rescue [ref: @flood-rescue]");
   });
 
   test("frame 声明的空 catalog 目录可发现、可创建，未声明目录不可伪造", () => {

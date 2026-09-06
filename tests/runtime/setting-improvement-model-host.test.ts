@@ -11,19 +11,18 @@ import {
 test.each([
   {
     locale: "zh-CN" as const,
-    heading: "未来游玩语义边界（只读；不是设定文档范文）",
+    heading: "创建后游玩语义边界（只读参考）",
     hostGroup: "游玩作者语义（编排顺序）",
     narrativeGroup: "preset:builtin/play.narrative",
-    warning: "不要模仿这些块的句式、节奏、动作细节或描写密度写入 world/",
+    warning: "不要模仿这些块的句式、节奏或镜头写入 world/",
   },
   {
     locale: "en" as const,
-    heading:
-      "Future play semantics (read-only; not a setting-document style template)",
+    heading: "Post-creation play semantics (read-only reference)",
     hostGroup: "Play author semantics (arranged order)",
     narrativeGroup: "preset:builtin/play.narrative",
     warning:
-      "Do not imitate their sentences, pacing, staged gestures, or descriptive density in world/ documents",
+      "Do not imitate their sentences, pacing or staged gestures in world/",
   },
 ])("$locale 冻结预设原文标作语义边界而不是设定范文", (scenario) => {
   const host = new FileNativeModelHost({
@@ -106,17 +105,13 @@ test.each([
     );
     expect(serialized).toContain("创作工具与结算");
     expect(serialized).toContain("内容包当前树写入边界");
-    expect(serialized).toContain("未来游玩语义边界（只读；不是设定文档范文）");
+    expect(serialized).toContain("创建后游玩语义边界（只读参考）");
     expect(serialized).toContain("游玩作者语义（编排顺序）");
     expect(serialized).toContain("preset:builtin/play.narrative");
+    expect(serialized).toContain("不要模仿这些块的句式、节奏或镜头写入 world/");
+    expect(serialized).toContain("不要把跨世界规则复制进 control/");
     expect(serialized).toContain(
-      "不要模仿这些块的句式、节奏、动作细节或描写密度写入 world/",
-    );
-    expect(serialized).toContain(
-      "不要把其中跨世界通用的规则复制进内容包控制块",
-    );
-    expect(serialized).toContain(
-      "完整内容包占位在这里连续展开世界指令和 frame 选定材料",
+      "完整世界提示占位在这里连续展开世界指令和 frame 选定材料",
     );
     expect(serialized).toContain("通用状态维护判据");
     expect(serialized).toContain("玩家可见叙事规则");
@@ -147,6 +142,17 @@ test.each([
     expect(serialized).not.toContain("点击应用");
     expect(serialized).not.toContain("setting_preview_candidate");
     expect(serialized).not.toContain("setting_finish_candidate");
+    if (provider === "openai_responses") {
+      const definitions = (request.body as { tools: Record<string, unknown>[] })
+        .tools;
+      expect(definitions.every((tool) => tool.strict === false)).toBe(true);
+      expect(
+        definitions.find((tool) => tool.name === "setting_list"),
+      ).toHaveProperty("parameters.required", []);
+      expect(
+        definitions.find((tool) => tool.name === "setting_write_file"),
+      ).toHaveProperty("parameters.required", ["path", "contents"]);
+    }
   },
 );
 
