@@ -7,6 +7,10 @@ import {
 let activeLocale: AppLocale = defaultAppLocale;
 
 const englishMessages: Record<string, string> = {
+  "已保留当前页面的未保存修改，请保存或放弃后再切换。":
+    "Your unsaved changes have been kept. Save or discard them before switching pages.",
+  "这份内容包正在完善，请在回复完成后创建世界。":
+    "This content package is being developed. Wait for the reply to finish before creating a world.",
   放弃控制修改: "Discard control changes",
   选择编辑文件: "Choose a file to edit",
   当前文件: "Current file",
@@ -1071,7 +1075,7 @@ const settingImprovementEnglishMessages: Record<string, string> = {
     "{turns} turns · {tools} tools · {files} files",
   "正在恢复设定完善对话…": "Restoring the setting-improvement conversation…",
   "直接说你现在想做什么。": "Say what you want to do now.",
-  "例如：先帮我梳理一下人物关系；或者直接把开场改成雨夜码头，并同步当前情境。":
+  "例如：先帮我梳理人物关系；或者直接把开场改成雨夜码头，并同步当前情境。":
     "For example: help me reason through the character relationships first; or change the opening to a rainy-night wharf and update the current situation too.",
   你: "You",
   AI: "AI",

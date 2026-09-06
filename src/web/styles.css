@@ -46,14 +46,15 @@ body {
 }
 
 button {
-  padding: 0.75rem 1.2rem;
+  padding: 7px 11px;
   border: 1px solid var(--border);
   border-radius: 3px;
   color: var(--text);
-  background: var(--accent);
+  background: transparent;
   font: inherit;
-  font-weight: 700;
+  font-weight: 400;
   cursor: pointer;
+  min-height: 32px;
 }
 
 button:disabled {
@@ -65,12 +66,13 @@ input,
 select,
 textarea {
   width: 100%;
-  padding: 0.75rem;
+  padding: 8px 10px;
   border: 1px solid var(--field-border);
   border-radius: 3px;
   color: inherit;
   background: var(--field-surface);
   font: inherit;
+  min-width: 0;
 }
 
 textarea {
@@ -81,9 +83,37 @@ label {
   display: grid;
   gap: 0.45rem;
 }
+button:hover:not(:disabled) {
+  background: var(--surface-selected);
+  border-color: #b8b1a3;
+}
+input[type="checkbox"],
+input[type="radio"] {
+  width: auto;
+  accent-color: var(--accent);
+}
+h1,
+h2,
+h3,
+h4 {
+  font-weight: 500;
+}
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+summary {
+  cursor: pointer;
+}
+.primary-button {
+  background: #343832;
+  color: #fff;
+}
+.primary-button:hover:not(:disabled) {
+  background: #464c43;
+}
 
 .center-card,
-.workspace-shell,
 .config-shell {
   width: min(72rem, calc(100% - 2rem));
   margin: 0 auto;
@@ -3815,8 +3845,8 @@ input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
 summary:focus-visible {
-  outline: 3px solid var(--border);
-  outline-offset: 3px;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 @media (max-width: 64rem) {

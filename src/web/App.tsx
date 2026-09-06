@@ -111,6 +111,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const filesDirtyRef = useRef(filesDirty);
   filesDirtyRef.current = filesDirty;
   const packageOpenRequest = useRef(0);
+  const navigationDraftLockedRef = useRef(false);
   const improvementObservationScope = useRef(0);
   const improvementHistoryRequest = useRef(0);
   const improvementSelection = useRef<
@@ -324,6 +325,10 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         packageId,
       });
       if (packageOpenRequest.current !== requestVersion) return;
+      if (navigationDraftLockedRef.current) {
+        setNotice(uiText("已保留当前页面的未保存修改，请保存或放弃后再切换。"));
+        return;
+      }
       if (packageId !== selected) improvementObservationScope.current += 1;
       const packageFiles = package_.files;
       setSelected(packageId);
@@ -739,12 +744,25 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     }
     creatingWorldRef.current = true;
     setCreatingWorld(true);
+    const packageId = selected;
+    const model = modelBinding();
     try {
+      const authoring = await client.request<V1SettingImprovementOverview>({
+        type: "setting-improvement.overview",
+        packageId,
+      });
+      if (
+        authoring.latest?.runStatus === "running" ||
+        authoring.history.some((session) => session.runStatus === "running")
+      ) {
+        setNotice(uiText("这份内容包正在完善，请在回复完成后创建世界。"));
+        return;
+      }
       const created = await client.request<{ world: { worldId: string } }>({
         type: "world.create",
         operationId: createClientId("create"),
-        packageId: selected,
-        model: modelBinding(),
+        packageId,
+        model,
       });
       await refresh();
       openWorld(created.world.worldId);
@@ -776,6 +794,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   }
 
   function openWorld(id: string): void {
+    packageOpenRequest.current += 1;
     setWorldId(id);
     setScreen("world");
   }
@@ -851,8 +870,16 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     importPending ||
     creatingWorld ||
     childNavigationLocked;
+  navigationDraftLockedRef.current =
+    filesDirty ||
+    playPresetDraftDirty ||
+    modelDraftDirty ||
+    childNavigationLocked ||
+    improvementActive;
   function navigate(next: Screen): void {
-    if (navigationLocked || next === screen) return;
+    if (navigationLocked) return;
+    if (next !== "content" || next === screen) packageOpenRequest.current += 1;
+    if (next === screen) return;
     if (next === "content") {
       if (selectedPackage === undefined) void createPackage();
       else void openPackage(selectedPackage.localId);
@@ -999,8 +1026,8 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
               setImportArchive(archive);
               setNotice("");
             }}
-            onOpenPlayPresets={() => setScreen("plays")}
-            onCreateWorld={() => setScreen("create")}
+            onOpenPlayPresets={() => navigate("plays")}
+            onCreateWorld={() => navigate("create")}
             onCreatePackage={() => void createPackage()}
             onImportPackage={() => void importPackage()}
             onOpenPackage={(packageId) => void openPackage(packageId)}

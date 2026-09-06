@@ -41,6 +41,14 @@ function fixture() {
               id: "model",
               name: "本地主持",
               provider: "chat_completions",
+              presetId: "custom",
+              dialect: "standard",
+              baseUrl: "http://localhost:1/v1",
+              hasApiKey: true,
+              reasoningEffort: "provider_default",
+              reasoningSummary: "provider_default",
+              thinkingMode: "provider_default",
+              thinkingBudgetTokens: null,
               modelId: "test",
               contextWindowTokens: 128000,
               maxOutputTokens: 16000,
@@ -210,4 +218,78 @@ test("切换创建来源时迟到的开场读取不能替换当前预览", async
       .getByRole("button", { name: "从当前内容包创建" })
       .hasAttribute("disabled"),
   ).toBe(true);
+});
+
+test("迟到的内容包读取不会卸载刚产生模型草稿的页面", async () => {
+  const { client, request } = fixture();
+  let finish: (value: unknown) => void = () => undefined;
+  const original = request.getMockImplementation()!;
+  request.mockImplementation((input) =>
+    input.type === "content.read"
+      ? new Promise((resolve) => {
+          finish = resolve;
+        })
+      : original(input),
+  );
+  render(createElement(App, { client }));
+  await screen.findByRole("heading", { name: "世界工作区" });
+  fireEvent.click(screen.getByRole("button", { name: "模型连接" }));
+  fireEvent.click(
+    within(screen.getByRole("navigation", { name: "工作区导航" })).getByRole(
+      "button",
+      { name: "内容编辑" },
+    ),
+  );
+  fireEvent.change(screen.getByLabelText("配置名称"), {
+    target: { value: "新的未保存名称" },
+  });
+  await act(async () => {
+    finish({
+      localId: "first",
+      title: "第一份内容",
+      status: "usable",
+      files: [],
+      issues: [],
+    });
+    await Promise.resolve();
+  });
+  expect(screen.getByLabelText<HTMLInputElement>("配置名称").value).toBe(
+    "新的未保存名称",
+  );
+  expect(
+    screen.queryByRole("heading", { name: "第一份内容 · AI 设定完善" }),
+  ).toBeNull();
+});
+
+test("创建页重新核验所选包的运行状态，避免使用其他标签页的中间结果", async () => {
+  const { client, request } = fixture();
+  const original = request.getMockImplementation()!;
+  request.mockImplementation((input) =>
+    input.type === "setting-improvement.overview"
+      ? Promise.resolve({
+          latest: { runStatus: "ready" },
+          history: [{ runStatus: "running" }],
+        })
+      : original(input),
+  );
+  render(createElement(App, { client }));
+  await screen.findByRole("heading", { name: "世界工作区" });
+  fireEvent.click(
+    within(screen.getByRole("navigation", { name: "工作区导航" })).getByRole(
+      "button",
+      { name: "新建世界" },
+    ),
+  );
+  fireEvent.change(screen.getByLabelText("创建世界的内容包"), {
+    target: { value: "chosen" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "从当前内容包创建" }));
+  await screen.findByText("这份内容包正在完善，请在回复完成后创建世界。");
+  expect(request).toHaveBeenCalledWith({
+    type: "setting-improvement.overview",
+    packageId: "chosen",
+  });
+  expect(request.mock.calls.some(([r]) => r.type === "world.create")).toBe(
+    false,
+  );
 });
