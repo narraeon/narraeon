@@ -298,54 +298,42 @@ export function PromptPreviewScreen({
       className={`prompt-preview-screen${embedded ? " embedded" : ""}`}
       aria-labelledby="prompt-preview-title"
     >
-      {embedded ? (
-        <header className="prompt-preview-embedded-header">
-          <div>
-            <p className="eyebrow">READ ONLY · REAL COMPILER</p>
+      <header className="prompt-preview-header">
+        <div className="prompt-preview-title-row">
+          {embedded ? (
             <h4 id="prompt-preview-title">{uiText("全新上下文会发送什么")}</h4>
-          </div>
-          <p>
-            {uiText("真实编译，0 次模型调用，不会创建对话或写入权威状态。")}
-          </p>
-        </header>
-      ) : (
-        <header className="prompt-preview-header">
-          <div>
-            <p className="eyebrow">READ ONLY · REAL COMPILER</p>
+          ) : (
             <h2 id="prompt-preview-title">{uiText("提示词预览")}</h2>
-            <p className="prompt-preview-lede">
-              {uiText(
-                "用真实编译器检查全新上下文会发送什么：逻辑 role、Markdown、材料、工具、预算与 Provider 映射。",
-              )}
-            </p>
-          </div>
-          <div
+          )}
+          <span
             className="prompt-preview-readonly"
             aria-label={uiText("预览性质")}
+            title={uiText("不会创建对话或写入权威状态")}
           >
             <span>{uiText("只读检查")}</span>
-            <strong>{uiText("0 次模型调用")}</strong>
-            <small>{uiText("不会创建对话或写入权威状态")}</small>
-          </div>
-        </header>
-      )}
+            <span>{uiText("0 次模型调用")}</span>
+          </span>
+        </div>
+        <p className="prompt-preview-lede">
+          {embedded
+            ? uiText("真实编译，0 次模型调用，不会创建对话或写入权威状态。")
+            : uiText(
+                "用真实编译器检查全新上下文会发送什么：逻辑 role、Markdown、材料、工具、预算与 Provider 映射。",
+              )}
+        </p>
+      </header>
 
       <div className="prompt-preview-setup">
         <section
           className="panel-card prompt-preview-input-card"
           aria-labelledby="prompt-preview-input-title"
         >
-          <div className="prompt-preview-section-heading">
-            <div>
-              <p className="prompt-preview-kicker">PREVIEW INPUT</p>
-              <h3 id="prompt-preview-input-title">
-                {uiText("决定这次检查什么")}
-              </h3>
-            </div>
-            <span className="prompt-preview-mode">
-              {uiText("内容包首轮 · 全新上下文")}
-            </span>
-          </div>
+          <h3 id="prompt-preview-input-title" className="visually-hidden">
+            {uiText("决定这次检查什么")}
+          </h3>
+          <p className="prompt-preview-context">
+            {uiText("内容包首轮 · 全新上下文")}
+          </p>
 
           {packages.length === 0 ? (
             <p className="prompt-preview-empty" role="status">
@@ -355,7 +343,7 @@ export function PromptPreviewScreen({
             </p>
           ) : (
             <>
-              <label>
+              <label className="prompt-preview-package-field">
                 {uiText("内容包")}
                 <select
                   aria-label={uiText("预览内容包")}
@@ -378,7 +366,7 @@ export function PromptPreviewScreen({
                 </select>
               </label>
 
-              <label>
+              <label className="prompt-preview-player-field">
                 {uiText("预览玩家输入")}
                 <textarea
                   aria-label={uiText("预览玩家输入")}

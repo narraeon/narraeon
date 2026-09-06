@@ -816,16 +816,29 @@
 }
 /* Preview inputs stay compact; the compiled result is the main workspace. */
 .prompt-preview-screen {
+  width: 100%;
+  max-width: 1440px;
+  margin-inline: auto;
   padding: 22px 28px;
   gap: 18px;
 }
 .prompt-preview-screen.embedded {
   padding: 0;
+  border: 0;
+  background: transparent;
 }
 .prompt-preview-header {
+  display: block;
   padding: 0;
-  gap: 20px;
-  align-items: center;
+}
+.prompt-preview-title-row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+}
+.prompt-preview-title-row h4 {
+  margin: 0;
 }
 .prompt-preview-header h2 {
   font-size: 22px;
@@ -839,42 +852,61 @@
   margin: 6px 0 0;
 }
 .prompt-preview-readonly {
+  display: inline-flex;
+  gap: 8px;
   padding: 0;
   border: 0;
-  min-width: 180px;
+  min-width: 0;
   font-size: 12px;
   background: transparent;
 }
-.prompt-preview-readonly strong {
-  font-size: 14px;
+.prompt-preview-readonly span {
+  font: inherit;
+  letter-spacing: normal;
+  text-transform: none;
 }
 .prompt-preview-setup {
   display: block;
 }
 .prompt-preview-input-card {
   display: grid;
-  grid-template-columns: minmax(180px, 0.7fr) minmax(0, 2fr) auto;
-  align-items: end;
-  gap: 14px;
+  grid-template-columns: 260px minmax(0, 1fr);
+  align-items: start;
+  gap: 14px 24px;
   border: 0;
   padding: 16px 0;
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
   border-radius: 0;
 }
-.prompt-preview-section-heading {
-  grid-column: 1 / -1;
+.prompt-preview-context {
   margin: 0;
+  color: var(--muted);
+  font-size: 12px;
 }
-.prompt-preview-section-heading h3 {
-  font-size: 14px;
-}
-.prompt-preview-input-card textarea {
+.prompt-preview-screen .prompt-preview-input-card > label > textarea {
   min-height: 64px;
   height: 64px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  font-size: 13px;
+  line-height: 1.65;
+  background: var(--surface);
 }
 .prompt-preview-input-card > label {
   margin: 0;
+}
+.prompt-preview-package-field {
+  grid-column: 1;
+  grid-row: 2;
+}
+.prompt-preview-player-field {
+  grid-column: 2;
+  grid-row: 2 / 4;
+}
+.prompt-preview-input-card > button {
+  grid-column: 1;
+  grid-row: 3;
 }
 .prompt-preview-input-card > label > .field-note {
   grid-column: 1 / -1;
@@ -1033,11 +1065,7 @@
     padding: 20px;
   }
   .prompt-preview-input-card {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
-  }
-  .prompt-preview-input-card > button {
-    grid-column: 1 / -1;
-    justify-self: start;
+    grid-template-columns: 220px minmax(0, 1fr);
   }
 }
 @media (max-width: 620px) {
@@ -1134,21 +1162,14 @@
   .prompt-preview-screen {
     padding: 18px 16px;
   }
-  .prompt-preview-header {
-    display: block;
-  }
-  .prompt-preview-readonly {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    flex-wrap: wrap;
-    margin-top: 8px;
-  }
   .prompt-preview-input-card {
     grid-template-columns: minmax(0, 1fr);
   }
-  .prompt-preview-section-heading {
-    flex-wrap: wrap;
+  .prompt-preview-package-field,
+  .prompt-preview-player-field,
+  .prompt-preview-input-card > button {
+    grid-column: 1;
+    grid-row: auto;
   }
   .world-floating-chrome {
     gap: 0;
