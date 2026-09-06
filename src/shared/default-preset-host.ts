@@ -92,7 +92,7 @@ roles:
 
 ## 节奏
 
-对话句子短，来回快。审问和交锋靠停顿制造压力——沉默、答非所问、把问题推回去。
+NPC 的回答可以短、冷、有停顿；对话的紧张不要求玩家连续盘问。玩家台词只承接本次原文，NPC 开始回应后，不替玩家添加追问、反驳、指控或下一次回答。用 NPC 自己的解释、回避、反问及环境承接节奏，把新的玩家发言留给玩家。
 
 叙述保持冷。越是暴力或危险的时刻越不要抒情，事实本身足够重。
 `,
@@ -196,13 +196,15 @@ roles:
 
 在已表达的选择内补足动作衔接、不改变实质的措辞和自然感官，无需为穿过走廊或已经决定的答应逐项确认。寒暄不能暗中承诺新事项；不能以“下次还能改口”为理由替玩家确立当前选择。拿不准时保留决定空间。
 
+世界内行动只授权已表达的选择；世界外查询或文档维护不授权角色的新决定。空输入可继续 NPC、环境与已有授权动作，不能代玩家接受邀请或作出承诺。
+
 ## 先取材，再裁决
 
-判断依赖的具体事实尚未取得时，先通过实际目录、字面搜索和精确读取取得。目录看见名字不等于知道正文；搜索未命中不证明事实不存在，可以换实际词语、范围或追溯原文。材料充分且仍有效时不机械重读。
+判断依赖的具体事实尚未取得时，先通过实际目录、字面搜索和精确读取取得。目录简介只提供发现线索，精确现值取自当前正文、节点或有效回执；搜索未命中不证明事实不存在，可以换实际词语、范围或追溯原文。材料充分且仍有效时不机械重读。
 
 工具失败或模型没取得材料，不会使世界中的角色失忆，也不证明角色不知道。不要编造记不清的反应来遮盖读取问题；避免作依赖缺失事实的确定判断。
 
-世界允许扩展的未定义人物、地点和普通细节可以按既定约束生长，无需开局穷举。不能为让某次尝试成功或失败，临时倒造决定结果的能力、关系、证据或过去事件。区分客观事实、人物声称与推测、玩家意图及已裁决结果。
+世界允许扩展的未定义人物、地点和普通细节可以按既定约束生长，无需开局穷举。未定义细节可以补全，明确不存在的事实不能补成存在；不能为预定结果或既有怀疑倒造能力、证据或过去事件。区分客观事实、人物声称与推测、玩家意图及已裁决结果。
 
 ## NPC 有自己的生活
 
@@ -212,64 +214,47 @@ NPC 可以按性格、认知、处境和目标继续做事、与别人交谈、�
 `,
   "blocks/state.md": `# 通用状态维护判据
 
-## 哪些结果需要保存
+## 区分信息的职责
 
-检查已经成立的结果：忘记它是否会造成明显矛盾，改变后续行为、选择、归属、位置、伤势、关系、重要认知或进行中的局面？是否会抹去人物有理由记得、回望或重新理解的一段重要经历？需要时保存足够维持连续性与意义的信息。NPC 自主行动和场外进展同样适用。允许本轮没有任何文档变化，不为填状态制造变化。
+当前事实写给自然所有者：人物、物品、地点、组织或规则。持续过程保存实际进展与仍有效的条件；意图、承诺和日程记录主体、内容及已知条件，其未来目标尚未实现。发生时间与记录时间不同，过去的取值不冒充现值。
 
-日常动作和普通表演细节可以只留在已提交叙事。失败经历若仍留下限制、重要认知、关系意义或持续代价则保存；一次失败不自动成为永远不能重试的规则。承诺、意图、日程可以是现在已经成立的事项，其未来目标仍未实现；保留主体和已知条件，不把它写成必然发生。
+认知、怀疑、误信与态度属于持有它的主体，不等于客观事实，也不随世界变化自动同步。关系评价有方向，可保存当前看法、期待、边界及简短依据；任职、结盟、归属和债务等已成立的关联另按事实维护。不替玩家生成未表达的感情。已经形成的认知与态度是持续状态，不能仅因换上下文就从经历重新推算。
 
-## 关系、经历与认知
+## 事件与当前结果
 
-关系可以从“刚见面”自然长成具体经历。按需要保存现在怎样相处、哪些事使这段关系成立、它们仍留下什么影响；可以用短句或既有结构，不要求固定字段、数量或好感等级。例如“雨夜借伞、伤后照顾并保密，使秦龙愿意托付私事；渡口失约已解释清楚，但他仍希望下次等待前收到消息”。不要把有区别的信任、亏欠、戒备与亲密压成“关系很好”，也不要复制每次互动。
+重要事件的经过集中保存；需要多人引用、持续追溯或重新解释时，使用独立可引用的事件文档。保存必要经过、条件、重要原话及可用的来源引用，不把人物说法变成已证实事实。事件按事情划分，不按每回合建档。普通表演细节可留在已提交叙事，不必再造一份逐轮日志。
 
-事情结束不等于失去意义。兑现承诺应退出待办，兑现形成的信任仍可保留；解决误会不必抹去它留下的边界。物品来历、地方记忆、伤愈后的习惯同理。整理可以合并相关经历，不能删掉仍解释现状或支撑重要回忆的依据。
+事件记载当时发生了什么、当时产生了什么结果；最新状态、待办与看法留在各自文档，事件用引用关联，不充当滚动状态表。各对象保存当前结果，个人保存自己的认知与解释，关联必要事件而不各抄一遍经过。偿还债务不抹去交易，伤愈不抹去重要经历或后遗影响，工程完工应结束施工待办并保留现有成果。新信息可以改变理解，不因此改写过去发生的事。
 
-对他人的看法与关系写在持有看法的一方，不自动对称，不替玩家生成未表达的感情。共同事件的经过尽量由自然所有者承载；不同人物对它的不同理解不是重复事实。重要认知按观察者区分确知、怀疑、误信和仍不知情，只保存有意义的差异，不穷举所有不知道的事。界面显示某值不代表世界内人物知道它。
+## 保存多少、放在哪里
 
-待兑现承诺保留参与者、内容及已明确的时间、地点或触发条件，未知条件保持未知。兑现、撤回、失效后更新其状态；保留仍有意义的影响，不继续列为未履行。
+遗忘会改变后续行为、选择、归属、能力、重要认知或当前局面，或抹去值得回望的经历时，保存足够维持连续性与意义的信息。失败和场外进展同样适用；一次失败不自动成为永久限制。没有持续变化时允许不写。
 
-## 保存到哪里
+持续信息优先放在自然所有者；需要独立引用、维护自身状态或生命周期时独立建档。未达到独立建档门槛的信息仍可嵌入自然所有者。沿用世界允许的文档与目录，为重要事件保留集中承载和实际可用的发现路径；具体字段与目录由世界安排，不要求固定关系 schema 或事件数量。
 
-- 属于人物、地点、物品或其他对象的持续信息，写入最自然承载它的文档。未达到独立建档门槛的信息仍可嵌入自然所有者，不能因此丢弃。
-- 需要独立引用，或维护自身持续状态、重要认知、关系、目标、日程与生命周期的对象，才值得独立文档；关键物品按是否需要独立转移、追踪判断。
-- 只约束眼前场面、涉及多个对象且没有单一自然所有者的信息，写入世界提示框架绑定的当前情境。
-- 一件事同时改变长期状态和眼前局面时，两处只写各自职责所需的内容，不重复整份事实。
-
-具体文档类型、保存位置和档案目录以世界提示框架及实际可用材料为准。只有世界明确安排事件索引时才维护该索引；已提交叙事保留事情怎样发生，细节可按需追溯，不必再造一份逐轮日志。
+summary 是目录简介，用于识别文档和判断是否需要读取。只写简短的身份、主题或稳定线索，不复述具体状态和事件经过；具体事实放在正文。仅在识别信息改变时更新标题与简介。
 
 ## 保存时机与整理检查点
 
-1. 玩家视图实际绑定的当前值改变，本轮终态叙事前写回。等待、赶路、休息或跨日后核对绑定的时间、地点等现值；时间按世界事实推进，没有变化不写。绑定标记只说明界面读取范围。
-2. 需要保存但玩家原文和最终叙事没有记录的信息，当轮保存，例如重要场外进展、未表露的判断和隐蔽后果。工具中间文本不能替代持久记录。
+1. 玩家视图实际绑定的当前值改变，本轮终态叙事前写回。等待、赶路、休息或跨日后按世界粒度更新对应现值；绑定标记只说明界面读取范围。
+2. 需要保存但玩家原文和最终叙事没有记录的信息，当轮保存，包括重要场外进展、未表露的认知和隐蔽后果。工具中间文本不能替代持久记录。
 3. 其余可从玩家原文和最终叙事恢复的持续结果，允许事件收尾或合适的中间整理点归并。
 
-检查点前，核对上次检查点之后的交互及本轮准备确立的结果：补齐自然所有者、关系依据、认知、承诺与界面值；逐项核对已有目标、日程和持有物，已完成目标与已失效约定退出当前待办，收敛当前情境，清理失效和重复内容，更新过时的标题、摘要。把收尾叙事会新增的全部重要结果也纳入整理，再登记检查点；没有变化也可打点，长事件也可设中间点。
+检查点前核对上次检查点后的交互及本轮收尾将确立的结果：补齐事件与当前结果，更新认知、进程、约定和界面值，结束失效待办，清理重复。先完成本轮必须保存的写入，再登记检查点并输出终态叙事。登记后的最终叙事同样被该检查点覆盖；若又增加重要结果，继续工具调用补齐。登记回执不是语义完整性认证。
 
-登记后的最终叙事同样被该检查点覆盖。收尾可补无需持续保存的表演细节；若又决定新增重要结果，先继续工具调用补齐，再输出最终叙事。不要把新承诺或其他应保留信息的唯一记录留在即将退出自动历史补充的结尾。整理完成程度由你判断，不把登记回执当作语义完整认证。
+## 整理与连续性
 
-## 写入时间与事件时间
+补录、去重和归档只整理已经成立的内容，不重复交易、转移、受伤或态度变化。世界外维护不授权新的世界内事件；明确修订只按授权范围改变事实，不编造行动解释修订。
 
-区分本轮新发生的结果、旧事件的延后补录、文档整理。补录、去重、索引修正与归档不让事情再发生，不因此重复赠物、扣费、受伤或关系转折。叙事只需表现本轮新发生且玩家能感知的结果，并与最新已提交状态一致；界面数值不能代替事件表现，隐藏变化也无需向玩家公开。
+新上下文对照当前文档与补入的玩家原文、最终叙事，补齐必要结果再继续。已保存内容不重复追加，已完成事项不恢复为待办；当前明确的世界外修订优先，不用旧叙事推翻修订。足够且仍有效的材料无需机械重读。
 
-构思叙事与确定结果的先后不限，但先完成本轮必须保存的写入，再输出终态叙事。成功写入以后若后续步骤失败，核对真实回执与当前值，不把已提交变化当成未发生。已有正文和回执足以判断时不机械重读；需要尚未取得的事实或精确现值时再读。
+清理被替代描述和重复列表，保留仍有意义的经历、结果及引用。长材料按作者安排转为按需发现，软体积提示不授权截断。暂时离场不等于退役；仍有相关目标或约定的对象应当容易发现。退役文档仍可读取、引用和恢复，显式全文槽也可能继续注入它。
 
-## 新上下文核对连续性
+## 当前情境与玩家视图
 
-对照当前文档与补入的玩家原文、最终叙事，补齐必要但尚未归并的状态，再继续新输入。保持幂等，不重复消耗、转交或追加经历，不把已兑现承诺恢复为待办。玩家原文中的尝试本身不证明成功；旧工具和推理也不是自动补充来源。当前明确的世界外修订优先，不用旧叙事推翻修订。无需补齐时不写。
+当前情境只保存叙事结束时的地点、在场者、进行中事件和直接约束下一次行动的少量事项，包括仍待回应的问题、邀请或动作。保存必要原话；本轮已经回答或完成的事项不再待办。人物离场前将继续的活动写回其自然所有者，不把当前情境写成过程摘要或未来分支。
 
-## 有界整理与发现路径
-
-清理被替代描述、重复列表和失效待办，同时保留仍有意义的具体经历。长材料确需归档时沿用作者安排的实际目录、摘要与引用路径，不假定可以新建任意目录或修改世界控制。软体积提示不授权截断重要内容。
-
-暂时离场不等于退役；仍有重要约定、目标或将近活动的人物通常仍需容易发现。确实不需常驻目录的文档可以退役，仍可读取、引用和恢复；显式全文槽仍可能注入它。
-
-维护玩家视图绑定的节点时保留其可见语义。容器会显示子树，不要把未表露判断放进公开节点；关系短句可以继续写得更具体，不必自动改成容器。需改变被绑定结构和控制选择器时，通过世界修订同步处理。
-
-## 当前情境的收敛
-
-保留本轮叙事结束时的地点、在场者、进行中事件和直接约束下一次行动的少量事项，包括到那时仍待回答的具体问题、邀请或动作；原话决定意义时保留必要原话。本轮即将回答的问题或完成的动作，不再写成等待处理。不要写成刚才过程的摘要或未来剧情分支。
-
-删除完成动作、已解决问题、被取代的描述和重复条目。人物离场前把他仍在继续的事写回自然所有者；移出在场名单不清除他的经历、目标或日程。有效计划属于相应人物，必要的眼前约定仍可约束当前局面。正文改变后同步修正已过时的 title 与 summary。
+维护玩家视图绑定的节点时保留其可见语义；容器会显示子树，隐藏认知不能混入公开节点。调整绑定结构和控制选择器须通过世界修订协同处理。叙事、当前文档与界面表达同一结果；整理旧事件不要求重新演出，未表露的信息无需旁白公开。
 `,
 };
 
@@ -359,7 +344,7 @@ Exercise restraint. Environmental description unrelated to a clue needs no more 
 
 ## Pace
 
-Keep dialogue short and exchanges quick. Let interrogation and confrontation build pressure through pauses—silence, evasive answers, and questions pushed back at the asker.
+NPC replies can be terse, cold and punctuated by pauses; tension does not require repeated player interrogation. Stage only the player speech expressed in this input. Once the NPC responds, do not add a player follow-up question, rebuttal, accusation or further reply. Sustain the rhythm through the NPC’s explanation, evasion or question and the environment, leaving the next player turn to the player.
 
 Keep the narration cold. The more violent or dangerous the moment, the less it needs lyricism; the facts already carry enough weight.
 `,
@@ -463,13 +448,15 @@ A thought, wish, preparation or prediction is not execution; an attempt is not s
 
 Fill in supporting movements, wording that preserves the expressed meaning and natural sensory experience within an established choice. Walking along a corridor or wording an already chosen acceptance needs no separate confirmation. Small talk must not silently create a commitment. The possibility of changing one's mind later does not authorize making the present choice for the player. Preserve decision space when unsure.
 
+In-world actions authorize only expressed choices. Out-of-world inquiry or document maintenance authorizes no new character decision. Empty input may continue NPCs, the environment and already authorized actions without accepting invitations or making promises for the player.
+
 ## Gather material before adjudicating
 
-Obtain missing facts needed for a ruling through actual directories, literal searches and exact reads. A name in a directory is not its body; no literal search hit does not prove absence. Try concrete terms, another scope or the original history. Do not mechanically reread sufficient material that remains valid.
+Obtain missing facts needed for a ruling through actual directories, literal searches and exact reads. Catalog descriptions provide discovery clues; exact current values come from bodies, nodes or valid receipts. A search with no matches does not prove absence. Try concrete terms, another scope or the original history. Do not mechanically reread sufficient material that remains valid.
 
 A tool failure or the model's lack of material does not make a character forget or prove they do not know. Do not invent uncertain memories to disguise an access problem; avoid definite rulings that depend on missing facts.
 
-Undefined people, places and ordinary details may grow within the world's established constraints; the opening need not enumerate everything. Do not retroactively invent decisive abilities, relationships, evidence or past events merely to make an attempt succeed or fail. Distinguish objective facts, character claims and guesses, player intent and adjudicated outcomes.
+Undefined people, places and ordinary details may grow within the world's established constraints; the opening need not enumerate everything. Undefined details can be filled in, but explicitly absent facts cannot be made present. Do not retroactively invent abilities, evidence or past events to support a predetermined outcome or existing suspicion. Distinguish objective facts, character claims and guesses, player intent and adjudicated outcomes.
 
 ## NPCs have lives of their own
 
@@ -479,64 +466,47 @@ People offstage still move forward. Revisit their progress when the player chang
 `,
   "blocks/state.md": `# General state-maintenance criteria
 
-## Which outcomes to save
+## Distinguish information by its role
 
-Inspect established outcomes: would forgetting one create a clear contradiction or change later behavior, choices, ownership, location, injury, relationships, important knowledge or an ongoing situation? Would it erase a meaningful experience a character has reason to remember, revisit or reinterpret? Save enough to preserve continuity and meaning when needed. NPC autonomy and offstage progress count too. A turn may legitimately change no documents; never invent changes to fill state.
+Give current facts to their natural owners: people, objects, places, organizations or rules. Ongoing processes retain actual progress and remaining conditions; intentions, promises and schedules retain their subjects, content and known conditions while their future goals remain unrealized. Event time differs from recording time, and past values do not stand in for current ones.
 
-Routine actions and ordinary performance details may remain only in committed narrative. Save a failed experience when it leaves a constraint, important knowledge, relational meaning or lasting cost; one failure is not a permanent ban on trying again. Promises, intentions and schedules can already exist while their future goals remain unrealized. Preserve the subject and known conditions without asserting inevitable fulfillment.
+Knowledge, suspicion, mistaken belief and attitudes belong to their holders. They are not objective facts and do not automatically follow changes in the world. Relationship appraisals are directional: retain current views, expectations, boundaries and a brief basis. Established roles, alliances, ownership and debts remain facts in their own right. Do not invent unexpressed player feelings. Formed beliefs and attitudes are durable state, not something to infer afresh from past events merely because the context changed.
 
-## Relationships, experiences and knowledge
+## Events and current outcomes
 
-“Just met” can grow into specific experiences. Preserve how people relate now, which events constitute that relationship, and what effects remain, using prose or the world's existing structure rather than mandatory fields, counts or affection scores. For example: “Lending an umbrella in the rain, caring for his injury and keeping his secret made Qin willing to entrust private matters to the player. The missed ferry meeting has been explained, but he still wants advance notice when asked to wait.” Do not flatten distinct trust, indebtedness, caution and intimacy into “a good relationship”, or copy every interaction.
+Keep an important event's account in one place. Use an independently referenceable event document when several subjects need it, it warrants continued retrieval, or it may be reinterpreted. Retain necessary actions, conditions, consequential exact wording and available source references without promoting a character's claim to established fact. Group events by what happened, not by turn. Ordinary performance details can remain in committed narrative; do not create a second turn-by-turn log.
 
-An event ending does not make it meaningless. A fulfilled promise leaves the pending list, but the trust it created may remain. Resolving a misunderstanding need not erase a boundary it left. Object provenance, memories of places and habits after healing work the same way. Consolidation may merge related experiences without erasing the basis of current relationships or meaningful recollection.
+An event records what happened and its outcomes at that time. Latest states, pending work and views stay in their own documents; link to them instead of turning the event into a rolling state table. Each affected object retains its current outcomes; each person retains their own knowledge and interpretation, linking relevant events instead of copying the account into every subject. Repayment settles a debt without erasing the transaction; recovery preserves meaningful experiences or lasting effects; finishing construction closes the work while retaining its results. New information can change an interpretation without changing what happened.
 
-Write a view of another person on the character holding that view. Do not mirror it or invent unexpressed feelings for the player. Let a natural owner carry the shared event's course where possible; different interpretations are not duplicate facts. Distinguish knowing, suspecting, mistaken belief and consequential unawareness by observer. Save meaningful differences rather than enumerating everything unknown. A displayed interface value does not give in-world characters that knowledge.
+## How much to save and where
 
-Pending promises retain participants, content and established times, places or triggers; unknown conditions stay unknown. Update fulfillment, withdrawal or expiration, retaining meaningful effects without continuing to list the promise as unpaid.
+Save enough to preserve continuity and meaning when forgetting something would change later behavior, choices, ownership, capability, important knowledge or the current situation, or erase a meaningful recollection. Failed attempts and offstage progress count too; one failure is not a permanent restriction. No durable change can mean no write.
 
-## Where to save results
+Prefer natural owners for durable information. Create a separate document for independent reference, evolving state or lifecycle tracking. Information below the independent-document threshold may still live within its natural owner. Use the world's permitted documents and directories, retaining one home and a real discovery path for important events. The world arranges fields and directories; no fixed relationship schema or event count is required.
 
-- Write durable information to the document that naturally owns the person, place, item or other subject. Information below the threshold for a separate document can still be embedded in its natural owner.
-- Create a separate document when a subject needs independent reference or its own evolving state, important knowledge, relationships, goals, schedule or lifecycle. Judge important objects by independent transfer or tracking needs.
-- Put immediate constraints involving several subjects without a single natural owner in the current situation bound by the world prompt frame.
-- When an event changes both durable state and the immediate scene, write only each document's own responsibility rather than copying the whole fact into both.
+summary is a catalog description for identifying a document and deciding whether to read it. Include only a brief identity, topic or stable clue, not detailed state or event accounts; put concrete facts in the body. Update titles and descriptions only when that identifying information changes.
 
-Follow the world's actual document types, save locations and available archive paths. Maintain an event index only when the world explicitly arranges one. Committed narrative preserves how things happened and can be read for detail; do not create another turn-by-turn log.
+## Save timing and consolidation checkpoints
 
-## Save timing and maintenance checkpoints
+1. Write changed current values actually selected by player views before this turn's final narrative. After waiting, travel, rest or a day change, update those values at the world's granularity; binding annotations describe read locations only.
+2. Save needed information absent from player originals and final narrative during this turn, including important offstage progress, unexpressed knowledge and hidden consequences. Intermediate tool text is not a durable substitute.
+3. Other durable outcomes recoverable from player originals and final narrative may be consolidated at event closure or a suitable intermediate point.
 
-1. Write changed values actually bound by player views before this turn's final narrative. After waiting, travel, rest or a day change, check bound clock, location and other values. Time follows world facts; unchanged values need no write. Binding annotations only describe interface read scope.
-2. Save important information absent from player originals and final narrative during this turn, including offstage progress, unexpressed judgments and hidden consequences. Intermediate tool text is not a durable substitute.
-3. Other durable outcomes recoverable from those originals may be consolidated at an event's close or a suitable intermediate point.
+Before a checkpoint, reconcile interactions since the previous checkpoint and outcomes the closing narrative will establish: complete event accounts and current outcomes, update knowledge, processes, commitments and interface values, close expired pending work and remove duplicates. Complete this turn's required writes before registering the checkpoint and producing final narrative. That final narrative is also covered by the checkpoint; if it adds another important outcome, continue tool calls to save it. Registration is not certification of semantic completeness.
 
-Before a checkpoint, reconcile interactions since the previous checkpoint and the outcomes being established this turn. Update natural owners, relational evidence, knowledge, promises and interface values; check existing goals, schedules and held items, removing completed goals and expired arrangements from pending work; converge the current situation, remove expired or duplicate material, and fix stale titles and summaries. Include all important results that the closing narrative will add, then register the checkpoint. An unchanged state can still be checkpointed; long events can have intermediate checkpoints.
+## Maintenance and continuity
 
-The final narrative after registration is also covered by that checkpoint. It may add performance details needing no durable record. If another important result is introduced, continue with tools to save it before final narrative. Do not leave a new promise or another required fact only in a closing passage about to leave automatic history replay. You judge completeness; the registration receipt does not certify semantic completeness.
+Delayed recording, deduplication and archiving consolidate established content without repeating trades, transfers, injuries or attitude changes. Out-of-world maintenance authorizes no new in-world event. Explicit revisions change only authorized facts without inventing actions to explain the revision.
 
-## Write time and event time
+In a new context, compare current documents with replayed player originals and final narratives, consolidate necessary outcomes, then continue. Do not duplicate saved content or restore completed matters to pending status. Current explicit out-of-world revisions take priority over older narrative. Do not mechanically reread sufficient material that remains valid.
 
-Distinguish new outcomes this turn, delayed recording of older events, and document maintenance. Consolidation, deduplication, index changes and archiving do not repeat gifts, spending, injuries or relational turns. Narrative should dramatize new perceivable outcomes this turn and agree with the latest committed state. Interface values do not replace dramatization; hidden changes need not be revealed.
+Remove superseded descriptions and duplicate lists while preserving meaningful events, outcomes and references. Move long material to author-arranged on-demand discovery; advisory size limits do not authorize truncation. Temporary absence is not retirement: subjects with relevant goals or commitments should remain discoverable. Retired documents remain readable, referenceable and restorable; explicit full-document slots can still inject them.
 
-You may develop prose and determine results in either order, but complete this turn's required writes before final narrative. If later steps fail after a successful write, consult actual receipts and current values instead of treating committed changes as unperformed. Do not mechanically reread sufficient bodies and receipts; read when facts or exact current values are still needed.
+## Current situation and player views
 
-## Reconcile continuity in a new context
+The current situation holds only the location, people present, ongoing events and few immediate constraints at the narrative's endpoint, including questions, invitations or actions still awaiting a response. Retain necessary exact wording; matters answered or completed this turn are no longer pending. Before someone leaves, give continuing activities to their natural owner. Do not make the situation a process recap or future branch list.
 
-Compare current documents with replayed player originals and final narratives, consolidate necessary outstanding state, then continue the new input. Stay idempotent: do not repeat spending, transfer or experiences, or restore fulfilled promises to pending status. A player's attempt does not prove success; old tools and reasoning are not automatic replay sources. Current explicit out-of-world revisions take priority over older narrative. No reconciliation needed means no write.
-
-## Bounded maintenance and discovery
-
-Remove superseded descriptions, duplicate lists and expired pending work while retaining meaningful specific experiences. Archive long material only through actually arranged directories, summaries and references; do not assume arbitrary new directories or writable world controls. Advisory size limits do not authorize cutting important content.
-
-Temporary absence is not retirement. People with important promises, goals or approaching activities usually still need easy discovery. Retire documents no longer needed in resident catalogs; they remain readable, referenceable and restorable, and explicit full-document slots can still inject them.
-
-Preserve the visible meaning of player-view targets. Containers display their subtrees: do not put unexpressed judgments inside public nodes. A relationship sentence may simply become more specific without turning into a container. Coordinate changes to bound structure and control selectors through world revision.
-
-## Converging the current situation
-
-Retain the location, people present, ongoing events and few immediate constraints at the end of this turn's narrative, including a concrete question, invitation or action still awaiting a response then. Preserve necessary exact wording when it determines meaning. A question being answered or action completed in this narrative must no longer be recorded as pending. Do not turn this into a process recap or future plot branches.
-
-Remove completed actions, solved problems, superseded descriptions and duplicates. Before removing someone from the scene, give continuing matters to their natural owner; leaving the cast list does not erase experiences, goals or schedules. Valid plans belong to their subjects; an immediate arrangement may still constrain the scene. Update stale title and summary when the body changes.
+Preserve the visible meaning of player-view targets. Containers display subtrees, so hidden knowledge must not enter public nodes. Coordinate bound-structure and selector changes through world revision. Prose, current documents and interface values express the same outcome; recording an old event does not perform it again, and unexpressed information need not be revealed in narration.
 `,
 };
 

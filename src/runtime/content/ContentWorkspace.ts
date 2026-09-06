@@ -379,6 +379,7 @@ context:
   - slot: { kind: catalog, directory: locations, maxEntries: 24, required: false }
   - slot: { kind: catalog, directory: items, maxEntries: 24, required: false }
   - slot: { kind: catalog, directory: rules, maxEntries: 24, required: false }
+  - slot: { kind: catalog, directory: events, maxEntries: 24, required: false }
   - slot: { kind: current_situation }
   - slot: { kind: history, recent: 2 }
   - slot: { kind: additional_materials }

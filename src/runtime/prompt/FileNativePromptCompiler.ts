@@ -1608,8 +1608,8 @@ context:
 `,
     "control/blocks/world-style.md":
       locale === "zh-CN"
-        ? "# 世界状态规则\n\n只保存已经发生且下一次行动不能忽略的结果；人物变化写入对应人物，眼前未结束的局面写入当前情境。\n"
-        : "# World-state rules\n\nSave only results that have happened and cannot be ignored at the next action. Write character changes to the corresponding character and unfinished immediate circumstances to the current situation.\n",
+        ? "# 本世界的保存位置\n\n人物的衣着和修为写入对应人物文档；宿舍里尚待回应的邀请写入当前情境。\n"
+        : "# Save locations in this world\n\nKeep clothing and cultivation rank in each character's document; put unanswered invitations in the dorm room in the current situation.\n",
     "state/current-situation.yaml": `$document:
   id: situation.current
   ref: current-situation

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 
+import { minimalFileNativeContentScaffold } from "../../src/runtime/content/ContentWorkspace.ts";
 import { defaultPresetHostFiles } from "../../src/shared/default-preset-host.ts";
 import { builtinDefaultPlayPresetBinding } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
 import { FileNativePlayDocuments } from "../../src/runtime/play/PlayDocumentTools.ts";
@@ -1264,6 +1265,53 @@ ${"original material\n".repeat(1_000)}${originalTail}
         [],
       ),
     ).toMatchObject({ ok: true });
+  });
+
+  test("新建内容包允许首个事件建档，并在全新编译中发现", () => {
+    const source = input();
+    const files = Object.fromEntries(
+      minimalFileNativeContentScaffold()
+        .filter(({ path }) => path !== "opening.md")
+        .map(({ path, contents }) => [
+          path.replace(/^world\//u, "state/"),
+          contents,
+        ]),
+    );
+    const documents = new FileNativePlayDocuments(files);
+    source.world.documentSnapshot = documents.snapshot;
+    source.world.additionalMaterials = [];
+    const compiler = new FileNativePromptCompiler();
+    documents.bindBootstrap(compiler.compileBootstrap(source));
+    expect(
+      documents.execute(
+        { id: "list", name: "state_list", arguments: { parent: "@dir-/" } },
+        [],
+      ).markdown,
+    ).toContain("Directory @dir-/events");
+    expect(
+      documents.execute(
+        {
+          id: "first-event",
+          name: "world_create",
+          arguments: {
+            parent: "@dir-/events",
+            codec: "yaml",
+            refHint: "flood-rescue",
+            title: "Flood rescue",
+            summary: "The rescue at the old bridge.",
+            aliases: [],
+            body: "account: A borrowed boat brought the stranded workers ashore.",
+          },
+        },
+        [],
+      ),
+    ).toMatchObject({ ok: true });
+    source.world.documentSnapshot = documents.snapshot;
+    expect(
+      compiler
+        .compileBootstrap(source)
+        .logicalMessages.find(({ role }) => role === "world_context")?.markdown,
+    ).toContain("Flood rescue [ref: @flood-rescue]");
   });
 
   test("frame 声明的空 catalog 目录可发现、可创建，未声明目录不可伪造", () => {
