@@ -3884,6 +3884,7 @@ test("从调用链节点派生会保留截至该节点的调用轨迹，并可�
     steps: [
       {
         outcome: "response",
+        text: "Alex reaches for the door handle.",
         reasoningContent: "First confirm the dormitory door's current state.",
         toolCalls: [
           {
@@ -4026,7 +4027,17 @@ test("从调用链节点派生会保留截至该节点的调用轨迹，并可�
   });
   expect(
     continuedToolHost.requests[0]?.appended.map(({ kind }) => kind),
-  ).toEqual(["runtime_notice", "player", "assistant", "tool"]);
+  ).toEqual([
+    "runtime_notice",
+    "player",
+    "assistant",
+    "tool",
+    "runtime_notice",
+  ]);
+  expect(continuedToolHost.requests[0]?.appended.at(-1)).toMatchObject({
+    kind: "runtime_notice",
+    notice: "tool_step",
+  });
 
   const playerBranch = (
     await runtime.handle({
@@ -4114,6 +4125,136 @@ test("从调用链节点派生会保留截至该节点的调用轨迹，并可�
     "commit:2",
   );
 });
+
+test.each(["continue_context", "fresh_context"] as const)(
+  "结算提示与空输入续写提示按历史端点截取，并支持 %s 玩家修订",
+  async (continuation) => {
+    const { worlds, worldId, root } = await createWorld(
+      `play-chain-notice-prefix-${continuation}`,
+    );
+    const host = new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [
+        {
+          outcome: "response",
+          text: "Alex pauses at the door.",
+          toolCalls: [
+            { id: "list-before-door", name: "state_list", arguments: {} },
+            { id: "list-again", name: "state_list", arguments: {} },
+          ],
+        },
+        { outcome: "response", text: "Alex opens the door." },
+        { outcome: "response", text: "A breeze stirs the curtains." },
+        { outcome: "response", text: "Alex follows you outside." },
+      ],
+    });
+    const chains = new PlayCallChain(worlds);
+    const initial = await chains.start({
+      worldId,
+      chainId: `notice-prefix-${continuation}`,
+      exchangeId: "open-door",
+      playerText: "I ask Alex to open the door.",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: modelBinding(),
+      modelHost: host,
+    });
+    const initialTranscript = (await worlds.playTimeline.readCurrent(worldId))!
+      .value.transcript;
+    const continued = await chains.append({
+      worldId,
+      chainId: initial.chainId,
+      exchangeId: "notice-continue",
+      playerText: "",
+      modelHost: host,
+    });
+    const continuedTranscript = (await worlds.playTimeline.readCurrent(
+      worldId,
+    ))!.value.transcript;
+    const latest = await chains.append({
+      worldId,
+      chainId: initial.chainId,
+      exchangeId: "leave-room",
+      playerText: "I go outside.",
+      modelHost: host,
+    });
+
+    // Both endpoints are historical: the complete-context copy shortcut must
+    // not hide bugs in notice-aware prefix reconstruction.
+    const coldWorlds = new FileNativeWorldStore(root);
+    const coldChains = new PlayCallChain(coldWorlds);
+    for (const [label, head, expected] of [
+      ["initial", initial.parentHead, initialTranscript],
+      ["continued", continued.parentHead, continuedTranscript],
+    ] as const) {
+      const branch = await coldChains.deriveWorld({
+        operationId: `notice-prefix-fork-${label}-${continuation}`,
+        sourceWorldId: worldId,
+        sourceHead: head,
+        hostPresetId: "host-current",
+      });
+      const saved = await coldWorlds.playTimeline.readCurrent(
+        branch.world.worldId,
+      );
+      expect(saved!.value.transcript).toEqual(expected);
+    }
+    expect(
+      continuedTranscript
+        .filter((item) => item.kind === "runtime_notice")
+        .map(({ notice }) => notice),
+    ).toEqual(["checkpoint_rounds", "tool_step", "continuation"]);
+
+    const selected = latest.events.find(
+      (event) => event.kind === "player" && event.exchangeId === "leave-room",
+    );
+    const revised = await coldChains.revisePlayer({
+      operationId: `notice-prefix-revise-${continuation}`,
+      worldId,
+      chainId: latest.chainId,
+      eventId: selected!.id,
+      replacementExchangeId: "stay-in-room",
+      replacementText: "I stay inside.",
+      ...(continuation === "fresh_context"
+        ? {
+            continuation,
+            freshContext: {
+              hostBinding: hostBinding(),
+              playPreset: playPreset(),
+              modelBinding: modelBinding(),
+            },
+          }
+        : { continuation }),
+    });
+    const replacementHost = new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [{ outcome: "response", text: "Alex waits by the open door." }],
+    });
+    await new PlayCallChain(new FileNativeWorldStore(root)).append({
+      worldId,
+      chainId: revised.playCallChain.chainId,
+      exchangeId: "generate-revised-notice-prefix",
+      playerText: "",
+      modelHost: replacementHost,
+    });
+    expect(replacementHost.requests[0]!.appended).toEqual([
+      ...(continuation === "continue_context" ? continuedTranscript : []),
+      expectedRoundMarker(1),
+      { kind: "player", text: "I stay inside." },
+    ]);
+    expect(
+      (await coldWorlds.recoverEndpoint(worldId)).history.map(
+        ({ exactText }) => exactText,
+      ),
+    ).toEqual([
+      "门外传来三声短促的铃响。\n",
+      "I ask Alex to open the door.",
+      "Alex opens the door.",
+      "A breeze stirs the curtains.",
+      "I stay inside.",
+      "Alex waits by the open door.",
+    ]);
+  },
+);
 
 test.each([
   {

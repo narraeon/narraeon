@@ -1110,6 +1110,13 @@ export class PlayCallChain {
       input.selectedEvent.committedHead,
       restoresHead,
     );
+    const prefixEvents = structuredClone(
+      sourceContext.events.slice(0, input.selectedEventIndex),
+    );
+    const transcript = transcriptThroughEvents(
+      sourceContext.transcript,
+      prefixEvents,
+    );
     const outcome = await this.#worlds.reviseTimeline({
       operationId: request.operationId,
       worldId: request.worldId,
@@ -1120,13 +1127,6 @@ export class PlayCallChain {
       requestFingerprint,
     });
 
-    const prefixEvents = structuredClone(
-      sourceContext.events.slice(0, input.selectedEventIndex),
-    );
-    const transcript = transcriptThroughEvents(
-      sourceContext.transcript,
-      prefixEvents,
-    );
     const events: V1PlayCallChainEvent[] = [
       ...prefixEvents,
       {
@@ -3487,6 +3487,10 @@ function transcriptThroughEvents(
       continue;
     }
     if (event.kind === "assistant" && event.status === "completed") {
+      const notice = transcript[cursor];
+      const hasContinuationNotice =
+        notice?.kind === "runtime_notice" && notice.notice === "continuation";
+      const item = transcript[cursor + (hasContinuationNotice ? 1 : 0)];
       const hasToolCall = events
         .slice(index + 1)
         .find(
@@ -3498,13 +3502,18 @@ function transcriptThroughEvents(
       const recorded =
         event.text.trim().length > 0 ||
         hasToolCall?.kind === "tool_call" ||
-        transcript[cursor]?.kind === "assistant";
+        item?.kind === "assistant";
       if (!recorded) continue;
-      const item = transcript[cursor];
       if (item?.kind !== "assistant" || item.text !== event.text)
         throw new PlayCallChainError(
           "Source call-chain responses do not match the model transcript, so a fork cannot be created safely.",
         );
+      // A continuation notice belongs to the generation it precedes, never
+      // to a fork ending at the previously completed narrative.
+      if (hasContinuationNotice) {
+        result.push(structuredClone(notice));
+        cursor += 1;
+      }
       result.push(structuredClone(item));
       cursor += 1;
       continue;
@@ -3517,6 +3526,13 @@ function transcriptThroughEvents(
         );
       result.push(structuredClone(item));
       cursor += 1;
+      // A tool-step notice follows the entire settled batch and remains part
+      // of its closure even when the selected endpoint stops at that batch.
+      const notice = transcript[cursor];
+      if (notice?.kind === "runtime_notice" && notice.notice === "tool_step") {
+        result.push(structuredClone(notice));
+        cursor += 1;
+      }
     }
   }
   return result;
