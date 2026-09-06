@@ -318,7 +318,7 @@ const toolDescriptions: Record<
 > = {
   en: {
     world_checkpoint:
-      "Declare that the necessary state maintenance for this turn is complete and suggest starting a fresh context. No arguments. Registration becomes effective only when this turn’s final tool-free narrative commits, including that narrative in the checkpoint. This is your declaration, not Runtime verification or an automatic context switch. After the tool result, finish with a tool-free narrative.",
+      "Declare that the necessary state maintenance for this turn is complete and suggest starting a fresh context. No arguments. Registration becomes effective only when this turn’s final tool-free response commits, including that response in the checkpoint. This is your declaration, not Runtime verification or an automatic context switch. Further tool calls are allowed before the final nonempty tool-free response.",
     state_list:
       "List document and state directory handles known to Runtime. parent must be @dir-/ for the state root or an @dir-* handle returned by an earlier state_list result; descend only through returned directory handles. Catalog directories declared by the frozen world frame remain listed and usable when empty. A cursor is valid only for the same state snapshot, parent, and limit. Pass returned document handles to context_read. This tool never lists committed history.",
     history_list:
@@ -340,7 +340,7 @@ const toolDescriptions: Record<
   },
   "zh-CN": {
     world_checkpoint:
-      "声明本轮必要状态已整理完成，并建议玩家在此开启全新上下文。参数为空对象。登记仅在本轮最终无工具叙事提交后生效，检查点包含该叙事。这是 AI 的整理声明，不是 Runtime 完整性认证，也不会自动切换上下文。收到工具结果后仍须用不调用工具的响应完成叙事。",
+      "声明本轮必要状态已整理完成，并建议玩家在此开启全新上下文。参数为空对象。登记仅在本轮最终无工具响应提交后生效，检查点包含该响应。这是 AI 的整理声明，不是 Runtime 完整性认证，也不会自动切换上下文。最终非空且无工具调用的响应之前，仍可继续调用工具。",
     state_list:
       "列出 Runtime 已知的文档与状态目录句柄。状态根目录的 parent 使用 @dir-/；继续下级时只能使用先前 state_list 结果返回的 @dir-*。冻结世界 frame 声明的 catalog 目录即使为空，也会继续列出并可用。cursor 只对同一状态快照、parent 和 limit 有效。返回的文档句柄交给 context_read；本工具不列出已提交历史。",
     history_list:

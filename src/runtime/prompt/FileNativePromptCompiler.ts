@@ -309,7 +309,7 @@ const runtimeContracts: Record<
 - Runtime performs state commits and saves follow-up artifacts. Tool exchanges and internal processing must never appear in player-visible content.`,
     shell: `# Runtime play boundary
 
-A tool-free response with player-visible story text ends the model/tool loop started by the current player submission. A response that calls any tool is an intermediate step and must not contain player-visible story text; continue from the tool results, then narrate in a later tool-free response.
+A nonempty tool-free response ends the model/tool loop started by the current player submission. A response that calls any tool is an intermediate step and must not contain player-visible story text; continue from the tool results, then finish in a later tool-free response.
 
 The player's next submission may choose a fresh context; the old model transcript will not enter that request. Fresh contexts include all committed original player inputs and final narratives after the last effective world_checkpoint, excluding tools, reasoning, and the opening. A checkpoint declaration takes effect only after its final narrative commits. Author instructions decide save timing.
 
@@ -336,7 +336,7 @@ Runtime executes only real tool definitions, file validation, and authority comm
 - 状态提交与后置产物保存由 Runtime 执行。工具交换与内部处理过程不得混入玩家可见内容。`,
     shell: `# Runtime 游玩边界
 
-不调用工具且包含玩家可见故事正文的响应会结束本次玩家提交触发的模型／工具循环。只要响应调用了任何工具，它就是工具中间步，不得同时输出玩家可见故事正文；先根据工具结果继续，再用一个不调用工具的后续响应完成叙事。
+非空且不调用工具的响应会结束本次玩家提交触发的模型／工具循环。只要响应调用了任何工具，它就是工具中间步，不得同时输出玩家可见故事正文；先根据工具结果继续，再用一个不调用工具的后续响应结束。
 
 下一次玩家提交可以选择“全新上下文”；旧模型 transcript 不会进入那个请求。新上下文会补入最近一次已生效 world_checkpoint 之后的全部已提交玩家原文与最终叙事，不含工具、推理和开场白。检查点登记只在其最终叙事提交后生效。具体保存时机由作者提示规定。
 
