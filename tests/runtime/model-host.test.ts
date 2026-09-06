@@ -364,6 +364,7 @@ test.each([
   expect(names).toContain("history_list");
   expect(names).not.toContain("context_list");
   for (const tool of tools) {
+    if (provider === "openai_responses") expect(tool.strict).toBe(false);
     const schema =
       provider === "chat_completions"
         ? (tool.function as { parameters?: unknown } | undefined)?.parameters

@@ -142,6 +142,17 @@ test.each([
     expect(serialized).not.toContain("点击应用");
     expect(serialized).not.toContain("setting_preview_candidate");
     expect(serialized).not.toContain("setting_finish_candidate");
+    if (provider === "openai_responses") {
+      const definitions = (request.body as { tools: Record<string, unknown>[] })
+        .tools;
+      expect(definitions.every((tool) => tool.strict === false)).toBe(true);
+      expect(
+        definitions.find((tool) => tool.name === "setting_list"),
+      ).toHaveProperty("parameters.required", []);
+      expect(
+        definitions.find((tool) => tool.name === "setting_write_file"),
+      ).toHaveProperty("parameters.required", ["path", "contents"]);
+    }
   },
 );
 
