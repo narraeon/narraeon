@@ -503,12 +503,42 @@
   z-index: 4;
 }
 .play-preset-screen .play-preset-operations[open] {
-  width: min(700px, calc(100% - 40px));
-  padding: 16px;
+  width: min(340px, calc(100% - 40px));
+  padding: 14px;
   background: #fffefa;
   border: 1px solid #deded8;
   max-height: 76vh;
   overflow: auto;
+}
+.play-preset-screen .play-preset-operations .play-preset-name-field {
+  margin: 12px 0;
+}
+.play-preset-screen .play-preset-operations .play-preset-management {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.play-preset-screen .play-preset-management > p {
+  margin-bottom: 8px;
+}
+.play-preset-screen .play-preset-management > button {
+  min-height: 34px;
+  padding: 7px 9px;
+  border: 0;
+  text-align: left;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.play-preset-screen .play-preset-management > .danger-button {
+  margin-top: 6px;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  color: #a34035;
 }
 .play-preset-screen .play-preset-workspace-nav {
   position: absolute;
