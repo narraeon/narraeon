@@ -550,9 +550,15 @@ function appendBlockString(
   delta: string,
   expectedType: string,
 ): void {
-  if (block.type !== expectedType || typeof block[field] !== "string")
+  // Some streams introduce the signature only in signature_delta. Retain
+  // exactly that returned value; do not require an empty start placeholder.
+  const firstSignature = field === "signature" && block[field] === undefined;
+  if (
+    block.type !== expectedType ||
+    (typeof block[field] !== "string" && !firstSignature)
+  )
     throw new Error("Anthropic SSE content block does not match its delta");
-  block[field] += delta;
+  block[field] = firstSignature ? delta : String(block[field]) + delta;
 }
 
 function mergeUsage(target: Record<string, unknown>, value: unknown): void {

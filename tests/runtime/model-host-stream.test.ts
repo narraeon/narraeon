@@ -379,151 +379,158 @@ test("OpenAI Responses 游玩请求从 response.completed 取得完整 continuat
   });
 });
 
-test("Anthropic Messages 游玩请求用 SSE 保留 thinking 签名与完整 content blocks", async () => {
-  const deltas: ModelHostDelta[] = [];
-  const fetch_ = vi.fn<typeof fetch>().mockResolvedValue(
-    sseResponse(
-      [
-        namedData("message_start", {
-          type: "message_start",
-          message: {
-            id: "message-anthropic-stream-1",
-            role: "assistant",
-            model: "claude-test",
-            content: [],
-            usage: {
-              input_tokens: 310,
-              cache_read_input_tokens: 120,
-              cache_creation_input_tokens: 30,
-              output_tokens: 1,
+test.each([{}, { signature: "" }])(
+  "Anthropic Messages 游玩请求用 SSE 保留 thinking 签名与完整 content blocks：%j",
+  async (initialSignature) => {
+    const deltas: ModelHostDelta[] = [];
+    const fetch_ = vi.fn<typeof fetch>().mockResolvedValue(
+      sseResponse(
+        [
+          namedData("message_start", {
+            type: "message_start",
+            message: {
+              id: "message-anthropic-stream-1",
+              role: "assistant",
+              model: "claude-test",
+              content: [],
+              usage: {
+                input_tokens: 310,
+                cache_read_input_tokens: 120,
+                cache_creation_input_tokens: 30,
+                output_tokens: 1,
+              },
             },
+          }),
+          namedData("content_block_start", {
+            type: "content_block_start",
+            index: 0,
+            content_block: {
+              type: "thinking",
+              thinking: "",
+              ...initialSignature,
+            },
+          }),
+          namedData("content_block_delta", {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "thinking_delta", thinking: "Check first" },
+          }),
+          namedData("content_block_delta", {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "signature_delta", signature: "opaque-signature" },
+          }),
+          namedData("content_block_stop", {
+            type: "content_block_stop",
+            index: 0,
+          }),
+          namedData("content_block_start", {
+            type: "content_block_start",
+            index: 1,
+            content_block: { type: "text", text: "" },
+          }),
+          namedData("content_block_delta", {
+            type: "content_block_delta",
+            index: 1,
+            delta: { type: "text_delta", text: "The light comes on." },
+          }),
+          namedData("content_block_stop", {
+            type: "content_block_stop",
+            index: 1,
+          }),
+          namedData("content_block_start", {
+            type: "content_block_start",
+            index: 2,
+            content_block: {
+              type: "tool_use",
+              id: "tool-anthropic-stream-1",
+              name: "context_read",
+              input: {},
+            },
+          }),
+          namedData("content_block_delta", {
+            type: "content_block_delta",
+            index: 2,
+            delta: { type: "input_json_delta", partial_json: '{"ref":' },
+          }),
+          namedData("content_block_delta", {
+            type: "content_block_delta",
+            index: 2,
+            delta: { type: "input_json_delta", partial_json: '"@scene"}' },
+          }),
+          namedData("content_block_stop", {
+            type: "content_block_stop",
+            index: 2,
+          }),
+          namedData("message_delta", {
+            type: "message_delta",
+            delta: { stop_reason: "tool_use", stop_sequence: null },
+            usage: {
+              output_tokens: 41,
+              output_tokens_details: { thinking_tokens: 17 },
+            },
+          }),
+          namedData("message_stop", { type: "message_stop" }),
+        ],
+        true,
+      ),
+    );
+    const host = modelHost("anthropic_messages", fetch_);
+
+    const response = await host.exchange(exchange("anthropic_messages"), {
+      onDelta: (delta) => deltas.push(structuredClone(delta)),
+    });
+
+    expect(requestBody(fetch_)).toMatchObject({ stream: true });
+    expect(deltas).toEqual([
+      { kind: "reasoning", text: "Check first" },
+      { kind: "text", text: "The light comes on." },
+      { kind: "tool", text: '{"ref":' },
+      { kind: "tool", text: '"@scene"}' },
+    ]);
+    expect(response).toMatchObject({
+      text: "The light comes on.",
+      reasoningContent: "Check first",
+      stopReason: "tool_use",
+      toolCalls: [
+        {
+          id: "tool-anthropic-stream-1",
+          name: "context_read",
+          arguments: { ref: "@scene" },
+        },
+      ],
+      usage: {
+        inputTokens: 460,
+        uncachedInputTokens: 310,
+        cacheReadTokens: 120,
+        cacheWriteTokens: 30,
+        reasoningTokens: 17,
+        outputTokens: 41,
+        totalTokens: 501,
+      },
+      providerState: {
+        protocol: "anthropic_messages",
+        responseId: "message-anthropic-stream-1",
+        model: "claude-test",
+        stopReason: "tool_use",
+        content: [
+          {
+            type: "thinking",
+            thinking: "Check first",
+            signature: "opaque-signature",
           },
-        }),
-        namedData("content_block_start", {
-          type: "content_block_start",
-          index: 0,
-          content_block: { type: "thinking", thinking: "", signature: "" },
-        }),
-        namedData("content_block_delta", {
-          type: "content_block_delta",
-          index: 0,
-          delta: { type: "thinking_delta", thinking: "Check first" },
-        }),
-        namedData("content_block_delta", {
-          type: "content_block_delta",
-          index: 0,
-          delta: { type: "signature_delta", signature: "opaque-signature" },
-        }),
-        namedData("content_block_stop", {
-          type: "content_block_stop",
-          index: 0,
-        }),
-        namedData("content_block_start", {
-          type: "content_block_start",
-          index: 1,
-          content_block: { type: "text", text: "" },
-        }),
-        namedData("content_block_delta", {
-          type: "content_block_delta",
-          index: 1,
-          delta: { type: "text_delta", text: "The light comes on." },
-        }),
-        namedData("content_block_stop", {
-          type: "content_block_stop",
-          index: 1,
-        }),
-        namedData("content_block_start", {
-          type: "content_block_start",
-          index: 2,
-          content_block: {
+          { type: "text", text: "The light comes on." },
+          {
             type: "tool_use",
             id: "tool-anthropic-stream-1",
             name: "context_read",
-            input: {},
+            input: { ref: "@scene" },
           },
-        }),
-        namedData("content_block_delta", {
-          type: "content_block_delta",
-          index: 2,
-          delta: { type: "input_json_delta", partial_json: '{"ref":' },
-        }),
-        namedData("content_block_delta", {
-          type: "content_block_delta",
-          index: 2,
-          delta: { type: "input_json_delta", partial_json: '"@scene"}' },
-        }),
-        namedData("content_block_stop", {
-          type: "content_block_stop",
-          index: 2,
-        }),
-        namedData("message_delta", {
-          type: "message_delta",
-          delta: { stop_reason: "tool_use", stop_sequence: null },
-          usage: {
-            output_tokens: 41,
-            output_tokens_details: { thinking_tokens: 17 },
-          },
-        }),
-        namedData("message_stop", { type: "message_stop" }),
-      ],
-      true,
-    ),
-  );
-  const host = modelHost("anthropic_messages", fetch_);
-
-  const response = await host.exchange(exchange("anthropic_messages"), {
-    onDelta: (delta) => deltas.push(structuredClone(delta)),
-  });
-
-  expect(requestBody(fetch_)).toMatchObject({ stream: true });
-  expect(deltas).toEqual([
-    { kind: "reasoning", text: "Check first" },
-    { kind: "text", text: "The light comes on." },
-    { kind: "tool", text: '{"ref":' },
-    { kind: "tool", text: '"@scene"}' },
-  ]);
-  expect(response).toMatchObject({
-    text: "The light comes on.",
-    reasoningContent: "Check first",
-    stopReason: "tool_use",
-    toolCalls: [
-      {
-        id: "tool-anthropic-stream-1",
-        name: "context_read",
-        arguments: { ref: "@scene" },
+        ],
       },
-    ],
-    usage: {
-      inputTokens: 460,
-      uncachedInputTokens: 310,
-      cacheReadTokens: 120,
-      cacheWriteTokens: 30,
-      reasoningTokens: 17,
-      outputTokens: 41,
-      totalTokens: 501,
-    },
-    providerState: {
-      protocol: "anthropic_messages",
-      responseId: "message-anthropic-stream-1",
-      model: "claude-test",
-      stopReason: "tool_use",
-      content: [
-        {
-          type: "thinking",
-          thinking: "Check first",
-          signature: "opaque-signature",
-        },
-        { type: "text", text: "The light comes on." },
-        {
-          type: "tool_use",
-          id: "tool-anthropic-stream-1",
-          name: "context_read",
-          input: { ref: "@scene" },
-        },
-      ],
-    },
-  });
-});
+    });
+  },
+);
 
 test("Anthropic Messages SSE 错误保留 Provider 类型、消息与请求 ID", async () => {
   const host = modelHost(
