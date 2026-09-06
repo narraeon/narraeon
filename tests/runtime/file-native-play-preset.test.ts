@@ -1,3 +1,5 @@
+import { validPlayFollowup } from "../../src/runtime/prompt/PromptCompilationCodec.ts";
+import { parsePlayPresetRegexAsset } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +14,7 @@ import {
   legacyDefaultPlayPresetFilesForLocale,
   defaultPlayPresetFilesForLocale,
   FileNativePlayPresetStore,
+  isFrozenArtifactPresentation,
   maxPlayPresetFollowups,
   applyPlayPresetStructuredEditor,
   parsePlayPresetFiles,
@@ -48,6 +51,114 @@ afterEach(async () => {
 });
 
 describe("文件原生玩法预设", () => {
+  test("rule enablement is strict, portable, and absent in unchanged legacy rules", () => {
+    const legacy =
+      "- order: 0\n  scope: raw_text\n  pattern: keep\n  flags: g\n  replace: changed\n  maxMatches: 10\n  errorPolicy: fallback\n";
+    expect(
+      parsePlayPresetRegexAsset(legacy, "regex/test.yaml")[0],
+    ).not.toHaveProperty("enabled");
+    expect(
+      parsePlayPresetRegexAsset(
+        legacy + "  enabled: false\n",
+        "regex/test.yaml",
+      )[0],
+    ).toMatchObject({ enabled: false, pattern: "keep", order: 0 });
+    expect(() =>
+      parsePlayPresetRegexAsset(legacy + "  enabled: yes\n", "regex/test.yaml"),
+    ).toThrow("boolean");
+    expect(() =>
+      parsePlayPresetRegexAsset(
+        legacy + "  unknown: true\n",
+        "regex/test.yaml",
+      ),
+    ).toThrow();
+  });
+
+  test("artifact authoring metadata survives strict save, copy and cold export", async () => {
+    const root = await mkdtemp(join(tmpdir(), "preset-metadata-"));
+    roots.push(root);
+    const store = new FileNativePlayPresetStore(root);
+    await store.initialize();
+    const imported = await store.importPortable({
+      name: "Workbench",
+      files: firstPartyActionChoicesPresetFiles,
+    });
+    const structure = structuredClone(imported.preset.structure!);
+    Object.assign(structure.followups[0]!.artifacts[0]!, {
+      displayName: "行动建议",
+      purpose: "只提供下一步草稿",
+    });
+    const savedMetadata = await store.save({
+      presetId: imported.preset.id,
+      name: "Workbench",
+      files: imported.preset.files,
+      structure,
+    });
+    expect(savedMetadata.preset.draft?.validation).toEqual({ status: "valid" });
+    await store.select(imported.preset.id);
+    const cold = new FileNativePlayPresetStore(root);
+    await cold.initialize();
+    const reopened = (await cold.list()).presets.find(
+      (p) => p.id === imported.preset.id,
+    )!;
+    expect(reopened.validation).toEqual({ status: "valid" });
+    expect(reopened.structure!.followups[0]!.artifacts[0]).toMatchObject({
+      name: "player_options",
+      displayName: "行动建议",
+      purpose: "只提供下一步草稿",
+    });
+    const binding = await cold.bindCurrent();
+    const frozen = {
+      declaration: reopened.structure!.followups[0]!.artifacts[0],
+      files: binding.files,
+      mount: "composer_below",
+    };
+    expect(
+      isFrozenArtifactPresentation(JSON.parse(JSON.stringify(frozen))),
+    ).toBe(true);
+    expect(
+      isFrozenArtifactPresentation({
+        ...frozen,
+        declaration: { ...frozen.declaration, purpose: 42 },
+      }),
+    ).toBe(false);
+    const compiled = new FileNativePromptCompiler().compilePlayPreset(
+      createMinimalFileNativePreviewInput({
+        provider: "chat_completions",
+        modelId: "metadata",
+        contextWindowTokens: 64000,
+        maxOutputTokens: 4096,
+        playerInput: "Continue",
+        playerInputPlacement: "append",
+      }),
+      binding,
+    );
+    const followup = compiled.followups.find((f) => f.id === "player_options")!;
+    expect(
+      followup.logicalMessages.map((m) => m.markdown).join("\n"),
+    ).toContain('purpose="只提供下一步草稿"');
+    expect(validPlayFollowup(JSON.parse(JSON.stringify(followup)))).toBe(true);
+    expect(
+      validPlayFollowup({
+        ...followup,
+        artifacts: [{ ...followup.artifacts[0], displayName: 42 }],
+      }),
+    ).toBe(false);
+    const portable = await cold.exportPortable(reopened.id);
+    const importedAgain = await cold.importPortable({
+      name: "Round trip",
+      files: portable,
+    });
+    expect(importedAgain.preset.structure!.followups[0]!.artifacts).toEqual(
+      reopened.structure!.followups[0]!.artifacts,
+    );
+    expect(importedAgain.preset.scriptsEnabled).toBe(false);
+    const copy = await cold.copy(reopened.id);
+    expect(copy.preset.structure!.followups[0]!.artifacts).toEqual(
+      reopened.structure!.followups[0]!.artifacts,
+    );
+  });
+
   test("only the Runtime-owned default preset follows the saved locale", async () => {
     const root = await mkdtemp(join(tmpdir(), "narraeon-play-locale-"));
     roots.push(root);

@@ -1,48 +1,20 @@
-import { FollowupResourcesEditor } from "./FollowupResourcesEditor.tsx";
-import { FollowupListEditor } from "./FollowupListEditor.tsx";
-import {
-  defaultFollowupItems,
-  type FollowupItem,
-} from "../shared/ordered-followups.ts";
-import {
-  PlayerViewPanelsEditor,
-  type PlayPresetPlayerViewPanel,
-} from "./PlayerViewPanelsEditor.tsx";
+import "./preset-workbench.css";
+import { PresetWorkbenchEditor } from "./PresetWorkbenchEditor.tsx";
+import { PresetDraftPreview } from "./PresetDraftPreview.tsx";
+import { type FollowupItem } from "../shared/ordered-followups.ts";
+import { type PlayPresetPlayerViewPanel } from "./PlayerViewPanelsEditor.tsx";
 import { InterfaceExtensionPreview } from "./InterfaceExtensionPreview.tsx";
-import { MountSelect, PathChecklist } from "./PlayPresetEditorControls.tsx";
+import { PathChecklist } from "./PlayPresetEditorControls.tsx";
 import {
   mountLabel,
   withCurrentPath,
-  markdownTitle,
-  markdownExcerpt,
   describePresetFile,
 } from "./playPresetEditorLabels.ts";
-import { OrderedPlayPromptEditor } from "./OrderedPlayPromptEditor.tsx";
 import type { OrderedPlayPrompt } from "../shared/ordered-play-prompts.ts";
 import { uiText } from "./i18n.ts";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
-import { parse as parseYaml, parseDocument } from "yaml";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import type { V1Request } from "../protocol/v1.ts";
-import {
-  defaultSettingImprovementPromptForLocale,
-  defaultSettingImprovementPromptPath,
-} from "../shared/default-setting-improvement-prompt.ts";
-import {
-  applyRegexPipeline,
-  buildAppSrcDoc,
-  buildDocumentSrcDoc,
-  extensionBridgeNamespace,
-  type ArtifactPayload,
-} from "./ArtifactExtensionHost.tsx";
-import { getWebLocale } from "./i18n.ts";
 
 interface PlayPresetMount {
   channel: string;
@@ -127,7 +99,7 @@ interface PlayPresetWorkbenchArtifact {
   diagnostics: string[];
 }
 
-interface PlayPresetWorkbenchSnapshot {
+export interface PlayPresetWorkbenchSnapshot {
   id: string;
   name: string;
   revision: string;
@@ -153,7 +125,9 @@ type PlayPresetArtifactInvalidation =
   | "explicit_clear"
   | "never";
 
-interface PlayPresetArtifactDefinition {
+export interface PlayPresetArtifactDefinition {
+  displayName?: string;
+  purpose?: string;
   name: string;
   channel: string;
   strategy: PlayPresetArtifactStrategy;
@@ -181,7 +155,7 @@ export interface PlayPresetFollowupDefinition {
   maxArtifactBytes: number;
 }
 
-interface PlayPresetStructuredEditor {
+export interface PlayPresetStructuredEditor {
   followupItems?: FollowupItem[];
   playPrompts?: OrderedPlayPrompt[];
   authorPrompts?: OrderedPlayPrompt[];
@@ -243,13 +217,7 @@ interface Feedback {
   text: string;
 }
 
-type PlayPresetWorkspaceView =
-  | "call_chain"
-  | "setting_improvement"
-  | "extensions"
-  | "blocks"
-  | "files"
-  | "preview";
+type PlayPresetWorkspaceView = "call_chain" | "setting_improvement" | "files";
 
 const playPresetWorkspaceViews: {
   id: PlayPresetWorkspaceView;
@@ -265,26 +233,6 @@ const playPresetWorkspaceViews: {
     id: "setting_improvement",
     label: "设定完善",
     description: "AI 创作方法；工具契约保持内置",
-  },
-  {
-    id: "extensions",
-    label: "界面扩展",
-    description: "玩家视图、布局、资源与无模型预览",
-  },
-  {
-    id: "blocks",
-    label: "提示内容",
-    description: "阅读、编辑并排序主持规则块",
-  },
-  {
-    id: "files",
-    label: "高级文件",
-    description: "带用途说明的完整源文件",
-  },
-  {
-    id: "preview",
-    label: "产物预览",
-    description: "冻结 contract 与 renderer 的真实预览",
   },
 ];
 
@@ -330,9 +278,8 @@ export function PlayPresetScreen({
     revision: string;
   }) => ReactNode;
 }): React.JSX.Element {
-  const systemSettingImprovementPrompt =
-    defaultSettingImprovementPromptForLocale(getWebLocale());
   const [library, setLibrary] = useState(initialLibrary);
+  const libraryMenu = useRef<HTMLDetailsElement>(null);
   const initial =
     initialLibrary.presets.find(
       ({ id }) => id === initialLibrary.currentPresetId,
@@ -352,11 +299,6 @@ export function PlayPresetScreen({
     useState<PlayPresetWorkspaceView>("call_chain");
   const [pending, setPending] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
-  const [workbench, setWorkbench] =
-    useState<PlayPresetWorkbenchSnapshot | null>(null);
-  const [workbenchPending, setWorkbenchPending] = useState(false);
-  const [structuredError, setStructuredError] = useState<string | null>(null);
-  const workbenchRequest = useRef(0);
 
   const saved = useMemo(
     () => library.presets.find(({ id }) => id === draft?.id),
@@ -383,6 +325,23 @@ export function PlayPresetScreen({
     draft?.structure?.callChainPath,
     savedEditable?.structure?.callChainPath,
   ]);
+  const boundPaths = new Set([
+    ...(draft?.structure?.followups.flatMap((f) => [
+      f.prompt.path,
+      ...f.artifacts.flatMap((a) => [
+        a.renderer,
+        a.regex,
+        ...(a.scripts ?? []),
+        ...(a.assets ?? []),
+      ]),
+    ]) ?? []),
+    ...(draft?.structure?.playerViewPanels.flatMap((p) => [
+      p.renderer,
+      p.regex,
+      ...(p.scripts ?? []),
+      ...(p.assets ?? []),
+    ]) ?? []),
+  ]);
   const rawStructuralDirty =
     draft !== null &&
     savedEditable !== undefined &&
@@ -397,81 +356,12 @@ export function PlayPresetScreen({
   const currentPreset = library.presets.find(
     ({ id }) => id === library.currentPresetId,
   );
-  const followupCount = draft?.structure?.followups.length ?? 0;
-  const artifactCount =
-    draft?.structure?.followups.reduce(
-      (total, followup) => total + followup.artifacts.length,
-      0,
-    ) ?? 0;
-  const mountCount = draft?.structure?.mounts.length ?? 0;
-  const fileCount = draft === null ? 0 : Object.keys(draft.files).length;
 
   useEffect(() => {
     onDirtyChange(dirty);
   }, [dirty, onDirtyChange]);
 
   useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
-
-  useEffect(() => {
-    const selected = draft;
-    const requestId = ++workbenchRequest.current;
-    if (
-      selected?.validation.status !== "valid" ||
-      selected?.id !== selectedId ||
-      dirty
-    ) {
-      return;
-    }
-    let active = true;
-    queueMicrotask(() => {
-      if (active && requestId === workbenchRequest.current)
-        setWorkbenchPending(true);
-    });
-    void Promise.resolve(
-      client.request<PlayPresetWorkbenchSnapshot>({
-        type: "play.workbench.read",
-        presetId: selected.id,
-        revision: selected.revision,
-      }),
-    )
-      .then((snapshot) => {
-        if (
-          snapshot !== undefined &&
-          active &&
-          requestId === workbenchRequest.current &&
-          snapshot.id === selected.id &&
-          snapshot.revision === selected.revision
-        )
-          setWorkbench(snapshot);
-      })
-      .catch(() => {
-        if (active && requestId === workbenchRequest.current)
-          setWorkbench(null);
-      })
-      .finally(() => {
-        if (active && requestId === workbenchRequest.current)
-          setWorkbenchPending(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [client, dirty, draft, selectedId]);
-
-  const visibleWorkbench =
-    draft !== null &&
-    draft.validation.status === "valid" &&
-    draft.id === selectedId &&
-    !dirty &&
-    workbench?.id === draft.id &&
-    workbench.revision === draft.revision
-      ? workbench
-      : null;
-  const visibleWorkbenchPending =
-    draft !== null &&
-    draft.validation.status === "valid" &&
-    draft.id === selectedId &&
-    !dirty &&
-    workbenchPending;
 
   async function refresh(preferredId?: string): Promise<void> {
     const next = await client.request<PlayPresetScreenLibrary>({
@@ -482,6 +372,7 @@ export function PlayPresetScreen({
       next.presets.find(({ id }) => id === selectedId) ??
       next.presets.find(({ id }) => id === next.currentPresetId) ??
       next.presets[0];
+    if (libraryMenu.current) libraryMenu.current.open = false;
     setLibrary(next);
     onLibraryChange(next);
     setSelectedId(selected?.id ?? "");
@@ -490,7 +381,6 @@ export function PlayPresetScreen({
     setFilePath(
       editable === null ? "" : preferredPresetFilePath(editable.files),
     );
-    setStructuredError(null);
   }
 
   async function run(work: () => Promise<void>): Promise<void> {
@@ -525,8 +415,6 @@ export function PlayPresetScreen({
     const editable = toEditablePreset(next);
     setDraft(editable);
     setFilePath(preferredPresetFilePath(editable.files));
-    setWorkbench(null);
-    setStructuredError(null);
     setFeedback(null);
     setWorkspaceView("call_chain");
   }
@@ -536,7 +424,6 @@ export function PlayPresetScreen({
     const editable = toEditablePreset(saved);
     setDraft(editable);
     setFilePath(preferredPresetFilePath(editable.files));
-    setStructuredError(null);
     setFeedback({ kind: "status", text: uiText("已撤销当前未保存修改。") });
   }
 
@@ -576,7 +463,6 @@ export function PlayPresetScreen({
             structure: update(structuredClone(current.structure)),
           },
     );
-    setStructuredError(null);
   }
 
   async function saveDraft(): Promise<void> {
@@ -665,7 +551,24 @@ export function PlayPresetScreen({
   }
 
   return (
-    <section className="play-preset-screen" aria-labelledby="play-preset-title">
+    <section
+      className="play-preset-screen"
+      aria-labelledby="play-preset-title"
+      onPointerDownCapture={(event) => {
+        for (const menu of event.currentTarget.querySelectorAll<HTMLDetailsElement>(
+          ".play-preset-operations[open], .play-preset-library > details[open]",
+        ))
+          if (event.target instanceof Node && !menu.contains(event.target))
+            menu.open = false;
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape")
+          for (const menu of event.currentTarget.querySelectorAll<HTMLDetailsElement>(
+            ".play-preset-operations[open], .play-preset-library > details[open]",
+          ))
+            menu.open = false;
+      }}
+    >
       <header className="play-preset-header">
         <div>
           <p className="eyebrow">PLAY WORKBENCH · FILE NATIVE</p>
@@ -702,7 +605,9 @@ export function PlayPresetScreen({
             aria-label={uiText("玩法预设列表")}
           >
             <label>
-              {uiText("玩法预设")}
+              <span role="heading" aria-level={2}>
+                {uiText("玩法预设")}
+              </span>
               <select
                 aria-label={uiText("切换预设")}
                 value={selectedId ?? ""}
@@ -716,7 +621,7 @@ export function PlayPresetScreen({
                 ))}
               </select>
             </label>
-            <details>
+            <details ref={libraryMenu}>
               <summary>{uiText("预设管理")}</summary>
 
               <section
@@ -814,7 +719,6 @@ export function PlayPresetScreen({
                   <p className="play-preset-section-kicker">EDIT PRESET</p>
                   <h3>{draft.name}</h3>
                   <p className="field-note">
-                    revision {draft.revision}{" "}
                     {uiText("· 游玩修改在下一次正常发送生效")}
                   </p>
                 </div>
@@ -842,20 +746,20 @@ export function PlayPresetScreen({
                 </div>
               </header>
 
-              <label className="play-preset-name-field">
-                {uiText("预设名称")}
-                <input
-                  aria-label={uiText("玩法预设名称")}
-                  maxLength={160}
-                  value={draft.name}
-                  onChange={(event) =>
-                    setDraft({ ...draft, name: event.currentTarget.value })
-                  }
-                />
-              </label>
-
               <details className="play-preset-operations">
                 <summary>{uiText("预设操作")}</summary>
+                <label className="play-preset-name-field">
+                  {uiText("预设名称")}
+                  <input
+                    aria-label={uiText("玩法预设名称")}
+                    maxLength={160}
+                    value={draft.name}
+                    onChange={(event) =>
+                      setDraft({ ...draft, name: event.currentTarget.value })
+                    }
+                  />
+                </label>
+
                 <div
                   className="play-preset-management"
                   aria-label={uiText("玩法预设身份管理")}
@@ -973,29 +877,33 @@ export function PlayPresetScreen({
                     "导入的 JavaScript 默认停用；启用表示你信任这些本地文件，而不是获得安全沙箱保证。",
                   )}
                 </p>
+                <details>
+                  <summary>{uiText("保留的资源")}</summary>
+                  <p>
+                    {uiText("未绑定资源仍随预设保存；可在模板编辑器重新引用。")}
+                  </p>
+                  {Object.keys(draft.files)
+                    .filter(
+                      (path) =>
+                        !structuralPaths.has(path) && !boundPaths.has(path),
+                    )
+                    .map((path) => (
+                      <details key={path}>
+                        <summary>
+                          {describePresetFile(path, draft.files[path] ?? "")
+                            .title ?? path.split("/").at(-1)}
+                        </summary>
+                        <textarea
+                          aria-label={path.split("/").at(-1)}
+                          value={draft.files[path]}
+                          onChange={(event) =>
+                            updateFileAtPath(path, event.target.value)
+                          }
+                        />
+                      </details>
+                    ))}
+                </details>
               </details>
-
-              <div
-                className="play-preset-overview"
-                aria-label={uiText("玩法预设摘要")}
-              >
-                <div>
-                  <span>{uiText("后置请求")}</span>
-                  <strong>{followupCount}</strong>
-                </div>
-                <div>
-                  <span>{uiText("产物输出")}</span>
-                  <strong>{artifactCount}</strong>
-                </div>
-                <div>
-                  <span>{uiText("界面挂载")}</span>
-                  <strong>{mountCount}</strong>
-                </div>
-                <div>
-                  <span>{uiText("普通文件")}</span>
-                  <strong>{fileCount}</strong>
-                </div>
-              </div>
 
               <nav
                 className="play-preset-workspace-nav"
@@ -1005,8 +913,8 @@ export function PlayPresetScreen({
                 {playPresetWorkspaceViews
                   .filter(
                     (view) =>
-                      view.id !== "blocks" ||
-                      draft.structure?.playPrompts === undefined,
+                      view.id === "call_chain" ||
+                      view.id === "setting_improvement",
                   )
                   .map((view) => (
                     <button
@@ -1025,67 +933,64 @@ export function PlayPresetScreen({
                   ))}
               </nav>
 
-              {draft.structure === undefined ||
-              (workspaceView !== "call_chain" &&
-                workspaceView !== "extensions") ? null : (
-                <PlayPresetStructuredEditorPanel
-                  view={workspaceView}
+              {draft.structure &&
+              (workspaceView === "call_chain" ||
+                workspaceView === "setting_improvement") ? (
+                <PresetWorkbenchEditor
+                  key={`${draft.id}:${workspaceView}`}
                   structure={draft.structure}
                   files={draft.files}
-                  workbench={visibleWorkbench}
-                  workbenchPending={visibleWorkbenchPending}
-                  structuredError={structuredError}
+                  authoring={workspaceView === "setting_improvement"}
                   onChange={updateStructure}
-                  onFileChange={updateFileAtPath}
-                  onCreateFile={(path, contents) =>
-                    updateFiles((files) => ({ ...files, [path]: contents }))
+                  onWrite={updateFileAtPath}
+                  promptPreview={
+                    <details className="preset-draft-preview">
+                      <summary>{uiText("真实调用链预览")}</summary>
+                      {dirty ? (
+                        <p>
+                          {uiText(
+                            "请先保存当前修改；真实预览只编译已冻结的有效 revision。",
+                          )}
+                        </p>
+                      ) : (
+                        renderPromptPreview?.({
+                          presetId: draft.id,
+                          revision: draft.revision,
+                        })
+                      )}
+                    </details>
                   }
-                  onError={setStructuredError}
-                  interfacePreview={
-                    workspaceView === "extensions" ? (
+                  preview={(requestId, output) =>
+                    requestId && output ? (
+                      <PresetDraftPreview
+                        key={`${requestId}:${output}`}
+                        client={client}
+                        presetId={draft.id}
+                        revision={draft.revision}
+                        files={draft.files}
+                        structure={
+                          draft.structure as unknown as Record<string, unknown>
+                        }
+                        scriptsEnabled={draft.scriptsEnabled === true}
+                        requestId={requestId}
+                        output={output}
+                      />
+                    ) : (
                       <InterfaceExtensionPreview
                         client={client}
                         presetId={draft.id}
                         revision={draft.revision}
                         files={draft.files}
                         structure={
-                          rawStructuralDirty
-                            ? undefined
-                            : (draft.structure as unknown as Record<
-                                string,
-                                unknown
-                              >)
+                          draft.structure as unknown as Record<string, unknown>
                         }
                         conflict={structuralConflict}
                         scriptsEnabled={draft.scriptsEnabled === true}
                       />
-                    ) : null
-                  }
-                />
-              )}
-              {draft.structure !== undefined &&
-              workspaceView === "setting_improvement" ? (
-                <SettingImprovementPromptEditor
-                  structure={draft.structure}
-                  files={draft.files}
-                  systemPrompt={systemSettingImprovementPrompt}
-                  onChange={updateStructure}
-                  onFileChange={updateFileAtPath}
-                  onCreateFile={(path, contents) =>
-                    updateFiles((files) => ({ ...files, [path]: contents }))
+                    )
                   }
                 />
               ) : null}
-              {workspaceView === "blocks" && (
-                <PresetBlockLibrary
-                  files={draft.files}
-                  pending={pending}
-                  onChange={(files) =>
-                    updateFiles(() => structuredClone(files))
-                  }
-                  onFeedback={setFeedback}
-                />
-              )}
               {workspaceView === "files" ? (
                 <PresetFileWorkspace
                   files={draft.files}
@@ -1118,7 +1023,6 @@ export function PlayPresetScreen({
               ) : null}
               {draft.structure === undefined &&
               (workspaceView === "call_chain" ||
-                workspaceView === "extensions" ||
                 workspaceView === "setting_improvement") ? (
                 <section
                   id={`play-preset-panel-${workspaceView}`}
@@ -1129,7 +1033,7 @@ export function PlayPresetScreen({
                   <strong>{uiText("结构化编辑暂不可用")}</strong>
                   <p>
                     {uiText(
-                      "当前草稿无法生成结构投影。请到“高级文件”修复 preset.yaml 或 call-chain.yaml，保存后再回来。",
+                      "导入内容无法解析；原文完整保留，可导出或打开原文修复。",
                     )}
                   </p>
                   <button
@@ -1137,76 +1041,10 @@ export function PlayPresetScreen({
                     className="secondary-button"
                     onClick={() => setWorkspaceView("files")}
                   >
-                    {uiText("前往高级文件")}
+                    {uiText("修复导入原文")}
                   </button>
                 </section>
               ) : null}
-              {workspaceView === "preview" ? (
-                <section
-                  id="play-preset-panel-preview"
-                  className="play-preset-preview-workspace"
-                  role="tabpanel"
-                  aria-labelledby="play-preset-tab-preview"
-                >
-                  <header className="play-preset-workspace-heading">
-                    <div>
-                      <p className="play-preset-section-kicker">
-                        FROZEN REVISION
-                      </p>
-                      <h4>{uiText("预览当前预设")}</h4>
-                    </div>
-                    <p>
-                      {uiText(
-                        "产物外观与真实调用链提示词都留在这里检查，不会调用模型或离开当前预设。",
-                      )}
-                    </p>
-                  </header>
-                  {visibleWorkbenchPending ? (
-                    <p role="status">{uiText("正在生成真实编译/产物预览…")}</p>
-                  ) : null}
-                  {visibleWorkbench?.staticErrors.length ? (
-                    <ul aria-label={uiText("工作台静态错误")}>
-                      {visibleWorkbench.staticErrors.map((error) => (
-                        <li key={`${error.location}:${error.code}`}>
-                          {error.location} · {error.message}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                  <PlayPresetArtifactPreviewPanel
-                    workbench={visibleWorkbench}
-                  />
-                  <section
-                    className="play-preset-prompt-preview"
-                    aria-label={uiText("当前预设的真实提示词预览")}
-                  >
-                    <h3>{uiText("真实调用链预览")}</h3>
-                    {dirty ? (
-                      <p className="field-note">
-                        {uiText(
-                          "请先保存当前修改；真实预览只编译已冻结的有效 revision。",
-                        )}
-                      </p>
-                    ) : draft.validation.status !== "valid" ? (
-                      <p className="field-note">
-                        {uiText(
-                          "当前 revision 需要修复，暂时不能编译真实调用链。",
-                        )}
-                      </p>
-                    ) : renderPromptPreview === undefined ? (
-                      <p className="field-note">
-                        {uiText("当前宿主没有提供提示词预览面板。")}
-                      </p>
-                    ) : (
-                      renderPromptPreview({
-                        presetId: draft.id,
-                        revision: draft.revision,
-                      })
-                    )}
-                  </section>
-                </section>
-              ) : null}
-
               <footer className="play-preset-editor-actions">
                 {structuralConflict ? (
                   <p role="alert" className="workspace-feedback">
@@ -1225,7 +1063,7 @@ export function PlayPresetScreen({
                   </strong>
                   <span>
                     {draft.validation.status === "valid"
-                      ? `revision ${draft.revision}`
+                      ? uiText("· 游玩修改在下一次正常发送生效")
                       : `[${draft.validation.code ?? "play_preset_invalid"}] ${draft.validation.location ?? "call-chain.yaml"}：${draft.validation.message}`}
                   </span>
                 </div>
@@ -1281,848 +1119,6 @@ export function PlayPresetScreen({
         </div>
       </fieldset>
     </section>
-  );
-}
-
-function SettingImprovementPromptEditor({
-  structure,
-  files,
-  systemPrompt,
-  onChange,
-  onFileChange,
-  onCreateFile,
-}: {
-  structure: PlayPresetStructuredEditor;
-  files: Record<string, string>;
-  systemPrompt: string;
-  onChange: (
-    update: (
-      structure: PlayPresetStructuredEditor,
-    ) => PlayPresetStructuredEditor,
-  ) => void;
-  onFileChange: (path: string, contents: string) => void;
-  onCreateFile: (path: string, contents: string) => void;
-}): React.JSX.Element {
-  if (structure.authorPrompts !== undefined)
-    return (
-      <section
-        id="play-preset-panel-setting_improvement"
-        role="tabpanel"
-        aria-labelledby="play-preset-tab-setting_improvement"
-      >
-        <OrderedPlayPromptEditor
-          authoring
-          entries={structure.authorPrompts}
-          onChange={(authorPrompts) =>
-            onChange((current) => ({ ...current, authorPrompts }))
-          }
-        />
-      </section>
-    );
-  const prompt = structure.settingImprovementPrompt;
-  return (
-    <section
-      id="play-preset-panel-setting_improvement"
-      className="play-preset-structured-editor"
-      role="tabpanel"
-      aria-labelledby="play-preset-tab-setting_improvement"
-    >
-      <header className="play-preset-workspace-heading">
-        <div>
-          <p className="play-preset-section-kicker">AI AUTHORING</p>
-          <h3>{uiText("AI 设定完善")}</h3>
-        </div>
-        <p>
-          {uiText(
-            "这份文字决定 AI 怎样理解、规划和创作内容包设定；每次开始完善时会冻结当前预设 revision。",
-          )}
-        </p>
-      </header>
-
-      <div className="play-preset-concept-note">
-        <strong>{uiText("工具为什么不在这里？")}</strong>
-        <p>
-          {uiText(
-            "Runtime 继续内置 setting_* 工具定义、参数、说明和当前树直接结算协议。预设只能编辑创作语义，不能替换这些机械契约。",
-          )}
-        </p>
-      </div>
-
-      {prompt === undefined ? (
-        <div className="play-preset-structured-section">
-          <div>
-            <h4>{uiText("沿用系统推荐提示")}</h4>
-            <p>
-              {uiText(
-                "这是一份功能加入前保存的 v1 预设。打开页面不会改写它；写入后才会产生新的预设 revision。",
-              )}
-            </p>
-          </div>
-          <textarea
-            aria-label={uiText("系统推荐设定完善提示词")}
-            value={systemPrompt}
-            readOnly
-            spellCheck={false}
-          />
-          <button
-            type="button"
-            onClick={() => {
-              onCreateFile(
-                defaultSettingImprovementPromptPath,
-                files[defaultSettingImprovementPromptPath]?.trim()
-                  ? files[defaultSettingImprovementPromptPath]
-                  : systemPrompt,
-              );
-              onChange((current) => ({
-                ...current,
-                settingImprovementPrompt: {
-                  role: "author_instruction",
-                  path: defaultSettingImprovementPromptPath,
-                },
-              }));
-            }}
-          >
-            {uiText("写入预设并编辑")}
-          </button>
-        </div>
-      ) : (
-        <div className="play-preset-structured-section">
-          <PromptReferenceEditor
-            label={uiText("设定完善创作提示")}
-            path={prompt.path}
-            paths={promptFilePaths(files)}
-            files={files}
-            onPathChange={(path) =>
-              onChange((current) => ({
-                ...current,
-                settingImprovementPrompt: { ...prompt, path },
-              }))
-            }
-            onContentsChange={(contents) => onFileChange(prompt.path, contents)}
-          />
-        </div>
-      )}
-    </section>
-  );
-}
-
-interface PlayPresetStructuredEditorPanelProps {
-  view: "call_chain" | "extensions";
-  interfacePreview: ReactNode;
-  structure: PlayPresetStructuredEditor;
-  files: Record<string, string>;
-  workbench: PlayPresetWorkbenchSnapshot | null;
-  workbenchPending: boolean;
-  structuredError: string | null;
-  onChange: (
-    update: (
-      structure: PlayPresetStructuredEditor,
-    ) => PlayPresetStructuredEditor,
-  ) => void;
-  onFileChange: (path: string, contents: string) => void;
-  onCreateFile: (path: string, contents: string) => void;
-  onError: (message: string | null) => void;
-}
-
-function PlayPresetStructuredEditorPanel({
-  view,
-  interfacePreview,
-  structure,
-  files,
-  workbench,
-  workbenchPending,
-  structuredError,
-  onChange,
-  onFileChange,
-  onCreateFile,
-  onError,
-}: PlayPresetStructuredEditorPanelProps): React.JSX.Element {
-  void onError;
-  const promptPaths = promptFilePaths(files);
-  const artifactOutputs = structure.followups.flatMap(
-    (followup, followupIndex) =>
-      followup.artifacts.map((artifact, artifactIndex) => ({
-        followup,
-        followupIndex,
-        artifact,
-        artifactIndex,
-      })),
-  );
-  const artifactChannels = new Set(
-    artifactOutputs.map(({ artifact }) => artifact.channel),
-  );
-  const unmatchedMounts = structure.mounts.filter(
-    ({ channel }) => !artifactChannels.has(channel),
-  );
-
-  function addNarrativePrompt(): void {
-    const path = uniquePresetPath(
-      files,
-      `prompts/narrative-${structure.narrativePrompts.length + 1}.md`,
-    );
-    onCreateFile(
-      path,
-      uiText("# 叙事规则\n\n说明 AI 每次写玩家可见正文时都应遵守的规则。\n"),
-    );
-    onChange((current) => ({
-      ...current,
-      narrativePrompts: [
-        ...current.narrativePrompts,
-        { role: "author_instruction", path },
-      ],
-    }));
-  }
-
-  function addFollowup(
-    clone?: PlayPresetFollowupDefinition,
-    body?: string,
-  ): void {
-    const id = `followup_${crypto.randomUUID().replaceAll("-", "")}`;
-    const path = uniquePresetPath(files, `prompts/${id}.md`);
-    const artifactName = `${id}_output`;
-    const channel = `${id}.output`;
-    onCreateFile(
-      path,
-      body ??
-        uiText(
-          "# 新后置请求\n\n说明主调用链完成后，需要额外整理成什么界面内容。\n",
-        ),
-    );
-    onChange((current) => ({
-      ...current,
-      mounts: [...current.mounts, { channel, mount: "story" }],
-      followupItems: [
-        ...(current.followupItems ?? defaultFollowupItems(current.followups)),
-        { id, kind: "user", enabled: true },
-      ],
-      followups: [
-        ...current.followups,
-        {
-          id,
-          displayName: clone
-            ? `${clone.displayName} ${uiText("副本")}`
-            : uiText("新后置请求"),
-          prompt: { role: "author_instruction", path },
-          artifacts: clone
-            ? clone.artifacts.map((artifact) => ({ ...artifact, channel }))
-            : [defaultArtifact(artifactName, channel)],
-          maxArtifactBytes: 32_768,
-        },
-      ],
-    }));
-  }
-
-  function updateFollowup(
-    followupIndex: number,
-    update: (
-      followup: PlayPresetFollowupDefinition,
-    ) => PlayPresetFollowupDefinition,
-  ): void {
-    onChange((current) => ({
-      ...current,
-      followups: current.followups.map((followup, index) =>
-        index === followupIndex ? update(followup) : followup,
-      ),
-    }));
-  }
-
-  function updateArtifact(
-    followupIndex: number,
-    artifactIndex: number,
-    update: (
-      artifact: PlayPresetArtifactDefinition,
-    ) => PlayPresetArtifactDefinition,
-  ): void {
-    onChange((current) => {
-      const followup = current.followups[followupIndex];
-      const artifact = followup?.artifacts[artifactIndex];
-      if (followup === undefined || artifact === undefined) return current;
-      const nextArtifact = update(artifact);
-      return {
-        ...current,
-        mounts:
-          nextArtifact.channel === artifact.channel
-            ? current.mounts
-            : current.mounts.map((mount) =>
-                mount.channel === artifact.channel
-                  ? { ...mount, channel: nextArtifact.channel }
-                  : mount,
-              ),
-        followups: current.followups.map((entry, index) =>
-          index === followupIndex
-            ? {
-                ...entry,
-                artifacts: entry.artifacts.map((candidate, index) =>
-                  index === artifactIndex ? nextArtifact : candidate,
-                ),
-              }
-            : entry,
-        ),
-      };
-    });
-  }
-
-  function setChannelMount(
-    channel: string,
-    mount: PlayPresetMount["mount"] | "",
-  ): void {
-    onChange((current) => ({
-      ...current,
-      mounts: [
-        ...current.mounts.filter((entry) => entry.channel !== channel),
-        ...(mount === "" ? [] : [{ channel, mount }]),
-      ],
-    }));
-  }
-
-  return (
-    <section
-      id={`play-preset-panel-${view}`}
-      className="play-preset-structured-editor"
-      role="tabpanel"
-      aria-labelledby={`play-preset-tab-${view}`}
-    >
-      <header className="play-preset-workspace-heading">
-        <div>
-          <p className="play-preset-section-kicker">
-            {view === "call_chain" ? "PLAY CALL CHAIN" : "PRESENTATION"}
-          </p>
-          <h3>
-            {view === "call_chain" ? uiText("调用链") : uiText("界面扩展")}
-          </h3>
-        </div>
-        <p>
-          {view === "call_chain"
-            ? uiText(
-                "先编辑 AI 主响应要遵守的文字规则，再按需添加主响应结束后的界面产物。提示内容直接显示，不需要填写文件路径。",
-              )
-            : uiText(
-                "直接用已保存的玩家视图配置界面，不需要后置请求。模型产物的位置设置独立保留。",
-              )}
-        </p>
-        {workbenchPending ? (
-          <p role="status">{uiText("正在生成真实编译/产物预览…")}</p>
-        ) : null}
-        {workbench === null && !workbenchPending ? (
-          <p className="field-note">
-            {uiText("保存有效 revision 后生成真实预览。")}
-          </p>
-        ) : null}
-        {structuredError === null ? null : (
-          <p role="alert" className="workspace-feedback">
-            {structuredError}
-          </p>
-        )}
-        {workbench?.staticErrors.length ? (
-          <ul aria-label={uiText("工作台静态错误")}>
-            {workbench.staticErrors.map((error) => (
-              <li key={`${error.location}:${error.code}`}>
-                {error.location} · {error.message}
-              </li>
-            ))}
-          </ul>
-        ) : null}
-      </header>
-
-      {view === "extensions" ? (
-        <>
-          <PlayerViewPanelsEditor
-            panels={structure.playerViewPanels}
-            files={files}
-            onFileChange={onFileChange}
-            onChange={(playerViewPanels) =>
-              onChange((current) => ({ ...current, playerViewPanels }))
-            }
-          />
-          {interfacePreview}
-
-          <div className="play-preset-structured-section">
-            <div className="play-preset-section-header">
-              <div>
-                <h4>{uiText("产物显示位置")}</h4>
-                <p>{uiText("每项都来自“调用链”中的一个真实产物输出。")}</p>
-              </div>
-            </div>
-            {artifactOutputs.length === 0 ? (
-              <p className="play-preset-empty-copy">
-                {uiText("当前没有模型产物；玩家视图面板仍可独立使用。")}
-              </p>
-            ) : (
-              <div className="play-preset-placement-list">
-                {artifactOutputs.map(({ followup, artifact }) => (
-                  <article
-                    className="play-preset-placement-card"
-                    key={`${followup.id}:${artifact.name}`}
-                  >
-                    <div>
-                      <strong>{artifact.name}</strong>
-                      <span>{followup.displayName}</span>
-                      <code>{artifact.channel}</code>
-                    </div>
-                    <label>
-                      {uiText("显示位置")}
-                      <MountSelect
-                        ariaLabel={uiText("{name} 显示位置", {
-                          name: artifact.name,
-                        })}
-                        value={
-                          structure.mounts.find(
-                            ({ channel }) => channel === artifact.channel,
-                          )?.mount ?? ""
-                        }
-                        allowNone
-                        onChange={(mount) =>
-                          setChannelMount(artifact.channel, mount)
-                        }
-                      />
-                    </label>
-                  </article>
-                ))}
-              </div>
-            )}
-            {unmatchedMounts.length === 0 ? null : (
-              <details className="play-preset-advanced-card">
-                <summary>{uiText("未连接到当前产物的旧频道")}</summary>
-                {unmatchedMounts.map((mount) => (
-                  <div
-                    className="play-preset-inline-editor"
-                    key={mount.channel}
-                  >
-                    <code>{mount.channel}</code>
-                    <MountSelect
-                      ariaLabel={uiText("{name} 显示位置", {
-                        name: mount.channel,
-                      })}
-                      value={mount.mount}
-                      allowNone
-                      onChange={(next) => setChannelMount(mount.channel, next)}
-                    />
-                  </div>
-                ))}
-              </details>
-            )}
-          </div>
-
-          <div className="play-preset-structured-section">
-            <h4>{uiText("随预设加载的界面文件")}</h4>
-            <p>
-              {uiText(
-                "勾选 renderer、脚本和样式等前端资源。这里只选择已有文件，不需要写数组格式。",
-              )}
-            </p>
-            <PathChecklist
-              ariaLabel={uiText("界面扩展文件")}
-              paths={extensionAssetPaths(files)}
-              selected={structure.extensionRefs}
-              emptyText={uiText("当前还没有 renderer、脚本或样式文件。")}
-              onChange={(extensionRefs) =>
-                onChange((current) => ({ ...current, extensionRefs }))
-              }
-            />
-          </div>
-        </>
-      ) : null}
-
-      {view === "call_chain" ? (
-        <div className="play-preset-structured-section">
-          {structure.playPrompts !== undefined ? (
-            <OrderedPlayPromptEditor
-              entries={structure.playPrompts}
-              {...(structure.migrationNotice === undefined
-                ? {}
-                : { migrationNotice: structure.migrationNotice })}
-              onChange={(playPrompts) =>
-                onChange((current) => ({ ...current, playPrompts }))
-              }
-            />
-          ) : (
-            <>
-              <div className="play-preset-section-header">
-                <h4>{uiText("叙事提示块")}</h4>
-                <button type="button" onClick={addNarrativePrompt}>
-                  {uiText("新增叙事提示块")}
-                </button>
-              </div>
-              <p>
-                {uiText(
-                  "这些文字和主持规则一起进入稳定 bootstrap，约束调用链中的玩家可见正文。下方直接显示真实内容。",
-                )}
-              </p>
-              {structure.narrativePrompts.length === 0 ? (
-                <p>{uiText("尚未声明叙事提示块；通用文风仍由主持块提供。")}</p>
-              ) : null}
-              <ol aria-label={uiText("叙事提示块")}>
-                {structure.narrativePrompts.map((prompt, index) => (
-                  <li key={`narrative-${index}`}>
-                    <PromptReferenceEditor
-                      label={uiText("叙事规则 {index}", { index: index + 1 })}
-                      path={prompt.path}
-                      paths={promptPaths}
-                      files={files}
-                      onPathChange={(path) =>
-                        onChange((current) => ({
-                          ...current,
-                          narrativePrompts: current.narrativePrompts.map(
-                            (entry, entryIndex) =>
-                              entryIndex === index ? { ...entry, path } : entry,
-                          ),
-                        }))
-                      }
-                      onContentsChange={(contents) =>
-                        onFileChange(prompt.path, contents)
-                      }
-                    />
-                    <button
-                      type="button"
-                      aria-label={uiText("删除叙事提示块 {index}", {
-                        index: index + 1,
-                      })}
-                      onClick={() =>
-                        onChange((current) => ({
-                          ...current,
-                          narrativePrompts: current.narrativePrompts.filter(
-                            (_, entryIndex) => entryIndex !== index,
-                          ),
-                        }))
-                      }
-                    >
-                      {uiText("删除")}
-                    </button>
-                  </li>
-                ))}
-              </ol>
-            </>
-          )}
-          <hr />
-          <div className="play-preset-section-header">
-            <h4>{uiText("后置请求")}</h4>
-            <button type="button" onClick={() => addFollowup()}>
-              {uiText("新增后置请求")}
-            </button>
-          </div>
-          <p>
-            {uiText(
-              "每个后置请求在主调用链完成后单独派发一次，共用同一段冻结前缀，彼此看不见对方，也不会进入之后的模型上下文。请求提示、产物格式和显示位置都可在当前页面编辑。",
-            )}
-          </p>
-          {structure.followups.length === 0 ? (
-            <p>{uiText("没有后置请求；主调用链完成后不会再派发额外请求。")}</p>
-          ) : null}
-          <FollowupListEditor
-            definitions={structure.followups}
-            items={structure.followupItems}
-            onItemsChange={(followupItems) =>
-              onChange((current) => ({ ...current, followupItems }))
-            }
-            onClone={addFollowup}
-            renderUser={(followup, index) => (
-              <article className="play-preset-followup-card">
-                <label>
-                  {uiText("显示名")}
-                  <input
-                    aria-label={uiText("后置请求 {index} 显示名", {
-                      index: index + 1,
-                    })}
-                    value={followup.displayName}
-                    onChange={(event) => {
-                      const displayName = event.currentTarget.value;
-                      updateFollowup(index, (current) => ({
-                        ...current,
-                        displayName,
-                      }));
-                    }}
-                  />
-                </label>
-                <label>
-                  {uiText("提示词")}
-                  <textarea
-                    aria-label={uiText("这次额外请求要做什么")}
-                    rows={10}
-                    value={files[followup.prompt.path] ?? ""}
-                    onChange={(event) =>
-                      onFileChange(
-                        followup.prompt.path,
-                        event.currentTarget.value,
-                      )
-                    }
-                  />
-                </label>
-                <div className="play-preset-section-header">
-                  <div>
-                    <h5>{uiText("输出到界面的产物")}</h5>
-                    <p>
-                      {uiText(
-                        "产物不是世界事实；它只是这次额外请求生成的界面内容。",
-                      )}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const name = uniqueArtifactName(followup.artifacts);
-                      const channel = `${followup.id}.${name}`;
-                      onChange((current) => ({
-                        ...current,
-                        mounts: [
-                          ...current.mounts,
-                          { channel, mount: "story" },
-                        ],
-                        followups: current.followups.map((entry, entryIndex) =>
-                          entryIndex === index
-                            ? {
-                                ...entry,
-                                artifacts: [
-                                  ...entry.artifacts,
-                                  defaultArtifact(name, channel),
-                                ],
-                              }
-                            : entry,
-                        ),
-                      }));
-                    }}
-                  >
-                    {uiText("新增产物")}
-                  </button>
-                </div>
-                {followup.artifacts.length === 0 ? (
-                  <p role="alert">
-                    {uiText("后置请求至少需要一项产物才能保存为有效预设。")}
-                  </p>
-                ) : (
-                  <ol className="play-preset-artifact-editor-list">
-                    {followup.artifacts.map((artifact, artifactIndex) => (
-                      <li key={`${artifact.name}-${artifactIndex}`}>
-                        <label>
-                          {uiText("显示位置")}
-                          <MountSelect
-                            ariaLabel={`${artifact.name} ${uiText("显示位置")}`}
-                            value={
-                              structure.mounts.find(
-                                (mount) => mount.channel === artifact.channel,
-                              )?.mount ?? ""
-                            }
-                            allowNone
-                            onChange={(mount) =>
-                              setChannelMount(artifact.channel, mount)
-                            }
-                          />
-                        </label>
-                        <FollowupResourcesEditor
-                          files={files}
-                          renderer={artifact.renderer}
-                          scripts={artifact.scripts}
-                          assets={artifact.assets}
-                          onWrite={onFileChange}
-                          onAttach={(kind, path, body) => {
-                            onCreateFile(path, body);
-                            onChange((current) => ({
-                              ...current,
-                              extensionRefs: [
-                                ...new Set([...current.extensionRefs, path]),
-                              ],
-                            }));
-                            updateArtifact(index, artifactIndex, (current) =>
-                              kind === "renderer"
-                                ? {
-                                    ...current,
-                                    renderer: path,
-                                    rendererRevision: crypto.randomUUID(),
-                                  }
-                                : {
-                                    ...current,
-                                    [kind]: [...(current[kind] ?? []), path],
-                                  },
-                            );
-                          }}
-                        />
-                        <ArtifactDefinitionEditor
-                          artifact={artifact}
-                          files={files}
-                          mount={
-                            structure.mounts.find(
-                              ({ channel }) => channel === artifact.channel,
-                            )?.mount
-                          }
-                          onChange={(update) =>
-                            updateArtifact(index, artifactIndex, update)
-                          }
-                          onRemove={() =>
-                            onChange((current) => {
-                              const removing =
-                                current.followups[index]?.artifacts[
-                                  artifactIndex
-                                ];
-                              if (removing === undefined) return current;
-                              const followups = current.followups.map(
-                                (entry, entryIndex) =>
-                                  entryIndex === index
-                                    ? {
-                                        ...entry,
-                                        artifacts: entry.artifacts.filter(
-                                          (_, candidateIndex) =>
-                                            candidateIndex !== artifactIndex,
-                                        ),
-                                      }
-                                    : entry,
-                              );
-                              const channelStillUsed = followups.some((entry) =>
-                                entry.artifacts.some(
-                                  ({ channel }) => channel === removing.channel,
-                                ),
-                              );
-                              return {
-                                ...current,
-                                followups,
-                                mounts: channelStillUsed
-                                  ? current.mounts
-                                  : current.mounts.filter(
-                                      ({ channel }) =>
-                                        channel !== removing.channel,
-                                    ),
-                              };
-                            })
-                          }
-                        />
-                      </li>
-                    ))}
-                  </ol>
-                )}
-                <details className="play-preset-advanced-card">
-                  <summary>{uiText("高级请求设置")}</summary>
-                  <div className="play-preset-form-grid">
-                    <label>
-                      {uiText("稳定标识")}
-                      <input
-                        aria-label={uiText("后置请求 {index} 标识", {
-                          index: index + 1,
-                        })}
-                        value={followup.id}
-                        readOnly
-                      />
-                    </label>
-                    <label>
-                      {uiText("本次所有产物合计上限（bytes）")}
-                      <input
-                        type="number"
-                        min={1}
-                        max={1_048_576}
-                        value={followup.maxArtifactBytes}
-                        onChange={(event) => {
-                          const maxArtifactBytes = Number(
-                            event.currentTarget.value,
-                          );
-                          updateFollowup(index, (current) => ({
-                            ...current,
-                            maxArtifactBytes,
-                          }));
-                        }}
-                      />
-                    </label>
-                  </div>
-                </details>
-                <button
-                  type="button"
-                  aria-label={uiText("删除后置请求 {id}", {
-                    id: followup.id,
-                  })}
-                  onClick={() =>
-                    onChange((current) => {
-                      const removingChannels = new Set(
-                        current.followups[index]?.artifacts.map(
-                          ({ channel }) => channel,
-                        ) ?? [],
-                      );
-                      const followups = current.followups.filter(
-                        (_, entryIndex) => entryIndex !== index,
-                      );
-                      const channelsStillUsed = new Set(
-                        followups.flatMap(({ artifacts }) =>
-                          artifacts.map(({ channel }) => channel),
-                        ),
-                      );
-                      return {
-                        ...current,
-                        followups,
-                        followupItems: (
-                          current.followupItems ??
-                          defaultFollowupItems(current.followups)
-                        ).filter(
-                          (item) => item.id !== current.followups[index]?.id,
-                        ),
-                        mounts: current.mounts.filter(
-                          ({ channel }) =>
-                            !removingChannels.has(channel) ||
-                            channelsStillUsed.has(channel),
-                        ),
-                      };
-                    })
-                  }
-                >
-                  {uiText("删除")}
-                </button>
-              </article>
-            )}
-          />
-          {workbenchPending ? <p>{uiText("正在读取产物预览……")}</p> : null}
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-function PromptReferenceEditor({
-  label,
-  path,
-  paths,
-  files,
-  onPathChange,
-  onContentsChange,
-}: {
-  label: string;
-  path: string;
-  paths: string[];
-  files: Record<string, string>;
-  onPathChange: (path: string) => void;
-  onContentsChange: (contents: string) => void;
-}): React.JSX.Element {
-  const available = [...new Set([...paths, path])].sort();
-  const contents = files[path];
-  return (
-    <article className="play-preset-prompt-card">
-      <header>
-        <div>
-          <strong>{label}</strong>
-          <span>{markdownTitle(contents ?? "")}</span>
-        </div>
-        <label>
-          {uiText("使用哪份内容")}
-          <select
-            aria-label={uiText("{label} 内容", { label })}
-            value={path}
-            onChange={(event) => onPathChange(event.currentTarget.value)}
-          >
-            {available.map((candidate) => (
-              <option key={candidate} value={candidate}>
-                {markdownTitle(files[candidate] ?? "") || candidate}
-              </option>
-            ))}
-          </select>
-        </label>
-      </header>
-      <code>{path}</code>
-      {contents === undefined ? (
-        <p role="alert">
-          {uiText("这份提示文件不存在；请改选已有内容或到高级文件修复。")}
-        </p>
-      ) : (
-        <textarea
-          aria-label={uiText("编辑提示内容 {path}", { path })}
-          value={contents}
-          onChange={(event) => onContentsChange(event.currentTarget.value)}
-          spellCheck={false}
-        />
-      )}
-    </article>
   );
 }
 
@@ -2466,30 +1462,6 @@ export function ArtifactDefinitionEditor({
   );
 }
 
-function defaultArtifact(
-  name: string,
-  channel: string,
-): PlayPresetArtifactDefinition {
-  return {
-    name,
-    channel,
-    strategy: "replace",
-    contentType: "text/markdown",
-    save: "commit",
-    invalidation: "new_operation",
-    required: false,
-    maxEmits: 1,
-  };
-}
-
-function uniqueArtifactName(artifacts: PlayPresetArtifactDefinition[]): string {
-  const used = new Set(artifacts.map(({ name }) => name));
-  let suffix = artifacts.length + 1;
-  let name = `output_${suffix}`;
-  while (used.has(name)) name = `output_${++suffix}`;
-  return name;
-}
-
 function contentTypeLabel(
   contentType: PlayPresetArtifactDefinition["contentType"],
 ): string {
@@ -2501,37 +1473,6 @@ function contentTypeLabel(
       "text/html": "HTML",
     } as const
   )[contentType];
-}
-
-function promptFilePaths(files: Record<string, string>): string[] {
-  return Object.keys(files)
-    .filter((path) => path.endsWith(".md") && !path.startsWith("blocks/"))
-    .sort();
-}
-
-function extensionAssetPaths(files: Record<string, string>): string[] {
-  return Object.keys(files)
-    .filter(
-      (path) =>
-        path.startsWith("renderers/") ||
-        path.startsWith("scripts/") ||
-        path.startsWith("assets/") ||
-        path.startsWith("regex/"),
-    )
-    .sort();
-}
-
-function uniquePresetPath(
-  files: Record<string, string>,
-  preferred: string,
-): string {
-  if (files[preferred] === undefined) return preferred;
-  const dot = preferred.lastIndexOf(".");
-  const base = dot < 0 ? preferred : preferred.slice(0, dot);
-  const extension = dot < 0 ? "" : preferred.slice(dot);
-  let suffix = 2;
-  while (files[`${base}-${suffix}${extension}`] !== undefined) suffix += 1;
-  return `${base}-${suffix}${extension}`;
 }
 
 function PresetFileWorkspace({
@@ -2678,613 +1619,5 @@ function PresetFileWorkspace({
         </div>
       </details>
     </section>
-  );
-}
-
-function PlayPresetArtifactPreviewPanel({
-  workbench,
-}: {
-  workbench: PlayPresetWorkbenchSnapshot | null;
-}): React.JSX.Element {
-  if (workbench === null)
-    return (
-      <section
-        className="play-preset-artifact-preview"
-        aria-label={uiText("真实产物预览")}
-      >
-        <h3>{uiText("真实产物预览")}</h3>
-        <p className="field-note">
-          {uiText(
-            "保存有效 revision 后可预览产物 contract、regex 与冻结 renderer。",
-          )}
-        </p>
-      </section>
-    );
-  return (
-    <section
-      className="play-preset-artifact-preview"
-      aria-label={uiText("真实产物预览")}
-    >
-      <h3>{uiText("真实产物预览（只读）")}</h3>
-      <p className="field-note">
-        {uiText(
-          "样例由当前冻结文件生成；此处不调用模型、不写入世界，只复用生产 regex/renderer 编码。",
-        )}
-      </p>
-      {workbench.artifactPreviews.length === 0 ? (
-        <p className="field-note">
-          {uiText("当前预设没有 artifact output contract。")}
-        </p>
-      ) : (
-        workbench.artifactPreviews.map((preview) => (
-          <PlayPresetArtifactPreview
-            key={`${preview.requestId}:${preview.output}`}
-            preview={preview}
-            scriptsEnabled={workbench.scriptsEnabled !== false}
-          />
-        ))
-      )}
-    </section>
-  );
-}
-
-function PlayPresetArtifactPreview({
-  preview,
-  scriptsEnabled,
-}: {
-  preview: PlayPresetWorkbenchArtifact;
-  scriptsEnabled: boolean;
-}): React.JSX.Element {
-  const payload = toArtifactPayload(preview.rawPayload);
-  const pipeline = applyRegexPipeline({
-    payload,
-    contentType: preview.declaration.contentType,
-    rules: preview.regex,
-  });
-  let srcDoc: string | null = null;
-  let rendererError: string | null = null;
-  const appPreviewEnabled = preview.renderer?.mode === "app" && scriptsEnabled;
-  if (preview.renderer?.mode === "app" && !scriptsEnabled) {
-    try {
-      srcDoc = buildDocumentSrcDoc(
-        pipeline.final,
-        preview.declaration.contentType,
-        undefined,
-        payload,
-      );
-    } catch (error: unknown) {
-      rendererError =
-        error instanceof Error
-          ? error.message
-          : uiText("raw/document fallback 失败");
-    }
-  } else if (preview.renderer !== undefined) {
-    try {
-      srcDoc =
-        preview.renderer.mode === "app"
-          ? buildAppSrcDoc({
-              renderer: preview.renderer,
-              instanceId: `workbench-${preview.requestId}-${preview.output}`,
-              nonce: "workbench-preview",
-            })
-          : buildDocumentSrcDoc(
-              pipeline.final,
-              preview.declaration.contentType,
-              preview.renderer,
-              payload,
-            );
-    } catch (error: unknown) {
-      rendererError =
-        error instanceof Error ? error.message : uiText("renderer 预览失败");
-    }
-  } else {
-    try {
-      srcDoc = buildDocumentSrcDoc(
-        pipeline.final,
-        preview.declaration.contentType,
-        undefined,
-        payload,
-      );
-    } catch (error: unknown) {
-      rendererError =
-        error instanceof Error
-          ? error.message
-          : uiText("内置 renderer 预览失败");
-    }
-  }
-  return (
-    <article className="play-preset-artifact-card">
-      <h4>
-        {preview.requestId} / {preview.output}
-      </h4>
-      <p className="field-note">
-        {uiText(
-          "这是当前样例实际显示在游戏页面上的效果；不会调用模型或写入世界。",
-        )}
-      </p>
-      {preview.diagnostics.map((diagnostic) => (
-        <p role="alert" key={diagnostic}>
-          {diagnostic}
-        </p>
-      ))}
-      {preview.renderer?.mode === "app" && !scriptsEnabled ? (
-        <p className="field-note">
-          {uiText(
-            "JavaScript 已停用；app 样例仅以 raw/document fallback 显示，不执行作者脚本。",
-          )}
-        </p>
-      ) : null}
-      <section
-        className="play-preset-artifact-rendered-preview"
-        aria-label={uiText("页面上的效果")}
-      >
-        <h5>{uiText("页面上的效果")}</h5>
-        {rendererError === null && srcDoc !== null ? (
-          appPreviewEnabled ? (
-            <WorkbenchAppPreview
-              renderer={preview.renderer!}
-              content={pipeline.final}
-              rawPayload={payload}
-              instanceId={`workbench-${preview.requestId}-${preview.output}`}
-            />
-          ) : (
-            <iframe
-              title={uiText("产物预览 {request}/{output}", {
-                request: preview.requestId,
-                output: preview.output,
-              })}
-              sandbox=""
-              srcDoc={srcDoc}
-            />
-          )
-        ) : preview.renderer === undefined ? (
-          <p className="field-note">
-            {uiText("无自定义 renderer；使用内置文本/Markdown/HTML renderer。")}
-          </p>
-        ) : (
-          <pre role="alert">
-            renderer fallback：{rendererError ?? uiText("无法生成预览")}\n
-            {preview.rawText}
-          </pre>
-        )}
-      </section>
-      <details className="play-preset-artifact-technical-details">
-        <summary>{uiText("技术细节：频道、处理规则与产物协议")}</summary>
-        <p className="field-note">
-          channel={preview.declaration.channel} · strategy=
-          {preview.declaration.strategy} · save={preview.declaration.save} ·
-          invalidation={preview.declaration.invalidation}
-        </p>
-        <details>
-          <summary>{uiText("raw payload 与 emit schema")}</summary>
-          <pre>{JSON.stringify(preview.rawPayload, null, 2)}</pre>
-          <pre>{JSON.stringify(preview.declaration, null, 2)}</pre>
-        </details>
-        <details>
-          <summary>{uiText("regex pipeline / 最终内容")}</summary>
-          {pipeline.steps.map((step) => (
-            <div key={`${step.order}:${step.scope}`} className="field-note">
-              #{step.order} {step.scope} · {step.status} · matches=
-              {step.matches}
-              {step.error === undefined ? null : ` · ${step.error}`}
-            </div>
-          ))}
-          <pre>{pipeline.final}</pre>
-        </details>
-        <p className="field-note">
-          active projection：{preview.activeProjection.status} ·{" "}
-          {preview.activeProjection.channel}
-          {preview.activeProjection.key === undefined
-            ? ""
-            : `/${preview.activeProjection.key}`}{" "}
-          · clear：{preview.clear.description}
-        </p>
-        <div className="field-note">
-          {uiText("emit 后：")}
-          {preview.simulation.emitted.status}（
-          {preview.simulation.emitted.identity}
-          {uiText("）；explicit clear 后：")}
-          {preview.simulation.explicitClear.status}；
-          {preview.simulation.invalidation.policy} {uiText("触发后：")}
-          {preview.simulation.invalidation.status}（
-          {preview.simulation.invalidation.reason}）
-        </div>
-        {preview.renderer?.mode === "app" ? (
-          <details>
-            <summary>{uiText("app 初始消息（只读协议预览）")}</summary>
-            <pre>
-              {JSON.stringify(
-                {
-                  namespace: "narraeon.extension.v1",
-                  type: "render.update",
-                  instanceId: `workbench-${preview.requestId}-${preview.output}`,
-                  payload: {
-                    content: pipeline.final,
-                    interactionDisabled: false,
-                  },
-                },
-                null,
-                2,
-              )}
-            </pre>
-          </details>
-        ) : null}
-      </details>
-    </article>
-  );
-}
-
-function WorkbenchAppPreview({
-  renderer,
-  content,
-  rawPayload,
-  instanceId,
-}: {
-  renderer: PlayPresetWorkbenchRenderer;
-  content: string;
-  rawPayload: ArtifactPayload;
-  instanceId: string;
-}): React.JSX.Element {
-  const iframeRef = useRef<HTMLIFrameElement | null>(null);
-  const [nonce] = useState(
-    () => `workbench-${Math.random().toString(36).slice(2)}`,
-  );
-  const [ready, setReady] = useState(false);
-  const srcDoc = buildAppSrcDoc({ renderer, instanceId, nonce });
-  const sendUpdate = useCallback(() => {
-    iframeRef.current?.contentWindow?.postMessage(
-      {
-        namespace: extensionBridgeNamespace,
-        type: "render.update",
-        instanceId,
-        nonce,
-        payload: {
-          content,
-          rawPayload,
-          interactionDisabled: false,
-        },
-      },
-      "*",
-    );
-  }, [content, instanceId, nonce, rawPayload]);
-
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent<unknown>) => {
-      const value = event.data;
-      if (
-        event.source !== iframeRef.current?.contentWindow ||
-        typeof value !== "object" ||
-        value === null ||
-        (value as { namespace?: unknown }).namespace !==
-          extensionBridgeNamespace ||
-        (value as { type?: unknown }).type !== "bridge.ready" ||
-        (value as { instanceId?: unknown }).instanceId !== instanceId ||
-        (value as { nonce?: unknown }).nonce !== nonce
-      )
-        return;
-      setReady(true);
-      sendUpdate();
-    };
-    window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
-  }, [instanceId, nonce, sendUpdate]);
-
-  useEffect(() => {
-    if (ready) sendUpdate();
-  }, [ready, sendUpdate]);
-
-  return (
-    <>
-      <iframe
-        ref={iframeRef}
-        title={uiText("产物预览 {id}", { id: instanceId })}
-        sandbox="allow-scripts"
-        srcDoc={srcDoc}
-        onLoad={sendUpdate}
-      />
-      <p className="field-note" role="status">
-        {ready
-          ? uiText("app preview ready；已发送 render.update。")
-          : uiText("等待 app preview ready…")}
-      </p>
-    </>
-  );
-}
-
-function isRecordValue(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function toArtifactPayload(value: unknown): ArtifactPayload {
-  if (value === null) return null;
-  if (
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean"
-  )
-    return value;
-  if (Array.isArray(value))
-    return value.map((entry) => toArtifactPayload(entry));
-  if (isRecordValue(value))
-    return Object.fromEntries(
-      Object.entries(value).map(([key, entry]) => [
-        key,
-        toArtifactPayload(entry),
-      ]),
-    );
-  return null;
-}
-
-/**
- * The block library and its enable list.
- *
- * `frame.yaml` is the enable list: a block listed under `author_instruction`
- * reaches the model in the order shown, and a block that stays in the tree
- * without being listed remains fully editable but is simply not sent. Enabling
- * several blocks of the same kind is allowed on purpose — nothing here forces
- * them to be mutually exclusive.
- */
-function PresetBlockLibrary({
-  files,
-  pending,
-  onChange,
-  onFeedback,
-}: {
-  files: Record<string, string>;
-  pending: boolean;
-  onChange: (files: Record<string, string>) => void;
-  onFeedback: (feedback: Feedback) => void;
-}): React.JSX.Element {
-  const frameSource = files["frame.yaml"] ?? "";
-  const enabled = useMemo(() => readEnabledBlocks(frameSource), [frameSource]);
-  const library = Object.keys(files)
-    .filter((path) => path.startsWith("blocks/") && path.endsWith(".md"))
-    .sort();
-  const unlisted = library.filter((path) => !enabled.includes(path));
-  const missing = enabled.filter((path) => files[path] === undefined);
-  const orderedLibrary = [
-    ...enabled.filter((path) => files[path] !== undefined),
-    ...unlisted,
-  ];
-  const [selectedPath, setSelectedPath] = useState(orderedLibrary[0] ?? "");
-  const selected = library.includes(selectedPath)
-    ? selectedPath
-    : (orderedLibrary[0] ?? "");
-
-  function writeEnabled(next: string[]): void {
-    try {
-      onChange({
-        ...files,
-        "frame.yaml": writeEnabledBlocks(frameSource, next),
-      });
-    } catch (error: unknown) {
-      onFeedback({
-        kind: "error",
-        text:
-          error instanceof Error
-            ? uiText("frame.yaml 无法更新：{message}", {
-                message: error.message,
-              })
-            : uiText("frame.yaml 无法更新。"),
-      });
-    }
-  }
-
-  return (
-    <section
-      id="play-preset-panel-blocks"
-      className="play-preset-block-workspace"
-      role="tabpanel"
-      aria-labelledby="play-preset-tab-blocks play-preset-blocks-title"
-    >
-      <header className="play-preset-workspace-heading">
-        <div>
-          <p className="play-preset-section-kicker">BLOCK LIBRARY</p>
-          <h4 id="play-preset-blocks-title">{uiText("主持规则内容")}</h4>
-        </div>
-        <p>
-          {uiText(
-            "直接阅读和编辑每条跨世界主持规则。启用的规则按顺序进入模型；停用只是不发送，内容仍会随预设保存和导出。",
-          )}
-        </p>
-      </header>
-
-      <div className="play-preset-concept-note">
-        <strong>{uiText("frame.yaml 在这里做什么？")}</strong>
-        <p>
-          {uiText(
-            "它只保存“哪些主持规则已启用、按什么顺序发送”。你在下方勾选或排序时，页面会同步更新它，不必手写路径。",
-          )}
-        </p>
-      </div>
-
-      {missing.length > 0 && (
-        <p role="alert">
-          {uiText("frame.yaml 引用了不存在的块：")}
-          {missing.join("、")}
-        </p>
-      )}
-
-      {orderedLibrary.length === 0 ? (
-        <p className="play-preset-empty-copy">
-          {uiText("当前预设还没有主持规则内容。")}
-        </p>
-      ) : (
-        <div className="play-preset-block-browser">
-          <aside aria-label={uiText("主持规则列表")}>
-            <ol>
-              {orderedLibrary.map((path) => {
-                const order = enabled.indexOf(path);
-                const contents = files[path] ?? "";
-                return (
-                  <li key={path}>
-                    <button
-                      type="button"
-                      className={path === selected ? "selected" : ""}
-                      aria-pressed={path === selected}
-                      onClick={() => setSelectedPath(path)}
-                    >
-                      <strong>{markdownTitle(contents)}</strong>
-                      <span>
-                        {order < 0
-                          ? uiText("未启用")
-                          : uiText("启用顺序 {index}", { index: order + 1 })}
-                      </span>
-                      <small>{markdownExcerpt(contents)}</small>
-                    </button>
-                  </li>
-                );
-              })}
-            </ol>
-          </aside>
-          <section className="play-preset-block-editor">
-            <header>
-              <div>
-                <span>
-                  {enabled.includes(selected)
-                    ? uiText("已启用")
-                    : uiText("未启用")}
-                </span>
-                <h5>{markdownTitle(files[selected] ?? "")}</h5>
-                <code>{selected}</code>
-              </div>
-              <div className="play-preset-block-actions">
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={enabled.includes(selected)}
-                    disabled={pending}
-                    aria-label={
-                      enabled.includes(selected)
-                        ? uiText("停用 {path}", { path: selected })
-                        : uiText("启用 {path}", { path: selected })
-                    }
-                    onChange={(event) =>
-                      writeEnabled(
-                        event.currentTarget.checked
-                          ? [...enabled, selected]
-                          : enabled.filter((path) => path !== selected),
-                      )
-                    }
-                  />
-                  {uiText("发送给模型")}
-                </label>
-                <button
-                  type="button"
-                  disabled={pending || enabled.indexOf(selected) <= 0}
-                  aria-label={uiText("上移 {path}", { path: selected })}
-                  onClick={() =>
-                    writeEnabled(
-                      moveBlock(enabled, enabled.indexOf(selected), -1),
-                    )
-                  }
-                >
-                  {uiText("上移")}
-                </button>
-                <button
-                  type="button"
-                  disabled={
-                    pending ||
-                    !enabled.includes(selected) ||
-                    enabled.indexOf(selected) === enabled.length - 1
-                  }
-                  aria-label={uiText("下移 {path}", { path: selected })}
-                  onClick={() =>
-                    writeEnabled(
-                      moveBlock(enabled, enabled.indexOf(selected), 1),
-                    )
-                  }
-                >
-                  {uiText("下移")}
-                </button>
-              </div>
-            </header>
-            <label>
-              {uiText("完整规则内容")}
-              <textarea
-                aria-label={uiText("编辑提示块内容 {path}", {
-                  path: selected,
-                })}
-                value={files[selected] ?? ""}
-                onChange={(event) =>
-                  onChange({
-                    ...files,
-                    [selected]: event.currentTarget.value,
-                  })
-                }
-                spellCheck={false}
-              />
-            </label>
-          </section>
-        </div>
-      )}
-    </section>
-  );
-}
-
-function moveBlock(paths: string[], index: number, delta: number): string[] {
-  const next = [...paths];
-  const target = index + delta;
-  if (target < 0 || target >= next.length) return next;
-  [next[index], next[target]] = [next[target]!, next[index]!];
-  return next;
-}
-
-/** Author blocks listed under `roles.author_instruction`, in frame order. */
-function readEnabledBlocks(frameSource: string): string[] {
-  try {
-    const frame = parseYaml(frameSource) as {
-      roles?: { author_instruction?: unknown };
-    } | null;
-    const entries = frame?.roles?.author_instruction;
-    if (!Array.isArray(entries)) return [];
-    return entries
-      .map((entry) =>
-        typeof entry === "object" && entry !== null
-          ? (entry as { markdown?: unknown }).markdown
-          : undefined,
-      )
-      .filter((path): path is string => typeof path === "string");
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Rewrite only the markdown entries, keeping every other frame entry — the
- * Runtime builtins and the `world.instructions` include — exactly where the
- * author put it.
- */
-function writeEnabledBlocks(frameSource: string, blocks: string[]): string {
-  const document = parseDocument(frameSource);
-  const entries = document.getIn(["roles", "author_instruction"], true);
-  if (!isYamlSeq(entries))
-    throw new Error(uiText("roles.author_instruction 必须是数组"));
-  const preserved = entries.items.filter(
-    (item) => !isMarkdownEntry(document, item),
-  );
-  const rebuilt = [
-    ...blocks.map((markdown) => ({ markdown })),
-    ...preserved.map((item) => (item as { toJSON: () => unknown }).toJSON()),
-  ];
-  document.setIn(["roles", "author_instruction"], rebuilt);
-  return String(document);
-}
-
-function isMarkdownEntry(document: unknown, item: unknown): boolean {
-  void document;
-  const value = (item as { toJSON?: () => unknown }).toJSON?.();
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    typeof (value as { markdown?: unknown }).markdown === "string"
-  );
-}
-
-function isYamlSeq(value: unknown): value is { items: unknown[] } {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    Array.isArray((value as { items?: unknown }).items)
   );
 }

@@ -1,845 +1,322 @@
 // @vitest-environment jsdom
-
 import {
   cleanup,
   fireEvent,
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { createElement } from "react";
-import { afterEach, describe, expect, test, vi } from "vitest";
-
+import { afterEach, expect, test, vi } from "vitest";
 import type { V1Request } from "../../src/protocol/v1.ts";
 import { firstPartyActionChoicesPresetFiles } from "../../src/shared/first-party-action-choices.ts";
-import {
-  defaultSettingImprovementPromptPath,
-  defaultSettingImprovementPromptZhCN,
-} from "../../src/shared/default-setting-improvement-prompt.ts";
+import { defaultOrderedPlayPrompts } from "../../src/shared/ordered-play-prompts.ts";
+import { defaultOrderedAuthorPrompts } from "../../src/shared/ordered-author-prompts.ts";
 import {
   PlayPresetScreen,
   type PlayPresetScreenPreset,
 } from "../../src/web/PlayPresetScreen.tsx";
 
-type Preset = PlayPresetScreenPreset & { validation: { status: "valid" } };
-
-const editorStructure: NonNullable<Preset["structure"]> = {
-  name: "结构化玩法",
-  callChainPath: "call-chain.yaml",
-  settingImprovementPrompt: {
-    role: "author_instruction",
-    path: defaultSettingImprovementPromptPath,
-  },
-  mounts: [],
-  playerViewPanels: [],
-  extensionRefs: [],
-  narrativePrompts: [
-    { role: "author_instruction", path: "prompts/narrate.md" },
-  ],
-  followups: [
-    {
-      id: "player_options",
-      displayName: "行动选项",
-      prompt: { role: "author_instruction", path: "prompts/options.md" },
-      artifacts: [
-        {
-          name: "player_options",
-          channel: "player.options",
-          strategy: "replace",
-          contentType: "application/json",
-          save: "commit",
-          invalidation: "new_operation",
-          required: true,
-          maxEmits: 1,
-        },
-      ],
-      maxArtifactBytes: 32_768,
-    },
-  ],
-};
-
-function workbenchSnapshot(
-  id: string,
-  revision: string,
-  message: string,
-): Record<string, unknown> {
-  return {
-    id,
-    name: id,
-    revision,
-    structure: editorStructure,
-    artifactPreviews: [],
-    staticErrors: [{ code: "fixture", message, location: "call-chain.yaml" }],
-    trustedLocalCode: false,
-    scriptsEnabled: false,
-  };
-}
-
 afterEach(cleanup);
-
-describe("玩法预设工作台", () => {
-  test("无后置请求也能发现玩家视图编辑与独立预览", () => {
-    const preset: Preset = {
-      id: "pure",
-      name: "纯界面",
-      revision: "rev-pure",
-      files: structuredClone(firstPartyActionChoicesPresetFiles),
-      structure: { ...editorStructure, followups: [] },
-      validation: { status: "valid" },
-    };
-    const client = {
-      request: () => Promise.resolve({ worlds: [] }),
-    } as unknown as {
-      request<T>(request: V1Request): Promise<T>;
-    };
-    render(
-      createElement(PlayPresetScreen, {
-        client,
-        initialLibrary: { currentPresetId: preset.id, presets: [preset] },
-        recommendedTemplates: [],
-        onLibraryChange: vi.fn(),
-        onDirtyChange: vi.fn(),
-      }),
-    );
-    fireEvent.click(screen.getByRole("tab", { name: /界面扩展/u }));
-    expect(screen.queryByText(/先在“调用链”新增后置请求/u)).toBeNull();
-    expect(screen.getByLabelText("预览世界")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "新增玩家视图面板" }));
-    expect(screen.getByLabelText("玩家视图面板 1 视图")).toBeTruthy();
-    expect(
-      screen.getByText(
-        "同一玩家视图由自定义面板接管，其他视图仍显示默认卡片。",
-      ),
-    ).toBeTruthy();
-  });
-
-  test("复制推荐起点后展示普通文件并允许编辑 contract/renderer 文件", async () => {
-    const base: Preset = {
-      id: "default",
-      name: "default",
-      revision: "rev-base",
-      files: structuredClone(firstPartyActionChoicesPresetFiles),
-      validation: { status: "valid" },
-    };
-    const requests: unknown[] = [];
-    let copied: Preset | null = null;
-    const client = {
-      request: vi.fn((request: V1Request) => {
-        requests.push(request);
-        if (request.type === "play.create") {
-          copied = {
-            ...base,
-            id: "copy",
-            name: "下一步建议（可编辑副本）",
-            files: request.files ?? base.files,
-          };
-          return Promise.resolve({ currentPresetId: "copy", preset: copied });
-        }
-        if (request.type === "play.read")
-          return Promise.resolve({
-            currentPresetId: copied?.id ?? base.id,
-            presets: copied === null ? [base] : [base, copied],
-          });
-        return Promise.reject(new Error(`unexpected ${request.type}`));
-      }),
-    } as unknown as {
-      request<T = unknown>(request: V1Request): Promise<T>;
-    };
-    render(
-      createElement(PlayPresetScreen, {
-        client,
-        initialLibrary: { currentPresetId: base.id, presets: [base] },
-        recommendedTemplates: [
-          {
-            id: "fixture-action-choices",
-            label: "行动选项",
-            name: "下一步建议（可编辑副本）",
-            files: firstPartyActionChoicesPresetFiles,
-          },
-        ],
-        onLibraryChange: vi.fn(),
-        onDirtyChange: vi.fn(),
-      }),
-    );
-
-    expect(screen.getByRole("heading", { name: "玩法预设" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "复制推荐行动选项" }));
-    await screen.findByText("已复制推荐行动选项；所有文件均可编辑。");
-    const create = requests.find(
-      (
-        request,
-      ): request is { type: "play.create"; files?: Record<string, string> } =>
-        typeof request === "object" &&
-        request !== null &&
-        (request as { type?: string }).type === "play.create",
-    );
-    expect(create?.files).toBeDefined();
-    expect(Object.keys(create?.files ?? {})).toEqual(
-      expect.arrayContaining([
-        "prompts/options.md",
-        "call-chain.yaml",
-        "renderers/player-options.html",
-        "scripts/player-options.js",
-        "assets/player-options.css",
-      ]),
-    );
-  });
-
-  test("推荐模板 registry 为空时工作台仍可编辑普通玩法文件", () => {
-    const base: Preset = {
-      id: "generic",
-      name: "普通玩法",
-      revision: "rev-generic",
-      files: {
-        "preset.yaml": "format: narraeon.play-preset/v1\n",
-      },
-      validation: { status: "valid" },
-    };
-    const client = {
-      request: vi.fn(),
-    } as unknown as {
-      request<T = unknown>(request: V1Request): Promise<T>;
-    };
-    render(
-      createElement(PlayPresetScreen, {
-        client,
-        initialLibrary: { currentPresetId: base.id, presets: [base] },
-        onLibraryChange: vi.fn(),
-        onDirtyChange: vi.fn(),
-      }),
-    );
-    expect(
-      screen.queryByRole("button", { name: "复制推荐行动选项" }),
-    ).toBeNull();
-    expect(screen.getByRole("heading", { name: "玩法预设" })).toBeTruthy();
-  });
-
-  test("以六个任务区收纳流程、设定提示、内容、文件和Preview，管理操作不再独占分页", async () => {
-    const base: Preset = {
-      id: "organized",
-      name: "清晰玩法",
-      revision: "rev-organized",
-      files: {
-        "preset.yaml": "format: narraeon.play-preset/v1\n",
-        "call-chain.yaml": "format: narraeon.play-call-chain/v1\n",
-        "prompts/policy.md": "# Policy\n",
-      },
-      validation: { status: "valid" },
-      structure: editorStructure,
-      enabled: true,
-      scriptsEnabled: false,
-    };
-    const sibling: Preset = {
-      ...base,
-      id: "organized-copy",
-      name: "备用玩法",
-      revision: "rev-organized-copy",
-    };
-    const requestMock = vi.fn((request: V1Request) => {
-      if (request.type === "play.workbench.read")
-        return Promise.resolve({
-          id: base.id,
-          name: base.name,
-          revision: base.revision,
-          structure: editorStructure,
-          artifactPreviews: [],
-          staticErrors: [],
-          trustedLocalCode: false,
-          scriptsEnabled: false,
-        });
-      return Promise.reject(new Error(`unexpected ${request.type}`));
-    });
-    const client = {
-      request: requestMock,
-    } as unknown as { request<T = unknown>(request: V1Request): Promise<T> };
-    render(
-      createElement(PlayPresetScreen, {
-        client,
-        initialLibrary: {
-          currentPresetId: base.id,
-          presets: [base, sibling],
-        },
-        onLibraryChange: vi.fn(),
-        onDirtyChange: vi.fn(),
-      }),
-    );
-
-    expect(
-      screen.getByRole("button", { name: "删除后置请求 player_options" }),
-    ).toBeTruthy();
-    expect(screen.queryByLabelText("玩法预设文件", { exact: true })).toBeNull();
-
-    fireEvent.click(screen.getByRole("tab", { name: /高级文件/u }));
-    expect(screen.getByLabelText("玩法预设文件", { exact: true })).toBeTruthy();
-    expect(
-      screen.getByLabelText<HTMLTextAreaElement>(/编辑玩法文件/u).wrap,
-    ).toBe("soft");
-    expect(
-      screen.queryByRole("button", { name: "删除后置请求 player_options" }),
-    ).toBeNull();
-
-    fireEvent.change(screen.getByLabelText("玩法预设名称"), {
-      target: { value: "清晰玩法二版" },
-    });
-    expect(screen.getByText("未保存修改")).toBeTruthy();
-    expect(
-      screen
-        .getByRole("combobox", { name: "切换预设" })
-        .hasAttribute("disabled"),
-    ).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "撤销未保存修改" }));
-    expect(screen.getByLabelText<HTMLInputElement>("玩法预设名称").value).toBe(
-      "清晰玩法",
-    );
-    expect(
-      screen
-        .getByRole("combobox", { name: "切换预设" })
-        .hasAttribute("disabled"),
-    ).toBe(false);
-
-    expect(screen.queryByRole("tab", { name: /管理/u })).toBeNull();
-    fireEvent.click(screen.getByText("预设操作"));
-    expect(screen.getByLabelText("玩法预设身份管理")).toBeTruthy();
-    await waitFor(() =>
-      expect(requestMock).toHaveBeenCalledWith({
-        type: "play.workbench.read",
-        presetId: base.id,
-        revision: base.revision,
-      }),
-    );
-  });
-
-  test("第一方脚本不重复发送由 host 注入的 bridge.ready", () => {
-    expect(
-      firstPartyActionChoicesPresetFiles["scripts/player-options.js"],
-    ).not.toContain('type: "bridge.ready"');
-  });
-
-  test("常用配置直接显示提示内容、解释频道与核心 YAML，并在原页嵌入Preview", async () => {
-    const structure = structuredClone(editorStructure);
-    structure.mounts = [{ channel: "player.options", mount: "composer_below" }];
-    structure.extensionRefs = [
-      "renderers/player-options.html",
-      "scripts/player-options.js",
-      "assets/player-options.css",
-    ];
-    const base: Preset = {
-      id: "readable",
-      name: "可读玩法",
-      revision: "rev-readable",
-      files: structuredClone(firstPartyActionChoicesPresetFiles),
-      validation: { status: "valid" },
-      structure,
-      enabled: true,
-      scriptsEnabled: false,
-    };
-    const client = {
-      request: vi.fn((request: V1Request) => {
-        if (request.type === "play.workbench.read")
-          return Promise.resolve({
-            id: base.id,
-            name: base.name,
-            revision: base.revision,
-            structure,
-            artifactPreviews: [
-              {
-                requestId: "player_options",
-                output: "player_options",
-                declaration: structure.followups[0]?.artifacts[0],
-                rawPayload: [{ id: "observe", label: "先观察四周" }],
-                rawText: '[{"id":"observe","label":"先观察四周"}]',
-                regex: [],
-                activeProjection: {
-                  status: "active",
-                  channel: "player.options",
-                  strategy: "replace",
-                  save: "commit",
-                },
-                clear: {
-                  supported: true,
-                  invalidation: "new_operation",
-                  description: "新操作开始时清除",
-                },
-                simulation: {
-                  emitted: { status: "active", identity: "fixture" },
-                  explicitClear: { status: "cleared", identity: "fixture" },
-                  invalidation: {
-                    policy: "new_operation",
-                    status: "cleared",
-                    reason: "新操作开始",
-                  },
-                },
-                diagnostics: [],
-              },
-            ],
-            staticErrors: [],
-            trustedLocalCode: false,
-            scriptsEnabled: false,
-          });
-        return Promise.reject(new Error(`unexpected ${request.type}`));
-      }),
-    } as unknown as { request<T = unknown>(request: V1Request): Promise<T> };
-
-    render(
-      createElement(PlayPresetScreen, {
-        client,
-        initialLibrary: { currentPresetId: base.id, presets: [base] },
-        onLibraryChange: vi.fn(),
-        onDirtyChange: vi.fn(),
-        renderPromptPreview: ({ revision }: { revision: string }) =>
-          createElement(
-            "div",
-            { "aria-label": "嵌入的真实提示词Preview" },
-            `原页Preview ${revision}`,
-          ),
-      }),
-    );
-
-    expect(
-      screen.getByLabelText<HTMLTextAreaElement>(
-        "编辑提示内容 prompts/narrate.md",
-      ).value,
-    ).toContain("Player-visible narrative");
-    expect(
-      screen.getByLabelText<HTMLTextAreaElement>("这次额外请求要做什么").value,
-    ).toContain("Next-step ideas");
-    expect(screen.queryByText("提示块路径")).toBeNull();
-
-    fireEvent.click(screen.getByRole("tab", { name: /设定完善/u }));
-    expect(screen.getByText("工具为什么不在这里？")).toBeTruthy();
-    expect(
-      screen.getByLabelText<HTMLTextAreaElement>(
-        `编辑提示内容 ${defaultSettingImprovementPromptPath}`,
-      ).value,
-    ).toContain("Recommended setting-improvement method");
-    expect(screen.getByText(/工具定义、参数、说明/u)).toBeTruthy();
-
-    fireEvent.click(screen.getByRole("tab", { name: /界面扩展/u }));
-    expect(screen.getByLabelText("预览世界")).toBeTruthy();
-    expect(screen.queryByLabelText("玩家视图面板 JSON")).toBeNull();
-    expect(screen.queryByLabelText("扩展引用 JSON")).toBeNull();
-    expect(
-      screen.getByLabelText<HTMLSelectElement>("player_options 显示位置").value,
-    ).toBe("composer_below");
-    expect(screen.getByRole("list", { name: "界面扩展文件" })).toBeTruthy();
-
-    fireEvent.click(screen.getByRole("tab", { name: /提示内容/u }));
-    expect(screen.getByText("frame.yaml 在这里做什么？")).toBeTruthy();
-    expect(
-      screen.getByLabelText<HTMLTextAreaElement>(
-        "编辑提示块内容 blocks/style.md",
-      ).value,
-    ).toContain("interactive novel");
-
-    fireEvent.click(screen.getByRole("tab", { name: /高级文件/u }));
-    const yamlGuide = screen.getByLabelText("三个核心 YAML 文件的用途");
-    expect(yamlGuide.textContent).toContain("预设入口");
-    expect(yamlGuide.textContent).toContain("调用链与产物");
-    expect(yamlGuide.textContent).toContain("主持规则顺序");
-    expect(
-      screen.getByLabelText<HTMLSelectElement>("玩法预设文件", {
-        exact: true,
-      }).value,
-    ).toBe("preset.yaml");
-
-    fireEvent.click(screen.getByRole("tab", { name: /产物预览/u }));
-    expect(screen.getByLabelText("嵌入的真实提示词Preview").textContent).toBe(
-      "原页Preview rev-readable",
-    );
-    expect(
-      await screen.findByRole("heading", { name: "页面上的效果" }),
-    ).toBeTruthy();
-    expect(
-      screen.getByText("技术细节：频道、处理规则与产物协议").closest("details")
-        ?.open,
-    ).toBe(false);
-  });
-
-  test("旧预设只读显示系统回退，用户确认后才写入并编辑设定完善提示", async () => {
-    const files = structuredClone(firstPartyActionChoicesPresetFiles);
-    files["preset.yaml"] = files["preset.yaml"]!.replace(
-      "settingImprovement:\n  markdown: prompts/setting-improvement.md\n",
-      "",
-    );
-    delete files[defaultSettingImprovementPromptPath];
-    const legacyStructure = structuredClone(editorStructure);
-    delete legacyStructure.settingImprovementPrompt;
-    let current: Preset = {
-      id: "legacy-setting-prompt",
-      name: "旧预设",
-      revision: "rev-legacy",
-      files,
-      validation: { status: "valid" },
-      structure: legacyStructure,
-      enabled: true,
-      scriptsEnabled: false,
-    };
-    const requests: V1Request[] = [];
-    const dirtyChanged = vi.fn();
-    const client = {
-      request: vi.fn((request: V1Request) => {
-        requests.push(request);
-        if (request.type === "play.workbench.read")
-          return Promise.resolve({
-            id: current.id,
-            name: current.name,
-            revision: current.revision,
-            structure: current.structure,
-            artifactPreviews: [],
-            staticErrors: [],
-            trustedLocalCode: false,
-            scriptsEnabled: false,
-          });
-        if (request.type === "play.save") {
-          current = {
-            ...current,
-            files: request.files,
-            structure:
-              (request.structure as
-                NonNullable<Preset["structure"]> | undefined) ??
-              current.structure ??
-              legacyStructure,
-          };
-          return Promise.resolve({
-            currentPresetId: current.id,
-            preset: current,
-          });
-        }
-        if (request.type === "play.read")
-          return Promise.resolve({
-            currentPresetId: current.id,
-            presets: [current],
-          });
-        return Promise.reject(new Error(`unexpected ${request.type}`));
-      }),
-    } as unknown as { request<T = unknown>(request: V1Request): Promise<T> };
-
-    render(
-      createElement(PlayPresetScreen, {
-        client,
-        initialLibrary: { currentPresetId: current.id, presets: [current] },
-        onLibraryChange: vi.fn(),
-        onDirtyChange: dirtyChanged,
-      }),
-    );
-    fireEvent.click(screen.getByRole("tab", { name: /设定完善/u }));
-    expect(
-      screen.getByLabelText<HTMLTextAreaElement>("系统推荐设定完善提示词")
-        .value,
-    ).toBe(defaultSettingImprovementPromptZhCN);
-    expect(screen.getByText("已保存")).toBeTruthy();
-
-    fireEvent.click(screen.getByRole("button", { name: "写入预设并编辑" }));
-    const editor = screen.getByLabelText<HTMLTextAreaElement>(
-      `编辑提示内容 ${defaultSettingImprovementPromptPath}`,
-    );
-    fireEvent.change(editor, {
-      target: { value: "# 自定义设定方法\n\n只完善校园日常。\n" },
-    });
-    expect(screen.getByText("未保存修改")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
-    await screen.findByText("玩法文件与结构化草稿已保存。");
-
-    const saved = requests.find(
-      (request): request is Extract<V1Request, { type: "play.save" }> =>
-        request.type === "play.save",
-    );
-    expect(saved?.files[defaultSettingImprovementPromptPath]).toContain(
-      "只完善校园日常",
-    );
-    expect(saved?.structure).toMatchObject({
-      settingImprovementPrompt: {
-        role: "author_instruction",
-        path: defaultSettingImprovementPromptPath,
-      },
-    });
-    expect(dirtyChanged).toHaveBeenCalledWith(true);
-  });
-
-  test("结构化编辑器可新增后置请求并通过 play.save 保存同一结构草稿", async () => {
-    const structure: NonNullable<Preset["structure"]> = {
-      name: "结构化玩法",
+function fixture(): PlayPresetScreenPreset {
+  return {
+    id: "preset",
+    name: "工作台",
+    revision: "rev-original",
+    files: structuredClone(firstPartyActionChoicesPresetFiles),
+    validation: { status: "valid" },
+    scriptsEnabled: false,
+    structure: {
+      name: "workbench",
       callChainPath: "call-chain.yaml",
-      mounts: [{ channel: "story.panel", mount: "story" }],
+      mounts: [],
       playerViewPanels: [],
       extensionRefs: [],
-      narrativePrompts: [
-        { role: "author_instruction", path: "prompts/narrate.md" },
-      ],
+      narrativePrompts: [],
       followups: [],
-    };
-    const base: Preset = {
-      id: "structured",
-      name: "结构化玩法",
-      revision: "rev-structured",
-      files: {
-        "preset.yaml": "format: narraeon.play-preset/v1",
-        "call-chain.yaml": "format: narraeon.play-call-chain/v1",
-      },
-      validation: { status: "valid" },
-      structure,
-      enabled: true,
-      scriptsEnabled: false,
-    };
-    const requests: V1Request[] = [];
-    let current = base;
-    const client = {
-      request: vi.fn((request: V1Request) => {
-        requests.push(request);
-        if (request.type === "play.save") {
-          current = {
-            ...current,
-            structure: request.structure as unknown as NonNullable<
-              Preset["structure"]
-            >,
-          };
-          return Promise.resolve({
-            currentPresetId: current.id,
-            preset: current,
-          });
-        }
-        if (request.type === "play.read")
-          return Promise.resolve({
-            currentPresetId: current.id,
-            presets: [current],
-          });
-        if (request.type === "play.workbench.read")
-          return Promise.resolve({
-            id: current.id,
-            name: current.name,
-            revision: current.revision,
-            structure: current.structure ?? editorStructure,
-            artifactPreviews: [],
-            staticErrors: [],
-            trustedLocalCode: false,
-            scriptsEnabled: false,
-          });
-        return Promise.reject(new Error(`unexpected ${request.type}`));
-      }),
-    } as unknown as { request<T = unknown>(request: V1Request): Promise<T> };
-    render(
-      createElement(PlayPresetScreen, {
-        client,
-        initialLibrary: { currentPresetId: base.id, presets: [base] },
-        onLibraryChange: vi.fn(),
-        onDirtyChange: vi.fn(),
-      }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "新增后置请求" }));
-    expect(
-      screen
-        .getByRole("list", { name: "后置请求" })
-        .querySelectorAll(":scope > .play-preset-followup-card"),
-    ).toHaveLength(1);
-    fireEvent.change(screen.getByLabelText("后置请求 1 显示名"), {
-      target: { value: "行动选项" },
-    });
-    fireEvent.click(screen.getByLabelText("启用 行动选项"));
-    expect(screen.getByLabelText("后置请求 1 显示名")).toHaveProperty(
-      "value",
-      "行动选项",
-    );
-    fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
-    await screen.findByText("玩法文件与结构化草稿已保存。");
-    const save = requests.find((request) => request.type === "play.save");
-    expect(save?.type).toBe("play.save");
-    if (save?.type === "play.save") {
-      expect(save.structure).toBeDefined();
-      const followups = save.structure?.followups as { displayName: string }[];
-      expect(followups).toHaveLength(1);
-      expect(followups[0]?.displayName).toBe("行动选项");
-      expect(save.structure?.followupItems).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ kind: "user", enabled: false }),
-        ]),
-      );
+      playPrompts: defaultOrderedPlayPrompts(),
+      authorPrompts: defaultOrderedAuthorPrompts(),
+    },
+  };
+}
+function setup(preset = fixture()) {
+  let current = preset;
+  const request = vi.fn((request: V1Request): Promise<unknown> => {
+    if (request.type === "play.read")
+      return Promise.resolve({
+        currentPresetId: current.id,
+        presets: [current],
+      });
+    if (request.type === "play.save") {
+      current = {
+        ...current,
+        name: request.name,
+        files: request.files,
+        ...(request.structure
+          ? {
+              structure: request.structure as unknown as NonNullable<
+                PlayPresetScreenPreset["structure"]
+              >,
+            }
+          : {}),
+      };
+      return Promise.resolve({});
     }
-    fireEvent.click(
-      screen.getByRole("button", { name: "场景回顾（系统示例）" }),
-    );
-    expect(screen.getByLabelText("系统后置提示词")).toHaveProperty(
-      "readOnly",
-      true,
-    );
-    expect(screen.queryByRole("button", { name: /^删除后置请求/ })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "克隆后置请求" }));
-    const clone = screen.getByRole("button", {
-      name: "场景回顾（系统示例） 副本",
-    });
-    fireEvent.click(clone);
-    expect(screen.getByLabelText("这次额外请求要做什么")).toHaveProperty(
-      "readOnly",
-      false,
-    );
-    const list = screen.getByRole("list", { name: "后置请求" });
-    fireEvent.keyDown(clone, { altKey: true, key: "ArrowUp" });
-    expect(list.lastElementChild?.textContent).toContain("行动选项");
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "下移 场景回顾（系统示例） 副本",
-      }),
-    );
-    expect(list.lastElementChild?.textContent).toContain(
-      "场景回顾（系统示例） 副本",
-    );
+    if (request.type === "play.workbench.read")
+      return Promise.resolve({
+        id: current.id,
+        revision: current.revision,
+        name: current.name,
+        structure: current.structure,
+        artifactPreviews: [],
+        staticErrors: [],
+        scriptsEnabled: false,
+      });
+    if (request.type === "workspace.read")
+      return Promise.resolve({ worlds: [] });
+    return Promise.resolve({});
   });
+  render(
+    createElement(PlayPresetScreen, {
+      client: { request: request as <T>(request: V1Request) => Promise<T> },
+      initialLibrary: { currentPresetId: current.id, presets: [current] },
+      onLibraryChange: vi.fn(),
+      onDirtyChange: vi.fn(),
+    }),
+  );
+  return request;
+}
+function addFollowup() {
+  fireEvent.click(screen.getByRole("button", { name: "新增后置请求" }));
+}
+function outputs() {
+  fireEvent.click(screen.getByRole("button", { name: "界面产物" }));
+}
 
-  test("初始与切换选择会自动加载对应 workbench，并丢弃迟到的旧 revision", async () => {
-    const first: Preset = {
-      id: "first",
-      name: "第一玩法",
-      revision: "rev-first",
-      files: { "preset.yaml": "first", "call-chain.yaml": "first" },
-      validation: { status: "valid" },
-      structure: editorStructure,
-    };
-    const second: Preset = {
-      ...first,
-      id: "second",
-      name: "第二玩法",
-      revision: "rev-second",
-    };
-    const pending = new Map<
-      string,
-      (snapshot: Record<string, unknown>) => void
-    >();
-    const requests: V1Request[] = [];
-    const client = {
-      request: vi.fn((request: V1Request) => {
-        requests.push(request);
-        if (request.type === "play.workbench.read")
-          return new Promise<Record<string, unknown>>((resolve) => {
-            pending.set(`${request.presetId}:${request.revision}`, resolve);
-          });
-        return Promise.reject(new Error(`unexpected ${request.type}`));
-      }),
-    } as unknown as { request<T = unknown>(request: V1Request): Promise<T> };
-    render(
-      createElement(PlayPresetScreen, {
-        client,
-        initialLibrary: {
-          currentPresetId: first.id,
-          presets: [first, second],
-        },
-        onLibraryChange: vi.fn(),
-        onDirtyChange: vi.fn(),
-      }),
-    );
-    await waitFor(() =>
-      expect(requests).toContainEqual({
-        type: "play.workbench.read",
-        presetId: first.id,
-        revision: first.revision,
-      }),
-    );
-    fireEvent.change(screen.getByRole("combobox", { name: "切换预设" }), {
-      target: { value: second.id },
-    });
-    await waitFor(() =>
-      expect(requests).toContainEqual({
-        type: "play.workbench.read",
-        presetId: second.id,
-        revision: second.revision,
-      }),
-    );
-    pending.get("first:rev-first")?.(
-      workbenchSnapshot(first.id, first.revision, "旧Preview"),
-    );
-    await Promise.resolve();
-    expect(screen.queryByText("旧Preview")).toBeNull();
-    pending.get("second:rev-second")?.(
-      workbenchSnapshot(second.id, second.revision, "第二玩法Preview"),
-    );
-    await waitFor(() =>
-      expect(
-        screen.getByRole("list", { name: "工作台静态错误" }).textContent,
-      ).toContain("第二玩法Preview"),
-    );
+test("one directory exposes prompts, followups and pure interface without file or preview tabs", () => {
+  setup();
+  expect(screen.getAllByRole("tab").map((n) => n.textContent)).toEqual([
+    expect.stringContaining("游玩"),
+    expect.stringContaining("设定完善"),
+  ]);
+  expect(screen.getByRole("list", { name: "提示词顺序" })).toBeTruthy();
+  expect(screen.getByRole("list", { name: "后置请求" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "新增纯界面" }));
+  expect(screen.getByLabelText("玩家视图面板 1 视图")).toHaveProperty(
+    "value",
+    "status",
+  );
+  expect(screen.getByLabelText("预览世界")).toBeTruthy();
+  expect(
+    screen.getAllByRole("button", { name: "新建 HTML 模板" }),
+  ).toHaveLength(1);
+  fireEvent.click(screen.getByRole("tab", { name: /设定完善/u }));
+  expect(screen.queryByRole("list", { name: "后置请求" })).toBeNull();
+  expect(screen.getByRole("list", { name: "提示词顺序" })).toBeTruthy();
+});
+
+test("renaming three independent outputs preserves stable submission names, positions and resource references on save", async () => {
+  const request = setup();
+  addFollowup();
+  fireEvent.change(screen.getByLabelText("后置请求名称"), {
+    target: { value: "回顾与建议" },
   });
-
-  test("raw call chain 编辑不被旧结构静默覆盖，双向结构修改会明确阻止保存", async () => {
-    const base: Preset = {
-      id: "raw-edit",
-      name: "raw 编辑",
-      revision: "rev-raw",
-      files: {
-        "preset.yaml": "preset",
-        "prompts/policy.md": "policy",
-        "call-chain.yaml": "call chain",
-      },
-      validation: { status: "valid" },
-      structure: {
-        ...editorStructure,
-        migrationNotice: "Legacy migration pending",
-      },
-    };
-    const requests: V1Request[] = [];
-    let current = base;
-    const client = {
-      request: vi.fn((request: V1Request) => {
-        requests.push(request);
-        if (request.type === "play.workbench.read")
-          return Promise.resolve(
-            workbenchSnapshot(base.id, base.revision, "Preview"),
-          );
-        if (request.type === "play.save") {
-          current = {
-            ...current,
-            revision: "rev-raw-draft",
-            files: request.files,
-            structure: current.structure ?? editorStructure,
-          };
-          return Promise.resolve({
-            currentPresetId: current.id,
-            preset: current,
-          });
-        }
-        if (request.type === "play.read")
-          return Promise.resolve({
-            currentPresetId: current.id,
-            presets: [current],
-          });
-        return Promise.reject(new Error(`unexpected ${request.type}`));
-      }),
-    } as unknown as { request<T = unknown>(request: V1Request): Promise<T> };
-    render(
-      createElement(PlayPresetScreen, {
-        client,
-        initialLibrary: { currentPresetId: base.id, presets: [base] },
-        onLibraryChange: vi.fn(),
-        onDirtyChange: vi.fn(),
-      }),
-    );
-    fireEvent.click(screen.getByRole("tab", { name: /高级文件/u }));
-    fireEvent.change(screen.getByLabelText("玩法预设文件", { exact: true }), {
-      target: { value: "call-chain.yaml" },
-    });
-    fireEvent.change(screen.getByLabelText("编辑玩法文件 call-chain.yaml"), {
-      target: { value: "raw call chain authored directly" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
-    await screen.findByText("玩法文件与结构化草稿已保存。");
-    const rawSave = requests.find(
-      (request): request is Extract<V1Request, { type: "play.save" }> =>
-        request.type === "play.save",
-    );
-    expect(rawSave).toBeDefined();
-    expect(rawSave).not.toHaveProperty("structure");
-
-    fireEvent.click(screen.getByRole("tab", { name: /游玩/u }));
-    fireEvent.change(screen.getByLabelText("后置请求 1 显示名"), {
-      target: { value: "改过的显示名" },
-    });
-    fireEvent.click(screen.getByRole("tab", { name: /高级文件/u }));
-    fireEvent.change(screen.getByLabelText("玩法预设文件", { exact: true }), {
-      target: { value: "call-chain.yaml" },
-    });
-    fireEvent.change(screen.getByLabelText("编辑玩法文件 call-chain.yaml"), {
-      target: { value: "another raw call chain edit" },
-    });
-    expect(screen.getByText(/stale structure 覆盖 raw YAML/u)).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: "保存修改" }).getAttribute("disabled"),
-    ).toBe("");
+  outputs();
+  fireEvent.change(screen.getByLabelText("产物名称"), {
+    target: { value: "第一份回顾" },
   });
+  fireEvent.change(screen.getByLabelText("生成内容用途"), {
+    target: { value: "回顾已发生的变化" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "新建 HTML 模板" }));
+  fireEvent.change(screen.getByLabelText("HTML", { exact: true }), {
+    target: { value: "<h1>ONE</h1><!-- narraeon:content -->" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "＋ 新增产物" }));
+  fireEvent.change(screen.getByLabelText("产物名称"), {
+    target: { value: "行动建议" },
+  });
+  fireEvent.change(screen.getByLabelText("产物显示位置"), {
+    target: { value: "composer_below" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "＋ 新增产物" }));
+  fireEvent.change(screen.getByLabelText("产物名称"), {
+    target: { value: "第三项" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+  await waitFor(() =>
+    expect(request.mock.calls.some(([r]) => r.type === "play.save")).toBe(true),
+  );
+  const save = request.mock.calls
+    .map(([r]) => r)
+    .find(
+      (r): r is Extract<V1Request, { type: "play.save" }> =>
+        r.type === "play.save",
+    )!;
+  const structure = save.structure as unknown as NonNullable<
+    PlayPresetScreenPreset["structure"]
+  >;
+  expect(structure.followups[0]!.artifacts.map((a) => a.name)).toEqual([
+    "output_1",
+    "output_2",
+    "output_3",
+  ]);
+  expect(structure.followups[0]!.artifacts.map((a) => a.displayName)).toEqual([
+    "第一份回顾",
+    "行动建议",
+    "第三项",
+  ]);
+  expect(structure.followups[0]!.artifacts[0]!.purpose).toBe(
+    "回顾已发生的变化",
+  );
+  expect(save.files[structure.followups[0]!.artifacts[0]!.renderer!]).toContain(
+    "ONE",
+  );
+  expect(structure.followups[0]!.artifacts[1]!.renderer).toBeUndefined();
+  expect(
+    structure.mounts.find(
+      (m) => m.channel === structure.followups[0]!.artifacts[1]!.channel,
+    )?.mount,
+  ).toBe("composer_below");
+});
+
+test("new regex rules can be disabled without deleting source, and unlink leaves the shared file", async () => {
+  const request = setup();
+  addFollowup();
+  outputs();
+  fireEvent.click(screen.getByRole("button", { name: "新建规则集" }));
+  fireEvent.click(screen.getByRole("button", { name: "新增正则规则" }));
+  fireEvent.change(screen.getByLabelText("查找", { exact: true }), {
+    target: { value: "(" },
+  });
+  expect(screen.getByLabelText("查找", { exact: true })).toHaveProperty(
+    "value",
+    "(",
+  );
+  fireEvent.change(screen.getByLabelText("查找", { exact: true }), {
+    target: { value: "KEEP_ORIGINAL" },
+  });
+  fireEvent.click(screen.getByLabelText("启用规则"));
+  fireEvent.change(screen.getByLabelText("规则集", { exact: true }), {
+    target: { value: "" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+  await waitFor(() =>
+    expect(request.mock.calls.some(([r]) => r.type === "play.save")).toBe(true),
+  );
+  const save = request.mock.calls
+    .map(([r]) => r)
+    .find(
+      (r): r is Extract<V1Request, { type: "play.save" }> =>
+        r.type === "play.save",
+    )!;
+  const source = Object.entries(save.files).find(([p]) =>
+    p.startsWith("regex/"),
+  )![1];
+  expect(source).toContain("KEEP_ORIGINAL");
+  expect(source).toContain("enabled: false");
+});
+
+test("system example is fully read-only, clone becomes independently editable and reorderable", () => {
+  setup();
+  fireEvent.click(
+    screen.getByRole("button", { name: /场景回顾（系统示例）/u }),
+  );
+  expect(screen.getByLabelText("后置请求名称")).toHaveProperty(
+    "readOnly",
+    true,
+  );
+  outputs();
+  expect(
+    screen.getByRole("button", { name: "移除此产物" }).closest("fieldset")
+      ?.disabled,
+  ).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "克隆后置请求" }));
+  expect(screen.getByLabelText("后置请求名称")).toHaveProperty(
+    "readOnly",
+    false,
+  );
+  const list = screen.getByRole("list", { name: "后置请求" });
+  const clone = within(list).getByRole("button", { name: /副本/u });
+  fireEvent.keyDown(clone, { key: "ArrowUp", altKey: true });
+  expect(list.children[1]?.textContent).toContain("副本");
+});
+
+test("dirty draft cannot switch and cancel restores source and metadata", () => {
+  setup();
+  addFollowup();
+  expect(screen.getByLabelText("切换预设")).toHaveProperty("disabled", true);
+  fireEvent.click(screen.getByRole("button", { name: "撤销未保存修改" }));
+  expect(screen.getByLabelText("切换预设")).toHaveProperty("disabled", false);
+  expect(
+    within(screen.getByRole("list", { name: "后置请求" })).queryByRole(
+      "button",
+      { name: /新后置请求/u },
+    ),
+  ).toBeNull();
+});
+
+test("invalid imported source is retained in recovery editor and raw save does not attach stale structure", async () => {
+  const preset = fixture();
+  delete preset.structure;
+  preset.validation = { status: "invalid", message: "Broken imported YAML" };
+  const request = setup(preset);
+  fireEvent.click(screen.getByRole("button", { name: "修复导入原文" }));
+  fireEvent.change(screen.getByLabelText("玩法预设文件", { exact: true }), {
+    target: { value: "call-chain.yaml" },
+  });
+  fireEvent.change(screen.getByLabelText("编辑玩法文件 call-chain.yaml"), {
+    target: { value: "original unrepaired content" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+  await waitFor(() =>
+    expect(request.mock.calls.some(([r]) => r.type === "play.save")).toBe(true),
+  );
+  const saved = request.mock.calls
+    .map(([r]) => r)
+    .find((r) => r.type === "play.save");
+  expect(saved).not.toHaveProperty("structure");
+  expect(saved).toMatchObject({
+    files: { "call-chain.yaml": "original unrepaired content" },
+  });
+});
+
+test("script examples create independent output resources without enabling script permission", async () => {
+  const request = setup();
+  addFollowup();
+  outputs();
+  fireEvent.click(screen.getByRole("button", { name: "新建行动按钮示例" }));
+  fireEvent.click(screen.getByRole("button", { name: "新建场景卡片示例" }));
+  fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+  await waitFor(() =>
+    expect(request.mock.calls.some(([r]) => r.type === "play.save")).toBe(true),
+  );
+  expect(request.mock.calls.some(([r]) => r.type === "play.scripts")).toBe(
+    false,
+  );
+  const saved = request.mock.calls
+    .map(([r]) => r)
+    .find(
+      (r): r is Extract<V1Request, { type: "play.save" }> =>
+        r.type === "play.save",
+    )!;
+  const structure = saved.structure as unknown as NonNullable<
+    PlayPresetScreenPreset["structure"]
+  >;
+  const artifacts = structure.followups[0]!.artifacts;
+  expect(artifacts).toHaveLength(3);
+  expect(artifacts[1]!.renderer).not.toBe(artifacts[2]!.renderer);
+  expect(saved.files[artifacts[1]!.scripts![0]!]).toContain(
+    "composer.set_draft",
+  );
+  expect(saved.files[artifacts[1]!.scripts![0]!]).toContain(
+    "message.requestId",
+  );
+});
+
+test("first-party scripts leave bridge.ready to the production host", () => {
+  expect(
+    firstPartyActionChoicesPresetFiles["scripts/player-options.js"],
+  ).not.toContain('type: "bridge.ready"');
 });

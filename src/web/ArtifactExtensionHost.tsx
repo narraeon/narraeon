@@ -21,6 +21,7 @@ export type FrontendRegexScope =
 export type FrontendRegexErrorPolicy = "fallback" | "skip" | "fail";
 
 export interface FrontendRegexRule {
+  enabled?: boolean;
   order: number;
   scope: FrontendRegexScope;
   pattern: string;
@@ -263,6 +264,7 @@ export function applyRegexPipeline(input: {
   let transformations = 0;
   let failure: RegexPipelineResult["failure"] = "none";
   for (const rule of rules) {
+    if (rule.enabled === false) continue;
     const current =
       rule.scope === "raw_text"
         ? raw

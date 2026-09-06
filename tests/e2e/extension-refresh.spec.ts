@@ -132,41 +132,29 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
     await page.reload();
     await page.getByRole("button", { name: "预设", exact: true }).click();
     await page
-      .getByLabel("后置请求 1 显示名")
-      .fill("Edited multi-output request");
+      .getByRole("list", { name: "后置请求" })
+      .getByRole("button", { name: /^first/u })
+      .click();
+    await page.getByLabel("后置请求名称").fill("Edited multi-output request");
     await page
       .getByLabel("这次额外请求要做什么")
       .fill("Emit panel and output_3 from the settled story.");
-    await page.getByText("编辑渲染资源", { exact: true }).first().click();
+    await page.getByRole("button", { name: "界面产物", exact: true }).click();
+    await addStyle(page, "body { color: rgb(34, 56, 78); }");
     await page
-      .getByRole("button", { name: "添加 样式与资源", exact: true })
-      .first()
+      .getByRole("button", { name: "＋ 新增产物", exact: true })
+      .click();
+    await page.getByLabel("产物显示位置").selectOption("sidebar");
+    await page
+      .getByRole("button", { name: "新建 HTML 模板", exact: true })
       .click();
     await page
-      .getByLabel("样式与资源 1", { exact: true })
-      .first()
-      .fill("body { color: rgb(34, 56, 78); }");
-    await page.getByRole("button", { name: "新增产物", exact: true }).click();
-    await page.getByLabel("output_3 显示位置").selectOption("sidebar");
-    await page.getByText("编辑渲染资源", { exact: true }).last().click();
-    await page
-      .getByRole("button", { name: "添加 HTML 模板", exact: true })
-      .last()
-      .click();
-    await page
-      .getByLabel("HTML 模板 1", { exact: true })
-      .last()
+      .getByLabel("HTML", { exact: true })
       .fill("<main><h2>Edited renderer</h2><!-- narraeon:content --></main>");
-    await page
-      .getByRole("button", { name: "添加 样式与资源", exact: true })
-      .last()
-      .click();
-    await page
-      .getByLabel("样式与资源 1", { exact: true })
-      .last()
-      .fill(
-        'h2 { color: rgb(12, 34, 56); } h2::after { content: "<"; } /* </style><script data-css-escape>bad()</script> */',
-      );
+    await addStyle(
+      page,
+      'h2 { color: rgb(12, 34, 56); } h2::after { content: "<"; } /* </style><script data-css-escape>bad()</script> */',
+    );
     await page.getByRole("button", { name: "保存修改", exact: true }).click();
     await expect(
       page.getByText("玩法文件与结构化草稿已保存。", { exact: true }),
@@ -611,4 +599,14 @@ function contentFiles() {
       contents: "format: narraeon.player-views/v1\nviews: []\n",
     },
   ];
+}
+
+async function addStyle(page: Page, body: string) {
+  await page.getByRole("button", { name: "新建命名资源", exact: true }).click();
+  const details = page
+    .locator(".preset-display-editor details")
+    .filter({ has: page.locator("summary", { hasText: /resource\.css/u }) })
+    .last();
+  await details.locator("summary").click();
+  await details.locator("textarea").fill(body);
 }
