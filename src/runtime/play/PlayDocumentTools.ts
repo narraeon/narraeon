@@ -121,8 +121,28 @@ export class FileNativePlayDocuments {
     return this.#committedSnapshot;
   }
 
-  bindBootstrap(bootstrap: PromptCompilation): void {
-    this.#reads = bootstrapAuthorizations(bootstrap, this.#candidate.snapshot);
+  bindBootstrap(
+    bootstrap: PromptCompilation,
+    previousAuthorization?: PlayDocumentAuthorizationCheckpoint,
+  ): void {
+    const injected = bootstrapAuthorizations(
+      bootstrap,
+      this.#candidate.snapshot,
+    );
+    this.#reads = injected;
+    // Refreshing a prefix retains the native conversation. Its exact reads
+    // remain valid only on the identical state tree, including our own writes.
+    if (
+      previousAuthorization?.stateFingerprint ===
+      fingerprintStateFiles(this.#candidate.files)
+    ) {
+      this.restoreAuthorizationCheckpoint(previousAuthorization);
+      for (const [ref, locators] of injected.documents) {
+        for (const locator of locators ?? [null])
+          authorizeRead(this.#reads, this.#candidate.snapshot.id, ref, locator);
+      }
+    }
+    // Creation capabilities come from this prefix, not past directory slots.
     this.#declaredDirectories = declaredStateDirectories(bootstrap);
   }
 

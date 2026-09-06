@@ -640,7 +640,7 @@ test("Prompt Preview 只采用 Runtime 当前配置，不信任浏览器提交�
       presetId: "custom",
       provider: "openai_responses",
       baseUrl: "https://provider.invalid/v1",
-      apiKey: "secret",
+      apiKey: "provider-credential-not-in-preview-9f49",
       modelId: "runtime-model",
       contextWindowTokens: 64_000,
       maxOutputTokens: 8_000,
@@ -677,7 +677,9 @@ test("Prompt Preview 只采用 Runtime 当前配置，不信任浏览器提交�
       },
     },
   });
-  expect(JSON.stringify(preview.result)).not.toContain("secret");
+  expect(JSON.stringify(preview.result)).not.toContain(
+    "provider-credential-not-in-preview-9f49",
+  );
   expect(JSON.stringify(preview.result)).not.toContain("browser-forged-model");
 });
 

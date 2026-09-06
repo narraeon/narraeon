@@ -195,10 +195,10 @@ test("文档软上限只报告 UTF-8 体积，实际注入按去重材料计数"
 
 test("主持块分别约束玩家代理权与默认叙事视角", () => {
   expect(defaultPresetHostFiles["blocks/adjudication.md"]).toContain(
-    "What the player must decide",
+    "Decisions that belong to the player",
   );
   expect(defaultPresetHostFiles["blocks/adjudication.md"]).toContain(
-    "intention, attempt, preparation, or prediction does not mean the goal has been achieved",
+    "an attempt is not success",
   );
   expect(defaultPresetHostFiles["blocks/style.md"]).toContain(
     "Address the player character as “you”",

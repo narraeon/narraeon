@@ -486,7 +486,10 @@ export class PlayCallChain {
       },
       playPreset,
     );
-    documents.bindBootstrap(compilation.bootstrap);
+    documents.bindBootstrap(
+      compilation.bootstrap,
+      session.documents.authorizationCheckpoint(),
+    );
     session.documents = documents;
     session.history = historyEntries(binding.history);
     session.narrativeCheckpoint = binding.narrativeCheckpoint;

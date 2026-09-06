@@ -613,6 +613,138 @@ test("工具中编辑不替换快照，拒绝后的冷重试不读取新配置",
   });
 });
 
+test("跨发送精读授权在重启、成功写入和空输入刷新后保留，且不扩大到未读节点", async () => {
+  const { worlds, worldId, root } = await createWorld("retained-read", [
+    ...worldFiles(),
+    {
+      path: "world/characters/qin.yaml",
+      contents:
+        "$document:\n  id: person.qin\n  ref: qin\n  title: Qin\n  summary: Courier\n  aliases: []\nrelationship: Just met\nprivate: Unknown\n",
+    },
+  ]);
+  const patch = (id: string, key: string, value: string) => ({
+    id,
+    name: "world_patch",
+    arguments: {
+      target: "@qin",
+      edits: [{ op: "replace", locator: { yaml: [key] }, value }],
+    },
+  });
+  const host = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "read",
+            name: "context_read",
+            arguments: { ref: "@qin#/relationship" },
+          },
+        ],
+      },
+      { outcome: "response", text: "Qin greets you." },
+      {
+        outcome: "response",
+        toolCalls: [
+          patch(
+            "second-write",
+            "relationship",
+            "Trust after lending an umbrella",
+          ),
+        ],
+      },
+      { outcome: "response", text: "Qin accepts the umbrella." },
+      {
+        outcome: "response",
+        toolCalls: [
+          patch(
+            "third-write",
+            "relationship",
+            "Trust with a promise to return the umbrella",
+          ),
+          patch("forbidden", "private", "Forged"),
+        ],
+      },
+      { outcome: "response", text: "Qin promises to return it." },
+    ],
+  });
+  const chains = new PlayCallChain(worlds);
+  await chains.start({
+    worldId,
+    chainId: "read-proof",
+    exchangeId: "first",
+    playerText: "Hello",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: host,
+  });
+  for (const [exchangeId, playerText] of [
+    ["second", "I lend the umbrella"],
+    ["third", ""],
+  ]) {
+    const resumed = new PlayCallChain(new FileNativeWorldStore(root));
+    const view = await resumed.append({
+      worldId,
+      chainId: "read-proof",
+      exchangeId: exchangeId!,
+      playerText: playerText!,
+      modelHost: host,
+      resolvePrompt: () =>
+        Promise.resolve({
+          hostBinding: hostBinding(),
+          playPreset: playPreset(),
+        }),
+    });
+    expect(view.status).toBe("ready");
+    expect(
+      view.events.find(
+        (event) =>
+          event.kind === "tool_result" &&
+          event.callId === `${exchangeId}-write`,
+      ),
+    ).toMatchObject({ ok: true });
+    if (exchangeId === "third")
+      expect(
+        view.events.find(
+          (event) =>
+            event.kind === "tool_result" && event.callId === "forbidden",
+        ),
+      ).toMatchObject({ ok: false });
+  }
+  expect(
+    (await worlds.bindPlayCallChain(worldId)).files[
+      "state/characters/qin.yaml"
+    ],
+  ).toContain("Trust with a promise");
+  const freshHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [patch("fresh-write", "relationship", "Unproven")],
+      },
+      { outcome: "response", text: "A fresh scene." },
+    ],
+  });
+  const fresh = await new PlayCallChain(new FileNativeWorldStore(root)).start({
+    worldId,
+    chainId: "fresh-proof",
+    exchangeId: "fresh",
+    playerText: "Continue",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: freshHost,
+  });
+  expect(
+    fresh.events.find(
+      (event) => event.kind === "tool_result" && event.callId === "fresh-write",
+    ),
+  ).toMatchObject({ ok: false });
+});
+
 test("新的发送与空输入重编译，冷恢复保留原生对话和当轮快照", async () => {
   const { worlds, worldId } = await createWorld("live-prompts");
   const modelHost = new ScriptedModelHost({
@@ -1880,7 +2012,7 @@ test("工具中间步文本不进入叙事，状态与终态叙事分别推进�
     .join("\n");
   // The play narrative block enters bootstrap as an ordinary author instruction.
   expect(authorPrompt).toContain(
-    "Make the final sentence a specific action someone takes",
+    "meaningful silence, solitude, rest and waiting",
   );
   expect(
     modelHost.requests[0]?.bootstrap.logicalMessages
@@ -2015,6 +2147,96 @@ test("整理检查点随最终叙事提交，冷启动保留边界并补入跨�
   expect(JSON.stringify(thirdHost.requests[0]?.appended)).toContain(
     "Completed player rounds since the last checkpoint: 1",
   );
+});
+
+test("登记后补齐收尾承诺，再过一轮切换上下文时仍从状态取得结果", async () => {
+  const { worlds, worldId } = await createWorld("checkpoint-closing-write");
+  const promise = "Alex will return the medicine money tomorrow at the ferry.";
+  const closing =
+    "He promises to bring the medicine money to the ferry tomorrow.";
+  const host = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          { id: "checkpoint", name: "world_checkpoint", arguments: {} },
+        ],
+      },
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "save-closing",
+            name: "world_patch",
+            arguments: {
+              target: "@current-situation",
+              edits: [
+                { op: "add", locator: { yaml: ["promise"] }, value: promise },
+              ],
+            },
+          },
+        ],
+      },
+      { outcome: "response", text: closing },
+      { outcome: "response", text: "You reach the inn." },
+      { outcome: "response", text: "Morning arrives." },
+    ],
+  });
+  const chains = new PlayCallChain(worlds);
+  const first = await chains.start({
+    worldId,
+    chainId: "closing",
+    exchangeId: "first",
+    playerText: "Finish this scene",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: host,
+  });
+  expect(
+    first.events.find(
+      (event) =>
+        event.kind === "tool_result" && event.callId === "save-closing",
+    ),
+  ).toMatchObject({ ok: true });
+  const checkpoint = (await worlds.recoverEndpoint(worldId))
+    .narrativeCheckpoint;
+  expect(checkpoint?.head).toBe(first.parentHead);
+  await chains.append({
+    worldId,
+    chainId: "closing",
+    exchangeId: "later",
+    playerText: "Go to the inn",
+    modelHost: host,
+    resolvePrompt: () =>
+      Promise.resolve({
+        hostBinding: hostBinding(),
+        playPreset: playPreset(),
+      }),
+  });
+  await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "fresh-closing",
+    exchangeId: "fresh",
+    playerText: "Morning",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: host,
+  });
+  const bootstrap = host.requests.at(-1)!.bootstrap;
+  const text = bootstrap.logicalMessages
+    .map(({ markdown }) => markdown)
+    .join("\n");
+  expect(text).toContain(promise);
+  expect(text).toContain("You reach the inn.");
+  expect(text).not.toContain(closing);
+  expect(
+    (await worlds.bindPlayCallChain(worldId)).history[
+      checkpoint!.historyMessageId
+    ],
+  ).toBe(closing);
 });
 
 test("检查点登记尚未生效，最终叙事接受后崩溃仍只恢复一次检查点", async () => {

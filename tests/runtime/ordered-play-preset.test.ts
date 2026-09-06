@@ -368,59 +368,79 @@ test("save rejects removal, source substitution, downgrade and required-disable 
   expect((await store.bindCurrent()).revision).toBe(preset.revision);
 });
 
-test("setting improvement and world revision reference enabled ordered play semantics without activating play mechanics", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ordered-author-"));
-  roots.push(root);
-  const store = new FileNativePlayPresetStore(root);
-  await store.initialize();
-  const preset = (await store.list()).presets[0]!;
-  const structure = preset.structure!;
-  structure.playPrompts = structure.playPrompts!.map((entry) =>
-    entry.kind === "builtin" && entry.builtin !== "play.mechanics"
-      ? { ...entry, enabled: false }
-      : entry,
-  );
-  structure.playPrompts.push({
-    id: "custom-author-reference",
-    kind: "user",
-    name: "Reference",
-    body: "ONLY_ENABLED_PLAY_POLICY",
-    enabled: true,
-  });
-  await store.save({
-    presetId: preset.id,
-    name: preset.name,
-    files: preset.files,
-    structure,
-  });
-  await store.select(preset.id);
-  const compiler = new FileNativePromptCompiler();
-  const common = {
-    runtimeContract: "AUTHOR_MECHANICS",
-    authorPrompt: "AUTHOR_POLICY",
-    playPreset: await store.bindCurrent(),
-    modelBinding: {
-      provider: "chat_completions" as const,
-      modelId: "test",
-      contextWindowTokens: 32000,
-      maxOutputTokens: 2000,
-    },
-    tools: [],
-  };
-  for (const result of [
-    compiler.compileSettingImprovement({
-      ...common,
-      contentPackageTitle: "Package",
-    }),
-    compiler.compileWorldRevision({ ...common, worldTitle: "World" }),
-  ]) {
-    const encoded = JSON.stringify(result.provider);
-    expect(encoded).toContain("ONLY_ENABLED_PLAY_POLICY");
-    expect(encoded).not.toContain("# Player-visible narrative rules");
-    expect(encoded).not.toContain("# Tools and response settlement");
-    expect(encoded).toContain("Authoring tools and settlement");
-  }
-});
+test.each(["en", "zh-CN"] as const)(
+  "%s author targets reference enabled play semantics with the correct tree boundary",
+  async (locale) => {
+    const root = await mkdtemp(join(tmpdir(), "ordered-author-"));
+    roots.push(root);
+    const store = new FileNativePlayPresetStore(root);
+    await store.initialize();
+    const preset = (await store.list()).presets[0]!;
+    const structure = preset.structure!;
+    structure.playPrompts = structure.playPrompts!.map((entry) =>
+      entry.kind === "builtin" && entry.builtin !== "play.mechanics"
+        ? { ...entry, enabled: false }
+        : entry,
+    );
+    structure.playPrompts.push({
+      id: "custom-author-reference",
+      kind: "user",
+      name: "Reference",
+      body: "ONLY_ENABLED_PLAY_POLICY",
+      enabled: true,
+    });
+    await store.save({
+      presetId: preset.id,
+      name: preset.name,
+      files: preset.files,
+      structure,
+    });
+    await store.select(preset.id);
+    const compiler = new FileNativePromptCompiler({ locale });
+    const common = {
+      runtimeContract: "AUTHOR_MECHANICS",
+      authorPrompt: "AUTHOR_POLICY",
+      playPreset: await store.bindCurrent(),
+      modelBinding: {
+        provider: "chat_completions" as const,
+        modelId: "test",
+        contextWindowTokens: 32000,
+        maxOutputTokens: 2000,
+      },
+      tools: [],
+    };
+    const results = [
+      compiler.compileSettingImprovement({
+        ...common,
+        contentPackageTitle: "Package",
+      }),
+      compiler.compileWorldRevision({ ...common, worldTitle: "World" }),
+    ];
+    for (const result of results) {
+      const encoded = JSON.stringify(result.provider);
+      expect(encoded).toContain("ONLY_ENABLED_PLAY_POLICY");
+      expect(encoded).not.toContain("# Player-visible narrative rules");
+      expect(encoded).not.toContain("# Tools and response settlement");
+      expect(encoded).toContain(
+        locale === "en" ? "Authoring tools and settlement" : "创作工具与结算",
+      );
+    }
+    const references = results.map(
+      (result) =>
+        result.logicalMessages
+          .flatMap(({ blocks }) => blocks)
+          .find(({ source }) => source === "play-preset:author-reference")!
+          .markdown,
+    );
+    expect(references[0]).toContain("world/");
+    expect(references[1]).toContain("state/");
+    expect(references[1]).not.toContain("world/");
+    expect(references[1]).toContain(
+      locale === "en" ? "play continues after Apply" : "应用后继续游玩",
+    );
+    expect(references[1]).not.toContain("opening.md");
+  },
+);
 
 test("one damaged legacy frame stays inspectable without breaking the preset library", async () => {
   const root = await mkdtemp(join(tmpdir(), "ordered-damaged-"));
