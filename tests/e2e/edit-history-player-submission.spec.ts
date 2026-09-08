@@ -281,6 +281,33 @@ test("检查点建议在叙事后出现，点击只选择下一条消息的新�
     page.getByRole("button", { name: "从全新上下文发送行动", exact: true }),
   ).toBeVisible();
   expect(providerRequests).toHaveLength(count);
+  await page.getByLabel("你的行动").fill("保留这份行动草稿。");
+  await page
+    .getByRole("button", { name: "取消全新上下文", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "追加行动", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("你的行动")).toHaveValue("保留这份行动草稿。");
+  await expect(
+    page.getByText("世界已在故事外修订；下一次行动会从新上下文开始。"),
+  ).toHaveCount(0);
+  expect(providerRequests).toHaveLength(count);
+  responses.push("Alex 点头，继续刚才的话题。");
+  const appendStream = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/runtime/v1") &&
+      (response.request().postDataJSON() as { request?: { type?: string } })
+        .request?.type === "play.chain.append",
+  );
+  await page.getByLabel("你的行动").press("Enter");
+  await expect(page.getByText("Alex 点头，继续刚才的话题。")).toBeVisible();
+  expect(await (await appendStream).finished()).toBeNull();
+  const appended = JSON.parse(providerRequests.at(-1)!) as {
+    messages: { role: string; content: unknown }[];
+  };
+  expect(appended.messages.some(({ role }) => role === "tool")).toBe(true);
+  await note.getByRole("button", { name: "下一条消息使用全新上下文" }).click();
   responses.push("你们走进走廊。");
   const finalStream = page.waitForResponse(
     (response) =>
@@ -299,7 +326,7 @@ test("检查点建议在叙事后出现，点击只选择下一条消息的新�
   const sent = JSON.parse(providerRequests.at(-1)!) as {
     messages: { role: string; content: unknown }[];
   };
-  expect(JSON.stringify(sent.messages)).toContain("距上次检查点已完成 0 回合");
+  expect(JSON.stringify(sent.messages)).toContain("距上次检查点已完成 1 回合");
   expect(sent.messages.some(({ role }) => role === "tool")).toBe(false);
 });
 

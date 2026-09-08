@@ -1119,6 +1119,7 @@ const settingImprovementEnglishMessages: Record<string, string> = {
     "Discuss and revise {packageName} with the model. Successful tool changes write directly to the content package current tree, just like play.",
   全新上下文: "Fresh context",
   "AI 建议在此开启全新上下文": "The AI suggests starting a fresh context here",
+  取消全新上下文: "Cancel fresh context",
   下一条消息使用全新上下文: "Use a fresh context for the next message",
   玩家输入前的回合提示: "Round marker before player input",
   " + 1 条回合提示": " + 1 round marker",

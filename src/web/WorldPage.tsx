@@ -202,6 +202,7 @@ export function WorldPage({
   const [playCallChain, setPlayCallChain] =
     useState<V1PlayCallChainView | null>(null);
   const [forceFreshContext, setForceFreshContext] = useState(false);
+  const [preferFreshContext, setPreferFreshContext] = useState(false);
   const [playTimeline, setPlayTimeline] = useState<V1PlayTimelinePage | null>(
     null,
   );
@@ -774,6 +775,7 @@ export function WorldPage({
       const next = await requestRuntime<V1PlayCallChainView>(client, request);
       setPlayCallChain(next);
       if (fresh) setForceFreshContext(false);
+      setPreferFreshContext(false);
       if (hasPlayerText) setPlayerText("");
       await refreshWorld();
       const wasCancelled = cancelledExchangeRef.current === exchangeId;
@@ -807,7 +809,10 @@ export function WorldPage({
       ).catch(() => null);
       if (inspected !== null) {
         setPlayCallChain(inspected);
-        if (fresh && inspected.chainId === chainId) setForceFreshContext(false);
+        if (fresh && inspected.chainId === chainId) {
+          setForceFreshContext(false);
+          setPreferFreshContext(false);
+        }
         if (
           hasPlayerText &&
           inspected.events.some(
@@ -1404,7 +1409,7 @@ export function WorldPage({
   }
 
   function submitCurrentMode(): Promise<void> {
-    return submitPlayChain(activeChainStale ? "fresh" : "append");
+    return submitPlayChain(defaultSubmitFresh ? "fresh" : "append");
   }
 
   async function saveReadingPreferences(
@@ -1436,9 +1441,11 @@ export function WorldPage({
     }
   }
 
+  const defaultSubmitFresh =
+    preferFreshContext || activeChainId === null || activeChainStale;
+  const defaultSubmitEnabled = defaultSubmitFresh ? canStartFresh : canAppend;
   const composer = useConversationComposer(
-    modelConfigured &&
-      (activeChainId === null || activeChainStale ? canStartFresh : canAppend),
+    modelConfigured && defaultSubmitEnabled,
     submitCurrentMode,
   );
 
@@ -1573,9 +1580,6 @@ export function WorldPage({
       />
     );
   }
-
-  const defaultSubmitFresh = activeChainId === null || activeChainStale;
-  const defaultSubmitEnabled = defaultSubmitFresh ? canStartFresh : canAppend;
 
   return (
     <main
@@ -1737,7 +1741,7 @@ export function WorldPage({
                   restartDisabled={pending !== null || worldRevisionLocked}
                   freshContextDisabled={!modelConfigured}
                   onUseFreshContext={() => {
-                    setForceFreshContext(true);
+                    setPreferFreshContext(true);
                     composerRef.current?.querySelector("textarea")?.focus();
                   }}
                   onRestartFrom={(head) => void deriveWorld(head)}
@@ -1850,6 +1854,21 @@ export function WorldPage({
             {activeChainStale && playIdle ? (
               <div className="world-fresh-context-note" role="note">
                 {uiText("世界已在故事外修订；下一次行动会从新上下文开始。")}
+              </div>
+            ) : null}
+            {preferFreshContext && !activeChainStale && playIdle ? (
+              <div className="world-fresh-context-note" role="note">
+                <span>{uiText("下一条消息将开启全新上下文")}</span>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => {
+                    setPreferFreshContext(false);
+                    composerTextareaRef.current?.focus();
+                  }}
+                >
+                  {uiText("取消全新上下文")}
+                </button>
               </div>
             ) : null}
             <div className="world-composer-row">
