@@ -193,9 +193,26 @@ export class ModelHostFailureError extends Error {
   }
 }
 
-/** A Provider has rejected the complete request because its context is full. */
+/** Reject provider-confirmed truncation before accepting text or tool calls. */
+export function assertModelOutputComplete(stopReason: unknown): void {
+  if (
+    stopReason === "length" ||
+    stopReason === "max_tokens" ||
+    stopReason === "max_output_tokens" ||
+    stopReason === "incomplete:max_output_tokens"
+  ) {
+    throw new ModelHostFailureError(
+      "模型输出已达到 Token 上限，回复未完成。请在模型配置中调高“最大输出 Token”，保存后使用全新上下文重新发送。推理过程也可能占用输出额度。",
+      { details: { code: "model_output_limit", stopReason } },
+    );
+  }
+}
+
+/** Replaying the frozen request cannot recover a context or output limit. */
 export function modelHostFailureRequiresFreshContext(error: unknown): boolean {
   if (!(error instanceof ModelHostFailureError)) return false;
+  if (failureDetailStrings(error.details).includes("model_output_limit"))
+    return true;
   const evidence = [error.message, ...failureDetailStrings(error.details)]
     .join("\n")
     .toLocaleLowerCase("und");

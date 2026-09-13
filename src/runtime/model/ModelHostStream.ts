@@ -1,4 +1,8 @@
-import { ModelHostFailureError, type ModelHostDelta } from "./ModelHost.ts";
+import {
+  assertModelOutputComplete,
+  ModelHostFailureError,
+  type ModelHostDelta,
+} from "./ModelHost.ts";
 import { providerStreamEvents } from "./ProviderStream.ts";
 
 export type ModelHostDeltaSink = (delta: ModelHostDelta) => void;
@@ -144,6 +148,7 @@ export async function aggregateChatModelStream(
 
   if (!completed || !sawPayload)
     throw new Error("Chat SSE ended before a complete response");
+  assertModelOutputComplete(stopReason);
   const toolCalls = [...calls.entries()]
     .sort(([left], [right]) => left - right)
     .map(([, call]) => {
@@ -336,8 +341,6 @@ export async function aggregateAnthropicModelStream(
         if (block === undefined || block.stopped)
           throw new Error("Anthropic SSE content block stop is invalid");
         block.stopped = true;
-        if (block.value.type === "tool_use" && block.partialJson !== "")
-          block.value.input = parseStreamJson(block.partialJson);
         break;
       }
       case "message_delta": {
@@ -375,11 +378,14 @@ export async function aggregateAnthropicModelStream(
 
   if (!started || !stopped)
     throw new Error("Anthropic SSE ended before a complete response");
+  assertModelOutputComplete(stopReason);
   const content = [...blocks.entries()]
     .sort(([left], [right]) => left - right)
     .map(([, block]) => {
       if (!block.stopped)
         throw new Error("Anthropic SSE content block did not end");
+      if (block.value.type === "tool_use" && block.partialJson !== "")
+        block.value.input = parseStreamJson(block.partialJson);
       return block.value;
     });
   const text = content
@@ -468,6 +474,13 @@ export async function aggregateResponsesModelStream(
       payload.type === "response.cancelled" ||
       payload.type === "error"
     ) {
+      if (
+        payload.type === "response.incomplete" &&
+        isRecord(payload.response)
+      ) {
+        const details = payload.response.incomplete_details;
+        if (isRecord(details)) assertModelOutputComplete(details.reason);
+      }
       throw new ModelHostFailureError(
         "Responses SSE returned an explicit failure",
       );

@@ -24,6 +24,7 @@ import type {
   ModelHostResponse,
 } from "./ModelHost.ts";
 import {
+  assertModelOutputComplete,
   ModelHostBindingMismatchError,
   ModelHostCancelledError,
   ModelHostContinuationError,
@@ -343,6 +344,7 @@ export class FileNativeModelHost implements ModelHost {
         await trace("chat_response", payload);
         const message = payload.choices?.[0]?.message;
         const finishReason = payload.choices?.[0]?.finish_reason;
+        assertModelOutputComplete(finishReason);
         if (message === undefined)
           throw unknownProviderResponse("Chat Completions");
         if (
@@ -475,6 +477,7 @@ export class FileNativeModelHost implements ModelHost {
             cache_creation_input_tokens?: number;
           };
         };
+        assertModelOutputComplete(payload.stop_reason);
         const content = payload.content!;
         if (!validAnthropicContent(content))
           throw unknownProviderResponse("Anthropic Messages");
@@ -1518,6 +1521,7 @@ async function openAIResponsesRequest(
       await trace(`${input.tracePrefix}_response`, payload);
       if (!isRecord(payload) || !Array.isArray(payload.output))
         throw unknownProviderResponse("Responses API");
+      assertModelOutputComplete(responsesStopReason(payload));
       const output = cloneResponseOutput(payload.output);
       if (!validResponsesOutput(output))
         throw unknownProviderResponse("Responses API");

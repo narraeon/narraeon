@@ -2,6 +2,7 @@ import { expect, test } from "vitest";
 
 import { FileNativeModelHost } from "../../src/runtime/model/FileNativeModelAdapters.ts";
 import {
+  assertModelOutputComplete,
   equalModelHostBinding,
   ModelHostFailureError,
   ModelHostOutcomeUnknownError,
@@ -637,3 +638,215 @@ function isUserMessage(value: unknown): boolean {
     value.role === "user"
   );
 }
+
+test.each([
+  {
+    provider: "chat_completions" as const,
+    payload: {
+      choices: [
+        {
+          finish_reason: "length",
+          message: {
+            role: "assistant",
+            content: "partial",
+            tool_calls: [
+              {
+                id: "call",
+                type: "function",
+                function: { name: "state_read", arguments: '{"ref":' },
+              },
+            ],
+          },
+        },
+      ],
+    },
+  },
+  {
+    provider: "openai_responses" as const,
+    payload: {
+      status: "incomplete",
+      incomplete_details: { reason: "max_output_tokens" },
+      output: [
+        {
+          type: "function_call",
+          call_id: "call",
+          name: "state_read",
+          arguments: '{"ref":',
+        },
+      ],
+    },
+  },
+  {
+    provider: "anthropic_messages" as const,
+    payload: {
+      stop_reason: "max_tokens",
+      content: [{ type: "text", text: "partial" }],
+    },
+  },
+])(
+  "$provider reports output exhaustion before parsing partial output",
+  async ({ provider, payload }) => {
+    const host = new FileNativeModelHost(
+      {
+        provider,
+        baseUrl: "https://provider.invalid/v1",
+        apiKey: "test",
+        modelId: "model",
+        contextWindowTokens: 64000,
+        maxOutputTokens: 2048,
+      },
+      () =>
+        Promise.resolve(
+          new Response(JSON.stringify(payload), {
+            headers: { "content-type": "application/json" },
+          }),
+        ),
+    );
+    await expect(
+      host.exchange(
+        exchangeFor(provider, "model", host.binding().cacheStrategy),
+      ),
+    ).rejects.toMatchObject({
+      kind: "failed",
+      message:
+        "模型输出已达到 Token 上限，回复未完成。请在模型配置中调高“最大输出 Token”，保存后使用全新上下文重新发送。推理过程也可能占用输出额度。",
+    });
+  },
+);
+
+test.each([
+  {
+    provider: "chat_completions" as const,
+    events: [
+      {
+        choices: [
+          {
+            index: 0,
+            delta: {
+              role: "assistant",
+              tool_calls: [
+                {
+                  index: 0,
+                  id: "call",
+                  type: "function",
+                  function: { name: "state_read", arguments: '{"ref":' },
+                },
+              ],
+            },
+            finish_reason: "length",
+          },
+        ],
+      },
+      "[DONE]",
+    ],
+  },
+  {
+    provider: "openai_responses" as const,
+    events: [
+      {
+        type: "response.incomplete",
+        response: {
+          status: "incomplete",
+          incomplete_details: { reason: "max_output_tokens" },
+          output: [
+            {
+              type: "function_call",
+              call_id: "call",
+              name: "state_read",
+              arguments: '{"ref":',
+            },
+          ],
+        },
+      },
+    ],
+  },
+  {
+    provider: "anthropic_messages" as const,
+    events: [
+      {
+        type: "message_start",
+        message: { id: "message", role: "assistant", content: [] },
+      },
+      {
+        type: "content_block_start",
+        index: 0,
+        content_block: {
+          type: "tool_use",
+          id: "call",
+          name: "state_read",
+          input: {},
+        },
+      },
+      {
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "input_json_delta", partial_json: '{"ref":' },
+      },
+      { type: "content_block_stop", index: 0 },
+      { type: "message_delta", delta: { stop_reason: "max_tokens" } },
+      { type: "message_stop" },
+    ],
+  },
+])(
+  "$provider streaming truncation preserves an actionable error with partial tool JSON",
+  async ({ provider, events }) => {
+    const body = events
+      .map(
+        (event) =>
+          `data: ${typeof event === "string" ? event : JSON.stringify(event)}\n\n`,
+      )
+      .join("");
+    const host = new FileNativeModelHost(
+      {
+        provider,
+        baseUrl: "https://provider.invalid/v1",
+        apiKey: "test",
+        modelId: "model",
+        contextWindowTokens: 64000,
+        maxOutputTokens: 2048,
+      },
+      () =>
+        Promise.resolve(
+          new Response(body, {
+            headers: { "content-type": "text/event-stream" },
+          }),
+        ),
+    );
+    await expect(
+      host.exchange(
+        exchangeFor(provider, "model", host.binding().cacheStrategy),
+      ),
+    ).rejects.toMatchObject({
+      kind: "failed",
+      message:
+        "模型输出已达到 Token 上限，回复未完成。请在模型配置中调高“最大输出 Token”，保存后使用全新上下文重新发送。推理过程也可能占用输出额度。",
+      details: { code: "model_output_limit" },
+    });
+  },
+);
+
+test("output limit requires a fresh context while other stop reasons stay unchanged", () => {
+  for (const reason of [
+    "length",
+    "max_tokens",
+    "max_output_tokens",
+    "incomplete:max_output_tokens",
+  ]) {
+    try {
+      assertModelOutputComplete(reason);
+      throw new Error("expected limit failure");
+    } catch (error) {
+      expect(modelHostFailureRequiresFreshContext(error)).toBe(true);
+    }
+  }
+  for (const reason of [
+    undefined,
+    "stop",
+    "tool_calls",
+    "end_turn",
+    "tool_use",
+    "completed",
+    "incomplete:content_filter",
+  ])
+    expect(() => assertModelOutputComplete(reason)).not.toThrow();
+});
