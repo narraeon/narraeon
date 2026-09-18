@@ -591,6 +591,7 @@ export function SettingImprovementPanel({
               )}
               onChange={(event) => setMessage(event.target.value)}
               onKeyDown={composer.onKeyDown}
+              enterKeyHint="enter"
             />
             {running && view !== null ? (
               <button
@@ -611,7 +612,11 @@ export function SettingImprovementPanel({
             )}
           </div>
           <span className="field-note">
-            {uiText("Enter 发送，Shift + Enter 换行")}
+            {uiText(
+              composer.enterInsertsNewline
+                ? "回车换行，点击发送按钮发送"
+                : "Enter 发送，Shift + Enter 换行",
+            )}
           </span>
         </footer>
 

@@ -394,6 +394,14 @@ const englishMessages: Record<string, string> = {
   进入世界: "Open world",
   删除: "Delete",
   世界名称: "World name",
+  "内容包操作：{title}": "Content-package actions: {title}",
+  "重命名内容包：{title}": "Rename content package: {title}",
+  "删除内容包：{title}": "Delete content package: {title}",
+  调整此刻面板宽度: "Resize the current scene panel",
+  "拖拽调整宽度，双击恢复默认": "Drag to resize; double-click to reset",
+  保存内容包标题: "Save content-package title",
+  "删除内容包“{title}”？它会从本机移除，且无法撤销。已创建的世界不受影响。":
+    "Delete content package “{title}”? It will be removed from this device and cannot be restored. Existing worlds are unaffected.",
   保存世界名称: "Save world name",
   保存: "Save",
   取消: "Cancel",
@@ -473,6 +481,10 @@ const englishMessages: Record<string, string> = {
     "When editing an existing configuration, leaving API Key blank reuses the credential saved on this device for the current protocol and endpoint. Enter a new value to replace it.",
   "模型 ID": "Model ID",
   "正在拉取…": "Fetching…",
+  已拉取的模型: "Fetched models",
+  选择模型: "Select a model",
+  "选择后会填入模型 ID，也可以手动输入。":
+    "Selecting a model fills in the model ID. You can also enter it manually.",
   从端点拉取模型: "Fetch models from endpoint",
   "可在模型 ID 输入框中选择已拉取结果。":
     "Fetched results can be selected in the Model ID field.",
@@ -1085,6 +1097,8 @@ const settingImprovementEnglishMessages: Record<string, string> = {
   你: "You",
   AI: "AI",
   上一次操作未完成: "The previous operation did not complete",
+  "回车换行，点击发送按钮发送":
+    "Enter inserts a new line. Tap the send button to send.",
   "Enter 发送，Shift + Enter 换行":
     "Enter to send; Shift + Enter for a new line",
   停止回复: "Stop response",

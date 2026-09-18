@@ -52,6 +52,8 @@ describe("世界工作区主页", () => {
         onCreatePackage: vi.fn(),
         onImportPackage,
         onOpenPackage,
+        onRenamePackage: vi.fn(),
+        onDeletePackage: vi.fn(),
         onOpenWorld,
         onRenameWorld: vi.fn(),
         onDeleteWorld: vi.fn(),
@@ -96,6 +98,8 @@ describe("世界工作区主页", () => {
         onCreatePackage: vi.fn(),
         onImportPackage: vi.fn(),
         onOpenPackage: vi.fn(),
+        onRenamePackage: vi.fn(),
+        onDeletePackage: vi.fn(),
         onOpenWorld: vi.fn(),
         onRenameWorld: vi.fn(),
         onDeleteWorld: vi.fn(),
@@ -137,6 +141,8 @@ describe("世界工作区主页", () => {
         onCreatePackage: vi.fn(),
         onImportPackage: vi.fn(),
         onOpenPackage: vi.fn(),
+        onRenamePackage: vi.fn(),
+        onDeletePackage: vi.fn(),
         onOpenWorld,
         onRenameWorld,
         onDeleteWorld,
@@ -233,6 +239,93 @@ describe("世界工作区主页", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "保存名称" }));
     await screen.findByRole("heading", { name: "雾港第三夜" });
+  });
+
+  test("主页按条目身份改名和删除内容包，取消删除不写入 Runtime", async () => {
+    let packages = [
+      { localId: "package-first", title: "第一份", status: "usable" },
+      { localId: "package-target", title: "待改名", status: "needs_repair" },
+    ];
+    const request = vi.fn(async (input: V1Request): Promise<unknown> => {
+      await Promise.resolve();
+      if (input.type === "content.rename") {
+        packages = packages.map((item) =>
+          item.localId === input.packageId
+            ? { ...item, title: input.name }
+            : item,
+        );
+        return {};
+      }
+      if (input.type === "content.delete") {
+        packages = packages.filter((item) => item.localId !== input.packageId);
+        return {};
+      }
+      if (input.type === "workspace.read")
+        return {
+          preferences: { locale: "zh-CN" },
+          contentPackages: packages,
+          playPresets: { currentPresetId: "", presets: [] },
+          worlds: [],
+          storageNotices: [],
+          model: {
+            configured: false,
+            activeConnectionId: null,
+            connections: [],
+            presets: [],
+          },
+        };
+      throw new Error(`unexpected request: ${input.type}`);
+    });
+    const confirm = vi.spyOn(globalThis, "confirm").mockReturnValue(false);
+    try {
+      render(
+        createElement(App, { client: { request } as unknown as RuntimeClient }),
+      );
+      await screen.findByRole("button", { name: "打开内容包：待改名" });
+      fireEvent.click(
+        screen.getByRole("button", { name: "重命名内容包：待改名" }),
+      );
+      const save = screen.getByRole("button", { name: "保存内容包标题" });
+      expect(save.hasAttribute("disabled")).toBe(true);
+      fireEvent.change(screen.getByLabelText("内容包标题"), {
+        target: { value: "  新标题  " },
+      });
+      fireEvent.click(save);
+      await screen.findByRole("button", { name: "打开内容包：新标题" });
+      expect(request).toHaveBeenCalledWith({
+        type: "content.rename",
+        packageId: "package-target",
+        name: "新标题",
+      });
+      fireEvent.click(
+        screen.getByRole("button", { name: "删除内容包：新标题" }),
+      );
+      expect(request).not.toHaveBeenCalledWith({
+        type: "content.delete",
+        packageId: "package-target",
+      });
+      confirm.mockReturnValue(true);
+      fireEvent.click(
+        screen.getByRole("button", { name: "删除内容包：新标题" }),
+      );
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("button", { name: "打开内容包：新标题" }),
+        ).toBeNull(),
+      );
+      expect(request).toHaveBeenCalledWith({
+        type: "content.delete",
+        packageId: "package-target",
+      });
+      expect(
+        screen.getByRole("button", { name: "打开内容包：第一份" }),
+      ).toBeTruthy();
+      expect(
+        request.mock.calls.some(([input]) => input.type === "content.read"),
+      ).toBe(false);
+    } finally {
+      confirm.mockRestore();
+    }
   });
 
   test("应用保存界面语言并在重新加载后继续使用", async () => {

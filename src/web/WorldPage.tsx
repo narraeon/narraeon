@@ -172,6 +172,17 @@ export function WorldPage({
   const [decorationRevision, setDecorationRevision] = useState(0);
   const decorationRequestId = useRef(0);
   const [leftRailOpen, setLeftRailOpen] = useState(false);
+  const [leftRailWidth, setLeftRailWidth] = useState(320);
+  const leftRailDrag = useRef<{
+    pointerId: number;
+    x: number;
+    width: number;
+  } | null>(null);
+  function resizeLeftRail(width: number): void {
+    setLeftRailWidth(
+      Math.max(240, Math.min(720, window.innerWidth - 24, width)),
+    );
+  }
   const [rightRailOpen, setRightRailOpen] = useState(false);
   const [rightRailTab, setRightRailTab] = useState<RightRailTab>("documents");
   const [readingOpen, setReadingOpen] = useState(false);
@@ -1586,6 +1597,7 @@ export function WorldPage({
       className="world-reader-page"
       style={
         {
+          "--world-left-rail-width": leftRailWidth + "px",
           "--world-story-size": readingPreferences.fontSize + "px",
           "--world-story-leading": readingPreferences.lineHeight,
           "--world-story-tracking": readingPreferences.letterSpacing + "em",
@@ -1923,7 +1935,12 @@ export function WorldPage({
                   }
                   onChange={(event) => setPlayerText(event.target.value)}
                   onKeyDown={composer.onKeyDown}
-                  title={uiText("Enter 发送，Shift + Enter 换行")}
+                  enterKeyHint="enter"
+                  title={uiText(
+                    composer.enterInsertsNewline
+                      ? "回车换行，点击发送按钮发送"
+                      : "Enter 发送，Shift + Enter 换行",
+                  )}
                 />
               </label>
               <button
@@ -1975,6 +1992,58 @@ export function WorldPage({
             aria-hidden={!leftRailOpen}
             aria-label={uiText("当前情景")}
           >
+            <div
+              className="world-rail-resize-handle"
+              role="separator"
+              aria-label={uiText("调整此刻面板宽度")}
+              aria-orientation="vertical"
+              aria-valuemin={240}
+              aria-valuemax={720}
+              aria-valuenow={leftRailWidth}
+              tabIndex={leftRailOpen ? 0 : -1}
+              title={uiText("拖拽调整宽度，双击恢复默认")}
+              onPointerDown={(event) => {
+                if (event.button !== 0) return;
+                event.preventDefault();
+                event.currentTarget.focus();
+                event.currentTarget.setPointerCapture(event.pointerId);
+                leftRailDrag.current = {
+                  pointerId: event.pointerId,
+                  x: event.clientX,
+                  width:
+                    event.currentTarget.parentElement!.getBoundingClientRect()
+                      .width,
+                };
+              }}
+              onPointerMove={(event) => {
+                const drag = leftRailDrag.current;
+                if (drag?.pointerId !== event.pointerId) return;
+                resizeLeftRail(drag.width + event.clientX - drag.x);
+              }}
+              onPointerUp={(event) => {
+                leftRailDrag.current = null;
+                if (event.currentTarget.hasPointerCapture(event.pointerId))
+                  event.currentTarget.releasePointerCapture(event.pointerId);
+              }}
+              onPointerCancel={() => {
+                leftRailDrag.current = null;
+              }}
+              onLostPointerCapture={() => {
+                leftRailDrag.current = null;
+              }}
+              onDoubleClick={() => setLeftRailWidth(320)}
+              onKeyDown={(event) => {
+                if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+                  event.preventDefault();
+                  resizeLeftRail(
+                    leftRailWidth + (event.key === "ArrowRight" ? 20 : -20),
+                  );
+                } else if (event.key === "Home" || event.key === "End") {
+                  event.preventDefault();
+                  resizeLeftRail(event.key === "Home" ? 240 : 720);
+                }
+              }}
+            />
             <header>
               <div>
                 <strong>{uiText("此刻")}</strong>

@@ -383,9 +383,10 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
 
   async function contentCommand(
     type: "content.copy" | "content.delete",
+    packageId = selected,
   ): Promise<void> {
     try {
-      await client.request({ type, packageId: selected });
+      await client.request({ type, packageId });
       await refresh();
       setScreen("home");
     } catch (error: unknown) {
@@ -393,11 +394,14 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     }
   }
 
-  async function renamePackage(title: string): Promise<void> {
+  async function renamePackage(
+    title: string,
+    packageId = selected,
+  ): Promise<void> {
     try {
       await client.request({
         type: "content.rename",
-        packageId: selected,
+        packageId,
         name: title,
       });
       await refresh();
@@ -1037,6 +1041,20 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             onCreatePackage={() => void createPackage()}
             onImportPackage={() => void importPackage()}
             onOpenPackage={(packageId) => void openPackage(packageId)}
+            onRenamePackage={(item, name) =>
+              void renamePackage(name, item.localId)
+            }
+            onDeletePackage={(item) => {
+              if (
+                globalThis.confirm(
+                  uiText(
+                    "删除内容包“{title}”？它会从本机移除，且无法撤销。已创建的世界不受影响。",
+                    { title: item.title },
+                  ),
+                )
+              )
+                void contentCommand("content.delete", item.localId);
+            }}
             onOpenWorld={openWorld}
             onRenameWorld={(world, name) =>
               void renameWorld(world.worldId, name).catch(report)

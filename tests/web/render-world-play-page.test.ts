@@ -179,6 +179,74 @@ describe("世界游玩页面", () => {
     expect(screen.getByText(/情况: Alex正在整理球衣/u)).toBeTruthy();
   });
 
+  test("此刻面板支持拖拽、键盘调宽和恢复默认，收起后保留宽度", async () => {
+    renderWorld(readOnlyClient());
+    await screen.findByRole("heading", { name: "宿舍世界" });
+    fireEvent.click(screen.getByRole("button", { name: "此刻" }));
+    const handle = screen.getByRole("separator", { name: "调整此刻面板宽度" });
+    const panel = screen.getByLabelText("当前情景");
+    vi.spyOn(panel, "getBoundingClientRect").mockReturnValue({
+      width: 320,
+    } as DOMRect);
+    handle.setPointerCapture = vi.fn();
+    handle.hasPointerCapture = vi.fn(() => true);
+    handle.releasePointerCapture = vi.fn();
+    function pointer(type: string, x: number): void {
+      const event = new MouseEvent(type, {
+        bubbles: true,
+        clientX: x,
+        button: 0,
+      });
+      Object.defineProperty(event, "pointerId", { value: 1 });
+      fireEvent(handle, event);
+    }
+    pointer("pointerdown", 320);
+    pointer("pointermove", 520);
+    pointer("pointerup", 520);
+    expect(handle.getAttribute("aria-valuenow")).toBe("520");
+    pointer("pointermove", 600);
+    expect(handle.getAttribute("aria-valuenow")).toBe("520");
+    fireEvent.click(screen.getByRole("button", { name: "收起状态栏" }));
+    fireEvent.click(screen.getByRole("button", { name: "此刻" }));
+    expect(handle.getAttribute("aria-valuenow")).toBe("520");
+    fireEvent.keyDown(handle, { key: "ArrowLeft" });
+    expect(handle.getAttribute("aria-valuenow")).toBe("500");
+    fireEvent.keyDown(handle, { key: "Home" });
+    fireEvent.keyDown(handle, { key: "ArrowLeft" });
+    expect(handle.getAttribute("aria-valuenow")).toBe("240");
+    fireEvent.keyDown(handle, { key: "End" });
+    expect(handle.getAttribute("aria-valuenow")).toBe("720");
+    fireEvent.doubleClick(handle);
+    expect(handle.getAttribute("aria-valuenow")).toBe("320");
+  });
+
+  test("手机游玩输入框放行换行，不触发模型请求", async () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn(() => ({
+        matches: true,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    );
+    const client = readOnlyClient();
+    renderWorld(client);
+    await screen.findByRole("heading", { name: "宿舍世界" });
+    const input = screen.getByLabelText<HTMLTextAreaElement>("你的行动");
+    fireEvent.change(input, { target: { value: "第一行" } });
+    expect(fireEvent.keyDown(input, { key: "Enter" })).toBe(true);
+    fireEvent.change(input, { target: { value: "第一行\n第二行" } });
+    expect(input.value).toBe("第一行\n第二行");
+    expect(input.getAttribute("enterkeyhint")).toBe("enter");
+    expect(
+      client.request.mock.calls.some(
+        ([request]) =>
+          request.type === "play.chain.start" ||
+          request.type === "play.chain.append",
+      ),
+    ).toBe(false);
+  });
+
   test("在世界管理页修改正在游玩的世界名称", async () => {
     const onRenameWorld = vi.fn(() => Promise.resolve());
     renderWorld(readOnlyClient(), undefined, { onRenameWorld });

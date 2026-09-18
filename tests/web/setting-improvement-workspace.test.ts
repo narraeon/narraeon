@@ -263,6 +263,28 @@ function renderPanel(
 }
 
 for (const target of ["content-package", "world-revision"] as const) {
+  test(`${target}: 手机换行不发送，点击发送保留多行正文`, async () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn(() => ({
+        matches: true,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    );
+    const onSend = vi.fn(() => Promise.resolve());
+    renderPanel(undefined, { target, onSend });
+    const input = screen.getByLabelText("继续这段对话");
+    fireEvent.change(input, { target: { value: "第一行" } });
+    expect(fireEvent.keyDown(input, { key: "Enter" })).toBe(true);
+    expect(onSend).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: "第一行\n第二行" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() =>
+      expect(onSend).toHaveBeenCalledExactlyOnceWith("第一行\n第二行"),
+    );
+  });
+
   test(`${target}: Enter sends once, Shift+Enter and IME confirmation do not send`, async () => {
     let finish!: () => void;
     const onSend = vi.fn(

@@ -101,6 +101,17 @@ export function ModelConnectionScreen({
     if (invalidateModels) setModels([]);
   }
 
+  function changeModelId(modelId: string): void {
+    change({
+      modelId,
+      ...(form.provider === "anthropic_messages" &&
+      form.thinkingMode === "provider_default" &&
+      !cliProxySuffixControlsThinking({ ...form, modelId })
+        ? { reasoningSummary: "provider_default" as const }
+        : {}),
+    });
+  }
+
   function choosePreset(presetId: ModelProviderPresetId): void {
     const preset = library.presets.find(({ id }) => id === presetId);
     if (preset === undefined) return;
@@ -557,27 +568,11 @@ export function ModelConnectionScreen({
               <input
                 id="model-id"
                 aria-label={uiText("模型 ID")}
-                list="provider-models"
                 maxLength={512}
                 required
                 value={form.modelId}
-                onChange={(event) => {
-                  const modelId = event.target.value;
-                  change({
-                    modelId,
-                    ...(form.provider === "anthropic_messages" &&
-                    form.thinkingMode === "provider_default" &&
-                    !cliProxySuffixControlsThinking({ ...form, modelId })
-                      ? { reasoningSummary: "provider_default" as const }
-                      : {}),
-                  });
-                }}
+                onChange={(event) => changeModelId(event.target.value)}
               />
-              <datalist id="provider-models">
-                {models.map((model) => (
-                  <option key={model} value={model} />
-                ))}
-              </datalist>
             </div>
             <button
               className="secondary-button"
@@ -595,9 +590,27 @@ export function ModelConnectionScreen({
             </button>
           </div>
           {models.length > 0 && (
-            <p className="field-note">
-              {uiText("可在模型 ID 输入框中选择已拉取结果。")}
-            </p>
+            <div>
+              <label htmlFor="fetched-model-id">{uiText("已拉取的模型")}</label>
+              <select
+                id="fetched-model-id"
+                value={models.includes(form.modelId) ? form.modelId : ""}
+                disabled={pending !== null}
+                onChange={(event) => changeModelId(event.target.value)}
+              >
+                <option value="" disabled>
+                  {uiText("选择模型")}
+                </option>
+                {models.map((model) => (
+                  <option key={model} value={model}>
+                    {model}
+                  </option>
+                ))}
+              </select>
+              <p className="field-note">
+                {uiText("选择后会填入模型 ID，也可以手动输入。")}
+              </p>
+            </div>
           )}
 
           <div className="two-column-fields">

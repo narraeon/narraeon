@@ -260,6 +260,54 @@ test("克隆配置由 Runtime 复制凭据、保持当前配置并打开副本�
   );
 });
 
+test("拉取模型后提供独立下拉列表，已有 ID 不会隐藏其他模型，仍可手动输入", async () => {
+  const library = modelLibrary();
+  const request = vi.fn(async (input: V1Request) => {
+    await Promise.resolve();
+    if (input.type === "model.models")
+      return { models: ["remote-one", "remote-two"] };
+    if (input.type === "model.save") return library;
+    throw new Error(`unexpected request: ${input.type}`);
+  });
+  render(
+    createElement(ModelConnectionScreen, {
+      client: { request } as unknown as RuntimeClient,
+      library,
+      onLibraryChange: vi.fn(),
+      onNotice: vi.fn(),
+      onDirtyChange: vi.fn(),
+    }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "从端点拉取模型" }));
+  const picker = await screen.findByRole<HTMLSelectElement>("combobox", {
+    name: "已拉取的模型",
+  });
+  expect([...picker.options].map(({ value }) => value)).toEqual([
+    "",
+    "remote-one",
+    "remote-two",
+  ]);
+  fireEvent.change(picker, { target: { value: "remote-two" } });
+  expect(screen.getByLabelText<HTMLInputElement>("模型 ID").value).toBe(
+    "remote-two",
+  );
+  fireEvent.change(screen.getByLabelText("模型 ID"), {
+    target: { value: "custom-model" },
+  });
+  expect(picker.value).toBe("");
+  fireEvent.click(screen.getByRole("button", { name: "保存模型连接并启用" }));
+  await waitFor(() => {
+    const saved = request.mock.calls
+      .map(([input]) => input)
+      .find((input) => input.type === "model.save");
+    expect(saved?.connection.modelId).toBe("custom-model");
+  });
+  fireEvent.change(screen.getByLabelText("Base URL"), {
+    target: { value: "https://other.invalid/v1" },
+  });
+  expect(screen.queryByRole("combobox", { name: "已拉取的模型" })).toBeNull();
+});
+
 function modelLibrary(): ModelConnectionLibraryView {
   return {
     configured: true,

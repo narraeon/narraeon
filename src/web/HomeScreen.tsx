@@ -28,6 +28,8 @@ export function HomeScreen({
   onImportPackage,
   onOpenPackage,
   onOpenWorld,
+  onRenamePackage,
+  onDeletePackage,
   onRenameWorld,
   onDeleteWorld,
 }: {
@@ -46,11 +48,17 @@ export function HomeScreen({
   onImportPackage: () => void;
   onOpenPackage: (packageId: string) => void;
   onOpenWorld: (worldId: string) => void;
+  onRenamePackage: (item: HomeContentPackage, name: string) => void;
+  onDeletePackage: (item: HomeContentPackage) => void;
   onRenameWorld: (world: HomeWorld, name: string) => void;
   onDeleteWorld: (world: HomeWorld) => void;
 }): React.JSX.Element {
   const [renamingWorldId, setRenamingWorldId] = useState<string | null>(null);
   const [worldNameDraft, setWorldNameDraft] = useState("");
+  const [renamingPackageId, setRenamingPackageId] = useState<string | null>(
+    null,
+  );
+  const [packageNameDraft, setPackageNameDraft] = useState("");
   const usablePackageCount = contentPackages.filter(
     ({ status }) => status === "usable",
   ).length;
@@ -224,31 +232,112 @@ export function HomeScreen({
               {contentPackages.length > 0 ? (
                 <div className="home-package-list">
                   {contentPackages.map((item) => (
-                    <button
-                      className="home-package-card"
-                      key={item.localId}
-                      type="button"
-                      aria-label={uiText("打开内容包：{name}", {
-                        name: item.title,
-                      })}
-                      aria-pressed={item.localId === selectedPackageId}
-                      disabled={importPending}
-                      onClick={() => onOpenPackage(item.localId)}
-                    >
-                      <span className="home-package-card-heading">
-                        <strong>{item.title}</strong>
-                        <span className={`home-package-state ${item.status}`}>
-                          {item.status === "usable"
-                            ? uiText("可用")
-                            : uiText("待修复")}
+                    <div className="home-world-card-shell" key={item.localId}>
+                      <button
+                        className="home-package-card"
+                        type="button"
+                        aria-label={uiText("打开内容包：{name}", {
+                          name: item.title,
+                        })}
+                        aria-pressed={item.localId === selectedPackageId}
+                        disabled={importPending}
+                        onClick={() => onOpenPackage(item.localId)}
+                      >
+                        <span className="home-package-card-heading">
+                          <strong>{item.title}</strong>
+                          <span className={`home-package-state ${item.status}`}>
+                            {item.status === "usable"
+                              ? uiText("可用")
+                              : uiText("待修复")}
+                          </span>
                         </span>
-                      </span>
-                      <span className="home-package-card-copy">
-                        {item.status === "usable"
-                          ? uiText("可编辑、预览并创建新世界")
-                          : uiText("打开并修复当前树中的问题")}
-                      </span>
-                    </button>
+                        <span className="home-package-card-copy">
+                          {item.status === "usable"
+                            ? uiText("可编辑、预览并创建新世界")
+                            : uiText("打开并修复当前树中的问题")}
+                        </span>
+                      </button>
+                      <details className="home-world-card-actions">
+                        <summary
+                          aria-label={uiText("内容包操作：{title}", {
+                            title: item.title,
+                          })}
+                        >
+                          •••
+                        </summary>
+                        <div>
+                          <button
+                            className="home-world-rename"
+                            type="button"
+                            aria-label={uiText("重命名内容包：{title}", {
+                              title: item.title,
+                            })}
+                            disabled={importPending}
+                            onClick={() => {
+                              setRenamingPackageId(item.localId);
+                              setPackageNameDraft(item.title);
+                            }}
+                          >
+                            {uiText("重命名")}
+                          </button>
+                          <button
+                            className="home-world-delete"
+                            type="button"
+                            aria-label={uiText("删除内容包：{title}", {
+                              title: item.title,
+                            })}
+                            disabled={importPending}
+                            onClick={() => onDeletePackage(item)}
+                          >
+                            {uiText("删除")}
+                          </button>
+                        </div>
+                      </details>
+                      {renamingPackageId === item.localId ? (
+                        <form
+                          className="home-world-rename-form"
+                          onSubmit={(event) => {
+                            event.preventDefault();
+                            const name = packageNameDraft.trim();
+                            if (name === "" || name === item.title) return;
+                            onRenamePackage(item, name);
+                            setRenamingPackageId(null);
+                          }}
+                        >
+                          <label>
+                            <span>{uiText("内容包标题")}</span>
+                            <input
+                              aria-label={uiText("内容包标题")}
+                              autoFocus
+                              maxLength={160}
+                              value={packageNameDraft}
+                              onChange={(event) =>
+                                setPackageNameDraft(event.currentTarget.value)
+                              }
+                            />
+                          </label>
+                          <div className="button-row">
+                            <button
+                              type="submit"
+                              aria-label={uiText("保存内容包标题")}
+                              disabled={
+                                packageNameDraft.trim() === "" ||
+                                packageNameDraft.trim() === item.title
+                              }
+                            >
+                              {uiText("保存")}
+                            </button>
+                            <button
+                              type="button"
+                              className="secondary-button"
+                              onClick={() => setRenamingPackageId(null)}
+                            >
+                              {uiText("取消")}
+                            </button>
+                          </div>
+                        </form>
+                      ) : null}
+                    </div>
                   ))}
                 </div>
               ) : (

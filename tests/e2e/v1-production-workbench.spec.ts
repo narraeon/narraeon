@@ -170,8 +170,10 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(page.getByRole("status")).toContainText(
     "已从当前端点拉取 2 个模型",
   );
-  await expect(page.locator("#provider-models option")).toHaveCount(2);
-  await page.getByLabel("模型 ID").fill("trace-model");
+  const fetchedModels = page.getByRole("combobox", { name: "已拉取的模型" });
+  await expect(fetchedModels.locator("option")).toHaveCount(3);
+  await fetchedModels.selectOption("trace-model");
+  await expect(page.getByLabel("模型 ID")).toHaveValue("trace-model");
   await page.getByRole("button", { name: "保存模型连接" }).click();
   await expect(page.getByRole("status")).toContainText("模型连接已保存");
   await page.getByRole("button", { name: "新建另一份" }).click();
