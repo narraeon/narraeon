@@ -28,7 +28,13 @@ test("authors clone readonly recommendations, disable originals, and reorder wit
   expect(
     screen.getByLabelText<HTMLTextAreaElement>("Prompt text").readOnly,
   ).toBe(true);
+  expect(
+    screen.getByLabelText<HTMLSelectElement>("Message role").disabled,
+  ).toBe(true);
   fireEvent.click(screen.getByRole("button", { name: "Clone prompt" }));
+  expect(
+    screen.getByLabelText<HTMLSelectElement>("Message role").disabled,
+  ).toBe(false);
   fireEvent.change(screen.getByLabelText("Prompt name"), {
     target: { value: "My policy" },
   });

@@ -249,6 +249,7 @@
   max-height: 76vh;
   overflow-y: auto;
 }
+.play-preset-screen .ordered-play-content > .ordered-play-prompt-heading,
 .play-preset-screen .ordered-play-content > label,
 .play-preset-screen .ordered-play-content > h4,
 .play-preset-screen .ordered-play-content > p,
@@ -256,6 +257,18 @@
 .play-preset-screen .ordered-play-actions {
   margin-inline: auto;
   max-width: 800px;
+}
+.ordered-play-prompt-heading {
+  display: grid;
+  grid-template-columns: minmax(110px, 160px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.ordered-play-prompt-heading > label,
+.ordered-play-prompt-heading input,
+.ordered-play-prompt-heading select {
+  min-width: 0;
+  width: 100%;
 }
 .play-preset-screen .ordered-play-content > label:has(textarea) {
   margin-top: 20px;

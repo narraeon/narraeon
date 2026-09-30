@@ -242,34 +242,27 @@ export function OrderedPlayPromptEditor({
                   </button>
                 )}
               </div>
-              <label>
-                {t("Message role", "发送角色")}
-                <select
-                  aria-label={t("Message role", "发送角色")}
-                  value={selected.messageRole ?? "system"}
-                  disabled={builtin?.required}
-                  onChange={(event) => {
-                    if (isPromptMessageRole(event.target.value))
-                      update({ ...selected, messageRole: event.target.value });
-                  }}
-                >
-                  <option value="system">System</option>
-                  <option value="user">User</option>
-                  <option value="assistant">Assistant</option>
-                </select>
-              </label>
-              {selected.kind === "world" ? (
-                <>
-                  <h4>{name(selected)}</h4>
-                  <p>
-                    {t(
-                      "World instructions appear here. On a fresh context, frame-selected materials and the directory index are supplied as an initial tool result. Continuing retains these materials and appends actual interactions. Inspect the content in a world or content-package Prompt Preview.",
-                      "世界指令在此展开；全新上下文时，frame 选中的材料与目录索引作为初始工具结果提供。继续时保留初始材料，追加真实交互。请在具体世界或内容包的真实提示预览中检查正文。",
-                    )}
-                  </p>
-                </>
-              ) : (
-                <>
+              <div className="ordered-play-prompt-heading">
+                <label>
+                  {t("Message role", "发送角色")}
+                  <select
+                    aria-label={t("Message role", "发送角色")}
+                    value={selected.messageRole ?? "system"}
+                    disabled={selected.kind === "builtin"}
+                    onChange={(event) => {
+                      if (isPromptMessageRole(event.target.value))
+                        update({
+                          ...selected,
+                          messageRole: event.target.value,
+                        });
+                    }}
+                  >
+                    <option value="system">System</option>
+                    <option value="user">User</option>
+                    <option value="assistant">Assistant</option>
+                  </select>
+                </label>
+                {selected.kind !== "world" && (
                   <label>
                     {t("Prompt name", "提示词名称")}
                     <input
@@ -282,6 +275,20 @@ export function OrderedPlayPromptEditor({
                       }}
                     />
                   </label>
+                )}
+              </div>
+              {selected.kind === "world" ? (
+                <>
+                  <h4>{name(selected)}</h4>
+                  <p>
+                    {t(
+                      "World instructions appear here. On a fresh context, frame-selected materials and the directory index are supplied as an initial tool result. Continuing retains these materials and appends actual interactions. Inspect the content in a world or content-package Prompt Preview.",
+                      "世界指令在此展开；全新上下文时，frame 选中的材料与目录索引作为初始工具结果提供。继续时保留初始材料，追加真实交互。请在具体世界或内容包的真实提示预览中检查正文。",
+                    )}
+                  </p>
+                </>
+              ) : (
+                <>
                   {builtin && (
                     <p>
                       {t(
