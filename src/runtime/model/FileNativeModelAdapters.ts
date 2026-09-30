@@ -935,9 +935,14 @@ function responsesBootstrapMessages(
       responsesBootstrapMessage(message, connection.dialect === "cliproxyapi"),
   );
   const prefixEnd = bootstrapPrefixEnd(request);
+  // Legacy material arrays already mark their stable blocks, and may also contain
+  // player input. Only mark whole messages for the plain-text instruction prefix.
+  const cacheMessageIndex = request.bootstrap.provider.messages
+    .slice(0, prefixEnd)
+    .findLastIndex((message) => typeof message.content === "string");
   const prefix = messages.map((message, index) =>
     connection.dialect === "cliproxyapi" &&
-    index === prefixEnd - 1 &&
+    index === cacheMessageIndex &&
     isRecord(message)
       ? { ...message, cache_control: { type: "ephemeral" } }
       : message,

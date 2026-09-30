@@ -111,7 +111,7 @@ test.each([
     expect(serialized).toContain("不要模仿这些块的句式、节奏或镜头写入 world/");
     expect(serialized).toContain("不要把跨世界规则复制进 control/");
     expect(serialized).toContain(
-      "完整世界提示占位在这里连续展开世界指令和 frame 选定材料",
+      "frame 选定材料仅在全新游玩上下文中作为初始工具结果提供",
     );
     expect(serialized).toContain("通用状态维护判据");
     expect(serialized).toContain("玩家可见叙事规则");
