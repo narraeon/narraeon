@@ -1,3 +1,10 @@
+import { PlayCallChainError } from "./PlayCallChainError.ts";
+import {
+  preparePlayerRevisionTrace,
+  prepareForkTrace,
+  restorePlayDocuments,
+  independentContextCopy,
+} from "./PlayTraceRetention.ts";
 import {
   currentPlayPrompt,
   recordedPlayPrompt,
@@ -9,7 +16,6 @@ import type { AppLocale } from "../../protocol/appPreferences.ts";
 import {
   completedPlayerRounds,
   continuationNotice,
-  isPlayerRoundMarker,
   playerInputAppend,
   toolStepNotice,
   type NarrativeCheckpoint,
@@ -183,12 +189,7 @@ interface ActivePlayInvocation extends V1PlayRunProgress {
   abortable: boolean;
 }
 
-export class PlayCallChainError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "PlayCallChainError";
-  }
-}
+export { PlayCallChainError } from "./PlayCallChainError.ts";
 
 export interface PlayCallChainObserver {
   onSnapshot?: (view: V1PlayCallChainView) => void;
@@ -1092,12 +1093,9 @@ export class PlayCallChain {
       input.selectedEvent.committedHead,
       restoresHead,
     );
-    const prefixEvents = structuredClone(
-      sourceContext.events.slice(0, input.selectedEventIndex),
-    );
-    const transcript = transcriptThroughEvents(
-      sourceContext.transcript,
-      prefixEvents,
+    const traceRetention = preparePlayerRevisionTrace(
+      sourceContext,
+      input.selectedEventIndex,
     );
     const outcome = await this.#worlds.reviseTimeline({
       operationId: request.operationId,
@@ -1109,39 +1107,17 @@ export class PlayCallChain {
       requestFingerprint,
     });
 
-    const events: V1PlayCallChainEvent[] = [
-      ...prefixEvents,
-      {
-        id: input.selectedEvent.id,
-        kind: "player",
-        exchangeId: request.replacementExchangeId,
-        text: request.replacementText,
-        context: input.selectedEvent.context,
-        committedHead: outcome.head,
-      },
-    ];
-    const completedKeys = completedToolKeys(prefixEvents);
     const [baseline, selected, binding] = await Promise.all([
       this.#worlds.recoverEndpoint(request.worldId, sourceContext.baselineHead),
       this.#worlds.recoverEndpoint(request.worldId, restoresHead),
       this.#worlds.bindPlayCallChain(request.worldId),
     ]);
-    transcript.push(
-      ...playerInputAppend({
-        history: Object.fromEntries(
-          selected.history.map(({ messageId, exactText }) => [
-            messageId,
-            exactText,
-          ]),
-        ),
-        checkpoint: selected.narrativeCheckpoint,
-        text: request.replacementText,
-        locale: this.#compiler.locale,
-        checkpointAvailable: sourceContext.tools.some(
-          ({ name }) => name === "world_checkpoint",
-        ),
-      }),
-    );
+    const continuedTrace = traceRetention.withReplacement(selected, {
+      head: outcome.head,
+      exchangeId: request.replacementExchangeId,
+      text: request.replacementText,
+      locale: this.#compiler.locale,
+    });
     if (binding.parentHead !== outcome.head)
       throw new PlayCallChainError(
         "The timeline revision was committed, but current-world materialization has not reached the new endpoint.",
@@ -1156,7 +1132,7 @@ export class PlayCallChain {
         sourceContext,
         sourceContexts: input.sourceContexts,
         selectedContextIndex: input.selectedContextIndex,
-        prefixEvents,
+        traceRetention,
         baseline,
         selected,
         binding,
@@ -1176,14 +1152,8 @@ export class PlayCallChain {
         playCallChain: projectView(revised),
       };
     }
-    const documents = restorePlayDocuments(
-      binding.files,
-      sourceContext,
-      prefixEvents,
-    );
     const revised: PersistedPlayCallChain = {
-      continuityContextId:
-        sourceContext.continuityContextId ?? sourceContext.chainId,
+      ...continuedTrace.atEndpoint({ baseline, selected, binding }),
       schemaVersion: 3,
       kind: "play_call_chain",
       chainId: playerRevisionChainId(
@@ -1199,61 +1169,7 @@ export class PlayCallChain {
           ? null
           : input.sourceContexts[input.selectedContextIndex - 1]!.chainId,
       timelineGeneration,
-      baselineHead: sourceContext.baselineHead,
-      baselineHistoryLength:
-        sourceContext.baselineHistoryLength ?? baseline.history.length,
       parentHead: outcome.head,
-      promptRuns: playPromptRunsThroughEvents(sourceContext, events),
-      ...(sourceContext.presetFiles === undefined
-        ? {}
-        : { presetFiles: structuredClone(sourceContext.presetFiles) }),
-      playPreset: structuredClone(sourceContext.playPreset),
-      ...(sourceContext.followups === undefined
-        ? {}
-        : { followups: structuredClone(sourceContext.followups) }),
-      ...(sourceContext.playPresetScriptsEnabled === undefined
-        ? {}
-        : {
-            playPresetScriptsEnabled: sourceContext.playPresetScriptsEnabled,
-          }),
-      ...(sourceContext.modelBinding === undefined
-        ? {}
-        : { modelBinding: structuredClone(sourceContext.modelBinding) }),
-      status: "ready",
-      canRetry: false,
-      bootstrap: structuredClone(sourceContext.bootstrap),
-      tools: structuredClone(sourceContext.tools),
-      transcript,
-      events,
-      completedTools: sourceContext.completedTools
-        .filter(({ key }) => completedKeys.has(key))
-        .map((item) => structuredClone(item)),
-      documentAuthorizationCheckpoints: authorizationCheckpointsThroughEvents(
-        sourceContext,
-        events,
-        documents.authorizationCheckpoint(),
-      ),
-      changedDocuments: changedDocumentsAtHead(
-        sourceContext.changedDocuments,
-        baseline.state,
-        selected.state,
-      ),
-      nextMaterials: structuredClone(binding.additionalMaterials),
-      nextEventId: Math.max(0, ...events.map(({ id }) => id)) + 1,
-      exchange: Math.max(
-        0,
-        ...prefixEvents
-          .filter(
-            (
-              event,
-            ): event is Extract<V1PlayCallChainEvent, { kind: "assistant" }> =>
-              event.kind === "assistant" && event.status === "completed",
-          )
-          .map(({ exchange }) => exchange),
-      ),
-      lastRequest: null,
-      lastRequestAttempt: 0,
-      lastFailure: null,
       updatedAt: Date.now(),
     };
     await this.#worlds.playTimeline.persist(structuredClone(revised));
@@ -1325,7 +1241,7 @@ export class PlayCallChain {
     sourceContext: PersistedPlayCallChainContext;
     sourceContexts: PersistedPlayCallChainContext[];
     selectedContextIndex: number;
-    prefixEvents: V1PlayCallChainEvent[];
+    traceRetention: ReturnType<typeof preparePlayerRevisionTrace>;
     baseline: FileNativeRecoveredEndpoint;
     selected: FileNativeRecoveredEndpoint;
     binding: FileNativePlayBinding;
@@ -1340,20 +1256,14 @@ export class PlayCallChain {
         ? null
         : input.sourceContexts[input.selectedContextIndex - 1]!.chainId;
 
-    if (input.prefixEvents.length > 0) {
-      const prefixTranscript = transcriptThroughEvents(
-        sourceContext.transcript,
-        input.prefixEvents,
-      );
-      const completedKeys = completedToolKeys(input.prefixEvents);
-      const documents = restorePlayDocuments(
-        input.binding.files,
-        sourceContext,
-        input.prefixEvents,
-      );
+    const retainedPrefix = input.traceRetention.pagePrefixAtEndpoint({
+      baseline: input.baseline,
+      selected: input.selected,
+      binding: input.binding,
+    });
+    if (retainedPrefix !== null) {
       const prefix: PersistedPlayCallChain = {
-        continuityContextId:
-          sourceContext.continuityContextId ?? sourceContext.chainId,
+        ...retainedPrefix,
         schemaVersion: 3,
         kind: "play_call_chain",
         chainId: derivedChainId(
@@ -1365,54 +1275,7 @@ export class PlayCallChain {
         previousContexts: [],
         previousChainId,
         timelineGeneration: input.timelineGeneration,
-        baselineHead: sourceContext.baselineHead,
-        baselineHistoryLength:
-          sourceContext.baselineHistoryLength ?? input.baseline.history.length,
         parentHead: input.restoresHead,
-        promptRuns: playPromptRunsThroughEvents(
-          sourceContext,
-          input.prefixEvents,
-        ),
-        ...(sourceContext.presetFiles === undefined
-          ? {}
-          : { presetFiles: structuredClone(sourceContext.presetFiles) }),
-        playPreset: structuredClone(sourceContext.playPreset),
-        ...(sourceContext.followups === undefined
-          ? {}
-          : { followups: structuredClone(sourceContext.followups) }),
-        ...(sourceContext.playPresetScriptsEnabled === undefined
-          ? {}
-          : {
-              playPresetScriptsEnabled: sourceContext.playPresetScriptsEnabled,
-            }),
-        ...(sourceContext.modelBinding === undefined
-          ? {}
-          : { modelBinding: structuredClone(sourceContext.modelBinding) }),
-        status: "ready",
-        canRetry: false,
-        bootstrap: structuredClone(sourceContext.bootstrap),
-        tools: structuredClone(sourceContext.tools),
-        transcript: prefixTranscript,
-        events: structuredClone(input.prefixEvents),
-        completedTools: sourceContext.completedTools
-          .filter(({ key }) => completedKeys.has(key))
-          .map((item) => structuredClone(item)),
-        documentAuthorizationCheckpoints: authorizationCheckpointsThroughEvents(
-          sourceContext,
-          input.prefixEvents,
-          documents.authorizationCheckpoint(),
-        ),
-        changedDocuments: changedDocumentsAtHead(
-          sourceContext.changedDocuments,
-          input.baseline.state,
-          input.selected.state,
-        ),
-        nextMaterials: structuredClone(input.selected.additionalMaterials),
-        nextEventId: Math.max(0, ...input.prefixEvents.map(({ id }) => id)) + 1,
-        exchange: completedAssistantExchange(input.prefixEvents),
-        lastRequest: null,
-        lastRequestAttempt: 0,
-        lastFailure: null,
         updatedAt: Date.now(),
       };
       await this.#worlds.playTimeline.persistDetached(structuredClone(prefix));
@@ -1525,26 +1388,15 @@ export class PlayCallChain {
         input.sourceHead,
       ),
     ]);
-    const selectsCompleteContext =
-      input.sourceEvents.length === sourceContext.events.length;
-    // A complete context already defines the selected trace closure. Preserve
-    // its model transcript verbatim instead of reconstructing it from the
-    // independently persisted page-event projection.
-    const transcript = selectsCompleteContext
-      ? structuredClone(sourceContext.transcript)
-      : transcriptThroughEvents(sourceContext.transcript, input.sourceEvents);
-    const completedKeys = selectsCompleteContext
-      ? null
-      : completedToolKeys(input.sourceEvents);
-    const events = structuredClone(input.sourceEvents);
+    const traceRetention = prepareForkTrace(sourceContext, input.sourceEvents);
     const derivedBinding =
       input.targetBinding ??
       (await this.#worlds.bindPlayCallChain(input.targetWorldId));
-    const derivedDocuments = restorePlayDocuments(
-      derivedBinding.files,
-      sourceContext,
-      input.sourceEvents,
-    );
+    const retainedTrace = traceRetention.atEndpoint({
+      baseline,
+      selected,
+      binding: derivedBinding,
+    });
     const now = Date.now();
     const timelineGeneration = this.#worlds.playTimeline.newGeneration();
     let previousChainId: string | null = null;
@@ -1578,8 +1430,7 @@ export class PlayCallChain {
       previousChainId = chainId;
     }
     const derived: PersistedPlayCallChain = {
-      continuityContextId:
-        sourceContext.continuityContextId ?? sourceContext.chainId,
+      ...retainedTrace,
       schemaVersion: 3,
       kind: "play_call_chain",
       chainId: derivedChainId(
@@ -1591,61 +1442,7 @@ export class PlayCallChain {
       previousContexts: [],
       previousChainId,
       timelineGeneration,
-      baselineHead: sourceContext.baselineHead,
-      baselineHistoryLength:
-        sourceContext.baselineHistoryLength ?? baseline.history.length,
       parentHead: input.sourceHead,
-      promptRuns: playPromptRunsThroughEvents(sourceContext, events),
-      ...(sourceContext.presetFiles === undefined
-        ? {}
-        : { presetFiles: structuredClone(sourceContext.presetFiles) }),
-      playPreset: structuredClone(sourceContext.playPreset),
-      ...(sourceContext.followups === undefined
-        ? {}
-        : { followups: structuredClone(sourceContext.followups) }),
-      ...(sourceContext.playPresetScriptsEnabled === undefined
-        ? {}
-        : {
-            playPresetScriptsEnabled: sourceContext.playPresetScriptsEnabled,
-          }),
-      ...(sourceContext.modelBinding === undefined
-        ? {}
-        : { modelBinding: structuredClone(sourceContext.modelBinding) }),
-      status: "ready",
-      canRetry: false,
-      bootstrap: structuredClone(sourceContext.bootstrap),
-      tools: structuredClone(sourceContext.tools),
-      transcript,
-      events,
-      completedTools: sourceContext.completedTools
-        .filter(({ key }) => completedKeys === null || completedKeys.has(key))
-        .map((item) => structuredClone(item)),
-      documentAuthorizationCheckpoints: authorizationCheckpointsThroughEvents(
-        sourceContext,
-        events,
-        derivedDocuments.authorizationCheckpoint(),
-      ),
-      changedDocuments: changedDocumentsAtHead(
-        sourceContext.changedDocuments,
-        baseline.state,
-        selected.state,
-      ),
-      nextMaterials: structuredClone(derivedBinding.additionalMaterials),
-      nextEventId: Math.max(0, ...events.map(({ id }) => id)) + 1,
-      exchange: Math.max(
-        0,
-        ...events
-          .filter(
-            (
-              event,
-            ): event is Extract<V1PlayCallChainEvent, { kind: "assistant" }> =>
-              event.kind === "assistant" && event.status === "completed",
-          )
-          .map(({ exchange }) => exchange),
-      ),
-      lastRequest: null,
-      lastRequestAttempt: 0,
-      lastFailure: null,
       updatedAt: now,
     };
     if (input.targetWorldRoot === undefined)
@@ -3212,90 +3009,6 @@ function mergeChangedDocuments(
   }
 }
 
-function restorePlayDocuments(
-  files: Readonly<Record<string, string>>,
-  context: Pick<
-    PersistedPlayCallChainContext,
-    | "bootstrap"
-    | "tools"
-    | "playPreset"
-    | "followups"
-    | "playPresetScriptsEnabled"
-    | "promptRuns"
-    | "documentAuthorizationCheckpoints"
-  >,
-  events: readonly V1PlayCallChainEvent[],
-): FileNativePlayDocuments {
-  const documents = new FileNativePlayDocuments(files);
-  try {
-    const checkpoint = documentAuthorizationThroughEvents(context, events);
-    const runs = playPromptRunsThroughEvents(context, events);
-    if (checkpoint === undefined || runs.length > 0)
-      documents.bindBootstrap(
-        currentPlayPrompt({ ...context, promptRuns: runs }).bootstrap,
-      );
-    if (checkpoint !== undefined)
-      documents.restoreAuthorizationCheckpoint(checkpoint.authorization);
-  } catch (error: unknown) {
-    throw new PlayCallChainError(
-      `Call-chain document authorization could not be restored: ${
-        error instanceof Error ? error.message : "invalid checkpoint"
-      }。`,
-    );
-  }
-  return documents;
-}
-
-function documentAuthorizationThroughEvents(
-  context: Pick<
-    PersistedPlayCallChainContext,
-    "documentAuthorizationCheckpoints"
-  >,
-  events: readonly V1PlayCallChainEvent[],
-): PersistedDocumentAuthorizationCheckpoint | undefined {
-  const checkpoints = context.documentAuthorizationCheckpoints;
-  if (checkpoints === undefined || checkpoints.length === 0) return undefined;
-  const selectedEventIds = new Set(events.map(({ id }) => id));
-  const selected = checkpoints.findLast(
-    ({ afterEventId }) =>
-      afterEventId === 0 || selectedEventIds.has(afterEventId),
-  );
-  // Legacy V1 records had no durable dynamic authorization. If the selected
-  // prefix predates their first lazily-written checkpoint, retain the exact
-  // old recovery behavior and rebuild only bootstrap authorization.
-  return selected === undefined ? undefined : structuredClone(selected);
-}
-
-function independentContextCopy(
-  source: PersistedPlayCallChainContext,
-): PersistedPlayCallChainContext {
-  const context = structuredClone(source);
-  context.continuityContextId ??= source.chainId;
-  delete context.derivedFrom;
-  delete context.branchedBeforePlayer;
-  return context;
-}
-
-function authorizationCheckpointsThroughEvents(
-  context: PersistedPlayCallChainContext,
-  events: readonly V1PlayCallChainEvent[],
-  fallback: PlayDocumentAuthorizationCheckpoint,
-): PersistedDocumentAuthorizationCheckpoint[] {
-  const eventIds = new Set(events.map(({ id }) => id));
-  const selected = (context.documentAuthorizationCheckpoints ?? [])
-    .filter(
-      ({ afterEventId }) => afterEventId === 0 || eventIds.has(afterEventId),
-    )
-    .map((checkpoint) => structuredClone(checkpoint));
-  if (selected.length > 0) return selected;
-  return [
-    {
-      afterEventId: Math.max(0, ...events.map(({ id }) => id)),
-      authorization: structuredClone(fallback),
-    },
-  ];
-}
-
 function projectContext(
   context: PersistedPlayCallChainContext,
 ): V1PlayCallChainContextView {
@@ -3446,108 +3159,6 @@ function eventsThroughHead(
   return structuredClone(events.slice(0, end));
 }
 
-function transcriptThroughEvents(
-  transcript: readonly ModelHostAppendItem[],
-  events: readonly V1PlayCallChainEvent[],
-): ModelHostAppendItem[] {
-  const result: ModelHostAppendItem[] = [];
-  let cursor = 0;
-  for (const [index, event] of events.entries()) {
-    if (event.kind === "player") {
-      const marker = transcript[cursor];
-      if (isPlayerRoundMarker(marker)) {
-        result.push(structuredClone(marker));
-        cursor += 1;
-      }
-      const item = transcript[cursor];
-      if (item?.kind !== "player" || item.text !== event.text)
-        throw new PlayCallChainError(
-          "Source call-chain events do not match the model transcript, so a fork cannot be created safely.",
-        );
-      result.push(structuredClone(item));
-      cursor += 1;
-      continue;
-    }
-    if (event.kind === "assistant" && event.status === "completed") {
-      const notice = transcript[cursor];
-      const hasContinuationNotice =
-        notice?.kind === "runtime_notice" && notice.notice === "continuation";
-      const item = transcript[cursor + (hasContinuationNotice ? 1 : 0)];
-      const hasToolCall = events
-        .slice(index + 1)
-        .find(
-          (candidate) =>
-            candidate.kind === "player" ||
-            candidate.kind === "assistant" ||
-            candidate.kind === "tool_call",
-        );
-      const recorded =
-        event.text.trim().length > 0 ||
-        hasToolCall?.kind === "tool_call" ||
-        item?.kind === "assistant";
-      if (!recorded) continue;
-      if (item?.kind !== "assistant" || item.text !== event.text)
-        throw new PlayCallChainError(
-          "Source call-chain responses do not match the model transcript, so a fork cannot be created safely.",
-        );
-      // A continuation notice belongs to the generation it precedes, never
-      // to a fork ending at the previously completed narrative.
-      if (hasContinuationNotice) {
-        result.push(structuredClone(notice));
-        cursor += 1;
-      }
-      result.push(structuredClone(item));
-      cursor += 1;
-      continue;
-    }
-    if (event.kind === "tool_result") {
-      const item = transcript[cursor];
-      if (item?.kind !== "tool" || item.toolCallId !== event.callId)
-        throw new PlayCallChainError(
-          "Source call-chain tool results do not match the model transcript, so a fork cannot be created safely.",
-        );
-      result.push(structuredClone(item));
-      cursor += 1;
-      // A tool-step notice follows the entire settled batch and remains part
-      // of its closure even when the selected endpoint stops at that batch.
-      const notice = transcript[cursor];
-      if (notice?.kind === "runtime_notice" && notice.notice === "tool_step") {
-        result.push(structuredClone(notice));
-        cursor += 1;
-      }
-    }
-  }
-  return result;
-}
-
-function completedToolKeys(
-  events: readonly V1PlayCallChainEvent[],
-): Set<string> {
-  const keys = new Set<string>();
-  let exchange: number | null = null;
-  for (const event of events) {
-    if (event.kind === "player") exchange = null;
-    else if (event.kind === "assistant") exchange = event.exchange;
-    else if (event.kind === "tool_call" && exchange !== null)
-      keys.add(`${exchange}:${event.callId}`);
-  }
-  return keys;
-}
-
-function changedDocumentsAtHead(
-  changes: readonly V1PlayCallChainView["changedDocuments"][number][],
-  baseline: readonly { path: string; contents: string }[],
-  selected: readonly { path: string; contents: string }[],
-): V1PlayCallChainView["changedDocuments"] {
-  const before = new Map(baseline.map((file) => [file.path, file.contents]));
-  const after = new Map(selected.map((file) => [file.path, file.contents]));
-  return changes
-    .filter(
-      ({ path }) => after.has(path) && before.get(path) !== after.get(path),
-    )
-    .map((change) => structuredClone(change));
-}
-
 function derivedChainId(
   sourceChainId: string,
   branchIdentity: string,
@@ -3633,22 +3244,6 @@ function playerRevisionTimelineGeneration(
     )
     .digest("hex")
     .slice(0, 40)}`;
-}
-
-function completedAssistantExchange(
-  events: readonly V1PlayCallChainEvent[],
-): number {
-  return Math.max(
-    0,
-    ...events
-      .filter(
-        (
-          event,
-        ): event is Extract<V1PlayCallChainEvent, { kind: "assistant" }> =>
-          event.kind === "assistant" && event.status === "completed",
-      )
-      .map(({ exchange }) => exchange),
-  );
 }
 
 function historyEntries(

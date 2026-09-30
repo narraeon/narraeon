@@ -38,6 +38,10 @@ import {
 } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
 import { PlayCallChain } from "../../src/runtime/play/PlayCallChain.ts";
 import {
+  preparePlayerRevisionTrace,
+  prepareForkTrace,
+} from "../../src/runtime/play/PlayTraceRetention.ts";
+import {
   FileNativePlayAdvanceStore,
   type PlayAdvanceBase,
 } from "../../src/runtime/play/FileNativePlayAdvanceStore.ts";
@@ -52,6 +56,205 @@ import { FileNativeWorldRevisionStore } from "../../src/runtime/world-revision/F
 import { WorldRevisionWorkspace } from "../../src/runtime/world-revision/WorldRevisionWorkspace.ts";
 
 const roots: string[] = [];
+
+test("修改轨迹统一保留前缀工具及原生载荷，并按含同 ID 修改稿的事件选择运行快照与授权", async () => {
+  const { source, prefix, eventIndex, endpoint } =
+    await createTraceRetentionFixture();
+  const player = source.events[eventIndex]!;
+  const authorization =
+    prefix.documentAuthorizationCheckpoints!.at(-1)!.authorization;
+  source.documentAuthorizationCheckpoints!.push({
+    afterEventId: player.id,
+    authorization: structuredClone(authorization),
+  });
+  const original = structuredClone(source);
+  const prepared = preparePlayerRevisionTrace(source, eventIndex);
+  const retained = prepared
+    .withReplacement(endpoint.selected, {
+      head: "commit:replacement",
+      exchangeId: "replacement",
+      text: "Replacement input.",
+      locale: "zh-CN",
+    })
+    .atEndpoint(endpoint);
+  expect(retained.transcript.slice(0, -2)).toEqual(prefix.transcript);
+  expect(retained.completedTools).toEqual(prefix.completedTools);
+  expect(retained.events.at(-1)).toMatchObject({
+    id: player.id,
+    text: "Replacement input.",
+    committedHead: "commit:replacement",
+  });
+  expect(retained.promptRuns).toEqual(source.promptRuns);
+  expect(retained.documentAuthorizationCheckpoints!.at(-1)?.afterEventId).toBe(
+    player.id,
+  );
+  expect(retained.exchange).toBe(2);
+  expect(retained.nextEventId).toBe(player.id + 1);
+  expect(source).toEqual(original);
+  retained.completedTools[0]!.result.markdown = "changed copy";
+  expect(source).toEqual(original);
+});
+
+test("fresh 修改按页面前缀选择快照和授权，缺少旧 binding 仍能保留，空前缀不生成记录", async () => {
+  const { source, prefix, eventIndex, endpoint } =
+    await createTraceRetentionFixture();
+  delete source.modelBinding;
+  const prepared = preparePlayerRevisionTrace(source, eventIndex);
+  const retained = prepared.pagePrefixAtEndpoint(endpoint)!;
+  expect(retained.events).toEqual(prefix.events);
+  expect(retained.transcript).toEqual(prefix.transcript);
+  expect(retained.completedTools).toEqual(prefix.completedTools);
+  expect(retained.promptRuns).toEqual(prefix.promptRuns);
+  expect(retained.documentAuthorizationCheckpoints).toEqual(
+    prefix.documentAuthorizationCheckpoints,
+  );
+  expect(retained.changedDocuments).toEqual([
+    {
+      kind: "replace",
+      ref: "@current-situation",
+      path: "current-situation.yaml",
+    },
+  ]);
+  expect(retained).not.toHaveProperty("modelBinding");
+  expect(
+    preparePlayerRevisionTrace(source, 0).pagePrefixAtEndpoint(endpoint),
+  ).toBeNull();
+});
+
+test("完整分叉保留原生轨迹及全部工具，部分分叉恢复所选端点的关联记录及文档变化", async () => {
+  const { source, prefix, endpoint, current, currentBinding } =
+    await createTraceRetentionFixture();
+  const partial = prepareForkTrace(source, prefix.events).atEndpoint(endpoint);
+  expect(partial.transcript).toEqual(prefix.transcript);
+  expect(partial.completedTools).toEqual(prefix.completedTools);
+  expect(partial.promptRuns).toEqual(prefix.promptRuns);
+  expect(partial.documentAuthorizationCheckpoints).toEqual(
+    prefix.documentAuthorizationCheckpoints,
+  );
+  expect(partial.changedDocuments).toEqual([
+    {
+      kind: "replace",
+      ref: "@current-situation",
+      path: "current-situation.yaml",
+    },
+  ]);
+  // A frozen next generation can have a continuation notice beyond page events.
+  // Complete-context forks preserve that native closure without reconstruction.
+  source.transcript.push({
+    kind: "runtime_notice",
+    notice: "continuation",
+    text: "Continue without new player input.",
+  });
+  const full = prepareForkTrace(source, source.events).atEndpoint({
+    ...endpoint,
+    selected: current,
+    binding: currentBinding,
+  });
+  expect(full.transcript).toEqual(source.transcript);
+  expect(full.completedTools).toEqual(source.completedTools);
+  expect(full.promptRuns).toEqual(source.promptRuns);
+  expect(full.changedDocuments).toEqual([]);
+  full.events[0] = {
+    id: 1,
+    kind: "failure",
+    message: "Independent copy.",
+  };
+  expect(source.events[0]?.kind).toBe("player");
+});
+
+async function createTraceRetentionFixture() {
+  const { worlds, worldId } = await createWorld("trace-retention-revision");
+  const chains = new PlayCallChain(worlds);
+  const host = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          { id: "read-prefix", name: "state_list", arguments: {} },
+          {
+            id: "patch-prefix",
+            name: "world_patch",
+            arguments: {
+              target: "@current-situation",
+              edits: [
+                {
+                  op: "replace",
+                  locator: { yaml: ["情况"] },
+                  value: "Alex打开了门。",
+                },
+              ],
+            },
+          },
+        ],
+      },
+      {
+        outcome: "response",
+        text: "The retained reply.",
+        providerState: {
+          protocol: "chat_completions",
+          assistantMessage: {
+            role: "assistant",
+            content: "The retained reply.",
+            provider_extension: { opaque: "KEEP ORIGINAL" },
+          },
+        },
+      },
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "patch-after",
+            name: "world_patch",
+            arguments: {
+              target: "@current-situation",
+              edits: [
+                {
+                  op: "replace",
+                  locator: { yaml: ["情况"] },
+                  value: "Alex守在宿舍门边。",
+                },
+              ],
+            },
+          },
+        ],
+      },
+      { outcome: "response", text: "The discarded reply." },
+    ],
+  });
+  await chains.start({
+    worldId,
+    chainId: "trace-retention-source",
+    exchangeId: "first",
+    playerText: "First input.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: host,
+  });
+  const prefix = (await worlds.playTimeline.readCurrent(worldId))!.value;
+  await chains.append({
+    worldId,
+    chainId: prefix.chainId,
+    exchangeId: "second",
+    playerText: "Second input.",
+    modelHost: host,
+  });
+  const source = (await worlds.playTimeline.readCurrent(worldId))!.value;
+  const eventIndex = source.events.findIndex(
+    (event) => event.kind === "player" && event.exchangeId === "second",
+  );
+  const player = source.events[eventIndex];
+  if (player?.kind !== "player") throw new Error("missing selected player");
+  const endpoint = {
+    baseline: await worlds.recoverEndpoint(worldId, source.baselineHead),
+    selected: await worlds.recoverEndpoint(worldId, prefix.parentHead),
+    binding: await worlds.bindPlayCallChainAt(worldId, prefix.parentHead),
+  };
+  const current = await worlds.recoverEndpoint(worldId);
+  const currentBinding = await worlds.bindPlayCallChain(worldId);
+  return { source, prefix, eventIndex, endpoint, current, currentBinding };
+}
 
 afterEach(async () => {
   delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE;

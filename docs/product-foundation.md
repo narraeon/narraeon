@@ -308,6 +308,7 @@ AI 使用受管的文档 create／write／patch／move／delete 操作修改 YAM
 - `ModelToolConversation` 只拥有作者型 Provider／工具交换、流式观察、取消和请求幂等；内容包与世界修订各自在其结算 seam 后拥有目标树的发布语义。
 - `WorldRevisionWorkspace` 拥有独占 epoch、共享 `state`／`control` 工作树、统一改动历史、逐文件回滚和可恢复 Apply／Discard；`WorldRevisionSession` 拥有跨 epoch 对话、工具授权与重新读取边界，`FileNativeWorldRevisionStore` 保存二者的 durable 状态。
 - `PlayCallChain` 拥有两个提交动作、空输入续写、模型／工具循环、浏览器增量投影、tool-call 幂等、逐响应 Authority 衔接和中断请求原样重发。
+- `PlayTraceRetention` 集中所选端点的页面／模型轨迹选择与关联记录组装，供继续修改、fresh 修改的旧页面前缀和完整／部分分叉复用；分阶段计算保留既有检查时序，身份、Authority、端点读取与发布仍归操作调用方。
 - `FileNativePlayTimelineStore` 拥有跨全新上下文的页面时间线、稳定游标摘要页、单事件详情和可恢复的追加投影。
 - `FileNativePlayAdvanceStore` 拥有冻结请求、完整 Provider 结果、精确响应结算和已结算端点等不可变游玩推进事实。
 - `FileNativeAuthorityV3` 拥有世界中立不可变事实、双父关系、直接结果 root、物理闭包复制和小 continuity head；`FileNativeWorldStore` 拥有世界外壳、operation receipt、投影物化、时间线修订、原子分叉 staging 与修订 control 发布；`FileNativeWorldOperationCoordinator` 在世界语义写入和持久修订锁之间仲裁。它们都不向模型暴露提交 DTO。
