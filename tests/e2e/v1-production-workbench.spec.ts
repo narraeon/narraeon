@@ -1015,6 +1015,14 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(playProgress).toContainText(
     "思考中（正在接收 Provider 返回推理）",
   );
+  await page
+    .getByText("Provider 返回推理（不等同隐藏思维链）", { exact: true })
+    .click();
+  await expect(
+    page.getByText("The Provider has started returning explicit reasoning.", {
+      exact: true,
+    }),
+  ).toBeVisible();
   expect(providerRequests).toHaveLength(cancellableRequestIndex + 1);
   await expect(playProgress).toContainText("Provider 派发");
   await expect(

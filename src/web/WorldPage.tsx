@@ -1750,6 +1750,7 @@ export function WorldPage({
                   client={client}
                   worldId={worldId}
                   items={playTimeline.items}
+                  liveChain={playCallChain}
                   restartDisabled={pending !== null || worldRevisionLocked}
                   freshContextDisabled={!modelConfigured}
                   onUseFreshContext={() => {
@@ -2256,6 +2257,7 @@ export function WorldPage({
 }
 
 function PlayTimeline({
+  liveChain,
   client,
   worldId,
   items,
@@ -2268,6 +2270,7 @@ function PlayTimeline({
   client: WorldPageClient;
   worldId: string;
   items: readonly V1PlayTimelineItem[];
+  liveChain: V1PlayCallChainView | null;
   restartDisabled: boolean;
   freshContextDisabled: boolean;
   onUseFreshContext: () => void;
@@ -2300,6 +2303,17 @@ function PlayTimeline({
                     worldId={worldId}
                     chainId={item.chainId}
                     event={item.event}
+                    liveAssistant={
+                      item.event.kind === "assistant" &&
+                      item.event.status === "streaming" &&
+                      liveChain?.chainId === item.chainId
+                        ? liveChain.events.find(
+                            (event) =>
+                              event.id === item.event.id &&
+                              event.kind === "assistant",
+                          )
+                        : undefined
+                    }
                     restartDisabled={restartDisabled}
                     freshContextDisabled={freshContextDisabled}
                     onRestartFrom={onRestartFrom}
@@ -2494,6 +2508,7 @@ function timelineEventHasTrace(event: V1PlayTimelineEventSummary): boolean {
 }
 
 function TimelineEvent({
+  liveAssistant,
   client,
   worldId,
   chainId,
@@ -2509,6 +2524,7 @@ function TimelineEvent({
   worldId: string;
   chainId: string;
   event: V1PlayTimelineEventSummary;
+  liveAssistant?: V1PlayCallChainEvent | undefined;
   restartDisabled: boolean;
   freshContextDisabled: boolean;
   onRestartFrom: (head: string) => void;
@@ -2830,8 +2846,15 @@ function TimelineEvent({
           ) : null}
           {presentation === "trace" ? (
             diagnostics
-          ) : event.status === "streaming" && event.detailsAvailable ? (
-            <small>{uiText("响应完成后可查看模型诊断详情")}</small>
+          ) : event.status === "streaming" &&
+            liveAssistant?.kind === "assistant" &&
+            liveAssistant.reasoning ? (
+            <details>
+              <summary>
+                {uiText("Provider 返回推理（不等同隐藏思维链）")}
+              </summary>
+              <pre>{liveAssistant.reasoning}</pre>
+            </details>
           ) : null}
         </article>
       </li>

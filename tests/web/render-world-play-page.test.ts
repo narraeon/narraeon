@@ -1116,6 +1116,7 @@ describe("世界游玩页面", () => {
 
   test("浏览器直接消费模型文本流，在最终响应完成前逐段显示", async () => {
     let chain: V1PlayCallChainView | null = null;
+    let emitFrame: ((frame: V1PlayCallChainStreamFrame) => void) | undefined;
     let finishStream: (() => void) | undefined;
     const client = {
       request: vi.fn(<T>(request: V1Request) => {
@@ -1160,6 +1161,7 @@ describe("世界游玩页面", () => {
           ],
         };
         chain = running;
+        emitFrame = onFrame;
         onFrame({ kind: "snapshot", value: running, final: false });
         onFrame({
           kind: "assistant_delta",
@@ -1204,14 +1206,36 @@ describe("世界游玩页面", () => {
     expect(within(progress).getByText("24 字")).toBeTruthy();
     expect(screen.getByText("接收中 · 第 1 次派发")).toBeTruthy();
     expect(screen.getByText("待定输出；响应完成前不会进入故事")).toBeTruthy();
-    expect(screen.getByText("响应完成后可查看模型诊断详情")).toBeTruthy();
     expect(
       screen.queryByText("世界已在故事外修订；下一次行动会从新上下文开始。"),
     ).toBeNull();
     expect(screen.queryByText("查看模型诊断详情")).toBeNull();
+    const reasoning = screen.getByText("Provider 返回推理（不等同隐藏思维链）");
+    expect(reasoning.closest("details")?.open).toBe(false);
+    fireEvent.click(reasoning);
     expect(
-      screen.queryByText("First confirm that the doorway is clear."),
-    ).toBeNull();
+      screen.getByText("First confirm that the doorway is clear."),
+    ).toBeTruthy();
+    expect(
+      client.request.mock.calls.some(
+        ([request]) => request.type === "play.timeline.detail",
+      ),
+    ).toBe(false);
+    act(() =>
+      emitFrame?.({
+        kind: "assistant_delta",
+        eventId: 2,
+        deltaKind: "reasoning",
+        text: " Then check the corridor.",
+        updatedAt: Date.now(),
+      }),
+    );
+    expect(
+      screen.getByText(
+        "First confirm that the doorway is clear. Then check the corridor.",
+      ),
+    ).toBeTruthy();
+    expect(reasoning.closest("details")?.open).toBe(true);
     act(() => finishStream?.());
     expect(
       await screen.findByText("Alex opens the door and lets you go first."),
@@ -1360,7 +1384,7 @@ describe("世界游玩页面", () => {
         phase: "waiting",
         startedAt: now - 95_000,
         lastActivityAt: now - 91_000,
-        reasoningChars: 0,
+        reasoningChars: "Recovered Provider reasoning.".length,
         textChars: 0,
         toolChars: 0,
         toolCalls: 0,
@@ -1379,6 +1403,7 @@ describe("世界游玩页面", () => {
           id: 2,
           kind: "assistant",
           text: "",
+          reasoning: "Recovered Provider reasoning.",
           status: "streaming",
           responseKind: "pending",
           exchange: 1,
@@ -1435,6 +1460,10 @@ describe("世界游玩页面", () => {
     await waitFor(() =>
       expect(within(progress).getByText(/模型调用可能已经卡住/u)).toBeTruthy(),
     );
+    const recovered = screen.getByText("Recovered Provider reasoning.");
+    expect(recovered.closest("details")?.open).toBe(false);
+    fireEvent.click(screen.getByText("Provider 返回推理（不等同隐藏思维链）"));
+    expect(recovered.closest("details")?.open).toBe(true);
     fireEvent.click(within(progress).getByRole("button", { name: "取消生成" }));
     await waitFor(
       () =>
