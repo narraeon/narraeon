@@ -1,3 +1,7 @@
+import {
+  newPresetArtifact,
+  type PresetResourceEdit,
+} from "./preset-resource-editor.ts";
 import { createPresetScriptExample } from "./preset-script-examples.ts";
 import { useState, type ReactNode } from "react";
 import { OrderedPlayPromptEditor } from "./OrderedPlayPromptEditor.tsx";
@@ -24,6 +28,7 @@ export function PresetWorkbenchEditor({
   authoring,
   onChange,
   onWrite,
+  onResourceEdit,
   preview,
   promptPreview,
 }: {
@@ -34,17 +39,27 @@ export function PresetWorkbenchEditor({
     update: (s: PlayPresetStructuredEditor) => PlayPresetStructuredEditor,
   ) => void;
   onWrite: (path: string, body: string) => void;
+  onResourceEdit: (edit: PresetResourceEdit) => void;
   promptPreview?: ReactNode;
   preview: (requestId?: string, output?: string) => ReactNode;
 }) {
-  const [selection, setSelection] = useState<{
+  const [requestedSelection, setSelection] = useState<{
     kind: "followup" | "panel";
     id: string;
+    fallback?: string;
   }>();
   const [tab, setTab] = useState("prompt");
   const [output, setOutput] = useState("");
   const items =
     structure.followupItems ?? defaultFollowupItems(structure.followups);
+  // A failed clone must keep the source selected; the new identity only exists
+  // after the complete resource edit has been applied.
+  const selection =
+    requestedSelection?.kind === "followup" &&
+    !items.some((item) => item.id === requestedSelection.id) &&
+    requestedSelection.fallback
+      ? { ...requestedSelection, id: requestedSelection.fallback }
+      : requestedSelection;
   const example = builtinFollowupExample(getWebLocale());
   const selectedItem = items.find((i) => i.id === selection?.id);
   const followup: PlayPresetFollowupDefinition | undefined =
@@ -71,74 +86,30 @@ export function PresetWorkbenchEditor({
       artifacts: f.artifacts.map((a) => (a.name === artifact?.name ? next : a)),
     }));
   }
-  function addFollowup(clone?: PlayPresetFollowupDefinition, body?: string) {
+  function addFollowup(clone?: PlayPresetFollowupDefinition) {
     const id = `request_${crypto.randomUUID().replaceAll("-", "")}`;
-    const path = `prompts/${id}.md`;
-    onWrite(
-      path,
-      body ??
-        t(
-          "根据本轮已提交叙事，生成下面声明的界面产物。",
-          "Generate the declared interface outputs from the settled narrative.",
-        ),
+    onResourceEdit(
+      clone
+        ? {
+            type: "clone-followup",
+            id,
+            source: clone.id,
+          }
+        : {
+            type: "create-followup",
+            id,
+            displayName: t("新后置请求", "New follow-up"),
+            body: t(
+              "根据本轮已提交叙事，生成下面声明的界面产物。",
+              "Generate the declared interface outputs from the settled narrative.",
+            ),
+          },
     );
-    // Clone a complete resource closure, preserving sharing within the clone only.
-    const refs = new Map<string, string>();
-    function copy(path: string) {
-      let next = refs.get(path);
-      if (!next) {
-        const [dir] = path.split("/");
-        next = `${dir}/${crypto.randomUUID()}-${path.split("/").at(-1)}`;
-        refs.set(path, next);
-      }
-      return next;
-    }
-    const artifacts = clone
-      ? clone.artifacts.map((a, i) => ({
-          ...a,
-          channel: `${id}.output_${i + 1}`,
-          ...(a.renderer ? { renderer: copy(a.renderer) } : {}),
-          ...(a.regex ? { regex: copy(a.regex) } : {}),
-          ...(a.scripts ? { scripts: a.scripts.map(copy) } : {}),
-          ...(a.assets ? { assets: a.assets.map(copy) } : {}),
-        }))
-      : [newArtifact(`${id}.output_1`, "output_1")];
-    for (const [path, target] of refs) {
-      let body = files[path] ?? "";
-      for (const [source, replacement] of refs)
-        body = body.replaceAll(source, replacement);
-      onWrite(target, body);
-    }
-    onChange((s) => ({
-      ...s,
-      followups: [
-        ...s.followups,
-        {
-          id,
-          displayName: clone
-            ? `${clone.displayName} ${t("副本", "copy")}`
-            : t("新后置请求", "New follow-up"),
-          prompt: { role: "author_instruction", path },
-          artifacts,
-          maxArtifactBytes: clone?.maxArtifactBytes ?? 32768,
-        },
-      ],
-      followupItems: [
-        ...(s.followupItems ?? defaultFollowupItems(s.followups)),
-        { id, kind: "user", enabled: true },
-      ],
-      mounts: [
-        ...s.mounts,
-        ...artifacts.map((a, i) => ({
-          channel: a.channel,
-          mount:
-            s.mounts.find((m) => m.channel === clone?.artifacts[i]?.channel)
-              ?.mount ?? ("story" as const),
-        })),
-      ],
-      extensionRefs: [...new Set([...s.extensionRefs, ...refs.values()])],
-    }));
-    setSelection({ kind: "followup", id });
+    setSelection({
+      kind: "followup",
+      id,
+      ...(clone && selection ? { fallback: selection.id } : {}),
+    });
     setTab("prompt");
   }
   function name(item: FollowupItem) {
@@ -246,31 +217,15 @@ export function PresetWorkbenchEditor({
             aria-label={t("新增纯界面", "Add interface panel")}
             onClick={() => {
               const id = `panel_${crypto.randomUUID().replaceAll("-", "")}`;
-              onChange((s) => ({
-                ...s,
-                playerViewPanels: [
-                  ...s.playerViewPanels,
-                  {
-                    id,
-                    source: { kind: "player_view", view: "status" },
-                    channel: `player.view.${id}`,
-                    key: "current",
-                    mount: "sidebar",
-                    rendererMode: "document",
-                    config: {
-                      title: t("世界状态栏", "World status"),
-                      layout: "stack",
-                      theme: "default",
-                      empty: "message",
-                      emptyMessage: t(
-                        "当前没有可显示内容。",
-                        "No content to display.",
-                      ),
-                      groups: [],
-                    },
-                  },
-                ],
-              }));
+              onResourceEdit({
+                type: "create-panel",
+                id,
+                title: t("世界状态栏", "World status"),
+                emptyMessage: t(
+                  "当前没有可显示内容。",
+                  "No content to display.",
+                ),
+              });
               setSelection({ kind: "panel", id });
             }}
           >
@@ -300,25 +255,13 @@ export function PresetWorkbenchEditor({
           panels={[panel]}
           files={files}
           onFileChange={onWrite}
+          onResourceEdit={onResourceEdit}
           onChange={(panels) =>
             onChange((s) => ({
               ...s,
               playerViewPanels: s.playerViewPanels.flatMap((p) =>
                 p.id === panel.id ? panels : [p],
               ),
-              extensionRefs: [
-                ...new Set([
-                  ...s.extensionRefs,
-                  ...panels.flatMap((p) =>
-                    [
-                      p.renderer,
-                      p.regex,
-                      ...(p.scripts ?? []),
-                      ...(p.assets ?? []),
-                    ].filter((p): p is string => p !== undefined),
-                  ),
-                ]),
-              ],
             }))
           }
         />
@@ -358,15 +301,7 @@ export function PresetWorkbenchEditor({
             ↓
           </button>
           {followup && (
-            <button
-              type="button"
-              onClick={() =>
-                addFollowup(
-                  followup,
-                  readonly ? example.body : files[followup.prompt.path],
-                )
-              }
-            >
+            <button type="button" onClick={() => addFollowup(followup)}>
               {t("克隆后置请求", "Clone follow-up")}
             </button>
           )}
@@ -374,11 +309,7 @@ export function PresetWorkbenchEditor({
             <button
               type="button"
               onClick={() => {
-                onChange((s) => ({
-                  ...s,
-                  followups: s.followups.filter((f) => f.id !== selection.id),
-                  followupItems: items.filter((i) => i.id !== selection.id),
-                }));
+                onResourceEdit({ type: "remove-followup", id: selection.id });
                 setSelection(undefined);
               }}
             >
@@ -521,22 +452,15 @@ export function PresetWorkbenchEditor({
                           )
                         )
                           suffix++;
-                        const a = newArtifact(
+                        const a = newPresetArtifact(
                           `${followup.id}.output_${suffix}`,
                           `output_${suffix}`,
                         );
-                        onChange((s) => ({
-                          ...s,
-                          mounts: [
-                            ...s.mounts,
-                            { channel: a.channel, mount: "story" },
-                          ],
-                          followups: s.followups.map((f) =>
-                            f.id === followup.id
-                              ? { ...f, artifacts: [...f.artifacts, a] }
-                              : f,
-                          ),
-                        }));
+                        onResourceEdit({
+                          type: "add-artifact",
+                          requestId: followup.id,
+                          artifact: a,
+                        });
                         setOutput(a.name);
                       }}
                     >
@@ -567,38 +491,13 @@ export function PresetWorkbenchEditor({
                             kind,
                             followup.id,
                           );
-                          for (const [path, body] of Object.entries(
-                            example.files,
-                          ))
-                            onWrite(path, body);
-                          onChange((s) => ({
-                            ...s,
-                            followups: s.followups.map((f) =>
-                              f.id === followup.id
-                                ? {
-                                    ...f,
-                                    artifacts: [
-                                      ...f.artifacts,
-                                      example.artifact,
-                                    ],
-                                  }
-                                : f,
-                            ),
-                            mounts: [
-                              ...s.mounts,
-                              {
-                                channel: example.artifact.channel,
-                                mount:
-                                  kind === "actions"
-                                    ? "composer_below"
-                                    : "story",
-                              },
-                            ],
-                            extensionRefs: [
-                              ...s.extensionRefs,
-                              ...Object.keys(example.files),
-                            ],
-                          }));
+                          onResourceEdit({
+                            type: "add-artifact",
+                            requestId: followup.id,
+                            ...example,
+                            mount:
+                              kind === "actions" ? "composer_below" : "story",
+                          });
                           setOutput(example.artifact.name);
                         }}
                       >
@@ -728,32 +627,17 @@ export function PresetWorkbenchEditor({
                           value={artifact}
                           files={files}
                           onWrite={onWrite}
-                          onChange={(display) => {
-                            const next = { ...artifact };
-                            for (const key of [
-                              "renderer",
-                              "rendererRevision",
-                              "regex",
-                              "scripts",
-                              "assets",
-                            ] as const)
-                              delete next[key];
-                            updateArtifact({ ...next, ...display });
-                            onChange((s) => ({
-                              ...s,
-                              extensionRefs: [
-                                ...new Set([
-                                  ...s.extensionRefs,
-                                  ...[
-                                    display.renderer,
-                                    display.regex,
-                                    ...(display.scripts ?? []),
-                                    ...(display.assets ?? []),
-                                  ].filter((p): p is string => p !== undefined),
-                                ]),
-                              ],
-                            }));
-                          }}
+                          onEdit={(edit) =>
+                            onResourceEdit({
+                              type: "display",
+                              target: {
+                                kind: "artifact",
+                                requestId: followup.id,
+                                output: artifact.name,
+                              },
+                              edit,
+                            })
+                          }
                         />
                       </>
                     ) : (
@@ -765,12 +649,11 @@ export function PresetWorkbenchEditor({
                     <button
                       type="button"
                       onClick={() =>
-                        updateFollowup((f) => ({
-                          ...f,
-                          artifacts: f.artifacts.filter(
-                            (a) => a.name !== artifact.name,
-                          ),
-                        }))
+                        onResourceEdit({
+                          type: "remove-artifact",
+                          requestId: followup.id,
+                          output: artifact.name,
+                        })
                       }
                     >
                       {t("移除此产物", "Remove output")}
@@ -826,23 +709,6 @@ export function PresetWorkbenchEditor({
       {...(!authoring ? { directory, detail } : {})}
     />
   );
-}
-function newArtifact(
-  channel: string,
-  name: string,
-): PlayPresetArtifactDefinition {
-  return {
-    name,
-    displayName: t("新产物", "New output"),
-    channel,
-    strategy: "replace",
-    contentType: "text/markdown",
-    rendererMode: "document",
-    save: "commit",
-    invalidation: "explicit_clear",
-    required: false,
-    maxEmits: 1,
-  };
 }
 function ArtifactAdvancedEditor({
   artifact,

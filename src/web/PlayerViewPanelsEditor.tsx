@@ -1,3 +1,4 @@
+import type { PresetResourceEdit } from "./preset-resource-editor.ts";
 import { PresetDisplayEditor } from "./PresetDisplayEditor.tsx";
 import { uiText } from "./i18n.ts";
 import type { ArtifactMountName } from "./ArtifactExtensionHost.tsx";
@@ -40,11 +41,13 @@ export function PlayerViewPanelsEditor({
   files,
   onChange,
   onFileChange,
+  onResourceEdit,
 }: {
   panels: PlayPresetPlayerViewPanel[];
   files: Record<string, string>;
   onChange: (panels: PlayPresetPlayerViewPanel[]) => void;
   onFileChange: (path: string, contents: string) => void;
+  onResourceEdit: (edit: PresetResourceEdit) => void;
 }): React.JSX.Element {
   function updatePanel(
     index: number,
@@ -59,25 +62,12 @@ export function PlayerViewPanelsEditor({
 
   function addPanel(): void {
     const id = `panel_${crypto.randomUUID().replaceAll("-", "")}`;
-    onChange([
-      ...panels,
-      {
-        id,
-        source: { kind: "player_view", view: "status" },
-        channel: `player.view.${id}`,
-        key: "current",
-        mount: "sidebar",
-        rendererMode: "document",
-        config: {
-          title: uiText("玩家状态"),
-          layout: "stack",
-          theme: "default",
-          empty: "message",
-          emptyMessage: uiText("当前没有可显示内容。"),
-          groups: [],
-        },
-      },
-    ]);
+    onResourceEdit({
+      type: "create-panel",
+      id,
+      title: uiText("玩家状态"),
+      emptyMessage: uiText("当前没有可显示内容。"),
+    });
   }
 
   return (
@@ -120,11 +110,7 @@ export function PlayerViewPanelsEditor({
                     type="button"
                     className="danger-button"
                     onClick={() =>
-                      onChange(
-                        panels.filter(
-                          (_, candidateIndex) => candidateIndex !== index,
-                        ),
-                      )
+                      onResourceEdit({ type: "remove-panel", id: panel.id })
                     }
                   >
                     {uiText("删除面板")}
@@ -249,22 +235,11 @@ export function PlayerViewPanelsEditor({
                   value={panel}
                   files={files}
                   onWrite={onFileChange}
-                  onChange={(display) =>
-                    updatePanel(index, (current) => {
-                      const next = { ...current };
-                      for (const key of [
-                        "renderer",
-                        "rendererRevision",
-                        "regex",
-                        "scripts",
-                        "assets",
-                      ] as const)
-                        delete next[key];
-                      return {
-                        ...next,
-                        ...display,
-                        rendererMode: display.rendererMode ?? "document",
-                      };
+                  onEdit={(edit) =>
+                    onResourceEdit({
+                      type: "display",
+                      target: { kind: "panel", id: panel.id },
+                      edit,
                     })
                   }
                 />

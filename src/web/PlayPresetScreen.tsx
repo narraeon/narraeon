@@ -1,3 +1,8 @@
+import {
+  editPresetResources,
+  presetResourceUsage,
+  type PresetResourceEdit,
+} from "./preset-resource-editor.ts";
 import { resourceTitle } from "./preset-resource-names.ts";
 import "./preset-workbench.css";
 import { PresetWorkbenchEditor } from "./PresetWorkbenchEditor.tsx";
@@ -289,9 +294,9 @@ export function PlayPresetScreen({
       ({ id }) => id === initialLibrary.currentPresetId,
     ) ?? initialLibrary.presets[0];
   const [selectedId, setSelectedId] = useState(initial?.id ?? "");
-  const [draft, setDraft] = useState<PlayPresetScreenPreset | null>(() =>
-    initial === undefined ? null : toEditablePreset(initial),
-  );
+  const [draft, setDraft] = useState<
+    (PlayPresetScreenPreset & { resourceError?: string | undefined }) | null
+  >(() => (initial === undefined ? null : toEditablePreset(initial)));
   const [filePath, setFilePath] = useState(
     initial?.files === undefined
       ? ""
@@ -329,23 +334,16 @@ export function PlayPresetScreen({
     draft?.structure?.callChainPath,
     savedEditable?.structure?.callChainPath,
   ]);
-  const boundPaths = new Set([
-    ...(draft?.structure?.followups.flatMap((f) => [
-      f.prompt.path,
-      ...f.artifacts.flatMap((a) => [
-        a.renderer,
-        a.regex,
-        ...(a.scripts ?? []),
-        ...(a.assets ?? []),
-      ]),
-    ]) ?? []),
-    ...(draft?.structure?.playerViewPanels.flatMap((p) => [
-      p.renderer,
-      p.regex,
-      ...(p.scripts ?? []),
-      ...(p.assets ?? []),
-    ]) ?? []),
-  ]);
+  const resourceUsage = useMemo(
+    () =>
+      draft?.structure
+        ? presetResourceUsage({
+            files: draft.files,
+            structure: draft.structure,
+          })
+        : undefined,
+    [draft?.files, draft?.structure],
+  );
   const rawStructuralDirty =
     draft !== null &&
     savedEditable !== undefined &&
@@ -467,6 +465,28 @@ export function PlayPresetScreen({
             structure: update(structuredClone(current.structure)),
           },
     );
+  }
+
+  function updateResources(action: PresetResourceEdit): void {
+    setDraft((current) => {
+      if (!current?.structure) return current;
+      try {
+        return {
+          ...current,
+          ...editPresetResources(
+            { files: current.files, structure: current.structure },
+            action,
+          ),
+          resourceError: undefined,
+        };
+      } catch (error) {
+        return {
+          ...current,
+          resourceError:
+            error instanceof Error ? error.message : uiText("玩法预设操作失败"),
+        };
+      }
+    });
   }
 
   async function saveDraft(): Promise<void> {
@@ -592,6 +612,18 @@ export function PlayPresetScreen({
         </div>
       </header>
 
+      {draft?.resourceError && (
+        <DismissibleNotice
+          role="alert"
+          className="play-preset-feedback error"
+          text={draft.resourceError}
+          onDismiss={() =>
+            setDraft((current) =>
+              current ? { ...current, resourceError: undefined } : current,
+            )
+          }
+        />
+      )}
       {feedback === null ? null : (
         <DismissibleNotice
           className={`play-preset-feedback ${feedback.kind}`}
@@ -881,7 +913,8 @@ export function PlayPresetScreen({
                       {Object.keys(draft.files)
                         .filter(
                           (path) =>
-                            !structuralPaths.has(path) && !boundPaths.has(path),
+                            !structuralPaths.has(path) &&
+                            !resourceUsage?.get(path)?.declared,
                         )
                         .map((path) => (
                           <details key={path}>
@@ -898,32 +931,16 @@ export function PlayPresetScreen({
                             ) && (
                               <button
                                 type="button"
-                                disabled={Object.entries(draft.files).some(
-                                  ([other, body]) =>
-                                    other !== path &&
-                                    !structuralPaths.has(other) &&
-                                    body.includes(path),
-                                )}
+                                disabled={
+                                  !draft.structure ||
+                                  resourceUsage?.get(path)?.declared === true ||
+                                  (resourceUsage?.get(path)?.sources.length ??
+                                    0) > 0
+                                }
                                 onClick={() =>
-                                  setDraft((current) => {
-                                    if (
-                                      !current?.structure ||
-                                      boundPaths.has(path)
-                                    )
-                                      return current;
-                                    const files = { ...current.files };
-                                    delete files[path];
-                                    return {
-                                      ...current,
-                                      files,
-                                      structure: {
-                                        ...current.structure,
-                                        extensionRefs:
-                                          current.structure.extensionRefs.filter(
-                                            (ref) => ref !== path,
-                                          ),
-                                      },
-                                    };
+                                  updateResources({
+                                    type: "delete-resource",
+                                    path,
                                   })
                                 }
                               >
@@ -999,6 +1016,7 @@ export function PlayPresetScreen({
                   authoring={workspaceView === "setting_improvement"}
                   onChange={updateStructure}
                   onWrite={updateFileAtPath}
+                  onResourceEdit={updateResources}
                   promptPreview={
                     <details className="preset-draft-preview">
                       <summary>{uiText("发送给 AI 的内容预览")}</summary>

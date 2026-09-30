@@ -507,3 +507,188 @@ test("message role and merging controls are saved with the preset", async () => 
     ]),
   );
 });
+
+async function savedRequest(request: ReturnType<typeof setup>) {
+  fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+  await waitFor(() =>
+    expect(request.mock.calls.some(([r]) => r.type === "play.save")).toBe(true),
+  );
+  return request.mock.calls
+    .map(([r]) => r)
+    .find(
+      (r): r is Extract<V1Request, { type: "play.save" }> =>
+        r.type === "play.save",
+    )!;
+}
+
+test("interface resource creation reaches save with its declaration, file and extension index", async () => {
+  const request = setup();
+  fireEvent.click(screen.getByRole("button", { name: "新增纯界面" }));
+  fireEvent.click(screen.getByRole("button", { name: "新建 HTML 模板" }));
+  fireEvent.change(screen.getByLabelText("HTML", { exact: true }), {
+    target: { value: "<main>PANEL</main>" },
+  });
+  const save = await savedRequest(request);
+  const structure = save.structure as unknown as NonNullable<
+    PlayPresetScreenPreset["structure"]
+  >;
+  const renderer = structure.playerViewPanels[0]!.renderer!;
+  expect(save.files[renderer]).toBe("<main>PANEL</main>");
+  expect(structure.extensionRefs).toContain(renderer);
+  expect(request.mock.calls.some(([r]) => r.type === "play.scripts")).toBe(
+    false,
+  );
+});
+
+function resourceRequestFixture() {
+  const preset = fixture();
+  preset.structure!.followups = [
+    {
+      id: "request",
+      displayName: "来源请求",
+      prompt: { role: "author_instruction", path: "prompts/request.md" },
+      maxArtifactBytes: 32768,
+      artifacts: [
+        {
+          name: "status",
+          channel: "source",
+          strategy: "replace",
+          contentType: "text/markdown",
+          renderer: "renderers/view.html",
+          rendererRevision: "v1",
+          scripts: ["scripts/view.js"],
+          assets: ["assets/data.json"],
+          save: "commit",
+          invalidation: "never",
+          required: false,
+          maxEmits: 1,
+        },
+      ],
+    },
+  ];
+  Object.assign(preset.files, {
+    "prompts/request.md": "Original prompt",
+    "renderers/view.html": "<main>Original</main>",
+    "scripts/view.js": 'window.__NARRAEON_ASSETS__["assets/data.json"]',
+    "assets/data.json": '{"value":1}',
+  });
+  preset.structure!.mounts = [{ channel: "source", mount: "sidebar" }];
+  preset.structure!.extensionRefs = [
+    "renderers/view.html",
+    "scripts/view.js",
+    "assets/data.json",
+  ];
+  return preset;
+}
+
+test("clone and remove-output buttons save independent rewritten resources and clean only the removed mount", async () => {
+  const preset = resourceRequestFixture();
+  const request = setup(preset);
+  fireEvent.click(screen.getByRole("button", { name: /来源请求/u }));
+  fireEvent.click(screen.getByRole("button", { name: "克隆后置请求" }));
+  expect(screen.getByLabelText("后置请求名称")).toHaveProperty(
+    "value",
+    "来源请求 副本",
+  );
+  outputs();
+  fireEvent.click(screen.getByRole("button", { name: "移除此产物" }));
+  const save = await savedRequest(request);
+  const structure = save.structure as unknown as NonNullable<
+    PlayPresetScreenPreset["structure"]
+  >;
+  expect(structure.followups).toHaveLength(2);
+  expect(structure.followups[0]).toEqual(preset.structure!.followups[0]);
+  expect(structure.followups[1]!.artifacts).toEqual([]);
+  expect(structure.mounts).toEqual([{ channel: "source", mount: "sidebar" }]);
+  const copiedScript = structure.extensionRefs.find(
+    (path) => path.startsWith("scripts/") && path !== "scripts/view.js",
+  )!;
+  const copiedData = structure.extensionRefs.find(
+    (path) => path.startsWith("assets/") && path !== "assets/data.json",
+  )!;
+  expect(save.files[copiedScript]).toBe(
+    `window.__NARRAEON_ASSETS__["${copiedData}"]`,
+  );
+  expect(save.files["scripts/view.js"]).toBe(preset.files["scripts/view.js"]);
+  expect(request.mock.calls.some(([r]) => r.type === "play.scripts")).toBe(
+    false,
+  );
+});
+
+test("resource deletion button follows current source references through edits and save", async () => {
+  const preset = fixture();
+  preset.files["assets/data.json"] = "{}";
+  preset.files["scripts/consumer.js"] =
+    'window.__NARRAEON_ASSETS__["assets/data.json"]';
+  preset.structure!.extensionRefs = ["assets/data.json", "scripts/consumer.js"];
+  const request = setup(preset);
+  fireEvent.click(screen.getByText("预设操作", { exact: true }));
+  fireEvent.click(screen.getByText("保留的资源", { exact: true }));
+  const data = screen
+    .getByText("data.json", { selector: "summary" })
+    .closest("details")!;
+  fireEvent.click(within(data).getByText("data.json", { selector: "summary" }));
+  expect(
+    within(data).getByRole("button", { name: "删除未引用资源" }),
+  ).toHaveProperty("disabled", true);
+  const consumer = screen
+    .getByText("consumer.js", { selector: "summary" })
+    .closest("details")!;
+  fireEvent.click(
+    within(consumer).getByText("consumer.js", { selector: "summary" }),
+  );
+  fireEvent.change(within(consumer).getByRole("textbox"), {
+    target: { value: "// no resource references" },
+  });
+  expect(
+    within(data).getByRole("button", { name: "删除未引用资源" }),
+  ).toHaveProperty("disabled", false);
+  fireEvent.click(within(data).getByRole("button", { name: "删除未引用资源" }));
+  const save = await savedRequest(request);
+  expect(save.files["assets/data.json"]).toBeUndefined();
+  expect(
+    (
+      save.structure as unknown as NonNullable<
+        PlayPresetScreenPreset["structure"]
+      >
+    ).extensionRefs,
+  ).toEqual(["scripts/consumer.js"]);
+});
+
+test("missing clone resource shows a diagnostic and preserves the draft and selection", async () => {
+  const preset = resourceRequestFixture();
+  delete preset.files["assets/data.json"];
+  const request = setup(preset);
+  fireEvent.click(screen.getByRole("button", { name: /来源请求/u }));
+  fireEvent.click(screen.getByRole("button", { name: "克隆后置请求" }));
+  expect(screen.getByRole("alert").textContent).toContain("assets/data.json");
+  expect(screen.getByLabelText("后置请求名称")).toHaveProperty(
+    "value",
+    "来源请求",
+  );
+  fireEvent.change(screen.getByLabelText("后置请求名称"), {
+    target: { value: "仍可编辑" },
+  });
+  const save = await savedRequest(request);
+  expect(save.files).toEqual(preset.files);
+  const structure = save.structure as unknown as NonNullable<
+    PlayPresetScreenPreset["structure"]
+  >;
+  expect(structure.followups).toHaveLength(1);
+  expect(structure.followups[0]!.displayName).toBe("仍可编辑");
+});
+
+test("cloning the system example reaches save with its production story mount", async () => {
+  const request = setup();
+  fireEvent.click(
+    screen.getByRole("button", { name: /场景回顾（系统示例）/u }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "克隆后置请求" }));
+  const save = await savedRequest(request);
+  const structure = save.structure as unknown as NonNullable<
+    PlayPresetScreenPreset["structure"]
+  >;
+  expect(structure.mounts).toEqual([
+    { channel: structure.followups[0]!.artifacts[0]!.channel, mount: "story" },
+  ]);
+});
