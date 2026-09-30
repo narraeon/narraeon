@@ -96,3 +96,36 @@ test("生产新会话拒绝旧历史参数，世界作用域与 locale 进入实
     }).ok,
   ).toBe(false);
 });
+
+test.each(["en", "zh-CN"] as const)(
+  "旧会话历史回执只引导已声明的读取和搜索参数：%s",
+  (locale) => {
+    const execute = (name: string, args: unknown) =>
+      documents.execute({ id: name, name, arguments: args }, history, {
+        locale,
+        legacyHistoryTools: true,
+      });
+    const read = execute("context_read", {
+      ref: "@history-message-message.10.1.narrator",
+    });
+    expect(read.ok).toBe(true);
+    expect(read.markdown).not.toContain("history_read");
+    const neighbors = Array.from(
+      read.markdown.matchAll(/context_read \{ref:"([^"]+)"\}/gu),
+      (match) => match[1]!,
+    );
+    expect(neighbors).toEqual([
+      "@history-message-message.2.1.player",
+      "@history-message-message.10.2.narrator",
+    ]);
+    for (const ref of neighbors)
+      expect(execute("context_read", { ref }).ok).toBe(true);
+    const search = execute("context_search", {
+      source: "history",
+      query: "没有这个词",
+    });
+    expect(search.ok).toBe(true);
+    expect(search.markdown).not.toContain("all");
+    expect(search.markdown).toContain("query");
+  },
+);

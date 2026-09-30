@@ -593,7 +593,10 @@ export class FileNativePromptCompiler {
   }
 
   /** The same selection used by bootstrap, without model or host instructions. */
-  inspectWorldMaterials(world: FileNativePromptInput["world"]): {
+  inspectWorldMaterials(
+    world: FileNativePromptInput["world"],
+    playerInputPlacement?: FileNativePromptInput["playerInputPlacement"],
+  ): {
     blocks: { source: string; markdown: string }[];
     coverage: PromptCompilation["coverage"];
     maintenance: WorldPromptMaintenance;
@@ -605,7 +608,10 @@ export class FileNativePromptCompiler {
     requireFormat(frame, "narraeon.world-frame/v1", "world frame");
     const coverage: PromptCompilation["coverage"] = [];
     const materials = resolveContext(
-      { world },
+      {
+        world,
+        ...(playerInputPlacement === undefined ? {} : { playerInputPlacement }),
+      },
       frame,
       world.documentSnapshot,
       coverage,
@@ -1069,7 +1075,10 @@ export class FileNativePromptCompiler {
           : { maintenance: frozen.maintenance }),
       });
     }
-    const materials = this.inspectWorldMaterials(input.world);
+    const materials = this.inspectWorldMaterials(
+      input.world,
+      input.playerInputPlacement,
+    );
     const snapshot = input.world.documentSnapshot;
     const declaredDirectories = materials.coverage
       .filter(({ slot }) => slot === "catalog")

@@ -280,10 +280,12 @@ export class FileNativePlayDocuments {
         return toolFailure(
           "Legacy context_read requires ref and accepts only obsolete cursor/maxBytes in addition.",
         );
-      return render(
+      return renderHistoryResult(
         query().read({
           ref: args.ref.startsWith("@") ? args.ref : `@${args.ref}`,
         }),
+        options.locale ?? "en",
+        true,
       );
     }
     if (call.name === "context_search")

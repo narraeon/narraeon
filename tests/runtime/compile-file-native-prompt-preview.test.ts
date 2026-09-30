@@ -2234,3 +2234,20 @@ test("旧会话刷新编译仍保留冻结工具定义，新会话定义只声�
     fresh.toolUniverse.find(({ name }) => name === "context_read")!.description,
   ).not.toContain("history-message");
 });
+
+test("生产附加材料选择 genesis 提交时仍排除开场白原文", () => {
+  const request = input({ playerInputPlacement: "append" });
+  request.world.history = {
+    "message.genesis.narrator": "GENESIS-MUST-NOT-BE-REPLAYED",
+  };
+  request.world.additionalMaterials = [
+    { kind: "history_commit", commit: "genesis" },
+  ];
+  const compiled = new FileNativePromptCompiler().compilePlayCallChain(
+    request,
+    builtinDefaultPlayPresetBinding(),
+  ).bootstrap;
+  expect(compiled.provider.preload?.markdown).not.toContain(
+    "GENESIS-MUST-NOT-BE-REPLAYED",
+  );
+});
