@@ -10,9 +10,7 @@ import {
 } from "../protocol/appPreferences.ts";
 import type {
   ContentTreeFile,
-  V1SettingImprovementHistoryItem,
   V1SettingImprovementOverview,
-  V1SettingImprovementRollbackResult,
 } from "../protocol/v1.ts";
 import { firstPartyPlayPresetTemplatesForLocale } from "../shared/first-party-play-preset-templates.ts";
 import type { RuntimeClient } from "./runtimeClient.ts";
@@ -26,10 +24,8 @@ import { HomeScreen } from "./HomeScreen.tsx";
 import { ModelConnectionScreen } from "./ModelConnectionScreen.tsx";
 import { PlayPresetScreen } from "./PlayPresetScreen.tsx";
 import { PromptPreviewScreen } from "./PromptPreviewScreen.tsx";
-import {
-  SettingImprovementPanel,
-  type SettingImprovementView,
-} from "./SettingImprovementPanel.tsx";
+import { SettingImprovementPanel } from "./SettingImprovementPanel.tsx";
+import { useAuthoringWorkspace } from "./useAuthoringWorkspace.ts";
 import { WorldPage } from "./WorldPage.tsx";
 
 interface Workspace {
@@ -69,17 +65,9 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [screen, setScreen] = useState<Screen>("home");
   const [selected, setSelected] = useState<string>("");
-  const [files, setFiles] = useState<ContentTreeFile[]>([]);
-  const [currentPackageFiles, setCurrentPackageFiles] = useState<
-    ContentTreeFile[]
-  >([]);
-  const [packageDetail, setPackageDetail] = useState<PackageDetail | null>(
-    null,
-  );
   const [creatingWorld, setCreatingWorld] = useState(false);
   const creatingWorldRef = useRef(false);
   const [childNavigationLocked, setChildNavigationLocked] = useState(false);
-  const [filesDirty, setFilesDirty] = useState(false);
   const [playPresetDraftDirty, setPlayPresetDraftDirty] = useState(false);
   const [modelDraftDirty, setModelDraftDirty] = useState(false);
   const [promptPreviewPlayPreset, setPromptPreviewPlayPreset] = useState<{
@@ -88,24 +76,11 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   } | null>(null);
   const [importArchive, setImportArchive] = useState<File | null>(null);
   const [importPending, setImportPending] = useState(false);
-  const [improvementView, setImprovementView] =
-    useState<SettingImprovementView | null>(null);
-  const [improvementHistory, setImprovementHistory] = useState<
-    V1SettingImprovementHistoryItem[]
-  >([]);
-  const [improvementHistoryView, setImprovementHistoryView] =
-    useState<SettingImprovementView | null>(null);
-  const [improvementStartingFresh, setImprovementStartingFresh] =
-    useState(false);
-  const [improvementHistoryLoading, setImprovementHistoryLoading] =
-    useState(false);
-  const [improvementLoading, setImprovementLoading] = useState(false);
-  const [improvementObservationFailure, setImprovementObservationFailure] =
-    useState<string | null>(null);
-  const [improvementRequestFailure, setImprovementRequestFailure] = useState<
-    string | null
-  >(null);
-  const [improvementNow, setImprovementNow] = useState(0);
+  const { workspace: authoringWorkspace, state: authoring } =
+    useAuthoringWorkspace(client, "setting", selected, screen === "content");
+  const filesDirty = authoring.dirty;
+  const files = authoring.files;
+  const packageDetail = authoring.target?.packageDetail ?? null;
   const [worldId, setWorldId] = useState("");
   const [notice, setNotice] = useState(uiText("正在读取工作区…"));
   const [localeSaving, setLocaleSaving] = useState(false);
@@ -113,18 +88,6 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   filesDirtyRef.current = filesDirty;
   const packageOpenRequest = useRef(0);
   const navigationDraftLockedRef = useRef(false);
-  const improvementObservationScope = useRef(0);
-  const improvementHistoryRequest = useRef(0);
-  const improvementSelection = useRef<
-    | string
-    | {
-        kind: "fresh";
-        previousSessionId: string | null;
-        requestStarted: boolean;
-      }
-    | null
-  >(null);
-
   async function refresh(): Promise<void> {
     const next = await client.request<Workspace>({ type: "workspace.read" });
     setWebLocale(next.preferences.locale);
@@ -137,144 +100,24 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     setNotice("");
   }
 
-  const improvementObservedSessionId = improvementStartingFresh
-    ? undefined
-    : (improvementHistoryView?.sessionId ?? improvementView?.sessionId);
-
-  // SSE carries live status; durable revisions trigger transcript hydration.
   useEffect(() => {
-    if (screen !== "content" || selected === "") return;
-    let active = true;
-    const observationScope = improvementObservationScope.current;
-    const unsubscribe = client.observeConversation(
-      {
-        kind: "setting",
-        id: selected,
-        ...(improvementObservedSessionId === undefined
-          ? {}
-          : { sessionId: improvementObservedSessionId }),
-      },
-      async (observation, durableChanged) => {
-        if (observation.kind !== "setting") return;
-        const status = observation.value;
-        const historyRequestVersion = improvementHistoryRequest.current;
-        try {
-          if (
-            !active ||
-            improvementObservationScope.current !== observationScope ||
-            improvementHistoryRequest.current !== historyRequestVersion
-          )
-            return;
-          if (durableChanged) {
-            const next = await client.request<V1SettingImprovementOverview>({
-              type: "setting-improvement.overview",
-              packageId: selected,
-            });
-            if (
-              !active ||
-              improvementObservationScope.current !== observationScope ||
-              improvementHistoryRequest.current !== historyRequestVersion
-            )
-              return;
-            setImprovementView(next.latest);
-            setImprovementHistory(next.history);
-            const selectedSessionId = improvementSelection.current;
-            if (
-              typeof selectedSessionId === "string" &&
-              selectedSessionId !== next.latest?.sessionId
-            ) {
-              const selectedView = await client.request<SettingImprovementView>(
-                {
-                  type: "setting-improvement.session.read",
-                  packageId: selected,
-                  sessionId: selectedSessionId,
-                },
-              );
-              if (
-                !active ||
-                improvementObservationScope.current !== observationScope ||
-                improvementHistoryRequest.current !== historyRequestVersion
-              )
-                return;
-              setImprovementHistoryView(selectedView);
-            } else if (
-              typeof selectedSessionId === "object" &&
-              selectedSessionId !== null &&
-              selectedSessionId.kind === "fresh" &&
-              selectedSessionId.requestStarted &&
-              next.latest !== null &&
-              next.latest.sessionId !== selectedSessionId.previousSessionId
-            ) {
-              setImprovementHistoryView(null);
-              setImprovementStartingFresh(false);
-              improvementSelection.current = next.latest.sessionId;
-            } else if (selectedSessionId === null) {
-              setImprovementHistoryView(null);
-              if (next.latest !== null)
-                improvementSelection.current = next.latest.sessionId;
-            }
-            const currentPackage = await client.request<PackageDetail>({
-              type: "content.read",
-              packageId: selected,
-            });
-            if (
-              !active ||
-              improvementObservationScope.current !== observationScope
-            )
-              return;
-            setPackageDetail(currentPackage);
-            setCurrentPackageFiles(
-              currentPackage.files.map((file) => ({ ...file })),
-            );
-            if (!filesDirtyRef.current)
-              setFiles(currentPackage.files.map((file) => ({ ...file })));
-          } else if (status.selected !== null) {
-            const selectedStatus = status.selected;
-            const overlay = (current: SettingImprovementView | null) =>
-              current?.sessionId !== selectedStatus.sessionId
-                ? current
-                : {
-                    ...current,
-                    runStatus: selectedStatus.runStatus,
-                    progress: selectedStatus.progress,
-                  };
-            setImprovementView(overlay);
-            setImprovementHistoryView(overlay);
-          }
-        } catch {
-          // Keep the last authoritative snapshot if hydration fails.
-          throw new Error(uiText("对话同步失败，请重新打开此页面。"));
-        } finally {
-          if (
-            active &&
-            improvementObservationScope.current === observationScope
-          ) {
-            setImprovementNow(Date.now());
-            setImprovementLoading(false);
-          }
-        }
-      },
-      (connection) => {
-        if (!active) return;
-        setImprovementObservationFailure(
-          connection === "connected"
-            ? null
-            : uiText(
-                connection === "reconnecting"
-                  ? "对话连接已断开，正在重新连接…"
-                  : "对话同步失败，请重新打开此页面。",
+    let previous: typeof packageDetail = null;
+    return authoringWorkspace.subscribe(() => {
+      const detail = authoringWorkspace.getSnapshot().target?.packageDetail;
+      if (detail === undefined || detail === previous) return;
+      previous = detail;
+      setWorkspace((current) =>
+        current === null
+          ? null
+          : {
+              ...current,
+              contentPackages: current.contentPackages.map((item) =>
+                item.localId === detail.localId ? { ...item, ...detail } : item,
               ),
-        );
-        if (connection === "failed") setImprovementLoading(false);
-      },
-    );
-    const timer = setInterval(() => setImprovementNow(Date.now()), 1000);
-    return () => {
-      active = false;
-      unsubscribe();
-      clearInterval(timer);
-    };
-  }, [client, screen, selected, improvementObservedSessionId]);
+            },
+      );
+    });
+  }, [authoringWorkspace]);
 
   useEffect(() => {
     let active = true;
@@ -319,9 +162,8 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   async function openPackage(packageId: string): Promise<void> {
     const requestVersion = packageOpenRequest.current + 1;
     packageOpenRequest.current = requestVersion;
-    improvementHistoryRequest.current += 1;
     try {
-      const package_ = await client.request<PackageDetail>({
+      await client.request<PackageDetail>({
         type: "content.read",
         packageId,
       });
@@ -330,42 +172,13 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         setNotice(uiText("已保留当前页面的未保存修改，请保存或放弃后再切换。"));
         return;
       }
-      if (packageId !== selected) improvementObservationScope.current += 1;
-      const packageFiles = package_.files;
+      authoringWorkspace.close();
       setSelected(packageId);
-      setPackageDetail(package_);
-      setCurrentPackageFiles(packageFiles.map((file) => ({ ...file })));
-      setImprovementView(null);
-      setImprovementHistory([]);
-      setImprovementHistoryView(null);
-      setImprovementStartingFresh(false);
-      improvementSelection.current = null;
-      setImprovementHistoryLoading(false);
-      setImprovementLoading(true);
-      setImprovementRequestFailure(null);
-      setFiles(packageFiles.map((file) => ({ ...file })));
-      setFilesDirty(false);
+      if (packageId === selected && screen === "content")
+        void authoringWorkspace.open();
       setScreen("content");
     } catch (error: unknown) {
       if (packageOpenRequest.current === requestVersion) report(error);
-    }
-  }
-
-  async function savePackage(): Promise<void> {
-    try {
-      const saved = await client.request<PackageDetail>({
-        type: "content.replace",
-        packageId: selected,
-        files,
-      });
-      setPackageDetail(saved);
-      setFiles(saved.files.map((file) => ({ ...file })));
-      setCurrentPackageFiles(saved.files.map((file) => ({ ...file })));
-      setFilesDirty(false);
-      await refresh();
-      setNotice(uiText("内容包当前树已整批保存。"));
-    } catch (error: unknown) {
-      report(error);
     }
   }
 
@@ -388,6 +201,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     try {
       await client.request({ type, packageId });
       await refresh();
+      authoringWorkspace.close();
       setScreen("home");
     } catch (error: unknown) {
       report(error);
@@ -458,258 +272,6 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     }
   }
 
-  async function sendImprovement(message: string): Promise<void> {
-    const selectionVersion = improvementHistoryRequest.current;
-    const observationScope = improvementObservationScope.current;
-    if (filesDirty) {
-      const error = new Error(uiText("请先保存文件编辑，再继续 AI 设定完善。"));
-      report(error);
-      throw error;
-    }
-    setImprovementRequestFailure(null);
-    setNotice("");
-    if (
-      improvementStartingFresh &&
-      typeof improvementSelection.current === "object" &&
-      improvementSelection.current !== null
-    )
-      improvementSelection.current = {
-        ...improvementSelection.current,
-        requestStarted: true,
-      };
-    const selectedConversation = improvementStartingFresh
-      ? null
-      : (improvementHistoryView ?? improvementView);
-    try {
-      const next = await client.request<SettingImprovementView>({
-        type: "setting-improvement.message",
-        packageId: selected,
-        requestId: createClientId("setting-message"),
-        message,
-        continuation:
-          selectedConversation === null
-            ? { kind: "fresh_context" }
-            : {
-                kind: "continue_context",
-                sessionId: selectedConversation.sessionId,
-              },
-      });
-      if (improvementObservationScope.current !== observationScope) return;
-      if (improvementHistoryRequest.current === selectionVersion) {
-        if (
-          selectedConversation !== null &&
-          selectedConversation.sessionId !== improvementView?.sessionId
-        )
-          setImprovementHistoryView(next);
-        else {
-          setImprovementView(next);
-          setImprovementHistoryView(null);
-        }
-        setImprovementStartingFresh(false);
-        improvementSelection.current = next.sessionId;
-      }
-      try {
-        const package_ = await client.request<PackageDetail>({
-          type: "content.read",
-          packageId: selected,
-        });
-        if (improvementObservationScope.current !== observationScope) return;
-        setPackageDetail(package_);
-        if (!filesDirtyRef.current)
-          setFiles(package_.files.map((file) => ({ ...file })));
-        setCurrentPackageFiles(package_.files.map((file) => ({ ...file })));
-        await refresh();
-      } catch (refreshError: unknown) {
-        report(refreshError);
-      }
-    } catch (error: unknown) {
-      setImprovementRequestFailure(
-        error instanceof Error ? error.message : uiText("操作失败"),
-      );
-      report(error);
-      throw error;
-    }
-  }
-
-  async function cancelImprovement(): Promise<void> {
-    const selectedConversation = improvementStartingFresh
-      ? null
-      : (improvementHistoryView ?? improvementView);
-    if (selectedConversation === null) return;
-    setImprovementRequestFailure(null);
-    try {
-      const next = await client.request<SettingImprovementView>({
-        type: "setting-improvement.cancel",
-        sessionId: selectedConversation.sessionId,
-      });
-      if (improvementHistoryView === null) setImprovementView(next);
-      else setImprovementHistoryView(next);
-    } catch (error: unknown) {
-      setImprovementRequestFailure(
-        error instanceof Error ? error.message : uiText("操作失败"),
-      );
-      report(error);
-    }
-  }
-
-  async function selectImprovementSession(sessionId: string): Promise<void> {
-    const requestVersion = improvementHistoryRequest.current + 1;
-    improvementHistoryRequest.current = requestVersion;
-    setImprovementStartingFresh(false);
-    improvementSelection.current = sessionId;
-    if (improvementView?.sessionId === sessionId) {
-      setImprovementHistoryView(null);
-      return;
-    }
-    setImprovementHistoryLoading(true);
-    setImprovementRequestFailure(null);
-    try {
-      const historical = await client.request<SettingImprovementView>({
-        type: "setting-improvement.session.read",
-        packageId: selected,
-        sessionId,
-      });
-      if (improvementHistoryRequest.current !== requestVersion) return;
-      setImprovementHistoryView(historical);
-    } catch (error: unknown) {
-      if (improvementHistoryRequest.current !== requestVersion) return;
-      setImprovementRequestFailure(
-        error instanceof Error ? error.message : uiText("操作失败"),
-      );
-      report(error);
-    } finally {
-      if (improvementHistoryRequest.current === requestVersion)
-        setImprovementHistoryLoading(false);
-    }
-  }
-
-  async function deleteImprovementSession(sessionId: string): Promise<void> {
-    const selectedSessionId = improvementStartingFresh
-      ? null
-      : (improvementHistoryView?.sessionId ??
-        improvementView?.sessionId ??
-        null);
-    const deletingSelected = selectedSessionId === sessionId;
-    const previousSelection = improvementSelection.current;
-    improvementHistoryRequest.current += 1;
-    if (deletingSelected) improvementSelection.current = null;
-    setImprovementHistoryLoading(true);
-    setImprovementRequestFailure(null);
-    try {
-      const next = await client.request<V1SettingImprovementOverview>({
-        type: "setting-improvement.session.delete",
-        packageId: selected,
-        sessionId,
-      });
-      improvementHistoryRequest.current += 1;
-      setImprovementView(next.latest);
-      setImprovementHistory(next.history);
-      if (improvementStartingFresh) {
-        setImprovementHistoryView(null);
-        improvementSelection.current = {
-          kind: "fresh",
-          previousSessionId: next.latest?.sessionId ?? null,
-          requestStarted: false,
-        };
-      } else if (deletingSelected) {
-        setImprovementHistoryView(null);
-        improvementSelection.current = next.latest?.sessionId ?? null;
-      } else if (
-        typeof previousSelection === "string" &&
-        next.history.some(({ sessionId: id }) => id === previousSelection)
-      ) {
-        improvementSelection.current = previousSelection;
-        if (next.latest?.sessionId === previousSelection)
-          setImprovementHistoryView(null);
-      } else {
-        setImprovementHistoryView(null);
-        improvementSelection.current = next.latest?.sessionId ?? null;
-      }
-      setNotice(uiText("对话历史已删除；内容包当前树没有回滚。"));
-    } catch (error: unknown) {
-      improvementHistoryRequest.current += 1;
-      improvementSelection.current = previousSelection;
-      const message =
-        error instanceof Error ? error.message : uiText("操作失败");
-      setImprovementRequestFailure(message);
-      report(error);
-      throw error;
-    } finally {
-      setImprovementHistoryLoading(false);
-    }
-  }
-
-  async function rollbackImprovementFile(
-    sessionId: string,
-    changeSetId: string,
-    path: string,
-  ): Promise<V1SettingImprovementRollbackResult> {
-    if (filesDirty) {
-      const error = new Error(uiText("请先保存或放弃文件编辑中的未保存修改。"));
-      report(error);
-      throw error;
-    }
-    setImprovementRequestFailure(null);
-    setNotice("");
-    let result: V1SettingImprovementRollbackResult;
-    try {
-      result = await client.request<V1SettingImprovementRollbackResult>({
-        type: "setting-improvement.rollback",
-        packageId: selected,
-        sessionId,
-        changeSetId,
-        path,
-      });
-    } catch (error: unknown) {
-      const message =
-        error instanceof Error ? error.message : uiText("操作失败");
-      setImprovementRequestFailure(message);
-      report(error);
-      throw error;
-    }
-    try {
-      const package_ = await client.request<PackageDetail>({
-        type: "content.read",
-        packageId: selected,
-      });
-      setPackageDetail(package_);
-      setFiles(package_.files.map((file) => ({ ...file })));
-      setCurrentPackageFiles(package_.files.map((file) => ({ ...file })));
-      setFilesDirty(false);
-      await refresh();
-    } catch (error: unknown) {
-      const message =
-        error instanceof Error ? error.message : uiText("操作失败");
-      setImprovementRequestFailure(
-        uiText("Runtime 已确认回滚结果，但重新读取内容包失败：{message}", {
-          message,
-        }),
-      );
-    }
-    setNotice(
-      result.status === "rolled_back"
-        ? uiText("已回滚这个文件；对话历史仍然保留。")
-        : uiText("当前文件已是修改前版本。"),
-    );
-    return result;
-  }
-
-  function startFreshImprovementContext(): void {
-    const selectedConversation = improvementHistoryView ?? improvementView;
-    if (selectedConversation?.runStatus === "running") return;
-    improvementHistoryRequest.current += 1;
-    setImprovementHistoryLoading(false);
-    setImprovementHistoryView(null);
-    setImprovementStartingFresh(true);
-    improvementSelection.current = {
-      kind: "fresh",
-      previousSessionId:
-        improvementView?.sessionId ?? improvementHistory[0]?.sessionId ?? null,
-      requestStarted: false,
-    };
-    setImprovementRequestFailure(null);
-  }
-
   function openPromptPreview(target?: {
     presetId: string;
     revision: string;
@@ -720,6 +282,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       setNotice(uiText("请先保存并启用一份模型配置。"));
       return;
     }
+    authoringWorkspace.close();
     setScreen("preview");
   }
 
@@ -727,7 +290,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     if (
       creatingWorldRef.current ||
       filesDirtyRef.current ||
-      (improvementHistoryView ?? improvementView)?.runStatus === "running"
+      authoring.view?.runStatus === "running"
     )
       return;
     const source =
@@ -738,8 +301,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
           );
     if (
       source?.status !== "usable" ||
-      improvementLoading ||
-      improvementHistoryLoading
+      (screen === "content" && authoring.loading)
     )
       return;
     if (workspace?.model.configured !== true) {
@@ -800,6 +362,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
 
   function openWorld(id: string): void {
     packageOpenRequest.current += 1;
+    authoringWorkspace.close();
     setWorldId(id);
     setScreen("world");
   }
@@ -852,9 +415,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   );
   const selectedPackageDetail =
     packageDetail?.localId === selected ? packageDetail : null;
-  const displayedImprovementView = improvementStartingFresh
-    ? null
-    : (improvementHistoryView ?? improvementView);
+  const displayedImprovementView = authoring.view;
   const improvementActive = displayedImprovementView?.runStatus === "running";
   const selectedWorld = workspace.worlds.find(
     (world) => world.worldId === worldId,
@@ -889,7 +450,10 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       if (selectedPackage === undefined) void createPackage();
       else void openPackage(selectedPackage.localId);
     } else if (next === "preview") openPromptPreview();
-    else setScreen(next);
+    else {
+      authoringWorkspace.close();
+      setScreen(next);
+    }
   }
 
   const worldContent =
@@ -920,33 +484,25 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       <SettingImprovementPanel
         showWorkspaceBack={false}
         key={selected}
-        onPreview={() =>
-          client.request({
-            type: "setting-improvement.preview",
-            packageId: selected,
-            ...(displayedImprovementView === null
-              ? {}
-              : { sessionId: displayedImprovementView.sessionId }),
-          })
-        }
+        onPreview={() => authoringWorkspace.preview()}
         packageName={selectedPackage?.title ?? selected}
         modelConfigured={workspace.model.configured}
         hasUnsavedFileDraft={filesDirty}
-        loading={
-          improvementLoading || improvementHistoryLoading || creatingWorld
-        }
+        loading={authoring.loading || creatingWorld}
         onCreateWorld={() => void createWorld()}
         onNavigationLockChange={setChildNavigationLocked}
         view={displayedImprovementView}
-        history={improvementHistory}
+        history={authoring.target?.history ?? []}
         latestSessionId={
-          improvementView?.sessionId ?? improvementHistory[0]?.sessionId ?? null
+          authoring.target?.latest?.sessionId ??
+          authoring.target?.history[0]?.sessionId ??
+          null
         }
-        notice={notice}
+        notice={notice || authoring.notice}
         requestFailure={
-          improvementRequestFailure ?? improvementObservationFailure
+          authoring.requestFailure ?? authoring.observationFailure
         }
-        now={improvementNow}
+        now={authoring.now}
         contentEditor={{
           scriptPermission: (
             <PackageScriptPermissionControl
@@ -964,15 +520,14 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             "needs_repair",
           issues: selectedPackageDetail?.issues ?? [],
           dirty: filesDirty,
-          onFilesChange: (nextFiles) => {
-            setFiles(nextFiles);
-            setFilesDirty(true);
+          onFilesChange: (nextFiles) => authoringWorkspace.editFiles(nextFiles),
+          onSave: () => {
+            setNotice("");
+            void authoringWorkspace.saveFiles();
           },
-          onSave: () => void savePackage(),
           onReset: () => {
-            setFiles(currentPackageFiles.map((file) => ({ ...file })));
-            setFilesDirty(false);
-            setNotice(uiText("已放弃未保存修改；内容包当前树未改变。"));
+            setNotice("");
+            authoringWorkspace.resetFiles();
           },
           onCopy: () => void contentCommand("content.copy"),
           onExport: () => void exportPackage(),
@@ -980,12 +535,21 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
           title: selectedPackage?.title ?? selected,
           onRename: (name) => void renamePackage(name),
         }}
-        onSend={sendImprovement}
-        onCancel={cancelImprovement}
-        onFreshContext={startFreshImprovementContext}
-        onSelectSession={selectImprovementSession}
-        onDeleteSession={deleteImprovementSession}
-        onRollbackFile={rollbackImprovementFile}
+        onSend={(message) => {
+          setNotice("");
+          return authoringWorkspace.send(message);
+        }}
+        onCancel={() => authoringWorkspace.cancel()}
+        onFreshContext={() => authoringWorkspace.startFresh()}
+        onSelectSession={(id) => authoringWorkspace.selectSession(id)}
+        onDeleteSession={(id) => {
+          setNotice("");
+          return authoringWorkspace.deleteSession(id);
+        }}
+        onRollbackFile={(id, change, path) => {
+          setNotice("");
+          return authoringWorkspace.rollbackFile(id, change, path);
+        }}
         onConfigureModel={() => navigate("model")}
         onBack={() => navigate("home")}
       />

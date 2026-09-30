@@ -4,6 +4,7 @@ import { PackageScriptPermissionControl } from "./PackageScriptPermissionControl
 import { PlayerValue } from "./PlayerViewValue.tsx";
 import { useConversationComposer } from "./useConversationComposer.ts";
 import type { ObserveConversation } from "./ConversationObserver.ts";
+import { useAuthoringWorkspace } from "./useAuthoringWorkspace.ts";
 import { uiText } from "./i18n.ts";
 import {
   Fragment,
@@ -25,10 +26,7 @@ import type {
   V1PlayTimelineItem,
   V1PlayTimelinePage,
   V1Request,
-  V1SettingImprovementRollbackResult,
   V1WorldRevisionEpochView,
-  V1WorldRevisionOverview,
-  V1WorldRevisionView,
 } from "../protocol/v1.ts";
 import {
   defaultAppReadingPreferences,
@@ -60,10 +58,7 @@ import {
 import { projectUncoveredPlayerViews } from "./PlayerViewFallback.ts";
 import { ModelUsageBreakdown } from "./ModelUsageBreakdown.tsx";
 import { PlayRunProgress } from "./PlayRunProgress.tsx";
-import {
-  SettingImprovementPanel,
-  type SettingImprovementView,
-} from "./SettingImprovementPanel.tsx";
+import { SettingImprovementPanel } from "./SettingImprovementPanel.tsx";
 import {
   activePlayExchangeId,
   createPlayRunProgress,
@@ -222,32 +217,13 @@ export function WorldPage({
   const [authoringLocked, setAuthoringLocked] = useState(false);
   const [controlDirty, setControlDirty] = useState(false);
   const [controlPreview, setControlPreview] = useState<unknown>(null);
-  const [revisionOverview, setRevisionOverview] =
-    useState<V1WorldRevisionOverview | null>(null);
-  const [revisionView, setRevisionView] = useState<V1WorldRevisionView | null>(
-    null,
-  );
-  const [revisionFiles, setRevisionFiles] = useState<ContentTreeFile[]>([]);
-  const [savedRevisionFiles, setSavedRevisionFiles] = useState<
-    ContentTreeFile[]
-  >([]);
-  const [revisionLoading, setRevisionLoading] = useState(false);
-  const [revisionStartingFresh, setRevisionStartingFresh] = useState(false);
-  const [revisionRequestFailure, setRevisionRequestFailure] = useState<
-    string | null
-  >(null);
-  const [revisionNotice, setRevisionNotice] = useState("");
-  const [revisionApplying, setRevisionApplying] = useState(false);
-  const [revisionNow, setRevisionNow] = useState(Date.now());
-  const revisionDirtyRef = useRef(false);
-  const revisionLockRequest = useRef<Promise<void> | null>(null);
-  const revisionSelectionVersion = useRef(0);
-  const [revisionObservationFailure, setRevisionObservationFailure] = useState<
-    string | null
-  >(null);
-  const revisionFreshRequest = useRef<{
-    previousSessionId: string | null;
-  } | null>(null);
+  const { workspace: revisionWorkspace, state: authoring } =
+    useAuthoringWorkspace(client, "revision", worldId, dialog === "revision");
+  const revisionOverview =
+    dialog === "revision" ? (authoring.target?.revision ?? null) : null;
+  const revisionFiles = authoring.files;
+  const savedRevisionFiles = authoring.baseline;
+  const revisionDirty = authoring.dirty;
   const [aiReading, setAiReading] = useState<V1PlayContextReadingView | null>(
     null,
   );
@@ -261,8 +237,6 @@ export function WorldPage({
   const [composerHeight, setComposerHeight] = useState(72);
   const worldHead = world?.head;
   const openedWorldId = world?.worldId;
-  const revisionDirty = !sameTextFiles(savedRevisionFiles, revisionFiles);
-  revisionDirtyRef.current = revisionDirty;
   useEffect(() => {
     onNavigationLockChange?.(revisionDirty || controlDirty || authoringLocked);
     return () => onNavigationLockChange?.(false);
@@ -503,103 +477,22 @@ export function WorldPage({
   ]);
 
   useEffect(() => {
-    if (dialog !== "revision") return;
-    let active = true;
-    const selectedSessionId = revisionStartingFresh
-      ? undefined
-      : revisionView?.sessionId;
-    if (client.observeConversation === undefined) return;
-    const unsubscribe = client.observeConversation(
-      {
-        kind: "revision",
-        id: worldId,
-        ...(selectedSessionId === undefined
-          ? {}
-          : { sessionId: selectedSessionId }),
-      },
-      async (observation, durableChanged) => {
-        if (observation.kind !== "revision") return;
-        const status = observation.value;
-        try {
-          if (!active) return;
-          const selectedStatus = status.selected;
-          if (!revisionStartingFresh && selectedStatus !== null) {
-            setRevisionView((current) =>
-              current?.sessionId !== selectedStatus.sessionId
-                ? current
-                : {
-                    ...current,
-                    runStatus: selectedStatus.runStatus,
-                    progress: selectedStatus.progress,
-                  },
-            );
-          }
-          setRevisionNow(Date.now());
-          if (!durableChanged) return;
-          const next = await requestRuntime<V1WorldRevisionOverview>(client, {
-            type: "world.revision.overview",
-            worldId,
-          });
-          if (!active) return;
-          setRevisionOverview(next);
-          const selectedView =
-            selectedSessionId !== undefined &&
-            selectedSessionId !== next.latest?.sessionId
-              ? await requestRuntime<V1WorldRevisionView>(client, {
-                  type: "world.revision.session.read",
-                  worldId,
-                  sessionId: selectedSessionId,
-                })
-              : next.latest;
-          if (!active) return;
-          const fresh = revisionFreshRequest.current;
-          if (
-            fresh !== null &&
-            next.latest !== null &&
-            next.latest.sessionId !== fresh.previousSessionId
-          ) {
-            revisionFreshRequest.current = null;
-            setRevisionStartingFresh(false);
-            setRevisionView(next.latest);
-          } else if (!revisionStartingFresh && fresh === null)
-            setRevisionView(selectedView);
-          if (!revisionDirtyRef.current && next.epoch?.locked === true) {
-            setRevisionFiles(cloneTextFiles(next.epoch.files));
-            setSavedRevisionFiles(cloneTextFiles(next.epoch.files));
-          }
-          setWorld((current) =>
-            current === null
-              ? null
-              : {
-                  ...current,
-                  worldRevision:
-                    next.epoch?.locked === true ? next.epoch : null,
-                },
-          );
-        } catch (error: unknown) {
-          if (active) throw error;
-        }
-      },
-      (connection) => {
-        if (active)
-          setRevisionObservationFailure(
-            connection === "connected"
-              ? null
-              : uiText(
-                  connection === "reconnecting"
-                    ? "对话连接已断开，正在重新连接…"
-                    : "对话同步失败，请重新打开此页面。",
-                ),
-          );
-      },
-    );
-    const timer = window.setInterval(() => setRevisionNow(Date.now()), 1000);
-    return () => {
-      active = false;
-      unsubscribe();
-      window.clearInterval(timer);
-    };
-  }, [client, dialog, revisionStartingFresh, revisionView?.sessionId, worldId]);
+    let previous = revisionWorkspace.getSnapshot().target?.revision;
+    return revisionWorkspace.subscribe(() => {
+      const overview = revisionWorkspace.getSnapshot().target?.revision;
+      if (overview === undefined || overview === previous) return;
+      previous = overview;
+      setWorld((current) =>
+        current === null
+          ? null
+          : {
+              ...current,
+              worldRevision:
+                overview.epoch?.locked === true ? overview.epoch : null,
+            },
+      );
+    });
+  }, [revisionWorkspace]);
 
   useLayoutEffect(() => {
     const textarea = composerTextareaRef.current;
@@ -966,306 +859,20 @@ export function WorldPage({
     }
   }
 
-  async function openRevision(path?: string): Promise<void> {
+  function openRevision(path?: string): void {
     if (path !== undefined) setSelectedDocument(path);
     setDialog("revision");
     setRightRailOpen(false);
     setReadingOpen(false);
-    setRevisionLoading(true);
-    setRevisionRequestFailure(null);
-    try {
-      const next = await requestRuntime<V1WorldRevisionOverview>(client, {
-        type: "world.revision.overview",
-        worldId,
-      });
-      setRevisionOverview(next);
-      setRevisionView(next.latest);
-      setRevisionStartingFresh(next.latest === null);
-      const [state, control] = next.epoch?.locked
-        ? [[], []]
-        : await Promise.all([
-            requestRuntime<ContentTreeFile[]>(client, {
-              type: "world.surface.read",
-              worldId,
-              surface: "state",
-            }),
-            requestRuntime<ContentTreeFile[]>(client, {
-              type: "world.surface.read",
-              worldId,
-              surface: "control",
-            }),
-          ]);
-      const files = next.epoch?.locked
-        ? next.epoch.files
-        : [
-            ...state.map((file) => ({ ...file, path: `state/${file.path}` })),
-            ...control.map((file) => ({
-              ...file,
-              path: `control/${file.path}`,
-            })),
-          ];
-      setRevisionFiles(cloneTextFiles(files));
-      setSavedRevisionFiles(cloneTextFiles(files));
-      setWorld((current) =>
-        current === null
-          ? null
-          : {
-              ...current,
-              worldRevision: next.epoch?.locked === true ? next.epoch : null,
-            },
-      );
-      setRevisionNotice(
-        uiText(
-          next.epoch?.locked
-            ? "世界已锁定到这份修订；关闭页面也会保留工作树。"
-            : "浏览不会锁定世界；首次编辑或发送消息后才会锁定。",
-        ),
-      );
-    } catch (reason: unknown) {
-      setDialog(null);
-      setFeedback({ kind: "error", text: errorMessage(reason) });
-    } finally {
-      setRevisionLoading(false);
-    }
-  }
-
-  function changeRevisionFiles(files: ContentTreeFile[]): void {
-    setRevisionFiles(files);
-    if (
-      sameTextFiles(savedRevisionFiles, files) ||
-      activeRevisionEpoch?.locked ||
-      revisionLockRequest.current !== null
-    )
-      return;
-    setRevisionLoading(true);
-    setRevisionRequestFailure(null);
-    revisionLockRequest.current = (async () => {
-      try {
-        const next = await requestRuntime<V1WorldRevisionOverview>(client, {
-          type: "world.revision.open",
-          worldId,
-        });
-        setRevisionOverview(next);
-        setWorld((current) =>
-          current === null
-            ? null
-            : {
-                ...current,
-                worldRevision: next.epoch?.locked ? next.epoch : null,
-              },
-        );
-        setRevisionNotice(
-          uiText("世界已锁定到这份修订；关闭页面也会保留工作树。"),
-        );
-      } catch (reason: unknown) {
-        setRevisionRequestFailure(errorMessage(reason));
-      } finally {
-        revisionLockRequest.current = null;
-        setRevisionLoading(false);
-      }
-    })();
-  }
-
-  async function saveRevisionFiles(): Promise<void> {
-    const epoch = revisionOverview?.epoch;
-    if (!revisionDirty) return;
-    if (!epoch?.locked) {
-      changeRevisionFiles(revisionFiles);
-      return;
-    }
-    setRevisionLoading(true);
-    setRevisionRequestFailure(null);
-    try {
-      if (!sameTextFiles(savedRevisionFiles, epoch.files)) {
-        throw new Error(
-          uiText("世界已在浏览期间发生变化；请重置草稿并重新编辑。"),
-        );
-      }
-      const next = await requestRuntime<V1WorldRevisionOverview>(client, {
-        type: "world.revision.files.replace",
-        worldId,
-        epochId: epoch.epochId,
-        expectedRevision: epoch.revision,
-        files: revisionFiles,
-      });
-      setRevisionOverview(next);
-      if (next.epoch !== null) {
-        setRevisionFiles(cloneTextFiles(next.epoch.files));
-        setSavedRevisionFiles(cloneTextFiles(next.epoch.files));
-      }
-      setRevisionNotice(
-        uiText("手动修改已保存到修订工作树，可以继续编辑或回滚。"),
-      );
-    } catch (reason: unknown) {
-      setRevisionRequestFailure(errorMessage(reason));
-    } finally {
-      setRevisionLoading(false);
-    }
-  }
-
-  async function sendRevisionMessage(message: string): Promise<void> {
-    if (revisionDirty) return;
-    const selectionVersion = revisionSelectionVersion.current;
-    const selected = revisionStartingFresh ? null : revisionView;
-    if (selected === null)
-      revisionFreshRequest.current = {
-        previousSessionId: revisionOverview?.latest?.sessionId ?? null,
-      };
-    setRevisionRequestFailure(null);
-    setRevisionNotice("");
-    try {
-      const nextView = await requestRuntime<V1WorldRevisionView>(client, {
-        type: "world.revision.message",
-        worldId,
-        requestId: createClientId("world-revision-message"),
-        message,
-        continuation:
-          selected === null
-            ? { kind: "fresh_context" }
-            : {
-                kind: "continue_context",
-                sessionId: selected.sessionId,
-              },
-      });
-      if (revisionSelectionVersion.current === selectionVersion) {
-        revisionFreshRequest.current = null;
-        setRevisionStartingFresh(false);
-        setRevisionView(nextView);
-      }
-      const next = await requestRuntime<V1WorldRevisionOverview>(client, {
-        type: "world.revision.overview",
-        worldId,
-      });
-      setRevisionOverview(next);
-      if (next.epoch !== null && !revisionDirtyRef.current) {
-        setRevisionFiles(cloneTextFiles(next.epoch.files));
-        setSavedRevisionFiles(cloneTextFiles(next.epoch.files));
-      }
-    } catch (reason: unknown) {
-      setRevisionRequestFailure(errorMessage(reason));
-      throw reason;
-    }
-  }
-
-  async function cancelRevisionMessage(): Promise<void> {
-    if (revisionView === null) return;
-    try {
-      setRevisionView(
-        await requestRuntime<V1WorldRevisionView>(client, {
-          type: "world.revision.cancel",
-          sessionId: revisionView.sessionId,
-        }),
-      );
-    } catch (reason: unknown) {
-      setRevisionRequestFailure(errorMessage(reason));
-    }
-  }
-
-  async function selectRevisionSession(sessionId: string): Promise<void> {
-    const selectionVersion = ++revisionSelectionVersion.current;
-    revisionFreshRequest.current = null;
-    setRevisionLoading(true);
-    setRevisionRequestFailure(null);
-    try {
-      const selected = await requestRuntime<V1WorldRevisionView>(client, {
-        type: "world.revision.session.read",
-        worldId,
-        sessionId,
-      });
-      if (revisionSelectionVersion.current !== selectionVersion) return;
-      setRevisionView(selected);
-      setRevisionStartingFresh(false);
-    } catch (reason: unknown) {
-      setRevisionRequestFailure(errorMessage(reason));
-    } finally {
-      setRevisionLoading(false);
-    }
-  }
-
-  async function deleteRevisionSession(sessionId: string): Promise<void> {
-    setRevisionLoading(true);
-    setRevisionRequestFailure(null);
-    try {
-      const next = await requestRuntime<V1WorldRevisionOverview>(client, {
-        type: "world.revision.session.delete",
-        worldId,
-        sessionId,
-      });
-      setRevisionOverview(next);
-      if (revisionView?.sessionId === sessionId) setRevisionView(next.latest);
-      setRevisionStartingFresh(next.latest === null);
-    } catch (reason: unknown) {
-      setRevisionRequestFailure(errorMessage(reason));
-    } finally {
-      setRevisionLoading(false);
-    }
-  }
-
-  async function rollbackRevisionFile(
-    _sessionId: string,
-    changeSetId: string,
-    path: string,
-  ): Promise<V1SettingImprovementRollbackResult> {
-    const epoch = revisionOverview?.epoch;
-    if (!epoch?.locked)
-      throw new Error("The world-revision epoch is no longer active");
-    setRevisionRequestFailure(null);
-    try {
-      const result = await requestRuntime<V1SettingImprovementRollbackResult>(
-        client,
-        {
-          type: "world.revision.rollback",
-          worldId,
-          epochId: epoch.epochId,
-          changeSetId,
-          path,
-        },
-      );
-      const next = await requestRuntime<V1WorldRevisionOverview>(client, {
-        type: "world.revision.overview",
-        worldId,
-      });
-      setRevisionOverview(next);
-      if (next.epoch !== null) {
-        setRevisionFiles(cloneTextFiles(next.epoch.files));
-        setSavedRevisionFiles(cloneTextFiles(next.epoch.files));
-      }
-      setRevisionNotice(
-        result.status === "already_rolled_back"
-          ? uiText("这个文件已经是该次修改前的版本。")
-          : uiText("已回滚所选文件；其他修订保持不变。"),
-      );
-      return result;
-    } catch (reason: unknown) {
-      setRevisionRequestFailure(errorMessage(reason));
-      throw reason;
-    }
   }
 
   async function applyRevision(): Promise<void> {
-    const epoch = revisionOverview?.epoch;
-    if (
-      epoch === null ||
-      epoch === undefined ||
-      !epoch.locked ||
-      revisionDirty ||
-      epoch.diagnostics.length > 0
-    )
-      return;
-    setRevisionApplying(true);
-    setRevisionRequestFailure(null);
+    const result = await revisionWorkspace.finish("apply");
+    if (result === null) return;
+    revisionWorkspace.close();
+    setDialog(null);
+    if (result.changed) setForceFreshContext(true);
     try {
-      await requestRuntime<V1WorldRevisionOverview>(client, {
-        type: "world.revision.apply",
-        worldId,
-        epochId: epoch.epochId,
-        expectedRevision: epoch.revision,
-      });
-      setDialog(null);
-      setRevisionOverview(null);
-      setRevisionFiles([]);
-      setSavedRevisionFiles([]);
-      if (epoch.diff.length > 0) setForceFreshContext(true);
       await refreshWorld(false);
       setFeedback({
         kind: "status",
@@ -1274,44 +881,41 @@ export function WorldPage({
         ),
       });
     } catch (reason: unknown) {
-      setRevisionRequestFailure(errorMessage(reason));
-    } finally {
-      setRevisionApplying(false);
+      setFeedback({
+        kind: "error",
+        text: uiText(
+          "世界修订已应用并解锁，但刷新世界失败。请重新打开世界：{message}",
+          { message: errorMessage(reason) },
+        ),
+      });
     }
   }
 
   async function discardRevision(): Promise<void> {
-    const epoch = revisionOverview?.epoch;
     if (
-      epoch === null ||
-      epoch === undefined ||
-      !epoch.locked ||
       !globalThis.confirm(
         uiText("放弃这次世界修订？所有尚未应用的手动和 AI 修改都会丢失。"),
       )
     )
       return;
-    setRevisionApplying(true);
-    setRevisionRequestFailure(null);
+    const result = await revisionWorkspace.finish("discard");
+    if (result === null) return;
+    revisionWorkspace.close();
+    setDialog(null);
     try {
-      await requestRuntime<V1WorldRevisionOverview>(client, {
-        type: "world.revision.discard",
-        worldId,
-        epochId: epoch.epochId,
-      });
-      setDialog(null);
-      setRevisionOverview(null);
-      setRevisionFiles([]);
-      setSavedRevisionFiles([]);
       await refreshWorld(false);
       setFeedback({
         kind: "status",
         text: uiText("这次世界修订已放弃，原世界保持不变并已解锁。"),
       });
     } catch (reason: unknown) {
-      setRevisionRequestFailure(errorMessage(reason));
-    } finally {
-      setRevisionApplying(false);
+      setFeedback({
+        kind: "error",
+        text: uiText(
+          "这次世界修订已放弃，原世界保持不变并已解锁，但刷新世界失败。请重新打开世界：{message}",
+          { message: errorMessage(reason) },
+        ),
+      });
     }
   }
   async function deriveWorld(sourceHead = world?.head): Promise<void> {
@@ -1481,36 +1085,25 @@ export function WorldPage({
 
   if (dialog === "revision") {
     const epoch = activeRevisionEpoch;
-    const panelView: SettingImprovementView | null =
-      revisionStartingFresh || revisionView === null
-        ? null
-        : {
-            ...revisionView,
-            packageId: worldId,
-            legacyDraft: null,
-          };
+    const panelView = authoring.view;
     return (
       <SettingImprovementPanel
         onNavigationLockChange={setAuthoringLocked}
         key={worldId}
-        onPreview={() =>
-          requestRuntime(client, {
-            type: "world.revision.preview",
-            worldId,
-            ...(panelView === null ? {} : { sessionId: panelView.sessionId }),
-          })
-        }
+        onPreview={() => revisionWorkspace.preview()}
         target="world-revision"
         packageName={worldTitle}
         modelConfigured={modelConfigured}
         hasUnsavedFileDraft={revisionDirty}
-        loading={revisionLoading}
+        loading={authoring.loading}
         view={panelView}
         history={revisionOverview?.history ?? []}
         latestSessionId={revisionOverview?.latest?.sessionId ?? null}
-        notice={revisionNotice}
-        requestFailure={revisionRequestFailure ?? revisionObservationFailure}
-        now={revisionNow}
+        notice={authoring.notice}
+        requestFailure={
+          authoring.requestFailure ?? authoring.observationFailure
+        }
+        now={authoring.now}
         contentEditor={{
           mode: "world-revision",
           files: revisionFiles,
@@ -1536,38 +1129,27 @@ export function WorldPage({
               )
               .map(({ path }) => path) ?? [],
           dirty: revisionDirty,
-          onFilesChange: changeRevisionFiles,
-          onSave: () => void saveRevisionFiles(),
-          onReset: () => {
-            const files = epoch?.files ?? savedRevisionFiles;
-            setRevisionFiles(cloneTextFiles(files));
-            setSavedRevisionFiles(cloneTextFiles(files));
-            setRevisionRequestFailure(null);
-          },
+          onFilesChange: (files) => revisionWorkspace.editFiles(files),
+          onSave: () => void revisionWorkspace.saveFiles(),
+          onReset: () => revisionWorkspace.resetFiles(),
           onCopy: () => undefined,
           onExport: () => undefined,
           onDelete: () => undefined,
           title: worldTitle,
           onRename: () => undefined,
         }}
-        onSend={sendRevisionMessage}
-        onCancel={cancelRevisionMessage}
-        onFreshContext={() => {
-          revisionSelectionVersion.current += 1;
-          revisionFreshRequest.current = null;
-          setRevisionStartingFresh(true);
-          setRevisionView(null);
-          setRevisionRequestFailure(null);
-        }}
-        onSelectSession={selectRevisionSession}
-        onDeleteSession={deleteRevisionSession}
-        onRollbackFile={rollbackRevisionFile}
+        onSend={(message) => revisionWorkspace.send(message)}
+        onCancel={() => revisionWorkspace.cancel()}
+        onFreshContext={() => revisionWorkspace.startFresh()}
+        onSelectSession={(id) => revisionWorkspace.selectSession(id)}
+        onDeleteSession={(id) => revisionWorkspace.deleteSession(id)}
+        onRollbackFile={(id, change, path) =>
+          revisionWorkspace.rollbackFile(id, change, path)
+        }
         onConfigureModel={onConfigureModel}
         onBack={() => {
-          revisionSelectionVersion.current += 1;
-          revisionFreshRequest.current = null;
+          revisionWorkspace.close();
           setDialog(null);
-          setRevisionRequestFailure(null);
           void refreshWorld(false);
         }}
         {...(epoch?.locked === true ||
@@ -1580,7 +1162,7 @@ export function WorldPage({
                   epoch?.locked === true &&
                   modelConfigured &&
                   epoch.diagnostics.length === 0,
-                applying: revisionApplying,
+                applying: authoring.applying,
                 changes: epoch?.changes ?? [],
                 sealedEpochs: revisionOverview?.sealedEpochs ?? [],
                 onApply: applyRevision,
@@ -3061,28 +2643,6 @@ function selectedStateDocument(
   return state.some(({ path }) => path === current)
     ? current
     : (state[0]?.path ?? "");
-}
-
-function cloneTextFiles(files: readonly ContentTreeFile[]): ContentTreeFile[] {
-  return files.map((file) => ({ ...file }));
-}
-
-function sameTextFiles(
-  left: readonly ContentTreeFile[],
-  right: readonly ContentTreeFile[],
-): boolean {
-  const byPath = new Map(right.map((file) => [file.path, file]));
-  return (
-    left.length === right.length &&
-    left.every((file) => {
-      const candidate = byPath.get(file.path);
-      return (
-        candidate?.path === file.path &&
-        candidate.contents === file.contents &&
-        candidate.encoding === file.encoding
-      );
-    })
-  );
 }
 
 function errorMessage(reason: unknown): string {

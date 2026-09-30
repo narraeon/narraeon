@@ -12,7 +12,7 @@ export function AuthoringPromptPreview({
   onPreview,
 }: {
   requests: V1AuthoringRequestPreview[];
-  onPreview?: () => Promise<Compilation>;
+  onPreview?: () => Promise<Compilation | null>;
 }) {
   const zh = getWebLocale() === "zh-CN";
   const [candidate, setCandidate] = useState<Compilation | null>(null);
