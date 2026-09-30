@@ -1,5 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
-import { rm } from "node:fs/promises";
+import { expect, type Page } from "@playwright/test";
+import { test } from "../support/isolatedRuntimeTest.ts";
 import { createServer, type Server } from "node:http";
 
 import type { V1Request } from "../../src/protocol/v1.ts";
@@ -11,12 +11,9 @@ const providerRequests: string[] = [];
 
 test.setTimeout(60_000);
 
+test.use({ runtimeScope: "edit-history" });
+
 test.beforeAll(async () => {
-  await Promise.all(
-    [".test-data/e2e", ".test-data/e2e-config", ".test-data/e2e-log"].map(
-      (path) => rm(path, { force: true, recursive: true }),
-    ),
-  );
   provider = createServer((request, response) => {
     request.setEncoding("utf8");
     let body = "";
@@ -51,6 +48,7 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
+  if (provider === undefined) return;
   await new Promise<void>((resolve, reject) =>
     provider.close((error) =>
       error === undefined ? resolve() : reject(error),

@@ -1,5 +1,5 @@
-import { expect, test, type Locator } from "@playwright/test";
-import { rm } from "node:fs/promises";
+import { expect, type Locator } from "@playwright/test";
+import { test } from "../support/isolatedRuntimeTest.ts";
 import { createServer, type Server } from "node:http";
 
 import { createZip } from "../support/createZip.ts";
@@ -34,12 +34,9 @@ async function expectCanScrollVertically(locator: Locator): Promise<void> {
   expect(result?.scrollTop).toBe(result?.maximum);
 }
 
+test.use({ runtimeScope: "workbench" });
+
 test.beforeAll(async () => {
-  await Promise.all(
-    [".test-data/e2e", ".test-data/e2e-config", ".test-data/e2e-log"].map(
-      (path) => rm(path, { force: true, recursive: true }),
-    ),
-  );
   provider = createServer((request, response) => {
     if (request.method === "GET" && request.url?.endsWith("/models")) {
       response.writeHead(200, { "content-type": "application/json" });
@@ -106,6 +103,7 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
+  if (provider === undefined) return;
   await new Promise<void>((resolve, reject) =>
     provider.close((error) =>
       error === undefined ? resolve() : reject(error),
