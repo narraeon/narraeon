@@ -872,13 +872,23 @@ export function WorldPage({
     revisionWorkspace.close();
     setDialog(null);
     if (result.changed) setForceFreshContext(true);
-    await refreshWorld(false);
-    setFeedback({
-      kind: "status",
-      text: uiText(
-        "世界修订已应用并解锁。再次继续原对话时，AI 会先重新读取当前世界。",
-      ),
-    });
+    try {
+      await refreshWorld(false);
+      setFeedback({
+        kind: "status",
+        text: uiText(
+          "世界修订已应用并解锁。再次继续原对话时，AI 会先重新读取当前世界。",
+        ),
+      });
+    } catch (reason: unknown) {
+      setFeedback({
+        kind: "error",
+        text: uiText(
+          "世界修订已应用并解锁，但刷新世界失败。请重新打开世界：{message}",
+          { message: errorMessage(reason) },
+        ),
+      });
+    }
   }
 
   async function discardRevision(): Promise<void> {
@@ -892,11 +902,21 @@ export function WorldPage({
     if (result === null) return;
     revisionWorkspace.close();
     setDialog(null);
-    await refreshWorld(false);
-    setFeedback({
-      kind: "status",
-      text: uiText("这次世界修订已放弃，原世界保持不变并已解锁。"),
-    });
+    try {
+      await refreshWorld(false);
+      setFeedback({
+        kind: "status",
+        text: uiText("这次世界修订已放弃，原世界保持不变并已解锁。"),
+      });
+    } catch (reason: unknown) {
+      setFeedback({
+        kind: "error",
+        text: uiText(
+          "这次世界修订已放弃，原世界保持不变并已解锁，但刷新世界失败。请重新打开世界：{message}",
+          { message: errorMessage(reason) },
+        ),
+      });
+    }
   }
   async function deriveWorld(sourceHead = world?.head): Promise<void> {
     if (world === null) return;

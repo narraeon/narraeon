@@ -453,6 +453,79 @@ describe("世界游玩页面", () => {
     ).toBeGreaterThan(0);
   });
 
+  test.each(["apply", "discard"] as const)(
+    "世界修订 %s 成功后读取失败，明确提示刷新失败且不重复发布",
+    async (action) => {
+      vi.stubGlobal(
+        "confirm",
+        vi.fn(() => true),
+      );
+      const epoch = worldRevisionEpoch([]);
+      let finished = false;
+      const client = {
+        request: vi.fn((request: V1Request): Promise<unknown> => {
+          if (request.type === "world.read") {
+            if (finished)
+              return Promise.reject(new Error("refresh unavailable"));
+            return Promise.resolve({
+              ...worldView(null),
+              worldRevision: epoch,
+            });
+          }
+          if (request.type === "world.revision.overview")
+            return Promise.resolve(worldRevisionOverview(epoch));
+          if (request.type === `world.revision.${action}`) {
+            finished = true;
+            return Promise.resolve(
+              worldRevisionOverview({
+                ...epoch,
+                locked: false,
+                lifecycle: action === "apply" ? "applied" : "discarded",
+              }),
+            );
+          }
+          if (request.type === "world.play-decorations.read")
+            return Promise.resolve({
+              head: "commit:3",
+              artifacts: [],
+              extensions: [],
+              artifactDebug: [],
+            });
+          if (request.type === "artifacts.debug") return Promise.resolve([]);
+          return Promise.reject(
+            new Error(`Unexpected request: ${request.type}`),
+          );
+        }),
+      };
+      renderWorld(client);
+      await screen.findByRole("heading", { name: "宿舍世界" });
+      fireEvent.click(screen.getByRole("button", { name: "世界" }));
+      fireEvent.click(screen.getByRole("button", { name: "修订当前世界" }));
+      await screen.findByRole("heading", { name: /宿舍世界.*世界修订/u });
+      const button = screen.getByRole<HTMLButtonElement>("button", {
+        name: action === "apply" ? "应用并解锁" : "放弃",
+      });
+      await waitFor(() => expect(button.disabled).toBe(false));
+      fireEvent.click(button);
+      const expected =
+        action === "apply"
+          ? "世界修订已应用并解锁，但刷新世界失败。请重新打开世界：refresh unavailable"
+          : "这次世界修订已放弃，原世界保持不变并已解锁，但刷新世界失败。请重新打开世界：refresh unavailable";
+      expect(await screen.findByRole("alert")).toHaveProperty(
+        "textContent",
+        expected,
+      );
+      expect(
+        screen.queryByRole("heading", { name: /宿舍世界.*世界修订/u }),
+      ).toBeNull();
+      expect(
+        client.request.mock.calls.filter(
+          ([request]) => request.type === `world.revision.${action}`,
+        ),
+      ).toHaveLength(1);
+    },
+  );
+
   test("世界修订把手动编辑、历史、应用和游玩锁放在同一工作区", async () => {
     const chain = playChainView(
       "play-chain-correction",

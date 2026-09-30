@@ -1805,6 +1805,10 @@ const worldRevisionEnglishMessages: Record<string, string> = {
     "The selected file was rolled back; other revision changes remain.",
   "世界修订已应用并解锁。再次继续原对话时，AI 会先重新读取当前世界。":
     "The world revision was applied and unlocked. Continuing the same conversation later requires the model to read the current world again.",
+  "世界修订已应用并解锁，但刷新世界失败。请重新打开世界：{message}":
+    "The world revision was applied and unlocked, but refreshing the world failed. Please reopen the world: {message}",
+  "这次世界修订已放弃，原世界保持不变并已解锁，但刷新世界失败。请重新打开世界：{message}":
+    "This world revision was discarded. The original world is unchanged and unlocked, but refreshing failed. Please reopen the world: {message}",
   "放弃这次世界修订？所有尚未应用的手动和 AI 修改都会丢失。":
     "Discard this world revision? Every unapplied manual and model change will be lost.",
   "这次世界修订已放弃，原世界保持不变并已解锁。":
