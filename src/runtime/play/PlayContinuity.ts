@@ -1,3 +1,8 @@
+import { HistoryQuery, historyInputs } from "../history/HistoryQuery.ts";
+import {
+  renderHistoryMessage,
+  renderHistoryInjectionNotice,
+} from "../history/HistoryRendering.ts";
 import type { AppLocale } from "../../protocol/appPreferences.ts";
 import type { ModelHostAppendItem } from "../model/ModelHost.ts";
 import type { PromptCompilation } from "../prompt/FileNativePromptCompiler.ts";
@@ -125,20 +130,33 @@ export function checkpointReplayBlocks(
   history: Readonly<Record<string, string>>,
   checkpoint: NarrativeCheckpoint | undefined,
   locale: AppLocale,
+  excluded: ReadonlySet<string> = new Set(),
+  snapshot = new HistoryQuery(
+    "checkpoint-replay",
+    historyInputs(
+      Object.entries(history).map(([path, contents]) => ({ path, contents })),
+    ),
+  ),
 ): PromptCompilation["logicalMessages"][number]["blocks"] {
-  const entries = checkpointHistory(history, checkpoint);
-  if (entries.length === 0) return [];
+  const eligible = checkpointHistory(history, checkpoint);
+  if (eligible.length === 0) return [];
+  const ids = new Set(
+    eligible.filter(([id]) => !excluded.has(id)).map(([id]) => id),
+  );
+  const entries = snapshot.messages.filter(({ id }) => ids.has(id));
   const zh = locale === "zh-CN";
   return [
     {
       source: "runtime:checkpoint-history:notice",
-      markdown: zh
-        ? "# 检查点后的已提交原文\n\n以下是当前时间线上最近一次已生效检查点之后的玩家原文与最终主持叙事；尚无检查点时从世界起点选取，开场白除外。部分结果可能已写入当前文档；这些记录用于核对连续性，不代表需要再次执行其中的事件。当前明确的世界修订优先，不能用旧叙事推翻修订。"
-        : "# Committed history after the checkpoint\n\nThese are the current timeline’s original player inputs and final narratives after its last effective checkpoint (or the world origin if none, excluding the opening). Some results may already be in current documents. These records support continuity, not repeated execution. Explicit current world corrections take precedence over old narrative.",
+      markdown:
+        (zh
+          ? "# 检查点后的已提交原文\n\n以下是当前时间线上最近一次已生效检查点之后的玩家原文与最终主持叙事；尚无检查点时从世界起点选取，开场白除外。部分结果可能已写入当前文档；这些记录用于核对连续性，不代表需要再次执行其中的事件。当前明确的世界修订优先，不能用旧叙事推翻修订。"
+          : "# Committed history after the checkpoint\n\nThese are the current timeline’s original player inputs and final narratives after its last effective checkpoint (or the world origin if none, excluding the opening). Some results may already be in current documents. These records support continuity, not repeated execution. Explicit current world corrections take precedence over old narrative.") +
+        `\n\n${renderHistoryInjectionNotice(snapshot.messages.length, entries, "checkpoint", locale)}`,
     },
-    ...entries.map(([id, text]) => ({
-      source: `runtime:checkpoint-history:${id}`,
-      markdown: `## ${id.endsWith(".player") ? (zh ? "玩家原文" : "Player input") : zh ? "主持叙事" : "Host narrative"}\n\n${text}`,
+    ...entries.map((message) => ({
+      source: `runtime:checkpoint-history:${message.id}`,
+      markdown: renderHistoryMessage(message, locale),
     })),
   ];
 }

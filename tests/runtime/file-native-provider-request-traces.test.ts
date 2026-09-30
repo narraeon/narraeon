@@ -1560,6 +1560,8 @@ test.each(["chat_completions", "anthropic_messages"] as const)(
     expect(body.tools.map((tool) => tool.function?.name ?? tool.name)).toEqual([
       "state_list",
       "history_list",
+      "history_search",
+      "history_read",
       "context_search",
       "context_read",
       "world_patch",

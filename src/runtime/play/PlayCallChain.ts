@@ -1,3 +1,4 @@
+import { hasLegacyHistoryTools } from "../prompt/FileNativeToolRegistry.ts";
 import { PlayCallChainError } from "./PlayCallChainError.ts";
 import {
   preparePlayerRevisionTrace,
@@ -98,6 +99,8 @@ import type {
 const callChainToolNames = new Set([
   "state_list",
   "history_list",
+  "history_search",
+  "history_read",
   // Kept executable only for contexts whose frozen tool universe contains it.
   "context_list",
   "context_search",
@@ -2934,7 +2937,13 @@ function prepareTool(
                 failureKind: "protocol",
                 markdown: "world_checkpoint requires an empty argument object.",
               }
-          : session.documents.execute(call, session.history);
+          : session.documents.execute(call, session.history, {
+              historyScope: session.worldId,
+              locale,
+              legacyHistoryTools: hasLegacyHistoryTools(
+                currentPlayPrompt(session).tools,
+              ),
+            });
     } catch (error: unknown) {
       result = {
         ok: false,

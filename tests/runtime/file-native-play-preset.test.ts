@@ -747,6 +747,8 @@ extensions:
     expect(preview.playPreset?.toolUniverse.map(({ name }) => name)).toEqual([
       "state_list",
       "history_list",
+      "history_search",
+      "history_read",
       "context_search",
       "context_read",
       "world_patch",
@@ -839,6 +841,8 @@ extensions:
     expect(full.toolUniverse.map(({ name }) => name)).toEqual([
       "state_list",
       "history_list",
+      "history_search",
+      "history_read",
       "context_search",
       "context_read",
       "world_patch",
@@ -994,6 +998,8 @@ extensions:
         toolUniverse: [
           { name: "state_list" },
           { name: "history_list" },
+          { name: "history_search" },
+          { name: "history_read" },
           { name: "context_search" },
           { name: "context_read" },
           { name: "world_patch" },

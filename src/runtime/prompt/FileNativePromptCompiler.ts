@@ -1,3 +1,15 @@
+import {
+  HistoryQuery,
+  historyInputs,
+  historySelectionMatches,
+} from "../history/HistoryQuery.ts";
+import {
+  renderHistoryMessage,
+  renderHistoryInjectionNotice,
+  historyRoleLabel,
+} from "../history/HistoryRendering.ts";
+import { historyUseGuidance } from "../../shared/history-use-guidance.ts";
+import { hasLegacyHistoryTools } from "./FileNativeToolRegistry.ts";
 import type {
   WorldExtensionControl,
   WorldExtensionsView,
@@ -310,7 +322,9 @@ const runtimeContracts: Record<
 - A document marked \`full body injected\` in the material-coverage report already has its complete writable body in the request and carries write authorization. Do not read it again merely to confirm body structure, check body fields, or “be safe.” context_read additionally exposes the current title, summary, and aliases. world_patch preserves metadata fields omitted from set_metadata, so do not read merely to copy unchanged metadata. Read only when a decision depends on unseen metadata or material the report says is not covered.
 - A YAML world_patch locator may mix map keys and zero-based array indexes; remove deletes exactly one existing key or array item. Retire an entity that should leave future frame catalogs with world_retire instead of destroying its document; retired documents remain listed, readable, referenceable, and restorable.
 - Zero literal-search matches do not prove that a fact does not exist. Tools, directories, documents, archives, searches, matches, handles, Runtime, and failure processes are private adjudication details. Player-visible narrative must not mention internal phrases such as “nothing was found.” When information is insufficient, preserve uncertainty inside the world instead of inventing an internal process.
-- World-write tools change only an uncommitted working copy. Their changes are not official world facts until Runtime accepts and completes the commit.`,
+- World-write tools change only an uncommitted working copy. Their changes are not official world facts until Runtime accepts and completes the commit.
+
+${historyUseGuidance("en")}`,
     operation: `# Runtime call-chain rules
 
 - A response with no tool calls may contain player-visible story text and finish the current call-chain step.
@@ -323,7 +337,9 @@ A nonempty tool-free response ends the model/tool loop started by the current pl
 
 The player's next submission may choose a fresh context; the old model transcript will not enter that request. Fresh contexts include all committed original player inputs and final narratives after the last effective world_checkpoint, excluding tools, reasoning, and the opening. A checkpoint declaration takes effect only after its final narrative commits. Author instructions decide save timing.
 
-Runtime executes only real tool definitions, file validation, and authority commits. This block does not define story content, point of view, style, player agency, or state semantics.`,
+Runtime executes only real tool definitions, file validation, and authority commits. This block does not define story content, point of view, style, player agency, or state semantics.
+
+${historyUseGuidance("en")}`,
   },
   "zh-CN": {
     play: `# Runtime 权限边界
@@ -337,7 +353,9 @@ Runtime executes only real tool definitions, file validation, and authority comm
 - 材料覆盖报告标为 \`已注入完整正文\` 的文档，其完整可写正文已经在本次请求里，写入资格同样已经具备。不要为确认正文结构、核对正文字段或“保险起见”重读它。context_read 会额外显示当前 title、summary 和 aliases；world_patch 会保留 set_metadata 中未提供的元数据字段，因此不要只为照抄未改变的元数据而读取。只有后续决策确实依赖尚未显示的元数据，或材料覆盖报告未覆盖的内容时才读。
 - YAML world_patch 的 locator 可混合 map key 与从 0 开始的数组下标；remove 只删除一个精确的已有键或数组项。对象需要退出后续 frame catalog 时用 world_retire 退役，不要销毁文档；退役文档仍可列出、读取、引用和恢复。
 - 字面搜索 0 命中不证明事实不存在。工具、目录、文档、档案、检索、命中、句柄、Runtime 及失败过程只供私下裁决；玩家可见叙事不得出现“没搜到／没找到资料”等内部措辞。信息不足时保持世界内的不确定性，不编造内部过程。
-- 世界写入工具只修改尚未提交的工作副本；Runtime 接受并完成提交前，这些修改都不是正式世界事实。`,
+- 世界写入工具只修改尚未提交的工作副本；Runtime 接受并完成提交前，这些修改都不是正式世界事实。
+
+${historyUseGuidance("zh-CN")}`,
     operation: `# Runtime 调用链规则
 
 - 不调用工具的响应可以输出玩家可见故事正文，并结束当前调用链步骤。
@@ -350,13 +368,17 @@ Runtime executes only real tool definitions, file validation, and authority comm
 
 下一次玩家提交可以选择“全新上下文”；旧模型 transcript 不会进入那个请求。新上下文会补入最近一次已生效 world_checkpoint 之后的全部已提交玩家原文与最终叙事，不含工具、推理和开场白。检查点登记只在其最终叙事提交后生效。具体保存时机由作者提示规定。
 
-Runtime 只执行真实工具定义、文件校验和权威提交；本段不规定故事、人称、文风、玩家代理权或状态语义。`,
+Runtime 只执行真实工具定义、文件校验和权威提交；本段不规定故事、人称、文风、玩家代理权或状态语义。
+
+${historyUseGuidance("zh-CN")}`,
   },
 };
 
 const playCallChainToolNames = new Set<RegisteredRuntimeToolName>([
   "state_list",
   "history_list",
+  "history_search",
+  "history_read",
   "context_search",
   "context_read",
   "world_patch",
@@ -776,16 +798,35 @@ export class FileNativePromptCompiler {
     binding: PlayPresetBinding,
   ): PlayPresetCompilation {
     const presetCompilation = this.compilePlayPreset(input, binding);
-    const toolUniverse = presetCompilation.toolUniverse.filter(({ name }) =>
-      playCallChainToolNames.has(name as RegisteredRuntimeToolName),
-    );
-    const selectedMessages =
+    const frozenTools =
+      input.frozenWorldContext?.toolUniverse ?? input.frozenWorldContext?.tools;
+    const toolUniverse =
+      frozenTools !== undefined && hasLegacyHistoryTools(frozenTools)
+        ? structuredClone(frozenTools)
+        : presetCompilation.toolUniverse.filter(({ name }) =>
+            playCallChainToolNames.has(name as RegisteredRuntimeToolName),
+          );
+    const initialMessages =
       binding.definition.playPrompts === undefined
         ? playCallChainNarrativeGuidance(
             presetCompilation.bootstrap.logicalMessages,
             binding,
           )
         : presetCompilation.bootstrap.logicalMessages;
+    const selectedMessages =
+      frozenTools !== undefined && hasLegacyHistoryTools(frozenTools)
+        ? initialMessages.map((message) => {
+            if (message.role !== "runtime_system") return message;
+            const blocks = message.blocks.map((block) => ({
+              ...block,
+              markdown: block.markdown.replace(
+                historyUseGuidance(this.#locale),
+                historyUseGuidance(this.#locale, true),
+              ),
+            }));
+            return { ...message, blocks, markdown: joinBlocks(blocks) };
+          })
+        : initialMessages;
     // Instructions keep author order; initial reads follow as protocol tool results.
     const logicalMessages = [
       ...selectedMessages.filter(
@@ -1459,7 +1500,7 @@ function withoutAppendedContextGenesis(
       )
         return true;
       const matches = Object.keys(history).filter((key) =>
-        historyMaterialMatches(material, key),
+        historySelectionMatches(material, key),
       );
       // Invalid references still reach the compiler's required-slot validation.
       return matches.length === 0 || matches.some((key) => !excluded.has(key));
@@ -1470,9 +1511,7 @@ function withoutAppendedContextGenesis(
     world: {
       ...input.world,
       additionalMaterials,
-      history: Object.fromEntries(
-        Object.entries(history).filter(([key]) => !excluded.has(key)),
-      ),
+      history,
     },
   };
 }
@@ -2042,7 +2081,8 @@ interface SelectedMaterial extends MeasuredWorldMaterial {
 }
 
 function resolveContext(
-  input: Pick<FileNativePromptInput, "world">,
+  input: Pick<FileNativePromptInput, "world"> &
+    Partial<Pick<FileNativePromptInput, "playerInputPlacement">>,
   worldFrame: Record<string, unknown>,
   snapshot: FileNativeWorldDocumentSnapshot,
   coverage: PromptCompilation["coverage"],
@@ -2065,12 +2105,31 @@ function resolveContext(
     coverage: number;
     slotId?: string;
   } | null = null;
+  const history = new HistoryQuery(
+    "prompt-compilation",
+    historyInputs(
+      Object.entries(input.world.history ?? {}).map(([path, contents]) => ({
+        path,
+        contents,
+      })),
+    ),
+  );
+  const excluded = new Set(input.world.historyAlreadyAppended ?? []);
+  const replayEntries =
+    input.world.replayHistory === true
+      ? checkpointHistory(
+          input.world.history ?? {},
+          input.world.narrativeCheckpoint,
+        ).filter(([id]) => !excluded.has(id))
+      : [];
   const replay =
     input.world.replayHistory === true
       ? checkpointReplayBlocks(
           input.world.history ?? {},
           input.world.narrativeCheckpoint,
           locale,
+          excluded,
+          history,
         )
       : [];
   for (const entry of context) {
@@ -2098,13 +2157,7 @@ function resolveContext(
       resolveCatalog(slot, snapshot, selected, coverage, locale);
     else if (slot.kind === "history" && replay.length > 0) continue;
     else if (slot.kind === "history")
-      resolveRecentHistory(
-        slot,
-        input.world.history ?? {},
-        selected,
-        coverage,
-        locale,
-      );
+      resolveRecentHistory(slot, history, selected, coverage, locale, excluded);
     else if (slot.kind === "additional_materials")
       additionalMaterialsAt ??= {
         selected: selected.length,
@@ -2152,12 +2205,23 @@ function resolveContext(
       markdown: bindings,
     });
   if (replay.length > 0) {
-    const entries = checkpointHistory(
+    const selectedIds = new Set(
+      selected.flatMap(({ key }) =>
+        key.startsWith("history_message:")
+          ? [key.slice("history_message:".length)]
+          : [],
+      ),
+    );
+    const entries = replayEntries.filter(([id]) => !selectedIds.has(id));
+    const deduplicatedReplay = checkpointReplayBlocks(
       input.world.history ?? {},
       input.world.narrativeCheckpoint,
+      locale,
+      new Set([...excluded, ...selectedIds]),
+      history,
     );
     selected.push(
-      ...replay.map((block, index) => ({
+      ...deduplicatedReplay.map((block, index) => ({
         ...block,
         key:
           index === 0
@@ -2182,10 +2246,12 @@ function resolveContext(
     resolveAdditionalMaterials(
       input.world.additionalMaterials,
       snapshot,
-      input.world.history ?? {},
+      history,
       withMaterials,
       materialCoverage,
       locale,
+      excluded,
+      input.playerInputPlacement === "append",
     );
     selected.splice(
       additionalMaterialsAt.selected,
@@ -2445,10 +2511,11 @@ function validCatalogDirectory(directory: string): boolean {
  */
 function resolveRecentHistory(
   slot: Record<string, unknown>,
-  history: Record<string, string>,
+  history: HistoryQuery,
   selected: SelectedMaterial[],
   coverage: PromptCompilation["coverage"],
   locale: AppLocale,
+  excluded: ReadonlySet<string>,
 ): void {
   const recent = Number(slot.recent ?? 2);
   if (!Number.isInteger(recent) || recent < 1 || recent > 32)
@@ -2460,18 +2527,16 @@ function resolveRecentHistory(
   // in commit order. Its keys are semantic message IDs, not sortable file
   // names: lexical sorting would put `message.genesis` after every numbered
   // message and `message.9` after `message.15`.
-  const ordered = Object.entries(history).filter(
-    ([ref]) => !ref.endsWith("message.genesis.narrator"),
-  );
-  const chosen = ordered.slice(-recent);
+  const ordered = history.messages.filter(({ isOpening }) => !isOpening);
+  const chosen = ordered.slice(-recent).filter(({ id }) => !excluded.has(id));
   if (chosen.length === 0) {
     selected.push({
       key: "history:empty",
       source: "slot:history:empty",
       markdown:
         locale === "zh-CN"
-          ? "# 最近已提交对话\n\n（空：当前世界没有更早的玩家原文或主持叙事；无需为寻找上一条记录调用历史检索工具。）"
-          : "# Recent committed conversation\n\n(Empty: this world has no earlier player input or host narrative. Do not call history tools merely to look for a previous message.)",
+          ? `# 最近已提交对话\n\n${renderHistoryInjectionNotice(history.messages.length, [], "recent", locale)}\n（本次没有可注入的非开场白原文：可能只有开场白，或近期材料已在原生对话中。无需为寻找上一条记录例行调用历史检索工具。）`
+          : `# Recent committed conversation\n\n${renderHistoryInjectionNotice(history.messages.length, [], "recent", locale)}\n(No non-opening originals selected for injection: only the opening exists, or recent entries are already in native conversation. Do not call history tools merely to look for a previous message.)`,
     });
     coverage.push({
       slot: "history",
@@ -2483,20 +2548,36 @@ function resolveRecentHistory(
     });
     return;
   }
-  for (const [index, [ref, text]] of chosen.entries()) {
+  const missing = chosen.filter(
+    ({ id }) =>
+      overlappingSelection(selected, `history_message:${id}`) === null,
+  );
+  if (missing.length > 0)
+    selected.push({
+      key: "history:recent-notice",
+      source: "slot:history:notice",
+      markdown: renderHistoryInjectionNotice(
+        history.messages.length,
+        missing,
+        "recent",
+        locale,
+      ),
+    });
+  for (const [index, message] of missing.entries()) {
+    const ref = message.id;
     const key = `history_message:${ref}`;
     if (overlappingSelection(selected, key) !== null) continue;
     selected.push({
       key,
       source: `slot:history:${ref}`,
-      markdown: renderHistoryMessage(ref, text, locale),
+      markdown: renderHistoryMessage(message, locale),
     });
     coverage.push({
       slot: "history",
       source:
         locale === "zh-CN"
-          ? `${historyMessageLabel(ref, locale)}（最近记录 ${index + 1}/${chosen.length}）`
-          : `${historyMessageLabel(ref, locale)} (recent ${index + 1}/${chosen.length})`,
+          ? `${historyRoleLabel(message, locale)}（最近记录 ${index + 1}/${chosen.length}）`
+          : `${historyRoleLabel(message, locale)} (recent ${index + 1}/${chosen.length})`,
       status: "resolved",
       complete: true,
       continuation: "history_list",
@@ -2507,10 +2588,12 @@ function resolveRecentHistory(
 function resolveAdditionalMaterials(
   materials: MaterialSelection[],
   snapshot: FileNativeWorldDocumentSnapshot,
-  history: Record<string, string>,
+  history: HistoryQuery,
   selected: SelectedMaterial[],
   coverage: PromptCompilation["coverage"],
   locale: AppLocale,
+  excluded: ReadonlySet<string>,
+  excludeOpening: boolean,
 ): void {
   if (materials.length > 32)
     throw new PromptCompilationError(
@@ -2549,8 +2632,8 @@ function resolveAdditionalMaterials(
         material.kind === "history_message"
           ? material.message
           : material.commit;
-      const matches = Object.entries(history).filter(([key]) =>
-        historyMaterialMatches(material, key),
+      const matches = history.messages.filter(({ id }) =>
+        historySelectionMatches(material, id),
       );
       if (matches.length === 0)
         throw new PromptCompilationError(
@@ -2558,21 +2641,34 @@ function resolveAdditionalMaterials(
           `Additional history material does not exist: ${ref}`,
         );
       const missing = matches.filter(
-        ([id]) => !selected.some(({ key }) => key === `history_message:${id}`),
+        ({ id, isOpening }) =>
+          !excluded.has(id) &&
+          !(excludeOpening && isOpening) &&
+          !selected.some(({ key }) => key === `history_message:${id}`),
       );
       if (missing.length === 0) continue;
       selected.push(
-        ...missing.map(([id, text]) => ({
-          key: `history_message:${id}`,
-          source: `slot:additional_materials:${id}`,
-          markdown: renderHistoryMessage(id, text, locale),
+        {
+          key: `history:additional-notice:${selected.length}`,
+          source: "slot:additional_materials:history-notice",
+          markdown: renderHistoryInjectionNotice(
+            history.messages.length,
+            missing,
+            "additional",
+            locale,
+          ),
+        },
+        ...missing.map((message) => ({
+          key: `history_message:${message.id}`,
+          source: `slot:additional_materials:${message.id}`,
+          markdown: renderHistoryMessage(message, locale),
         })),
       );
       coverage.push({
         slot: "additional_materials",
         source:
           matches.length === 1
-            ? historyMessageLabel(matches[0]![0], locale)
+            ? historyRoleLabel(matches[0]!, locale)
             : locale === "zh-CN"
               ? `已选历史提交（${matches.length} 条）`
               : `selected history commit (${matches.length} messages)`,
@@ -2582,62 +2678,6 @@ function resolveAdditionalMaterials(
       });
     }
   }
-}
-
-function historyMaterialMatches(
-  material: Extract<
-    MaterialSelection,
-    { kind: "history_message" | "history_commit" }
-  >,
-  key: string,
-): boolean {
-  if (material.kind === "history_message")
-    return (
-      historyMaterialIdentity(key) === historyMaterialIdentity(material.message)
-    );
-  const ref = material.commit;
-  return ref.startsWith("commit:")
-    ? historyMaterialIdentity(key).startsWith(`message.${ref.slice(7)}.`)
-    : ref === "genesis"
-      ? historyMaterialIdentity(key).startsWith("message.genesis.")
-      : key.startsWith(
-          ref.replace(/^@?history-commit-/u, "history-message-").concat("-"),
-        );
-}
-
-function historyMaterialIdentity(ref: string): string {
-  const value = ref.replace(/^@?(?:history-message-)?/u, "");
-  return (
-    /(?:^|\.)(message\.(?:genesis|[0-9]+)(?:\.[0-9]+)?\.(?:player|narrator))$/u.exec(
-      value,
-    )?.[1] ?? value
-  );
-}
-
-function renderHistoryMessage(
-  ref: string,
-  text: string,
-  locale: AppLocale,
-): string {
-  return `## ${historyMessageLabel(ref, locale)}\n\n${text.trim()}`;
-}
-
-function historyMessageLabel(ref: string, locale: AppLocale): string {
-  if (ref.endsWith("message.genesis.narrator"))
-    return locale === "zh-CN" ? "开场白" : "Opening";
-  if (
-    /(?:^|\.)message\.[^.]+(?:\.[0-9]+)?\.player$|(?:^|-)player(?:-|$)/u.test(
-      ref,
-    )
-  )
-    return locale === "zh-CN" ? "玩家原文" : "Player input";
-  if (
-    /(?:^|\.)message\.[^.]+(?:\.[0-9]+)?\.narrator$|(?:^|-)narrator(?:-|$)/u.test(
-      ref,
-    )
-  )
-    return locale === "zh-CN" ? "主持叙事" : "Host narrative";
-  return locale === "zh-CN" ? "已提交消息" : "Committed message";
 }
 
 function addNodeSelection(

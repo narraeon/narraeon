@@ -2266,6 +2266,8 @@ test("工具中间步文本不进入叙事，状态与终态叙事分别推进�
   expect(modelHost.requests[0]?.tools.map(({ name }) => name)).toEqual([
     "state_list",
     "history_list",
+    "history_search",
+    "history_read",
     "context_search",
     "context_read",
     "world_patch",
@@ -2289,7 +2291,7 @@ test("工具中间步文本不进入叙事，状态与终态叙事分别推进�
     "门外传来三声短促的铃响。",
   );
   expect(JSON.stringify(modelHost.requests[0]?.bootstrap)).toContain(
-    "this world has no earlier player input or host narrative",
+    "only the opening exists",
   );
   const authorPrompt = modelHost.requests[0]?.bootstrap.logicalMessages
     .filter(({ role }) => role === "author_instruction")
@@ -6539,4 +6541,230 @@ test("浏览器观察保持40项尾部并恢复活动片段，旧历史仍只能
     });
     await running;
   }
+});
+
+test("冻结旧历史工具会话冷启动后继续，不添加新历史工具并保持原生前缀", async () => {
+  const { worlds, worldId, root } = await createWorld("frozen-history-upgrade");
+  const initial = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [{ outcome: "response", text: "那封信已交给 Alex。" }],
+  });
+  await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "modern-fixture",
+    exchangeId: "initial",
+    playerText: "我递出那封信。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: initial,
+  });
+  const loaded = (await worlds.playTimeline.readCurrent(worldId))!.value;
+  const frozen = structuredClone(loaded);
+  frozen.chainId = "released-history-context";
+  frozen.previousChainId = null;
+  frozen.promptRuns = [];
+  frozen.lastRequest = null;
+  frozen.tools = frozen.tools.filter(
+    ({ name }) => name !== "history_search" && name !== "history_read",
+  );
+  frozen.tools.find(({ name }) => name === "history_list")!.inputSchema = {
+    type: "object",
+    required: ["order"],
+    properties: {
+      order: { enum: ["newest_first", "oldest_first"] },
+      cursor: { type: ["string", "null"] },
+      limit: { type: "integer" },
+    },
+  };
+  frozen.tools.find(({ name }) => name === "context_search")!.inputSchema = {
+    type: "object",
+    required: ["source", "query"],
+    properties: {
+      source: { enum: ["state", "history"] },
+      query: { type: "string" },
+    },
+  };
+  frozen.bootstrap.tools = structuredClone(frozen.tools);
+  frozen.bootstrap.toolUniverse = structuredClone(frozen.tools);
+  await worlds.playTimeline.persist(frozen);
+  const prefix = structuredClone(frozen.transcript);
+  const resumed = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "old-list",
+            name: "history_list",
+            arguments: { order: "oldest_first", limit: 2 },
+          },
+          {
+            id: "old-search",
+            name: "context_search",
+            arguments: { source: "history", query: "那封信" },
+          },
+          {
+            id: "old-read",
+            name: "context_read",
+            arguments: { ref: "@history-message-message.2.1.narrator" },
+          },
+        ],
+      },
+      { outcome: "response", text: "Alex仍收着那封信。" },
+    ],
+  });
+  const coldWorlds = new FileNativeWorldStore(root);
+  const result = await new PlayCallChain(coldWorlds).append({
+    worldId,
+    chainId: frozen.chainId,
+    exchangeId: "after-upgrade",
+    playerText: "核对之前的交信。",
+    modelHost: resumed,
+    resolvePrompt: () =>
+      Promise.resolve({ hostBinding: hostBinding(), playPreset: playPreset() }),
+  });
+  expect(result.status).toBe("ready");
+  expect(resumed.requests[0]!.tools).toEqual(frozen.tools);
+  expect(resumed.requests[0]!.appended.slice(0, prefix.length)).toEqual(prefix);
+  const receipts = resumed.requests[1]!.appended.filter(
+    (item) => item.kind === "tool",
+  );
+  expect(receipts).toHaveLength(3);
+  expect(
+    receipts.every(
+      (item) => item.kind === "tool" && item.markdown.includes("position"),
+    ),
+  ).toBe(true);
+  expect(resumed.requests[0]!.tools.map(({ name }) => name)).not.toContain(
+    "history_search",
+  );
+});
+
+test("历史查询沿真实时间线修订与分叉恢复位置，状态修正不使历史 cursor 失效", async () => {
+  const { HistoryQuery, historyInputs } =
+    await import("../../src/runtime/history/HistoryQuery.ts");
+  const { worlds, worldId } = await createWorld("history-query-real-timeline");
+  const first = await worlds.commitPlayStep({
+    worldId,
+    operationId: "history-first",
+    parentHead: "genesis",
+    stateChanges: [],
+    nextMaterials: [],
+    historyAppend: [{ role: "player", exactText: "那封信放在桌上。" }],
+  });
+  await worlds.commitPlayStep({
+    worldId,
+    operationId: "history-multiple",
+    parentHead: first.head,
+    stateChanges: [],
+    nextMaterials: [],
+    historyAppend: [
+      { role: "narrator", exactText: "第一段主持原文。" },
+      { role: "narrator", exactText: "第二段主持原文。" },
+    ],
+  });
+  const open = async (id: string) => {
+    const binding = await worlds.bindPlayCallChain(id);
+    return new HistoryQuery(
+      id,
+      historyInputs(
+        Object.entries(binding.history).map(([path, contents]) => ({
+          path,
+          contents,
+        })),
+      ),
+    );
+  };
+  const before = await open(worldId);
+  const page = before.list({ limit: 2 });
+  expect(page).toMatchObject({
+    total: 4,
+    messages: [
+      { position: 3, role: "narrator" },
+      { position: 4, role: "narrator" },
+    ],
+  });
+  if (!page.ok) throw new Error("Expected list");
+  const { FileNativePlayDocuments } =
+    await import("../../src/runtime/play/PlayDocumentTools.ts");
+  const documents = new FileNativePlayDocuments(
+    (await worlds.bindPlayCallChain(worldId)).files,
+  );
+  documents.execute(
+    {
+      id: "read",
+      name: "context_read",
+      arguments: { ref: "@current-situation" },
+    },
+    [],
+  );
+  expect(
+    documents.execute(
+      {
+        id: "patch",
+        name: "world_patch",
+        arguments: {
+          target: "@current-situation",
+          edits: [
+            {
+              op: "replace",
+              locator: { yaml: ["情况"] },
+              value: "Alex在桌边。",
+            },
+          ],
+        },
+      },
+      [],
+    ).ok,
+  ).toBe(true);
+  await worlds.commitCorrection({
+    worldId,
+    operationId: "history-state-only",
+    parentHead: await worlds.currentHead(worldId),
+    stateChanges: documents.stateChanges(),
+    nextMaterials: [],
+  });
+  expect(
+    (await open(worldId)).list({ cursor: page.earlierCursor }),
+  ).toMatchObject({ ok: true, messages: [{ position: 1 }, { position: 2 }] });
+  const branch = await worlds.deriveWorld({
+    operationId: "history-branch",
+    sourceWorldId: worldId,
+    sourceHead: first.head,
+    hostPresetId: "host",
+  });
+  expect((await open(branch.world.worldId)).read({ latest: 21 })).toMatchObject(
+    {
+      total: 2,
+      messages: [
+        { position: 1, isOpening: true },
+        { position: 2, ref: "@history-message-message.1.1.player" },
+      ],
+    },
+  );
+  expect(
+    (await open(branch.world.worldId)).list({ cursor: page.earlierCursor }),
+  ).toMatchObject({ code: "history_invalid_cursor" });
+  await worlds.reviseTimeline({
+    worldId,
+    operationId: "history-revision",
+    expectedCurrentHead: await worlds.currentHead(worldId),
+    restoresHead: "genesis",
+    replacesHead: first.head,
+    replacementText: "我把那封信带走。",
+    requestFingerprint: "sha256:" + "a".repeat(64),
+  });
+  const revised = await open(worldId);
+  expect(revised.list({ cursor: page.earlierCursor })).toMatchObject({
+    code: "history_changed",
+  });
+  expect(
+    revised.read({ ref: "@history-message-message.1.1.player" }),
+  ).toMatchObject({ code: "history_ref_not_in_current_timeline" });
+  expect(revised.read({ latest: 21 })).toMatchObject({
+    total: 2,
+    messages: [{ position: 1 }, { position: 2, text: "我把那封信带走。" }],
+  });
 });

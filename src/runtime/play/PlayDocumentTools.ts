@@ -1,3 +1,5 @@
+import { HistoryQuery, historyInputs } from "../history/HistoryQuery.ts";
+import { renderHistoryResult } from "../history/HistoryRendering.ts";
 import {
   stateDirectoryHandle,
   parseStateDirectoryHandle,
@@ -217,39 +219,92 @@ export class FileNativePlayDocuments {
   execute(
     call: ModelHostToolCall,
     history: { path: string; contents: string }[],
+    options: {
+      historyScope?: string;
+      locale?: AppLocale;
+      legacyHistoryTools?: boolean;
+    } = {},
   ): PlayDocumentToolResult {
-    if (call.name === "context_search")
-      return executeContextSearch(
-        this.#candidate.snapshot,
-        history,
-        call.arguments,
+    let historyQuery: HistoryQuery | undefined;
+    const query = () =>
+      (historyQuery ??= new HistoryQuery(
+        options.historyScope ?? "local-document-context",
+        historyInputs(history),
+      ));
+    const render = (result: Parameters<typeof renderHistoryResult>[0]) =>
+      renderHistoryResult(result, options.locale ?? "en");
+    const legacy = options.legacyHistoryTools !== false;
+    const args = call.arguments;
+    if (call.name === "history_search") return render(query().search(args));
+    if (call.name === "history_read") return render(query().read(args));
+    if (call.name === "history_list") {
+      return render(
+        legacy && record(args) && args.order !== undefined
+          ? query().legacyList(args, "history_list")
+          : query().list(args),
       );
+    }
+    if (
+      call.name === "context_list" &&
+      record(args) &&
+      args.source === "history"
+    ) {
+      const { source: _source, ...parameters } = args;
+      void _source;
+      return legacy
+        ? render(query().legacyList(parameters, "context_list"))
+        : toolFailure("Use history_list for committed history.");
+    }
+    if (
+      call.name === "context_search" &&
+      record(args) &&
+      args.source === "history"
+    ) {
+      const { source: _source, ...parameters } = args;
+      void _source;
+      return legacy
+        ? render(query().legacySearch(parameters))
+        : toolFailure("Use history_search for committed history.");
+    }
+    if (
+      call.name === "context_read" &&
+      record(args) &&
+      typeof args.ref === "string" &&
+      /^@?history-message-/u.test(args.ref)
+    ) {
+      if (!legacy)
+        return toolFailure(
+          "Use history_read with refs supplied in injections or tool results.",
+        );
+      if (!hasOnlyToolKeys(args, ["ref", "cursor", "maxBytes"]))
+        return toolFailure(
+          "Legacy context_read requires ref and accepts only obsolete cursor/maxBytes in addition.",
+        );
+      return render(
+        query().read({
+          ref: args.ref.startsWith("@") ? args.ref : `@${args.ref}`,
+        }),
+      );
+    }
+    if (call.name === "context_search")
+      return executeContextSearch(this.#candidate.snapshot, call.arguments);
     if (call.name === "state_list")
       return executeStateList(
         this.#candidate.snapshot,
-        history,
         call.arguments,
         this.#declaredDirectories,
-      );
-    if (call.name === "history_list")
-      return executeHistoryList(
-        this.#candidate.snapshot,
-        history,
-        call.arguments,
       );
     // Frozen contexts created before runtime-tools-v5 retain this exact name
     // and argument shape. New contexts never advertise it.
     if (call.name === "context_list")
       return executeContextList(
         this.#candidate.snapshot,
-        history,
         call.arguments,
         this.#declaredDirectories,
       );
     if (call.name === "context_read") {
       const result = executeContextRead(
         this.#candidate.snapshot,
-        history,
         call.arguments,
       );
       authorizeToolRead(this.#reads, this.#candidate.snapshot, result);
@@ -849,7 +904,6 @@ interface ContextToolResult {
 
 function executeContextSearch(
   snapshot: WorldDocumentStore,
-  history: { path: string; contents: string }[],
   args: unknown,
 ): ContextToolResult {
   if (
@@ -896,49 +950,7 @@ function executeContextSearch(
         : {}),
     });
 
-  const source = history.map(
-    ({ path, contents }) =>
-      [
-        historyRef(path),
-        contents,
-        [`history-commit-${path.split("-")[0] ?? ""}`] as string[],
-      ] as const,
-  );
-  const normalizedQuery = normalizeSearch(query, caseSensitive);
-  const within =
-    typeof args.within === "string" ? args.within.replace(/^@/u, "") : null;
-  const allHits = source.filter(
-    ([ref, text, parentScopes]) =>
-      (within === null || ref === within || parentScopes.includes(within)) &&
-      normalizeSearch(text, caseSensitive).includes(normalizedQuery),
-  );
-  const scope = JSON.stringify({
-    kind: "search",
-    source: "history",
-    query,
-    caseSensitive,
-    within: args.within ?? null,
-    limit,
-  });
-  const offset = parseCursor(args.cursor, scope);
-  if (offset === null)
-    return {
-      ok: false,
-      markdown:
-        "# Runtime argument error\n\nThe cursor does not match the search criteria or endpoint.",
-    };
-  const hits = allHits.slice(offset, offset + limit);
-  const complete = offset + hits.length >= allHits.length;
-  const renderedHits = hits
-    .map(
-      ([ref, text]) =>
-        `- @${ref}\n  Exact-match excerpt:\n${quoteMarkdown(snippet(text, query), "  ")}`,
-    )
-    .join("\n");
-  return {
-    ok: true,
-    markdown: `# Literal search\n\nScope: history${args.within === undefined ? "" : ` · ${args.within}`}\nNormalization: ${caseSensitive ? "original text" : "NFKC + case folding"}\nTotal matches: ${allHits.length}\n${renderedHits || "Zero literal matches do not prove that the fact is absent from the world."}\n\n---\nThis page: ${offset}..${offset + hits.length} / ${allHits.length} matches\nComplete: ${complete ? "yes" : "no"}${complete ? "" : `\nNext-page cursor: ${cursorFor(scope, offset + hits.length)}`}`,
-  };
+  return toolFailure("Use history_search for committed history.");
 }
 
 function searchState(
@@ -1031,7 +1043,6 @@ function knownStateDirectory(
 
 function executeStateList(
   snapshot: WorldDocumentStore,
-  history: { path: string; contents: string }[],
   args: unknown,
   declaredDirectories: readonly string[],
 ): ContextToolResult {
@@ -1050,35 +1061,13 @@ function executeStateList(
     };
   return executeContextList(
     snapshot,
-    history,
     { ...args, source: "state" },
     declaredDirectories,
   );
 }
 
-function executeHistoryList(
-  snapshot: WorldDocumentStore,
-  history: { path: string; contents: string }[],
-  args: unknown,
-): ContextToolResult {
-  if (
-    !record(args) ||
-    !hasOnlyToolKeys(args, ["order", "cursor", "limit"]) ||
-    (args.order !== "newest_first" && args.order !== "oldest_first") ||
-    (args.limit !== undefined && typeof args.limit !== "number") ||
-    !validOptionalCursor(args.cursor)
-  )
-    return {
-      ok: false,
-      markdown:
-        "# Runtime argument error\n\nhistory_list requires newest_first or oldest_first order and accepts only cursor and limit in addition; use state_list for state directories.",
-    };
-  return executeContextList(snapshot, history, { ...args, source: "history" });
-}
-
 function executeContextList(
   snapshot: WorldDocumentStore,
-  history: { path: string; contents: string }[],
   args: unknown,
   declaredDirectories: readonly string[] = [],
 ): ContextToolResult {
@@ -1155,38 +1144,11 @@ function executeContextList(
     };
   }
 
-  // History arrives in Authority order. Semantic message IDs are not sortable
-  // paths: lexical order misplaces both numeric sequences and genesis.
-  const ordered =
-    args.order === "oldest_first" ? history : [...history].reverse();
-  const entries = ordered.map(
-    ({ path, contents }) =>
-      `- @${historyRef(path)}, ${Buffer.byteLength(contents, "utf8")} bytes`,
-  );
-  const scope = JSON.stringify({
-    kind: "list",
-    source: "history",
-    order: args.order,
-    limit,
-  });
-  const offset = parseCursor(args.cursor, scope);
-  if (offset === null)
-    return {
-      ok: false,
-      markdown:
-        "# Runtime argument error\n\nThe cursor does not match the listing criteria or endpoint.",
-    };
-  const page = entries.slice(offset, offset + limit);
-  const complete = offset + page.length >= entries.length;
-  return {
-    ok: true,
-    markdown: `# Directory listing\n\nScope: history · ${String(args.order)}\n${page.join("\n") || "(empty)"}\n\n---\nThis page: ${offset}..${offset + page.length} / ${entries.length} items\nComplete: ${complete ? "yes" : "no"}${complete ? "" : `\nNext-page cursor: ${cursorFor(scope, offset + page.length)}`}`,
-  };
+  return toolFailure("Use history_list for committed history.");
 }
 
 function executeContextRead(
   snapshot: WorldDocumentStore,
-  history: { path: string; contents: string }[],
   args: unknown,
 ): ContextToolResult {
   if (
@@ -1202,16 +1164,6 @@ function executeContextRead(
       markdown:
         "# Runtime argument error\n\nA stable ref returned by list or search is required.",
     };
-  const historyRefValue = args.ref.replace(/^@/u, "");
-  const historyEntry = history.find(
-    ({ path }) => historyRef(path) === historyRefValue,
-  );
-  if (historyEntry !== undefined)
-    return {
-      ok: true,
-      markdown: `# Exact read @${historyRefValue}\n\n${historyEntry.contents}\n\n---\nSource: @${historyRefValue}\nComplete: yes`,
-    };
-
   const handle = parseStateReadHandle(args.ref);
   if (handle === null)
     return {
@@ -1392,54 +1344,6 @@ function hasOnlyToolKeys(
 
 function validOptionalCursor(value: unknown): boolean {
   return value === undefined || value === null || typeof value === "string";
-}
-
-function normalizeSearch(value: string, caseSensitive: boolean): string {
-  const normalized = value.normalize("NFKC");
-  return caseSensitive ? normalized : normalized.toLocaleLowerCase("und");
-}
-
-function snippet(text: string, query: string): string {
-  const position = text
-    .normalize("NFKC")
-    .toLocaleLowerCase("und")
-    .indexOf(query.normalize("NFKC").toLocaleLowerCase("und"));
-  const start = Math.max(0, position - 120);
-  return text.slice(start, start + 240).replace(/\s+/gu, " ");
-}
-
-function historyRef(path: string): string {
-  return `history-message-${path.replace(/\.md$/u, "")}`;
-}
-
-function cursorFor(scope: string, offset: number): string {
-  return Buffer.from(
-    JSON.stringify({
-      scope: createHash("sha256").update(scope).digest("hex"),
-      offset,
-    }),
-    "utf8",
-  ).toString("base64url");
-}
-
-function parseCursor(cursor: unknown, scope: string): number | null {
-  if (cursor === undefined || cursor === null) return 0;
-  if (typeof cursor !== "string") return null;
-  try {
-    const value = JSON.parse(
-      Buffer.from(cursor, "base64url").toString("utf8"),
-    ) as unknown;
-    if (
-      !record(value) ||
-      value.scope !== createHash("sha256").update(scope).digest("hex") ||
-      !Number.isSafeInteger(value.offset) ||
-      Number(value.offset) < 0
-    )
-      return null;
-    return Number(value.offset);
-  } catch {
-    return null;
-  }
 }
 
 export function parseNarrative(args: unknown): string {

@@ -1000,6 +1000,8 @@ context:
     expect(compiled.tools.map(({ name }) => name)).toEqual([
       "state_list",
       "history_list",
+      "history_search",
+      "history_read",
       "context_search",
       "context_read",
       "world_patch",
@@ -1064,10 +1066,11 @@ context:
     expect(historyList?.inputSchema).toEqual({
       type: "object",
       additionalProperties: false,
-      required: ["order"],
+      required: [],
       properties: {
-        order: { enum: ["newest_first", "oldest_first"] },
-        cursor: { type: ["string", "null"] },
+        before: { type: "string", minLength: 1 },
+        after: { type: "string", minLength: 1 },
+        cursor: { type: "string", minLength: 1 },
         limit: { type: "integer", minimum: 1, maximum: 100 },
       },
     });
@@ -1122,7 +1125,7 @@ context:
     expect(stateList?.description).toContain(
       "remain listed and usable when empty",
     );
-    expect(historyList?.description).toContain("newest_first");
+    expect(historyList?.description).toContain("oldest to newest");
     expect(historyList?.description).toContain("committed history");
     expect(create?.description).toContain("state_list");
     expect(create?.description).toContain("unknown directory is rejected");
@@ -1137,7 +1140,7 @@ context:
     expect(chinese[0]?.description).toContain("@dir-*");
     expect(chinese[0]?.description).toContain("即使为空");
     expect(chinese[1]?.description).toContain("已提交历史");
-    expect(chinese[1]?.description).toContain("oldest_first");
+    expect(chinese[1]?.description).toContain("由旧到新");
   });
 
   test.each(["oldest_first", "newest_first"])(
@@ -1939,12 +1942,12 @@ context:
     expect(
       duplicateContext?.match(/缠成麻花的充电线拎起来晃了晃/gu),
     ).toHaveLength(1);
-    expect(duplicateContext).not.toContain(
-      "history-message-00000003-01-narrator-ccc",
+    expect(duplicateContext).toContain(
+      "@history-message-00000003-01-narrator-ccc",
     );
   });
 
-  test("history slot 按权威消息顺序取最近记录且不向模型暴露内部消息 ID", () => {
+  test("history slot 按权威消息顺序取最近记录并提供可导航稳定句柄", () => {
     const compiler = new FileNativePromptCompiler();
     const source = input();
     const files = snapshotRecord(source);
@@ -1971,10 +1974,13 @@ context:
     expect(worldContext).toContain("第十五组主持叙事。");
     expect(worldContext).not.toContain("开场白不应被当成最近消息。");
     expect(worldContext).not.toContain("第九组");
-    expect(worldContext).not.toContain(worldId);
-    expect(worldContext).not.toContain("message.15");
-    expect(worldContext).toContain("## Player input");
-    expect(worldContext).toContain("## Host narrative");
+    expect(worldContext).toContain(
+      `@history-message-${worldId}.message.15.player`,
+    );
+    expect(worldContext).toContain("position 4 · role=player · Player input");
+    expect(worldContext).toContain(
+      "position 5 · role=narrator · Host narrative",
+    );
   });
 
   test("只有 genesis 开场白时 history slot 如实报告为空且不重复注入开场白", () => {
@@ -2012,9 +2018,7 @@ context:
       "这段开场白不能作为 recent history 再注入。",
     );
     expect(worldContext).toContain("Recent committed conversation");
-    expect(worldContext).toContain(
-      "this world has no earlier player input or host narrative",
-    );
+    expect(worldContext).toContain("only the opening exists");
     expect(worldContext).toContain(
       "Do not call history tools merely to look for a previous message",
     );
@@ -2070,4 +2074,163 @@ context:
       /another-endpoint|another-commit|op-2|another-host-id|another-version|private\/machine/u,
     );
   });
+});
+
+test("recent 注入 ref 与完整历史位置共用快照，原生消息过滤后不重新编号", () => {
+  const request = input({ playerInputPlacement: "append" });
+  const files = snapshotRecord(request);
+  files["control/frame.yaml"] = files["control/frame.yaml"]!.replace(
+    "  - slot: { kind: additional_materials }",
+    "  - slot: { kind: history, recent: 3 }\n  - slot: { kind: additional_materials }",
+  );
+  bindSnapshot(request, files);
+  request.world.history = {
+    "message.genesis.narrator": "开场白",
+    "message.1.1.player": "旧请求",
+    "message.9.1.narrator": "  相同正文\n\n ",
+    "message.10.1.narrator": "  相同正文\n\n ",
+    "message.15.1.player": "我递交钥匙，这是已完成的历史行动。",
+  };
+  request.world.historyAlreadyAppended = ["message.10.1.narrator"];
+  request.world.additionalMaterials = [
+    { kind: "history_message", message: "message.9.1.narrator" },
+  ];
+  const compiled = new FileNativePromptCompiler().compileBootstrap(request);
+  const context = compiled.logicalMessages.find(
+    ({ role }) => role === "world_context",
+  )!.markdown;
+  expect(context).toContain("position 3");
+  expect(context).toContain("position 5");
+  expect(context).not.toContain("position 4");
+  expect(context.match(/ {2}相同正文\n\n /gu)).toHaveLength(1);
+  expect(context).toContain("not the current request");
+  const documents = new FileNativePlayDocuments({});
+  const read = documents.execute(
+    {
+      id: "injected-ref",
+      name: "history_read",
+      arguments: {
+        ref: "@history-message-message.9.1.narrator",
+        before: 1,
+        after: 1,
+      },
+    },
+    Object.entries(request.world.history).map(([path, contents]) => ({
+      path,
+      contents,
+    })),
+  );
+  expect(read.ok).toBe(true);
+  expect(read.markdown).toContain("position 3");
+  expect(read.markdown).toContain("  相同正文\n\n ");
+  expect(context).toContain("@history-message-message.9.1.narrator");
+});
+
+test("历史附加材料保留作者顺序与全局位置，检查点补充去重后明确间隔", () => {
+  const request = input({ playerInputPlacement: "append" });
+  request.world.history = {
+    "message.genesis.narrator": "开场白",
+    "message.1.1.player": "第一个问题",
+    "message.1.2.narrator": "  第一个回答\n\n ",
+    "message.10.1.player": "第二个问题",
+    "message.10.2.narrator": "  第二个回答\n ",
+    "message.100.1.narrator": "第三个回答",
+  };
+  request.world.additionalMaterials = [
+    { kind: "history_message", message: "message.100.1.narrator" },
+    { kind: "history_commit", commit: "commit:1" },
+  ];
+  const compiler = new FileNativePromptCompiler();
+  const additional = compiler
+    .compileBootstrap(request)
+    .logicalMessages.find(({ role }) => role === "world_context")!.markdown;
+  expect(additional.indexOf("position 6")).toBeLessThan(
+    additional.indexOf("position 2"),
+  );
+  expect(additional).toContain(
+    "may be non-contiguous; author declaration order retained",
+  );
+  expect(additional).toContain("  第一个回答\n\n ");
+  request.world.narrativeCheckpoint = {
+    head: "commit:1",
+    historyMessageId: "message.1.2.narrator",
+    contextId: "previous",
+    completedPlayerRounds: 1,
+  };
+  request.world.historyAlreadyAppended = ["message.10.1.player"];
+  const production = compiler.compilePlayCallChain(
+    request,
+    builtinDefaultPlayPresetBinding(),
+  );
+  const blocks = production.bootstrap.logicalMessages.flatMap(
+    ({ blocks }) => blocks,
+  );
+  const replay = blocks
+    .filter(({ source }) => source.startsWith("runtime:checkpoint-history"))
+    .map(({ markdown }) => markdown)
+    .join("\n");
+  expect(replay).toContain("position 5");
+  expect(replay).toContain("position 6");
+  expect(replay).not.toContain("position 4");
+  expect(replay).toContain("remaining positions may have gaps");
+  expect(replay).toContain(
+    "Explicit current world corrections take precedence",
+  );
+  expect(
+    blocks
+      .map(({ markdown }) => markdown)
+      .join("\n")
+      .match(/第三个回答/gu),
+  ).toHaveLength(1);
+  const preview = compiler.preview(request, builtinDefaultPlayPresetBinding());
+  expect(JSON.stringify(preview)).toContain("history_read");
+  expect(JSON.stringify(preview)).toContain(
+    "@history-message-message.10.2.narrator",
+  );
+});
+
+test("旧会话刷新编译仍保留冻结工具定义，新会话定义只声明专用历史入口", () => {
+  const compiler = new FileNativePromptCompiler();
+  const request = input({ playerInputPlacement: "append" });
+  const old = compiler.compilePlayCallChain(
+    request,
+    builtinDefaultPlayPresetBinding(),
+  );
+  const legacyTools = old.toolUniverse.filter(
+    ({ name }) => name !== "history_search" && name !== "history_read",
+  );
+  legacyTools.find(({ name }) => name === "history_list")!.inputSchema = {
+    type: "object",
+    properties: {
+      order: { enum: ["newest_first", "oldest_first"] },
+      limit: { type: "integer" },
+      cursor: { type: ["string", "null"] },
+    },
+    required: ["order"],
+  };
+  old.bootstrap.tools = structuredClone(legacyTools);
+  old.bootstrap.toolUniverse = structuredClone(legacyTools);
+  request.frozenWorldContext = old.bootstrap;
+  const refreshed = compiler.compilePlayCallChain(
+    request,
+    builtinDefaultPlayPresetBinding(),
+  );
+  expect(refreshed.toolUniverse).toEqual(legacyTools);
+  expect(refreshed.bootstrap.tools).toEqual(legacyTools);
+  delete request.frozenWorldContext;
+  const fresh = compiler.compilePlayCallChain(
+    request,
+    builtinDefaultPlayPresetBinding(),
+  );
+  expect(fresh.toolUniverse.map(({ name }) => name)).toContain(
+    "history_search",
+  );
+  expect(fresh.toolUniverse.map(({ name }) => name)).toContain("history_read");
+  expect(
+    fresh.toolUniverse.find(({ name }) => name === "context_search")!
+      .inputSchema,
+  ).toMatchObject({ properties: { source: { const: "state" } } });
+  expect(
+    fresh.toolUniverse.find(({ name }) => name === "context_read")!.description,
+  ).not.toContain("history-message");
 });

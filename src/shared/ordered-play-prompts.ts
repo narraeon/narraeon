@@ -1,3 +1,4 @@
+import { historyUseGuidance } from "./history-use-guidance.ts";
 import type { AppLocale } from "../protocol/appPreferences.ts";
 import { defaultNarrationPromptForLocale } from "./default-play-prompts.ts";
 import { defaultPresetHostFilesForLocale } from "./default-preset-host.ts";
@@ -41,14 +42,18 @@ export function builtinPlayPrompts(locale: AppLocale): BuiltinPlayPrompt[] {
 
 world_patch 的 YAML locator 可以包含 map key 和从零开始的数组下标；remove 删除一个精确位置。未提供的元数据保持原值。world_retire 从目录注入中退役文档，文档仍可读取、引用和恢复。工具响应的成功状态变化与后续最终叙事分别提交，后续失败不回滚已提交变化。成功写入回执表示当前值已改变；以真实回执的结算状态为准，模型文字不能提交世界。
 
-包含工具调用的响应属于中间步，正文不作为最终叙事提交。收到全部工具结果后继续；没有工具调用的非空正文结束本次循环并由 Runtime 提交叙事。world_checkpoint 登记在随后最终叙事成功提交后生效，边界包含该叙事；登记后仍可继续工具调用。全新上下文的历史补充只包含检查点后的已提交玩家原文与最终叙事，排除开场白、工具和推理。`
+包含工具调用的响应属于中间步，正文不作为最终叙事提交。收到全部工具结果后继续；没有工具调用的非空正文结束本次循环并由 Runtime 提交叙事。world_checkpoint 登记在随后最终叙事成功提交后生效，边界包含该叙事；登记后仍可继续工具调用。全新上下文的历史补充只包含检查点后的已提交玩家原文与最终叙事，排除开场白、工具和推理。
+
+${historyUseGuidance(locale)}`
         : `# Tools and response settlement
 
 Use only attached tools. Directories use @dir-* handles from the preload or tool results; do not list them again just to confirm a handle; documents and history use returned @handles. Results identify read scope, completeness and cursor; directory summaries are not document bodies. Complete injected bodies and exact reads authorize writes within their corresponding scopes; player-view annotations grant no additional authority. Initial world materials load once per fresh context. Later successful tool calls and receipts update current values and read scopes; do not re-read merely to confirm your own successful writes. A fresh context does not inherit old conversation authorization.
 
 YAML world_patch locators accept map keys and zero-based array indexes; remove deletes one exact location. Omitted metadata remains unchanged. world_retire removes a document from catalog injection while keeping it readable, referenceable and restorable. Successful tool-response state changes and later final narrative commit separately; later failure does not roll back committed changes. Successful write receipts change current values; the actual receipt determines settlement, not model prose.
 
-Responses containing tool calls are intermediate steps; their text is not committed as final narrative. Continue after all tool results. A nonempty tool-free response ends this loop and Runtime commits its narrative. world_checkpoint takes effect after the subsequent final narrative commits, including that narrative in its boundary; further tool calls may follow registration. Fresh-context replay contains committed player originals and final narratives after the checkpoint, excluding the opening, tools and reasoning.`,
+Responses containing tool calls are intermediate steps; their text is not committed as final narrative. Continue after all tool results. A nonempty tool-free response ends this loop and Runtime commits its narrative. world_checkpoint takes effect after the subsequent final narrative commits, including that narrative in its boundary; further tool calls may follow registration. Fresh-context replay contains committed player originals and final narratives after the checkpoint, excluding the opening, tools and reasoning.
+
+${historyUseGuidance(locale)}`,
     },
     {
       id: "play.style",

@@ -1,3 +1,4 @@
+import { historyUseGuidance } from "../../shared/history-use-guidance.ts";
 import type { ModelProviderKind } from "../../protocol/modelConnections.ts";
 import {
   defaultAppLocale,
@@ -15,6 +16,8 @@ import {
 export const registeredRuntimeToolNames = [
   "state_list",
   "history_list",
+  "history_search",
+  "history_read",
   "context_search",
   "context_read",
   "world_patch",
@@ -26,7 +29,7 @@ export const registeredRuntimeToolNames = [
 ] as const;
 
 /** Changes only when the executable Runtime tool universe or schemas change. */
-export const runtimeToolRegistryRevision = "runtime-tools-v8";
+export const runtimeToolRegistryRevision = "runtime-tools-v9";
 
 export type RegisteredRuntimeToolName =
   (typeof registeredRuntimeToolNames)[number];
@@ -161,21 +164,56 @@ function createToolDefinitions(
       ),
     },
     history_list: {
-      description: descriptions.history_list,
+      description: descriptions.history_list + " " + historyUseGuidance(locale),
       inputSchema: object(
         {
-          order: { enum: ["newest_first", "oldest_first"] },
-          cursor: { type: ["string", "null"] },
+          before: string,
+          after: string,
           limit: { type: "integer", minimum: 1, maximum: 100 },
+          cursor: string,
         },
-        ["order"],
+        [],
+      ),
+    },
+    history_search: {
+      description:
+        descriptions.history_search + " " + historyUseGuidance(locale),
+      inputSchema: object(
+        {
+          queries: {
+            type: "array",
+            minItems: 1,
+            maxItems: 5,
+            items: { type: "string", minLength: 1, maxLength: 256 },
+          },
+          match: { enum: ["any", "all"] },
+          order: { enum: ["newest_first", "oldest_first"] },
+          caseSensitive: { type: "boolean" },
+          after: string,
+          before: string,
+          limit: { type: "integer", minimum: 1, maximum: 50 },
+          cursor: string,
+        },
+        [],
+      ),
+    },
+    history_read: {
+      description: descriptions.history_read + " " + historyUseGuidance(locale),
+      inputSchema: object(
+        {
+          latest: { type: "integer", minimum: 1, maximum: 21 },
+          ref: string,
+          before: { type: "integer", minimum: 0, maximum: 20 },
+          after: { type: "integer", minimum: 0, maximum: 20 },
+        },
+        [],
       ),
     },
     context_search: {
       description: descriptions.context_search,
       inputSchema: object(
         {
-          source: { enum: ["state", "history"] },
+          source: { const: "state" },
           query: { type: "string", minLength: 1, maxLength: 256 },
           caseSensitive: { type: "boolean" },
           within: string,
@@ -322,11 +360,15 @@ const toolDescriptions: Record<
     state_list:
       "List document and state directory handles known to Runtime. parent must be @dir-/ for the state root or an @dir-* handle from the initial directory index or an earlier state_list result; no preliminary listing is needed for an already supplied handle. Catalog directories declared by the frozen world frame remain listed and usable when empty. A cursor is valid only for the same state snapshot, parent, and limit. Pass returned document handles to context_read. This tool never lists committed history.",
     history_list:
-      "List handles for committed history messages known to Runtime. order must be newest_first or oldest_first. A cursor is valid only for the same committed-history snapshot, order, and limit. Pass returned @history-message-* handles to context_read. This tool never lists the mutable state directory.",
+      "Browse committed history on the current timeline. Omit anchors for the latest page; use only before or after with a Runtime ref (including refs in injected history) for the immediately adjacent page, excluding the anchor. Every page is oldest to newest. limit defaults to 20 (1–100 messages). Previews are only the first 120 Unicode code points. Use independent earlierCursor/laterCursor with {cursor} alone; no first-query parameters on continuation. Cursors bind world, tool, query and immutable ordered history. After history_changed rerun the query. Opening messages are queryable. Read full originals with history_read; positions are snapshot locations, not identities or turns.",
+    history_search:
+      "Search committed originals on the current timeline with queries: 1–5 nonempty literal strings (max 256 code points each); no query alias or semantic filters. match defaults to any, or all within one message. NFKC normalization always applies; caseSensitive defaults to false (locale-und case folding), normalized duplicate queries collapse. order defaults to newest_first, or oldest_first. limit defaults to 10 (1–50 matching messages). Optional after/before refs exclude timeline boundaries independently of order; after must precede before. Each result has at most 3 partial original fragments, query occurrence counts and complete-original length. Read a hit and nearby context with history_read. Continue with {cursor} alone; history_changed requires a new query.",
+    history_read:
+      "Read complete committed originals on the current timeline, never summarized, truncated or body-paginated. Use {latest:N} alone (1–21 messages), or {ref,before,after} with defaults before=after=0 and sum at most 20; do not mix modes. Ref may come directly from Runtime prompt injections or tools without listing first. Windows are always oldest to newest, including the anchor. earlier/later are immediately outside this window and can be the next ref with before/after to avoid rereading. Boundaries and empty history are normal. Counts are messages, not turns; 21 long messages can produce large output.",
     context_search:
-      "Search literal source text in state or history. Zero matches means only that the supplied text had no literal match; it does not prove that a world fact does not exist. Player-visible narrative must not recount the search process. within accepts only an @document or @dir-* handle returned by Runtime.",
+      "Search literal source text in state documents. Use source=state; committed history uses history_search. Zero matches means only that the supplied text had no literal match; it does not prove that a world fact does not exist. Player-visible narrative must not recount the search process. within accepts only an @document or @dir-* handle returned by Runtime.",
     context_read:
-      "Read the complete content of an @document, @node, or @history-message-* handle previously returned by Runtime. The read heading, metadata boundaries, body boundaries, scope, and completion marker in the result are not source text. set_metadata may include only the fields that must change; Runtime preserves omitted metadata fields. Update the writable body between the boundaries with locators. YAML bodies omit the $document technical header; Markdown bodies begin at the document's level-one heading. Results are never truncated or paginated. Never pass file paths, natural-language names, or an invented world/... value.",
+      "Read the complete content of an @document or @node handle previously returned by Runtime. The read heading, metadata boundaries, body boundaries, scope, and completion marker in the result are not source text. set_metadata may include only the fields that must change; Runtime preserves omitted metadata fields. Update the writable body between the boundaries with locators. YAML bodies omit the $document technical header; Markdown bodies begin at the document's level-one heading. Results are never truncated or paginated. Never pass file paths, natural-language names, or an invented world/... value.",
     world_patch:
       'Update a document that has been read precisely or whose complete body was injected with write authorization. target must be an @short-ref. When title, summary, or aliases are stale, use set_metadata and include only the title, summary, or aliases that must change. At least one is required; Runtime preserves omitted fields from the current candidate document. A YAML edit uses locator:{yaml:["field","child"]}, for example {op:"replace",locator:{yaml:["status"]},value:"new value"}. Locator segments address map keys or a zero-based array index; remove deletes exactly the existing key or array item at its locator. A YAML value may reference a whole document only as {$ref:"@short-ref"}; the short reference must come from a Runtime list, read, or create result. Never invent a document id. If no handle is available, use ordinary text when semantically correct or call world_create first and use its returned @short-ref. To add an item to the end of an existing sequence, use append with the locator pointing to that sequence; add creates only a map key or list index that does not exist. A Markdown locator excludes the document level-one heading: {markdown:["Responsibilities"]} points exactly to ## Responsibilities, and replace_section.markdown must begin with the same heading at the same level. Use replace_preamble for text after the level-one heading and before the first level-two heading; send only that text. Use replace_body to replace the whole Markdown body and retain the original level-one heading. Success reports only whether the document changed and does not echo the body. Call context_read again only when a later decision depends on Runtime\'s exact serialized body or current metadata. Do not use path, JSON Pointer, set, or a file name.',
     world_create:
@@ -344,11 +386,15 @@ const toolDescriptions: Record<
     state_list:
       "列出 Runtime 已知的文档与状态目录句柄。状态根目录的 parent 使用 @dir-/；继续下级时使用初始目录索引或 state_list 返回的 @dir-*；已有句柄无需再次列目录确认。冻结世界 frame 声明的 catalog 目录即使为空，也会继续列出并可用。cursor 只对同一状态快照、parent 和 limit 有效。返回的文档句柄交给 context_read；本工具不列出已提交历史。",
     history_list:
-      "列出 Runtime 已知的已提交历史消息句柄。order 必须是 newest_first 或 oldest_first；cursor 只对同一历史快照、order 和 limit 有效。返回的 @history-message-* 交给 context_read；本工具不列出可变状态目录。",
+      "浏览当前时间线已提交历史。无锚点时取最新一页；before 或 after 只能选一个，取锚点紧邻前／后的一页且不含锚点。页内始终由旧到新。limit 默认20，整数1–100。预览仅含前120个Unicode码点；完整原文用history_read。earlierCursor／laterCursor独立翻页，续页只传{cursor}，不可混用首次参数。游标绑定世界、工具、查询和有序历史快照；history_changed须重新查询。开场白可查询。提示词注入中的ref可直接使用，无需再次列举；位置不是身份或回合数。",
+    history_search:
+      "搜索当前时间线已提交原文。queries必填：1–5个非空字面词，每词最多256个Unicode码点，不接受query别名或语义筛选。match默认any，all限于同一消息。始终NFKC规范化，caseSensitive默认false（locale-und大小写折叠），规范化重复词合并。order默认newest_first，可选oldest_first；limit默认10，整数1–50条命中消息。after／before始终按时间线先后排除边界，after必须早于before，与结果排序无关。每项最多3个部分原文片段、逐词命中次数及完整原文长度；可用history_read读取前后文。续页只传{cursor}；history_changed须重新查询。",
+    history_read:
+      "完整读取当前时间线已提交原文，无摘要、无截断、无正文分页。{latest:N}单独读取最近1–21条；或{ref,before,after}，before／after默认0且合计最多20；两模式互斥。ref可直接使用Runtime提示词注入或工具结果的历史句柄，不必先列举。窗口始终由旧到新且包含锚点。earlier／later是窗口外紧邻句柄，可作为下一次ref并配before／after避免重复读取；边界与空历史正常。数量单位是消息而非回合；21条长消息仍可能产生大量输出。",
     context_search:
-      "在 state 或 history 的原文字面中搜索。0 命中只表示给定文本没有字面命中，不证明世界事实不存在；玩家可见叙事不得复述搜索过程。within 只能使用 Runtime 已返回的 @文档或 @dir-* 句柄。",
+      "在状态文档原文字面中搜索，source只能为state；已提交历史使用history_search。0 命中只表示给定文本没有字面命中，不证明世界事实不存在；玩家可见叙事不得复述搜索过程。within 只能使用 Runtime 已返回的 @文档或 @dir-* 句柄。",
     context_read:
-      "完整读取 Runtime 先前返回的 @文档、@节点或 @history-message-* 句柄。结果中的读取标题、元信息边界、正文边界、范围和完整标记不属于源文；set_metadata 可以只提交需要改变的字段，Runtime 会保留未提供的元数据字段。中间的可写正文用 locator 更新。YAML 正文不含 $document 技术头，Markdown 正文从文档 # 一级标题开始。结果不会截断或分页。不要传文件路径、自然语言名称或自行拼造的 world/...。",
+      "完整读取 Runtime 先前返回的 @文档或@节点句柄。结果中的读取标题、元信息边界、正文边界、范围和完整标记不属于源文；set_metadata 可以只提交需要改变的字段，Runtime 会保留未提供的元数据字段。中间的可写正文用 locator 更新。YAML 正文不含 $document 技术头，Markdown 正文从文档 # 一级标题开始。结果不会截断或分页。不要传文件路径、自然语言名称或自行拼造的 world/...。",
     world_patch:
       '更新已精确读取，或已随写入资格注入完整正文的文档。target 必须使用 @短引用；文档 title、summary 或 aliases 过时时使用 set_metadata，只提供需要改变的 title、summary 或 aliases。至少提供一项；未提供的字段由 Runtime 从当前候选文档保留。YAML edit 使用 locator:{yaml:["字段","子字段"]}，例如 {op:"replace",locator:{yaml:["情况"]},value:"新值"}。locator 的每一段可以定位 map key 或从 0 开始的数组下标；remove 只删除 locator 精确指向的已有键或数组项。YAML value 需要引用整份文档时只能写 {$ref:"@短引用"}，短引用必须来自 Runtime 的 list、read 或 create 结果；不得自行编造文档 id。没有可用句柄时，根据语义使用普通文本，或先 world_create 后使用其返回的 @短引用。向已存在的 sequence 末尾加一项必须使用 append 并把 locator 指向该 sequence；add 只创建尚不存在的 map key 或 list index。Markdown locator 不包含文档 # 一级标题：{markdown:["职责"]} 精确指向 ## 职责，replace_section.markdown 必须从同级同名标题开始。修改 # 标题下、第一个 ## 前的文字用 replace_preamble（只传该段文字）；替换整个 Markdown 正文用 replace_body，且 markdown 必须保留原 # 一级标题。成功结果只报告文档是否发生变化，不回显正文；只有后续决策依赖 Runtime 序列化后的精确正文或当前元数据时才重新 context_read。不要使用 path、JSON Pointer、set 或文件名。',
     world_create:
@@ -361,3 +407,21 @@ const toolDescriptions: Record<
       "清除本次后置请求预先声明且允许 clear 的产物投影；不能选择频道、key 或其他输出契约。",
   },
 };
+
+export function hasLegacyHistoryTools(
+  tools: readonly { name: string; inputSchema: object }[],
+): boolean {
+  return tools.some(({ name, inputSchema }) => {
+    const schema = inputSchema as {
+      properties?: Record<string, { enum?: unknown[] }>;
+      oneOf?: unknown[];
+      anyOf?: unknown[];
+    };
+    return (
+      name === "context_list" ||
+      (name === "history_list" && schema.properties?.order !== undefined) ||
+      (name === "context_search" &&
+        schema.properties?.source?.enum?.includes("history") === true)
+    );
+  });
+}
