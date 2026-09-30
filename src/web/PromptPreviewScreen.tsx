@@ -56,7 +56,7 @@ export interface PromptPreviewData {
         text: string;
         cache_control?: { type: "ephemeral" };
       }[];
-      messages: { role: "system" | "user"; content: unknown }[];
+      messages: { role: "system" | "user" | "assistant"; content: unknown }[];
     };
     tools: { name: string; description: string; inputSchema: object }[];
     toolUniverse?: {

@@ -2,10 +2,19 @@ import type { AppLocale } from "../protocol/appPreferences.ts";
 import { defaultNarrationPromptForLocale } from "./default-play-prompts.ts";
 import { defaultPresetHostFilesForLocale } from "./default-preset-host.ts";
 
-export type OrderedPlayPrompt =
+export type PromptMessageRole = "system" | "user" | "assistant";
+
+export function isPromptMessageRole(
+  value: unknown,
+): value is PromptMessageRole {
+  return value === "system" || value === "user" || value === "assistant";
+}
+
+export type OrderedPlayPrompt = { messageRole?: PromptMessageRole } & (
   | { id: string; kind: "user"; name: string; enabled: boolean; body: string }
   | { id: string; kind: "builtin"; builtin: string; enabled: boolean }
-  | { id: string; kind: "world" };
+  | { id: string; kind: "world" }
+);
 
 export interface BuiltinPlayPrompt {
   id: string;

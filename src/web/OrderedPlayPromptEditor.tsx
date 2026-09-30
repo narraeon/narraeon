@@ -6,12 +6,16 @@ import { useState, type ReactNode } from "react";
 import {
   builtinPlayPrompts,
   type OrderedPlayPrompt,
+  type PromptMessageRole,
+  isPromptMessageRole,
 } from "../shared/ordered-play-prompts.ts";
 import { getWebLocale } from "./i18n.ts";
 
 export function OrderedPlayPromptEditor({
   entries,
   onChange,
+  mergeConsecutiveMessages = true,
+  onMergeConsecutiveMessagesChange,
   migrationNotice,
   authoring = false,
   directory,
@@ -20,6 +24,8 @@ export function OrderedPlayPromptEditor({
   onSelectPrompt,
 }: {
   entries: OrderedPlayPrompt[];
+  mergeConsecutiveMessages?: boolean;
+  onMergeConsecutiveMessagesChange?: (value: boolean) => void;
   onChange: (entries: OrderedPlayPrompt[]) => void;
   migrationNotice?: string;
   authoring?: boolean;
@@ -62,13 +68,18 @@ export function OrderedPlayPromptEditor({
       entries.map((current) => (current.id === entry.id ? entry : current)),
     );
   }
-  function add(body = "", title = t("New prompt", "新提示词")) {
+  function add(
+    body = "",
+    title = t("New prompt", "新提示词"),
+    messageRole: PromptMessageRole = "system",
+  ) {
     const entry: OrderedPlayPrompt = {
       id: crypto.randomUUID(),
       kind: "user",
       name: title,
       enabled: true,
       body,
+      messageRole,
     };
     const next = [...entries];
     next.splice(index + 1, 0, entry);
@@ -85,6 +96,21 @@ export function OrderedPlayPromptEditor({
       }
     >
       {migrationNotice && <p role="status">{migrationNotice}</p>}
+      {onMergeConsecutiveMessagesChange && (
+        <label>
+          <input
+            type="checkbox"
+            checked={mergeConsecutiveMessages}
+            onChange={(event) =>
+              onMergeConsecutiveMessagesChange(event.target.checked)
+            }
+          />
+          {t(
+            "Merge adjacent messages with the same role",
+            "合并相邻同角色消息",
+          )}
+        </label>
+      )}
       <div className="ordered-play-editor">
         <aside>
           <button type="button" onClick={() => add()}>
@@ -194,6 +220,7 @@ export function OrderedPlayPromptEditor({
                             ? selected.body
                             : builtin!.body,
                           `${name(selected)} ${t("copy", "副本")}`,
+                          selected.messageRole ?? "system",
                         )
                       }
                     >
@@ -215,6 +242,22 @@ export function OrderedPlayPromptEditor({
                   </button>
                 )}
               </div>
+              <label>
+                {t("Message role", "发送角色")}
+                <select
+                  aria-label={t("Message role", "发送角色")}
+                  value={selected.messageRole ?? "system"}
+                  disabled={builtin?.required}
+                  onChange={(event) => {
+                    if (isPromptMessageRole(event.target.value))
+                      update({ ...selected, messageRole: event.target.value });
+                  }}
+                >
+                  <option value="system">System</option>
+                  <option value="user">User</option>
+                  <option value="assistant">Assistant</option>
+                </select>
+              </label>
               {selected.kind === "world" ? (
                 <>
                   <h4>{name(selected)}</h4>

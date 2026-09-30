@@ -1,3 +1,4 @@
+import { isPromptMessageRole } from "../../shared/ordered-play-prompts.ts";
 import { isWorldExtensionControl } from "../../protocol/worldExtensions.ts";
 import type { PromptCompilation } from "./FileNativePromptCompiler.ts";
 import { isWorldPromptMaintenance } from "../../protocol/worldMaintenance.ts";
@@ -207,7 +208,15 @@ export function validLogicalMessages(value: unknown): boolean {
 function validLogicalMessage(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["role", "markdown", "blocks"]) &&
+    hasExactKeys(
+      value,
+      ["role", "markdown", "blocks"],
+      ["messageRole", "promptId"],
+    ) &&
+    (value.messageRole === undefined ||
+      isPromptMessageRole(value.messageRole)) &&
+    (value.promptId === undefined ||
+      (typeof value.promptId === "string" && value.promptId.length > 0)) &&
     [
       "runtime_system",
       "author_instruction",
@@ -240,7 +249,7 @@ function validPromptProvider(value: unknown): boolean {
       (message) =>
         isRecord(message) &&
         hasExactKeys(message, ["role", "content"]) &&
-        (message.role === "system" || message.role === "user") &&
+        isPromptMessageRole(message.role) &&
         Object.hasOwn(message, "content"),
     )
   );

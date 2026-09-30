@@ -807,6 +807,10 @@ export function PresetWorkbenchEditor({
     ) : undefined;
   return (
     <OrderedPlayPromptEditor
+      mergeConsecutiveMessages={structure.mergeConsecutiveMessages ?? true}
+      onMergeConsecutiveMessagesChange={(mergeConsecutiveMessages) =>
+        onChange((s) => ({ ...s, mergeConsecutiveMessages }))
+      }
       entries={
         (authoring ? structure.authorPrompts : structure.playPrompts) ?? []
       }

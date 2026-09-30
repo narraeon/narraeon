@@ -1223,7 +1223,8 @@ function responsesBootstrapMessage(
             if (!isRecord(item) || typeof item.text !== "string") return [];
             return [
               {
-                type: "input_text",
+                type:
+                  message.role === "assistant" ? "output_text" : "input_text",
                 text: item.text,
                 ...(isRecord(item.cache_control)
                   ? { cache_control: cloneProviderValue(item.cache_control) }

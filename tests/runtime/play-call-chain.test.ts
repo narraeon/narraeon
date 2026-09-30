@@ -143,12 +143,13 @@ test.each([
       modelHost: host,
     });
     const latest = playPreset();
-    latest.definition.playPrompts!.unshift({
+    latest.definition.playPrompts!.push({
       kind: "user",
       id: "new",
       name: "New",
       enabled: true,
       body: "NATIVE UPDATED PROMPT",
+      messageRole: "assistant",
     });
     const next = await new PlayCallChain(worlds).append({
       worldId,
@@ -165,6 +166,24 @@ test.each([
     expect(next.status).toBe("ready");
     expect(requests).toHaveLength(2);
     expect(requests[1]).toContain("NATIVE UPDATED PROMPT");
+    const expectedText: unknown = expect.stringContaining(
+      "NATIVE UPDATED PROMPT",
+    );
+    const expectedContent: unknown =
+      provider === "anthropic_messages"
+        ? expect.arrayContaining([
+            expect.objectContaining({ text: expectedText }),
+          ])
+        : expectedText;
+    expect(JSON.parse(requests[1]!)).toHaveProperty(
+      provider === "openai_responses" ? "input" : "messages",
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "assistant",
+          content: expectedContent,
+        }),
+      ]),
+    );
     expect(requests[1]).toContain("OPAQUE ORIGINAL");
     expect(requests[1]).toContain(JSON.stringify(original).slice(1, -1));
     const reading = await new PlayCallChain(worlds).inspectReading(

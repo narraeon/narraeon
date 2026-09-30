@@ -224,6 +224,7 @@ export interface PlayPresetDefinition {
   format: "narraeon.play-preset/v1" | "narraeon.play-preset/v2";
   playPrompts?: OrderedPlayPrompt[];
   authorPrompts?: OrderedPlayPrompt[];
+  mergeConsecutiveMessages?: boolean;
   name: string;
   callChainPath: string;
   /** Optional only so pre-feature v1 presets retain their prior semantics. */
@@ -264,6 +265,7 @@ export interface PlayPresetStructuredEditor {
   followupItems?: FollowupItem[];
   playPrompts?: OrderedPlayPrompt[];
   authorPrompts?: OrderedPlayPrompt[];
+  mergeConsecutiveMessages?: boolean;
   migrationNotice?: string;
   name: string;
   callChainPath: string;
@@ -404,6 +406,7 @@ export function defaultPlayPresetFilesForLocale(
   preset.set("format", "narraeon.play-preset/v2");
   preset.set("playPrompts", defaultOrderedPlayPrompts());
   preset.set("authorPrompts", defaultOrderedAuthorPrompts());
+  preset.set("mergeConsecutiveMessages", false);
   files["preset.yaml"] = stringify(preset.toJS());
   return files;
 }
@@ -1134,6 +1137,7 @@ export function toPlayPresetStructuredEditor(
 ): PlayPresetStructuredEditor {
   return {
     name: definition.name,
+    mergeConsecutiveMessages: definition.mergeConsecutiveMessages ?? true,
     authorPrompts: structuredClone(
       definition.authorPrompts ?? legacyAuthorPrompts(definition),
     ),
@@ -1207,6 +1211,11 @@ export function applyPlayPresetStructuredEditor(
       "Structured editing can be applied only to parseable preset/call-chain YAML",
     );
   preset.set("name", input.name);
+  if (input.mergeConsecutiveMessages !== undefined)
+    preset.set(
+      "mergeConsecutiveMessages",
+      parseMessageMerging(input.mergeConsecutiveMessages),
+    );
   if (input.authorPrompts !== undefined)
     preset.set("authorPrompts", parseOrderedAuthorPrompts(input.authorPrompts));
   if (input.playPrompts !== undefined) {
@@ -1382,6 +1391,13 @@ export function parsePlayPresetStructuredEditor(
       ? {}
       : { followupItems: parseFollowupItems(value.followupItems, followups) }),
     name: value.name,
+    ...(value.mergeConsecutiveMessages === undefined
+      ? {}
+      : {
+          mergeConsecutiveMessages: parseMessageMerging(
+            value.mergeConsecutiveMessages,
+          ),
+        }),
     ...(value.authorPrompts === undefined
       ? {}
       : { authorPrompts: parseOrderedAuthorPrompts(value.authorPrompts) }),
@@ -1425,6 +1441,7 @@ export function parsePlayPresetFiles(
         "settingImprovement",
         "playPrompts",
         "authorPrompts",
+        "mergeConsecutiveMessages",
         "mounts",
         "playerViewPanels",
         "extensions",
@@ -1449,7 +1466,9 @@ export function parsePlayPresetFiles(
       );
     if (
       preset.format === "narraeon.play-preset/v1" &&
-      (preset.playPrompts !== undefined || preset.authorPrompts !== undefined)
+      (preset.playPrompts !== undefined ||
+        preset.authorPrompts !== undefined ||
+        preset.mergeConsecutiveMessages !== undefined)
     )
       invalid(
         "preset_format_invalid",
@@ -1522,6 +1541,13 @@ export function parsePlayPresetFiles(
       definition: {
         ...(followupItems === undefined ? {} : { followupItems }),
         format: preset.format,
+        ...(preset.mergeConsecutiveMessages === undefined
+          ? {}
+          : {
+              mergeConsecutiveMessages: parseMessageMerging(
+                preset.mergeConsecutiveMessages,
+              ),
+            }),
         ...(preset.format === "narraeon.play-preset/v2"
           ? { playPrompts: parseOrderedPlayPrompts(preset.playPrompts) }
           : {}),
@@ -3290,4 +3316,13 @@ export function legacyAuthorPrompts(
       enabled: true,
     };
   return entries;
+}
+
+function parseMessageMerging(value: unknown): boolean {
+  if (typeof value !== "boolean")
+    throw new FileNativePlayPresetError(
+      "message_merging_invalid",
+      "mergeConsecutiveMessages must be a boolean",
+    );
+  return value;
 }

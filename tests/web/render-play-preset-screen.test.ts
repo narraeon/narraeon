@@ -463,3 +463,47 @@ test.each(["zh-CN", "en"] as const)(
     );
   },
 );
+
+test("message role and merging controls are saved with the preset", async () => {
+  const request = setup();
+  expect(screen.getByLabelText<HTMLSelectElement>("发送角色").disabled).toBe(
+    true,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "新增提示词" }));
+  fireEvent.change(screen.getByLabelText("提示词名称"), {
+    target: { value: "示例回答" },
+  });
+  fireEvent.change(screen.getByLabelText("提示词正文"), {
+    target: { value: "夜色渐浓。" },
+  });
+  fireEvent.change(screen.getByLabelText("发送角色"), {
+    target: { value: "assistant" },
+  });
+  fireEvent.click(screen.getByLabelText("合并相邻同角色消息"));
+  fireEvent.click(screen.getByRole("button", { name: "克隆提示词" }));
+  expect(screen.getByLabelText<HTMLSelectElement>("发送角色").value).toBe(
+    "assistant",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+  await waitFor(() =>
+    expect(request.mock.calls.some(([r]) => r.type === "play.save")).toBe(true),
+  );
+  const save = request.mock.calls
+    .map(([r]) => r)
+    .find((r) => r.type === "play.save");
+  expect(save?.structure).toMatchObject({ mergeConsecutiveMessages: false });
+  expect(save?.structure).toHaveProperty(
+    "playPrompts",
+    expect.arrayContaining([
+      expect.objectContaining({
+        name: "示例回答",
+        messageRole: "assistant",
+        body: "夜色渐浓。",
+      }),
+      expect.objectContaining({
+        name: "示例回答 副本",
+        messageRole: "assistant",
+      }),
+    ]),
+  );
+});

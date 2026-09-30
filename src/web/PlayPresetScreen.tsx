@@ -162,6 +162,7 @@ export interface PlayPresetStructuredEditor {
   followupItems?: FollowupItem[];
   playPrompts?: OrderedPlayPrompt[];
   authorPrompts?: OrderedPlayPrompt[];
+  mergeConsecutiveMessages?: boolean;
   migrationNotice?: string;
   name: string;
   callChainPath: string;

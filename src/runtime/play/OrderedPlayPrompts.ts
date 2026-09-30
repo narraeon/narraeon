@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { parseDocument } from "yaml";
 import {
   builtinPlayPrompts,
+  isPromptMessageRole,
   type OrderedPlayPrompt,
   type BuiltinPlayPrompt,
 } from "../../shared/ordered-play-prompts.ts";
@@ -32,12 +33,20 @@ export function parseOrderedPlayPrompts(
     )
       return fail();
     ids.add(item.id);
+    if (
+      item.messageRole !== undefined &&
+      !isPromptMessageRole(item.messageRole)
+    )
+      return fail();
+    const messageRole =
+      item.messageRole === undefined ? {} : { messageRole: item.messageRole };
     const exact = (keys: string[]) =>
-      Object.keys(item).length === keys.length &&
+      Object.keys(item).length ===
+        keys.length + (item.messageRole === undefined ? 0 : 1) &&
       keys.every((key) => Object.hasOwn(item, key));
     if (item.kind === "world" && exact(["id", "kind"])) {
       worlds++;
-      return { id: item.id, kind: "world" };
+      return { id: item.id, kind: "world", ...messageRole };
     }
     if (
       item.kind === "user" &&
@@ -54,6 +63,7 @@ export function parseOrderedPlayPrompts(
         name: item.name,
         enabled: item.enabled,
         body: item.body,
+        ...messageRole,
       };
     const builtin = catalog.find((entry) => entry.id === item.builtin);
     if (
@@ -62,7 +72,9 @@ export function parseOrderedPlayPrompts(
       !builtin ||
       builtins.has(builtin.id) ||
       typeof item.enabled !== "boolean" ||
-      (builtin.required && !item.enabled)
+      (builtin.required &&
+        (!item.enabled ||
+          (item.messageRole !== undefined && item.messageRole !== "system")))
     )
       return fail();
     builtins.add(builtin.id);
@@ -71,6 +83,7 @@ export function parseOrderedPlayPrompts(
       kind: "builtin",
       builtin: builtin.id,
       enabled: item.enabled,
+      ...messageRole,
     };
   });
   if (

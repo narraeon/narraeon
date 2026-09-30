@@ -74,6 +74,10 @@ test("A 工作台真实保存、独立三产物、正则、JS、导入及下一�
         "用克制而有画面感的文字描写雾港。\n\n少解释，多呈现。每次叙事停在一个值得选择的时刻。",
       );
     await page.getByLabel("提示词正文", { exact: true }).blur();
+    await page
+      .getByLabel("发送角色", { exact: true })
+      .selectOption("assistant");
+    await page.getByLabel("合并相邻同角色消息", { exact: true }).check();
     await page.screenshot({ path: `${evidence}/A-main.png`, fullPage: true });
     await page
       .getByRole("button", { name: "新增后置请求", exact: true })
@@ -149,6 +153,15 @@ test("A 工作台真实保存、独立三产物、正则、JS、导入及下一�
     const saved = library.presets.find((p) => p.id === created.preset.id)!;
     expect(saved.validation).toEqual({ status: "valid" });
     expect(saved.draft).toBeUndefined();
+    expect(saved.structure!.mergeConsecutiveMessages).toBe(true);
+    expect(saved.structure!.playPrompts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "雾港 · 叙事风格",
+          messageRole: "assistant",
+        }),
+      ]),
+    );
     const followup = saved.structure!.followups[0]!;
     names = followup.artifacts.map((a) => a.name);
     expect(names).toHaveLength(3);
@@ -328,6 +341,14 @@ test("A 工作台真实保存、独立三产物、正则、JS、导入及下一�
     await expect(page.getByLabel("你的行动")).toHaveValue("Draft A45 only");
     expect(calls).toBe(2);
     expect(bodies[1]).toContain("回顾本轮已发生变化");
+    expect(JSON.parse(bodies[0]!)).toMatchObject({
+      messages: expect.arrayContaining([
+        expect.objectContaining({
+          role: "assistant",
+          content: expect.stringContaining("用克制而有画面感的文字描写雾港"),
+        }),
+      ]),
+    });
     await page.screenshot({
       path: `${evidence}/A-production-play.png`,
       fullPage: true,

@@ -1,3 +1,4 @@
+import { validLogicalMessages } from "../prompt/PromptCompilationCodec.ts";
 import { isPackageFollowupControlPath } from "../content/PackageFollowups.ts";
 import {
   validAuthoringRequests,
@@ -660,34 +661,6 @@ function validPromptCompilation(value: unknown): boolean {
     Array.isArray(value.coverage) &&
     isRecord(value.budget) &&
     isRecord(value.cache)
-  );
-}
-
-function validLogicalMessages(value: unknown): boolean {
-  return (
-    Array.isArray(value) &&
-    value.every(
-      (message) =>
-        isRecord(message) &&
-        hasExactKeys(message, ["role", "markdown", "blocks"]) &&
-        [
-          "runtime_system",
-          "author_instruction",
-          "world_context",
-          "player_input",
-          "assistant",
-          "tool",
-        ].includes(String(message.role)) &&
-        typeof message.markdown === "string" &&
-        Array.isArray(message.blocks) &&
-        message.blocks.every(
-          (block) =>
-            isRecord(block) &&
-            hasExactKeys(block, ["source", "markdown"]) &&
-            typeof block.source === "string" &&
-            typeof block.markdown === "string",
-        ),
-    )
   );
 }
 
