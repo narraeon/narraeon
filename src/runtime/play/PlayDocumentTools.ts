@@ -1,3 +1,7 @@
+import {
+  stateDirectoryHandle,
+  parseStateDirectoryHandle,
+} from "../world/StateDirectoryHandles.ts";
 import type { AppLocale } from "../../protocol/appPreferences.ts";
 import type { WorldDocumentMaintenance } from "../../protocol/worldMaintenance.ts";
 import { renderDocumentWritePosition } from "../prompt/WorldMaintenanceReport.ts";
@@ -994,41 +998,6 @@ function parseStateSearchScope(
   return document === null
     ? invalidStateHandle
     : { document: { shortRef: document[1]! } };
-}
-
-function stateDirectoryHandle(directory: string): string {
-  if (directory === "") return "@dir-/";
-  const encoded = directory.split("/").map(encodeURIComponent).join("/");
-  return `@dir-/${encoded}`;
-}
-
-function parseStateDirectoryHandle(handle: string): string | null {
-  if (handle === "@dir-/") return "";
-  if (!handle.startsWith("@dir-/") || handle.length === "@dir-/".length)
-    return null;
-  try {
-    const directory = handle
-      .slice("@dir-/".length)
-      .split("/")
-      .map(decodeURIComponent)
-      .join("/");
-    if (
-      directory
-        .split("/")
-        .some(
-          (segment) =>
-            segment === "" ||
-            segment === "." ||
-            segment === ".." ||
-            segment.includes("\\"),
-        ) ||
-      stateDirectoryHandle(directory) !== handle
-    )
-      return null;
-    return directory;
-  } catch {
-    return null;
-  }
 }
 
 function validStateDirectory(directory: string): boolean {

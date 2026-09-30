@@ -64,6 +64,7 @@ import type {
   PlayPresetMount,
 } from "../play/FileNativePlayPresetStore.ts";
 import type { MaterialSelection } from "./MaterialSelection.ts";
+import { stateDirectoryHandle } from "../world/StateDirectoryHandles.ts";
 
 export type { MaterialSelection } from "./MaterialSelection.ts";
 
@@ -83,6 +84,8 @@ export type FileNativeWorldDocumentSnapshot = Pick<
 >;
 
 export interface FileNativePromptInput {
+  /** Reuse material bytes actually supplied to this context; never reselect them on append. */
+  frozenWorldContext?: PromptCompilation;
   extensionControls?: WorldExtensionsView;
   endpoint: { id: string; commit: string; operationId?: string };
   hostBinding: {
@@ -125,6 +128,8 @@ export interface PromptCompilation {
   }[];
   provider: {
     protocol: ProviderKind;
+    /** Runtime-generated initial read, distinct from provider-native conversation. */
+    preload?: { callId: string; markdown: string };
     system?: {
       type: "text";
       text: string;
@@ -651,7 +656,7 @@ export class FileNativePromptCompiler {
       coverage,
       blocks: context,
       maintenance,
-    } = this.inspectWorldMaterials(effectiveInput.world);
+    } = this.playMaterials(effectiveInput);
     const hostRoles = compileHostRoles(
       effectiveInput.hostBinding.files,
       hostFrame,
@@ -712,7 +717,7 @@ export class FileNativePromptCompiler {
       toolUniverse: structuredClone(tools),
       toolStrategy,
       coverage,
-      maintenance,
+      ...(maintenance === undefined ? {} : { maintenance }),
       budget,
       cache: {
         ...cache,
@@ -774,20 +779,42 @@ export class FileNativePromptCompiler {
     const toolUniverse = presetCompilation.toolUniverse.filter(({ name }) =>
       playCallChainToolNames.has(name as RegisteredRuntimeToolName),
     );
-    const logicalMessages =
+    const selectedMessages =
       binding.definition.playPrompts === undefined
         ? playCallChainNarrativeGuidance(
             presetCompilation.bootstrap.logicalMessages,
             binding,
           )
         : presetCompilation.bootstrap.logicalMessages;
+    // Instructions keep author order; initial reads follow as protocol tool results.
+    const logicalMessages = [
+      ...selectedMessages.filter(
+        ({ role }) => role !== "world_context" && role !== "player_input",
+      ),
+      ...selectedMessages.filter(({ role }) => role === "world_context"),
+      ...selectedMessages.filter(({ role }) => role === "player_input"),
+    ];
     const provider = mapProvider(
       input.modelBinding.provider,
-      logicalMessages,
+      logicalMessages.filter(({ role }) => role !== "world_context"),
       presetCompilation.bootstrap.cache.strategy,
       binding.definition.playPrompts !== undefined,
       binding.definition.mergeConsecutiveMessages ?? true,
     );
+    provider.preload = {
+      callId: "runtime_initial_world_context",
+      markdown: logicalMessages
+        .filter(({ role }) => role === "world_context")
+        .map(({ markdown }) => markdown)
+        .join("\n\n"),
+    };
+    const lastInstructionRole = logicalMessages
+      .filter(
+        ({ role }) =>
+          role === "runtime_system" || role === "author_instruction",
+      )
+      .at(-1)!.role;
+    const strategy = presetCompilation.bootstrap.cache.strategy;
     const stableText = cacheStableText(
       logicalMessages,
       binding.definition.playPrompts ? provider : undefined,
@@ -800,6 +827,23 @@ export class FileNativePromptCompiler {
       toolUniverse: structuredClone(toolUniverse),
       cache: {
         ...presetCompilation.bootstrap.cache,
+        breakpoints:
+          strategy === "explicit_anthropic_blocks"
+            ? [
+                ...new Set<LogicalRole>([
+                  ...(binding.definition.playPrompts === undefined
+                    ? ["runtime_system" as const, "author_instruction" as const]
+                    : [lastInstructionRole]),
+                  "world_context",
+                ]),
+              ]
+            : strategy === "explicit_cliproxyapi_message"
+              ? [
+                  input.modelBinding.provider === "chat_completions"
+                    ? "world_context"
+                    : lastInstructionRole,
+                ]
+              : [],
         ...stableCacheBoundary(
           stableText,
           toolUniverse,
@@ -856,7 +900,7 @@ export class FileNativePromptCompiler {
     const files = snapshotFiles(effective.world.documentSnapshot);
     const frame = readYamlRecord(files["control/frame.yaml"], "world frame");
     const instructions = readWorldInstructions(files, frame);
-    const materials = this.inspectWorldMaterials(effective.world);
+    const materials = this.playMaterials(effective);
     const logicalMessages: PromptCompilation["logicalMessages"] = [];
     let prompt:
       { messageRole: PromptMessageRole; promptId: string } | undefined;
@@ -939,7 +983,9 @@ export class FileNativePromptCompiler {
       toolUniverse: structuredClone(tools),
       toolStrategy,
       coverage: materials.coverage,
-      maintenance: materials.maintenance,
+      ...(materials.maintenance === undefined
+        ? {}
+        : { maintenance: materials.maintenance }),
       budget: disabledPromptBudget(effective),
       cache: {
         ...stableCacheBoundary(
@@ -958,6 +1004,78 @@ export class FileNativePromptCompiler {
             : [],
       },
     };
+  }
+
+  private playMaterials(input: FileNativePromptInput): {
+    blocks: { source: string; markdown: string }[];
+    coverage: PromptCompilation["coverage"];
+    maintenance?: WorldPromptMaintenance;
+  } {
+    if (input.frozenWorldContext !== undefined) {
+      const frozen = input.frozenWorldContext;
+      return structuredClone({
+        blocks: frozen.logicalMessages
+          .filter(({ role }) => role === "world_context")
+          .flatMap(({ blocks }) => blocks)
+          .filter(
+            ({ source }) =>
+              source !== "runtime:world-placeholder/coverage" &&
+              source !== "runtime:builtin/runtime.coverage",
+          ),
+        coverage: frozen.coverage,
+        ...(frozen.maintenance === undefined
+          ? {}
+          : { maintenance: frozen.maintenance }),
+      });
+    }
+    const materials = this.inspectWorldMaterials(input.world);
+    const snapshot = input.world.documentSnapshot;
+    const declaredDirectories = materials.coverage
+      .filter(({ slot }) => slot === "catalog")
+      .map(({ source }) => source);
+    const directories = new Set<string>([""]);
+    const pending = [""];
+    for (const directory of pending) {
+      let cursor: string | null = null;
+      do {
+        const result = snapshot.query({
+          kind: "catalog",
+          directory,
+          declaredDirectories,
+          includeRetired: true,
+          limit: 100,
+          cursor,
+        });
+        if (result.kind === "error")
+          throwQueryFailure(result, "directory index");
+        if (result.kind !== "catalog")
+          throw new PromptCompilationError(
+            "world_document_query_failed",
+            "Invalid directory index query result",
+          );
+        for (const entry of result.entries) {
+          if (entry.kind !== "directory") continue;
+          const directory = entry.logicalPath.slice(
+            `${snapshot.logicalRoot}/`.length,
+          );
+          if (!directories.has(directory)) {
+            directories.add(directory);
+            pending.push(directory);
+          }
+        }
+        cursor = result.page.nextCursor;
+      } while (cursor !== null);
+    }
+    materials.blocks.unshift({
+      source: "runtime:initial-directories",
+      markdown: `${this.#locale === "zh-CN" ? "# 初始目录索引\n\n全部目录句柄，可直接使用；文档正文仍按需读取。" : "# Initial directory index\n\nAll directory handles, ready to use; read document bodies as needed."}\n${[
+        ...directories,
+      ]
+        .sort()
+        .map((directory) => `- ${stateDirectoryHandle(directory)}`)
+        .join("\n")}`,
+    });
+    return materials;
   }
 
   /**
@@ -1219,8 +1337,8 @@ function settingImprovementPresetReference(
                 ...worldInstructionPlaceholder,
                 markdown:
                   locale === "zh-CN"
-                    ? "完整世界提示占位在这里连续展开世界指令和 frame 选定材料（不是整棵树）；请通过本轮创作工具检查实际内容。"
-                    : "The complete world placeholder expands world instructions and frame-selected material continuously here, not the entire tree. Inspect actual content through the current authoring tools.",
+                    ? "世界指令在此展开；frame 选定材料仅在全新游玩上下文中作为初始工具结果提供。请通过本轮创作工具检查实际内容。"
+                    : "World instructions expand here; frame-selected material is supplied as an initial tool result only for a fresh play context. Inspect actual content through the current authoring tools.",
               },
             ];
           if (!entry.enabled) return [];
@@ -2991,13 +3109,17 @@ function mapProvider(
     messages.map((message) => [message.role, message.markdown]),
   ) as Record<LogicalRole, string>;
   const userBlocks = [
-    {
-      type: "text" as const,
-      text: byRole.world_context,
-      ...(cacheStrategy === "provider_managed"
-        ? {}
-        : { cache_control: { type: "ephemeral" as const } }),
-    },
+    ...(byRole.world_context === undefined
+      ? []
+      : [
+          {
+            type: "text" as const,
+            text: byRole.world_context,
+            ...(cacheStrategy === "provider_managed"
+              ? {}
+              : { cache_control: { type: "ephemeral" as const } }),
+          },
+        ]),
     ...(typeof byRole.player_input === "string" &&
     byRole.player_input.length > 0
       ? [{ type: "text" as const, text: byRole.player_input }]
@@ -3018,7 +3140,8 @@ function mapProvider(
           cache_control: { type: "ephemeral" },
         },
       ],
-      messages: [{ role: "user", content: userBlocks }],
+      messages:
+        userBlocks.length === 0 ? [] : [{ role: "user", content: userBlocks }],
     };
   }
   return {
@@ -3028,7 +3151,9 @@ function mapProvider(
         role: "system",
         content: `# Runtime System\n\n${byRole.runtime_system}\n\n# Author Instruction\n\n${byRole.author_instruction}`,
       },
-      { role: "user", content: userBlocks },
+      ...(userBlocks.length === 0
+        ? []
+        : [{ role: "user" as const, content: userBlocks }]),
     ],
   };
 }

@@ -263,8 +263,8 @@ export function OrderedPlayPromptEditor({
                   <h4>{name(selected)}</h4>
                   <p>
                     {t(
-                      "The current world's frame expands its instructions and selected materials together here, including material coverage and read authorization. This is not the entire file tree. Inspect actual content in a world or content-package Prompt Preview.",
-                      "当前世界的 frame 在此连续展开世界指令与选定材料，包括材料覆盖和读取资格；不是注入全部文件。请在具体世界或内容包的真实提示预览中检查正文。",
+                      "World instructions appear here. On a fresh context, frame-selected materials and the directory index are supplied as an initial tool result. Continuing retains these materials and appends actual interactions. Inspect the content in a world or content-package Prompt Preview.",
+                      "世界指令在此展开；全新上下文时，frame 选中的材料与目录索引作为初始工具结果提供。继续时保留初始材料，追加真实交互。请在具体世界或内容包的真实提示预览中检查正文。",
                     )}
                   </p>
                 </>

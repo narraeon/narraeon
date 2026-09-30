@@ -240,7 +240,12 @@ function validLogicalMessage(value: unknown): boolean {
 function validPromptProvider(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["protocol", "messages"], ["system"]) &&
+    hasExactKeys(value, ["protocol", "messages"], ["system", "preload"]) &&
+    (value.preload === undefined ||
+      (isRecord(value.preload) &&
+        hasExactKeys(value.preload, ["callId", "markdown"]) &&
+        value.preload.callId === "runtime_initial_world_context" &&
+        typeof value.preload.markdown === "string")) &&
     validProviderKind(value.protocol) &&
     (value.system === undefined ||
       (Array.isArray(value.system) && value.system.every(validSystemBlock))) &&

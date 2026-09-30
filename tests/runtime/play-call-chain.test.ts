@@ -421,7 +421,7 @@ test("后置定义与资源跨冷恢复完整保留，旧请求不解析新预�
   ).toEqual(expect.arrayContaining([{ hp: 7 }, { first: "Wait" }]));
 });
 
-test("下一次材料与写入授权使用新快照，历史分叉仍恢复当时提示", async () => {
+test("追加上下文冻结初始材料并保留写入授权，历史分叉恢复当时提示", async () => {
   const { worlds, worldId } = await createWorld("live-materials");
   const host = new ScriptedModelHost({
     binding: modelBinding(),
@@ -466,6 +466,8 @@ test("下一次材料与写入授权使用新快照，历史分叉仍恢复当�
         ],
       },
       { outcome: "response", text: "SECOND NARRATIVE ORIGINAL" },
+      { outcome: "response", text: "EMPTY CONTINUATION" },
+      { outcome: "response", text: "FRESH CONTEXT" },
     ],
   });
   const chains = new PlayCallChain(worlds);
@@ -488,7 +490,7 @@ test("下一次材料与写入授权使用新快照，历史分叉仍恢复当�
     enabled: true,
     body: "NEW MATERIAL RULE",
   });
-  const second = await chains.append({
+  const second = await new PlayCallChain(worlds).append({
     worldId,
     chainId: "materials",
     exchangeId: "second",
@@ -501,7 +503,19 @@ test("下一次材料与写入授权使用新快照，历史分叉仍恢复当�
       }),
   });
   expect(second.status).toBe("ready");
+  expect(host.requests[2]!.bootstrap.provider.preload).toEqual(
+    host.requests[0]!.bootstrap.provider.preload,
+  );
+  expect(JSON.stringify(host.requests[2]!.appended)).toContain(
+    "NEW MATERIAL VALUE",
+  );
+  expect(JSON.stringify(host.requests[2]!.appended)).not.toContain(
+    "runtime_initial_world_context",
+  );
   expect(JSON.stringify(host.requests[2]!.bootstrap)).toContain(
+    "NEW MATERIAL RULE",
+  );
+  expect(JSON.stringify(host.requests[2]!.bootstrap)).not.toContain(
     "NEW MATERIAL VALUE",
   );
   expect(JSON.stringify(host.requests[2]!.bootstrap)).not.toContain(
@@ -520,7 +534,9 @@ test("下一次材料与写入授权使用新快照，历史分叉仍恢复当�
   );
   const restored = new PlayCallChain(worlds);
   const reading = await restored.inspectReading(worldId, second.parentHead);
-  expect(JSON.stringify(reading?.bootstrap)).toContain("NEW MATERIAL VALUE");
+  expect(JSON.stringify(reading?.bootstrap)).not.toContain(
+    "NEW MATERIAL VALUE",
+  );
   expect(JSON.stringify(reading?.bootstrap)).not.toContain(
     "LATEST MATERIAL VALUE",
   );
@@ -539,6 +555,32 @@ test("下一次材料与写入授权使用新快照，历史分叉仍恢复当�
     "NEW MATERIAL RULE",
   );
   expect(branchReading?.playPreset.revision).toBe("builtin-default-v1");
+  const resolvePrompt = () =>
+    Promise.resolve({ hostBinding: hostBinding(), playPreset: latest });
+  await new PlayCallChain(worlds).append({
+    worldId,
+    chainId: "materials",
+    exchangeId: "empty",
+    playerText: "",
+    modelHost: host,
+    resolvePrompt,
+  });
+  expect(host.requests[4]!.bootstrap.provider.preload).toEqual(
+    host.requests[0]!.bootstrap.provider.preload,
+  );
+  await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "materials-fresh",
+    exchangeId: "fresh",
+    playerText: "Start fresh.",
+    hostBinding: hostBinding(),
+    playPreset: latest,
+    modelBinding: modelBinding(),
+    modelHost: host,
+  });
+  expect(host.requests[5]!.bootstrap.provider.preload?.markdown).toContain(
+    "LATEST MATERIAL VALUE",
+  );
 });
 
 test("工具中编辑不替换快照，拒绝后的冷重试不读取新配置", async () => {

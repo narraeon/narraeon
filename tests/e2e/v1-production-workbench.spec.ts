@@ -937,10 +937,16 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   const freshRequest = providerRequest();
   expect(
     freshRequest.messages?.filter(({ role }) => role === "assistant"),
-  ).toHaveLength(0);
-  expect(
-    freshRequest.messages?.filter(({ role }) => role === "tool"),
-  ).toHaveLength(0);
+  ).toEqual([
+    expect.objectContaining({
+      tool_calls: [
+        expect.objectContaining({ id: "runtime_initial_world_context" }),
+      ],
+    }),
+  ]);
+  expect(freshRequest.messages?.filter(({ role }) => role === "tool")).toEqual([
+    expect.objectContaining({ tool_call_id: "runtime_initial_world_context" }),
+  ]);
 
   await page.getByRole("button", { name: "返回工作区" }).click();
   await page.getByRole("button", { name: "预设", exact: true }).click();
@@ -975,6 +981,11 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   expect(
     liveRequest.messages?.filter(({ role }) => role === "assistant"),
   ).toEqual([
+    expect.objectContaining({
+      tool_calls: [
+        expect.objectContaining({ id: "runtime_initial_world_context" }),
+      ],
+    }),
     expect.objectContaining({
       content: "Alex saves the training time on the phone.",
     }),

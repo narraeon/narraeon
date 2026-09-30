@@ -741,9 +741,7 @@ function anthropicRequestBody(
     ...anthropicReasoningRequest(connection),
     system: request.bootstrap.provider.system,
     messages: [
-      ...request.bootstrap.provider.messages.filter(
-        ({ role }) => role !== "system",
-      ),
+      ...anthropicBootstrapMessages(request),
       ...anthropicAppend(request),
     ],
     ...(tools.length === 0
@@ -911,11 +909,20 @@ function chatBootstrapMessages(
   connection: ResolvedFileNativeModelConnection,
   request: ModelHostExchange,
 ): unknown[] {
-  const messages = request.bootstrap.provider.messages.map((message) =>
-    cloneProviderValue(message),
+  const messages: unknown[] = request.bootstrap.provider.messages.map(
+    (message) => cloneProviderValue(message),
+  );
+  const prefixEnd = bootstrapPrefixEnd(request);
+  messages.splice(
+    prefixEnd,
+    0,
+    ...initialWorldContext(request, "chat_completions"),
   );
   return connection.dialect === "cliproxyapi"
-    ? attachCacheControlToLastRole(messages, "system")
+    ? attachCacheControlToLastRole(
+        messages,
+        request.bootstrap.provider.preload === undefined ? "system" : "tool",
+      )
     : messages;
 }
 
@@ -923,12 +930,109 @@ function responsesBootstrapMessages(
   connection: ResolvedFileNativeModelConnection,
   request: ModelHostExchange,
 ): unknown[] {
-  const messages = request.bootstrap.provider.messages.map((message) =>
-    responsesBootstrapMessage(message, connection.dialect === "cliproxyapi"),
+  const messages: unknown[] = request.bootstrap.provider.messages.map(
+    (message) =>
+      responsesBootstrapMessage(message, connection.dialect === "cliproxyapi"),
   );
-  return connection.dialect === "cliproxyapi"
-    ? attachCacheControlToLastRole(messages, "system")
-    : messages;
+  const prefixEnd = bootstrapPrefixEnd(request);
+  const prefix = messages.map((message, index) =>
+    connection.dialect === "cliproxyapi" &&
+    index === prefixEnd - 1 &&
+    isRecord(message)
+      ? { ...message, cache_control: { type: "ephemeral" } }
+      : message,
+  );
+  prefix.splice(
+    prefixEnd,
+    0,
+    ...initialWorldContext(request, "openai_responses"),
+  );
+  return prefix;
+}
+
+/** Configured User prompts are part of the prefix, not the player's first input. */
+function bootstrapPrefixEnd(request: ModelHostExchange): number {
+  return (
+    request.bootstrap.provider.messages.length -
+    request.bootstrap.logicalMessages.filter(
+      ({ role }) => role === "player_input",
+    ).length
+  );
+}
+
+function anthropicBootstrapMessages(request: ModelHostExchange): unknown[] {
+  const messages: unknown[] = request.bootstrap.provider.messages.map(
+    (message) => cloneProviderValue(message),
+  );
+  messages.splice(
+    bootstrapPrefixEnd(request),
+    0,
+    ...initialWorldContext(request, "anthropic_messages"),
+  );
+  return messages.filter(
+    (message) => !isRecord(message) || message.role !== "system",
+  );
+}
+
+/** Synthetic bootstrap only: never manufacture a provider continuation or a story event. */
+function initialWorldContext(
+  request: ModelHostExchange,
+  protocol: PromptCompilation["provider"]["protocol"],
+): unknown[] {
+  const preload = request.bootstrap.provider.preload;
+  if (preload === undefined) return [];
+  const name = "runtime_load_context";
+  const notice = {
+    role: "user",
+    content:
+      "Runtime preload: supply the initial world materials selected by the frame. This bootstrap-only read is not a player action or a callable tool. Later successful tool results update these initial values.",
+  };
+  if (protocol === "chat_completions")
+    return [
+      notice,
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: preload.callId,
+            type: "function",
+            function: { name, arguments: "{}" },
+          },
+        ],
+      },
+      { role: "tool", tool_call_id: preload.callId, content: preload.markdown },
+    ];
+  if (protocol === "openai_responses")
+    return [
+      notice,
+      { type: "function_call", call_id: preload.callId, name, arguments: "{}" },
+      {
+        type: "function_call_output",
+        call_id: preload.callId,
+        output: preload.markdown,
+      },
+    ];
+  return [
+    notice,
+    {
+      role: "assistant",
+      content: [{ type: "tool_use", id: preload.callId, name, input: {} }],
+    },
+    {
+      role: "user",
+      content: [
+        {
+          type: "tool_result",
+          tool_use_id: preload.callId,
+          content: preload.markdown,
+          ...(request.bootstrap.cache.strategy === "explicit_anthropic_blocks"
+            ? { cache_control: { type: "ephemeral" } }
+            : {}),
+        },
+      ],
+    },
+  ];
 }
 
 function attachCacheControlToLastRole(

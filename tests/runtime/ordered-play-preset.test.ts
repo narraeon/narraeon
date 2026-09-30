@@ -84,7 +84,7 @@ test.each([
   "anthropic_messages",
   "openai_responses",
 ] as const)(
-  "%s encodes interleaved instructions and complete world material in author order",
+  "%s preserves instruction order and preloads world material as one tool exchange",
   async (provider) => {
     const root = await mkdtemp(join(tmpdir(), "ordered-body-"));
     roots.push(root);
@@ -190,9 +190,10 @@ test.each([
     const expected = [
       "BEFORE_WORLD",
       "# Save locations in this world",
-      "Dorm room 302",
       "AFTER_WORLD",
       "# Tools and response settlement",
+      "runtime_load_context",
+      "Dorm room 302",
       "PLAYER_LAST",
     ];
     for (const token of expected) expect(body).toContain(token);
@@ -200,6 +201,49 @@ test.each([
       expect(body.indexOf(expected[i]!)).toBeGreaterThan(
         body.indexOf(expected[i - 1]!),
       );
+    expect(body.split("Dorm room 302")).toHaveLength(2);
+    expect(body).not.toContain("<world_material>");
+    const encoded = JSON.parse(body) as {
+      messages: {
+        role: string;
+        tool_call_id?: string;
+        content:
+          string | { type?: string; tool_use_id?: string; content?: string }[];
+      }[];
+      input: { type: string; call_id?: string; output?: string }[];
+      system?: unknown;
+    };
+    const preloadId = compilation.bootstrap.provider.preload!.callId;
+    if (provider === "chat_completions") {
+      const result = encoded.messages.find(
+        (message) => message.role === "tool",
+      );
+      expect(result?.tool_call_id).toBe(preloadId);
+      expect(result?.content).toContain("@dir-/");
+      expect(
+        encoded.messages.find((message) => message.role === "system")?.content,
+      ).not.toContain("Dorm room 302");
+    } else if (provider === "openai_responses") {
+      expect(
+        encoded.input.find((item) => item.type === "function_call_output"),
+      ).toMatchObject({
+        call_id: preloadId,
+        output: compilation.bootstrap.provider.preload!.markdown,
+      });
+    } else {
+      const result = encoded.messages.find(
+        (message) =>
+          Array.isArray(message.content) &&
+          message.content[0]?.type === "tool_result",
+      );
+      if (!Array.isArray(result?.content))
+        throw new Error("Expected tool result blocks");
+      expect(result.content[0]).toMatchObject({
+        tool_use_id: preloadId,
+        content: compilation.bootstrap.provider.preload!.markdown,
+      });
+      expect(JSON.stringify(encoded.system)).not.toContain("Dorm room 302");
+    }
     expect(body).not.toContain("DO_NOT_INJECT");
     expect(body).not.toContain("# Runtime play boundary");
     expect(body).not.toContain("# Player-visible narrative rules");

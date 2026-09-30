@@ -8,6 +8,8 @@ Provider 响应同时承担两种职责：Runtime 需要解析可见正文、返
 
 因此 Runtime 将二者分离：模型调用投影只供工具执行、诊断、界面呈现和 Authority 结算分类；Provider 续传载荷是不透明但可校验的协议原生 append fragment。Chat Completions 保存完整 assistant message，OpenAI Responses 保存完整 `output` items，Anthropic Messages 保存完整 assistant `content` blocks。下一次请求直接追加该载荷，不从 `text`、`reasoningContent` 或 `toolCalls` 重建，也不追加完整 HTTP response。流式解码器在完成事件上形成同一种载荷，并保留解析器不认识的协议字段。
 
+新上下文的 Runtime 初始材料预加载属于 bootstrap，独立于上述 Provider 续传。encoder 可以为真实读取的初始材料生成一组调用／结果消息，但必须标明 Runtime 来源，不伪造模型推理或签名，不把它保存成模型响应、实际工具执行或 Authority 事实。追加上下文复用这份初始材料，后续真实 Provider 返回仍严格原样续传。
+
 Authority 结算只查看完整投影是否含工具调用，不改写续传载荷：含任何工具调用的响应一律是工具中间步，其 text 只留作诊断投影；工具状态变化仍可独立提交，随后把原生 assistant 片段和 Runtime 工具结果继续交给 Provider。不含工具调用且 text 非空的完整响应才成为主持叙事。流式 text 在完成前保持待定，不能因先于工具调用片段到达就提前晋升为故事。
 
 每条模型会话同时冻结完整续传兼容绑定：endpoint、协议与方言、模型、续传 codec、推理／摘要配置、输出能力、工具策略和缓存策略。凭据与传输超时可以在语义绑定不变时更新；其余字段变化、载荷缺失、载荷损坏或 codec 不兼容都 fail closed，要求从当前 Authority 开始全新上下文，不能静默降级为投影重建。

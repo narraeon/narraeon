@@ -72,22 +72,31 @@ async function fixture() {
 function compile(
   binding: PlayPresetBinding,
   provider: ProviderKind = "chat_completions",
+  dialect: "standard" | "cliproxyapi" = "standard",
 ) {
   const input = createMinimalFileNativePreviewInput({
     provider,
     modelId: "test",
     contextWindowTokens: 32000,
     maxOutputTokens: 2000,
+    ...(dialect === "cliproxyapi"
+      ? { cacheStrategy: "explicit_cliproxyapi_message" as const }
+      : {}),
     playerInput: "ACTUAL_PLAYER",
     playerInputPlacement: "append",
   });
   return new FileNativePromptCompiler().compilePlayCallChain(input, binding)
     .bootstrap;
 }
-function wire(binding: PlayPresetBinding, provider: ProviderKind) {
-  const bootstrap = compile(binding, provider);
+function wire(
+  binding: PlayPresetBinding,
+  provider: ProviderKind,
+  dialect: "standard" | "cliproxyapi" = "standard",
+) {
+  const bootstrap = compile(binding, provider, dialect);
   const host = new FileNativeModelHost({
     provider,
+    dialect,
     modelId: "test",
     baseUrl: "https://provider.invalid/v1",
     apiKey: "test",
@@ -124,6 +133,19 @@ test.each([
     ];
     if (provider !== "anthropic_messages")
       expected.unshift(role("system"), role("system"));
+    const preload: unknown[] =
+      provider === "openai_responses"
+        ? [
+            role("user"),
+            expect.objectContaining({ type: "function_call" }),
+            expect.objectContaining({ type: "function_call_output" }),
+          ]
+        : [
+            role("user"),
+            role("assistant"),
+            role(provider === "anthropic_messages" ? "user" : "tool"),
+          ];
+    expected.splice(expected.length - 1, 0, ...preload);
     expect(wire(binding, provider)).toMatchObject({
       [provider === "openai_responses" ? "input" : "messages"]: expected,
     });
@@ -134,12 +156,34 @@ test.each([
     expect(serialized.indexOf("ACTUAL_PLAYER")).toBeGreaterThan(
       serialized.indexOf("LAST_USER"),
     );
-    // A world placeholder remains one physical message with separate logical responsibilities.
+    // World instructions retain their configured role; material keeps its separate responsibility.
     expect(
       bootstrap.logicalMessages
         .filter((message) => message.promptId === "world")
         .map((message) => message.role),
     ).toEqual(["author_instruction", "world_context"]);
+  },
+);
+
+test.each(["user", "assistant"] as const)(
+  "CLIProxyAPI Responses caches through a trailing %s preset message",
+  async (messageRole) => {
+    const { binding } = await fixture();
+    binding.definition.playPrompts!.at(-1)!.messageRole = messageRole;
+    const body = wire(binding, "openai_responses", "cliproxyapi");
+    const { input } = body as { input: Record<string, unknown>[] };
+    const marked = input.filter(
+      (message) => message.cache_control !== undefined,
+    );
+    expect(marked).toHaveLength(1);
+    expect(marked[0]).toMatchObject({
+      role: messageRole,
+      content: "# Author instruction\n\nLAST_USER",
+      cache_control: { type: "ephemeral" },
+    });
+    expect(input.indexOf(marked[0]!)).toBeLessThan(
+      input.findIndex((message) => message.type === "function_call"),
+    );
   },
 );
 
@@ -175,6 +219,9 @@ test("merges only adjacent prefix messages, persists on save/import, and changes
       expect.anything(),
       expect.anything(),
       { role: "user", content: "# Author instruction\n\nLAST_USER" },
+      expect.objectContaining({ role: "user" }),
+      expect.objectContaining({ role: "assistant" }),
+      expect.objectContaining({ role: "tool" }),
       { role: "user", content: "ACTUAL_PLAYER" },
     ],
   });

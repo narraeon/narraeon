@@ -12,6 +12,57 @@ import {
 } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
 import { WorldDocumentStore } from "../../src/runtime/world/WorldDocumentStore.ts";
 
+test("预加载目录索引覆盖分页、嵌套和空目录，句柄可直接用于工具", () => {
+  const request = input({ playerInputPlacement: "append" });
+  const files = request.world.documentSnapshot.files.map((file) => ({
+    ...file,
+  }));
+  files.find(({ path }) => path === "control/frame.yaml")!.contents +=
+    "  - slot: { kind: catalog, directory: empty/deep, maxEntries: 10, required: false }\n";
+  for (let index = 0; index < 105; index += 1) {
+    files.push({
+      path: `state/目录${index}/nested/note.yaml`,
+      contents: `$document:\n  id: note.${index}\n  ref: note-${index}\n  title: Note\n  summary: Index test\n  aliases: []\nvalue: initial\n`,
+    });
+  }
+  request.world.documentSnapshot = WorldDocumentStore.open({
+    layout: "world_state",
+    files,
+  });
+  const compilation = new FileNativePromptCompiler().compilePlayCallChain(
+    request,
+    builtinDefaultPlayPresetBinding(),
+  ).bootstrap;
+  const index = compilation.logicalMessages
+    .flatMap(({ blocks }) => blocks)
+    .find(({ source }) => source === "runtime:initial-directories")!.markdown;
+  const documents = new FileNativePlayDocuments(
+    Object.fromEntries(files.map(({ path, contents }) => [path, contents])),
+  );
+  documents.bindBootstrap(compilation);
+  for (const directory of [
+    "",
+    "empty",
+    "empty/deep",
+    "目录0/nested",
+    "目录104/nested",
+  ]) {
+    const handle = `@dir-/${directory.split("/").map(encodeURIComponent).join("/")}`;
+    expect(index).toContain(`- ${handle}`);
+    expect(
+      documents.execute(
+        {
+          id: directory || "root",
+          name: "state_list",
+          arguments: { parent: handle },
+        },
+        [],
+      ).ok,
+    ).toBe(true);
+  }
+  expect(compilation.provider.preload?.markdown).toContain(index);
+});
+
 test("玩家视图的实际节点绑定在提示词和精确读取中标记且不进入可写正文", () => {
   const request = input();
   const files = [

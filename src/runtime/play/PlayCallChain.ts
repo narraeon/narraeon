@@ -454,18 +454,9 @@ export class PlayCallChain {
     if (input.resolvePrompt === undefined) return;
     const { hostBinding, playPreset } = await input.resolvePrompt();
     const binding = await this.#worlds.bindPlayCallChain(input.worldId);
-    const baseline = await this.#worlds.bindPlayCallChainAt(
-      input.worldId,
-      session.baselineHead,
-    );
-    const documents = new FileNativePlayDocuments(binding.files);
-    const documentMaintenance = await this.#bindDocumentMaintenance(
-      documents,
-      input.worldId,
-      binding.parentHead,
-    );
     const compilation = this.#compiler.compilePlayCallChain(
       {
+        frozenWorldContext: currentPlayPrompt(session).bootstrap,
         extensionControls: await this.#worlds.extensionControls(
           input.worldId,
           playPreset,
@@ -478,16 +469,10 @@ export class PlayCallChain {
         hostBinding,
         world: {
           controlFingerprint: fingerprintControl(binding.files),
-          documentSnapshot: documents.snapshot,
+          documentSnapshot: session.documents.snapshot,
           additionalMaterials: structuredClone(binding.additionalMaterials),
-          // Only pre-context history belongs in the prefix. Native conversation stays appended.
           history: structuredClone(binding.history),
-          historyAlreadyAppended: Object.keys(binding.history).filter(
-            (key) => !(key in baseline.history),
-          ),
-          narrativeCheckpoint: baseline.narrativeCheckpoint,
-          documentMaintenance,
-          documentMaintenanceUnavailableReason: documents.maintenanceWarning,
+          narrativeCheckpoint: binding.narrativeCheckpoint,
         },
         playerInputPlacement: "append",
         playerInput: input.playerText,
@@ -495,11 +480,8 @@ export class PlayCallChain {
       },
       playPreset,
     );
-    documents.bindBootstrap(
-      compilation.bootstrap,
-      session.documents.authorizationCheckpoint(),
-    );
-    session.documents = documents;
+    // The native conversation already contains successful writes and exact reads.
+    // Rebinding initial coverage here would incorrectly reauthorize stale scopes.
     session.history = historyEntries(binding.history);
     session.narrativeCheckpoint = binding.narrativeCheckpoint;
     session.nextMaterials = structuredClone(binding.additionalMaterials);
@@ -521,7 +503,7 @@ export class PlayCallChain {
     });
     session.documentAuthorizationCheckpoints.push({
       afterEventId: session.nextEventId,
-      authorization: documents.authorizationCheckpoint(),
+      authorization: session.documents.authorizationCheckpoint(),
     });
     await this.#persist(session);
     crashAtPlayAdvanceEdge("after_prompt_run_prepared");
