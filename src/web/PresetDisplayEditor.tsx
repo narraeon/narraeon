@@ -1,3 +1,4 @@
+import type { PresetDisplayEdit } from "./preset-resource-editor.ts";
 import { resourceTitle } from "./preset-resource-names.ts";
 import { parseDisplayRegex } from "../shared/display-regex.ts";
 import { useState } from "react";
@@ -19,12 +20,12 @@ const t = (cn: string, en: string) => (getWebLocale() === "zh-CN" ? cn : en);
 export function PresetDisplayEditor({
   value,
   files,
-  onChange,
+  onEdit,
   onWrite,
 }: {
   value: DisplayDefinition;
   files: Record<string, string>;
-  onChange: (value: DisplayDefinition) => void;
+  onEdit: (edit: PresetDisplayEdit) => void;
   onWrite: (path: string, body: string) => void;
 }) {
   const [resourceName, setResourceName] = useState("");
@@ -33,56 +34,20 @@ export function PresetDisplayEditor({
     kind: "renderer" | "regex" | "scripts" | "assets",
     path: string,
   ) {
-    const next = { ...value };
-    if (kind === "scripts" || kind === "assets")
-      next[kind] = (next[kind] ?? []).filter((p) => p !== path);
-    else {
-      delete next[kind];
-      if (kind === "renderer") {
-        delete next.rendererRevision;
-        next.rendererMode = "document";
-      }
-    }
-    onChange(next);
+    onEdit({ type: "unbind", kind, path });
   }
   function attach(
     kind: "renderer" | "regex" | "scripts" | "assets",
     path: string,
   ) {
-    onChange({
-      ...value,
-      ...(kind === "renderer"
-        ? { renderer: path, rendererRevision: crypto.randomUUID() }
-        : kind === "regex"
-          ? { regex: path }
-          : { [kind]: [...new Set([...(value[kind] ?? []), path])] }),
-    });
+    onEdit({ type: "bind", kind, path });
   }
   function create(
     kind: "renderer" | "regex" | "scripts" | "assets",
     suffix: string,
     body: string,
   ) {
-    const directory = {
-      renderer: "renderers",
-      regex: "regex",
-      scripts: "scripts",
-      assets: "assets",
-    }[kind];
-    // User labels can contain Unicode; the portable reference codec uses ASCII.
-    const name = resourceName.trim()
-      ? "named-" +
-        Array.from(resourceName.trim().slice(0, 24))
-          .map((char) =>
-            /[A-Za-z0-9.-]/u.test(char)
-              ? char
-              : `_u${char.codePointAt(0)!.toString(16)}_`,
-          )
-          .join("")
-      : "resource";
-    const path = `${directory}/${name}.${crypto.randomUUID()}.${suffix}`;
-    onWrite(path, body);
-    attach(kind, path);
+    onEdit({ type: "create", kind, name: resourceName, suffix, body });
   }
   return (
     <section className="preset-display-editor">
@@ -137,10 +102,7 @@ export function PresetDisplayEditor({
           aria-label={t("运行方式", "Rendering mode")}
           value={value.rendererMode ?? "document"}
           onChange={(e) =>
-            onChange({
-              ...value,
-              rendererMode: e.target.value as "document" | "app",
-            })
+            onEdit({ type: "mode", mode: e.target.value as "document" | "app" })
           }
         >
           <option value="document">{t("静态文档", "Static document")}</option>
