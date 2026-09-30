@@ -1719,6 +1719,10 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
 Object.assign(englishMessages, playWorkspaceEnglishMessages);
 
 const worldRevisionEnglishMessages: Record<string, string> = {
+  "对话历史已删除；修订工作树中的改动没有回滚。":
+    "Conversation history deleted; changes in the revision worktree were not rolled back.",
+  "Runtime 已确认回滚结果，但重新读取修订工作树失败：{message}":
+    "Runtime confirmed the rollback, but reloading the revision worktree failed: {message}",
   世界修订: "World revision",
   世界修订导航: "World-revision navigation",
   世界修订工具: "World-revision tools",

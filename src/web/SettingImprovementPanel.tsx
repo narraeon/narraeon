@@ -37,7 +37,7 @@ interface SettingImprovementPanelProps {
   requestFailure: string | null;
   now: number;
   contentEditor: ContentTreeEditorProps;
-  onPreview?: () => Promise<V1SettingPromptPreview["compilation"]>;
+  onPreview?: () => Promise<V1SettingPromptPreview["compilation"] | null>;
   onSend: (message: string) => Promise<void>;
   onCancel: () => Promise<void>;
   onFreshContext: () => void;
@@ -112,7 +112,8 @@ export function SettingImprovementPanel({
   const conversationRef = useRef<HTMLElement>(null);
   const running = view?.runStatus === "running" || submitting;
   const rollbackRunning = rollingBackFile !== null;
-  const interactionLocked = running || rollbackRunning;
+  const finishingRevision = revisionActions?.applying === true;
+  const interactionLocked = running || rollbackRunning || finishingRevision;
   useEffect(() => {
     onNavigationLockChange?.(
       interactionLocked || hasUnsavedFileDraft || loading,
@@ -299,7 +300,7 @@ export function SettingImprovementPanel({
           </button>
           <button
             type="button"
-            disabled={interactionLocked}
+            disabled={interactionLocked || loading}
             onClick={onFreshContext}
           >
             {uiText("全新上下文")}
@@ -668,7 +669,7 @@ export function SettingImprovementPanel({
               history={history}
               latestSessionId={latestSessionId}
               selectedSessionId={view?.sessionId ?? null}
-              loading={loading || rollbackRunning}
+              loading={loading || rollbackRunning || finishingRevision}
               deletingSessionId={deletingSessionId}
               onSelectSession={async (sessionId) => {
                 await onSelectSession(sessionId);
@@ -739,12 +740,17 @@ export function SettingImprovementPanel({
                 editDisabled={interactionLocked}
               />
             ) : (
-              <ContentTreeEditor
-                {...contentEditor}
-                selectedPath={selectedFilePath}
-                onSelectedPathChange={setSelectedFilePath}
-                embedded
-              />
+              <fieldset
+                disabled={finishingRevision}
+                style={{ display: "contents" }}
+              >
+                <ContentTreeEditor
+                  {...contentEditor}
+                  selectedPath={selectedFilePath}
+                  onSelectedPathChange={setSelectedFilePath}
+                  embedded
+                />
+              </fieldset>
             )}
           </div>
         </aside>
