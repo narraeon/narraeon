@@ -2115,23 +2115,14 @@ function resolveContext(
     ),
   );
   const excluded = new Set(input.world.historyAlreadyAppended ?? []);
-  const replayEntries =
+  const checkpointEntries =
     input.world.replayHistory === true
       ? checkpointHistory(
           input.world.history ?? {},
           input.world.narrativeCheckpoint,
-        ).filter(([id]) => !excluded.has(id))
-      : [];
-  const replay =
-    input.world.replayHistory === true
-      ? checkpointReplayBlocks(
-          input.world.history ?? {},
-          input.world.narrativeCheckpoint,
-          locale,
-          excluded,
-          history,
         )
       : [];
+  const replayEntries = checkpointEntries.filter(([id]) => !excluded.has(id));
   for (const entry of context) {
     const selectionStart = selected.length;
     const slot = isRecord(entry) && isRecord(entry.slot) ? entry.slot : null;
@@ -2155,7 +2146,7 @@ function resolveContext(
       resolveReferenceTargets(slot, snapshot, selected, coverage, locale);
     else if (slot.kind === "catalog")
       resolveCatalog(slot, snapshot, selected, coverage, locale);
-    else if (slot.kind === "history" && replay.length > 0) continue;
+    else if (slot.kind === "history" && checkpointEntries.length > 0) continue;
     else if (slot.kind === "history")
       resolveRecentHistory(slot, history, selected, coverage, locale, excluded);
     else if (slot.kind === "additional_materials")
@@ -2204,7 +2195,7 @@ function resolveContext(
       source: "runtime:player-view-bindings",
       markdown: bindings,
     });
-  if (replay.length > 0) {
+  if (checkpointEntries.length > 0) {
     const selectedIds = new Set(
       selected.flatMap(({ key }) =>
         key.startsWith("history_message:")

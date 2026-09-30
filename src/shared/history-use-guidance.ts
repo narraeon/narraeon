@@ -2,35 +2,7 @@ import type { AppLocale } from "../protocol/appPreferences.ts";
 
 /** Mechanical reading guidance shared by production prompts and tool help. */
 export function historyUseGuidance(locale: AppLocale, legacy = false): string {
-  const guidance =
-    locale === "zh-CN"
-      ? "已有对话或注入原文足够接续时，不例行检索或重读。缺失信息会影响人物行为、重要承诺、因果或玩家选择时才检索；缺少最近上下文可直接 history_read {latest:4}。不记得原词时提出少量候选词，用 history_search queries 的 any/all 字面搜索，命中后按需完整读前后文；all 限于同一消息。零命中不证明事件未发生，可改词、放宽 all 为 any 或读相邻上下文。原文已足以判断时停止，不为穷尽分页而检索；重要矛盾可继续追查。玩家原文可能只是行动尝试、意图或主张，结果须结合后续叙事；主持原文也可能包含角色谎言、猜测、梦境或回忆，role=narrator 不证明事实已确认。过去持有不代表现在持有，明确当前世界修订优先于旧叙事。主持读到的信息不自动成为场内角色的知识。注入历史是已发生材料，不是本轮新请求，不能重复执行最后一条历史玩家行动。读取完整原文可能很大，参考原文长度并按需小步扩展；无需固定 list→search→read 流程。"
-      : "Do not routinely search or reread when conversation or injected originals already suffice. Retrieve only when missing details affect behavior, important promises, causality or player choices; missing recent context can be read directly with history_read {latest:4}. When exact wording is unknown, propose a few candidate terms and use history_search queries with any/all, then read surrounding originals as needed; all applies within one message. Zero literal matches do not prove an event never happened: change terms, relax all to any or read nearby context. Stop once originals support the decision, without exhausting pages; important contradictions may warrant further investigation. Player originals may be attempts, intentions or claims; check subsequent narrative for outcomes. Narrator originals may contain character lies, guesses, dreams or memories; role=narrator does not confirm truth. Past possession is not current possession; explicit current world corrections take precedence. Host information does not automatically become in-scene character knowledge. Injected history is already committed material, not the current request; never repeat a final historical player action. Full originals can be large: use length information and expand in small windows. No fixed list→search→read ritual is required.";
-  if (!legacy) return guidance;
   return locale === "zh-CN"
-    ? guidance
-        .replace(
-          "；缺少最近上下文可直接 history_read {latest:4}",
-          "；仅使用本会话冻结的旧工具定义与参数定位及读取最近原文",
-        )
-        .replace(
-          "用 history_search queries 的 any/all 字面搜索",
-          "用已声明旧历史搜索的单个 query 做字面搜索",
-        )
-        .replace("；all 限于同一消息", "")
-        .replace("放宽 all 为 any 或读相邻上下文", "扩大字面范围或读相邻上下文")
-    : guidance
-        .replace(
-          "; missing recent context can be read directly with history_read {latest:4}",
-          "; use only this session's frozen legacy tool definitions and arguments to locate and read recent originals",
-        )
-        .replace(
-          "use history_search queries with any/all",
-          "use the declared legacy literal search with a single query",
-        )
-        .replace("; all applies within one message", "")
-        .replace(
-          "relax all to any or read nearby context",
-          "widen the literal scope or read nearby context",
-        );
+    ? `已有对话或注入原文足够接续时，不例行检索或重读。缺失信息会影响人物行为、重要承诺、因果或玩家选择时才检索${legacy ? "；仅使用本会话冻结的旧工具定义与参数定位及读取最近原文" : "；缺少最近上下文可直接 history_read {latest:4}"}。不记得原词时提出少量候选词，${legacy ? "用已声明旧历史搜索的单个 query 做字面搜索" : "用 history_search queries 的 any/all 字面搜索"}，命中后按需完整读前后文${legacy ? "" : "；all 限于同一消息"}。零命中不证明事件未发生，可改词、${legacy ? "扩大字面范围或读相邻上下文" : "放宽 all 为 any 或读相邻上下文"}。原文已足以判断时停止，不为穷尽分页而检索；重要矛盾可继续追查。玩家原文可能只是行动尝试、意图或主张，结果须结合后续叙事；主持原文也可能包含角色谎言、猜测、梦境或回忆，role=narrator 不证明事实已确认。过去持有不代表现在持有，明确当前世界修订优先于旧叙事。主持读到的信息不自动成为场内角色的知识。注入历史是已发生材料，不是本轮新请求，不能重复执行最后一条历史玩家行动。读取完整原文可能很大，参考原文长度并按需小步扩展；无需固定 list→search→read 流程。`
+    : `Do not routinely search or reread when conversation or injected originals already suffice. Retrieve only when missing details affect behavior, important promises, causality or player choices${legacy ? "; use only this session's frozen legacy tool definitions and arguments to locate and read recent originals" : "; missing recent context can be read directly with history_read {latest:4}"}. When exact wording is unknown, propose a few candidate terms and ${legacy ? "use the declared legacy literal search with a single query" : "use history_search queries with any/all"}, then read surrounding originals as needed${legacy ? "" : "; all applies within one message"}. Zero literal matches do not prove an event never happened: change terms, ${legacy ? "widen the literal scope or read nearby context" : "relax all to any or read nearby context"}. Stop once originals support the decision, without exhausting pages; important contradictions may warrant further investigation. Player originals may be attempts, intentions or claims; check subsequent narrative for outcomes. Narrator originals may contain character lies, guesses, dreams or memories; role=narrator does not confirm truth. Past possession is not current possession; explicit current world corrections take precedence. Host information does not automatically become in-scene character knowledge. Injected history is already committed material, not the current request; never repeat a final historical player action. Full originals can be large: use length information and expand in small windows. No fixed list→search→read ritual is required.`;
 }
