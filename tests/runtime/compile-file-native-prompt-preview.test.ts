@@ -1140,6 +1140,56 @@ context:
     expect(chinese[1]?.description).toContain("oldest_first");
   });
 
+  test.each(["oldest_first", "newest_first"])(
+    "历史列表按 Authority 顺序分页：%s",
+    (order) => {
+      const documents = new FileNativePlayDocuments({});
+      const paths = [
+        "message.genesis.narrator",
+        "message.1.1.player",
+        "message.2.1.narrator",
+        "message.10.1.player",
+        "message.10.2.narrator",
+        "message.10.10.narrator",
+        "message.100.1.player",
+        "message.101.1.narrator",
+        "message.1002.1.player",
+      ];
+      const history = paths.map((path) => ({ path, contents: path }));
+      const expected = order === "oldest_first" ? paths : [...paths].reverse();
+      for (const name of ["history_list", "context_list"]) {
+        const actual: string[] = [];
+        let cursor: string | undefined;
+        do {
+          const result = documents.execute(
+            {
+              id: "history-page",
+              name,
+              arguments: {
+                ...(name === "context_list" ? { source: "history" } : {}),
+                order,
+                limit: 2,
+                ...(cursor === undefined ? {} : { cursor }),
+              },
+            },
+            history,
+          );
+          expect(result.ok).toBe(true);
+          actual.push(
+            ...Array.from(
+              result.markdown.matchAll(/^- @history-message-([^,]+),/gmu),
+              (match) => match[1]!,
+            ),
+          );
+          cursor = /Next-page cursor: (\S+)/u.exec(result.markdown)?.[1];
+          expect(actual.length).toBeLessThanOrEqual(paths.length);
+        } while (cursor !== undefined);
+        expect(actual).toEqual(expected);
+        expect(history.map(({ path }) => path)).toEqual(paths);
+      }
+    },
+  );
+
   test("state_list 与 history_list 在 Runtime 执行接口拒绝另一工具的参数", () => {
     const snapshot = input().world.documentSnapshot;
     const documents = new FileNativePlayDocuments(

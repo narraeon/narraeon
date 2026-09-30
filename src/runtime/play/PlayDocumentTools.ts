@@ -1155,16 +1155,14 @@ function executeContextList(
     };
   }
 
-  const entries = [...history]
-    .sort((a, b) =>
-      (args.order ?? "newest_first") === "oldest_first"
-        ? a.path.localeCompare(b.path)
-        : b.path.localeCompare(a.path),
-    )
-    .map(
-      ({ path, contents }) =>
-        `- @${historyRef(path)}, ${Buffer.byteLength(contents, "utf8")} bytes`,
-    );
+  // History arrives in Authority order. Semantic message IDs are not sortable
+  // paths: lexical order misplaces both numeric sequences and genesis.
+  const ordered =
+    args.order === "oldest_first" ? history : [...history].reverse();
+  const entries = ordered.map(
+    ({ path, contents }) =>
+      `- @${historyRef(path)}, ${Buffer.byteLength(contents, "utf8")} bytes`,
+  );
   const scope = JSON.stringify({
     kind: "list",
     source: "history",
