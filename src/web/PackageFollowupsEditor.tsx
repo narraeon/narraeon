@@ -1,3 +1,4 @@
+import { browserUUID } from "./browser-uuid.ts";
 import { useState } from "react";
 import { parseDocument, stringify } from "yaml";
 import type { ContentTreeFile } from "../protocol/v1.ts";
@@ -104,7 +105,7 @@ export function PackageFollowupsEditor({
             <button
               type="button"
               onClick={() => {
-                const id = `followup_${crypto.randomUUID().replaceAll("-", "")}`;
+                const id = `followup_${browserUUID().replaceAll("-", "")}`;
                 const path = `prompts/${id}.md`;
                 save(
                   [

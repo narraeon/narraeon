@@ -1,3 +1,4 @@
+import { browserUUID } from "./browser-uuid.ts";
 import type { PlayPresetArtifactDefinition } from "./PlayPresetScreen.tsx";
 import { getWebLocale } from "./i18n.ts";
 
@@ -6,7 +7,7 @@ export function createPresetScriptExample(
   kind: "actions" | "card",
   requestId: string,
 ) {
-  const id = `example_${crypto.randomUUID().replaceAll("-", "")}`;
+  const id = `example_${browserUUID().replaceAll("-", "")}`;
   const zh = getWebLocale() === "zh-CN";
   const renderer = `renderers/${id}.html`;
   const script = `scripts/${id}.js`;
@@ -97,7 +98,7 @@ export function createPresetScriptExample(
     return event.source === parent && message && message.namespace === "narraeon.extension.v1" && message.instanceId === instanceId && message.nonce === nonce;
   }
   function request(command, payload) {
-    var requestId = crypto.randomUUID();
+    var requestId = Array.from(crypto.getRandomValues(new Uint8Array(16)), function (byte) { return byte.toString(16).padStart(2, "0"); }).join("");
     pending.set(requestId, command);
     parent.postMessage({namespace: "narraeon.extension.v1", instanceId: instanceId, nonce: nonce, requestId: requestId, command: command, payload: payload}, "*");
   }

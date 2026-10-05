@@ -1,3 +1,4 @@
+import { browserUUID } from "./browser-uuid.ts";
 import {
   newPresetArtifact,
   type PresetResourceEdit,
@@ -87,7 +88,7 @@ export function PresetWorkbenchEditor({
     }));
   }
   function addFollowup(clone?: PlayPresetFollowupDefinition) {
-    const id = `request_${crypto.randomUUID().replaceAll("-", "")}`;
+    const id = `request_${browserUUID().replaceAll("-", "")}`;
     onResourceEdit(
       clone
         ? {
@@ -216,7 +217,7 @@ export function PresetWorkbenchEditor({
             type="button"
             aria-label={t("新增纯界面", "Add interface panel")}
             onClick={() => {
-              const id = `panel_${crypto.randomUUID().replaceAll("-", "")}`;
+              const id = `panel_${browserUUID().replaceAll("-", "")}`;
               onResourceEdit({
                 type: "create-panel",
                 id,

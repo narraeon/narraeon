@@ -1,3 +1,4 @@
+import { browserUUID } from "./browser-uuid.ts";
 import { uiText } from "./i18n.ts";
 
 /** Edit author resources in place; paths are assigned only when a resource is added. */
@@ -72,7 +73,7 @@ export function FollowupResourcesEditor({
               onClick={() =>
                 onAttach(
                   entry.kind,
-                  `${entry.directory}/followup-${crypto.randomUUID()}.${entry.suffix}`,
+                  `${entry.directory}/followup-${browserUUID()}.${entry.suffix}`,
                   entry.initial,
                 )
               }

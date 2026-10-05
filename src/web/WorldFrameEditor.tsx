@@ -1,3 +1,4 @@
+import { browserUUID } from "./browser-uuid.ts";
 import { getWebLocale, uiText } from "./i18n.ts";
 import { useMemo, useState } from "react";
 import { parse, stringify } from "yaml";
@@ -807,7 +808,7 @@ function FrameSlotCard({
             if (event.currentTarget.value === "") delete next.advisoryBytes;
             else {
               next.advisoryBytes = Number(event.currentTarget.value);
-              next.id ??= `slot-${crypto.randomUUID()}`;
+              next.id ??= `slot-${browserUUID()}`;
             }
             onChange(next);
           }}

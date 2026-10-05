@@ -1,3 +1,4 @@
+import { browserUUID } from "./browser-uuid.ts";
 import type { PresetResourceEdit } from "./preset-resource-editor.ts";
 import { PresetDisplayEditor } from "./PresetDisplayEditor.tsx";
 import { uiText } from "./i18n.ts";
@@ -61,7 +62,7 @@ export function PlayerViewPanelsEditor({
   }
 
   function addPanel(): void {
-    const id = `panel_${crypto.randomUUID().replaceAll("-", "")}`;
+    const id = `panel_${browserUUID().replaceAll("-", "")}`;
     onResourceEdit({
       type: "create-panel",
       id,

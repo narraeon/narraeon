@@ -1,3 +1,4 @@
+import { browserUUID } from "./browser-uuid.ts";
 import {
   builtinFollowupExample,
   defaultFollowupItems,
@@ -224,7 +225,7 @@ export function editPresetResources(
       const slash = path.lastIndexOf("/");
       refs.set(
         path,
-        `${path.slice(0, slash)}/${crypto.randomUUID()}-${path.slice(slash + 1)}`,
+        `${path.slice(0, slash)}/${browserUUID()}-${path.slice(slash + 1)}`,
       );
       queue.push(...localResourceReferences(draft.files[path]));
     }
@@ -309,7 +310,7 @@ export function editPresetResources(
     display[kind] = [...new Set([...(display[kind] ?? []), path])];
   else {
     display[kind] = path;
-    if (kind === "renderer") display.rendererRevision = crypto.randomUUID();
+    if (kind === "renderer") display.rendererRevision = browserUUID();
   }
   next.structure.extensionRefs = [
     ...new Set([...next.structure.extensionRefs, path]),
@@ -337,7 +338,7 @@ function resourcePath(
         )
         .join("")
     : "resource";
-  return `${directory}/${name}.${crypto.randomUUID()}.${edit.suffix}`;
+  return `${directory}/${name}.${browserUUID()}.${edit.suffix}`;
 }
 
 /** Builds one index for the UI; deletion rebuilds it from the latest draft. */

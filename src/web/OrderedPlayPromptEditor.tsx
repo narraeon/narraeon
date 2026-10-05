@@ -1,3 +1,4 @@
+import { browserUUID } from "./browser-uuid.ts";
 import {
   builtinAuthorPrompts,
   authoringMechanics,
@@ -74,7 +75,7 @@ export function OrderedPlayPromptEditor({
     messageRole: PromptMessageRole = "system",
   ) {
     const entry: OrderedPlayPrompt = {
-      id: crypto.randomUUID(),
+      id: browserUUID(),
       kind: "user",
       name: title,
       enabled: true,
