@@ -1,3 +1,4 @@
+import type { HistoryBackground } from "../history/HistoryBackground.ts";
 import { HistoryQuery, historyInputs } from "../history/HistoryQuery.ts";
 import { renderHistoryResult } from "../history/HistoryRendering.ts";
 import {
@@ -218,7 +219,11 @@ export class FileNativePlayDocuments {
 
   execute(
     call: ModelHostToolCall,
-    history: { path: string; contents: string }[],
+    history: {
+      path: string;
+      contents: string;
+      background?: HistoryBackground;
+    }[],
     options: {
       historyScope?: string;
       locale?: AppLocale;

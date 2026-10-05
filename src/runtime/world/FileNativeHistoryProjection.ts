@@ -1,11 +1,36 @@
 import { createHash } from "node:crypto";
 
 import type { ContentTreeFile } from "../content/ContentTreeFile.ts";
+import type { HistoryBackground } from "../history/HistoryBackground.ts";
 
 export interface FileNativeHistoryProjectionMessage {
   messageId: string;
   role: "player" | "narrator";
   exactText: string;
+  background?: HistoryBackground;
+}
+
+export function historyBackgroundRecord(
+  messages: readonly FileNativeHistoryProjectionMessage[],
+): Record<string, HistoryBackground> {
+  return Object.fromEntries(
+    messages.flatMap((message) =>
+      message.background === undefined
+        ? []
+        : [[message.messageId, structuredClone(message.background)]],
+    ),
+  );
+}
+
+export function projectHistoryBackgrounds(
+  messages: readonly FileNativeHistoryProjectionMessage[],
+): ContentTreeFile[] {
+  return Object.entries(historyBackgroundRecord(messages)).map(
+    ([id, background]) => ({
+      path: `${id}.json`,
+      contents: `${JSON.stringify(background)}\n`,
+    }),
+  );
 }
 
 export function fileNativeHistoryMessageIdFromProjectionPath(

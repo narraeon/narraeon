@@ -38,6 +38,12 @@ test("v0.4.0 实际发布代码写出的预设、世界、原生请求与产物�
       "Released player.\n",
       "Released narrative.\n",
     ]);
+    expect(
+      endpoint.history.every((message) => message.background === undefined),
+    ).toBe(true);
+    expect(
+      (await worlds.bindPlayCallChain(fixture.worldId)).historyBackgrounds,
+    ).toEqual({});
     const contexts = await worlds.playTimeline.readAllContexts(fixture.worldId);
     expect(contexts).toHaveLength(1);
     expect(

@@ -1,3 +1,9 @@
+import {
+  captureNarrativeOrigin,
+  snapshotBackground,
+  isHistoryBackground,
+  type HistoryBackground,
+} from "../history/HistoryBackground.ts";
 import { FileNativeArtifactStore } from "../artifact/FileNativeArtifactStore.ts";
 import { WorldExtensionRequests } from "../extension/WorldExtensionRequests.ts";
 import {
@@ -56,6 +62,8 @@ import {
 import {
   fileNativeHistoryMessageIdFromProjectionPath,
   projectFileNativeHistorySurface,
+  projectHistoryBackgrounds,
+  historyBackgroundRecord,
 } from "./FileNativeHistoryProjection.ts";
 
 const publicationFile = "publication.json";
@@ -129,6 +137,7 @@ interface Genesis {
     messageId: string;
     role: "player" | "narrator";
     exactText: string;
+    background?: HistoryBackground;
   }[];
   additionalMaterials: MaterialSelection[];
 }
@@ -148,6 +157,7 @@ export interface FileNativePlayBinding {
   files: Record<string, string>;
   additionalMaterials: MaterialSelection[];
   history: Record<string, string>;
+  historyBackgrounds?: Record<string, HistoryBackground>;
   narrativeCheckpoint?: NarrativeCheckpoint | undefined;
 }
 
@@ -165,6 +175,7 @@ export interface FileNativeStateChange {
 export type FileNativePlayCommit = FileNativeAuthorityCommitV3;
 
 interface FileNativeMaterializedCheckpoint {
+  historyBackgroundCount?: number;
   schemaVersion: 3;
   head: string;
   sequence: number;
@@ -181,7 +192,11 @@ export type FileNativeOperationOutcome =
       parentHead: string;
       head: string;
       commitDigest: string;
-      historyAppend: { role: "player" | "narrator"; exactText: string }[];
+      historyAppend: {
+        role: "player" | "narrator";
+        exactText: string;
+        background?: HistoryBackground;
+      }[];
       nextAdditionalMaterials: MaterialSelection[];
       mode: "play" | "correction" | "timeline_revision";
     };
@@ -202,6 +217,7 @@ export interface FileNativeRecoveredEndpoint {
     messageId: string;
     role: "player" | "narrator";
     exactText: string;
+    background?: HistoryBackground;
   }[];
   additionalMaterials: MaterialSelection[];
   narrativeCheckpoint?: NarrativeCheckpoint | undefined;
@@ -546,7 +562,14 @@ export class FileNativeWorldStore {
     await mkdir(this.#operationsRoot, { recursive: true, mode: 0o700 });
     await rm(stagingRoot, { recursive: true, force: true });
     try {
-      const openingMessage = genesisOpeningMessage(openingText(packageFiles));
+      const openingMessage = {
+        ...genesisOpeningMessage(openingText(packageFiles)),
+        ...backgroundField(
+          snapshotBackground(
+            captureNarrativeOrigin(inspection.worldDocumentSnapshot, 1).value,
+          ),
+        ),
+      };
       const initialMaterials: MaterialSelection[] = [
         { kind: "history_message", message: openingMessage.messageId },
       ];
@@ -567,6 +590,10 @@ export class FileNativeWorldStore {
           historySurfaceFiles([openingMessage])[0]!.path,
         ),
         openingMessage.exactText,
+      );
+      await replaceMaterializedTree(
+        join(stagingRoot, "runtime", "history-backgrounds"),
+        projectHistoryBackgrounds([openingMessage]),
       );
       const genesis: Genesis = {
         schemaVersion: 1,
@@ -599,6 +626,7 @@ export class FileNativeWorldStore {
         head: "genesis",
         sequence: 0,
         commitDigest: null,
+        ...backgroundCount([openingMessage]),
       } satisfies FileNativeMaterializedCheckpoint);
       await writeJson(
         join(stagingRoot, "runtime", "additional-materials.json"),
@@ -1042,7 +1070,13 @@ export class FileNativeWorldStore {
         const authorityStore = new FileNativeAuthorityV3(root);
         const authority = await authorityStore.readHead();
         const checkpoint = await readMaterializedCheckpoint(root);
-        if (!sameMaterializedEndpoint(checkpoint, authority)) {
+        const cachedBackgrounds = await readTree(
+          join(root, "runtime", "history-backgrounds"),
+        );
+        if (
+          !sameMaterializedEndpoint(checkpoint, authority) ||
+          (checkpoint?.historyBackgroundCount ?? 0) !== cachedBackgrounds.length
+        ) {
           const recovered = await authorityStore.recover();
           let operation: Extract<
             FileNativeOperationOutcome,
@@ -1079,14 +1113,16 @@ export class FileNativeWorldStore {
               { ...operation, outcome: "committed" },
             );
         }
-        const [state, control, history, materials] = await Promise.all([
-          readTree(join(root, "state")),
-          readTree(join(root, "control")),
-          readTree(join(root, "history")),
-          readOptionalJson<{ head: string; items: MaterialSelection[] }>(
-            join(root, "runtime", "additional-materials.json"),
-          ),
-        ]);
+        const [state, control, history, materials, backgrounds] =
+          await Promise.all([
+            readTree(join(root, "state")),
+            readTree(join(root, "control")),
+            readTree(join(root, "history")),
+            readOptionalJson<{ head: string; items: MaterialSelection[] }>(
+              join(root, "runtime", "additional-materials.json"),
+            ),
+            readTree(join(root, "runtime", "history-backgrounds")),
+          ]);
         if ((materials?.head ?? "genesis") !== authority.head)
           throw new FileNativeWorldCreationError(
             "inconsistent_materialization",
@@ -1105,6 +1141,10 @@ export class FileNativeWorldStore {
           ),
           additionalMaterials: materials?.items ?? [],
           history: materializedHistoryRecord(history),
+          historyBackgrounds: materializedBackgroundRecord(
+            backgrounds,
+            materializedHistoryRecord(history),
+          ),
           narrativeCheckpoint: await authorityStore.readNarrativeCheckpoint(),
         };
       });
@@ -1146,6 +1186,7 @@ export class FileNativeWorldStore {
       ),
       additionalMaterials: structuredClone(endpoint.additionalMaterials),
       narrativeCheckpoint: endpoint.narrativeCheckpoint,
+      historyBackgrounds: historyBackgroundRecord(endpoint.history),
       history: Object.fromEntries(
         endpoint.history.map(({ messageId, exactText }) => [
           messageId,
@@ -1355,6 +1396,10 @@ export class FileNativeWorldStore {
             join(staging, "history", file.path),
             file.contents,
           );
+        await replaceMaterializedTree(
+          join(staging, "runtime", "history-backgrounds"),
+          projectHistoryBackgrounds(selected.history),
+        );
         const genesis: Genesis = {
           schemaVersion: 1,
           type: "file_native_genesis",
@@ -1386,6 +1431,7 @@ export class FileNativeWorldStore {
           head: input.sourceHead,
           sequence: clonedHead.sequence,
           commitDigest: clonedHead.commitDigest,
+          ...backgroundCount(selected.history),
         } satisfies FileNativeMaterializedCheckpoint);
         await input.stageTarget?.({
           targetWorldRoot: staging,
@@ -1402,6 +1448,7 @@ export class FileNativeWorldStore {
               return files;
             }, {}),
             additionalMaterials: structuredClone(selected.additionalMaterials),
+            historyBackgrounds: historyBackgroundRecord(selected.history),
             history: Object.fromEntries(
               selected.history.map(({ messageId, exactText }) => [
                 messageId,
@@ -1659,11 +1706,31 @@ export class FileNativeWorldStore {
         "Selected player message does not match the logical parent endpoint to restore",
       );
 
+    const binding = await this.bindPlayCallChainAt(
+      input.worldId,
+      input.restoresHead,
+    );
+    const snapshot = WorldDocumentStore.open({
+      layout: "world_state",
+      files: Object.entries(binding.files).map(([path, contents]) => ({
+        path,
+        contents,
+      })),
+    });
+    const background = snapshotBackground(
+      captureNarrativeOrigin(snapshot, 1).value,
+    );
     return this.#commitHistoryChange({
       operationId: input.operationId,
       worldId: input.worldId,
       parentHead: input.expectedCurrentHead,
-      historyAppend: [{ role: "player", exactText: input.replacementText }],
+      historyAppend: [
+        {
+          role: "player",
+          exactText: input.replacementText,
+          ...backgroundField(background),
+        },
+      ],
       nextMaterials: worldNeutralMaterials(input.worldId, replacementMaterials),
       stateChanges: [],
       mode: "timeline_revision",
@@ -1762,7 +1829,11 @@ export class FileNativeWorldStore {
     operationId: string;
     worldId: string;
     parentHead: string;
-    historyAppend: { role: "player" | "narrator"; exactText: string }[];
+    historyAppend: {
+      role: "player" | "narrator";
+      exactText: string;
+      background?: HistoryBackground;
+    }[];
     nextMaterials: MaterialSelection[];
     stateChanges: FileNativeStateChange[];
     narrativeCheckpoint?: NarrativeCheckpointDeclaration;
@@ -1806,7 +1877,11 @@ export class FileNativeWorldStore {
     operationId: string;
     worldId: string;
     parentHead: string;
-    historyAppend: { role: "player" | "narrator"; exactText: string }[];
+    historyAppend: {
+      role: "player" | "narrator";
+      exactText: string;
+      background?: HistoryBackground;
+    }[];
     nextMaterials: MaterialSelection[];
     stateChanges: FileNativeStateChange[];
     narrativeCheckpoint?: NarrativeCheckpointDeclaration;
@@ -2154,16 +2229,21 @@ export class FileNativeWorldStore {
   ): Promise<{
     endpoint: string;
     state: ContentTreeFile[];
-    history: { role: "player" | "narrator"; exactText: string }[];
+    history: {
+      role: "player" | "narrator";
+      exactText: string;
+      background?: HistoryBackground;
+    }[];
     additionalMaterials: MaterialSelection[];
   }> {
     const recovered = await this.recoverEndpoint(worldId, endpoint);
     return {
       endpoint: recovered.head,
       state: recovered.state,
-      history: recovered.history.map(({ role, exactText }) => ({
+      history: recovered.history.map(({ role, exactText, background }) => ({
         role,
         exactText,
+        ...backgroundField(background),
       })),
       additionalMaterials: recovered.additionalMaterials,
     };
@@ -2611,7 +2691,11 @@ async function assertCommittedAuthorityOutcomeMatches(
     commit.head !== outcome.head ||
     commit.mode !== outcome.mode ||
     !isDeepStrictEqual(
-      commit.historyAppend.map(({ role, exactText }) => ({ role, exactText })),
+      commit.historyAppend.map(({ role, exactText, background }) => ({
+        role,
+        exactText,
+        ...backgroundField(background),
+      })),
       outcome.historyAppend,
     ) ||
     !isDeepStrictEqual(
@@ -2774,12 +2858,14 @@ async function readMaterializedCheckpoint(
   if (value === null) return null;
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, [
-      "schemaVersion",
-      "head",
-      "sequence",
-      "commitDigest",
-    ]) ||
+    !hasRequiredAndOptionalKeys(
+      value,
+      ["schemaVersion", "head", "sequence", "commitDigest"],
+      ["historyBackgroundCount"],
+    ) ||
+    (value.historyBackgroundCount !== undefined &&
+      (!Number.isSafeInteger(value.historyBackgroundCount) ||
+        Number(value.historyBackgroundCount) < 1)) ||
     value.schemaVersion !== 3 ||
     typeof value.head !== "string" ||
     !Number.isSafeInteger(value.sequence) ||
@@ -2814,7 +2900,10 @@ function sameMaterializedEndpoint(
 function isPlayHistoryAppendInput(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["role", "exactText"]) &&
+    hasRequiredAndOptionalKeys(value, ["role", "exactText"], ["background"]) &&
+    (value.background === undefined ||
+      (isHistoryBackground(value.background) &&
+        (value.role !== "player" || value.background.kind === "snapshot"))) &&
     (value.role === "player" || value.role === "narrator") &&
     typeof value.exactText === "string"
   );
@@ -2836,6 +2925,10 @@ async function materializeRecoveredEndpoint(
     join(root, "history"),
     historySurfaceFiles(endpoint.history),
   );
+  await replaceMaterializedTree(
+    join(root, "runtime", "history-backgrounds"),
+    projectHistoryBackgrounds(endpoint.history),
+  );
   await publishJson(join(root, "runtime", "additional-materials.json"), {
     head: authority.head,
     items: endpoint.additionalMaterials,
@@ -2845,6 +2938,7 @@ async function materializeRecoveredEndpoint(
     head: authority.head,
     sequence: authority.sequence,
     commitDigest: authority.commitDigest,
+    ...backgroundCount(endpoint.history),
   } satisfies FileNativeMaterializedCheckpoint);
 }
 
@@ -2957,7 +3051,11 @@ function assertSameOperationOutcome(
   input: {
     worldId: string;
     parentHead: string;
-    historyAppend: { role: "player" | "narrator"; exactText: string }[];
+    historyAppend: {
+      role: "player" | "narrator";
+      exactText: string;
+      background?: HistoryBackground;
+    }[];
     nextMaterials: MaterialSelection[];
   },
 ): void {
@@ -3016,7 +3114,11 @@ function authorityCommitMatchesInput(
     playContext?: string;
     worldClock?: string;
     parentHead: string;
-    historyAppend: { role: "player" | "narrator"; exactText: string }[];
+    historyAppend: {
+      role: "player" | "narrator";
+      exactText: string;
+      background?: HistoryBackground;
+    }[];
     nextMaterials: MaterialSelection[];
     stateChanges: FileNativeStateChange[];
     mode: "play" | "correction" | "timeline_revision";
@@ -3057,7 +3159,11 @@ function authorityCommitMatchesInput(
     commit.timelineParent.head ===
       (input.timelineRevision?.restoresHead ?? input.parentHead) &&
     isDeepStrictEqual(
-      commit.historyAppend.map(({ role, exactText }) => ({ role, exactText })),
+      commit.historyAppend.map(({ role, exactText, background }) => ({
+        role,
+        exactText,
+        ...backgroundField(background),
+      })),
       input.historyAppend,
     ) &&
     stateChangesMatch &&
@@ -3172,7 +3278,13 @@ async function readGenesisForFork(
   const history = value.history.map((message, index) => {
     if (
       !isRecord(message) ||
-      !hasExactKeys(message, ["messageId", "role", "exactText"]) ||
+      !hasRequiredAndOptionalKeys(
+        message,
+        ["messageId", "role", "exactText"],
+        ["background"],
+      ) ||
+      (message.background !== undefined &&
+        !isHistoryBackground(message.background)) ||
       typeof message.messageId !== "string" ||
       (message.role !== "player" && message.role !== "narrator") ||
       typeof message.exactText !== "string"
@@ -3199,6 +3311,7 @@ async function readGenesisForFork(
       messageId,
       role,
       exactText: message.exactText,
+      ...backgroundField(message.background),
     };
   });
   let additionalMaterials: MaterialSelection[];
@@ -3369,3 +3482,39 @@ import {
   readDocumentMaintenanceFacts,
   type DocumentMaintenanceState,
 } from "./WorldDocumentMaintenance.ts";
+
+function backgroundField(background: HistoryBackground | undefined): {
+  background?: HistoryBackground;
+} {
+  return background === undefined ? {} : { background };
+}
+function materializedBackgroundRecord(
+  files: readonly ContentTreeFile[],
+  history: Record<string, string>,
+): Record<string, HistoryBackground> {
+  return Object.fromEntries(
+    files.map(({ path, contents }) => {
+      const id = path.replace(/\.json$/u, "");
+      const value: unknown = JSON.parse(contents);
+      if (
+        path !== `${id}.json` ||
+        !Object.hasOwn(history, id) ||
+        !isHistoryBackground(value)
+      )
+        throw new FileNativeWorldCreationError(
+          "world_corrupt",
+          "Materialized history background is invalid or unreachable",
+        );
+      return [id, value];
+    }),
+  );
+}
+
+function backgroundCount(messages: readonly Genesis["history"][number][]): {
+  historyBackgroundCount?: number;
+} {
+  const count = messages.filter(
+    ({ background }) => background !== undefined,
+  ).length;
+  return count === 0 ? {} : { historyBackgroundCount: count };
+}

@@ -1,3 +1,4 @@
+import { FileNativePlayDocuments } from "../../src/runtime/play/PlayDocumentTools.ts";
 import { FileNativeModelHost } from "../../src/runtime/model/FileNativeModelAdapters.ts";
 import { createHash } from "node:crypto";
 import {
@@ -6912,4 +6913,621 @@ test("历史查询沿真实时间线修订与分叉恢复位置，状态修正�
     total: 2,
     messages: [{ position: 1 }, { position: 2, text: "我把那封信带走。" }],
   });
+});
+
+function backgroundWorldFiles() {
+  return [
+    ...worldFiles().map((file) =>
+      file.path === "world/current-situation.yaml"
+        ? {
+            ...file,
+            path: "world/scene.yaml",
+            contents:
+              file.contents +
+              "背景: {时间: 第一天, 地点: 客栈}\n长局面: " +
+              "不属于历史背景".repeat(2000) +
+              "\n",
+          }
+        : file,
+    ),
+    {
+      path: "world/alternate.yaml",
+      contents:
+        "$document:\n  id: situation.alternate\n  ref: alternate\n  title: Alternate\n  summary: Another scene.\n  aliases: []\n背景: {时间: 第九天, 地点: 城门}\n",
+    },
+  ];
+}
+function backgroundPatch(
+  id: string,
+  day: string,
+): NonNullable<ModelHostResponse["toolCalls"]> {
+  return [
+    {
+      id,
+      name: "world_patch",
+      arguments: {
+        target: "@current-situation",
+        edits: [
+          {
+            op: "replace",
+            locator: { yaml: ["背景"] },
+            value: { 时间: day, 地点: "山门" },
+          },
+        ],
+      },
+    },
+  ];
+}
+function backgroundStart(
+  worldId: string,
+  chainId: string,
+  modelHost: ModelHost,
+) {
+  return {
+    worldId,
+    chainId,
+    exchangeId: "first",
+    playerText: "明天再走，后天回来。\n",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  };
+}
+
+test("历史背景在工具前冻结，多次工具后提交终点，冷续写与真实预览共用原记录", async () => {
+  const { worlds, worldId, root } = await createWorld(
+    "history-background-origin",
+    backgroundWorldFiles(),
+  );
+  const host = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        text: "这份中间正文不进入历史",
+        toolCalls: backgroundPatch("day-two", "第二天"),
+      },
+      {
+        outcome: "response",
+        toolCalls: backgroundPatch("day-three", "第三天"),
+      },
+      {
+        outcome: "response",
+        toolCalls: backgroundPatch("unchanged", "第三天"),
+      },
+      { outcome: "response", text: "  他说明天到这里。\n\n" },
+      { outcome: "response", text: "维护既有记录，没有推进时间。" },
+    ],
+  });
+  const chains = new PlayCallChain(worlds);
+  const first = await chains.start(
+    backgroundStart(worldId, "background-origin", host),
+  );
+  expect(first.status).toBe("ready");
+  const origin = "时间: 第一天\n地点: 客栈";
+  const after = "时间: 第三天\n地点: 山门";
+  const endpoint = await worlds.recoverEndpoint(worldId);
+  expect(endpoint.history.map(({ background }) => background)).toEqual([
+    { kind: "snapshot", value: origin },
+    { kind: "snapshot", value: origin },
+    { kind: "narrative", before: origin, after },
+  ]);
+  expect(endpoint.history.at(-1)?.exactText).toBe("  他说明天到这里。\n\n");
+  expect(JSON.stringify(endpoint.history)).not.toContain("不属于历史背景");
+  expect(endpoint.history).toHaveLength(3);
+  await new PlayCallChain(worlds).append({
+    worldId,
+    chainId: first.chainId,
+    exchangeId: "continuation",
+    playerText: "",
+    modelHost: host,
+  });
+  const current = await new FileNativeWorldStore(root).recoverEndpoint(worldId);
+  expect(current.history.at(-1)?.background).toEqual({
+    kind: "narrative",
+    before: after,
+    after,
+  });
+  expect(current.history.filter(({ role }) => role === "player")).toHaveLength(
+    1,
+  );
+  const fresh = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [{ outcome: "response", text: "继续。" }],
+  });
+  await new PlayCallChain(worlds).start({
+    ...backgroundStart(worldId, "background-fresh", fresh),
+    playerText: "确认旧约定。",
+  });
+  const injected = fresh.requests[0]!.bootstrap.logicalMessages.flatMap(
+    ({ blocks }) => blocks,
+  )
+    .filter(({ source }) => source.startsWith("runtime:checkpoint-history"))
+    .map(({ markdown }) => markdown)
+    .join("\n");
+  expect(injected).toContain(origin);
+  expect(injected).toContain(after);
+  expect(injected).not.toContain("不属于历史背景");
+  const binding = await worlds.bindPlayCallChain(worldId);
+  const documents = new FileNativePlayDocuments(binding.files);
+  const preview = new FileNativePromptCompiler().preview({
+    endpoint: { id: "preview", commit: binding.parentHead },
+    hostBinding: hostBinding(),
+    world: {
+      controlFingerprint: "preview",
+      documentSnapshot: documents.snapshot,
+      history: binding.history,
+      historyBackgrounds: binding.historyBackgrounds ?? {},
+      additionalMaterials: binding.additionalMaterials,
+      replayHistory: true,
+    },
+    playerInputPlacement: "append",
+    playerInput: "预览",
+    modelBinding: modelBinding(),
+  });
+  expect(JSON.stringify(preview)).toContain("第一天");
+  const read = documents.execute(
+    {
+      id: "read",
+      name: "history_read",
+      arguments: { ref: "@history-message-message.4.1.narrator" },
+    },
+    Object.entries(binding.history).map(([path, contents]) => ({
+      path,
+      contents,
+      ...(binding.historyBackgrounds?.[path] === undefined
+        ? {}
+        : { background: binding.historyBackgrounds[path] }),
+    })),
+  );
+  expect(read.ok).toBe(true);
+  expect(read.markdown).toContain(origin);
+  expect(read.markdown).toContain(after);
+});
+
+test.each([
+  "after_provider_completed",
+  "after_settlement_prepared",
+  "after_timeline_settled",
+] as const)(
+  "历史背景在 %s 切点恢复只提交一次，不调用 Provider",
+  async (edge) => {
+    const { worlds, worldId, root } = await createWorld(
+      `background-${edge}`,
+      backgroundWorldFiles(),
+    );
+    const scripted = new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [
+        {
+          outcome: "response",
+          toolCalls: backgroundPatch("advance", "第三天"),
+        },
+        { outcome: "response", text: "明天会到。" },
+      ],
+    });
+    const host: ModelHost = {
+      binding: () => modelBinding(),
+      exchange: async (request, observer) => {
+        if (request.exchange === 2)
+          process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE = edge;
+        return scripted.exchange(request, observer);
+      },
+    };
+    const interrupted = await new PlayCallChain(worlds)
+      .start(backgroundStart(worldId, `background-${edge}`, host))
+      .catch((error: unknown) => {
+        expect(String(error)).toContain("after_timeline_settled");
+        return { chainId: `background-${edge}` };
+      });
+    delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE;
+    const coldWorlds = new FileNativeWorldStore(root);
+    await new PlayCallChain(coldWorlds).inspectWorld(worldId);
+    const recovered = await coldWorlds.recoverEndpoint(worldId);
+    expect(
+      recovered.history.filter(({ exactText }) => exactText === "明天会到。"),
+    ).toHaveLength(1);
+    expect(recovered.history.at(-1)?.background).toEqual({
+      kind: "narrative",
+      before: "时间: 第一天\n地点: 客栈",
+      after: "时间: 第三天\n地点: 山门",
+    });
+    expect(scripted.requests).toHaveLength(2);
+    await new PlayCallChain(coldWorlds).inspectWorld(worldId);
+    expect((await coldWorlds.recoverEndpoint(worldId)).history).toEqual(
+      recovered.history,
+    );
+    expect(interrupted.chainId).toBe(`background-${edge}`);
+  },
+);
+
+test.each(["continue_context", "fresh_context"] as const)(
+  "历史背景分叉保留前缀，%s 修改稿按新绑定重新采集",
+  async (continuation) => {
+    const { worlds, worldId } = await createWorld(
+      `background-revision-${continuation}`,
+      backgroundWorldFiles(),
+    );
+    const host = new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [
+        {
+          outcome: "response",
+          toolCalls: backgroundPatch("advance", "第三天"),
+        },
+        { outcome: "response", text: "第三天的叙事。" },
+      ],
+    });
+    const chains = new PlayCallChain(worlds);
+    const first = await chains.start(
+      backgroundStart(worldId, `background-revision-${continuation}`, host),
+    );
+    const old = await worlds.recoverEndpoint(worldId);
+    const control = (await worlds.readSurface(worldId, "control")).map(
+      (file) =>
+        file.path === "frame.yaml"
+          ? {
+              ...file,
+              contents: file.contents.replace(
+                "currentSituation: situation.current",
+                'currentSituation: "@alternate"',
+              ),
+            }
+          : file,
+    );
+    await worlds.saveControlDraft(worldId, control);
+    await worlds.applyControlDraft(worldId, {
+      hostBinding: hostBinding(),
+      modelBinding: modelBinding(),
+    });
+    const unchanged = await worlds.bindPlayCallChain(worldId);
+    expect(unchanged.historyBackgrounds).toEqual(
+      Object.fromEntries(
+        old.history.map(({ messageId, background }) => [messageId, background]),
+      ),
+    );
+    const branch = await chains.deriveWorld({
+      operationId: `background-fork-${continuation}`,
+      sourceWorldId: worldId,
+      sourceHead: first.parentHead,
+      hostPresetId: "host",
+    });
+    expect(
+      (await worlds.recoverEndpoint(branch.world.worldId)).history,
+    ).toEqual(old.history);
+    const player = first.events.find((event) => event.kind === "player")!;
+    const revision = await chains.revisePlayer({
+      operationId: `background-edit-${continuation}`,
+      worldId,
+      chainId: first.chainId,
+      eventId: player.id,
+      replacementExchangeId: "edited",
+      replacementText: "修改为明天启程。",
+      ...(continuation === "fresh_context"
+        ? {
+            continuation,
+            freshContext: {
+              hostBinding: hostBinding(),
+              playPreset: playPreset(),
+              modelBinding: modelBinding(),
+            },
+          }
+        : { continuation }),
+    });
+    const revised = await worlds.recoverEndpoint(worldId);
+    expect(revised.history).toHaveLength(2);
+    expect(revised.history[0]).toEqual(old.history[0]);
+    expect(revised.history[1]?.background).toEqual({
+      kind: "snapshot",
+      value: "时间: 第九天\n地点: 城门",
+    });
+    expect(
+      (await worlds.recoverEndpoint(worldId, first.parentHead)).history,
+    ).toEqual(old.history);
+    const newHost = new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [{ outcome: "response", text: "新回复。" }],
+    });
+    await new PlayCallChain(worlds).append({
+      worldId,
+      chainId: revision.playCallChain.chainId,
+      exchangeId: "regenerate",
+      playerText: "",
+      modelHost: newHost,
+    });
+    expect(
+      (await worlds.recoverEndpoint(worldId)).history.at(-1)?.background,
+    ).toEqual({
+      kind: "narrative",
+      before: "时间: 第九天\n地点: 城门",
+      after: "时间: 第九天\n地点: 城门",
+    });
+  },
+);
+
+test("工具修改后原样重试保留旧段起点和完整请求，不重新读取已更换绑定", async () => {
+  const { worlds, worldId } = await createWorld(
+    "background-safe-retry",
+    backgroundWorldFiles(),
+  );
+  const scripted = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: backgroundPatch("before-refusal", "第三天"),
+      },
+      { outcome: "response", text: "终于呈现旧段正文。" },
+    ],
+  });
+  const requests: ModelHostExchange[] = [];
+  const host: ModelHost = {
+    binding: modelBinding,
+    exchange: async (request, observer) => {
+      requests.push(structuredClone(request));
+      if (requests.length === 2)
+        throw new ModelHostFailureError("Rejected before generation");
+      return scripted.exchange(request, observer);
+    },
+  };
+  const interrupted = await new PlayCallChain(worlds).start(
+    backgroundStart(worldId, "background-retry", host),
+  );
+  expect(interrupted).toMatchObject({ status: "interrupted", canRetry: true });
+  const control = (await worlds.readSurface(worldId, "control")).map((file) =>
+    file.path === "frame.yaml"
+      ? {
+          ...file,
+          contents: file.contents.replace(
+            "currentSituation: situation.current",
+            'currentSituation: "@alternate"',
+          ),
+        }
+      : file,
+  );
+  await worlds.saveControlDraft(worldId, control);
+  await worlds.applyControlDraft(worldId, {
+    hostBinding: hostBinding(),
+    modelBinding: modelBinding(),
+  });
+  await new PlayCallChain(worlds).append({
+    worldId,
+    chainId: interrupted.chainId,
+    exchangeId: "retry",
+    playerText: "",
+    modelHost: host,
+  });
+  expect(requests[2]).toEqual(requests[1]);
+  expect(
+    (await worlds.recoverEndpoint(worldId)).history.at(-1)?.background,
+  ).toEqual({
+    kind: "narrative",
+    before: "时间: 第一天\n地点: 客栈",
+    after: "时间: 第三天\n地点: 山门",
+  });
+});
+
+test("历史背景投影丢失时从 Authority 修复，不用修订后的当前情境回填", async () => {
+  const { worlds, worldId, root } = await createWorld(
+    "background-projection-repair",
+    backgroundWorldFiles(),
+  );
+  const host = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [{ outcome: "response", text: "明天见。" }],
+  });
+  await new PlayCallChain(worlds).start(
+    backgroundStart(worldId, "background-projection", host),
+  );
+  const original = await worlds.recoverEndpoint(worldId);
+  const binding = await worlds.bindPlayCallChain(worldId);
+  const documents = new FileNativePlayDocuments(binding.files);
+  documents.execute(
+    {
+      id: "read",
+      name: "context_read",
+      arguments: { ref: "@current-situation" },
+    },
+    [],
+  );
+  documents.execute(
+    {
+      id: "patch",
+      name: "world_patch",
+      arguments: {
+        target: "@current-situation",
+        edits: [
+          { op: "replace", locator: { yaml: ["背景"] }, value: "十年后" },
+        ],
+      },
+    },
+    [],
+  );
+  await worlds.commitCorrection({
+    operationId: "background-correction",
+    worldId,
+    parentHead: binding.parentHead,
+    nextMaterials: binding.additionalMaterials,
+    stateChanges: documents.stateChanges(),
+  });
+  await rm(
+    join(root, "worlds-file-native", worldId, "runtime", "history-backgrounds"),
+    { recursive: true },
+  );
+  const repaired = await new FileNativeWorldStore(root).bindPlayCallChain(
+    worldId,
+  );
+  expect(repaired.historyBackgrounds).toEqual(
+    Object.fromEntries(
+      original.history.map(({ messageId, background }) => [
+        messageId,
+        background,
+      ]),
+    ),
+  );
+  expect(JSON.stringify(repaired.historyBackgrounds)).not.toContain("十年后");
+});
+
+test("工具端点分叉的新叙事从所选状态采集背景，原世界记录保持不变", async () => {
+  const { worlds, worldId } = await createWorld(
+    "background-tool-fork",
+    backgroundWorldFiles(),
+  );
+  const chains = new PlayCallChain(worlds);
+  const source = await chains.start(
+    backgroundStart(
+      worldId,
+      "background-tool-source",
+      new ScriptedModelHost({
+        binding: modelBinding(),
+        steps: [
+          {
+            outcome: "response",
+            toolCalls: backgroundPatch("day-three", "第三天"),
+          },
+          { outcome: "response", text: "原世界的最终叙事。" },
+        ],
+      }),
+    ),
+  );
+  const toolStep = source.events.find(
+    (event) => event.kind === "assistant" && event.responseKind === "tool_step",
+  );
+  if (toolStep?.kind !== "assistant" || toolStep.committedHead === undefined)
+    throw new Error("Tool step did not commit");
+  const original = await worlds.recoverEndpoint(worldId);
+  const branch = await chains.deriveWorld({
+    operationId: "background-tool-fork",
+    sourceWorldId: worldId,
+    sourceHead: toolStep.committedHead,
+    hostPresetId: "host",
+  });
+  const fork = await chains.inspectWorld(branch.world.worldId);
+  if (fork === null) throw new Error("Fork context missing");
+  await chains.append({
+    worldId: branch.world.worldId,
+    chainId: fork.chainId,
+    exchangeId: "fork-continuation",
+    playerText: "",
+    modelHost: new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [{ outcome: "response", text: "分叉的新叙事。" }],
+    }),
+  });
+  const forked = await worlds.recoverEndpoint(branch.world.worldId);
+  expect(forked.history.at(-1)?.background).toEqual({
+    kind: "narrative",
+    before: "时间: 第三天\n地点: 山门",
+    after: "时间: 第三天\n地点: 山门",
+  });
+  expect(forked.history.slice(0, 2)).toEqual(original.history.slice(0, 2));
+  expect(forked.history).toHaveLength(3);
+  expect((await worlds.recoverEndpoint(worldId)).history).toEqual(
+    original.history,
+  );
+});
+
+test("世界外修订改名并更换绑定不改历史背景或游标，新消息重新采集", async () => {
+  const { worlds, worldId, root } = await createWorld(
+    "background-world-revision",
+    backgroundWorldFiles(),
+  );
+  await new PlayCallChain(worlds).start(
+    backgroundStart(
+      worldId,
+      "background-before-revision",
+      new ScriptedModelHost({
+        binding: modelBinding(),
+        steps: [{ outcome: "response", text: "明天见，后天回来。" }],
+      }),
+    ),
+  );
+  const { HistoryQuery, historyInputs } =
+    await import("../../src/runtime/history/HistoryQuery.ts");
+  const query = (
+    binding: Awaited<ReturnType<typeof worlds.bindPlayCallChain>>,
+  ) =>
+    new HistoryQuery(
+      worldId,
+      historyInputs(
+        Object.entries(binding.history).map(([path, contents]) => ({
+          path,
+          contents,
+          ...(binding.historyBackgrounds?.[path] === undefined
+            ? {}
+            : { background: binding.historyBackgrounds[path] }),
+        })),
+      ),
+    );
+  const original = await worlds.bindPlayCallChain(worldId);
+  const page = query(original).list({ limit: 1 });
+  if (!page.ok) throw new Error("History listing failed");
+  const workspace = new WorldRevisionWorkspace({
+    store: new FileNativeWorldRevisionStore(root),
+    worlds,
+  });
+  let epoch = await workspace.open(worldId);
+  epoch = await workspace.replace({
+    worldId,
+    epochId: epoch.epochId,
+    expectedRevision: epoch.revision,
+    files: epoch.files.map((file) => {
+      if (file.path === "state/scene.yaml")
+        return {
+          ...file,
+          contents: file.contents
+            .replace(/title: .*/u, "title: 十年后的码头")
+            .replace("第一天", "十年后"),
+        };
+      if (file.path === "control/frame.yaml")
+        return {
+          ...file,
+          contents: file.contents.replace(
+            "currentSituation: situation.current",
+            'currentSituation: "@alternate"',
+          ),
+        };
+      return file;
+    }),
+  });
+  await workspace.apply({
+    worldId,
+    epochId: epoch.epochId,
+    expectedRevision: epoch.revision,
+  });
+  const revised = await new FileNativeWorldStore(root).bindPlayCallChain(
+    worldId,
+  );
+  expect(revised.files["state/scene.yaml"]).toContain("title: 十年后的码头");
+  expect(revised.history).toEqual(original.history);
+  expect(revised.historyBackgrounds).toEqual(original.historyBackgrounds);
+  expect(query(revised).list({ cursor: page.earlierCursor })).toMatchObject({
+    ok: true,
+  });
+  await new PlayCallChain(worlds).start(
+    backgroundStart(
+      worldId,
+      "background-after-revision",
+      new ScriptedModelHost({
+        binding: modelBinding(),
+        steps: [{ outcome: "response", text: "新的约定。" }],
+      }),
+    ),
+  );
+  const current = await worlds.recoverEndpoint(worldId);
+  expect(current.history.at(-2)?.background).toEqual({
+    kind: "snapshot",
+    value: "时间: 第九天\n地点: 城门",
+  });
+  expect(current.history.at(-1)?.background).toEqual({
+    kind: "narrative",
+    before: "时间: 第九天\n地点: 城门",
+    after: "时间: 第九天\n地点: 城门",
+  });
+  expect(
+    current.history.slice(0, 3).map(({ background }) => background),
+  ).toEqual(
+    Object.keys(original.history).map((id) => original.historyBackgrounds![id]),
+  );
 });

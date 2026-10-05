@@ -1,3 +1,7 @@
+import {
+  isHistoryBackground,
+  type HistoryBackground,
+} from "../history/HistoryBackground.ts";
 import { createHash, randomUUID } from "node:crypto";
 import {
   link,
@@ -32,6 +36,7 @@ export interface FileNativeAuthorityHistoryMessage {
   messageId: string;
   role: "player" | "narrator";
   exactText: string;
+  background?: HistoryBackground;
 }
 
 export interface FileNativeAuthorityStateChangeInput {
@@ -291,6 +296,7 @@ export class FileNativeAuthorityV3 {
     historyAppend: readonly {
       role: "player" | "narrator";
       exactText: string;
+      background?: HistoryBackground;
     }[];
     stateChanges: readonly FileNativeAuthorityStateChangeInput[];
     nextMaterials: readonly MaterialSelection[];
@@ -1345,7 +1351,10 @@ function isHistoryMessage(
 ): value is FileNativeAuthorityHistoryMessage {
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, ["messageId", "role", "exactText"]) ||
+    !hasExactKeys(value, ["messageId", "role", "exactText"], ["background"]) ||
+    (value.background !== undefined &&
+      (!isHistoryBackground(value.background) ||
+        (value.role === "player" && value.background.kind !== "snapshot"))) ||
     typeof value.messageId !== "string" ||
     (value.role !== "player" && value.role !== "narrator") ||
     typeof value.exactText !== "string"
@@ -1504,10 +1513,12 @@ function validRelativePath(path: string): boolean {
 function hasExactKeys(
   value: Record<string, unknown>,
   keys: readonly string[],
+  optional: readonly string[] = [],
 ): boolean {
   return (
-    Object.keys(value).length === keys.length &&
-    keys.every((key) => Object.hasOwn(value, key))
+    Object.keys(value).every(
+      (key) => keys.includes(key) || optional.includes(key),
+    ) && keys.every((key) => Object.hasOwn(value, key))
   );
 }
 

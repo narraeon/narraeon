@@ -1,3 +1,10 @@
+import {
+  captureNarrativeOrigin,
+  snapshotBackground,
+  narrativeBackground,
+  type HistoryBackground,
+} from "../history/HistoryBackground.ts";
+import { isDeepStrictEqual } from "node:util";
 import { hasLegacyHistoryTools } from "../prompt/FileNativeToolRegistry.ts";
 import { PlayCallChainError } from "./PlayCallChainError.ts";
 import {
@@ -118,7 +125,7 @@ interface PlayCallChainSession extends PersistedPlayCallChain {
   narrativeCheckpoint?: NarrativeCheckpoint | undefined;
   documentAuthorizationCheckpoints: PersistedDocumentAuthorizationCheckpoint[];
   documents: FileNativePlayDocuments;
-  history: { path: string; contents: string }[];
+  history: { path: string; contents: string; background?: HistoryBackground }[];
   completedToolMap: Map<string, CompletedToolCall>;
   persistenceCursor: PlayContextPersistenceCursor;
 }
@@ -293,6 +300,7 @@ export class PlayCallChain {
           documentSnapshot: documents.snapshot,
           additionalMaterials: structuredClone(binding.additionalMaterials),
           history: structuredClone(binding.history),
+          historyBackgrounds: structuredClone(binding.historyBackgrounds ?? {}),
           narrativeCheckpoint: binding.narrativeCheckpoint,
           documentMaintenance,
           documentMaintenanceUnavailableReason: documents.maintenanceWarning,
@@ -352,7 +360,7 @@ export class PlayCallChain {
       lastFailure: null,
       updatedAt: now,
       documents,
-      history: historyEntries(binding.history),
+      history: historyEntries(binding.history, binding.historyBackgrounds),
       narrativeCheckpoint: binding.narrativeCheckpoint,
       completedToolMap: new Map(),
       persistenceCursor: {
@@ -413,8 +421,10 @@ export class PlayCallChain {
         last?.kind === "assistant" &&
         last.toolCalls.length === 0 &&
         last.text.trim().length > 0
-      )
+      ) {
+        session.narrativeOrigin = await this.#captureOrigin(session);
         session.transcript.push(continuationNotice(this.#compiler.locale));
+      }
       return this.#dispatch(
         session,
         input.modelHost,
@@ -476,6 +486,7 @@ export class PlayCallChain {
           documentSnapshot: session.documents.snapshot,
           additionalMaterials: structuredClone(binding.additionalMaterials),
           history: structuredClone(binding.history),
+          historyBackgrounds: structuredClone(binding.historyBackgrounds ?? {}),
           narrativeCheckpoint: binding.narrativeCheckpoint,
         },
         playerInputPlacement: "append",
@@ -486,7 +497,10 @@ export class PlayCallChain {
     );
     // The native conversation already contains successful writes and exact reads.
     // Rebinding initial coverage here would incorrectly reauthorize stale scopes.
-    session.history = historyEntries(binding.history);
+    session.history = historyEntries(
+      binding.history,
+      binding.historyBackgrounds,
+    );
     session.narrativeCheckpoint = binding.narrativeCheckpoint;
     session.nextMaterials = structuredClone(binding.additionalMaterials);
     (session.promptRuns ??= []).push({
@@ -1218,6 +1232,7 @@ export class PlayCallChain {
           documentSnapshot: documents.snapshot,
           additionalMaterials: structuredClone(binding.additionalMaterials),
           history: structuredClone(binding.history),
+          historyBackgrounds: structuredClone(binding.historyBackgrounds ?? {}),
           narrativeCheckpoint: binding.narrativeCheckpoint,
           documentMaintenance,
           documentMaintenanceUnavailableReason: documents.maintenanceWarning,
@@ -1315,6 +1330,15 @@ export class PlayCallChain {
       canRetry: false,
       bootstrap: structuredClone(fresh.bootstrap),
       tools: structuredClone(fresh.tools),
+      narrativeOrigin: captureNarrativeOrigin(
+        WorldDocumentStore.open({
+          layout: "world_state",
+          files: Object.entries(input.binding.files).map(
+            ([path, contents]) => ({ path, contents }),
+          ),
+        }),
+        1,
+      ),
       transcript: playerInputAppend({
         history: fresh.binding.history,
         checkpoint: fresh.binding.narrativeCheckpoint,
@@ -1496,6 +1520,24 @@ export class PlayCallChain {
     this.#worldChains.delete(worldId);
   }
 
+  async #captureOrigin(session: PlayCallChainSession) {
+    const binding = await this.#worlds.bindPlayCallChain(session.worldId);
+    if (binding.parentHead !== session.parentHead)
+      throw new PlayCallChainError(
+        "World advanced before background capture; use a fresh context.",
+      );
+    return captureNarrativeOrigin(
+      WorldDocumentStore.open({
+        layout: "world_state",
+        files: Object.entries(binding.files).map(([path, contents]) => ({
+          path,
+          contents,
+        })),
+      }),
+      session.nextEventId,
+    );
+  }
+
   async #submitPlayer(
     session: PlayCallChainSession,
     exchangeId: string,
@@ -1512,6 +1554,7 @@ export class PlayCallChain {
         "The call chain is waiting for the model to return.",
       );
 
+    session.narrativeOrigin = await this.#captureOrigin(session);
     const exchange = session.exchange + 1;
     const nextRequest = createRequest(session, modelHost, exchange, [
       ...session.transcript,
@@ -1533,6 +1576,7 @@ export class PlayCallChain {
       schemaVersion: 1,
       kind: "play_advance",
       advanceKind: "player",
+      narrativeOrigin: structuredClone(session.narrativeOrigin),
       playContext: session.continuityContextId ?? session.chainId,
       worldId: session.worldId,
       chainId: session.chainId,
@@ -1606,7 +1650,17 @@ export class PlayCallChain {
       operationId: advance.operationId,
       worldId: session.worldId,
       parentHead: advance.parentHead,
-      historyAppend: [{ role: "player", exactText: advance.playerText }],
+      historyAppend: [
+        {
+          role: "player",
+          exactText: advance.playerText,
+          ...(advance.narrativeOrigin?.value == null
+            ? {}
+            : {
+                background: snapshotBackground(advance.narrativeOrigin.value)!,
+              }),
+        },
+      ],
       nextMaterials: structuredClone(session.nextMaterials),
       stateChanges: [],
     });
@@ -1643,6 +1697,8 @@ export class PlayCallChain {
     session.nextEventId = advance.eventId + 1;
     session.parentHead = outcome.head;
     appendCommittedHistory(session, outcome.head, outcome.historyAppend);
+    if (advance.narrativeOrigin === undefined) delete session.narrativeOrigin;
+    else session.narrativeOrigin = structuredClone(advance.narrativeOrigin);
     session.exchange = advance.exchange;
     session.lastRequest = structuredClone(advance.nextRequest);
     session.lastRequestAttempt = 0;
@@ -1821,7 +1877,11 @@ export class PlayCallChain {
         : { providerState: response.providerState }),
       toolCalls: structuredClone(calls),
     };
+    const background = visibleText
+      ? narrativeBackground(advance.narrativeOrigin, session.documents.snapshot)
+      : undefined;
     return {
+      ...(background === undefined ? {} : { background }),
       assistantEvent,
       playContext: session.continuityContextId ?? session.chainId,
       ...(worldClock === undefined || stateChanges.length === 0
@@ -1896,6 +1956,9 @@ export class PlayCallChain {
               {
                 role: "narrator",
                 exactText: settlement.assistantEvent.text,
+                ...(settlement.background === undefined
+                  ? {}
+                  : { background: settlement.background }),
               },
             ]
           : [],
@@ -1972,7 +2035,10 @@ export class PlayCallChain {
         session.documents.restoreAuthorizationCheckpoint(
           settlement.authorizationCheckpoint,
         );
-        session.history = historyEntries(binding.history);
+        session.history = historyEntries(
+          binding.history,
+          binding.historyBackgrounds,
+        );
         session.nextMaterials = structuredClone(binding.additionalMaterials);
       }
       mergeChangedDocuments(session, settlement.stateChanges);
@@ -2118,6 +2184,9 @@ export class PlayCallChain {
         schemaVersion: 1,
         kind: "play_advance",
         advanceKind: "response",
+        ...(session.narrativeOrigin === undefined
+          ? {}
+          : { narrativeOrigin: structuredClone(session.narrativeOrigin) }),
         worldId: session.worldId,
         chainId: session.chainId,
         advanceId: responseOperationId,
@@ -2643,7 +2712,7 @@ export class PlayCallChain {
         ) ?? [],
       nextMaterials: structuredClone(binding.additionalMaterials),
       documents,
-      history: historyEntries(binding.history),
+      history: historyEntries(binding.history, binding.historyBackgrounds),
       narrativeCheckpoint: binding.narrativeCheckpoint,
       completedToolMap: new Map(
         persisted.completedTools.map((item) => [
@@ -2868,20 +2937,33 @@ function finalizePreparedReceipts(
 function appendCommittedHistory(
   session: Pick<PlayCallChainSession, "history">,
   head: string,
-  messages: readonly { role: "player" | "narrator"; exactText: string }[],
+  messages: readonly {
+    role: "player" | "narrator";
+    exactText: string;
+    background?: HistoryBackground;
+  }[],
 ): void {
   const sequence = Number(head.slice("commit:".length));
   for (const [index, message] of messages.entries()) {
     const path = `message.${sequence}.${index + 1}.${message.role}`;
     const existing = session.history.find((item) => item.path === path);
     if (existing !== undefined) {
-      if (existing.contents !== message.exactText)
+      if (
+        existing.contents !== message.exactText ||
+        !isDeepStrictEqual(existing.background, message.background)
+      )
         throw new PlayCallChainError(
           "Recovered Authority history conflicts with the call-chain history.",
         );
       continue;
     }
-    session.history.push({ path, contents: message.exactText });
+    session.history.push({
+      path,
+      contents: message.exactText,
+      ...(message.background === undefined
+        ? {}
+        : { background: structuredClone(message.background) }),
+    });
   }
 }
 
@@ -3257,10 +3339,14 @@ function playerRevisionTimelineGeneration(
 
 function historyEntries(
   history: Readonly<Record<string, string>>,
-): { path: string; contents: string }[] {
+  backgrounds: Readonly<Record<string, HistoryBackground>> = {},
+): { path: string; contents: string; background?: HistoryBackground }[] {
   return Object.entries(history).map(([path, contents]) => ({
     path,
     contents,
+    ...(backgrounds[path] === undefined
+      ? {}
+      : { background: structuredClone(backgrounds[path]) }),
   }));
 }
 

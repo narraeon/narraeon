@@ -1,4 +1,5 @@
 import type { WorldDocumentMaintenance } from "../../protocol/worldMaintenance.ts";
+import type { HistoryBackground } from "../history/HistoryBackground.ts";
 import type { NarrativeCheckpoint } from "./PlayContinuity.ts";
 import { readDeclaredWorldClock } from "../prompt/WorldMaintenanceReport.ts";
 import { createHash, randomUUID } from "node:crypto";
@@ -48,6 +49,7 @@ interface Candidate extends WorldStateRevision {
   materials: MaterialSelection[];
   originalMaterials: MaterialSelection[];
   history: Record<string, string>;
+  historyBackgrounds: Record<string, HistoryBackground>;
   documentMaintenance: Record<string, WorldDocumentMaintenance>;
   documentMaintenanceUnavailableReason?: string;
   narrativeCheckpoint: NarrativeCheckpoint | undefined;
@@ -169,6 +171,7 @@ export class FileNativeContinuityCorrection {
         materials: structuredClone(binding.additionalMaterials),
         originalMaterials: structuredClone(binding.additionalMaterials),
         history: structuredClone(binding.history),
+        historyBackgrounds: structuredClone(binding.historyBackgrounds ?? {}),
         reads: new Map(),
         previewedVersion: null,
         stateOperationClaim: claimed.handle,
@@ -401,6 +404,7 @@ export class FileNativeContinuityCorrection {
           documentSnapshot: candidate.snapshot,
           additionalMaterials: materials,
           history: candidate.history,
+          historyBackgrounds: candidate.historyBackgrounds,
           documentMaintenance: candidate.documentMaintenance,
           documentMaintenanceUnavailableReason:
             candidate.documentMaintenanceUnavailableReason,

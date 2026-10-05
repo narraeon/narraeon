@@ -527,7 +527,61 @@ test("并发使用同一 operation ID 只能原子保留一个修正候选", asy
   );
 });
 
-async function world() {
+test("连续性修正的真实预览显示已保存历史背景，不从候选状态重新采集", async () => {
+  const { store, corrections, worldId } = await world(
+    files().map((file) =>
+      file.path === "world/current.yaml"
+        ? { ...file, contents: file.contents + "背景: {时间: 第一天}\n" }
+        : file,
+    ),
+  );
+  await store.commitPlayStep({
+    operationId: "background-history",
+    worldId,
+    parentHead: "genesis",
+    historyAppend: [
+      {
+        role: "narrator",
+        exactText: "明天回来。",
+        background: {
+          kind: "narrative",
+          before: "时间: 第一天",
+          after: "时间: 第一天",
+        },
+      },
+    ],
+    nextMaterials: [
+      { kind: "history_message", message: "message.1.1.narrator" },
+    ],
+    stateChanges: [],
+  });
+  const started = await corrections.begin({
+    worldId,
+    operationId: "background-preview",
+    mode: "documents",
+  });
+  const read = corrections.readDocument(started.candidateId, "@current");
+  const patched = corrections.patchDocument({
+    candidateId: started.candidateId,
+    expectedVersion: started.version,
+    target: "@current",
+    expectedHash: read.hash,
+    edits: [{ op: "replace", locator: { yaml: ["背景"] }, value: "十年后" }],
+  });
+  const preview = corrections.preview({
+    candidateId: started.candidateId,
+    expectedVersion: patched.version,
+    prompt: prompt(),
+  });
+  const historical = preview.nextPrompt.compilation.logicalMessages
+    .flatMap(({ blocks }) => blocks)
+    .find(({ markdown }) => markdown.includes("明天回来。"))?.markdown;
+  expect(historical).toContain("时间: 第一天");
+  expect(historical).not.toContain("十年后");
+  await corrections.cancel(started.candidateId, patched.version);
+});
+
+async function world(packageFiles = files()) {
   const root = await mkdtemp(join(tmpdir(), "narraeon-correction-"));
   roots.push(root);
   const store = new FileNativeWorldStore(root);
@@ -535,7 +589,7 @@ async function world() {
     operationId: "create",
     sourcePackageId: "package",
     sourcePackageTitle: "Test content package",
-    packageFiles: files(),
+    packageFiles,
     prompt: prompt(),
   });
   return {

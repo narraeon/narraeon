@@ -1,4 +1,8 @@
 import {
+  isNarrativeOrigin,
+  type NarrativeOrigin,
+} from "../history/HistoryBackground.ts";
+import {
   encodePlayPromptRun,
   decodePlayPromptRun,
   type PlayPromptRun,
@@ -55,6 +59,7 @@ export interface PersistedDocumentAuthorizationCheckpoint {
 }
 
 export interface PersistedPlayCallChainContext {
+  narrativeOrigin?: NarrativeOrigin;
   promptRuns?: PlayPromptRun[];
   /** Narrative context identity survives transport chain renaming on forks. */
   continuityContextId?: string;
@@ -150,6 +155,7 @@ interface PersistedContextState {
 }
 
 interface PersistedContextContinuation {
+  narrativeOrigin?: NarrativeOrigin;
   schemaVersion: 3;
   kind: "play_context_continuation";
   chainId: string;
@@ -462,6 +468,9 @@ export class FileNativePlayTimelineStore {
       chainId: value.chainId,
       nextMaterials: structuredClone(value.nextMaterials),
       lastRequestDigest,
+      ...(value.narrativeOrigin === undefined
+        ? {}
+        : { narrativeOrigin: structuredClone(value.narrativeOrigin) }),
     } satisfies PersistedContextContinuation;
     const continuationDigest = createHash("sha256")
       .update(JSON.stringify(continuation))
@@ -694,6 +703,11 @@ export class FileNativePlayTimelineStore {
       promptRuns,
       changedDocuments: structuredClone(stateValue.changedDocuments),
       nextMaterials: structuredClone(continuationValue.nextMaterials),
+      ...(continuationValue.narrativeOrigin === undefined
+        ? {}
+        : {
+            narrativeOrigin: structuredClone(continuationValue.narrativeOrigin),
+          }),
       nextEventId: stateValue.nextEventId,
       exchange: stateValue.exchange,
       lastRequest,
@@ -1311,6 +1325,8 @@ function assertContextContinuation(
     !isRecord(value) ||
     value.schemaVersion !== 3 ||
     value.kind !== "play_context_continuation" ||
+    (value.narrativeOrigin !== undefined &&
+      !isNarrativeOrigin(value.narrativeOrigin)) ||
     typeof value.chainId !== "string" ||
     !Array.isArray(value.nextMaterials) ||
     (value.lastRequestDigest !== null &&

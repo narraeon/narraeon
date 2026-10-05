@@ -241,8 +241,9 @@ summary 是目录简介，用于识别文档和判断是否需要读取。只写
 先按玩家授权与互动需要确定本轮叙事范围和停笔位置，再保存该范围内的事实。保存进行中活动的实际进展、必要原话和待回应事项即可整理截至此刻的状态，不把尚未发生的完成结果提前写入。
 
 1. 玩家视图实际绑定的当前值改变，本轮终态叙事前写回。等待、赶路、休息或跨日后按世界粒度更新对应现值；绑定标记只说明界面读取范围。
-2. 需要保存但玩家原文和最终叙事没有记录的信息，当轮保存，包括重要场外进展、未表露的认知和隐蔽后果。工具中间文本不能替代持久记录。
-3. 其余可从玩家原文和最终叙事恢复的持续结果，允许事件收尾或合适的中间整理点归并。
+2. 当前情境已采用顶层 \`背景\` 时，时间、地点等定位值发生变化应在最终叙事提交前写回该节点，避免在其他情境字段维护同一现值的第二份。没有该字段的世界不必创建，未变化不必写入，仅维护记录不授权推进剧情。
+3. 需要保存但玩家原文和最终叙事没有记录的信息，当轮保存，包括重要场外进展、未表露的认知和隐蔽后果。工具中间文本不能替代持久记录。
+4. 其余可从玩家原文和最终叙事恢复的持续结果，允许事件收尾或合适的中间整理点归并。
 
 按已确定的叙事范围完成本轮必须保存的写入。只有本轮选择登记检查点时，才核对上次检查点后的交互和本轮范围内的结果，补齐必要记录，更新认知、进程、约定和界面值，结束实际已失效的待办并清理重复。整理可以停在活动中途；准备好该停笔位置的记录后登记检查点，再输出最终叙事。检查点覆盖该叙事，若其中又增加重要结果，继续工具调用补齐。正常回复无需登记检查点，登记回执也不是语义完整性认证。
 
@@ -497,8 +498,9 @@ summary is a catalog description for identifying a document and deciding whether
 First choose this turn's narrative scope and stopping point from player authorization and interaction needs, then save facts within that scope. Recording actual progress in an ongoing activity, necessary exact wording and matters awaiting a response can complete maintenance through this moment without writing unrealized completion outcomes in advance.
 
 1. Write changed current values actually selected by player views before this turn's final narrative. After waiting, travel, rest or a day change, update those values at the world's granularity; binding annotations describe read locations only.
-2. Save needed information absent from player originals and final narrative during this turn, including important offstage progress, unexpressed knowledge and hidden consequences. Intermediate tool text is not a durable substitute.
-3. Other durable outcomes recoverable from player originals and final narrative may be consolidated at event closure or a suitable intermediate point.
+2. If the current situation already uses the exact top-level \`背景\` field, write changed time, location or other positioning values there before final narrative submission; avoid maintaining a second current copy elsewhere in that situation. Worlds without the field need not create it, unchanged values need no write, and record maintenance does not authorize story advancement.
+3. Save needed information absent from player originals and final narrative during this turn, including important offstage progress, unexpressed knowledge and hidden consequences. Intermediate tool text is not a durable substitute.
+4. Other durable outcomes recoverable from player originals and final narrative may be consolidated at event closure or a suitable intermediate point.
 
 Complete required writes within the chosen narrative scope. Only if you choose to register a checkpoint this turn, reconcile interactions since the previous checkpoint and outcomes within this turn's scope: fill necessary records, update knowledge, processes, commitments and interface values, close actually expired pending work and remove duplicates. Maintenance can stop during an activity; prepare records for that stopping point, register the checkpoint, then produce final narrative. The checkpoint covers that narrative; if it adds another important outcome, continue tool calls to save it. A normal reply needs no checkpoint, and registration is not certification of semantic completeness.
 

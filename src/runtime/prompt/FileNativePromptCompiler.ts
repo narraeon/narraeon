@@ -26,7 +26,10 @@ import {
 } from "../../shared/ordered-play-prompts.ts";
 import { parseOrderedPlayPrompts } from "../play/OrderedPlayPrompts.ts";
 import { renderDocumentWritePosition } from "./WorldMaintenanceReport.ts";
-import { parseDocument, stringify } from "yaml";
+import { parseDocument } from "yaml";
+import { renderWorldYamlSource } from "../world/WorldYamlRendering.ts";
+export { renderWorldYamlSource } from "../world/WorldYamlRendering.ts";
+import type { HistoryBackground } from "../history/HistoryBackground.ts";
 import type { ModelHostAppendItem } from "../model/ModelHost.ts";
 import type {
   WorldDocumentMaintenance,
@@ -108,6 +111,7 @@ export interface FileNativePromptInput {
     controlFingerprint: string;
     documentSnapshot: FileNativeWorldDocumentSnapshot;
     history?: Record<string, string>;
+    historyBackgrounds?: Record<string, HistoryBackground>;
     narrativeCheckpoint?: NarrativeCheckpoint | undefined;
     replayHistory?: boolean;
     /** Exact history identities already represented by the native conversation. */
@@ -2017,18 +2021,6 @@ function renderSnapshotDocument(
   };
 }
 
-/**
- * Serialize a YAML node exactly the way context_read does, so what bootstrap
- * injects is what a later read would hand back. Internal document ids become
- * the @shortRef handles the model can actually pass to a tool.
- */
-export function renderWorldYamlSource(value: WorldDocumentValue): string {
-  return stringify(promptYamlValue(value), {
-    indent: 2,
-    lineWidth: 0,
-  }).trimEnd();
-}
-
 function renderYamlDocument(
   descriptor: WorldDocumentDescriptor,
   value: WorldDocumentValue,
@@ -2039,35 +2031,6 @@ function renderYamlDocument(
       "YAML world-document root node must be a map",
     );
   return `## ${descriptor.title} [ref: @${descriptor.shortRef} · YAML]\n\n> ${descriptor.summary}\n\n${renderWorldYamlSource(value)}`;
-}
-
-function projectedReference(
-  value: WorldDocumentValue,
-): { shortRef: string } | null {
-  if (
-    !isRecord(value) ||
-    Object.keys(value).length !== 2 ||
-    typeof value.$ref !== "string" ||
-    !isRecord(value.target)
-  )
-    return null;
-  return typeof value.target.shortRef === "string"
-    ? { shortRef: value.target.shortRef }
-    : null;
-}
-
-function promptYamlValue(value: WorldDocumentValue): unknown {
-  const reference = projectedReference(value);
-  if (reference !== null) return { $ref: `@${reference.shortRef}` };
-  if (Array.isArray(value)) return value.map(promptYamlValue);
-  if (isRecord(value))
-    return Object.fromEntries(
-      Object.entries(value).map(([key, child]) => [
-        key,
-        promptYamlValue(child),
-      ]),
-    );
-  return value;
 }
 
 function throwQueryFailure(
@@ -2120,6 +2083,9 @@ function resolveContext(
       Object.entries(input.world.history ?? {}).map(([path, contents]) => ({
         path,
         contents,
+        ...(input.world.historyBackgrounds?.[path] === undefined
+          ? {}
+          : { background: input.world.historyBackgrounds[path] }),
       })),
     ),
   );
