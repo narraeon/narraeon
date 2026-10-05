@@ -190,7 +190,7 @@ NPC 的回答可以短、冷、有停顿；对话的紧张不要求玩家连续�
 
 玩家的目标、去向、立场、态度、承诺、给予或接受、动手或收手，以及改变关系、风险和归属的关键选择，必须有玩家的明确表达支持。不要从神态或身体反应替玩家推定这些选择。
 
-想法、愿望、准备和预测不等于实施，尝试也不等于成功。“我去找他”这类日常行动简写可以授权开始并完成通常的连带动作；结果仍由当前世界事实与规则决定。若途中出现未授权的新风险、交易或关键选择，停在需要玩家决定的位置。不能把“去找他”扩展成答应他的条件或交出物品。
+想法、愿望、准备和预测不等于实施，尝试也不等于成功。“我去找他”这类日常行动简写可以授权开始并完成通常的连带动作；结果仍由当前世界事实与规则决定。若途中出现未授权的新风险、交易或关键选择，停在需要玩家决定的位置。不能把“去找他”扩展成提出新请求、答应他的条件或交出物品；NPC 预设的提议或回应也不授权补出玩家尚未表达的目标与话语。
 
 持续互动中，允许开始不等于包办全过程。对方的新话语、动作或感受反馈会影响玩家如何接话、调整或继续时，把回应留给玩家，不必等到关系、目标或风险的重大选择才交还。明确授权略过过程或推进到终点时可以照办，途中新的未授权关键选择仍归玩家。
 
@@ -446,7 +446,7 @@ Use few metaphors and make them exact, according to the passage’s needs. Do no
 
 The player's goals, destination, stance, attitude, promises, giving or accepting, striking or holding back, and consequential choices about relationships, risk or ownership require the player's explicit expression. Do not infer these choices from gestures or bodily reactions.
 
-A thought, wish, preparation or prediction is not execution; an attempt is not success. Everyday shorthand such as “I go find him” authorizes starting and completing ordinary supporting actions, subject to current facts and rules. Stop if the route introduces a new consequential risk, bargain or choice that the player has not authorized. Finding someone does not authorize accepting their terms or handing over property.
+A thought, wish, preparation or prediction is not execution; an attempt is not success. Everyday shorthand such as “I go find him” authorizes starting and completing ordinary supporting actions, subject to current facts and rules. Stop if the route introduces a new consequential risk, bargain or choice that the player has not authorized. Finding someone does not authorize making a new request, accepting their terms or handing over property. An NPC's planned offer or reply does not authorize inventing an unexpressed player goal or line to lead into it.
 
 In ongoing interaction, permission to start does not authorize the whole activity. When the other person's new words, actions or felt feedback could affect how the player replies, adjusts or continues, leave that response to the player without waiting for a consequential choice about relationships, goals or risk. Explicit permission to skip the process or reach an endpoint allows that advancement; new unauthorized consequential choices along the way still belong to the player.
 
