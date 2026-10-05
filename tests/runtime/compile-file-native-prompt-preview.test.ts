@@ -148,32 +148,52 @@ test("检查点原文按消息身份去重，完整保留大段和相同文本�
   expect(world.markdown).not.toContain("开场不重放");
 });
 
-test("真实玩法预览把回合事实放在玩家原文前，原文保持完整", () => {
-  const request = input({
-    playerInputPlacement: "append",
-    playerInput: "  我等一会儿。\n",
-  });
-  request.world.history = {
-    "message.1.1.player": "先前输入",
-    "message.2.1.narrator": "先前叙事",
-  };
-  const preview = new FileNativePromptCompiler({ locale: "zh-CN" }).preview(
-    request,
-    builtinDefaultPlayPresetBinding(),
-  );
-  expect(preview.initialAppend?.beforePlayer?.provider.content).toContain(
-    "距上次检查点已完成 1 回合",
-  );
-  expect(preview.initialAppend?.beforePlayer?.logical).toMatchObject({
-    kind: "runtime_notice",
-    notice: "checkpoint_rounds",
-  });
-  expect(preview.initialAppend?.logical.text).toBe("  我等一会儿。\n");
-  expect(preview.initialAppend?.provider.content).toBe("  我等一会儿。\n");
-  expect(JSON.stringify(preview.compilation.provider)).not.toContain(
-    "距上次检查点已完成",
-  );
-});
+test.each([
+  { locale: "zh-CN" as const, rounds: 0, checkpoint: false },
+  { locale: "zh-CN" as const, rounds: 1, checkpoint: false },
+  { locale: "zh-CN" as const, rounds: 0, checkpoint: true },
+  { locale: "en" as const, rounds: 0, checkpoint: false },
+  { locale: "en" as const, rounds: 1, checkpoint: false },
+  { locale: "en" as const, rounds: 0, checkpoint: true },
+])(
+  "真实玩法预览只追加回合事实，玩家原文保持完整：$locale/$rounds/$checkpoint",
+  ({ locale, rounds, checkpoint }) => {
+    const request = input({
+      playerInputPlacement: "append",
+      playerInput: "  我等一会儿。\n",
+    });
+    request.world.history =
+      rounds > 0 || checkpoint
+        ? {
+            "message.1.1.player": "先前输入",
+            "message.2.1.narrator": "先前叙事",
+          }
+        : {};
+    if (checkpoint)
+      request.world.narrativeCheckpoint = {
+        contextId: "earlier-context",
+        head: "commit:2",
+        historyMessageId: "message.2.1.narrator",
+        completedPlayerRounds: 1,
+      };
+    const preview = new FileNativePromptCompiler({ locale }).preview(
+      request,
+      builtinDefaultPlayPresetBinding(locale),
+    );
+    const marker =
+      locale === "zh-CN"
+        ? `[Runtime 回合提示]\n距上次检查点已完成 ${rounds} 回合。${checkpoint ? "" : "当前尚无检查点，以世界起点计数。"}`
+        : `[Runtime round marker]\nCompleted player rounds since the last checkpoint: ${rounds}.${checkpoint ? "" : " No checkpoint yet; counting from the world origin."}`;
+    expect(preview.initialAppend?.beforePlayer?.provider.content).toBe(marker);
+    expect(preview.initialAppend?.beforePlayer?.logical).toMatchObject({
+      kind: "runtime_notice",
+      notice: "checkpoint_rounds",
+    });
+    expect(preview.initialAppend?.logical.text).toBe("  我等一会儿。\n");
+    expect(preview.initialAppend?.provider.content).toBe("  我等一会儿。\n");
+    expect(JSON.stringify(preview.compilation.provider)).not.toContain(marker);
+  },
+);
 
 test("文档软上限只报告 UTF-8 体积，实际注入按去重材料计数", () => {
   const request = input();
@@ -813,10 +833,10 @@ context:
     );
     expect(runtimeSystem).toContain("Runtime call-chain rules");
     expect(runtimeSystem).toContain(
-      "A response that calls any tool is an intermediate tool step",
+      "A response that calls any tool is an intermediate step",
     );
     expect(runtimeSystem).toContain(
-      "return the story in a later response with no tool calls",
+      "present this turn's still-unshown content in a later tool-free response",
     );
     expect(compiled.budget).toMatchObject({
       estimator: "disabled",

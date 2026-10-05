@@ -356,7 +356,7 @@ const toolDescriptions: Record<
 > = {
   en: {
     world_checkpoint:
-      "Declare that the necessary state maintenance for this turn is complete and suggest starting a fresh context. No arguments. Registration becomes effective only when this turn’s final tool-free response commits, including that response in the checkpoint. This is your declaration, not Runtime verification or an automatic context switch. Further tool calls are allowed before the final nonempty tool-free response.",
+      "Register a consolidation declaration and a history-replay boundary. No arguments. Registration takes effect only after the subsequent nonempty tool-free final prose successfully commits, and includes that prose. A fresh context replays committed player inputs and final narratives after this boundary. The player may choose a fresh context; registration neither switches context nor ends an in-world event. Normal replies need no checkpoint. Further tool calls may follow registration; Runtime does not verify semantic completeness.",
     state_list:
       "List document and state directory handles known to Runtime. parent must be @dir-/ for the state root or an @dir-* handle from the initial directory index or an earlier state_list result; no preliminary listing is needed for an already supplied handle. Catalog directories declared by the frozen world frame remain listed and usable when empty. A cursor is valid only for the same state snapshot, parent, and limit. Pass returned document handles to context_read. This tool never lists committed history.",
     history_list:
@@ -382,7 +382,7 @@ const toolDescriptions: Record<
   },
   "zh-CN": {
     world_checkpoint:
-      "声明本轮必要状态已整理完成，并建议玩家在此开启全新上下文。参数为空对象。登记仅在本轮最终无工具响应提交后生效，检查点包含该响应。这是 AI 的整理声明，不是 Runtime 完整性认证，也不会自动切换上下文。最终非空且无工具调用的响应之前，仍可继续调用工具。",
+      "登记整理声明与历史重放边界，参数为空对象。仅在随后非空且无工具调用的最终正文成功提交后生效，边界包含该正文；全新上下文补入边界之后的已提交玩家原文与最终叙事。玩家可自行选择全新上下文，登记不切换上下文，也不结束世界内事件。正常回复无需检查点，登记后仍可继续工具调用；Runtime 不认证语义整理完整。",
     state_list:
       "列出 Runtime 已知的文档与状态目录句柄。状态根目录的 parent 使用 @dir-/；继续下级时使用初始目录索引或 state_list 返回的 @dir-*；已有句柄无需再次列目录确认。冻结世界 frame 声明的 catalog 目录即使为空，也会继续列出并可用。cursor 只对同一状态快照、parent 和 limit 有效。返回的文档句柄交给 context_read；本工具不列出已提交历史。",
     history_list:

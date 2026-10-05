@@ -328,14 +328,14 @@ ${historyUseGuidance("en")}`,
     operation: `# Runtime call-chain rules
 
 - A response with no tool calls may contain player-visible story text and finish the current call-chain step.
-- A response that calls any tool is an intermediate tool step. Do not include player-visible story text in that response. After receiving all tool results, return the story in a later response with no tool calls.
+- A response that calls any tool is an intermediate step; its text is retained in native continuation and diagnostics without being displayed or committed as final story. After all tool results, use the receipts to present this turn's still-unshown content in a later tool-free response consistent with committed state.
 - Obey only the real tool definitions attached to this request. A tool that is not defined cannot be called.
 - Runtime performs state commits and saves follow-up artifacts. Tool exchanges and internal processing must never appear in player-visible content.`,
     shell: `# Runtime play boundary
 
-A nonempty tool-free response ends the model/tool loop started by the current player submission. A response that calls any tool is an intermediate step and must not contain player-visible story text; continue from the tool results, then finish in a later tool-free response.
+A nonempty tool-free response ends the model/tool loop started by the current player submission. A response that calls any tool is an intermediate step; its text has not yet been displayed or committed as final story. After all tool results, use the receipts to present this turn's still-unshown content in a later tool-free response consistent with committed state.
 
-The player's next submission may choose a fresh context; the old model transcript will not enter that request. Fresh contexts include all committed original player inputs and final narratives after the last effective world_checkpoint, excluding tools, reasoning, and the opening. A checkpoint declaration takes effect only after its final narrative commits. Author instructions decide save timing.
+The player's next submission may choose a fresh context; the old model transcript will not enter that request. Fresh contexts include all committed original player inputs and final narratives after the last effective world_checkpoint, excluding tools, reasoning, and the opening. A checkpoint declaration takes effect only after the subsequent nonempty tool-free final prose successfully commits, including that prose in its boundary; further tool calls may follow registration. Normal replies need no checkpoint; registration neither ends an in-world event nor switches context. Author instructions decide save timing.
 
 Runtime executes only real tool definitions, file validation, and authority commits. This block does not define story content, point of view, style, player agency, or state semantics.
 
@@ -359,14 +359,14 @@ ${historyUseGuidance("zh-CN")}`,
     operation: `# Runtime 调用链规则
 
 - 不调用工具的响应可以输出玩家可见故事正文，并结束当前调用链步骤。
-- 只要响应调用了任何工具，它就是工具中间步；该响应不要输出玩家可见故事正文。收到全部工具结果后，再用一个不调用工具的后续响应完成叙事。
+- 只要响应调用了任何工具，它就是中间步；其中的文字保留在原生续传与诊断中，不展示或提交为最终故事。收到全部工具结果后，根据回执在后续无工具响应中呈现本轮尚未展示的内容，并与已提交状态一致。
 - 只服从当前请求的真实工具定义；没有定义的工具不可调用。
 - 状态提交与后置产物保存由 Runtime 执行。工具交换与内部处理过程不得混入玩家可见内容。`,
     shell: `# Runtime 游玩边界
 
-非空且不调用工具的响应会结束本次玩家提交触发的模型／工具循环。只要响应调用了任何工具，它就是工具中间步，不得同时输出玩家可见故事正文；先根据工具结果继续，再用一个不调用工具的后续响应结束。
+非空且不调用工具的响应会结束本次玩家提交触发的模型／工具循环。只要响应调用了任何工具，它就是工具中间步，其中的文字尚未展示或提交为最终故事。收到全部工具结果后，根据回执在后续无工具响应中呈现本轮尚未展示的内容，并与已提交状态一致。
 
-下一次玩家提交可以选择“全新上下文”；旧模型 transcript 不会进入那个请求。新上下文会补入最近一次已生效 world_checkpoint 之后的全部已提交玩家原文与最终叙事，不含工具、推理和开场白。检查点登记只在其最终叙事提交后生效。具体保存时机由作者提示规定。
+下一次玩家提交可以选择“全新上下文”；旧模型 transcript 不会进入那个请求。新上下文会补入最近一次已生效 world_checkpoint 之后的全部已提交玩家原文与最终叙事，不含工具、推理和开场白。检查点登记仅在随后非空且无工具调用的最终正文成功提交后生效，边界包含该正文；登记后仍可继续工具调用。正常回复无需检查点，登记不结束世界内事件，也不自动切换上下文。具体保存时机由作者提示规定。
 
 Runtime 只执行真实工具定义、文件校验和权威提交；本段不规定故事、人称、文风、玩家代理权或状态语义。
 

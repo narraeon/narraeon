@@ -63,8 +63,8 @@ export function playerRoundMarker(
 ): Extract<ModelHostAppendItem, { kind: "runtime_notice" }> {
   const markdown =
     locale === "zh-CN"
-      ? `距上次检查点已完成 ${rounds} 回合。${hasCheckpoint ? "" : "当前尚无检查点，以世界起点计数。"}必要状态整理完成时，可调用 world_checkpoint 建议在此开启全新上下文。`
-      : `Completed player rounds since the last checkpoint: ${rounds}. ${hasCheckpoint ? "" : "No checkpoint yet; counting from the world origin. "}When necessary state maintenance is complete, world_checkpoint can suggest starting a fresh context here.`;
+      ? `距上次检查点已完成 ${rounds} 回合。${hasCheckpoint ? "" : "当前尚无检查点，以世界起点计数。"}`
+      : `Completed player rounds since the last checkpoint: ${rounds}.${hasCheckpoint ? "" : " No checkpoint yet; counting from the world origin."}`;
   return {
     kind: "runtime_notice",
     notice: "checkpoint_rounds",
@@ -86,8 +86,8 @@ export function continuationNotice(
     notice: "continuation",
     text:
       locale === "zh-CN"
-        ? "[Runtime 续写提示]\n本次发送没有追加新的玩家原文。请从当前对话继续生成；已有的最终主持正文是已经完成的历史。"
-        : "[Runtime continuation]\nThis send adds no new player input. Continue generation from the current conversation; existing final narrator messages are already completed history.",
+        ? "[Runtime 续写提示]\n本次发送没有追加新的玩家原文。已有的最终主持正文已展示并提交为历史；本次响应接在其后，不重新提交旧正文。回复提交不表示世界内活动已经结束。"
+        : "[Runtime continuation]\nThis send adds no new player input. Existing final narrator prose has been displayed and committed as history; this response follows it without resubmitting it. A committed reply does not mean an in-world activity has ended.",
   };
 }
 
@@ -99,8 +99,8 @@ export function toolStepNotice(
     notice: "tool_step",
     text:
       locale === "zh-CN"
-        ? "[Runtime 结算提示]\n上一响应同时调用了工具，其中的文字没有作为最终故事展示或提交。工具已按回执结算；请从已提交结果继续，最终用无工具调用的非空叙事完成本次发送。"
-        : "[Runtime settlement]\nThe previous response called tools, so its text was not displayed or committed as final story. The tools have settled as their receipts state. Continue from committed results, then finish this send with nonempty narrative and no tool calls.",
+        ? "[Runtime 结算提示]\n上一响应调用了工具，其中的文字尚未作为最终故事展示或提交。工具已按回执结算；请根据回执，用无工具调用的非空最终正文呈现本轮尚未展示的内容，并与已提交状态一致。工具结算不要求在这些内容之后再推进剧情。"
+        : "[Runtime settlement]\nThe previous response called tools, so its text has not yet been displayed or committed as final story. The tools have settled as their receipts state. Use those receipts to present this turn’s still-unshown content in nonempty final prose with no tool calls, consistent with committed state. Tool settlement does not require advancing the story beyond that content.",
   };
 }
 

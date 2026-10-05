@@ -32,8 +32,10 @@ import {
 import { FileNativeAiFailureLog } from "../../src/runtime/model/AiFailureLog.ts";
 import {
   defaultPlayPresetFiles,
+  builtinDefaultPlayPresetBinding,
   legacyDefaultPlayPresetFilesForLocale,
   parsePlayPresetFiles,
+  presetHostBinding,
   type PlayPresetBinding,
 } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
 import { PlayCallChain } from "../../src/runtime/play/PlayCallChain.ts";
@@ -2436,6 +2438,149 @@ test("整理检查点随最终叙事提交，冷启动保留边界并补入跨�
     "Completed player rounds since the last checkpoint: 1",
   );
 });
+
+test.each(["en", "zh-CN"] as const)(
+  "活动中途检查点在冷启动上下文保留进展与待回应原话：%s",
+  async (locale) => {
+    const files = worldFiles().map((file) =>
+      file.path === "control/frame.yaml"
+        ? {
+            ...file,
+            contents: file.contents.replace(
+              "  - slot: { kind: history, recent: 2 }\n",
+              "",
+            ),
+          }
+        : file,
+    );
+    const { worlds, worldId, root } = await createWorld(
+      `ongoing-checkpoint-${locale}`,
+      files,
+    );
+    const preset = builtinDefaultPlayPresetBinding(locale);
+    const prompt = presetHostBinding(preset);
+    const feedback =
+      "Try keeping your wrist level. Does this grip feel comfortable?";
+    const final = `Alex guides the first movement and says: “${feedback}”`;
+    const intermediate = "Unshown draft of the lesson's first movement.";
+    const host = new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [
+        {
+          outcome: "response",
+          text: intermediate,
+          toolCalls: [
+            {
+              id: "save-progress",
+              name: "world_patch",
+              arguments: {
+                target: "@current-situation",
+                edits: [
+                  {
+                    op: "add",
+                    locator: { yaml: ["lesson"] },
+                    value: {
+                      status: "ongoing",
+                      progress:
+                        "First movement demonstrated; practice has not finished.",
+                      awaitingPlayerResponse: feedback,
+                    },
+                  },
+                ],
+              },
+            },
+            { id: "checkpoint", name: "world_checkpoint", arguments: {} },
+          ],
+        },
+        { outcome: "response", text: final },
+      ],
+    });
+    const first = await new PlayCallChain(
+      worlds,
+      new FileNativePromptCompiler({ locale }),
+    ).start({
+      worldId,
+      chainId: "ongoing",
+      exchangeId: "start-lesson",
+      playerText: "Begin teaching me the first movement.",
+      hostBinding: prompt,
+      playPreset: preset,
+      modelBinding: modelBinding(),
+      modelHost: host,
+    });
+    expect(first.status).toBe("ready");
+    const endpoint = await worlds.recoverEndpoint(worldId);
+    expect(endpoint.narrativeCheckpoint).toMatchObject({
+      head: first.parentHead,
+      completedPlayerRounds: 1,
+    });
+    expect(endpoint.history.at(-1)?.exactText).toBe(final);
+    expect(
+      endpoint.history.some(({ exactText }) => exactText === intermediate),
+    ).toBe(false);
+    expect(host.requests[1]?.appended.at(-1)).toMatchObject({
+      kind: "runtime_notice",
+      notice: "tool_step",
+    });
+    const pendingState = endpoint.state.find(
+      ({ path }) => path === "current-situation.yaml",
+    )!.contents;
+    expect(pendingState).toContain("status: ongoing");
+    expect(pendingState).toContain(feedback);
+    const next = new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [
+        {
+          outcome: "response",
+          text: "Alex keeps the demonstration in place as you adjust your wrist.",
+        },
+      ],
+    });
+    await new PlayCallChain(
+      new FileNativeWorldStore(root),
+      new FileNativePromptCompiler({ locale }),
+    ).start({
+      worldId,
+      chainId: "fresh-ongoing",
+      exchangeId: "respond-to-feedback",
+      playerText: "I adjust my wrist and ask him to check the angle.",
+      hostBinding: prompt,
+      playPreset: preset,
+      modelBinding: modelBinding(),
+      modelHost: next,
+    });
+    const bootstrap = next.requests[0]!.bootstrap;
+    const materials = bootstrap.logicalMessages
+      .filter(({ role }) => role === "world_context")
+      .map(({ markdown }) => markdown)
+      .join("\n");
+    expect(materials).toContain(
+      "First movement demonstrated; practice has not finished.",
+    );
+    expect(materials).toContain(feedback);
+    expect(materials).not.toContain(intermediate);
+    expect(materials).not.toContain(final);
+    expect(
+      bootstrap.logicalMessages
+        .flatMap(({ blocks }) => blocks)
+        .filter(({ source }) =>
+          source.startsWith("runtime:checkpoint-history"),
+        ),
+    ).toEqual([]);
+    expect(next.requests[0]?.appended[0]).toMatchObject({
+      kind: "runtime_notice",
+      notice: "checkpoint_rounds",
+      text: expect.stringContaining(
+        locale === "zh-CN" ? "已完成 0 回合" : "last checkpoint: 0",
+      ) as unknown,
+    });
+    expect(
+      (await worlds.recoverEndpoint(worldId)).state.find(
+        ({ path }) => path === "current-situation.yaml",
+      )?.contents,
+    ).toBe(pendingState);
+  },
+);
 
 test("登记后补齐收尾承诺，再过一轮切换上下文时仍从状态取得结果", async () => {
   const { worlds, worldId } = await createWorld("checkpoint-closing-write");
@@ -5369,7 +5514,7 @@ test("空输入追加会从完整逻辑 transcript 继续生成，并把 Provide
     {
       kind: "runtime_notice",
       notice: "continuation",
-      text: "[Runtime continuation]\nThis send adds no new player input. Continue generation from the current conversation; existing final narrator messages are already completed history.",
+      text: "[Runtime continuation]\nThis send adds no new player input. Existing final narrator prose has been displayed and committed as history; this response follows it without resubmitting it. A committed reply does not mean an in-world activity has ended.",
     },
   ]);
   expect(

@@ -2929,8 +2929,8 @@ function prepareTool(
                 ok: true,
                 markdown:
                   locale === "zh-CN"
-                    ? "检查点已登记，将在本轮最终叙事提交后生效。玩家随后可以选择开启全新上下文。"
-                    : "Checkpoint registered. It becomes effective when this turn’s final narrative commits. The player can then choose a fresh context.",
+                    ? "检查点已登记；随后非空且无工具调用的最终正文成功提交后生效，边界包含该正文。它仅标记历史重放边界，不结束世界内事件；登记后仍可继续调用工具。玩家随后可自行选择全新上下文。"
+                    : "Checkpoint registered. It takes effect after the subsequent nonempty tool-free final prose successfully commits, including that prose in its boundary. It marks a history-replay boundary without ending an in-world event; further tool calls may follow registration. The player may then choose a fresh context.",
               }
             : {
                 ok: false,
