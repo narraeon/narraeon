@@ -144,7 +144,7 @@ if (configPath === "--list") {
             ...observer,
             signal: AbortSignal.any([
               observer?.signal ?? new AbortController().signal,
-              AbortSignal.timeout(180_000),
+              AbortSignal.timeout(300_000),
             ]),
           });
           record.response = {
@@ -159,7 +159,7 @@ if (configPath === "--list") {
         { path: "opening.md", contents: "你与林舟在一起。\n" },
         {
           path: "world/current-situation.yaml",
-          contents: `$document:\n  id: situation.current\n  ref: current-situation\n  title: 当前局面\n  summary: 你与林舟的当前局面。\n  aliases: []\n情况: ${JSON.stringify(scene.state)}\n门: 敞开\n`,
+          contents: `$document:\n  id: situation.current\n  ref: current-situation\n  title: 当前局面\n  summary: 你与林舟的当前局面。\n  aliases: []\n情况: ${JSON.stringify(scene.state)}\n门: ${scene.id === "ordinary-actions" ? "关闭" : "敞开"}\n`,
         },
         {
           path: "control/frame.yaml",
