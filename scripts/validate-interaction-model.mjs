@@ -48,6 +48,34 @@ const scenarios = [
     observe: "完成路程并呈现新条件；不代玩家抵押钥匙或借走船。",
   },
   {
+    id: "autonomous-checkpoint-scene-change",
+    state:
+      "你和成年朋友林舟在书房。桌上有他的航海笔记，他愿意借给你到明天下午，没有附加条件；明天下午他会在码头修船。借阅尚未发生。",
+    input: "我向林舟借航海笔记，答应明天下午归还。",
+    continuationInputs: [
+      "我收好笔记，问他明天下午在哪里。",
+      "我告诉他明天下午去码头还书。",
+      "我向他道别，带着笔记走到街口。",
+    ],
+    observe:
+      "同一上下文连续普通游玩，玩家没有维护指令；自然收尾或换场景后主动整理并打点，借阅、归还约定与当前地点可恢复；不提前代玩家告别、还书或推进到明天。",
+  },
+  {
+    id: "autonomous-checkpoint-ongoing",
+    state:
+      "你和成年朋友林舟在练功房进行第一次基础课，正在分步练习手腕、手肘和肩部姿势。你刚试做一次，手腕角度偏斜，尚未掌握这套动作；林舟正在逐项指导，没有约定本次课的结束时间。",
+    input: "我告诉林舟手腕有些酸，希望今天放慢速度。",
+    continuationInputs: [
+      "我把手腕放平，再试一次，问他这个角度是否合适。",
+      "我告诉他我以前右肩受过伤，练习时想避开大幅抬肩。",
+      "我按刚才的指导试着调整手肘，问他还需要注意哪里。",
+      "我告诉他我想以后每天傍晚来练基础动作。",
+      "我再试一次刚才的动作，问他现在的姿势怎么样。",
+    ],
+    observe:
+      "同一活动跨多轮积累身体限制、练习意向和实际进展；没有玩家维护指令也主动中途整理并打点。保留最新反馈的回应机会与进行中状态，不宣布掌握、课程结束或自行离场；不要求每轮打点。",
+  },
+  {
     id: "mid-activity-checkpoint",
     state:
       "教学正在进行：林舟刚示范第一式，你试做一次，手腕角度仍偏斜。他的原话是：‘把手腕放平一点，这个握法舒服吗？’你尚未回应，练习未完成。",
@@ -129,10 +157,11 @@ if (configPath === "--list") {
     for (const scene of chosen) {
       const worlds = new world.FileNativeWorldStore(root);
       const exchanges = [];
+      let turnRequests = 0;
       const modelHost = {
         binding: () => production.binding(),
         exchange: async (request, observer) => {
-          if (exchanges.length >= 24)
+          if (turnRequests++ >= 24)
             throw new Error("Validation request limit reached");
           const record = {
             bootstrap: request.bootstrap.logicalMessages,
@@ -229,22 +258,41 @@ if (configPath === "--list") {
         worlds,
         new prompt.FileNativePromptCompiler({ locale: "zh-CN" }),
       );
-      for (const [index, playerText] of [
-        scene.input,
-        scene.nextInput,
-      ].entries()) {
-        if (!playerText) continue;
-        const view = await chains.start({
-          worldId,
-          chainId: `${scene.id}-${index}`,
-          exchangeId: `${scene.id}-${index}`,
-          playerText,
-          hostBinding,
-          playPreset,
-          modelBinding: production.binding(),
-          modelHost,
-        });
+      const inputs = [
+        { text: scene.input, fresh: true },
+        ...(scene.continuationInputs ?? []).map((text) => ({
+          text,
+          fresh: false,
+        })),
+        ...(scene.nextInput ? [{ text: scene.nextInput, fresh: true }] : []),
+      ];
+      let chainId = `${scene.id}-0`;
+      for (const [index, { text: playerText, fresh }] of inputs.entries()) {
+        turnRequests = 0;
+        const exchangeId = `${scene.id}-${index}`;
+        if (fresh) chainId = exchangeId;
+        const view = fresh
+          ? await chains.start({
+              worldId,
+              chainId,
+              exchangeId,
+              playerText,
+              hostBinding,
+              playPreset,
+              modelBinding: production.binding(),
+              modelHost,
+            })
+          : await chains.append({
+              worldId,
+              chainId,
+              exchangeId,
+              playerText,
+              modelHost,
+              resolvePrompt: () => Promise.resolve({ hostBinding, playPreset }),
+            });
         sends.push({
+          playerText,
+          context: fresh ? "fresh" : "append",
           status: view.status,
           failure: view.lastFailure,
           endpoint: await worlds.recoverEndpoint(worldId),

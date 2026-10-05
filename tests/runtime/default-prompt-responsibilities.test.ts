@@ -129,7 +129,9 @@ describe("旧格式默认提示词职责", () => {
         ],
         state: [
           "其余可从玩家原文和最终叙事恢复的持续结果",
-          "检查点",
+          "事件自然告一段落、实际转换场景",
+          "持续活动经过多轮并积累了需要归并的进展时",
+          "调用 world_checkpoint",
           "未达到独立建档门槛的信息仍可嵌入自然所有者",
           "足够维持连续性与意义的信息",
           "按已确定的叙事范围完成本轮必须保存的写入",
@@ -149,7 +151,9 @@ describe("旧格式默认提示词职责", () => {
         ],
         state: [
           "Other durable outcomes recoverable from player originals and final narrative",
-          "Only if you choose to register a checkpoint this turn",
+          "proactively consolidate when an event naturally settles",
+          "an ongoing activity has accumulated progress across several turns",
+          "call world_checkpoint",
           "Information below the independent-document threshold",
           "Save enough to preserve continuity and meaning",
           "Complete required writes within the chosen narrative scope",
