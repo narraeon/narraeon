@@ -1,3 +1,9 @@
+import {
+  isNarrativeOrigin,
+  isHistoryBackground,
+  type NarrativeOrigin,
+  type HistoryBackground,
+} from "../history/HistoryBackground.ts";
 import { createHash, randomUUID } from "node:crypto";
 import type { NarrativeCheckpointDeclaration } from "./PlayContinuity.ts";
 import {
@@ -25,6 +31,7 @@ import type { PersistedCompletedToolCall } from "./FileNativePlayTimelineStore.t
 export type DurableModelHostResponse = Omit<ModelHostResponse, "diagnostics">;
 
 export interface PreparedPlayResponseSettlement {
+  background?: HistoryBackground;
   playContext?: string;
   worldClock?: string;
   narrativeCheckpoint?: NarrativeCheckpointDeclaration;
@@ -44,6 +51,7 @@ export type PlayAdvanceBase =
       schemaVersion: 1;
       kind: "play_advance";
       advanceKind: "player";
+      narrativeOrigin?: NarrativeOrigin;
       playContext?: string;
       worldId: string;
       chainId: string;
@@ -63,6 +71,7 @@ export type PlayAdvanceBase =
       schemaVersion: 1;
       kind: "play_advance";
       advanceKind: "response";
+      narrativeOrigin?: NarrativeOrigin;
       worldId: string;
       chainId: string;
       advanceId: string;
@@ -282,6 +291,8 @@ function assertBase(value: unknown): asserts value is PlayAdvanceBase {
     value.schemaVersion !== 1 ||
     value.kind !== "play_advance" ||
     (value.advanceKind !== "player" && value.advanceKind !== "response") ||
+    (value.narrativeOrigin !== undefined &&
+      !isNarrativeOrigin(value.narrativeOrigin)) ||
     typeof value.worldId !== "string" ||
     typeof value.chainId !== "string" ||
     typeof value.advanceId !== "string" ||
@@ -345,6 +356,8 @@ function assertSettlementPrepared(value: SettlementPreparedFact | null): void {
     (value.schemaVersion !== 1 ||
       value.stage !== "settlement_prepared" ||
       !isRecord(value.settlement) ||
+      (value.settlement.background !== undefined &&
+        !isHistoryBackground(value.settlement.background)) ||
       typeof value.recordedAt !== "number")
   )
     throw new Error("Settlement-prepared play fact has an invalid shape");

@@ -1,3 +1,4 @@
+import { captureNarrativeOrigin } from "../history/HistoryBackground.ts";
 import type { AppLocale } from "../../protocol/appPreferences.ts";
 import type {
   V1PlayCallChainEvent,
@@ -170,6 +171,7 @@ function assembleRetainedTrace(
     source,
     selection.authorizationEvents,
   );
+  const lastEvent = selection.events.at(-1);
   return {
     continuityContextId: source.continuityContextId ?? source.chainId,
     baselineHead: source.baselineHead,
@@ -189,6 +191,14 @@ function assembleRetainedTrace(
     ...(source.modelBinding === undefined
       ? {}
       : { modelBinding: structuredClone(source.modelBinding) }),
+    ...(lastEvent?.kind === "player" || lastEvent?.kind === "tool_result"
+      ? {
+          narrativeOrigin: captureNarrativeOrigin(
+            documents.snapshot,
+            lastEvent.kind === "player" ? lastEvent.id : lastEvent.id + 1,
+          ),
+        }
+      : {}),
     status: "ready",
     canRetry: false,
     bootstrap: structuredClone(source.bootstrap),

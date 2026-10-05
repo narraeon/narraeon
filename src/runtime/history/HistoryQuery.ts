@@ -1,3 +1,4 @@
+import type { HistoryBackground } from "./HistoryBackground.ts";
 import {
   createHash,
   createHmac,
@@ -10,6 +11,7 @@ export interface HistoryMessageInput {
   readonly role: "player" | "narrator";
   readonly isOpening?: boolean;
   readonly text: string;
+  readonly background?: HistoryBackground;
 }
 
 export interface HistoryMessage extends HistoryMessageInput {
@@ -116,6 +118,9 @@ export class HistoryQuery {
     this.messages = inputs.map((message, index) =>
       Object.freeze({
         ...message,
+        ...(message.background === undefined
+          ? {}
+          : { background: Object.freeze(structuredClone(message.background)) }),
         ref: refs[index]!,
         position: index + 1,
         isOpening: message.isOpening === true,
@@ -127,11 +132,12 @@ export class HistoryQuery {
     this.snapshotId = createHash("sha256")
       .update(
         JSON.stringify(
-          inputs.map(({ id, role, isOpening, text }) => [
+          inputs.map(({ id, role, isOpening, text, background }) => [
             id,
             role,
             isOpening === true,
             text,
+            background ?? null,
           ]),
         ),
       )
@@ -569,13 +575,18 @@ export function historyMessageRef(id: string): string {
 
 /** Decode storage identity once at the boundary; never infer order from it. */
 export function historyInputs(
-  entries: readonly { path: string; contents: string }[],
+  entries: readonly {
+    path: string;
+    contents: string;
+    background?: HistoryBackground;
+  }[],
 ): HistoryMessageInput[] {
-  return entries.map(({ path, contents }) => {
+  return entries.map(({ path, contents, background }) => {
     const id = path.replace(/\.md$/u, "");
     return {
       id,
       text: contents,
+      ...(background === undefined ? {} : { background }),
       role: /(?:\.|-)player(?:-|$)/u.test(id) ? "player" : "narrator",
       isOpening: id.endsWith("message.genesis.narrator"),
     };

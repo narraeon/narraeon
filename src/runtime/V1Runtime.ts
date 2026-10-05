@@ -205,6 +205,9 @@ export class V1Runtime {
               ),
               documentSnapshot: snapshot,
               history: structuredClone(binding.history),
+              historyBackgrounds: structuredClone(
+                binding.historyBackgrounds ?? {},
+              ),
               narrativeCheckpoint: binding.narrativeCheckpoint,
               ...maintenance,
               additionalMaterials: structuredClone(binding.additionalMaterials),
@@ -933,6 +936,9 @@ export class V1Runtime {
               }),
               additionalMaterials: structuredClone(binding.additionalMaterials),
               history: structuredClone(binding.history),
+              historyBackgrounds: structuredClone(
+                binding.historyBackgrounds ?? {},
+              ),
               narrativeCheckpoint: baseline.narrativeCheckpoint,
               historyAlreadyAppended: Object.keys(binding.history).filter(
                 (key) => !(key in baseline.history),

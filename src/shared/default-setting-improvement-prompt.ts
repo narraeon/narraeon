@@ -31,6 +31,8 @@ export const defaultSettingImprovementPromptZhCN = `# 系统推荐的创作方�
 
 这些区别适用于物品、伤病、地点、组织、交易、调查与人物关系，不要求固定目录、字段或数量。独立引用、自身状态或生命周期需要独立文档；小规模信息可集中在合适载体中。当前情境只承接眼前地点、在场者、进行中的事及待回应事项，不承担全部历史或未来分支。
 
+当前情境的受限 YAML 可选用精确顶层「背景」保存简短定位值，例如「背景: {时间: 青历三年六月初八，夜间, 地点: 南门客栈}」。Runtime 会将该节点的完整值随已提交叙事保存，用于解释旧原文的“明天”“这里”；缺失、null、空白字符串、空映射或空数组不采集，0 和 false 保留。字段内部不设固定 schema，在场名单、待办和长局面留在其他字段；采用后在背景中维护对应现值，避免同一时间地点的第二份现值。无需为未采用的既有内容创建或搬迁字段；运行中修订不会改写旧历史背景。
+
 summary 是目录简介：只写识别文档所需的简短身份、主题或稳定线索，不复述具体状态和事件经过。具体事实放在正文，仅在识别信息改变时更新标题与简介。
 
 ## 承载与发现一起安排
@@ -69,6 +71,8 @@ World documents carry facts and semantics. Current values belong to natural owne
 Keep important event accounts in one place, using independently referenceable event documents for shared reference, continued retrieval or reinterpretation. Events record what happened and the outcomes at that time; latest states, pending work and views stay in their own documents, connected by references rather than copied into a rolling event-state table. Objects retain current outcomes; people retain knowledge, relationship appraisals and a brief basis, linking relevant events instead of copying their accounts. Persist formed states and attitudes too, rather than saving only events and asking each play request to infer everything again. Organize events by what happened, not by turn; ordinary details may remain narrative-only.
 
 These distinctions apply to objects, injuries, places, organizations, trades, investigations and personal relationships without fixed directories, fields or counts. Independent reference, evolving state or lifecycle tracking warrants a separate document; smaller records may share a suitable home. The current situation holds the immediate location, people present, ongoing matters and unanswered requests, not all history or future branches.
+
+Restricted YAML current situations may optionally use the exact top-level field 背景 for brief positioning values, for example \`背景: {时间: night on day eight, 地点: South Gate Inn}\`. Runtime saves the complete node with committed narrative to interpret old references to tomorrow or here; missing, null, blank strings and empty maps/lists are unrecorded, while 0 and false survive. Its contents have no fixed schema. Keep attendance, pending matters and long situations elsewhere; when adopted, maintain corresponding current values in this node without a second copy. Do not create or relocate fields in existing content merely to adopt this convention. Running-world revisions never rewrite saved historical backgrounds.
 
 summary is a catalog description: include only a brief identity, topic or stable clue needed to identify the document, not detailed state or event accounts. Concrete facts belong in the body. Update titles and descriptions only when identifying information changes.
 

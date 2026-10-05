@@ -2271,3 +2271,82 @@ test("生产附加材料选择 genesis 提交时仍排除开场白原文", () =>
     "GENESIS-MUST-NOT-BE-REPLAYED",
   );
 });
+
+test.each(["recent", "additional", "checkpoint"] as const)(
+  "%s 历史材料与真实 Prompt Preview 使用同一已保存背景，不连续项各自可解释",
+  (kind) => {
+    const request = input({ playerInputPlacement: "append" });
+    request.world.history = {
+      "message.genesis.narrator": "开场白",
+      "message.1.1.player": "明天再来。",
+      "message.2.1.narrator": "后天也在这里。",
+      "message.3.1.player": "下次到这里。",
+    };
+    request.world.historyBackgrounds = {
+      "message.genesis.narrator": { kind: "snapshot", value: "时间: 起点" },
+      "message.1.1.player": {
+        kind: "snapshot",
+        value: "时间: 第一天\n地点: 客栈",
+      },
+      "message.2.1.narrator": {
+        kind: "narrative",
+        before: "时间: 第一天\n地点: 客栈",
+        after: "时间: 第二天\n地点: 山门",
+      },
+      "message.3.1.player": {
+        kind: "snapshot",
+        value: "时间: 第二天\n地点: 山门",
+      },
+    };
+    if (kind === "recent") {
+      const files = snapshotRecord(request);
+      files["control/frame.yaml"] = files["control/frame.yaml"]!.replace(
+        "  - slot: { kind: additional_materials }",
+        "  - slot: { kind: history, recent: 3 }\n  - slot: { kind: additional_materials }",
+      );
+      bindSnapshot(request, files);
+    } else if (kind === "additional")
+      request.world.additionalMaterials = [
+        { kind: "history_message", message: "message.1.1.player" },
+        { kind: "history_message", message: "message.3.1.player" },
+      ];
+    else {
+      request.world.replayHistory = true;
+      request.world.historyAlreadyAppended = ["message.2.1.narrator"];
+    }
+    const compiler = new FileNativePromptCompiler();
+    const compilation = compiler.compileBootstrap(request);
+    const preview = compiler.preview(request);
+    const blocks = compilation.logicalMessages
+      .flatMap(({ blocks }) => blocks)
+      .filter(
+        ({ markdown }) =>
+          markdown.startsWith("## ") && markdown.includes("@history-message-"),
+      );
+    expect(blocks.length).toBeGreaterThan(0);
+    const text = blocks.map(({ markdown }) => markdown).join("\n");
+    expect(text).toContain("时间: 第一天");
+    expect(text).toContain("时间: 第二天");
+    expect(text).not.toContain("时间: 起点");
+    const entries = Object.entries(request.world.history).map(
+      ([path, contents]) => ({
+        path,
+        contents,
+        background: request.world.historyBackgrounds![path]!,
+      }),
+    );
+    for (const { markdown } of blocks) {
+      const ref = /@history-message-[^\s]+/u.exec(markdown)?.[0];
+      if (ref === undefined) continue;
+      const tool = new FileNativePlayDocuments({}).execute(
+        { id: ref, name: "history_read", arguments: { ref } },
+        entries,
+      );
+      expect(tool.ok).toBe(true);
+      expect(tool.markdown).toContain(markdown);
+      expect(JSON.stringify(preview)).toContain(
+        JSON.stringify(markdown).slice(1, -1),
+      );
+    }
+  },
+);
