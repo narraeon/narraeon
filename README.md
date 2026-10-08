@@ -178,7 +178,7 @@ TMPDIR=/tmp npm run test:package
 
 Project contracts and architecture:
 
-- [CONTEXT.md](CONTEXT.md) — domain vocabulary
+- [GLOSSARY.md](GLOSSARY.md) — domain vocabulary
 - [docs/product-foundation.md](docs/product-foundation.md) — current V1 product contract
 - [docs/adr/](docs/adr/) — architectural decisions
 

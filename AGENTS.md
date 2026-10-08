@@ -10,8 +10,8 @@ This repo uses the default canonical triage labels. See `docs/agents/triage-labe
 
 ### Domain docs
 
-This repo uses a single-context domain-doc layout. See `docs/agents/domain.md`.
+This repo uses a single-context domain-doc layout: `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
 
 ### Product baseline
 
-Before planning or implementing V1, read `CONTEXT.md`, `docs/product-foundation.md`, and the current GitHub issue. Repository documents define the current product and architectural contract; the issue defines the work and its acceptance state.
+Before planning or implementing V1, read `GLOSSARY.md`, `docs/product-foundation.md`, and the current GitHub issue. Repository documents define the current product and architectural contract; the issue defines the work and its acceptance state.

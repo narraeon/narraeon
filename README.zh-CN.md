@@ -168,7 +168,7 @@ TMPDIR=/tmp npm run test:package
 
 项目契约与架构文档：
 
-- [CONTEXT.md](CONTEXT.md) —— 领域词汇
+- [GLOSSARY.md](GLOSSARY.md) —— 领域词汇
 - [docs/product-foundation.md](docs/product-foundation.md) —— 当前 V1 产品契约
 - [docs/adr/](docs/adr/) —— 架构决策
 
