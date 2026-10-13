@@ -709,7 +709,7 @@ test.each([
     ).rejects.toMatchObject({
       kind: "failed",
       message:
-        "模型输出已达到 Token 上限，回复未完成。请在模型配置中调高“最大输出 Token”，保存后使用全新上下文重新发送。推理过程也可能占用输出额度。",
+        "The model response reached the output token limit before completion. Increase maxOutputTokens and start a fresh context; reasoning may also consume the output budget.",
     });
   },
 );
@@ -819,7 +819,7 @@ test.each([
     ).rejects.toMatchObject({
       kind: "failed",
       message:
-        "模型输出已达到 Token 上限，回复未完成。请在模型配置中调高“最大输出 Token”，保存后使用全新上下文重新发送。推理过程也可能占用输出额度。",
+        "The model response reached the output token limit before completion. Increase maxOutputTokens and start a fresh context; reasoning may also consume the output budget.",
       details: { code: "model_output_limit" },
     });
   },

@@ -2041,6 +2041,34 @@ const dynamicEnglishMessages: Record<string, string> = {
 
 Object.assign(englishMessages, dynamicEnglishMessages);
 
+Object.assign(englishMessages, {
+  模型请求结果未知: "Model request outcome unknown",
+  "模型请求已发出，但结果未知。旧请求不能重发；为避免重复生成，请从全新上下文继续。":
+    "The model request was dispatched, but its outcome is unknown. The previous request cannot be resent. Continue with a fresh context to avoid duplicate generation.",
+  模型上下文已达上限: "Model context limit reached",
+  "当前上下文超过了模型的输入上限。旧请求不能重发，请从全新上下文继续。":
+    "The current context exceeds the model input limit. The previous request cannot be resent. Continue with a fresh context.",
+  模型输出已达上限: "Model output limit reached",
+  "模型回复达到输出上限，尚未完成。请在模型配置中调高最大输出 Token，保存后从全新上下文继续。推理也可能占用输出额度。":
+    "The model response reached the output limit before completion. Increase the maximum output tokens in the model configuration, save, then continue with a fresh context. Reasoning may also consume the output budget.",
+  模型上下文无法继续: "Model context unavailable",
+  "当前上下文的续传信息不可用，或模型连接与原配置不兼容。旧请求不能重发，请从全新上下文继续。":
+    "Continuation data is unavailable, or the model connection is incompatible with the original configuration. The previous request cannot be resent. Continue with a fresh context.",
+  模型请求可以重新发送: "Model request can be resent",
+  "模型拒绝了请求，或请求尚未发出。可以重新发送已保存的请求，不会重复提交玩家原文。":
+    "The model rejected the request, or it was not dispatched. You can resend the saved request without submitting the player text again.",
+  模型连接发生错误: "Model connection error",
+  "模型服务未能完成请求。请检查模型连接；也可以从全新上下文继续。":
+    "The model service could not complete the request. Check the model connection, or continue with a fresh context.",
+  "处理这次请求时发生错误。旧请求不能重发；请查看技术详情，也可以从全新上下文继续。":
+    "An error occurred while processing this request. The previous request cannot be resent. View the technical details, or continue with a fresh context.",
+  重新发送: "Resend request",
+  从全新上下文继续: "Continue with a fresh context",
+  调整最大输出: "Adjust maximum output",
+  检查模型连接: "Check model connection",
+  技术详情: "Technical details",
+});
+
 export function setWebLocale(locale: AppLocale): void {
   if (!isAppLocale(locale)) throw new Error("Unsupported web locale");
   activeLocale = locale;

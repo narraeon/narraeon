@@ -1,3 +1,8 @@
+import { playFailureDescription } from "./PlayFailureText.ts";
+import {
+  PlayFailureNotice,
+  type PlayFailureRecovery,
+} from "./PlayFailureNotice.tsx";
 import { WorldExtensionMenu } from "./WorldExtensionMenu.tsx";
 import type { WorldExtensionsView } from "../protocol/worldExtensions.ts";
 import { PackageScriptPermissionControl } from "./PackageScriptPermissionControl.tsx";
@@ -199,6 +204,7 @@ export function WorldPage({
   );
   const [playProgressNow, setPlayProgressNow] = useState(0);
   const cancelledExchangeRef = useRef<string | null>(null);
+  const playSubmissionInFlight = useRef(false);
   const [worldNameDraft, setWorldNameDraft] = useState(worldTitle);
   const [lastWorldTitle, setLastWorldTitle] = useState(worldTitle);
   if (lastWorldTitle !== worldTitle) {
@@ -566,8 +572,25 @@ export function WorldPage({
   const activeStatus = playCallChain?.status ?? playTimeline?.activeStatus;
   const activeChainId =
     playCallChain?.chainId ?? playTimeline?.activeChainId ?? null;
-  const activeCanRetry =
+  const reportedCanRetry =
     playCallChain?.canRetry ?? playTimeline?.activeCanRetry ?? false;
+  const lastActiveEvent = playTimeline?.items.findLast(
+    (item) => item.kind === "event" && item.chainId === activeChainId,
+  );
+  const activeFailureKind =
+    playCallChain?.lastFailureKind ??
+    playTimeline?.activeLastFailureKind ??
+    (lastActiveEvent?.kind === "event" &&
+    lastActiveEvent.event.kind === "failure"
+      ? lastActiveEvent.event.failureKind
+      : undefined);
+  const activeCanRetry =
+    reportedCanRetry &&
+    (activeFailureKind === undefined || activeFailureKind === "retryable");
+  const activeFailureVisible =
+    activeStatus === "interrupted" &&
+    lastActiveEvent?.kind === "event" &&
+    lastActiveEvent.event.kind === "failure";
   const activeRevisionEpoch =
     revisionOverview?.epoch?.locked === true
       ? revisionOverview.epoch
@@ -638,10 +661,21 @@ export function WorldPage({
     return next;
   }
 
-  async function submitPlayChain(context: "fresh" | "append"): Promise<void> {
-    if (!modelConfigured) return;
+  async function submitPlayChain(
+    context: "fresh" | "append",
+    submittedText = playerText,
+  ): Promise<void> {
+    if (!modelConfigured || !playIdle || playSubmissionInFlight.current) return;
     const fresh = context === "fresh" || activeChainId === null;
-    if ((fresh && !canStartFresh) || (!fresh && !canAppend)) return;
+    const hasSubmittedText = submittedText.trim().length > 0;
+    if (
+      fresh
+        ? !hasSubmittedText
+        : activeChainStale ||
+          (activeStatus !== "ready" && (hasSubmittedText || !activeCanRetry))
+    )
+      return;
+    playSubmissionInFlight.current = true;
     const chainId = fresh ? createClientId("play-chain") : activeChainId;
     const exchangeId = createClientId("play-exchange");
     const startedAt = Date.now();
@@ -654,7 +688,7 @@ export function WorldPage({
       kind: "status",
       text: fresh
         ? uiText("正在从当前世界重新拼接上下文…")
-        : hasPlayerText
+        : hasSubmittedText
           ? uiText("正在把玩家输入追加到现有上下文…")
           : activeStatus === "interrupted"
             ? uiText("正在原样发送上次未完成的模型请求…")
@@ -667,20 +701,20 @@ export function WorldPage({
             worldId,
             chainId,
             exchangeId,
-            playerText,
+            playerText: submittedText,
           } satisfies Extract<V1Request, { type: "play.chain.start" }>)
         : ({
             type: "play.chain.append",
             worldId,
             chainId,
             exchangeId,
-            playerText,
+            playerText: submittedText,
           } satisfies Extract<V1Request, { type: "play.chain.append" }>);
       const next = await requestRuntime<V1PlayCallChainView>(client, request);
       setPlayCallChain(next);
       if (fresh) setForceFreshContext(false);
       setPreferFreshContext(false);
-      if (hasPlayerText) setPlayerText("");
+      if (hasSubmittedText) setPlayerText("");
       await refreshWorld();
       const wasCancelled = cancelledExchangeRef.current === exchangeId;
       if (wasCancelled) {
@@ -701,7 +735,7 @@ export function WorldPage({
         setFeedback({
           kind: "status",
           text:
-            !fresh && !hasPlayerText
+            !fresh && !hasSubmittedText
               ? uiText("AI 已沿现有上下文继续生成，没有追加玩家指令。")
               : uiText("调用链已返回；模型完成的叙事和世界变化已经分别提交。"),
         });
@@ -718,7 +752,7 @@ export function WorldPage({
           setPreferFreshContext(false);
         }
         if (
-          hasPlayerText &&
+          hasSubmittedText &&
           inspected.events.some(
             (event) =>
               event.kind === "player" && event.exchangeId === exchangeId,
@@ -747,6 +781,7 @@ export function WorldPage({
       setPlayProgress((current) =>
         current?.exchangeId === exchangeId ? null : current,
       );
+      playSubmissionInFlight.current = false;
       setPending(null);
     }
   }
@@ -1056,6 +1091,17 @@ export function WorldPage({
     }
   }
 
+  const failureRecovery: PlayFailureRecovery = {
+    canRetry: activeCanRetry && !activeChainStale,
+    disabled: !modelConfigured || !playIdle,
+    onRetry: () => void submitPlayChain("append", ""),
+    onFreshContext: () => {
+      setPreferFreshContext(true);
+      composerTextareaRef.current?.focus();
+    },
+    onConfigureModel,
+  };
+
   const defaultSubmitFresh =
     preferFreshContext || activeChainId === null || activeChainStale;
   const defaultSubmitEnabled = defaultSubmitFresh ? canStartFresh : canAppend;
@@ -1333,6 +1379,11 @@ export function WorldPage({
                   worldId={worldId}
                   items={playTimeline.items}
                   liveChain={playCallChain}
+                  failureRecovery={
+                    activeStatus === "interrupted" && activeChainId !== null
+                      ? { ...failureRecovery, chainId: activeChainId }
+                      : undefined
+                  }
                   restartDisabled={pending !== null || worldRevisionLocked}
                   freshContextDisabled={!modelConfigured}
                   onUseFreshContext={() => {
@@ -1426,17 +1477,27 @@ export function WorldPage({
             {playObservationFailure === null ? null : (
               <p role="status">{playObservationFailure}</p>
             )}
-            {playFailure === null ? null : (
+            {playFailure === null || activeFailureVisible ? null : (
               <div
                 className="play-call-failure"
                 role="alert"
                 aria-label={uiText("模型调用失败")}
               >
-                <strong>{uiText("模型调用失败")}</strong>
-                <p>{playFailure}</p>
+                <PlayFailureNotice
+                  failureKind={activeFailureKind}
+                  canRetry={activeCanRetry}
+                  message={
+                    playCallChain?.lastFailure ??
+                    playTimeline?.activeLastFailure ??
+                    playFailure
+                  }
+                  recovery={failureRecovery}
+                />
               </div>
             )}
-            {!activeCanRetry ? null : (
+            {!activeCanRetry ||
+            activeFailureVisible ||
+            playFailure !== null ? null : (
               <div className="play-retry-note" role="alert">
                 <span aria-hidden="true">!</span>
                 <p>
@@ -1840,6 +1901,7 @@ export function WorldPage({
 
 function PlayTimeline({
   liveChain,
+  failureRecovery,
   client,
   worldId,
   items,
@@ -1853,6 +1915,7 @@ function PlayTimeline({
   worldId: string;
   items: readonly V1PlayTimelineItem[];
   liveChain: V1PlayCallChainView | null;
+  failureRecovery?: (PlayFailureRecovery & { chainId: string }) | undefined;
   restartDisabled: boolean;
   freshContextDisabled: boolean;
   onUseFreshContext: () => void;
@@ -1865,6 +1928,10 @@ function PlayTimeline({
   ) => void;
 }): React.JSX.Element {
   const groups = groupPlayTimelineItems(items);
+  const lastActiveItem = items.findLast(
+    (item) =>
+      item.kind === "event" && item.chainId === failureRecovery?.chainId,
+  );
   return (
     <ol
       className="call-chain-events play-timeline-events"
@@ -1901,6 +1968,9 @@ function PlayTimeline({
                     onRestartFrom={onRestartFrom}
                     onEditPlayer={onEditPlayer}
                     presentation="story"
+                    failureRecovery={
+                      lastActiveItem === item ? failureRecovery : undefined
+                    }
                     onUseFreshContext={onUseFreshContext}
                   />
                 ) : null,
@@ -2091,6 +2161,7 @@ function timelineEventHasTrace(event: V1PlayTimelineEventSummary): boolean {
 
 function TimelineEvent({
   liveAssistant,
+  failureRecovery,
   client,
   worldId,
   chainId,
@@ -2107,6 +2178,7 @@ function TimelineEvent({
   chainId: string;
   event: V1PlayTimelineEventSummary;
   liveAssistant?: V1PlayCallChainEvent | undefined;
+  failureRecovery?: PlayFailureRecovery | undefined;
   restartDisabled: boolean;
   freshContextDisabled: boolean;
   onRestartFrom: (head: string) => void;
@@ -2532,8 +2604,12 @@ function TimelineEvent({
 
   return (
     <li className="call-chain-failure" role="alert">
-      <strong>{uiText("调用链中断")}</strong>
-      <p>{event.message}</p>
+      <PlayFailureNotice
+        failureKind={event.failureKind}
+        canRetry={failureRecovery?.canRetry ?? false}
+        message={event.message}
+        recovery={failureRecovery}
+      />
     </li>
   );
 }
@@ -2663,13 +2739,10 @@ function playCallFailureMessage(
     ): candidate is Extract<V1PlayCallChainEvent, { kind: "failure" }> =>
       candidate.kind === "failure",
   );
-  const detail = chain.lastFailure ?? event?.message ?? null;
-  const guidance = chain.canRetry
-    ? uiText("模型请求中断；清空输入后点击追加上下文即可原样发送上次请求。")
-    : uiText("调用链处理失败；旧请求不能重发，请使用全新上下文。");
-  return detail === null || detail.includes(guidance)
-    ? (detail ?? guidance)
-    : `${detail} ${guidance}`;
+  return playFailureDescription(
+    chain.lastFailureKind ?? event?.failureKind,
+    chain.canRetry,
+  );
 }
 
 function requestRuntime<T>(
@@ -2759,6 +2832,7 @@ function applyPlayTimelineFrame(
         activeStatus: chain.status,
         activeCanRetry: chain.canRetry,
         activeLastFailure: chain.lastFailure,
+        activeLastFailureKind: chain.lastFailureKind,
         items,
       };
     });
@@ -2897,6 +2971,7 @@ function legacyTimelinePage(world: WorldReadView): V1PlayTimelinePage {
     activeStatus: chain.status,
     activeCanRetry: chain.canRetry,
     activeLastFailure: chain.lastFailure,
+    activeLastFailureKind: chain.lastFailureKind,
     items: [
       ...baseline,
       ...contexts.flatMap((context) => [

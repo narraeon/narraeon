@@ -13,6 +13,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, expect, test, vi } from "vitest";
+import { classifyPlayFailure } from "../../src/runtime/play/PlayFailure.ts";
+import { playFailureKinds } from "../../src/protocol/playFailure.ts";
 
 import {
   parseV1Envelope,
@@ -22,6 +24,8 @@ import {
 import { contentTreeFingerprint } from "../../src/runtime/content/ContentTreeFingerprint.ts";
 import type { ContentTreeFile } from "../../src/runtime/content/ContentWorkspace.ts";
 import {
+  ModelHostBindingMismatchError,
+  ModelHostContinuationError,
   ModelHostFailureError,
   ModelHostOutcomeUnknownError,
   ScriptedModelHost,
@@ -59,6 +63,224 @@ import { FileNativeWorldRevisionStore } from "../../src/runtime/world-revision/F
 import { WorldRevisionWorkspace } from "../../src/runtime/world-revision/WorldRevisionWorkspace.ts";
 
 const roots: string[] = [];
+
+test.each([
+  [
+    "outcome_unknown",
+    new ModelHostOutcomeUnknownError("dispatched outcome unknown"),
+    false,
+  ],
+  [
+    "context_limit",
+    new ModelHostFailureError("request rejected", {
+      details: { code: "context_length_exceeded" },
+    }),
+    false,
+  ],
+  [
+    "output_limit",
+    new ModelHostFailureError("response incomplete", {
+      details: { code: "model_output_limit" },
+    }),
+    false,
+  ],
+  [
+    "context_unavailable",
+    new ModelHostContinuationError("lost continuation"),
+    false,
+  ],
+  [
+    "context_unavailable",
+    new ModelHostBindingMismatchError("incompatible binding"),
+    false,
+  ],
+  ["retryable", new ModelHostFailureError("rejected before generation"), true],
+  ["other", new Error("tool processing failed"), false],
+] as const)(
+  "%s failure is persisted in context, event, summary and cold recovery",
+  async (failureKind, failure, canRetry) => {
+    const { worlds, worldId } = await createWorld(
+      `failure-kind-${failureKind}`,
+    );
+    const chains = new PlayCallChain(worlds);
+    const exchange = vi.fn(() => Promise.reject(failure));
+    const result = await chains.start({
+      worldId,
+      chainId: "classified-failure",
+      exchangeId: "first-failure",
+      playerText: "I wait for Alex.",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: modelBinding(),
+      modelHost: { binding: modelBinding, exchange },
+    });
+    expect(result).toMatchObject({
+      status: "interrupted",
+      canRetry,
+      lastFailureKind: failureKind,
+      lastFailure: failure.message,
+    });
+    const event = result.events.at(-1)!;
+    expect(event).toMatchObject({
+      kind: "failure",
+      failureKind,
+      message: failure.message,
+    });
+    expect(
+      (await worlds.playTimeline.readCurrent(worldId))?.value,
+    ).toMatchObject({ lastFailureKind: failureKind, canRetry });
+    const page = await worlds.playTimeline.readPage(worldId, 40);
+    expect(page).toMatchObject({
+      activeLastFailureKind: failureKind,
+      activeCanRetry: canRetry,
+    });
+    expect(page.items.at(-1)).toMatchObject({
+      event: { failureKind, message: failure.message },
+    });
+    expect(
+      await worlds.playTimeline.readDetail(worldId, result.chainId, event.id),
+    ).toMatchObject({ failureKind });
+    expect(await new PlayCallChain(worlds).inspectWorld(worldId)).toMatchObject(
+      { lastFailureKind: failureKind, canRetry },
+    );
+    expect(
+      (await worlds.recoverEndpoint(worldId)).history.map(
+        ({ exactText }) => exactText,
+      ),
+    ).toEqual(["门外传来三声短促的铃响。\n", "I wait for Alex."]);
+    if (!canRetry) {
+      await expect(
+        chains.append({
+          worldId,
+          chainId: result.chainId,
+          exchangeId: "forbidden-retry",
+          playerText: "",
+          modelHost: { binding: modelBinding, exchange },
+        }),
+      ).rejects.toThrow("use a fresh context");
+      expect(exchange).toHaveBeenCalledOnce();
+    }
+  },
+);
+
+test("Provider failures without replay permission classify as provider_error; unknown failures and undispatched requests retain their boundaries", () => {
+  expect(
+    classifyPlayFailure(new ModelHostFailureError("provider error"), false),
+  ).toBe("provider_error");
+  expect(classifyPlayFailure(new Error("settlement failed"), false)).toBe(
+    "other",
+  );
+  expect(classifyPlayFailure(new Error("not dispatched"), true)).toBe(
+    "retryable",
+  );
+});
+
+test("all seven failure kinds round-trip through the context and timeline codecs", async () => {
+  const { worlds, worldId } = await createWorld("failure-kind-codecs");
+  const result = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "failure-kind-codecs",
+    exchangeId: "first",
+    playerText: "I wait.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [{ outcome: "failure", message: "rejected" }],
+    }),
+  });
+  for (const failureKind of playFailureKinds) {
+    const loaded = (await worlds.playTimeline.readCurrent(worldId))!;
+    loaded.value.lastFailureKind = failureKind;
+    loaded.value.canRetry = failureKind === "retryable";
+    const event = loaded.value.events.at(-1)!;
+    if (event.kind !== "failure") throw new Error("missing failure");
+    event.failureKind = failureKind;
+    await worlds.playTimeline.persist(loaded.value, loaded.cursor);
+    expect(await new PlayCallChain(worlds).inspectWorld(worldId)).toMatchObject(
+      { lastFailureKind: failureKind },
+    );
+    expect(await worlds.playTimeline.readPage(worldId, 40)).toMatchObject({
+      activeLastFailureKind: failureKind,
+    });
+    expect(
+      await worlds.playTimeline.readDetail(worldId, result.chainId, event.id),
+    ).toMatchObject({ failureKind });
+  }
+});
+
+test("failure kinds are optional in stored records and invalid kinds fail closed", async () => {
+  const { worlds, worldId, root } = await createWorld(
+    "failure-kind-compatibility",
+  );
+  const result = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "optional-failure-kind",
+    exchangeId: "first",
+    playerText: "I wait.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [{ outcome: "failure", message: "rejected" }],
+    }),
+  });
+  const contextRoot = join(
+    root,
+    "worlds-file-native",
+    worldId,
+    "runtime",
+    "play-contexts",
+    createHash("sha256").update(result.chainId).digest("hex"),
+  );
+  const statePath = join(contextRoot, "state.json");
+  const state = JSON.parse(await readFile(statePath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  delete state.lastFailureKind;
+  await writeFile(statePath, JSON.stringify(state));
+  const event = result.events.at(-1)!;
+  if (event.kind !== "failure") throw new Error("missing failure");
+  delete event.failureKind;
+  const numbered = `${String(event.id).padStart(10, "0")}.json`;
+  for (const directory of ["events", "summaries"])
+    await writeFile(
+      join(contextRoot, directory, numbered),
+      JSON.stringify(event),
+    );
+  expect(await new PlayCallChain(worlds).inspectWorld(worldId)).toMatchObject({
+    status: "interrupted",
+    canRetry: true,
+  });
+  expect(
+    (await worlds.playTimeline.readPage(worldId, 40)).items.at(-1),
+  ).toMatchObject({ event });
+  expect(
+    await worlds.playTimeline.readDetail(worldId, result.chainId, event.id),
+  ).not.toHaveProperty("failureKind");
+  await writeFile(
+    statePath,
+    JSON.stringify({ ...state, lastFailureKind: "invented" }),
+  );
+  await expect(worlds.playTimeline.readPage(worldId, 40)).rejects.toThrow(
+    "invalid shape",
+  );
+  await writeFile(statePath, JSON.stringify(state));
+  for (const directory of ["events", "summaries"])
+    await writeFile(
+      join(contextRoot, directory, numbered),
+      JSON.stringify({ ...event, failureKind: "invented" }),
+    );
+  await expect(worlds.playTimeline.readPage(worldId, 40)).rejects.toThrow(
+    "invalid kind",
+  );
+  await expect(
+    worlds.playTimeline.readDetail(worldId, result.chainId, event.id),
+  ).rejects.toThrow("invalid kind");
+});
 
 test("修改轨迹统一保留前缀工具及原生载荷，并按含同 ID 修改稿的事件选择运行快照与授权", async () => {
   const { source, prefix, eventIndex, endpoint } =
@@ -1230,11 +1452,16 @@ test("派发推进存在但结果未落盘时按 outcome unknown 终止，冷恢
   delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE;
   const recovered = await new PlayCallChain(worlds).inspectWorld(worldId);
 
-  expect(recovered).toMatchObject({ status: "interrupted", canRetry: false });
+  expect(recovered).toMatchObject({
+    status: "interrupted",
+    canRetry: false,
+    lastFailureKind: "outcome_unknown",
+  });
   expect(
     recovered?.events.some(
       (event) =>
         event.kind === "failure" &&
+        event.failureKind === "outcome_unknown" &&
         event.message.includes("outcome is unknown"),
     ),
   ).toBe(true);
@@ -5567,6 +5794,11 @@ test("模型绑定的协议配置变化会在提交玩家输入前拒绝旧上�
     "The selected model connection does not match the frozen model binding; start a fresh context.",
   );
   expect(switchedHost.requests).toHaveLength(0);
+  expect(await new PlayCallChain(worlds).inspectWorld(worldId)).toMatchObject({
+    status: "interrupted",
+    canRetry: false,
+    lastFailureKind: "context_unavailable",
+  });
   expect((await worlds.recoverEndpoint(worldId)).history).toHaveLength(3);
 });
 
