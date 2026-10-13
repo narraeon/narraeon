@@ -1574,6 +1574,8 @@ const worldPageEnglishMessages: Record<string, string> = {
 Object.assign(englishMessages, worldPageEnglishMessages);
 
 const playWorkspaceEnglishMessages: Record<string, string> = {
+  显示技术信息: "Show technical information",
+  检查点: "Checkpoint",
   "AI 响应诊断": "Model response diagnostics",
   "AI 如何读取": "How the model reads",
   "AI 实际收到了哪些世界内容": "What world content the model actually received",

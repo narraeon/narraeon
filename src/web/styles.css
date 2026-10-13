@@ -8020,6 +8020,43 @@ summary:focus-visible {
   margin: 1.5rem 0 0;
 }
 
+.is-story-mode .world-story-column .story-context-boundary {
+  gap: 0;
+}
+
+.is-story-mode .world-story-column .story-context-boundary::before,
+.is-story-mode .world-story-column .story-context-boundary::after {
+  background: var(--border);
+}
+
+.is-story-mode .world-story-column .history-restart-button {
+  opacity: 0;
+}
+
+.is-story-mode .world-story-column article:hover .history-restart-button,
+.is-story-mode
+  .world-story-column
+  article:focus-within
+  .history-restart-button {
+  opacity: 1;
+}
+
+@media (max-width: 720px), (hover: none), (pointer: coarse) {
+  .is-story-mode .world-story-column .history-restart-button {
+    opacity: 1;
+  }
+}
+
+.play-checkpoint-marker {
+  color: var(--muted);
+}
+
+.world-reading-technical-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .world-story-column .story-context-boundary .call-chain-summary {
   display: block;
   gap: 0;

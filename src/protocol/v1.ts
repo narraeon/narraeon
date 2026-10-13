@@ -6,7 +6,11 @@ import type {
   ModelProviderKind,
   SaveModelConnectionInput,
 } from "./modelConnections.ts";
-import type { AppLocale, AppReadingPreferences } from "./appPreferences.ts";
+import {
+  isAppReadingPreferences,
+  type AppLocale,
+  type AppReadingPreferences,
+} from "./appPreferences.ts";
 import type { ModelUsage } from "./modelUsage.ts";
 import { maxPortableContentArchiveBase64Characters } from "./contentTree.ts";
 
@@ -1079,7 +1083,7 @@ function validateRequestFields(request: Record<string, unknown>): void {
       );
     if (
       request.reading !== undefined &&
-      !isValidReadingPreferences(request.reading)
+      !isAppReadingPreferences(request.reading)
     )
       throw new V1ProtocolError(
         "invalid_request",
@@ -1464,27 +1468,4 @@ const requestTypes = new Set([
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isValidReadingPreferences(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  return (
-    Object.keys(value).length === 5 &&
-    (value.density === "compact" ||
-      value.density === "standard" ||
-      value.density === "relaxed") &&
-    isFiniteRange(value.fontSize, 15, 24) &&
-    isFiniteRange(value.lineHeight, 1.4, 2.4) &&
-    isFiniteRange(value.letterSpacing, 0, 0.12) &&
-    isFiniteRange(value.measure, 32, 72)
-  );
-}
-
-function isFiniteRange(value: unknown, minimum: number, maximum: number) {
-  return (
-    typeof value === "number" &&
-    Number.isFinite(value) &&
-    value >= minimum &&
-    value <= maximum
-  );
 }

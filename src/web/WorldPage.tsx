@@ -126,6 +126,7 @@ interface WorldPlayDecorationsView {
 interface Feedback {
   kind: "status" | "error";
   text: string;
+  technical?: boolean;
 }
 
 interface WorldPageClient {
@@ -144,6 +145,7 @@ export function WorldPage({
   onRenameWorld,
   onOpenWorld,
   onNavigationLockChange,
+  onReadingPreferencesChange,
   initialReadingPreferences = defaultAppReadingPreferences,
 }: {
   client: WorldPageClient;
@@ -156,6 +158,7 @@ export function WorldPage({
   onRenameWorld: (name: string) => Promise<void>;
   onOpenWorld: (worldId: string) => Promise<void>;
   onNavigationLockChange?: (locked: boolean) => void;
+  onReadingPreferencesChange?: (value: AppReadingPreferences) => void;
   initialReadingPreferences?: AppReadingPreferences;
 }): React.JSX.Element {
   const [world, setWorld] = useState<WorldReadView | null>(null);
@@ -209,6 +212,7 @@ export function WorldPage({
     useState<V1PlayCallChainView | null>(null);
   const [forceFreshContext, setForceFreshContext] = useState(false);
   const [preferFreshContext, setPreferFreshContext] = useState(false);
+  const [handledCheckpoints, setHandledCheckpoints] = useState<string[]>([]);
   const [playTimeline, setPlayTimeline] = useState<V1PlayTimelinePage | null>(
     null,
   );
@@ -566,6 +570,28 @@ export function WorldPage({
   const activeStatus = playCallChain?.status ?? playTimeline?.activeStatus;
   const activeChainId =
     playCallChain?.chainId ?? playTimeline?.activeChainId ?? null;
+  const latestNarrative = playTimeline?.items.findLast(
+    (item) =>
+      item.kind === "event" &&
+      item.event.kind === "assistant" &&
+      item.event.status === "completed" &&
+      item.event.committedHead !== undefined &&
+      assistantResponseKind(item.event) === "narrative",
+  );
+  if (
+    world?.worldId === worldId &&
+    latestNarrative?.kind === "event" &&
+    latestNarrative.event.kind === "assistant" &&
+    latestNarrative.event.checkpoint === true
+  ) {
+    const checkpointKey = `${worldId}:${latestNarrative.event.committedHead}`;
+    if (!handledCheckpoints.includes(checkpointKey)) {
+      // Remember the identity, rather than the tail page, so paging, mode
+      // changes and cancellation cannot reselect an already handled checkpoint.
+      setHandledCheckpoints([...handledCheckpoints, checkpointKey]);
+      setPreferFreshContext(true);
+    }
+  }
   const activeCanRetry =
     playCallChain?.canRetry ?? playTimeline?.activeCanRetry ?? false;
   const activeRevisionEpoch =
@@ -642,6 +668,7 @@ export function WorldPage({
     if (!modelConfigured) return;
     const fresh = context === "fresh" || activeChainId === null;
     if ((fresh && !canStartFresh) || (!fresh && !canAppend)) return;
+    setPreferFreshContext(false);
     const chainId = fresh ? createClientId("play-chain") : activeChainId;
     const exchangeId = createClientId("play-exchange");
     const startedAt = Date.now();
@@ -652,6 +679,7 @@ export function WorldPage({
     setPending(context === "fresh" ? "play-fresh" : "play-append");
     setFeedback({
       kind: "status",
+      technical: true,
       text: fresh
         ? uiText("正在从当前世界重新拼接上下文…")
         : hasPlayerText
@@ -679,7 +707,6 @@ export function WorldPage({
       const next = await requestRuntime<V1PlayCallChainView>(client, request);
       setPlayCallChain(next);
       if (fresh) setForceFreshContext(false);
-      setPreferFreshContext(false);
       if (hasPlayerText) setPlayerText("");
       await refreshWorld();
       const wasCancelled = cancelledExchangeRef.current === exchangeId;
@@ -700,6 +727,7 @@ export function WorldPage({
         setPlayFailure(null);
         setFeedback({
           kind: "status",
+          technical: true,
           text:
             !fresh && !hasPlayerText
               ? uiText("AI 已沿现有上下文继续生成，没有追加玩家指令。")
@@ -715,7 +743,6 @@ export function WorldPage({
         setPlayCallChain(inspected);
         if (fresh && inspected.chainId === chainId) {
           setForceFreshContext(false);
-          setPreferFreshContext(false);
         }
         if (
           hasPlayerText &&
@@ -1034,6 +1061,7 @@ export function WorldPage({
     setReadingPreferencesSaving(true);
     try {
       await client.request({ type: "preferences.save", reading: next });
+      onReadingPreferencesChange?.(next);
     } catch (reason: unknown) {
       setFeedback({ kind: "error", text: errorMessage(reason) });
     } finally {
@@ -1176,7 +1204,7 @@ export function WorldPage({
 
   return (
     <main
-      className="world-reader-page"
+      className={`world-reader-page ${readingPreferences.showTechnicalInfo ? "is-detailed-mode" : "is-story-mode"}`}
       style={
         {
           "--world-left-rail-width": leftRailWidth + "px",
@@ -1335,10 +1363,7 @@ export function WorldPage({
                   liveChain={playCallChain}
                   restartDisabled={pending !== null || worldRevisionLocked}
                   freshContextDisabled={!modelConfigured}
-                  onUseFreshContext={() => {
-                    setPreferFreshContext(true);
-                    composerRef.current?.querySelector("textarea")?.focus();
-                  }}
+                  showTechnicalInfo={readingPreferences.showTechnicalInfo}
                   onRestartFrom={(head) => void deriveWorld(head)}
                   onEditPlayer={(chainId, eventId, editedText, continuation) =>
                     void reviseEditedPlayer(
@@ -1542,13 +1567,15 @@ export function WorldPage({
                   : "↑"}
               </button>
             </div>
-            <p className="world-composer-hint">
-              {uiText(
-                activeCanRetry
-                  ? "原样重试使用已保存请求，不采用新预设。"
-                  : "正常发送和空输入续写使用最新预设；本轮工具执行期间保持不变。",
-              )}
-            </p>
+            {readingPreferences.showTechnicalInfo ? (
+              <p className="world-composer-hint">
+                {uiText(
+                  activeCanRetry
+                    ? "原样重试使用已保存请求，不采用新预设。"
+                    : "正常发送和空输入续写使用最新预设；本轮工具执行期间保持不变。",
+                )}
+              </p>
+            ) : null}
             <ArtifactExtensionMount mount="composer_below" />
           </footer>
 
@@ -1811,7 +1838,9 @@ export function WorldPage({
             />
           ) : null}
 
-          {feedback === null ? null : (
+          {feedback === null ||
+          (feedback.technical === true &&
+            !readingPreferences.showTechnicalInfo) ? null : (
             <p
               className={"world-feedback " + feedback.kind}
               role={feedback.kind === "error" ? "alert" : "status"}
@@ -1845,9 +1874,9 @@ function PlayTimeline({
   items,
   restartDisabled,
   freshContextDisabled,
+  showTechnicalInfo,
   onRestartFrom,
   onEditPlayer,
-  onUseFreshContext,
 }: {
   client: WorldPageClient;
   worldId: string;
@@ -1855,7 +1884,7 @@ function PlayTimeline({
   liveChain: V1PlayCallChainView | null;
   restartDisabled: boolean;
   freshContextDisabled: boolean;
-  onUseFreshContext: () => void;
+  showTechnicalInfo: boolean;
   onRestartFrom: (head: string) => void;
   onEditPlayer: (
     chainId: string,
@@ -1898,14 +1927,14 @@ function PlayTimeline({
                     }
                     restartDisabled={restartDisabled}
                     freshContextDisabled={freshContextDisabled}
+                    showTechnicalInfo={showTechnicalInfo}
                     onRestartFrom={onRestartFrom}
                     onEditPlayer={onEditPlayer}
                     presentation="story"
-                    onUseFreshContext={onUseFreshContext}
                   />
                 ) : null,
               )}
-              {traceEvents.length === 0 ? null : (
+              {!showTechnicalInfo || traceEvents.length === 0 ? null : (
                 <li className="world-timeline-trace">
                   <details>
                     <summary>
@@ -1929,10 +1958,10 @@ function PlayTimeline({
                           event={item.event}
                           restartDisabled={restartDisabled}
                           freshContextDisabled={freshContextDisabled}
+                          showTechnicalInfo={showTechnicalInfo}
                           onRestartFrom={onRestartFrom}
                           onEditPlayer={onEditPlayer}
                           presentation="trace"
-                          onUseFreshContext={onUseFreshContext}
                         />
                       ))}
                     </ol>
@@ -1951,25 +1980,29 @@ function PlayTimeline({
               role="separator"
               aria-label={uiText("全新上下文从这里开始")}
             >
-              <span>{uiText("全新上下文从这里开始")}</span>
-              <small>{item.playPreset.name}</small>
-              <details className="call-chain-summary">
-                <summary>{uiText("本上下文已提交的世界变化")}</summary>
-                {item.changedDocuments.length === 0 ? (
-                  <span>{uiText("没有文档变化")}</span>
-                ) : (
-                  <ul>
-                    {item.changedDocuments.map((change) => (
-                      <li key={`${change.kind}:${change.path}`}>
-                        {change.kind === "create"
-                          ? uiText("新建")
-                          : uiText("更新")}{" "}
-                        {change.ref} · {change.path}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </details>
+              {showTechnicalInfo ? (
+                <>
+                  <span>{uiText("全新上下文从这里开始")}</span>
+                  <small>{item.playPreset.name}</small>
+                  <details className="call-chain-summary">
+                    <summary>{uiText("本上下文已提交的世界变化")}</summary>
+                    {item.changedDocuments.length === 0 ? (
+                      <span>{uiText("没有文档变化")}</span>
+                    ) : (
+                      <ul>
+                        {item.changedDocuments.map((change) => (
+                          <li key={`${change.kind}:${change.path}`}>
+                            {change.kind === "create"
+                              ? uiText("新建")
+                              : uiText("更新")}{" "}
+                            {change.ref} · {change.path}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </details>
+                </>
+              ) : null}
             </li>
           );
         if (item.kind === "genesis")
@@ -2097,10 +2130,10 @@ function TimelineEvent({
   event,
   restartDisabled,
   freshContextDisabled,
+  showTechnicalInfo,
   onRestartFrom,
   onEditPlayer,
   presentation,
-  onUseFreshContext,
 }: {
   client: WorldPageClient;
   worldId: string;
@@ -2109,6 +2142,7 @@ function TimelineEvent({
   liveAssistant?: V1PlayCallChainEvent | undefined;
   restartDisabled: boolean;
   freshContextDisabled: boolean;
+  showTechnicalInfo: boolean;
   onRestartFrom: (head: string) => void;
   onEditPlayer: (
     chainId: string,
@@ -2117,7 +2151,6 @@ function TimelineEvent({
     continuation: PlayerRevisionContinuation,
   ) => void;
   presentation: "story" | "trace";
-  onUseFreshContext: () => void;
 }): React.JSX.Element {
   const [detail, setDetail] = useState<V1PlayCallChainEvent | null>(null);
   const [detailPending, setDetailPending] = useState(false);
@@ -2151,11 +2184,13 @@ function TimelineEvent({
         <article>
           <header>
             <strong>{uiText("玩家")}</strong>
-            <span>
-              {event.context === "fresh"
-                ? uiText("全新上下文")
-                : uiText("追加上下文")}
-            </span>
+            {showTechnicalInfo ? (
+              <span>
+                {event.context === "fresh"
+                  ? uiText("全新上下文")
+                  : uiText("追加上下文")}
+              </span>
+            ) : null}
             {event.committedHead === undefined ? null : (
               <span className="history-message-actions">
                 {event.committedHead === "genesis" ? null : (
@@ -2360,21 +2395,27 @@ function TimelineEvent({
       >
         <article>
           <header>
-            <strong>
-              {event.status === "streaming"
-                ? uiText("模型响应中")
-                : responseKind === "tool_step"
-                  ? uiText("模型工具步骤")
-                  : responseKind === "empty"
-                    ? uiText("空模型响应")
-                    : uiText("AI 响应")}
-            </strong>
-            <span>
-              {uiText("{status} · 第 {attempt} 次派发", {
-                status: callChainAssistantStatusLabel(event.status),
-                attempt: event.attempt,
-              })}
-            </span>
+            {showTechnicalInfo ? (
+              <>
+                <strong>
+                  {event.status === "streaming"
+                    ? uiText("模型响应中")
+                    : responseKind === "tool_step"
+                      ? uiText("模型工具步骤")
+                      : responseKind === "empty"
+                        ? uiText("空模型响应")
+                        : uiText("AI 响应")}
+                </strong>
+                <span>
+                  {uiText("{status} · 第 {attempt} 次派发", {
+                    status: callChainAssistantStatusLabel(event.status),
+                    attempt: event.attempt,
+                  })}
+                </span>
+              </>
+            ) : event.status === "interrupted" ? (
+              <strong>{uiText("中断片段")}</strong>
+            ) : null}
             {event.committedHead === undefined ? null : (
               <button
                 type="button"
@@ -2411,24 +2452,16 @@ function TimelineEvent({
           {responseKind === "pending" ? (
             <small>{uiText("待定输出；响应完成前不会进入故事")}</small>
           ) : null}
-          {event.checkpoint === true &&
+          {showTechnicalInfo &&
+          event.checkpoint === true &&
           event.status === "completed" &&
           responseKind === "narrative" ? (
-            <aside className="play-checkpoint-note">
-              <p>{uiText("AI 建议在此开启全新上下文")}</p>
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={restartDisabled || freshContextDisabled}
-                onClick={onUseFreshContext}
-              >
-                {uiText("下一条消息使用全新上下文")}
-              </button>
-            </aside>
+            <small className="play-checkpoint-marker">{uiText("检查点")}</small>
           ) : null}
           {presentation === "trace" ? (
             diagnostics
-          ) : event.status === "streaming" &&
+          ) : showTechnicalInfo &&
+            event.status === "streaming" &&
             liveAssistant?.kind === "assistant" &&
             liveAssistant.reasoning ? (
             <details>
@@ -2511,7 +2544,7 @@ function TimelineEvent({
           {detailError === null ? null : <p role="alert">{detailError}</p>}
           {full === null ? null : <pre>{safeJson(full)}</pre>}
         </details>
-        {event.usage === undefined ? null : (
+        {!showTechnicalInfo || event.usage === undefined ? null : (
           <ModelUsageBreakdown usage={event.usage} compact />
         )}
       </li>

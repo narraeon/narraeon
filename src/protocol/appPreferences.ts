@@ -12,6 +12,7 @@ export interface AppReadingPreferences {
   lineHeight: number;
   letterSpacing: number;
   measure: number;
+  showTechnicalInfo: boolean;
 }
 
 export interface AppPreferences {
@@ -29,6 +30,7 @@ export const defaultAppReadingPreferences: AppReadingPreferences = {
   lineHeight: 1.7,
   letterSpacing: 0.01,
   measure: 48,
+  showTechnicalInfo: false,
 };
 
 export function isAppLocale(value: unknown): value is AppLocale {
@@ -42,12 +44,13 @@ export function isAppReadingPreferences(
     return false;
   const candidate = value as Record<string, unknown>;
   return (
-    Object.keys(candidate).length === 5 &&
+    Object.keys(candidate).length === 6 &&
     readingDensities.includes(candidate.density as ReadingDensity) &&
     isNumberInRange(candidate.fontSize, 15, 24) &&
     isNumberInRange(candidate.lineHeight, 1.4, 2.4) &&
     isNumberInRange(candidate.letterSpacing, 0, 0.12) &&
-    isNumberInRange(candidate.measure, 32, 72)
+    isNumberInRange(candidate.measure, 32, 72) &&
+    typeof candidate.showTechnicalInfo === "boolean"
   );
 }
 

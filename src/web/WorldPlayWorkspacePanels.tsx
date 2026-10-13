@@ -260,6 +260,16 @@ export function ReadingPreferencesPopover({
           ×
         </button>
       </header>
+      <label className="world-reading-technical-toggle">
+        <input
+          type="checkbox"
+          checked={value.showTechnicalInfo}
+          onChange={(event) =>
+            onChange({ ...value, showTechnicalInfo: event.target.checked })
+          }
+        />
+        <span>{uiText("显示技术信息")}</span>
+      </label>
       <div className="world-density-picker">
         <span>{uiText("排版密度")}</span>
         <div>
