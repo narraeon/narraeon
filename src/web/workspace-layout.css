@@ -1322,3 +1322,55 @@
     display: none;
   }
 }
+
+.protagonist-template-scrim {
+  position: fixed;
+  z-index: 60;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgb(37 49 59 / 18%);
+}
+.protagonist-template-manager {
+  width: min(64rem, 100%);
+  max-height: 100%;
+  overflow: auto;
+  padding: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.protagonist-template-manager > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+.protagonist-template-columns {
+  display: grid;
+  grid-template-columns: minmax(10rem, 1fr) minmax(0, 3fr);
+  gap: 1rem;
+}
+.protagonist-template-columns nav,
+.protagonist-template-columns form,
+.protagonist-template-columns label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.protagonist-template-columns nav {
+  max-height: 65vh;
+  overflow: auto;
+}
+.protagonist-template-columns textarea {
+  min-height: 20rem;
+  resize: vertical;
+}
+@media (max-width: 600px) {
+  .protagonist-template-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .protagonist-template-columns nav {
+    max-height: 8rem;
+  }
+}

@@ -264,13 +264,15 @@ test("文件草稿阻止全局导航与快捷创建，放弃草稿后恢复", as
 test("切换创建来源时迟到的开场读取不能替换当前预览", async () => {
   let resolveFirst: (value: unknown) => void = () => undefined;
   const request = vi.fn((r: V1Request) =>
-    r.type === "content.read" && r.packageId === "first"
-      ? new Promise((resolve) => {
-          resolveFirst = resolve;
-        })
-      : Promise.resolve({
-          files: [{ path: "opening.md", contents: "当前开场" }],
-        }),
+    r.type === "protagonist-templates.read"
+      ? Promise.resolve({ templates: [] })
+      : r.type === "content.read" && r.packageId === "first"
+        ? new Promise((resolve) => {
+            resolveFirst = resolve;
+          })
+        : Promise.resolve({
+            files: [{ path: "opening.md", contents: "当前开场" }],
+          }),
   );
   const props = {
     client: { request } as unknown as RuntimeClient,

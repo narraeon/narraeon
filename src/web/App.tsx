@@ -1,3 +1,4 @@
+import type { ProtagonistTemplate } from "../protocol/protagonistTemplates.ts";
 import { PackageScriptPermissionControl } from "./PackageScriptPermissionControl.tsx";
 import { useEffect, useRef, useState } from "react";
 
@@ -82,6 +83,11 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const files = authoring.files;
   const packageDetail = authoring.target?.packageDetail ?? null;
   const [worldId, setWorldId] = useState("");
+  const [protagonistRevision, setProtagonistRevision] = useState<{
+    worldId: string;
+    message: string;
+    started: boolean;
+  } | null>(null);
   const [notice, setNotice] = useState(uiText("正在读取工作区…"));
   const [localeSaving, setLocaleSaving] = useState(false);
   const filesDirtyRef = useRef(filesDirty);
@@ -286,7 +292,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     setScreen("preview");
   }
 
-  async function createWorld(): Promise<void> {
+  async function createWorld(template?: ProtagonistTemplate): Promise<void> {
     if (
       creatingWorldRef.current ||
       filesDirtyRef.current ||
@@ -331,6 +337,15 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         packageId,
         model,
       });
+      if (template !== undefined)
+        setProtagonistRevision({
+          worldId: created.world.worldId,
+          message: uiText(
+            "请按下面的主角模板修改本世界的主角。\n\n- 找到本世界中代表玩家的主角文档，按模板改写姓名、外貌、背景、性格等相关内容。\n- 模板与本世界设定冲突的部分，保留模板的意图，按本世界的规则调整。\n- 只修改主角相关的内容，不修改其他人物、地点、规则或世界控制。\n- 如果本世界中找不到明确的主角文档，先在回复中说明并询问我，不要擅自新建。\n\n主角模板：\n\n{body}",
+            { body: template.body },
+          ),
+          started: false,
+        });
       await refresh();
       openWorld(created.world.worldId);
     } catch (error: unknown) {
@@ -460,6 +475,16 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     screen === "world" ? (
       <WorldPage
         showWorkspaceBack={false}
+        {...(protagonistRevision?.worldId === worldId
+          ? {
+              protagonistRevision,
+              onProtagonistRevisionStarted: () =>
+                setProtagonistRevision((current) =>
+                  current === null ? null : { ...current, started: true },
+                ),
+              onProtagonistRevisionFinished: () => setProtagonistRevision(null),
+            }
+          : {})}
         key={worldId}
         client={client}
         worldId={worldId}
@@ -669,14 +694,14 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         )}
         {screen === "create" && (
           <CreateWorldScreen
-            key={selected}
             client={client}
             packages={workspace.contentPackages}
             selectedId={selected}
             pending={creatingWorld}
             modelConfigured={workspace.model.configured}
             onSelect={setSelected}
-            onCreate={() => void createWorld()}
+            onCreate={(template) => void createWorld(template)}
+            onNavigationLockChange={setChildNavigationLocked}
             onEdit={() => navigate("content")}
             onConfigureModel={() => navigate("model")}
           />

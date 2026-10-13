@@ -55,6 +55,7 @@ interface SettingImprovementPanelProps {
   onNavigationLockChange?: (locked: boolean) => void;
   revisionActions?: {
     active?: boolean;
+    applyLabel?: string;
     changedFileCount: number;
     canApply: boolean;
     applying: boolean;
@@ -329,11 +330,16 @@ export function SettingImprovementPanel({
                 !revisionActions.canApply ||
                 revisionActions.applying
               }
+              className={
+                revisionActions.applyLabel === undefined
+                  ? undefined
+                  : "primary-button"
+              }
               onClick={() => void revisionActions.onApply()}
             >
               {revisionActions.applying
                 ? uiText("正在应用…")
-                : uiText("应用并解锁")}
+                : (revisionActions.applyLabel ?? uiText("应用并解锁"))}
             </button>
           )}
         </nav>

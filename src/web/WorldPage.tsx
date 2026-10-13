@@ -145,6 +145,9 @@ export function WorldPage({
   onOpenWorld,
   onNavigationLockChange,
   initialReadingPreferences = defaultAppReadingPreferences,
+  protagonistRevision,
+  onProtagonistRevisionStarted,
+  onProtagonistRevisionFinished,
 }: {
   client: WorldPageClient;
   worldId: string;
@@ -157,6 +160,9 @@ export function WorldPage({
   onOpenWorld: (worldId: string) => Promise<void>;
   onNavigationLockChange?: (locked: boolean) => void;
   initialReadingPreferences?: AppReadingPreferences;
+  protagonistRevision?: { message: string; started: boolean };
+  onProtagonistRevisionStarted?: () => void;
+  onProtagonistRevisionFinished?: () => void;
 }): React.JSX.Element {
   const [world, setWorld] = useState<WorldReadView | null>(null);
   // Decorations have their own lifetime: lightweight world reads intentionally
@@ -181,7 +187,9 @@ export function WorldPage({
   const [rightRailOpen, setRightRailOpen] = useState(false);
   const [rightRailTab, setRightRailTab] = useState<RightRailTab>("documents");
   const [readingOpen, setReadingOpen] = useState(false);
-  const [dialog, setDialog] = useState<WorldDialog>(null);
+  const [dialog, setDialog] = useState<WorldDialog>(
+    protagonistRevision === undefined ? null : "revision",
+  );
   const [readingPreferences, setReadingPreferences] = useState(
     initialReadingPreferences,
   );
@@ -219,6 +227,33 @@ export function WorldPage({
   const [controlPreview, setControlPreview] = useState<unknown>(null);
   const { workspace: revisionWorkspace, state: authoring } =
     useAuthoringWorkspace(client, "revision", worldId, dialog === "revision");
+  const protagonistMessageSent = useRef(false);
+  useEffect(() => {
+    if (
+      protagonistRevision === undefined ||
+      protagonistRevision.started ||
+      protagonistMessageSent.current ||
+      dialog !== "revision" ||
+      world === null ||
+      authoring.loading ||
+      authoring.target === null
+    )
+      return;
+    protagonistMessageSent.current = true;
+    onProtagonistRevisionStarted?.();
+    revisionWorkspace.startFresh();
+    void revisionWorkspace
+      .send(protagonistRevision.message)
+      .catch(() => undefined);
+  }, [
+    protagonistRevision,
+    dialog,
+    world,
+    authoring.loading,
+    authoring.target,
+    revisionWorkspace,
+    onProtagonistRevisionStarted,
+  ]);
   const revisionOverview =
     dialog === "revision" ? (authoring.target?.revision ?? null) : null;
   const revisionFiles = authoring.files;
@@ -870,6 +905,7 @@ export function WorldPage({
     const result = await revisionWorkspace.finish("apply");
     if (result === null) return;
     revisionWorkspace.close();
+    onProtagonistRevisionFinished?.();
     setDialog(null);
     if (result.changed) setForceFreshContext(true);
     try {
@@ -901,6 +937,7 @@ export function WorldPage({
     const result = await revisionWorkspace.finish("discard");
     if (result === null) return;
     revisionWorkspace.close();
+    onProtagonistRevisionFinished?.();
     setDialog(null);
     try {
       await refreshWorld(false);
@@ -1152,11 +1189,15 @@ export function WorldPage({
           setDialog(null);
           void refreshWorld(false);
         }}
-        {...(epoch?.locked === true ||
+        {...(protagonistRevision !== undefined ||
+        epoch?.locked === true ||
         (revisionOverview?.sealedEpochs.length ?? 0) > 0
           ? {
               revisionActions: {
                 active: epoch?.locked === true,
+                ...(protagonistRevision === undefined
+                  ? {}
+                  : { applyLabel: uiText("应用并开始游玩") }),
                 changedFileCount: epoch?.diff.length ?? 0,
                 canApply:
                   epoch?.locked === true &&
