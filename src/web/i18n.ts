@@ -1400,6 +1400,12 @@ const worldPageEnglishMessages: Record<string, string> = {
   当前文档: "Current documents",
   已提交叙事: "Committed narrative",
   世界管理: "World management",
+  导出故事: "Export story",
+  "导出 Markdown": "Export Markdown",
+  导出纯文本: "Export plain text",
+  "故事已导出。": "Story exported.",
+  "下载当前时间线的开场白、玩家原文与主持正文。":
+    "Download the opening, player inputs and narration on the current timeline.",
   世界游玩: "World play",
   本次模型调用进度: "Current model-call progress",
   "正在建立调用…": "Establishing the model call…",

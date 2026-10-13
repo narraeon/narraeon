@@ -25,6 +25,13 @@ export interface ModelBinding {
 
 export const v1Protocol = "narraeon.runtime/v1" as const;
 
+export type V1StoryExportFormat = "markdown" | "text";
+
+export interface V1StoryExport {
+  fileName: string;
+  content: string;
+}
+
 export interface V1Envelope {
   protocol: typeof v1Protocol;
   request: V1Request;
@@ -146,6 +153,11 @@ export type V1Request =
     }
   | { type: "world.read"; worldId: string }
   | { type: "world.rename"; worldId: string; name: string }
+  | {
+      type: "world.story.export";
+      worldId: string;
+      format: V1StoryExportFormat;
+    }
   | { type: "world.delete"; worldId: string }
   | { type: "artifacts.read"; worldId: string; channel?: string }
   | { type: "artifacts.debug"; worldId: string; operationId?: string }
@@ -921,6 +933,7 @@ const requiredFields: Record<
   },
   "world.read": { worldId: "string" },
   "world.rename": { worldId: "string", name: "string" },
+  "world.story.export": { worldId: "string", format: "string" },
   "world.delete": { worldId: "string" },
   "artifacts.read": { worldId: "string" },
   "artifacts.debug": { worldId: "string" },
@@ -1049,6 +1062,15 @@ function validateRequestFields(request: Record<string, unknown>): void {
         `${String(request.type)}.${field} is invalid`,
       );
   }
+  if (
+    request.type === "world.story.export" &&
+    request.format !== "markdown" &&
+    request.format !== "text"
+  )
+    throw new V1ProtocolError(
+      "invalid_request",
+      "world.story.export.format must be markdown or text",
+    );
   if (
     request.type === "world.extensions.set" &&
     !["on", "off", "default"].includes(String(request.value))
@@ -1420,6 +1442,7 @@ const requestTypes = new Set([
   "world.create",
   "world.read",
   "world.rename",
+  "world.story.export",
   "world.delete",
   "artifacts.read",
   "artifacts.debug",

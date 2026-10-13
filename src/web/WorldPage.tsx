@@ -26,6 +26,8 @@ import type {
   V1PlayTimelineItem,
   V1PlayTimelinePage,
   V1Request,
+  V1StoryExport,
+  V1StoryExportFormat,
   V1WorldRevisionEpochView,
 } from "../protocol/v1.ts";
 import {
@@ -79,6 +81,7 @@ type PendingAction =
   | "control-preview"
   | "control-apply"
   | "rename"
+  | "story-export"
   | "revise"
   | "derive";
 
@@ -1041,6 +1044,40 @@ export function WorldPage({
     }
   }
 
+  async function downloadStory(format: V1StoryExportFormat): Promise<void> {
+    if (pending !== null) return;
+    setPending("story-export");
+    setFeedback(null);
+    try {
+      const exported = (await client.request({
+        type: "world.story.export",
+        worldId,
+        format,
+      })) as V1StoryExport;
+      const url = URL.createObjectURL(
+        new Blob([exported.content], {
+          type:
+            format === "markdown"
+              ? "text/markdown;charset=utf-8"
+              : "text/plain;charset=utf-8",
+        }),
+      );
+      try {
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = exported.fileName;
+        link.click();
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+      setFeedback({ kind: "status", text: uiText("故事已导出。") });
+    } catch (reason: unknown) {
+      setFeedback({ kind: "error", text: errorMessage(reason) });
+    } finally {
+      setPending(null);
+    }
+  }
+
   async function renameCurrentWorld(): Promise<void> {
     const name = worldNameDraft.trim();
     if (name === "" || name === worldTitle) return;
@@ -1802,6 +1839,7 @@ export function WorldPage({
                 setControlPreview(null);
               }}
               onRename={() => void renameCurrentWorld()}
+              onExportStory={(format) => void downloadStory(format)}
               onDerive={() => void deriveWorld(world.head)}
               onPreviewControl={() => void previewControl()}
               onApplyControl={() => void applyControl()}
