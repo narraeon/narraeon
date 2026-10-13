@@ -1,5 +1,5 @@
 import { PackageScriptPermissionControl } from "./PackageScriptPermissionControl.tsx";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { maxPortableContentArchiveBytes } from "../protocol/contentTree.ts";
 import type { ModelConnectionLibraryView } from "../protocol/modelConnections.ts";
@@ -27,6 +27,11 @@ import { PromptPreviewScreen } from "./PromptPreviewScreen.tsx";
 import { SettingImprovementPanel } from "./SettingImprovementPanel.tsx";
 import { useAuthoringWorkspace } from "./useAuthoringWorkspace.ts";
 import { WorldPage } from "./WorldPage.tsx";
+import {
+  parseWorkspaceHash,
+  workspaceHash,
+  type WorkspaceLocation,
+} from "./WorkspaceLocation.ts";
 
 interface Workspace {
   preferences: AppPreferences;
@@ -64,6 +69,9 @@ type Screen = WorkspaceScreen;
 export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [screen, setScreen] = useState<Screen>("home");
+  const locationRef = useRef<WorkspaceLocation>({ screen: "home" });
+  const [selectedPresetId, setSelectedPresetId] = useState("");
+  const [presetPageVersion, setPresetPageVersion] = useState(0);
   const [selected, setSelected] = useState<string>("");
   const [creatingWorld, setCreatingWorld] = useState(false);
   const creatingWorldRef = useRef(false);
@@ -87,7 +95,125 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const filesDirtyRef = useRef(filesDirty);
   filesDirtyRef.current = filesDirty;
   const packageOpenRequest = useRef(0);
+  const navigationLockedRef = useRef(false);
   const navigationDraftLockedRef = useRef(false);
+  const navigationLocked =
+    filesDirty ||
+    authoring.view?.runStatus === "running" ||
+    playPresetDraftDirty ||
+    modelDraftDirty ||
+    importPending ||
+    creatingWorld ||
+    childNavigationLocked;
+  navigationLockedRef.current = navigationLocked;
+  navigationDraftLockedRef.current =
+    filesDirty ||
+    authoring.view?.runStatus === "running" ||
+    playPresetDraftDirty ||
+    modelDraftDirty ||
+    childNavigationLocked;
+
+  function switchLocation(next: WorkspaceLocation, mode?: "replace"): void {
+    const previous = locationRef.current;
+    const hash = workspaceHash(next);
+    packageOpenRequest.current += 1;
+    if (workspaceHash(previous) !== hash) authoringWorkspace.close();
+    locationRef.current = next;
+    if (next.screen === "content") setSelected(next.packageId);
+    if (next.screen === "world") setWorldId(next.worldId);
+    if (next.screen === "plays") setSelectedPresetId(next.presetId ?? "");
+    setScreen(next.screen);
+    if (mode === "replace" || previous.screen === next.screen)
+      window.history.replaceState(null, "", hash);
+    else window.history.pushState(null, "", hash);
+  }
+
+  function preserveLocation(): void {
+    packageOpenRequest.current += 1;
+    window.history.pushState(null, "", workspaceHash(locationRef.current));
+    setNotice(uiText("已保留当前页面的未保存修改，请保存或放弃后再切换。"));
+  }
+
+  const restoreAddress = useEffectEvent((next: Workspace) => {
+    const target = parseWorkspaceHash(window.location.hash);
+    let failure = "";
+    if (target === null) failure = uiText("找不到该页面。");
+    else if (
+      target.screen === "world" &&
+      !next.worlds.some(({ worldId }) => worldId === target.worldId)
+    )
+      failure = uiText("找不到该世界。");
+    else if (
+      target.screen === "content" &&
+      !next.contentPackages.some(({ localId }) => localId === target.packageId)
+    )
+      failure = uiText("找不到该内容包。");
+    else if (
+      target.screen === "plays" &&
+      target.presetId !== undefined &&
+      !next.playPresets.presets.some(({ id }) => id === target.presetId)
+    )
+      failure = uiText("找不到该预设。");
+    if (failure || target === null) {
+      switchLocation({ screen: "home" }, "replace");
+      setNotice(failure);
+    } else if (target.screen === "content") {
+      void openPackage(target.packageId, "replace");
+    } else if (target.screen === "plays") {
+      const presetId = target.presetId ?? next.playPresets.currentPresetId;
+      const current = locationRef.current;
+      if (current.screen === "plays" && current.presetId !== presetId)
+        setPresetPageVersion((version) => version + 1);
+      switchLocation(
+        { screen: "plays", ...(presetId ? { presetId } : {}) },
+        "replace",
+      );
+    } else if (target.screen === "preview" && !next.model.configured) {
+      switchLocation({ screen: "model" }, "replace");
+      setNotice(uiText("请先保存并启用一份模型配置。"));
+    } else {
+      if (target.screen === "preview") setPromptPreviewPlayPreset(null);
+      switchLocation(target, "replace");
+    }
+  });
+
+  const restoreBrowserAddress = useEffectEvent(() => {
+    if (navigationLockedRef.current || creatingWorldRef.current) {
+      preserveLocation();
+      return;
+    }
+    // Recheck local identities: another tab may have deleted the target.
+    const version = ++packageOpenRequest.current;
+    if (workspace === null) return;
+    const hash = window.location.hash;
+    void client.request<Workspace>({ type: "workspace.read" }).then(
+      (next) => {
+        if (
+          version !== packageOpenRequest.current ||
+          window.location.hash !== hash
+        )
+          return;
+        if (navigationLockedRef.current || creatingWorldRef.current) {
+          preserveLocation();
+          return;
+        }
+        setWebLocale(next.preferences.locale);
+        setWorkspace(next);
+        restoreAddress(next);
+      },
+      (error: unknown) => {
+        if (version !== packageOpenRequest.current) return;
+        window.history.pushState(null, "", workspaceHash(locationRef.current));
+        report(error);
+      },
+    );
+  });
+
+  useEffect(() => {
+    const onPopState = () => restoreBrowserAddress();
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
   async function refresh(): Promise<void> {
     const next = await client.request<Workspace>({ type: "workspace.read" });
     setWebLocale(next.preferences.locale);
@@ -129,6 +255,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         setWorkspace(next);
         setSelected(next.contentPackages[0]?.localId ?? "");
         setNotice("");
+        restoreAddress(next);
       })
       .catch((error: unknown) => {
         if (active)
@@ -138,6 +265,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       });
     return () => {
       active = false;
+      packageOpenRequest.current += 1;
     };
   }, [client]);
 
@@ -159,7 +287,10 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     }
   }
 
-  async function openPackage(packageId: string): Promise<void> {
+  async function openPackage(
+    packageId: string,
+    mode?: "replace",
+  ): Promise<void> {
     const requestVersion = packageOpenRequest.current + 1;
     packageOpenRequest.current = requestVersion;
     try {
@@ -168,17 +299,29 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         packageId,
       });
       if (packageOpenRequest.current !== requestVersion) return;
-      if (navigationDraftLockedRef.current) {
-        setNotice(uiText("已保留当前页面的未保存修改，请保存或放弃后再切换。"));
+      if (
+        navigationDraftLockedRef.current ||
+        (mode === "replace" &&
+          (navigationLockedRef.current || creatingWorldRef.current))
+      ) {
+        if (mode === "replace") preserveLocation();
+        else
+          setNotice(
+            uiText("已保留当前页面的未保存修改，请保存或放弃后再切换。"),
+          );
         return;
       }
-      authoringWorkspace.close();
-      setSelected(packageId);
-      if (packageId === selected && screen === "content")
-        void authoringWorkspace.open();
-      setScreen("content");
+      switchLocation({ screen: "content", packageId }, mode);
     } catch (error: unknown) {
-      if (packageOpenRequest.current === requestVersion) report(error);
+      if (packageOpenRequest.current === requestVersion) {
+        if (mode === "replace")
+          window.history.replaceState(
+            null,
+            "",
+            workspaceHash(locationRef.current),
+          );
+        report(error);
+      }
     }
   }
 
@@ -201,8 +344,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     try {
       await client.request({ type, packageId });
       await refresh();
-      authoringWorkspace.close();
-      setScreen("home");
+      switchLocation({ screen: "home" });
     } catch (error: unknown) {
       report(error);
     }
@@ -278,12 +420,11 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   }): void {
     setPromptPreviewPlayPreset(target ?? null);
     if (workspace?.model.configured !== true) {
-      setScreen("model");
+      switchLocation({ screen: "model" });
       setNotice(uiText("请先保存并启用一份模型配置。"));
       return;
     }
-    authoringWorkspace.close();
-    setScreen("preview");
+    switchLocation({ screen: "preview" });
   }
 
   async function createWorld(): Promise<void> {
@@ -305,7 +446,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     )
       return;
     if (workspace?.model.configured !== true) {
-      setScreen("model");
+      switchLocation({ screen: "model" });
       setNotice(uiText("请先保存并启用一份模型配置。"));
       return;
     }
@@ -361,10 +502,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   }
 
   function openWorld(id: string): void {
-    packageOpenRequest.current += 1;
-    authoringWorkspace.close();
-    setWorldId(id);
-    setScreen("world");
+    switchLocation({ screen: "world", worldId: id });
   }
 
   async function renameWorld(worldId: string, name: string): Promise<void> {
@@ -416,7 +554,6 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const selectedPackageDetail =
     packageDetail?.localId === selected ? packageDetail : null;
   const displayedImprovementView = authoring.view;
-  const improvementActive = displayedImprovementView?.runStatus === "running";
   const selectedWorld = workspace.worlds.find(
     (world) => world.worldId === worldId,
   );
@@ -428,20 +565,6 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       ({ id }) => id === workspace.playPresets.currentPresetId,
     )?.name ?? null;
 
-  const navigationLocked =
-    filesDirty ||
-    improvementActive ||
-    playPresetDraftDirty ||
-    modelDraftDirty ||
-    importPending ||
-    creatingWorld ||
-    childNavigationLocked;
-  navigationDraftLockedRef.current =
-    filesDirty ||
-    playPresetDraftDirty ||
-    modelDraftDirty ||
-    childNavigationLocked ||
-    improvementActive;
   function navigate(next: Screen): void {
     if (navigationLocked) return;
     if (next !== "content" || next === screen) packageOpenRequest.current += 1;
@@ -450,9 +573,20 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       if (selectedPackage === undefined) void createPackage();
       else void openPackage(selectedPackage.localId);
     } else if (next === "preview") openPromptPreview();
+    else if (next === "plays")
+      switchLocation({
+        screen: "plays",
+        ...(selectedPresetId || workspace?.playPresets.currentPresetId
+          ? {
+              presetId:
+                selectedPresetId ||
+                (workspace?.playPresets.currentPresetId ?? ""),
+            }
+          : {}),
+      });
+    else if (next === "world") openWorld(worldId);
     else {
-      authoringWorkspace.close();
-      setScreen(next);
+      switchLocation({ screen: next });
     }
   }
 
@@ -474,7 +608,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         }
         onOpenWorld={async (nextWorldId) => {
           await refresh();
-          setWorldId(nextWorldId);
+          openWorld(nextWorldId);
         }}
       />
     ) : null;
@@ -570,7 +704,6 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         {worldContent}
         {authoringContent}
         {screen !== "content" &&
-          screen !== "world" &&
           (notice || workspace.storageNotices.length > 0) && (
             <div className="workspace-feedback">
               {notice && (
@@ -628,8 +761,16 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         )}
         {screen === "plays" && (
           <PlayPresetScreen
+            key={presetPageVersion}
             client={client}
             initialLibrary={workspace.playPresets}
+            initialSelectedId={selectedPresetId}
+            onSelectionChange={(presetId) =>
+              switchLocation(
+                { screen: "plays", ...(presetId ? { presetId } : {}) },
+                "replace",
+              )
+            }
             recommendedTemplates={firstPartyPlayPresetTemplatesForLocale(
               workspace.preferences.locale,
             )}

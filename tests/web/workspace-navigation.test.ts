@@ -23,6 +23,126 @@ import { defaultOrderedAuthorPrompts } from "../../src/shared/ordered-author-pro
 
 afterEach(cleanup);
 
+test("启动恢复指定内容包，读取地址不会创建新的内容包", async () => {
+  window.history.replaceState(null, "", "#/content/chosen");
+  const { client, request } = fixture();
+  render(createElement(App, { client }));
+  await screen.findByRole("heading", { name: "当前创作 · AI 设定完善" });
+  expect(window.location.hash).toBe("#/content/chosen");
+  expect(request.mock.calls.some(([r]) => r.type === "content.create")).toBe(
+    false,
+  );
+});
+
+test.each([
+  ["#/content", "找不到该内容包。"],
+  ["#/content/deleted", "找不到该内容包。"],
+  ["#/content/%E0%A4%A", "找不到该内容包。"],
+  ["#/world/deleted", "找不到该世界。"],
+  ["#/presets/deleted", "找不到该预设。"],
+  ["#/unknown", "找不到该页面。"],
+])("无效书签 %s 返回首页并显示通知", async (hash, message) => {
+  window.history.replaceState(null, "", hash);
+  const { client, request } = fixture();
+  render(createElement(App, { client }));
+  await screen.findByRole("heading", { name: "世界工作区" });
+  expect(screen.getByText(message)).toBeTruthy();
+  expect(window.location.hash).toBe("#/");
+  expect(request.mock.calls.some(([r]) => r.type === "content.create")).toBe(
+    false,
+  );
+});
+
+test("后退立即恢复地址并保留模型草稿", async () => {
+  const { client, request } = fixture();
+  render(createElement(App, { client }));
+  await screen.findByRole("heading", { name: "世界工作区" });
+  fireEvent.click(screen.getByRole("button", { name: "模型连接" }));
+  expect(window.location.hash).toBe("#/models");
+  fireEvent.change(screen.getByLabelText("配置名称"), {
+    target: { value: "未保存的模型名称" },
+  });
+  const calls = request.mock.calls.length;
+  window.history.replaceState(null, "", "#/");
+  fireEvent(window, new PopStateEvent("popstate"));
+  expect(window.location.hash).toBe("#/models");
+  expect(
+    screen.getByText("已保留当前页面的未保存修改，请保存或放弃后再切换。"),
+  ).toBeTruthy();
+  expect(screen.getByLabelText<HTMLInputElement>("配置名称").value).toBe(
+    "未保存的模型名称",
+  );
+  expect(request.mock.calls.length).toBe(calls);
+});
+
+test("世界创建进行中时后退保持来源页面和地址", async () => {
+  window.history.replaceState(null, "", "#/create");
+  const { client, request } = fixture();
+  const original = request.getMockImplementation()!;
+  let rejectCreation: (error: Error) => void = () => undefined;
+  request.mockImplementation((r) =>
+    r.type === "world.create"
+      ? new Promise((_resolve, reject) => {
+          rejectCreation = reject;
+        })
+      : original(r),
+  );
+  render(createElement(App, { client }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "从当前内容包创建" }),
+  );
+  await waitFor(() =>
+    expect(request.mock.calls.some(([r]) => r.type === "world.create")).toBe(
+      true,
+    ),
+  );
+  window.history.replaceState(null, "", "#/");
+  fireEvent(window, new PopStateEvent("popstate"));
+  expect(window.location.hash).toBe("#/create");
+  expect(
+    screen.getByText("已保留当前页面的未保存修改，请保存或放弃后再切换。"),
+  ).toBeTruthy();
+  await act(async () => {
+    rejectCreation(new Error("已结束创建测试"));
+    await Promise.resolve();
+  });
+  await screen.findByText("已结束创建测试");
+});
+
+test("较晚的内容读取不能覆盖更新的浏览器地址", async () => {
+  const { client, request } = fixture();
+  const original = request.getMockImplementation()!;
+  let finish: (value: unknown) => void = () => undefined;
+  request.mockImplementation((r) =>
+    r.type === "content.read"
+      ? new Promise((resolve) => {
+          finish = resolve;
+        })
+      : original(r),
+  );
+  render(createElement(App, { client }));
+  await screen.findByRole("heading", { name: "世界工作区" });
+  window.history.replaceState(null, "", "#/content/chosen");
+  fireEvent(window, new PopStateEvent("popstate"));
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith({
+      type: "content.read",
+      packageId: "chosen",
+    }),
+  );
+  window.history.replaceState(null, "", "#/models");
+  fireEvent(window, new PopStateEvent("popstate"));
+  await screen.findByLabelText("配置名称");
+  await act(async () => {
+    finish({ localId: "chosen", files: [], issues: [] });
+    await Promise.resolve();
+  });
+  expect(window.location.hash).toBe("#/models");
+  expect(
+    screen.queryByRole("heading", { name: "当前创作 · AI 设定完善" }),
+  ).toBeNull();
+});
+
 test.each(["model", "preset"])(
   "模型切换与预设删除提示可以各自关闭（先关闭 %s）",
   async (first) => {
