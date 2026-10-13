@@ -32,6 +32,7 @@ test("app preference requests accept only supported locales", () => {
           lineHeight: 1.8,
           letterSpacing: 0.02,
           measure: 72,
+          showTechnicalInfo: true,
         },
       },
     }).request,
@@ -43,6 +44,7 @@ test("app preference requests accept only supported locales", () => {
       lineHeight: 1.8,
       letterSpacing: 0.02,
       measure: 72,
+      showTechnicalInfo: true,
     },
   });
   expect(() =>
@@ -56,8 +58,31 @@ test("app preference requests accept only supported locales", () => {
           lineHeight: 1.8,
           letterSpacing: 0.02,
           measure: 74,
+          showTechnicalInfo: false,
         },
       },
     }),
   ).toThrow("preferences.save.reading is invalid");
 });
+
+test.each(["true", 1, null, undefined])(
+  "technical information preference requires a boolean: %j",
+  (showTechnicalInfo) => {
+    expect(() =>
+      parseV1Envelope({
+        protocol: v1Protocol,
+        request: {
+          type: "preferences.save",
+          reading: {
+            density: "compact",
+            fontSize: 17,
+            lineHeight: 1.7,
+            letterSpacing: 0.01,
+            measure: 48,
+            showTechnicalInfo,
+          },
+        },
+      }),
+    ).toThrow("preferences.save.reading is invalid");
+  },
+);

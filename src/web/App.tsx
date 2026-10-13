@@ -637,6 +637,16 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         initialReadingPreferences={
           workspace.preferences.reading ?? defaultAppReadingPreferences
         }
+        onReadingPreferencesChange={(reading) =>
+          setWorkspace((current) =>
+            current === null
+              ? null
+              : {
+                  ...current,
+                  preferences: { ...current.preferences, reading },
+                },
+          )
+        }
         onOpenWorld={async (nextWorldId) => {
           await refresh();
           openWorld(nextWorldId);

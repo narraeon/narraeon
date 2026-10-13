@@ -9,7 +9,7 @@ let providerUrl = "";
 const responses: (string | { checkpoint: true })[] = [];
 const providerRequests: string[] = [];
 
-test.setTimeout(60_000);
+test.setTimeout(90_000);
 
 test.use({ runtimeScope: "edit-history" });
 
@@ -31,7 +31,7 @@ test.beforeAll(async () => {
       response.writeHead(200, { "content-type": "text/event-stream" });
       response.end(
         [
-          `data: ${JSON.stringify({ choices: [{ delta: typeof text === "string" ? { content: text } : { tool_calls: [{ index: 0, id: "checkpoint-call", type: "function", function: { name: "world_checkpoint", arguments: "{}" } }] } }] })}\n\n`,
+          `data: ${JSON.stringify({ choices: [{ delta: typeof text === "string" ? { content: text } : { tool_calls: [{ index: 0, id: `checkpoint-call-${providerRequests.length}`, type: "function", function: { name: "world_checkpoint", arguments: "{}" } }] } }] })}\n\n`,
           `data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 120, completion_tokens: 20 } })}\n\n`,
           "data: [DONE]\n\n",
         ].join(""),
@@ -218,7 +218,7 @@ test("修改旧玩家提交可另存为全新上下文，创建分叉才生成�
   );
 });
 
-test("检查点建议在叙事后出现，点击只选择下一条消息的新上下文", async ({
+test("故事模式开关持久化，最新检查点自动预选且取消后只由新检查点重选", async ({
   page,
 }) => {
   await page.goto("/");
@@ -269,12 +269,80 @@ test("检查点建议在叙事后出现，点击只选择下一条消息的新�
   await page
     .getByRole("button", { name: "从全新上下文发送行动", exact: true })
     .click();
-  await expect(page.getByText("Alex 把整理好的书放回架上。")).toBeVisible();
-  const note = page.locator(".play-checkpoint-note");
-  await expect(note).toContainText("AI 建议在此开启全新上下文");
+  await expect(page.getByText("Alex 把整理好的书放回架上。")).toBeVisible({
+    timeout: 20_000,
+  });
+  const story = page.getByLabel("故事时间线");
+  await expect(page.locator(".world-reader-page")).toHaveClass(
+    /is-story-mode/u,
+  );
+  await expect(story.locator(".world-timeline-trace")).toHaveCount(0);
+  await expect(story.locator(".play-checkpoint-marker")).toHaveCount(0);
+  await expect(story.getByRole("separator")).toHaveText("");
+  await expect(
+    page.getByText("下一条消息将开启全新上下文", { exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".play-checkpoint-note")).toHaveCount(0);
+  await expect(page.locator(".world-feedback.status")).toHaveCount(0);
+  const player = story
+    .locator(".call-chain-player")
+    .filter({ hasText: "整理这段事情。" });
+  await page.mouse.move(0, 0);
+  await expect(player.getByRole("button", { name: "修改" })).toHaveCSS(
+    "opacity",
+    "0",
+  );
+  await player.locator("article").hover();
+  await expect(player.getByRole("button", { name: "修改" })).toHaveCSS(
+    "opacity",
+    "1",
+  );
+  await page.mouse.move(0, 0);
+  await player.getByRole("button", { name: "修改" }).focus();
+  await expect(player.getByRole("button", { name: "修改" })).toHaveCSS(
+    "opacity",
+    "1",
+  );
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByLabel("你的行动").focus();
+  await expect(player.getByRole("button", { name: "修改" })).toHaveCSS(
+    "opacity",
+    "1",
+  );
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.getByRole("button", { name: "阅读设置" }).click();
+  const toggle = page.getByRole("checkbox", { name: "显示技术信息" });
+  await expect(toggle).not.toBeChecked();
+  const saved = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/runtime/v1") &&
+      (response.request().postDataJSON() as { request?: { type?: string } })
+        .request?.type === "preferences.save",
+  );
+  await toggle.check();
+  expect((await saved).ok()).toBe(true);
+  await expect(story.locator(".world-timeline-trace")).toHaveCount(1);
+  await expect(story.locator(".play-checkpoint-marker")).toHaveText("检查点");
+  await expect(
+    story.getByRole("button", { name: "下一条消息使用全新上下文" }),
+  ).toHaveCount(0);
+  await page.reload();
+  await page
+    .getByRole("button", { name: "打开世界：Checkpoint world", exact: true })
+    .click();
+  await expect(page.locator(".world-reader-page")).toHaveClass(
+    /is-detailed-mode/u,
+  );
+  await page.getByRole("button", { name: "阅读设置" }).click();
+  await expect(
+    page.getByRole("checkbox", { name: "显示技术信息" }),
+  ).toBeChecked();
+  await page
+    .getByLabel("阅读设置")
+    .getByRole("button", { name: "关闭" })
+    .click();
   const count = providerRequests.length;
-  await note.getByRole("button", { name: "下一条消息使用全新上下文" }).click();
-  await expect(page.getByLabel("你的行动")).toBeFocused();
+
   await expect(
     page.getByRole("button", { name: "从全新上下文发送行动", exact: true }),
   ).toBeVisible();
@@ -291,6 +359,28 @@ test("检查点建议在叙事后出现，点击只选择下一条消息的新�
     page.getByText("世界已在故事外修订；下一次行动会从新上下文开始。"),
   ).toHaveCount(0);
   expect(providerRequests).toHaveLength(count);
+  await page.getByRole("button", { name: "返回工作区" }).click();
+  await page
+    .getByRole("button", { name: "打开世界：Checkpoint world", exact: true })
+    .click();
+  await expect(
+    page.getByText("下一条消息将开启全新上下文", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "追加行动", exact: true }),
+  ).toBeVisible();
+  await page.reload();
+  await page
+    .getByRole("button", { name: "打开世界：Checkpoint world", exact: true })
+    .click();
+  await expect(
+    page.getByText("下一条消息将开启全新上下文", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "追加行动", exact: true }),
+  ).toBeVisible();
+  expect(providerRequests).toHaveLength(count);
+  await page.getByLabel("你的行动").fill("保留这份行动草稿。");
   responses.push("Alex 点头，继续刚才的话题。");
   const appendStream = page.waitForResponse(
     (response) =>
@@ -299,13 +389,27 @@ test("检查点建议在叙事后出现，点击只选择下一条消息的新�
         .request?.type === "play.chain.append",
   );
   await page.getByLabel("你的行动").press("Enter");
-  await expect(page.getByText("Alex 点头，继续刚才的话题。")).toBeVisible();
+  await expect(page.getByText("Alex 点头，继续刚才的话题。")).toBeVisible({
+    timeout: 20_000,
+  });
   expect(await (await appendStream).finished()).toBeNull();
   const appended = JSON.parse(providerRequests.at(-1)!) as {
     messages: { role: string; content: unknown }[];
   };
   expect(appended.messages.some(({ role }) => role === "tool")).toBe(true);
-  await note.getByRole("button", { name: "下一条消息使用全新上下文" }).click();
+  await expect(
+    page.getByText("下一条消息将开启全新上下文", { exact: true }),
+  ).toHaveCount(0);
+  responses.push({ checkpoint: true }, "新一段整理完成。");
+  await page.getByLabel("你的行动").fill("再整理一段。");
+  await page.getByRole("button", { name: "追加行动", exact: true }).click();
+  await expect(page.getByText("新一段整理完成。", { exact: true })).toBeVisible(
+    { timeout: 20_000 },
+  );
+  await expect(
+    page.getByText("下一条消息将开启全新上下文", { exact: true }),
+  ).toBeVisible();
+  await expect(story.locator(".play-checkpoint-marker")).toHaveCount(2);
   responses.push("你们走进走廊。");
   const finalStream = page.waitForResponse(
     (response) =>
@@ -317,7 +421,9 @@ test("检查点建议在叙事后出现，点击只选择下一条消息的新�
   await page
     .getByRole("button", { name: "从全新上下文发送行动", exact: true })
     .click();
-  await expect(page.getByText("你们走进走廊。")).toBeVisible();
+  await expect(page.getByText("你们走进走廊。")).toBeVisible({
+    timeout: 20_000,
+  });
   // Visible streamed text precedes durable settlement. Finish this request
   // before another suite removes the shared test world's files.
   expect(await (await finalStream).finished()).toBeNull();
@@ -328,6 +434,37 @@ test("检查点建议在叙事后出现，点击只选择下一条消息的新�
   expect(sent.messages.filter(({ role }) => role === "tool")).toEqual([
     expect.objectContaining({ tool_call_id: "runtime_initial_world_context" }),
   ]);
+  await expect(
+    page.getByText("下一条消息将开启全新上下文", { exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "阅读设置" }).click();
+  const savedStory = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/runtime/v1") &&
+      (response.request().postDataJSON() as { request?: { type?: string } })
+        .request?.type === "preferences.save",
+  );
+  await page.getByRole("checkbox", { name: "显示技术信息" }).uncheck();
+  expect((await savedStory).ok()).toBe(true);
+  await expect(story.locator(".play-checkpoint-marker")).toHaveCount(0);
+  await page.reload();
+  await page
+    .getByRole("button", { name: "打开世界：Checkpoint world", exact: true })
+    .click();
+  await expect(page.locator(".world-reader-page")).toHaveClass(
+    /is-story-mode/u,
+  );
+  await expect(
+    page.getByText("下一条消息将开启全新上下文", { exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "阅读设置" }).click();
+  await expect(
+    page.getByRole("checkbox", { name: "显示技术信息" }),
+  ).not.toBeChecked();
+  await page.locator(".workspace-locale-picker select").selectOption("en");
+  await expect(
+    page.getByRole("checkbox", { name: "Show technical information" }),
+  ).not.toBeChecked();
 });
 
 async function runtime<T = unknown>(

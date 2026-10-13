@@ -13,7 +13,7 @@ import {
   within,
 } from "@testing-library/react";
 import { createElement } from "react";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import type {
   ContentTreeFile,
@@ -30,12 +30,26 @@ import type {
 } from "../../src/protocol/v1.ts";
 import { projectUncoveredPlayerViews } from "../../src/web/PlayerViewFallback.ts";
 import type { FrontendArtifactProjection } from "../../src/web/ArtifactExtensionHost.tsx";
+import {
+  defaultAppReadingPreferences,
+  type AppReadingPreferences,
+} from "../../src/protocol/appPreferences.ts";
 import { WorldPage } from "../../src/web/WorldPage.tsx";
 import { App } from "../../src/web/App.tsx";
 import type { RuntimeClient } from "../../src/web/runtimeClient.ts";
 
+beforeEach(() => {
+  // Node's native localStorage can shadow the browser storage in jsdom.
+  const browser = globalThis as unknown as {
+    jsdom: { window: { localStorage: Storage } };
+  };
+  vi.stubGlobal("localStorage", browser.jsdom.window.localStorage);
+  window.localStorage.clear();
+});
+
 afterEach(() => {
   cleanup();
+  window.localStorage.clear();
   vi.unstubAllGlobals();
 });
 
@@ -327,6 +341,282 @@ describe("世界游玩页面", () => {
     },
   );
 
+  test("默认故事模式隐藏技术信息，切换详细模式即时显示且不提前读取详情", async () => {
+    const chain = playChainView("mode-chain", "send", "我推开门。");
+    const client = {
+      request: vi.fn((request: V1Request): Promise<unknown> => {
+        if (request.type === "world.read")
+          return Promise.resolve(worldView(chain));
+        if (request.type === "world.play-decorations.read")
+          return Promise.resolve(
+            playDecorations("正文附件", "world-one", "commit:3"),
+          );
+        if (request.type === "artifacts.debug") return Promise.resolve([]);
+        if (request.type === "preferences.save")
+          return Promise.resolve({ locale: "zh-CN", reading: request.reading });
+        return Promise.reject(new Error(`Unexpected request: ${request.type}`));
+      }),
+    };
+    const rendered = renderWorld(client);
+    await screen.findByText("Alex opens the door and lets you go first.");
+    const story = screen.getByRole("article", { name: "故事时间线" });
+    expect(within(story).getByText("我推开门。")).toBeTruthy();
+    expect(within(story).queryByText("AI 响应")).toBeNull();
+    expect(within(story).queryByText("全新上下文")).toBeNull();
+    expect(within(story).queryByText("本段调用详情")).toBeNull();
+    expect(within(story).queryByText("本上下文已提交的世界变化")).toBeNull();
+    expect(within(story).getByRole("separator").textContent).toBe("");
+    expect(
+      screen.queryByText(
+        "正常发送和空输入续写使用最新预设；本轮工具执行期间保持不变。",
+      ),
+    ).toBeNull();
+    await screen.findByTitle("panel");
+    fireEvent.click(screen.getByRole("button", { name: "此刻" }));
+    expect(screen.getByText("白色运动背心")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "阅读设置" }));
+    const toggle = screen.getByRole<HTMLInputElement>("checkbox", {
+      name: "显示技术信息",
+    });
+    expect(toggle.checked).toBe(false);
+    fireEvent.click(toggle);
+    expect(within(story).getByText("AI 响应")).toBeTruthy();
+    expect(within(story).getByText("全新上下文")).toBeTruthy();
+    expect(within(story).getAllByText("已完成 · 第 1 次派发")).toHaveLength(2);
+    expect(within(story).getByText("本段调用详情")).toBeTruthy();
+    expect(within(story).getByText("本上下文已提交的世界变化")).toBeTruthy();
+    expect(within(story).getByText("default")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "正常发送和空输入续写使用最新预设；本轮工具执行期间保持不变。",
+      ),
+    ).toBeTruthy();
+    expect(rendered.container.querySelector(".is-detailed-mode")).toBeTruthy();
+    await waitFor(() =>
+      expect(client.request).toHaveBeenCalledWith({
+        type: "preferences.save",
+        reading: { ...defaultAppReadingPreferences, showTechnicalInfo: true },
+      }),
+    );
+    expect(
+      client.request.mock.calls.filter(
+        ([request]) => request.type === "play.timeline.detail",
+      ),
+    ).toHaveLength(0);
+    fireEvent.click(toggle);
+    expect(within(story).queryByText("本段调用详情")).toBeNull();
+    expect(screen.getByTitle("panel")).toBeTruthy();
+  });
+
+  test.each([false, true])(
+    "两种模式保留中断、取消和待修复状态（技术信息=%s）",
+    async (showTechnicalInfo) => {
+      const chain = interruptedChainView();
+      chain.events.push(
+        { id: 4, kind: "cancellation", message: "玩家取消了模型生成。" },
+        { id: 5, kind: "failure", message: "已提交、待修复" },
+        {
+          id: 6,
+          kind: "followup",
+          followupId: "failed-panel",
+          displayName: "辅助面板",
+          text: "",
+          toolCalls: [],
+          failure: "后置请求失败",
+          usage: emptyAggregatedModelUsage(),
+        },
+      );
+      const client = {
+        request: vi.fn((request: V1Request): Promise<unknown> => {
+          if (request.type === "world.read")
+            return Promise.resolve(worldView(chain));
+          if (request.type === "artifacts.debug") return Promise.resolve([]);
+          return Promise.reject(
+            new Error(`Unexpected request: ${request.type}`),
+          );
+        }),
+      };
+      renderWorld(client, undefined, {
+        initialReadingPreferences: {
+          ...defaultAppReadingPreferences,
+          showTechnicalInfo,
+        },
+      });
+      await screen.findByRole("heading", { name: "宿舍世界" });
+      const story = screen.getByRole("article", { name: "故事时间线" });
+      expect(
+        within(story).getByText("The Provider stream disconnected midway."),
+      ).toBeTruthy();
+      expect(within(story).getByText("生成已取消")).toBeTruthy();
+      expect(within(story).getByText("已提交、待修复")).toBeTruthy();
+      expect(within(story).getAllByText(/辅助面板/u).length).toBeGreaterThan(0);
+      expect(within(story).queryAllByLabelText("Token 用量明细")).toHaveLength(
+        showTechnicalInfo ? 2 : 0,
+      );
+    },
+  );
+
+  test("故事模式保留流式正文和待定标记，隐藏派发与返回推理", async () => {
+    const chain = playChainView("stream-mode", "send", "打开门。");
+    const assistant = chain.events.find((event) => event.kind === "assistant")!;
+    if (assistant.kind !== "assistant") throw new Error("Missing assistant");
+    delete assistant.committedHead;
+    assistant.text = "Alex 正在推门";
+    assistant.status = "streaming";
+    assistant.responseKind = "pending";
+    chain.status = "running";
+    const client = {
+      request: vi.fn((request: V1Request): Promise<unknown> => {
+        if (request.type === "world.read")
+          return Promise.resolve(worldView(chain));
+        if (request.type === "artifacts.debug") return Promise.resolve([]);
+        return Promise.reject(new Error(`Unexpected request: ${request.type}`));
+      }),
+    };
+    renderWorld(client);
+    await screen.findByText("Alex 正在推门");
+    expect(screen.getByText("待定输出；响应完成前不会进入故事")).toBeTruthy();
+    expect(screen.queryByText("接收中 · 第 1 次派发")).toBeNull();
+    expect(
+      screen.queryByText("Provider 返回推理（不等同隐藏思维链）"),
+    ).toBeNull();
+    expect(screen.getByRole("button", { name: "取消生成" })).toBeTruthy();
+  });
+
+  test("只有最新已提交正文检查点自动预选，取消后重复观察和模式切换不重选，新检查点再预选", async () => {
+    let receive: Parameters<ObserveConversation>[1] | undefined;
+    const chain = playChainView("checkpoint-chain", "send", "我整理书架。");
+    const checkpoint = chain.events.find(
+      (event) => event.kind === "assistant",
+    )!;
+    if (checkpoint.kind !== "assistant") throw new Error("Missing narrative");
+    checkpoint.checkpoint = true;
+    const laterNarrative = structuredClone(checkpoint);
+    delete laterNarrative.checkpoint;
+    chain.events.push({
+      ...laterNarrative,
+      id: 5,
+      text: "后来又聊了一会。",
+      committedHead: "commit:4",
+    });
+    chain.parentHead = "commit:4";
+    const client = {
+      observeConversation: ((_target, callback) => {
+        receive = callback;
+        return () => {
+          receive = undefined;
+        };
+      }) satisfies ObserveConversation,
+      request: vi.fn((request: V1Request): Promise<unknown> => {
+        if (request.type === "world.read")
+          return Promise.resolve(worldView(chain));
+        if (request.type === "artifacts.debug") return Promise.resolve([]);
+        if (request.type === "preferences.save")
+          return Promise.resolve({ reading: request.reading });
+        return Promise.reject(new Error(`Unexpected request: ${request.type}`));
+      }),
+    };
+    renderWorld(client);
+    await screen.findByText("后来又聊了一会。");
+    expect(screen.queryByText("下一条消息将开启全新上下文")).toBeNull();
+    expect(screen.queryByText("检查点")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "阅读设置" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "显示技术信息" }));
+    expect(screen.getAllByText("检查点")).toHaveLength(1);
+    expect(screen.queryByText("AI 建议在此开启全新上下文")).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "下一条消息使用全新上下文" }),
+    ).toBeNull();
+    chain.events.push({
+      ...checkpoint,
+      id: 6,
+      text: "新一段整理完成。",
+      committedHead: "commit:5",
+    });
+    chain.parentHead = "commit:5";
+    await act(async () => {
+      await receive?.({ kind: "play", value: structuredClone(chain) }, true);
+    });
+    expect(screen.getByText("下一条消息将开启全新上下文")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("你的行动"), {
+      target: { value: "保留草稿" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "取消全新上下文" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "显示技术信息" }));
+    await act(async () => {
+      await receive?.({ kind: "play", value: structuredClone(chain) }, true);
+    });
+    expect(screen.queryByText("下一条消息将开启全新上下文")).toBeNull();
+    expect(screen.getByRole("button", { name: "追加行动" })).toBeTruthy();
+    expect(screen.getByLabelText<HTMLTextAreaElement>("你的行动").value).toBe(
+      "保留草稿",
+    );
+    expect(screen.queryByText("检查点")).toBeNull();
+    chain.events.push({
+      ...checkpoint,
+      id: 7,
+      text: "再一次整理完成。",
+      committedHead: "commit:6",
+    });
+    chain.parentHead = "commit:6";
+    await act(async () => {
+      await receive?.({ kind: "play", value: structuredClone(chain) }, true);
+    });
+    expect(screen.getByText("下一条消息将开启全新上下文")).toBeTruthy();
+    expect(
+      client.request.mock.calls.some(
+        ([request]) =>
+          request.type === "play.chain.start" ||
+          request.type === "play.chain.append",
+      ),
+    ).toBe(false);
+  });
+
+  test("取消检查点后卸载重进仍不预选，相同端点改上下文身份不重选，新检查点及未处理选择保留", async () => {
+    const chain = playChainView("checkpoint-navigation", "send", "整理书架。");
+    const narrative = chain.events.find((event) => event.kind === "assistant")!;
+    if (narrative.kind !== "assistant") throw new Error("Missing narrative");
+    narrative.checkpoint = true;
+    const client = {
+      request: vi.fn((request: V1Request): Promise<unknown> => {
+        if (request.type === "world.read")
+          return Promise.resolve(worldView(chain));
+        if (request.type === "artifacts.debug") return Promise.resolve([]);
+        return Promise.reject(new Error(`Unexpected request: ${request.type}`));
+      }),
+    };
+    let page = renderWorld(client);
+    await screen.findByText("下一条消息将开启全新上下文");
+    fireEvent.click(screen.getByRole("button", { name: "取消全新上下文" }));
+    page.unmount();
+    page = renderWorld(client);
+    await screen.findByText(narrative.text);
+    expect(screen.queryByText("下一条消息将开启全新上下文")).toBeNull();
+    page.unmount();
+    chain.chainId = "restored-context-for-same-checkpoint";
+    page = renderWorld(client);
+    await screen.findByText(narrative.text);
+    expect(screen.queryByText("下一条消息将开启全新上下文")).toBeNull();
+    page.unmount();
+    narrative.committedHead = "commit:4";
+    narrative.text = "另一段整理完成。";
+    chain.parentHead = "commit:4";
+    page = renderWorld(client);
+    await screen.findByText(narrative.text);
+    expect(screen.getByText("下一条消息将开启全新上下文")).toBeTruthy();
+    page.unmount();
+    renderWorld(client);
+    await screen.findByText(narrative.text);
+    expect(screen.getByText("下一条消息将开启全新上下文")).toBeTruthy();
+    expect(
+      client.request.mock.calls.some(
+        ([request]) =>
+          request.type === "play.chain.start" ||
+          request.type === "play.chain.append",
+      ),
+    ).toBe(false);
+  });
+
   test("正文产物只挂实际回复，早期分页不误挂或重复，旧无归属产物不挂载", async () => {
     const chain = playChainView("attached-chain", "send", "行动");
     const decorations = playDecorations(
@@ -598,6 +888,7 @@ describe("世界游玩页面", () => {
         lineHeight: 1.7,
         letterSpacing: 0.01,
         measure: 64,
+        showTechnicalInfo: false,
       },
     });
     await screen.findByRole("heading", { name: "宿舍世界" });
@@ -1127,7 +1418,12 @@ describe("世界游玩页面", () => {
       }),
     };
 
-    renderWorld(client);
+    renderWorld(client, undefined, {
+      initialReadingPreferences: {
+        ...defaultAppReadingPreferences,
+        showTechnicalInfo: true,
+      },
+    });
     await screen.findByRole("heading", { name: "宿舍世界" });
     fireEvent.change(screen.getByLabelText("你的行动"), {
       target: { value: "I signal Alex to open the door." },
@@ -1232,7 +1528,12 @@ describe("世界游玩页面", () => {
       }),
     };
 
-    renderWorld(client);
+    renderWorld(client, undefined, {
+      initialReadingPreferences: {
+        ...defaultAppReadingPreferences,
+        showTechnicalInfo: true,
+      },
+    });
     const firstNarration = await screen.findByText(
       "Alex opens the door and lets you go first.",
     );
@@ -1272,7 +1573,7 @@ describe("世界游玩页面", () => {
     expect(within(traces[2]!).queryByText("调用 world_patch")).toBeNull();
   });
 
-  test("模型响应始终显示输入、缓存读写、推理和输出 token 明细", async () => {
+  test("详细模式显示输入、缓存读写、推理和输出 token 明细", async () => {
     const chain = playChainView(
       "play-chain-usage",
       "exchange-usage",
@@ -1314,7 +1615,12 @@ describe("世界游玩页面", () => {
       }),
     };
 
-    renderWorld(client);
+    renderWorld(client, undefined, {
+      initialReadingPreferences: {
+        ...defaultAppReadingPreferences,
+        showTechnicalInfo: true,
+      },
+    });
     await screen.findByText("Alex opens the door and lets you go first.");
 
     const compact = screen.getByLabelText("Token 用量明细");
@@ -1392,7 +1698,12 @@ describe("世界游玩页面", () => {
       }),
     };
 
-    renderWorld(client);
+    renderWorld(client, undefined, {
+      initialReadingPreferences: {
+        ...defaultAppReadingPreferences,
+        showTechnicalInfo: true,
+      },
+    });
     await screen.findByText("调用 context_search");
     expect(
       screen.queryByText(
@@ -1552,7 +1863,12 @@ describe("世界游玩页面", () => {
       },
     };
 
-    renderWorld(client);
+    renderWorld(client, undefined, {
+      initialReadingPreferences: {
+        ...defaultAppReadingPreferences,
+        showTechnicalInfo: true,
+      },
+    });
     await screen.findByRole("heading", { name: "宿舍世界" });
     fireEvent.change(screen.getByLabelText("你的行动"), {
       target: { value: "I signal Alex to open the door." },
@@ -1815,7 +2131,12 @@ describe("世界游玩页面", () => {
       }),
     };
 
-    renderWorld(client);
+    renderWorld(client, undefined, {
+      initialReadingPreferences: {
+        ...defaultAppReadingPreferences,
+        showTechnicalInfo: true,
+      },
+    });
     const progress = await screen.findByRole("status", {
       name: "本次模型调用进度",
     });
@@ -1991,7 +2312,12 @@ describe("世界游玩页面", () => {
       }),
     };
 
-    renderWorld(client);
+    renderWorld(client, undefined, {
+      initialReadingPreferences: {
+        ...defaultAppReadingPreferences,
+        showTechnicalInfo: true,
+      },
+    });
     await screen.findByRole("heading", { name: "宿舍世界" });
     const timeline = screen.getByLabelText("模型调用链");
     expect(within(timeline).getByText("模型工具步骤")).toBeTruthy();
@@ -2080,7 +2406,12 @@ describe("世界游玩页面", () => {
     };
 
     try {
-      renderWorld(client);
+      renderWorld(client, undefined, {
+        initialReadingPreferences: {
+          ...defaultAppReadingPreferences,
+          showTechnicalInfo: true,
+        },
+      });
       await screen.findByRole("heading", { name: "宿舍世界" });
       scrollIntoView.mockClear();
       fireEvent.change(screen.getByLabelText("你的行动"), {
@@ -2209,7 +2540,12 @@ describe("世界游玩页面", () => {
     };
 
     try {
-      renderWorld(client);
+      renderWorld(client, undefined, {
+        initialReadingPreferences: {
+          ...defaultAppReadingPreferences,
+          showTechnicalInfo: true,
+        },
+      });
       await screen.findByText(
         "The visible tail starts in the middle of one context.",
       );
@@ -2347,7 +2683,12 @@ describe("世界游玩页面", () => {
       }),
     };
 
-    renderWorld(client);
+    renderWorld(client, undefined, {
+      initialReadingPreferences: {
+        ...defaultAppReadingPreferences,
+        showTechnicalInfo: true,
+      },
+    });
     expect(
       await screen.findByText("Alex has opened the door halfway"),
     ).toBeTruthy();
@@ -2983,13 +3324,7 @@ function renderWorld(
   ),
   options: {
     onRenameWorld?: (name: string) => Promise<void>;
-    initialReadingPreferences?: {
-      density: "compact" | "standard" | "relaxed";
-      fontSize: number;
-      lineHeight: number;
-      letterSpacing: number;
-      measure: number;
-    };
+    initialReadingPreferences?: AppReadingPreferences;
   } = {},
 ) {
   let receive: Parameters<ObserveConversation>[1] | undefined;

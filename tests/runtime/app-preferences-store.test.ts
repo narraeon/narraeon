@@ -35,7 +35,7 @@ test("app preferences default to English and persist the selected locale", async
   const path = join(root, "preferences-v1.json");
   expect((await stat(path)).mode & 0o077).toBe(0);
   expect(JSON.parse(await readFile(path, "utf8"))).toEqual({
-    schemaVersion: 2,
+    schemaVersion: 3,
     locale: "zh-CN",
     reading: defaultAppReadingPreferences,
   });
@@ -66,7 +66,7 @@ test("app preferences migrate v1 locale and preserve it when reading controls sa
   expect(
     JSON.parse(await readFile(join(root, "preferences-v1.json"), "utf8")),
   ).toEqual({
-    schemaVersion: 2,
+    schemaVersion: 3,
     locale: "zh-CN",
     reading,
   });
@@ -84,6 +84,70 @@ test("app preferences reject incompatible persisted documents", async () => {
     "App preferences file does not match a supported schema",
   );
 });
+
+test("v2 reading preferences retain typography, default to story mode and save as v3", async () => {
+  const root = await temporaryRoot();
+  const path = join(root, "preferences-v1.json");
+  // Exact five-field document written by the schema-v2 store.
+  const legacyReading = {
+    density: "relaxed",
+    fontSize: 21,
+    lineHeight: 2,
+    letterSpacing: 0.05,
+    measure: 64,
+  };
+  await writeFile(
+    path,
+    JSON.stringify({
+      schemaVersion: 2,
+      locale: "zh-CN",
+      reading: legacyReading,
+    }),
+  );
+  const store = new AppPreferencesStore(root);
+  const expectedReading = { ...legacyReading, showTechnicalInfo: false };
+  await expect(store.view()).resolves.toEqual({
+    locale: "zh-CN",
+    reading: expectedReading,
+  });
+  await store.save({ locale: "en" });
+  expect(JSON.parse(await readFile(path, "utf8"))).toEqual({
+    schemaVersion: 3,
+    locale: "en",
+    reading: expectedReading,
+  });
+  const reading = { ...defaultAppReadingPreferences, showTechnicalInfo: true };
+  await store.save({ reading });
+  await expect(new AppPreferencesStore(root).view()).resolves.toEqual({
+    locale: "en",
+    reading,
+  });
+});
+
+test.each([
+  { schemaVersion: 2, reading: { ...defaultAppReadingPreferences } },
+  {
+    schemaVersion: 3,
+    reading: { ...defaultAppReadingPreferences, showTechnicalInfo: "true" },
+  },
+  {
+    schemaVersion: 3,
+    reading: { ...defaultAppReadingPreferences, extra: false },
+  },
+  { schemaVersion: 4, reading: defaultAppReadingPreferences },
+])(
+  "persisted preferences keep strict versioned validation: %j",
+  async (document) => {
+    const root = await temporaryRoot();
+    await writeFile(
+      join(root, "preferences-v1.json"),
+      JSON.stringify({ locale: "en", ...document }),
+    );
+    await expect(new AppPreferencesStore(root).view()).rejects.toThrow(
+      "App preferences file does not match a supported schema",
+    );
+  },
+);
 
 async function temporaryRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "narraeon-app-preferences-"));

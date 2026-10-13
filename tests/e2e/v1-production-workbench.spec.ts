@@ -1,4 +1,4 @@
-import { expect, type Locator } from "@playwright/test";
+import { expect as playwrightExpect, type Locator } from "@playwright/test";
 import { test } from "../support/isolatedRuntimeTest.ts";
 import { createServer, type Server } from "node:http";
 
@@ -12,7 +12,9 @@ const providerRequests: string[] = [];
 /** Delay Provider SSE frames so the browser's real increments remain observable. */
 let providerDelayMs = 0;
 
-test.setTimeout(120_000);
+// This scenario repeatedly waits for durable Runtime settlement on disk.
+const expect = playwrightExpect.configure({ timeout: 20_000 });
+test.setTimeout(180_000);
 
 async function expectCanScrollVertically(locator: Locator): Promise<void> {
   const result = await locator.evaluate((root) => {
@@ -747,6 +749,13 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     "The dormitory door closes behind you. Alex, wearing a dark blue athletic tank top, waits to discuss tonight's training.",
   );
   await expect(page.getByLabel("你的行动")).toBeVisible();
+  // This workbench scenario inspects the technical trace throughout.
+  await page.getByRole("button", { name: "阅读设置" }).click();
+  await page.getByRole("checkbox", { name: "显示技术信息" }).check();
+  await page
+    .getByLabel("阅读设置")
+    .getByRole("button", { name: "关闭" })
+    .click();
   for (const mount of [
     "story",
     "sidebar",
