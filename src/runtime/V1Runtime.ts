@@ -1,3 +1,6 @@
+import { WorldArchives } from "./archive/WorldArchives.ts";
+import { WorldArchiveError } from "./archive/WorldArchiveZip.ts";
+import { FileNativeWorldCreationError } from "./world/FileNativeWorldStore.ts";
 import type { WorldExtensionsView } from "../protocol/worldExtensions.ts";
 import { PackageScriptPermissions } from "./extension/PackageScriptPermissions.ts";
 import { comparePromptPrefixes } from "./prompt/WorldPromptDiagnostics.ts";
@@ -84,6 +87,7 @@ import type {
 } from "../protocol/conversationObservation.ts";
 
 export class V1Runtime {
+  readonly worldArchives: WorldArchives;
   readonly #conversationChanges = new ConversationChanges();
   readonly #content: ContentWorkspace;
   readonly #playPresets: FileNativePlayPresetStore;
@@ -126,6 +130,11 @@ export class V1Runtime {
       this.#failureLog,
       (id) => this.#conversationChanges.publish(`play:${id}`),
     );
+    this.worldArchives = new WorldArchives({
+      dataRoot: input.dataRoot,
+      worlds: this.#worlds,
+      chains: this.#playCallChains,
+    });
     this.#models = new ModelConnectionStore(input.configRoot);
     this.#corrections = new FileNativeContinuityCorrection(this.#worlds, {
       compiler: this.#compiler,
@@ -231,6 +240,7 @@ export class V1Runtime {
     this.#locale = (await this.#preferences.view()).locale;
     this.#compiler.setLocale(this.#locale);
     await this.#playPresets.initialize();
+    await this.worldArchives.initialize();
   }
 
   async handle(
@@ -240,6 +250,17 @@ export class V1Runtime {
     try {
       const result = await this.#dispatch(request, playCallChainObserver);
       return { protocol: v1Protocol, result };
+    } catch (error) {
+      if (error instanceof WorldArchiveError)
+        throw new V1ProtocolError(error.code, error.message, { cause: error });
+      if (
+        request.type === "world.archive.export" &&
+        error instanceof FileNativeWorldCreationError &&
+        (error.code === "operation_conflict" ||
+          error.code === "inconsistent_materialization")
+      )
+        throw new V1ProtocolError(error.code, error.message, { cause: error });
+      throw error;
     } finally {
       // Explicit commands may partially settle before failing. Readers recover
       // through the same Runtime projection, never infer success from this signal.
@@ -615,6 +636,10 @@ export class V1Runtime {
           this.#playCallChains.forgetWorld(request.worldId);
           return this.#worlds.deleteWorld(request.worldId);
         });
+      case "world.archive.export":
+        return this.worldArchives.exportWorld(request);
+      case "world.archive.import":
+        return this.worldArchives.importWorld(request);
       case "world.read": {
         const head = await this.#worlds.currentHead(request.worldId);
         const playerViews = await this.#worlds.renderPlayerViewsAtHead(
@@ -654,6 +679,9 @@ export class V1Runtime {
           playCallChain: null,
           playTimeline,
           worldRevision: revisionEpoch,
+          archiveNeedsFreshContext: await this.#worlds.archiveNeedsFreshContext(
+            request.worldId,
+          ),
         };
       }
       case "world.surface.read":
@@ -814,7 +842,7 @@ export class V1Runtime {
           hostPresetId: preset.id,
         });
         await this.#reconcileResultArtifacts(result);
-        return result;
+        return { outcome: result.outcome, world: result.world };
       }
       case "play.chain.revise-player": {
         const base = {

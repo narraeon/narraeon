@@ -3,6 +3,7 @@ import {
   PlayFailureNotice,
   type PlayFailureRecovery,
 } from "./PlayFailureNotice.tsx";
+import { WorldBackupExportButton } from "./WorldArchiveControls.tsx";
 import { WorldExtensionMenu } from "./WorldExtensionMenu.tsx";
 import type { WorldExtensionsView } from "../protocol/worldExtensions.ts";
 import { PackageScriptPermissionControl } from "./PackageScriptPermissionControl.tsx";
@@ -97,7 +98,8 @@ type PendingAction =
   | "rename"
   | "story-export"
   | "revise"
-  | "derive";
+  | "derive"
+  | "archive-export";
 
 interface WorldMessage {
   role: "player" | "narrator";
@@ -107,6 +109,7 @@ interface WorldMessage {
 }
 
 interface WorldReadView {
+  archiveNeedsFreshContext?: boolean;
   extensionControls?: WorldExtensionsView;
   suppressedPlayerViewIds?: string[];
   worldId: string;
@@ -663,6 +666,7 @@ export function WorldPage({
   const worldRevisionLocked = activeRevisionEpoch?.locked === true;
   const activeChainStale =
     forceFreshContext ||
+    world?.archiveNeedsFreshContext === true ||
     (world !== null &&
       playCallChain !== null &&
       playCallChain.parentHead !== world.head);
@@ -1677,7 +1681,9 @@ export function WorldPage({
             )}
             {activeChainStale && playIdle ? (
               <div className="world-fresh-context-note" role="note">
-                {uiText("世界已在故事外修订；下一次行动会从新上下文开始。")}
+                {world?.archiveNeedsFreshContext
+                  ? uiText("世界从备份导入；下一次行动会从新上下文开始")
+                  : uiText("世界已在故事外修订；下一次行动会从新上下文开始。")}
               </div>
             ) : null}
             {preferFreshContext && !activeChainStale && playIdle ? (
@@ -2018,6 +2024,20 @@ export function WorldPage({
 
           {dialog === "manage" ? (
             <WorldManagementDialog
+              worldBackupExport={
+                <WorldBackupExportButton
+                  client={client}
+                  worldId={worldId}
+                  disabled={
+                    pending !== null ||
+                    activeStatus === "running" ||
+                    worldRevisionLocked
+                  }
+                  onBusyChange={(busy) =>
+                    setPending(busy ? "archive-export" : null)
+                  }
+                />
+              }
               packageScriptPermission={
                 <PackageScriptPermissionControl
                   key={worldId}
@@ -2174,6 +2194,7 @@ function PlayTimeline({
                     worldId={worldId}
                     chainId={item.chainId}
                     event={item.event}
+                    requiresFreshContext={item.requiresFreshContext}
                     liveAssistant={
                       item.event.kind === "assistant" &&
                       item.event.status === "streaming" &&
@@ -2229,6 +2250,7 @@ function PlayTimeline({
                           worldId={worldId}
                           chainId={item.chainId}
                           event={item.event}
+                          requiresFreshContext={item.requiresFreshContext}
                           restartDisabled={restartDisabled}
                           freshContextDisabled={freshContextDisabled}
                           showTechnicalInfo={showTechnicalInfo}
@@ -2402,6 +2424,7 @@ function TimelineEvent({
   worldId,
   chainId,
   event,
+  requiresFreshContext = false,
   restartDisabled,
   freshContextDisabled,
   showTechnicalInfo,
@@ -2414,6 +2437,7 @@ function TimelineEvent({
   worldId: string;
   chainId: string;
   event: V1PlayTimelineEventSummary;
+  requiresFreshContext?: boolean | undefined;
   liveAssistant?: V1PlayCallChainEvent | undefined;
   failureRecovery?: PlayFailureRecovery | undefined;
   restartDisabled: boolean;
@@ -2477,7 +2501,11 @@ function TimelineEvent({
                     disabled={restartDisabled}
                     onClick={() => {
                       setEditedText(event.text);
-                      setRevisionContinuation("continue_context");
+                      setRevisionContinuation(
+                        requiresFreshContext
+                          ? "fresh_context"
+                          : "continue_context",
+                      );
                     }}
                   >
                     {uiText("修改")}
@@ -2521,7 +2549,7 @@ function TimelineEvent({
                     name={`revision-continuation-${chainId}-${event.id}`}
                     value="continue_context"
                     checked={revisionContinuation === "continue_context"}
-                    disabled={restartDisabled}
+                    disabled={restartDisabled || requiresFreshContext}
                     onChange={() => setRevisionContinuation("continue_context")}
                   />
                   <span>
@@ -2549,6 +2577,13 @@ function TimelineEvent({
                     </small>
                   </span>
                 </label>
+                {requiresFreshContext ? (
+                  <p>
+                    {uiText(
+                      "此上下文来自备份；修改后须以本机选择开启全新上下文。",
+                    )}
+                  </p>
+                ) : null}
               </fieldset>
               <div className="button-row">
                 <button
@@ -2699,7 +2734,7 @@ function TimelineEvent({
                   <button
                     type="button"
                     className="history-restart-button"
-                    disabled={restartDisabled}
+                    disabled={restartDisabled || requiresFreshContext}
                     onClick={onRegenerate}
                   >
                     {uiText("重新生成")}
@@ -3124,6 +3159,7 @@ function applyPlayTimelineFrame(
           chainId: chain.chainId,
           current: true,
           event: summary,
+          ...(chain.requiresFreshContext ? { requiresFreshContext: true } : {}),
         };
         if (index < 0) items.push(next);
         else {
@@ -3302,6 +3338,9 @@ function legacyTimelinePage(world: WorldReadView): V1PlayTimelinePage {
           chainId: context.chainId,
           current: context.chainId === chain.chainId,
           event: summarizeTimelineEvent(event),
+          ...(context.requiresFreshContext
+            ? { requiresFreshContext: true }
+            : {}),
         })),
       ]),
     ],

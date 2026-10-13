@@ -24,6 +24,8 @@ import {
 } from "../protocol/v1.ts";
 import type { V1Runtime } from "../runtime/V1Runtime.ts";
 import type { PlayCallChainObserver } from "../runtime/play/PlayCallChain.ts";
+import { WorldArchiveError } from "../runtime/archive/WorldArchiveZip.ts";
+import type { Readable } from "node:stream";
 
 const runtimeRequestBodyLimit =
   maxPortableContentArchiveBase64Characters + 64 * 1024;
@@ -128,6 +130,66 @@ export async function createServer(input: {
     done(null, payload);
   });
   registerConversationStream(server, input.runtime);
+  // Keep uploads as a backpressured stream with their own archive-size limit.
+  // Fastify's JSON parser and content-package body limit never buffer this route.
+  await server.register((archives, _options, done) => {
+    archives.addContentTypeParser(
+      "application/zip",
+      (_request, payload, done) => done(null, payload),
+    );
+    archives.post("/api/runtime/v1/world-archives", async (request, reply) => {
+      try {
+        return await input.runtime.worldArchives.upload(
+          request.body as Readable,
+        );
+      } catch (error) {
+        if (error instanceof WorldArchiveError)
+          return reply
+            .status(error.code === "limit_exceeded" ? 413 : 400)
+            .send({ error: { code: error.code, message: error.message } });
+        throw error;
+      }
+    });
+    archives.get<{ Params: { archiveId: string } }>(
+      "/api/runtime/v1/world-archives/:archiveId",
+      async (request, reply) => {
+        try {
+          const archive = await input.runtime.worldArchives.download(
+            request.params.archiveId,
+          );
+          reply.raw.once("finish", () => {
+            void archive.cleanup().catch(() => undefined);
+          });
+          return reply
+            .type("application/zip")
+            .header("Content-Length", archive.metadata.bytes)
+            .header(
+              "Content-Disposition",
+              `attachment; filename="world.narraeon-world.zip"; filename*=UTF-8''${encodeURIComponent(archive.metadata.fileName)}`,
+            )
+            .send(archive.stream);
+        } catch (error) {
+          if (error instanceof WorldArchiveError)
+            return reply
+              .status(400)
+              .send({ error: { code: error.code, message: error.message } });
+          if (
+            error instanceof Error &&
+            "code" in error &&
+            error.code === "ENOENT"
+          )
+            return reply.status(404).send({
+              error: {
+                code: "invalid_archive",
+                message: "The archive download is unavailable",
+              },
+            });
+          throw error;
+        }
+      },
+    );
+    done();
+  });
   server.get("/health", () => ({
     status: "ok",
     protocol: "narraeon.runtime/v1",

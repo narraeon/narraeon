@@ -3237,6 +3237,7 @@ describe("世界游玩页面", () => {
     "玩家锚点尚未加载",
     "生成进行中",
     "世界修订锁定",
+    "导入的旧上下文",
   ])("重新生成保护边界：%s", async (scenario) => {
     const chain = playChainView("guarded-chain", "send", "原玩家输入");
     const player = chain.events[0]!;
@@ -3267,6 +3268,7 @@ describe("世界游玩页面", () => {
         chain.status = "running";
         disabled = true;
         break;
+      case "导入的旧上下文":
       case "世界修订锁定":
         disabled = true;
         break;
@@ -3290,6 +3292,9 @@ describe("世界游玩页面", () => {
               ? "other-chain"
               : chain.chainId,
           current: true,
+          ...(scenario === "导入的旧上下文"
+            ? { requiresFreshContext: true as const }
+            : {}),
           event: {
             ...event,
             detailsAvailable: false,

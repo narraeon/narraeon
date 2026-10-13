@@ -155,6 +155,7 @@ function assembleRetainedTrace(
   );
   const lastEvent = selection.events.at(-1);
   return {
+    ...(source.importedFromArchive ? { importedFromArchive: true } : {}),
     continuityContextId: source.continuityContextId ?? source.chainId,
     baselineHead: source.baselineHead,
     baselineHistoryLength:

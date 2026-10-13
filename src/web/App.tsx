@@ -1,4 +1,8 @@
 import type { ProtagonistTemplate } from "../protocol/protagonistTemplates.ts";
+import {
+  WorldBackupExportButton,
+  WorldBackupImportButton,
+} from "./WorldArchiveControls.tsx";
 import { PackageScriptPermissionControl } from "./PackageScriptPermissionControl.tsx";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
@@ -88,6 +92,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const [importPending, setImportPending] = useState(false);
   const [samplePending, setSamplePending] = useState(false);
   const samplePendingRef = useRef(false);
+  const [archivePending, setArchivePending] = useState(false);
   const { workspace: authoringWorkspace, state: authoring } =
     useAuthoringWorkspace(client, "setting", selected, screen === "content");
   const filesDirty = authoring.dirty;
@@ -112,6 +117,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     playPresetDraftDirty ||
     modelDraftDirty ||
     importPending ||
+    archivePending ||
     samplePending ||
     creatingWorld ||
     childNavigationLocked;
@@ -794,7 +800,24 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             activeModelName={activeModel?.name ?? null}
             currentPresetName={currentPresetName}
             importArchive={importArchive}
-            importPending={importPending}
+            importPending={importPending || archivePending}
+            worldBackupImport={
+              <WorldBackupImportButton
+                client={client}
+                disabled={importPending || samplePending || archivePending}
+                onBusyChange={setArchivePending}
+                onImported={refresh}
+              />
+            }
+            renderWorldBackupExport={(world) => (
+              <WorldBackupExportButton
+                client={client}
+                worldId={world.worldId}
+                label="导出备份"
+                disabled={importPending || archivePending || samplePending}
+                onBusyChange={setArchivePending}
+              />
+            )}
             samplePending={samplePending}
             onImportArchiveChange={(archive) => {
               setImportArchive(archive);

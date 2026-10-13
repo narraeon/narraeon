@@ -163,7 +163,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(page.getByRole("button", { name: "手动编辑" })).toHaveCount(0);
   await page.getByRole("button", { name: "返回工作区" }).click();
 
-  await page.getByRole("button", { name: "模型连接" }).click();
+  await page.getByRole("button", { name: "模型连接", exact: true }).click();
   await page.getByLabel("Base URL").fill(providerUrl);
   await page.getByLabel("API Key").fill("test-secret");
   await page.getByRole("button", { name: "从端点拉取模型" }).click();
@@ -727,7 +727,9 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await page.getByRole("button", { name: "世界管理" }).click();
   await page.getByLabel("世界显示名称").fill("Night Training Dormitory");
   await page.getByRole("button", { name: "保存名称" }).click();
-  await expect(page.getByRole("status")).toContainText("世界名称已保存");
+  await expect(
+    page.locator(".world-reader-page").getByRole("status"),
+  ).toContainText("世界名称已保存");
   await expect(
     page.getByRole("heading", { name: "Night Training Dormitory" }),
   ).toBeVisible();
@@ -1276,7 +1278,7 @@ test("世界修订复用统一编辑工作区且世界管理可以纵向滚动",
   await page.getByRole("button", { name: "导入 ZIP" }).click();
   await expect(page.getByText(/dialog-scroll-world\.zip/u)).toBeVisible();
   await page.getByRole("button", { name: "返回工作区" }).click();
-  await page.getByRole("button", { name: "模型连接" }).click();
+  await page.getByRole("button", { name: "模型连接", exact: true }).click();
   if ((await page.getByLabel("Base URL").inputValue()).length === 0) {
     await page.getByLabel("Base URL").fill(providerUrl);
     await page.getByLabel("API Key").fill("dialog-scroll-secret");
