@@ -324,7 +324,7 @@ test("检查点建议在叙事后出现，点击只选择下一条消息的新�
   const sent = JSON.parse(providerRequests.at(-1)!) as {
     messages: { role: string; content: unknown; tool_call_id?: string }[];
   };
-  expect(JSON.stringify(sent.messages)).toContain("距上次检查点已完成 1 回合");
+  expect(JSON.stringify(sent.messages)).not.toContain("距上次检查点已完成");
   expect(sent.messages.filter(({ role }) => role === "tool")).toEqual([
     expect.objectContaining({ tool_call_id: "runtime_initial_world_context" }),
   ]);

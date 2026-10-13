@@ -56,22 +56,7 @@ export function checkpointHistory(
     .filter(([id]) => !id.includes("message.genesis"));
 }
 
-export function playerRoundMarker(
-  rounds: number,
-  hasCheckpoint: boolean,
-  locale: AppLocale,
-): Extract<ModelHostAppendItem, { kind: "runtime_notice" }> {
-  const markdown =
-    locale === "zh-CN"
-      ? `距上次检查点已完成 ${rounds} 回合。${hasCheckpoint ? "" : "当前尚无检查点，以世界起点计数。"}`
-      : `Completed player rounds since the last checkpoint: ${rounds}.${hasCheckpoint ? "" : " No checkpoint yet; counting from the world origin."}`;
-  return {
-    kind: "runtime_notice",
-    notice: "checkpoint_rounds",
-    text: `${locale === "zh-CN" ? "[Runtime 回合提示]" : "[Runtime round marker]"}\n${markdown}`,
-  };
-}
-
+/** Retain released markers when reconstructing frozen transcript prefixes. */
 export function isPlayerRoundMarker(
   item: ModelHostAppendItem | undefined,
 ): item is Extract<ModelHostAppendItem, { kind: "runtime_notice" }> {
@@ -104,26 +89,8 @@ export function toolStepNotice(
   };
 }
 
-export function playerInputAppend(input: {
-  history: Readonly<Record<string, string>>;
-  checkpoint?: NarrativeCheckpoint | undefined;
-  text: string;
-  locale: AppLocale;
-  checkpointAvailable: boolean;
-}): ModelHostAppendItem[] {
-  return [
-    ...(input.text.trim().length > 0 && input.checkpointAvailable
-      ? [
-          playerRoundMarker(
-            completedPlayerRounds(input.history) -
-              (input.checkpoint?.completedPlayerRounds ?? 0),
-            input.checkpoint !== undefined,
-            input.locale,
-          ),
-        ]
-      : []),
-    { kind: "player", text: input.text },
-  ];
+export function playerInputAppend(text: string): ModelHostAppendItem[] {
+  return [{ kind: "player", text }];
 }
 
 export function checkpointReplayBlocks(

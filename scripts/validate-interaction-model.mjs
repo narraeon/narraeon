@@ -57,8 +57,9 @@ const scenarios = [
       "我告诉他明天下午去码头还书。",
       "我向他道别，带着笔记走到街口。",
     ],
+    nextInput: "我回想和林舟的归还约定，看看从街口该往哪里走。",
     observe:
-      "同一上下文连续普通游玩，玩家没有维护指令；自然收尾或换场景后主动整理并打点，借阅、归还约定与当前地点可恢复；不提前代玩家告别、还书或推进到明天。",
+      "同一上下文连续普通游玩，玩家没有维护指令；自然收尾或换场景后登记检查点，登记前已保存借阅、归还约定与当前地点；新上下文能正常延续。不提前代玩家告别、还书或推进到明天。",
   },
   {
     id: "autonomous-checkpoint-ongoing",
@@ -73,16 +74,20 @@ const scenarios = [
       "我再试一次刚才的动作，问他现在的姿势怎么样。",
     ],
     observe:
-      "同一活动跨多轮积累身体限制、练习意向和实际进展；没有玩家维护指令也主动中途整理并打点。保留最新反馈的回应机会与进行中状态，不宣布掌握、课程结束或自行离场；不要求每轮打点。",
+      "同一活动跨多轮积累身体限制、练习意向和实际进展；中途应有实际整理写入，但不登记检查点。保留最新反馈的回应机会与进行中状态，不宣布掌握、课程结束、自行离场或代玩家完成未授权步骤，不为到达间隙而压缩过程。",
   },
   {
     id: "mid-activity-checkpoint",
     state:
       "教学正在进行：林舟刚示范第一式，你试做一次，手腕角度仍偏斜。他的原话是：‘把手腕放平一点，这个握法舒服吗？’你尚未回应，练习未完成。",
-    input: "世界外：只整理截至当前的状态并登记检查点，不推进教学。",
+    input: "我告诉林舟手腕有些酸，希望先放慢速度。",
+    continuationInputs: [
+      "我把手腕放平，再试一次，问他这个角度是否合适。",
+      "我告诉他我以前右肩受过伤，希望避免大幅抬肩。",
+    ],
     nextInput: "我把手腕放平，问他这个角度是否合适。",
     observe:
-      "记录进行中教学与待回应原话后打点；全新上下文承接纠正，不重教开场、不宣称课程完成。",
+      "活动中途玩家主动开新上下文，完整补入当前事件原文并承接最新纠正、身体限制与待回应事项；不要求登记，不重教开场、不宣称课程完成或代玩家接话。",
   },
   {
     id: "tool-prose",
@@ -254,6 +259,15 @@ if (configPath === "--list") {
         continue;
       }
       const sends = [];
+      const checkpointStats = {
+        playerInputs: 0,
+        modelRequests: 0,
+        registrationAttempts: 0,
+        successfulRegistrations: 0,
+        attemptsPerPlayerInput: 0,
+        successfulRegistrationsPerPlayerInput: 0,
+      };
+      let accountedRegistrations = 0;
       const chains = new play.PlayCallChain(
         worlds,
         new prompt.FileNativePromptCompiler({ locale: "zh-CN" }),
@@ -269,8 +283,12 @@ if (configPath === "--list") {
       let chainId = `${scene.id}-0`;
       for (const [index, { text: playerText, fresh }] of inputs.entries()) {
         turnRequests = 0;
+        const requestStart = exchanges.length;
         const exchangeId = `${scene.id}-${index}`;
-        if (fresh) chainId = exchangeId;
+        if (fresh) {
+          chainId = exchangeId;
+          accountedRegistrations = 0;
+        }
         const view = fresh
           ? await chains.start({
               worldId,
@@ -290,7 +308,32 @@ if (configPath === "--list") {
               modelHost,
               resolvePrompt: () => Promise.resolve({ hostBinding, playPreset }),
             });
+        const registrationAttempts = exchanges
+          .slice(requestStart)
+          .flatMap(({ response }) => response?.toolCalls ?? [])
+          .filter(({ name }) => name === "world_checkpoint").length;
+        // Browser views contain only a bounded event tail. Count from the
+        // full saved synthetic context so long runs cannot lose earlier calls.
+        const savedContext = (await worlds.playTimeline.readCurrent(worldId))
+          ?.value;
+        if (savedContext === undefined)
+          throw new Error("Validation context was not saved");
+        const registrationsInContext = savedContext.events.filter(
+          (event) =>
+            event.kind === "tool_result" &&
+            event.name === "world_checkpoint" &&
+            event.ok &&
+            !event.replayed,
+        ).length;
+        const successfulRegistrations =
+          registrationsInContext - accountedRegistrations;
+        accountedRegistrations = registrationsInContext;
+        checkpointStats.playerInputs += 1;
+        checkpointStats.modelRequests += exchanges.length - requestStart;
+        checkpointStats.registrationAttempts += registrationAttempts;
+        checkpointStats.successfulRegistrations += successfulRegistrations;
         sends.push({
+          checkpointStats: { registrationAttempts, successfulRegistrations },
           playerText,
           context: fresh ? "fresh" : "append",
           status: view.status,
@@ -299,10 +342,15 @@ if (configPath === "--list") {
         });
         if (view.status !== "ready") break;
       }
+      checkpointStats.attemptsPerPlayerInput =
+        checkpointStats.registrationAttempts / checkpointStats.playerInputs;
+      checkpointStats.successfulRegistrationsPerPlayerInput =
+        checkpointStats.successfulRegistrations / checkpointStats.playerInputs;
       await writeFile(
         join(output, `${scene.id}.json`),
         JSON.stringify(
           {
+            checkpointStats,
             sourceRoot,
             modelBinding: production.binding(),
             scenario: scene,

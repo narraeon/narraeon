@@ -115,7 +115,7 @@ describe("旧格式默认提示词职责", () => {
     expect(inspectContentPackageCurrentTree(files).status).toBe("usable");
   });
 
-  test("生产提示区分即时保存与检查点归并，Runtime 只说明重放机制", () => {
+  test("生产提示区分随时整理与事件间隙检查点，Runtime 说明重放机制", () => {
     const locales = [
       {
         locale: "zh-CN" as const,
@@ -129,9 +129,11 @@ describe("旧格式默认提示词职责", () => {
         ],
         state: [
           "其余可从玩家原文和最终叙事恢复的持续结果",
-          "事件自然告一段落、实际转换场景",
-          "持续活动经过多轮并积累了需要归并的进展时",
-          "调用 world_checkpoint",
+          "world_checkpoint 只用于事件之间的间隙",
+          "整理不等于检查点",
+          "不登记检查点",
+          "不是本轮要达成的目标",
+          "不需要登记检查点",
           "未达到独立建档门槛的信息仍可嵌入自然所有者",
           "足够维持连续性与意义的信息",
           "按已确定的叙事范围完成本轮必须保存的写入",
@@ -151,9 +153,11 @@ describe("旧格式默认提示词职责", () => {
         ],
         state: [
           "Other durable outcomes recoverable from player originals and final narrative",
-          "proactively consolidate when an event naturally settles",
+          "Use world_checkpoint only for gaps between events",
           "an ongoing activity has accumulated progress across several turns",
-          "call world_checkpoint",
+          "Consolidation is not a checkpoint",
+          "Do not register during an ongoing activity",
+          "not a goal for this turn",
           "Information below the independent-document threshold",
           "Save enough to preserve continuity and meaning",
           "Complete required writes within the chosen narrative scope",
