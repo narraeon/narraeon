@@ -1,3 +1,4 @@
+import { RuntimeRequestError } from "./runtimeClient.ts";
 import { playFailureDescription } from "./PlayFailureText.ts";
 import {
   PlayFailureNotice,
@@ -861,6 +862,12 @@ export function WorldPage({
       if (cancelledExchangeRef.current === exchangeId) {
         setPlayFailure(null);
         setFeedback({ kind: "status", text: uiText("模型生成已取消。") });
+      } else if (
+        reason instanceof RuntimeRequestError &&
+        reason.protocolCode === "model_protocol_mismatch"
+      ) {
+        setPlayFailure(null);
+        setFeedback({ kind: "error", text: errorMessage(reason) });
       } else {
         setPlayFailure(
           playCallFailureMessage(inspected) ?? errorMessage(reason),
@@ -3007,6 +3014,13 @@ function selectedStateDocument(
 }
 
 function errorMessage(reason: unknown): string {
+  if (
+    reason instanceof RuntimeRequestError &&
+    reason.protocolCode === "model_protocol_mismatch"
+  )
+    return uiText(
+      "当前模型协议与此上下文不同。切回原协议即可继续；使用新协议请开启全新上下文。",
+    );
   return reason instanceof Error ? reason.message : uiText("操作失败");
 }
 

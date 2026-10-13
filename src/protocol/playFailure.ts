@@ -6,6 +6,7 @@ export const playFailureKinds = [
   "retryable",
   "provider_error",
   "other",
+  "configuration_mismatch",
 ] as const;
 
 export type PlayFailureKind = (typeof playFailureKinds)[number];

@@ -859,7 +859,8 @@ export class V1ProtocolError extends Error {
     | "invalid_request"
     | WorldArchiveErrorCode
     | "operation_conflict"
-    | "inconsistent_materialization";
+    | "inconsistent_materialization"
+    | "model_protocol_mismatch";
 
   constructor(
     code: V1ProtocolError["code"],

@@ -6003,49 +6003,217 @@ test("空输入追加会从完整逻辑 transcript 继续生成，并把 Provide
   ]);
 });
 
-test("模型绑定的协议配置变化会在提交玩家输入前拒绝旧上下文", async () => {
+test("切换协议只临时拒绝，切回原协议后允许继续", async () => {
   const { worlds, worldId } = await createWorld("play-binding-switch");
   const initialHost = new ScriptedModelHost({
     binding: modelBinding(),
-    steps: [{ outcome: "response", text: "The first exchange settles." }],
+    steps: [{ outcome: "response", text: "First response." }],
   });
   const chains = new PlayCallChain(worlds);
   const initial = await chains.start({
     worldId,
-    chainId: "play-binding-switch-contract",
-    exchangeId: "binding-switch-first",
-    playerText: "Begin with the frozen model.",
+    chainId: "protocol-switch",
+    exchangeId: "first",
+    playerText: "Begin.",
     hostBinding: hostBinding(),
     playPreset: playPreset(),
     modelBinding: modelBinding(),
     modelHost: initialHost,
   });
-  const switchedHost = new ScriptedModelHost({
-    binding: {
-      ...modelBinding(),
-      protocolConfigFingerprint: "sha256:changed-reasoning-policy",
-    },
-    steps: [{ outcome: "response", text: "Must not be dispatched." }],
+  const switched = new ScriptedModelHost({
+    binding: { ...modelBinding(), provider: "anthropic_messages" },
+    steps: [],
   });
-
   await expect(
     chains.append({
       worldId,
       chainId: initial.chainId,
-      exchangeId: "binding-switch-second",
-      playerText: "Continue after changing the connection.",
-      modelHost: switchedHost,
+      exchangeId: "wrong",
+      playerText: "Next.",
+      modelHost: switched,
     }),
-  ).rejects.toThrow(
-    "The selected model connection does not match the frozen model binding; start a fresh context.",
-  );
-  expect(switchedHost.requests).toHaveLength(0);
+  ).rejects.toThrow(/protocol/i);
+  expect(switched.requests).toHaveLength(0);
   expect(await new PlayCallChain(worlds).inspectWorld(worldId)).toMatchObject({
-    status: "interrupted",
-    canRetry: false,
-    lastFailureKind: "context_unavailable",
+    status: "ready",
+    lastFailure: null,
   });
-  expect((await worlds.recoverEndpoint(worldId)).history).toHaveLength(3);
+  const changed = new ScriptedModelHost({
+    binding: {
+      ...modelBinding(),
+      modelId: "other-model",
+      endpointFingerprint: "other",
+      protocolConfigFingerprint: "changed-thinking",
+      maxOutputTokens: 8192,
+      contextWindowTokens: 256000,
+    },
+    steps: [{ outcome: "response", text: "Continued." }],
+  });
+  const result = await new PlayCallChain(worlds).append({
+    worldId,
+    chainId: initial.chainId,
+    exchangeId: "back",
+    playerText: "Next.",
+    modelHost: changed,
+  });
+  expect(result.status).toBe("ready");
+  expect(changed.requests[0]?.maxOutputTokens).toBe(8192);
+  expect(changed.requests[0]?.appended).toContainEqual(
+    expect.objectContaining({ kind: "assistant", text: "First response." }),
+  );
+});
+
+test.each(["binding", "outcome_unknown", "binding_over_unknown"] as const)(
+  "旧配置拦截可恢复但真实未知结果不恢复：%s",
+  async (kind) => {
+    const { worlds, worldId } = await createWorld("legacy-binding-recovery");
+    const host = new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [{ outcome: "response", text: "Before configuration change." }],
+    });
+    const initial = await new PlayCallChain(worlds).start({
+      worldId,
+      chainId: "legacy-poison",
+      exchangeId: "first",
+      playerText: "Begin.",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: modelBinding(),
+      modelHost: host,
+    });
+    const loaded = (await worlds.playTimeline.readCurrent(worldId))!;
+    const value = loaded.value;
+    value.status = "interrupted";
+    value.canRetry = false;
+    value.lastFailureKind =
+      kind === "binding" ? "context_unavailable" : "outcome_unknown";
+    value.lastFailure =
+      kind === "binding"
+        ? "The selected model connection does not match the frozen model binding; start a fresh context."
+        : "The dispatched request outcome is unknown.";
+    value.events.push({
+      id: value.nextEventId++,
+      kind: "failure",
+      message: value.lastFailure,
+      failureKind: value.lastFailureKind,
+    });
+    if (kind === "binding_over_unknown") {
+      value.lastFailure =
+        "The selected model connection does not match the frozen model binding; start a fresh context.";
+      value.lastFailureKind = "context_unavailable";
+      value.events.push({
+        id: value.nextEventId++,
+        kind: "failure",
+        message: value.lastFailure,
+        failureKind: value.lastFailureKind,
+      });
+    }
+    await worlds.playTimeline.persist(value);
+    const cold = new PlayCallChain(worlds);
+    const expectedStatus = kind === "binding" ? "ready" : "interrupted";
+    expect((await worlds.playTimeline.readPage(worldId, 40)).activeStatus).toBe(
+      expectedStatus,
+    );
+    expect((await cold.inspectWorld(worldId))?.status).toBe(expectedStatus);
+    const next = new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [{ outcome: "response", text: "Recovered." }],
+    });
+    const append = cold.append({
+      worldId,
+      chainId: initial.chainId,
+      exchangeId: "after",
+      playerText: "Continue.",
+      modelHost: next,
+    });
+    if (kind === "binding") expect((await append).status).toBe("ready");
+    else {
+      await expect(append).rejects.toThrow();
+      expect(next.requests).toHaveLength(0);
+    }
+  },
+);
+
+test("冷恢复重试沿用请求模型快照，下一次发送采用当前配置", async () => {
+  const { worlds, worldId } = await createWorld("request-model-snapshot");
+  const connection = {
+    provider: "chat_completions" as const,
+    baseUrl: "https://original.invalid/v1",
+    apiKey: "secret",
+    modelId: "original",
+    reasoningEffort: "high" as const,
+    contextWindowTokens: 64000,
+    maxOutputTokens: 4096,
+  };
+  const original = new FileNativeModelHost(connection);
+  const changed = new FileNativeModelHost({
+    ...connection,
+    modelId: "changed",
+    reasoningEffort: "low",
+    contextWindowTokens: 128000,
+    maxOutputTokens: 2048,
+  });
+  const initial = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "request-model-snapshot",
+    exchangeId: "first",
+    playerText: "Begin.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: original.binding(),
+    modelHost: {
+      binding: () => original.binding(),
+      freezeRequest: (request) => original.freezeRequest(request),
+      exchange: () =>
+        Promise.reject(new ModelHostFailureError("Rejected before generation")),
+    },
+  });
+  const saved = (await worlds.playTimeline.readCurrent(worldId))!.value
+    .lastRequest!;
+  expect(initial.canRetry).toBe(true);
+  expect(saved.modelConfig?.modelId).toBe("original");
+  const scripted = new ScriptedModelHost({
+    binding: changed.binding(),
+    steps: [
+      { outcome: "response", text: "Retried." },
+      { outcome: "response", text: "New parameters." },
+    ],
+  });
+  const changedHost: ModelHost = {
+    binding: () => changed.binding(),
+    freezeRequest: (request) => changed.freezeRequest(request),
+    exchange: (request, observer) => scripted.exchange(request, observer),
+  };
+  const cold = new PlayCallChain(worlds);
+  expect(
+    (
+      await cold.append({
+        worldId,
+        chainId: initial.chainId,
+        exchangeId: "retry",
+        playerText: "",
+        modelHost: changedHost,
+      })
+    ).status,
+  ).toBe("ready");
+  expect(scripted.requests[0]).toEqual(saved);
+  expect(changed.previewRequest(scripted.requests[0]!)).toEqual(
+    original.previewRequest(saved),
+  );
+  const next = await cold.append({
+    worldId,
+    chainId: initial.chainId,
+    exchangeId: "next",
+    playerText: "Continue.",
+    modelHost: changedHost,
+  });
+  expect(next.status).toBe("ready");
+  expect(next.contextWindowTokens).toBe(128000);
+  expect(scripted.requests[1]?.modelConfig).toMatchObject({
+    modelId: "changed",
+    reasoningEffort: "low",
+    maxOutputTokens: 2048,
+  });
 });
 
 test("只有 reasoning 的响应仍持久化原生续传载荷，但不会进入叙事 Authority", async () => {

@@ -1,3 +1,4 @@
+import { projectLegacyModelBindingFailure } from "./LegacyModelBindingFailure.ts";
 import { classifyPlayFailure } from "./PlayFailure.ts";
 import {
   captureNarrativeOrigin,
@@ -403,23 +404,7 @@ export class PlayCallChain {
       );
     const session = await this.#requireChain(input.worldId, input.chainId);
     await this.#assertCurrentHead(session);
-    try {
-      assertSessionModelHostBinding(session, input.modelHost);
-    } catch (error: unknown) {
-      if (!(error instanceof PlayCallChainError)) throw error;
-      session.status = "interrupted";
-      session.canRetry = false;
-      session.lastFailure = error.message;
-      session.lastFailureKind = "context_unavailable";
-      session.events.push({
-        id: session.nextEventId++,
-        kind: "failure",
-        message: error.message,
-        failureKind: session.lastFailureKind,
-      });
-      await this.#persist(session);
-      throw error;
-    }
+    assertSessionModelHostBinding(session, input.modelHost);
     if (input.playerText.trim().length === 0) {
       if (session.status === "running")
         throw new PlayCallChainError("A model request is still running.");
@@ -427,6 +412,18 @@ export class PlayCallChain {
         if (!session.canRetry || session.lastRequest === null)
           throw new PlayCallChainError(
             "The current model context cannot continue; use a fresh context.",
+          );
+        // Pre-snapshot requests have only a binding fingerprint. Do not invent
+        // their original encoding settings from a newly selected connection.
+        if (
+          session.lastRequest.modelConfig === undefined &&
+          !equalModelHostBinding(
+            session.modelBinding!,
+            input.modelHost.binding(),
+          )
+        )
+          throw new PlayCallChainError(
+            "This older saved request has no model configuration snapshot. Restore its original settings to retry it, or start a fresh context.",
           );
         return this.#dispatch(
           session,
@@ -2155,6 +2152,10 @@ export class PlayCallChain {
         session.lastRequest?.maxOutputTokens ?? 1,
         session.exchange,
       );
+      if (session.lastRequest?.modelConfig !== undefined)
+        nextRequest.modelConfig = structuredClone(
+          session.lastRequest.modelConfig,
+        );
       session.lastRequest = structuredClone(nextRequest);
       session.lastRequestAttempt = 0;
       session.status = "interrupted";
@@ -2231,7 +2232,8 @@ export class PlayCallChain {
     signal: AbortSignal,
     observer?: PlayCallChainObserver,
   ): Promise<V1PlayCallChainView> {
-    let request = structuredClone(firstRequest);
+    let request =
+      modelHost.freezeRequest?.(firstRequest) ?? structuredClone(firstRequest);
     let attempt = firstAttempt;
     for (;;) {
       this.#setInvocationAbortable(session.chainId, true);
@@ -2961,12 +2963,13 @@ function createRequest(
   exchange: number,
   appended: readonly ModelHostAppendItem[] = session.transcript,
 ): ModelHostExchange {
-  return createRequestWithMaxOutputTokens(
+  const request = createRequestWithMaxOutputTokens(
     session,
     modelHost.binding().maxOutputTokens,
     exchange,
     appended,
   );
+  return modelHost.freezeRequest?.(request) ?? request;
 }
 
 function createRequestWithMaxOutputTokens(
@@ -3225,7 +3228,11 @@ function projectContext(
     playPreset: structuredClone(recordedPlayPrompt(context).playPreset),
     ...(context.modelBinding === undefined
       ? {}
-      : { contextWindowTokens: context.modelBinding.contextWindowTokens }),
+      : {
+          contextWindowTokens:
+            context.lastRequest?.modelConfig?.contextWindowTokens ??
+            context.modelBinding.contextWindowTokens,
+        }),
     ...(response?.kind !== "assistant"
       ? {}
       : {
@@ -3258,7 +3265,7 @@ function projectActivityEvent(
     event.kind === "failure" ||
     event.kind === "cancellation"
   )
-    return structuredClone(event);
+    return structuredClone(projectLegacyModelBindingFailure(event));
   if (event.kind === "assistant") {
     const { reasoning, toolFragment, usage, ...summary } = event;
     void reasoning;
@@ -3502,7 +3509,11 @@ function assertSessionModelHostBinding(
     throw new PlayCallChainError(
       "This model context predates durable provider continuation bindings; start a fresh context.",
     );
-  assertModelHostBinding(session.modelBinding, modelHost);
+  if (session.modelBinding.provider !== modelHost.binding().provider)
+    throw new PlayCallChainError(
+      "The selected model protocol differs from this context. Switch back to its original protocol to continue, or start a fresh context.",
+      "model_protocol_mismatch",
+    );
 }
 
 function validateIdentity(value: string, label: string): void {

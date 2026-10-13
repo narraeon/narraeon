@@ -7,6 +7,11 @@ import {
 let activeLocale: AppLocale = defaultAppLocale;
 
 const englishMessages: Record<string, string> = {
+  旧模型配置曾阻止发送: "Previous model settings blocked sending",
+  "旧版本因模型配置变化阻止了这次发送。切回原协议后，可按上下文当前状态继续。":
+    "An older version blocked this send after the model settings changed. Switch back to the original protocol and continue according to the context's current status.",
+  "当前模型协议与此上下文不同。切回原协议即可继续；使用新协议请开启全新上下文。":
+    "The selected model protocol differs from this context. Switch back to the original protocol to continue, or start a fresh context with the new protocol.",
   复制: "Copy",
   主角模板: "Protagonist template",
   不使用: "None",
@@ -2140,8 +2145,8 @@ Object.assign(englishMessages, {
   "模型回复达到输出上限，尚未完成。请在模型配置中调高最大输出 Token，保存后从全新上下文继续。推理也可能占用输出额度。":
     "The model response reached the output limit before completion. Increase the maximum output tokens in the model configuration, save, then continue with a fresh context. Reasoning may also consume the output budget.",
   模型上下文无法继续: "Model context unavailable",
-  "当前上下文的续传信息不可用，或模型连接与原配置不兼容。旧请求不能重发，请从全新上下文继续。":
-    "Continuation data is unavailable, or the model connection is incompatible with the original configuration. The previous request cannot be resent. Continue with a fresh context.",
+  "当前上下文的续传信息缺失或不可用。旧请求不能重发，请从全新上下文继续。":
+    "Continuation data is missing or unavailable. The previous request cannot be resent. Continue with a fresh context.",
   模型请求可以重新发送: "Model request can be resent",
   "模型拒绝了请求，或请求尚未发出。可以重新发送已保存的请求，不会重复提交玩家原文。":
     "The model rejected the request, or it was not dispatched. You can resend the saved request without submitting the player text again.",

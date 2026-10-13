@@ -1,4 +1,8 @@
 import {
+  legacyModelBindingFailure,
+  projectLegacyModelBindingFailure,
+} from "./LegacyModelBindingFailure.ts";
+import {
   isPlayFailureKind,
   type PlayFailureKind,
 } from "../../protocol/playFailure.ts";
@@ -943,7 +947,7 @@ export class FileNativePlayTimelineStore {
           ...(context.index.importedFromArchive
             ? { requiresFreshContext: true }
             : {}),
-          event: summary,
+          event: projectLegacyModelBindingFailure(summary),
         });
         pointer = { ...pointer, eventId: pointer.eventId - 1 };
         continue;
@@ -1027,7 +1031,7 @@ export class FileNativePlayTimelineStore {
     assertPlayEvent(event);
     if (event.id !== eventId)
       throw new Error("Play timeline event identity is inconsistent");
-    return normalizePlayEvent(event);
+    return projectLegacyModelBindingFailure(normalizePlayEvent(event));
   }
 
   newGeneration(): string {
@@ -1157,6 +1161,48 @@ export class FileNativePlayTimelineStore {
       stateValue.chainId !== chainId
     )
       throw new Error("Play context durable identity is inconsistent");
+    // Old versions persisted a configuration preflight failure as a terminal
+    // context failure. Recover only the disposition proven by its event prefix.
+    // Archive contexts and genuine provider failures retain their restrictions.
+    if (
+      !indexValue.importedFromArchive &&
+      stateValue.status === "interrupted" &&
+      stateValue.lastFailure === legacyModelBindingFailure &&
+      (stateValue.lastFailureKind === undefined ||
+        stateValue.lastFailureKind === "context_unavailable")
+    ) {
+      for (let id = stateValue.eventCount; id > 0; id -= 1) {
+        const event = await readJson<unknown>(
+          join(root, "events", numbered(id)),
+        );
+        assertPlayEvent(event);
+        if (
+          event.kind === "followup" ||
+          (event.kind === "failure" &&
+            event.message === legacyModelBindingFailure)
+        )
+          continue;
+        if (
+          event.kind === "assistant" &&
+          event.status === "completed" &&
+          event.responseKind === "narrative" &&
+          event.continuation === "available" &&
+          event.committedHead === stateValue.parentHead
+        ) {
+          stateValue.status = "ready";
+          stateValue.canRetry = false;
+          stateValue.lastFailure = null;
+          delete stateValue.lastFailureKind;
+        } else if (event.kind === "failure") {
+          stateValue.canRetry = event.failureKind === "retryable";
+          stateValue.lastFailure = event.message;
+          if (event.failureKind === undefined)
+            delete stateValue.lastFailureKind;
+          else stateValue.lastFailureKind = event.failureKind;
+        }
+        break;
+      }
+    }
     return { root, index: indexValue, state: stateValue };
   }
 }

@@ -32,10 +32,7 @@ import {
 import { contentTreeFingerprint } from "./content/ContentTreeFingerprint.ts";
 import { inspectContentPackageCurrentTree } from "./content/FileNativeContentTree.ts";
 import { FileNativeModelHost } from "./model/FileNativeModelAdapters.ts";
-import {
-  equalModelHostBinding,
-  type ModelHostBinding,
-} from "./model/ModelHost.ts";
+import { type ModelHostBinding } from "./model/ModelHost.ts";
 import { ModelConnectionStore } from "./model/ModelConnectionStore.ts";
 import { FileNativeContinuityCorrection } from "./play/FileNativeContinuityCorrection.ts";
 import { fingerprintControl } from "./play/PlayDocumentTools.ts";
@@ -954,8 +951,7 @@ export class V1Runtime {
         const continueContext =
           currentContext !== null &&
           !currentContext.stale &&
-          frozenBinding !== undefined &&
-          equalModelHostBinding(frozenBinding, modelBinding);
+          frozenBinding?.provider === modelBinding.provider;
         const baseline = continueContext
           ? await this.#worlds.bindPlayCallChainAt(
               request.worldId,
@@ -1406,7 +1402,7 @@ async function playCall<Value>(
     return await operation();
   } catch (error: unknown) {
     if (error instanceof PlayCallChainError)
-      throw new V1ProtocolError("invalid_request", error.message, {
+      throw new V1ProtocolError(error.code, error.message, {
         cause: error,
       });
     throw error;

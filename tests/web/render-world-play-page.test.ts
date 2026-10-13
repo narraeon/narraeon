@@ -36,7 +36,10 @@ import {
 } from "../../src/protocol/appPreferences.ts";
 import { WorldPage } from "../../src/web/WorldPage.tsx";
 import { App } from "../../src/web/App.tsx";
-import type { RuntimeClient } from "../../src/web/runtimeClient.ts";
+import {
+  RuntimeRequestError,
+  type RuntimeClient,
+} from "../../src/web/runtimeClient.ts";
 
 beforeEach(() => {
   // Node's native localStorage can shadow the browser storage in jsdom.
@@ -2917,6 +2920,57 @@ describe("世界游玩页面", () => {
       });
       cleanup();
     }
+  });
+
+  test("协议不匹配保留玩家输入和追加入口，切回后可再次发送", async () => {
+    const chain = playChainView("existing", "first", "Begin.");
+    let incompatible = true;
+    const client = {
+      request: vi.fn(<T>(request: V1Request): Promise<T> => {
+        if (request.type === "world.read")
+          return Promise.resolve(worldView(chain) as T);
+        if (request.type === "artifacts.debug") return Promise.resolve([] as T);
+        if (request.type === "play.chain.inspect")
+          return Promise.resolve(chain as T);
+        if (request.type === "play.chain.append") {
+          if (incompatible)
+            return Promise.reject(
+              new RuntimeRequestError("Protocol differs", {
+                protocolCode: "model_protocol_mismatch",
+              }),
+            );
+          return Promise.resolve(chain as T);
+        }
+        return Promise.reject(new Error(`Unexpected request: ${request.type}`));
+      }),
+    };
+    renderWorld(client);
+    await screen.findByText("Alex opens the door and lets you go first.");
+    fireEvent.change(screen.getByLabelText("你的行动"), {
+      target: { value: "Continue after switching back." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "追加上下文" }));
+    const notice = await screen.findByText(
+      "当前模型协议与此上下文不同。切回原协议即可继续；使用新协议请开启全新上下文。",
+    );
+    expect(notice.closest("details")).toBeNull();
+    expect(screen.queryByText("调用链中断")).toBeNull();
+    expect(
+      screen.getByRole<HTMLButtonElement>("button", { name: "追加上下文" })
+        .disabled,
+    ).toBe(false);
+    expect(screen.getByLabelText<HTMLTextAreaElement>("你的行动").value).toBe(
+      "Continue after switching back.",
+    );
+    incompatible = false;
+    fireEvent.click(screen.getByRole("button", { name: "追加上下文" }));
+    await waitFor(() =>
+      expect(
+        client.request.mock.calls.filter(
+          ([request]) => request.type === "play.chain.append",
+        ),
+      ).toHaveLength(2),
+    );
   });
 
   test("追加上下文只发送一条新的玩家输入并接到现有调用链", async () => {

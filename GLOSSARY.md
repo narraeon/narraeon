@@ -269,7 +269,7 @@ _Avoid_：整段对话冻结、当前预设的动态别名、从旧请求重建�
 _Avoid_：世界、存档、权威历史、思维链
 
 **Provider 续传载荷**：
-Provider 完整响应中可以原样追加到下一次同协议请求的协议原生片段；Chat Completions 保存完整 assistant message，Responses 保存完整 `output` items，Anthropic Messages 保存完整 assistant `content` blocks。它不含 HTTP response 外壳，也不能从正文、返回推理、工具调用等解析投影重新组装；缺失、损坏或与冻结绑定不兼容时，本次模型会话必须失败并要求全新上下文。
+Provider 完整响应中可以原样追加到下一次同协议请求的协议原生片段；Chat Completions 保存完整 assistant message，Responses 保存完整 `output` items，Anthropic Messages 保存完整 assistant `content` blocks。它不含 HTTP response 外壳，也不能从正文、返回推理、工具调用等解析投影重新组装；缺失或损坏时，本次模型会话必须失败并要求全新上下文；游玩上下文与当前所选协议不同时只临时阻止发送，切回原协议可继续。
 _Avoid_：完整 HTTP response、解析后重建消息、从 text 切思维链、静默丢弃签名
 
 **模型调用投影**：
@@ -281,7 +281,7 @@ Runtime 对当前仍在执行的一次游玩生成给出的临时观察，按准
 _Avoid_：隐藏思维探针、把无数据等同卡死、持久模型状态、客户端自造阶段
 
 **模型绑定**：
-一次模型会话固定使用的 provider endpoint、协议与方言、模型、续传 codec、Effort、Thinking 模式／手动预算、返回 thinking 内容、输出能力、工具策略和缓存策略；凭据与传输超时可以更新，但任何会改变请求或续传语义的字段都只能在全新上下文生效。它必须提供真实上下文窗口与最大输出能力，不能用脱离模型的 48k／128k 产品常量代替。
+一次请求使用的 provider endpoint、协议与方言、模型、续传 codec、Effort、Thinking 模式／手动预算、返回 thinking 内容、输出能力、工具策略和缓存策略。游玩上下文保留原协议，正常发送可使用同协议的当前模型配置；请求派发后其编码参数冻结，合法重试沿用该快照。协议切换临时阻止旧上下文发送，切回原协议即可继续。作者会话仍保留会话级模型绑定。它必须提供真实上下文窗口与最大输出能力，不能用脱离模型的 48k／128k 产品常量代替。
 _Avoid_：自动猜测模型能力、会话中途换模、只比较模型名、固定全局 token 预算
 
 ### 游玩与权威

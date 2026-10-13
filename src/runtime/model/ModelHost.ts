@@ -1,6 +1,10 @@
 import type {
   ModelPromptCacheStrategy,
   ModelProviderKind,
+  ModelProviderDialect,
+  ModelReasoningEffort,
+  ModelReasoningSummary,
+  ModelThinkingMode,
 } from "../../protocol/modelConnections.ts";
 import type {
   ModelUsage as ModelHostUsage,
@@ -92,7 +96,21 @@ export type ModelHostAppendItem =
       isError?: boolean;
     };
 
+/** Credential-free encoding settings frozen per request, not per context. */
+export interface ModelHostRequestConfig {
+  provider: ModelProviderKind;
+  modelId: string;
+  dialect: ModelProviderDialect;
+  reasoningEffort: ModelReasoningEffort;
+  reasoningSummary: ModelReasoningSummary;
+  thinkingMode: ModelThinkingMode;
+  thinkingBudgetTokens: number | null;
+  contextWindowTokens: number;
+  maxOutputTokens: number;
+}
+
 export interface ModelHostExchange {
+  modelConfig?: ModelHostRequestConfig;
   bootstrap: PromptCompilation;
   /** Stable definitions for the complete logical operation. */
   toolUniverse?: PromptCompilation["tools"];
@@ -147,6 +165,7 @@ export interface ModelHostWireRequest {
 }
 
 export interface ModelHost {
+  freezeRequest?(request: ModelHostExchange): ModelHostExchange;
   /** Optional credential-free production encoding, used only for request diagnostics. */
   previewRequest?(request: ModelHostExchange): ModelHostWireRequest;
   binding(): ModelHostBinding;

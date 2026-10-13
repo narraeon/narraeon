@@ -19,6 +19,7 @@ const titles = [
   ["模型请求可以重新发送", "Model request can be resent"],
   ["模型连接发生错误", "Model connection error"],
   ["调用链中断", "Call chain interrupted"],
+  ["旧模型配置曾阻止发送", "Previous model settings blocked sending"],
 ];
 
 for (const locale of ["zh-CN", "en"] as const)

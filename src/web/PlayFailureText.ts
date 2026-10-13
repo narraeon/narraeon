@@ -5,6 +5,11 @@ export const failureText: Record<
   PlayFailureKind,
   { title: string; description: string }
 > = {
+  configuration_mismatch: {
+    title: "旧模型配置曾阻止发送",
+    description:
+      "旧版本因模型配置变化阻止了这次发送。切回原协议后，可按上下文当前状态继续。",
+  },
   outcome_unknown: {
     title: "模型请求结果未知",
     description:
@@ -23,7 +28,7 @@ export const failureText: Record<
   context_unavailable: {
     title: "模型上下文无法继续",
     description:
-      "当前上下文的续传信息不可用，或模型连接与原配置不兼容。旧请求不能重发，请从全新上下文继续。",
+      "当前上下文的续传信息缺失或不可用。旧请求不能重发，请从全新上下文继续。",
   },
   retryable: {
     title: "模型请求可以重新发送",

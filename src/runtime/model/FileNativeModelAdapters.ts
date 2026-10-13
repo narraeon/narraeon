@@ -174,7 +174,46 @@ export class FileNativeModelHost implements ModelHost {
     };
   }
 
-  async exchange(
+  freezeRequest(request: ModelHostExchange): ModelHostExchange {
+    const frozen = structuredClone(request);
+    if (frozen.modelConfig === undefined) {
+      const {
+        baseUrl: _baseUrl,
+        apiKey: _apiKey,
+        ...config
+      } = this.#connection;
+      void _baseUrl;
+      void _apiKey;
+      frozen.modelConfig = config;
+    }
+    return frozen;
+  }
+
+  #requestHost(request: ModelHostExchange): FileNativeModelHost {
+    if (request.modelConfig === undefined) return this;
+    if (request.modelConfig.provider !== this.#connection.provider)
+      throw new ModelHostBindingMismatchError(
+        "The request protocol does not match the selected model host",
+      );
+    return new FileNativeModelHost(
+      {
+        ...request.modelConfig,
+        baseUrl: this.#connection.baseUrl,
+        apiKey: this.#connection.apiKey,
+      },
+      this.#fetch,
+      this.#failureLog,
+    );
+  }
+
+  exchange(
+    request: ModelHostExchange,
+    observer?: ModelHostExchangeObserver,
+  ): Promise<ModelHostResponse> {
+    return this.#requestHost(request).#exchange(request, observer);
+  }
+
+  async #exchange(
     request: ModelHostExchange,
     observer?: ModelHostExchangeObserver,
   ): Promise<ModelHostResponse> {
@@ -200,6 +239,10 @@ export class FileNativeModelHost implements ModelHost {
 
   /** Uses the production encoders and deliberately omits credentials. */
   previewRequest(request: ModelHostExchange): ModelHostWireRequest {
+    return this.#requestHost(request).#previewRequest(request);
+  }
+
+  #previewRequest(request: ModelHostExchange): ModelHostWireRequest {
     assertExchangeCompatibility(this.#connection, request);
     const provider = this.#connection.provider;
     const body =
