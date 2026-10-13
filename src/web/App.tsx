@@ -72,6 +72,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const locationRef = useRef<WorkspaceLocation>({ screen: "home" });
   const [selectedPresetId, setSelectedPresetId] = useState("");
   const [presetPageVersion, setPresetPageVersion] = useState(0);
+  const presetPageInstanceRef = useRef(0);
   const [selected, setSelected] = useState<string>("");
   const [creatingWorld, setCreatingWorld] = useState(false);
   const creatingWorldRef = useRef(false);
@@ -117,6 +118,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     const previous = locationRef.current;
     const hash = workspaceHash(next);
     packageOpenRequest.current += 1;
+    if (previous.screen !== next.screen) presetPageInstanceRef.current += 1;
     if (workspaceHash(previous) !== hash) authoringWorkspace.close();
     locationRef.current = next;
     if (next.screen === "content") setSelected(next.packageId);
@@ -162,8 +164,10 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     } else if (target.screen === "plays") {
       const presetId = target.presetId ?? next.playPresets.currentPresetId;
       const current = locationRef.current;
-      if (current.screen === "plays" && current.presetId !== presetId)
+      if (current.screen === "plays" && current.presetId !== presetId) {
+        presetPageInstanceRef.current += 1;
         setPresetPageVersion((version) => version + 1);
+      }
       switchLocation(
         { screen: "plays", ...(presetId ? { presetId } : {}) },
         "replace",
@@ -266,6 +270,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     return () => {
       active = false;
       packageOpenRequest.current += 1;
+      presetPageInstanceRef.current += 1;
     };
   }, [client]);
 
@@ -590,6 +595,8 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     }
   }
 
+  // Async preset actions retain this instance even after a later page mounts.
+  const presetPageInstance = presetPageInstanceRef.current;
   const worldContent =
     screen === "world" ? (
       <WorldPage
@@ -765,12 +772,17 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             client={client}
             initialLibrary={workspace.playPresets}
             initialSelectedId={selectedPresetId}
-            onSelectionChange={(presetId) =>
+            onSelectionChange={(presetId) => {
+              if (
+                locationRef.current.screen !== "plays" ||
+                presetPageInstanceRef.current !== presetPageInstance
+              )
+                return;
               switchLocation(
                 { screen: "plays", ...(presetId ? { presetId } : {}) },
                 "replace",
-              )
-            }
+              );
+            }}
             recommendedTemplates={firstPartyPlayPresetTemplatesForLocale(
               workspace.preferences.locale,
             )}

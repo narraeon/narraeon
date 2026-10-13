@@ -23,6 +23,127 @@ import { defaultOrderedAuthorPrompts } from "../../src/shared/ordered-author-pro
 
 afterEach(cleanup);
 
+function delayedPresetCopyFixture() {
+  const { client, request } = fixture();
+  const original = request.getMockImplementation()!;
+  const base: PlayPresetScreenPreset = {
+    id: "preset-first",
+    name: "第一份预设",
+    revision: "rev-original",
+    files: structuredClone(firstPartyActionChoicesPresetFiles),
+    validation: { status: "valid" },
+  };
+  const other = { ...base, id: "preset-other", name: "第二份预设" };
+  const copied = { ...base, id: "preset-copy", name: "复制的预设" };
+  let library = { currentPresetId: base.id, presets: [base, other] };
+  let finishRead: (value: typeof library) => void = () => undefined;
+  request.mockImplementation(async (input) => {
+    if (input.type === "workspace.read")
+      return { ...((await original(input)) as object), playPresets: library };
+    if (input.type === "play.copy") {
+      library = { ...library, presets: [...library.presets, copied] };
+      return { preset: copied };
+    }
+    if (input.type === "play.read")
+      return new Promise((resolve) => {
+        finishRead = resolve;
+      });
+    return original(input);
+  });
+  return {
+    client,
+    request,
+    finishRead: () => finishRead(library),
+    firstId: base.id,
+    otherId: other.id,
+    copyId: copied.id,
+  };
+}
+
+test.each(["model-draft", "reopened-presets"])(
+  "离开预设页面后迟到的复制读取不能导航或覆盖当前选择：%s",
+  async (destination) => {
+    const scenario = delayedPresetCopyFixture();
+    render(createElement(App, { client: scenario.client }));
+    await screen.findByRole("heading", { name: "世界工作区" });
+    const presets = () =>
+      within(screen.getByRole("navigation", { name: "工作区导航" })).getByRole(
+        "button",
+        { name: "预设" },
+      );
+    fireEvent.click(presets());
+    expect(window.location.hash).toBe(`#/presets/${scenario.firstId}`);
+    fireEvent.click(screen.getByText("预设操作", { selector: "summary" }));
+    fireEvent.click(screen.getByRole("button", { name: "复制为新预设" }));
+    await waitFor(() =>
+      expect(scenario.request).toHaveBeenCalledWith({ type: "play.read" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "模型连接" }));
+    if (destination === "model-draft") {
+      fireEvent.change(screen.getByLabelText("配置名称"), {
+        target: { value: "新的模型草稿" },
+      });
+    } else {
+      fireEvent.click(presets());
+      fireEvent.change(screen.getByLabelText("切换预设"), {
+        target: { value: scenario.otherId },
+      });
+    }
+    const address = window.location.hash;
+    const historyLength = window.history.length;
+    await act(async () => {
+      scenario.finishRead();
+      await Promise.resolve();
+    });
+    expect(window.location.hash).toBe(address);
+    expect(window.history.length).toBe(historyLength);
+    if (destination === "model-draft") {
+      expect(screen.getByLabelText<HTMLInputElement>("配置名称").value).toBe(
+        "新的模型草稿",
+      );
+      expect(screen.queryByRole("heading", { name: "玩法预设" })).toBeNull();
+    } else {
+      expect(screen.getByLabelText<HTMLSelectElement>("切换预设").value).toBe(
+        scenario.otherId,
+      );
+      expect(window.location.hash).toBe(`#/presets/${scenario.otherId}`);
+    }
+  },
+);
+
+test("当前预设页面的选择和有效复制回调仍替换 URL", async () => {
+  const scenario = delayedPresetCopyFixture();
+  render(createElement(App, { client: scenario.client }));
+  await screen.findByRole("heading", { name: "世界工作区" });
+  fireEvent.click(
+    within(screen.getByRole("navigation", { name: "工作区导航" })).getByRole(
+      "button",
+      { name: "预设" },
+    ),
+  );
+  const historyLength = window.history.length;
+  fireEvent.change(screen.getByLabelText("切换预设"), {
+    target: { value: scenario.otherId },
+  });
+  expect(window.location.hash).toBe(`#/presets/${scenario.otherId}`);
+  expect(window.history.length).toBe(historyLength);
+  fireEvent.click(screen.getByText("预设操作", { selector: "summary" }));
+  fireEvent.click(screen.getByRole("button", { name: "复制为新预设" }));
+  await waitFor(() =>
+    expect(scenario.request).toHaveBeenCalledWith({ type: "play.read" }),
+  );
+  await act(async () => {
+    scenario.finishRead();
+    await Promise.resolve();
+  });
+  expect(screen.getByLabelText<HTMLSelectElement>("切换预设").value).toBe(
+    scenario.copyId,
+  );
+  expect(window.location.hash).toBe(`#/presets/${scenario.copyId}`);
+  expect(window.history.length).toBe(historyLength);
+  expect(screen.getByText("已复制为独立预设。")).toBeTruthy();
+});
+
 test("启动恢复指定内容包，读取地址不会创建新的内容包", async () => {
   window.history.replaceState(null, "", "#/content/chosen");
   const { client, request } = fixture();
