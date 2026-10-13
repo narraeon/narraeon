@@ -1093,7 +1093,9 @@ export function WorldPage({
 
   const failureRecovery: PlayFailureRecovery = {
     canRetry: activeCanRetry && !activeChainStale,
-    disabled: !modelConfigured || !playIdle,
+    playDisabled: !modelConfigured || !playIdle,
+    configureDisabled:
+      !playIdle || revisionDirty || controlDirty || authoringLocked,
     onRetry: () => void submitPlayChain("append", ""),
     onFreshContext: () => {
       setPreferFreshContext(true);

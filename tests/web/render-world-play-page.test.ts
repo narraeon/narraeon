@@ -31,6 +31,8 @@ import type {
 import { projectUncoveredPlayerViews } from "../../src/web/PlayerViewFallback.ts";
 import type { FrontendArtifactProjection } from "../../src/web/ArtifactExtensionHost.tsx";
 import { WorldPage } from "../../src/web/WorldPage.tsx";
+import { App } from "../../src/web/App.tsx";
+import type { RuntimeClient } from "../../src/web/runtimeClient.ts";
 
 afterEach(() => {
   cleanup();
@@ -38,6 +40,107 @@ afterEach(() => {
 });
 
 describe("世界游玩页面", () => {
+  test.each(["provider_error", "output_limit", "retryable"] as const)(
+    "没有模型连接时 %s 的配置恢复可导航，重发仍禁用且保留草稿导航锁",
+    async (failureKind) => {
+      const chain = interruptedChainView();
+      chain.lastFailureKind = failureKind;
+      chain.canRetry = failureKind === "retryable";
+      const failure = chain.events.at(-1)!;
+      if (failure.kind !== "failure") throw new Error("missing failure");
+      failure.failureKind = failureKind;
+      const request = vi.fn((input: V1Request): Promise<unknown> => {
+        if (input.type === "workspace.read")
+          return Promise.resolve({
+            preferences: { locale: "zh-CN" },
+            contentPackages: [],
+            worlds: [{ worldId: "world-one", title: "宿舍世界" }],
+            storageNotices: [],
+            playPresets: { currentPresetId: "", presets: [] },
+            model: {
+              configured: false,
+              activeConnectionId: null,
+              connections: [],
+              presets: [],
+            },
+          });
+        if (input.type === "world.read")
+          return Promise.resolve(worldView(chain));
+        if (input.type === "artifacts.debug") return Promise.resolve([]);
+        if (input.type === "world.package-scripts.read")
+          return Promise.resolve({ enabled: false });
+        return Promise.reject(new Error(`Unexpected request: ${input.type}`));
+      });
+      render(
+        createElement(App, {
+          client: { request } as unknown as RuntimeClient,
+        }),
+      );
+      fireEvent.click(
+        await screen.findByRole("button", { name: "打开世界：宿舍世界" }),
+      );
+      await screen.findByText("需要先配置模型连接才能游玩。");
+      const fresh = screen.getByRole<HTMLButtonElement>("button", {
+        name: "从全新上下文继续",
+      });
+      expect(fresh.disabled).toBe(true);
+      if (failureKind === "retryable") {
+        const retry = screen.getByRole<HTMLButtonElement>("button", {
+          name: "重新发送",
+        });
+        expect(retry.disabled).toBe(true);
+        fireEvent.click(retry);
+        expect(
+          request.mock.calls.some(
+            ([input]) => input.type === "play.chain.append",
+          ),
+        ).toBe(false);
+        return;
+      }
+      const configure = screen.getByRole<HTMLButtonElement>("button", {
+        name: failureKind === "output_limit" ? "调整最大输出" : "检查模型连接",
+      });
+      expect(configure.disabled).toBe(false);
+      const openManagement = (): HTMLElement => {
+        fireEvent.click(screen.getByRole("button", { name: "世界管理" }));
+        const management = screen.getByRole("dialog", { name: "世界管理" });
+        fireEvent.click(within(management).getByText("世界控制 · 高级编辑"));
+        return management;
+      };
+      const management = openManagement();
+      fireEvent.change(
+        within(management).getByLabelText("世界控制文件（JSON）"),
+        { target: { value: "[]" } },
+      );
+      fireEvent.click(within(management).getByRole("button", { name: "关闭" }));
+      expect(configure.disabled).toBe(true);
+      fireEvent.click(configure);
+      expect(
+        document.querySelector(".workspace-shell")?.getAttribute("data-screen"),
+      ).toBe("world");
+      const resetManagement = openManagement();
+      fireEvent.click(
+        within(resetManagement).getByRole("button", { name: "放弃控制修改" }),
+      );
+      fireEvent.click(
+        within(resetManagement).getByRole("button", { name: "关闭" }),
+      );
+      expect(configure.disabled).toBe(false);
+      fireEvent.click(configure);
+      await screen.findByRole("heading", { name: "模型连接" });
+      expect(
+        document.querySelector(".workspace-shell")?.getAttribute("data-screen"),
+      ).toBe("model");
+      expect(
+        request.mock.calls.some(
+          ([input]) =>
+            input.type === "play.chain.append" ||
+            input.type === "play.chain.start",
+        ),
+      ).toBe(false);
+    },
+  );
+
   test.each([false, true])(
     "恢复按钮使用当前链，保留草稿并支持轻量首屏=%s",
     async (summaryOnly) => {

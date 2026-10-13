@@ -38,7 +38,8 @@ for (const locale of ["zh-CN", "en"] as const)
           message,
           recovery: {
             canRetry: true,
-            disabled: false,
+            playDisabled: false,
+            configureDisabled: false,
             onRetry,
             onFreshContext,
             onConfigureModel,
@@ -92,7 +93,8 @@ test.each([true, false])(
           "Chat Completions request was dispatched but its outcome is unknown",
         recovery: {
           canRetry,
-          disabled: false,
+          playDisabled: false,
+          configureDisabled: false,
           onRetry: vi.fn(),
           onFreshContext: vi.fn(),
           onConfigureModel: vi.fn(),
@@ -124,7 +126,8 @@ test("historical failures and missing replay permission do not offer resend", ()
       message: "old",
       recovery: {
         canRetry: false,
-        disabled: false,
+        playDisabled: false,
+        configureDisabled: false,
         onRetry: vi.fn(),
         onFreshContext: vi.fn(),
         onConfigureModel: vi.fn(),

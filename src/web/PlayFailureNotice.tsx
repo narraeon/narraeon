@@ -4,7 +4,8 @@ import { failureText } from "./PlayFailureText.ts";
 
 export interface PlayFailureRecovery {
   canRetry: boolean;
-  disabled: boolean;
+  playDisabled: boolean;
+  configureDisabled: boolean;
   onRetry: () => void;
   onFreshContext: () => void;
   onConfigureModel: () => void;
@@ -32,7 +33,7 @@ export function PlayFailureNotice({
           {kind === "retryable" && recovery.canRetry ? (
             <button
               type="button"
-              disabled={recovery.disabled}
+              disabled={recovery.playDisabled}
               onClick={recovery.onRetry}
             >
               {uiText("重新发送")}
@@ -40,7 +41,7 @@ export function PlayFailureNotice({
           ) : null}
           <button
             type="button"
-            disabled={recovery.disabled}
+            disabled={recovery.playDisabled}
             onClick={recovery.onFreshContext}
           >
             {uiText("从全新上下文继续")}
@@ -48,7 +49,7 @@ export function PlayFailureNotice({
           {kind === "provider_error" || kind === "output_limit" ? (
             <button
               type="button"
-              disabled={recovery.disabled}
+              disabled={recovery.configureDisabled}
               onClick={recovery.onConfigureModel}
             >
               {uiText(
