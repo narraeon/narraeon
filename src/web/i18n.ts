@@ -38,6 +38,10 @@ const englishMessages: Record<string, string> = {
   "选择一个世界继续故事，或从内容包开始创作。":
     "Continue a story in an existing world, or start creating from a content package.",
   "世界操作：{title}": "World actions: {title}",
+  刚刚: "Just now",
+  活动时间未记录: "Activity time not recorded",
+  "1 回合": "1 turn",
+  "{count} 回合": "{count} turns",
   "先新建或导入一份内容包，再完善开场与世界设定。":
     "Create or import a content package, then develop its opening and world setting.",
   "导入内容包 ZIP": "Import content package ZIP",

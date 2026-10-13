@@ -179,6 +179,26 @@
   font-size: 16px;
   font-weight: 500;
 }
+.home-world-card-story {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+.home-world-card-activity {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.home-world-card-excerpt {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 13px;
+}
 .home-world-card-action {
   display: flex;
   gap: 12px;

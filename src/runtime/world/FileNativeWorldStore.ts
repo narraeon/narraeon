@@ -42,6 +42,12 @@ import {
 } from "../prompt/FileNativePromptCompiler.ts";
 import { PlayerViewRenderer } from "./PlayerViewRenderer.ts";
 import { WorldDocumentStore } from "./WorldDocumentStore.ts";
+import {
+  readWorldActivity,
+  updateWorldActivity,
+  type WorldActivity,
+  type WorldActivitySummary,
+} from "./WorldActivity.ts";
 import { FileNativePlayTimelineStore } from "../play/FileNativePlayTimelineStore.ts";
 import { FileNativePlayAdvanceStore } from "../play/FileNativePlayAdvanceStore.ts";
 import { FileNativeWorldStorageMigrator } from "./FileNativeWorldStorageMigrator.ts";
@@ -107,13 +113,16 @@ export interface FileNativeWorldCreationInput {
   };
 }
 
-export interface FileNativeWorldSummary {
+export interface FileNativeWorldSummary extends WorldActivitySummary {
   worldId: string;
   title: string;
   parentEndpoint: "genesis";
 }
 
-interface Publication extends FileNativeWorldSummary {
+interface Publication extends Pick<
+  FileNativeWorldSummary,
+  "worldId" | "title" | "parentEndpoint"
+> {
   schemaVersion: 1;
   operationId: string;
   sourceFingerprint: string;
@@ -340,15 +349,33 @@ export class FileNativeWorldStore {
 
   async listWorlds(): Promise<FileNativeWorldSummary[]> {
     await mkdir(this.#worldsRoot, { recursive: true, mode: 0o700 });
-    const entries = await readdir(this.#worldsRoot, { withFileTypes: true });
+    const entries = (
+      await readdir(this.#worldsRoot, { withFileTypes: true })
+    ).filter((entry) => entry.isDirectory() && !entry.name.startsWith("."));
     const worlds: FileNativeWorldSummary[] = [];
-    for (const entry of entries.sort((left, right) =>
-      left.name.localeCompare(right.name),
-    )) {
-      if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
-      worlds.push(await readWorldSummaryAt(join(this.#worldsRoot, entry.name)));
+    // Bound concurrent shell/head/cache reads even in a large workspace.
+    for (let offset = 0; offset < entries.length; offset += 16) {
+      worlds.push(
+        ...(await Promise.all(
+          entries
+            .slice(offset, offset + 16)
+            .map((entry) =>
+              readWorldSummaryAt(
+                join(this.#worldsRoot, entry.name),
+                undefined,
+                (rebuild) =>
+                  this.operations.withWorldAuthorityLock(entry.name, rebuild),
+              ),
+            ),
+        )),
+      );
     }
-    return worlds;
+    return worlds.sort(
+      (left, right) =>
+        (right.lastActivityAt ?? -1) - (left.lastActivityAt ?? -1) ||
+        left.title.localeCompare(right.title) ||
+        left.worldId.localeCompare(right.worldId),
+    );
   }
 
   async renameWorld(
@@ -376,7 +403,7 @@ export class FileNativeWorldStore {
         worldId,
         name: trimmed,
       } satisfies WorldLocalMetadata);
-      return { ...toSummary(publication), title: trimmed };
+      return readWorldSummaryAt(root, publication);
     });
   }
 
@@ -641,13 +668,23 @@ export class FileNativeWorldStore {
         sourceFingerprint,
       };
       await writeJson(join(stagingRoot, publicationFile), publication);
+      await updateWorldActivity(
+        stagingRoot,
+        "genesis",
+        [openingMessage],
+        Date.now(),
+      );
       await durableTree(stagingRoot);
       crashAtFileNativeWorldCreationEdge("after_staging");
       await rename(stagingRoot, finalRoot);
       await syncDirectory(this.#worldsRoot);
       crashAtFileNativeWorldCreationEdge("after_atomic_publish");
       await publishOperation(operationPath, publication);
-      return { outcome: "created", world: toSummary(publication), preview };
+      return {
+        outcome: "created",
+        world: await this.#currentSummary(publication),
+        preview,
+      };
     } catch (error: unknown) {
       await rm(stagingRoot, { recursive: true, force: true }).catch(
         () => undefined,
@@ -1467,13 +1504,22 @@ export class FileNativeWorldStore {
           sourceFingerprint: requestFingerprint,
         };
         await writeJson(join(staging, publicationFile), publication);
+        await updateWorldActivity(
+          staging,
+          input.sourceHead,
+          selected.history,
+          Date.now(),
+        );
         await durableTree(staging);
         crashAtFileNativeAuthorityEdge("derivation_before_publish");
         await rename(staging, finalRoot);
         await syncDirectory(this.#worldsRoot);
         crashAtFileNativeAuthorityEdge("derivation_after_publish");
         await publishJson(operationPath, publication);
-        return { outcome: "derived", world: toSummary(publication) };
+        return {
+          outcome: "derived",
+          world: await this.#currentSummary(publication),
+        };
       } catch (error: unknown) {
         await rm(staging, { recursive: true, force: true }).catch(
           () => undefined,
@@ -1495,7 +1541,10 @@ export class FileNativeWorldStore {
               "Published fork world does not match the operation payload",
             );
           await publishJson(operationPath, published);
-          return { outcome: "derived", world: toSummary(published) };
+          return {
+            outcome: "derived",
+            world: await this.#currentSummary(published),
+          };
         }
         throw error;
       }
@@ -2121,6 +2170,7 @@ export class FileNativeWorldStore {
           });
           crashAtFileNativeAuthorityEdge("after_acceptance_prepared");
           await authorityStore.publishPrepared(preparedAppend);
+          const acceptedAt = Date.now();
           crashAtFileNativeAuthorityEdge("after_commit_acceptance");
           await publishJson(
             this.#operationOutcomePath(input.operationId),
@@ -2133,6 +2183,7 @@ export class FileNativeWorldStore {
               root,
               preparedAppend.nextHead,
               recovered,
+              acceptedAt,
             );
             crashAtFileNativeAuthorityEdge("after_materialization");
             const outcome = { ...pending, outcome: "committed" as const };
@@ -2913,6 +2964,7 @@ async function materializeRecoveredEndpoint(
   root: string,
   authority: FileNativeAuthorityHeadV3,
   endpoint: AuthorityRecoveredEndpoint,
+  lastActivityAt: number | null = null,
 ): Promise<void> {
   if (authority.head !== endpoint.head)
     throw new FileNativeWorldCreationError(
@@ -2940,6 +2992,12 @@ async function materializeRecoveredEndpoint(
     commitDigest: authority.commitDigest,
     ...backgroundCount(endpoint.history),
   } satisfies FileNativeMaterializedCheckpoint);
+  await updateWorldActivity(
+    root,
+    authority.head,
+    endpoint.history,
+    lastActivityAt,
+  );
 }
 
 async function replaceMaterializedTree(
@@ -3337,18 +3395,31 @@ async function readPublicationAt(root: string): Promise<Publication> {
 async function readWorldSummaryAt(
   root: string,
   publication?: Publication,
+  serializeRebuild?: (
+    rebuild: () => Promise<WorldActivity>,
+  ) => Promise<WorldActivity>,
 ): Promise<FileNativeWorldSummary> {
   const published = publication ?? (await readPublicationAt(root));
+  const { lastActivityAt, excerpt, playerTurns } = await readWorldActivity(
+    root,
+    serializeRebuild,
+  );
+  const summary = {
+    ...toSummary(published),
+    lastActivityAt,
+    excerpt,
+    playerTurns,
+  };
   const metadata = await readOptionalJson<unknown>(
     join(root, localMetadataFile),
   );
-  if (metadata === null) return toSummary(published);
+  if (metadata === null) return summary;
   if (!isWorldLocalMetadata(metadata) || metadata.worldId !== published.worldId)
     throw new FileNativeWorldCreationError(
       "world_corrupt",
       "Local world shell is corrupt",
     );
-  return { ...toSummary(published), title: metadata.name };
+  return { ...summary, title: metadata.name };
 }
 
 async function readJson<T>(path: string): Promise<T> {
@@ -3364,7 +3435,9 @@ async function readOptionalJson<T>(path: string): Promise<T | null> {
   }
 }
 
-function toSummary(publication: Publication): FileNativeWorldSummary {
+function toSummary(
+  publication: Publication,
+): Pick<FileNativeWorldSummary, "worldId" | "title" | "parentEndpoint"> {
   return {
     worldId: publication.worldId,
     title: publication.title,

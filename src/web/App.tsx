@@ -20,7 +20,7 @@ import type { ContentTreeIssue } from "./ContentTreeEditor.tsx";
 import { WorkspaceHeader, type WorkspaceScreen } from "./WorkspaceHeader.tsx";
 import { CreateWorldScreen } from "./CreateWorldScreen.tsx";
 import { DismissibleNotice } from "./DismissibleNotice.tsx";
-import { HomeScreen } from "./HomeScreen.tsx";
+import { HomeScreen, type HomeWorld } from "./HomeScreen.tsx";
 import { ModelConnectionScreen } from "./ModelConnectionScreen.tsx";
 import { PlayPresetScreen } from "./PlayPresetScreen.tsx";
 import { PromptPreviewScreen } from "./PromptPreviewScreen.tsx";
@@ -32,7 +32,7 @@ interface Workspace {
   preferences: AppPreferences;
   contentPackages: PackageSummary[];
   playPresets: PlayPresetLibrary;
-  worlds: { worldId: string; title: string }[];
+  worlds: HomeWorld[];
   storageNotices: { surface: string; message: string }[];
   model: ModelConnectionLibraryView;
 }
@@ -453,6 +453,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     else {
       authoringWorkspace.close();
       setScreen(next);
+      if (next === "home") void refresh().catch(report);
     }
   }
 
