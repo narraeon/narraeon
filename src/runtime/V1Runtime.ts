@@ -352,6 +352,8 @@ export class V1Runtime {
         return this.#models.listModels(request);
       case "content.create":
         return this.#content.createCurrentTreeContentPackage();
+      case "content.create-sample":
+        return this.#content.createSampleContentPackage(request.locale);
       case "content.scripts.read":
         return this.#content.packageScriptPermissions(request.packageId);
       case "content.scripts.set":

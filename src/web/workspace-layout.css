@@ -146,6 +146,12 @@
 .home-section-heading > button {
   margin-left: auto;
 }
+.home-content-library .home-section-heading {
+  flex-wrap: wrap;
+}
+.home-section-heading > button + button {
+  margin-left: 0;
+}
 .home-section-heading h2 {
   margin: 0;
   font-size: 16px;

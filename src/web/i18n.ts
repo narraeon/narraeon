@@ -439,6 +439,11 @@ const englishMessages: Record<string, string> = {
   模型已就绪: "Model ready",
   需要模型连接: "Model connection required",
   新建内容包: "Create content package",
+  从示例新建: "Create from sample",
+  从示例开始: "Start with a sample",
+  "正在创建示例…": "Creating sample…",
+  "从雨夜旅店的示例故事开始，也可以新建或导入自己的内容包。":
+    "Start with a rainy-night inn story, or create or import your own content package.",
   待修复: "Needs repair",
   "可编辑、预览并创建新世界": "Ready to edit, preview, and create a world",
   打开并修复当前树中的问题: "Open and repair issues in the current tree",

@@ -22,6 +22,7 @@ describe("世界工作区主页", () => {
     const onOpenWorld = vi.fn();
     const onOpenPackage = vi.fn();
     const onImportPackage = vi.fn();
+    const onCreateSamplePackage = vi.fn();
     const importArchive = new File(["zip fixture"], "雾港来信.zip", {
       type: "application/zip",
     });
@@ -50,6 +51,8 @@ describe("世界工作区主页", () => {
         onImportArchiveChange: vi.fn(),
         onCreateWorld: vi.fn(),
         onCreatePackage: vi.fn(),
+        onCreateSamplePackage,
+        onConfigureModel: vi.fn(),
         onImportPackage,
         onOpenPackage,
         onRenamePackage: vi.fn(),
@@ -79,10 +82,15 @@ describe("世界工作区主页", () => {
     expect(screen.getByText(/雾港来信\.zip/u)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "导入 ZIP" }));
     expect(onImportPackage).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("button", { name: "从示例开始" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "从示例新建" }));
+    expect(onCreateSamplePackage).toHaveBeenCalledOnce();
   });
 
   test("为空工作区说明起步路径并阻止未选择 ZIP 时导入", () => {
     const onImportArchiveChange = vi.fn();
+    const onCreateSamplePackage = vi.fn();
+    const onConfigureModel = vi.fn();
     render(
       createElement(HomeScreen, {
         contentPackages: [],
@@ -96,6 +104,8 @@ describe("世界工作区主页", () => {
         onImportArchiveChange,
         onCreateWorld: vi.fn(),
         onCreatePackage: vi.fn(),
+        onCreateSamplePackage,
+        onConfigureModel,
         onImportPackage: vi.fn(),
         onOpenPackage: vi.fn(),
         onRenamePackage: vi.fn(),
@@ -109,6 +119,10 @@ describe("世界工作区主页", () => {
     expect(screen.getByText("还没有正在游玩的世界")).toBeTruthy();
     expect(screen.getByText("从一组人类可读文件开始")).toBeTruthy();
     expect(screen.getAllByText(/尚未配置/u).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "从示例开始" }));
+    expect(onCreateSamplePackage).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: "配置模型连接" }));
+    expect(onConfigureModel).toHaveBeenCalledOnce();
     expect(
       screen.getByRole("button", { name: "导入 ZIP" }).hasAttribute("disabled"),
     ).toBe(true);
@@ -139,6 +153,8 @@ describe("世界工作区主页", () => {
         onImportArchiveChange: vi.fn(),
         onCreateWorld: vi.fn(),
         onCreatePackage: vi.fn(),
+        onCreateSamplePackage: vi.fn(),
+        onConfigureModel: vi.fn(),
         onImportPackage: vi.fn(),
         onOpenPackage: vi.fn(),
         onRenamePackage: vi.fn(),

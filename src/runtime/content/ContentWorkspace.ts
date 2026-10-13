@@ -19,6 +19,7 @@ import {
   normalizeCurrentContentTreeFiles,
 } from "./CurrentTreeContentLibrary.ts";
 import type { ContentTreeFile } from "./ContentTreeFile.ts";
+import { sampleContentPackageForLocale } from "../../shared/sample-packages/index.ts";
 import {
   inspectContentPackageCurrentTree,
   isContentPackageWorldDocumentPath,
@@ -110,6 +111,11 @@ export class ContentWorkspace {
       title: defaultContentPackageTitle(locale, "new"),
       files: minimalFileNativeContentScaffold(locale),
     });
+  }
+
+  createSampleContentPackage(locale: AppLocale) {
+    const sample = sampleContentPackageForLocale(locale);
+    return this.#currentTreeLibrary.createPackage(sample);
   }
 
   listCurrentTreeContentPackages() {
