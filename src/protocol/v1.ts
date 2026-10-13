@@ -8,6 +8,7 @@ import type {
 } from "./modelConnections.ts";
 import type { AppLocale, AppReadingPreferences } from "./appPreferences.ts";
 import type { ModelUsage } from "./modelUsage.ts";
+import type { PlayFailureKind } from "./playFailure.ts";
 import { maxPortableContentArchiveBase64Characters } from "./contentTree.ts";
 
 export interface ContentTreeFile {
@@ -711,6 +712,7 @@ export type V1PlayCallChainEvent =
       id: number;
       kind: "failure";
       message: string;
+      failureKind?: PlayFailureKind;
     }
   | {
       id: number;
@@ -776,6 +778,7 @@ export interface V1PlayTimelinePage {
   activeStatus: V1PlayCallChainStatus | null;
   activeCanRetry: boolean;
   activeLastFailure: string | null;
+  activeLastFailureKind?: PlayFailureKind | undefined;
   items: V1PlayTimelineItem[];
   nextCursor: string | null;
 }
@@ -797,6 +800,7 @@ export interface V1PlayCallChainContextView {
     path: string;
   }[];
   lastFailure: string | null;
+  lastFailureKind?: PlayFailureKind;
   updatedAt: number;
 }
 

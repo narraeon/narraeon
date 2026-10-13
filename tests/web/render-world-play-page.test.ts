@@ -31,6 +31,8 @@ import type {
 import { projectUncoveredPlayerViews } from "../../src/web/PlayerViewFallback.ts";
 import type { FrontendArtifactProjection } from "../../src/web/ArtifactExtensionHost.tsx";
 import { WorldPage } from "../../src/web/WorldPage.tsx";
+import { App } from "../../src/web/App.tsx";
+import type { RuntimeClient } from "../../src/web/runtimeClient.ts";
 
 afterEach(() => {
   cleanup();
@@ -128,6 +130,202 @@ describe("世界游玩页面", () => {
     expect(await screen.findByText("无法读取故事")).toBeTruthy();
     expect(button.disabled).toBe(false);
   });
+  test.each(["provider_error", "output_limit", "retryable"] as const)(
+    "没有模型连接时 %s 的配置恢复可导航，重发仍禁用且保留草稿导航锁",
+    async (failureKind) => {
+      const chain = interruptedChainView();
+      chain.lastFailureKind = failureKind;
+      chain.canRetry = failureKind === "retryable";
+      const failure = chain.events.at(-1)!;
+      if (failure.kind !== "failure") throw new Error("missing failure");
+      failure.failureKind = failureKind;
+      const request = vi.fn((input: V1Request): Promise<unknown> => {
+        if (input.type === "workspace.read")
+          return Promise.resolve({
+            preferences: { locale: "zh-CN" },
+            contentPackages: [],
+            worlds: [{ worldId: "world-one", title: "宿舍世界" }],
+            storageNotices: [],
+            playPresets: { currentPresetId: "", presets: [] },
+            model: {
+              configured: false,
+              activeConnectionId: null,
+              connections: [],
+              presets: [],
+            },
+          });
+        if (input.type === "world.read")
+          return Promise.resolve(worldView(chain));
+        if (input.type === "artifacts.debug") return Promise.resolve([]);
+        if (input.type === "world.package-scripts.read")
+          return Promise.resolve({ enabled: false });
+        return Promise.reject(new Error(`Unexpected request: ${input.type}`));
+      });
+      render(
+        createElement(App, {
+          client: { request } as unknown as RuntimeClient,
+        }),
+      );
+      fireEvent.click(
+        await screen.findByRole("button", { name: "打开世界：宿舍世界" }),
+      );
+      await screen.findByText("需要先配置模型连接才能游玩。");
+      const fresh = screen.getByRole<HTMLButtonElement>("button", {
+        name: "从全新上下文继续",
+      });
+      expect(fresh.disabled).toBe(true);
+      if (failureKind === "retryable") {
+        const retry = screen.getByRole<HTMLButtonElement>("button", {
+          name: "重新发送",
+        });
+        expect(retry.disabled).toBe(true);
+        fireEvent.click(retry);
+        expect(
+          request.mock.calls.some(
+            ([input]) => input.type === "play.chain.append",
+          ),
+        ).toBe(false);
+        return;
+      }
+      const configure = screen.getByRole<HTMLButtonElement>("button", {
+        name: failureKind === "output_limit" ? "调整最大输出" : "检查模型连接",
+      });
+      expect(configure.disabled).toBe(false);
+      const openManagement = (): HTMLElement => {
+        fireEvent.click(screen.getByRole("button", { name: "世界管理" }));
+        const management = screen.getByRole("dialog", { name: "世界管理" });
+        fireEvent.click(within(management).getByText("世界控制 · 高级编辑"));
+        return management;
+      };
+      const management = openManagement();
+      fireEvent.change(
+        within(management).getByLabelText("世界控制文件（JSON）"),
+        { target: { value: "[]" } },
+      );
+      fireEvent.click(within(management).getByRole("button", { name: "关闭" }));
+      expect(configure.disabled).toBe(true);
+      fireEvent.click(configure);
+      expect(
+        document.querySelector(".workspace-shell")?.getAttribute("data-screen"),
+      ).toBe("world");
+      const resetManagement = openManagement();
+      fireEvent.click(
+        within(resetManagement).getByRole("button", { name: "放弃控制修改" }),
+      );
+      fireEvent.click(
+        within(resetManagement).getByRole("button", { name: "关闭" }),
+      );
+      expect(configure.disabled).toBe(false);
+      fireEvent.click(configure);
+      await screen.findByRole("heading", { name: "模型连接" });
+      expect(
+        document.querySelector(".workspace-shell")?.getAttribute("data-screen"),
+      ).toBe("model");
+      expect(
+        request.mock.calls.some(
+          ([input]) =>
+            input.type === "play.chain.append" ||
+            input.type === "play.chain.start",
+        ),
+      ).toBe(false);
+    },
+  );
+
+  test.each([false, true])(
+    "恢复按钮使用当前链，保留草稿并支持轻量首屏=%s",
+    async (summaryOnly) => {
+      const chain = interruptedChainView();
+      chain.lastFailureKind = "retryable";
+      const failure = chain.events.at(-1)!;
+      if (failure.kind !== "failure") throw new Error("missing failure");
+      failure.failureKind = "retryable";
+      const readView: ReturnType<typeof worldView> & {
+        playTimeline?: V1PlayTimelinePage;
+      } = worldView(chain);
+      if (summaryOnly) {
+        readView.playCallChain = null;
+        readView.playTimeline = {
+          worldId: "world-one",
+          generation: "summary-only",
+          activeChainId: chain.chainId,
+          activeStatus: "interrupted",
+          activeCanRetry: true,
+          activeLastFailure: chain.lastFailure,
+          activeLastFailureKind: "retryable",
+          items: [
+            {
+              kind: "event",
+              chainId: chain.chainId,
+              current: true,
+              event: failure,
+            },
+          ],
+          nextCursor: null,
+        };
+      }
+      const client = {
+        request: vi.fn((request: V1Request): Promise<unknown> => {
+          if (request.type === "world.read") return Promise.resolve(readView);
+          if (request.type === "artifacts.debug") return Promise.resolve([]);
+          if (request.type === "play.chain.append")
+            return Promise.resolve(chain);
+          return Promise.reject(
+            new Error(`Unexpected request: ${request.type}`),
+          );
+        }),
+      };
+      renderWorld(client);
+      const retry = await screen.findByRole("button", { name: "重新发送" });
+      const composer = screen.getByLabelText<HTMLTextAreaElement>("你的行动");
+      fireEvent.change(composer, { target: { value: "下一次行动的草稿" } });
+      fireEvent.click(retry);
+      await waitFor(() =>
+        expect(
+          client.request.mock.calls.some(
+            ([request]) => request.type === "play.chain.append",
+          ),
+        ).toBe(true),
+      );
+      const request = client.request.mock.calls.find(
+        ([request]) => request.type === "play.chain.append",
+      )![0];
+      expect(request).toMatchObject({
+        type: "play.chain.append",
+        worldId: "world-one",
+        chainId: chain.chainId,
+        playerText: "",
+      });
+      expect(composer.value).toBe("下一次行动的草稿");
+      await waitFor(() =>
+        expect(
+          screen.getByRole<HTMLButtonElement>("button", {
+            name: "从全新上下文继续",
+          }).disabled,
+        ).toBe(false),
+      );
+      const sendsBefore = client.request.mock.calls.filter(
+        ([request]) =>
+          request.type === "play.chain.append" ||
+          request.type === "play.chain.start",
+      ).length;
+      fireEvent.click(screen.getByRole("button", { name: "从全新上下文继续" }));
+      expect(document.activeElement).toBe(composer);
+      expect(screen.getByText("下一条消息将开启全新上下文")).toBeTruthy();
+      expect(composer.value).toBe("下一次行动的草稿");
+      expect(
+        client.request.mock.calls.filter(
+          ([request]) =>
+            request.type === "play.chain.append" ||
+            request.type === "play.chain.start",
+        ),
+      ).toHaveLength(sendsBefore);
+      expect(
+        client.request.mock.calls.some(
+          ([request]) => request.type === "play.timeline.detail",
+        ),
+      ).toBe(false);
+    },
+  );
 
   test("正文产物只挂实际回复，早期分页不误挂或重复，旧无归属产物不挂载", async () => {
     const chain = playChainView("attached-chain", "send", "行动");
@@ -1640,7 +1838,7 @@ describe("世界游玩页面", () => {
     expect(screen.getByText("生成已取消")).toBeTruthy();
   });
 
-  test("调用链流失败后在当前操作区保留明确错误而不是只在页面顶部提示", async () => {
+  test("调用链流失败后保留本地化恢复卡片并折叠技术错误", async () => {
     const failure = "Immutable play-advance fact already has different data";
     let chain: V1PlayCallChainView | null = null;
     const client = {
@@ -1719,15 +1917,13 @@ describe("世界游玩页面", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "全新上下文" }));
 
-    const composer = document.querySelector<HTMLElement>(
-      ".world-composer-dock",
-    );
-    expect(composer).not.toBeNull();
-    const alert = await within(composer!).findByRole("alert", {
-      name: "模型调用失败",
-    });
-    expect(alert.textContent).toContain(failure);
-    expect(alert.textContent).toContain("旧请求不能重发");
+    const alert = await screen.findByRole("alert");
+    expect(alert.querySelector("p")?.textContent).toContain("旧请求不能重发");
+    expect(alert.querySelector("details")?.open).toBe(false);
+    expect(within(alert).getByText(failure)).toBeTruthy();
+    expect(
+      within(alert).getByRole("button", { name: "从全新上下文继续" }),
+    ).toBeTruthy();
     expect(
       screen.queryByRole("status", { name: "本次模型调用进度" }),
     ).toBeNull();
@@ -2155,7 +2351,7 @@ describe("世界游玩页面", () => {
     expect(
       await screen.findByText("Alex has opened the door halfway"),
     ).toBeTruthy();
-    expect(screen.getByText(/保持输入为空并重试/u)).toBeTruthy();
+    expect(screen.getByText(/可以重新发送已保存的请求/u)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "追加上下文" }));
 
     expect(

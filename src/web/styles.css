@@ -8277,6 +8277,13 @@ summary:focus-visible {
   padding: 0.5rem 0.65rem;
 }
 
+.play-failure-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
 .world-fresh-context-note {
   padding: 0.35rem 0.6rem;
   border-radius: 3px;

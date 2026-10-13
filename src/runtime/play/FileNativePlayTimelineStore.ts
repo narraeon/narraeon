@@ -1,4 +1,8 @@
 import {
+  isPlayFailureKind,
+  type PlayFailureKind,
+} from "../../protocol/playFailure.ts";
+import {
   isNarrativeOrigin,
   type NarrativeOrigin,
 } from "../history/HistoryBackground.ts";
@@ -94,6 +98,7 @@ export interface PersistedPlayCallChainContext {
   lastRequest: ModelHostExchange | null;
   lastRequestAttempt: number;
   lastFailure: string | null;
+  lastFailureKind?: PlayFailureKind;
   updatedAt: number;
 }
 
@@ -151,6 +156,7 @@ interface PersistedContextState {
   continuationDigest: string;
   lastRequestAttempt: number;
   lastFailure: string | null;
+  lastFailureKind?: PlayFailureKind;
   updatedAt: number;
 }
 
@@ -549,6 +555,9 @@ export class FileNativePlayTimelineStore {
       continuationDigest,
       lastRequestAttempt: value.lastRequestAttempt,
       lastFailure: value.lastFailure,
+      ...(value.lastFailureKind === undefined
+        ? {}
+        : { lastFailureKind: value.lastFailureKind }),
       updatedAt: value.updatedAt,
     };
     await publishJson(join(root, "state.json"), state);
@@ -713,6 +722,9 @@ export class FileNativePlayTimelineStore {
       lastRequest,
       lastRequestAttempt: stateValue.lastRequestAttempt,
       lastFailure: stateValue.lastFailure,
+      ...(stateValue.lastFailureKind === undefined
+        ? {}
+        : { lastFailureKind: stateValue.lastFailureKind }),
       updatedAt: stateValue.updatedAt,
     };
     return {
@@ -959,6 +971,9 @@ export class FileNativePlayTimelineStore {
       activeStatus: active?.state.status ?? null,
       activeCanRetry: active?.state.canRetry ?? false,
       activeLastFailure: active?.state.lastFailure ?? null,
+      ...(active?.state.lastFailureKind === undefined
+        ? {}
+        : { activeLastFailureKind: active.state.lastFailureKind }),
       items: reverse.reverse(),
       nextCursor:
         pointer.chainId === null && pointer.genesisIndex < 0
@@ -1313,6 +1328,8 @@ function assertContextState(
     !/^[a-f0-9]{64}$/u.test(value.continuationDigest) ||
     !validCount(value.lastRequestAttempt) ||
     (value.lastFailure !== null && typeof value.lastFailure !== "string") ||
+    (value.lastFailureKind !== undefined &&
+      !isPlayFailureKind(value.lastFailureKind)) ||
     typeof value.updatedAt !== "number"
   )
     throw new Error("Play context state has an invalid shape");
@@ -1407,6 +1424,8 @@ function isReleasedPlayContext(
     (value.lastRequest !== null && !isRecord(value.lastRequest)) ||
     !validCount(value.lastRequestAttempt) ||
     (value.lastFailure !== null && typeof value.lastFailure !== "string") ||
+    (value.lastFailureKind !== undefined &&
+      !isPlayFailureKind(value.lastFailureKind)) ||
     typeof value.updatedAt !== "number"
   )
     return false;
@@ -1588,7 +1607,10 @@ function assertPlayEvent(
   }
   if (
     (value.kind !== "failure" && value.kind !== "cancellation") ||
-    typeof value.message !== "string"
+    typeof value.message !== "string" ||
+    (value.kind === "failure" &&
+      value.failureKind !== undefined &&
+      !isPlayFailureKind(value.failureKind))
   )
     throw new Error("Play timeline event has an invalid kind");
 }
