@@ -38,6 +38,171 @@ afterEach(() => {
 });
 
 describe("世界游玩页面", () => {
+  test.each([
+    ["ready", "ready", 9_000, "command"],
+    ["running", "ready", 9_000, "command"],
+    ["ready", "ready", null, "command"],
+    ["ready", "running", 9_000, "command"],
+    ["ready", "ready", 9_000, "observation"],
+    ["running", "ready", 9_000, "observation"],
+    ["ready", "ready", null, "observation"],
+    ["ready", "running", 9_000, "observation"],
+  ] as const)(
+    "断线后跨页同链推进的轻量读取更新占用和发送状态：旧 %s，新 %s，input %s，%s",
+    async (oldStatus, latestStatus, input, trigger) => {
+      const old = playChainView("cross-page-chain", "first", "Look around.");
+      old.contextWindowTokens = 10_000;
+      const oldUsage = {
+        ...emptyAggregatedModelUsage(),
+        inputTokens: 6_200,
+        provenance: {
+          ...emptyAggregatedModelUsage().provenance,
+          inputTokens: "provider" as const,
+        },
+      };
+      old.latestCompletedResponse = { id: 4, usage: oldUsage };
+      const latestResponse = {
+        id: 6,
+        kind: "assistant" as const,
+        text: "The other page has advanced the story.",
+        status: "completed" as const,
+        responseKind: "narrative" as const,
+        exchange: 3,
+        attempt: 1,
+        committedHead: "commit:5",
+        hasReasoning: false,
+        hasToolFragment: false,
+        hasUsage: input !== null,
+        detailsAvailable: input !== null,
+        ...(input === null
+          ? {}
+          : { usage: { ...oldUsage, inputTokens: input } }),
+      };
+      const latestTimeline: V1PlayTimelinePage = {
+        worldId: "world-one",
+        generation: "same-context",
+        activeChainId: old.chainId,
+        activeStatus: latestStatus,
+        activeCanRetry: false,
+        activeLastFailure: null,
+        items: [
+          {
+            kind: "event",
+            chainId: old.chainId,
+            current: true,
+            event: latestResponse,
+          },
+        ],
+        nextCursor: null,
+      };
+      let advanced = false;
+      let onConnection: Parameters<ObserveConversation>[2] | undefined;
+      let receive: Parameters<ObserveConversation>[1] | undefined;
+      const client = {
+        observeConversation: ((_target, callback, connection) => {
+          receive = callback;
+          onConnection = connection;
+          return () => undefined;
+        }) satisfies ObserveConversation,
+        request: vi.fn((request: V1Request): Promise<unknown> => {
+          if (request.type === "world.read")
+            return Promise.resolve(
+              advanced
+                ? {
+                    ...worldView(null),
+                    head: "commit:5",
+                    playTimeline: latestTimeline,
+                  }
+                : {
+                    ...worldView(old),
+                    playTimeline: {
+                      ...latestTimeline,
+                      activeStatus: "ready",
+                      items: [
+                        {
+                          kind: "event",
+                          chainId: old.chainId,
+                          current: true,
+                          event: {
+                            ...latestResponse,
+                            id: 4,
+                            usage: oldUsage,
+                            committedHead: old.parentHead,
+                          },
+                        },
+                      ],
+                    },
+                  },
+            );
+          if (request.type === "play.chain.append") {
+            // A peer advances the same chain after this reply, while SSE is
+            // disconnected and before the local post-command world.read.
+            advanced = true;
+            return Promise.resolve({ ...old, status: oldStatus });
+          }
+          if (request.type === "artifacts.debug") return Promise.resolve([]);
+          return Promise.reject(
+            new Error(`Unexpected request: ${request.type}`),
+          );
+        }),
+      };
+      renderWorld(client);
+      await screen.findByText("上下文 62%");
+      act(() => onConnection?.("reconnecting"));
+      if (trigger === "command")
+        fireEvent.click(screen.getByRole("button", { name: "追加行动" }));
+      else {
+        advanced = true;
+        act(
+          () =>
+            void receive?.(
+              { kind: "play", value: { ...old, status: oldStatus } },
+              true,
+            ),
+        );
+      }
+      await screen.findByText(input === null ? "上下文 —" : "上下文 90%");
+      expect(screen.queryByText("上下文 62%")).toBeNull();
+      expect(screen.queryByText(/世界已在故事外修订/u)).toBeNull();
+      await waitFor(() =>
+        expect(
+          screen.getByRole<HTMLButtonElement>("button", { name: "追加行动" })
+            .disabled,
+        ).toBe(latestStatus === "running"),
+      );
+      expect(
+        screen.getByLabelText<HTMLTextAreaElement>("你的行动").disabled,
+      ).toBe(latestStatus === "running");
+      expect(screen.queryByText(/上下文已用 90%/u) !== null).toBe(
+        input !== null,
+      );
+      if (latestStatus === "ready") {
+        fireEvent.change(screen.getByLabelText("你的行动"), {
+          target: { value: "Continue from the latest reply." },
+        });
+        expect(
+          screen.getByRole<HTMLButtonElement>("button", { name: "追加行动" })
+            .disabled,
+        ).toBe(false);
+      }
+      expect(
+        client.request.mock.calls.filter(
+          ([request]) => request.type === "world.read",
+        ),
+      ).toHaveLength(2);
+      expect(
+        client.request.mock.calls.some(([request]) =>
+          [
+            "play.chain.inspect",
+            "play.timeline.page",
+            "play.timeline.detail",
+            "world.surface.read",
+          ].includes(request.type),
+        ),
+      ).toBe(false);
+    },
+  );
+
   test("上下文占用提示预选下一条全新发送，预选本身不调用 Runtime", async () => {
     const current = playChainView("usage-current", "first", "Look around.");
     current.contextWindowTokens = 10_000;

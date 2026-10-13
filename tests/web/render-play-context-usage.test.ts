@@ -14,6 +14,24 @@ import { setWebLocale } from "../../src/web/i18n.ts";
 
 afterEach(cleanup);
 
+test.each([9_000, null])(
+  "较新的同链完成响应覆盖旧 projection，最新缺失时不回退：%s",
+  (input) => {
+    const latest = { ...response(input), id: 2 };
+    if (input === null) delete latest.usage;
+    show([latest], {
+      chain: {
+        ...chain,
+        latestCompletedResponse: { id: 1, usage: response(6_200).usage! },
+      },
+    });
+    expect(
+      screen.getByText(input === null ? "上下文 —" : "上下文 90%"),
+    ).toBeTruthy();
+    expect(screen.queryByText("上下文 62%")).toBeNull();
+  },
+);
+
 function response(
   inputTokens: number | null,
 ): Extract<V1PlayTimelineEventSummary, { kind: "assistant" }> {

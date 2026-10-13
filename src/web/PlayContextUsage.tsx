@@ -11,25 +11,36 @@ export function PlayContextUsage({
   freshContextDisabled,
   onUseFreshContext,
 }: {
-  chain: V1PlayCallChainView | null;
+  chain: Pick<
+    V1PlayCallChainView,
+    "chainId" | "contextWindowTokens" | "latestCompletedResponse"
+  > | null;
   timeline: V1PlayTimelinePage | null;
   freshContextSelected: boolean;
   freshContextDisabled: boolean;
   onUseFreshContext: () => void;
 }): React.JSX.Element {
   const chainId = chain?.chainId ?? timeline?.activeChainId;
-  const item = timeline?.items.findLast(
-    (item) =>
+  const timelineResponse = timeline?.items.reduce<
+    V1PlayCallChainView["latestCompletedResponse"]
+  >(
+    (latest, item) =>
       item.kind === "event" &&
       item.chainId === chainId &&
       item.event.kind === "assistant" &&
-      item.event.status === "completed",
+      item.event.status === "completed" &&
+      (latest === undefined || item.event.id > latest.id)
+        ? item.event
+        : latest,
+    undefined,
   );
+  const projectedResponse = chain?.latestCompletedResponse;
   const response =
-    chain?.latestCompletedResponse ??
-    (item?.kind === "event" && item.event.kind === "assistant"
-      ? item.event
-      : undefined);
+    projectedResponse !== undefined &&
+    (timelineResponse === undefined ||
+      projectedResponse.id >= timelineResponse.id)
+      ? projectedResponse
+      : timelineResponse;
   const contextWindow = chain?.contextWindowTokens;
   const usage = response?.usage;
   const input = usage?.inputTokens;
