@@ -379,10 +379,26 @@
 .world-reader-shell {
   height: 100%;
 }
+.world-reader-page {
+  --world-header-height: 80px;
+}
+/* Cover the story between the floating controls and behind the title. */
+.world-reader-shell::before {
+  content: "";
+  position: absolute;
+  z-index: 11;
+  inset: 0 0 auto;
+  height: var(--world-header-height);
+  background: var(--surface);
+  pointer-events: none;
+}
 .setting-story-column,
 .world-story-column {
   min-height: 100%;
   padding-top: 90px;
+}
+.world-story-column {
+  padding-top: calc(var(--world-header-height) + 10px);
 }
 .setting-reader-scroll,
 .world-reader-scroll,
@@ -1247,6 +1263,12 @@
   .setting-story-column,
   .world-story-column {
     padding-top: 86px;
+  }
+  .world-reader-page {
+    --world-header-height: 76px;
+  }
+  .world-story-column {
+    padding-top: calc(var(--world-header-height) + 10px);
   }
   .setting-floating-title {
     top: 82px;
