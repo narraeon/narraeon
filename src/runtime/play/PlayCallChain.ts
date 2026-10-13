@@ -853,6 +853,7 @@ export class PlayCallChain {
     identityPrefix?: "import";
     resetPackageScriptPermissions?: boolean;
     requireMaterialized?: boolean;
+    retainCompleteTimeline?: true;
   }): Promise<{
     outcome: "derived";
     world: FileNativeWorldSummary;
@@ -872,6 +873,12 @@ export class PlayCallChain {
           targetWorldId,
           targetWorldRoot,
           targetBinding: binding,
+          ...(input.retainCompleteTimeline
+            ? { retainCompleteTimeline: true }
+            : {}),
+          ...(input.identityPrefix === "import"
+            ? { markImportedContexts: true }
+            : {}),
         });
       },
     });
@@ -926,20 +933,26 @@ export class PlayCallChain {
     targetWorldId: string;
     targetWorldRoot: string;
     targetBinding: FileNativePlayBinding;
+    retainCompleteTimeline?: true;
+    markImportedContexts?: true;
   }): Promise<V1PlayCallChainView | null> {
     const source = await this.#readPersisted(input.sourceWorldId);
     if (source === null) return null;
     const sourceContexts = await this.#worlds.playTimeline.readAllContexts(
       input.sourceWorldId,
     );
-    const selectedContextIndex = sourceContexts.findIndex(
-      ({ events }) => eventsThroughHead(events, input.sourceHead) !== null,
-    );
+    const selectedContextIndex = input.retainCompleteTimeline
+      ? sourceContexts.length - 1
+      : sourceContexts.findIndex(
+          ({ events }) => eventsThroughHead(events, input.sourceHead) !== null,
+        );
     if (selectedContextIndex < 0) return null;
-    const sourceEvents = eventsThroughHead(
-      sourceContexts[selectedContextIndex]!.events,
-      input.sourceHead,
-    )!;
+    const sourceEvents = input.retainCompleteTimeline
+      ? sourceContexts[selectedContextIndex]!.events
+      : eventsThroughHead(
+          sourceContexts[selectedContextIndex]!.events,
+          input.sourceHead,
+        )!;
     return this.#forkSelectionToDerivedWorld({
       sourceWorldId: input.sourceWorldId,
       sourceContexts,
@@ -950,6 +963,8 @@ export class PlayCallChain {
       branchIdentity: input.sourceHead,
       targetWorldRoot: input.targetWorldRoot,
       targetBinding: input.targetBinding,
+      ...(input.retainCompleteTimeline ? { retainCompleteTimeline: true } : {}),
+      ...(input.markImportedContexts ? { markImportedContexts: true } : {}),
     });
   }
 
@@ -964,13 +979,6 @@ export class PlayCallChain {
     playCallChain: V1PlayCallChainView;
   }> {
     validateIdentity(input.operationId, "timeline-revision operation ID");
-    if (
-      input.continuation === "continue_context" &&
-      (await this.#worlds.archiveNeedsFreshContext(input.worldId))
-    )
-      throw new PlayCallChainError(
-        "This world was imported from a backup; start a fresh context before continuing.",
-      );
     validateIdentity(input.worldId, "world ID");
     validateIdentity(input.chainId, "call-chain ID");
     validateIdentity(input.replacementExchangeId, "replacement exchange ID");
@@ -1081,6 +1089,13 @@ export class PlayCallChain {
         "The model context to revise does not exist.",
       );
     const sourceContext = sourceContexts[selectedContextIndex]!;
+    if (
+      input.continuation === "continue_context" &&
+      sourceContext.importedFromArchive
+    )
+      throw new PlayCallChainError(
+        "This model context was imported from a backup; start a fresh context before continuing.",
+      );
     const selectedEventIndex = sourceContext.events.findIndex(
       (event) => event.id === input.eventId,
     );
@@ -1421,6 +1436,8 @@ export class PlayCallChain {
     branchIdentity: string;
     targetWorldRoot?: string;
     targetBinding?: FileNativePlayBinding;
+    retainCompleteTimeline?: true;
+    markImportedContexts?: true;
   }): Promise<V1PlayCallChainView> {
     if (input.targetWorldRoot === undefined) {
       const existing = await this.#readPersisted(input.targetWorldId);
@@ -1436,29 +1453,42 @@ export class PlayCallChain {
         "The forked world's Authority does not match the selected history endpoint, so the call chain cannot be written.",
       );
 
-    const [baseline, selected] = await Promise.all([
-      this.#worlds.recoverEndpoint(
-        input.targetWorldRoot === undefined
-          ? input.targetWorldId
-          : input.sourceWorldId,
-        sourceContext.baselineHead,
-      ),
-      this.#worlds.recoverEndpoint(
-        input.targetWorldRoot === undefined
-          ? input.targetWorldId
-          : input.sourceWorldId,
-        input.sourceHead,
-      ),
-    ]);
-    const traceRetention = prepareForkTrace(sourceContext, input.sourceEvents);
-    const derivedBinding =
-      input.targetBinding ??
-      (await this.#worlds.bindPlayCallChain(input.targetWorldId));
-    const retainedTrace = traceRetention.atEndpoint({
-      baseline,
-      selected,
-      binding: derivedBinding,
-    });
+    let retainedTrace: Omit<
+      PersistedPlayCallChainContext,
+      "chainId" | "parentHead" | "updatedAt"
+    >;
+    if (input.retainCompleteTimeline) {
+      // A backup retains the current page closure, even when its last context
+      // precedes a correction or contains an uncommitted response diagnostic.
+      retainedTrace = independentContextCopy(sourceContext);
+    } else {
+      const [baseline, selected] = await Promise.all([
+        this.#worlds.recoverEndpoint(
+          input.targetWorldRoot === undefined
+            ? input.targetWorldId
+            : input.sourceWorldId,
+          sourceContext.baselineHead,
+        ),
+        this.#worlds.recoverEndpoint(
+          input.targetWorldRoot === undefined
+            ? input.targetWorldId
+            : input.sourceWorldId,
+          input.sourceHead,
+        ),
+      ]);
+      const traceRetention = prepareForkTrace(
+        sourceContext,
+        input.sourceEvents,
+      );
+      const derivedBinding =
+        input.targetBinding ??
+        (await this.#worlds.bindPlayCallChain(input.targetWorldId));
+      retainedTrace = traceRetention.atEndpoint({
+        baseline,
+        selected,
+        binding: derivedBinding,
+      });
+    }
     const now = Date.now();
     const timelineGeneration = this.#worlds.playTimeline.newGeneration();
     let previousChainId: string | null = null;
@@ -1472,6 +1502,7 @@ export class PlayCallChain {
       );
       const previousContext = {
         ...independentContextCopy(context),
+        ...(input.markImportedContexts ? { importedFromArchive: true } : {}),
         schemaVersion: 3,
         kind: "play_call_chain",
         worldId: input.targetWorldId,
@@ -1488,11 +1519,15 @@ export class PlayCallChain {
           targetWorldRoot: input.targetWorldRoot,
           source: context,
           target: previousContext,
+          ...(input.retainCompleteTimeline
+            ? { retainCompleteContext: true }
+            : {}),
         });
       previousChainId = chainId;
     }
     const derived: PersistedPlayCallChain = {
       ...retainedTrace,
+      ...(input.markImportedContexts ? { importedFromArchive: true } : {}),
       schemaVersion: 3,
       kind: "play_call_chain",
       chainId: derivedChainId(
@@ -1504,7 +1539,9 @@ export class PlayCallChain {
       previousContexts: [],
       previousChainId,
       timelineGeneration,
-      parentHead: input.sourceHead,
+      parentHead: input.retainCompleteTimeline
+        ? sourceContext.parentHead
+        : input.sourceHead,
       updatedAt: now,
     };
     if (input.targetWorldRoot === undefined)
@@ -1515,6 +1552,9 @@ export class PlayCallChain {
         targetWorldRoot: input.targetWorldRoot,
         source: sourceContext,
         target: structuredClone(derived),
+        ...(input.retainCompleteTimeline
+          ? { retainCompleteContext: true }
+          : {}),
       });
     if (input.targetWorldRoot !== undefined) {
       const retainedContexts = [
@@ -3139,6 +3179,7 @@ function projectContext(
   context: PersistedPlayCallChainContext,
 ): V1PlayCallChainContextView {
   return {
+    ...(context.importedFromArchive ? { requiresFreshContext: true } : {}),
     chainId: context.chainId,
     baselineHead: context.baselineHead,
     ...(context.baselineHistoryLength === undefined

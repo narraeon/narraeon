@@ -20,6 +20,8 @@ const englishMessages: Record<string, string> = {
   "世界备份已导入，新世界已加入列表。":
     "World backup imported. The new world is now in your list.",
   "世界备份 ZIP 文件": "World backup ZIP file",
+  "此上下文来自备份；修改后须以本机选择开启全新上下文。":
+    "This context came from a backup. After editing, start a fresh context with your local choices.",
   导入世界备份: "Import world backup",
   "世界备份上传失败，请重试。": "World backup upload failed. Please try again.",
   "这不是有效的世界备份，请选择世界备份 ZIP。":

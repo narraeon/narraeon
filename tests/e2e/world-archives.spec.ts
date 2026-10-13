@@ -1,5 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { V1Request } from "../../src/protocol/v1.ts";
+import { rm } from "node:fs/promises";
+import { join } from "node:path";
+import { worldArchiveFixture } from "../support/worldArchiveFixture.ts";
 async function runtime<T>(page: Page, request: V1Request): Promise<T> {
   const response = await page.request.post("/api/runtime/v1", {
     data: { protocol: "narraeon.runtime/v1", request },
@@ -7,6 +10,53 @@ async function runtime<T>(page: Page, request: V1Request): Promise<T> {
   expect(response.ok(), await response.text()).toBe(true);
   return ((await response.json()) as { result: T }).result;
 }
+
+test("导入旧玩家消息的修改默认采用本机全新上下文并禁用旧续传", async ({
+  page,
+}) => {
+  const source = await worldArchiveFixture();
+  try {
+    const title = `Archive旧轨迹-${crypto.randomUUID().slice(0, 8)}`;
+    await source.worlds.renameWorld(source.worldId, title);
+    await source.archives.exportWorld({
+      worldId: source.worldId,
+      operationId: "browser-old-context",
+    });
+    await runtime(page, { type: "preferences.save", locale: "zh-CN" });
+    await page.goto("/");
+    await page
+      .getByLabel("世界备份 ZIP 文件")
+      .setInputFiles(
+        join(
+          source.root,
+          "world-archives/exports/browser-old-context/archive.zip",
+        ),
+      );
+    await expect(
+      page.getByText("世界备份已导入，新世界已加入列表。", { exact: true }),
+    ).toBeVisible({ timeout: 30000 });
+    await page
+      .getByRole("button", { name: `打开世界：${title}`, exact: true })
+      .click();
+    const player = page.locator(".call-chain-player").filter({
+      hasText: "我推开旅店的大门。",
+    });
+    await player.getByRole("button", { name: "修改", exact: true }).click();
+    await expect(
+      player.getByRole("radio", { name: /沿原上下文继续/ }),
+    ).toBeDisabled();
+    await expect(
+      player.getByRole("radio", { name: /作为全新上下文保存/ }),
+    ).toBeChecked();
+    await expect(
+      player.getByText("此上下文来自备份；修改后须以本机选择开启全新上下文。", {
+        exact: true,
+      }),
+    ).toBeVisible();
+  } finally {
+    await rm(source.root, { recursive: true, force: true });
+  }
+});
 for (const locale of ["zh-CN", "en"] as const) {
   test(`世界备份浏览器下载、上传、恢复提示及世界管理导出 ${locale}`, async ({
     page,

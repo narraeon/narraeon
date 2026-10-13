@@ -240,6 +240,7 @@ export interface FileNativeWorldDerivationInput {
   identityPrefix?: "import";
   resetPackageScriptPermissions?: boolean;
   requireMaterialized?: boolean;
+  retainCompleteTimeline?: true;
   /** Additional idempotency identity for a higher-level branch request. */
   requestDiscriminator?: string;
   stageTarget?: (input: {
@@ -795,7 +796,8 @@ export class FileNativeWorldStore {
     return (
       (await readOptionalJson(
         join(this.#worldsRoot, worldId, "runtime", "archive-import.json"),
-      )) !== null
+      )) !== null ||
+      (await this.playTimeline.currentContextRequiresFreshContext(worldId))
     );
   }
 
@@ -3529,6 +3531,7 @@ function derivationRequestFingerprint(
       sourceHead: input.sourceHead,
       hostPresetId: input.hostPresetId,
       requestDiscriminator: input.requestDiscriminator ?? null,
+      ...(input.retainCompleteTimeline ? { retainCompleteTimeline: true } : {}),
       ...(input.targetName === undefined &&
       input.identityPrefix === undefined &&
       !input.resetPackageScriptPermissions

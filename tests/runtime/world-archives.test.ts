@@ -23,6 +23,8 @@ import { worldArchiveLimits } from "../../src/protocol/worldArchives.ts";
 import { PackageScriptPermissions } from "../../src/runtime/extension/PackageScriptPermissions.ts";
 import { WorldExtensionControls } from "../../src/runtime/extension/WorldExtensionControls.ts";
 import { ScriptedModelHost } from "../../src/runtime/model/ModelHost.ts";
+import { FileNativeWorldRevisionStore } from "../../src/runtime/world-revision/FileNativeWorldRevisionStore.ts";
+import { WorldRevisionWorkspace } from "../../src/runtime/world-revision/WorldRevisionWorkspace.ts";
 import { presetHostBinding } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
 import {
   archiveModelBinding,
@@ -132,6 +134,338 @@ test("便携归档排除分叉新建的本地活动缓存，导入忽略来源�
     "utf8",
   ).catch(() => null);
   expect(importedCache).not.toBe(cache);
+});
+
+test("故事之后的世界修正端点归档保留完整页面轨迹与调用详情", async () => {
+  const source = await fixture();
+  await source.worlds.commitCorrection({
+    worldId: source.worldId,
+    parentHead: await source.worlds.currentHead(source.worldId),
+    operationId: "after-story-correction",
+    nextMaterials: [],
+    stateChanges: [],
+  });
+  const before = await source.worlds.playTimeline.readPage(source.worldId, 40);
+  const archive = await exported(source);
+  const target = await empty();
+  const result = await target.archives.importWorld({
+    operationId: "corrected-import",
+    ...(await target.archives.upload(createReadStream(archive.zip))),
+  });
+  const after = await target.worlds.playTimeline.readPage(
+    result.world.worldId,
+    40,
+  );
+  expect(after.items.map((item) => item.kind)).toEqual(
+    before.items.map((item) => item.kind),
+  );
+  expect(await target.chains.inspectWorld(result.world.worldId)).toMatchObject({
+    events: source.story.events,
+  });
+});
+
+test("多上下文世界应用修订后归档保留全部冻结调用详情和最新控制", async () => {
+  const source = await fixture();
+  await source.chains.start({
+    worldId: source.worldId,
+    chainId: "second-source-context",
+    exchangeId: "second-source-send",
+    playerText: "我在大堂坐下。",
+    hostBinding: presetHostBinding(source.preset),
+    playPreset: source.preset,
+    modelBinding: archiveModelBinding,
+    modelHost: new ScriptedModelHost({
+      binding: archiveModelBinding,
+      steps: [{ outcome: "response", text: "大堂的炉火正旺。" }],
+    }),
+  });
+  const workspace = new WorldRevisionWorkspace({
+    worlds: source.worlds,
+    store: new FileNativeWorldRevisionStore(source.root),
+  });
+  let epoch = await workspace.open(source.worldId);
+  epoch = await workspace.replace({
+    worldId: source.worldId,
+    epochId: epoch.epochId,
+    expectedRevision: epoch.revision,
+    files: epoch.files.map((file) => ({
+      ...file,
+      contents:
+        file.path === "control/blocks/world.md"
+          ? `${file.contents}\n修订后保留完整备份。\n`
+          : file.contents,
+    })),
+  });
+  await workspace.apply({
+    worldId: source.worldId,
+    epochId: epoch.epochId,
+    expectedRevision: epoch.revision,
+  });
+  const before = await source.worlds.playTimeline.readAllContexts(
+    source.worldId,
+  );
+  expect(before).toHaveLength(2);
+  const archive = await exported(source);
+  const target = await empty();
+  const result = await target.archives.importWorld({
+    operationId: "revision-import",
+    ...(await target.archives.upload(createReadStream(archive.zip))),
+  });
+  const after = await target.worlds.playTimeline.readAllContexts(
+    result.world.worldId,
+  );
+  const details = (context: (typeof before)[number]) => ({
+    events: context.events,
+    transcript: context.transcript,
+    bootstrap: context.bootstrap,
+    parentHead: context.parentHead,
+    lastRequest: context.lastRequest,
+    modelBinding: context.modelBinding,
+  });
+  expect(after.map(details)).toEqual(before.map(details));
+  expect(
+    await target.worlds.readSurface(result.world.worldId, "control"),
+  ).toEqual(await source.worlds.readSurface(source.worldId, "control"));
+  expect(
+    await target.worlds.readAuthorityHistory(result.world.worldId),
+  ).toEqual(await source.worlds.readAuthorityHistory(source.worldId));
+});
+
+test.each(["matching", "different"])(
+  "本机新上下文之后从导入旧端点分叉仍需全新上下文（%s Provider 绑定）",
+  async (provider) => {
+    const source = await fixture();
+    const archive = await exported(source);
+    const target = await empty();
+    const result = await target.archives.importWorld({
+      operationId: "context-isolation-import",
+      ...(await target.archives.upload(createReadStream(archive.zip))),
+    });
+    const old = (await target.chains.inspectWorld(result.world.worldId))!;
+    const binding =
+      provider === "matching"
+        ? archiveModelBinding
+        : { ...archiveModelBinding, endpointFingerprint: "local-provider" };
+    await target.chains.start({
+      worldId: result.world.worldId,
+      chainId: "local-context",
+      exchangeId: "local-send",
+      playerText: "我用本机新上下文继续。",
+      hostBinding: presetHostBinding(source.preset),
+      playPreset: source.preset,
+      modelBinding: binding,
+      modelHost: new ScriptedModelHost({
+        binding,
+        steps: [{ outcome: "response", text: "本机主持回应。" }],
+      }),
+    });
+    const cold = archiveStores(target.root);
+    expect(
+      await cold.worlds.archiveNeedsFreshContext(result.world.worldId),
+    ).toBe(false);
+    const branch = await cold.chains.deriveWorld({
+      operationId: "old-imported-context-fork",
+      sourceWorldId: result.world.worldId,
+      sourceHead: old.parentHead,
+      hostPresetId: "host",
+    });
+    expect(
+      await cold.worlds.archiveNeedsFreshContext(branch.world.worldId),
+    ).toBe(true);
+    const forked = (await cold.chains.inspectWorld(branch.world.worldId))!;
+    const oldHost = new ScriptedModelHost({
+      binding: archiveModelBinding,
+      steps: [{ outcome: "response", text: "不应续传旧链。" }],
+    });
+    await expect(
+      cold.chains.append({
+        worldId: branch.world.worldId,
+        chainId: forked.chainId,
+        exchangeId: "old-fork-append",
+        playerText: "继续",
+        modelHost: oldHost,
+      }),
+    ).rejects.toThrow("fresh context");
+    expect(oldHost.requests).toHaveLength(0);
+    const forkFreshHost = new ScriptedModelHost({
+      binding,
+      steps: [{ outcome: "response", text: "分叉使用本机全新上下文。" }],
+    });
+    await cold.chains.start({
+      worldId: branch.world.worldId,
+      chainId: "fork-local-context",
+      exchangeId: "fork-local-send",
+      playerText: "以本机选择重新开始。",
+      hostBinding: presetHostBinding(source.preset),
+      playPreset: source.preset,
+      modelBinding: binding,
+      modelHost: forkFreshHost,
+    });
+    expect(
+      forkFreshHost.requests[0]!.appended.some(
+        (item) => item.kind === "assistant",
+      ),
+    ).toBe(false);
+    expect(
+      await cold.worlds.archiveNeedsFreshContext(branch.world.worldId),
+    ).toBe(false);
+    const localHost = new ScriptedModelHost({
+      binding,
+      steps: [{ outcome: "response", text: "本机上下文仍可正常继续。" }],
+    });
+    await cold.chains.append({
+      worldId: result.world.worldId,
+      chainId: "local-context",
+      exchangeId: "local-append",
+      playerText: "我再问一句。",
+      modelHost: localHost,
+    });
+    expect(localHost.requests).toHaveLength(1);
+  },
+);
+
+test("本机新上下文之后修改导入旧玩家消息不能沿来源上下文继续", async () => {
+  const source = await fixture();
+  await source.chains.append({
+    worldId: source.worldId,
+    chainId: source.story.chainId,
+    exchangeId: "second-origin-player",
+    playerText: "我走上楼梯。",
+    modelHost: new ScriptedModelHost({
+      binding: archiveModelBinding,
+      steps: [{ outcome: "response", text: "楼梯传来脚步声。" }],
+    }),
+  });
+  const archive = await exported(source);
+  const target = await empty();
+  const result = await target.archives.importWorld({
+    operationId: "old-edit-import",
+    ...(await target.archives.upload(createReadStream(archive.zip))),
+  });
+  const old = (await target.chains.inspectWorld(result.world.worldId))!;
+  await target.chains.start({
+    worldId: result.world.worldId,
+    chainId: "local-before-edit",
+    exchangeId: "local-before-edit-send",
+    playerText: "我开启本机上下文。",
+    hostBinding: presetHostBinding(source.preset),
+    playPreset: source.preset,
+    modelBinding: archiveModelBinding,
+    modelHost: new ScriptedModelHost({
+      binding: archiveModelBinding,
+      steps: [{ outcome: "response", text: "本机回应。" }],
+    }),
+  });
+  const cold = archiveStores(target.root);
+  const head = await cold.worlds.currentHead(result.world.worldId);
+  const player = old.events.findLast((event) => event.kind === "player")!;
+  const revision = {
+    operationId: "old-imported-player-edit",
+    worldId: result.world.worldId,
+    chainId: old.chainId,
+    eventId: player.id,
+    replacementExchangeId: "old-edit-replacement",
+    replacementText: "我从侧门走入。",
+  };
+  await expect(
+    cold.chains.revisePlayer({
+      ...revision,
+      continuation: "continue_context",
+    }),
+  ).rejects.toThrow("fresh context");
+  expect(await cold.worlds.currentHead(result.world.worldId)).toBe(head);
+  await cold.chains.revisePlayer({
+    ...revision,
+    continuation: "fresh_context",
+    freshContext: {
+      hostBinding: presetHostBinding(source.preset),
+      playPreset: source.preset,
+      modelBinding: archiveModelBinding,
+    },
+  });
+  expect(
+    (await cold.worlds.recoverEndpoint(result.world.worldId)).history.at(-1)
+      ?.exactText,
+  ).toBe(revision.replacementText);
+  const oldPrefix = await cold.chains.deriveWorld({
+    operationId: "imported-prefix-after-fresh-edit",
+    sourceWorldId: result.world.worldId,
+    sourceHead: "commit:2",
+    hostPresetId: "host",
+  });
+  expect(
+    await cold.worlds.archiveNeedsFreshContext(oldPrefix.world.worldId),
+  ).toBe(true);
+  expect(
+    (await cold.chains.inspectWorld(oldPrefix.world.worldId))?.events
+      .filter((event) => event.kind === "player")
+      .map((event) => event.text),
+  ).toEqual(["我推开旅店的大门。"]);
+});
+
+test("归档完整保留已结束的失败调用记录和冻结请求", async () => {
+  const source = await fixture();
+  const failed = await source.chains.start({
+    worldId: source.worldId,
+    chainId: "failed-source-context",
+    exchangeId: "failed-source-send",
+    playerText: "我查看阁楼。",
+    hostBinding: presetHostBinding(source.preset),
+    playPreset: source.preset,
+    modelBinding: archiveModelBinding,
+    modelHost: new ScriptedModelHost({
+      binding: archiveModelBinding,
+      steps: [{ outcome: "failure", message: "Provider rejected request" }],
+    }),
+  });
+  expect(failed.status).toBe("interrupted");
+  const encoding = {
+    provider: "chat_completions" as const,
+    method: "POST" as const,
+    endpointPath: "/v1/chat/completions",
+    headerNames: ["Content-Type"],
+    body: { messages: [{ role: "user", content: "我查看阁楼。" }] },
+  };
+  await source.worlds.playTimeline.recordInitialEncoding(
+    source.worldId,
+    failed.chainId,
+    encoding,
+  );
+  const before = await source.worlds.playTimeline.readAllContexts(
+    source.worldId,
+  );
+  const archive = await exported(source);
+  const target = await empty();
+  const imported = await target.archives.importWorld({
+    operationId: "failed-context-import",
+    ...(await target.archives.upload(createReadStream(archive.zip))),
+  });
+  const after = await target.worlds.playTimeline.readAllContexts(
+    imported.world.worldId,
+  );
+  expect(
+    await target.worlds.playTimeline.readInitialEncoding(
+      imported.world.worldId,
+      after.at(-1)!.chainId,
+    ),
+  ).toEqual(encoding);
+  expect(
+    after.map((context) => ({
+      events: context.events,
+      transcript: context.transcript,
+      lastRequest: context.lastRequest,
+      lastFailure: context.lastFailure,
+      status: context.status,
+    })),
+  ).toEqual(
+    before.map((context) => ({
+      events: context.events,
+      transcript: context.transcript,
+      lastRequest: context.lastRequest,
+      lastFailure: context.lastFailure,
+      status: context.status,
+    })),
+  );
 });
 
 test("完整世界跨根往返保留 Authority、故事、冻结产物与名称，独立导入并强制全新上下文", async () => {

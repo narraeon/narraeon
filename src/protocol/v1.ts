@@ -750,6 +750,7 @@ export type V1PlayTimelineItem =
       kind: "event";
       chainId: string;
       current: boolean;
+      requiresFreshContext?: true;
       event: V1PlayTimelineEventSummary;
     }
   | {
@@ -772,6 +773,7 @@ export interface V1PlayTimelinePage {
 
 /** One model context as projected into the durable player-visible timeline. */
 export interface V1PlayCallChainContextView {
+  requiresFreshContext?: true;
   chainId: string;
   baselineHead: string;
   /** Number of committed messages that precede the first event in this chain. */

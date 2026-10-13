@@ -1905,6 +1905,7 @@ function PlayTimeline({
                     worldId={worldId}
                     chainId={item.chainId}
                     event={item.event}
+                    requiresFreshContext={item.requiresFreshContext}
                     liveAssistant={
                       item.event.kind === "assistant" &&
                       item.event.status === "streaming" &&
@@ -1947,6 +1948,7 @@ function PlayTimeline({
                           worldId={worldId}
                           chainId={item.chainId}
                           event={item.event}
+                          requiresFreshContext={item.requiresFreshContext}
                           restartDisabled={restartDisabled}
                           freshContextDisabled={freshContextDisabled}
                           onRestartFrom={onRestartFrom}
@@ -2115,6 +2117,7 @@ function TimelineEvent({
   worldId,
   chainId,
   event,
+  requiresFreshContext = false,
   restartDisabled,
   freshContextDisabled,
   onRestartFrom,
@@ -2126,6 +2129,7 @@ function TimelineEvent({
   worldId: string;
   chainId: string;
   event: V1PlayTimelineEventSummary;
+  requiresFreshContext?: boolean | undefined;
   liveAssistant?: V1PlayCallChainEvent | undefined;
   restartDisabled: boolean;
   freshContextDisabled: boolean;
@@ -2185,7 +2189,11 @@ function TimelineEvent({
                     disabled={restartDisabled}
                     onClick={() => {
                       setEditedText(event.text);
-                      setRevisionContinuation("continue_context");
+                      setRevisionContinuation(
+                        requiresFreshContext
+                          ? "fresh_context"
+                          : "continue_context",
+                      );
                     }}
                   >
                     {uiText("修改")}
@@ -2229,7 +2237,7 @@ function TimelineEvent({
                     name={`revision-continuation-${chainId}-${event.id}`}
                     value="continue_context"
                     checked={revisionContinuation === "continue_context"}
-                    disabled={restartDisabled}
+                    disabled={restartDisabled || requiresFreshContext}
                     onChange={() => setRevisionContinuation("continue_context")}
                   />
                   <span>
@@ -2257,6 +2265,13 @@ function TimelineEvent({
                     </small>
                   </span>
                 </label>
+                {requiresFreshContext ? (
+                  <p>
+                    {uiText(
+                      "此上下文来自备份；修改后须以本机选择开启全新上下文。",
+                    )}
+                  </p>
+                ) : null}
               </fieldset>
               <div className="button-row">
                 <button
@@ -2756,6 +2771,7 @@ function applyPlayTimelineFrame(
           chainId: chain.chainId,
           current: true,
           event: summary,
+          ...(chain.requiresFreshContext ? { requiresFreshContext: true } : {}),
         };
         if (index < 0) items.push(next);
         else {
@@ -2932,6 +2948,9 @@ function legacyTimelinePage(world: WorldReadView): V1PlayTimelinePage {
           chainId: context.chainId,
           current: context.chainId === chain.chainId,
           event: summarizeTimelineEvent(event),
+          ...(context.requiresFreshContext
+            ? { requiresFreshContext: true }
+            : {}),
         })),
       ]),
     ],

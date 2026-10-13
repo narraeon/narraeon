@@ -59,6 +59,8 @@ export interface PersistedDocumentAuthorizationCheckpoint {
 }
 
 export interface PersistedPlayCallChainContext {
+  /** Source-machine contexts stay readable but can never resume Provider state. */
+  importedFromArchive?: true;
   narrativeOrigin?: NarrativeOrigin;
   promptRuns?: PlayPromptRun[];
   /** Narrative context identity survives transport chain renaming on forks. */
@@ -107,6 +109,7 @@ export interface PersistedPlayCallChain extends PersistedPlayCallChainContext {
 }
 
 interface PersistedContextIndex {
+  importedFromArchive?: true;
   schemaVersion: 3;
   kind: "play_context_index";
   worldId: string;
@@ -304,6 +307,7 @@ export class FileNativePlayTimelineStore {
     targetWorldRoot: string;
     source: PersistedPlayCallChainContext;
     target: PersistedPlayCallChain;
+    retainCompleteContext?: true;
   }): Promise<PlayContextPersistenceCursor> {
     assertIdentity(input.sourceWorldId, "Source world ID");
     assertIdentity(input.source.chainId, "Source call-chain ID");
@@ -331,6 +335,7 @@ export class FileNativePlayTimelineStore {
       input.target.documentAuthorizationCheckpoints ?? [],
     );
     if (
+      input.retainCompleteContext ||
       input.target.events.some(
         (event) => event.kind === "assistant" && event.status === "completed",
       )
@@ -578,6 +583,24 @@ export class FileNativePlayTimelineStore {
     return loaded;
   }
 
+  /** Read only the small active context index, never its transcript or bootstrap. */
+  async currentContextRequiresFreshContext(worldId: string): Promise<boolean> {
+    assertIdentity(worldId, "World ID");
+    const head = await this.#readTimelineHead(worldId);
+    if (head === null) return false;
+    const index = await readJson<unknown>(
+      join(this.#contextRoot(worldId, head.chainId), "index.json"),
+    );
+    assertContextIndex(index);
+    if (
+      index.worldId !== worldId ||
+      index.chainId !== head.chainId ||
+      index.timelineGeneration !== head.generation
+    )
+      throw new Error("Play context durable identity is inconsistent");
+    return index.importedFromArchive === true;
+  }
+
   async readContext(
     worldId: string,
     chainId: string,
@@ -661,6 +684,7 @@ export class FileNativePlayTimelineStore {
       chainId,
       previousChainId: indexValue.previousChainId,
       timelineGeneration: indexValue.timelineGeneration,
+      ...(indexValue.importedFromArchive ? { importedFromArchive: true } : {}),
       ...(baseValue.continuityContextId === undefined
         ? {}
         : { continuityContextId: baseValue.continuityContextId }),
@@ -904,6 +928,9 @@ export class FileNativePlayTimelineStore {
           kind: "event",
           chainId: pointer.chainId,
           current: pointer.chainId === head?.chainId,
+          ...(context.index.importedFromArchive
+            ? { requiresFreshContext: true }
+            : {}),
           event: summary,
         });
         pointer = { ...pointer, eventId: pointer.eventId - 1 };
@@ -1121,6 +1148,7 @@ export class FileNativePlayTimelineStore {
 
 function contextIndex(value: PersistedPlayCallChain): PersistedContextIndex {
   return {
+    ...(value.importedFromArchive ? { importedFromArchive: true } : {}),
     schemaVersion: 3,
     kind: "play_context_index",
     worldId: value.worldId,
@@ -1258,6 +1286,8 @@ function assertContextIndex(
     !isRecord(value) ||
     value.schemaVersion !== 3 ||
     value.kind !== "play_context_index" ||
+    (value.importedFromArchive !== undefined &&
+      value.importedFromArchive !== true) ||
     typeof value.worldId !== "string" ||
     typeof value.chainId !== "string" ||
     (value.previousChainId !== null &&

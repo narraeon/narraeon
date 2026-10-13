@@ -122,6 +122,7 @@ export class WorldArchives {
           targetWorldRoot: join(root, "world"),
           requireMaterialized: true,
           resetPackageScriptPermissions: true,
+          retainCompleteTimeline: true,
         });
         // A fork may create a local display cache; it is outside the portable closure.
         await rm(join(fork.worldRoot, "runtime", "activity.json"), {
@@ -362,6 +363,7 @@ export class WorldArchives {
               targetName: manifest.worldName,
               identityPrefix: "import",
               resetPackageScriptPermissions: true,
+              retainCompleteTimeline: true,
             });
           } catch (error) {
             throw new WorldArchiveError(
