@@ -13,7 +13,7 @@ import {
   within,
 } from "@testing-library/react";
 import { createElement } from "react";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import type {
   ContentTreeFile,
@@ -36,8 +36,18 @@ import {
 } from "../../src/protocol/appPreferences.ts";
 import { WorldPage } from "../../src/web/WorldPage.tsx";
 
+beforeEach(() => {
+  // Node's native localStorage can shadow the browser storage in jsdom.
+  const browser = globalThis as unknown as {
+    jsdom: { window: { localStorage: Storage } };
+  };
+  vi.stubGlobal("localStorage", browser.jsdom.window.localStorage);
+  window.localStorage.clear();
+});
+
 afterEach(() => {
   cleanup();
+  window.localStorage.clear();
   vi.unstubAllGlobals();
 });
 
@@ -263,6 +273,51 @@ describe("世界游玩页面", () => {
     await act(async () => {
       await receive?.({ kind: "play", value: structuredClone(chain) }, true);
     });
+    expect(screen.getByText("下一条消息将开启全新上下文")).toBeTruthy();
+    expect(
+      client.request.mock.calls.some(
+        ([request]) =>
+          request.type === "play.chain.start" ||
+          request.type === "play.chain.append",
+      ),
+    ).toBe(false);
+  });
+
+  test("取消检查点后卸载重进仍不预选，相同端点改上下文身份不重选，新检查点及未处理选择保留", async () => {
+    const chain = playChainView("checkpoint-navigation", "send", "整理书架。");
+    const narrative = chain.events.find((event) => event.kind === "assistant")!;
+    if (narrative.kind !== "assistant") throw new Error("Missing narrative");
+    narrative.checkpoint = true;
+    const client = {
+      request: vi.fn((request: V1Request): Promise<unknown> => {
+        if (request.type === "world.read")
+          return Promise.resolve(worldView(chain));
+        if (request.type === "artifacts.debug") return Promise.resolve([]);
+        return Promise.reject(new Error(`Unexpected request: ${request.type}`));
+      }),
+    };
+    let page = renderWorld(client);
+    await screen.findByText("下一条消息将开启全新上下文");
+    fireEvent.click(screen.getByRole("button", { name: "取消全新上下文" }));
+    page.unmount();
+    page = renderWorld(client);
+    await screen.findByText(narrative.text);
+    expect(screen.queryByText("下一条消息将开启全新上下文")).toBeNull();
+    page.unmount();
+    chain.chainId = "restored-context-for-same-checkpoint";
+    page = renderWorld(client);
+    await screen.findByText(narrative.text);
+    expect(screen.queryByText("下一条消息将开启全新上下文")).toBeNull();
+    page.unmount();
+    narrative.committedHead = "commit:4";
+    narrative.text = "另一段整理完成。";
+    chain.parentHead = "commit:4";
+    page = renderWorld(client);
+    await screen.findByText(narrative.text);
+    expect(screen.getByText("下一条消息将开启全新上下文")).toBeTruthy();
+    page.unmount();
+    renderWorld(client);
+    await screen.findByText(narrative.text);
     expect(screen.getByText("下一条消息将开启全新上下文")).toBeTruthy();
     expect(
       client.request.mock.calls.some(

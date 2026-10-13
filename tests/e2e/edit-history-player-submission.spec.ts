@@ -359,6 +359,28 @@ test("故事模式开关持久化，最新检查点自动预选且取消后只�
     page.getByText("世界已在故事外修订；下一次行动会从新上下文开始。"),
   ).toHaveCount(0);
   expect(providerRequests).toHaveLength(count);
+  await page.getByRole("button", { name: "返回工作区" }).click();
+  await page
+    .getByRole("button", { name: "打开世界：Checkpoint world", exact: true })
+    .click();
+  await expect(
+    page.getByText("下一条消息将开启全新上下文", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "追加行动", exact: true }),
+  ).toBeVisible();
+  await page.reload();
+  await page
+    .getByRole("button", { name: "打开世界：Checkpoint world", exact: true })
+    .click();
+  await expect(
+    page.getByText("下一条消息将开启全新上下文", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "追加行动", exact: true }),
+  ).toBeVisible();
+  expect(providerRequests).toHaveLength(count);
+  await page.getByLabel("你的行动").fill("保留这份行动草稿。");
   responses.push("Alex 点头，继续刚才的话题。");
   const appendStream = page.waitForResponse(
     (response) =>

@@ -7,6 +7,10 @@ import type { ObserveConversation } from "./ConversationObserver.ts";
 import { useAuthoringWorkspace } from "./useAuthoringWorkspace.ts";
 import { uiText } from "./i18n.ts";
 import {
+  hasHandledCheckpoint,
+  rememberHandledCheckpoint,
+} from "./CheckpointContextPreferences.ts";
+import {
   Fragment,
   useEffect,
   useLayoutEffect,
@@ -211,8 +215,14 @@ export function WorldPage({
   const [playCallChain, setPlayCallChain] =
     useState<V1PlayCallChainView | null>(null);
   const [forceFreshContext, setForceFreshContext] = useState(false);
-  const [preferFreshContext, setPreferFreshContext] = useState(false);
-  const [handledCheckpoints, setHandledCheckpoints] = useState<string[]>([]);
+  const [checkpointPreference, setCheckpointPreference] = useState<{
+    worldId: string;
+    head: string;
+    fresh: boolean;
+  } | null>(null);
+  const preferFreshContext =
+    checkpointPreference?.worldId === worldId && checkpointPreference.fresh;
+  const [observedCheckpoints, setObservedCheckpoints] = useState<string[]>([]);
   const [playTimeline, setPlayTimeline] = useState<V1PlayTimelinePage | null>(
     null,
   );
@@ -582,14 +592,22 @@ export function WorldPage({
     world?.worldId === worldId &&
     latestNarrative?.kind === "event" &&
     latestNarrative.event.kind === "assistant" &&
-    latestNarrative.event.checkpoint === true
+    latestNarrative.event.checkpoint === true &&
+    latestNarrative.event.committedHead !== undefined
   ) {
     const checkpointKey = `${worldId}:${latestNarrative.event.committedHead}`;
-    if (!handledCheckpoints.includes(checkpointKey)) {
+    if (!observedCheckpoints.includes(checkpointKey)) {
       // Remember the identity, rather than the tail page, so paging, mode
       // changes and cancellation cannot reselect an already handled checkpoint.
-      setHandledCheckpoints([...handledCheckpoints, checkpointKey]);
-      setPreferFreshContext(true);
+      setObservedCheckpoints([...observedCheckpoints, checkpointKey]);
+      setCheckpointPreference({
+        worldId,
+        head: latestNarrative.event.committedHead,
+        fresh: !hasHandledCheckpoint(
+          worldId,
+          latestNarrative.event.committedHead,
+        ),
+      });
     }
   }
   const activeCanRetry =
@@ -664,11 +682,17 @@ export function WorldPage({
     return next;
   }
 
+  function consumeCheckpointPreference(): void {
+    if (checkpointPreference?.worldId !== worldId) return;
+    rememberHandledCheckpoint(worldId, checkpointPreference.head);
+    setCheckpointPreference({ ...checkpointPreference, fresh: false });
+  }
+
   async function submitPlayChain(context: "fresh" | "append"): Promise<void> {
     if (!modelConfigured) return;
     const fresh = context === "fresh" || activeChainId === null;
     if ((fresh && !canStartFresh) || (!fresh && !canAppend)) return;
-    setPreferFreshContext(false);
+    consumeCheckpointPreference();
     const chainId = fresh ? createClientId("play-chain") : activeChainId;
     const exchangeId = createClientId("play-exchange");
     const startedAt = Date.now();
@@ -1483,7 +1507,7 @@ export function WorldPage({
                   type="button"
                   className="secondary-button"
                   onClick={() => {
-                    setPreferFreshContext(false);
+                    consumeCheckpointPreference();
                     composerTextareaRef.current?.focus();
                   }}
                 >
