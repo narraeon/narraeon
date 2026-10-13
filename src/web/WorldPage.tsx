@@ -947,8 +947,15 @@ export function WorldPage({
     eventId: number,
     editedText: string,
     continuation: PlayerRevisionContinuation,
+    regenerate = false,
   ): Promise<void> {
-    if (world === null) return;
+    if (
+      world === null ||
+      pending !== null ||
+      activeStatus === "running" ||
+      worldRevisionLocked
+    )
+      return;
     if (editedText.trim().length === 0) {
       setFeedback({
         kind: "error",
@@ -960,7 +967,9 @@ export function WorldPage({
     setPending("revise");
     setFeedback({
       kind: "status",
-      text: uiText("正在当前世界中保存修改，并舍弃这条消息之后的当前时间线…"),
+      text: regenerate
+        ? uiText("正在重新生成…")
+        : uiText("正在当前世界中保存修改，并舍弃这条消息之后的当前时间线…"),
     });
     try {
       const revised = await requestRuntime<{
@@ -982,9 +991,13 @@ export function WorldPage({
       if (!modelConfigured) {
         setFeedback({
           kind: "status",
-          text: uiText(
-            "修改已保存在当前世界；配置模型后点击“追加上下文”即可继续生成。",
-          ),
+          text: regenerate
+            ? uiText(
+                "原回复已离开当前时间线；配置模型后点击“追加上下文”即可重新生成。",
+              )
+            : uiText(
+                "修改已保存在当前世界；配置模型后点击“追加上下文”即可继续生成。",
+              ),
         });
         return;
       }
@@ -992,8 +1005,9 @@ export function WorldPage({
       setPending("play-append");
       setFeedback({
         kind: "status",
-        text:
-          continuation === "fresh_context"
+        text: regenerate
+          ? uiText("正在重新生成…")
+          : continuation === "fresh_context"
             ? uiText("修改已保存，正在从全新上下文继续生成…")
             : uiText("修改已保存，正在从修改稿继续生成…"),
       });
@@ -1015,9 +1029,11 @@ export function WorldPage({
                   "修改已保存，但模型请求中断；点击“追加上下文”即可原样重发。",
                 )
               : uiText("修改已保存，但模型请求失败；请使用全新上下文继续。")
-            : continuation === "fresh_context"
-              ? uiText("修改已保存在当前世界，并已作为全新上下文继续。")
-              : uiText("修改已保存在当前世界，并已从修改稿继续。"),
+            : regenerate
+              ? uiText("已重新生成；原回复已离开当前时间线")
+              : continuation === "fresh_context"
+                ? uiText("修改已保存在当前世界，并已作为全新上下文继续。")
+                : uiText("修改已保存在当前世界，并已从修改稿继续。"),
       });
     } catch (reason: unknown) {
       setFeedback({ kind: "error", text: errorMessage(reason) });
@@ -1370,7 +1386,11 @@ export function WorldPage({
                   worldId={worldId}
                   items={playTimeline.items}
                   liveChain={playCallChain}
-                  restartDisabled={pending !== null || worldRevisionLocked}
+                  restartDisabled={
+                    pending !== null ||
+                    activeStatus === "running" ||
+                    worldRevisionLocked
+                  }
                   freshContextDisabled={!modelConfigured}
                   onUseFreshContext={() => {
                     setPreferFreshContext(true);
@@ -1383,6 +1403,15 @@ export function WorldPage({
                       eventId,
                       editedText,
                       continuation,
+                    )
+                  }
+                  onRegeneratePlayer={(chainId, eventId, originalText) =>
+                    void reviseEditedPlayer(
+                      chainId,
+                      eventId,
+                      originalText,
+                      "continue_context",
+                      true,
                     )
                   }
                 />
@@ -1885,6 +1914,7 @@ function PlayTimeline({
   freshContextDisabled,
   onRestartFrom,
   onEditPlayer,
+  onRegeneratePlayer,
   onUseFreshContext,
 }: {
   client: WorldPageClient;
@@ -1901,8 +1931,40 @@ function PlayTimeline({
     editedText: string,
     continuation: PlayerRevisionContinuation,
   ) => void;
+  onRegeneratePlayer: (
+    chainId: string,
+    eventId: number,
+    originalText: string,
+  ) => void;
 }): React.JSX.Element {
   const groups = groupPlayTimelineItems(items);
+  const latestNarrativeIndex = items.findLastIndex(
+    (item) =>
+      item.kind === "event" &&
+      item.event.kind === "assistant" &&
+      item.event.status === "completed" &&
+      assistantResponseKind(item.event) === "narrative" &&
+      item.event.committedHead !== undefined,
+  );
+  const latestNarrative = items[latestNarrativeIndex];
+  const previousStory =
+    latestNarrative?.kind === "event"
+      ? items
+          .slice(0, latestNarrativeIndex)
+          .findLast(
+            (item) =>
+              item.kind === "event" &&
+              item.chainId === latestNarrative.chainId &&
+              timelineEventBelongsInStory(item.event),
+          )
+      : undefined;
+  const regeneratePlayer =
+    previousStory?.kind === "event" &&
+    previousStory.event.kind === "player" &&
+    previousStory.event.committedHead !== undefined &&
+    previousStory.event.committedHead !== "genesis"
+      ? { chainId: previousStory.chainId, event: previousStory.event }
+      : undefined;
   return (
     <ol
       className="call-chain-events play-timeline-events"
@@ -1938,6 +2000,16 @@ function PlayTimeline({
                     freshContextDisabled={freshContextDisabled}
                     onRestartFrom={onRestartFrom}
                     onEditPlayer={onEditPlayer}
+                    onRegenerate={
+                      item === latestNarrative && regeneratePlayer !== undefined
+                        ? () =>
+                            onRegeneratePlayer(
+                              regeneratePlayer.chainId,
+                              regeneratePlayer.event.id,
+                              regeneratePlayer.event.text,
+                            )
+                        : undefined
+                    }
                     presentation="story"
                     onUseFreshContext={onUseFreshContext}
                   />
@@ -2137,6 +2209,7 @@ function TimelineEvent({
   freshContextDisabled,
   onRestartFrom,
   onEditPlayer,
+  onRegenerate,
   presentation,
   onUseFreshContext,
 }: {
@@ -2154,6 +2227,7 @@ function TimelineEvent({
     editedText: string,
     continuation: PlayerRevisionContinuation,
   ) => void;
+  onRegenerate?: (() => void) | undefined;
   presentation: "story" | "trace";
   onUseFreshContext: () => void;
 }): React.JSX.Element {
@@ -2414,14 +2488,26 @@ function TimelineEvent({
               })}
             </span>
             {event.committedHead === undefined ? null : (
-              <button
-                type="button"
-                className="history-restart-button"
-                disabled={restartDisabled}
-                onClick={() => onRestartFrom(event.committedHead!)}
-              >
-                {uiText("创建分叉")}
-              </button>
+              <span className="history-message-actions">
+                {onRegenerate === undefined ? null : (
+                  <button
+                    type="button"
+                    className="history-restart-button"
+                    disabled={restartDisabled}
+                    onClick={onRegenerate}
+                  >
+                    {uiText("重新生成")}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="history-restart-button"
+                  disabled={restartDisabled}
+                  onClick={() => onRestartFrom(event.committedHead!)}
+                >
+                  {uiText("创建分叉")}
+                </button>
+              </span>
             )}
           </header>
           {responseKind === "tool_step" && event.text.length > 0 ? (

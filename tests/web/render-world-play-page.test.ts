@@ -2315,6 +2315,237 @@ describe("世界游玩页面", () => {
     });
   });
 
+  test("只在最新已提交正文旁显示重新生成，工具轨迹不阻断玩家锚点", async () => {
+    const chain = playChainView("latest-chain", "first-send", "第一次行动");
+    const player = chain.events[0]!;
+    const assistant = chain.events[3]!;
+    if (player.kind !== "player" || assistant.kind !== "assistant")
+      throw new Error("Invalid play fixture");
+    chain.events.push(
+      { ...player, id: 5, text: "第二次行动", committedHead: "commit:4" },
+      { ...assistant, id: 6, text: "新的工具步骤", responseKind: "tool_step" },
+      { ...assistant, id: 7, text: "最新正文", committedHead: "commit:5" },
+    );
+    const client = {
+      request: vi.fn(() => Promise.resolve(worldView(chain))),
+    };
+    renderWorld(client);
+    const latest = (await screen.findByText("最新正文")).closest("article")!;
+    expect(screen.getAllByRole("button", { name: "重新生成" })).toHaveLength(1);
+    expect(
+      within(latest).getByRole("button", { name: "重新生成" }),
+    ).toBeTruthy();
+    expect(
+      within(latest).getByRole("button", { name: "创建分叉" }),
+    ).toBeTruthy();
+    expect(
+      within(
+        screen
+          .getByText("Alex opens the door and lets you go first.")
+          .closest("article")!,
+      ).queryByRole("button", { name: "重新生成" }),
+    ).toBeNull();
+  });
+
+  test.each([
+    "空输入续写",
+    "未提交玩家消息",
+    "genesis 玩家消息",
+    "未提交主持正文",
+    "工具步骤",
+    "其他调用链的玩家消息",
+    "玩家锚点尚未加载",
+    "生成进行中",
+    "世界修订锁定",
+  ])("重新生成保护边界：%s", async (scenario) => {
+    const chain = playChainView("guarded-chain", "send", "原玩家输入");
+    const player = chain.events[0]!;
+    const assistant = chain.events[3]!;
+    if (player.kind !== "player" || assistant.kind !== "assistant")
+      throw new Error("Invalid play fixture");
+    let disabled = false;
+    switch (scenario) {
+      case "空输入续写":
+        chain.events.push({ ...assistant, id: 5, text: "续写正文" });
+        break;
+      case "未提交玩家消息":
+        delete player.committedHead;
+        break;
+      case "genesis 玩家消息":
+        player.committedHead = "genesis";
+        break;
+      case "未提交主持正文":
+        delete assistant.committedHead;
+        break;
+      case "工具步骤":
+        assistant.responseKind = "tool_step";
+        break;
+      case "玩家锚点尚未加载":
+        chain.events.shift();
+        break;
+      case "生成进行中":
+        chain.status = "running";
+        disabled = true;
+        break;
+      case "世界修订锁定":
+        disabled = true;
+        break;
+    }
+    const timeline: V1PlayTimelinePage = {
+      worldId: "world-one",
+      generation: "guards",
+      activeChainId: chain.chainId,
+      activeStatus: chain.status,
+      activeCanRetry: false,
+      activeLastFailure: null,
+      nextCursor: null,
+      items: chain.events
+        .filter(
+          (event) => event.kind === "player" || event.kind === "assistant",
+        )
+        .map((event) => ({
+          kind: "event",
+          chainId:
+            scenario === "其他调用链的玩家消息" && event.kind === "player"
+              ? "other-chain"
+              : chain.chainId,
+          current: true,
+          event: {
+            ...event,
+            detailsAvailable: false,
+            hasReasoning: false,
+            hasToolFragment: false,
+            hasUsage: false,
+          },
+        })),
+    };
+    const client = {
+      request: vi.fn(() =>
+        Promise.resolve({
+          ...worldView(null),
+          playTimeline: timeline,
+          worldRevision:
+            scenario === "世界修订锁定" ? worldRevisionEpoch([]) : null,
+        }),
+      ),
+    };
+    renderWorld(client);
+    await screen.findByRole("heading", { name: "宿舍世界" });
+    const button = screen.queryByRole<HTMLButtonElement>("button", {
+      name: "重新生成",
+    });
+    if (disabled) expect(button?.disabled).toBe(true);
+    else expect(button).toBeNull();
+  });
+
+  test.each([
+    {
+      status: "ready" as const,
+      canRetry: false,
+      feedback: "已重新生成；原回复已离开当前时间线",
+    },
+    {
+      status: "interrupted" as const,
+      canRetry: true,
+      feedback: "修改已保存，但模型请求中断；点击“追加上下文”即可原样重发。",
+    },
+    {
+      status: "interrupted" as const,
+      canRetry: false,
+      feedback: "修改已保存，但模型请求失败；请使用全新上下文继续。",
+    },
+  ])(
+    "重新生成沿原上下文使用玩家原文并保留恢复反馈：$status/$canRetry",
+    async ({ status, canRetry, feedback }) => {
+      const originalText = "  I signal Alex to open the door.\n";
+      let chain = playChainView("original-chain", "first-send", originalText);
+      const confirm = vi.fn(() => true);
+      vi.stubGlobal("confirm", confirm);
+      const client = {
+        request: vi.fn((request: V1Request): Promise<unknown> => {
+          if (request.type === "world.read")
+            return Promise.resolve(worldView(chain));
+          if (request.type === "artifacts.debug") return Promise.resolve([]);
+          if (request.type === "play.chain.revise-player") {
+            chain = {
+              ...chain,
+              chainId: "regenerated-chain",
+              parentHead: "commit:4",
+              changedDocuments: [],
+              events: [
+                {
+                  id: 1,
+                  kind: "player",
+                  exchangeId: request.replacementExchangeId,
+                  text: request.replacementText,
+                  context: "fresh",
+                  committedHead: "commit:4",
+                },
+              ],
+            };
+            return Promise.resolve({
+              outcome: "revised",
+              playCallChain: chain,
+            });
+          }
+          if (request.type === "play.chain.append") {
+            chain = { ...chain, status, canRetry, parentHead: "commit:5" };
+            if (status === "ready")
+              chain.events.push({
+                id: 2,
+                kind: "assistant",
+                text: "重新生成的正文",
+                responseKind: "narrative",
+                status: "completed",
+                exchange: 1,
+                attempt: 1,
+                committedHead: "commit:5",
+              });
+            return Promise.resolve(chain);
+          }
+          return Promise.reject(
+            new Error(`Unexpected request: ${request.type}`),
+          );
+        }),
+      };
+      const onOpenWorld = vi.fn(() => Promise.resolve());
+      renderWorld(client, onOpenWorld);
+      fireEvent.change(await screen.findByLabelText("你的行动"), {
+        target: { value: "尚未发送的草稿" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "重新生成" }));
+      await screen.findByText(feedback);
+      expect(confirm).not.toHaveBeenCalled();
+      expect(onOpenWorld).not.toHaveBeenCalled();
+      expect(
+        screen.queryByText("Alex opens the door and lets you go first."),
+      ).toBeNull();
+      expect(screen.getByLabelText<HTMLTextAreaElement>("你的行动").value).toBe(
+        "尚未发送的草稿",
+      );
+      const writes = client.request.mock.calls
+        .map(([request]) => request)
+        .filter((request) => request.type.startsWith("play.chain."));
+      expect(writes).toEqual([
+        expect.objectContaining({
+          type: "play.chain.revise-player",
+          worldId: "world-one",
+          chainId: "original-chain",
+          eventId: 1,
+          replacementText: originalText,
+          continuation: "continue_context",
+        }),
+        expect.objectContaining({
+          type: "play.chain.append",
+          chainId: "regenerated-chain",
+          playerText: "",
+        }),
+      ]);
+      if (status === "ready")
+        expect(screen.getByText("重新生成的正文")).toBeTruthy();
+    },
+  );
+
   test("修改历史玩家提交会留在当前世界，并从修改稿自动继续", async () => {
     let chain = playChainView(
       "play-chain-existing",

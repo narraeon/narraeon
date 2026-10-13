@@ -1486,6 +1486,12 @@ const worldPageEnglishMessages: Record<string, string> = {
     "Copy current state and committed narrative through this point into a completely independent world.",
   "正在创建…": "Creating…",
   创建分叉: "Create fork",
+  重新生成: "Regenerate",
+  "正在重新生成…": "Regenerating…",
+  "已重新生成；原回复已离开当前时间线":
+    "Regenerated; the original reply is no longer on the current timeline",
+  "原回复已离开当前时间线；配置模型后点击“追加上下文”即可重新生成。":
+    'The original reply is no longer on the current timeline. Configure a model, then click "Append context" to regenerate.',
   世界控制: "World control",
   "编辑主持框架和玩家视图。草稿必须先通过真实提示词预览，再整批应用。":
     "Edit the host frame and player views. The draft must pass a real Prompt Preview before it can be applied as a whole.",
