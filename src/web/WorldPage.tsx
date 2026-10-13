@@ -57,6 +57,7 @@ import {
 } from "./ArtifactDebugger.tsx";
 import { projectUncoveredPlayerViews } from "./PlayerViewFallback.ts";
 import { ModelUsageBreakdown } from "./ModelUsageBreakdown.tsx";
+import { PlayContextUsage } from "./PlayContextUsage.tsx";
 import { PlayRunProgress } from "./PlayRunProgress.tsx";
 import { SettingImprovementPanel } from "./SettingImprovementPanel.tsx";
 import {
@@ -608,7 +609,13 @@ export function WorldPage({
       setControlDirty(false);
       setControlPreview(null);
     }
-    setPlayCallChain(nextChain);
+    // Lightweight world reads omit the chain; keep its observed frozen model
+    // window while the timeline still identifies the same active context.
+    setPlayCallChain(
+      (current) =>
+        nextChain ??
+        (current?.chainId === nextTimeline.activeChainId ? current : null),
+    );
     setPlayTimeline(nextTimeline);
     setPlayFailure(playCallFailureMessage(nextChain));
     if (nextChain?.status === "running") {
@@ -1466,6 +1473,20 @@ export function WorldPage({
                 </button>
               </div>
             ) : null}
+            <PlayContextUsage
+              chain={playCallChain}
+              timeline={playTimeline}
+              freshContextSelected={
+                preferFreshContext ||
+                activeChainStale ||
+                pending === "play-fresh"
+              }
+              freshContextDisabled={!playIdle || !modelConfigured}
+              onUseFreshContext={() => {
+                setPreferFreshContext(true);
+                composerTextareaRef.current?.focus();
+              }}
+            />
             <div className="world-composer-row">
               <details className="world-composer-mode">
                 <summary aria-label={uiText("选择提交方式")}>＋</summary>

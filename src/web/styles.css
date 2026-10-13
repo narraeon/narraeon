@@ -8285,6 +8285,29 @@ summary:focus-visible {
   font-size: 0.75rem;
 }
 
+.world-context-usage {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.world-context-usage-label {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.world-context-usage-warning {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  padding: 0.35rem 0.6rem;
+  border-radius: 3px;
+  color: var(--warning);
+  background: var(--danger-surface);
+  font-size: 0.75rem;
+}
+
 .world-overlay-rail {
   position: fixed;
   z-index: 31;

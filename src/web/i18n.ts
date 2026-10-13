@@ -1142,6 +1142,18 @@ const settingImprovementEnglishMessages: Record<string, string> = {
   "和 AI 边聊边修改 {packageName}。成功的工具改动会像游玩一样直接写入内容包当前树。":
     "Discuss and revise {packageName} with the model. Successful tool changes write directly to the content package current tree, just like play.",
   全新上下文: "Fresh context",
+  "上下文 —": "Context —",
+  "上下文 {percent}%": "Context {percent}%",
+  "上下文已用 {percent}%，建议下一条从全新上下文开始":
+    "Context usage is {percent}%. Consider starting the next message in a fresh context.",
+  "当前上下文尚无已完成的 AI 响应。":
+    "There is no completed AI response in the current context yet.",
+  "当前上下文没有记录模型窗口。":
+    "No model context window was recorded for the current context.",
+  "Provider 未报告最近一次完整响应的输入 token 数。":
+    "The Provider did not report input tokens for the latest completed response.",
+  "最近一次完整响应的实报输入量：{input} / {window} tokens。仅作提示，不限制发送。":
+    "Reported input for the latest completed response: {input} / {window} tokens. This is informational and does not limit sending.",
   "AI 建议在此开启全新上下文": "The AI suggests starting a fresh context here",
   取消全新上下文: "Cancel fresh context",
   下一条消息使用全新上下文: "Use a fresh context for the next message",

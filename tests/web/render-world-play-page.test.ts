@@ -38,6 +38,71 @@ afterEach(() => {
 });
 
 describe("世界游玩页面", () => {
+  test("上下文占用提示预选下一条全新发送，预选本身不调用 Runtime", async () => {
+    const current = playChainView("usage-current", "first", "Look around.");
+    current.contextWindowTokens = 10_000;
+    const assistant = current.events.find(
+      (event) => event.kind === "assistant",
+    );
+    if (assistant?.kind !== "assistant") throw new Error("Expected response");
+    assistant.usage = {
+      ...emptyAggregatedModelUsage(),
+      inputTokens: 8_500,
+      provenance: {
+        ...emptyAggregatedModelUsage().provenance,
+        inputTokens: "provider",
+      },
+    };
+    let active = current;
+    const client = {
+      request: vi.fn((request: V1Request): Promise<unknown> => {
+        if (request.type === "world.read")
+          return Promise.resolve(worldView(active));
+        if (request.type === "play.chain.start") {
+          active = playChainView(
+            request.chainId,
+            request.exchangeId,
+            request.playerText,
+          );
+          active.contextWindowTokens = 10_000;
+          return Promise.resolve(active);
+        }
+        if (request.type === "artifacts.debug") return Promise.resolve([]);
+        return Promise.reject(new Error(`Unexpected request: ${request.type}`));
+      }),
+    };
+    renderWorld(client);
+    await screen.findByText("上下文 85%");
+    fireEvent.change(screen.getByLabelText("你的行动"), {
+      target: { value: "Continue the story." },
+    });
+    expect(
+      screen.getByRole<HTMLButtonElement>("button", { name: "追加行动" })
+        .disabled,
+    ).toBe(false);
+    const count = client.request.mock.calls.length;
+    fireEvent.click(
+      screen.getByRole("button", { name: "下一条消息使用全新上下文" }),
+    );
+    expect(client.request).toHaveBeenCalledTimes(count);
+    expect(screen.getByLabelText("你的行动")).toBe(document.activeElement);
+    expect(screen.queryByText(/上下文已用/u)).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "从全新上下文发送行动" }),
+    );
+    await waitFor(() =>
+      expect(client.request).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "play.chain.start",
+          playerText: "Continue the story.",
+        }),
+      ),
+    );
+    await screen.findByText("上下文 —");
+    expect(active.chainId).not.toBe(current.chainId);
+    expect(screen.queryByText(/上下文已用/u)).toBeNull();
+  });
+
   test("正文产物只挂实际回复，早期分页不误挂或重复，旧无归属产物不挂载", async () => {
     const chain = playChainView("attached-chain", "send", "行动");
     const decorations = playDecorations(

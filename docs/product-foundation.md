@@ -233,6 +233,8 @@ Effort、Thinking 模式和返回 thinking 内容是三项独立意图。OpenAI 
 
 模型配置继续提供 Provider 的 `contextWindowTokens` 和 `maxOutputTokens`。每次新派发直接使用当前 ModelHost 的固定 `maxOutputTokens`；原样重发使用已持久化的完整原请求。Runtime 不估算 token、不做上下文准入、不另设“连续交换输出上限”，也不在响应已经完成并计费后重新计算再拒绝结果。上下文能否容纳请求完全由 Provider 判断；Runtime 不自动摘要、压缩或截断历史。
 
+世界页输入区显示当前调用链最近一次完整 AI 响应的实报输入量占冻结模型窗口的比例；未报告输入量、旧记录没有冻结窗口或新上下文尚无完整响应时显示“—”，并说明原因，不使用估算或累计 usage。占用达到 85% 时建议下一条使用全新上下文，快捷按钮只准备下一次发送，玩家仍可继续追加。开启全新上下文后旧提示消失。占用信息只用于界面，不进入模型请求、上下文准入或检查点选择。
+
 提示词编译把稳定机械块、主持块和世界控制块放在稳定前缀，稳定前缀指纹不包含内部 ID、时间戳和 operation 数据。Anthropic Messages 在这些真实稳定块上编码显式 cache breakpoint；CLIProxyAPI 方言的 Chat Completions／Responses 使用代理明确支持的 `cache_control` 扩展。标准 Responses 的 `prompt_cache_key` 按稳定前缀分组，使等价前缀可复用 Provider 缓存；CLIProxyAPI 中该字段还承担 session affinity／重放隔离职责，因此改为按冻结模型会话生成稳定散列：同一会话各轮不变，不同调用链绝不共享。两种路径都不把原始内部身份写入 wire。没有等价显式块的标准协议只报告 provider-managed 策略。Runtime 不能把字节估计伪装成 token 命中，而要持久投影 Provider 实际报告的 input、uncached input、cache read、cache write、reasoning、output 与 total usage，并分别保留 provider／派生／不可用 provenance；游玩时间线和设定完善进度都直接显示全部七项，未报告字段显示为未报告而不是零。缓存 read／write 是 input 的构成，reasoning 已包含在 output 中，界面不能重复相加。改变 Thinking 或 Effort 会改变 Provider prompt/cache key 的语义并使旧缓存边界失效；缓存 miss 只影响成本和延迟，不能改变请求语义或恢复能力。
 
 Prompt Preview 必须调用真实编译器，并展示：
