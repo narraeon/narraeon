@@ -245,7 +245,7 @@ Effort、Thinking 模式和返回 thinking 内容是三项独立意图。OpenAI 
 
 模型配置继续提供 Provider 的 `contextWindowTokens` 和 `maxOutputTokens`。每次新派发直接使用当前 ModelHost 的固定 `maxOutputTokens`；原样重发使用已持久化的完整原请求。Runtime 不估算 token、不做上下文准入、不另设“连续交换输出上限”，也不在响应已经完成并计费后重新计算再拒绝结果。上下文能否容纳请求完全由 Provider 判断；Runtime 不自动摘要、压缩或截断历史。
 
-世界页输入区显示当前调用链最近一次完整 AI 响应的实报输入量占冻结模型窗口的比例；未报告输入量、旧记录没有冻结窗口或新上下文尚无完整响应时显示“—”，并说明原因，不使用估算或累计 usage。占用达到 85% 时建议下一条使用全新上下文，快捷按钮只准备下一次发送，玩家仍可继续追加。开启全新上下文后旧提示消失。占用信息只用于界面，不进入模型请求、上下文准入或检查点选择。
+世界页输入区显示当前调用链最近一次完整 AI 响应的实报输入量占冻结模型窗口的比例；未报告输入量、旧记录没有冻结窗口或新上下文尚无完整响应时显示“—”，并说明原因，不使用估算或累计 usage。非零但不足 1% 时显示“<1%”；下一次发送已确定开启全新上下文时显示“—”，不沿用旧上下文占用。占用达到 85% 时建议下一条使用全新上下文，快捷按钮只准备下一次发送，玩家仍可继续追加。开启全新上下文后旧提示消失。占用信息只用于界面，不进入模型请求、上下文准入或检查点选择。
 
 提示词编译把稳定机械块、主持块和世界控制块放在稳定前缀，稳定前缀指纹不包含内部 ID、时间戳和 operation 数据。Anthropic Messages 在这些真实稳定块上编码显式 cache breakpoint；CLIProxyAPI 方言的 Chat Completions／Responses 使用代理明确支持的 `cache_control` 扩展。标准 Responses 的 `prompt_cache_key` 按稳定前缀分组，使等价前缀可复用 Provider 缓存；CLIProxyAPI 中该字段还承担 session affinity／重放隔离职责，因此改为按冻结模型会话生成稳定散列：同一会话各轮不变，不同调用链绝不共享。两种路径都不把原始内部身份写入 wire。没有等价显式块的标准协议只报告 provider-managed 策略。Runtime 不能把字节估计伪装成 token 命中，而要持久投影 Provider 实际报告的 input、uncached input、cache read、cache write、reasoning、output 与 total usage，并分别保留 provider／派生／不可用 provenance；游玩时间线和设定完善进度都直接显示全部七项，未报告字段显示为未报告而不是零。缓存 read／write 是 input 的构成，reasoning 已包含在 output 中，界面不能重复相加。改变 Thinking 或 Effort 会改变 Provider prompt/cache key 的语义并使旧缓存边界失效；缓存 miss 只影响成本和延迟，不能改变请求语义或恢复能力。
 
@@ -292,6 +292,8 @@ Runtime 是唯一业务提交者。每笔提交绑定稳定 operation ID 和父�
 V1 继续只用 genesis anchor 加不可变 Authority 事实作为正确性来源，不增加第二份权威日志。`worldId` 只属于世界本地外壳；历史消息使用 Authority 内局部身份，事实摘要不包含 world 或 operation 身份。`commit:N` 是 V1 世界内别名，父关系同时携带不可变摘要，结果 root 是恢复 state、history 和材料的直接入口。物化检查点只证明本地投影已经追到哪个接受点，不能接受新事实或覆盖 Authority。普通打开与继续游玩读取小 head 和当前投影；旧端点直接读取对应结果 root，完整审计才遍历 audit chain。
 
 “创建分叉”是唯一创建独立世界的历史操作。玩家可以在任一已提交玩家／AI 节点点击该按钮；Runtime 先持有统一来源 snapshot lease，再保留截至所选端点的世界中立 Authority 物理闭包，使用创建分叉当下的当前控制和玩家所选主持预设，在同一 target staging 中物化一次最终 state/history／材料投影并发布新世界。当前 head 直接采用小 root 的结果引用，不解码或重算 Authority 事实；共享不可变文件优先 hardlink，失败时 reflink 或逐字节复制，可变投影绝不 hardlink，删除来源后目标仍完全自足。分叉不解析、改写、重算或逐笔物化祖先事实，也不调用 Provider 或重新执行工具。若节点属于持久游玩时间线，staging 同时保留此前完整页面轨迹，并截断所选上下文截至节点的模型 transcript 与调用轨迹，包括返回推理、工具参数和结果；分叉点之后的上下文和响应不进入目标，活动 chain 身份重新分配。截断后最后一项是玩家消息时，玩家可以留空点击“追加上下文”直接重新生成，不再提交一遍同样的玩家原文。
+
+当前时间线最新的已提交主持正文，在同一上下文中紧接已提交玩家消息时提供“重新生成”，复用该玩家原文，不新增玩家回合。原上下文可用时直接沿用；备份导入、续传不可用或原上下文生成失败时，说明原因并提供“用全新上下文重新生成”，由玩家明确选择后使用当前模型和预设。若时间线修订已经完成，恢复操作以修订后的同一玩家节点为起点，不重复使用旧节点。
 
 “修改”只作用于当前世界，不创建新 world ID（[ADR-0032](adr/0032-player-edits-append-current-world-timeline-revisions.md)、[ADR-0036](adr/0036-authority-facts-are-world-neutral-and-forks-retain-physical-closures.md)）。玩家确认修改稿后，Runtime 在当前 audit head 上原子追加 timeline revision：`auditParent` 指向修改前当前 head，`timelineParent` 指向所选玩家消息的逻辑父端点，事实只保存双父关系、请求指纹、修改稿与直接结果 root，不嵌入完整 replacement state/history。玩家同时明确选择后续模型上下文策略：**沿原上下文继续**时，新 chain 身份保留逻辑父端点以前的 transcript、Provider 原生续传与原冻结绑定；**作为全新上下文保存**时，页面先把修改点前的调用轨迹封成旧上下文前缀，再用当前主持预设、玩法预设和模型绑定从逻辑父端点重新编译 bootstrap，修改稿成为新上下文唯一的首条玩家 append。后一条路径不读取、不重建旧 Provider 续传，因此旧上下文缺少 durable binding 也不会阻止它。旧提交和旧端点继续精确可恢复，但不进入当前结果 root；“舍弃后续”因此不等于删除审计记录。
 

@@ -144,6 +144,7 @@ test("实报 85% 提示可准备下一条全新上下文，超过窗口仍可追
     .locator(".world-composer-dock")
     .screenshot({ path: testInfo.outputPath("context-usage-composer.png") });
   await shortcut.click();
+  await expect(page.getByText("上下文 —", { exact: true })).toBeVisible();
   await expect(
     page.getByText("下一条消息将开启全新上下文", { exact: true }),
   ).toBeVisible();

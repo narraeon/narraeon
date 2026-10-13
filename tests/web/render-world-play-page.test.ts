@@ -898,6 +898,41 @@ describe("世界游玩页面", () => {
     },
   );
 
+  test.each(["imported", "revised"])(
+    "必需全新上下文的世界不显示旧占用：%s",
+    async (kind) => {
+      const chain = playChainView("old-usage", "first", "Look around.");
+      chain.contextWindowTokens = 10000;
+      chain.latestCompletedResponse = {
+        id: 4,
+        usage: {
+          ...emptyAggregatedModelUsage(),
+          inputTokens: 70,
+          provenance: {
+            ...emptyAggregatedModelUsage().provenance,
+            inputTokens: "provider",
+          },
+        },
+      };
+      const view = worldView(chain);
+      const client = {
+        request: vi.fn(() =>
+          Promise.resolve({
+            ...view,
+            archiveNeedsFreshContext: kind === "imported",
+            head: kind === "revised" ? "commit:revised" : view.head,
+          }),
+        ),
+      };
+      renderWorld(client);
+      await screen.findByRole("heading", { name: "宿舍世界" });
+      expect(screen.getByText("上下文 —").title).toBe(
+        "下一次发送将开启全新上下文，尚无实报占用。",
+      );
+      expect(screen.queryByText("上下文 <1%")).toBeNull();
+    },
+  );
+
   test("上下文占用提示预选下一条全新发送，预选本身不调用 Runtime", async () => {
     const current = playChainView("usage-current", "first", "Look around.");
     current.contextWindowTokens = 10_000;
@@ -3291,7 +3326,6 @@ describe("世界游玩页面", () => {
     "玩家锚点尚未加载",
     "生成进行中",
     "世界修订锁定",
-    "导入的旧上下文",
   ])("重新生成保护边界：%s", async (scenario) => {
     const chain = playChainView("guarded-chain", "send", "原玩家输入");
     const player = chain.events[0]!;
@@ -3322,7 +3356,6 @@ describe("世界游玩页面", () => {
         chain.status = "running";
         disabled = true;
         break;
-      case "导入的旧上下文":
       case "世界修订锁定":
         disabled = true;
         break;
@@ -3346,9 +3379,6 @@ describe("世界游玩页面", () => {
               ? "other-chain"
               : chain.chainId,
           current: true,
-          ...(scenario === "导入的旧上下文"
-            ? { requiresFreshContext: true as const }
-            : {}),
           event: {
             ...event,
             detailsAvailable: false,
@@ -3376,6 +3406,125 @@ describe("世界游玩页面", () => {
     if (disabled) expect(button?.disabled).toBe(true);
     else expect(button).toBeNull();
   });
+
+  test.each(["imported", "unavailable", "append-protocol-mismatch"] as const)(
+    "原上下文不可用时提供全新上下文重新生成：%s",
+    async (scenario) => {
+      const originalText = "  原始玩家输入\n";
+      let chain = playChainView("original", "first", originalText);
+      if (scenario === "imported") chain.requiresFreshContext = true;
+      let fresh = false;
+      const client = {
+        request: vi.fn((request: V1Request): Promise<unknown> => {
+          if (request.type === "world.read")
+            return Promise.resolve(worldView(chain));
+          if (request.type === "artifacts.debug") return Promise.resolve([]);
+          if (request.type === "play.chain.revise-player") {
+            if (
+              request.continuation === "continue_context" &&
+              scenario === "unavailable"
+            )
+              return Promise.reject(
+                new RuntimeRequestError("Missing provider continuation", {
+                  protocolCode: "invalid_request",
+                }),
+              );
+            fresh = request.continuation === "fresh_context";
+            chain = {
+              ...chain,
+              chainId: fresh ? "fresh-regeneration" : "continued-regeneration",
+              events: [
+                {
+                  id: 1,
+                  kind: "player",
+                  exchangeId: request.replacementExchangeId,
+                  text: request.replacementText,
+                  context: "fresh",
+                  committedHead: "commit:4",
+                },
+              ],
+            };
+            delete chain.requiresFreshContext;
+            return Promise.resolve({
+              outcome: "revised",
+              playCallChain: chain,
+            });
+          }
+          if (request.type === "play.chain.append") {
+            if (!fresh)
+              return Promise.reject(
+                new RuntimeRequestError("Protocol mismatch", {
+                  protocolCode: "model_protocol_mismatch",
+                }),
+              );
+            chain = {
+              ...chain,
+              events: [
+                ...chain.events,
+                {
+                  id: 2,
+                  kind: "assistant",
+                  text: "新上下文重新生成的回复",
+                  status: "completed",
+                  responseKind: "narrative",
+                  committedHead: "commit:5",
+                  exchange: 1,
+                  attempt: 1,
+                },
+              ],
+            };
+            return Promise.resolve(chain);
+          }
+          return Promise.reject(
+            new Error(`Unexpected request: ${request.type}`),
+          );
+        }),
+      };
+      renderWorld(client);
+      await screen.findByText("Alex opens the door and lets you go first.");
+      const regenerate = screen.getByRole<HTMLButtonElement>("button", {
+        name: "重新生成",
+      });
+      expect(regenerate.disabled).toBe(false);
+      fireEvent.click(regenerate);
+      const fallback = await screen.findByRole("button", {
+        name: "用全新上下文重新生成",
+      });
+      expect(
+        screen.getByText(
+          "原上下文无法用于这次重新生成。可使用当前模型和预设，从同一条玩家输入开启全新上下文。",
+        ),
+      ).toBeTruthy();
+      expect(
+        client.request.mock.calls.some(
+          ([request]) =>
+            request.type === "play.chain.revise-player" &&
+            request.continuation === "fresh_context",
+        ),
+      ).toBe(false);
+      fireEvent.click(fallback);
+      await screen.findByText("新上下文重新生成的回复");
+      expect(client.request).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "play.chain.revise-player",
+          continuation: "fresh_context",
+          replacementText: originalText,
+          chainId:
+            scenario === "append-protocol-mismatch"
+              ? "continued-regeneration"
+              : "original",
+          eventId: 1,
+        }),
+      );
+      expect(client.request).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "play.chain.append",
+          chainId: "fresh-regeneration",
+          playerText: "",
+        }),
+      );
+    },
+  );
 
   test.each([
     {

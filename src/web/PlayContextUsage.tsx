@@ -49,6 +49,7 @@ export function PlayContextUsage({
   const usage = response?.usage;
   const input = usage?.inputTokens;
   const percent =
+    !freshContextSelected &&
     contextWindow !== undefined &&
     contextWindow > 0 &&
     input !== undefined &&
@@ -58,8 +59,9 @@ export function PlayContextUsage({
       : null;
   // Keep the displayed integer below 85 until the actual warning threshold.
   const displayedPercent = percent === null ? null : Math.floor(percent);
-  const explanation =
-    response === undefined
+  const explanation = freshContextSelected
+    ? uiText("下一次发送将开启全新上下文，尚无实报占用。")
+    : response === undefined
       ? uiText("当前上下文尚无已完成的 AI 响应。")
       : contextWindow === undefined || contextWindow <= 0
         ? uiText("当前上下文没有记录模型窗口。")
@@ -91,7 +93,9 @@ export function PlayContextUsage({
       <small className="world-context-usage-label" title={explanation}>
         {percent === null
           ? uiText("上下文 —")
-          : uiText("上下文 {percent}%", { percent: displayedPercent! })}
+          : uiText("上下文 {percent}%", {
+              percent: percent > 0 && percent < 1 ? "<1" : displayedPercent!,
+            })}
       </small>
     </div>
   );

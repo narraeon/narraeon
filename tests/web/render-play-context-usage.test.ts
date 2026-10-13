@@ -285,3 +285,27 @@ test("完整响应已离开有界摘要页时仍用调用链最近实报；最�
   );
   expect(screen.getByText("上下文 —").title).toContain("Provider 未报告");
 });
+
+test.each([1, 70, 99])(
+  "非零且不足百分之一的实报显示小于百分之一：%i",
+  (input) => {
+    show([response(input)]);
+    expect(screen.getByText("上下文 <1%").title).toContain(`${input} / 10000`);
+    expect(screen.queryByText("上下文 0%")).toBeNull();
+  },
+);
+
+test("下一次确定开启新上下文时不展示旧占用", () => {
+  const shown = show([response(9000)], { freshContextSelected: true });
+  expect(screen.getByText("上下文 —").title).toBe(
+    "下一次发送将开启全新上下文，尚无实报占用。",
+  );
+  expect(screen.queryByText("上下文 90%")).toBeNull();
+  shown.rerender(
+    createElement(PlayContextUsage, {
+      ...shown.props,
+      freshContextSelected: false,
+    }),
+  );
+  expect(screen.getByText("上下文 90%")).toBeTruthy();
+});

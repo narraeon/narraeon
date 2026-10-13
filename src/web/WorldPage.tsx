@@ -226,6 +226,12 @@ export function WorldPage({
     string | null
   >(null);
   const [playFailure, setPlayFailure] = useState<string | null>(null);
+  const [regenerationFallback, setRegenerationFallback] = useState<{
+    worldId: string;
+    chainId: string;
+    eventId: number;
+    originalText: string;
+  } | null>(null);
   const [playProgress, setPlayProgress] = useState<PlayRunProgressValue | null>(
     null,
   );
@@ -767,6 +773,7 @@ export function WorldPage({
           (activeStatus !== "ready" && (hasSubmittedText || !activeCanRetry))
     )
       return;
+    setRegenerationFallback(null);
     playSubmissionInFlight.current = true;
     consumeCheckpointPreference();
     const chainId = fresh ? createClientId("play-chain") : activeChainId;
@@ -1096,6 +1103,14 @@ export function WorldPage({
       });
       return;
     }
+    setRegenerationFallback(null);
+    let regenerationTarget = {
+      worldId,
+      chainId,
+      eventId,
+      originalText: editedText,
+    };
+    let revisionAccepted = false;
     const replacementExchangeId = createClientId("play-exchange");
     setPending("revise");
     setFeedback({
@@ -1119,6 +1134,21 @@ export function WorldPage({
         replacementText: editedText,
         continuation,
       });
+      revisionAccepted = true;
+      if (continuation === "fresh_context") {
+        setForceFreshContext(false);
+        consumeCheckpointPreference();
+      }
+      const revisedPlayer = revised.playCallChain.events.find(
+        (event) =>
+          event.kind === "player" && event.exchangeId === replacementExchangeId,
+      );
+      if (revisedPlayer !== undefined)
+        regenerationTarget = {
+          ...regenerationTarget,
+          chainId: revised.playCallChain.chainId,
+          eventId: revisedPlayer.id,
+        };
       applyPlayCallChain(revised.playCallChain);
       await refreshWorld();
       if (!modelConfigured) {
@@ -1151,6 +1181,13 @@ export function WorldPage({
         exchangeId: createClientId("play-exchange"),
         playerText: "",
       });
+      if (
+        regenerate &&
+        continuation === "continue_context" &&
+        continued.status === "interrupted" &&
+        !continued.canRetry
+      )
+        setRegenerationFallback(regenerationTarget);
       applyPlayCallChain(continued);
       await refreshWorld();
       setFeedback({
@@ -1169,6 +1206,17 @@ export function WorldPage({
                 : uiText("修改已保存在当前世界，并已从修改稿继续。"),
       });
     } catch (reason: unknown) {
+      // Offer an explicit new-context action after a known rejection, or after
+      // the revision is confirmed. Do not replay a revision with unknown outcome.
+      if (
+        regenerate &&
+        continuation === "continue_context" &&
+        (revisionAccepted ||
+          (reason instanceof RuntimeRequestError &&
+            (reason.protocolCode === "invalid_request" ||
+              reason.protocolCode === "model_protocol_mismatch")))
+      )
+        setRegenerationFallback(regenerationTarget);
       setFeedback({ kind: "error", text: errorMessage(reason) });
     } finally {
       setPending(null);
@@ -1569,15 +1617,33 @@ export function WorldPage({
                       continuation,
                     )
                   }
-                  onRegeneratePlayer={(chainId, eventId, originalText) =>
+                  onRegeneratePlayer={(
+                    chainId,
+                    eventId,
+                    originalText,
+                    requiresFreshContext,
+                  ) => {
+                    if (
+                      requiresFreshContext ||
+                      activeChainStale ||
+                      (activeStatus === "interrupted" && !activeCanRetry)
+                    ) {
+                      setRegenerationFallback({
+                        worldId,
+                        chainId,
+                        eventId,
+                        originalText,
+                      });
+                      return;
+                    }
                     void reviseEditedPlayer(
                       chainId,
                       eventId,
                       originalText,
                       "continue_context",
                       true,
-                    )
-                  }
+                    );
+                  }}
                 />
               ) : committedMessages.length === 0 ? (
                 <div className="story-empty-state">
@@ -1705,6 +1771,37 @@ export function WorldPage({
                   }}
                 >
                   {uiText("取消全新上下文")}
+                </button>
+              </div>
+            ) : null}
+            {regenerationFallback?.worldId === worldId ? (
+              <div className="play-retry-note" role="status">
+                <p>
+                  {uiText(
+                    "原上下文无法用于这次重新生成。可使用当前模型和预设，从同一条玩家输入开启全新上下文。",
+                  )}
+                </p>
+                <button
+                  type="button"
+                  disabled={!playIdle || !modelConfigured}
+                  onClick={() =>
+                    void reviseEditedPlayer(
+                      regenerationFallback.chainId,
+                      regenerationFallback.eventId,
+                      regenerationFallback.originalText,
+                      "fresh_context",
+                      true,
+                    )
+                  }
+                >
+                  {uiText("用全新上下文重新生成")}
+                </button>
+                <button
+                  type="button"
+                  disabled={!playIdle}
+                  onClick={() => setRegenerationFallback(null)}
+                >
+                  {uiText("取消")}
                 </button>
               </div>
             ) : null}
@@ -2147,6 +2244,7 @@ function PlayTimeline({
     chainId: string,
     eventId: number,
     originalText: string,
+    requiresFreshContext: boolean,
   ) => void;
 }): React.JSX.Element {
   const groups = groupPlayTimelineItems(items);
@@ -2175,7 +2273,11 @@ function PlayTimeline({
     previousStory.event.kind === "player" &&
     previousStory.event.committedHead !== undefined &&
     previousStory.event.committedHead !== "genesis"
-      ? { chainId: previousStory.chainId, event: previousStory.event }
+      ? {
+          chainId: previousStory.chainId,
+          event: previousStory.event,
+          requiresFreshContext: previousStory.requiresFreshContext,
+        }
       : undefined;
   const lastActiveItem = items.findLast(
     (item) =>
@@ -2225,6 +2327,11 @@ function PlayTimeline({
                               regeneratePlayer.chainId,
                               regeneratePlayer.event.id,
                               regeneratePlayer.event.text,
+                              item.requiresFreshContext === true ||
+                                regeneratePlayer.requiresFreshContext ===
+                                  true ||
+                                (item.event.kind === "assistant" &&
+                                  item.event.continuation === "unavailable"),
                             )
                         : undefined
                     }
@@ -2741,7 +2848,7 @@ function TimelineEvent({
                   <button
                     type="button"
                     className="history-restart-button"
-                    disabled={restartDisabled || requiresFreshContext}
+                    disabled={restartDisabled}
                     onClick={onRegenerate}
                   >
                     {uiText("重新生成")}

@@ -7,6 +7,11 @@ import {
 let activeLocale: AppLocale = defaultAppLocale;
 
 const englishMessages: Record<string, string> = {
+  "下一次发送将开启全新上下文，尚无实报占用。":
+    "The next message starts a fresh context; no usage has been reported yet.",
+  "原上下文无法用于这次重新生成。可使用当前模型和预设，从同一条玩家输入开启全新上下文。":
+    "The original context cannot be used for this regeneration. Use the current model and presets to regenerate from the same player input in a fresh context.",
+  用全新上下文重新生成: "Regenerate with a fresh context",
   旧模型配置曾阻止发送: "Previous model settings blocked sending",
   "旧版本因模型配置变化阻止了这次发送。切回原协议后，可按上下文当前状态继续。":
     "An older version blocked this send after the model settings changed. Switch back to the original protocol and continue according to the context's current status.",
