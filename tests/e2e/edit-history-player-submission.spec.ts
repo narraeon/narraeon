@@ -327,9 +327,7 @@ test("故事模式开关持久化，最新检查点自动预选且取消后只�
     story.getByRole("button", { name: "下一条消息使用全新上下文" }),
   ).toHaveCount(0);
   await page.reload();
-  await page
-    .getByRole("button", { name: "打开世界：Checkpoint world", exact: true })
-    .click();
+  await expect(page).toHaveURL(/#\/world\//u);
   await expect(page.locator(".world-reader-page")).toHaveClass(
     /is-detailed-mode/u,
   );
@@ -370,9 +368,7 @@ test("故事模式开关持久化，最新检查点自动预选且取消后只�
     page.getByRole("button", { name: "追加行动", exact: true }),
   ).toBeVisible();
   await page.reload();
-  await page
-    .getByRole("button", { name: "打开世界：Checkpoint world", exact: true })
-    .click();
+  await expect(page).toHaveURL(/#\/world\//u);
   await expect(
     page.getByText("下一条消息将开启全新上下文", { exact: true }),
   ).toHaveCount(0);
@@ -448,9 +444,7 @@ test("故事模式开关持久化，最新检查点自动预选且取消后只�
   expect((await savedStory).ok()).toBe(true);
   await expect(story.locator(".play-checkpoint-marker")).toHaveCount(0);
   await page.reload();
-  await page
-    .getByRole("button", { name: "打开世界：Checkpoint world", exact: true })
-    .click();
+  await expect(page).toHaveURL(/#\/world\//u);
   await expect(page.locator(".world-reader-page")).toHaveClass(
     /is-story-mode/u,
   );

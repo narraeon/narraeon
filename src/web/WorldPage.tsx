@@ -68,6 +68,7 @@ import {
 } from "./ArtifactDebugger.tsx";
 import { projectUncoveredPlayerViews } from "./PlayerViewFallback.ts";
 import { ModelUsageBreakdown } from "./ModelUsageBreakdown.tsx";
+import { PlayContextUsage } from "./PlayContextUsage.tsx";
 import { PlayRunProgress } from "./PlayRunProgress.tsx";
 import { SettingImprovementPanel } from "./SettingImprovementPanel.tsx";
 import {
@@ -78,6 +79,10 @@ import {
 } from "./PlayRunProgressState.ts";
 
 type RightRailTab = "documents" | "ai-reading";
+type PlayContextUsageProjection = Pick<
+  V1PlayCallChainView,
+  "worldId" | "chainId" | "contextWindowTokens" | "latestCompletedResponse"
+>;
 type WorldDialog = "revision" | "reading" | "manage" | null;
 type PlayerRevisionContinuation = Extract<
   V1Request,
@@ -231,6 +236,8 @@ export function WorldPage({
   }
   const [playCallChain, setPlayCallChain] =
     useState<V1PlayCallChainView | null>(null);
+  const [playContextUsage, setPlayContextUsage] =
+    useState<PlayContextUsageProjection | null>(null);
   const [forceFreshContext, setForceFreshContext] = useState(false);
   const [checkpointPreference, setCheckpointPreference] = useState<{
     worldId: string;
@@ -352,7 +359,7 @@ export function WorldPage({
           observedDecorations = revision;
           setDecorationRevision((current) => current + 1);
         }
-        setPlayCallChain(next);
+        applyPlayCallChain(next);
         setPlayFailure(playCallFailureMessage(next));
         if (next.status === "running") {
           setPlayProgress((current) =>
@@ -384,24 +391,25 @@ export function WorldPage({
           hydratedHead = `${next.parentHead}:${next.status}`;
           setWorld(projection);
           const page = projection.playTimeline;
-          if (page !== undefined)
-            setPlayTimeline((current) =>
-              current === null
-                ? page
-                : {
-                    ...current,
-                    items: current.items.map((item) =>
-                      item.kind !== "event"
-                        ? item
-                        : (page.items.find(
-                            (candidate) =>
-                              candidate.kind === "event" &&
-                              candidate.chainId === item.chainId &&
-                              candidate.event.id === item.event.id,
-                          ) ?? item),
-                    ),
-                  },
+          if (page !== undefined) {
+            setPlayTimeline((current) => mergePlayTimelinePage(current, page));
+            setPlayContextUsage((current) =>
+              current?.worldId === page.worldId &&
+              current.chainId === page.activeChainId
+                ? current
+                : null,
             );
+            setPlayCallChain((current) =>
+              current !== null && timelineHasNewerActivity(page, current)
+                ? null
+                : current,
+            );
+            if (
+              timelineHasNewerActivity(page, next) &&
+              page.activeStatus !== "running"
+            )
+              setPlayProgress(null);
+          }
         }
       },
       (connection) => {
@@ -688,7 +696,17 @@ export function WorldPage({
       setControlDirty(false);
       setControlPreview(null);
     }
+    // Retain only usage metadata across lightweight reads, never the old
+    // endpoint or running/retry state that would override the new timeline.
     setPlayCallChain(nextChain);
+    setPlayContextUsage((current) =>
+      nextChain !== null
+        ? projectPlayContextUsage(nextChain)
+        : current?.worldId === next.worldId &&
+            current.chainId === nextTimeline.activeChainId
+          ? current
+          : null,
+    );
     setPlayTimeline(nextTimeline);
     setPlayFailure(playCallFailureMessage(nextChain));
     if (nextChain?.status === "running") {
@@ -705,6 +723,11 @@ export function WorldPage({
     setSelectedDocument((current) =>
       selectedStateDocument(next.state, current),
     );
+  }
+
+  function applyPlayCallChain(next: V1PlayCallChainView): void {
+    setPlayCallChain(next);
+    setPlayContextUsage(projectPlayContextUsage(next));
   }
 
   async function refreshWorld(
@@ -777,7 +800,7 @@ export function WorldPage({
             playerText: submittedText,
           } satisfies Extract<V1Request, { type: "play.chain.append" }>);
       const next = await requestRuntime<V1PlayCallChainView>(client, request);
-      setPlayCallChain(next);
+      applyPlayCallChain(next);
       if (fresh) setForceFreshContext(false);
       if (hasSubmittedText) setPlayerText("");
       await refreshWorld();
@@ -812,7 +835,7 @@ export function WorldPage({
         { type: "play.chain.inspect", worldId },
       ).catch(() => null);
       if (inspected !== null) {
-        setPlayCallChain(inspected);
+        applyPlayCallChain(inspected);
         if (fresh && inspected.chainId === chainId) {
           setForceFreshContext(false);
         }
@@ -1085,7 +1108,7 @@ export function WorldPage({
         replacementText: editedText,
         continuation,
       });
-      setPlayCallChain(revised.playCallChain);
+      applyPlayCallChain(revised.playCallChain);
       await refreshWorld();
       if (!modelConfigured) {
         setFeedback({
@@ -1117,7 +1140,7 @@ export function WorldPage({
         exchangeId: createClientId("play-exchange"),
         playerText: "",
       });
-      setPlayCallChain(continued);
+      applyPlayCallChain(continued);
       await refreshWorld();
       setFeedback({
         kind: continued.status === "interrupted" ? "error" : "status",
@@ -1672,6 +1695,22 @@ export function WorldPage({
                 </button>
               </div>
             ) : null}
+            <PlayContextUsage
+              chain={
+                playContextUsage?.worldId === worldId ? playContextUsage : null
+              }
+              timeline={playTimeline}
+              freshContextSelected={
+                preferFreshContext ||
+                activeChainStale ||
+                pending === "play-fresh"
+              }
+              freshContextDisabled={!playIdle || !modelConfigured}
+              onUseFreshContext={() => {
+                setManualFreshContext(true);
+                composerTextareaRef.current?.focus();
+              }}
+            />
             <div className="world-composer-row">
               <details className="world-composer-mode">
                 <summary aria-label={uiText("选择提交方式")}>＋</summary>
@@ -2961,6 +3000,71 @@ function requestRuntime<T>(
   request: V1Request,
 ): Promise<T> {
   return client.request(request) as Promise<T>;
+}
+
+function timelineHasNewerActivity(
+  page: V1PlayTimelinePage,
+  chain: V1PlayCallChainView,
+): boolean {
+  if (page.activeChainId !== chain.chainId) return true;
+  const item = page.items.findLast(
+    (item) => item.kind === "event" && item.chainId === chain.chainId,
+  );
+  if (item?.kind !== "event") return false;
+  const event = chain.events.at(-1);
+  if (event === undefined || item.event.id > event.id) return true;
+  if (item.event.id !== event.id) return false;
+  return (
+    (chain.status === "running" && page.activeStatus !== "running") ||
+    (item.event.kind === "assistant" &&
+      item.event.status === "completed" &&
+      event.kind === "assistant" &&
+      event.status !== "completed")
+  );
+}
+
+function projectPlayContextUsage(
+  next: V1PlayCallChainView,
+): PlayContextUsageProjection {
+  return {
+    worldId: next.worldId,
+    chainId: next.chainId,
+    ...(next.contextWindowTokens === undefined
+      ? {}
+      : { contextWindowTokens: next.contextWindowTokens }),
+    ...(next.latestCompletedResponse === undefined
+      ? {}
+      : { latestCompletedResponse: next.latestCompletedResponse }),
+  };
+}
+
+function mergePlayTimelinePage(
+  current: V1PlayTimelinePage | null,
+  page: V1PlayTimelinePage,
+): V1PlayTimelinePage {
+  if (current?.generation !== page.generation) return page;
+  const key = (item: V1PlayTimelineItem): string =>
+    item.kind === "genesis"
+      ? `genesis:${item.messageId}`
+      : item.kind === "context_boundary"
+        ? `context:${item.chainId}`
+        : `event:${item.chainId}:${item.event.id}`;
+  const incoming = new Map(page.items.map((item) => [key(item), item]));
+  const items = current.items.map((item) => {
+    const replacement = incoming.get(key(item));
+    incoming.delete(key(item));
+    return (
+      replacement ??
+      (item.kind === "genesis"
+        ? item
+        : { ...item, current: item.chainId === page.activeChainId })
+    );
+  });
+  return {
+    ...page,
+    items: [...items, ...incoming.values()],
+    nextCursor: current.nextCursor,
+  };
 }
 
 function applyPlayTimelineFrame(

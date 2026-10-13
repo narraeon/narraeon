@@ -800,6 +800,10 @@ export interface V1PlayCallChainContextView {
   baselineHistoryLength?: number;
   parentHead: string;
   playPreset: { id: string; name: string; revision: string };
+  /** Provider window from this context's frozen model binding, if recorded. */
+  contextWindowTokens?: number;
+  /** Keeps the latest complete input report available beyond the event tail. */
+  latestCompletedResponse?: { id: number; usage?: ModelUsage };
   status: V1PlayCallChainStatus;
   canRetry: boolean;
   events: V1PlayCallChainEvent[];

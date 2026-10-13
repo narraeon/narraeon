@@ -196,9 +196,7 @@ test("重新生成最新回复追加一次时间线修订，保留原文和旧�
     expect(workspace.worlds.map(({ worldId: id }) => id)).toEqual([worldId]);
 
     await page.reload();
-    await page
-      .getByRole("button", { name: "打开世界：重新生成测试世界", exact: true })
-      .click();
+    await expect(page).toHaveURL(/#\/world\//u);
     await expect(timeline).toContainText("重新生成的第二段回复");
     await expect(timeline).not.toContainText("原来的第二段回复");
     await expect(regenerate).toHaveCount(1);

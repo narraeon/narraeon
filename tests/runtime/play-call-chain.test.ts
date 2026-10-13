@@ -1,4 +1,5 @@
 import { FileNativePlayDocuments } from "../../src/runtime/play/PlayDocumentTools.ts";
+import { emptyAggregatedModelUsage } from "../../src/protocol/modelUsage.ts";
 import { FileNativeModelHost } from "../../src/runtime/model/FileNativeModelAdapters.ts";
 import { createHash } from "node:crypto";
 import {
@@ -282,6 +283,120 @@ test("failure kinds are optional in stored records and invalid kinds fail closed
   await expect(
     worlds.playTimeline.readDetail(worldId, result.chainId, event.id),
   ).rejects.toThrow("invalid kind");
+});
+
+test("最近完整响应在40项尾部之外时，仍投影其输入 usage 而不扩大事件尾部", async () => {
+  const { worlds, worldId } = await createWorld("context-usage-outside-tail");
+  const usage = {
+    ...emptyAggregatedModelUsage(),
+    inputTokens: 620_000,
+    provenance: {
+      ...emptyAggregatedModelUsage().provenance,
+      inputTokens: "provider" as const,
+    },
+  };
+  const chains = new PlayCallChain(worlds);
+  await chains.start({
+    worldId,
+    chainId: "usage-outside-tail",
+    exchangeId: "usage-outside-tail-player",
+    playerText: "Read the directory many times.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [
+        {
+          outcome: "response",
+          usage,
+          toolCalls: Array.from({ length: 25 }, (_, index) => ({
+            id: `usage-list-${index}`,
+            name: "state_list",
+            arguments: {},
+          })),
+        },
+        { outcome: "failure", message: "Rejected before generation." },
+      ],
+    }),
+  });
+  const view = await chains.observeWorld(worldId);
+  expect(view?.events).toHaveLength(40);
+  expect(
+    view?.events.some(
+      (event) => event.kind === "assistant" && event.status === "completed",
+    ),
+  ).toBe(false);
+  expect(view?.latestCompletedResponse).toMatchObject({ usage });
+});
+
+test("上下文窗口只读投影冻结绑定，旧无绑定记录不补窗口，观察提供最近实报 usage", async () => {
+  const { worlds, worldId, root } = await createWorld("context-usage");
+  const chains = new PlayCallChain(worlds);
+  const usage = {
+    ...emptyAggregatedModelUsage(),
+    inputTokens: 54_400,
+    provenance: {
+      ...emptyAggregatedModelUsage().provenance,
+      inputTokens: "provider" as const,
+    },
+  };
+  for (const [chainId, window] of [
+    ["context-usage-first", 64_000],
+    ["context-usage-next", 128_000],
+  ] as const) {
+    const binding = { ...modelBinding(), contextWindowTokens: window };
+    const result = await chains.start({
+      worldId,
+      chainId,
+      exchangeId: `${chainId}-exchange`,
+      playerText: "Look around.",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: binding,
+      modelHost: new ScriptedModelHost({
+        binding,
+        steps: [
+          {
+            outcome: "response",
+            text: "Alex waits by the door.",
+            reasoningContent: "Heavy diagnostics stay behind the detail API.",
+            usage,
+          },
+        ],
+      }),
+    });
+    expect(result.contextWindowTokens).toBe(window);
+  }
+  const cold = new PlayCallChain(new FileNativeWorldStore(root));
+  const inspected = await cold.inspectWorld(worldId);
+  expect(inspected?.contextWindowTokens).toBe(128_000);
+  expect(inspected?.previousContexts).toEqual([]);
+  const observed = await cold.observeWorld(worldId);
+  expect(observed?.contextWindowTokens).toBe(128_000);
+  expect(observed?.latestCompletedResponse).toMatchObject({ usage });
+  expect(JSON.stringify(observed)).not.toContain("Heavy diagnostics");
+
+  const contextRoot = join(
+    root,
+    "worlds-file-native",
+    worldId,
+    "runtime",
+    "play-contexts",
+  );
+  for (const directory of await readdir(contextRoot)) {
+    const path = join(contextRoot, directory, "base.json");
+    const original = JSON.parse(await readFile(path, "utf8")) as {
+      modelBinding?: ModelHostBinding;
+    };
+    delete original.modelBinding;
+    await writeFile(path, JSON.stringify(original));
+  }
+  const legacy = await new PlayCallChain(
+    new FileNativeWorldStore(root),
+  ).inspectWorld(worldId);
+  expect(legacy).not.toHaveProperty("contextWindowTokens");
+  expect(legacy?.previousContexts).toEqual([]);
 });
 
 test("修改轨迹统一保留前缀工具及原生载荷，并按含同 ID 修改稿的事件选择运行快照与授权", async () => {

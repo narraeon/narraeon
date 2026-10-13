@@ -3136,6 +3136,9 @@ function mergeChangedDocuments(
 function projectContext(
   context: PersistedPlayCallChainContext,
 ): V1PlayCallChainContextView {
+  const response = context.events.findLast(
+    (event) => event.kind === "assistant" && event.status === "completed",
+  );
   return {
     chainId: context.chainId,
     baselineHead: context.baselineHead,
@@ -3144,6 +3147,19 @@ function projectContext(
       : { baselineHistoryLength: context.baselineHistoryLength }),
     parentHead: context.parentHead,
     playPreset: structuredClone(recordedPlayPrompt(context).playPreset),
+    ...(context.modelBinding === undefined
+      ? {}
+      : { contextWindowTokens: context.modelBinding.contextWindowTokens }),
+    ...(response?.kind !== "assistant"
+      ? {}
+      : {
+          latestCompletedResponse: {
+            id: response.id,
+            ...(response.usage === undefined
+              ? {}
+              : { usage: structuredClone(response.usage) }),
+          },
+        }),
     status: context.status,
     canRetry: context.canRetry,
     events: context.events
