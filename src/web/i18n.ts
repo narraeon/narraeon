@@ -104,6 +104,7 @@ const englishMessages: Record<string, string> = {
   "根据已完成的剧情，通过 artifact_emit 输出 output_1。":
     "Use artifact_emit to emit output_1 based on the settled story.",
   故事正文: "Story content",
+  侧栏: "Sidebar",
   删除请求: "Delete request",
   新增包后置请求: "Add package followup",
   包请求名称: "Package request name",
@@ -577,6 +578,15 @@ const playPresetEnglishMessages: Record<string, string> = {
   "玩法预设状态已更新。": "Play-preset status updated.",
   启用预设: "Enable preset",
   停用预设: "Disable preset",
+  启用: "Enable",
+  添加: "Add",
+  切换预设: "Switch preset",
+  保留的资源: "Retained assets",
+  "未绑定资源仍随预设保存；可在模板编辑器重新引用。":
+    "Unbound assets are still saved with the preset. Reference them again from the template editor.",
+  "导入内容无法解析；原文完整保留，可导出或打开原文修复。":
+    "The imported content could not be parsed. Its source is kept intact; export it or open the source to repair it.",
+  修复导入原文: "Repair imported source",
   "JavaScript 已停用；raw/document 仍可预览。":
     "JavaScript is disabled; raw and document content can still be previewed.",
   "JavaScript 已显式启用（本地可信代码）。":
@@ -1399,6 +1409,9 @@ const worldPageEnglishMessages: Record<string, string> = {
   "{seconds} 秒没有新数据": "No new data for {seconds} seconds",
   返回推理: "Returned reasoning",
   工具参数: "Tool arguments",
+  正文: "Text",
+  工具调用: "Tool calls",
+  "Provider 派发": "Provider dispatches",
   "{count} 字": "{count} characters",
   "Provider 尚未返回可区分的增量；这可能是排队、模型内部思考或网络等待。":
     "The Provider has not returned a distinguishable delta yet; it may be queued, thinking internally, or waiting on the network.",
@@ -1501,6 +1514,7 @@ const worldPageEnglishMessages: Record<string, string> = {
   没有文档变化: "No document changes",
   新建: "Create",
   更新: "Update",
+  新增: "Add",
   玩家: "Player",
   修改: "Edit",
   修改后的行动: "Edited action",

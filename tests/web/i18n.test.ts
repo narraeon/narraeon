@@ -28,3 +28,20 @@ test("web text follows the active locale and interpolates complete messages", ()
     "调用 world_patch",
   );
 });
+
+test("every Chinese uiText literal has an English message", () => {
+  const sources = import.meta.glob<string>(
+    ["../../src/web/*.{ts,tsx}", "!../../src/web/i18n.ts"],
+    { eager: true, import: "default", query: "?raw" },
+  );
+  const missing = new Set<string>();
+  setWebLocale("en");
+  for (const [file, source] of Object.entries(sources)) {
+    for (const match of source.matchAll(/uiText\(\s*"((?:[^"\\]|\\.)*)"/gu)) {
+      const chinese = JSON.parse(`"${match[1]}"`) as string;
+      if (!/\p{Script=Han}/u.test(chinese)) continue;
+      if (uiText(chinese) === chinese) missing.add(`${file}: ${chinese}`);
+    }
+  }
+  expect([...missing]).toEqual([]);
+});
