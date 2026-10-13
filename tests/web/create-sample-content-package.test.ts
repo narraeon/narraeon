@@ -94,6 +94,7 @@ test.each(appLocales)(
         : "Content package for the new world",
     );
     expect(select.value).toBe("sample-new");
+    expect(window.location.hash).toBe("#/create");
     await waitFor(() =>
       expect(
         screen.getByLabelText(

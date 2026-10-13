@@ -94,13 +94,7 @@ for (const locale of appLocales) {
         });
         await page.reload();
         await expect(start).toHaveCount(0);
-        await page
-          .locator(".home-world-library")
-          .getByRole("button", {
-            name: chinese ? "新建世界" : "Create world",
-            exact: true,
-          })
-          .click();
+        await expect(page).toHaveURL(/#\/create$/u);
         await page
           .getByRole("button", {
             name: chinese
@@ -141,20 +135,19 @@ for (const locale of appLocales) {
             : "Rain Lantern Inn lobby, Brookbridge",
         );
         await page.reload();
-        await page
-          .getByRole("button", {
-            name: chinese
-              ? `打开世界：${sample.title}`
-              : `Open world: ${sample.title}`,
-            exact: true,
-          })
-          .click();
+        await expect(page).toHaveURL(/#\/world\//u);
         await expect(timeline).toContainText(
           chinese
             ? "雨水沿着旅店的檐角落下"
             : "Rain patters from the inn's eaves.",
         );
-        await page.reload();
+        await page
+          .getByRole("button", {
+            name: chinese ? "返回工作区" : "Back to workspace",
+            exact: true,
+          })
+          .click();
+        await expect(page).toHaveURL(/#\/$/u);
         const repeated = page.waitForResponse((response) => {
           const request = response.request();
           return (

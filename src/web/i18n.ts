@@ -12,6 +12,10 @@ const englishMessages: Record<string, string> = {
   "生成预览后，在这里查看实际发送的消息、材料与工具。":
     "Generate a preview to inspect the messages, materials, and tools sent to the model.",
   关闭提示: "Dismiss notification",
+  "找不到该页面。": "Page not found.",
+  "找不到该世界。": "World not found.",
+  "找不到该内容包。": "Content package not found.",
+  "找不到该预设。": "Preset not found.",
   "已保留当前页面的未保存修改，请保存或放弃后再切换。":
     "Your unsaved changes have been kept. Save or discard them before switching pages.",
   "这份内容包正在完善，请在回复完成后创建世界。":

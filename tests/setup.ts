@@ -6,4 +6,5 @@ import { setWebLocale } from "../src/web/i18n.ts";
 // tests override this baseline when they verify the English surface.
 beforeEach(() => {
   setWebLocale("zh-CN");
+  if (typeof window !== "undefined") window.history.replaceState(null, "", "/");
 });

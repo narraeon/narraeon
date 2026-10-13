@@ -275,6 +275,8 @@ export function PlayPresetScreen({
   recommendedTemplates = [],
   onLibraryChange,
   onDirtyChange,
+  initialSelectedId,
+  onSelectionChange,
   renderPromptPreview,
 }: {
   client: PlayPresetClient;
@@ -282,6 +284,8 @@ export function PlayPresetScreen({
   recommendedTemplates?: RecommendedPlayPresetTemplate[];
   onLibraryChange: (library: PlayPresetScreenLibrary) => void;
   onDirtyChange: (dirty: boolean) => void;
+  initialSelectedId?: string;
+  onSelectionChange?: (presetId: string) => void;
   renderPromptPreview?: (target: {
     presetId: string;
     revision: string;
@@ -290,9 +294,11 @@ export function PlayPresetScreen({
   const [library, setLibrary] = useState(initialLibrary);
   const libraryMenu = useRef<HTMLDetailsElement>(null);
   const initial =
+    initialLibrary.presets.find(({ id }) => id === initialSelectedId) ??
     initialLibrary.presets.find(
       ({ id }) => id === initialLibrary.currentPresetId,
-    ) ?? initialLibrary.presets[0];
+    ) ??
+    initialLibrary.presets[0];
   const [selectedId, setSelectedId] = useState(initial?.id ?? "");
   const [draft, setDraft] = useState<
     (PlayPresetScreenPreset & { resourceError?: string | undefined }) | null
@@ -378,6 +384,7 @@ export function PlayPresetScreen({
     setLibrary(next);
     onLibraryChange(next);
     setSelectedId(selected?.id ?? "");
+    onSelectionChange?.(selected?.id ?? "");
     const editable = selected === undefined ? null : toEditablePreset(selected);
     setDraft(editable);
     setFilePath(
@@ -414,6 +421,7 @@ export function PlayPresetScreen({
     const next = library.presets.find(({ id: candidate }) => candidate === id);
     if (next === undefined) return;
     setSelectedId(id);
+    onSelectionChange?.(id);
     const editable = toEditablePreset(next);
     setDraft(editable);
     setFilePath(preferredPresetFilePath(editable.files));
