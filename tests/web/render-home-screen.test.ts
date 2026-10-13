@@ -13,6 +13,8 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import type { V1Request } from "../../src/protocol/v1.ts";
 import { App } from "../../src/web/App.tsx";
 import { HomeScreen } from "../../src/web/HomeScreen.tsx";
+import { setWebLocale } from "../../src/web/i18n.ts";
+import { relativeActivityTime } from "../../src/web/worldActivityPresentation.ts";
 import type { RuntimeClient } from "../../src/web/runtimeClient.ts";
 
 afterEach(cleanup);
@@ -41,7 +43,15 @@ describe("世界工作区主页", () => {
             status: "needs_repair" as const,
           },
         ],
-        worlds: [{ worldId: "world-1", title: "雾港第一夜" }],
+        worlds: [
+          {
+            worldId: "world-1",
+            title: "雾港第一夜",
+            lastActivityAt: Date.now(),
+            excerpt: "船长把灯挂在舱门前。",
+            playerTurns: 6,
+          },
+        ],
         selectedPackageId: "package-ready",
         modelConfigured: true,
         activeModelName: "本地主持模型",
@@ -68,6 +78,12 @@ describe("世界工作区主页", () => {
     expect(screen.getByRole("button", { name: "新建世界" })).toBeTruthy();
     expect(screen.getByText(/1 份待修复/u)).toBeTruthy();
     expect(screen.getByText(/本地主持模型/u)).toBeTruthy();
+    expect(screen.getByText("刚刚")).toBeTruthy();
+    expect(screen.getByText("6 回合")).toBeTruthy();
+    expect(screen.getByText("船长把灯挂在舱门前。")).toBeTruthy();
+    expect(
+      document.querySelector("time")?.getAttribute("datetime"),
+    ).toBeTruthy();
 
     fireEvent.click(
       screen.getByRole("button", { name: "打开世界：雾港第一夜" }),
@@ -143,7 +159,15 @@ describe("世界工作区主页", () => {
     render(
       createElement(HomeScreen, {
         contentPackages: [],
-        worlds: [{ worldId: "world-1", title: "雾港第一夜" }],
+        worlds: [
+          {
+            worldId: "world-1",
+            title: "雾港第一夜",
+            lastActivityAt: null,
+            excerpt: null,
+            playerTurns: 0,
+          },
+        ],
         selectedPackageId: "",
         modelConfigured: true,
         activeModelName: "本地主持模型",
@@ -174,11 +198,31 @@ describe("世界工作区主页", () => {
     fireEvent.click(screen.getByRole("button", { name: "保存世界名称" }));
 
     expect(onRenameWorld).toHaveBeenCalledWith(
-      { worldId: "world-1", title: "雾港第一夜" },
+      {
+        worldId: "world-1",
+        title: "雾港第一夜",
+        lastActivityAt: null,
+        excerpt: null,
+        playerTurns: 0,
+      },
       "雾港第二夜",
     );
     expect(onOpenWorld).not.toHaveBeenCalled();
     expect(onDeleteWorld).not.toHaveBeenCalled();
+  });
+
+  test("相对活动时间使用界面语言，未来时间显示刚刚", () => {
+    const now = 1_790_000_000_000;
+    setWebLocale("zh-CN");
+    expect(relativeActivityTime(now - 3 * 60 * 60 * 1000, now)).toBe("3小时前");
+    expect(relativeActivityTime(now + 1000, now)).toBe("刚刚");
+    setWebLocale("en");
+    expect(relativeActivityTime(now - 3 * 60 * 60 * 1000, now)).toBe(
+      "3 hours ago",
+    );
+    expect(relativeActivityTime(now - 60 * 1000, now)).toBe("1 minute ago");
+    expect(relativeActivityTime(now, now)).toBe("Just now");
+    setWebLocale("zh-CN");
   });
 
   test("应用把世界卡片提交的新名称保存到 Runtime 并刷新工作区", async () => {

@@ -66,6 +66,17 @@ test.each([
   },
 );
 
+test("活动缓存缺失时导出只读名称与故事，不重建缓存", async () => {
+  const { runtime, worlds, worldId, worldRoot } = await fixture("zh-CN");
+  await worlds.renameWorld(worldId, "新世界名称");
+  await rm(join(worldRoot, "runtime/activity.json"), { force: true });
+  const before = await treeBytes(worldRoot);
+  const exported = await exportCurrent(runtime, worldId, "text");
+  expect(exported.content).toBe(`新世界名称\n\n${opening}`);
+  expect(exported.fileName).toBe("新世界名称.txt");
+  expect(await treeBytes(worldRoot)).toEqual(before);
+});
+
 test("只有开场白、修订锁定和物化历史落后时仍读取已接受正文", async () => {
   const { runtime, worlds, worldId, worldRoot } = await fixture("zh-CN");
   const lock = await worlds.acquireWorldRevisionLock(

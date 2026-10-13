@@ -1,5 +1,6 @@
 import { getWebLocale, uiText } from "./i18n.ts";
 import { useState } from "react";
+import { relativeActivityTime } from "./worldActivityPresentation.ts";
 
 interface HomeContentPackage {
   localId: string;
@@ -7,9 +8,12 @@ interface HomeContentPackage {
   status: "usable" | "needs_repair";
 }
 
-interface HomeWorld {
+export interface HomeWorld {
   worldId: string;
   title: string;
+  lastActivityAt: number | null;
+  excerpt: string | null;
+  playerTurns: number;
 }
 
 export function HomeScreen({
@@ -110,7 +114,43 @@ export function HomeScreen({
                     disabled={pending}
                     onClick={() => onOpenWorld(world.worldId)}
                   >
-                    <strong>{world.title}</strong>
+                    <span className="home-world-card-story">
+                      <strong>{world.title}</strong>
+                      <span className="home-world-card-activity">
+                        {world.lastActivityAt == null ? (
+                          <span>{uiText("活动时间未记录")}</span>
+                        ) : (
+                          <time
+                            dateTime={new Date(
+                              world.lastActivityAt,
+                            ).toISOString()}
+                            title={new Date(
+                              world.lastActivityAt,
+                            ).toLocaleString(getWebLocale())}
+                          >
+                            {relativeActivityTime(world.lastActivityAt)}
+                          </time>
+                        )}
+                        <span>
+                          {uiText(
+                            world.playerTurns === 1 ? "1 回合" : "{count} 回合",
+                            {
+                              count: (world.playerTurns ?? 0).toLocaleString(
+                                getWebLocale(),
+                              ),
+                            },
+                          )}
+                        </span>
+                      </span>
+                      {world.excerpt == null ? null : (
+                        <span
+                          className="home-world-card-excerpt"
+                          title={world.excerpt}
+                        >
+                          {world.excerpt}
+                        </span>
+                      )}
+                    </span>
                     <span className="home-world-card-action">
                       {uiText("进入世界")}
                       <span aria-hidden="true">→</span>
