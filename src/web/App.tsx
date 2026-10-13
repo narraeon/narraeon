@@ -1,3 +1,7 @@
+import {
+  WorldBackupExportButton,
+  WorldBackupImportButton,
+} from "./WorldArchiveControls.tsx";
 import { PackageScriptPermissionControl } from "./PackageScriptPermissionControl.tsx";
 import { useEffect, useRef, useState } from "react";
 
@@ -76,6 +80,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   } | null>(null);
   const [importArchive, setImportArchive] = useState<File | null>(null);
   const [importPending, setImportPending] = useState(false);
+  const [archivePending, setArchivePending] = useState(false);
   const { workspace: authoringWorkspace, state: authoring } =
     useAuthoringWorkspace(client, "setting", selected, screen === "content");
   const filesDirty = authoring.dirty;
@@ -434,6 +439,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     playPresetDraftDirty ||
     modelDraftDirty ||
     importPending ||
+    archivePending ||
     creatingWorld ||
     childNavigationLocked;
   navigationDraftLockedRef.current =
@@ -595,7 +601,24 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             activeModelName={activeModel?.name ?? null}
             currentPresetName={currentPresetName}
             importArchive={importArchive}
-            importPending={importPending}
+            importPending={importPending || archivePending}
+            worldBackupImport={
+              <WorldBackupImportButton
+                client={client}
+                disabled={importPending}
+                onBusyChange={setArchivePending}
+                onImported={refresh}
+              />
+            }
+            renderWorldBackupExport={(world) => (
+              <WorldBackupExportButton
+                client={client}
+                worldId={world.worldId}
+                label="导出备份"
+                disabled={importPending || archivePending}
+                onBusyChange={setArchivePending}
+              />
+            )}
             onImportArchiveChange={(archive) => {
               setImportArchive(archive);
               setNotice("");

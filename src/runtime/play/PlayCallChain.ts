@@ -374,6 +374,7 @@ export class PlayCallChain {
     this.#active.set(session.chainId, session);
     this.#worldChains.set(session.worldId, session.chainId);
     await this.#persist(session);
+    await this.#worlds.completeArchiveFreshContext(session.worldId);
     return this.#submitPlayer(
       session,
       input.exchangeId,
@@ -394,6 +395,10 @@ export class PlayCallChain {
     signal: AbortSignal,
   ): Promise<V1PlayCallChainView> {
     validateIdentity(input.exchangeId, "exchange ID");
+    if (await this.#worlds.archiveNeedsFreshContext(input.worldId))
+      throw new PlayCallChainError(
+        "This world was imported from a backup; start a fresh context before continuing.",
+      );
     const session = await this.#requireChain(input.worldId, input.chainId);
     await this.#assertCurrentHead(session);
     assertSessionModelHostBinding(session, input.modelHost);
@@ -819,7 +824,9 @@ export class PlayCallChain {
       chainId: session.chainId,
       baselineHead: session.baselineHead,
       parentHead: session.parentHead,
-      stale: session.parentHead !== worldHead,
+      stale:
+        session.parentHead !== worldHead ||
+        (await this.#worlds.archiveNeedsFreshContext(worldId)),
       playPreset: structuredClone(recordedPlayPrompt(session).playPreset),
       updatedAt: session.updatedAt,
       bootstrap: {
@@ -839,20 +846,40 @@ export class PlayCallChain {
     sourceWorldId: string;
     sourceHead: string;
     hostPresetId: string;
-  }): Promise<{ outcome: "derived"; world: FileNativeWorldSummary }> {
+    targetDataRoot?: string;
+    targetName?: string;
+    publish?: false;
+    targetWorldRoot?: string;
+    identityPrefix?: "import";
+    resetPackageScriptPermissions?: boolean;
+    requireMaterialized?: boolean;
+  }): Promise<{
+    outcome: "derived";
+    world: FileNativeWorldSummary;
+    worldRoot: string;
+  }> {
     const result = await this.#worlds.deriveWorld({
       ...input,
-      stageTarget: async ({ targetWorldRoot, targetWorldId, binding }) => {
+      stageTarget: async ({
+        targetWorldRoot,
+        targetWorldId,
+        binding,
+        sourceHead,
+      }) => {
         await this.stageForkToDerivedWorld({
           sourceWorldId: input.sourceWorldId,
-          sourceHead: input.sourceHead,
+          sourceHead,
           targetWorldId,
           targetWorldRoot,
           targetBinding: binding,
         });
       },
     });
-    if ((await this.inspectWorld(result.world.worldId)) === null)
+    if (
+      input.targetDataRoot === undefined &&
+      input.publish !== false &&
+      (await this.inspectWorld(result.world.worldId)) === null
+    )
       await this.forkToDerivedWorld({
         sourceWorldId: input.sourceWorldId,
         sourceHead: input.sourceHead,
@@ -937,6 +964,13 @@ export class PlayCallChain {
     playCallChain: V1PlayCallChainView;
   }> {
     validateIdentity(input.operationId, "timeline-revision operation ID");
+    if (
+      input.continuation === "continue_context" &&
+      (await this.#worlds.archiveNeedsFreshContext(input.worldId))
+    )
+      throw new PlayCallChainError(
+        "This world was imported from a backup; start a fresh context before continuing.",
+      );
     validateIdentity(input.worldId, "world ID");
     validateIdentity(input.chainId, "call-chain ID");
     validateIdentity(input.replacementExchangeId, "replacement exchange ID");
@@ -1159,6 +1193,7 @@ export class PlayCallChain {
         freshPreparation,
       });
       await this.#worlds.playTimeline.persist(structuredClone(revised));
+      await this.#worlds.completeArchiveFreshContext(request.worldId);
       const activeId = this.#worldChains.get(request.worldId);
       if (activeId !== undefined) this.#active.delete(activeId);
       this.#active.delete(sourceContext.chainId);

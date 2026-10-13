@@ -7,6 +7,35 @@ import {
 let activeLocale: AppLocale = defaultAppLocale;
 
 const englishMessages: Record<string, string> = {
+  导出世界备份: "Export world backup",
+  导出备份: "Export backup",
+  "正在导出世界备份…": "Exporting world backup…",
+  "正在导出…": "Exporting…",
+  "世界备份已开始下载。": "Your world backup download has started.",
+  "备份包含完整故事、世界文档和模型调用记录，不包含 API Key 和模型配置。":
+    "Backups include the complete story, world documents, and model call records. API keys and model configuration are excluded.",
+  "世界备份超过容量限制。": "The world backup exceeds the size limits.",
+  "正在上传世界备份：{progress}%": "Uploading world backup: {progress}%",
+  "正在校验并导入世界备份…": "Validating and importing world backup…",
+  "世界备份已导入，新世界已加入列表。":
+    "World backup imported. The new world is now in your list.",
+  "世界备份 ZIP 文件": "World backup ZIP file",
+  导入世界备份: "Import world backup",
+  "世界备份上传失败，请重试。": "World backup upload failed. Please try again.",
+  "这不是有效的世界备份，请选择世界备份 ZIP。":
+    "This is not a valid world backup. Select a world backup ZIP.",
+  "此世界备份格式不受支持，请升级应用后重试。":
+    "This world backup format is unsupported. Update the app and try again.",
+  "世界备份包含不安全或冲突的文件路径。":
+    "The world backup contains unsafe or conflicting file paths.",
+  "世界备份完整性校验失败，未创建世界。":
+    "World backup integrity verification failed. No world was created.",
+  "请先等待生成结束，并应用或放弃世界修订，再导出备份。":
+    "Wait for generation to finish and apply or discard any world revision before exporting a backup.",
+  "请先修复世界，再导出备份。": "Repair the world before exporting a backup.",
+  "世界从备份导入；下一次行动会从新上下文开始":
+    "World imported from backup; your next action will start a fresh context",
+
   保存说明: "About saving",
   重命名文件: "Rename file",
   "生成预览后，在这里查看实际发送的消息、材料与工具。":

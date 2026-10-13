@@ -620,6 +620,7 @@ function baseRef(handle: string): string {
 }
 
 export function WorldManagementDialog({
+  worldBackupExport,
   packageScriptPermission,
   world,
   worldTitle,
@@ -640,6 +641,7 @@ export function WorldManagementDialog({
   modelConfigured,
   revisionLocked,
 }: {
+  worldBackupExport?: ReactNode;
   packageScriptPermission?: ReactNode;
   world: { worldId: string; head: string; runtime: unknown };
   worldTitle: string;
@@ -740,6 +742,7 @@ export function WorldManagementDialog({
               {uiText("创建分叉")}
             </button>
           </article>
+          {worldBackupExport}
           <details className="manage-disclosure">
             <summary>{uiText("世界控制 · 高级编辑")}</summary>
             <article className="manage-card control-card">

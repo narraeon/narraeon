@@ -1,5 +1,5 @@
 import { getWebLocale, uiText } from "./i18n.ts";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 interface HomeContentPackage {
   localId: string;
@@ -15,6 +15,8 @@ interface HomeWorld {
 export function HomeScreen({
   contentPackages,
   worlds,
+  worldBackupImport,
+  renderWorldBackupExport,
   selectedPackageId,
   modelConfigured,
   activeModelName,
@@ -33,6 +35,8 @@ export function HomeScreen({
   onRenameWorld,
   onDeleteWorld,
 }: {
+  worldBackupImport?: ReactNode;
+  renderWorldBackupExport?: (world: HomeWorld) => ReactNode;
   contentPackages: HomeContentPackage[];
   worlds: HomeWorld[];
   selectedPackageId: string;
@@ -92,6 +96,7 @@ export function HomeScreen({
             >
               {uiText("新建世界")}
             </button>
+            {worldBackupImport}
           </header>
 
           {worlds.length > 0 ? (
@@ -122,6 +127,7 @@ export function HomeScreen({
                       •••
                     </summary>
                     <div>
+                      {renderWorldBackupExport?.(world)}
                       <button
                         className="home-world-rename"
                         type="button"

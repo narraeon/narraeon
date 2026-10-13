@@ -1,3 +1,4 @@
+import type { WorldArchiveErrorCode } from "./worldArchives.ts";
 import type { WorldExtensionChoice } from "./worldExtensions.ts";
 import type { WorldPromptPrefixComparison } from "./worldPromptDiagnostics.ts";
 import type { WorldPromptMaintenance } from "./worldMaintenance.ts";
@@ -144,6 +145,8 @@ export type V1Request =
       packageId: string;
       model: ModelBinding;
     }
+  | { type: "world.archive.export"; worldId: string; operationId: string }
+  | { type: "world.archive.import"; operationId: string; uploadId: string }
   | { type: "world.read"; worldId: string }
   | { type: "world.rename"; worldId: string; name: string }
   | { type: "world.delete"; worldId: string }
@@ -819,7 +822,12 @@ export type V1PlayCallChainStreamFrame =
     };
 
 export class V1ProtocolError extends Error {
-  readonly code: "incompatible_data" | "invalid_request";
+  readonly code:
+    | "incompatible_data"
+    | "invalid_request"
+    | WorldArchiveErrorCode
+    | "operation_conflict"
+    | "inconsistent_materialization";
 
   constructor(
     code: V1ProtocolError["code"],
@@ -919,6 +927,8 @@ const requiredFields: Record<
     packageId: "string",
     model: "object",
   },
+  "world.archive.export": { worldId: "string", operationId: "string" },
+  "world.archive.import": { operationId: "string", uploadId: "string" },
   "world.read": { worldId: "string" },
   "world.rename": { worldId: "string", name: "string" },
   "world.delete": { worldId: "string" },
@@ -1418,6 +1428,8 @@ const requestTypes = new Set([
   "play.workbench.read",
   "prompt.preview",
   "world.create",
+  "world.archive.export",
+  "world.archive.import",
   "world.read",
   "world.rename",
   "world.delete",

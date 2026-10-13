@@ -1,3 +1,4 @@
+import { WorldBackupExportButton } from "./WorldArchiveControls.tsx";
 import { WorldExtensionMenu } from "./WorldExtensionMenu.tsx";
 import type { WorldExtensionsView } from "../protocol/worldExtensions.ts";
 import { PackageScriptPermissionControl } from "./PackageScriptPermissionControl.tsx";
@@ -80,7 +81,8 @@ type PendingAction =
   | "control-apply"
   | "rename"
   | "revise"
-  | "derive";
+  | "derive"
+  | "archive-export";
 
 interface WorldMessage {
   role: "player" | "narrator";
@@ -90,6 +92,7 @@ interface WorldMessage {
 }
 
 interface WorldReadView {
+  archiveNeedsFreshContext?: boolean;
   extensionControls?: WorldExtensionsView;
   suppressedPlayerViewIds?: string[];
   worldId: string;
@@ -575,6 +578,7 @@ export function WorldPage({
   const worldRevisionLocked = activeRevisionEpoch?.locked === true;
   const activeChainStale =
     forceFreshContext ||
+    world?.archiveNeedsFreshContext === true ||
     (world !== null &&
       playCallChain !== null &&
       playCallChain.parentHead !== world.head);
@@ -1448,7 +1452,9 @@ export function WorldPage({
             )}
             {activeChainStale && playIdle ? (
               <div className="world-fresh-context-note" role="note">
-                {uiText("世界已在故事外修订；下一次行动会从新上下文开始。")}
+                {world?.archiveNeedsFreshContext
+                  ? uiText("世界从备份导入；下一次行动会从新上下文开始")
+                  : uiText("世界已在故事外修订；下一次行动会从新上下文开始。")}
               </div>
             ) : null}
             {preferFreshContext && !activeChainStale && playIdle ? (
@@ -1771,6 +1777,20 @@ export function WorldPage({
 
           {dialog === "manage" ? (
             <WorldManagementDialog
+              worldBackupExport={
+                <WorldBackupExportButton
+                  client={client}
+                  worldId={worldId}
+                  disabled={
+                    pending !== null ||
+                    activeStatus === "running" ||
+                    worldRevisionLocked
+                  }
+                  onBusyChange={(busy) =>
+                    setPending(busy ? "archive-export" : null)
+                  }
+                />
+              }
               packageScriptPermission={
                 <PackageScriptPermissionControl
                   key={worldId}
