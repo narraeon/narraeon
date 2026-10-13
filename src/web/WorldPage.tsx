@@ -227,33 +227,6 @@ export function WorldPage({
   const [controlPreview, setControlPreview] = useState<unknown>(null);
   const { workspace: revisionWorkspace, state: authoring } =
     useAuthoringWorkspace(client, "revision", worldId, dialog === "revision");
-  const protagonistMessageSent = useRef(false);
-  useEffect(() => {
-    if (
-      protagonistRevision === undefined ||
-      protagonistRevision.started ||
-      protagonistMessageSent.current ||
-      dialog !== "revision" ||
-      world === null ||
-      authoring.loading ||
-      authoring.target === null
-    )
-      return;
-    protagonistMessageSent.current = true;
-    onProtagonistRevisionStarted?.();
-    revisionWorkspace.startFresh();
-    void revisionWorkspace
-      .send(protagonistRevision.message)
-      .catch(() => undefined);
-  }, [
-    protagonistRevision,
-    dialog,
-    world,
-    authoring.loading,
-    authoring.target,
-    revisionWorkspace,
-    onProtagonistRevisionStarted,
-  ]);
   const revisionOverview =
     dialog === "revision" ? (authoring.target?.revision ?? null) : null;
   const revisionFiles = authoring.files;
@@ -1175,6 +1148,17 @@ export function WorldPage({
           title: worldTitle,
           onRename: () => undefined,
         }}
+        {...(authoring.target === null ||
+        protagonistRevision === undefined ||
+        protagonistRevision.started
+          ? {}
+          : {
+              initialMessage: protagonistRevision.message,
+              onInitialMessageStarted: () => {
+                onProtagonistRevisionStarted?.();
+                revisionWorkspace.startFresh();
+              },
+            })}
         onSend={(message) => revisionWorkspace.send(message)}
         onCancel={() => revisionWorkspace.cancel()}
         onFreshContext={() => revisionWorkspace.startFresh()}

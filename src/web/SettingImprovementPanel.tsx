@@ -1,6 +1,6 @@
 import { AuthoringPromptPreview } from "./AuthoringPromptPreview.tsx";
 import { useConversationComposer } from "./useConversationComposer.ts";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type {
   ContentTreeFile,
@@ -39,6 +39,8 @@ interface SettingImprovementPanelProps {
   contentEditor: ContentTreeEditorProps;
   onPreview?: () => Promise<V1SettingPromptPreview["compilation"] | null>;
   onSend: (message: string) => Promise<void>;
+  initialMessage?: string;
+  onInitialMessageStarted?: () => void;
   onCancel: () => Promise<void>;
   onFreshContext: () => void;
   onSelectSession: (sessionId: string) => Promise<void>;
@@ -82,6 +84,8 @@ export function SettingImprovementPanel({
   now,
   contentEditor,
   onSend,
+  initialMessage,
+  onInitialMessageStarted,
   onPreview,
   onCancel,
   onFreshContext,
@@ -97,6 +101,8 @@ export function SettingImprovementPanel({
 }: SettingImprovementPanelProps): React.JSX.Element {
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
+  const initialMessageSent = useRef(false);
   const [leftRailOpen, setLeftRailOpen] = useState(false);
   const [rightRailOpen, setRightRailOpen] = useState(false);
   const [fileRailMode, setFileRailMode] = useState<FileRailMode>("preview");
@@ -135,24 +141,36 @@ export function SettingImprovementPanel({
       ? undefined
       : new Set(revisionActions.changes.map(({ changeSetId }) => changeSetId));
 
-  const send = async (): Promise<void> => {
-    const text = message;
-    if (disabled || text.trim().length === 0) return;
-    setSubmitting(true);
-    setMessage("");
-    setRightRailOpen(false);
-    try {
-      await onSend(text);
-    } catch {
-      setMessage((current) => (current.length === 0 ? text : current));
-    } finally {
-      setSubmitting(false);
-    }
-  };
+  const sendText = useCallback(
+    async (text: string): Promise<void> => {
+      if (disabled || submittingRef.current || text.trim().length === 0) return;
+      submittingRef.current = true;
+      setSubmitting(true);
+      setMessage("");
+      setRightRailOpen(false);
+      try {
+        await onSend(text);
+      } catch {
+        setMessage((current) => (current.length === 0 ? text : current));
+      } finally {
+        submittingRef.current = false;
+        setSubmitting(false);
+      }
+    },
+    [disabled, onSend],
+  );
+
+  useEffect(() => {
+    if (initialMessage === undefined || initialMessageSent.current || disabled)
+      return;
+    initialMessageSent.current = true;
+    onInitialMessageStarted?.();
+    void sendText(initialMessage);
+  }, [initialMessage, disabled, onInitialMessageStarted, sendText]);
 
   const composer = useConversationComposer(
     !disabled && message.trim().length > 0,
-    send,
+    () => sendText(message),
   );
 
   const openFileRail = (mode: FileRailMode): void => {
@@ -747,7 +765,7 @@ export function SettingImprovementPanel({
               />
             ) : (
               <fieldset
-                disabled={finishingRevision}
+                disabled={interactionLocked}
                 style={{ display: "contents" }}
               >
                 <ContentTreeEditor
