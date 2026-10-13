@@ -38,6 +38,119 @@ afterEach(() => {
 });
 
 describe("世界游玩页面", () => {
+  test.each([6_200, 9_000])(
+    "观察 A 链后补读切换到无完成响应的 B 链会清除旧占用和提示：%i",
+    async (input) => {
+      const old = playChainView("chain-a", "first", "Look around.");
+      old.contextWindowTokens = 10_000;
+      const oldResponse = {
+        id: 4,
+        usage: {
+          ...emptyAggregatedModelUsage(),
+          inputTokens: input,
+          provenance: {
+            ...emptyAggregatedModelUsage().provenance,
+            inputTokens: "provider" as const,
+          },
+        },
+      };
+      old.latestCompletedResponse = oldResponse;
+      const initial = {
+        ...worldView(old),
+        playTimeline: {
+          worldId: old.worldId,
+          generation: "cross-context",
+          activeChainId: old.chainId,
+          activeStatus: old.status,
+          activeCanRetry: false,
+          activeLastFailure: null,
+          items: [
+            {
+              kind: "event" as const,
+              chainId: old.chainId,
+              current: true,
+              event: {
+                id: 4,
+                kind: "assistant" as const,
+                text: "The story in A.",
+                status: "completed" as const,
+                exchange: 1,
+                attempt: 1,
+                usage: oldResponse.usage,
+                hasReasoning: false,
+                hasToolFragment: false,
+                hasUsage: true,
+                detailsAvailable: true,
+              },
+            },
+          ],
+          nextCursor: null,
+        } satisfies V1PlayTimelinePage,
+      };
+      const latest = {
+        ...worldView(null),
+        playTimeline: {
+          ...initial.playTimeline,
+          activeChainId: "chain-b",
+          activeStatus: "running" as const,
+          items: initial.playTimeline.items.map((item) => ({
+            ...item,
+            current: false,
+          })),
+        },
+      };
+      let advanced = false;
+      let receive: Parameters<ObserveConversation>[1] | undefined;
+      const client = {
+        observeConversation: ((_target, callback) => {
+          receive = callback;
+          return () => undefined;
+        }) satisfies ObserveConversation,
+        request: vi.fn((request: V1Request): Promise<unknown> => {
+          if (request.type === "world.read")
+            return Promise.resolve(advanced ? latest : initial);
+          if (request.type === "artifacts.debug") return Promise.resolve([]);
+          return Promise.reject(
+            new Error(`Unexpected request: ${request.type}`),
+          );
+        }),
+      };
+      renderWorld(client);
+      await screen.findByText(`上下文 ${input / 100}%`);
+      expect(screen.queryByText(/上下文已用 90%/u) !== null).toBe(
+        input === 9_000,
+      );
+      // The observation is A, but a peer opens B before its hydration read.
+      advanced = true;
+      act(() => void receive?.({ kind: "play", value: old }, true));
+      const label = await screen.findByText("上下文 —");
+      expect(label.title).toBe("当前上下文尚无已完成的 AI 响应。");
+      expect(screen.queryByText(`上下文 ${input / 100}%`)).toBeNull();
+      expect(screen.queryByText(/上下文已用 90%/u)).toBeNull();
+      expect(
+        screen.queryByRole("button", { name: "下一条消息使用全新上下文" }),
+      ).toBeNull();
+      expect(
+        screen.getByLabelText<HTMLTextAreaElement>("你的行动").disabled,
+      ).toBe(true);
+      expect(
+        client.request.mock.calls.filter(
+          ([request]) => request.type === "world.read",
+        ),
+      ).toHaveLength(2);
+      expect(
+        client.request.mock.calls.some(([request]) =>
+          [
+            "play.chain.inspect",
+            "play.timeline.page",
+            "play.timeline.detail",
+            "world.surface.read",
+          ].includes(request.type),
+        ),
+      ).toBe(false);
+    },
+  );
+
   test.each([
     ["ready", "ready", 9_000, "command"],
     ["running", "ready", 9_000, "command"],

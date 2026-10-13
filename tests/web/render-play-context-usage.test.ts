@@ -14,6 +14,46 @@ import { setWebLocale } from "../../src/web/i18n.ts";
 
 afterEach(cleanup);
 
+test.each(["fresh", null])(
+  "当前时间线切换上下文时拒绝旧链占用缓存：%s",
+  (activeChainId) => {
+    show([response(9_000)], {
+      chain: {
+        ...chain,
+        latestCompletedResponse: { id: 2, usage: response(9_000).usage! },
+      },
+      timeline: { ...timeline([response(9_000)]), activeChainId },
+    });
+    expect(screen.getByText("上下文 —").title).toBe(
+      "当前上下文尚无已完成的 AI 响应。",
+    );
+    expect(screen.queryByText("上下文 90%")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "下一条消息使用全新上下文" }),
+    ).toBeNull();
+  },
+);
+
+test("新链已有实报响应时也不能借用旧链窗口计算占用", () => {
+  const page = timeline([response(9_000)]);
+  page.activeChainId = "fresh";
+  page.items = page.items.map((item) =>
+    item.kind === "event" ? { ...item, chainId: "fresh" } : item,
+  );
+  show([], {
+    chain: {
+      ...chain,
+      latestCompletedResponse: { id: 2, usage: response(9_000).usage! },
+    },
+    timeline: page,
+  });
+  expect(screen.getByText("上下文 —").title).toBe(
+    "当前上下文没有记录模型窗口。",
+  );
+  expect(screen.queryByRole("status")).toBeNull();
+});
+
 test.each([9_000, null])(
   "较新的同链完成响应覆盖旧 projection，最新缺失时不回退：%s",
   (input) => {
@@ -199,6 +239,7 @@ test("已预选或开启全新上下文后不显示旧提示，旧链实报量�
     createElement(PlayContextUsage, {
       ...shown.props,
       chain: { ...chain, chainId: "fresh" },
+      timeline: { ...timeline([]), activeChainId: "fresh" },
     }),
   );
   expect(screen.getByText("上下文 —").title).toBe(

@@ -360,6 +360,12 @@ export function WorldPage({
           const page = projection.playTimeline;
           if (page !== undefined) {
             setPlayTimeline((current) => mergePlayTimelinePage(current, page));
+            setPlayContextUsage((current) =>
+              current?.worldId === page.worldId &&
+              current.chainId === page.activeChainId
+                ? current
+                : null,
+            );
             setPlayCallChain((current) =>
               current !== null && timelineHasNewerActivity(page, current)
                 ? null

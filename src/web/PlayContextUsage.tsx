@@ -20,7 +20,11 @@ export function PlayContextUsage({
   freshContextDisabled: boolean;
   onUseFreshContext: () => void;
 }): React.JSX.Element {
-  const chainId = chain?.chainId ?? timeline?.activeChainId;
+  const currentChain =
+    timeline === null || chain?.chainId === timeline.activeChainId
+      ? chain
+      : null;
+  const chainId = currentChain?.chainId ?? timeline?.activeChainId;
   const timelineResponse = timeline?.items.reduce<
     V1PlayCallChainView["latestCompletedResponse"]
   >(
@@ -34,14 +38,14 @@ export function PlayContextUsage({
         : latest,
     undefined,
   );
-  const projectedResponse = chain?.latestCompletedResponse;
+  const projectedResponse = currentChain?.latestCompletedResponse;
   const response =
     projectedResponse !== undefined &&
     (timelineResponse === undefined ||
       projectedResponse.id >= timelineResponse.id)
       ? projectedResponse
       : timelineResponse;
-  const contextWindow = chain?.contextWindowTokens;
+  const contextWindow = currentChain?.contextWindowTokens;
   const usage = response?.usage;
   const input = usage?.inputTokens;
   const percent =
