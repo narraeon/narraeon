@@ -38,6 +38,97 @@ afterEach(() => {
 });
 
 describe("世界游玩页面", () => {
+  test("导出只在显式触发时读取，修订锁内可下载两种故事格式", async () => {
+    const createObjectURL = vi.fn<(blob: Blob) => string>(
+      () => "blob:story-export",
+    );
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal(
+      "URL",
+      class extends URL {
+        static override createObjectURL = createObjectURL;
+        static override revokeObjectURL = revokeObjectURL;
+      },
+    );
+    const click = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => undefined);
+    const client = {
+      request: vi.fn((request: V1Request): Promise<unknown> => {
+        if (request.type === "world.story.export")
+          return Promise.resolve({
+            fileName:
+              request.format === "markdown" ? "宿舍世界.md" : "宿舍世界.txt",
+            content: "完整故事原文",
+          });
+        return Promise.resolve({
+          ...worldView(null),
+          worldRevision: worldRevisionEpoch([]),
+        });
+      }),
+    };
+    try {
+      renderWorld(client);
+      await screen.findByRole("heading", { name: "宿舍世界" });
+      fireEvent.click(screen.getByRole("button", { name: "世界管理" }));
+      const dialog = screen.getByRole("dialog", { name: "世界管理" });
+      expect(
+        client.request.mock.calls.some(
+          ([request]) => request.type === "world.story.export",
+        ),
+      ).toBe(false);
+      for (const [format, label, fileName] of [
+        ["markdown", "导出 Markdown", "宿舍世界.md"],
+        ["text", "导出纯文本", "宿舍世界.txt"],
+      ] as const) {
+        const button = within(dialog).getByRole<HTMLButtonElement>("button", {
+          name: label,
+        });
+        expect(button.disabled).toBe(false);
+        fireEvent.click(button);
+        await waitFor(() =>
+          expect(click).toHaveBeenCalledTimes(format === "markdown" ? 1 : 2),
+        );
+        expect(client.request).toHaveBeenCalledWith({
+          type: "world.story.export",
+          worldId: "world-one",
+          format,
+        });
+        const anchor = click.mock.instances.at(-1)! as HTMLAnchorElement;
+        expect(anchor.download).toBe(fileName);
+        expect(anchor.href).toBe("blob:story-export");
+        expect(createObjectURL.mock.calls.at(-1)?.[0]).toBeInstanceOf(Blob);
+        await waitFor(() => expect(button.disabled).toBe(false));
+      }
+      expect(revokeObjectURL.mock.calls).toEqual([
+        ["blob:story-export"],
+        ["blob:story-export"],
+      ]);
+      expect(await screen.findByText("故事已导出。")).toBeTruthy();
+    } finally {
+      click.mockRestore();
+    }
+  });
+
+  test("故事导出失败会报告错误并恢复入口", async () => {
+    const client = {
+      request: vi.fn((request: V1Request): Promise<unknown> =>
+        request.type === "world.story.export"
+          ? Promise.reject(new Error("无法读取故事"))
+          : Promise.resolve(worldView(null)),
+      ),
+    };
+    renderWorld(client);
+    await screen.findByRole("heading", { name: "宿舍世界" });
+    fireEvent.click(screen.getByRole("button", { name: "世界管理" }));
+    const button = screen.getByRole<HTMLButtonElement>("button", {
+      name: "导出 Markdown",
+    });
+    fireEvent.click(button);
+    expect(await screen.findByText("无法读取故事")).toBeTruthy();
+    expect(button.disabled).toBe(false);
+  });
+
   test("正文产物只挂实际回复，早期分页不误挂或重复，旧无归属产物不挂载", async () => {
     const chain = playChainView("attached-chain", "send", "行动");
     const decorations = playDecorations(

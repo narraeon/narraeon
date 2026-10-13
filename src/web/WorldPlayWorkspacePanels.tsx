@@ -633,6 +633,7 @@ export function WorldManagementDialog({
   onControlFiles,
   onResetControl,
   onRename,
+  onExportStory,
   onDerive,
   onPreviewControl,
   onApplyControl,
@@ -653,6 +654,7 @@ export function WorldManagementDialog({
   onControlFiles: (value: string) => void;
   onResetControl: () => void;
   onRename: () => void;
+  onExportStory: (format: "markdown" | "text") => void;
   onDerive: () => void;
   onPreviewControl: () => void;
   onApplyControl: () => void;
@@ -724,6 +726,28 @@ export function WorldManagementDialog({
                 {uiText("保存名称")}
               </button>
             </form>
+          </article>
+          <article className="manage-card">
+            <div className="manage-card-copy">
+              <h3>{uiText("导出故事")}</h3>
+              <p>{uiText("下载当前时间线的开场白、玩家原文与主持正文。")}</p>
+            </div>
+            <div className="button-row">
+              <button
+                type="button"
+                disabled={pending !== null}
+                onClick={() => onExportStory("markdown")}
+              >
+                {uiText("导出 Markdown")}
+              </button>
+              <button
+                type="button"
+                disabled={pending !== null}
+                onClick={() => onExportStory("text")}
+              >
+                {uiText("导出纯文本")}
+              </button>
+            </div>
           </article>
           <article className="manage-card derive-card">
             <div>

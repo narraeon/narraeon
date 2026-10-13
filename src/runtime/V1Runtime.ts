@@ -241,6 +241,7 @@ export class V1Runtime {
       // Explicit commands may partially settle before failing. Readers recover
       // through the same Runtime projection, never infer success from this signal.
       if (
+        request.type !== "world.story.export" &&
         !/\.(read|status|overview|inspect|page|detail|list|preview)$/.test(
           request.type,
         )
@@ -589,6 +590,12 @@ export class V1Runtime {
         return this.#worlds.getCreationOutcome(request.operationId);
       case "world.rename":
         return this.#worlds.renameWorld(request.worldId, request.name);
+      case "world.story.export":
+        return this.#worlds.exportStory(
+          request.worldId,
+          request.format,
+          this.#locale,
+        );
       case "world.delete":
         return playCall(async () => {
           await this.#worlds.assertWorldRevisionUnlocked(request.worldId);

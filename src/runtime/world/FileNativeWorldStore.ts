@@ -13,6 +13,9 @@ import {
 import type { WorldExtensionChoice } from "../../protocol/worldExtensions.ts";
 import type { PlayPresetBinding } from "../play/FileNativePlayPresetStore.ts";
 import type { AppLocale } from "../../protocol/appPreferences.ts";
+import type { V1StoryExport, V1StoryExportFormat } from "../../protocol/v1.ts";
+import { HistoryQuery } from "../history/HistoryQuery.ts";
+import { exportStory } from "../history/StoryExport.ts";
 import { PackageScriptPermissions } from "../extension/PackageScriptPermissions.ts";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -349,6 +352,33 @@ export class FileNativeWorldStore {
       worlds.push(await readWorldSummaryAt(join(this.#worldsRoot, entry.name)));
     }
     return worlds;
+  }
+
+  /** Explicit full-history read; independent of page and model projections. */
+  async exportStory(
+    worldId: string,
+    format: V1StoryExportFormat,
+    locale: AppLocale,
+  ): Promise<V1StoryExport> {
+    assertIdentity(worldId, "World ID");
+    await this.ensureCurrentStorage(worldId);
+    return this.operations.withWorldAuthorityLock(worldId, async () => {
+      const root = join(this.#worldsRoot, worldId);
+      const publication = await readPublicationAt(root);
+      const summary = await readWorldSummaryAt(root, publication);
+      const endpoint = await new FileNativeAuthorityV3(
+        root,
+      ).recoverHeadResult();
+      const history = new HistoryQuery(
+        worldId,
+        endpoint.history.map(({ messageId, role, exactText }) => ({
+          id: messageId,
+          role,
+          text: exactText,
+        })),
+      );
+      return exportStory(summary.title, history.messages, format, locale);
+    });
   }
 
   async renameWorld(
