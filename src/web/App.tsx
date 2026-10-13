@@ -76,6 +76,8 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   } | null>(null);
   const [importArchive, setImportArchive] = useState<File | null>(null);
   const [importPending, setImportPending] = useState(false);
+  const [samplePending, setSamplePending] = useState(false);
+  const samplePendingRef = useRef(false);
   const { workspace: authoringWorkspace, state: authoring } =
     useAuthoringWorkspace(client, "setting", selected, screen === "content");
   const filesDirty = authoring.dirty;
@@ -191,6 +193,26 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       await openPackage(created.localId);
     } catch (error: unknown) {
       report(error);
+    }
+  }
+
+  async function createSamplePackage(): Promise<void> {
+    if (workspace === null || samplePendingRef.current || importPending) return;
+    samplePendingRef.current = true;
+    setSamplePending(true);
+    try {
+      const created = await client.request<PackageSummary>({
+        type: "content.create-sample",
+        locale: workspace.preferences.locale,
+      });
+      await refresh();
+      setSelected(created.localId);
+      setScreen("create");
+    } catch (error: unknown) {
+      report(error);
+    } finally {
+      samplePendingRef.current = false;
+      setSamplePending(false);
     }
   }
 
@@ -434,6 +456,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     playPresetDraftDirty ||
     modelDraftDirty ||
     importPending ||
+    samplePending ||
     creatingWorld ||
     childNavigationLocked;
   navigationDraftLockedRef.current =
@@ -596,6 +619,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             currentPresetName={currentPresetName}
             importArchive={importArchive}
             importPending={importPending}
+            samplePending={samplePending}
             onImportArchiveChange={(archive) => {
               setImportArchive(archive);
               setNotice("");
@@ -603,6 +627,8 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             onOpenPlayPresets={() => navigate("plays")}
             onCreateWorld={() => navigate("create")}
             onCreatePackage={() => void createPackage()}
+            onCreateSamplePackage={() => void createSamplePackage()}
+            onConfigureModel={() => navigate("model")}
             onImportPackage={() => void importPackage()}
             onOpenPackage={(packageId) => void openPackage(packageId)}
             onRenamePackage={(item, name) =>

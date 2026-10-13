@@ -61,6 +61,7 @@ export type V1Request =
   | { type: "model.delete"; connectionId: string }
   | ({ type: "model.models" } & ListProviderModelsInput)
   | { type: "content.create" }
+  | { type: "content.create-sample"; locale: AppLocale }
   | { type: "content.scripts.read"; packageId: string }
   | { type: "content.scripts.set"; packageId: string; enabled: boolean }
   | { type: "world.package-scripts.read"; worldId: string }
@@ -874,6 +875,7 @@ const requiredFields: Record<
   "model.select": { connectionId: "string" },
   "model.delete": { connectionId: "string" },
   "model.models": { provider: "string", baseUrl: "string" },
+  "content.create-sample": { locale: "string" },
   "content.scripts.read": { packageId: "string" },
   "content.scripts.set": { packageId: "string", enabled: "boolean" },
   "world.package-scripts.read": { worldId: "string" },
@@ -1070,6 +1072,15 @@ function validateRequestFields(request: Record<string, unknown>): void {
     throw new V1ProtocolError(
       "invalid_request",
       "world.story.export.format must be markdown or text",
+    );
+  if (
+    request.type === "content.create-sample" &&
+    (Object.keys(request).some((key) => key !== "type" && key !== "locale") ||
+      (request.locale !== "en" && request.locale !== "zh-CN"))
+  )
+    throw new V1ProtocolError(
+      "invalid_request",
+      "content.create-sample.locale must be en or zh-CN, with no extra fields",
     );
   if (
     request.type === "world.extensions.set" &&
@@ -1406,6 +1417,7 @@ const requestTypes = new Set([
   "model.delete",
   "model.models",
   "content.create",
+  "content.create-sample",
   "content.scripts.read",
   "content.scripts.set",
   "world.package-scripts.read",
