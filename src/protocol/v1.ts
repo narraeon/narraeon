@@ -1,3 +1,4 @@
+import type { SaveProtagonistTemplateInput } from "./protagonistTemplates.ts";
 import type { WorldExtensionChoice } from "./worldExtensions.ts";
 import type { WorldPromptPrefixComparison } from "./worldPromptDiagnostics.ts";
 import type { WorldPromptMaintenance } from "./worldMaintenance.ts";
@@ -56,6 +57,10 @@ export type V1Request =
       locale?: AppLocale;
       reading?: AppReadingPreferences;
     }
+  | { type: "protagonist-templates.read" }
+  | ({ type: "protagonist-templates.save" } & SaveProtagonistTemplateInput)
+  | { type: "protagonist-templates.copy"; id: string }
+  | { type: "protagonist-templates.delete"; id: string }
   | { type: "model.read" }
   | {
       type: "model.save";
@@ -878,6 +883,9 @@ const requiredFields: Record<
   Record<string, "string" | "number" | "boolean" | "object" | "array">
 > = {
   "preferences.save": {},
+  "protagonist-templates.save": { name: "string", body: "string" },
+  "protagonist-templates.copy": { id: "string" },
+  "protagonist-templates.delete": { id: "string" },
   "model.save": { connection: "object" },
   "model.copy": { connectionId: "string", name: "string" },
   "model.select": { connectionId: "string" },
@@ -1417,6 +1425,10 @@ function validateRequestFields(request: Record<string, unknown>): void {
 const requestTypes = new Set([
   "workspace.read",
   "preferences.read",
+  "protagonist-templates.read",
+  "protagonist-templates.save",
+  "protagonist-templates.copy",
+  "protagonist-templates.delete",
   "preferences.save",
   "model.read",
   "model.save",

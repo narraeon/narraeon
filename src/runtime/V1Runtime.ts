@@ -68,6 +68,7 @@ import {
 import { FileNativeWorldStore } from "./world/FileNativeWorldStore.ts";
 import { WorldDocumentStore } from "./world/WorldDocumentStore.ts";
 import { FileNativeAiFailureLog } from "./model/AiFailureLog.ts";
+import { ProtagonistTemplateStore } from "./config/ProtagonistTemplateStore.ts";
 import { AppPreferencesStore } from "./config/AppPreferencesStore.ts";
 import { FileNativeWorldRevisionStore } from "./world-revision/FileNativeWorldRevisionStore.ts";
 import { WorldRevisionSession } from "./world-revision/WorldRevisionSession.ts";
@@ -93,6 +94,7 @@ export class V1Runtime {
   readonly #playCallChains: PlayCallChain;
   readonly #failureLog: FileNativeAiFailureLog | undefined;
   readonly #preferences: AppPreferencesStore;
+  readonly #protagonistTemplates: ProtagonistTemplateStore;
   readonly #settingImprovements: SettingImprovementSession;
   readonly #worldRevisions: WorldRevisionSession;
   readonly #compiler = new FileNativePromptCompiler();
@@ -104,6 +106,7 @@ export class V1Runtime {
     logRoot?: string;
   }) {
     this.#preferences = new AppPreferencesStore(input.configRoot);
+    this.#protagonistTemplates = new ProtagonistTemplateStore(input.configRoot);
     this.#content = new ContentWorkspace(input.dataRoot, {
       locale: () => this.#locale,
     });
@@ -339,6 +342,14 @@ export class V1Runtime {
         await this.#playPresets.syncBuiltinDefaultLocale();
         return preferences;
       }
+      case "protagonist-templates.read":
+        return this.#protagonistTemplates.view();
+      case "protagonist-templates.save":
+        return this.#protagonistTemplates.save(request);
+      case "protagonist-templates.copy":
+        return this.#protagonistTemplates.copy(request.id);
+      case "protagonist-templates.delete":
+        return this.#protagonistTemplates.delete(request.id);
       case "model.read":
         return this.#models.view();
       case "model.save":

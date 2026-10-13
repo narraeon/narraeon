@@ -12,7 +12,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { createElement } from "react";
+import { createElement, StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import type {
@@ -4196,4 +4196,262 @@ test("世界扩展菜单提交 Runtime 选择；无调用链的同端点通知�
       request.type.startsWith("play.chain"),
     ),
   ).toBe(false);
+});
+
+function deferredProtagonistRevision() {
+  let resolveWorld!: (value: ReturnType<typeof worldView>) => void;
+  const initialWorld = new Promise<ReturnType<typeof worldView>>((resolve) => {
+    resolveWorld = resolve;
+  });
+  let resolveSend!: (value: V1WorldRevisionView) => void;
+  let rejectSend!: (reason: unknown) => void;
+  const send = new Promise<V1WorldRevisionView>((resolve, reject) => {
+    resolveSend = resolve;
+    rejectSend = reject;
+  });
+  let epoch: V1WorldRevisionEpochView | null = null;
+  let latest: V1WorldRevisionView | null = null;
+  const files = worldView(null).state;
+  const subscribers = new Set<{
+    target: ConversationTarget;
+    receive: Parameters<ObserveConversation>[1];
+  }>();
+  const client = {
+    observeConversation: ((target, receive) => {
+      const subscriber = { target, receive };
+      subscribers.add(subscriber);
+      return () => subscribers.delete(subscriber);
+    }) satisfies ObserveConversation,
+    request: vi.fn(async (request: V1Request): Promise<unknown> => {
+      if (request.type === "world.read") return initialWorld;
+      if (request.type === "world.revision.overview")
+        return { ...worldRevisionOverview(epoch), latest };
+      if (request.type === "world.surface.read")
+        return request.surface === "state" ? files : [];
+      if (request.type === "world.revision.message") return send;
+      if (request.type === "world.play-decorations.read")
+        return { ...worldView(null), playerViewPanels: [], artifactDebug: [] };
+      if (request.type === "artifacts.debug") return [];
+      throw new Error(`Unexpected request ${request.type}`);
+    }),
+  };
+  const view = (runStatus: "running" | "ready"): V1WorldRevisionView => ({
+    sessionId: "protagonist-session",
+    worldId: "world-one",
+    epochId: worldRevisionEpoch([]).epochId,
+    runStatus,
+    messages: [],
+    turns: [],
+    usage: emptyAggregatedModelUsage(),
+    progress: { exchange: 0, toolCalls: 0, streaming: null, updatedAt: 1 },
+    lastFailure: null,
+  });
+  const props = {
+    client,
+    worldId: "world-one",
+    worldTitle: "宿舍世界",
+    modelConfigured: true,
+    onBack: vi.fn(),
+    onConfigureModel: vi.fn(),
+    onRenameWorld: vi.fn(() => Promise.resolve()),
+    onOpenWorld: vi.fn(() => Promise.resolve()),
+    onNavigationLockChange: vi.fn(),
+    protagonistRevision: {
+      message: "固定说明\n\n主角模板：冷静调查员",
+      started: false,
+    },
+    onProtagonistRevisionStarted: vi.fn(),
+  };
+  return {
+    client,
+    props,
+    rejectSend,
+    openWorld: () => resolveWorld(worldView(null)),
+    acknowledge: () => {
+      epoch = worldRevisionEpoch(
+        files.map((file) => ({ ...file, path: `state/${file.path}` })),
+      );
+      latest = view("running");
+      resolveSend(latest);
+    },
+    complete: async () => {
+      latest = view("ready");
+      for (const subscriber of [...subscribers]) {
+        if (subscriber.target.kind !== "revision") continue;
+        await subscriber.receive(
+          {
+            kind: "revision",
+            value: {
+              revision: "completed",
+              selected: {
+                sessionId: latest.sessionId,
+                runStatus: latest.runStatus,
+                progress: latest.progress,
+              },
+            },
+          },
+          true,
+        );
+      }
+    },
+  };
+}
+
+function expectProtagonistInteractionLocked() {
+  expect(
+    screen.getByRole<HTMLButtonElement>("button", {
+      name: "返回游玩",
+    }).disabled,
+  ).toBe(true);
+  expect(
+    screen.getByRole<HTMLButtonElement>("button", { name: "编辑" }).disabled,
+  ).toBe(true);
+  expect(
+    screen.getByRole<HTMLButtonElement>("button", {
+      name: "全新上下文",
+    }).disabled,
+  ).toBe(true);
+  expect(screen.getByRole<HTMLTextAreaElement>("textbox").disabled).toBe(true);
+  expect(
+    screen.getByRole<HTMLButtonElement>("button", {
+      name: "应用并开始游玩",
+    }).disabled,
+  ).toBe(true);
+  expect(
+    screen.getByRole<HTMLButtonElement>("button", { name: "放弃" }).disabled,
+  ).toBe(true);
+}
+
+test("自动主角修订从延迟 HTTP 派发到延迟观察完成持续保护交互和导航", async () => {
+  const f = deferredProtagonistRevision();
+  const rendered = render(
+    createElement(StrictMode, null, createElement(WorldPage, f.props)),
+  );
+  await waitFor(() =>
+    expect(
+      f.client.request.mock.calls.some(
+        ([request]) => request.type === "world.surface.read",
+      ),
+    ).toBe(true),
+  );
+  expect(
+    f.client.request.mock.calls.some(
+      ([request]) => request.type === "world.revision.message",
+    ),
+  ).toBe(false);
+  await act(async () => {
+    f.openWorld();
+    await Promise.resolve();
+  });
+  await waitFor(() =>
+    expect(f.props.onProtagonistRevisionStarted).toHaveBeenCalledOnce(),
+  );
+  expectProtagonistInteractionLocked();
+  expect(f.props.onNavigationLockChange).toHaveBeenLastCalledWith(true);
+  fireEvent.click(screen.getByRole("button", { name: "返回游玩" }));
+  fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+  fireEvent.change(screen.getByRole("textbox"), {
+    target: { value: "重复发送" },
+  });
+  fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+  rendered.rerender(
+    createElement(
+      StrictMode,
+      null,
+      createElement(WorldPage, {
+        ...f.props,
+        protagonistRevision: { ...f.props.protagonistRevision, started: true },
+      }),
+    ),
+  );
+  expect(
+    f.client.request.mock.calls.filter(
+      ([request]) => request.type === "world.revision.message",
+    ),
+  ).toHaveLength(1);
+  expect(
+    screen.queryByLabelText("编辑 state/current-situation.yaml"),
+  ).toBeNull();
+  await act(async () => {
+    f.acknowledge();
+    await Promise.resolve();
+  });
+  expectProtagonistInteractionLocked();
+  expect(f.props.onNavigationLockChange).toHaveBeenLastCalledWith(true);
+  await act(f.complete);
+  await waitFor(() =>
+    expect(
+      screen.getByRole<HTMLButtonElement>("button", {
+        name: "返回游玩",
+      }).disabled,
+    ).toBe(false),
+  );
+  expect(f.props.onNavigationLockChange).toHaveBeenLastCalledWith(false);
+});
+
+test("自动主角修订请求失败释放交互保护并恢复正文供明确重试", async () => {
+  const f = deferredProtagonistRevision();
+  const rendered = render(
+    createElement(StrictMode, null, createElement(WorldPage, f.props)),
+  );
+  await act(async () => {
+    f.openWorld();
+    await Promise.resolve();
+  });
+  await waitFor(() =>
+    expect(f.props.onProtagonistRevisionStarted).toHaveBeenCalledOnce(),
+  );
+  expectProtagonistInteractionLocked();
+  rendered.rerender(
+    createElement(
+      StrictMode,
+      null,
+      createElement(WorldPage, {
+        ...f.props,
+        protagonistRevision: { ...f.props.protagonistRevision, started: true },
+      }),
+    ),
+  );
+  await act(async () => {
+    f.rejectSend(new Error("模板发送失败"));
+    await Promise.resolve();
+  });
+  await screen.findByRole("alert");
+  expect(screen.getByRole("alert").textContent).toContain("模板发送失败");
+  expect(screen.getByRole<HTMLTextAreaElement>("textbox").value).toBe(
+    f.props.protagonistRevision.message,
+  );
+  expect(
+    screen.getByRole<HTMLButtonElement>("button", {
+      name: "返回游玩",
+    }).disabled,
+  ).toBe(false);
+  expect(
+    screen.getByRole<HTMLButtonElement>("button", { name: "编辑" }).disabled,
+  ).toBe(false);
+  expect(f.props.onNavigationLockChange).toHaveBeenLastCalledWith(false);
+  expect(
+    f.client.request.mock.calls.filter(
+      ([request]) => request.type === "world.revision.message",
+    ),
+  ).toHaveLength(1);
+  expect(
+    f.client.request.mock.calls.some(
+      ([request]) => request.type === "world.revision.discard",
+    ),
+  ).toBe(false);
+  await act(async () => {
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+    await Promise.resolve();
+  });
+  expect(
+    f.client.request.mock.calls.filter(
+      ([request]) => request.type === "world.revision.message",
+    ),
+  ).toHaveLength(2);
+  await screen.findByText("模板发送失败");
+  expect(screen.getByRole<HTMLTextAreaElement>("textbox").value).toBe(
+    f.props.protagonistRevision.message,
+  );
+  expect(f.props.onNavigationLockChange).toHaveBeenLastCalledWith(false);
 });

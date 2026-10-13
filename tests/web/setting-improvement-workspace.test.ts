@@ -338,3 +338,28 @@ test("发送尚未返回时立即禁用快捷创建，世界修订不显示创�
   renderPanel(undefined, { target: "world-revision", onCreateWorld });
   expect(screen.queryByRole("button", { name: "创建世界" })).toBeNull();
 });
+
+test("发送等待期间已打开的文件编辑器也被禁用，结算后恢复", async () => {
+  let finish!: () => void;
+  renderPanel(undefined, {
+    target: "world-revision",
+    onSend: () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  });
+  fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+  const editor = screen.getByLabelText("编辑 opening.md");
+  const fieldset = editor.closest("fieldset")!;
+  expect(fieldset.disabled).toBe(false);
+  fireEvent.change(screen.getByRole("textbox", { name: "继续这段对话" }), {
+    target: { value: "修订主角" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "发送" }));
+  expect(fieldset.disabled).toBe(true);
+  await act(async () => {
+    finish();
+    await Promise.resolve();
+  });
+  expect(fieldset.disabled).toBe(false);
+});
