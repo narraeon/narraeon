@@ -156,7 +156,7 @@ test.each([
   { locale: "en" as const, rounds: 1, checkpoint: false },
   { locale: "en" as const, rounds: 0, checkpoint: true },
 ])(
-  "真实玩法预览只追加回合事实，玩家原文保持完整：$locale/$rounds/$checkpoint",
+  "真实玩法预览不附加检查点回合提示，玩家原文保持完整：$locale/$rounds/$checkpoint",
   ({ locale, rounds, checkpoint }) => {
     const request = input({
       playerInputPlacement: "append",
@@ -180,18 +180,48 @@ test.each([
       request,
       builtinDefaultPlayPresetBinding(locale),
     );
-    const marker =
+    const encoded = JSON.stringify(preview.compilation.provider);
+    const authorPrompt = preview.compilation.logicalMessages
+      .filter(({ role }) => role === "author_instruction")
+      .map(({ markdown }) => markdown)
+      .join("\n");
+    const runtimePrompt = preview.compilation.logicalMessages
+      .filter(({ role }) => role === "runtime_system")
+      .map(({ markdown }) => markdown)
+      .join("\n");
+    const checkpointTool = preview.playPreset!.toolUniverse.find(
+      ({ name }) => name === "world_checkpoint",
+    )!;
+    expect(authorPrompt).toContain(
       locale === "zh-CN"
-        ? `[Runtime 回合提示]\n距上次检查点已完成 ${rounds} 回合。${checkpoint ? "" : "当前尚无检查点，以世界起点计数。"}`
-        : `[Runtime round marker]\nCompleted player rounds since the last checkpoint: ${rounds}.${checkpoint ? "" : " No checkpoint yet; counting from the world origin."}`;
-    expect(preview.initialAppend?.beforePlayer?.provider.content).toBe(marker);
-    expect(preview.initialAppend?.beforePlayer?.logical).toMatchObject({
-      kind: "runtime_notice",
-      notice: "checkpoint_rounds",
+        ? "整理不等于检查点"
+        : "Consolidation is not a checkpoint",
+    );
+    const gapPolicy =
+      locale === "zh-CN"
+        ? "world_checkpoint 只在事件间隙登记"
+        : "world_checkpoint registers only at gaps between events";
+    expect(runtimePrompt).toContain(gapPolicy);
+    expect(encoded).toContain(gapPolicy);
+    expect(checkpointTool.description).toContain(
+      locale === "zh-CN"
+        ? "整理与归并不需要调用本工具"
+        : "Consolidation and maintenance do not require this tool",
+    );
+    expect(checkpointTool.inputSchema).toEqual({
+      type: "object",
+      properties: {},
+      required: [],
+      additionalProperties: false,
     });
+    expect(preview.initialAppend?.beforePlayer).toBeUndefined();
+    expect(JSON.stringify(preview)).not.toContain("checkpoint_rounds");
+    expect(JSON.stringify(preview)).not.toContain("距上次检查点已完成");
+    expect(JSON.stringify(preview)).not.toContain(
+      "Completed player rounds since the last checkpoint",
+    );
     expect(preview.initialAppend?.logical.text).toBe("  我等一会儿。\n");
     expect(preview.initialAppend?.provider.content).toBe("  我等一会儿。\n");
-    expect(JSON.stringify(preview.compilation.provider)).not.toContain(marker);
   },
 );
 

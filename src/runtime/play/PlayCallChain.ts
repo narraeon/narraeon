@@ -1129,11 +1129,10 @@ export class PlayCallChain {
       this.#worlds.recoverEndpoint(request.worldId, restoresHead),
       this.#worlds.bindPlayCallChain(request.worldId),
     ]);
-    const continuedTrace = traceRetention.withReplacement(selected, {
+    const continuedTrace = traceRetention.withReplacement({
       head: outcome.head,
       exchangeId: request.replacementExchangeId,
       text: request.replacementText,
-      locale: this.#compiler.locale,
     });
     if (binding.parentHead !== outcome.head)
       throw new PlayCallChainError(
@@ -1339,15 +1338,7 @@ export class PlayCallChain {
         }),
         1,
       ),
-      transcript: playerInputAppend({
-        history: fresh.binding.history,
-        checkpoint: fresh.binding.narrativeCheckpoint,
-        text: request.replacementText,
-        locale: this.#compiler.locale,
-        checkpointAvailable: fresh.tools.some(
-          ({ name }) => name === "world_checkpoint",
-        ),
-      }),
+      transcript: playerInputAppend(request.replacementText),
       events: [
         {
           id: 1,
@@ -1558,17 +1549,7 @@ export class PlayCallChain {
     const exchange = session.exchange + 1;
     const nextRequest = createRequest(session, modelHost, exchange, [
       ...session.transcript,
-      ...playerInputAppend({
-        history: Object.fromEntries(
-          session.history.map(({ path, contents }) => [path, contents]),
-        ),
-        checkpoint: session.narrativeCheckpoint,
-        text: playerText,
-        locale: this.#compiler.locale,
-        checkpointAvailable: currentPlayPrompt(session).tools.some(
-          ({ name }) => name === "world_checkpoint",
-        ),
-      }),
+      ...playerInputAppend(playerText),
     ]);
     const operationKey = `player:${exchangeId}`;
     const playerOperationId = operationId(session.chainId, operationKey);
