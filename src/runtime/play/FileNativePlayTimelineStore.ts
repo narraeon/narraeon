@@ -1,3 +1,4 @@
+import { isResolutionReceipt } from "../../protocol/resolution.ts";
 import {
   isNarrativeOrigin,
   type NarrativeOrigin,
@@ -1563,6 +1564,11 @@ function assertPlayEvent(
   }
   if (value.kind === "tool_result") {
     if (
+      value.resolution !== undefined &&
+      !isResolutionReceipt(value.resolution)
+    )
+      throw new Error("Invalid resolution receipt");
+    if (
       typeof value.callId !== "string" ||
       typeof value.name !== "string" ||
       typeof value.ok !== "boolean" ||
@@ -1639,6 +1645,11 @@ function assertTimelineEventSummary(
     return;
   }
   if (value.kind === "tool_result") {
+    if (
+      value.resolution !== undefined &&
+      !isResolutionReceipt(value.resolution)
+    )
+      throw new Error("Invalid resolution receipt");
     if (
       typeof value.callId !== "string" ||
       typeof value.name !== "string" ||

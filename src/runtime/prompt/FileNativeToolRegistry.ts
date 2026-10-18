@@ -4,6 +4,11 @@ import {
   defaultAppLocale,
   type AppLocale,
 } from "../../protocol/appPreferences.ts";
+import {
+  resolutionToolDefinition,
+  resolutionToolNames,
+  type ResolutionToolName,
+} from "../play/TabletopResolution.ts";
 
 /**
  * Runtime-owned prompt tool registry.
@@ -13,7 +18,12 @@ import {
  * tool contract.
  */
 
-export const registeredRuntimeToolNames = [
+/**
+ * Tools that every current play and authoring surface may expose. Resolution
+ * tools are registered below but never enter a surface until a per-world
+ * selection (Phase 2) includes them.
+ */
+export const baseRuntimeToolNames = [
   "state_list",
   "history_list",
   "history_search",
@@ -28,11 +38,19 @@ export const registeredRuntimeToolNames = [
   "artifact_clear",
 ] as const;
 
+/** The full executable Runtime vocabulary. Exposure is chosen per surface. */
+export const registeredRuntimeToolNames = [
+  ...baseRuntimeToolNames,
+  ...resolutionToolNames,
+] as const;
+
 /** Changes only when the executable Runtime tool universe or schemas change. */
-export const runtimeToolRegistryRevision = "runtime-tools-v9";
+export const runtimeToolRegistryRevision = "runtime-tools-v10";
 
 export type RegisteredRuntimeToolName =
   (typeof registeredRuntimeToolNames)[number];
+
+type BaseRuntimeToolName = (typeof baseRuntimeToolNames)[number];
 
 export interface RuntimePromptTool {
   name: RegisteredRuntimeToolName;
@@ -152,6 +170,7 @@ function createToolDefinitions(
     RegisteredRuntimeToolName,
     { description: string; inputSchema: object }
   > = {
+    ...resolutionDefinitions(locale),
     state_list: {
       description: descriptions.state_list,
       inputSchema: object(
@@ -350,9 +369,23 @@ function createToolDefinitions(
   return definitions;
 }
 
+function resolutionDefinitions(
+  locale: AppLocale,
+): Record<ResolutionToolName, { description: string; inputSchema: object }> {
+  return Object.fromEntries(
+    resolutionToolNames.map((name) => {
+      const { description, inputSchema } = resolutionToolDefinition(
+        name,
+        locale,
+      );
+      return [name, { description, inputSchema }];
+    }),
+  ) as Record<ResolutionToolName, { description: string; inputSchema: object }>;
+}
+
 const toolDescriptions: Record<
   AppLocale,
-  Record<RegisteredRuntimeToolName, string>
+  Record<BaseRuntimeToolName, string>
 > = {
   en: {
     world_checkpoint:

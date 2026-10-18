@@ -67,12 +67,13 @@ import {
   type WorldDocumentValue,
 } from "../world/WorldDocumentStore.ts";
 import {
+  baseRuntimeToolNames,
   defaultRuntimeToolDefinitionStrategy,
-  registeredRuntimeToolNames,
   runtimeToolsForNames,
   type RegisteredRuntimeToolName,
   type RuntimeToolDefinitionStrategy,
 } from "./FileNativeToolRegistry.ts";
+import { resolutionToolNames } from "../play/TabletopResolution.ts";
 import type {
   PlayPresetBinding,
   PlayPresetFollowupDefinition,
@@ -389,12 +390,14 @@ const playCallChainToolNames = new Set<RegisteredRuntimeToolName>([
   "world_create",
   "world_retire",
   "world_checkpoint",
+  ...resolutionToolNames,
 ]);
 
 export type FileNativeToolName = RegisteredRuntimeToolName;
 
 export class FileNativePromptCompiler {
   readonly #toolStrategyOverride: RuntimeToolDefinitionStrategy | undefined;
+  readonly #playToolNames: readonly RegisteredRuntimeToolName[];
   #locale: AppLocale;
 
   get locale(): AppLocale {
@@ -405,10 +408,16 @@ export class FileNativePromptCompiler {
     options: {
       toolStrategy?: RuntimeToolDefinitionStrategy;
       locale?: AppLocale;
+      /**
+       * Tool names frozen into each new play universe. Production uses the
+       * base surface; per-world selection replaces this option in Phase 2.
+       */
+      playToolNames?: readonly RegisteredRuntimeToolName[];
     } = {},
   ) {
     this.#toolStrategyOverride = options.toolStrategy;
     this.#locale = options.locale ?? defaultAppLocale;
+    this.#playToolNames = options.playToolNames ?? baseRuntimeToolNames;
   }
 
   setLocale(locale: AppLocale): void {
@@ -720,10 +729,7 @@ export class FileNativePromptCompiler {
         markdown: joinBlocks(blocks[role]),
       }));
     scanRuntimeLeakage(logicalMessages);
-    const tools = runtimeToolsForNames(
-      registeredRuntimeToolNames,
-      this.#locale,
-    );
+    const tools = runtimeToolsForNames(baseRuntimeToolNames, this.#locale);
     const toolStrategy =
       this.#toolStrategyOverride ??
       defaultRuntimeToolDefinitionStrategy(
@@ -934,6 +940,7 @@ export class FileNativePromptCompiler {
       bootstrap,
       binding,
       this.#locale,
+      this.#playToolNames,
     );
     refreshMaintenanceTotals(compilation.bootstrap);
     return compilation;
@@ -1008,10 +1015,7 @@ export class FileNativePromptCompiler {
         { source: "player:input", markdown: effective.playerInput },
       ]);
     scanRuntimeLeakage(logicalMessages);
-    const tools = runtimeToolsForNames(
-      registeredRuntimeToolNames,
-      this.#locale,
-    );
+    const tools = runtimeToolsForNames(baseRuntimeToolNames, this.#locale);
     const toolStrategy =
       this.#toolStrategyOverride ??
       defaultRuntimeToolDefinitionStrategy(effective.modelBinding.provider);
@@ -1631,11 +1635,9 @@ function compilePlayPresetCompilation(
   bootstrap: PromptCompilation,
   binding: PlayPresetBinding,
   locale: AppLocale,
+  playToolNames: readonly RegisteredRuntimeToolName[],
 ): PlayPresetCompilation {
-  const toolUniverse = fileNativeToolsForNames(
-    registeredRuntimeToolNames,
-    locale,
-  );
+  const toolUniverse = fileNativeToolsForNames(playToolNames, locale);
   const toolStrategy = bootstrap.toolStrategy;
   const stableText = cacheStableText(
     bootstrap.logicalMessages,
