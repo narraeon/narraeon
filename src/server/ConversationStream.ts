@@ -13,7 +13,8 @@ import type { V1Runtime } from "../runtime/V1Runtime.ts";
  * teardown path has access to the model's cancellation signal. */
 export function registerConversationStream(
   server: FastifyInstance,
-  runtime: Pick<V1Runtime, "readConversation" | "subscribeConversation">,
+  runtime: Pick<V1Runtime, "readConversation" | "subscribeConversation"> &
+    Partial<Pick<V1Runtime, "recordConversationFailure">>,
 ): void {
   const connections = new Set<PassThrough>();
   server.addHook("preClose", () => {
@@ -84,6 +85,11 @@ export function registerConversationStream(
           previous = next;
         }
       } catch (error: unknown) {
+        request.log.error(
+          { err: error, conversationTarget: target },
+          "conversation observation failed",
+        );
+        await runtime.recordConversationFailure?.(target, error);
         write(
           `event: failure\ndata: ${JSON.stringify({ message: error instanceof Error ? error.message : "Conversation observation failed" })}\n\n`,
         );

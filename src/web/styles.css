@@ -148,6 +148,23 @@ summary {
   align-content: center;
 }
 
+.app-error-boundary {
+  gap: 0.75rem;
+}
+
+.app-error-message {
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}
+
+.app-error-boundary pre {
+  max-height: 40vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.8rem;
+}
+
 .workspace-header,
 .config-header,
 .section-heading-row {

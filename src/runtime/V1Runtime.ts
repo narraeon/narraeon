@@ -311,6 +311,22 @@ export class V1Runtime {
     });
   }
 
+  async recordConversationFailure(
+    target: ConversationTarget,
+    error: unknown,
+  ): Promise<void> {
+    await this.#errorLog?.recordRequestFailure(
+      {
+        type: `${target.kind}.observe`,
+        targetId: target.id,
+        ...("sessionId" in target && target.sessionId !== undefined
+          ? { sessionId: target.sessionId }
+          : {}),
+      },
+      error,
+    );
+  }
+
   subscribeConversation(
     target: ConversationTarget,
     changed: (durable: boolean) => void,

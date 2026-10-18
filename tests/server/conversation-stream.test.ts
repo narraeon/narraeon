@@ -120,3 +120,26 @@ test("an invalidation during an asynchronous initial read is delivered without p
   expect(readConversation).toHaveBeenCalledTimes(2);
   abort.abort();
 });
+
+test("observation failures are recorded and sent to the page with their reason", async () => {
+  const server = Fastify({ logger: false });
+  const recordConversationFailure = vi.fn(() => Promise.resolve());
+  registerConversationStream(server, {
+    readConversation: () => Promise.reject(new Error("World does not exist")),
+    subscribeConversation: () => () => undefined,
+    recordConversationFailure,
+  });
+  cleanup.push(() => server.close());
+  const address = await server.listen({ port: 0, host: "127.0.0.1" });
+  const response = await fetch(
+    `${address}/api/runtime/v1/events?kind=play&id=world-missing`,
+  );
+  const text = await response.text();
+  expect(text).toContain(
+    `event: failure\ndata: ${JSON.stringify({ message: "World does not exist" })}`,
+  );
+  expect(recordConversationFailure).toHaveBeenCalledWith(
+    { kind: "play", id: "world-missing" },
+    expect.objectContaining({ message: "World does not exist" }),
+  );
+});

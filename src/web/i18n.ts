@@ -7,6 +7,49 @@ import {
 let activeLocale: AppLocale = defaultAppLocale;
 
 const englishMessages: Record<string, string> = {
+  页面出错了: "Something went wrong",
+  "页面显示时发生错误，已保存的故事和世界不受影响。请重新加载页面；如果反复出现，请把下面的技术详情发给开发者。":
+    "The page hit an error while displaying. Your saved stories and worlds are not affected. Reload the page; if this keeps happening, send the technical details below to the developers.",
+  重新加载页面: "Reload page",
+  "对话同步失败：{message}\u3000请重新打开此页面。":
+    "Conversation sync failed: {message} Reopen this page.",
+  "Narraeon 服务请求失败（HTTP {status}）。":
+    "The Narraeon request failed (HTTP {status}).",
+  "Narraeon 服务版本与页面不匹配，请刷新页面。":
+    "The Narraeon service version does not match this page. Refresh the page.",
+  "无法连接到 Narraeon 服务。请确认服务正在运行、网络连接正常。":
+    "Cannot reach the Narraeon service. Make sure it is running and your network connection works.",
+  "Narraeon 服务暂时不可用（HTTP {status}），可能正在重启，请稍后重试。":
+    "The Narraeon service is temporarily unavailable (HTTP {status}) and may be restarting. Try again shortly.",
+  "Narraeon 服务返回了无法识别的响应（HTTP {status}）。请稍后重试；如果使用了反向代理，请检查代理配置。":
+    "The Narraeon service returned an unreadable response (HTTP {status}). Try again shortly; if you use a reverse proxy, check its configuration.",
+  "模型正在生成，请等它完成或先取消，再进行这项操作。":
+    "The model is still generating. Wait for it to finish or cancel it, then try again.",
+  "世界刚被其他操作更新，这次操作没有生效。请刷新页面后重试。":
+    "The world was just updated by another operation, so this action did not take effect. Refresh the page and try again.",
+  "世界正在修订，游玩和其他修改已锁定。请先应用或放弃修订。":
+    "The world is being revised, so play and other changes are locked. Apply or discard the revision first.",
+  "这个世界来自备份，请先开启全新上下文再继续。":
+    "This world came from a backup. Start a fresh context before continuing.",
+  "当前上下文无法继续，请使用全新上下文。":
+    "The current context cannot continue. Use a fresh context.",
+  "找不到要操作的对话记录，请刷新页面后重试。":
+    "The conversation record for this action was not found. Refresh the page and try again.",
+  "世界不存在，可能已被删除。":
+    "This world does not exist; it may have been deleted.",
+  "世界正在处理另一项操作，请稍后重试。":
+    "The world is busy with another operation. Try again shortly.",
+  "上一次修改已保存，但还没有完整写入当前世界。请刷新页面；如果仍然失败，请在世界管理中修复世界。":
+    "The last change was saved but has not been fully written to the current world. Refresh the page; if it still fails, repair the world from world management.",
+  "正在导出世界备份，请等它完成后再操作。":
+    "A world backup is being exported. Wait for it to finish, then try again.",
+  "世界名称须为 1–160 个字符，且不能换行。":
+    "World names must be 1–160 characters with no line breaks.",
+  "玩家输入不能为空。": "Player input cannot be empty.",
+  "修订内容已在别处更新，请刷新后再保存。":
+    "The revision was updated elsewhere. Refresh before saving.",
+  "请等待或取消正在进行的 AI 回复，再修改这次修订。":
+    "Wait for or cancel the running AI reply before changing this revision.",
   "下一次发送将开启全新上下文，尚无实报占用。":
     "The next message starts a fresh context; no usage has been reported yet.",
   "原上下文无法用于这次重新生成。可使用当前模型和预设，从同一条玩家输入开启全新上下文。":

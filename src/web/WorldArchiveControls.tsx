@@ -7,6 +7,10 @@ import type { V1Request } from "../protocol/v1.ts";
 import { createClientId } from "./ClientId.ts";
 import { RuntimeRequestError } from "./runtimeClient.ts";
 import { uiText } from "./i18n.ts";
+import {
+  runtimeErrorText,
+  runtimeUnreadableResponseText,
+} from "./RuntimeErrorText.ts";
 
 interface ArchiveClient {
   request(request: V1Request): Promise<unknown>;
@@ -159,22 +163,30 @@ function uploadWorldBackup(
       reject(new Error(uiText("世界备份上传失败，请重试。")));
     request.onabort = request.onerror;
     request.onload = () => {
+      let result: {
+        uploadId: string;
+        error?: { code?: string; message?: string };
+      };
       try {
-        const result = JSON.parse(request.responseText) as {
-          uploadId: string;
-          error?: { code?: string; message?: string };
-        };
-        if (request.status < 200 || request.status >= 300)
-          reject(
-            new RuntimeRequestError(
-              result.error?.message ?? uiText("世界备份上传失败，请重试。"),
-              { protocolCode: result.error?.code },
-            ),
-          );
-        else resolve(result);
-      } catch (error) {
-        reject(error instanceof Error ? error : new Error(String(error)));
+        result = JSON.parse(request.responseText) as typeof result;
+      } catch {
+        reject(
+          new RuntimeRequestError(
+            runtimeUnreadableResponseText(request.status),
+          ),
+        );
+        return;
       }
+      if (request.status < 200 || request.status >= 300)
+        reject(
+          new RuntimeRequestError(
+            result.error?.message === undefined
+              ? uiText("世界备份上传失败，请重试。")
+              : runtimeErrorText(result.error.message),
+            { protocolCode: result.error?.code },
+          ),
+        );
+      else resolve(result);
     };
     request.send(file);
   });

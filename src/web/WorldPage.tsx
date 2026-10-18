@@ -10,7 +10,10 @@ import type { WorldExtensionsView } from "../protocol/worldExtensions.ts";
 import { PackageScriptPermissionControl } from "./PackageScriptPermissionControl.tsx";
 import { PlayerValue } from "./PlayerViewValue.tsx";
 import { useConversationComposer } from "./useConversationComposer.ts";
-import type { ObserveConversation } from "./ConversationObserver.ts";
+import {
+  conversationConnectionText,
+  type ObserveConversation,
+} from "./ConversationObserver.ts";
 import { useAuthoringWorkspace } from "./useAuthoringWorkspace.ts";
 import { uiText } from "./i18n.ts";
 import {
@@ -422,7 +425,7 @@ export function WorldPage({
           }
         }
       },
-      (connection) => {
+      (connection, message) => {
         if (active && connection === "connected") {
           hydratedHead = undefined;
           observedDecorations = undefined;
@@ -430,13 +433,7 @@ export function WorldPage({
         }
         if (active)
           setPlayObservationFailure(
-            connection === "connected"
-              ? null
-              : uiText(
-                  connection === "reconnecting"
-                    ? "对话连接已断开，正在重新连接…"
-                    : "对话同步失败，请重新打开此页面。",
-                ),
+            conversationConnectionText(connection, message),
           );
       },
     );
