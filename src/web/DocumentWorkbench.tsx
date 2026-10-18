@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 
+import { gameplayPath } from "../protocol/gameplay.ts";
 import type { ContentTreeFile } from "../protocol/v1.ts";
 import { getWebLocale, uiText } from "./i18n.ts";
 import { WorldFrameEditor } from "./WorldFrameEditor.tsx";
@@ -383,7 +384,7 @@ export function DocumentWorkbench({
                 <span className="content-editor-kicker">
                   {workspace.kind === "content-package" ||
                   workspace.kind === "world-revision"
-                    ? describeFile(selectedFile)
+                    ? describeFile(selectedFile, workspace.kind)
                     : uiText("全文编辑")}
                 </span>
                 <h4>
@@ -488,6 +489,10 @@ export function DocumentWorkbench({
                 <textarea
                   rows={27}
                   spellCheck={false}
+                  readOnly={isRevisionGameplayFile(
+                    selectedFile,
+                    workspace.kind,
+                  )}
                   value={selectedFile.contents}
                   placeholder={editorPlaceholder(
                     selectedFile.path,
@@ -658,10 +663,16 @@ function validateDraftPath(
     )
   )
     return uiText("路径不能包含空目录、. 或 ..。");
-  if (/\.json$/iu.test(path))
+  // control/gameplay.json is the gameplay identity, not an unsupported JSON file.
+  // A world revision may keep the existing file, but cannot create or move it.
+  const gameplayFileAllowed =
+    path === gameplayPath &&
+    (kind === "content-package" || currentPath === gameplayPath);
+  if (/\.json$/iu.test(path) && path !== gameplayPath)
     return uiText("当前文件原生 V1 不接受 manifest 或 JSON 内容文件。");
   if (
     kind === "world-revision" &&
+    !gameplayFileAllowed &&
     !/^state\/.+\.(?:ya?ml|md)$/u.test(path) &&
     path !== "control/frame.yaml" &&
     path !== "control/player-views.yaml" &&
@@ -739,11 +750,27 @@ function fileKind(file: ContentTreeFile): string {
   if (file.encoding === "base64") return "BIN";
   if (/\.ya?ml$/iu.test(file.path)) return "YAML";
   if (/\.md$/iu.test(file.path)) return "MD";
+  if (file.path === gameplayPath) return "JSON";
   return "TEXT";
 }
 
-function describeFile(file: ContentTreeFile): string {
+/** A world's gameplay identity is fixed, so a revision shows it without an editable source. */
+function isRevisionGameplayFile(
+  file: ContentTreeFile,
+  kind: DocumentWorkspaceKind,
+): boolean {
+  return kind === "world-revision" && file.path === gameplayPath;
+}
+
+function describeFile(
+  file: ContentTreeFile,
+  kind: DocumentWorkspaceKind,
+): string {
   if (file.encoding === "base64") return uiText("二进制资源");
+  if (file.path === gameplayPath)
+    return kind === "world-revision"
+      ? uiText("世界玩法身份，修订中保持不变")
+      : uiText("内容包玩法身份，只能修改跑团判定方案");
   if (file.path === "opening.md") return uiText("玩家首次行动前看到的开场白");
   if (file.path.startsWith("world/"))
     return uiText("会复制为世界状态的设定文档");
