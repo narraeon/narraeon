@@ -841,13 +841,10 @@ export class FileNativePromptCompiler {
     binding: PlayPresetBinding,
   ): PlayPresetCompilation {
     const presetCompilation = this.compilePlayPreset(input, binding);
-    // A continued context keeps the universe it was frozen with. Gameplay-derived
-    // tools are therefore never added mid-context, even to a context frozen
-    // before tabletop tools existed; a fresh context derives its universe above.
     const frozenTools =
       input.frozenWorldContext?.toolUniverse ?? input.frozenWorldContext?.tools;
     const toolUniverse =
-      frozenTools !== undefined
+      frozenTools !== undefined && hasLegacyHistoryTools(frozenTools)
         ? structuredClone(frozenTools)
         : presetCompilation.toolUniverse.filter(({ name }) =>
             playCallChainToolNames.has(name as RegisteredRuntimeToolName),

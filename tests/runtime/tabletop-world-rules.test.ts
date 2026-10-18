@@ -134,7 +134,7 @@ describe("tabletop world rules at the world placeholder", () => {
     );
   });
 
-  test("a context frozen before tabletop tools existed keeps neither the block nor the tools", () => {
+  test("a context frozen before tabletop existed gets the send's tools but no frozen rules block", () => {
     const compiler = new FileNativePromptCompiler();
     const binding = builtinDefaultPlayPresetBinding("en");
     const frozenFiction = compiler.compilePlayCallChain(
@@ -151,9 +151,8 @@ describe("tabletop world rules at the world placeholder", () => {
       },
       binding,
     ).bootstrap;
+    // Rules are frozen material; tools follow the world on every send.
     expect(rulesBlocks(resumed.logicalMessages)).toEqual([]);
-    expect(resumed.tools.map(({ name }) => name)).not.toContain(
-      "percentile_check",
-    );
+    expect(resumed.tools.map(({ name }) => name)).toContain("percentile_check");
   });
 });

@@ -137,25 +137,28 @@ describe("per-world tool exposure", () => {
     );
   });
 
-  test("a frozen universe keeps its frozen tools even when the world is tabletop", () => {
+  test("a continued send derives the tabletop tools from the world, even when frozen before them", () => {
     const compiler = new FileNativePromptCompiler();
     const binding = builtinDefaultPlayPresetBinding("en");
-    const frozen = compiler.compilePlayCallChain(
+    const frozenFiction = compiler.compilePlayCallChain(
       previewInputWithGameplay(fiction),
       binding,
     ).bootstrap;
+    const tabletop: Gameplay = { mode: "tabletop", scheme: "d20" };
     const resumed = compiler.compilePlayCallChain(
       {
-        ...previewInputWithGameplay({ mode: "tabletop", scheme: "d20" }),
-        frozenWorldContext: frozen,
+        ...previewInputWithGameplay(tabletop, {
+          playerInputPlacement: "append",
+        }),
+        frozenWorldContext: frozenFiction,
       },
       binding,
     );
     expect(toolNames(resumed.toolUniverse)).toEqual(
-      playChainToolNames(fiction),
+      playChainToolNames(tabletop),
     );
     expect(toolNames(resumed.bootstrap.tools)).toEqual(
-      playChainToolNames(fiction),
+      playChainToolNames(tabletop),
     );
   });
 
