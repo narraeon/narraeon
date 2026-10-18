@@ -261,6 +261,42 @@ describe("内容包玩法 V1 请求", () => {
     expect(read.files.map(({ path }) => path)).not.toContain(gameplayPath);
   });
 
+  test("content.replace 改变玩法模式时返回 invalid_request，而不是内部错误", async () => {
+    const root = await temporaryRoot();
+    const runtime = new V1Runtime({
+      dataRoot: root,
+      configRoot: join(root, "config"),
+    });
+    const created = (await call(runtime, {
+      type: "content.create",
+      gameplay: { mode: "tabletop", scheme: "d100" },
+    })) as { localId: string };
+    const current = (await call(runtime, {
+      type: "content.read",
+      packageId: created.localId,
+    })) as { files: { path: string; contents: string }[] };
+
+    const rejected = runtime.handle({
+      type: "content.replace",
+      packageId: created.localId,
+      files: [
+        ...current.files.filter(({ path }) => path !== gameplayPath),
+        gameplayFile({ mode: "interactive-fiction" }),
+      ],
+    });
+    await expect(rejected).rejects.toBeInstanceOf(V1ProtocolError);
+    await expect(rejected).rejects.toMatchObject({
+      code: "invalid_request",
+      message: expect.stringMatching(/Gameplay mode is fixed.*玩法模式不能/su),
+    });
+    expect(
+      (await call(runtime, {
+        type: "content.read",
+        packageId: created.localId,
+      })) as { gameplay: unknown },
+    ).toMatchObject({ gameplay: { mode: "tabletop", scheme: "d100" } });
+  });
+
   test("协议层拒绝未知判定方案和格式错误的玩法选择", () => {
     const request = (value: Record<string, unknown>) =>
       parseV1Envelope({ protocol: v1Protocol, request: value });

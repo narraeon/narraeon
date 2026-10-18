@@ -383,10 +383,18 @@ export class V1Runtime {
       case "content.read":
         return this.#content.readCurrentTreeContentPackage(request.packageId);
       case "content.replace":
-        return this.#content.replaceCurrentTreeContentPackage(
-          request.packageId,
-          request.files,
-        );
+        try {
+          return await this.#content.replaceCurrentTreeContentPackage(
+            request.packageId,
+            request.files,
+          );
+        } catch (error: unknown) {
+          if (error instanceof InvalidContentTreeError)
+            throw new V1ProtocolError("invalid_request", error.message, {
+              cause: error,
+            });
+          throw error;
+        }
       case "content.copy":
         return this.#content.copyCurrentTreeContentPackage(request.packageId);
       case "content.delete":
