@@ -354,7 +354,7 @@ test("故事模式开关持久化，最新检查点自动预选且取消后只�
   ).toBeVisible();
   await expect(page.getByLabel("你的行动")).toHaveValue("保留这份行动草稿。");
   await expect(
-    page.getByText("世界已在故事外修订；下一次行动会从新上下文开始。"),
+    page.getByText("世界已在当前上下文之外更新；下一次行动会从新上下文开始。"),
   ).toHaveCount(0);
   expect(providerRequests).toHaveLength(count);
   await page.getByRole("button", { name: "返回工作区" }).click();

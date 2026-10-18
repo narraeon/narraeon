@@ -1754,7 +1754,9 @@ export function WorldPage({
               <div className="world-fresh-context-note" role="note">
                 {world?.archiveNeedsFreshContext
                   ? uiText("世界从备份导入；下一次行动会从新上下文开始")
-                  : uiText("世界已在故事外修订；下一次行动会从新上下文开始。")}
+                  : uiText(
+                      "世界已在当前上下文之外更新；下一次行动会从新上下文开始。",
+                    )}
               </div>
             ) : null}
             {preferFreshContext && !activeChainStale && playIdle ? (

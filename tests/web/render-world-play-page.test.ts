@@ -858,7 +858,7 @@ describe("世界游玩页面", () => {
       }
       await screen.findByText(input === null ? "上下文 —" : "上下文 90%");
       expect(screen.queryByText("上下文 62%")).toBeNull();
-      expect(screen.queryByText(/世界已在故事外修订/u)).toBeNull();
+      expect(screen.queryByText(/世界已在当前上下文之外更新/u)).toBeNull();
       await waitFor(() =>
         expect(
           screen.getByRole<HTMLButtonElement>("button", { name: "追加行动" })
@@ -1717,7 +1717,9 @@ describe("世界游玩页面", () => {
       ),
     ).toBeTruthy();
     expect(
-      screen.getByText("世界已在故事外修订；下一次行动会从新上下文开始。"),
+      screen.getByText(
+        "世界已在当前上下文之外更新；下一次行动会从新上下文开始。",
+      ),
     ).toBeTruthy();
     expect(
       screen.getByRole<HTMLButtonElement>("button", { name: "追加上下文" })
@@ -2266,7 +2268,9 @@ describe("世界游玩页面", () => {
     expect(screen.getByText("接收中 · 第 1 次派发")).toBeTruthy();
     expect(screen.getByText("待定输出；响应完成前不会进入故事")).toBeTruthy();
     expect(
-      screen.queryByText("世界已在故事外修订；下一次行动会从新上下文开始。"),
+      screen.queryByText(
+        "世界已在当前上下文之外更新；下一次行动会从新上下文开始。",
+      ),
     ).toBeNull();
     expect(screen.queryByText("查看模型诊断详情")).toBeNull();
     const reasoning = screen.getByText("Provider 返回推理（不等同隐藏思维链）");
@@ -2946,7 +2950,9 @@ describe("世界游玩页面", () => {
         }),
       ).toHaveLength(0);
       expect(
-        screen.queryByText("世界已在故事外修订；下一次行动会从新上下文开始。"),
+        screen.queryByText(
+          "世界已在当前上下文之外更新；下一次行动会从新上下文开始。",
+        ),
       ).toBeNull();
     } finally {
       await act(async () => {
@@ -3462,7 +3468,9 @@ describe("世界游玩页面", () => {
     renderWorld(client);
     await screen.findByText("Alex opens the door and lets you go first.");
     expect(
-      screen.getByText("世界已在故事外修订；下一次行动会从新上下文开始。"),
+      screen.getByText(
+        "世界已在当前上下文之外更新；下一次行动会从新上下文开始。",
+      ),
     ).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "重新生成" }));
     await screen.findByText("沿原上下文重新生成的回复");
@@ -3478,7 +3486,9 @@ describe("世界游玩页面", () => {
       screen.queryByRole("button", { name: "用全新上下文重新生成" }),
     ).toBeNull();
     expect(
-      screen.queryByText("世界已在故事外修订；下一次行动会从新上下文开始。"),
+      screen.queryByText(
+        "世界已在当前上下文之外更新；下一次行动会从新上下文开始。",
+      ),
     ).toBeNull();
   });
 

@@ -1734,8 +1734,8 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
   世界侧栏: "World side panel",
   "世界修订已提交。现有追加上下文已过期，下一次行动会自动使用全新上下文。":
     "The world revision was committed. The existing append context is now stale, so the next action will automatically use a fresh context.",
-  "世界已在故事外修订；下一次行动会从新上下文开始。":
-    "The world was revised outside the story. The next action will start from a fresh context.",
+  "世界已在当前上下文之外更新；下一次行动会从新上下文开始。":
+    "The world changed outside the current context. The next action will start from a fresh context.",
   世界阅读工具: "World reading tools",
   从全新上下文发送行动: "Send action from a fresh context",
   从当前世界重新编译材料: "Recompile materials from the current world",
