@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import { Ajv } from "ajv";
 import type { AppLocale } from "../../protocol/appPreferences.ts";
+import type { ResolutionScheme } from "../../protocol/gameplay.ts";
 import {
   arithmeticTotal,
   d100Outcome,
@@ -30,6 +31,19 @@ export type ResolutionToolName = (typeof resolutionToolNames)[number];
 
 export function isResolutionTool(name: string): name is ResolutionToolName {
   return resolutionToolNames.some((item) => item === name);
+}
+
+const checkToolByScheme = {
+  d20: "d20_check",
+  d100: "percentile_check",
+  bag: "bag_check",
+} as const satisfies Record<ResolutionScheme, ResolutionToolName>;
+
+/** The one check tool that embodies a tabletop scheme. Auxiliary tools never decide success. */
+export function resolutionCheckToolForScheme(
+  scheme: ResolutionScheme,
+): ResolutionToolName {
+  return checkToolByScheme[scheme];
 }
 
 const integer = (minimum: number, maximum: number) => ({

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { parseDocument } from "yaml";
+import { isMap, isSeq, parseDocument, type YAMLSeq } from "yaml";
 import {
   builtinPlayPrompts,
   isPromptMessageRole,
@@ -40,22 +40,28 @@ export function parseOrderedPlayPrompts(
       return fail();
     const messageRole =
       item.messageRole === undefined ? {} : { messageRole: item.messageRole };
-    const exact = (keys: string[]) =>
-      Object.keys(item).length ===
-        keys.length + (item.messageRole === undefined ? 0 : 1) &&
-      keys.every((key) => Object.hasOwn(item, key));
+    const exact = (keys: string[], optional: string[] = []) =>
+      Object.keys(item).every(
+        (key) =>
+          keys.includes(key) ||
+          optional.includes(key) ||
+          key === "messageRole" ||
+          key === "id" ||
+          key === "kind",
+      ) && keys.every((key) => Object.hasOwn(item, key));
     if (item.kind === "world" && exact(["id", "kind"])) {
       worlds++;
       return { id: item.id, kind: "world", ...messageRole };
     }
     if (
       item.kind === "user" &&
-      exact(["id", "kind", "name", "enabled", "body"]) &&
+      exact(["id", "kind", "name", "enabled", "body"], ["gameplay"]) &&
       typeof item.name === "string" &&
       item.name.trim().length > 0 &&
       /^[^\r\n\0]{1,160}$/u.test(item.name) &&
       typeof item.body === "string" &&
-      typeof item.enabled === "boolean"
+      typeof item.enabled === "boolean" &&
+      (item.gameplay === undefined || item.gameplay === "tabletop")
     )
       return {
         id: item.id,
@@ -64,6 +70,9 @@ export function parseOrderedPlayPrompts(
         enabled: item.enabled,
         body: item.body,
         ...messageRole,
+        ...(item.gameplay === "tabletop"
+          ? { gameplay: "tabletop" as const }
+          : {}),
       };
     const builtin = catalog.find((entry) => entry.id === item.builtin);
     if (
@@ -92,6 +101,72 @@ export function parseOrderedPlayPrompts(
   )
     return fail();
   return entries;
+}
+
+/**
+ * Insert the tabletop builtins that an ordered preset does not list yet.
+ * play.tabletop goes just before the world placeholder and author.tabletop just
+ * after author.guidance. Files that are not ordered v2 or do not parse come back
+ * unchanged, and nothing else in them is rewritten. The same object is returned
+ * when nothing needs inserting, so callers can detect a change by identity.
+ */
+export function withTabletopPromptBuiltins(
+  files: Record<string, string>,
+): Record<string, string> {
+  const source = files["preset.yaml"];
+  if (source === undefined) return files;
+  const document = parseDocument(source, { uniqueKeys: true });
+  if (
+    document.errors.length > 0 ||
+    document.warnings.length > 0 ||
+    !isMap(document.contents) ||
+    document.get("format") !== "narraeon.play-preset/v2"
+  )
+    return files;
+  let changed = false;
+  const playPrompts = document.get("playPrompts", true);
+  if (isSeq(playPrompts) && !hasEntry(playPrompts, "play.tabletop")) {
+    const world = playPrompts.items.findIndex(
+      (item) => entryField(item, "kind") === "world",
+    );
+    playPrompts.items.splice(
+      world < 0 ? playPrompts.items.length : world,
+      0,
+      document.createNode({
+        id: "play.tabletop",
+        kind: "builtin",
+        builtin: "play.tabletop",
+        enabled: true,
+      }),
+    );
+    changed = true;
+  }
+  const authorPrompts = document.get("authorPrompts", true);
+  if (isSeq(authorPrompts) && !hasEntry(authorPrompts, "author.tabletop")) {
+    const guidance = authorPrompts.items.findIndex(
+      (item) => entryField(item, "id") === "author.guidance",
+    );
+    authorPrompts.items.splice(
+      guidance < 0 ? authorPrompts.items.length : guidance + 1,
+      0,
+      document.createNode({
+        id: "author.tabletop",
+        kind: "builtin",
+        builtin: "author.tabletop",
+        enabled: true,
+      }),
+    );
+    changed = true;
+  }
+  return changed ? { ...files, "preset.yaml": document.toString() } : files;
+}
+
+function hasEntry(sequence: YAMLSeq, id: string): boolean {
+  return sequence.items.some((item) => entryField(item, "id") === id);
+}
+
+function entryField(item: unknown, key: string): unknown {
+  return isMap(item) ? item.get(key) : undefined;
 }
 
 /** Recognized v1 content becomes user text, never a locked builtin inferred from a path. */
@@ -221,5 +296,13 @@ export function migrateLegacyPlayPrompts(
       path.endsWith(".md")
     )
       add(path, false);
+  // The tabletop builtin joins converted presets just before the world placeholder.
+  const worldIndex = entries.findIndex((entry) => entry.kind === "world");
+  entries.splice(worldIndex, 0, {
+    id: "play.tabletop",
+    kind: "builtin",
+    builtin: "play.tabletop",
+    enabled: true,
+  });
   return entries;
 }

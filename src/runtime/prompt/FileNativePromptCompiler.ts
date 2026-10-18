@@ -23,6 +23,8 @@ import {
 import {
   type PromptMessageRole,
   builtinPlayPrompts,
+  orderedPromptScope,
+  promptScopeApplies,
 } from "../../shared/ordered-play-prompts.ts";
 import { parseOrderedPlayPrompts } from "../play/OrderedPlayPrompts.ts";
 import { renderDocumentWritePosition } from "./WorldMaintenanceReport.ts";
@@ -67,13 +69,18 @@ import {
   type WorldDocumentValue,
 } from "../world/WorldDocumentStore.ts";
 import {
-  baseRuntimeToolNames,
   defaultRuntimeToolDefinitionStrategy,
+  runtimeToolNamesForGameplay,
   runtimeToolsForNames,
   type RegisteredRuntimeToolName,
   type RuntimeToolDefinitionStrategy,
 } from "./FileNativeToolRegistry.ts";
 import { resolutionToolNames } from "../play/TabletopResolution.ts";
+import { readGameplay, type Gameplay } from "../../protocol/gameplay.ts";
+import {
+  tabletopAuthoringRulesBlock,
+  tabletopWorldRulesBlock,
+} from "../play/TabletopRules.ts";
 import type {
   PlayPresetBinding,
   PlayPresetFollowupDefinition,
@@ -196,6 +203,8 @@ export interface PromptCompilation {
 
 export interface SettingImprovementPromptInput {
   contentPackageTitle: string;
+  /** The package's gameplay; a tabletop package states its scheme in the author target. */
+  gameplay: Gameplay;
   runtimeContract: string;
   authorPrompt: string;
   playPreset: PlayPresetBinding;
@@ -206,6 +215,8 @@ export interface SettingImprovementPromptInput {
 export interface WorldRevisionPromptInput {
   worldTitle: string;
   epoch?: { id: string; baseHead: string };
+  /** The world's fixed gameplay, stated in the author target for tabletop worlds. */
+  gameplay: Gameplay;
   runtimeContract: string;
   authorPrompt: string;
   playPreset: PlayPresetBinding;
@@ -218,6 +229,7 @@ interface AuthoringConversationPromptInput {
   identity: { source: string; markdown: string };
   boundary: { source: string; markdown: string };
   runtimeSource: string;
+  gameplay: Gameplay;
   runtimeContract: string;
   authorPrompt: string;
   playPreset: PlayPresetBinding;
@@ -397,7 +409,6 @@ export type FileNativeToolName = RegisteredRuntimeToolName;
 
 export class FileNativePromptCompiler {
   readonly #toolStrategyOverride: RuntimeToolDefinitionStrategy | undefined;
-  readonly #playToolNames: readonly RegisteredRuntimeToolName[];
   #locale: AppLocale;
 
   get locale(): AppLocale {
@@ -408,16 +419,10 @@ export class FileNativePromptCompiler {
     options: {
       toolStrategy?: RuntimeToolDefinitionStrategy;
       locale?: AppLocale;
-      /**
-       * Tool names frozen into each new play universe. Production uses the
-       * base surface; per-world selection replaces this option in Phase 2.
-       */
-      playToolNames?: readonly RegisteredRuntimeToolName[];
     } = {},
   ) {
     this.#toolStrategyOverride = options.toolStrategy;
     this.#locale = options.locale ?? defaultAppLocale;
-    this.#playToolNames = options.playToolNames ?? baseRuntimeToolNames;
   }
 
   setLocale(locale: AppLocale): void {
@@ -450,6 +455,7 @@ export class FileNativePromptCompiler {
       },
       runtimeSource: "runtime:builtin/setting-improvement",
       target: "setting",
+      gameplay: input.gameplay,
       runtimeContract: input.runtimeContract,
       authorPrompt: input.authorPrompt,
       playPreset: input.playPreset,
@@ -482,6 +488,7 @@ export class FileNativePromptCompiler {
       },
       runtimeSource: "runtime:builtin/world-revision",
       target: "world-revision",
+      gameplay: input.gameplay,
       runtimeContract: input.runtimeContract,
       authorPrompt: input.authorPrompt,
       playPreset: input.playPreset,
@@ -498,6 +505,7 @@ export class FileNativePromptCompiler {
       input.playPreset,
       this.#locale,
       input.target,
+      input.gameplay,
     );
     const logicalMessages: PromptCompilation["logicalMessages"] = [];
     const ordered =
@@ -508,6 +516,10 @@ export class FileNativePromptCompiler {
 
     for (const entry of ordered) {
       if (entry.kind === "world" || !entry.enabled) continue;
+      if (
+        !promptScopeApplies(orderedPromptScope(entry, catalog), input.gameplay)
+      )
+        continue;
       const builtin =
         entry.kind === "builtin"
           ? catalog.find((item) => item.id === entry.builtin)!
@@ -526,7 +538,19 @@ export class FileNativePromptCompiler {
           },
         ];
       if (builtin?.id === "author.target")
-        blocks = [input.identity, input.boundary];
+        blocks = [
+          input.identity,
+          input.boundary,
+          ...(input.gameplay.mode === "tabletop"
+            ? [
+                tabletopAuthoringRulesBlock(
+                  input.gameplay,
+                  input.target,
+                  this.#locale,
+                ),
+              ]
+            : []),
+        ];
       if (builtin?.id === "author.play-reference")
         blocks = [
           {
@@ -729,7 +753,10 @@ export class FileNativePromptCompiler {
         markdown: joinBlocks(blocks[role]),
       }));
     scanRuntimeLeakage(logicalMessages);
-    const tools = runtimeToolsForNames(baseRuntimeToolNames, this.#locale);
+    const tools = runtimeToolsForNames(
+      runtimeToolNamesForGameplay(playGameplay(documentSnapshot)),
+      this.#locale,
+    );
     const toolStrategy =
       this.#toolStrategyOverride ??
       defaultRuntimeToolDefinitionStrategy(
@@ -940,7 +967,7 @@ export class FileNativePromptCompiler {
       bootstrap,
       binding,
       this.#locale,
-      this.#playToolNames,
+      runtimeToolNamesForGameplay(playGameplay(input.world.documentSnapshot)),
     );
     refreshMaintenanceTotals(compilation.bootstrap);
     return compilation;
@@ -974,9 +1001,14 @@ export class FileNativePromptCompiler {
           ...prompt,
         });
     };
+    const playCatalog = builtinPlayPrompts(this.#locale);
+    const gameplay = playGameplay(effective.world.documentSnapshot);
     for (const entry of parseOrderedPlayPrompts(
       binding.definition.playPrompts,
     )) {
+      // A scoped entry is absent from the request, not an empty message.
+      if (!promptScopeApplies(orderedPromptScope(entry, playCatalog), gameplay))
+        continue;
       prompt = {
         messageRole: entry.messageRole ?? "system",
         promptId: entry.id,
@@ -1015,7 +1047,12 @@ export class FileNativePromptCompiler {
         { source: "player:input", markdown: effective.playerInput },
       ]);
     scanRuntimeLeakage(logicalMessages);
-    const tools = runtimeToolsForNames(baseRuntimeToolNames, this.#locale);
+    const tools = runtimeToolsForNames(
+      runtimeToolNamesForGameplay(
+        playGameplay(effective.world.documentSnapshot),
+      ),
+      this.#locale,
+    );
     const toolStrategy =
       this.#toolStrategyOverride ??
       defaultRuntimeToolDefinitionStrategy(effective.modelBinding.provider);
@@ -1133,6 +1170,11 @@ export class FileNativePromptCompiler {
         .map((directory) => `- ${stateDirectoryHandle(directory)}`)
         .join("\n")}`,
     });
+    // Runtime rules precede the materials they govern. The frozen path keeps
+    // this block verbatim, so a continued context neither repeats nor loses it.
+    const gameplay = playGameplay(snapshot);
+    if (gameplay.mode === "tabletop")
+      materials.blocks.unshift(tabletopWorldRulesBlock(gameplay, this.#locale));
     return materials;
   }
 
@@ -1365,6 +1407,7 @@ function settingImprovementPresetReference(
   binding: PlayPresetBinding,
   locale: AppLocale,
   target: AuthoringConversationPromptInput["target"],
+  gameplay: Gameplay,
 ): string {
   const revision = target === "world-revision";
   const worldInstructionPlaceholder = {
@@ -1400,6 +1443,13 @@ function settingImprovementPresetReference(
               },
             ];
           if (!entry.enabled) return [];
+          if (
+            !promptScopeApplies(
+              orderedPromptScope(entry, builtinPlayPrompts(locale)),
+              gameplay,
+            )
+          )
+            return [];
           if (entry.kind === "user")
             return [
               { source: `preset:prompt/${entry.id}`, markdown: entry.body },
@@ -1902,6 +1952,14 @@ interface CompleteDocumentRead {
   descriptor: WorldDocumentDescriptor;
   codec: "yaml" | "markdown";
   body: string;
+}
+
+/**
+ * A world or package keeps its gameplay in control/gameplay.json; a missing
+ * file is interactive fiction. Every play universe is derived from this value.
+ */
+function playGameplay(snapshot: FileNativeWorldDocumentSnapshot) {
+  return readGameplay(snapshot.files);
 }
 
 function snapshotFiles(

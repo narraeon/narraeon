@@ -23,6 +23,7 @@ import {
 import {
   parseOrderedPlayPrompts,
   migrateLegacyPlayPrompts,
+  withTabletopPromptBuiltins,
 } from "./OrderedPlayPrompts.ts";
 import {
   defaultOrderedPlayPrompts,
@@ -511,12 +512,17 @@ export class FileNativePlayPresetStore {
     this.#locale = options.locale ?? (() => defaultAppLocale);
   }
 
+  /**
+   * Startup is the only place that upgrades stored presets. Reads never write:
+   * list, bind and freeze observe the library as it was last saved.
+   */
   async initialize(): Promise<void> {
     await this.#change(async () => {
       const document = await this.#read();
       const migrated = this.#markLegacyBuiltinDefault(document);
       const synchronized = this.#synchronizeBuiltinDefault(document);
-      if (migrated || synchronized) await this.#write(document);
+      const tabletop = this.#migrateTabletopPromptBuiltins(document);
+      if (migrated || synchronized || tabletop) await this.#write(document);
     });
   }
 
@@ -878,7 +884,10 @@ export class FileNativePlayPresetStore {
     name: string;
     files: readonly ContentTreeFile[] | Record<string, string>;
   }): Promise<{ currentPresetId: string; preset: FileNativePlayPresetView }> {
-    const files = toFileMap(input.files, this.#limits);
+    // A released preset gains the tabletop builtins at import, as at upgrade.
+    const files = withTabletopPromptBuiltins(
+      toFileMap(input.files, this.#limits),
+    );
     const parsed = parsePlayPresetFiles(files, this.#limits);
     if (parsed.kind === "invalid") throw parsed.error;
     toPlayPresetStructuredEditor(parsed.definition);
@@ -997,6 +1006,45 @@ export class FileNativePlayPresetStore {
       return false;
     preset.builtinDefault = true;
     return true;
+  }
+
+  /**
+   * One-time upgrade for ordered presets saved before the tabletop builtins
+   * existed. An affected revision is replaced by a new revision that inserts
+   * them; the old revision stays for frozen requests. A pending draft gets the
+   * same insertion, because a draft that kept the old list would fail the
+   * builtin-retention rule on save. The library is one atomically written file,
+   * so an interrupted upgrade leaves the released bytes and reruns cleanly.
+   */
+  #migrateTabletopPromptBuiltins(document: StoredDocument): boolean {
+    let changed = false;
+    for (const stored of document.presets) {
+      const current = stored.revisions[stored.currentRevision];
+      if (current !== undefined) {
+        const migrated = withTabletopPromptBuiltins(current);
+        if (migrated !== current) {
+          const revision = revisionForFiles(migrated, this.#limits);
+          stored.revisions[revision] = cloneFiles(migrated);
+          stored.currentRevision = revision;
+          changed = true;
+        }
+      }
+      const draft =
+        stored.draftRevision === undefined
+          ? undefined
+          : stored.revisions[stored.draftRevision];
+      if (draft !== undefined) {
+        const migrated = withTabletopPromptBuiltins(draft);
+        if (migrated !== draft) {
+          const revision = revisionForFiles(migrated, this.#limits);
+          stored.revisions[revision] = cloneFiles(migrated);
+          if (revision === stored.currentRevision) delete stored.draftRevision;
+          else stored.draftRevision = revision;
+          changed = true;
+        }
+      }
+    }
+    return changed;
   }
 
   #synchronizeBuiltinDefault(document: StoredDocument): boolean {

@@ -6,6 +6,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
+import { fictionGameplay } from "../../src/protocol/gameplay.ts";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -59,7 +60,10 @@ test("世界修订工具只暴露 state/control，共用读取授权并拒绝 op
     },
   });
 
-  const toolDefinitions = worldRevisionToolDefinitions("zh-CN");
+  const toolDefinitions = worldRevisionToolDefinitions(
+    "zh-CN",
+    fictionGameplay,
+  );
   expect(toolDefinitions.map(({ name }) => name)).toEqual([
     "world_revision_list",
     "world_revision_search",
@@ -71,15 +75,18 @@ test("世界修订工具只暴露 state/control，共用读取授权并拒绝 op
     "world_revision_delete",
   ]);
   expect(
-    [...toolDefinitions, ...worldRevisionToolDefinitions("en")].every(
+    [
+      ...toolDefinitions,
+      ...worldRevisionToolDefinitions("en", fictionGameplay),
+    ].every(
       ({ description }) =>
         description.length > 0 && !/opening(?:\.md)?/iu.test(description),
     ),
   ).toBe(true);
-  expect(worldRevisionRuntimeContract("zh-CN")).toContain(
+  expect(worldRevisionRuntimeContract("zh-CN", fictionGameplay)).toContain(
     "state/* 与 control/* 共同组成唯一的修订工作树",
   );
-  expect(worldRevisionRuntimeContract("zh-CN")).toContain(
+  expect(worldRevisionRuntimeContract("zh-CN", fictionGameplay)).toContain(
     "此前读取授权全部失效",
   );
 

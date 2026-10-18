@@ -374,11 +374,15 @@ export class SettingImprovementSession {
       await this.#content.readCurrentTreeContentPackage(packageId);
     const bootstrap = this.#compiler.compileSettingImprovement({
       contentPackageTitle: package_.title,
-      runtimeContract: settingImprovementRuntimeContract(locale),
+      gameplay: package_.gameplay,
+      runtimeContract: settingImprovementRuntimeContract(
+        locale,
+        package_.gameplay,
+      ),
       authorPrompt: settingImprovementPromptForBinding(playPreset, locale),
       playPreset,
       modelBinding: modelBinding,
-      tools: settingImprovementToolDefinitions(locale),
+      tools: settingImprovementToolDefinitions(locale, package_.gameplay),
     });
 
     return { bootstrap, playPreset };
@@ -405,10 +409,14 @@ export class SettingImprovementSession {
     ]);
     const locale = this.#locale();
     const modelBinding = host.binding();
-    const tools = settingImprovementToolDefinitions(locale);
+    const tools = settingImprovementToolDefinitions(locale, package_.gameplay);
     const bootstrap = this.#compiler.compileSettingImprovement({
       contentPackageTitle: package_.title,
-      runtimeContract: settingImprovementRuntimeContract(locale),
+      gameplay: package_.gameplay,
+      runtimeContract: settingImprovementRuntimeContract(
+        locale,
+        package_.gameplay,
+      ),
       authorPrompt: settingImprovementPromptForBinding(playPreset, locale),
       playPreset,
       modelBinding,

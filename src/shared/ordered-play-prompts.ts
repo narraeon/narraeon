@@ -1,7 +1,9 @@
 import { historyUseGuidance } from "./history-use-guidance.ts";
 import type { AppLocale } from "../protocol/appPreferences.ts";
+import type { Gameplay } from "../protocol/gameplay.ts";
 import { defaultNarrationPromptForLocale } from "./default-play-prompts.ts";
 import { defaultPresetHostFilesForLocale } from "./default-preset-host.ts";
+import { tabletopPlayBody } from "./tabletop-guidance.ts";
 
 export type PromptMessageRole = "system" | "user" | "assistant";
 
@@ -11,8 +13,18 @@ export function isPromptMessageRole(
   return value === "system" || value === "user" || value === "assistant";
 }
 
+/** A prompt that compiles only for worlds or packages with this gameplay. */
+export type PromptGameplayScope = "tabletop";
+
 export type OrderedPlayPrompt = { messageRole?: PromptMessageRole } & (
-  | { id: string; kind: "user"; name: string; enabled: boolean; body: string }
+  | {
+      id: string;
+      kind: "user";
+      name: string;
+      enabled: boolean;
+      body: string;
+      gameplay?: PromptGameplayScope;
+    }
   | { id: string; kind: "builtin"; builtin: string; enabled: boolean }
   | { id: string; kind: "world" }
 );
@@ -22,6 +34,30 @@ export interface BuiltinPlayPrompt {
   name: string;
   body: string;
   required: boolean;
+  /** Tabletop-scoped builtins are skipped for interactive fiction. */
+  gameplay?: PromptGameplayScope;
+}
+
+/**
+ * Unscoped prompts always apply. A scoped prompt applies only when the compiled
+ * world or package is tabletop, so fiction requests never see it.
+ */
+export function promptScopeApplies(
+  scope: PromptGameplayScope | undefined,
+  gameplay: Gameplay,
+): boolean {
+  return scope === undefined || gameplay.mode === "tabletop";
+}
+
+/** The scope of an ordered entry: a user entry's own scope or its builtin's. */
+export function orderedPromptScope(
+  entry: OrderedPlayPrompt,
+  catalog: readonly BuiltinPlayPrompt[],
+): PromptGameplayScope | undefined {
+  if (entry.kind === "user") return entry.gameplay;
+  if (entry.kind === "builtin")
+    return catalog.find((item) => item.id === entry.builtin)?.gameplay;
+  return undefined;
 }
 
 /** Application-owned references. Persist references; freeze resolved text in requests. */
@@ -87,6 +123,13 @@ ${historyUseGuidance(locale)}`,
         body,
         required: false,
       })),
+    {
+      id: "play.tabletop",
+      name: zh ? "跑团主持" : "Tabletop GM",
+      body: tabletopPlayBody(locale),
+      required: false,
+      gameplay: "tabletop",
+    },
   ];
 }
 

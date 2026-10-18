@@ -6,7 +6,9 @@ import {
 import { useState, type ReactNode } from "react";
 import {
   builtinPlayPrompts,
+  orderedPromptScope,
   type OrderedPlayPrompt,
+  type PromptGameplayScope,
   type PromptMessageRole,
   isPromptMessageRole,
 } from "../shared/ordered-play-prompts.ts";
@@ -69,10 +71,20 @@ export function OrderedPlayPromptEditor({
       entries.map((current) => (current.id === entry.id ? entry : current)),
     );
   }
+  /** A user entry's tabletop scope is a property of the entry, not of its text. */
+  function withScope(
+    entry: Extract<OrderedPlayPrompt, { kind: "user" }>,
+    scope: PromptGameplayScope | undefined,
+  ): OrderedPlayPrompt {
+    const next = { ...entry };
+    delete next.gameplay;
+    return scope === undefined ? next : { ...next, gameplay: scope };
+  }
   function add(
     body = "",
     title = t("New prompt", "新提示词"),
     messageRole: PromptMessageRole = "system",
+    gameplay?: PromptGameplayScope,
   ) {
     const entry: OrderedPlayPrompt = {
       id: browserUUID(),
@@ -81,6 +93,7 @@ export function OrderedPlayPromptEditor({
       enabled: true,
       body,
       messageRole,
+      ...(gameplay === undefined ? {} : { gameplay }),
     };
     const next = [...entries];
     next.splice(index + 1, 0, entry);
@@ -168,6 +181,10 @@ export function OrderedPlayPromptEditor({
                     }
                   />
                 )}
+                {entry.kind !== "world" &&
+                  orderedPromptScope(entry, catalog) !== undefined && (
+                    <small>{t("Tabletop only", "仅跑团")}</small>
+                  )}
                 {entry.kind !== "world" && !entry.enabled && (
                   <small>{t("Disabled", "已停用")}</small>
                 )}
@@ -222,6 +239,7 @@ export function OrderedPlayPromptEditor({
                             : builtin!.body,
                           `${name(selected)} ${t("copy", "副本")}`,
                           selected.messageRole ?? "system",
+                          orderedPromptScope(selected, catalog),
                         )
                       }
                     >
@@ -263,6 +281,23 @@ export function OrderedPlayPromptEditor({
                     <option value="assistant">Assistant</option>
                   </select>
                 </label>
+                {selected.kind === "user" && (
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={selected.gameplay === "tabletop"}
+                      onChange={(event) =>
+                        update(
+                          withScope(
+                            selected,
+                            event.target.checked ? "tabletop" : undefined,
+                          ),
+                        )
+                      }
+                    />
+                    {t("Tabletop worlds only", "仅跑团世界生效")}
+                  </label>
+                )}
                 {selected.kind !== "world" && (
                   <label>
                     {t("Prompt name", "提示词名称")}
