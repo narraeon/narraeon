@@ -437,7 +437,7 @@ const englishMessages: Record<string, string> = {
     "Inspect real roles, material, tools, budgets, and cache boundaries.",
   模型已就绪: "Model ready",
   需要模型连接: "Model connection required",
-  新建内容包: "Create content package",
+  新建内容包: "New content package",
   待修复: "Needs repair",
   "可编辑、预览并创建新世界": "Ready to edit, preview, and create a world",
   打开并修复当前树中的问题: "Open and repair issues in the current tree",
@@ -2025,6 +2025,84 @@ const dynamicEnglishMessages: Record<string, string> = {
     "Cache-read and cache-write tokens are components of input. Reasoning tokens are already included in output tokens and must not be added twice.",
 };
 
+const tabletopEnglishMessages: Record<string, string> = {
+  "d20 {mode} {dice} 取 {die}": "d20 {mode} {dice} keep {die}",
+  奖励骰取较低的十位: "Bonus dice keep the lower tens",
+  惩罚骰取较高的十位: "Penalty dice keep the higher tens",
+  奖励骰: "Bonus dice",
+  惩罚骰: "Penalty dice",
+  "抽到 {token}": "Drew {token}",
+  抽到特殊标记: "Drew a special token",
+  特殊标记: "Special token",
+  默认混乱袋: "Default chaos bag",
+  世界混乱袋: "World chaos bag",
+  行动: "Action",
+  修正: "Modifier",
+  难度: "Difficulty",
+  掷骰方式: "Roll mode",
+  掷出的骰: "Dice rolled",
+  采用的骰: "Die used",
+  总值: "Total",
+  "差值（总值 − 难度）": "Margin (total − difficulty)",
+  结果: "Result",
+  目标值: "Target",
+  个位: "Units",
+  十位骰: "Tens dice",
+  候选值: "Candidates",
+  选取: "Selection",
+  采用的结果: "Result used",
+  "余量（目标值 − 结果）": "Headroom (target − result)",
+  属性值: "Value",
+  袋子: "Bag",
+  抽到: "Drew",
+  效果: "Effect",
+  骰子: "Dice",
+  左值: "Left operand",
+  运算: "Operation",
+  右值: "Right operand",
+  失败: "Failure",
+  大成功: "Critical success",
+  大失败: "Critical failure",
+  普通: "Normal",
+  优势: "Advantage",
+  劣势: "Disadvantage",
+  加: "Add",
+  减: "Subtract",
+  乘: "Multiply",
+  除: "Divide",
+  判定结果: "Resolution result",
+  标记: "Token",
+  数量: "Count",
+  本次使用的混乱袋: "Chaos bag used for this check",
+  玩法: "Gameplay",
+  互动式小说: "Interactive fiction",
+  跑团: "Tabletop",
+  判定方案: "Resolution scheme",
+  混乱袋: "Chaos bag",
+  创建: "Create",
+  "内容包的玩法在创建时确定，之后不能切换。":
+    "A content package's gameplay is fixed when it is created and cannot be switched later.",
+  "默认方案。掷一颗个位骰，可加奖励骰或惩罚骰；结果不高于目标值即成功。":
+    "Default. Roll one units die, with optional bonus or penalty tens dice; a result at or under the target succeeds.",
+  "掷一颗 d20 加修正，总值不低于难度即成功；可掷优势或劣势。":
+    "Roll one d20 plus a modifier; a total at or above the difficulty succeeds. Advantage and disadvantage are available.",
+  "从混乱袋抽一枚标记；数值标记加修正后与难度比较，特殊标记直接决定大成功或大失败。":
+    "Draw one token from the chaos bag. A numeric token adds its modifier and is compared with the difficulty; a special token decides a critical result directly.",
+  内容包创建失败: "The content package could not be created",
+  "正在创建内容包…": "Creating content package\u2026",
+  "玩法模式在创建时固定，不能在互动式小说与跑团之间切换。":
+    "The gameplay mode is fixed when the package is created. It cannot switch between interactive fiction and tabletop.",
+  "已有世界保持创建时的判定方案；修改只影响之后从这份内容包新建的世界。":
+    "Existing worlds keep the scheme they were created with. A change applies only to worlds created from this package afterwards.",
+  "判定方案已保存；已有世界保持原方案。":
+    "Resolution scheme saved. Existing worlds keep their scheme.",
+  "世界玩法身份，修订中保持不变":
+    "World gameplay identity; it stays unchanged during revision",
+  "内容包玩法身份，只能修改跑团判定方案":
+    "Package gameplay identity; only a tabletop resolution scheme can change",
+};
+
+Object.assign(englishMessages, tabletopEnglishMessages);
 Object.assign(englishMessages, dynamicEnglishMessages);
 
 export function setWebLocale(locale: AppLocale): void {

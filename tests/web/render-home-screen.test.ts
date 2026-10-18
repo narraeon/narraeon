@@ -33,14 +33,22 @@ describe("世界工作区主页", () => {
             localId: "package-ready",
             title: "雾港来信",
             status: "usable" as const,
+            gameplay: { mode: "interactive-fiction" },
           },
           {
             localId: "package-repair",
             title: "旧塔草稿",
             status: "needs_repair" as const,
+            gameplay: { mode: "interactive-fiction" },
           },
         ],
-        worlds: [{ worldId: "world-1", title: "雾港第一夜" }],
+        worlds: [
+          {
+            worldId: "world-1",
+            title: "雾港第一夜",
+            gameplay: { mode: "interactive-fiction" },
+          },
+        ],
         selectedPackageId: "package-ready",
         modelConfigured: true,
         activeModelName: "本地主持模型",
@@ -129,7 +137,13 @@ describe("世界工作区主页", () => {
     render(
       createElement(HomeScreen, {
         contentPackages: [],
-        worlds: [{ worldId: "world-1", title: "雾港第一夜" }],
+        worlds: [
+          {
+            worldId: "world-1",
+            title: "雾港第一夜",
+            gameplay: { mode: "interactive-fiction" },
+          },
+        ],
         selectedPackageId: "",
         modelConfigured: true,
         activeModelName: "本地主持模型",
@@ -158,7 +172,11 @@ describe("世界工作区主页", () => {
     fireEvent.click(screen.getByRole("button", { name: "保存世界名称" }));
 
     expect(onRenameWorld).toHaveBeenCalledWith(
-      { worldId: "world-1", title: "雾港第一夜" },
+      {
+        worldId: "world-1",
+        title: "雾港第一夜",
+        gameplay: { mode: "interactive-fiction" },
+      },
       "雾港第二夜",
     );
     expect(onOpenWorld).not.toHaveBeenCalled();
@@ -182,7 +200,13 @@ describe("世界工作区主页", () => {
           preferences: { locale: "zh-CN" },
           contentPackages: [],
           playPresets: { currentPresetId: "", presets: [] },
-          worlds: [{ worldId: "world-1", title: worldTitle }],
+          worlds: [
+            {
+              worldId: "world-1",
+              title: worldTitle,
+              gameplay: { mode: "interactive-fiction" },
+            },
+          ],
           storageNotices: [],
           model: {
             configured: false,
@@ -243,8 +267,18 @@ describe("世界工作区主页", () => {
 
   test("主页按条目身份改名和删除内容包，取消删除不写入 Runtime", async () => {
     let packages = [
-      { localId: "package-first", title: "第一份", status: "usable" },
-      { localId: "package-target", title: "待改名", status: "needs_repair" },
+      {
+        localId: "package-first",
+        title: "第一份",
+        status: "usable",
+        gameplay: { mode: "interactive-fiction" },
+      },
+      {
+        localId: "package-target",
+        title: "待改名",
+        status: "needs_repair",
+        gameplay: { mode: "interactive-fiction" },
+      },
     ];
     const request = vi.fn(async (input: V1Request): Promise<unknown> => {
       await Promise.resolve();

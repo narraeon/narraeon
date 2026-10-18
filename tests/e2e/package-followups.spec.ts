@@ -131,6 +131,10 @@ test("普通作者编辑包后置请求后创建世界，经真实 Runtime 派�
     await page.reload();
     await page.getByRole("button", { name: "新建内容包", exact: true }).click();
     await page
+      .getByRole("dialog", { name: "新建内容包" })
+      .getByRole("button", { name: "创建", exact: true })
+      .click();
+    await page
       .getByRole("navigation", { name: "设定完善工具" })
       .getByRole("button", { name: "编辑", exact: true })
       .click();
