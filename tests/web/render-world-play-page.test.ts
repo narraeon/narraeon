@@ -1722,6 +1722,95 @@ describe("世界游玩页面", () => {
     expect(details?.open).toBe(true);
   });
 
+  test("判定工具结果在故事中显示卡片，普通工具结果与判定轨迹仍只在调用详情中", async () => {
+    const chain = playChainView(
+      "play-chain-resolution",
+      "exchange-resolution",
+      "我推开石门。",
+    );
+    chain.parentHead = "commit:4";
+    chain.events = [
+      chain.events[0]!,
+      {
+        id: 2,
+        kind: "tool_call",
+        callId: "door-check",
+        name: "d20_check",
+        arguments: { goal: "推开石门", modifier: 3, difficulty: 15 },
+        replayed: false,
+      },
+      {
+        id: 3,
+        kind: "tool_result",
+        callId: "door-check",
+        name: "d20_check",
+        ok: true,
+        markdown: "d20 14 + 3 = 17",
+        replayed: false,
+        resolution: {
+          kind: "d20",
+          goal: "推开石门",
+          modifier: 3,
+          difficulty: 15,
+          mode: "normal",
+          dice: [14],
+          selected: 14,
+          total: 17,
+          margin: 2,
+          outcome: "success",
+        },
+      },
+      {
+        id: 4,
+        kind: "tool_result",
+        callId: "patch-tool",
+        name: "world_patch",
+        ok: true,
+        markdown: "@current-situation write succeeded",
+        replayed: false,
+      },
+      {
+        id: 5,
+        kind: "assistant",
+        text: "石门缓缓打开。",
+        status: "completed",
+        responseKind: "narrative",
+        exchange: 1,
+        attempt: 1,
+        committedHead: "commit:5",
+      },
+    ];
+    const client = {
+      request: vi.fn(<T>(request: V1Request) => {
+        if (request.type === "world.read")
+          return Promise.resolve(worldView(chain) as T);
+        if (request.type === "artifacts.debug") return Promise.resolve([] as T);
+        if (request.type === "play.chain.inspect")
+          return Promise.resolve(chain as T);
+        return Promise.reject(new Error(`Unexpected request: ${request.type}`));
+      }),
+    };
+
+    renderWorld(client);
+    await screen.findByRole("heading", { name: "宿舍世界" });
+    const timeline = screen.getByLabelText("模型调用链");
+    const card = within(timeline).getByRole("article", { name: "判定结果" });
+    expect(card.textContent).toContain(
+      "推开石门 · d20 14 + 3 = 17 ≥ 15 · 成功",
+    );
+    expect(card.closest(".world-timeline-trace")).toBeNull();
+    expect(card.closest(".call-chain-resolution")).not.toBeNull();
+
+    const trace = timeline.querySelector(".world-timeline-trace-events");
+    expect(trace).not.toBeNull();
+    expect(
+      within(trace as HTMLElement).getByText("world_patch 返回"),
+    ).toBeTruthy();
+    expect(
+      within(trace as HTMLElement).getByText("d20_check 返回"),
+    ).toBeTruthy();
+  });
+
   test("模型流式输出只更新内容，不反复把页面定位到底部", async () => {
     const scrollDescriptor = Object.getOwnPropertyDescriptor(
       Element.prototype,

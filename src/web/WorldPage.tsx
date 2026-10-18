@@ -58,6 +58,7 @@ import {
 import { projectUncoveredPlayerViews } from "./PlayerViewFallback.ts";
 import { ModelUsageBreakdown } from "./ModelUsageBreakdown.tsx";
 import { PlayRunProgress } from "./PlayRunProgress.tsx";
+import { ResolutionCard } from "./ResolutionCard.tsx";
 import { SettingImprovementPanel } from "./SettingImprovementPanel.tsx";
 import {
   activePlayExchangeId,
@@ -2068,6 +2069,8 @@ function timelineEventBelongsInStory(
   )
     return true;
   if (event.kind === "followup") return event.failed;
+  // Only tabletop resolutions are story material; other tool results stay in the trace.
+  if (event.kind === "tool_result") return event.resolution !== undefined;
   if (event.kind !== "assistant") return false;
   return (
     event.status === "streaming" || assistantResponseKind(event) === "narrative"
@@ -2463,6 +2466,17 @@ function TimelineEvent({
       </li>
     );
   }
+
+  if (
+    event.kind === "tool_result" &&
+    presentation === "story" &&
+    event.resolution !== undefined
+  )
+    return (
+      <li className="call-chain-resolution">
+        <ResolutionCard receipt={event.resolution} />
+      </li>
+    );
 
   if (event.kind === "tool_result") {
     const full = detail?.kind === "tool_result" ? detail : null;
