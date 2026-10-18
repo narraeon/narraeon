@@ -55,6 +55,13 @@ test("portable ordered play preserves identities, disabled text, and protects re
         enabled: false,
         body: "Retain this text",
       },
+      // A released ordered preset gains the tabletop builtin on import.
+      {
+        id: "play.tabletop",
+        kind: "builtin",
+        builtin: "play.tabletop",
+        enabled: true,
+      },
       { id: "world", kind: "world" },
       { id: "mechanics", builtin: "play.mechanics", enabled: true },
     ],
