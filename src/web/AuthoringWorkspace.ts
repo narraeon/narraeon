@@ -89,6 +89,13 @@ export class AuthoringWorkspace {
         : {}),
     });
   }
+  /** Re-reads the saved package after a change made outside the file editor. */
+  async refresh(): Promise<void> {
+    if (!this.active || this.state.applying || this.state.dirty) return;
+    const valid = this.current();
+    const next = await this.target.read();
+    if (valid()) this.accept(next);
+  }
   async open(): Promise<void> {
     this.close();
     this.active = true;

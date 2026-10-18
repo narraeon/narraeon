@@ -1,15 +1,18 @@
+import { gameplayLabel, type Gameplay } from "../protocol/gameplay.ts";
 import { getWebLocale, uiText } from "./i18n.ts";
 import { useState } from "react";
 
 interface HomeContentPackage {
   localId: string;
   title: string;
+  gameplay: Gameplay;
   status: "usable" | "needs_repair";
 }
 
 interface HomeWorld {
   worldId: string;
   title: string;
+  gameplay: Gameplay;
 }
 
 export function HomeScreen({
@@ -107,7 +110,12 @@ export function HomeScreen({
                     disabled={importPending}
                     onClick={() => onOpenWorld(world.worldId)}
                   >
-                    <strong>{world.title}</strong>
+                    <span className="home-world-card-main">
+                      <strong>{world.title}</strong>
+                      <small className="home-world-card-gameplay">
+                        {gameplayLabel(world.gameplay, getWebLocale())}
+                      </small>
+                    </span>
                     <span className="home-world-card-action">
                       {uiText("进入世界")}
                       <span aria-hidden="true">→</span>
@@ -250,6 +258,9 @@ export function HomeScreen({
                               ? uiText("可用")
                               : uiText("待修复")}
                           </span>
+                        </span>
+                        <span className="home-package-card-gameplay">
+                          {gameplayLabel(item.gameplay, getWebLocale())}
                         </span>
                         <span className="home-package-card-copy">
                           {item.status === "usable"

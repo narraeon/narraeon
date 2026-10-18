@@ -285,10 +285,10 @@ describe("内容包玩法 V1 请求", () => {
       ],
     });
     await expect(rejected).rejects.toBeInstanceOf(V1ProtocolError);
-    await expect(rejected).rejects.toMatchObject({
-      code: "invalid_request",
-      message: expect.stringMatching(/Gameplay mode is fixed.*玩法模式不能/su),
-    });
+    await expect(rejected).rejects.toMatchObject({ code: "invalid_request" });
+    await expect(rejected).rejects.toThrow(
+      /Gameplay mode is fixed.*玩法模式不能/su,
+    );
     expect(
       (await call(runtime, {
         type: "content.read",

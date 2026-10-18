@@ -2,6 +2,7 @@ import { AuthoringPromptPreview } from "./AuthoringPromptPreview.tsx";
 import { useConversationComposer } from "./useConversationComposer.ts";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import type { Gameplay, ResolutionScheme } from "../protocol/gameplay.ts";
 import type {
   ContentTreeFile,
   V1SettingConversationExchange,
@@ -19,6 +20,7 @@ import {
   type ContentTreeEditorProps,
 } from "./ContentTreeEditor.tsx";
 import { ModelUsageBreakdown } from "./ModelUsageBreakdown.tsx";
+import { PackageGameplaySection } from "./PackageGameplaySection.tsx";
 import { getWebLocale, uiText } from "./i18n.ts";
 import { UnifiedTextDiff } from "./UnifiedTextDiff.tsx";
 
@@ -53,6 +55,10 @@ interface SettingImprovementPanelProps {
   showWorkspaceBack?: boolean;
   onCreateWorld?: () => void;
   onNavigationLockChange?: (locked: boolean) => void;
+  packageGameplay?: {
+    gameplay: Gameplay;
+    onChangeScheme: (scheme: ResolutionScheme) => Promise<void>;
+  };
   revisionActions?: {
     active?: boolean;
     changedFileCount: number;
@@ -92,6 +98,7 @@ export function SettingImprovementPanel({
   showWorkspaceBack = true,
   onCreateWorld,
   onNavigationLockChange,
+  packageGameplay,
   revisionActions,
 }: SettingImprovementPanelProps): React.JSX.Element {
   const [message, setMessage] = useState("");
@@ -367,6 +374,14 @@ export function SettingImprovementPanel({
                       )}
                 </p>
               </header>
+            )}
+
+            {packageGameplay === undefined ? null : (
+              <PackageGameplaySection
+                gameplay={packageGameplay.gameplay}
+                disabled={interactionLocked || hasUnsavedFileDraft || loading}
+                onChangeScheme={packageGameplay.onChangeScheme}
+              />
             )}
 
             {notice.length === 0 ? null : (

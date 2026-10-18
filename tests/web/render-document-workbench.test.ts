@@ -39,7 +39,7 @@ describe("文档工作区与玩法文件", () => {
 
     expect(screen.queryByRole("alert")).toBeNull();
     const editor = screen.getByLabelText("编辑 control/gameplay.json");
-    expect((editor as HTMLTextAreaElement).readOnly).toBe(false);
+    expect(editor.getAttribute("readonly")).toBeNull();
     expect(
       screen.getByText("内容包玩法身份，只能修改跑团判定方案"),
     ).toBeTruthy();
@@ -92,10 +92,8 @@ describe("文档工作区与玩法文件", () => {
       }),
     );
 
-    const editor = screen.getByLabelText(
-      "编辑 control/gameplay.json",
-    ) as HTMLTextAreaElement;
-    expect(editor.readOnly).toBe(true);
+    const editor = screen.getByLabelText("编辑 control/gameplay.json");
+    expect(editor.getAttribute("readonly")).not.toBeNull();
     expect(screen.getByText("世界玩法身份，修订中保持不变")).toBeTruthy();
     expect(screen.queryByRole("alert")).toBeNull();
   });

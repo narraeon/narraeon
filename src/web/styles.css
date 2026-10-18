@@ -9746,3 +9746,157 @@ summary:focus-visible {
 .world-extension-child {
   margin-inline-start: 1rem;
 }
+
+/* Creation dialog: the mode is always chosen; the scheme appears only for tabletop. */
+.create-package-dialog {
+  width: min(34rem, calc(100% - 2rem));
+  max-height: calc(100dvh - 2rem);
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: 0 8px 30px rgb(37 49 59 / 10%);
+}
+
+.create-package-dialog::backdrop {
+  background: rgb(37 49 59 / 18%);
+}
+
+.create-package-form {
+  display: grid;
+  gap: 1rem;
+  padding: 1.25rem 1.4rem;
+}
+
+.create-package-form header h2 {
+  margin: 0;
+  font-family: Georgia, "Noto Serif SC", serif;
+  font-size: 1.35rem;
+}
+
+.create-package-form header p,
+.create-package-choices legend {
+  margin: 0.3rem 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.create-package-choices {
+  display: grid;
+  gap: 0.55rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.create-package-choices legend {
+  margin: 0 0 0.25rem;
+  color: var(--text);
+  font-weight: 650;
+}
+
+.create-package-choice-block {
+  display: grid;
+  gap: 0.2rem;
+  padding-left: 1.45rem;
+}
+
+.create-package-choice-block .field-note,
+.create-package-choices .field-note {
+  margin: 0;
+}
+
+.create-package-choice {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 32px;
+  cursor: pointer;
+}
+
+.create-package-failure {
+  margin: 0;
+  color: var(--danger);
+}
+
+.create-package-form footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+}
+
+/* Gameplay identity on the package page: read-only mode, optional tabletop scheme. */
+.package-gameplay {
+  display: grid;
+  gap: 0.55rem;
+  max-width: 52rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--surface-muted);
+}
+
+.package-gameplay header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.package-gameplay h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.package-gameplay-mode {
+  font-size: 0.95rem;
+  font-weight: 650;
+}
+
+.package-gameplay .field-note {
+  margin: 0;
+}
+
+.package-gameplay-scheme {
+  display: grid;
+  gap: 0.45rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.package-gameplay-scheme legend {
+  margin-bottom: 0.2rem;
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 650;
+}
+
+.package-gameplay-choice {
+  display: grid;
+  gap: 0.15rem;
+  padding-left: 1.45rem;
+}
+
+.package-gameplay-choice label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 28px;
+  cursor: pointer;
+}
+
+.package-gameplay-choice .field-note {
+  margin: 0;
+}
+
+.prompt-preview-gameplay,
+.create-world-gameplay {
+  margin: 0.35rem 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
