@@ -1,3 +1,4 @@
+import { gameplayPath, readGameplay } from "../../protocol/gameplay.ts";
 import { readPackageFollowups } from "./PackageFollowups.ts";
 import { parseDocument } from "yaml";
 
@@ -10,6 +11,7 @@ import {
 } from "../world/WorldDocumentStore.ts";
 
 export type FileNativeContentIssueCode =
+  | "invalid_gameplay"
   | "invalid_package_followups"
   | "binary_world_file"
   | "dangling_reference"
@@ -131,7 +133,7 @@ export function inspectContentPackageCurrentTree(
 
   const unsupportedPaths = new Set<string>();
   for (const file of snapshotFiles) {
-    if (/\.json$/iu.test(file.path)) {
+    if (/\.json$/iu.test(file.path) && file.path !== gameplayPath) {
       unsupportedPaths.add(file.path);
       issue(
         issues,
@@ -264,6 +266,17 @@ export function inspectContentPackageCurrentTree(
           `${formatProblems.length - maxReportedPlayerViewProblems} more player-view issues were omitted`,
         );
     }
+  }
+
+  try {
+    readGameplay(snapshotFiles);
+  } catch (error) {
+    issue(
+      issues,
+      "invalid_gameplay",
+      gameplayPath,
+      error instanceof Error ? error.message : "Invalid gameplay",
+    );
   }
 
   try {
