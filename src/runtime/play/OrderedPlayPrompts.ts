@@ -40,22 +40,28 @@ export function parseOrderedPlayPrompts(
       return fail();
     const messageRole =
       item.messageRole === undefined ? {} : { messageRole: item.messageRole };
-    const exact = (keys: string[]) =>
-      Object.keys(item).length ===
-        keys.length + (item.messageRole === undefined ? 0 : 1) &&
-      keys.every((key) => Object.hasOwn(item, key));
+    const exact = (keys: string[], optional: string[] = []) =>
+      Object.keys(item).every(
+        (key) =>
+          keys.includes(key) ||
+          optional.includes(key) ||
+          key === "messageRole" ||
+          key === "id" ||
+          key === "kind",
+      ) && keys.every((key) => Object.hasOwn(item, key));
     if (item.kind === "world" && exact(["id", "kind"])) {
       worlds++;
       return { id: item.id, kind: "world", ...messageRole };
     }
     if (
       item.kind === "user" &&
-      exact(["id", "kind", "name", "enabled", "body"]) &&
+      exact(["id", "kind", "name", "enabled", "body"], ["gameplay"]) &&
       typeof item.name === "string" &&
       item.name.trim().length > 0 &&
       /^[^\r\n\0]{1,160}$/u.test(item.name) &&
       typeof item.body === "string" &&
-      typeof item.enabled === "boolean"
+      typeof item.enabled === "boolean" &&
+      (item.gameplay === undefined || item.gameplay === "tabletop")
     )
       return {
         id: item.id,
@@ -64,6 +70,9 @@ export function parseOrderedPlayPrompts(
         enabled: item.enabled,
         body: item.body,
         ...messageRole,
+        ...(item.gameplay === "tabletop"
+          ? { gameplay: "tabletop" as const }
+          : {}),
       };
     const builtin = catalog.find((entry) => entry.id === item.builtin);
     if (
@@ -221,5 +230,13 @@ export function migrateLegacyPlayPrompts(
       path.endsWith(".md")
     )
       add(path, false);
+  // The tabletop builtin joins converted presets just before the world placeholder.
+  const worldIndex = entries.findIndex((entry) => entry.kind === "world");
+  entries.splice(worldIndex, 0, {
+    id: "play.tabletop",
+    kind: "builtin",
+    builtin: "play.tabletop",
+    enabled: true,
+  });
   return entries;
 }

@@ -1,5 +1,6 @@
 import type { AppLocale } from "../protocol/appPreferences.ts";
 import { defaultSettingImprovementPromptForLocale } from "./default-setting-improvement-prompt.ts";
+import { tabletopAuthorBody } from "./tabletop-guidance.ts";
 import type {
   BuiltinPlayPrompt,
   OrderedPlayPrompt,
@@ -22,6 +23,13 @@ export function builtinAuthorPrompts(locale: AppLocale): BuiltinPlayPrompt[] {
       name: zh ? "创作建议" : "Authoring guidance",
       required: false,
       body: defaultSettingImprovementPromptForLocale(locale),
+    },
+    {
+      id: "author.tabletop",
+      name: zh ? "跑团创作建议" : "Tabletop authoring guidance",
+      required: false,
+      body: tabletopAuthorBody(locale),
+      gameplay: "tabletop",
     },
     {
       id: "author.target",

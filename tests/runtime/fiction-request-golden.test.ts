@@ -116,6 +116,7 @@ function computeDigests(): Record<string, string> {
     }).modelBinding;
     digests[`setting/${locale}`] = digest(
       compiler.compileSettingImprovement({
+        gameplay: { mode: "interactive-fiction" },
         contentPackageTitle: "Golden package",
         runtimeContract: settingImprovementRuntimeContract(locale),
         authorPrompt: "golden author prompt",
@@ -126,6 +127,7 @@ function computeDigests(): Record<string, string> {
     );
     digests[`revision/${locale}`] = digest(
       compiler.compileWorldRevision({
+        gameplay: { mode: "interactive-fiction" },
         worldTitle: "Golden world",
         epoch: { id: "epoch-golden", baseHead: "head-golden" },
         runtimeContract: settingImprovementRuntimeContract(locale),

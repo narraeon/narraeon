@@ -23,6 +23,8 @@ import {
 import {
   type PromptMessageRole,
   builtinPlayPrompts,
+  orderedPromptScope,
+  promptScopeApplies,
 } from "../../shared/ordered-play-prompts.ts";
 import { parseOrderedPlayPrompts } from "../play/OrderedPlayPrompts.ts";
 import { renderDocumentWritePosition } from "./WorldMaintenanceReport.ts";
@@ -74,8 +76,11 @@ import {
   type RuntimeToolDefinitionStrategy,
 } from "./FileNativeToolRegistry.ts";
 import { resolutionToolNames } from "../play/TabletopResolution.ts";
-import { readGameplay } from "../../protocol/gameplay.ts";
-import { tabletopWorldRulesBlock } from "../play/TabletopRules.ts";
+import { readGameplay, type Gameplay } from "../../protocol/gameplay.ts";
+import {
+  tabletopAuthoringRulesBlock,
+  tabletopWorldRulesBlock,
+} from "../play/TabletopRules.ts";
 import type {
   PlayPresetBinding,
   PlayPresetFollowupDefinition,
@@ -198,6 +203,8 @@ export interface PromptCompilation {
 
 export interface SettingImprovementPromptInput {
   contentPackageTitle: string;
+  /** The package's gameplay; a tabletop package states its scheme in the author target. */
+  gameplay: Gameplay;
   runtimeContract: string;
   authorPrompt: string;
   playPreset: PlayPresetBinding;
@@ -208,6 +215,8 @@ export interface SettingImprovementPromptInput {
 export interface WorldRevisionPromptInput {
   worldTitle: string;
   epoch?: { id: string; baseHead: string };
+  /** The world's fixed gameplay, stated in the author target for tabletop worlds. */
+  gameplay: Gameplay;
   runtimeContract: string;
   authorPrompt: string;
   playPreset: PlayPresetBinding;
@@ -220,6 +229,7 @@ interface AuthoringConversationPromptInput {
   identity: { source: string; markdown: string };
   boundary: { source: string; markdown: string };
   runtimeSource: string;
+  gameplay: Gameplay;
   runtimeContract: string;
   authorPrompt: string;
   playPreset: PlayPresetBinding;
@@ -445,6 +455,7 @@ export class FileNativePromptCompiler {
       },
       runtimeSource: "runtime:builtin/setting-improvement",
       target: "setting",
+      gameplay: input.gameplay,
       runtimeContract: input.runtimeContract,
       authorPrompt: input.authorPrompt,
       playPreset: input.playPreset,
@@ -477,6 +488,7 @@ export class FileNativePromptCompiler {
       },
       runtimeSource: "runtime:builtin/world-revision",
       target: "world-revision",
+      gameplay: input.gameplay,
       runtimeContract: input.runtimeContract,
       authorPrompt: input.authorPrompt,
       playPreset: input.playPreset,
@@ -493,6 +505,7 @@ export class FileNativePromptCompiler {
       input.playPreset,
       this.#locale,
       input.target,
+      input.gameplay,
     );
     const logicalMessages: PromptCompilation["logicalMessages"] = [];
     const ordered =
@@ -503,6 +516,10 @@ export class FileNativePromptCompiler {
 
     for (const entry of ordered) {
       if (entry.kind === "world" || !entry.enabled) continue;
+      if (
+        !promptScopeApplies(orderedPromptScope(entry, catalog), input.gameplay)
+      )
+        continue;
       const builtin =
         entry.kind === "builtin"
           ? catalog.find((item) => item.id === entry.builtin)!
@@ -521,7 +538,19 @@ export class FileNativePromptCompiler {
           },
         ];
       if (builtin?.id === "author.target")
-        blocks = [input.identity, input.boundary];
+        blocks = [
+          input.identity,
+          input.boundary,
+          ...(input.gameplay.mode === "tabletop"
+            ? [
+                tabletopAuthoringRulesBlock(
+                  input.gameplay,
+                  input.target,
+                  this.#locale,
+                ),
+              ]
+            : []),
+        ];
       if (builtin?.id === "author.play-reference")
         blocks = [
           {
@@ -975,9 +1004,14 @@ export class FileNativePromptCompiler {
           ...prompt,
         });
     };
+    const playCatalog = builtinPlayPrompts(this.#locale);
+    const gameplay = playGameplay(effective.world.documentSnapshot);
     for (const entry of parseOrderedPlayPrompts(
       binding.definition.playPrompts,
     )) {
+      // A scoped entry is absent from the request, not an empty message.
+      if (!promptScopeApplies(orderedPromptScope(entry, playCatalog), gameplay))
+        continue;
       prompt = {
         messageRole: entry.messageRole ?? "system",
         promptId: entry.id,
@@ -1376,6 +1410,7 @@ function settingImprovementPresetReference(
   binding: PlayPresetBinding,
   locale: AppLocale,
   target: AuthoringConversationPromptInput["target"],
+  gameplay: Gameplay,
 ): string {
   const revision = target === "world-revision";
   const worldInstructionPlaceholder = {
@@ -1411,6 +1446,13 @@ function settingImprovementPresetReference(
               },
             ];
           if (!entry.enabled) return [];
+          if (
+            !promptScopeApplies(
+              orderedPromptScope(entry, builtinPlayPrompts(locale)),
+              gameplay,
+            )
+          )
+            return [];
           if (entry.kind === "user")
             return [
               { source: `preset:prompt/${entry.id}`, markdown: entry.body },

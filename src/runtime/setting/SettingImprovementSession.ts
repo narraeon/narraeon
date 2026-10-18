@@ -374,6 +374,7 @@ export class SettingImprovementSession {
       await this.#content.readCurrentTreeContentPackage(packageId);
     const bootstrap = this.#compiler.compileSettingImprovement({
       contentPackageTitle: package_.title,
+      gameplay: package_.gameplay,
       runtimeContract: settingImprovementRuntimeContract(locale),
       authorPrompt: settingImprovementPromptForBinding(playPreset, locale),
       playPreset,
@@ -408,6 +409,7 @@ export class SettingImprovementSession {
     const tools = settingImprovementToolDefinitions(locale);
     const bootstrap = this.#compiler.compileSettingImprovement({
       contentPackageTitle: package_.title,
+      gameplay: package_.gameplay,
       runtimeContract: settingImprovementRuntimeContract(locale),
       authorPrompt: settingImprovementPromptForBinding(playPreset, locale),
       playPreset,

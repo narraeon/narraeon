@@ -390,6 +390,7 @@ export class WorldRevisionSession {
         : { epoch: { id: epoch.epochId, baseHead: epoch.baseHead } }),
       worldTitle:
         worlds.find((world) => world.worldId === worldId)?.title ?? worldId,
+      gameplay: await this.#worlds.gameplay(worldId),
       runtimeContract: worldRevisionRuntimeContract(locale),
       authorPrompt: settingImprovementPromptForBinding(playPreset, locale),
       playPreset,
@@ -415,10 +416,11 @@ export class WorldRevisionSession {
     epoch: StoredWorldRevisionEpoch,
     creationRequestId: string,
   ): Promise<StoredWorldRevisionSession> {
-    const [host, playPreset, worlds] = await Promise.all([
+    const [host, playPreset, worlds, gameplay] = await Promise.all([
       this.#bindModelHost(),
       this.#bindPlayPreset(),
       this.#worlds.listWorlds(),
+      this.#worlds.gameplay(worldId),
     ]);
     const worldTitle =
       worlds.find((world) => world.worldId === worldId)?.title ?? worldId;
@@ -428,6 +430,7 @@ export class WorldRevisionSession {
     const bootstrap = this.#compiler.compileWorldRevision({
       epoch: { id: epoch.epochId, baseHead: epoch.baseHead },
       worldTitle,
+      gameplay,
       runtimeContract: worldRevisionRuntimeContract(locale),
       authorPrompt: settingImprovementPromptForBinding(playPreset, locale),
       playPreset,

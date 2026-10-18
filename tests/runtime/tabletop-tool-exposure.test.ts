@@ -164,6 +164,7 @@ describe("per-world tool exposure", () => {
     const tools = settingImprovementToolDefinitions("en");
     const input = previewInputWithGameplay({ mode: "tabletop", scheme: "d20" });
     const compiled = compiler.compileSettingImprovement({
+      gameplay: { mode: "interactive-fiction" },
       contentPackageTitle: "Authoring",
       runtimeContract: "contract",
       authorPrompt: "author",
