@@ -4,7 +4,7 @@ import {
   type NarrativeOrigin,
   type HistoryBackground,
 } from "../history/HistoryBackground.ts";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { NarrativeCheckpointDeclaration } from "./PlayContinuity.ts";
 import {
   link,
@@ -104,6 +104,13 @@ interface SettledFact {
   recordedAt: number;
 }
 
+interface ResolutionSeedFact {
+  schemaVersion: 1;
+  stage: "resolution_seed";
+  seed: string;
+  recordedAt: number;
+}
+
 interface CurrentAdvancePointer {
   schemaVersion: 1;
   worldId: string;
@@ -186,6 +193,34 @@ export class FileNativePlayAdvanceStore {
         recordedAt: durableBase.createdAt,
       } satisfies SettlementPreparedFact,
     );
+  }
+
+  /**
+   * Return the advance's secret resolution seed, creating it on first need.
+   * Recovery reads the same fact, so every tool call in the advance draws from
+   * one persisted stream and a crashed batch cannot resample.
+   */
+  async resolutionSeed(
+    base: Extract<PlayAdvanceBase, { advanceKind: "response" }>,
+  ): Promise<string> {
+    const durableBase = await this.#assertCurrent(base);
+    const path = this.#factPath(base, "resolution-seed.json");
+    if ((await readOptionalJson<unknown>(path)) === null) {
+      try {
+        await publishImmutableJson(path, {
+          schemaVersion: 1,
+          stage: "resolution_seed",
+          seed: randomBytes(32).toString("hex"),
+          recordedAt: durableBase.createdAt,
+        } satisfies ResolutionSeedFact);
+      } catch (error: unknown) {
+        // A concurrent writer may have published first; the stored fact wins.
+        if ((await readOptionalJson<unknown>(path)) === null) throw error;
+      }
+    }
+    const fact = await readJson<unknown>(path);
+    assertResolutionSeedFact(fact);
+    return fact.seed;
   }
 
   async markSettled(base: PlayAdvanceBase, head: string): Promise<void> {
@@ -283,6 +318,20 @@ function sameAdvanceBase(
   void leftCreatedAt;
   void rightCreatedAt;
   return isDeepStrictEqual(leftIdentity, rightIdentity);
+}
+
+function assertResolutionSeedFact(
+  value: unknown,
+): asserts value is ResolutionSeedFact {
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== 1 ||
+    value.stage !== "resolution_seed" ||
+    typeof value.seed !== "string" ||
+    !/^[a-f0-9]{64}$/.test(value.seed) ||
+    typeof value.recordedAt !== "number"
+  )
+    throw new Error("Invalid persisted resolution seed");
 }
 
 function assertBase(value: unknown): asserts value is PlayAdvanceBase {

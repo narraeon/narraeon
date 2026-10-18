@@ -1,3 +1,4 @@
+import type { ResolutionReceipt } from "./resolution.ts";
 import type { WorldExtensionChoice } from "./worldExtensions.ts";
 import type { WorldPromptPrefixComparison } from "./worldPromptDiagnostics.ts";
 import type { WorldPromptMaintenance } from "./worldMaintenance.ts";
@@ -666,6 +667,8 @@ export type V1PlayCallChainEvent =
   | {
       id: number;
       kind: "tool_result";
+      /** Present only for tabletop resolution tools; never a preformatted string. */
+      resolution?: ResolutionReceipt;
       callId: string;
       name: string;
       ok: boolean;

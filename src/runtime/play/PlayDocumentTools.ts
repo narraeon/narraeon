@@ -1,3 +1,4 @@
+import type { ResolutionReceipt } from "../../protocol/resolution.ts";
 import type { HistoryBackground } from "../history/HistoryBackground.ts";
 import { HistoryQuery, historyInputs } from "../history/HistoryQuery.ts";
 import { renderHistoryResult } from "../history/HistoryRendering.ts";
@@ -40,6 +41,7 @@ import {
 
 export interface PlayDocumentToolResult extends ContextToolResult {
   nextMaterials?: MaterialSelection[];
+  resolution?: ResolutionReceipt;
   /** Internal receipt settled by PlayCallChain only after Authority commits. */
   candidateWrite?: {
     shortRef: string;
