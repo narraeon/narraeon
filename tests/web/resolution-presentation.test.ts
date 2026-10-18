@@ -10,7 +10,10 @@ import type {
   DiceReceipt,
 } from "../../src/protocol/resolution.ts";
 import { setWebLocale } from "../../src/web/i18n.ts";
-import { presentResolution } from "../../src/web/resolutionPresentation.ts";
+import {
+  presentResolution,
+  type ResolutionPresentation,
+} from "../../src/web/resolutionPresentation.ts";
 
 afterEach(() => setWebLocale("zh-CN"));
 
@@ -472,5 +475,102 @@ describe("判定收据的英文展示", () => {
       const cjk = text.filter((item) => /[㐀-鿿]/u.test(item));
       expect(cjk).toEqual(receipt.kind === "bag" ? ["骷髅"] : []);
     }
+  });
+});
+
+/** The strings a player reads; the internal tone key is not displayed. */
+function displayedText(presented: ResolutionPresentation[]): string {
+  return presented
+    .flatMap((item) => [
+      item.headline,
+      ...item.facts.flatMap(({ label, value }) => [label, value]),
+      ...(item.tokens ?? []).flatMap(({ label, count, effect }) => [
+        label,
+        count,
+        effect,
+      ]),
+    ])
+    .join("\n");
+}
+
+describe("默认混乱袋的特殊标记", () => {
+  const defaultTokens: BagReceipt["tokens"] = [
+    { label: "+1", count: 1, modifier: 1 },
+    { label: "0", count: 2, modifier: 0 },
+    { label: "-1", count: 2, modifier: -1 },
+    { label: "-2", count: 1, modifier: -2 },
+    { label: "critical_success", count: 1, outcome: "critical_success" },
+    { label: "critical_failure", count: 1, outcome: "critical_failure" },
+  ];
+  const defaultSpecial = (
+    outcome: "critical_success" | "critical_failure",
+  ): BagReceipt => ({
+    kind: "bag",
+    goal: "推开石门",
+    value: 3,
+    difficulty: 2,
+    defaultBag: true,
+    tokens: defaultTokens,
+    drawn: { label: outcome, outcome },
+    outcome,
+  });
+
+  test("中文界面把默认大成功与大失败标记显示为结果词，不显示原始键", () => {
+    const success = presentResolution(defaultSpecial("critical_success"));
+    expect(success.headline).toBe("推开石门 · 抽到 大成功 · 大成功");
+    expect(success.facts).toContainEqual({ label: "抽到", value: "大成功" });
+    expect(success.tokens).toContainEqual({
+      label: "大成功",
+      count: "1",
+      effect: "大成功",
+    });
+
+    const failure = presentResolution(defaultSpecial("critical_failure"));
+    expect(failure.headline).toBe("推开石门 · 抽到 大失败 · 大失败");
+    expect(failure.tokens).toContainEqual({
+      label: "大失败",
+      count: "1",
+      effect: "大失败",
+    });
+    expect(displayedText([success, failure])).not.toContain("critical_");
+  });
+
+  test("英文界面把默认特殊标记显示为英文结果词", () => {
+    setWebLocale("en");
+    const success = presentResolution({
+      ...defaultSpecial("critical_success"),
+      goal: "Open the stone door",
+    });
+    expect(success.headline).toBe(
+      "Open the stone door · Drew Critical success · Critical success",
+    );
+    expect(success.tokens).toContainEqual({
+      label: "Critical success",
+      count: "1",
+      effect: "Critical success",
+    });
+
+    const failure = presentResolution({
+      ...defaultSpecial("critical_failure"),
+      goal: "Open the stone door",
+    });
+    expect(failure.headline).toBe(
+      "Open the stone door · Drew Critical failure · Critical failure",
+    );
+    expect(failure.tokens).toContainEqual({
+      label: "Critical failure",
+      count: "1",
+      effect: "Critical failure",
+    });
+    expect(displayedText([success, failure])).not.toContain("critical_");
+  });
+
+  test("收据保存的标记键不被修改", () => {
+    const receipt = defaultSpecial("critical_failure");
+    const before = JSON.stringify(receipt);
+    presentResolution(receipt);
+    expect(JSON.stringify(receipt)).toBe(before);
+    expect(receipt.drawn.label).toBe("critical_failure");
+    expect(receipt.tokens[5]?.label).toBe("critical_failure");
   });
 });

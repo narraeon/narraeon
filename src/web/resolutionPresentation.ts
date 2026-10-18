@@ -2,6 +2,7 @@ import type {
   ArithmeticOperation,
   ArithmeticReceipt,
   BagReceipt,
+  ResolutionCriticalOutcome,
   D100Receipt,
   D20Receipt,
   DiceReceipt,
@@ -126,8 +127,9 @@ function presentD100(receipt: D100Receipt): ResolutionPresentation {
 function presentBag(receipt: BagReceipt): ResolutionPresentation {
   const { value, difficulty, drawn, tokens, defaultBag } = receipt;
   const source = defaultBag ? uiText("默认混乱袋") : uiText("世界混乱袋");
+  const drawnLabel = bagTokenLabel(drawn);
   const tokenRows = tokens.map((token) => ({
-    label: token.label,
+    label: bagTokenLabel(token),
     count: String(token.count),
     effect:
       token.outcome === undefined
@@ -139,13 +141,13 @@ function presentBag(receipt: BagReceipt): ResolutionPresentation {
     fact("属性值", String(value)),
     fact("难度", String(difficulty)),
     fact("袋子", source),
-    fact("抽到", drawn.label),
+    fact("抽到", drawnLabel),
   ];
   if (drawn.outcome !== undefined)
     return presentation(
       receipt.goal,
       receipt.outcome,
-      [uiText("抽到 {token}", { token: drawn.label })],
+      [uiText("抽到 {token}", { token: drawnLabel })],
       [...common, fact("效果", outcomeLabel(drawn.outcome))],
       tokenRows,
     );
@@ -156,7 +158,7 @@ function presentBag(receipt: BagReceipt): ResolutionPresentation {
     receipt.goal,
     receipt.outcome,
     [
-      uiText("抽到 {token}", { token: drawn.label }),
+      uiText("抽到 {token}", { token: drawnLabel }),
       `${value}${operand(modifier)} = ${total} ${total >= difficulty ? "≥" : "<"} ${difficulty}`,
     ],
     [
@@ -168,6 +170,19 @@ function presentBag(receipt: BagReceipt): ResolutionPresentation {
     ],
     tokenRows,
   );
+}
+
+/**
+ * The default bag names its two special tokens by outcome key. Show the outcome
+ * word for them; the receipt and the engine keep the stored label unchanged.
+ */
+function bagTokenLabel(token: {
+  label: string;
+  outcome?: ResolutionCriticalOutcome;
+}): string {
+  if (token.outcome !== undefined && token.label === token.outcome)
+    return outcomeLabel(token.outcome);
+  return token.label;
 }
 
 function presentDice(receipt: DiceReceipt): ResolutionPresentation {
