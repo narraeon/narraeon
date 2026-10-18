@@ -66,6 +66,7 @@ import {
   FileNativePromptCompiler,
   type FileNativePromptInput,
 } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
+import { gameplayFile } from "../../src/protocol/gameplay.ts";
 import { V1Runtime } from "../../src/runtime/V1Runtime.ts";
 import { FileNativeWorldStore } from "../../src/runtime/world/FileNativeWorldStore.ts";
 import { FileNativeWorldRevisionStore } from "../../src/runtime/world-revision/FileNativeWorldRevisionStore.ts";
@@ -7559,10 +7560,16 @@ const fictionPlayToolNames = [
   "world_checkpoint",
 ];
 
+/** Resolution scenarios run in a tabletop d20 world, so its universe carries the check. */
+function tabletopWorldFiles(): ContentTreeFile[] {
+  return [
+    ...worldFiles(),
+    gameplayFile({ mode: "tabletop", scheme: "d20" }),
+  ];
+}
+
 function resolutionCompiler(): FileNativePromptCompiler {
-  return new FileNativePromptCompiler({
-    playToolNames: [...baseRuntimeToolNames, "d20_check"],
-  });
+  return new FileNativePromptCompiler();
 }
 
 async function resolutionSeedFiles(
@@ -7600,7 +7607,7 @@ function d20ToolStep(id = "roll-1") {
 
 test("冻结宇宙含判定工具时执行判定，回执与持久种子逐位复算一致", async () => {
   const label = "play-chain-resolution-receipt";
-  const { worlds, worldId, root } = await createWorld(label);
+  const { worlds, worldId, root } = await createWorld(label, tabletopWorldFiles());
   const modelHost = new ScriptedModelHost({
     binding: modelBinding(),
     steps: [d20ToolStep(), { outcome: "response", text: "石门缓缓开启。" }],
@@ -7654,7 +7661,7 @@ test("冻结宇宙含判定工具时执行判定，回执与持久种子逐位�
 
 test("判定边界崩溃后冷恢复复用同一种子，不重新抽样也不重新派发模型", async () => {
   const label = "play-chain-resolution-recovery";
-  const { worlds, worldId, root } = await createWorld(label);
+  const { worlds, worldId, root } = await createWorld(label, tabletopWorldFiles());
   const modelHost = new ScriptedModelHost({
     binding: modelBinding(),
     steps: [d20ToolStep(), { outcome: "response", text: "石门缓缓开启。" }],
@@ -7722,7 +7729,7 @@ test("判定边界崩溃后冷恢复复用同一种子，不重新抽样也不�
 
 test("持久化判定回执被篡改后，时间线读取拒绝该回执", async () => {
   const label = "play-chain-resolution-tampered-receipt";
-  const { worlds, worldId, root } = await createWorld(label);
+  const { worlds, worldId, root } = await createWorld(label, tabletopWorldFiles());
   const modelHost = new ScriptedModelHost({
     binding: modelBinding(),
     steps: [d20ToolStep(), { outcome: "response", text: "石门缓缓开启。" }],
@@ -7772,7 +7779,7 @@ test("持久化判定回执被篡改后，时间线读取拒绝该回执", async
 
 test("判定种子稳定复用，持久化损坏时拒绝恢复", async () => {
   const label = "play-chain-resolution-seed";
-  const { worlds, worldId, root } = await createWorld(label);
+  const { worlds, worldId, root } = await createWorld(label, tabletopWorldFiles());
   const modelHost = new ScriptedModelHost({
     binding: modelBinding(),
     steps: [d20ToolStep(), { outcome: "response", text: "石门缓缓开启。" }],
@@ -7850,7 +7857,7 @@ test("判定工具不在冻结宇宙中时被拒绝，非法参数只产生工�
     isError: true,
   });
 
-  const invalid = await createWorld("play-chain-resolution-invalid-args");
+  const invalid = await createWorld("play-chain-resolution-invalid-args", tabletopWorldFiles());
   const invalidHost = new ScriptedModelHost({
     binding: modelBinding(),
     steps: [

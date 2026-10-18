@@ -4,7 +4,9 @@ import {
   defaultAppLocale,
   type AppLocale,
 } from "../../protocol/appPreferences.ts";
+import type { Gameplay } from "../../protocol/gameplay.ts";
 import {
+  resolutionCheckToolForScheme,
   resolutionToolDefinition,
   resolutionToolNames,
   type ResolutionToolName,
@@ -43,6 +45,23 @@ export const registeredRuntimeToolNames = [
   ...baseRuntimeToolNames,
   ...resolutionToolNames,
 ] as const;
+
+/**
+ * The tool surface of one world or package, derived only from its gameplay.
+ * Interactive fiction keeps the base surface exactly; tabletop adds the
+ * scheme's check plus auxiliary dice and arithmetic.
+ */
+export function runtimeToolNamesForGameplay(
+  gameplay: Gameplay,
+): RegisteredRuntimeToolName[] {
+  if (gameplay.mode !== "tabletop") return [...baseRuntimeToolNames];
+  return [
+    ...baseRuntimeToolNames,
+    resolutionCheckToolForScheme(gameplay.scheme),
+    "roll_dice",
+    "calculate",
+  ];
+}
 
 /** Changes only when the executable Runtime tool universe or schemas change. */
 export const runtimeToolRegistryRevision = "runtime-tools-v10";

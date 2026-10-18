@@ -67,13 +67,14 @@ import {
   type WorldDocumentValue,
 } from "../world/WorldDocumentStore.ts";
 import {
-  baseRuntimeToolNames,
   defaultRuntimeToolDefinitionStrategy,
+  runtimeToolNamesForGameplay,
   runtimeToolsForNames,
   type RegisteredRuntimeToolName,
   type RuntimeToolDefinitionStrategy,
 } from "./FileNativeToolRegistry.ts";
 import { resolutionToolNames } from "../play/TabletopResolution.ts";
+import { readGameplay } from "../../protocol/gameplay.ts";
 import type {
   PlayPresetBinding,
   PlayPresetFollowupDefinition,
@@ -397,7 +398,6 @@ export type FileNativeToolName = RegisteredRuntimeToolName;
 
 export class FileNativePromptCompiler {
   readonly #toolStrategyOverride: RuntimeToolDefinitionStrategy | undefined;
-  readonly #playToolNames: readonly RegisteredRuntimeToolName[];
   #locale: AppLocale;
 
   get locale(): AppLocale {
@@ -408,16 +408,10 @@ export class FileNativePromptCompiler {
     options: {
       toolStrategy?: RuntimeToolDefinitionStrategy;
       locale?: AppLocale;
-      /**
-       * Tool names frozen into each new play universe. Production uses the
-       * base surface; per-world selection replaces this option in Phase 2.
-       */
-      playToolNames?: readonly RegisteredRuntimeToolName[];
     } = {},
   ) {
     this.#toolStrategyOverride = options.toolStrategy;
     this.#locale = options.locale ?? defaultAppLocale;
-    this.#playToolNames = options.playToolNames ?? baseRuntimeToolNames;
   }
 
   setLocale(locale: AppLocale): void {
@@ -729,7 +723,10 @@ export class FileNativePromptCompiler {
         markdown: joinBlocks(blocks[role]),
       }));
     scanRuntimeLeakage(logicalMessages);
-    const tools = runtimeToolsForNames(baseRuntimeToolNames, this.#locale);
+    const tools = runtimeToolsForNames(
+      runtimeToolNamesForGameplay(playGameplay(documentSnapshot)),
+      this.#locale,
+    );
     const toolStrategy =
       this.#toolStrategyOverride ??
       defaultRuntimeToolDefinitionStrategy(
@@ -814,10 +811,13 @@ export class FileNativePromptCompiler {
     binding: PlayPresetBinding,
   ): PlayPresetCompilation {
     const presetCompilation = this.compilePlayPreset(input, binding);
+    // A continued context keeps the universe it was frozen with. Gameplay-derived
+    // tools are therefore never added mid-context, even to a context frozen
+    // before tabletop tools existed; a fresh context derives its universe above.
     const frozenTools =
       input.frozenWorldContext?.toolUniverse ?? input.frozenWorldContext?.tools;
     const toolUniverse =
-      frozenTools !== undefined && hasLegacyHistoryTools(frozenTools)
+      frozenTools !== undefined
         ? structuredClone(frozenTools)
         : presetCompilation.toolUniverse.filter(({ name }) =>
             playCallChainToolNames.has(name as RegisteredRuntimeToolName),
@@ -940,7 +940,7 @@ export class FileNativePromptCompiler {
       bootstrap,
       binding,
       this.#locale,
-      this.#playToolNames,
+      runtimeToolNamesForGameplay(playGameplay(input.world.documentSnapshot)),
     );
     refreshMaintenanceTotals(compilation.bootstrap);
     return compilation;
@@ -1015,7 +1015,12 @@ export class FileNativePromptCompiler {
         { source: "player:input", markdown: effective.playerInput },
       ]);
     scanRuntimeLeakage(logicalMessages);
-    const tools = runtimeToolsForNames(baseRuntimeToolNames, this.#locale);
+    const tools = runtimeToolsForNames(
+      runtimeToolNamesForGameplay(
+        playGameplay(effective.world.documentSnapshot),
+      ),
+      this.#locale,
+    );
     const toolStrategy =
       this.#toolStrategyOverride ??
       defaultRuntimeToolDefinitionStrategy(effective.modelBinding.provider);
@@ -1902,6 +1907,14 @@ interface CompleteDocumentRead {
   descriptor: WorldDocumentDescriptor;
   codec: "yaml" | "markdown";
   body: string;
+}
+
+/**
+ * A world or package keeps its gameplay in control/gameplay.json; a missing
+ * file is interactive fiction. Every play universe is derived from this value.
+ */
+function playGameplay(snapshot: FileNativeWorldDocumentSnapshot) {
+  return readGameplay(snapshot.files);
 }
 
 function snapshotFiles(
