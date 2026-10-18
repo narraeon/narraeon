@@ -351,7 +351,21 @@ export class V1Runtime {
       case "model.models":
         return this.#models.listModels(request);
       case "content.create":
-        return this.#content.createCurrentTreeContentPackage();
+        return this.#content.createCurrentTreeContentPackage(request.gameplay);
+      case "content.gameplay.set": {
+        try {
+          return await this.#content.setCurrentTreeContentGameplayScheme(
+            request.packageId,
+            request.scheme,
+          );
+        } catch (error: unknown) {
+          if (error instanceof InvalidContentTreeError)
+            throw new V1ProtocolError("invalid_request", error.message, {
+              cause: error,
+            });
+          throw error;
+        }
+      }
       case "content.scripts.read":
         return this.#content.packageScriptPermissions(request.packageId);
       case "content.scripts.set":
