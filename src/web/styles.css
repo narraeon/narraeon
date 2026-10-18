@@ -31,6 +31,8 @@
   --warning-surface: #faf2df;
   --success: #32654b;
   --success-surface: #eaf4ec;
+  --resolution-critical-success: #3f5f20;
+  --resolution-critical-success-surface: #eef4dc;
   --workspace-header-height: 54px;
 }
 
@@ -4865,6 +4867,110 @@ summary:focus-visible {
 
 .call-chain-tool-result.is-error details {
   border-color: var(--danger);
+}
+
+/* Outcome is always stated in words; colour and border weight only reinforce it. */
+.resolution-card {
+  margin: 0.35rem 0;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--muted);
+  border-radius: 3px;
+  color: var(--text);
+  background: var(--surface-inset);
+  font-family: system-ui, sans-serif;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.resolution-card.is-success {
+  border-left-color: var(--success);
+  background: var(--success-surface);
+}
+
+.resolution-card.is-failure {
+  border-left-color: var(--danger);
+  background: var(--danger-surface);
+}
+
+.resolution-card.is-critical_success {
+  border-left-width: 6px;
+  border-left-color: var(--resolution-critical-success);
+  background: var(--resolution-critical-success-surface);
+}
+
+.resolution-card.is-critical_failure {
+  border-left-width: 6px;
+  border-left-color: var(--danger);
+  background: var(--danger-surface);
+}
+
+.resolution-card summary {
+  padding: 0.55rem 0.8rem;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.resolution-outcome {
+  font-weight: 750;
+}
+
+.resolution-card.is-success .resolution-outcome {
+  color: var(--success);
+}
+
+.resolution-card.is-failure .resolution-outcome,
+.resolution-card.is-critical_failure .resolution-outcome {
+  color: var(--danger);
+}
+
+.resolution-card.is-critical_success .resolution-outcome {
+  color: var(--resolution-critical-success);
+}
+
+.resolution-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.3rem 0.9rem;
+  margin: 0;
+  padding: 0 0.8rem 0.7rem;
+}
+
+.resolution-facts > div {
+  display: contents;
+}
+
+.resolution-facts dt {
+  color: var(--muted);
+}
+
+.resolution-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.resolution-tokens {
+  width: calc(100% - 1.6rem);
+  margin: 0 0.8rem 0.7rem;
+  border-collapse: collapse;
+}
+
+.resolution-tokens caption {
+  padding: 0 0 0.35rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-align: left;
+}
+
+.resolution-tokens th,
+.resolution-tokens td {
+  padding: 0.3rem 0.45rem;
+  border-top: 1px solid var(--border);
+  text-align: left;
+  font-weight: 400;
+}
+
+.resolution-tokens th {
+  color: var(--muted);
 }
 
 .call-chain-summary {
