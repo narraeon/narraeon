@@ -1135,10 +1135,9 @@ export function WorldPage({
         continuation,
       });
       revisionAccepted = true;
-      if (continuation === "fresh_context") {
-        setForceFreshContext(false);
-        consumeCheckpointPreference();
-      }
+      // The revised chain is bound to the revision's own head.
+      setForceFreshContext(false);
+      if (continuation === "fresh_context") consumeCheckpointPreference();
       const revisedPlayer = revised.playCallChain.events.find(
         (event) =>
           event.kind === "player" && event.exchangeId === replacementExchangeId,
@@ -1623,9 +1622,11 @@ export function WorldPage({
                     originalText,
                     requiresFreshContext,
                   ) => {
+                    // A world that only moved ahead of the chain is restored
+                    // to this message's parent by the revision itself.
                     if (
                       requiresFreshContext ||
-                      activeChainStale ||
+                      world?.archiveNeedsFreshContext === true ||
                       (activeStatus === "interrupted" && !activeCanRetry)
                     ) {
                       setRegenerationFallback({

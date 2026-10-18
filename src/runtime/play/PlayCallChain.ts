@@ -1178,10 +1178,15 @@ export class PlayCallChain {
       sourceContext,
       input.selectedEventIndex,
     );
+    // A timeline revision appends on the current audit head and restores the
+    // selected message's logical parent, so a chain that lags the world (an
+    // out-of-story world revision, or an earlier revision whose chain was not
+    // published) must not block it. The commit still rechecks this head under
+    // the world lock.
     const outcome = await this.#worlds.reviseTimeline({
       operationId: request.operationId,
       worldId: request.worldId,
-      expectedCurrentHead: input.source.parentHead,
+      expectedCurrentHead: await this.#worlds.currentHead(request.worldId),
       restoresHead,
       replacesHead: input.selectedEvent.committedHead,
       replacementText: request.replacementText,

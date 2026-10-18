@@ -8169,3 +8169,72 @@ test("世界外修订改名并更换绑定不改历史背景或游标，新消�
     Object.keys(original.history).map((id) => original.historyBackgrounds![id]),
   );
 });
+
+test("世界在故事外前进后仍可修改或重新生成已提交玩家消息", async () => {
+  const { worlds, worldId } = await createWorld(
+    "play-chain-edit-after-out-of-story-advance",
+  );
+  const chains = new PlayCallChain(worlds);
+  const source = await chains.start({
+    worldId,
+    chainId: "play-chain-edit-after-advance-source",
+    exchangeId: "exchange-edit-after-advance-source",
+    playerText: "I take the eastern path.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [{ outcome: "response", text: "The eastern path is quiet." }],
+    }),
+  });
+  const selected = source.events.find(
+    (event) => event.kind === "player" && event.context === "fresh",
+  );
+  if (selected?.kind !== "player") throw new Error("missing first player");
+
+  // Anything that moves the world head without the chain (an applied world
+  // revision, or a timeline revision whose chain publication failed) leaves
+  // the persisted chain behind the current world.
+  await worlds.commitCorrection({
+    worldId,
+    operationId: "out-of-story-advance",
+    parentHead: source.parentHead,
+    stateChanges: [],
+    nextMaterials: [],
+  });
+  const advancedHead = await worlds.currentHead(worldId);
+  expect(advancedHead).not.toBe(source.parentHead);
+  await expect(chains.inspectWorld(worldId)).resolves.toMatchObject({
+    parentHead: source.parentHead,
+  });
+
+  const revised = await chains.revisePlayer({
+    operationId: "revise-after-out-of-story-advance",
+    worldId,
+    chainId: source.chainId,
+    eventId: selected.id,
+    replacementExchangeId: "exchange-edit-after-advance-replacement",
+    replacementText: "I take the western path.",
+    continuation: "continue_context",
+  });
+  const revisedHead = await worlds.currentHead(worldId);
+  expect(revised.playCallChain.parentHead).toBe(revisedHead);
+  expect(
+    (await worlds.recoverEndpoint(worldId)).history.map(
+      ({ exactText }) => exactText,
+    ),
+  ).toEqual(["门外传来三声短促的铃响。\n", "I take the western path."]);
+
+  const continued = await chains.append({
+    worldId,
+    chainId: revised.playCallChain.chainId,
+    exchangeId: "exchange-edit-after-advance-continue",
+    playerText: "",
+    modelHost: new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [{ outcome: "response", text: "The western path opens." }],
+    }),
+  });
+  expect(continued.status).toBe("ready");
+});

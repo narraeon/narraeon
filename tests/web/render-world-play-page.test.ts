@@ -3407,6 +3407,81 @@ describe("世界游玩页面", () => {
     else expect(button).toBeNull();
   });
 
+  test("世界在故事外前进后重新生成仍沿原上下文直接提交", async () => {
+    const originalText = "  原始玩家输入\n";
+    let chain = playChainView("original", "first", originalText);
+    let worldHead = "commit:9";
+    const client = {
+      request: vi.fn((request: V1Request): Promise<unknown> => {
+        if (request.type === "world.read")
+          return Promise.resolve({ ...worldView(chain), head: worldHead });
+        if (request.type === "artifacts.debug") return Promise.resolve([]);
+        if (request.type === "play.chain.revise-player") {
+          worldHead = "commit:10";
+          chain = {
+            ...chain,
+            chainId: "continued-regeneration",
+            parentHead: worldHead,
+            events: [
+              {
+                id: 1,
+                kind: "player",
+                exchangeId: request.replacementExchangeId,
+                text: request.replacementText,
+                context: "fresh",
+                committedHead: worldHead,
+              },
+            ],
+          };
+          return Promise.resolve({ outcome: "revised", playCallChain: chain });
+        }
+        if (request.type === "play.chain.append") {
+          worldHead = "commit:11";
+          chain = {
+            ...chain,
+            parentHead: worldHead,
+            events: [
+              ...chain.events,
+              {
+                id: 2,
+                kind: "assistant",
+                text: "沿原上下文重新生成的回复",
+                status: "completed",
+                responseKind: "narrative",
+                committedHead: worldHead,
+                exchange: 1,
+                attempt: 1,
+              },
+            ],
+          };
+          return Promise.resolve(chain);
+        }
+        return Promise.reject(new Error(`Unexpected request: ${request.type}`));
+      }),
+    };
+    renderWorld(client);
+    await screen.findByText("Alex opens the door and lets you go first.");
+    expect(
+      screen.getByText("世界已在故事外修订；下一次行动会从新上下文开始。"),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "重新生成" }));
+    await screen.findByText("沿原上下文重新生成的回复");
+    expect(client.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "play.chain.revise-player",
+        continuation: "continue_context",
+        chainId: "original",
+        replacementText: originalText,
+      }),
+    );
+    expect(
+      screen.queryByRole("button", { name: "用全新上下文重新生成" }),
+    ).toBeNull();
+    expect(
+      screen.queryByText("世界已在故事外修订；下一次行动会从新上下文开始。"),
+    ).toBeNull();
+  });
+
   test.each(["imported", "unavailable", "append-protocol-mismatch"] as const)(
     "原上下文不可用时提供全新上下文重新生成：%s",
     async (scenario) => {
