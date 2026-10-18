@@ -135,7 +135,27 @@ The world under revision is tabletop, with resolution scheme ${label}. Its gamep
 Check-tool rules for the current scheme:
 
 ${rules}`;
-  return { source, markdown };
+  const bag =
+    gameplay.scheme === "bag" ? `\n\n${bagAuthoringGuidance(locale)}` : "";
+  return { source, markdown: `${markdown}${bag}` };
+}
+
+/**
+ * Authoring guidance for a chaos-bag scheme: the default bag, or a bag the world
+ * documents, and who maintains its contents. Only the bag scheme carries it.
+ */
+export function bagAuthoringGuidance(locale: AppLocale): string {
+  return locale === "zh-CN"
+    ? `## 混乱袋内容
+
+- 默认袋：世界文档未定义标记时，判定使用默认袋：+1、0×2、-1×2、-2、大成功、大失败。
+- 世界自定义袋：在世界文档中写明每种标记的名称与数量，并且每种标记恰好写明修正值或大成功／大失败之一。判定时必须读取该清单，并原样提供。
+- 袋内容的变化由你在世界文档中维护。每次抽取后标记放回，抽取本身不改变袋。`
+    : `## Chaos-bag contents
+
+- Default bag: when the world documents define no tokens, the check uses the default bag: +1, 0 ×2, -1 ×2, -2, critical success, critical failure.
+- World-documented bag: write each token's label and count in the world documents, and give each token exactly one of a modifier or a critical outcome. Read that list and supply it exactly when checking.
+- You maintain any change to the bag's contents in the world documents. Each drawn token returns to the bag, so drawing never changes the bag itself.`;
 }
 
 /** The receipt sent after a successful gameplay write; it teaches the new scheme's rules mid-conversation. */
@@ -144,7 +164,11 @@ export function tabletopSchemeReceipt(
   locale: AppLocale,
 ): string {
   const rules = tabletopSchemeRules(gameplay, locale);
-  return locale === "zh-CN"
-    ? `新判定方案规则（之后请按此调整数值与难度）：\n\n${rules}`
-    : `New resolution-scheme rules (adjust numbers and difficulty to match from now on):\n\n${rules}`;
+  const receipt =
+    locale === "zh-CN"
+      ? `新判定方案规则（之后请按此调整数值与难度）：\n\n${rules}`
+      : `New resolution-scheme rules (adjust numbers and difficulty to match from now on):\n\n${rules}`;
+  return gameplay.scheme === "bag"
+    ? `${receipt}\n\n${bagAuthoringGuidance(locale)}`
+    : receipt;
 }

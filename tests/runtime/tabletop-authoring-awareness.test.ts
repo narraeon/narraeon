@@ -20,6 +20,9 @@ import {
   settingImprovementToolDefinitions,
 } from "../../src/runtime/setting/SettingAuthoringTransaction.ts";
 import { previewInputWithGameplay } from "../support/tabletopFixtures.ts";
+import { builtinAuthorPrompts } from "../../src/shared/ordered-author-prompts.ts";
+import { builtinPlayPrompts } from "../../src/shared/ordered-play-prompts.ts";
+import { worldRevisionRuntimeContract } from "../../src/runtime/world-revision/WorldRevisionAuthoringTransaction.ts";
 
 const fiction: Gameplay = { mode: "interactive-fiction" };
 const d20: Gameplay = { mode: "tabletop", scheme: "d20" };
@@ -155,4 +158,95 @@ describe("setting_write_file receipts teach a new scheme's rules", () => {
         resolutionToolDefinition("d20_check", locale).description,
       );
     });
+});
+
+describe("chaos-bag guidance lives with the bag scheme", () => {
+  const bagHeading = {
+    en: "Chaos-bag contents",
+    "zh-CN": "混乱袋内容",
+  } as const;
+  for (const locale of ["en", "zh-CN"] as const) {
+    test(`bag packages and bag revisions state the default and world-documented bag (${locale})`, () => {
+      const bagPackage = gameplayTargetBlock(
+        compileSetting({ mode: "tabletop", scheme: "bag" }, locale),
+      )!;
+      const bagRevision = gameplayTargetBlock(
+        compileRevision({ mode: "tabletop", scheme: "bag" }, locale),
+      )!;
+      for (const block of [bagPackage, bagRevision]) {
+        expect(block).toContain(bagHeading[locale]);
+        expect(block).toContain(locale === "zh-CN" ? "默认袋" : "Default bag");
+        expect(block).toContain(
+          locale === "zh-CN" ? "世界文档" : "world documents",
+        );
+      }
+    });
+
+    test(`non-bag tabletop schemes carry no bag guidance (${locale})`, () => {
+      for (const scheme of ["d20", "d100"] as const) {
+        const block = gameplayTargetBlock(
+          compileSetting({ mode: "tabletop", scheme }, locale),
+        )!;
+        // The package may switch to bag, so the scheme list may name it; the guidance may not appear.
+        expect(block).not.toContain(bagHeading[locale]);
+        expect(block).not.toMatch(/默认袋|Default bag/u);
+      }
+    });
+
+    test(`a bag scheme write receipt includes the bag guidance (${locale})`, () => {
+      const transaction = new SettingAuthoringTransaction({
+        baseFiles: [
+          ...minimalFileNativeContentScaffold(locale),
+          gameplayFile({ mode: "tabletop", scheme: "d20" }),
+        ],
+        locale,
+        preview: () =>
+          ({
+            compilation: { coverage: [], logicalMessages: [] },
+            leakage: { status: "clean", checkedFields: [] },
+          }) as unknown as PromptPreview,
+      });
+      const [, write] = transaction.execute([
+        { id: "read", name: "setting_read", arguments: { path: gameplayPath } },
+        {
+          id: "write",
+          name: "setting_write_file",
+          arguments: {
+            path: gameplayPath,
+            contents: gameplayFile({ mode: "tabletop", scheme: "bag" })
+              .contents,
+          },
+        },
+      ]);
+      expect(write?.isError).toBe(false);
+      expect(write?.markdown).toContain(bagHeading[locale]);
+    });
+  }
+
+  test("builtin tabletop prompts are scheme-independent and never mention a bag", () => {
+    for (const locale of ["en", "zh-CN"] as const) {
+      const play = builtinPlayPrompts(locale).find(
+        ({ id }) => id === "play.tabletop",
+      )!;
+      const author = builtinAuthorPrompts(locale).find(
+        ({ id }) => id === "author.tabletop",
+      )!;
+      expect(play.body).not.toMatch(/bag|混乱袋/iu);
+      expect(author.body).not.toMatch(/bag|混乱袋/iu);
+    }
+  });
+
+  test("a fiction world revision contract never names the gameplay file, a tabletop one does", () => {
+    for (const locale of ["en", "zh-CN"] as const) {
+      expect(
+        worldRevisionRuntimeContract(locale, { mode: "interactive-fiction" }),
+      ).not.toContain("gameplay.json");
+      expect(
+        worldRevisionRuntimeContract(locale, {
+          mode: "tabletop",
+          scheme: "d20",
+        }),
+      ).toContain("gameplay.json");
+    }
+  });
 });
