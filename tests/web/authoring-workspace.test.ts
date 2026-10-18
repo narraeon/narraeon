@@ -637,3 +637,30 @@ test.each(["setting", "revision"] as const)(
     f.workspace.close();
   },
 );
+
+test("保存中的玩法变更期间不能开始文件草稿，结束后重新读取保存的树", async () => {
+  const { workspace, setFiles } = fixture("setting");
+  await workspace.open();
+  let release: () => void = () => undefined;
+  const change = workspace.holdDraftsWhile(async () => {
+    await new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    setFiles("written by the scheme change");
+  });
+
+  expect(workspace.getSnapshot().draftsLocked).toBe(true);
+  workspace.editFiles([{ path: "control/frame.yaml", contents: "draft" }]);
+  expect(workspace.getSnapshot().dirty).toBe(false);
+  expect(workspace.getSnapshot().files[0]?.contents).toBe("saved");
+
+  release();
+  await change;
+  expect(workspace.getSnapshot().draftsLocked).toBe(false);
+  expect(workspace.getSnapshot().files[0]?.contents).toBe(
+    "written by the scheme change",
+  );
+  workspace.editFiles([{ path: "control/frame.yaml", contents: "draft" }]);
+  expect(workspace.getSnapshot().dirty).toBe(true);
+  workspace.close();
+});

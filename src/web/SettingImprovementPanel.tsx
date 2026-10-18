@@ -59,6 +59,8 @@ interface SettingImprovementPanelProps {
     gameplay: Gameplay;
     onChangeScheme: (scheme: ResolutionScheme) => Promise<void>;
   };
+  /** A saved-tree change is in flight, so no file draft may start. */
+  draftsLocked?: boolean;
   revisionActions?: {
     active?: boolean;
     changedFileCount: number;
@@ -99,6 +101,7 @@ export function SettingImprovementPanel({
   onCreateWorld,
   onNavigationLockChange,
   packageGameplay,
+  draftsLocked = false,
   revisionActions,
 }: SettingImprovementPanelProps): React.JSX.Element {
   const [message, setMessage] = useState("");
@@ -134,7 +137,8 @@ export function SettingImprovementPanel({
     view.sessionId !== latestSessionId;
   const disabled =
     loading || interactionLocked || !modelConfigured || hasUnsavedFileDraft;
-  const rollbackDisabled = loading || interactionLocked || hasUnsavedFileDraft;
+  const rollbackDisabled =
+    loading || interactionLocked || hasUnsavedFileDraft || draftsLocked;
   const revisingWorld = target === "world-revision";
   const rollbackableChangeSetIds =
     revisionActions === undefined
@@ -162,7 +166,7 @@ export function SettingImprovementPanel({
   );
 
   const openFileRail = (mode: FileRailMode): void => {
-    if (mode === "edit" && interactionLocked) return;
+    if (mode === "edit" && (interactionLocked || draftsLocked)) return;
     setFileRailMode(mode);
     setRightRailOpen(true);
     setLeftRailOpen(false);
@@ -276,6 +280,7 @@ export function SettingImprovementPanel({
                 loading ||
                 interactionLocked ||
                 hasUnsavedFileDraft ||
+                draftsLocked ||
                 contentEditor.status !== "usable"
               }
               onClick={onCreateWorld}
@@ -297,7 +302,7 @@ export function SettingImprovementPanel({
             className={
               rightRailOpen && fileRailMode === "edit" ? "is-current" : ""
             }
-            disabled={interactionLocked}
+            disabled={interactionLocked || draftsLocked}
             onClick={() => openFileRail("edit")}
           >
             {uiText("编辑")}
@@ -737,7 +742,7 @@ export function SettingImprovementPanel({
             <button
               type="button"
               className={fileRailMode === "edit" ? "is-current" : ""}
-              disabled={interactionLocked}
+              disabled={interactionLocked || draftsLocked}
               onClick={() => setFileRailMode("edit")}
             >
               {uiText("编辑")}
@@ -752,11 +757,11 @@ export function SettingImprovementPanel({
                 selectedPath={selectedFilePath}
                 onSelect={setSelectedFilePath}
                 onEdit={() => setFileRailMode("edit")}
-                editDisabled={interactionLocked}
+                editDisabled={interactionLocked || draftsLocked}
               />
             ) : (
               <fieldset
-                disabled={finishingRevision}
+                disabled={finishingRevision || draftsLocked}
                 style={{ display: "contents" }}
               >
                 <ContentTreeEditor

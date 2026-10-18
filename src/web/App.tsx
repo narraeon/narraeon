@@ -209,12 +209,14 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
 
   async function setPackageScheme(scheme: ResolutionScheme): Promise<void> {
     try {
-      await client.request({
-        type: "content.gameplay.set",
-        packageId: selected,
-        scheme,
+      // File drafts stay closed until the saved tree is re-read, so none can be saved over the scheme.
+      await authoringWorkspace.holdDraftsWhile(async () => {
+        await client.request({
+          type: "content.gameplay.set",
+          packageId: selected,
+          scheme,
+        });
       });
-      await authoringWorkspace.refresh();
       setNotice(uiText("判定方案已保存；已有世界保持原方案。"));
     } catch (error: unknown) {
       report(error);
@@ -525,6 +527,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
               },
             })}
         hasUnsavedFileDraft={filesDirty}
+        draftsLocked={authoring.draftsLocked}
         loading={authoring.loading || creatingWorld}
         onCreateWorld={() => void createWorld()}
         onNavigationLockChange={setChildNavigationLocked}

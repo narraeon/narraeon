@@ -254,3 +254,81 @@ function packageDetail(gameplay: Gameplay) {
   ];
   return { ...packageSummary(gameplay), files, issues: [] };
 }
+
+describe("判定方案保存期间的文件草稿", () => {
+  test("保存期间编辑入口关闭，已打开的编辑器也不能开始草稿，结束后恢复", async () => {
+    let gameplay: Gameplay = { mode: "tabletop", scheme: "d100" };
+    let finishSave: () => void = () => undefined;
+    const request = vi.fn(async (input: V1Request): Promise<unknown> => {
+      await Promise.resolve();
+      if (input.type === "workspace.read")
+        return {
+          preferences: { locale: "zh-CN" },
+          contentPackages: [packageSummary(gameplay)],
+          playPresets: { currentPresetId: "", presets: [] },
+          worlds: [],
+          storageNotices: [],
+          model: {
+            configured: false,
+            activeConnectionId: null,
+            connections: [],
+            presets: [],
+          },
+        };
+      if (input.type === "content.read") return packageDetail(gameplay);
+      if (input.type === "setting-improvement.overview")
+        return { latest: null, history: [] };
+      if (input.type === "content.scripts.read")
+        return { entries: [], enabled: false };
+      if (input.type === "content.gameplay.set")
+        return new Promise((resolve) => {
+          finishSave = () => {
+            gameplay = { mode: "tabletop", scheme: input.scheme };
+            resolve(packageDetail(gameplay));
+          };
+        });
+      throw new Error(`unexpected request: ${input.type}`);
+    });
+    const client = { request } as unknown as RuntimeClient;
+    render(createElement(App, { client }));
+
+    await screen.findByRole("heading", { name: "世界工作区" });
+    fireEvent.click(screen.getByRole("button", { name: "打开内容包：跑团包" }));
+    await screen.findByRole("heading", { name: "跑团包 · AI 设定完善" });
+    const section = await screen.findByRole("region", { name: "玩法" });
+    const tools = screen.getByRole("navigation", { name: "设定完善工具" });
+    const editTool = within(tools).getByRole("button", { name: "编辑" });
+    expect(editTool.matches(":disabled")).toBe(false);
+    fireEvent.click(editTool);
+    const editor = await screen.findByLabelText("编辑 opening.md");
+    expect(editor.closest("fieldset")?.matches(":disabled")).toBe(false);
+
+    fireEvent.click(within(section).getByRole("radio", { name: "混乱袋" }));
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith({
+        type: "content.gameplay.set",
+        packageId: "package-tabletop",
+        scheme: "bag",
+      }),
+    );
+    expect(
+      within(tools).getByRole("button", { name: "编辑" }).matches(":disabled"),
+    ).toBe(true);
+    expect(editor.closest("fieldset")?.matches(":disabled")).toBe(true);
+    fireEvent.change(editor, { target: { value: "草稿不应开始" } });
+    expect(screen.queryByText("有未保存修改")).toBeNull();
+    expect(screen.queryByText("草稿尚未保存")).toBeNull();
+
+    finishSave();
+    await waitFor(() =>
+      expect(within(section).getByText("跑团 · 混乱袋")).toBeTruthy(),
+    );
+    expect(
+      within(tools).getByRole("button", { name: "编辑" }).matches(":disabled"),
+    ).toBe(false);
+    expect(screen.queryByText("有未保存修改")).toBeNull();
+    expect(
+      screen.getByText("判定方案已保存；已有世界保持原方案。"),
+    ).toBeTruthy();
+  });
+});
