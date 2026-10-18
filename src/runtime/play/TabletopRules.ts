@@ -32,6 +32,13 @@ export function tabletopWorldRulesBlock(
 ): { source: string; markdown: string } {
   const label = gameplayLabel(gameplay, locale);
   const rules = tabletopSchemeRules(gameplay, locale);
+  // Only the bag scheme has a world-defined token list; other schemes never mention one.
+  const bagLine =
+    gameplay.scheme !== "bag"
+      ? ""
+      : locale === "zh-CN"
+        ? "- 世界文档中定义的混乱袋必须读取，并原样提供其当前标记清单；袋的变化由你在世界文档中维护。\n"
+        : "- A chaos bag defined in the world documents must be read and supplied exactly as its current token list. You maintain the bag's changes in the world documents.\n";
   const markdown =
     locale === "zh-CN"
       ? `# 跑团判定规则
@@ -55,8 +62,7 @@ ${rules}
 - 大成功与大失败按工具的固定规则兑现，不能由叙述改写。
 - 掷骰之后不得更改该行动的目标或难度，也不得为同一行动重掷。
 - 辅助掷骰与算术只决定伤害、数量等数值，不能推翻已经结算的判定。
-- 世界文档中定义的混乱袋必须读取，并原样提供其当前标记清单；袋的变化由你在世界文档中维护。
-- 参数不合法属于工具错误，不等于行动失败；修正参数后重新调用即可。`
+${bagLine}- 参数不合法属于工具错误，不等于行动失败；修正参数后重新调用即可。`
       : `# Tabletop resolution rules
 
 This world is tabletop, with resolution scheme ${label}. The Runtime-fixed rules below apply because of this world's gameplay identity.
@@ -78,8 +84,7 @@ ${rules}
 - Critical outcomes follow the tool's fixed rules and cannot be rewritten by narration.
 - After a draw, never change that action's goal or difficulty, and never reroll the same action.
 - Auxiliary dice and arithmetic decide numeric values such as damage or quantities; they never reverse a resolved check.
-- A chaos bag defined in the world documents must be read and supplied exactly as its current token list. You maintain the bag's changes in the world documents.
-- Invalid arguments are tool errors, not failed actions; correct the arguments and call the tool again.`;
+${bagLine}- Invalid arguments are tool errors, not failed actions; correct the arguments and call the tool again.`;
   return { source: "runtime:world-placeholder/gameplay", markdown };
 }
 

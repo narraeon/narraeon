@@ -17,6 +17,7 @@ import {
   resolutionToolDefinition,
 } from "../../src/runtime/play/TabletopResolution.ts";
 import { previewInputWithGameplay } from "../support/tabletopFixtures.ts";
+import { tabletopWorldRulesBlock } from "../../src/runtime/play/TabletopRules.ts";
 
 const fiction: Gameplay = { mode: "interactive-fiction" };
 const schemes: ResolutionScheme[] = ["d20", "d100", "bag"];
@@ -155,4 +156,34 @@ describe("tabletop world rules at the world placeholder", () => {
     expect(rulesBlocks(resumed.logicalMessages)).toEqual([]);
     expect(resumed.tools.map(({ name }) => name)).toContain("percentile_check");
   });
+});
+
+describe("the chaos-bag sentence belongs to the bag scheme only", () => {
+  const bagSentence = {
+    "zh-CN": "混乱袋必须读取",
+    en: "A chaos bag defined in the world documents must be read",
+  } as const;
+  for (const locale of ["en", "zh-CN"] as const) {
+    test(`bag rules state the bag contract (${locale})`, () => {
+      const { markdown } = tabletopWorldRulesBlock(
+        { mode: "tabletop", scheme: "bag" },
+        locale,
+      );
+      expect(markdown).toContain(bagSentence[locale]);
+    });
+    for (const scheme of ["d20", "d100"] as const)
+      test(`${scheme} rules never mention a bag (${locale})`, () => {
+        const { markdown } = tabletopWorldRulesBlock(
+          { mode: "tabletop", scheme },
+          locale,
+        );
+        expect(markdown).not.toMatch(/bag|混乱袋|标记清单/iu);
+        // The contract itself is still complete without the bag bullet.
+        expect(markdown).toContain(
+          locale === "zh-CN"
+            ? "参数不合法属于工具错误"
+            : "Invalid arguments are tool errors",
+        );
+      });
+  }
 });
