@@ -9,6 +9,7 @@ import {
   readGameplay,
 } from "../../protocol/gameplay.ts";
 import { isScalar, isSeq, parseDocument, stringify } from "yaml";
+import { tabletopSchemeReceipt } from "../play/TabletopRules.ts";
 import type { ContentTreeFile } from "../content/ContentTreeFile.ts";
 import { inspectContentPackageCurrentTree } from "../content/FileNativeContentTree.ts";
 import type { ModelHostToolCall } from "../model/ModelHost.ts";
@@ -1448,6 +1449,10 @@ function writeOpaque(
               `Current gameplay: ${gameplayLabel(gameplay, locale)}.`,
               `当前玩法：${gameplayLabel(gameplay, locale)}。`,
             ),
+            // Mid-conversation the model learns the new scheme's rules here (ADR-0037 append-only).
+            ...(gameplay.mode === "tabletop"
+              ? [tabletopSchemeReceipt(gameplay, locale)]
+              : []),
           ]),
     ].join("\n\n"),
   };
