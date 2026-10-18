@@ -2032,6 +2032,8 @@ const tabletopEnglishMessages: Record<string, string> = {
   奖励骰: "Bonus dice",
   惩罚骰: "Penalty dice",
   "抽到 {token}": "Drew {token}",
+  抽到特殊标记: "Drew a special token",
+  特殊标记: "Special token",
   默认混乱袋: "Default chaos bag",
   世界混乱袋: "World chaos bag",
   行动: "Action",

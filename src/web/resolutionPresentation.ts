@@ -1,6 +1,7 @@
 import type {
   ArithmeticOperation,
   ArithmeticReceipt,
+  BagDraw,
   BagReceipt,
   ResolutionCriticalOutcome,
   D100Receipt,
@@ -127,7 +128,8 @@ function presentD100(receipt: D100Receipt): ResolutionPresentation {
 function presentBag(receipt: BagReceipt): ResolutionPresentation {
   const { value, difficulty, drawn, tokens, defaultBag } = receipt;
   const source = defaultBag ? uiText("默认混乱袋") : uiText("世界混乱袋");
-  const drawnLabel = bagTokenLabel(drawn);
+  const drawnSegment = drawnTokenSegment(drawn);
+  const drawnFact = isOutcomeKeyToken(drawn) ? uiText("特殊标记") : drawn.label;
   const tokenRows = tokens.map((token) => ({
     label: bagTokenLabel(token),
     count: String(token.count),
@@ -141,13 +143,13 @@ function presentBag(receipt: BagReceipt): ResolutionPresentation {
     fact("属性值", String(value)),
     fact("难度", String(difficulty)),
     fact("袋子", source),
-    fact("抽到", drawnLabel),
+    fact("抽到", drawnFact),
   ];
   if (drawn.outcome !== undefined)
     return presentation(
       receipt.goal,
       receipt.outcome,
-      [uiText("抽到 {token}", { token: drawnLabel })],
+      [drawnSegment],
       [...common, fact("效果", outcomeLabel(drawn.outcome))],
       tokenRows,
     );
@@ -158,7 +160,7 @@ function presentBag(receipt: BagReceipt): ResolutionPresentation {
     receipt.goal,
     receipt.outcome,
     [
-      uiText("抽到 {token}", { token: drawnLabel }),
+      drawnSegment,
       `${value}${operand(modifier)} = ${total} ${total >= difficulty ? "≥" : "<"} ${difficulty}`,
     ],
     [
@@ -180,9 +182,26 @@ function bagTokenLabel(token: {
   label: string;
   outcome?: ResolutionCriticalOutcome;
 }): string {
-  if (token.outcome !== undefined && token.label === token.outcome)
-    return outcomeLabel(token.outcome);
+  if (isOutcomeKeyToken(token)) return outcomeLabel(token.outcome!);
   return token.label;
+}
+
+/** The default bag's special tokens are labelled by their outcome key. */
+function isOutcomeKeyToken(token: {
+  label: string;
+  outcome?: ResolutionCriticalOutcome;
+}): boolean {
+  return token.outcome !== undefined && token.label === token.outcome;
+}
+
+/**
+ * A default special token reads as "a special token" in the collapsed line, so
+ * the outcome word is not repeated. A custom special token keeps its own label.
+ */
+function drawnTokenSegment(drawn: BagDraw): string {
+  return isOutcomeKeyToken(drawn)
+    ? uiText("抽到特殊标记")
+    : uiText("抽到 {token}", { token: drawn.label });
 }
 
 function presentDice(receipt: DiceReceipt): ResolutionPresentation {

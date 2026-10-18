@@ -517,8 +517,8 @@ describe("默认混乱袋的特殊标记", () => {
 
   test("中文界面把默认大成功与大失败标记显示为结果词，不显示原始键", () => {
     const success = presentResolution(defaultSpecial("critical_success"));
-    expect(success.headline).toBe("推开石门 · 抽到 大成功 · 大成功");
-    expect(success.facts).toContainEqual({ label: "抽到", value: "大成功" });
+    expect(success.headline).toBe("推开石门 · 抽到特殊标记 · 大成功");
+    expect(success.facts).toContainEqual({ label: "抽到", value: "特殊标记" });
     expect(success.tokens).toContainEqual({
       label: "大成功",
       count: "1",
@@ -526,7 +526,7 @@ describe("默认混乱袋的特殊标记", () => {
     });
 
     const failure = presentResolution(defaultSpecial("critical_failure"));
-    expect(failure.headline).toBe("推开石门 · 抽到 大失败 · 大失败");
+    expect(failure.headline).toBe("推开石门 · 抽到特殊标记 · 大失败");
     expect(failure.tokens).toContainEqual({
       label: "大失败",
       count: "1",
@@ -542,7 +542,7 @@ describe("默认混乱袋的特殊标记", () => {
       goal: "Open the stone door",
     });
     expect(success.headline).toBe(
-      "Open the stone door · Drew Critical success · Critical success",
+      "Open the stone door · Drew a special token · Critical success",
     );
     expect(success.tokens).toContainEqual({
       label: "Critical success",
@@ -555,7 +555,7 @@ describe("默认混乱袋的特殊标记", () => {
       goal: "Open the stone door",
     });
     expect(failure.headline).toBe(
-      "Open the stone door · Drew Critical failure · Critical failure",
+      "Open the stone door · Drew a special token · Critical failure",
     );
     expect(failure.tokens).toContainEqual({
       label: "Critical failure",
@@ -563,6 +563,24 @@ describe("默认混乱袋的特殊标记", () => {
       effect: "Critical failure",
     });
     expect(displayedText([success, failure])).not.toContain("critical_");
+  });
+
+  test("自定义特殊标记保留自己的标签，不被替换为特殊标记", () => {
+    const custom: BagReceipt = {
+      ...defaultSpecial("critical_failure"),
+      drawn: { label: "骷髅", outcome: "critical_failure" },
+    };
+    expect(presentResolution(custom).headline).toBe(
+      "推开石门 · 抽到 骷髅 · 大失败",
+    );
+    expect(presentResolution(custom).facts).toContainEqual({
+      label: "抽到",
+      value: "骷髅",
+    });
+    setWebLocale("en");
+    expect(
+      presentResolution({ ...custom, goal: "Open the stone door" }).headline,
+    ).toBe("Open the stone door · Drew 骷髅 · Critical failure");
   });
 
   test("收据保存的标记键不被修改", () => {
