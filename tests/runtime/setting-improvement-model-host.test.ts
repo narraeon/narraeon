@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
 
+import { fictionGameplay } from "../../src/protocol/gameplay.ts";
 import { FileNativeModelHost } from "../../src/runtime/model/FileNativeModelAdapters.ts";
 import { builtinDefaultPlayPresetBinding } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
 import { FileNativePromptCompiler } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
@@ -34,11 +35,17 @@ test.each([
     maxOutputTokens: 4_096,
   });
   const compiler = new FileNativePromptCompiler({ locale: scenario.locale });
-  const tools = settingImprovementToolDefinitions(scenario.locale);
+  const tools = settingImprovementToolDefinitions(
+    scenario.locale,
+    fictionGameplay,
+  );
   const bootstrap = compiler.compileSettingImprovement({
     gameplay: { mode: "interactive-fiction" },
     contentPackageTitle: "Package",
-    runtimeContract: settingImprovementRuntimeContract(scenario.locale),
+    runtimeContract: settingImprovementRuntimeContract(
+      scenario.locale,
+      fictionGameplay,
+    ),
     authorPrompt: "Author setting documents.",
     playPreset: builtinDefaultPlayPresetBinding(scenario.locale),
     modelBinding: host.binding(),
@@ -74,14 +81,17 @@ test.each([
       maxOutputTokens: 4_096,
     });
     const compiler = new FileNativePromptCompiler({ locale: "zh-CN" });
-    const tools = settingImprovementToolDefinitions("zh-CN");
+    const tools = settingImprovementToolDefinitions("zh-CN", fictionGameplay);
     const playPreset = builtinDefaultPlayPresetBinding("zh-CN");
     playPreset.definition.files["blocks/not-enabled.md"] =
       "UNLISTED-PRESET-BLOCK-MUST-NOT-LEAK";
     const bootstrap = compiler.compileSettingImprovement({
       gameplay: { mode: "interactive-fiction" },
       contentPackageTitle: "雾港来信",
-      runtimeContract: settingImprovementRuntimeContract("zh-CN"),
+      runtimeContract: settingImprovementRuntimeContract(
+        "zh-CN",
+        fictionGameplay,
+      ),
       authorPrompt: "保留已有事实，只按用户当前消息行动。",
       playPreset,
       modelBinding: host.binding(),
@@ -218,7 +228,7 @@ test.each([
       authorPrompt: "UNUSED_OLD_POLICY",
       playPreset: preset,
       modelBinding: host.binding(),
-      tools: settingImprovementToolDefinitions("en"),
+      tools: settingImprovementToolDefinitions("en", fictionGameplay),
     });
     const request = host.previewRequest({
       bootstrap,

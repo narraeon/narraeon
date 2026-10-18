@@ -384,18 +384,19 @@ export class WorldRevisionSession {
     const worlds = await this.#worlds.listWorlds();
     const playPreset = await this.#bindPlayPreset();
     const locale = this.#locale();
+    const gameplay = await this.#worlds.gameplay(worldId);
     const bootstrap = this.#compiler.compileWorldRevision({
       ...(epoch === null
         ? {}
         : { epoch: { id: epoch.epochId, baseHead: epoch.baseHead } }),
       worldTitle:
         worlds.find((world) => world.worldId === worldId)?.title ?? worldId,
-      gameplay: await this.#worlds.gameplay(worldId),
-      runtimeContract: worldRevisionRuntimeContract(locale),
+      gameplay,
+      runtimeContract: worldRevisionRuntimeContract(locale, gameplay),
       authorPrompt: settingImprovementPromptForBinding(playPreset, locale),
       playPreset,
       modelBinding: modelBinding,
-      tools: worldRevisionToolDefinitions(locale),
+      tools: worldRevisionToolDefinitions(locale, gameplay),
     });
 
     return { bootstrap, playPreset };
@@ -426,12 +427,12 @@ export class WorldRevisionSession {
       worlds.find((world) => world.worldId === worldId)?.title ?? worldId;
     const locale = this.#locale();
     const modelBinding = host.binding();
-    const tools = worldRevisionToolDefinitions(locale);
+    const tools = worldRevisionToolDefinitions(locale, gameplay);
     const bootstrap = this.#compiler.compileWorldRevision({
       epoch: { id: epoch.epochId, baseHead: epoch.baseHead },
       worldTitle,
       gameplay,
-      runtimeContract: worldRevisionRuntimeContract(locale),
+      runtimeContract: worldRevisionRuntimeContract(locale, gameplay),
       authorPrompt: settingImprovementPromptForBinding(playPreset, locale),
       playPreset,
       modelBinding,

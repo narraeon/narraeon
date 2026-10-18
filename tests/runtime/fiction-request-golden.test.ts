@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { fictionGameplay } from "../../src/protocol/gameplay.ts";
 import { describe, expect, test } from "vitest";
 
 import type { AppLocale } from "../../src/protocol/appPreferences.ts";
@@ -20,12 +21,11 @@ import {
 
 /**
  * Fiction requests are the compatibility contract for tabletop work: every
- * compiled logical message, tool, provider payload and cache identity must stay
- * byte-identical to the base branch. The digests below were produced from the
- * base commit 6bbfa30 with this same scenario set. Against main (45ee767) the
- * 72 play, preview, call-chain and bootstrap digests are identical; the four
- * setting and revision digests differ only in the setting_write_file tool
- * description that phase 1A added (control/gameplay.json mention).
+ * compiled logical message, tool, provider payload and cache identity of a
+ * fiction world or package must stay byte-identical to the released main
+ * branch (45ee767). The digests below were produced by running this scenario
+ * set against main. Gameplay wording (control/gameplay.json mentions, bag
+ * guidance) reaches the model only for tabletop worlds and packages.
  */
 function digest(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -121,11 +121,14 @@ function computeDigests(): Record<string, string> {
       compiler.compileSettingImprovement({
         gameplay: { mode: "interactive-fiction" },
         contentPackageTitle: "Golden package",
-        runtimeContract: settingImprovementRuntimeContract(locale),
+        runtimeContract: settingImprovementRuntimeContract(
+          locale,
+          fictionGameplay,
+        ),
         authorPrompt: "golden author prompt",
         playPreset: binding,
         modelBinding,
-        tools: settingImprovementToolDefinitions(locale),
+        tools: settingImprovementToolDefinitions(locale, fictionGameplay),
       }),
     );
     digests[`revision/${locale}`] = digest(
@@ -133,11 +136,14 @@ function computeDigests(): Record<string, string> {
         gameplay: { mode: "interactive-fiction" },
         worldTitle: "Golden world",
         epoch: { id: "epoch-golden", baseHead: "head-golden" },
-        runtimeContract: settingImprovementRuntimeContract(locale),
+        runtimeContract: settingImprovementRuntimeContract(
+          locale,
+          fictionGameplay,
+        ),
         authorPrompt: "golden author prompt",
         playPreset: binding,
         modelBinding,
-        tools: settingImprovementToolDefinitions(locale),
+        tools: settingImprovementToolDefinitions(locale, fictionGameplay),
       }),
     );
   }
@@ -296,11 +302,11 @@ const expectedDigests: Record<string, string> = {
   "preview/zh-CN/ordered-default/openai_responses/bootstrap":
     "646db33158f50cad0d9c3203a71a81992c363a95846fb9287e6d22d0a990a7ca",
   "revision/en":
-    "bfd41396e72ccb1fc4f441f0feb13f64dc9d2cc8154f1bd670710eb775979765",
+    "5abbc35a3e641d237a6a008a07d49afc134c5c05f3793eb1f411ea80094819f6",
   "revision/zh-CN":
-    "40ae78a810d6da10bca80355270b79b0fe980f209519907c7c9dbfd821be1b11",
+    "7c153e4ecc3017e2d543fa1ef3700acc63b9ee1c512cd2c24ea3184efe0f5714",
   "setting/en":
-    "4c6b4444557c341819cbd2e4dc2df71d8f7dba02842d7d6c6f23b8a7d587fcbc",
+    "0d5231de8c6b09f878e0949b549f2e7d3237612d0b55b9210f6e58ab42a91d2e",
   "setting/zh-CN":
-    "3e2c3aa050a548c5f8f71d6e7f1c70ea653e01480e4ebbfafa629e059cb9fb5e",
+    "38628ba1c135c69e448be936f275f2a4d91e2049d366811023072d32daae33b1",
 };

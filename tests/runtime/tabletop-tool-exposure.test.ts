@@ -1,4 +1,5 @@
 import { mkdtemp, rm } from "node:fs/promises";
+import { fictionGameplay } from "../../src/protocol/gameplay.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -164,7 +165,7 @@ describe("per-world tool exposure", () => {
 
   test("authoring tool sets are independent of world gameplay", () => {
     const compiler = new FileNativePromptCompiler();
-    const tools = settingImprovementToolDefinitions("en");
+    const tools = settingImprovementToolDefinitions("en", fictionGameplay);
     const input = previewInputWithGameplay({ mode: "tabletop", scheme: "d20" });
     const compiled = compiler.compileSettingImprovement({
       gameplay: { mode: "interactive-fiction" },

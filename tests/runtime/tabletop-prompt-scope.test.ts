@@ -274,11 +274,11 @@ describe("tabletop-scoped prompts in authoring compilation", () => {
     const input = previewInputWithGameplay(gameplay);
     return compiler.compileSettingImprovement({
       contentPackageTitle: "Scope package",
-      runtimeContract: settingImprovementRuntimeContract("en"),
+      runtimeContract: settingImprovementRuntimeContract("en", gameplay),
       authorPrompt: "author",
       playPreset: binding,
       modelBinding: input.modelBinding,
-      tools: settingImprovementToolDefinitions("en"),
+      tools: settingImprovementToolDefinitions("en", gameplay),
       gameplay,
     });
   }

@@ -188,20 +188,34 @@ test("损坏的玩法文件和写入普通包的跑团文件都作为工具错�
   );
 });
 
-test("工具描述与运行时契约只新增玩法文件路径，不加入跑团规则", () => {
+test("跑团包的工具描述与运行时契约提及玩法文件，只说明可修改的判定方案", () => {
+  const tabletop = { mode: "tabletop", scheme: "d100" } as const;
   for (const locale of ["en", "zh-CN"] as const) {
-    const write = settingImprovementToolDefinitions(locale).find(
+    const write = settingImprovementToolDefinitions(locale, tabletop).find(
       ({ name }) => name === "setting_write_file",
     );
     expect(write?.description).toContain("control/gameplay.json");
-    expect(settingImprovementRuntimeContract(locale)).toContain(
+    expect(settingImprovementRuntimeContract(locale, tabletop)).toContain(
       "control/gameplay.json",
     );
   }
-  expect(settingImprovementRuntimeContract("en")).toContain(
+  expect(settingImprovementRuntimeContract("en", tabletop)).toContain(
     "only a tabletop resolution scheme may change",
   );
-  expect(settingImprovementRuntimeContract("zh-CN")).toContain(
+  expect(settingImprovementRuntimeContract("zh-CN", tabletop)).toContain(
     "只能修改跑团判定方案，玩法模式不可改",
   );
+});
+
+test("互动式小说的工具描述与运行时契约不提及玩法文件", () => {
+  for (const locale of ["en", "zh-CN"] as const) {
+    const fiction = { mode: "interactive-fiction" } as const;
+    const write = settingImprovementToolDefinitions(locale, fiction).find(
+      ({ name }) => name === "setting_write_file",
+    );
+    expect(write?.description).not.toContain("gameplay");
+    expect(settingImprovementRuntimeContract(locale, fiction)).not.toContain(
+      "gameplay",
+    );
+  }
 });

@@ -33,11 +33,11 @@ function compileSetting(
   return new FileNativePromptCompiler({ locale }).compileSettingImprovement({
     contentPackageTitle: "Authoring awareness",
     gameplay,
-    runtimeContract: settingImprovementRuntimeContract(locale),
+    runtimeContract: settingImprovementRuntimeContract(locale, gameplay),
     authorPrompt: "author",
     playPreset: builtinDefaultPlayPresetBinding(locale),
     modelBinding: input.modelBinding,
-    tools: settingImprovementToolDefinitions(locale),
+    tools: settingImprovementToolDefinitions(locale, gameplay),
   });
 }
 
@@ -50,11 +50,11 @@ function compileRevision(
     worldTitle: "Revision awareness",
     epoch: { id: "epoch-awareness", baseHead: "head-awareness" },
     gameplay,
-    runtimeContract: settingImprovementRuntimeContract(locale),
+    runtimeContract: settingImprovementRuntimeContract(locale, gameplay),
     authorPrompt: "author",
     playPreset: builtinDefaultPlayPresetBinding(locale),
     modelBinding: input.modelBinding,
-    tools: settingImprovementToolDefinitions(locale),
+    tools: settingImprovementToolDefinitions(locale, gameplay),
   });
 }
 
