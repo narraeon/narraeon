@@ -21,8 +21,11 @@ import {
 /**
  * Fiction requests are the compatibility contract for tabletop work: every
  * compiled logical message, tool, provider payload and cache identity must stay
- * byte-identical to the pre-tabletop compiler. The digests below were produced
- * from the base commit 6bbfa30 with this same scenario set.
+ * byte-identical to the base branch. The digests below were produced from the
+ * base commit 6bbfa30 with this same scenario set. Against main (45ee767) the
+ * 72 play, preview, call-chain and bootstrap digests are identical; the four
+ * setting and revision digests differ only in the setting_write_file tool
+ * description that phase 1A added (control/gameplay.json mention).
  */
 function digest(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
