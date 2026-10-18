@@ -1,4 +1,12 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
@@ -12,6 +20,7 @@ import {
   type V1Request,
 } from "../../src/protocol/v1.ts";
 import type { PlayCallChainObserver } from "../../src/runtime/play/PlayCallChain.ts";
+import type { RuntimeErrorRecord } from "../../src/runtime/RuntimeErrorLog.ts";
 import type { V1Runtime } from "../../src/runtime/V1Runtime.ts";
 import { createServer } from "../../src/server/createServer.ts";
 import { createRuntime } from "../../src/server/createRuntime.ts";
@@ -594,5 +603,85 @@ test("生产 HTTP 边界只接受显式 runtime/v1 envelope 并返回当前工�
   expect(unsupportedTree.json()).toMatchObject({
     error: { code: "invalid_request" },
   });
+  await server.close();
+});
+
+test("Runtime 请求失败写入 runtime-errors 日志且浏览器拿到错误原文", async () => {
+  const root = await mkdtemp(join(tmpdir(), "narraeon-v1-server-errors-"));
+  roots.push(root);
+  const staticRoot = join(root, "dist");
+  await mkdir(staticRoot, { recursive: true });
+  await writeFile(join(staticRoot, "index.html"), "<!doctype html>");
+  const logRoot = join(root, "logs");
+  const runtime = await createRuntime({
+    dataRoot: join(root, "data"),
+    configRoot: join(root, "config"),
+    logRoot,
+  });
+  const server = await createServer({
+    runtime,
+    staticRoot,
+    port: 4317,
+    logger: false,
+  });
+  const send = (request: unknown) =>
+    server.inject({
+      method: "POST",
+      url: "/api/runtime/v1",
+      headers: { "content-type": "application/json" },
+      payload: { protocol: "narraeon.runtime/v1", request },
+    });
+
+  const rejected = await send({
+    type: "play.chain.revise-player",
+    operationId: "revise-missing",
+    worldId: "world-missing",
+    chainId: "chain-missing",
+    eventId: 1,
+    replacementExchangeId: "exchange-missing",
+    replacementText: "Private player text.",
+    continuation: "continue_context",
+  });
+  expect(rejected.statusCode).toBeGreaterThanOrEqual(400);
+  const body = rejected.json<{
+    error?: { message?: string } | string;
+    message?: string;
+  }>();
+  const message =
+    typeof body.error === "object" ? body.error.message : body.message;
+  expect(message).toEqual(expect.any(String));
+
+  const [file, ...others] = await readdir(join(logRoot, "runtime-errors"));
+  expect(others).toEqual([]);
+  expect(file).toMatch(/^\d{4}-\d{2}-\d{2}\.jsonl$/u);
+  expect(
+    (await stat(join(logRoot, "runtime-errors", file!))).mode & 0o777,
+  ).toBe(0o600);
+  const contents = await readFile(
+    join(logRoot, "runtime-errors", file!),
+    "utf8",
+  );
+  expect(contents).not.toContain("Private player text.");
+  const records = contents
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as RuntimeErrorRecord);
+  expect(records).toMatchObject([
+    {
+      format: "narraeon.runtime-error-log/v1",
+      kind: "request_failed",
+      requestType: "play.chain.revise-player",
+      request: {
+        operationId: "revise-missing",
+        worldId: "world-missing",
+        chainId: "chain-missing",
+        eventId: 1,
+        replacementExchangeId: "exchange-missing",
+        continuation: "continue_context",
+      },
+      error: { message },
+    },
+  ]);
+  expect(records[0]?.error.stack).toContain(message);
   await server.close();
 });

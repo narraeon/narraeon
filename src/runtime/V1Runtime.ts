@@ -13,6 +13,7 @@ import {
 import {
   V1ProtocolError,
   v1Protocol,
+  type V1PlayCallChainView,
   type V1Request,
   type V1Response,
 } from "../protocol/v1.ts";
@@ -68,6 +69,7 @@ import {
 import { FileNativeWorldStore } from "./world/FileNativeWorldStore.ts";
 import { WorldDocumentStore } from "./world/WorldDocumentStore.ts";
 import { FileNativeAiFailureLog } from "./model/AiFailureLog.ts";
+import { FileNativeRuntimeErrorLog } from "./RuntimeErrorLog.ts";
 import { ProtagonistTemplateStore } from "./config/ProtagonistTemplateStore.ts";
 import { AppPreferencesStore } from "./config/AppPreferencesStore.ts";
 import { FileNativeWorldRevisionStore } from "./world-revision/FileNativeWorldRevisionStore.ts";
@@ -94,6 +96,7 @@ export class V1Runtime {
   readonly #corrections: FileNativeContinuityCorrection;
   readonly #playCallChains: PlayCallChain;
   readonly #failureLog: FileNativeAiFailureLog | undefined;
+  readonly #errorLog: FileNativeRuntimeErrorLog | undefined;
   readonly #preferences: AppPreferencesStore;
   readonly #protagonistTemplates: ProtagonistTemplateStore;
   readonly #settingImprovements: SettingImprovementSession;
@@ -120,6 +123,10 @@ export class V1Runtime {
       input.logRoot === undefined
         ? undefined
         : new FileNativeAiFailureLog(join(input.logRoot, "ai-failures"));
+    this.#errorLog =
+      input.logRoot === undefined
+        ? undefined
+        : new FileNativeRuntimeErrorLog(join(input.logRoot, "runtime-errors"));
     this.#playCallChains = new PlayCallChain(
       this.#worlds,
       this.#compiler,
@@ -246,8 +253,10 @@ export class V1Runtime {
   ): Promise<V1Response> {
     try {
       const result = await this.#dispatch(request, playCallChainObserver);
+      await this.#recordPlayInterruption(request, result);
       return { protocol: v1Protocol, result };
     } catch (error) {
+      await this.#errorLog?.recordRequestFailure(request, error);
       if (error instanceof WorldArchiveError)
         throw new V1ProtocolError(error.code, error.message, { cause: error });
       if (
@@ -275,6 +284,31 @@ export class V1Runtime {
         }
       }
     }
+  }
+
+  async #recordPlayInterruption(
+    request: V1Request,
+    result: unknown,
+  ): Promise<void> {
+    if (
+      this.#errorLog === undefined ||
+      (request.type !== "play.chain.start" &&
+        request.type !== "play.chain.append")
+    )
+      return;
+    const chain = result as Partial<V1PlayCallChainView> | null;
+    if (
+      chain?.status !== "interrupted" ||
+      typeof chain.lastFailure !== "string" ||
+      chain.events?.at(-1)?.kind === "cancellation"
+    )
+      return;
+    await this.#errorLog.recordPlayInterruption(request, {
+      message: chain.lastFailure,
+      ...(chain.lastFailureKind === undefined
+        ? {}
+        : { kind: chain.lastFailureKind }),
+    });
   }
 
   subscribeConversation(

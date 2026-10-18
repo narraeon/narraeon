@@ -25,18 +25,19 @@ export class RuntimeClient {
       body: JSON.stringify({ protocol: v1Protocol, request }),
     });
     const payload = (await response.json()) as V1Response & {
-      error?: {
-        code?: string;
-        message?: string;
-      };
+      error?: { code?: string; message?: string } | string;
+      message?: string;
     };
-    if (!response.ok)
+    if (!response.ok) {
+      // Unexpected Runtime errors use the HTTP server's own error shape.
+      const error = typeof payload.error === "object" ? payload.error : null;
       throw new RuntimeRequestError(
-        payload.error?.message ?? `Runtime request failed: ${response.status}`,
-        {
-          protocolCode: payload.error?.code,
-        },
+        error?.message ??
+          payload.message ??
+          `Runtime request failed: ${response.status}`,
+        { protocolCode: error?.code },
       );
+    }
     if (payload.protocol !== v1Protocol)
       throw new Error("The Runtime returned an incompatible protocol");
     return payload.result as T;
