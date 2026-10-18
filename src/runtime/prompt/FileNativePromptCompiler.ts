@@ -75,6 +75,7 @@ import {
 } from "./FileNativeToolRegistry.ts";
 import { resolutionToolNames } from "../play/TabletopResolution.ts";
 import { readGameplay } from "../../protocol/gameplay.ts";
+import { tabletopWorldRulesBlock } from "../play/TabletopRules.ts";
 import type {
   PlayPresetBinding,
   PlayPresetFollowupDefinition,
@@ -1138,6 +1139,11 @@ export class FileNativePromptCompiler {
         .map((directory) => `- ${stateDirectoryHandle(directory)}`)
         .join("\n")}`,
     });
+    // Runtime rules precede the materials they govern. The frozen path keeps
+    // this block verbatim, so a continued context neither repeats nor loses it.
+    const gameplay = playGameplay(snapshot);
+    if (gameplay.mode === "tabletop")
+      materials.blocks.unshift(tabletopWorldRulesBlock(gameplay, this.#locale));
     return materials;
   }
 
