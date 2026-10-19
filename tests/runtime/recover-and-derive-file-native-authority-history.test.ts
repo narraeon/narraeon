@@ -726,7 +726,7 @@ test("分叉保留逐字节相同的世界中立 Authority 前缀", async () => 
   ).toEqual(["message.1.1.player", "message.1.2.narrator"]);
 });
 
-test("分叉 staging 持有统一来源快照 lease，删除不能切断正在保留的物理闭包", async () => {
+test("分叉 staging 持有统一来源快照 lease，删除排队到分叉结束后执行，派生世界的物理闭包完整", async () => {
   const fixture = await world();
   let entered!: () => void;
   let release!: () => void;
@@ -747,20 +747,13 @@ test("分叉 staging 持有统一来源快照 lease，删除不能切断正在�
     },
   });
   await stagingEntered;
-  try {
-    await expect(
-      fixture.store.deleteWorld(fixture.worldId),
-    ).rejects.toMatchObject({ name: "WorldOperationBusyError" });
-  } finally {
-    release();
-  }
+  const deletion = fixture.store.deleteWorld(fixture.worldId);
+  release();
   const derived = await derivation;
+  await expect(deletion).resolves.toEqual({ deleted: true });
   await expect(
     fixture.store.recoverEndpoint(derived.world.worldId),
   ).resolves.toMatchObject({ head: "genesis" });
-  await expect(fixture.store.currentHead(fixture.worldId)).resolves.toBe(
-    "genesis",
-  );
 });
 
 test.each([

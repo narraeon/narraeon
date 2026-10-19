@@ -11,13 +11,13 @@ import {
   open,
   readdir,
   readFile,
-  readlink,
   rename,
   rm,
   stat,
 } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { worldQueueFor } from "../world/WorldQueue.ts";
 
 import {
   validatePlayPresetArtifactPayload,
@@ -351,17 +351,13 @@ export class FileNativeArtifactStore implements ArtifactStore {
     this.#worldsRoot = join(resolve(dataRoot), "worlds-file-native");
   }
 
-  /** Control acceptance and artifact publication share one persistent lock.
-   * Callers holding the Authority lock always acquire it before this lock. */
+  /** Control acceptance and artifact publication share the in-process world queue. */
   static withWorldControlsMutation<T>(
     dataRoot: string,
     worldId: string,
     action: () => Promise<T>,
   ): Promise<T> {
-    return withArtifactWorldLock(
-      artifactWorldLockPath(dataRoot, worldId),
-      action,
-    );
+    return worldQueueFor(resolve(dataRoot)).run(worldId, action);
   }
 
   /** The immutable closure publishes atomically with the derived world. */
@@ -2182,263 +2178,19 @@ export class FileNativeArtifactStore implements ArtifactStore {
   ): Promise<T> {
     const active = this.#mutationContext.getStore();
     if (active?.has(worldId) === true) return action();
-    return withArtifactWorldLock(
-      artifactWorldLockPath(dirname(this.#root), worldId),
-      () =>
-        this.#mutationContext.run(
-          new Set([...(active ?? []), worldId]),
-          async () => {
-            await this.#restoreFork(worldId);
-            return action();
-          },
-        ),
+    return worldQueueFor(dirname(this.#root)).run(worldId, () =>
+      this.#mutationContext.run(
+        new Set([...(active ?? []), worldId]),
+        async () => {
+          await this.#restoreFork(worldId);
+          return action();
+        },
+      ),
     );
   }
 
   #worldRoot(worldId: string): string {
     return join(this.#root, "worlds", identityHash(worldId));
-  }
-}
-
-function artifactWorldLockPath(dataRoot: string, worldId: string): string {
-  return join(
-    resolve(dataRoot),
-    "runtime-locks",
-    "artifacts",
-    identityHash(worldId),
-  );
-}
-
-const artifactWorldLockStaleMilliseconds = 30_000;
-const artifactWorldLockWaitMilliseconds = 30_000;
-
-async function withArtifactWorldLock<T>(
-  path: string,
-  action: () => Promise<T>,
-): Promise<T> {
-  const token = randomUUID();
-  const processIdentity = await artifactLocalProcessIdentity();
-  const parent = dirname(path);
-  await mkdir(parent, { recursive: true, mode: 0o700 });
-  const deadline = Date.now() + artifactWorldLockWaitMilliseconds;
-  while (true) {
-    try {
-      await mkdir(path, { mode: 0o700 });
-      break;
-    } catch (error: unknown) {
-      if (!isAlreadyExists(error)) throw error;
-      const owner = await readArtifactLockOwner(path);
-      if (owner !== null && (await artifactLockOwnerIsAlive(owner, path))) {
-        if (Date.now() >= deadline)
-          throw new Error("artifact world mutation lock is busy", {
-            cause: error,
-          });
-        await artifactLockDelay(5);
-        continue;
-      }
-      const metadata = await stat(path).catch(() => null);
-      if (
-        owner !== null ||
-        (metadata !== null &&
-          Date.now() - metadata.mtimeMs > artifactWorldLockStaleMilliseconds)
-      )
-        await retireArtifactWorldLock(path, owner, metadata, parent);
-      if (Date.now() >= deadline)
-        throw new Error("artifact world mutation lock is busy", {
-          cause: error,
-        });
-      await artifactLockDelay(5);
-    }
-  }
-
-  const ownerPath = join(path, "owner.json");
-  const heartbeatPath = join(path, "heartbeat");
-  let heartbeatHandle: Awaited<ReturnType<typeof open>> | undefined;
-  let stopped = false;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let heartbeat: Promise<void> = Promise.resolve();
-  const schedule = (): void => {
-    const handle = heartbeatHandle;
-    if (handle === undefined)
-      throw new ArtifactStoreInvariantError(
-        "Artifact world-lock heartbeat is not initialized",
-      );
-    timer = setTimeout(() => {
-      const now = new Date();
-      heartbeat = handle
-        .utimes(now, now)
-        .catch(() => undefined)
-        .finally(() => {
-          if (!stopped) schedule();
-        });
-    }, 5_000);
-  };
-  try {
-    await writeDurableJson(
-      ownerPath,
-      { token, pid: process.pid, processIdentity },
-      true,
-    );
-    if (
-      process.env.NARRAEON_INTERNAL_TEST_FAIL_AT_ARTIFACT_LOCK_EDGE ===
-        "after_owner" &&
-      process.env.NODE_ENV === "test"
-    )
-      throw new Error("simulated artifact lock setup failure");
-    await writeDurableJson(heartbeatPath, { token }, true);
-    heartbeatHandle = await open(heartbeatPath, "r+");
-    schedule();
-    return await action();
-  } finally {
-    stopped = true;
-    if (timer !== undefined) clearTimeout(timer);
-    await heartbeat;
-    await heartbeatHandle?.close();
-    await releaseArtifactWorldLock(path, token, parent);
-  }
-}
-
-interface ArtifactLockOwner {
-  token: string;
-  pid: number;
-  processIdentity: string;
-}
-
-async function readArtifactLockOwner(
-  path: string,
-): Promise<ArtifactLockOwner | null> {
-  let value: unknown;
-  try {
-    value = JSON.parse(await readFile(join(path, "owner.json"), "utf8"));
-  } catch (error: unknown) {
-    if (isMissing(error)) return null;
-    throw error;
-  }
-  if (
-    !isRecord(value) ||
-    !hasExactKeys(value, ["token", "pid", "processIdentity"]) ||
-    !isNonEmptyString(value.token) ||
-    !Number.isSafeInteger(value.pid) ||
-    Number(value.pid) < 1 ||
-    !isNonEmptyString(value.processIdentity)
-  )
-    throw new ArtifactStoreCorruptionError(
-      "Artifact world-mutation lock owner is corrupt",
-    );
-  return value as unknown as ArtifactLockOwner;
-}
-
-async function retireArtifactWorldLock(
-  path: string,
-  observedOwner: ArtifactLockOwner | null,
-  observedMetadata: { dev: number; ino: number; mtimeMs: number } | null,
-  locksRoot: string,
-): Promise<void> {
-  if (observedOwner === null && observedMetadata === null) return;
-  const currentOwner = await readArtifactLockOwner(path);
-  const currentMetadata = await stat(path).catch(() => null);
-  const sameGeneration =
-    observedOwner === null
-      ? currentOwner === null &&
-        observedMetadata !== null &&
-        currentMetadata !== null &&
-        observedMetadata.dev === currentMetadata.dev &&
-        observedMetadata.ino === currentMetadata.ino
-      : currentOwner?.token === observedOwner.token;
-  if (!sameGeneration) return;
-  if (
-    currentOwner !== null &&
-    (await artifactLockOwnerIsAlive(currentOwner, path))
-  )
-    return;
-  if (
-    currentOwner === null &&
-    (currentMetadata === null ||
-      Date.now() - currentMetadata.mtimeMs <=
-        artifactWorldLockStaleMilliseconds)
-  )
-    return;
-  const generation =
-    currentOwner?.token ??
-    `inode-${currentMetadata?.dev ?? "missing"}-${currentMetadata?.ino ?? "missing"}`;
-  const retired = `${path}.${identityHash(generation)}.${randomUUID()}.retired`;
-  try {
-    await rename(path, retired);
-    await syncArtifactDirectory(locksRoot);
-    await rm(retired, { recursive: true, force: true });
-  } catch (error: unknown) {
-    if (isMissing(error) || isAlreadyExists(error)) return;
-    throw error;
-  }
-}
-
-async function releaseArtifactWorldLock(
-  path: string,
-  token: string,
-  locksRoot: string,
-): Promise<void> {
-  const owner = await readArtifactLockOwner(path);
-  if (owner?.token !== token) return;
-  const retired = `${path}.${identityHash(token)}.${randomUUID()}.retired`;
-  try {
-    await rename(path, retired);
-    await syncArtifactDirectory(locksRoot);
-    await rm(retired, { recursive: true, force: true });
-  } catch (error: unknown) {
-    if (isMissing(error) || isAlreadyExists(error)) return;
-    throw error;
-  }
-}
-
-let cachedArtifactProcessIdentity: Promise<string> | undefined;
-
-function artifactLocalProcessIdentity(): Promise<string> {
-  cachedArtifactProcessIdentity ??= artifactProcessIdentity(process.pid).then(
-    (identity) => identity ?? `fallback:${process.pid}:${randomUUID()}`,
-  );
-  return cachedArtifactProcessIdentity;
-}
-
-async function artifactLockOwnerIsAlive(
-  owner: ArtifactLockOwner,
-  path: string,
-): Promise<boolean> {
-  const identity = await artifactProcessIdentity(owner.pid);
-  if (identity === owner.processIdentity) return true;
-  if (identity === null) {
-    try {
-      process.kill(owner.pid, 0);
-      return true;
-    } catch (error: unknown) {
-      if (isRecord(error) && error.code === "ESRCH") return false;
-      // Fall through to the heartbeat for non-Linux or inaccessible processes.
-    }
-  }
-  const heartbeat = await stat(join(path, "heartbeat")).catch(() => null);
-  return (
-    heartbeat !== null &&
-    Date.now() - heartbeat.mtimeMs <= artifactWorldLockStaleMilliseconds
-  );
-}
-
-async function artifactProcessIdentity(pid: number): Promise<string | null> {
-  try {
-    const [bootId, namespace, processStat] = await Promise.all([
-      readFile("/proc/sys/kernel/random/boot_id", "utf8"),
-      readlink(`/proc/${pid}/ns/pid`),
-      readFile(`/proc/${pid}/stat`, "utf8"),
-    ]);
-    const commandEnd = processStat.lastIndexOf(") ");
-    if (commandEnd < 0) return null;
-    const fields = processStat
-      .slice(commandEnd + 2)
-      .trim()
-      .split(/\s+/u);
-    const startTicks = fields[19];
-    if (startTicks === undefined || !/^\d+$/u.test(startTicks)) return null;
-    return `linux:${bootId.trim()}:${namespace}:${startTicks}`;
-  } catch {
-    return null;
   }
 }
 
@@ -2486,10 +2238,6 @@ async function syncArtifactDirectory(path: string): Promise<void> {
   } finally {
     await handle.close();
   }
-}
-
-function artifactLockDelay(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 export class InMemoryArtifactStore extends FileNativeArtifactStore {
@@ -3217,10 +2965,6 @@ function isSha256(value: unknown): value is string {
 
 function isMissing(error: unknown): boolean {
   return isRecord(error) && error.code === "ENOENT";
-}
-
-function isAlreadyExists(error: unknown): boolean {
-  return isRecord(error) && error.code === "EEXIST";
 }
 
 function validAttachment(value: unknown): value is ArtifactAttachment {

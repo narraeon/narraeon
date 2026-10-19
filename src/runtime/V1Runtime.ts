@@ -702,6 +702,7 @@ export class V1Runtime {
       case "world.delete":
         return playCall(async () => {
           await this.#worlds.assertWorldRevisionUnlocked(request.worldId);
+          await this.#playCallChains.abortWorld(request.worldId);
           this.#playCallChains.forgetWorld(request.worldId);
           return this.#worlds.deleteWorld(request.worldId);
         });

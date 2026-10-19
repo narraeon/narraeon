@@ -1603,6 +1603,70 @@ test("派发推进存在但结果未落盘时按 outcome unknown 终止，冷恢
   expect(modelHost.requests).toHaveLength(0);
 });
 
+test("修正后并发观察与续写：单飞水合不让磁盘快照覆盖运行中的会话", async () => {
+  const { worlds, worldId } = await createWorld("play-chain-revise-concurrent");
+  const host = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      { outcome: "response", text: "第一段回复" },
+      { outcome: "response", text: "第二段回复" },
+      { outcome: "response", text: "修正后续写一" },
+      { outcome: "response", text: "修正后续写二" },
+    ],
+  });
+  const chains = new PlayCallChain(worlds);
+  const initial = await chains.start({
+    worldId,
+    chainId: "play-chain-revise-concurrent",
+    exchangeId: "revise-concurrent-first",
+    playerText: "第一次行动",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: host,
+  });
+  const second = await chains.append({
+    worldId,
+    chainId: initial.chainId,
+    exchangeId: "revise-concurrent-second",
+    playerText: "第二次行动",
+    modelHost: host,
+  });
+  const secondPlayer = second.events.findLast(
+    (event) => event.kind === "player",
+  )!;
+  const revised = await chains.revisePlayer({
+    operationId: "revise-concurrent-operation",
+    worldId,
+    chainId: second.chainId,
+    eventId: secondPlayer.id,
+    replacementExchangeId: "revise-concurrent-replacement",
+    replacementText: "第二次行动（修正）",
+    continuation: "continue_context",
+  });
+  const chainId = revised.playCallChain.chainId;
+  const [, continued] = await Promise.all([
+    chains.inspectWorld(worldId),
+    chains.append({
+      worldId,
+      chainId,
+      exchangeId: "revise-concurrent-after-observe",
+      playerText: "第三次行动",
+      modelHost: host,
+    }),
+  ]);
+  expect(continued).toMatchObject({ status: "ready" });
+  await expect(
+    chains.append({
+      worldId,
+      chainId,
+      exchangeId: "revise-concurrent-after-continue",
+      playerText: "第四次行动",
+      modelHost: host,
+    }),
+  ).resolves.toMatchObject({ status: "ready" });
+});
+
 test("玩家取消会终止当前 Provider 派发并保留已提交玩家原文", async () => {
   const { worlds, worldId } = await createWorld("play-chain-player-cancel");
   let signal: AbortSignal | undefined;
@@ -1699,6 +1763,48 @@ test("玩家取消会终止当前 Provider 派发并保留已提交玩家原文"
     "门外传来三声短促的铃响。\n",
     "I ask Alex to wait while I reconsider.",
   ]);
+});
+
+test("删除进行中生成的世界：先中止生成再删除，删除成功且生成以中断结束（#72）", async () => {
+  const { worlds, worldId } = await createWorld(
+    "play-chain-delete-during-generation",
+  );
+  let markExchangeStarted: (() => void) | undefined;
+  const exchangeStarted = new Promise<void>((resolve) => {
+    markExchangeStarted = resolve;
+  });
+  const modelHost: ModelHost = {
+    binding: modelBinding,
+    async exchange(_request, observer) {
+      const signal = observer?.signal;
+      markExchangeStarted?.();
+      return new Promise<ModelHostResponse>((_resolve, reject) => {
+        signal?.addEventListener(
+          "abort",
+          () => reject(new DOMException("aborted", "AbortError")),
+          { once: true },
+        );
+      });
+    },
+  };
+  const chains = new PlayCallChain(worlds);
+  const running = chains.start({
+    worldId,
+    chainId: "play-chain-delete-during-generation",
+    exchangeId: "exchange-delete-during-generation",
+    playerText: "I walk out of the room while the story is generating.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+  await exchangeStarted;
+
+  await chains.abortWorld(worldId);
+  chains.forgetWorld(worldId);
+  await expect(worlds.deleteWorld(worldId)).resolves.toEqual({ deleted: true });
+  await running.catch(() => undefined);
+  await expect(worlds.recoverEndpoint(worldId)).rejects.toThrow();
 });
 
 test("Provider 游玩调用持有世界使用权，结束前不能开启修订 epoch", async () => {

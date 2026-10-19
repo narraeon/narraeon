@@ -78,9 +78,8 @@ test("维护诊断不可用时修正仍可预览、取消并释放世界锁", as
   await corrections.cancel(next.candidateId, next.version);
 });
 
-test("修正初始化异常清理续租和预留，可用同一操作重试", async () => {
+test("修正初始化异常清理 claim 和预留，可用同一操作重试", async () => {
   const { store, corrections, worldId } = await world();
-  const heartbeatCleanup = vi.spyOn(globalThis, "clearInterval");
   vi.spyOn(store, "inspectDocumentMaintenance").mockRejectedValueOnce(
     new Error("candidate initialization failed"),
   );
@@ -89,16 +88,11 @@ test("修正初始化异常清理续租和预留，可用同一操作重试", as
     operationId: "correction-initialization-retry",
     mode: "documents" as const,
   };
-  try {
-    await expect(corrections.begin(input)).rejects.toThrow(
-      "candidate initialization failed",
-    );
-    expect(heartbeatCleanup).toHaveBeenCalled();
-    const retried = await corrections.begin(input);
-    await corrections.cancel(retried.candidateId, retried.version);
-  } finally {
-    heartbeatCleanup.mockRestore();
-  }
+  await expect(corrections.begin(input)).rejects.toThrow(
+    "candidate initialization failed",
+  );
+  const retried = await corrections.begin(input);
+  await corrections.cancel(retried.candidateId, retried.version);
 });
 
 test("文档修正先读后 patch、Preview并追加 correction commit", async () => {

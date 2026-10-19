@@ -238,8 +238,15 @@ export class PlayCallChain {
   readonly #failureLog: AiFailureRecorder | undefined;
   readonly #active = new Map<string, PlayCallChainSession>();
   readonly #worldChains = new Map<string, string>();
+  /** One in-flight disk hydration per world; concurrent callers share it. */
+  readonly #hydrating = new Map<
+    string,
+    { token: symbol; session: Promise<PlayCallChainSession | null> }
+  >();
   readonly #loadedCursors = new Map<string, PlayContextPersistenceCursor>();
   readonly #activeInvocations = new Map<string, ActivePlayInvocation>();
+  /** Resolves when the matching invocation has left the active table. */
+  readonly #invocationSettled = new Map<string, Promise<void>>();
 
   constructor(
     worlds: FileNativeWorldStore,
@@ -598,6 +605,10 @@ export class PlayCallChain {
         "A model request is already running for this world or call chain.",
       );
     const startedAt = Date.now();
+    let markSettled!: () => void;
+    const settled = new Promise<void>((resolve) => {
+      markSettled = resolve;
+    });
     const invocation: ActivePlayInvocation = {
       worldId: input.worldId,
       chainId: input.chainId,
@@ -619,6 +630,7 @@ export class PlayCallChain {
     );
     this.#worlds.freezeControl(input.worldId, controlUseId);
     this.#activeInvocations.set(input.chainId, invocation);
+    this.#invocationSettled.set(input.chainId, settled);
     this.changed(input.worldId);
     try {
       await this.#worlds.assertWorldRevisionUnlocked(input.worldId);
@@ -628,6 +640,8 @@ export class PlayCallChain {
         this.#activeInvocations.delete(input.chainId);
       this.#worlds.releaseControl(input.worldId, controlUseId);
       this.changed(input.worldId);
+      this.#invocationSettled.delete(input.chainId);
+      markSettled();
     }
   }
 
@@ -716,6 +730,17 @@ export class PlayCallChain {
   }
 
   async #worldSession(worldId: string): Promise<PlayCallChainSession | null> {
+    return this.#loadWorldSession(worldId);
+  }
+
+  /**
+   * Returns the live session for a world, hydrating it from disk at most once
+   * at a time. Concurrent callers share one hydration, so a session object is
+   * never replaced by a stale copy that finished hydrating later.
+   */
+  async #loadWorldSession(
+    worldId: string,
+  ): Promise<PlayCallChainSession | null> {
     const activeId = this.#worldChains.get(worldId);
     const active =
       activeId === undefined ? undefined : this.#active.get(activeId);
@@ -726,19 +751,41 @@ export class PlayCallChain {
         await this.#reconcileSessionAdvance(active);
       return active;
     }
+    const pending = this.#hydrating.get(worldId);
+    if (pending !== undefined) return pending.session;
+    const token = Symbol(worldId);
+    const session = this.#hydrateWorldSession(worldId, token);
+    this.#hydrating.set(worldId, { token, session });
+    try {
+      return await session;
+    } finally {
+      if (this.#hydrating.get(worldId)?.token === token)
+        this.#hydrating.delete(worldId);
+    }
+  }
+
+  async #hydrateWorldSession(
+    worldId: string,
+    token: symbol,
+  ): Promise<PlayCallChainSession | null> {
     const persisted = await this.#readPersisted(worldId);
     if (persisted === null) return null;
     const advance = await this.#worlds.playAdvances.readCurrent(
       worldId,
       persisted.chainId,
     );
-    const session = await this.#hydrateSession(persisted, advance);
-    this.#active.set(session.chainId, session);
-    this.#worldChains.set(worldId, session.chainId);
-    await this.#reconcileSessionAdvance(session, advance);
-    if (session.status === "running")
-      await this.#interruptAbandonedDispatch(session);
-    return session;
+    const hydrated = await this.#hydrateSession(persisted, advance);
+    // A live session registered while this disk read was in flight wins.
+    const live = this.#active.get(hydrated.chainId);
+    if (live !== undefined) return live;
+    // forgetWorld ran during hydration; do not resurrect the old session.
+    if (this.#hydrating.get(worldId)?.token !== token) return null;
+    this.#active.set(hydrated.chainId, hydrated);
+    this.#worldChains.set(worldId, hydrated.chainId);
+    await this.#reconcileSessionAdvance(hydrated, advance);
+    if (hydrated.status === "running")
+      await this.#interruptAbandonedDispatch(hydrated);
+    return hydrated;
   }
 
   async inspectReading(
@@ -1603,6 +1650,30 @@ export class PlayCallChain {
     return projectView(derived);
   }
 
+  /**
+   * Stops every in-flight model request for a world and waits until each has
+   * left the active table, so deletion never races a play write.
+   */
+  async abortWorld(worldId: string): Promise<void> {
+    validateIdentity(worldId, "world ID");
+    const invocations = [...this.#activeInvocations.values()].filter(
+      (invocation) => invocation.worldId === worldId,
+    );
+    for (const invocation of invocations) {
+      if (invocation.abortable && !invocation.controller.signal.aborted) {
+        invocation.phase = "cancelling";
+        invocation.lastActivityAt = Date.now();
+        invocation.controller.abort();
+      }
+    }
+    await Promise.all(
+      invocations.map(
+        (invocation) =>
+          this.#invocationSettled.get(invocation.chainId) ?? Promise.resolve(),
+      ),
+    );
+  }
+
   forgetWorld(worldId: string): void {
     const activeId = this.#worldChains.get(worldId);
     const active =
@@ -1613,6 +1684,7 @@ export class PlayCallChain {
       );
     if (activeId !== undefined) this.#active.delete(activeId);
     this.#worldChains.delete(worldId);
+    this.#hydrating.delete(worldId);
   }
 
   async #captureOrigin(session: PlayCallChainSession) {
@@ -2745,21 +2817,11 @@ export class PlayCallChain {
       await this.#reconcileSessionAdvance(active);
       return active;
     }
-    const persisted = await this.#readPersisted(worldId);
-    if (persisted?.chainId !== chainId)
+    const session = await this.#loadWorldSession(worldId);
+    if (session?.chainId !== chainId)
       throw new PlayCallChainError(
         "The call chain does not exist; start from the latest world state.",
       );
-    const advance = await this.#worlds.playAdvances.readCurrent(
-      worldId,
-      chainId,
-    );
-    const session = await this.#hydrateSession(persisted, advance);
-    this.#active.set(chainId, session);
-    this.#worldChains.set(worldId, chainId);
-    await this.#reconcileSessionAdvance(session, advance);
-    if (session.status === "running")
-      await this.#interruptAbandonedDispatch(session);
     const currentHead = await this.#worlds.currentHead(worldId);
     if (currentHead !== session.parentHead)
       throw new PlayCallChainError(

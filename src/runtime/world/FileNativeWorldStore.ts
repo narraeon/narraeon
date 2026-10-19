@@ -315,6 +315,10 @@ export class FileNativeWorldStore {
   async ensureCurrentStorage(worldId: string): Promise<void> {
     assertIdentity(worldId, "World ID");
     if (this.#currentStorage.has(worldId)) return;
+    // A shared migration may be queued behind this caller; when the caller
+    // already holds the world, run the migration inline instead of awaiting it.
+    if (this.operations.isWorldHeld(worldId))
+      return this.#ensureCurrentStorageSerialized(worldId);
     const existing = this.#storageMigrations.get(worldId);
     if (existing !== undefined) return existing;
     const migration = this.#ensureCurrentStorageSerialized(worldId);

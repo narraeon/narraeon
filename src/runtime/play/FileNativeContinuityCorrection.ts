@@ -56,10 +56,7 @@ interface Candidate extends WorldStateRevision {
   reads: Map<string, { snapshotId: string; hash: string }>;
   previewedVersion: number | null;
   stateOperationClaim: ContinuityCorrectionWorldClaimHandle;
-  claimHeartbeat: ReturnType<typeof setInterval>;
 }
-
-const claimHeartbeatIntervalMilliseconds = 20_000;
 
 export class FileNativeContinuityCorrection {
   readonly #worlds: FileNativeWorldStore;
@@ -148,12 +145,6 @@ export class FileNativeContinuityCorrection {
         "The correction candidate's world-state snapshot is unavailable",
       );
     }
-    const claimHeartbeat = setInterval(() => {
-      void this.#worlds.operations
-        .renewCorrectionWorld(claimed.handle)
-        .catch(() => undefined);
-    }, claimHeartbeatIntervalMilliseconds);
-    claimHeartbeat.unref();
     try {
       const candidate: Candidate = {
         ...revision,
@@ -175,7 +166,6 @@ export class FileNativeContinuityCorrection {
         reads: new Map(),
         previewedVersion: null,
         stateOperationClaim: claimed.handle,
-        claimHeartbeat,
       };
       this.#candidates.set(candidate.id, candidate);
       return {
@@ -184,7 +174,6 @@ export class FileNativeContinuityCorrection {
         parentHead: candidate.parentHead,
       };
     } catch (error: unknown) {
-      clearInterval(claimHeartbeat);
       this.#worlds.releaseControl(input.worldId, input.operationId);
       await Promise.allSettled([
         this.#worlds.releaseOperationReservation(input.operationId),
@@ -361,7 +350,6 @@ export class FileNativeContinuityCorrection {
       await this.#worlds.failOperation(candidate.operationId, "failed");
       throw error;
     } finally {
-      clearInterval(candidate.claimHeartbeat);
       this.#worlds.releaseControl(candidate.worldId, candidate.operationId);
       this.#candidates.delete(candidate.id);
       await this.#worlds.operations
@@ -372,7 +360,6 @@ export class FileNativeContinuityCorrection {
 
   async cancel(candidateId: string, expectedVersion: number): Promise<void> {
     const candidate = this.#atVersion(candidateId, expectedVersion);
-    clearInterval(candidate.claimHeartbeat);
     this.#candidates.delete(candidateId);
     this.#worlds.releaseControl(candidate.worldId, candidate.operationId);
     try {

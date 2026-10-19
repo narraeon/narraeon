@@ -279,20 +279,36 @@ describe("FileNativeArtifactStore", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  test("artifact lock owner 发布后的 setup 故障会按 token 释放，不永久锁死 world", async () => {
-    const root = await mkdtemp(join(tmpdir(), "narraeon-artifact-lock-setup-"));
+  test("并发的 artifact 发布与世界读取不会读到半写入的 JSON", async () => {
+    const root = await mkdtemp(join(tmpdir(), "narraeon-artifact-concurrent-"));
     const fixture = context(root, "commit", "replace");
-    process.env.NARRAEON_INTERNAL_TEST_FAIL_AT_ARTIFACT_LOCK_EDGE =
-      "after_owner";
-    try {
-      await expect(
-        fixture.store.beginOperation(fixture.operation),
-      ).rejects.toThrow(/simulated artifact lock setup failure/u);
-    } finally {
-      delete process.env.NARRAEON_INTERNAL_TEST_FAIL_AT_ARTIFACT_LOCK_EDGE;
-    }
+    const operations = Array.from({ length: 12 }, (_, index) => ({
+      ...fixture.operation,
+      operationId: `concurrent-operation-${index}`,
+    }));
     await expect(
-      new FileNativeArtifactStore(root).beginOperation(fixture.operation),
+      Promise.all([
+        ...operations.map((operation) =>
+          fixture.store.beginOperation(operation),
+        ),
+        ...operations.map(() =>
+          fixture.store.readExtensionSummaries(fixture.operation.worldId),
+        ),
+      ]),
+    ).resolves.toHaveLength(24);
+    await rm(root, { recursive: true, force: true });
+  });
+
+  test("遗留的空 owner.json 锁目录不影响 artifact 请求", async () => {
+    const root = await mkdtemp(
+      join(tmpdir(), "narraeon-artifact-legacy-lock-"),
+    );
+    const fixture = context(root, "commit", "replace");
+    const legacy = join(root, "runtime-locks", "artifacts", "stale");
+    await mkdir(legacy, { recursive: true });
+    await writeFile(join(legacy, "owner.json"), "", "utf8");
+    await expect(
+      fixture.store.beginOperation(fixture.operation),
     ).resolves.toBeUndefined();
     await rm(root, { recursive: true, force: true });
   });
