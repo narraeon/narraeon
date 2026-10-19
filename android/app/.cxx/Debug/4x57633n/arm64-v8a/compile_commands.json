@@ -1,7 +1,0 @@
-[
-{
-  "directory": "/Users/siwei/project/narraeon/.claude/worktrees/android-packaging-a8b0c6/android/app/.cxx/Debug/4x57633n/arm64-v8a",
-  "command": "/Users/siwei/Library/Android/sdk/ndk/26.3.11579264/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android24 --sysroot=/Users/siwei/Library/Android/sdk/ndk/26.3.11579264/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Dnarraeon_native_EXPORTS -I/Users/siwei/project/narraeon/.claude/worktrees/android-packaging-a8b0c6/android/app/src/main/cpp/../../../libnode/include/node -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -std=c++20 -fno-limit-debug-info  -fPIC -std=c++20 -o CMakeFiles/narraeon-native.dir/native-lib.cpp.o -c /Users/siwei/project/narraeon/.claude/worktrees/android-packaging-a8b0c6/android/app/src/main/cpp/native-lib.cpp",
-  "file": "/Users/siwei/project/narraeon/.claude/worktrees/android-packaging-a8b0c6/android/app/src/main/cpp/native-lib.cpp"
-}
-]

@@ -1,1 +1,0 @@
-/Users/siwei/project/narraeon/.claude/worktrees/android-packaging-a8b0c6/android/app/build/intermediates/cxx/Debug/4x57633n/obj/arm64-v8a

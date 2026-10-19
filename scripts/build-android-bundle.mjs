@@ -64,6 +64,9 @@ execFileSync(
     "-o",
     "-name",
     "__tests__",
+    "-o",
+    "-name",
+    ".bin",
     ")",
     "-prune",
     "-exec",
@@ -92,6 +95,8 @@ await writeFile(
 const files = [];
 for (const name of await readdir(assetPath, { recursive: true })) {
   const relative = name.split(path.sep).join("/");
+  // AAPT drops asset paths with a dot-prefixed segment, so they cannot be listed.
+  if (relative.split("/").some((segment) => segment.startsWith("."))) continue;
   if (relative === "bundle-version.txt" || relative === "bundle-files.txt")
     continue;
   if ((await stat(`${assetPath}${relative}`)).isFile()) files.push(relative);

@@ -1,1 +1,0 @@
-/Users/siwei/project/narraeon/.claude/worktrees/android-packaging-a8b0c6/android/app/src/main/cpp/CMakeLists.txt
