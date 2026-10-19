@@ -1,3 +1,4 @@
+import type { Gameplay } from "../protocol/gameplay.ts";
 import type {
   ContentTreeFile,
   V1Request,
@@ -17,6 +18,7 @@ export interface AuthoringClient {
 export interface AuthoringPackageDetail {
   localId: string;
   title: string;
+  gameplay: Gameplay;
   status: "usable" | "needs_repair";
   files: ContentTreeFile[];
   issues: { code: string; path: string; message: string }[];

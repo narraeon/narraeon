@@ -57,9 +57,23 @@ import {
 } from "../../src/runtime/play/FileNativePlayAdvanceStore.ts";
 import { FileNativeArtifactStore } from "../../src/runtime/artifact/FileNativeArtifactStore.ts";
 import {
+  isResolutionReceipt,
+  type ResolutionReceipt,
+} from "../../src/protocol/resolution.ts";
+import {
+  resolutionMarkdown,
+  resolveTabletop,
+  seededRandom,
+} from "../../src/runtime/play/TabletopResolution.ts";
+import {
+  baseRuntimeToolNames,
+  registeredRuntimeToolNames,
+} from "../../src/runtime/prompt/FileNativeToolRegistry.ts";
+import {
   FileNativePromptCompiler,
   type FileNativePromptInput,
 } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
+import { gameplayFile } from "../../src/protocol/gameplay.ts";
 import { V1Runtime } from "../../src/runtime/V1Runtime.ts";
 import { FileNativeWorldStore } from "../../src/runtime/world/FileNativeWorldStore.ts";
 import { FileNativeWorldRevisionStore } from "../../src/runtime/world-revision/FileNativeWorldRevisionStore.ts";
@@ -8170,6 +8184,412 @@ test("世界外修订改名并更换绑定不改历史背景或游标，新消�
   );
 });
 
+/** Play surface of a fiction context; artifact tools belong to follow-up requests. */
+const fictionPlayToolNames = [
+  "state_list",
+  "history_list",
+  "history_search",
+  "history_read",
+  "context_search",
+  "context_read",
+  "world_patch",
+  "world_create",
+  "world_retire",
+  "world_checkpoint",
+];
+
+/** Resolution scenarios run in a tabletop d20 world, so its universe carries the check. */
+function tabletopWorldFiles(): ContentTreeFile[] {
+  return [...worldFiles(), gameplayFile({ mode: "tabletop", scheme: "d20" })];
+}
+
+function resolutionCompiler(): FileNativePromptCompiler {
+  return new FileNativePromptCompiler();
+}
+
+async function resolutionSeedFiles(
+  directory: string,
+): Promise<{ path: string; seed: string }[]> {
+  const files: { path: string; seed: string }[] = [];
+  for (const entry of await readdir(directory, {
+    withFileTypes: true,
+    recursive: true,
+  })) {
+    if (!entry.isFile() || entry.name !== "resolution-seed.json") continue;
+    const path = join(entry.parentPath, entry.name);
+    const fact = JSON.parse(await readFile(path, "utf8")) as {
+      stage: string;
+      seed: string;
+    };
+    expect(fact.stage).toBe("resolution_seed");
+    files.push({ path, seed: fact.seed });
+  }
+  return files;
+}
+
+function d20ToolStep(id = "roll-1") {
+  return {
+    outcome: "response" as const,
+    toolCalls: [
+      {
+        id,
+        name: "d20_check",
+        arguments: { goal: "推开石门", modifier: 3, difficulty: 15 },
+      },
+    ],
+  };
+}
+
+test("冻结宇宙含判定工具时执行判定，回执与持久种子逐位复算一致", async () => {
+  const label = "play-chain-resolution-receipt";
+  const { worlds, worldId, root } = await createWorld(
+    label,
+    tabletopWorldFiles(),
+  );
+  const modelHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [d20ToolStep(), { outcome: "response", text: "石门缓缓开启。" }],
+  });
+  const view = await new PlayCallChain(worlds, resolutionCompiler()).start({
+    worldId,
+    chainId: label,
+    exchangeId: `${label}-player`,
+    playerText: "我推开石门。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+
+  expect(modelHost.requests[0]?.tools.map(({ name }) => name)).toContain(
+    "d20_check",
+  );
+  const result = view.events.find(
+    (event) => event.kind === "tool_result" && event.callId === "roll-1",
+  );
+  expect(result).toMatchObject({
+    kind: "tool_result",
+    name: "d20_check",
+    ok: true,
+    resolution: {
+      kind: "d20",
+      goal: "推开石门",
+      modifier: 3,
+      difficulty: 15,
+      mode: "normal",
+    },
+  });
+  const receipt = (result as { resolution: ResolutionReceipt }).resolution;
+  expect(isResolutionReceipt(receipt)).toBe(true);
+  const [seedFile] = await resolutionSeedFiles(root);
+  expect(seedFile).toBeDefined();
+  const recomputed = resolveTabletop(
+    "d20_check",
+    { goal: "推开石门", modifier: 3, difficulty: 15 },
+    seededRandom(seedFile!.seed, "1:roll-1"),
+  );
+  expect(receipt).toEqual(recomputed);
+  expect(modelHost.requests[1]?.appended.at(-1)).toMatchObject({
+    kind: "tool",
+    toolCallId: "roll-1",
+    markdown: resolutionMarkdown(recomputed, "en"),
+  });
+  expect(modelHost.requests[1]?.appended.at(-1)).not.toHaveProperty("isError");
+});
+
+test("判定边界崩溃后冷恢复复用同一种子，不重新抽样也不重新派发模型", async () => {
+  const label = "play-chain-resolution-recovery";
+  const { worlds, worldId, root } = await createWorld(
+    label,
+    tabletopWorldFiles(),
+  );
+  const modelHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [d20ToolStep(), { outcome: "response", text: "石门缓缓开启。" }],
+  });
+  process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE =
+    "after_resolution";
+
+  const interrupted = await new PlayCallChain(
+    worlds,
+    resolutionCompiler(),
+  ).start({
+    worldId,
+    chainId: label,
+    exchangeId: `${label}-player`,
+    playerText: "我推开石门。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+  expect(interrupted).toMatchObject({ status: "interrupted" });
+  expect(modelHost.requests).toHaveLength(1);
+  const [seedBefore] = await resolutionSeedFiles(root);
+
+  delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE;
+  const recovered = await new PlayCallChain(
+    worlds,
+    resolutionCompiler(),
+  ).inspectWorld(worldId);
+  expect(recovered).toMatchObject({
+    status: "interrupted",
+  });
+  expect(recovered?.lastFailure).toContain("continuation request is ready");
+  expect(modelHost.requests).toHaveLength(1);
+  expect(await resolutionSeedFiles(root)).toEqual([seedBefore]);
+  const result = recovered?.events.find(
+    (event) => event.kind === "tool_result" && event.callId === "roll-1",
+  );
+  const expected = resolveTabletop(
+    "d20_check",
+    { goal: "推开石门", modifier: 3, difficulty: 15 },
+    seededRandom(seedBefore!.seed, "1:roll-1"),
+  );
+  expect(result).toMatchObject({ resolution: expected });
+  const continued = await new PlayCallChain(
+    worlds,
+    resolutionCompiler(),
+  ).append({
+    worldId,
+    chainId: label,
+    exchangeId: `${label}-continue`,
+    playerText: "",
+    modelHost,
+    resolvePrompt: () =>
+      Promise.resolve({ hostBinding: hostBinding(), playPreset: playPreset() }),
+  });
+  expect(continued).toMatchObject({ status: "ready" });
+  expect(modelHost.requests).toHaveLength(2);
+  expect(modelHost.requests[1]?.appended.at(-1)).toMatchObject({
+    kind: "tool",
+    toolCallId: "roll-1",
+    markdown: resolutionMarkdown(expected, "en"),
+  });
+});
+
+test("持久化判定回执被篡改后，时间线读取拒绝该回执", async () => {
+  const label = "play-chain-resolution-tampered-receipt";
+  const { worlds, worldId, root } = await createWorld(
+    label,
+    tabletopWorldFiles(),
+  );
+  const modelHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [d20ToolStep(), { outcome: "response", text: "石门缓缓开启。" }],
+  });
+  await new PlayCallChain(worlds, resolutionCompiler()).start({
+    worldId,
+    chainId: label,
+    exchangeId: `${label}-player`,
+    playerText: "我推开石门。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+  let tampered = 0;
+  for (const entry of await readdir(root, {
+    withFileTypes: true,
+    recursive: true,
+  })) {
+    if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+    const path = join(entry.parentPath, entry.name);
+    const text = await readFile(path, "utf8");
+    if (!text.includes('"resolution"')) continue;
+    const parsed = JSON.parse(text) as unknown;
+    const walk = (value: unknown): void => {
+      if (Array.isArray(value)) value.forEach(walk);
+      else if (typeof value === "object" && value !== null) {
+        const record = value as Record<string, unknown>;
+        if (
+          record.kind === "tool_result" &&
+          typeof record.resolution === "object"
+        ) {
+          (record.resolution as Record<string, unknown>).total = 999;
+          tampered += 1;
+        }
+        Object.values(record).forEach(walk);
+      }
+    };
+    walk(parsed);
+    await writeFile(path, `${JSON.stringify(parsed, null, 2)}\n`);
+  }
+  expect(tampered).toBeGreaterThan(0);
+  await expect(
+    new PlayCallChain(worlds, resolutionCompiler()).inspectWorld(worldId),
+  ).rejects.toThrow("Invalid resolution receipt");
+});
+
+test("判定种子稳定复用，持久化损坏时拒绝恢复", async () => {
+  const label = "play-chain-resolution-seed";
+  const { worlds, worldId, root } = await createWorld(
+    label,
+    tabletopWorldFiles(),
+  );
+  const modelHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [d20ToolStep(), { outcome: "response", text: "石门缓缓开启。" }],
+  });
+  await new PlayCallChain(worlds, resolutionCompiler()).start({
+    worldId,
+    chainId: label,
+    exchangeId: `${label}-player`,
+    playerText: "我推开石门。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+  const advances = new FileNativePlayAdvanceStore(root);
+  const current = await advances.readCurrent(worldId, label);
+  expect(current?.base.advanceKind).toBe("response");
+  const base = current!.base as Extract<
+    PlayAdvanceBase,
+    { advanceKind: "response" }
+  >;
+  const seed = await advances.resolutionSeed(base);
+  expect(await advances.resolutionSeed(base)).toBe(seed);
+  expect(seed).toMatch(/^[a-f0-9]{64}$/);
+
+  const [target] = (await resolutionSeedFiles(root)).filter(
+    (item) => item.seed === seed,
+  );
+  await writeFile(
+    target!.path,
+    `${JSON.stringify({ schemaVersion: 1, stage: "resolution_seed", seed: "not-hex", recordedAt: 1 })}\n`,
+  );
+  await expect(advances.resolutionSeed(base)).rejects.toThrow(
+    "Invalid persisted resolution seed",
+  );
+});
+
+test("判定工具不在冻结宇宙中时被拒绝，非法参数只产生工具错误", async () => {
+  const rejected = await createWorld("play-chain-resolution-gating");
+  const rejectedHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      d20ToolStep("not-frozen"),
+      { outcome: "response", text: "石门没有开启，角色只是退后一步。" },
+    ],
+  });
+  const view = await new PlayCallChain(rejected.worlds).start({
+    worldId: rejected.worldId,
+    chainId: "play-chain-resolution-gating",
+    exchangeId: "play-chain-resolution-gating-player",
+    playerText: "我推开石门。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: rejectedHost,
+  });
+  expect(rejectedHost.requests[0]?.tools.map(({ name }) => name)).not.toContain(
+    "d20_check",
+  );
+  expect(view.events).toContainEqual(
+    expect.objectContaining({
+      kind: "tool_result",
+      callId: "not-frozen",
+      ok: false,
+    }),
+  );
+  expect(
+    view.events.find(
+      (event) => event.kind === "tool_result" && event.callId === "not-frozen",
+    ),
+  ).not.toHaveProperty("resolution");
+  expect(rejectedHost.requests[1]?.appended.at(-1)).toMatchObject({
+    kind: "tool",
+    toolCallId: "not-frozen",
+    isError: true,
+  });
+
+  const invalid = await createWorld(
+    "play-chain-resolution-invalid-args",
+    tabletopWorldFiles(),
+  );
+  const invalidHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "bad-args",
+            name: "d20_check",
+            arguments: { goal: "推开石门", modifier: 1.5, difficulty: 15 },
+          },
+        ],
+      },
+      { outcome: "response", text: "石门没有开启，角色只是退后一步。" },
+    ],
+  });
+  const settled = await new PlayCallChain(
+    invalid.worlds,
+    resolutionCompiler(),
+  ).start({
+    worldId: invalid.worldId,
+    chainId: "play-chain-resolution-invalid-args",
+    exchangeId: "play-chain-resolution-invalid-args-player",
+    playerText: "我推开石门。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: invalidHost,
+  });
+  expect(settled).toMatchObject({ status: "ready" });
+  const result = settled.events.find(
+    (event) => event.kind === "tool_result" && event.callId === "bad-args",
+  );
+  expect(result).toMatchObject({ ok: false, name: "d20_check" });
+  expect(result).not.toHaveProperty("resolution");
+  expect(invalidHost.requests[1]?.appended.at(-1)).toMatchObject({
+    kind: "tool",
+    toolCallId: "bad-args",
+    isError: true,
+  });
+});
+
+test("普通虚构请求的工具列表保持不变，判定工具只存在于注册表词汇中", () => {
+  expect([...baseRuntimeToolNames]).toEqual([
+    ...fictionPlayToolNames,
+    "artifact_emit",
+    "artifact_clear",
+  ]);
+  for (const name of [
+    "d20_check",
+    "percentile_check",
+    "bag_check",
+    "roll_dice",
+    "calculate",
+  ])
+    expect(registeredRuntimeToolNames).toContain(name);
+  for (const name of fictionPlayToolNames)
+    expect(registeredRuntimeToolNames).toContain(name);
+  expect(baseRuntimeToolNames).not.toContain("d20_check");
+});
+
+test("普通虚构请求编译出的游玩工具与改动前完全一致", async () => {
+  const label = "play-chain-fiction-tool-list";
+  const { worlds, worldId } = await createWorld(label);
+  const modelHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [{ outcome: "response", text: "门后只有安静。" }],
+  });
+  await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: label,
+    exchangeId: `${label}-player`,
+    playerText: "我推门。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+  expect(modelHost.requests[0]?.tools.map(({ name }) => name)).toEqual(
+    fictionPlayToolNames,
+  );
+});
 test("世界在故事外前进后仍可修改或重新生成已提交玩家消息", async () => {
   const { worlds, worldId } = await createWorld(
     "play-chain-edit-after-out-of-story-advance",
@@ -8237,4 +8657,112 @@ test("世界在故事外前进后仍可修改或重新生成已提交玩家消�
     }),
   });
   expect(continued.status).toBe("ready");
+});
+
+test("判定回合重新生成最新玩家消息会创建新推进，新判定使用新种子且回执可复算", async () => {
+  const label = "play-chain-resolution-regenerate";
+  const { worlds, worldId, root } = await createWorld(
+    label,
+    tabletopWorldFiles(),
+  );
+  const chains = new PlayCallChain(worlds, resolutionCompiler());
+  const started = await chains.start({
+    worldId,
+    chainId: label,
+    exchangeId: `${label}-player`,
+    playerText: "我推开石门。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [
+        d20ToolStep("roll-old"),
+        { outcome: "response", text: "石门缓缓开启。" },
+      ],
+    }),
+  });
+  const player = started.events.find(
+    (event) => event.kind === "player" && event.context === "fresh",
+  );
+  if (player?.kind !== "player") throw new Error("missing first player");
+  const [oldSeed] = await resolutionSeedFiles(root);
+  expect(oldSeed).toBeDefined();
+
+  const revised = await chains.revisePlayer({
+    operationId: "regenerate-resolution",
+    worldId,
+    chainId: label,
+    eventId: player.id,
+    replacementExchangeId: `${label}-regenerate`,
+    replacementText: "我推开石门。",
+    continuation: "continue_context",
+  });
+  const regenerationHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      d20ToolStep("roll-new"),
+      { outcome: "response", text: "石门缓缓开启。" },
+    ],
+  });
+  const regenerated = await chains.append({
+    worldId,
+    chainId: revised.playCallChain.chainId,
+    exchangeId: `${label}-regenerate-continue`,
+    playerText: "",
+    modelHost: regenerationHost,
+    resolvePrompt: () =>
+      Promise.resolve({ hostBinding: hostBinding(), playPreset: playPreset() }),
+  });
+  expect(regenerated).toMatchObject({ status: "ready" });
+  expect(regenerationHost.requests[0]?.tools.map(({ name }) => name)).toContain(
+    "d20_check",
+  );
+  const result = regenerated.events.find(
+    (event) => event.kind === "tool_result" && event.callId === "roll-new",
+  );
+  expect(result).toMatchObject({ ok: true, name: "d20_check" });
+  const receipt = (result as { resolution: ResolutionReceipt }).resolution;
+  expect(isResolutionReceipt(receipt)).toBe(true);
+
+  const seeds = await resolutionSeedFiles(root);
+  const fresh = seeds.find(({ seed }) => seed !== oldSeed!.seed);
+  expect(fresh).toBeDefined();
+  expect(receipt).toEqual(
+    resolveTabletop(
+      "d20_check",
+      { goal: "推开石门", modifier: 3, difficulty: 15 },
+      seededRandom(fresh!.seed, "1:roll-new"),
+    ),
+  );
+});
+
+test("判定回合之后导出故事只含已提交的玩家与叙事原文，判定结果不进入导出也不使导出失败", async () => {
+  const label = "play-chain-resolution-story-export";
+  const { worlds, worldId } = await createWorld(label, tabletopWorldFiles());
+  await new PlayCallChain(worlds, resolutionCompiler()).start({
+    worldId,
+    chainId: label,
+    exchangeId: `${label}-player`,
+    playerText: "我推开石门。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [
+        d20ToolStep("roll-export"),
+        { outcome: "response", text: "石门缓缓开启。" },
+      ],
+    }),
+  });
+
+  const text = await worlds.exportStory(worldId, "text", "zh-CN");
+  expect(text.content).toContain("我：我推开石门。");
+  expect(text.content).toContain("石门缓缓开启。");
+  expect(text.content).not.toMatch(/d20 \d/u);
+  expect(text.content).not.toContain("≥");
+  const markdown = await worlds.exportStory(worldId, "markdown", "zh-CN");
+  expect(markdown.content).toContain("> **我**：我推开石门。");
+  expect(markdown.content).not.toMatch(/d20 \d/u);
 });

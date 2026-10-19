@@ -288,6 +288,10 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
 
   await page.getByRole("button", { name: "新建内容包" }).click();
   await page
+    .getByRole("dialog", { name: "新建内容包" })
+    .getByRole("button", { name: "创建", exact: true })
+    .click();
+  await page
     .getByRole("navigation", { name: "设定完善工具" })
     .getByRole("button", { name: "编辑", exact: true })
     .click();

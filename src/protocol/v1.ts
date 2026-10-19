@@ -1,3 +1,10 @@
+import {
+  parseGameplay,
+  resolutionSchemes,
+  type Gameplay,
+  type ResolutionScheme,
+} from "./gameplay.ts";
+import type { ResolutionReceipt } from "./resolution.ts";
 import type { SaveProtagonistTemplateInput } from "./protagonistTemplates.ts";
 import type { WorldArchiveErrorCode } from "./worldArchives.ts";
 import type { WorldExtensionChoice } from "./worldExtensions.ts";
@@ -71,7 +78,12 @@ export type V1Request =
   | { type: "model.select"; connectionId: string }
   | { type: "model.delete"; connectionId: string }
   | ({ type: "model.models" } & ListProviderModelsInput)
-  | { type: "content.create" }
+  | { type: "content.create"; gameplay?: Gameplay }
+  | {
+      type: "content.gameplay.set";
+      packageId: string;
+      scheme: ResolutionScheme;
+    }
   | { type: "content.create-sample"; locale: AppLocale }
   | { type: "content.scripts.read"; packageId: string }
   | { type: "content.scripts.set"; packageId: string; enabled: boolean }
@@ -692,6 +704,8 @@ export type V1PlayCallChainEvent =
   | {
       id: number;
       kind: "tool_result";
+      /** Present only for tabletop resolution tools; never a preformatted string. */
+      resolution?: ResolutionReceipt;
       callId: string;
       name: string;
       ok: boolean;
@@ -911,6 +925,7 @@ const requiredFields: Record<
   "content.scripts.set": { packageId: "string", enabled: "boolean" },
   "world.package-scripts.read": { worldId: "string" },
   "world.package-scripts.set": { worldId: "string", enabled: "boolean" },
+  "content.gameplay.set": { packageId: "string", scheme: "string" },
   "content.read": { packageId: "string" },
   "content.replace": { packageId: "string", files: "array" },
   "content.copy": { packageId: "string" },
@@ -1150,6 +1165,24 @@ function validateRequestFields(request: Record<string, unknown>): void {
       throw new V1ProtocolError(
         "invalid_request",
         "preferences.save.reading is invalid",
+      );
+  }
+  if (request.type === "content.create" && request.gameplay !== undefined) {
+    try {
+      parseGameplay(request.gameplay);
+    } catch (error: unknown) {
+      throw new V1ProtocolError(
+        "invalid_request",
+        "content.create.gameplay is invalid",
+        { cause: error },
+      );
+    }
+  }
+  if (request.type === "content.gameplay.set") {
+    if (!resolutionSchemes.some((scheme) => scheme === request.scheme))
+      throw new V1ProtocolError(
+        "invalid_request",
+        "content.gameplay.set.scheme is invalid",
       );
   }
   if (request.type === "content.import") {
@@ -1454,6 +1487,7 @@ const requestTypes = new Set([
   "model.delete",
   "model.models",
   "content.create",
+  "content.gameplay.set",
   "content.create-sample",
   "content.scripts.read",
   "content.scripts.set",

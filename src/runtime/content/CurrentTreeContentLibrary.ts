@@ -16,6 +16,14 @@ import { basename, dirname, isAbsolute, join, posix, win32 } from "node:path";
 
 import { portableContentTreePathKey } from "../../protocol/contentTree.ts";
 import {
+  assertSameGameplayMode,
+  gameplayFile,
+  gameplayPath,
+  readGameplay,
+  type Gameplay,
+  type ResolutionScheme,
+} from "../../protocol/gameplay.ts";
+import {
   defaultContentWorkspaceLimits,
   type ContentWorkspaceLimits,
 } from "./ContentLimits.ts";
@@ -60,6 +68,7 @@ interface CurrentTreeContentPackageLockMarker {
 }
 
 export interface EditableContentPackageSummary {
+  gameplay: Gameplay;
   localId: string;
   title: string;
   status: "usable" | "needs_repair";
@@ -412,6 +421,40 @@ export class CurrentTreeContentLibrary {
     });
   }
 
+  /**
+   * Change only the resolution scheme of a tabletop package. The edit reads the
+   * tree under the same lease as ordinary saves, so it publishes atomically and
+   * follows the same conflict rules.
+   */
+  setGameplayScheme(
+    localId: string,
+    scheme: ResolutionScheme,
+    options: CurrentTreeMutationOptions = {},
+  ): Promise<EditableContentPackageDetail> {
+    return this.#mutate(async () => {
+      const lease = await this.acquireOperationLease(localId, {
+        wait: options.waitForLease !== false,
+      });
+      try {
+        options.signal?.throwIfAborted();
+        const current = lease.package;
+        if (current.gameplay.mode !== "tabletop")
+          throw new InvalidContentTreeError(
+            "Only a tabletop content package has a resolution scheme / 只有跑团内容包有判定方案",
+          );
+        const replacement = gameplayFile({ mode: "tabletop", scheme });
+        return await lease.replace(
+          current.files.map((file) =>
+            file.path === gameplayPath ? replacement : file,
+          ),
+          options,
+        );
+      } finally {
+        lease.release();
+      }
+    });
+  }
+
   async acquireOperationLease(
     localId: string,
     options: { wait?: boolean } = {},
@@ -478,6 +521,7 @@ export class CurrentTreeContentLibrary {
             files,
             this.#limits,
           );
+          assertGameplayModeUnchanged(package_.files, normalized);
           return this.#replaceNormalizedCurrentTree(
             localId,
             package_.title,
@@ -738,7 +782,7 @@ function detail(
   inspection: FileNativeContentInspection,
 ): EditableContentPackageDetail {
   return {
-    ...summary(localId, title, inspection),
+    ...summary(localId, title, readGameplay(files), inspection),
     files: files.map((file) => ({ ...file })),
     documents: structuredClone(inspection.documents),
     issues: structuredClone(inspection.issues),
@@ -750,9 +794,11 @@ function detail(
 function summary(
   localId: string,
   title: string,
+  gameplay: Gameplay,
   inspection: FileNativeContentInspection,
 ): EditableContentPackageSummary {
   return {
+    gameplay: { ...gameplay },
     localId,
     title,
     status: inspection.status,
@@ -765,6 +811,7 @@ function packageSummary(
   package_: EditableContentPackageDetail,
 ): EditableContentPackageSummary {
   return {
+    gameplay: { ...package_.gameplay },
     localId: package_.localId,
     title: package_.title,
     status: package_.status,
@@ -838,9 +885,29 @@ export function normalizeCurrentContentTreeFiles(
       ...(file.encoding === undefined ? {} : { encoding: file.encoding }),
     });
   }
+  try {
+    readGameplay(normalized);
+  } catch (error: unknown) {
+    throw new InvalidContentTreeError(
+      error instanceof Error ? error.message : "Invalid gameplay identity",
+    );
+  }
   return normalized.sort((left, right) =>
     compareStrings(left.path, right.path),
   );
+}
+
+function assertGameplayModeUnchanged(
+  before: readonly ContentTreeFile[],
+  after: readonly ContentTreeFile[],
+): void {
+  try {
+    assertSameGameplayMode(before, after);
+  } catch (error: unknown) {
+    throw new InvalidContentTreeError(
+      error instanceof Error ? error.message : "Gameplay mode is fixed",
+    );
+  }
 }
 
 function decodeCanonicalBase64(contents: string, path: string): Buffer {

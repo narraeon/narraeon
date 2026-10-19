@@ -355,8 +355,18 @@ test.each(["model", "preset"])(
 
 function fixture() {
   const packages = [
-    { localId: "first", title: "第一份内容", status: "usable" as const },
-    { localId: "chosen", title: "当前创作", status: "usable" as const },
+    {
+      localId: "first",
+      title: "第一份内容",
+      status: "usable" as const,
+      gameplay: { mode: "interactive-fiction" as const },
+    },
+    {
+      localId: "chosen",
+      title: "当前创作",
+      status: "usable" as const,
+      gameplay: { mode: "interactive-fiction" as const },
+    },
   ];
   const request = vi.fn(async (input: V1Request): Promise<unknown> => {
     await Promise.resolve();
@@ -518,8 +528,18 @@ test("切换创建来源时迟到的开场读取不能替换当前预览", async
   const props = {
     client: { request } as unknown as RuntimeClient,
     packages: [
-      { localId: "first", title: "第一份", status: "usable" as const },
-      { localId: "second", title: "第二份", status: "usable" as const },
+      {
+        localId: "first",
+        title: "第一份",
+        status: "usable" as const,
+        gameplay: { mode: "interactive-fiction" as const },
+      },
+      {
+        localId: "second",
+        title: "第二份",
+        status: "usable" as const,
+        gameplay: { mode: "interactive-fiction" as const },
+      },
     ],
     selectedId: "first",
     pending: false,
@@ -547,6 +567,7 @@ test("切换创建来源时迟到的开场读取不能替换当前预览", async
       packages: props.packages.map((p) => ({
         ...p,
         status: "needs_repair" as const,
+        gameplay: { mode: "interactive-fiction" as const },
       })),
     }),
   );
@@ -585,6 +606,7 @@ test("迟到的内容包读取不会卸载刚产生模型草稿的页面", async
       localId: "first",
       title: "第一份内容",
       status: "usable",
+      gameplay: { mode: "interactive-fiction" as const },
       files: [],
       issues: [],
     });

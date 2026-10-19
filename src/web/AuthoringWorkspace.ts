@@ -21,6 +21,8 @@ export interface AuthoringWorkspaceState {
   baseline: ContentTreeFile[];
   serverFiles: ContentTreeFile[];
   dirty: boolean;
+  /** True while Runtime changes the saved tree outside the editor; no file draft can start. */
+  draftsLocked: boolean;
   loading: boolean;
   applying: boolean;
   requestFailure: string | null;
@@ -40,6 +42,7 @@ export class AuthoringWorkspace {
     baseline: [],
     serverFiles: [],
     dirty: false,
+    draftsLocked: false,
     loading: true,
     applying: false,
     requestFailure: null,
@@ -47,6 +50,7 @@ export class AuthoringWorkspace {
     notice: "",
     now: 0,
   };
+  private draftHolds = 0;
   private listeners = new Set<() => void>();
   private unsubscribe: (() => void) | undefined;
   private scope = 0;
@@ -91,6 +95,32 @@ export class AuthoringWorkspace {
         ? { files: cloneFiles(files), baseline: cloneFiles(files) }
         : {}),
     });
+  }
+  /**
+   * Runs a change that Runtime applies to the saved tree outside the file editor.
+   * File drafts cannot start until it finishes, then the saved package is re-read.
+   * A draft started earlier would otherwise be saved over the change.
+   */
+  async holdDraftsWhile(change: () => Promise<void>): Promise<void> {
+    const scope = this.scope;
+    const alive = () => this.active && scope === this.scope;
+    this.draftHolds += 1;
+    this.update({ draftsLocked: true });
+    try {
+      await change();
+      if (alive()) await this.refresh();
+    } finally {
+      this.draftHolds -= 1;
+      this.update({ draftsLocked: this.draftHolds > 0 });
+    }
+  }
+
+  /** Re-reads the saved package after a change made outside the file editor. */
+  async refresh(): Promise<void> {
+    if (!this.active || this.state.applying || this.state.dirty) return;
+    const valid = this.current();
+    const next = await this.target.read();
+    if (valid()) this.accept(next);
   }
   async open(): Promise<void> {
     this.close();
@@ -408,7 +438,7 @@ export class AuthoringWorkspace {
   }
   private editOpening: Promise<void> | null = null;
   editFiles(files: ContentTreeFile[]): void {
-    if (!this.active || this.state.applying) return;
+    if (!this.active || this.state.applying || this.draftHolds > 0) return;
     this.update({
       files: cloneFiles(files),
       dirty: !sameAuthoringFiles(this.state.baseline, files),

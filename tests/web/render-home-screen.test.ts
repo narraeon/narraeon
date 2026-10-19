@@ -36,17 +36,20 @@ describe("世界工作区主页", () => {
             localId: "package-ready",
             title: "雾港来信",
             status: "usable" as const,
+            gameplay: { mode: "interactive-fiction" },
           },
           {
             localId: "package-repair",
             title: "旧塔草稿",
             status: "needs_repair" as const,
+            gameplay: { mode: "interactive-fiction" },
           },
         ],
         worlds: [
           {
             worldId: "world-1",
             title: "雾港第一夜",
+            gameplay: { mode: "interactive-fiction" },
             lastActivityAt: Date.now(),
             excerpt: "船长把灯挂在舱门前。",
             playerTurns: 6,
@@ -163,6 +166,7 @@ describe("世界工作区主页", () => {
           {
             worldId: "world-1",
             title: "雾港第一夜",
+            gameplay: { mode: "interactive-fiction" },
             lastActivityAt: null,
             excerpt: null,
             playerTurns: 0,
@@ -201,6 +205,7 @@ describe("世界工作区主页", () => {
       {
         worldId: "world-1",
         title: "雾港第一夜",
+        gameplay: { mode: "interactive-fiction" },
         lastActivityAt: null,
         excerpt: null,
         playerTurns: 0,
@@ -242,7 +247,13 @@ describe("世界工作区主页", () => {
           preferences: { locale: "zh-CN" },
           contentPackages: [],
           playPresets: { currentPresetId: "", presets: [] },
-          worlds: [{ worldId: "world-1", title: worldTitle }],
+          worlds: [
+            {
+              worldId: "world-1",
+              title: worldTitle,
+              gameplay: { mode: "interactive-fiction" },
+            },
+          ],
           storageNotices: [],
           model: {
             configured: false,
@@ -303,8 +314,18 @@ describe("世界工作区主页", () => {
 
   test("主页按条目身份改名和删除内容包，取消删除不写入 Runtime", async () => {
     let packages = [
-      { localId: "package-first", title: "第一份", status: "usable" },
-      { localId: "package-target", title: "待改名", status: "needs_repair" },
+      {
+        localId: "package-first",
+        title: "第一份",
+        status: "usable",
+        gameplay: { mode: "interactive-fiction" },
+      },
+      {
+        localId: "package-target",
+        title: "待改名",
+        status: "needs_repair",
+        gameplay: { mode: "interactive-fiction" },
+      },
     ];
     const request = vi.fn(async (input: V1Request): Promise<unknown> => {
       await Promise.resolve();

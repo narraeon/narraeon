@@ -1,3 +1,4 @@
+import { gameplayLabel, type Gameplay } from "../protocol/gameplay.ts";
 import { getWebLocale, uiText } from "./i18n.ts";
 import { useState, type ReactNode } from "react";
 import { relativeActivityTime } from "./worldActivityPresentation.ts";
@@ -5,12 +6,14 @@ import { relativeActivityTime } from "./worldActivityPresentation.ts";
 interface HomeContentPackage {
   localId: string;
   title: string;
+  gameplay: Gameplay;
   status: "usable" | "needs_repair";
 }
 
 export interface HomeWorld {
   worldId: string;
   title: string;
+  gameplay: Gameplay;
   lastActivityAt: number | null;
   excerpt: string | null;
   playerTurns: number;
@@ -121,6 +124,9 @@ export function HomeScreen({
                   >
                     <span className="home-world-card-story">
                       <strong>{world.title}</strong>
+                      <small className="home-world-card-gameplay">
+                        {gameplayLabel(world.gameplay, getWebLocale())}
+                      </small>
                       <span className="home-world-card-activity">
                         {world.lastActivityAt == null ? (
                           <span>{uiText("活动时间未记录")}</span>
@@ -308,6 +314,9 @@ export function HomeScreen({
                               ? uiText("可用")
                               : uiText("待修复")}
                           </span>
+                        </span>
+                        <span className="home-package-card-gameplay">
+                          {gameplayLabel(item.gameplay, getWebLocale())}
                         </span>
                         <span className="home-package-card-copy">
                           {item.status === "usable"

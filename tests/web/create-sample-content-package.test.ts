@@ -26,7 +26,12 @@ test.each(appLocales)(
     const sample = sampleContentPackageForLocale(locale);
     const pending = Promise.withResolvers<{ localId: string }>();
     const packages = [
-      { localId: "existing", title: "Other package", status: "usable" },
+      {
+        localId: "existing",
+        title: "Other package",
+        status: "usable",
+        gameplay: { mode: "interactive-fiction" },
+      },
     ];
     const request = vi.fn(async (input: V1Request): Promise<unknown> => {
       await Promise.resolve();
@@ -50,6 +55,7 @@ test.each(appLocales)(
           localId: created.localId,
           title: sample.title,
           status: "usable",
+          gameplay: { mode: "interactive-fiction" },
         });
         return created;
       }

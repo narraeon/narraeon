@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
 
+import { fictionGameplay } from "../../src/protocol/gameplay.ts";
 import { minimalFileNativeContentScaffold } from "../../src/runtime/content/ContentWorkspace.ts";
 import {
   builtinDefaultPlayPresetBinding,
@@ -23,7 +24,9 @@ const preview = {
 
 test("设定完善契约描述显式上下文和直接当前树工具行为", () => {
   expect(
-    settingImprovementToolDefinitions("zh-CN").map(({ name }) => name),
+    settingImprovementToolDefinitions("zh-CN", fictionGameplay).map(
+      ({ name }) => name,
+    ),
   ).toEqual([
     "setting_list",
     "setting_search",
@@ -34,15 +37,17 @@ test("设定完善契约描述显式上下文和直接当前树工具行为", ()
     "setting_move",
     "setting_delete",
   ]);
-  const patch = settingImprovementToolDefinitions("zh-CN").find(
-    ({ name }) => name === "setting_patch",
-  );
-  const read = settingImprovementToolDefinitions("zh-CN").find(
+  const patch = settingImprovementToolDefinitions(
+    "zh-CN",
+    fictionGameplay,
+  ).find(({ name }) => name === "setting_patch");
+  const read = settingImprovementToolDefinitions("zh-CN", fictionGameplay).find(
     ({ name }) => name === "setting_read",
   );
-  const create = settingImprovementToolDefinitions("zh-CN").find(
-    ({ name }) => name === "setting_create",
-  );
+  const create = settingImprovementToolDefinitions(
+    "zh-CN",
+    fictionGameplay,
+  ).find(({ name }) => name === "setting_create");
   const readSchema = read?.inputSchema as {
     properties?: Record<string, unknown>;
   };
@@ -64,7 +69,7 @@ test("设定完善契约描述显式上下文和直接当前树工具行为", ()
     "string",
     "integer",
   ]);
-  const contract = settingImprovementRuntimeContract("zh-CN");
+  const contract = settingImprovementRuntimeContract("zh-CN", fictionGameplay);
   expect(contract).toContain("每条用户消息都追加到所选设定完善对话");
   expect(contract).toContain("显式选择“全新上下文”");
   expect(contract).toContain("不调用工具的完整响应");
@@ -85,7 +90,10 @@ test("设定完善契约描述显式上下文和直接当前树工具行为", ()
   expect(contract).toContain("精确 selector");
   expect(contract).not.toMatch(/计划阶段|生成阶段|结束工具|preview 或 finish/u);
 
-  const englishContract = settingImprovementRuntimeContract("en");
+  const englishContract = settingImprovementRuntimeContract(
+    "en",
+    fictionGameplay,
+  );
   expect(englishContract).toContain("remains available through state_list");
   expect(englishContract).not.toMatch(
     /planning phase|generation phase|finish tool|preview and finish tools/iu,

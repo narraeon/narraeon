@@ -9,6 +9,7 @@ import { mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 import type { AppLocale } from "../../protocol/appPreferences.ts";
+import { gameplayPath } from "../../protocol/gameplay.ts";
 import type { ModelUsage } from "../../protocol/modelUsage.ts";
 import type { ContentTreeFile } from "../content/ContentTreeFile.ts";
 import { contentTreeFingerprint } from "../content/ContentTreeFingerprint.ts";
@@ -866,6 +867,7 @@ function validRevisionPath(path: string): boolean {
     safe &&
     (isPackageFollowupControlPath(path) ||
       /^state\/.+\.(?:ya?ml|md)$/u.test(path) ||
+      path === gameplayPath ||
       path === "control/frame.yaml" ||
       path === "control/player-views.yaml" ||
       /^control\/blocks\/.+\.md$/u.test(path))

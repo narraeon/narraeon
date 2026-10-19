@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, expect, test, vi } from "vitest";
 
+import { gameplayFile } from "../../src/protocol/gameplay.ts";
 import type { ContentTreeFile } from "../../src/runtime/content/ContentWorkspace.ts";
 import { FileNativeContinuityCorrection } from "../../src/runtime/play/FileNativeContinuityCorrection.ts";
 import type { MaterialSelection } from "../../src/runtime/prompt/MaterialSelection.ts";
@@ -15,6 +16,36 @@ afterEach(async () => {
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
   );
+});
+
+test("跑团世界的修正预览暴露所选判定方案的工具，互动式小说不暴露", async () => {
+  const tabletop = await world([
+    ...files(),
+    gameplayFile({ mode: "tabletop", scheme: "d20" }),
+  ]);
+  const fiction = await world();
+  const cases: [typeof tabletop, readonly string[]][] = [
+    [tabletop, ["d20_check", "roll_dice", "calculate"]],
+    [fiction, []],
+  ];
+  for (const [target, expected] of cases) {
+    const started = await target.corrections.begin({
+      worldId: target.worldId,
+      operationId: `correction-tools-${expected.length}`,
+      mode: "documents",
+    });
+    const preview = target.corrections.preview({
+      candidateId: started.candidateId,
+      expectedVersion: started.version,
+      prompt: prompt(),
+    });
+    const names = preview.nextPrompt.compilation.tools.map(({ name }) => name);
+    for (const name of ["d20_check", "percentile_check", "bag_check"])
+      expect(names.includes(name)).toBe(expected.includes(name));
+    for (const name of ["roll_dice", "calculate"])
+      expect(names.includes(name)).toBe(expected.includes(name));
+    await target.corrections.cancel(started.candidateId, started.version);
+  }
 });
 
 test("维护诊断不可用时修正仍可预览、取消并释放世界锁", async () => {

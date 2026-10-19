@@ -351,6 +351,7 @@ describe("从内容包创建文件原生世界", () => {
       worldId: created.world.worldId,
       title: "雾港第一夜",
       parentEndpoint: "genesis",
+      gameplay: { mode: "interactive-fiction" },
     });
 
     const reopened = new FileNativeWorldStore(root);
@@ -360,6 +361,7 @@ describe("从内容包创建文件原生世界", () => {
         worldId: created.world.worldId,
         title: "雾港第一夜",
         parentEndpoint: "genesis",
+        gameplay: { mode: "interactive-fiction" },
       },
     ]);
     expect(await reopened.getCreationOutcome("create-op-1")).toEqual({
@@ -369,6 +371,7 @@ describe("从内容包创建文件原生世界", () => {
         worldId: created.world.worldId,
         title: "雾港第一夜",
         parentEndpoint: "genesis",
+        gameplay: { mode: "interactive-fiction" },
       },
     });
     expect(await reopened.currentHead(created.world.worldId)).toBe(beforeHead);

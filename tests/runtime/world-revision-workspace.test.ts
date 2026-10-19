@@ -6,11 +6,13 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
+import { fictionGameplay } from "../../src/protocol/gameplay.ts";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { afterEach, expect, test, vi } from "vitest";
 
+import { gameplayFile, gameplayPath } from "../../src/protocol/gameplay.ts";
 import { minimalFileNativeContentScaffold } from "../../src/runtime/content/ContentWorkspace.ts";
 import { contentTreeFingerprint } from "../../src/runtime/content/ContentTreeFingerprint.ts";
 import {
@@ -58,7 +60,10 @@ test("世界修订工具只暴露 state/control，共用读取授权并拒绝 op
     },
   });
 
-  const toolDefinitions = worldRevisionToolDefinitions("zh-CN");
+  const toolDefinitions = worldRevisionToolDefinitions(
+    "zh-CN",
+    fictionGameplay,
+  );
   expect(toolDefinitions.map(({ name }) => name)).toEqual([
     "world_revision_list",
     "world_revision_search",
@@ -70,15 +75,18 @@ test("世界修订工具只暴露 state/control，共用读取授权并拒绝 op
     "world_revision_delete",
   ]);
   expect(
-    [...toolDefinitions, ...worldRevisionToolDefinitions("en")].every(
+    [
+      ...toolDefinitions,
+      ...worldRevisionToolDefinitions("en", fictionGameplay),
+    ].every(
       ({ description }) =>
         description.length > 0 && !/opening(?:\.md)?/iu.test(description),
     ),
   ).toBe(true);
-  expect(worldRevisionRuntimeContract("zh-CN")).toContain(
+  expect(worldRevisionRuntimeContract("zh-CN", fictionGameplay)).toContain(
     "state/* 与 control/* 共同组成唯一的修订工作树",
   );
-  expect(worldRevisionRuntimeContract("zh-CN")).toContain(
+  expect(worldRevisionRuntimeContract("zh-CN", fictionGameplay)).toContain(
     "此前读取授权全部失效",
   );
 
@@ -488,6 +496,129 @@ test("手动与 AI 可共用工作树，逐文件回滚最后一次修改后整�
       (file) => file.path === "blocks/world.md",
     )?.contents,
   ).toContain("只使用简短段落。");
+});
+
+test("玩法身份在世界修订中只能保持不变，持久化的修订往返后仍原样应用", async () => {
+  const tabletop = [
+    ...minimalFileNativeContentScaffold("zh-CN"),
+    gameplayFile({ mode: "tabletop", scheme: "d20" }),
+  ];
+  const { worldId, worlds, workspace } = await createdWorld(tabletop);
+  const d20 = gameplayFile({ mode: "tabletop", scheme: "d20" }).contents;
+  const d100 = gameplayFile({ mode: "tabletop", scheme: "d100" }).contents;
+  let epoch = await workspace.open(worldId);
+  expect(epoch.files).toContainEqual(
+    expect.objectContaining({ path: gameplayPath, contents: d20 }),
+  );
+
+  await expect(
+    workspace.replace({
+      worldId,
+      epochId: epoch.epochId,
+      expectedRevision: epoch.revision,
+      files: replaceContents(epoch.files, gameplayPath, () => d100),
+    }),
+  ).rejects.toThrow(/fixed/u);
+  await expect(
+    workspace.replace({
+      worldId,
+      epochId: epoch.epochId,
+      expectedRevision: epoch.revision,
+      files: epoch.files.filter(({ path }) => path !== gameplayPath),
+    }),
+  ).rejects.toThrow(/fixed/u);
+
+  epoch = await workspace.replace({
+    worldId,
+    epochId: epoch.epochId,
+    expectedRevision: epoch.revision,
+    files: replaceContents(
+      epoch.files,
+      "state/current-situation.yaml",
+      (contents) => contents.replace("地点: 未设定", "地点: 青石桥"),
+    ),
+  });
+  const reopened = await workspace.open(worldId);
+  expect(reopened.epochId).toBe(epoch.epochId);
+  expect(reopened.files).toContainEqual(
+    expect.objectContaining({ path: gameplayPath, contents: d20 }),
+  );
+
+  const applied = await workspace.apply({
+    worldId,
+    epochId: epoch.epochId,
+    expectedRevision: epoch.revision,
+  });
+  expect(applied).toMatchObject({ lifecycle: "applied" });
+  expect(await worlds.readSurface(worldId, "control")).toContainEqual({
+    path: "gameplay.json",
+    contents: d20,
+  });
+  expect(await worlds.gameplay(worldId)).toEqual({
+    mode: "tabletop",
+    scheme: "d20",
+  });
+});
+
+test("世界修订工具写入玩法文件时只接受模式与方案都不变的内容", () => {
+  const files = [
+    ...worldRevisionFiles(),
+    gameplayFile({ mode: "tabletop", scheme: "d20" }),
+  ];
+  const transaction = new WorldRevisionAuthoringTransaction({
+    baseFiles: files,
+    immutableBaseFiles: files,
+    locale: "en",
+    preview: () => preview,
+  });
+
+  const [read, switched, unchanged] = transaction.execute([
+    {
+      id: "read-gameplay",
+      name: "world_revision_read",
+      arguments: { path: gameplayPath },
+    },
+    {
+      id: "switch-scheme",
+      name: "world_revision_write_file",
+      arguments: {
+        path: gameplayPath,
+        contents: gameplayFile({ mode: "tabletop", scheme: "d100" }).contents,
+      },
+    },
+    {
+      id: "same-scheme",
+      name: "world_revision_write_file",
+      arguments: {
+        path: gameplayPath,
+        contents: gameplayFile({ mode: "tabletop", scheme: "d20" }).contents,
+      },
+    },
+  ]);
+
+  expect(read?.isError).toBe(false);
+  expect(switched).toMatchObject({ isError: true, changes: [] });
+  expect(switched?.markdown).toMatch(/fixed/u);
+  expect(unchanged?.isError).toBe(false);
+  expect(
+    inspectWorldRevisionFiles(
+      files.map((file) =>
+        file.path === gameplayPath
+          ? {
+              ...file,
+              contents: gameplayFile({ mode: "tabletop", scheme: "bag" })
+                .contents,
+            }
+          : file,
+      ),
+      files,
+    ).diagnostics,
+  ).toEqual([
+    expect.objectContaining({
+      code: "gameplay_change_forbidden",
+      path: gameplayPath,
+    }),
+  ]);
 });
 
 test("空修订只解锁，仅 control 变化也只推进一次 Authority", async () => {

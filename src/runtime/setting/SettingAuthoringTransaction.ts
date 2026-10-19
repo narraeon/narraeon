@@ -3,7 +3,14 @@ import { renderWorldMaintenanceReport } from "../prompt/WorldMaintenanceReport.t
 import { listWorldDocuments as listQueryableWorldDocuments } from "../prompt/WorldMaintenanceReport.ts";
 import type { AppLocale } from "../../protocol/appPreferences.ts";
 import { defaultAppLocale } from "../../protocol/appPreferences.ts";
+import {
+  gameplayLabel,
+  gameplayPath,
+  readGameplay,
+  type Gameplay,
+} from "../../protocol/gameplay.ts";
 import { isScalar, isSeq, parseDocument, stringify } from "yaml";
+import { tabletopSchemeReceipt } from "../play/TabletopRules.ts";
 import type { ContentTreeFile } from "../content/ContentTreeFile.ts";
 import { inspectContentPackageCurrentTree } from "../content/FileNativeContentTree.ts";
 import type { ModelHostToolCall } from "../model/ModelHost.ts";
@@ -149,7 +156,28 @@ export const settingAuthorContractExamples = {
   playerViews: playerViewsExample,
 } as const;
 
-export function settingImprovementRuntimeContract(locale: AppLocale): string {
+/**
+ * Model-facing mention of control/gameplay.json. Only a tabletop package may
+ * change the scheme, so fiction packages never see the file in their contract
+ * or tool text. Runtime validation of the path is unaffected.
+ */
+function gameplayFileZh(tabletop: boolean): string {
+  return tabletop
+    ? "、control/blocks/*.md 和 control/gameplay.json（只能修改跑团判定方案，玩法模式不可改）"
+    : " 和 control/blocks/*.md";
+}
+
+function gameplayFileEn(tabletop: boolean): string {
+  return tabletop
+    ? ", control/blocks/*.md, and control/gameplay.json (only a tabletop resolution scheme may change)"
+    : ", and control/blocks/*.md";
+}
+
+export function settingImprovementRuntimeContract(
+  locale: AppLocale,
+  gameplay: Gameplay,
+): string {
+  const tabletop = gameplay.mode === "tabletop";
   return locale === "zh-CN"
     ? `# Runtime 设定完善对话契约
 
@@ -158,7 +186,7 @@ export function settingImprovementRuntimeContract(locale: AppLocale): string {
 - 工具写入直接修改内容包当前树。每个完整 Provider 工具响应中的调用按顺序执行，成功改动在该响应结算时原子发布，发布后立即成为内容包权威，无需另一步确认。
 - 每个写工具调用独立结算，并按本响应中的调用顺序读取之前已接受的结果。某个调用失败只在对应工具结果中返回精确原因，不回滚同一响应内其他成功调用，也不阻止后续调用。Runtime 在写调用结算后自动运行内容树检查和真实 Prompt Preview，并把检查结果附在最后一个成功写调用的结果中。
 - 修改既有文件前必须完整读取它。setting_list／setting_search 的 cursor，以及 setting_read 的读取授权，只属于产生它们的当前树 revision；任何其他对话或手动编辑改变当前树后，必须重新读取再写。setting_read 总是完整返回精确文件，不截断、不分页。工具只暴露逻辑路径，不暴露宿主路径。
-- world/ 下只写 .yaml 或 .md 世界文档；专用文件只允许 opening.md、control/frame.yaml、control/player-views.yaml 和 control/blocks/*.md，以及 control/followups.yaml 和其中引用的 prompts/*.md、renderers/*.html、scripts/*.js、regex/*.yaml、assets/* 文本资源。人物、地点、规则与当前情境放在 world/，本世界特有的主持要求放在 control/。
+- world/ 下只写 .yaml 或 .md 世界文档；专用文件只允许 opening.md、control/frame.yaml、control/player-views.yaml${gameplayFileZh(tabletop)}，以及 control/followups.yaml 和其中引用的 prompts/*.md、renderers/*.html、scripts/*.js、regex/*.yaml、assets/* 文本资源。人物、地点、规则与当前情境放在 world/，本世界特有的主持要求放在 control/。
 - opening.md 是玩家看见的第一页，不得替玩家决定行动、台词或内心。会继续约束首次行动的事实也必须写入自然承载它的世界文档。
 - 新建 world 文档使用 setting_create：ref 由你提供，并同时提供路径、标题、摘要、别名与不含技术头的正文。ref 必须是唯一的 2～32 位小写 ASCII 短句柄；Runtime 自行完成技术存储。既有文档选择值会在读取时自动投影为对应的 @ref；跨文档引用和 control 中的文档选择只使用 @ref。
 - YAML 中指向整份文档的机械引用只写成单键 map，例如 { $ref: "@alex" }；普通字符串中的 @alex 仍只是文字。frame 与 player-view selector 的 document 值也写成 "@alex"，局部位置另用 locator 表达。
@@ -194,7 +222,7 @@ export function settingImprovementRuntimeContract(locale: AppLocale): string {
 - Tool writes directly modify the content package's current tree. Calls in one complete Provider tool response execute in order; its successful changes publish atomically when that response settles, immediately become authoritative, and require no second confirmation.
 - Every write tool call settles independently and sees earlier accepted calls in response order. A failure returns its precise cause only in that call's result, does not roll back successful siblings, and does not stop later calls. Runtime automatically runs content-tree checks and a real Prompt Preview after writes and appends that review to the last successful write result.
 - Read an existing file completely before changing it. Cursors from setting_list and setting_search, and read authorization from setting_read, belong only to the current-tree revision that produced them. setting_read always returns the complete exact file without truncation or pagination. Re-read after another conversation or a manual edit changes the current tree. Tools expose logical paths, never host paths.
-- World documents are .yaml or .md files under world/. Special writes are limited to opening.md, control/frame.yaml, control/player-views.yaml, and control/blocks/*.md, plus control/followups.yaml and its referenced prompts/*.md, renderers/*.html, scripts/*.js, regex/*.yaml and assets/* text resources. Put characters, places, rules, and the current situation under world/, and world-specific hosting guidance under control/.
+- World documents are .yaml or .md files under world/. Special writes are limited to opening.md, control/frame.yaml, control/player-views.yaml${gameplayFileEn(tabletop)}, plus control/followups.yaml and its referenced prompts/*.md, renderers/*.html, scripts/*.js, regex/*.yaml and assets/* text resources. Put characters, places, rules, and the current situation under world/, and world-specific hosting guidance under control/.
 - opening.md is the first page shown to the player. Never decide the player's action, dialogue, or inner thoughts. Facts that constrain the first action must also live in the world document that naturally owns them.
 - Create a world document with setting_create. You provide its unique 2-to-32-character lowercase ASCII ref, path, title, summary, aliases, and body without a technical header; Runtime completes the technical storage. Existing document selectors are automatically projected to their @refs when read. Cross-document references and control selectors use only @refs.
 - A mechanical YAML reference to one whole document is a one-key map such as { $ref: "@alex" }; @alex inside an ordinary string is still only text. The document value in frame and player-view selectors is likewise "@alex", with any local position expressed separately by a locator.
@@ -225,10 +253,14 @@ export function settingImprovementRuntimeContract(locale: AppLocale): string {
 }
 
 export function settingImprovementToolDefinitions(
-  locale: AppLocale = defaultAppLocale,
+  locale: AppLocale,
+  gameplay: Gameplay,
 ): PromptCompilation["tools"] {
+  const tabletop = gameplay.mode === "tabletop";
   const descriptions =
-    locale === "zh-CN" ? toolDescriptionsZhCN : toolDescriptionsEn;
+    locale === "zh-CN"
+      ? toolDescriptionsZhCN(tabletop)
+      : toolDescriptionsEn(tabletop);
   const schema = (properties: Record<string, object>, required: string[]) => ({
     type: "object",
     additionalProperties: false,
@@ -352,7 +384,9 @@ export function settingImprovementToolDefinitions(
   ];
 }
 
-const toolDescriptionsEn: Record<SettingImprovementToolName, string> = {
+const toolDescriptionsEn = (
+  tabletop: boolean,
+): Record<SettingImprovementToolName, string> => ({
   setting_list:
     "List the world root or a world/ subdirectory from the content package's current tree. The root also lists opening and control files. A cursor is valid only for the same query and current-tree revision.",
   setting_search:
@@ -361,17 +395,18 @@ const toolDescriptionsEn: Record<SettingImprovementToolName, string> = {
     "Read a complete world document by world/ path or @ref, or read a complete opening/control file by exact path. Existing document selectors are projected to @refs. The result is never truncated or paginated.",
   setting_create:
     "Create one world/ .yaml or .md document. Supply a unique lowercase ASCII ref, title, summary, aliases, and body without a technical header; Runtime completes the storage envelope. The created document is already fully read.",
-  setting_write_file:
-    "Replace a completely read world/ .yaml or .md document body while preserving its identity and metadata, or create/replace opening.md, control/frame.yaml, control/player-views.yaml, or control/blocks/*.md, plus control/followups.yaml and its referenced prompts/*.md, renderers/*.html, scripts/*.js, regex/*.yaml and assets/* text resources. To repair a damaged world document, also provide ref, title, summary, and aliases; Runtime preserves any recoverable storage identity. Create new world documents with setting_create.",
+  setting_write_file: `Replace a completely read world/ .yaml or .md document body while preserving its identity and metadata, or create/replace opening.md, control/frame.yaml, control/player-views.yaml, ${tabletop ? "control/blocks/*.md, or control/gameplay.json (only a tabletop resolution scheme may change)" : "or control/blocks/*.md"}, plus control/followups.yaml and its referenced prompts/*.md, renderers/*.html, scripts/*.js, regex/*.yaml and assets/* text resources. To repair a damaged world document, also provide ref, title, summary, and aliases; Runtime preserves any recoverable storage identity. Create new world documents with setting_create.`,
   setting_patch:
     'Update a completely read YAML world document without rewriting unrelated content. locator is a non-empty path whose segments are map keys or zero-based array indexes. Use add for a missing map key or array index, replace for an existing node, append for the end of an existing array, and remove for an existing map key or array item. When title, summary, or aliases are stale, update all three together with op "set_metadata". Rewrite Markdown bodies with setting_write_file.',
   setting_move:
     "Move a completely read world document to a new world/ .yaml or .md logical path while preserving its identity and contents.",
   setting_delete:
     "Permanently delete a completely read world document from the content-package current tree. Runtime rejects deletion while currentSituation, a frame slot, a player-view selector, or another document's $ref still points to it, and reports every blocking location. Delete or redirect those references first.",
-};
+});
 
-const toolDescriptionsZhCN: Record<SettingImprovementToolName, string> = {
+const toolDescriptionsZhCN = (
+  tabletop: boolean,
+): Record<SettingImprovementToolName, string> => ({
   setting_list:
     "列出内容包当前树的 world 根目录或 world/ 子目录；根目录同时列出 opening 和 control 专用文件。cursor 只对同一查询和当前树 revision 有效。",
   setting_search:
@@ -380,15 +415,14 @@ const toolDescriptionsZhCN: Record<SettingImprovementToolName, string> = {
     "按 world/ 路径或 @ref 完整读取世界文档，或按精确路径完整读取 opening/control；既有文档选择值自动投影为 @ref。结果不会截断或分页。",
   setting_create:
     "创建一份 world/ 下的 .yaml 或 .md 文档；提供唯一的小写 ASCII ref、标题、摘要、别名和不含技术头的正文，Runtime 自行完成存储封装。创建成功的文档视为已经完整读取。",
-  setting_write_file:
-    "整份替换已完整读取的 world/ .yaml 或 .md 正文并保留身份和元信息，或创建／替换 opening.md、control/frame.yaml、control/player-views.yaml、control/blocks/*.md，以及 control/followups.yaml 和其中引用的 prompts/*.md、renderers/*.html、scripts/*.js、regex/*.yaml、assets/* 文本资源。修复损坏世界文档时同时提供 ref、title、summary、aliases，Runtime 会保留仍可恢复的存储身份。新建世界文档使用 setting_create。",
+  setting_write_file: `整份替换已完整读取的 world/ .yaml 或 .md 正文并保留身份和元信息，或创建／替换 opening.md、control/frame.yaml、control/player-views.yaml、control/blocks/*.md${tabletop ? "、control/gameplay.json（只能修改跑团判定方案，玩法模式不可改）" : ""}，以及 control/followups.yaml 和其中引用的 prompts/*.md、renderers/*.html、scripts/*.js、regex/*.yaml、assets/* 文本资源。修复损坏世界文档时同时提供 ref、title、summary、aliases，Runtime 会保留仍可恢复的存储身份。新建世界文档使用 setting_create。`,
   setting_patch:
     '细粒度更新已完整读取的 YAML 世界文档，不重写无关内容。locator 是非空路径，每段可以是 map key 或从 0 开始的数组下标；add 新建 map key 或数组位置，replace 更新既有节点，append 追加既有数组，remove 删除既有 map key 或数组项。title、summary 或 aliases 过时时用 op "set_metadata" 整组更新三项。Markdown 正文用 setting_write_file 整份重写。',
   setting_move:
     "把已完整读取的世界文档移动到新的 world/ .yaml 或 .md 逻辑路径，并保留身份与内容。",
   setting_delete:
     "从内容包当前树永久删除一份已完整读取的 world 文档。若 currentSituation、frame slot、player-view selector 或其他文档的 $ref 仍指向它，Runtime 会拒绝并返回全部精确阻挡位置；请先删除或改向这些引用。",
-};
+});
 
 interface ReadAuthorizations {
   snapshotId: string;
@@ -1395,13 +1429,15 @@ function writeOpaque(
     throw new SettingAuthoringError(
       localized(
         locale,
-        "Special-file writes accept only opening.md, control/frame.yaml, control/player-views.yaml, or control/blocks/*.md",
-        "专用文件只允许写入 opening.md、control/frame.yaml、control/player-views.yaml 或 control/blocks/*.md",
+        "Special-file writes accept only opening.md, control/frame.yaml, control/player-views.yaml, control/blocks/*.md, or control/gameplay.json",
+        "专用文件只允许写入 opening.md、control/frame.yaml、control/player-views.yaml、control/blocks/*.md 或 control/gameplay.json",
       ),
     );
   const authoredContents = requiredString(call.arguments.contents, "contents");
   assertNoLiteralUnicodeEscapes(authoredContents, locale);
   const contents = projectOpaqueDocumentIds(snapshot, path, authoredContents);
+  if (path === gameplayPath)
+    assertGameplayWriteKeepsMode(snapshot.files, contents, locale);
   const next = cloneFiles(snapshot.files);
   const existing = next.find((file) => file.path === path);
   if (existing !== undefined && !reads.opaquePaths.has(path))
@@ -1423,14 +1459,49 @@ function writeOpaque(
   });
   rebaseReads(reads, revised);
   reads.opaquePaths.add(path);
+  const gameplay =
+    path === gameplayPath ? readGameplay([{ path, contents }]) : null;
   return {
     snapshot: revised,
-    markdown: localized(
-      locale,
-      `# Current-tree write accepted\n\n${existing === undefined ? "Created" : "Updated"} ${path} in the content package's current tree. This file is already fully read; do not read it again unless a later decision needs Runtime's exact serialization.`,
-      `# 当前树写入已接受\n\n已在内容包当前树中${existing === undefined ? "创建" : "更新"} ${path}。该文件已视为完整读取；除非后续判断依赖 Runtime 的精确序列化结果，否则不要再次读取。`,
-    ),
+    markdown: [
+      localized(
+        locale,
+        `# Current-tree write accepted\n\n${existing === undefined ? "Created" : "Updated"} ${path} in the content package's current tree. This file is already fully read; do not read it again unless a later decision needs Runtime's exact serialization.`,
+        `# 当前树写入已接受\n\n已在内容包当前树中${existing === undefined ? "创建" : "更新"} ${path}。该文件已视为完整读取；除非后续判断依赖 Runtime 的精确序列化结果，否则不要再次读取。`,
+      ),
+      ...(gameplay === null
+        ? []
+        : [
+            localized(
+              locale,
+              `Current gameplay: ${gameplayLabel(gameplay, locale)}.`,
+              `当前玩法：${gameplayLabel(gameplay, locale)}。`,
+            ),
+            // Mid-conversation the model learns the new scheme's rules here (ADR-0037 append-only).
+            ...(gameplay.mode === "tabletop"
+              ? [tabletopSchemeReceipt(gameplay, locale)]
+              : []),
+          ]),
+    ].join("\n\n"),
   };
+}
+
+/** The gameplay mode is fixed; a write may only keep it or change a tabletop scheme. */
+function assertGameplayWriteKeepsMode(
+  files: readonly ContentTreeFile[],
+  contents: string,
+  locale: AppLocale,
+): void {
+  const before = readGameplay(files);
+  const after = readGameplay([{ path: gameplayPath, contents }]);
+  if (before.mode !== after.mode)
+    throw new SettingAuthoringError(
+      localized(
+        locale,
+        "Gameplay mode is fixed; control/gameplay.json may change only the resolution scheme of a tabletop package",
+        "玩法模式固定；control/gameplay.json 只能修改跑团的判定方案，不能在互动式小说与跑团之间切换",
+      ),
+    );
 }
 
 function writableOpaquePath(path: string): boolean {
@@ -1439,6 +1510,7 @@ function writableOpaquePath(path: string): boolean {
     path === "opening.md" ||
     path === "control/frame.yaml" ||
     path === "control/player-views.yaml" ||
+    path === gameplayPath ||
     /^control\/blocks\/[a-z0-9][a-z0-9/_-]*\.md$/u.test(path)
   );
 }

@@ -55,6 +55,13 @@ test("portable ordered play preserves identities, disabled text, and protects re
         enabled: false,
         body: "Retain this text",
       },
+      // A released ordered preset gains the tabletop builtin on import.
+      {
+        id: "play.tabletop",
+        kind: "builtin",
+        builtin: "play.tabletop",
+        enabled: true,
+      },
       { id: "world", kind: "world" },
       { id: "mechanics", builtin: "play.mechanics", enabled: true },
     ],
@@ -288,9 +295,23 @@ test("legacy migration retains disabled copies and resources while frozen reques
     enabled: false,
     body: files["blocks/style-horror.md"],
   });
+  // Converted v1 presets gain the tabletop builtin, which compiles only for tabletop worlds.
   expect(
     structure.playPrompts?.filter((entry) => entry.kind === "builtin"),
-  ).toHaveLength(1);
+  ).toEqual([
+    {
+      id: "play.mechanics",
+      kind: "builtin",
+      builtin: "play.mechanics",
+      enabled: true,
+    },
+    {
+      id: "play.tabletop",
+      kind: "builtin",
+      builtin: "play.tabletop",
+      enabled: true,
+    },
+  ]);
   const saved = await store.save({
     presetId: imported.preset.id,
     name: "Legacy",
@@ -455,10 +476,15 @@ test.each(["en", "zh-CN"] as const)(
     };
     const results = [
       compiler.compileSettingImprovement({
+        gameplay: { mode: "interactive-fiction" },
         ...common,
         contentPackageTitle: "Package",
       }),
-      compiler.compileWorldRevision({ ...common, worldTitle: "World" }),
+      compiler.compileWorldRevision({
+        gameplay: { mode: "interactive-fiction" },
+        ...common,
+        worldTitle: "World",
+      }),
     ];
     for (const result of results) {
       const encoded = JSON.stringify(result.provider);
@@ -608,6 +634,7 @@ test("disabled author recommendations do not fall back and author saves preserve
     original.definition.playerViewPanels,
   );
   const compilation = new FileNativePromptCompiler().compileSettingImprovement({
+    gameplay: { mode: "interactive-fiction" },
     contentPackageTitle: "Test",
     runtimeContract: "NOT_A_FALLBACK",
     authorPrompt: "NOT_A_FALLBACK",

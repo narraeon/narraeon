@@ -1,5 +1,6 @@
 import { expect, test, vi } from "vitest";
 
+import { fictionGameplay } from "../../src/protocol/gameplay.ts";
 import { FileNativeModelHost } from "../../src/runtime/model/FileNativeModelAdapters.ts";
 import {
   ModelHostContinuationError,
@@ -169,7 +170,7 @@ test.each([
   const bootstrap = compileSettingImprovementLegacyCurrentTreeBootstrap(
     legacy,
     "en",
-    settingImprovementToolDefinitions("en"),
+    settingImprovementToolDefinitions("en", fictionGameplay),
   );
 
   await adapter.exchange({

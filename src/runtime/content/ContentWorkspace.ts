@@ -3,6 +3,13 @@ import { inflateRawSync } from "node:zlib";
 
 import { portableContentTreePathKey } from "../../protocol/contentTree.ts";
 import {
+  fictionGameplay,
+  gameplayFile,
+  parseGameplay,
+  type Gameplay,
+  type ResolutionScheme,
+} from "../../protocol/gameplay.ts";
+import {
   defaultAppLocale,
   type AppLocale,
 } from "../../protocol/appPreferences.ts";
@@ -105,11 +112,15 @@ export class ContentWorkspace {
     });
   }
 
-  createCurrentTreeContentPackage() {
+  createCurrentTreeContentPackage(gameplay: Gameplay = fictionGameplay) {
     const locale = this.#locale();
+    const chosen = parseGameplay(gameplay);
     return this.#currentTreeLibrary.createPackage({
       title: defaultContentPackageTitle(locale, "new"),
-      files: minimalFileNativeContentScaffold(locale),
+      files: [
+        ...minimalFileNativeContentScaffold(locale),
+        ...(chosen.mode === "tabletop" ? [gameplayFile(chosen)] : []),
+      ],
     });
   }
 
@@ -159,6 +170,14 @@ export class ContentWorkspace {
     options: ContentWorkspaceOperationOptions = {},
   ) {
     return this.#currentTreeLibrary.replaceCurrentTree(localId, files, options);
+  }
+
+  setCurrentTreeContentGameplayScheme(
+    localId: string,
+    scheme: ResolutionScheme,
+    options: ContentWorkspaceOperationOptions = {},
+  ) {
+    return this.#currentTreeLibrary.setGameplayScheme(localId, scheme, options);
   }
 
   importPortableContentPackageArchive(

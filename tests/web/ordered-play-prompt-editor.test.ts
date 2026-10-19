@@ -93,3 +93,75 @@ test.each(["keyboard", "drag"] as const)(
     ]);
   },
 );
+
+test("tabletop scope survives cloning, can be toggled on user entries, and is badged", () => {
+  const changes: OrderedPlayPrompt[][] = [];
+  function Editor() {
+    const [entries, setEntries] = useState<OrderedPlayPrompt[]>(
+      defaultOrderedPlayPrompts(),
+    );
+    return createElement(OrderedPlayPromptEditor, {
+      entries,
+      onChange: (next: OrderedPlayPrompt[]) => {
+        changes.push(next);
+        setEntries(next);
+      },
+    });
+  }
+  setWebLocale("en");
+  render(createElement(Editor));
+
+  fireEvent.click(screen.getByRole("button", { name: "Tabletop GM" }));
+  expect(screen.getAllByText("Tabletop only").length).toBeGreaterThan(0);
+  expect(screen.queryByLabelText("Tabletop worlds only")).toBeNull();
+
+  fireEvent.click(screen.getByRole("button", { name: "Clone prompt" }));
+  const cloned = changes
+    .at(-1)!
+    .find(
+      (entry) => entry.kind === "user" && entry.name === "Tabletop GM copy",
+    );
+  expect(cloned).toMatchObject({ kind: "user", gameplay: "tabletop" });
+  const scope = screen.getByLabelText<HTMLInputElement>("Tabletop worlds only");
+  expect(scope.checked).toBe(true);
+
+  fireEvent.click(scope);
+  expect(
+    changes.at(-1)!.find((entry) => entry.id === cloned!.id),
+  ).not.toHaveProperty("gameplay");
+  expect(
+    screen.getByLabelText<HTMLInputElement>("Tabletop worlds only").checked,
+  ).toBe(false);
+
+  fireEvent.click(screen.getByLabelText("Tabletop worlds only"));
+  expect(
+    changes.at(-1)!.find((entry) => entry.id === cloned!.id),
+  ).toMatchObject({ gameplay: "tabletop" });
+});
+
+test("cloning an unscoped builtin leaves the copy unscoped", () => {
+  const changes: OrderedPlayPrompt[][] = [];
+  function Editor() {
+    const [entries, setEntries] = useState<OrderedPlayPrompt[]>(
+      defaultOrderedPlayPrompts(),
+    );
+    return createElement(OrderedPlayPromptEditor, {
+      entries,
+      onChange: (next: OrderedPlayPrompt[]) => {
+        changes.push(next);
+        setEntries(next);
+      },
+    });
+  }
+  setWebLocale("en");
+  render(createElement(Editor));
+  fireEvent.click(screen.getByRole("button", { name: "State maintenance" }));
+  fireEvent.click(screen.getByRole("button", { name: "Clone prompt" }));
+  const cloned = changes
+    .at(-1)!
+    .find((entry) => entry.kind === "user" && entry.name.endsWith("copy"));
+  expect(cloned).toBeDefined();
+  expect(cloned).not.toHaveProperty("gameplay");
+  // Only the scoped builtin itself carries the badge; the unscoped copy has none.
+  expect(screen.getAllByText("Tabletop only")).toHaveLength(1);
+});

@@ -13,6 +13,11 @@ import {
 import type { WorldExtensionChoice } from "../../protocol/worldExtensions.ts";
 import type { PlayPresetBinding } from "../play/FileNativePlayPresetStore.ts";
 import type { AppLocale } from "../../protocol/appPreferences.ts";
+import {
+  assertSameGameplay,
+  readGameplay,
+  type Gameplay,
+} from "../../protocol/gameplay.ts";
 import type { V1StoryExport, V1StoryExportFormat } from "../../protocol/v1.ts";
 import { HistoryQuery } from "../history/HistoryQuery.ts";
 import { exportStory } from "../history/StoryExport.ts";
@@ -120,6 +125,7 @@ export interface FileNativeWorldSummary extends WorldActivitySummary {
   worldId: string;
   title: string;
   parentEndpoint: "genesis";
+  gameplay: Gameplay;
 }
 
 interface Publication extends Pick<
@@ -359,6 +365,14 @@ export class FileNativeWorldStore {
         error instanceof Error ? { cause: error } : undefined,
       );
     }
+  }
+
+  async gameplay(worldId: string): Promise<Gameplay> {
+    assertIdentity(worldId, "World ID");
+    await this.ensureCurrentStorage(worldId);
+    const root = join(this.#worldsRoot, worldId);
+    await readPublicationAt(root);
+    return readWorldGameplayAt(root);
   }
 
   async readWorldSummary(worldId: string): Promise<FileNativeWorldSummary> {
@@ -897,6 +911,10 @@ export class FileNativeWorldStore {
           await this.ensureCurrentStorage(worldId);
           const root = join(this.#worldsRoot, worldId);
           await readPublicationAt(root);
+          assertControlGameplayUnchanged(
+            await readTree(join(root, "control")),
+            files,
+          );
           const staging = join(root, `runtime/.control-draft-${randomUUID()}`);
           await writeSurface(staging, "control", files);
           const final = join(root, "runtime/control-draft");
@@ -1020,6 +1038,7 @@ export class FileNativeWorldStore {
           "operation_conflict",
           "World control changed after this revision epoch opened",
         );
+      assertControlGameplayUnchanged(current, input.files);
       await rm(stagingRoot, { recursive: true, force: true });
       await rm(previousPath, { recursive: true, force: true });
       await writeSurface(stagingRoot, "control", input.files);
@@ -1097,6 +1116,10 @@ export class FileNativeWorldStore {
             );
           const preview = await this.previewControlDraft(worldId, prompt);
           const root = join(this.#worldsRoot, worldId);
+          assertControlGameplayUnchanged(
+            await readTree(join(root, "control")),
+            await readTree(join(root, "runtime/control-draft")),
+          );
           const draft = join(root, "runtime/control-draft");
           const replacement = join(
             root,
@@ -3557,12 +3580,13 @@ async function readWorldSummaryAt(
   ) => Promise<WorldActivity>,
 ): Promise<FileNativeWorldSummary> {
   const published = publication ?? (await readPublicationAt(root));
+  const gameplay = await readWorldGameplayAt(root);
   const { lastActivityAt, excerpt, playerTurns } = await readWorldActivity(
     root,
     serializeRebuild,
   );
   const summary = {
-    ...toSummary(published),
+    ...toSummary(published, gameplay),
     title: await readWorldTitleAt(root, published),
     lastActivityAt,
     excerpt,
@@ -3587,6 +3611,21 @@ async function readWorldTitleAt(
   return metadata.name;
 }
 
+/** Worlds copy the package's gameplay identity with control; its absence means interactive fiction. */
+async function readWorldGameplayAt(root: string): Promise<Gameplay> {
+  try {
+    return readGameplay(
+      controlGameplayFiles(await readTree(join(root, "control"))),
+    );
+  } catch (error: unknown) {
+    throw new FileNativeWorldCreationError(
+      "world_corrupt",
+      "World gameplay identity is corrupt",
+      { cause: error },
+    );
+  }
+}
+
 async function readJson<T>(path: string): Promise<T> {
   return JSON.parse(await readFile(path, "utf8")) as T;
 }
@@ -3602,12 +3641,42 @@ async function readOptionalJson<T>(path: string): Promise<T | null> {
 
 function toSummary(
   publication: Publication,
-): Pick<FileNativeWorldSummary, "worldId" | "title" | "parentEndpoint"> {
+  gameplay: Gameplay,
+): Pick<
+  FileNativeWorldSummary,
+  "worldId" | "title" | "parentEndpoint" | "gameplay"
+> {
   return {
     worldId: publication.worldId,
     title: publication.title,
     parentEndpoint: publication.parentEndpoint,
+    gameplay,
   };
+}
+
+/** World control is a fixed mode and scheme: drafts, revisions and applies may not change either. */
+function assertControlGameplayUnchanged(
+  current: readonly ContentTreeFile[],
+  next: readonly ContentTreeFile[],
+): void {
+  try {
+    assertSameGameplay(
+      controlGameplayFiles(current),
+      controlGameplayFiles(next),
+    );
+  } catch (error: unknown) {
+    throw new FileNativeWorldCreationError(
+      "candidate_validation_failed",
+      error instanceof Error ? error.message : "World gameplay is fixed",
+      { cause: error },
+    );
+  }
+}
+
+function controlGameplayFiles(
+  files: readonly ContentTreeFile[],
+): ContentTreeFile[] {
+  return files.map((file) => ({ ...file, path: `control/${file.path}` }));
 }
 
 const worldNamePattern = /^[^\r\n]{1,160}$/u;

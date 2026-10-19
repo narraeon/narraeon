@@ -31,6 +31,8 @@
   --warning-surface: #faf2df;
   --success: #32654b;
   --success-surface: #eaf4ec;
+  --resolution-critical-success: #3f5f20;
+  --resolution-critical-success-surface: #eef4dc;
   --workspace-header-height: 54px;
 }
 
@@ -4884,6 +4886,110 @@ summary:focus-visible {
   border-color: var(--danger);
 }
 
+/* Outcome is always stated in words; colour and border weight only reinforce it. */
+.resolution-card {
+  margin: 0.35rem 0;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--muted);
+  border-radius: 3px;
+  color: var(--text);
+  background: var(--surface-inset);
+  font-family: system-ui, sans-serif;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.resolution-card.is-success {
+  border-left-color: var(--success);
+  background: var(--success-surface);
+}
+
+.resolution-card.is-failure {
+  border-left-color: var(--danger);
+  background: var(--danger-surface);
+}
+
+.resolution-card.is-critical_success {
+  border-left-width: 6px;
+  border-left-color: var(--resolution-critical-success);
+  background: var(--resolution-critical-success-surface);
+}
+
+.resolution-card.is-critical_failure {
+  border-left-width: 6px;
+  border-left-color: var(--danger);
+  background: var(--danger-surface);
+}
+
+.resolution-card summary {
+  padding: 0.55rem 0.8rem;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.resolution-outcome {
+  font-weight: 750;
+}
+
+.resolution-card.is-success .resolution-outcome {
+  color: var(--success);
+}
+
+.resolution-card.is-failure .resolution-outcome,
+.resolution-card.is-critical_failure .resolution-outcome {
+  color: var(--danger);
+}
+
+.resolution-card.is-critical_success .resolution-outcome {
+  color: var(--resolution-critical-success);
+}
+
+.resolution-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.3rem 0.9rem;
+  margin: 0;
+  padding: 0 0.8rem 0.7rem;
+}
+
+.resolution-facts > div {
+  display: contents;
+}
+
+.resolution-facts dt {
+  color: var(--muted);
+}
+
+.resolution-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.resolution-tokens {
+  width: calc(100% - 1.6rem);
+  margin: 0 0.8rem 0.7rem;
+  border-collapse: collapse;
+}
+
+.resolution-tokens caption {
+  padding: 0 0 0.35rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-align: left;
+}
+
+.resolution-tokens th,
+.resolution-tokens td {
+  padding: 0.3rem 0.45rem;
+  border-top: 1px solid var(--border);
+  text-align: left;
+  font-weight: 400;
+}
+
+.resolution-tokens th {
+  color: var(--muted);
+}
+
 .call-chain-summary {
   display: grid;
   gap: 0.35rem;
@@ -9723,4 +9829,158 @@ summary:focus-visible {
 }
 .world-extension-child {
   margin-inline-start: 1rem;
+}
+
+/* Creation dialog: the mode is always chosen; the scheme appears only for tabletop. */
+.create-package-dialog {
+  width: min(34rem, calc(100% - 2rem));
+  max-height: calc(100dvh - 2rem);
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: 0 8px 30px rgb(37 49 59 / 10%);
+}
+
+.create-package-dialog::backdrop {
+  background: rgb(37 49 59 / 18%);
+}
+
+.create-package-form {
+  display: grid;
+  gap: 1rem;
+  padding: 1.25rem 1.4rem;
+}
+
+.create-package-form header h2 {
+  margin: 0;
+  font-family: Georgia, "Noto Serif SC", serif;
+  font-size: 1.35rem;
+}
+
+.create-package-form header p,
+.create-package-choices legend {
+  margin: 0.3rem 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.create-package-choices {
+  display: grid;
+  gap: 0.55rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.create-package-choices legend {
+  margin: 0 0 0.25rem;
+  color: var(--text);
+  font-weight: 650;
+}
+
+.create-package-choice-block {
+  display: grid;
+  gap: 0.2rem;
+  padding-left: 1.45rem;
+}
+
+.create-package-choice-block .field-note,
+.create-package-choices .field-note {
+  margin: 0;
+}
+
+.create-package-choice {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 32px;
+  cursor: pointer;
+}
+
+.create-package-failure {
+  margin: 0;
+  color: var(--danger);
+}
+
+.create-package-form footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+}
+
+/* Gameplay identity on the package page: read-only mode, optional tabletop scheme. */
+.package-gameplay {
+  display: grid;
+  gap: 0.55rem;
+  max-width: 52rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--surface-muted);
+}
+
+.package-gameplay header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.package-gameplay h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.package-gameplay-mode {
+  font-size: 0.95rem;
+  font-weight: 650;
+}
+
+.package-gameplay .field-note {
+  margin: 0;
+}
+
+.package-gameplay-scheme {
+  display: grid;
+  gap: 0.45rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.package-gameplay-scheme legend {
+  margin-bottom: 0.2rem;
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 650;
+}
+
+.package-gameplay-choice {
+  display: grid;
+  gap: 0.15rem;
+  padding-left: 1.45rem;
+}
+
+.package-gameplay-choice label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 28px;
+  cursor: pointer;
+}
+
+.package-gameplay-choice .field-note {
+  margin: 0;
+}
+
+.prompt-preview-gameplay,
+.create-world-gameplay {
+  margin: 0.35rem 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
 }

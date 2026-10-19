@@ -1,3 +1,4 @@
+import { gameplayLabel, type Gameplay } from "../protocol/gameplay.ts";
 import type { WorldPromptMaintenance } from "../protocol/worldMaintenance.ts";
 import { WorldMaintenancePanel } from "./WorldMaintenancePanel.tsx";
 import { getWebLocale, uiText } from "./i18n.ts";
@@ -19,6 +20,7 @@ interface PromptPreviewClient {
 export interface PromptPreviewPackage {
   localId: string;
   title: string;
+  gameplay: Gameplay;
   status: "usable" | "needs_repair";
 }
 
@@ -365,6 +367,11 @@ export function PromptPreviewScreen({
                   ))}
                 </select>
               </label>
+              {selectedPackage === undefined ? null : (
+                <p className="prompt-preview-gameplay">
+                  {gameplayLabel(selectedPackage.gameplay, getWebLocale())}
+                </p>
+              )}
 
               <label className="prompt-preview-player-field">
                 {uiText("预览玩家输入")}

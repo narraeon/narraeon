@@ -7,6 +7,7 @@ import { PackageScriptPermissionControl } from "./PackageScriptPermissionControl
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { maxPortableContentArchiveBytes } from "../protocol/contentTree.ts";
+import type { Gameplay, ResolutionScheme } from "../protocol/gameplay.ts";
 import type { ModelConnectionLibraryView } from "../protocol/modelConnections.ts";
 import {
   defaultAppReadingPreferences,
@@ -23,6 +24,7 @@ import { createClientId } from "./ClientId.ts";
 import { setWebLocale, uiText } from "./i18n.ts";
 import type { ContentTreeIssue } from "./ContentTreeEditor.tsx";
 import { WorkspaceHeader, type WorkspaceScreen } from "./WorkspaceHeader.tsx";
+import { CreateContentPackageDialog } from "./CreateContentPackageDialog.tsx";
 import { CreateWorldScreen } from "./CreateWorldScreen.tsx";
 import { DismissibleNotice } from "./DismissibleNotice.tsx";
 import { HomeScreen, type HomeWorld } from "./HomeScreen.tsx";
@@ -61,6 +63,7 @@ interface PlayPresetLibrary {
 interface PackageSummary {
   localId: string;
   title: string;
+  gameplay: Gameplay;
   status: "usable" | "needs_repair";
   files?: ContentTreeFile[];
 }
@@ -81,6 +84,8 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const [selected, setSelected] = useState<string>("");
   const [creatingWorld, setCreatingWorld] = useState(false);
   const creatingWorldRef = useRef(false);
+  const [packageDialogOpen, setPackageDialogOpen] = useState(false);
+  const [creatingPackage, setCreatingPackage] = useState(false);
   const [childNavigationLocked, setChildNavigationLocked] = useState(false);
   const [playPresetDraftDirty, setPlayPresetDraftDirty] = useState(false);
   const [modelDraftDirty, setModelDraftDirty] = useState(false);
@@ -345,13 +350,37 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     }
   }
 
-  async function createPackage(): Promise<void> {
+  /** The creation dialog keeps itself open and shows the error when Runtime refuses the package. */
+  async function createPackage(gameplay: Gameplay): Promise<void> {
+    setCreatingPackage(true);
     try {
       const created = await client.request<PackageSummary>({
         type: "content.create",
+        gameplay,
       });
-      await refresh();
-      await openPackage(created.localId);
+      setPackageDialogOpen(false);
+      try {
+        await refresh();
+        await openPackage(created.localId);
+      } catch (error: unknown) {
+        report(error);
+      }
+    } finally {
+      setCreatingPackage(false);
+    }
+  }
+
+  async function setPackageScheme(scheme: ResolutionScheme): Promise<void> {
+    try {
+      // File drafts stay closed until the saved tree is re-read, so none can be saved over the scheme.
+      await authoringWorkspace.holdDraftsWhile(async () => {
+        await client.request({
+          type: "content.gameplay.set",
+          packageId: selected,
+          scheme,
+        });
+      });
+      setNotice(uiText("判定方案已保存；已有世界保持原方案。"));
     } catch (error: unknown) {
       report(error);
     }
@@ -602,6 +631,8 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   );
   const selectedPackageDetail =
     packageDetail?.localId === selected ? packageDetail : null;
+  const selectedGameplay =
+    selectedPackageDetail?.gameplay ?? selectedPackage?.gameplay;
   const displayedImprovementView = authoring.view;
   const selectedWorld = workspace.worlds.find(
     (world) => world.worldId === worldId,
@@ -619,7 +650,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     if (next !== "content" || next === screen) packageOpenRequest.current += 1;
     if (next === screen) return;
     if (next === "content") {
-      if (selectedPackage === undefined) void createPackage();
+      if (selectedPackage === undefined) setPackageDialogOpen(true);
       else void openPackage(selectedPackage.localId);
     } else if (next === "preview") openPromptPreview();
     else if (next === "plays")
@@ -693,7 +724,16 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         onPreview={() => authoringWorkspace.preview()}
         packageName={selectedPackage?.title ?? selected}
         modelConfigured={workspace.model.configured}
+        {...(selectedGameplay === undefined
+          ? {}
+          : {
+              packageGameplay: {
+                gameplay: selectedGameplay,
+                onChangeScheme: setPackageScheme,
+              },
+            })}
         hasUnsavedFileDraft={filesDirty}
+        draftsLocked={authoring.draftsLocked}
         loading={authoring.loading || creatingWorld}
         onCreateWorld={() => void createWorld()}
         onNavigationLockChange={setChildNavigationLocked}
@@ -772,6 +812,13 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         onNavigate={navigate}
         onLocaleChange={(locale) => void saveLocale(locale)}
       />
+      {packageDialogOpen ? (
+        <CreateContentPackageDialog
+          pending={creatingPackage}
+          onCancel={() => setPackageDialogOpen(false)}
+          onCreate={createPackage}
+        />
+      ) : null}
       <div className="workspace-body">
         {worldContent}
         {authoringContent}
@@ -825,7 +872,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             }}
             onOpenPlayPresets={() => navigate("plays")}
             onCreateWorld={() => navigate("create")}
-            onCreatePackage={() => void createPackage()}
+            onCreatePackage={() => setPackageDialogOpen(true)}
             onCreateSamplePackage={() => void createSamplePackage()}
             onConfigureModel={() => navigate("model")}
             onImportPackage={() => void importPackage()}

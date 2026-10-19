@@ -1,6 +1,14 @@
 import { projectLegacyModelBindingFailure } from "./LegacyModelBindingFailure.ts";
 import { classifyPlayFailure } from "./PlayFailure.ts";
 import {
+  isResolutionTool,
+  resolutionMarkdown,
+  resolutionToolNames,
+  resolveTabletop,
+  seededRandom,
+  type ResolutionToolName,
+} from "./TabletopResolution.ts";
+import {
   captureNarrativeOrigin,
   snapshotBackground,
   narrativeBackground,
@@ -107,6 +115,7 @@ import type {
 } from "./FileNativePlayAdvanceStore.ts";
 
 const callChainToolNames = new Set([
+  ...resolutionToolNames,
   "state_list",
   "history_list",
   "history_search",
@@ -1833,6 +1842,11 @@ export class PlayCallChain {
     const prepared: PreparedToolResult[] = [];
     const trailingEvents: V1PlayCallChainEvent[] = [];
     let nextEventId = advance.eventId + 1;
+    // One persisted seed per advance: every resolution call draws from it by
+    // call identity, so recovery reproduces the same receipts.
+    const resolutionSeed = calls.some(({ name }) => isResolutionTool(name))
+      ? await this.#worlds.playAdvances.resolutionSeed(advance)
+      : undefined;
     for (const call of calls) {
       const item = prepareTool(
         session,
@@ -1840,7 +1854,10 @@ export class PlayCallChain {
         advance.exchange,
         call,
         this.#compiler.locale,
+        resolutionSeed,
       );
+      if (item.result.resolution !== undefined)
+        crashAtPlayAdvanceEdge("after_resolution");
       prepared.push(item);
       trailingEvents.push({
         id: nextEventId++,
@@ -3089,6 +3106,7 @@ function prepareTool(
   exchange: number,
   call: ModelHostToolCall,
   locale: AppLocale,
+  resolutionSeed: string | undefined,
 ): PreparedToolResult {
   const key = `${exchange}:${call.id}`;
   const signature = JSON.stringify(call.arguments);
@@ -3117,8 +3135,15 @@ function prepareTool(
     };
   } else {
     try {
-      result =
-        call.name === "world_checkpoint"
+      result = isResolutionTool(call.name)
+        ? resolutionToolResult(
+            call.name,
+            call.arguments,
+            resolutionSeed,
+            key,
+            locale,
+          )
+        : call.name === "world_checkpoint"
           ? typeof call.arguments === "object" &&
             call.arguments !== null &&
             !Array.isArray(call.arguments) &&
@@ -3163,6 +3188,9 @@ function prepareTool(
     name: call.name,
     ok: result.ok,
     markdown: result.markdown,
+    ...(result.resolution === undefined
+      ? {}
+      : { resolution: structuredClone(result.resolution) }),
     replayed,
   };
   return {
@@ -3544,6 +3572,23 @@ function notifyAssistantDelta(
   } catch {
     // Like snapshot projection, the Provider exchange outlives its browser stream.
   }
+}
+
+function resolutionToolResult(
+  name: ResolutionToolName,
+  args: unknown,
+  seed: string | undefined,
+  identity: string,
+  locale: AppLocale,
+): PlayDocumentToolResult {
+  if (seed === undefined)
+    throw new Error("The resolution seed for this advance is unavailable.");
+  const resolution = resolveTabletop(name, args, seededRandom(seed, identity));
+  return {
+    ok: true,
+    markdown: resolutionMarkdown(resolution, locale),
+    resolution,
+  };
 }
 
 function crashAtPlayAdvanceEdge(edge: string): void {

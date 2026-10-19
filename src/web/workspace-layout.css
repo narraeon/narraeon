@@ -191,6 +191,10 @@
   display: grid;
   gap: 6px;
 }
+.home-world-card-gameplay {
+  color: var(--muted);
+  font-size: 12px;
+}
 .home-world-card-activity {
   display: flex;
   flex-wrap: wrap;
@@ -278,6 +282,12 @@
 }
 .home-package-state.needs_repair {
   color: var(--danger);
+}
+.home-package-card-gameplay {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
 }
 .home-package-card-copy {
   display: block;

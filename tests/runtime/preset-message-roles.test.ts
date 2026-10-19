@@ -286,10 +286,15 @@ test("authoring and world revision use the same configured message roles", async
   };
   for (const result of [
     compiler.compileSettingImprovement({
+      gameplay: { mode: "interactive-fiction" },
       ...common,
       contentPackageTitle: "Package",
     }),
-    compiler.compileWorldRevision({ ...common, worldTitle: "World" }),
+    compiler.compileWorldRevision({
+      gameplay: { mode: "interactive-fiction" },
+      ...common,
+      worldTitle: "World",
+    }),
   ]) {
     expect(
       result.provider.messages.slice(-2).map((message) => message.role),

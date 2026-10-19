@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { gameplayLabel, type Gameplay } from "../protocol/gameplay.ts";
 import type {
   ProtagonistTemplate,
   ProtagonistTemplatesView,
@@ -6,7 +7,7 @@ import type {
 import { ProtagonistTemplateManager } from "./ProtagonistTemplateManager.tsx";
 import type { ContentTreeFile } from "../protocol/v1.ts";
 import type { RuntimeClient } from "./runtimeClient.ts";
-import { uiText } from "./i18n.ts";
+import { getWebLocale, uiText } from "./i18n.ts";
 
 export function CreateWorldScreen({
   client,
@@ -24,6 +25,7 @@ export function CreateWorldScreen({
   packages: readonly {
     localId: string;
     title: string;
+    gameplay: Gameplay;
     status: "usable" | "needs_repair";
   }[];
   selectedId: string;
@@ -122,7 +124,7 @@ export function CreateWorldScreen({
             >
               {packages.map((item) => (
                 <option key={item.localId} value={item.localId}>
-                  {item.title}
+                  {`${item.title} · ${gameplayLabel(item.gameplay, getWebLocale())}`}
                   {item.status === "needs_repair" ? uiText(" · 需要修复") : ""}
                 </option>
               ))}
@@ -195,6 +197,11 @@ export function CreateWorldScreen({
       <article aria-label={uiText("开场白预览")}>
         <span>{uiText("开场白")}</span>
         <h2>{selected?.title}</h2>
+        {selected === undefined ? null : (
+          <p className="create-world-gameplay">
+            {gameplayLabel(selected.gameplay, getWebLocale())}
+          </p>
+        )}
         {preview?.packageId === selectedId && preview.failure ? (
           <p role="alert">{preview.failure}</p>
         ) : preview?.packageId === selectedId ? (

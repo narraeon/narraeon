@@ -26,6 +26,7 @@ import { dirname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import type { AppLocale } from "../../protocol/appPreferences.ts";
+import { fictionGameplay } from "../../protocol/gameplay.ts";
 import type { ModelUsage } from "../../protocol/modelUsage.ts";
 import { ContentWorkspace } from "../content/ContentWorkspace.ts";
 import type { ContentTreeFile } from "../content/ContentTreeFile.ts";
@@ -789,7 +790,8 @@ function migrateLegacySession(
     bootstrap: compileSettingImprovementLegacyCurrentTreeBootstrap(
       structuredClone(value.bootstrap),
       value.locale,
-      settingImprovementToolDefinitions(value.locale),
+      // Released sessions predate gameplay, and a package's mode is fixed, so they are fiction.
+      settingImprovementToolDefinitions(value.locale, fictionGameplay),
     ),
     modelBinding: structuredClone(value.modelBinding),
     ...(value.playPreset === undefined
