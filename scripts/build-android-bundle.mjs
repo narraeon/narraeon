@@ -47,6 +47,33 @@ execFileSync("npm", ["ci", "--omit=dev", "--ignore-scripts"], {
   stdio: "inherit",
 });
 await rm(`${assetPath}package-lock.json`, { force: true });
+// Test fixtures from dependencies (for example @fastify/static) contain duplicate
+// names such as x.html and x.html.gz, which AAPT rejects as duplicate resources.
+execFileSync(
+  "find",
+  [
+    "node_modules",
+    "-type",
+    "d",
+    "(",
+    "-name",
+    "test",
+    "-o",
+    "-name",
+    "tests",
+    "-o",
+    "-name",
+    "__tests__",
+    ")",
+    "-prune",
+    "-exec",
+    "rm",
+    "-rf",
+    "{}",
+    "+",
+  ],
+  { cwd: assetPath, stdio: "inherit" },
+);
 
 const packageJson = JSON.parse(
   await readFile(new URL("../package.json", import.meta.url), "utf8"),
