@@ -4,6 +4,8 @@ status: accepted
 
 # 世界修订使用一份持久锁定工作树
 
+> 按 [ADR-0044](0044-runtime-is-single-process-and-recovers-by-retry.md)，epoch 的"独占锁"是跨重启的编辑模式标记，由进程内按世界串行保证互斥，不再是跨进程锁；Apply 各阶段的 operation 幂等回执随之撤销。
+
 运行中世界的手动编辑和 AI 创作统一进入一份 `state/*`／`control/*` 修订工作树。进入修订页面只读取内容与历史；首次实际编辑或发送修订消息才从固定 Authority 端点和控制指纹创建一个持久 epoch，已有活动 epoch 则直接恢复，并以非过期独占锁阻止游玩及其他世界语义写入；本地名称不属于世界语义，因此仍可修改。`opening.md` 已经提交为 genesis 叙事，没有可供世界修订覆盖的当前文件。
 
 手动保存和完整 AI 工具响应按顺序向同一 revision 发布，并共同追加逐文件 before／after 历史。活动 epoch 中的回滚直接恢复所选历史变化的 before-image，覆盖该文件此刻的值，同时追加一笔新的 rollback 变化；它不删除旧历史，也不要求整批回到某个快照。界面复用内容包设定完善的文件、对话、历史与 diff 交互，不另设手动／AI 模式。

@@ -4,6 +4,8 @@ status: accepted
 
 # 长时间线使用不可变事实、小端点与可重建投影
 
+> 关于持久推进、Provider 结果重放与崩溃后从已有事实继续的决定已由 [ADR-0044](0044-runtime-is-single-process-and-recovers-by-retry.md) 取代：崩溃后的生成标记为中断，由玩家重试并重新调用模型。有界页面读取的决定仍然有效；不可变事实链的存储模型在 #77 评估。
+
 > Authority 结果 root、世界中立身份与物理闭包分叉机制见 [ADR-0036](0036-authority-facts-are-world-neutral-and-forks-retain-physical-closures.md)；本 ADR 保留小 head、不可变事实和有界页面读取的决定。
 
 世界增长不再重写一份包含全部 Authority 提交或全部游玩上下文的累计记录。Authority 以内容寻址、父摘要相连的不可变提交保存正确性来源，只用一个小端点指出当前提交；页面时间线把冻结上下文、追加事件、轻量摘要和当前状态分开保存，首次打开只读取有界尾页，工具参数、工具结果、思维链与 usage 在玩家展开单项时才读取。

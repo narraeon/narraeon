@@ -4,6 +4,8 @@ status: accepted
 
 # Authority 事实世界中立，分叉保留物理闭包
 
+> 其中 operation receipt、prepared receipt 与来源 snapshot lease 等跨进程幂等和加锁机制已由 [ADR-0044](0044-runtime-is-single-process-and-recovers-by-retry.md) 取代。存储模型本身在 #77 评估，在此之前仍然有效。
+
 世界所有权、不可变连续性事实、operation 幂等和活动模型会话是四种不同身份。`worldId` 只属于世界本地外壳与可变投影；历史消息使用 Authority 内局部身份，不可变提交不保存 `worldId` 或 `operationId`。operation receipt 单独把一次请求绑定到已接受事实；`commit:N` 继续作为 V1 世界内端点别名，事实父关系同时携带内容摘要，genesis 摘要是第一笔提交的真实锚点。
 
 每笔 Authority 提交分别保存不可改写的 audit parent、当前时间线的 timeline parent 和直接结果 root。普通游玩与修正的两个父关系相同；玩家修改在当前 audit head 追加 timeline revision，但以被修改消息的逻辑父端点作为 timeline parent。修订事实只保存双父关系、修改请求指纹与直接结果引用，不嵌入完整 replacement state/history，也不从 genesis 逐笔重放提交。当前 head 的分叉直接采用已接受小 root 中的结果引用，不解码或重算该 Authority 事实；完整链校验只属于显式审计。

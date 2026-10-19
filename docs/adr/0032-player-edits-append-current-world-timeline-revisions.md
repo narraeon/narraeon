@@ -1,8 +1,10 @@
 ---
-status: accepted
+status: superseded by ADR-0044
 ---
 
 # 玩家消息修改追加当前世界时间线修订
+
+> 时间线修订机制已由 [ADR-0044](0044-runtime-is-single-process-and-recovers-by-retry.md) 取代：修改等于回退到被修改消息之前再普通发送，被替换的历史不保留。本 ADR 的"修改在当前世界进行、不创建新世界"产品决定仍然有效。
 
 > 身份、恢复快照与分叉复制机制已由 [ADR-0036](0036-authority-facts-are-world-neutral-and-forks-retain-physical-closures.md) 取代；本 ADR 保留“修改在当前世界追加修订而不创建新世界”的产品决定。
 
