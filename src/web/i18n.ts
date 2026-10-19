@@ -7,11 +7,117 @@ import {
 let activeLocale: AppLocale = defaultAppLocale;
 
 const englishMessages: Record<string, string> = {
+  页面出错了: "Something went wrong",
+  "页面显示时发生错误，已保存的故事和世界不受影响。请重新加载页面；如果反复出现，请把下面的技术详情发给开发者。":
+    "The page hit an error while displaying. Your saved stories and worlds are not affected. Reload the page; if this keeps happening, send the technical details below to the developers.",
+  重新加载页面: "Reload page",
+  "对话同步失败：{message}\u3000请重新打开此页面。":
+    "Conversation sync failed: {message} Reopen this page.",
+  "Narraeon 服务请求失败（HTTP {status}）。":
+    "The Narraeon request failed (HTTP {status}).",
+  "Narraeon 服务版本与页面不匹配，请刷新页面。":
+    "The Narraeon service version does not match this page. Refresh the page.",
+  "无法连接到 Narraeon 服务。请确认服务正在运行、网络连接正常。":
+    "Cannot reach the Narraeon service. Make sure it is running and your network connection works.",
+  "Narraeon 服务暂时不可用（HTTP {status}），可能正在重启，请稍后重试。":
+    "The Narraeon service is temporarily unavailable (HTTP {status}) and may be restarting. Try again shortly.",
+  "Narraeon 服务返回了无法识别的响应（HTTP {status}）。请稍后重试；如果使用了反向代理，请检查代理配置。":
+    "The Narraeon service returned an unreadable response (HTTP {status}). Try again shortly; if you use a reverse proxy, check its configuration.",
+  "模型正在生成，请等它完成或先取消，再进行这项操作。":
+    "The model is still generating. Wait for it to finish or cancel it, then try again.",
+  "世界刚被其他操作更新，这次操作没有生效。请刷新页面后重试。":
+    "The world was just updated by another operation, so this action did not take effect. Refresh the page and try again.",
+  "世界正在修订，游玩和其他修改已锁定。请先应用或放弃修订。":
+    "The world is being revised, so play and other changes are locked. Apply or discard the revision first.",
+  "这个世界来自备份，请先开启全新上下文再继续。":
+    "This world came from a backup. Start a fresh context before continuing.",
+  "当前上下文无法继续，请使用全新上下文。":
+    "The current context cannot continue. Use a fresh context.",
+  "找不到要操作的对话记录，请刷新页面后重试。":
+    "The conversation record for this action was not found. Refresh the page and try again.",
+  "世界不存在，可能已被删除。":
+    "This world does not exist; it may have been deleted.",
+  "世界正在处理另一项操作，请稍后重试。":
+    "The world is busy with another operation. Try again shortly.",
+  "上一次修改已保存，但还没有完整写入当前世界。请刷新页面；如果仍然失败，请在世界管理中修复世界。":
+    "The last change was saved but has not been fully written to the current world. Refresh the page; if it still fails, repair the world from world management.",
+  "正在导出世界备份，请等它完成后再操作。":
+    "A world backup is being exported. Wait for it to finish, then try again.",
+  "世界名称须为 1–160 个字符，且不能换行。":
+    "World names must be 1–160 characters with no line breaks.",
+  "玩家输入不能为空。": "Player input cannot be empty.",
+  "修订内容已在别处更新，请刷新后再保存。":
+    "The revision was updated elsewhere. Refresh before saving.",
+  "请等待或取消正在进行的 AI 回复，再修改这次修订。":
+    "Wait for or cancel the running AI reply before changing this revision.",
+  "下一次发送将开启全新上下文，尚无实报占用。":
+    "The next message starts a fresh context; no usage has been reported yet.",
+  "原上下文无法用于这次重新生成。可使用当前模型和预设，从同一条玩家输入开启全新上下文。":
+    "The original context cannot be used for this regeneration. Use the current model and presets to regenerate from the same player input in a fresh context.",
+  用全新上下文重新生成: "Regenerate with a fresh context",
+  旧模型配置曾阻止发送: "Previous model settings blocked sending",
+  "旧版本因模型配置变化阻止了这次发送。切回原协议后，可按上下文当前状态继续。":
+    "An older version blocked this send after the model settings changed. Switch back to the original protocol and continue according to the context's current status.",
+  "当前模型协议与此上下文不同。切回原协议即可继续；使用新协议请开启全新上下文。":
+    "The selected model protocol differs from this context. Switch back to the original protocol to continue, or start a fresh context with the new protocol.",
+  复制: "Copy",
+  主角模板: "Protagonist template",
+  不使用: "None",
+  管理主角模板: "Manage protagonist templates",
+  主角模板列表: "Protagonist template list",
+  新建主角模板: "New protagonist template",
+  模板名称: "Template name",
+  模板正文: "Template body",
+  "名称为 1–80 个字符；正文为自由 Markdown，最多 16 KiB。":
+    "Use a name of 1–80 characters and a free Markdown body of up to 16 KiB.",
+  主角模板保存失败: "Could not save protagonist template",
+  主角模板读取失败: "Could not load protagonist templates",
+  重新读取主角模板: "Reload protagonist templates",
+  "放弃未保存的主角模板修改？": "Discard unsaved protagonist template changes?",
+  "删除这个主角模板？": "Delete this protagonist template?",
+  应用并开始游玩: "Apply and start playing",
+  "请按下面的主角模板修改本世界的主角。\n\n- 找到本世界中代表玩家的主角文档，按模板改写姓名、外貌、背景、性格等相关内容。\n- 模板与本世界设定冲突的部分，保留模板的意图，按本世界的规则调整。\n- 只修改主角相关的内容，不修改其他人物、地点、规则或世界控制。\n- 如果本世界中找不到明确的主角文档，先在回复中说明并询问我，不要擅自新建。\n\n主角模板：\n\n{body}":
+    "Please modify this world’s protagonist using the template below.\n\n- Find the protagonist document representing the player in this world, and update the name, appearance, background, personality, and other relevant content according to the template.\n- Where the template conflicts with this world’s setting, preserve its intent while adapting it to the world’s rules.\n- Modify only protagonist-related content. Do not modify other characters, locations, rules, or world control.\n- If there is no clear protagonist document, explain this in your reply and ask me first. Do not create one on your own.\n\nProtagonist template:\n\n{body}",
+  导出世界备份: "Export world backup",
+  导出备份: "Export backup",
+  "正在导出世界备份…": "Exporting world backup…",
+  "正在导出…": "Exporting…",
+  "世界备份已开始下载。": "Your world backup download has started.",
+  "备份包含完整故事、世界文档和模型调用记录，不包含 API Key 和模型配置。":
+    "Backups include the complete story, world documents, and model call records. API keys and model configuration are excluded.",
+  "世界备份超过容量限制。": "The world backup exceeds the size limits.",
+  "正在上传世界备份：{progress}%": "Uploading world backup: {progress}%",
+  "正在校验并导入世界备份…": "Validating and importing world backup…",
+  "世界备份已导入，新世界已加入列表。":
+    "World backup imported. The new world is now in your list.",
+  "世界备份 ZIP 文件": "World backup ZIP file",
+  "此上下文来自备份；修改后须以本机选择开启全新上下文。":
+    "This context came from a backup. After editing, start a fresh context with your local choices.",
+  导入世界备份: "Import world backup",
+  "世界备份上传失败，请重试。": "World backup upload failed. Please try again.",
+  "这不是有效的世界备份，请选择世界备份 ZIP。":
+    "This is not a valid world backup. Select a world backup ZIP.",
+  "此世界备份格式不受支持，请升级应用后重试。":
+    "This world backup format is unsupported. Update the app and try again.",
+  "世界备份包含不安全或冲突的文件路径。":
+    "The world backup contains unsafe or conflicting file paths.",
+  "世界备份完整性校验失败，未创建世界。":
+    "World backup integrity verification failed. No world was created.",
+  "请先等待生成结束，并应用或放弃世界修订，再导出备份。":
+    "Wait for generation to finish and apply or discard any world revision before exporting a backup.",
+  "请先修复世界，再导出备份。": "Repair the world before exporting a backup.",
+  "世界从备份导入；下一次行动会从新上下文开始":
+    "World imported from backup; your next action will start a fresh context",
+
   保存说明: "About saving",
   重命名文件: "Rename file",
   "生成预览后，在这里查看实际发送的消息、材料与工具。":
     "Generate a preview to inspect the messages, materials, and tools sent to the model.",
   关闭提示: "Dismiss notification",
+  "找不到该页面。": "Page not found.",
+  "找不到该世界。": "World not found.",
+  "找不到该内容包。": "Content package not found.",
+  "找不到该预设。": "Preset not found.",
   "已保留当前页面的未保存修改，请保存或放弃后再切换。":
     "Your unsaved changes have been kept. Save or discard them before switching pages.",
   "这份内容包正在完善，请在回复完成后创建世界。":
@@ -38,6 +144,10 @@ const englishMessages: Record<string, string> = {
   "选择一个世界继续故事，或从内容包开始创作。":
     "Continue a story in an existing world, or start creating from a content package.",
   "世界操作：{title}": "World actions: {title}",
+  刚刚: "Just now",
+  活动时间未记录: "Activity time not recorded",
+  "1 回合": "1 turn",
+  "{count} 回合": "{count} turns",
   "先新建或导入一份内容包，再完善开场与世界设定。":
     "Create or import a content package, then develop its opening and world setting.",
   "导入内容包 ZIP": "Import content package ZIP",
@@ -104,6 +214,7 @@ const englishMessages: Record<string, string> = {
   "根据已完成的剧情，通过 artifact_emit 输出 output_1。":
     "Use artifact_emit to emit output_1 based on the settled story.",
   故事正文: "Story content",
+  侧栏: "Sidebar",
   删除请求: "Delete request",
   新增包后置请求: "Add package followup",
   包请求名称: "Package request name",
@@ -438,6 +549,11 @@ const englishMessages: Record<string, string> = {
   模型已就绪: "Model ready",
   需要模型连接: "Model connection required",
   新建内容包: "New content package",
+  从示例新建: "Create from sample",
+  从示例开始: "Start with a sample",
+  "正在创建示例…": "Creating sample…",
+  "从雨夜旅店的示例故事开始，也可以新建或导入自己的内容包。":
+    "Start with a rainy-night inn story, or create or import your own content package.",
   待修复: "Needs repair",
   "可编辑、预览并创建新世界": "Ready to edit, preview, and create a world",
   打开并修复当前树中的问题: "Open and repair issues in the current tree",
@@ -577,6 +693,15 @@ const playPresetEnglishMessages: Record<string, string> = {
   "玩法预设状态已更新。": "Play-preset status updated.",
   启用预设: "Enable preset",
   停用预设: "Disable preset",
+  启用: "Enable",
+  添加: "Add",
+  切换预设: "Switch preset",
+  保留的资源: "Retained assets",
+  "未绑定资源仍随预设保存；可在模板编辑器重新引用。":
+    "Unbound assets are still saved with the preset. Reference them again from the template editor.",
+  "导入内容无法解析；原文完整保留，可导出或打开原文修复。":
+    "The imported content could not be parsed. Its source is kept intact; export it or open the source to repair it.",
+  修复导入原文: "Repair imported source",
   "JavaScript 已停用；raw/document 仍可预览。":
     "JavaScript is disabled; raw and document content can still be previewed.",
   "JavaScript 已显式启用（本地可信代码）。":
@@ -1132,6 +1257,18 @@ const settingImprovementEnglishMessages: Record<string, string> = {
   "和 AI 边聊边修改 {packageName}。成功的工具改动会像游玩一样直接写入内容包当前树。":
     "Discuss and revise {packageName} with the model. Successful tool changes write directly to the content package current tree, just like play.",
   全新上下文: "Fresh context",
+  "上下文 —": "Context —",
+  "上下文 {percent}%": "Context {percent}%",
+  "上下文已用 {percent}%，建议下一条从全新上下文开始":
+    "Context usage is {percent}%. Consider starting the next message in a fresh context.",
+  "当前上下文尚无已完成的 AI 响应。":
+    "There is no completed AI response in the current context yet.",
+  "当前上下文没有记录模型窗口。":
+    "No model context window was recorded for the current context.",
+  "Provider 未报告最近一次完整响应的输入 token 数。":
+    "The Provider did not report input tokens for the latest completed response.",
+  "最近一次完整响应的实报输入量：{input} / {window} tokens。仅作提示，不限制发送。":
+    "Reported input for the latest completed response: {input} / {window} tokens. This is informational and does not limit sending.",
   "AI 建议在此开启全新上下文": "The AI suggests starting a fresh context here",
   取消全新上下文: "Cancel fresh context",
   下一条消息使用全新上下文: "Use a fresh context for the next message",
@@ -1390,6 +1527,12 @@ const worldPageEnglishMessages: Record<string, string> = {
   当前文档: "Current documents",
   已提交叙事: "Committed narrative",
   世界管理: "World management",
+  导出故事: "Export story",
+  "导出 Markdown": "Export Markdown",
+  导出纯文本: "Export plain text",
+  "故事已导出。": "Story exported.",
+  "下载当前时间线的开场白、玩家原文与主持正文。":
+    "Download the opening, player inputs and narration on the current timeline.",
   世界游玩: "World play",
   本次模型调用进度: "Current model-call progress",
   "正在建立调用…": "Establishing the model call…",
@@ -1399,6 +1542,9 @@ const worldPageEnglishMessages: Record<string, string> = {
   "{seconds} 秒没有新数据": "No new data for {seconds} seconds",
   返回推理: "Returned reasoning",
   工具参数: "Tool arguments",
+  正文: "Text",
+  工具调用: "Tool calls",
+  "Provider 派发": "Provider dispatches",
   "{count} 字": "{count} characters",
   "Provider 尚未返回可区分的增量；这可能是排队、模型内部思考或网络等待。":
     "The Provider has not returned a distinguishable delta yet; it may be queued, thinking internally, or waiting on the network.",
@@ -1462,6 +1608,12 @@ const worldPageEnglishMessages: Record<string, string> = {
     "Copy current state and committed narrative through this point into a completely independent world.",
   "正在创建…": "Creating…",
   创建分叉: "Create fork",
+  重新生成: "Regenerate",
+  "正在重新生成…": "Regenerating…",
+  "已重新生成；原回复已离开当前时间线":
+    "Regenerated; the original reply is no longer on the current timeline",
+  "原回复已离开当前时间线；配置模型后点击“追加上下文”即可重新生成。":
+    'The original reply is no longer on the current timeline. Configure a model, then click "Append context" to regenerate.',
   世界控制: "World control",
   "编辑主持框架和玩家视图。草稿必须先通过真实提示词预览，再整批应用。":
     "Edit the host frame and player views. The draft must pass a real Prompt Preview before it can be applied as a whole.",
@@ -1501,6 +1653,7 @@ const worldPageEnglishMessages: Record<string, string> = {
   没有文档变化: "No document changes",
   新建: "Create",
   更新: "Update",
+  新增: "Add",
   玩家: "Player",
   修改: "Edit",
   修改后的行动: "Edited action",
@@ -1560,6 +1713,8 @@ const worldPageEnglishMessages: Record<string, string> = {
 Object.assign(englishMessages, worldPageEnglishMessages);
 
 const playWorkspaceEnglishMessages: Record<string, string> = {
+  显示技术信息: "Show technical information",
+  检查点: "Checkpoint",
   "AI 响应诊断": "Model response diagnostics",
   "AI 如何读取": "How the model reads",
   "AI 实际收到了哪些世界内容": "What world content the model actually received",
@@ -1579,8 +1734,8 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
   世界侧栏: "World side panel",
   "世界修订已提交。现有追加上下文已过期，下一次行动会自动使用全新上下文。":
     "The world revision was committed. The existing append context is now stale, so the next action will automatically use a fresh context.",
-  "世界已在故事外修订；下一次行动会从新上下文开始。":
-    "The world was revised outside the story. The next action will start from a fresh context.",
+  "世界已在当前上下文之外更新；下一次行动会从新上下文开始。":
+    "The world changed outside the current context. The next action will start from a fresh context.",
   世界阅读工具: "World reading tools",
   从全新上下文发送行动: "Send action from a fresh context",
   从当前世界重新编译材料: "Recompile materials from the current world",
@@ -2104,6 +2259,34 @@ const tabletopEnglishMessages: Record<string, string> = {
 
 Object.assign(englishMessages, tabletopEnglishMessages);
 Object.assign(englishMessages, dynamicEnglishMessages);
+
+Object.assign(englishMessages, {
+  模型请求结果未知: "Model request outcome unknown",
+  "模型请求已发出，但结果未知。旧请求不能重发；为避免重复生成，请从全新上下文继续。":
+    "The model request was dispatched, but its outcome is unknown. The previous request cannot be resent. Continue with a fresh context to avoid duplicate generation.",
+  模型上下文已达上限: "Model context limit reached",
+  "当前上下文超过了模型的输入上限。旧请求不能重发，请从全新上下文继续。":
+    "The current context exceeds the model input limit. The previous request cannot be resent. Continue with a fresh context.",
+  模型输出已达上限: "Model output limit reached",
+  "模型回复达到输出上限，尚未完成。请在模型配置中调高最大输出 Token，保存后从全新上下文继续。推理也可能占用输出额度。":
+    "The model response reached the output limit before completion. Increase the maximum output tokens in the model configuration, save, then continue with a fresh context. Reasoning may also consume the output budget.",
+  模型上下文无法继续: "Model context unavailable",
+  "当前上下文的续传信息缺失或不可用。旧请求不能重发，请从全新上下文继续。":
+    "Continuation data is missing or unavailable. The previous request cannot be resent. Continue with a fresh context.",
+  模型请求可以重新发送: "Model request can be resent",
+  "模型拒绝了请求，或请求尚未发出。可以重新发送已保存的请求，不会重复提交玩家原文。":
+    "The model rejected the request, or it was not dispatched. You can resend the saved request without submitting the player text again.",
+  模型连接发生错误: "Model connection error",
+  "模型服务未能完成请求。请检查模型连接；也可以从全新上下文继续。":
+    "The model service could not complete the request. Check the model connection, or continue with a fresh context.",
+  "处理这次请求时发生错误。旧请求不能重发；请查看技术详情，也可以从全新上下文继续。":
+    "An error occurred while processing this request. The previous request cannot be resent. View the technical details, or continue with a fresh context.",
+  重新发送: "Resend request",
+  从全新上下文继续: "Continue with a fresh context",
+  调整最大输出: "Adjust maximum output",
+  检查模型连接: "Check model connection",
+  技术详情: "Technical details",
+});
 
 export function setWebLocale(locale: AppLocale): void {
   if (!isAppLocale(locale)) throw new Error("Unsupported web locale");

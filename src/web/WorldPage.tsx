@@ -1,11 +1,25 @@
+import { RuntimeRequestError } from "./runtimeClient.ts";
+import { playFailureDescription } from "./PlayFailureText.ts";
+import {
+  PlayFailureNotice,
+  type PlayFailureRecovery,
+} from "./PlayFailureNotice.tsx";
+import { WorldBackupExportButton } from "./WorldArchiveControls.tsx";
 import { WorldExtensionMenu } from "./WorldExtensionMenu.tsx";
 import type { WorldExtensionsView } from "../protocol/worldExtensions.ts";
 import { PackageScriptPermissionControl } from "./PackageScriptPermissionControl.tsx";
 import { PlayerValue } from "./PlayerViewValue.tsx";
 import { useConversationComposer } from "./useConversationComposer.ts";
-import type { ObserveConversation } from "./ConversationObserver.ts";
+import {
+  conversationConnectionText,
+  type ObserveConversation,
+} from "./ConversationObserver.ts";
 import { useAuthoringWorkspace } from "./useAuthoringWorkspace.ts";
 import { uiText } from "./i18n.ts";
+import {
+  hasHandledCheckpoint,
+  rememberHandledCheckpoint,
+} from "./CheckpointContextPreferences.ts";
 import {
   Fragment,
   useEffect,
@@ -26,6 +40,8 @@ import type {
   V1PlayTimelineItem,
   V1PlayTimelinePage,
   V1Request,
+  V1StoryExport,
+  V1StoryExportFormat,
   V1WorldRevisionEpochView,
 } from "../protocol/v1.ts";
 import {
@@ -57,6 +73,7 @@ import {
 } from "./ArtifactDebugger.tsx";
 import { projectUncoveredPlayerViews } from "./PlayerViewFallback.ts";
 import { ModelUsageBreakdown } from "./ModelUsageBreakdown.tsx";
+import { PlayContextUsage } from "./PlayContextUsage.tsx";
 import { PlayRunProgress } from "./PlayRunProgress.tsx";
 import { ResolutionCard } from "./ResolutionCard.tsx";
 import { SettingImprovementPanel } from "./SettingImprovementPanel.tsx";
@@ -68,6 +85,10 @@ import {
 } from "./PlayRunProgressState.ts";
 
 type RightRailTab = "documents" | "ai-reading";
+type PlayContextUsageProjection = Pick<
+  V1PlayCallChainView,
+  "worldId" | "chainId" | "contextWindowTokens" | "latestCompletedResponse"
+>;
 type WorldDialog = "revision" | "reading" | "manage" | null;
 type PlayerRevisionContinuation = Extract<
   V1Request,
@@ -80,8 +101,10 @@ type PendingAction =
   | "control-preview"
   | "control-apply"
   | "rename"
+  | "story-export"
   | "revise"
-  | "derive";
+  | "derive"
+  | "archive-export";
 
 interface WorldMessage {
   role: "player" | "narrator";
@@ -91,6 +114,7 @@ interface WorldMessage {
 }
 
 interface WorldReadView {
+  archiveNeedsFreshContext?: boolean;
   extensionControls?: WorldExtensionsView;
   suppressedPlayerViewIds?: string[];
   worldId: string;
@@ -127,6 +151,7 @@ interface WorldPlayDecorationsView {
 interface Feedback {
   kind: "status" | "error";
   text: string;
+  technical?: boolean;
 }
 
 interface WorldPageClient {
@@ -145,7 +170,11 @@ export function WorldPage({
   onRenameWorld,
   onOpenWorld,
   onNavigationLockChange,
+  onReadingPreferencesChange,
   initialReadingPreferences = defaultAppReadingPreferences,
+  protagonistRevision,
+  onProtagonistRevisionStarted,
+  onProtagonistRevisionFinished,
 }: {
   client: WorldPageClient;
   worldId: string;
@@ -157,7 +186,11 @@ export function WorldPage({
   onRenameWorld: (name: string) => Promise<void>;
   onOpenWorld: (worldId: string) => Promise<void>;
   onNavigationLockChange?: (locked: boolean) => void;
+  onReadingPreferencesChange?: (value: AppReadingPreferences) => void;
   initialReadingPreferences?: AppReadingPreferences;
+  protagonistRevision?: { message: string; started: boolean };
+  onProtagonistRevisionStarted?: () => void;
+  onProtagonistRevisionFinished?: () => void;
 }): React.JSX.Element {
   const [world, setWorld] = useState<WorldReadView | null>(null);
   // Decorations have their own lifetime: lightweight world reads intentionally
@@ -182,7 +215,9 @@ export function WorldPage({
   const [rightRailOpen, setRightRailOpen] = useState(false);
   const [rightRailTab, setRightRailTab] = useState<RightRailTab>("documents");
   const [readingOpen, setReadingOpen] = useState(false);
-  const [dialog, setDialog] = useState<WorldDialog>(null);
+  const [dialog, setDialog] = useState<WorldDialog>(
+    protagonistRevision === undefined ? null : "revision",
+  );
   const [readingPreferences, setReadingPreferences] = useState(
     initialReadingPreferences,
   );
@@ -195,11 +230,18 @@ export function WorldPage({
     string | null
   >(null);
   const [playFailure, setPlayFailure] = useState<string | null>(null);
+  const [regenerationFallback, setRegenerationFallback] = useState<{
+    worldId: string;
+    chainId: string;
+    eventId: number;
+    originalText: string;
+  } | null>(null);
   const [playProgress, setPlayProgress] = useState<PlayRunProgressValue | null>(
     null,
   );
   const [playProgressNow, setPlayProgressNow] = useState(0);
   const cancelledExchangeRef = useRef<string | null>(null);
+  const playSubmissionInFlight = useRef(false);
   const [worldNameDraft, setWorldNameDraft] = useState(worldTitle);
   const [lastWorldTitle, setLastWorldTitle] = useState(worldTitle);
   if (lastWorldTitle !== worldTitle) {
@@ -208,8 +250,19 @@ export function WorldPage({
   }
   const [playCallChain, setPlayCallChain] =
     useState<V1PlayCallChainView | null>(null);
+  const [playContextUsage, setPlayContextUsage] =
+    useState<PlayContextUsageProjection | null>(null);
   const [forceFreshContext, setForceFreshContext] = useState(false);
-  const [preferFreshContext, setPreferFreshContext] = useState(false);
+  const [checkpointPreference, setCheckpointPreference] = useState<{
+    worldId: string;
+    head: string;
+    fresh: boolean;
+  } | null>(null);
+  const [manualFreshContext, setManualFreshContext] = useState(false);
+  const preferFreshContext =
+    manualFreshContext ||
+    (checkpointPreference?.worldId === worldId && checkpointPreference.fresh);
+  const [observedCheckpoints, setObservedCheckpoints] = useState<string[]>([]);
   const [playTimeline, setPlayTimeline] = useState<V1PlayTimelinePage | null>(
     null,
   );
@@ -320,7 +373,7 @@ export function WorldPage({
           observedDecorations = revision;
           setDecorationRevision((current) => current + 1);
         }
-        setPlayCallChain(next);
+        applyPlayCallChain(next);
         setPlayFailure(playCallFailureMessage(next));
         if (next.status === "running") {
           setPlayProgress((current) =>
@@ -352,27 +405,28 @@ export function WorldPage({
           hydratedHead = `${next.parentHead}:${next.status}`;
           setWorld(projection);
           const page = projection.playTimeline;
-          if (page !== undefined)
-            setPlayTimeline((current) =>
-              current === null
-                ? page
-                : {
-                    ...current,
-                    items: current.items.map((item) =>
-                      item.kind !== "event"
-                        ? item
-                        : (page.items.find(
-                            (candidate) =>
-                              candidate.kind === "event" &&
-                              candidate.chainId === item.chainId &&
-                              candidate.event.id === item.event.id,
-                          ) ?? item),
-                    ),
-                  },
+          if (page !== undefined) {
+            setPlayTimeline((current) => mergePlayTimelinePage(current, page));
+            setPlayContextUsage((current) =>
+              current?.worldId === page.worldId &&
+              current.chainId === page.activeChainId
+                ? current
+                : null,
             );
+            setPlayCallChain((current) =>
+              current !== null && timelineHasNewerActivity(page, current)
+                ? null
+                : current,
+            );
+            if (
+              timelineHasNewerActivity(page, next) &&
+              page.activeStatus !== "running"
+            )
+              setPlayProgress(null);
+          }
         }
       },
-      (connection) => {
+      (connection, message) => {
         if (active && connection === "connected") {
           hydratedHead = undefined;
           observedDecorations = undefined;
@@ -380,13 +434,7 @@ export function WorldPage({
         }
         if (active)
           setPlayObservationFailure(
-            connection === "connected"
-              ? null
-              : uiText(
-                  connection === "reconnecting"
-                    ? "对话连接已断开，正在重新连接…"
-                    : "对话同步失败，请重新打开此页面。",
-                ),
+            conversationConnectionText(connection, message),
           );
       },
     );
@@ -567,8 +615,55 @@ export function WorldPage({
   const activeStatus = playCallChain?.status ?? playTimeline?.activeStatus;
   const activeChainId =
     playCallChain?.chainId ?? playTimeline?.activeChainId ?? null;
-  const activeCanRetry =
+  const latestNarrative = playTimeline?.items.findLast(
+    (item) =>
+      item.kind === "event" &&
+      item.event.kind === "assistant" &&
+      item.event.status === "completed" &&
+      item.event.committedHead !== undefined &&
+      assistantResponseKind(item.event) === "narrative",
+  );
+  if (
+    world?.worldId === worldId &&
+    latestNarrative?.kind === "event" &&
+    latestNarrative.event.kind === "assistant" &&
+    latestNarrative.event.checkpoint === true &&
+    latestNarrative.event.committedHead !== undefined
+  ) {
+    const checkpointKey = `${worldId}:${latestNarrative.event.committedHead}`;
+    if (!observedCheckpoints.includes(checkpointKey)) {
+      // Remember the identity, rather than the tail page, so paging, mode
+      // changes and cancellation cannot reselect an already handled checkpoint.
+      setObservedCheckpoints([...observedCheckpoints, checkpointKey]);
+      setCheckpointPreference({
+        worldId,
+        head: latestNarrative.event.committedHead,
+        fresh: !hasHandledCheckpoint(
+          worldId,
+          latestNarrative.event.committedHead,
+        ),
+      });
+    }
+  }
+  const reportedCanRetry =
     playCallChain?.canRetry ?? playTimeline?.activeCanRetry ?? false;
+  const lastActiveEvent = playTimeline?.items.findLast(
+    (item) => item.kind === "event" && item.chainId === activeChainId,
+  );
+  const activeFailureKind =
+    playCallChain?.lastFailureKind ??
+    playTimeline?.activeLastFailureKind ??
+    (lastActiveEvent?.kind === "event" &&
+    lastActiveEvent.event.kind === "failure"
+      ? lastActiveEvent.event.failureKind
+      : undefined);
+  const activeCanRetry =
+    reportedCanRetry &&
+    (activeFailureKind === undefined || activeFailureKind === "retryable");
+  const activeFailureVisible =
+    activeStatus === "interrupted" &&
+    lastActiveEvent?.kind === "event" &&
+    lastActiveEvent.event.kind === "failure";
   const activeRevisionEpoch =
     revisionOverview?.epoch?.locked === true
       ? revisionOverview.epoch
@@ -576,6 +671,7 @@ export function WorldPage({
   const worldRevisionLocked = activeRevisionEpoch?.locked === true;
   const activeChainStale =
     forceFreshContext ||
+    world?.archiveNeedsFreshContext === true ||
     (world !== null &&
       playCallChain !== null &&
       playCallChain.parentHead !== world.head);
@@ -609,7 +705,17 @@ export function WorldPage({
       setControlDirty(false);
       setControlPreview(null);
     }
+    // Retain only usage metadata across lightweight reads, never the old
+    // endpoint or running/retry state that would override the new timeline.
     setPlayCallChain(nextChain);
+    setPlayContextUsage((current) =>
+      nextChain !== null
+        ? projectPlayContextUsage(nextChain)
+        : current?.worldId === next.worldId &&
+            current.chainId === nextTimeline.activeChainId
+          ? current
+          : null,
+    );
     setPlayTimeline(nextTimeline);
     setPlayFailure(playCallFailureMessage(nextChain));
     if (nextChain?.status === "running") {
@@ -628,6 +734,11 @@ export function WorldPage({
     );
   }
 
+  function applyPlayCallChain(next: V1PlayCallChainView): void {
+    setPlayCallChain(next);
+    setPlayContextUsage(projectPlayContextUsage(next));
+  }
+
   async function refreshWorld(
     preserveControlDraft = true,
   ): Promise<WorldReadView> {
@@ -639,10 +750,30 @@ export function WorldPage({
     return next;
   }
 
-  async function submitPlayChain(context: "fresh" | "append"): Promise<void> {
-    if (!modelConfigured) return;
+  function consumeCheckpointPreference(): void {
+    setManualFreshContext(false);
+    if (checkpointPreference?.worldId !== worldId) return;
+    rememberHandledCheckpoint(worldId, checkpointPreference.head);
+    setCheckpointPreference({ ...checkpointPreference, fresh: false });
+  }
+
+  async function submitPlayChain(
+    context: "fresh" | "append",
+    submittedText = playerText,
+  ): Promise<void> {
+    if (!modelConfigured || !playIdle || playSubmissionInFlight.current) return;
     const fresh = context === "fresh" || activeChainId === null;
-    if ((fresh && !canStartFresh) || (!fresh && !canAppend)) return;
+    const hasSubmittedText = submittedText.trim().length > 0;
+    if (
+      fresh
+        ? !hasSubmittedText
+        : activeChainStale ||
+          (activeStatus !== "ready" && (hasSubmittedText || !activeCanRetry))
+    )
+      return;
+    setRegenerationFallback(null);
+    playSubmissionInFlight.current = true;
+    consumeCheckpointPreference();
     const chainId = fresh ? createClientId("play-chain") : activeChainId;
     const exchangeId = createClientId("play-exchange");
     const startedAt = Date.now();
@@ -653,9 +784,10 @@ export function WorldPage({
     setPending(context === "fresh" ? "play-fresh" : "play-append");
     setFeedback({
       kind: "status",
+      technical: true,
       text: fresh
         ? uiText("正在从当前世界重新拼接上下文…")
-        : hasPlayerText
+        : hasSubmittedText
           ? uiText("正在把玩家输入追加到现有上下文…")
           : activeStatus === "interrupted"
             ? uiText("正在原样发送上次未完成的模型请求…")
@@ -668,20 +800,19 @@ export function WorldPage({
             worldId,
             chainId,
             exchangeId,
-            playerText,
+            playerText: submittedText,
           } satisfies Extract<V1Request, { type: "play.chain.start" }>)
         : ({
             type: "play.chain.append",
             worldId,
             chainId,
             exchangeId,
-            playerText,
+            playerText: submittedText,
           } satisfies Extract<V1Request, { type: "play.chain.append" }>);
       const next = await requestRuntime<V1PlayCallChainView>(client, request);
-      setPlayCallChain(next);
+      applyPlayCallChain(next);
       if (fresh) setForceFreshContext(false);
-      setPreferFreshContext(false);
-      if (hasPlayerText) setPlayerText("");
+      if (hasSubmittedText) setPlayerText("");
       await refreshWorld();
       const wasCancelled = cancelledExchangeRef.current === exchangeId;
       if (wasCancelled) {
@@ -701,8 +832,9 @@ export function WorldPage({
         setPlayFailure(null);
         setFeedback({
           kind: "status",
+          technical: true,
           text:
-            !fresh && !hasPlayerText
+            !fresh && !hasSubmittedText
               ? uiText("AI 已沿现有上下文继续生成，没有追加玩家指令。")
               : uiText("调用链已返回；模型完成的叙事和世界变化已经分别提交。"),
         });
@@ -713,13 +845,12 @@ export function WorldPage({
         { type: "play.chain.inspect", worldId },
       ).catch(() => null);
       if (inspected !== null) {
-        setPlayCallChain(inspected);
+        applyPlayCallChain(inspected);
         if (fresh && inspected.chainId === chainId) {
           setForceFreshContext(false);
-          setPreferFreshContext(false);
         }
         if (
-          hasPlayerText &&
+          hasSubmittedText &&
           inspected.events.some(
             (event) =>
               event.kind === "player" && event.exchangeId === exchangeId,
@@ -736,6 +867,12 @@ export function WorldPage({
       if (cancelledExchangeRef.current === exchangeId) {
         setPlayFailure(null);
         setFeedback({ kind: "status", text: uiText("模型生成已取消。") });
+      } else if (
+        reason instanceof RuntimeRequestError &&
+        reason.protocolCode === "model_protocol_mismatch"
+      ) {
+        setPlayFailure(null);
+        setFeedback({ kind: "error", text: errorMessage(reason) });
       } else {
         setPlayFailure(
           playCallFailureMessage(inspected) ?? errorMessage(reason),
@@ -748,6 +885,7 @@ export function WorldPage({
       setPlayProgress((current) =>
         current?.exchangeId === exchangeId ? null : current,
       );
+      playSubmissionInFlight.current = false;
       setPending(null);
     }
   }
@@ -871,6 +1009,7 @@ export function WorldPage({
     const result = await revisionWorkspace.finish("apply");
     if (result === null) return;
     revisionWorkspace.close();
+    onProtagonistRevisionFinished?.();
     setDialog(null);
     if (result.changed) setForceFreshContext(true);
     try {
@@ -902,6 +1041,7 @@ export function WorldPage({
     const result = await revisionWorkspace.finish("discard");
     if (result === null) return;
     revisionWorkspace.close();
+    onProtagonistRevisionFinished?.();
     setDialog(null);
     try {
       await refreshWorld(false);
@@ -945,8 +1085,15 @@ export function WorldPage({
     eventId: number,
     editedText: string,
     continuation: PlayerRevisionContinuation,
+    regenerate = false,
   ): Promise<void> {
-    if (world === null) return;
+    if (
+      world === null ||
+      pending !== null ||
+      activeStatus === "running" ||
+      worldRevisionLocked
+    )
+      return;
     if (editedText.trim().length === 0) {
       setFeedback({
         kind: "error",
@@ -954,11 +1101,21 @@ export function WorldPage({
       });
       return;
     }
+    setRegenerationFallback(null);
+    let regenerationTarget = {
+      worldId,
+      chainId,
+      eventId,
+      originalText: editedText,
+    };
+    let revisionAccepted = false;
     const replacementExchangeId = createClientId("play-exchange");
     setPending("revise");
     setFeedback({
       kind: "status",
-      text: uiText("正在当前世界中保存修改，并舍弃这条消息之后的当前时间线…"),
+      text: regenerate
+        ? uiText("正在重新生成…")
+        : uiText("正在当前世界中保存修改，并舍弃这条消息之后的当前时间线…"),
     });
     try {
       const revised = await requestRuntime<{
@@ -975,14 +1132,32 @@ export function WorldPage({
         replacementText: editedText,
         continuation,
       });
-      setPlayCallChain(revised.playCallChain);
+      revisionAccepted = true;
+      // The revised chain is bound to the revision's own head.
+      setForceFreshContext(false);
+      if (continuation === "fresh_context") consumeCheckpointPreference();
+      const revisedPlayer = revised.playCallChain.events.find(
+        (event) =>
+          event.kind === "player" && event.exchangeId === replacementExchangeId,
+      );
+      if (revisedPlayer !== undefined)
+        regenerationTarget = {
+          ...regenerationTarget,
+          chainId: revised.playCallChain.chainId,
+          eventId: revisedPlayer.id,
+        };
+      applyPlayCallChain(revised.playCallChain);
       await refreshWorld();
       if (!modelConfigured) {
         setFeedback({
           kind: "status",
-          text: uiText(
-            "修改已保存在当前世界；配置模型后点击“追加上下文”即可继续生成。",
-          ),
+          text: regenerate
+            ? uiText(
+                "原回复已离开当前时间线；配置模型后点击“追加上下文”即可重新生成。",
+              )
+            : uiText(
+                "修改已保存在当前世界；配置模型后点击“追加上下文”即可继续生成。",
+              ),
         });
         return;
       }
@@ -990,8 +1165,9 @@ export function WorldPage({
       setPending("play-append");
       setFeedback({
         kind: "status",
-        text:
-          continuation === "fresh_context"
+        text: regenerate
+          ? uiText("正在重新生成…")
+          : continuation === "fresh_context"
             ? uiText("修改已保存，正在从全新上下文继续生成…")
             : uiText("修改已保存，正在从修改稿继续生成…"),
       });
@@ -1002,7 +1178,14 @@ export function WorldPage({
         exchangeId: createClientId("play-exchange"),
         playerText: "",
       });
-      setPlayCallChain(continued);
+      if (
+        regenerate &&
+        continuation === "continue_context" &&
+        continued.status === "interrupted" &&
+        !continued.canRetry
+      )
+        setRegenerationFallback(regenerationTarget);
+      applyPlayCallChain(continued);
       await refreshWorld();
       setFeedback({
         kind: continued.status === "interrupted" ? "error" : "status",
@@ -1013,11 +1196,24 @@ export function WorldPage({
                   "修改已保存，但模型请求中断；点击“追加上下文”即可原样重发。",
                 )
               : uiText("修改已保存，但模型请求失败；请使用全新上下文继续。")
-            : continuation === "fresh_context"
-              ? uiText("修改已保存在当前世界，并已作为全新上下文继续。")
-              : uiText("修改已保存在当前世界，并已从修改稿继续。"),
+            : regenerate
+              ? uiText("已重新生成；原回复已离开当前时间线")
+              : continuation === "fresh_context"
+                ? uiText("修改已保存在当前世界，并已作为全新上下文继续。")
+                : uiText("修改已保存在当前世界，并已从修改稿继续。"),
       });
     } catch (reason: unknown) {
+      // Offer an explicit new-context action after a known rejection, or after
+      // the revision is confirmed. Do not replay a revision with unknown outcome.
+      if (
+        regenerate &&
+        continuation === "continue_context" &&
+        (revisionAccepted ||
+          (reason instanceof RuntimeRequestError &&
+            (reason.protocolCode === "invalid_request" ||
+              reason.protocolCode === "model_protocol_mismatch")))
+      )
+        setRegenerationFallback(regenerationTarget);
       setFeedback({ kind: "error", text: errorMessage(reason) });
     } finally {
       setPending(null);
@@ -1035,10 +1231,45 @@ export function WorldPage({
     setReadingPreferencesSaving(true);
     try {
       await client.request({ type: "preferences.save", reading: next });
+      onReadingPreferencesChange?.(next);
     } catch (reason: unknown) {
       setFeedback({ kind: "error", text: errorMessage(reason) });
     } finally {
       setReadingPreferencesSaving(false);
+    }
+  }
+
+  async function downloadStory(format: V1StoryExportFormat): Promise<void> {
+    if (pending !== null) return;
+    setPending("story-export");
+    setFeedback(null);
+    try {
+      const exported = (await client.request({
+        type: "world.story.export",
+        worldId,
+        format,
+      })) as V1StoryExport;
+      const url = URL.createObjectURL(
+        new Blob([exported.content], {
+          type:
+            format === "markdown"
+              ? "text/markdown;charset=utf-8"
+              : "text/plain;charset=utf-8",
+        }),
+      );
+      try {
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = exported.fileName;
+        link.click();
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+      setFeedback({ kind: "status", text: uiText("故事已导出。") });
+    } catch (reason: unknown) {
+      setFeedback({ kind: "error", text: errorMessage(reason) });
+    } finally {
+      setPending(null);
     }
   }
 
@@ -1056,6 +1287,19 @@ export function WorldPage({
       setPending(null);
     }
   }
+
+  const failureRecovery: PlayFailureRecovery = {
+    canRetry: activeCanRetry && !activeChainStale,
+    playDisabled: !modelConfigured || !playIdle,
+    configureDisabled:
+      !playIdle || revisionDirty || controlDirty || authoringLocked,
+    onRetry: () => void submitPlayChain("append", ""),
+    onFreshContext: () => {
+      setManualFreshContext(true);
+      composerTextareaRef.current?.focus();
+    },
+    onConfigureModel,
+  };
 
   const defaultSubmitFresh =
     preferFreshContext || activeChainId === null || activeChainStale;
@@ -1139,6 +1383,17 @@ export function WorldPage({
           title: worldTitle,
           onRename: () => undefined,
         }}
+        {...(authoring.target === null ||
+        protagonistRevision === undefined ||
+        protagonistRevision.started
+          ? {}
+          : {
+              initialMessage: protagonistRevision.message,
+              onInitialMessageStarted: () => {
+                onProtagonistRevisionStarted?.();
+                revisionWorkspace.startFresh();
+              },
+            })}
         onSend={(message) => revisionWorkspace.send(message)}
         onCancel={() => revisionWorkspace.cancel()}
         onFreshContext={() => revisionWorkspace.startFresh()}
@@ -1153,11 +1408,15 @@ export function WorldPage({
           setDialog(null);
           void refreshWorld(false);
         }}
-        {...(epoch?.locked === true ||
+        {...(protagonistRevision !== undefined ||
+        epoch?.locked === true ||
         (revisionOverview?.sealedEpochs.length ?? 0) > 0
           ? {
               revisionActions: {
                 active: epoch?.locked === true,
+                ...(protagonistRevision === undefined
+                  ? {}
+                  : { applyLabel: uiText("应用并开始游玩") }),
                 changedFileCount: epoch?.diff.length ?? 0,
                 canApply:
                   epoch?.locked === true &&
@@ -1177,7 +1436,7 @@ export function WorldPage({
 
   return (
     <main
-      className="world-reader-page"
+      className={`world-reader-page ${readingPreferences.showTechnicalInfo ? "is-detailed-mode" : "is-story-mode"}`}
       style={
         {
           "--world-left-rail-width": leftRailWidth + "px",
@@ -1334,12 +1593,18 @@ export function WorldPage({
                   worldId={worldId}
                   items={playTimeline.items}
                   liveChain={playCallChain}
-                  restartDisabled={pending !== null || worldRevisionLocked}
+                  failureRecovery={
+                    activeStatus === "interrupted" && activeChainId !== null
+                      ? { ...failureRecovery, chainId: activeChainId }
+                      : undefined
+                  }
+                  restartDisabled={
+                    pending !== null ||
+                    activeStatus === "running" ||
+                    worldRevisionLocked
+                  }
                   freshContextDisabled={!modelConfigured}
-                  onUseFreshContext={() => {
-                    setPreferFreshContext(true);
-                    composerRef.current?.querySelector("textarea")?.focus();
-                  }}
+                  showTechnicalInfo={readingPreferences.showTechnicalInfo}
                   onRestartFrom={(head) => void deriveWorld(head)}
                   onEditPlayer={(chainId, eventId, editedText, continuation) =>
                     void reviseEditedPlayer(
@@ -1349,6 +1614,35 @@ export function WorldPage({
                       continuation,
                     )
                   }
+                  onRegeneratePlayer={(
+                    chainId,
+                    eventId,
+                    originalText,
+                    requiresFreshContext,
+                  ) => {
+                    // A world that only moved ahead of the chain is restored
+                    // to this message's parent by the revision itself.
+                    if (
+                      requiresFreshContext ||
+                      world?.archiveNeedsFreshContext === true ||
+                      (activeStatus === "interrupted" && !activeCanRetry)
+                    ) {
+                      setRegenerationFallback({
+                        worldId,
+                        chainId,
+                        eventId,
+                        originalText,
+                      });
+                      return;
+                    }
+                    void reviseEditedPlayer(
+                      chainId,
+                      eventId,
+                      originalText,
+                      "continue_context",
+                      true,
+                    );
+                  }}
                 />
               ) : committedMessages.length === 0 ? (
                 <div className="story-empty-state">
@@ -1427,17 +1721,27 @@ export function WorldPage({
             {playObservationFailure === null ? null : (
               <p role="status">{playObservationFailure}</p>
             )}
-            {playFailure === null ? null : (
+            {playFailure === null || activeFailureVisible ? null : (
               <div
                 className="play-call-failure"
                 role="alert"
                 aria-label={uiText("模型调用失败")}
               >
-                <strong>{uiText("模型调用失败")}</strong>
-                <p>{playFailure}</p>
+                <PlayFailureNotice
+                  failureKind={activeFailureKind}
+                  canRetry={activeCanRetry}
+                  message={
+                    playCallChain?.lastFailure ??
+                    playTimeline?.activeLastFailure ??
+                    playFailure
+                  }
+                  recovery={failureRecovery}
+                />
               </div>
             )}
-            {!activeCanRetry ? null : (
+            {!activeCanRetry ||
+            activeFailureVisible ||
+            playFailure !== null ? null : (
               <div className="play-retry-note" role="alert">
                 <span aria-hidden="true">!</span>
                 <p>
@@ -1449,7 +1753,11 @@ export function WorldPage({
             )}
             {activeChainStale && playIdle ? (
               <div className="world-fresh-context-note" role="note">
-                {uiText("世界已在故事外修订；下一次行动会从新上下文开始。")}
+                {world?.archiveNeedsFreshContext
+                  ? uiText("世界从备份导入；下一次行动会从新上下文开始")
+                  : uiText(
+                      "世界已在当前上下文之外更新；下一次行动会从新上下文开始。",
+                    )}
               </div>
             ) : null}
             {preferFreshContext && !activeChainStale && playIdle ? (
@@ -1459,7 +1767,7 @@ export function WorldPage({
                   type="button"
                   className="secondary-button"
                   onClick={() => {
-                    setPreferFreshContext(false);
+                    consumeCheckpointPreference();
                     composerTextareaRef.current?.focus();
                   }}
                 >
@@ -1467,6 +1775,53 @@ export function WorldPage({
                 </button>
               </div>
             ) : null}
+            {regenerationFallback?.worldId === worldId ? (
+              <div className="play-retry-note" role="status">
+                <p>
+                  {uiText(
+                    "原上下文无法用于这次重新生成。可使用当前模型和预设，从同一条玩家输入开启全新上下文。",
+                  )}
+                </p>
+                <button
+                  type="button"
+                  disabled={!playIdle || !modelConfigured}
+                  onClick={() =>
+                    void reviseEditedPlayer(
+                      regenerationFallback.chainId,
+                      regenerationFallback.eventId,
+                      regenerationFallback.originalText,
+                      "fresh_context",
+                      true,
+                    )
+                  }
+                >
+                  {uiText("用全新上下文重新生成")}
+                </button>
+                <button
+                  type="button"
+                  disabled={!playIdle}
+                  onClick={() => setRegenerationFallback(null)}
+                >
+                  {uiText("取消")}
+                </button>
+              </div>
+            ) : null}
+            <PlayContextUsage
+              chain={
+                playContextUsage?.worldId === worldId ? playContextUsage : null
+              }
+              timeline={playTimeline}
+              freshContextSelected={
+                preferFreshContext ||
+                activeChainStale ||
+                pending === "play-fresh"
+              }
+              freshContextDisabled={!playIdle || !modelConfigured}
+              onUseFreshContext={() => {
+                setManualFreshContext(true);
+                composerTextareaRef.current?.focus();
+              }}
+            />
             <div className="world-composer-row">
               <details className="world-composer-mode">
                 <summary aria-label={uiText("选择提交方式")}>＋</summary>
@@ -1543,13 +1898,15 @@ export function WorldPage({
                   : "↑"}
               </button>
             </div>
-            <p className="world-composer-hint">
-              {uiText(
-                activeCanRetry
-                  ? "原样重试使用已保存请求，不采用新预设。"
-                  : "正常发送和空输入续写使用最新预设；本轮工具执行期间保持不变。",
-              )}
-            </p>
+            {readingPreferences.showTechnicalInfo ? (
+              <p className="world-composer-hint">
+                {uiText(
+                  activeCanRetry
+                    ? "原样重试使用已保存请求，不采用新预设。"
+                    : "正常发送和空输入续写使用最新预设；本轮工具执行期间保持不变。",
+                )}
+              </p>
+            ) : null}
             <ArtifactExtensionMount mount="composer_below" />
           </footer>
 
@@ -1772,6 +2129,20 @@ export function WorldPage({
 
           {dialog === "manage" ? (
             <WorldManagementDialog
+              worldBackupExport={
+                <WorldBackupExportButton
+                  client={client}
+                  worldId={worldId}
+                  disabled={
+                    pending !== null ||
+                    activeStatus === "running" ||
+                    worldRevisionLocked
+                  }
+                  onBusyChange={(busy) =>
+                    setPending(busy ? "archive-export" : null)
+                  }
+                />
+              }
               packageScriptPermission={
                 <PackageScriptPermissionControl
                   key={worldId}
@@ -1803,6 +2174,7 @@ export function WorldPage({
                 setControlPreview(null);
               }}
               onRename={() => void renameCurrentWorld()}
+              onExportStory={(format) => void downloadStory(format)}
               onDerive={() => void deriveWorld(world.head)}
               onPreviewControl={() => void previewControl()}
               onApplyControl={() => void applyControl()}
@@ -1812,7 +2184,9 @@ export function WorldPage({
             />
           ) : null}
 
-          {feedback === null ? null : (
+          {feedback === null ||
+          (feedback.technical === true &&
+            !readingPreferences.showTechnicalInfo) ? null : (
             <p
               className={"world-feedback " + feedback.kind}
               role={feedback.kind === "error" ? "alert" : "status"}
@@ -1841,22 +2215,25 @@ export function WorldPage({
 
 function PlayTimeline({
   liveChain,
+  failureRecovery,
   client,
   worldId,
   items,
   restartDisabled,
   freshContextDisabled,
+  showTechnicalInfo,
   onRestartFrom,
   onEditPlayer,
-  onUseFreshContext,
+  onRegeneratePlayer,
 }: {
   client: WorldPageClient;
   worldId: string;
   items: readonly V1PlayTimelineItem[];
   liveChain: V1PlayCallChainView | null;
+  failureRecovery?: (PlayFailureRecovery & { chainId: string }) | undefined;
   restartDisabled: boolean;
   freshContextDisabled: boolean;
-  onUseFreshContext: () => void;
+  showTechnicalInfo: boolean;
   onRestartFrom: (head: string) => void;
   onEditPlayer: (
     chainId: string,
@@ -1864,8 +2241,49 @@ function PlayTimeline({
     editedText: string,
     continuation: PlayerRevisionContinuation,
   ) => void;
+  onRegeneratePlayer: (
+    chainId: string,
+    eventId: number,
+    originalText: string,
+    requiresFreshContext: boolean,
+  ) => void;
 }): React.JSX.Element {
   const groups = groupPlayTimelineItems(items);
+  const latestNarrativeIndex = items.findLastIndex(
+    (item) =>
+      item.kind === "event" &&
+      item.event.kind === "assistant" &&
+      item.event.status === "completed" &&
+      assistantResponseKind(item.event) === "narrative" &&
+      item.event.committedHead !== undefined,
+  );
+  const latestNarrative = items[latestNarrativeIndex];
+  const previousStory =
+    latestNarrative?.kind === "event"
+      ? items
+          .slice(0, latestNarrativeIndex)
+          .findLast(
+            (item) =>
+              item.kind === "event" &&
+              item.chainId === latestNarrative.chainId &&
+              timelineEventBelongsInStory(item.event),
+          )
+      : undefined;
+  const regeneratePlayer =
+    previousStory?.kind === "event" &&
+    previousStory.event.kind === "player" &&
+    previousStory.event.committedHead !== undefined &&
+    previousStory.event.committedHead !== "genesis"
+      ? {
+          chainId: previousStory.chainId,
+          event: previousStory.event,
+          requiresFreshContext: previousStory.requiresFreshContext,
+        }
+      : undefined;
+  const lastActiveItem = items.findLast(
+    (item) =>
+      item.kind === "event" && item.chainId === failureRecovery?.chainId,
+  );
   return (
     <ol
       className="call-chain-events play-timeline-events"
@@ -1886,6 +2304,7 @@ function PlayTimeline({
                     worldId={worldId}
                     chainId={item.chainId}
                     event={item.event}
+                    requiresFreshContext={item.requiresFreshContext}
                     liveAssistant={
                       item.event.kind === "assistant" &&
                       item.event.status === "streaming" &&
@@ -1899,14 +2318,32 @@ function PlayTimeline({
                     }
                     restartDisabled={restartDisabled}
                     freshContextDisabled={freshContextDisabled}
+                    showTechnicalInfo={showTechnicalInfo}
                     onRestartFrom={onRestartFrom}
                     onEditPlayer={onEditPlayer}
+                    onRegenerate={
+                      item === latestNarrative && regeneratePlayer !== undefined
+                        ? () =>
+                            onRegeneratePlayer(
+                              regeneratePlayer.chainId,
+                              regeneratePlayer.event.id,
+                              regeneratePlayer.event.text,
+                              item.requiresFreshContext === true ||
+                                regeneratePlayer.requiresFreshContext ===
+                                  true ||
+                                (item.event.kind === "assistant" &&
+                                  item.event.continuation === "unavailable"),
+                            )
+                        : undefined
+                    }
                     presentation="story"
-                    onUseFreshContext={onUseFreshContext}
+                    failureRecovery={
+                      lastActiveItem === item ? failureRecovery : undefined
+                    }
                   />
                 ) : null,
               )}
-              {traceEvents.length === 0 ? null : (
+              {!showTechnicalInfo || traceEvents.length === 0 ? null : (
                 <li className="world-timeline-trace">
                   <details>
                     <summary>
@@ -1928,12 +2365,13 @@ function PlayTimeline({
                           worldId={worldId}
                           chainId={item.chainId}
                           event={item.event}
+                          requiresFreshContext={item.requiresFreshContext}
                           restartDisabled={restartDisabled}
                           freshContextDisabled={freshContextDisabled}
+                          showTechnicalInfo={showTechnicalInfo}
                           onRestartFrom={onRestartFrom}
                           onEditPlayer={onEditPlayer}
                           presentation="trace"
-                          onUseFreshContext={onUseFreshContext}
                         />
                       ))}
                     </ol>
@@ -1952,25 +2390,29 @@ function PlayTimeline({
               role="separator"
               aria-label={uiText("全新上下文从这里开始")}
             >
-              <span>{uiText("全新上下文从这里开始")}</span>
-              <small>{item.playPreset.name}</small>
-              <details className="call-chain-summary">
-                <summary>{uiText("本上下文已提交的世界变化")}</summary>
-                {item.changedDocuments.length === 0 ? (
-                  <span>{uiText("没有文档变化")}</span>
-                ) : (
-                  <ul>
-                    {item.changedDocuments.map((change) => (
-                      <li key={`${change.kind}:${change.path}`}>
-                        {change.kind === "create"
-                          ? uiText("新建")
-                          : uiText("更新")}{" "}
-                        {change.ref} · {change.path}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </details>
+              {showTechnicalInfo ? (
+                <>
+                  <span>{uiText("全新上下文从这里开始")}</span>
+                  <small>{item.playPreset.name}</small>
+                  <details className="call-chain-summary">
+                    <summary>{uiText("本上下文已提交的世界变化")}</summary>
+                    {item.changedDocuments.length === 0 ? (
+                      <span>{uiText("没有文档变化")}</span>
+                    ) : (
+                      <ul>
+                        {item.changedDocuments.map((change) => (
+                          <li key={`${change.kind}:${change.path}`}>
+                            {change.kind === "create"
+                              ? uiText("新建")
+                              : uiText("更新")}{" "}
+                            {change.ref} · {change.path}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </details>
+                </>
+              ) : null}
             </li>
           );
         if (item.kind === "genesis")
@@ -2094,24 +2536,30 @@ function timelineEventHasTrace(event: V1PlayTimelineEventSummary): boolean {
 
 function TimelineEvent({
   liveAssistant,
+  failureRecovery,
   client,
   worldId,
   chainId,
   event,
+  requiresFreshContext = false,
   restartDisabled,
   freshContextDisabled,
+  showTechnicalInfo,
   onRestartFrom,
   onEditPlayer,
+  onRegenerate,
   presentation,
-  onUseFreshContext,
 }: {
   client: WorldPageClient;
   worldId: string;
   chainId: string;
   event: V1PlayTimelineEventSummary;
+  requiresFreshContext?: boolean | undefined;
   liveAssistant?: V1PlayCallChainEvent | undefined;
+  failureRecovery?: PlayFailureRecovery | undefined;
   restartDisabled: boolean;
   freshContextDisabled: boolean;
+  showTechnicalInfo: boolean;
   onRestartFrom: (head: string) => void;
   onEditPlayer: (
     chainId: string,
@@ -2119,8 +2567,8 @@ function TimelineEvent({
     editedText: string,
     continuation: PlayerRevisionContinuation,
   ) => void;
+  onRegenerate?: (() => void) | undefined;
   presentation: "story" | "trace";
-  onUseFreshContext: () => void;
 }): React.JSX.Element {
   const [detail, setDetail] = useState<V1PlayCallChainEvent | null>(null);
   const [detailPending, setDetailPending] = useState(false);
@@ -2154,11 +2602,13 @@ function TimelineEvent({
         <article>
           <header>
             <strong>{uiText("玩家")}</strong>
-            <span>
-              {event.context === "fresh"
-                ? uiText("全新上下文")
-                : uiText("追加上下文")}
-            </span>
+            {showTechnicalInfo ? (
+              <span>
+                {event.context === "fresh"
+                  ? uiText("全新上下文")
+                  : uiText("追加上下文")}
+              </span>
+            ) : null}
             {event.committedHead === undefined ? null : (
               <span className="history-message-actions">
                 {event.committedHead === "genesis" ? null : (
@@ -2168,7 +2618,11 @@ function TimelineEvent({
                     disabled={restartDisabled}
                     onClick={() => {
                       setEditedText(event.text);
-                      setRevisionContinuation("continue_context");
+                      setRevisionContinuation(
+                        requiresFreshContext
+                          ? "fresh_context"
+                          : "continue_context",
+                      );
                     }}
                   >
                     {uiText("修改")}
@@ -2212,7 +2666,7 @@ function TimelineEvent({
                     name={`revision-continuation-${chainId}-${event.id}`}
                     value="continue_context"
                     checked={revisionContinuation === "continue_context"}
-                    disabled={restartDisabled}
+                    disabled={restartDisabled || requiresFreshContext}
                     onChange={() => setRevisionContinuation("continue_context")}
                   />
                   <span>
@@ -2240,6 +2694,13 @@ function TimelineEvent({
                     </small>
                   </span>
                 </label>
+                {requiresFreshContext ? (
+                  <p>
+                    {uiText(
+                      "此上下文来自备份；修改后须以本机选择开启全新上下文。",
+                    )}
+                  </p>
+                ) : null}
               </fieldset>
               <div className="button-row">
                 <button
@@ -2363,30 +2824,48 @@ function TimelineEvent({
       >
         <article>
           <header>
-            <strong>
-              {event.status === "streaming"
-                ? uiText("模型响应中")
-                : responseKind === "tool_step"
-                  ? uiText("模型工具步骤")
-                  : responseKind === "empty"
-                    ? uiText("空模型响应")
-                    : uiText("AI 响应")}
-            </strong>
-            <span>
-              {uiText("{status} · 第 {attempt} 次派发", {
-                status: callChainAssistantStatusLabel(event.status),
-                attempt: event.attempt,
-              })}
-            </span>
+            {showTechnicalInfo ? (
+              <>
+                <strong>
+                  {event.status === "streaming"
+                    ? uiText("模型响应中")
+                    : responseKind === "tool_step"
+                      ? uiText("模型工具步骤")
+                      : responseKind === "empty"
+                        ? uiText("空模型响应")
+                        : uiText("AI 响应")}
+                </strong>
+                <span>
+                  {uiText("{status} · 第 {attempt} 次派发", {
+                    status: callChainAssistantStatusLabel(event.status),
+                    attempt: event.attempt,
+                  })}
+                </span>
+              </>
+            ) : event.status === "interrupted" ? (
+              <strong>{uiText("中断片段")}</strong>
+            ) : null}
             {event.committedHead === undefined ? null : (
-              <button
-                type="button"
-                className="history-restart-button"
-                disabled={restartDisabled}
-                onClick={() => onRestartFrom(event.committedHead!)}
-              >
-                {uiText("创建分叉")}
-              </button>
+              <span className="history-message-actions">
+                {onRegenerate === undefined ? null : (
+                  <button
+                    type="button"
+                    className="history-restart-button"
+                    disabled={restartDisabled}
+                    onClick={onRegenerate}
+                  >
+                    {uiText("重新生成")}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="history-restart-button"
+                  disabled={restartDisabled}
+                  onClick={() => onRestartFrom(event.committedHead!)}
+                >
+                  {uiText("创建分叉")}
+                </button>
+              </span>
             )}
           </header>
           {responseKind === "tool_step" && event.text.length > 0 ? (
@@ -2414,24 +2893,16 @@ function TimelineEvent({
           {responseKind === "pending" ? (
             <small>{uiText("待定输出；响应完成前不会进入故事")}</small>
           ) : null}
-          {event.checkpoint === true &&
+          {showTechnicalInfo &&
+          event.checkpoint === true &&
           event.status === "completed" &&
           responseKind === "narrative" ? (
-            <aside className="play-checkpoint-note">
-              <p>{uiText("AI 建议在此开启全新上下文")}</p>
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={restartDisabled || freshContextDisabled}
-                onClick={onUseFreshContext}
-              >
-                {uiText("下一条消息使用全新上下文")}
-              </button>
-            </aside>
+            <small className="play-checkpoint-marker">{uiText("检查点")}</small>
           ) : null}
           {presentation === "trace" ? (
             diagnostics
-          ) : event.status === "streaming" &&
+          ) : showTechnicalInfo &&
+            event.status === "streaming" &&
             liveAssistant?.kind === "assistant" &&
             liveAssistant.reasoning ? (
             <details>
@@ -2525,7 +2996,7 @@ function TimelineEvent({
           {detailError === null ? null : <p role="alert">{detailError}</p>}
           {full === null ? null : <pre>{safeJson(full)}</pre>}
         </details>
-        {event.usage === undefined ? null : (
+        {!showTechnicalInfo || event.usage === undefined ? null : (
           <ModelUsageBreakdown usage={event.usage} compact />
         )}
       </li>
@@ -2546,8 +3017,12 @@ function TimelineEvent({
 
   return (
     <li className="call-chain-failure" role="alert">
-      <strong>{uiText("调用链中断")}</strong>
-      <p>{event.message}</p>
+      <PlayFailureNotice
+        failureKind={event.failureKind}
+        canRetry={failureRecovery?.canRetry ?? false}
+        message={event.message}
+        recovery={failureRecovery}
+      />
     </li>
   );
 }
@@ -2660,6 +3135,13 @@ function selectedStateDocument(
 }
 
 function errorMessage(reason: unknown): string {
+  if (
+    reason instanceof RuntimeRequestError &&
+    reason.protocolCode === "model_protocol_mismatch"
+  )
+    return uiText(
+      "当前模型协议与此上下文不同。切回原协议即可继续；使用新协议请开启全新上下文。",
+    );
   return reason instanceof Error ? reason.message : uiText("操作失败");
 }
 
@@ -2677,13 +3159,10 @@ function playCallFailureMessage(
     ): candidate is Extract<V1PlayCallChainEvent, { kind: "failure" }> =>
       candidate.kind === "failure",
   );
-  const detail = chain.lastFailure ?? event?.message ?? null;
-  const guidance = chain.canRetry
-    ? uiText("模型请求中断；清空输入后点击追加上下文即可原样发送上次请求。")
-    : uiText("调用链处理失败；旧请求不能重发，请使用全新上下文。");
-  return detail === null || detail.includes(guidance)
-    ? (detail ?? guidance)
-    : `${detail} ${guidance}`;
+  return playFailureDescription(
+    chain.lastFailureKind ?? event?.failureKind,
+    chain.canRetry,
+  );
 }
 
 function requestRuntime<T>(
@@ -2691,6 +3170,71 @@ function requestRuntime<T>(
   request: V1Request,
 ): Promise<T> {
   return client.request(request) as Promise<T>;
+}
+
+function timelineHasNewerActivity(
+  page: V1PlayTimelinePage,
+  chain: V1PlayCallChainView,
+): boolean {
+  if (page.activeChainId !== chain.chainId) return true;
+  const item = page.items.findLast(
+    (item) => item.kind === "event" && item.chainId === chain.chainId,
+  );
+  if (item?.kind !== "event") return false;
+  const event = chain.events.at(-1);
+  if (event === undefined || item.event.id > event.id) return true;
+  if (item.event.id !== event.id) return false;
+  return (
+    (chain.status === "running" && page.activeStatus !== "running") ||
+    (item.event.kind === "assistant" &&
+      item.event.status === "completed" &&
+      event.kind === "assistant" &&
+      event.status !== "completed")
+  );
+}
+
+function projectPlayContextUsage(
+  next: V1PlayCallChainView,
+): PlayContextUsageProjection {
+  return {
+    worldId: next.worldId,
+    chainId: next.chainId,
+    ...(next.contextWindowTokens === undefined
+      ? {}
+      : { contextWindowTokens: next.contextWindowTokens }),
+    ...(next.latestCompletedResponse === undefined
+      ? {}
+      : { latestCompletedResponse: next.latestCompletedResponse }),
+  };
+}
+
+function mergePlayTimelinePage(
+  current: V1PlayTimelinePage | null,
+  page: V1PlayTimelinePage,
+): V1PlayTimelinePage {
+  if (current?.generation !== page.generation) return page;
+  const key = (item: V1PlayTimelineItem): string =>
+    item.kind === "genesis"
+      ? `genesis:${item.messageId}`
+      : item.kind === "context_boundary"
+        ? `context:${item.chainId}`
+        : `event:${item.chainId}:${item.event.id}`;
+  const incoming = new Map(page.items.map((item) => [key(item), item]));
+  const items = current.items.map((item) => {
+    const replacement = incoming.get(key(item));
+    incoming.delete(key(item));
+    return (
+      replacement ??
+      (item.kind === "genesis"
+        ? item
+        : { ...item, current: item.chainId === page.activeChainId })
+    );
+  });
+  return {
+    ...page,
+    items: [...items, ...incoming.values()],
+    nextCursor: current.nextCursor,
+  };
 }
 
 function applyPlayTimelineFrame(
@@ -2750,6 +3294,7 @@ function applyPlayTimelineFrame(
           chainId: chain.chainId,
           current: true,
           event: summary,
+          ...(chain.requiresFreshContext ? { requiresFreshContext: true } : {}),
         };
         if (index < 0) items.push(next);
         else {
@@ -2773,6 +3318,7 @@ function applyPlayTimelineFrame(
         activeStatus: chain.status,
         activeCanRetry: chain.canRetry,
         activeLastFailure: chain.lastFailure,
+        activeLastFailureKind: chain.lastFailureKind,
         items,
       };
     });
@@ -2911,6 +3457,7 @@ function legacyTimelinePage(world: WorldReadView): V1PlayTimelinePage {
     activeStatus: chain.status,
     activeCanRetry: chain.canRetry,
     activeLastFailure: chain.lastFailure,
+    activeLastFailureKind: chain.lastFailureKind,
     items: [
       ...baseline,
       ...contexts.flatMap((context) => [
@@ -2926,6 +3473,9 @@ function legacyTimelinePage(world: WorldReadView): V1PlayTimelinePage {
           chainId: context.chainId,
           current: context.chainId === chain.chainId,
           event: summarizeTimelineEvent(event),
+          ...(context.requiresFreshContext
+            ? { requiresFreshContext: true }
+            : {}),
         })),
       ]),
     ],

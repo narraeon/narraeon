@@ -231,9 +231,7 @@ test("纯界面编辑、草稿预览和游玩显示不增加模型调用，字�
       panel.getByText("Updated saved field 42", { exact: true }),
     ).toBeVisible();
     await page.reload();
-    await page
-      .getByRole("button", { name: `打开世界：${worldTitle}`, exact: true })
-      .click();
+    await expect(page).toHaveURL(/#\/world\//u);
     await expect(
       panel.getByText("Updated saved field 42", { exact: true }),
     ).toBeVisible();

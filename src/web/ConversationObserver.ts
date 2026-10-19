@@ -5,6 +5,8 @@ import {
   type ConversationUpdate,
 } from "../protocol/conversationObservation.ts";
 import { v1Protocol } from "../protocol/v1.ts";
+import { uiText } from "./i18n.ts";
+import { runtimeErrorText } from "./RuntimeErrorText.ts";
 
 export type ConversationConnection = "connected" | "reconnecting" | "failed";
 export type ObserveConversation = (
@@ -80,7 +82,10 @@ export const observeConversation: ObserveConversation = (
     current.addEventListener("failure", (event) => {
       if (!alive()) return;
       current.close();
-      connection?.("failed", (event as MessageEvent<string>).data);
+      connection?.(
+        "failed",
+        observationFailureMessage((event as MessageEvent<string>).data),
+      );
     });
     current.addEventListener("observation", (event) => {
       if (!alive()) return;
@@ -136,3 +141,26 @@ export const observeConversation: ObserveConversation = (
     source.close();
   };
 };
+
+/** Player-facing status line for an observed conversation's connection. */
+export function conversationConnectionText(
+  state: ConversationConnection,
+  message?: string,
+): string | null {
+  if (state === "connected") return null;
+  if (state === "reconnecting") return uiText("对话连接已断开，正在重新连接…");
+  return message === undefined || message.trim() === ""
+    ? uiText("对话同步失败，请重新打开此页面。")
+    : uiText("对话同步失败：{message}　请重新打开此页面。", { message });
+}
+
+function observationFailureMessage(data: string): string | undefined {
+  try {
+    const payload = JSON.parse(data) as { message?: unknown };
+    return typeof payload.message === "string"
+      ? runtimeErrorText(payload.message)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}

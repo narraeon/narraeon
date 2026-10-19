@@ -1,6 +1,7 @@
 import { gameplayLabel, type Gameplay } from "../protocol/gameplay.ts";
 import { getWebLocale, uiText } from "./i18n.ts";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
+import { relativeActivityTime } from "./worldActivityPresentation.ts";
 
 interface HomeContentPackage {
   localId: string;
@@ -9,25 +10,33 @@ interface HomeContentPackage {
   status: "usable" | "needs_repair";
 }
 
-interface HomeWorld {
+export interface HomeWorld {
   worldId: string;
   title: string;
   gameplay: Gameplay;
+  lastActivityAt: number | null;
+  excerpt: string | null;
+  playerTurns: number;
 }
 
 export function HomeScreen({
   contentPackages,
   worlds,
+  worldBackupImport,
+  renderWorldBackupExport,
   selectedPackageId,
   modelConfigured,
   activeModelName,
   currentPresetName,
   importArchive,
   importPending,
+  samplePending = false,
   onImportArchiveChange,
   onOpenPlayPresets = () => undefined,
   onCreateWorld,
   onCreatePackage,
+  onCreateSamplePackage,
+  onConfigureModel,
   onImportPackage,
   onOpenPackage,
   onOpenWorld,
@@ -36,6 +45,8 @@ export function HomeScreen({
   onRenameWorld,
   onDeleteWorld,
 }: {
+  worldBackupImport?: ReactNode;
+  renderWorldBackupExport?: (world: HomeWorld) => ReactNode;
   contentPackages: HomeContentPackage[];
   worlds: HomeWorld[];
   selectedPackageId: string;
@@ -44,10 +55,13 @@ export function HomeScreen({
   currentPresetName: string | null;
   importArchive: File | null;
   importPending: boolean;
+  samplePending?: boolean;
   onImportArchiveChange: (archive: File | null) => void;
   onOpenPlayPresets?: () => void;
   onCreateWorld: () => void;
   onCreatePackage: () => void;
+  onCreateSamplePackage: () => void;
+  onConfigureModel: () => void;
   onImportPackage: () => void;
   onOpenPackage: (packageId: string) => void;
   onOpenWorld: (worldId: string) => void;
@@ -62,6 +76,7 @@ export function HomeScreen({
     null,
   );
   const [packageNameDraft, setPackageNameDraft] = useState("");
+  const pending = importPending || samplePending;
   const usablePackageCount = contentPackages.filter(
     ({ status }) => status === "usable",
   ).length;
@@ -88,13 +103,10 @@ export function HomeScreen({
             >
               {worlds.length.toLocaleString(getWebLocale())}
             </span>
-            <button
-              type="button"
-              disabled={importPending}
-              onClick={onCreateWorld}
-            >
+            <button type="button" disabled={pending} onClick={onCreateWorld}>
               {uiText("新建世界")}
             </button>
+            {worldBackupImport}
           </header>
 
           {worlds.length > 0 ? (
@@ -107,14 +119,48 @@ export function HomeScreen({
                     aria-label={uiText("打开世界：{title}", {
                       title: world.title,
                     })}
-                    disabled={importPending}
+                    disabled={pending}
                     onClick={() => onOpenWorld(world.worldId)}
                   >
-                    <span className="home-world-card-main">
+                    <span className="home-world-card-story">
                       <strong>{world.title}</strong>
                       <small className="home-world-card-gameplay">
                         {gameplayLabel(world.gameplay, getWebLocale())}
                       </small>
+                      <span className="home-world-card-activity">
+                        {world.lastActivityAt == null ? (
+                          <span>{uiText("活动时间未记录")}</span>
+                        ) : (
+                          <time
+                            dateTime={new Date(
+                              world.lastActivityAt,
+                            ).toISOString()}
+                            title={new Date(
+                              world.lastActivityAt,
+                            ).toLocaleString(getWebLocale())}
+                          >
+                            {relativeActivityTime(world.lastActivityAt)}
+                          </time>
+                        )}
+                        <span>
+                          {uiText(
+                            world.playerTurns === 1 ? "1 回合" : "{count} 回合",
+                            {
+                              count: (world.playerTurns ?? 0).toLocaleString(
+                                getWebLocale(),
+                              ),
+                            },
+                          )}
+                        </span>
+                      </span>
+                      {world.excerpt == null ? null : (
+                        <span
+                          className="home-world-card-excerpt"
+                          title={world.excerpt}
+                        >
+                          {world.excerpt}
+                        </span>
+                      )}
                     </span>
                     <span className="home-world-card-action">
                       {uiText("进入世界")}
@@ -130,13 +176,14 @@ export function HomeScreen({
                       •••
                     </summary>
                     <div>
+                      {renderWorldBackupExport?.(world)}
                       <button
                         className="home-world-rename"
                         type="button"
                         aria-label={uiText("重命名世界：{title}", {
                           title: world.title,
                         })}
-                        disabled={importPending}
+                        disabled={pending}
                         onClick={() => {
                           setRenamingWorldId(world.worldId);
                           setWorldNameDraft(world.title);
@@ -150,7 +197,7 @@ export function HomeScreen({
                         aria-label={uiText("删除世界：{title}", {
                           title: world.title,
                         })}
-                        disabled={importPending}
+                        disabled={pending}
                         onClick={() => onDeleteWorld(world)}
                       >
                         {uiText("删除")}
@@ -226,14 +273,23 @@ export function HomeScreen({
             <div>
               <h2 id="home-content-title">{uiText("内容包")}</h2>
             </div>
-            <button
-              type="button"
-              disabled={importPending}
-              onClick={onCreatePackage}
-            >
+            <button type="button" disabled={pending} onClick={onCreatePackage}>
               {uiText("新建内容包")}
             </button>
+            <button
+              type="button"
+              disabled={pending}
+              onClick={onCreateSamplePackage}
+            >
+              {uiText("从示例新建")}
+            </button>
           </header>
+
+          {!modelConfigured && (
+            <button type="button" disabled={pending} onClick={onConfigureModel}>
+              {uiText("配置模型连接")}
+            </button>
+          )}
 
           <div className="home-content-layout">
             <div>
@@ -248,7 +304,7 @@ export function HomeScreen({
                           name: item.title,
                         })}
                         aria-pressed={item.localId === selectedPackageId}
-                        disabled={importPending}
+                        disabled={pending}
                         onClick={() => onOpenPackage(item.localId)}
                       >
                         <span className="home-package-card-heading">
@@ -283,7 +339,7 @@ export function HomeScreen({
                             aria-label={uiText("重命名内容包：{title}", {
                               title: item.title,
                             })}
-                            disabled={importPending}
+                            disabled={pending}
                             onClick={() => {
                               setRenamingPackageId(item.localId);
                               setPackageNameDraft(item.title);
@@ -297,7 +353,7 @@ export function HomeScreen({
                             aria-label={uiText("删除内容包：{title}", {
                               title: item.title,
                             })}
-                            disabled={importPending}
+                            disabled={pending}
                             onClick={() => onDeletePackage(item)}
                           >
                             {uiText("删除")}
@@ -355,8 +411,20 @@ export function HomeScreen({
                 <div className="home-empty-packages">
                   <h3>{uiText("从一组人类可读文件开始")}</h3>
                   <p>
-                    {uiText("先新建或导入一份内容包，再完善开场与世界设定。")}
+                    {uiText(
+                      "从雨夜旅店的示例故事开始，也可以新建或导入自己的内容包。",
+                    )}
                   </p>
+                  <button
+                    type="button"
+                    className="primary-button"
+                    disabled={pending}
+                    onClick={onCreateSamplePackage}
+                  >
+                    {samplePending
+                      ? uiText("正在创建示例…")
+                      : uiText("从示例开始")}
+                  </button>
                 </div>
               )}
             </div>
@@ -390,7 +458,7 @@ export function HomeScreen({
                     type="file"
                     accept=".zip,application/zip,application/x-zip-compressed"
                     aria-label={uiText("内容包 ZIP 文件")}
-                    disabled={importPending}
+                    disabled={pending}
                     onChange={(event) =>
                       onImportArchiveChange(event.target.files?.[0] ?? null)
                     }
@@ -405,7 +473,7 @@ export function HomeScreen({
                 </label>
                 <button
                   type="submit"
-                  disabled={importArchive === null || importPending}
+                  disabled={importArchive === null || pending}
                 >
                   {importPending ? uiText("正在导入…") : uiText("导入 ZIP")}
                 </button>
@@ -419,11 +487,7 @@ export function HomeScreen({
           {uiText("模型连接")} ·{" "}
           {modelConfigured ? activeModelName : uiText("尚未配置")}
         </span>
-        <button
-          type="button"
-          disabled={importPending}
-          onClick={onOpenPlayPresets}
-        >
+        <button type="button" disabled={pending} onClick={onOpenPlayPresets}>
           {uiText("当前预设")} · {currentPresetName ?? uiText("尚未选择")}
         </button>
         <span>

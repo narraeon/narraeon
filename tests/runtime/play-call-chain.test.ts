@@ -1,8 +1,10 @@
 import { FileNativePlayDocuments } from "../../src/runtime/play/PlayDocumentTools.ts";
+import { emptyAggregatedModelUsage } from "../../src/protocol/modelUsage.ts";
 import { FileNativeModelHost } from "../../src/runtime/model/FileNativeModelAdapters.ts";
 import { createHash } from "node:crypto";
 import {
   mkdtemp,
+  mkdir,
   readFile,
   readdir,
   rm,
@@ -10,9 +12,12 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { gunzipSync } from "node:zlib";
 
 import { afterEach, expect, test, vi } from "vitest";
+import { classifyPlayFailure } from "../../src/runtime/play/PlayFailure.ts";
+import { playFailureKinds } from "../../src/protocol/playFailure.ts";
 
 import {
   parseV1Envelope,
@@ -22,6 +27,8 @@ import {
 import { contentTreeFingerprint } from "../../src/runtime/content/ContentTreeFingerprint.ts";
 import type { ContentTreeFile } from "../../src/runtime/content/ContentWorkspace.ts";
 import {
+  ModelHostBindingMismatchError,
+  ModelHostContinuationError,
   ModelHostFailureError,
   ModelHostOutcomeUnknownError,
   ScriptedModelHost,
@@ -74,6 +81,338 @@ import { WorldRevisionWorkspace } from "../../src/runtime/world-revision/WorldRe
 
 const roots: string[] = [];
 
+test.each([
+  [
+    "outcome_unknown",
+    new ModelHostOutcomeUnknownError("dispatched outcome unknown"),
+    false,
+  ],
+  [
+    "context_limit",
+    new ModelHostFailureError("request rejected", {
+      details: { code: "context_length_exceeded" },
+    }),
+    false,
+  ],
+  [
+    "output_limit",
+    new ModelHostFailureError("response incomplete", {
+      details: { code: "model_output_limit" },
+    }),
+    false,
+  ],
+  [
+    "context_unavailable",
+    new ModelHostContinuationError("lost continuation"),
+    false,
+  ],
+  [
+    "context_unavailable",
+    new ModelHostBindingMismatchError("incompatible binding"),
+    false,
+  ],
+  ["retryable", new ModelHostFailureError("rejected before generation"), true],
+  ["other", new Error("tool processing failed"), false],
+] as const)(
+  "%s failure is persisted in context, event, summary and cold recovery",
+  async (failureKind, failure, canRetry) => {
+    const { worlds, worldId } = await createWorld(
+      `failure-kind-${failureKind}`,
+    );
+    const chains = new PlayCallChain(worlds);
+    const exchange = vi.fn(() => Promise.reject(failure));
+    const result = await chains.start({
+      worldId,
+      chainId: "classified-failure",
+      exchangeId: "first-failure",
+      playerText: "I wait for Alex.",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: modelBinding(),
+      modelHost: { binding: modelBinding, exchange },
+    });
+    expect(result).toMatchObject({
+      status: "interrupted",
+      canRetry,
+      lastFailureKind: failureKind,
+      lastFailure: failure.message,
+    });
+    const event = result.events.at(-1)!;
+    expect(event).toMatchObject({
+      kind: "failure",
+      failureKind,
+      message: failure.message,
+    });
+    expect(
+      (await worlds.playTimeline.readCurrent(worldId))?.value,
+    ).toMatchObject({ lastFailureKind: failureKind, canRetry });
+    const page = await worlds.playTimeline.readPage(worldId, 40);
+    expect(page).toMatchObject({
+      activeLastFailureKind: failureKind,
+      activeCanRetry: canRetry,
+    });
+    expect(page.items.at(-1)).toMatchObject({
+      event: { failureKind, message: failure.message },
+    });
+    expect(
+      await worlds.playTimeline.readDetail(worldId, result.chainId, event.id),
+    ).toMatchObject({ failureKind });
+    expect(await new PlayCallChain(worlds).inspectWorld(worldId)).toMatchObject(
+      { lastFailureKind: failureKind, canRetry },
+    );
+    expect(
+      (await worlds.recoverEndpoint(worldId)).history.map(
+        ({ exactText }) => exactText,
+      ),
+    ).toEqual(["门外传来三声短促的铃响。\n", "I wait for Alex."]);
+    if (!canRetry) {
+      await expect(
+        chains.append({
+          worldId,
+          chainId: result.chainId,
+          exchangeId: "forbidden-retry",
+          playerText: "",
+          modelHost: { binding: modelBinding, exchange },
+        }),
+      ).rejects.toThrow("use a fresh context");
+      expect(exchange).toHaveBeenCalledOnce();
+    }
+  },
+);
+
+test("Provider failures without replay permission classify as provider_error; unknown failures and undispatched requests retain their boundaries", () => {
+  expect(
+    classifyPlayFailure(new ModelHostFailureError("provider error"), false),
+  ).toBe("provider_error");
+  expect(classifyPlayFailure(new Error("settlement failed"), false)).toBe(
+    "other",
+  );
+  expect(classifyPlayFailure(new Error("not dispatched"), true)).toBe(
+    "retryable",
+  );
+});
+
+test("all seven failure kinds round-trip through the context and timeline codecs", async () => {
+  const { worlds, worldId } = await createWorld("failure-kind-codecs");
+  const result = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "failure-kind-codecs",
+    exchangeId: "first",
+    playerText: "I wait.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [{ outcome: "failure", message: "rejected" }],
+    }),
+  });
+  for (const failureKind of playFailureKinds) {
+    const loaded = (await worlds.playTimeline.readCurrent(worldId))!;
+    loaded.value.lastFailureKind = failureKind;
+    loaded.value.canRetry = failureKind === "retryable";
+    const event = loaded.value.events.at(-1)!;
+    if (event.kind !== "failure") throw new Error("missing failure");
+    event.failureKind = failureKind;
+    await worlds.playTimeline.persist(loaded.value, loaded.cursor);
+    expect(await new PlayCallChain(worlds).inspectWorld(worldId)).toMatchObject(
+      { lastFailureKind: failureKind },
+    );
+    expect(await worlds.playTimeline.readPage(worldId, 40)).toMatchObject({
+      activeLastFailureKind: failureKind,
+    });
+    expect(
+      await worlds.playTimeline.readDetail(worldId, result.chainId, event.id),
+    ).toMatchObject({ failureKind });
+  }
+});
+
+test("failure kinds are optional in stored records and invalid kinds fail closed", async () => {
+  const { worlds, worldId, root } = await createWorld(
+    "failure-kind-compatibility",
+  );
+  const result = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "optional-failure-kind",
+    exchangeId: "first",
+    playerText: "I wait.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [{ outcome: "failure", message: "rejected" }],
+    }),
+  });
+  const contextRoot = join(
+    root,
+    "worlds-file-native",
+    worldId,
+    "runtime",
+    "play-contexts",
+    createHash("sha256").update(result.chainId).digest("hex"),
+  );
+  const statePath = join(contextRoot, "state.json");
+  const state = JSON.parse(await readFile(statePath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  delete state.lastFailureKind;
+  await writeFile(statePath, JSON.stringify(state));
+  const event = result.events.at(-1)!;
+  if (event.kind !== "failure") throw new Error("missing failure");
+  delete event.failureKind;
+  const numbered = `${String(event.id).padStart(10, "0")}.json`;
+  for (const directory of ["events", "summaries"])
+    await writeFile(
+      join(contextRoot, directory, numbered),
+      JSON.stringify(event),
+    );
+  expect(await new PlayCallChain(worlds).inspectWorld(worldId)).toMatchObject({
+    status: "interrupted",
+    canRetry: true,
+  });
+  expect(
+    (await worlds.playTimeline.readPage(worldId, 40)).items.at(-1),
+  ).toMatchObject({ event });
+  expect(
+    await worlds.playTimeline.readDetail(worldId, result.chainId, event.id),
+  ).not.toHaveProperty("failureKind");
+  await writeFile(
+    statePath,
+    JSON.stringify({ ...state, lastFailureKind: "invented" }),
+  );
+  await expect(worlds.playTimeline.readPage(worldId, 40)).rejects.toThrow(
+    "invalid shape",
+  );
+  await writeFile(statePath, JSON.stringify(state));
+  for (const directory of ["events", "summaries"])
+    await writeFile(
+      join(contextRoot, directory, numbered),
+      JSON.stringify({ ...event, failureKind: "invented" }),
+    );
+  await expect(worlds.playTimeline.readPage(worldId, 40)).rejects.toThrow(
+    "invalid kind",
+  );
+  await expect(
+    worlds.playTimeline.readDetail(worldId, result.chainId, event.id),
+  ).rejects.toThrow("invalid kind");
+});
+
+test("最近完整响应在40项尾部之外时，仍投影其输入 usage 而不扩大事件尾部", async () => {
+  const { worlds, worldId } = await createWorld("context-usage-outside-tail");
+  const usage = {
+    ...emptyAggregatedModelUsage(),
+    inputTokens: 620_000,
+    provenance: {
+      ...emptyAggregatedModelUsage().provenance,
+      inputTokens: "provider" as const,
+    },
+  };
+  const chains = new PlayCallChain(worlds);
+  await chains.start({
+    worldId,
+    chainId: "usage-outside-tail",
+    exchangeId: "usage-outside-tail-player",
+    playerText: "Read the directory many times.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [
+        {
+          outcome: "response",
+          usage,
+          toolCalls: Array.from({ length: 25 }, (_, index) => ({
+            id: `usage-list-${index}`,
+            name: "state_list",
+            arguments: {},
+          })),
+        },
+        { outcome: "failure", message: "Rejected before generation." },
+      ],
+    }),
+  });
+  const view = await chains.observeWorld(worldId);
+  expect(view?.events).toHaveLength(40);
+  expect(
+    view?.events.some(
+      (event) => event.kind === "assistant" && event.status === "completed",
+    ),
+  ).toBe(false);
+  expect(view?.latestCompletedResponse).toMatchObject({ usage });
+});
+
+test("上下文窗口只读投影冻结绑定，旧无绑定记录不补窗口，观察提供最近实报 usage", async () => {
+  const { worlds, worldId, root } = await createWorld("context-usage");
+  const chains = new PlayCallChain(worlds);
+  const usage = {
+    ...emptyAggregatedModelUsage(),
+    inputTokens: 54_400,
+    provenance: {
+      ...emptyAggregatedModelUsage().provenance,
+      inputTokens: "provider" as const,
+    },
+  };
+  for (const [chainId, window] of [
+    ["context-usage-first", 64_000],
+    ["context-usage-next", 128_000],
+  ] as const) {
+    const binding = { ...modelBinding(), contextWindowTokens: window };
+    const result = await chains.start({
+      worldId,
+      chainId,
+      exchangeId: `${chainId}-exchange`,
+      playerText: "Look around.",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: binding,
+      modelHost: new ScriptedModelHost({
+        binding,
+        steps: [
+          {
+            outcome: "response",
+            text: "Alex waits by the door.",
+            reasoningContent: "Heavy diagnostics stay behind the detail API.",
+            usage,
+          },
+        ],
+      }),
+    });
+    expect(result.contextWindowTokens).toBe(window);
+  }
+  const cold = new PlayCallChain(new FileNativeWorldStore(root));
+  const inspected = await cold.inspectWorld(worldId);
+  expect(inspected?.contextWindowTokens).toBe(128_000);
+  expect(inspected?.previousContexts).toEqual([]);
+  const observed = await cold.observeWorld(worldId);
+  expect(observed?.contextWindowTokens).toBe(128_000);
+  expect(observed?.latestCompletedResponse).toMatchObject({ usage });
+  expect(JSON.stringify(observed)).not.toContain("Heavy diagnostics");
+
+  const contextRoot = join(
+    root,
+    "worlds-file-native",
+    worldId,
+    "runtime",
+    "play-contexts",
+  );
+  for (const directory of await readdir(contextRoot)) {
+    const path = join(contextRoot, directory, "base.json");
+    const original = JSON.parse(await readFile(path, "utf8")) as {
+      modelBinding?: ModelHostBinding;
+    };
+    delete original.modelBinding;
+    await writeFile(path, JSON.stringify(original));
+  }
+  const legacy = await new PlayCallChain(
+    new FileNativeWorldStore(root),
+  ).inspectWorld(worldId);
+  expect(legacy).not.toHaveProperty("contextWindowTokens");
+  expect(legacy?.previousContexts).toEqual([]);
+});
+
 test("修改轨迹统一保留前缀工具及原生载荷，并按含同 ID 修改稿的事件选择运行快照与授权", async () => {
   const { source, prefix, eventIndex, endpoint } =
     await createTraceRetentionFixture();
@@ -87,14 +426,13 @@ test("修改轨迹统一保留前缀工具及原生载荷，并按含同 ID 修�
   const original = structuredClone(source);
   const prepared = preparePlayerRevisionTrace(source, eventIndex);
   const retained = prepared
-    .withReplacement(endpoint.selected, {
+    .withReplacement({
       head: "commit:replacement",
       exchangeId: "replacement",
       text: "Replacement input.",
-      locale: "zh-CN",
     })
     .atEndpoint(endpoint);
-  expect(retained.transcript.slice(0, -2)).toEqual(prefix.transcript);
+  expect(retained.transcript.slice(0, -1)).toEqual(prefix.transcript);
   expect(retained.completedTools).toEqual(prefix.completedTools);
   expect(retained.events.at(-1)).toMatchObject({
     id: player.id,
@@ -1086,7 +1424,12 @@ test("新的发送与空输入重编译，冷恢复保留原生对话和当轮�
   expect(JSON.stringify(modelHost.requests[1]!.bootstrap)).toContain(
     "LATEST LIVE RULE",
   );
-  expect(modelHost.requests[1]!.appended.slice(0, 3)).toEqual([
+  expect(
+    modelHost.requests[1]!.appended.slice(
+      0,
+      modelHost.requests[0]!.appended.length + 1,
+    ),
+  ).toEqual([
     ...modelHost.requests[0]!.appended,
     expect.objectContaining({
       kind: "assistant",
@@ -1244,11 +1587,16 @@ test("派发推进存在但结果未落盘时按 outcome unknown 终止，冷恢
   delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE;
   const recovered = await new PlayCallChain(worlds).inspectWorld(worldId);
 
-  expect(recovered).toMatchObject({ status: "interrupted", canRetry: false });
+  expect(recovered).toMatchObject({
+    status: "interrupted",
+    canRetry: false,
+    lastFailureKind: "outcome_unknown",
+  });
   expect(
     recovered?.events.some(
       (event) =>
         event.kind === "failure" &&
+        event.failureKind === "outcome_unknown" &&
         event.message.includes("outcome is unknown"),
     ),
   ).toBe(true);
@@ -2296,7 +2644,6 @@ test("工具中间步文本不进入叙事，状态与终态叙事分别推进�
     modelBinding().maxOutputTokens,
   );
   expect(modelHost.requests[0]?.appended).toEqual([
-    expectedRoundMarker(0),
     { kind: "player", text: "I signal Alex to open the door." },
   ]);
   expect(
@@ -2425,8 +2772,8 @@ test("整理检查点随最终叙事提交，冷启动保留边界并补入跨�
     "  我拿起蓝色花瓶。\n",
     secondHost,
   );
-  expect(JSON.stringify(secondHost.requests[0]?.appended)).toContain(
-    "Completed player rounds since the last checkpoint: 0",
+  expect(JSON.stringify(secondHost.requests[0]?.appended)).not.toContain(
+    "checkpoint_rounds",
   );
   const thirdHost = new ScriptedModelHost({
     binding: modelBinding(),
@@ -2449,14 +2796,18 @@ test("整理检查点随最终叙事提交，冷启动保留边界并补入跨�
   );
   expect(JSON.stringify(replay)).not.toContain("我们结束讨论");
   expect(JSON.stringify(replay)).not.toContain("world_checkpoint");
-  expect(JSON.stringify(thirdHost.requests[0]?.appended)).toContain(
-    "Completed player rounds since the last checkpoint: 1",
+  expect(JSON.stringify(thirdHost.requests[0]?.appended)).not.toContain(
+    "checkpoint_rounds",
   );
 });
 
-test.each(["en", "zh-CN"] as const)(
-  "活动中途检查点在冷启动上下文保留进展与待回应原话：%s",
-  async (locale) => {
+test.each(
+  (["en", "zh-CN"] as const).flatMap((locale) =>
+    [false, true].map((legacyCheckpoint) => ({ locale, legacyCheckpoint })),
+  ),
+)(
+  "活动中途主动开新上下文保留进展与待回应原话：$locale/旧检查点=$legacyCheckpoint",
+  async ({ locale, legacyCheckpoint }) => {
     const files = worldFiles().map((file) =>
       file.path === "control/frame.yaml"
         ? {
@@ -2504,7 +2855,9 @@ test.each(["en", "zh-CN"] as const)(
                 ],
               },
             },
-            { id: "checkpoint", name: "world_checkpoint", arguments: {} },
+            ...(legacyCheckpoint
+              ? [{ id: "checkpoint", name: "world_checkpoint", arguments: {} }]
+              : []),
           ],
         },
         { outcome: "response", text: final },
@@ -2525,10 +2878,12 @@ test.each(["en", "zh-CN"] as const)(
     });
     expect(first.status).toBe("ready");
     const endpoint = await worlds.recoverEndpoint(worldId);
-    expect(endpoint.narrativeCheckpoint).toMatchObject({
-      head: first.parentHead,
-      completedPlayerRounds: 1,
-    });
+    if (legacyCheckpoint)
+      expect(endpoint.narrativeCheckpoint).toMatchObject({
+        head: first.parentHead,
+        completedPlayerRounds: 1,
+      });
+    else expect(endpoint.narrativeCheckpoint).toBeUndefined();
     expect(endpoint.history.at(-1)?.exactText).toBe(final);
     expect(
       endpoint.history.some(({ exactText }) => exactText === intermediate),
@@ -2574,21 +2929,23 @@ test.each(["en", "zh-CN"] as const)(
     );
     expect(materials).toContain(feedback);
     expect(materials).not.toContain(intermediate);
-    expect(materials).not.toContain(final);
-    expect(
-      bootstrap.logicalMessages
-        .flatMap(({ blocks }) => blocks)
-        .filter(({ source }) =>
-          source.startsWith("runtime:checkpoint-history"),
-        ),
-    ).toEqual([]);
-    expect(next.requests[0]?.appended[0]).toMatchObject({
-      kind: "runtime_notice",
-      notice: "checkpoint_rounds",
-      text: expect.stringContaining(
-        locale === "zh-CN" ? "已完成 0 回合" : "last checkpoint: 0",
-      ) as unknown,
-    });
+    if (legacyCheckpoint) expect(materials).not.toContain(final);
+    else expect(materials).toContain(final);
+    const replay = bootstrap.logicalMessages
+      .flatMap(({ blocks }) => blocks)
+      .filter(({ source }) => source.startsWith("runtime:checkpoint-history"));
+    if (legacyCheckpoint) expect(replay).toEqual([]);
+    else {
+      const originals = replay.map(({ markdown }) => markdown).join("\n");
+      expect(originals).toContain("Begin teaching me the first movement.");
+      expect(originals).toContain(final);
+    }
+    expect(next.requests[0]?.appended).toEqual([
+      {
+        kind: "player",
+        text: "I adjust my wrist and ask him to check the angle.",
+      },
+    ]);
     expect(
       (await worlds.recoverEndpoint(worldId)).state.find(
         ({ path }) => path === "current-situation.yaml",
@@ -2837,7 +3194,7 @@ test("仅登记检查点后重启可原样继续，空输入叙事进入重放�
       (item) =>
         item.kind === "runtime_notice" && item.notice === "checkpoint_rounds",
     ),
-  ).toHaveLength(1);
+  ).toHaveLength(0);
   const next = new ScriptedModelHost({
     binding: modelBinding(),
     steps: [{ outcome: "response", text: "你看向窗外。" }],
@@ -2852,7 +3209,9 @@ test("仅登记检查点后重启可原样继续，空输入叙事进入重放�
     modelBinding: modelBinding(),
     modelHost: next,
   });
-  expect(next.requests[0]!.appended[0]).toEqual(expectedRoundMarker(0));
+  expect(next.requests[0]!.appended).toEqual([
+    { kind: "player", text: "看看外面。" },
+  ]);
   expect(
     next.requests[0]!.bootstrap.logicalMessages.flatMap(({ blocks }) => blocks)
       .filter(({ source }) => source.startsWith("runtime:checkpoint-history"))
@@ -4084,7 +4443,6 @@ test("全新上下文只重建模型上下文，持久保留此前调用轨迹�
   const withHistory = second;
 
   expect(secondHost.requests[0]?.appended).toEqual([
-    expectedRoundMarker(1),
     { kind: "player", text: "Player input for the new context." },
   ]);
   expect(withHistory.previousContexts).toEqual([]);
@@ -4453,13 +4811,7 @@ test("从调用链节点派生会保留截至该节点的调用轨迹，并可�
   });
   expect(
     continuedToolHost.requests[0]?.appended.map(({ kind }) => kind),
-  ).toEqual([
-    "runtime_notice",
-    "player",
-    "assistant",
-    "tool",
-    "runtime_notice",
-  ]);
+  ).toEqual(["player", "assistant", "tool", "runtime_notice"]);
   expect(continuedToolHost.requests[0]?.appended.at(-1)).toMatchObject({
     kind: "runtime_notice",
     notice: "tool_step",
@@ -4529,7 +4881,6 @@ test("从调用链节点派生会保留截至该节点的调用轨迹，并可�
   });
   expect(regenerated.status).toBe("ready");
   expect(regeneratedHost.requests[0]?.appended).toEqual([
-    expectedRoundMarker(0),
     { kind: "player", text: "I signal Alex to open the door." },
   ]);
   expect(
@@ -4628,7 +4979,7 @@ test.each(["continue_context", "fresh_context"] as const)(
       continuedTranscript
         .filter((item) => item.kind === "runtime_notice")
         .map(({ notice }) => notice),
-    ).toEqual(["checkpoint_rounds", "tool_step", "continuation"]);
+    ).toEqual(["tool_step", "continuation"]);
 
     const selected = latest.events.find(
       (event) => event.kind === "player" && event.exchangeId === "leave-room",
@@ -4664,7 +5015,6 @@ test.each(["continue_context", "fresh_context"] as const)(
     });
     expect(replacementHost.requests[0]!.appended).toEqual([
       ...(continuation === "continue_context" ? continuedTranscript : []),
-      expectedRoundMarker(1),
       { kind: "player", text: "I stay inside." },
     ]);
     expect(
@@ -4911,7 +5261,6 @@ test("修改历史玩家提交会在同一世界追加时间线修订，并从�
     "Alex nods and says he will arrive five minutes early.",
   ]);
   expect(replacementHost.requests[0]?.appended).toEqual([
-    expectedRoundMarker(0),
     { kind: "player", text: "I ask Alex when we are meeting." },
     {
       kind: "assistant",
@@ -4925,7 +5274,6 @@ test("修改历史玩家提交会在同一世界追加时间线修订，并从�
       },
       toolCalls: [],
     },
-    expectedRoundMarker(1),
     { kind: "player", text: "Then let's meet fifteen minutes early." },
   ]);
   const authority = await worlds.readAuthorityHistory(worldId);
@@ -5047,7 +5395,6 @@ test("修改第一条玩家消息可把修改稿保存为不继承旧续传的�
     modelHost: replacementHost,
   });
   expect(replacementHost.requests[0]?.appended).toEqual([
-    expectedRoundMarker(0),
     { kind: "player", text: "I take the western path." },
   ]);
   expect(
@@ -5243,7 +5590,6 @@ test("把上下文中较后的修改稿另存为全新上下文时保留页面�
     modelHost: replacementHost,
   });
   expect(replacementHost.requests[0]?.appended).toEqual([
-    expectedRoundMarker(1),
     { kind: "player", text: "I take the western path instead." },
   ]);
 });
@@ -5345,6 +5691,134 @@ test("Provider 结果未知时禁止重放已派发请求，并要求全新上�
     "Alex has pushed the door halfway open",
   );
 });
+
+test.each(["en", "zh-CN"] as const)(
+  "冻结旧请求冷启动重发保留回合提示与工具定义，新发送不增加提示：%s",
+  async (locale) => {
+    const fixture = JSON.parse(
+      gunzipSync(
+        await readFile(
+          new URL(
+            "./fixtures/released-v056-checkpoint/storage.json.gz",
+            import.meta.url,
+          ),
+        ),
+      ).toString("utf8"),
+    ) as {
+      sourceCommit: string;
+      files: Record<string, string>;
+      scenarios: {
+        locale: "en" | "zh-CN";
+        worldId: string;
+        chainId: string;
+        head: string;
+        request: ModelHostExchange;
+      }[];
+    };
+    expect(fixture.sourceCommit).toBe(
+      "2cd320bb6a5f4cc37b0d6d8049c175b03cc9d450",
+    );
+    const root = await mkdtemp(join(tmpdir(), "checkpoint-recovery-"));
+    roots.push(root);
+    for (const [path, contents] of Object.entries(fixture.files)) {
+      await mkdir(dirname(join(root, path)), { recursive: true });
+      await writeFile(join(root, path), contents);
+    }
+    const scenario = fixture.scenarios.find(
+      (value) => value.locale === locale,
+    )!;
+    const { worldId } = scenario;
+    const worlds = new FileNativeWorldStore(root);
+    const frozen = (await worlds.playTimeline.readCurrent(worldId))!.value;
+    if (frozen.modelBinding === undefined)
+      throw new Error("Historical fixture is missing its model binding");
+    expect(frozen.lastRequest).toEqual(scenario.request);
+    const oldRequest = scenario.request;
+    const marker = oldRequest.appended[0];
+    if (marker?.kind !== "runtime_notice")
+      throw new Error("Missing old round marker");
+    expect(marker.notice).toBe("checkpoint_rounds");
+    const oldDescription = oldRequest.tools.find(
+      ({ name }) => name === "world_checkpoint",
+    )!.description;
+    expect(oldDescription).toContain(
+      locale === "zh-CN" ? "登记整理声明" : "consolidation declaration",
+    );
+    const resumed = new ScriptedModelHost({
+      binding: frozen.modelBinding,
+      steps: [
+        {
+          outcome: "response",
+          text: "Alex demonstrates and waits for your response.",
+        },
+        { outcome: "response", text: "Alex checks your wrist angle." },
+      ],
+    });
+    const chains = new PlayCallChain(
+      new FileNativeWorldStore(root),
+      new FileNativePromptCompiler({ locale }),
+    );
+    const retry = await chains.append({
+      worldId,
+      chainId: frozen.chainId,
+      exchangeId: "retry",
+      playerText: "",
+      modelHost: resumed,
+      resolvePrompt: () => {
+        throw new Error("Retry must not recompile presets.");
+      },
+    });
+    expect(retry.status).toBe("ready");
+    expect(resumed.requests[0]).toEqual(oldRequest);
+    expect(resumed.requests[0]!.appended[0]).toEqual(marker);
+    expect(
+      resumed.requests[0]!.tools.find(
+        ({ name }) => name === "world_checkpoint",
+      )!.description,
+    ).toBe(oldDescription);
+    const branch = await chains.deriveWorld({
+      operationId: `legacy-marker-fork-${locale}`,
+      sourceWorldId: worldId,
+      sourceHead: scenario.head,
+      hostPresetId: frozen.playPreset.id,
+    });
+    expect(
+      (await worlds.playTimeline.readCurrent(branch.world.worldId))!.value
+        .transcript,
+    ).toEqual(oldRequest.appended);
+    await chains.append({
+      worldId,
+      chainId: frozen.chainId,
+      exchangeId: "next-input",
+      playerText: "I adjust my wrist.",
+      modelHost: resumed,
+      resolvePrompt: () =>
+        Promise.resolve({
+          hostBinding: hostBinding(),
+          playPreset: playPreset(),
+        }),
+    });
+    expect(
+      resumed.requests[1]!.appended.filter(
+        (item) =>
+          item.kind === "runtime_notice" && item.notice === "checkpoint_rounds",
+      ),
+    ).toEqual([marker]);
+    expect(resumed.requests[1]!.appended.at(-1)).toEqual({
+      kind: "player",
+      text: "I adjust my wrist.",
+    });
+    expect(
+      (await worlds.recoverEndpoint(worldId)).history.map(
+        ({ exactText }) => exactText,
+      ),
+    ).not.toContain(marker.text);
+    for (const [path, exactBytes] of Object.entries(fixture.files).filter(
+      ([path]) => path.includes("/runtime/play-requests/"),
+    ))
+      expect(await readFile(join(root, path), "utf8")).toBe(exactBytes);
+  },
+);
 
 test("确定性 Provider 拒绝后只重放原样保存的请求", async () => {
   const { worlds, worldId } = await createWorld("play-chain-safe-retry");
@@ -5510,7 +5984,6 @@ test("空输入追加会从完整逻辑 transcript 继续生成，并把 Provide
     1,
   );
   expect(modelHost.requests[1]?.appended).toEqual([
-    expectedRoundMarker(0),
     { kind: "player", text: "I signal Alex to open the door." },
     {
       kind: "assistant",
@@ -5544,44 +6017,217 @@ test("空输入追加会从完整逻辑 transcript 继续生成，并把 Provide
   ]);
 });
 
-test("模型绑定的协议配置变化会在提交玩家输入前拒绝旧上下文", async () => {
+test("切换协议只临时拒绝，切回原协议后允许继续", async () => {
   const { worlds, worldId } = await createWorld("play-binding-switch");
   const initialHost = new ScriptedModelHost({
     binding: modelBinding(),
-    steps: [{ outcome: "response", text: "The first exchange settles." }],
+    steps: [{ outcome: "response", text: "First response." }],
   });
   const chains = new PlayCallChain(worlds);
   const initial = await chains.start({
     worldId,
-    chainId: "play-binding-switch-contract",
-    exchangeId: "binding-switch-first",
-    playerText: "Begin with the frozen model.",
+    chainId: "protocol-switch",
+    exchangeId: "first",
+    playerText: "Begin.",
     hostBinding: hostBinding(),
     playPreset: playPreset(),
     modelBinding: modelBinding(),
     modelHost: initialHost,
   });
-  const switchedHost = new ScriptedModelHost({
-    binding: {
-      ...modelBinding(),
-      protocolConfigFingerprint: "sha256:changed-reasoning-policy",
-    },
-    steps: [{ outcome: "response", text: "Must not be dispatched." }],
+  const switched = new ScriptedModelHost({
+    binding: { ...modelBinding(), provider: "anthropic_messages" },
+    steps: [],
   });
-
   await expect(
     chains.append({
       worldId,
       chainId: initial.chainId,
-      exchangeId: "binding-switch-second",
-      playerText: "Continue after changing the connection.",
-      modelHost: switchedHost,
+      exchangeId: "wrong",
+      playerText: "Next.",
+      modelHost: switched,
     }),
-  ).rejects.toThrow(
-    "The selected model connection does not match the frozen model binding; start a fresh context.",
+  ).rejects.toThrow(/protocol/i);
+  expect(switched.requests).toHaveLength(0);
+  expect(await new PlayCallChain(worlds).inspectWorld(worldId)).toMatchObject({
+    status: "ready",
+    lastFailure: null,
+  });
+  const changed = new ScriptedModelHost({
+    binding: {
+      ...modelBinding(),
+      modelId: "other-model",
+      endpointFingerprint: "other",
+      protocolConfigFingerprint: "changed-thinking",
+      maxOutputTokens: 8192,
+      contextWindowTokens: 256000,
+    },
+    steps: [{ outcome: "response", text: "Continued." }],
+  });
+  const result = await new PlayCallChain(worlds).append({
+    worldId,
+    chainId: initial.chainId,
+    exchangeId: "back",
+    playerText: "Next.",
+    modelHost: changed,
+  });
+  expect(result.status).toBe("ready");
+  expect(changed.requests[0]?.maxOutputTokens).toBe(8192);
+  expect(changed.requests[0]?.appended).toContainEqual(
+    expect.objectContaining({ kind: "assistant", text: "First response." }),
   );
-  expect(switchedHost.requests).toHaveLength(0);
-  expect((await worlds.recoverEndpoint(worldId)).history).toHaveLength(3);
+});
+
+test.each(["binding", "outcome_unknown", "binding_over_unknown"] as const)(
+  "旧配置拦截可恢复但真实未知结果不恢复：%s",
+  async (kind) => {
+    const { worlds, worldId } = await createWorld("legacy-binding-recovery");
+    const host = new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [{ outcome: "response", text: "Before configuration change." }],
+    });
+    const initial = await new PlayCallChain(worlds).start({
+      worldId,
+      chainId: "legacy-poison",
+      exchangeId: "first",
+      playerText: "Begin.",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: modelBinding(),
+      modelHost: host,
+    });
+    const loaded = (await worlds.playTimeline.readCurrent(worldId))!;
+    const value = loaded.value;
+    value.status = "interrupted";
+    value.canRetry = false;
+    value.lastFailureKind =
+      kind === "binding" ? "context_unavailable" : "outcome_unknown";
+    value.lastFailure =
+      kind === "binding"
+        ? "The selected model connection does not match the frozen model binding; start a fresh context."
+        : "The dispatched request outcome is unknown.";
+    value.events.push({
+      id: value.nextEventId++,
+      kind: "failure",
+      message: value.lastFailure,
+      failureKind: value.lastFailureKind,
+    });
+    if (kind === "binding_over_unknown") {
+      value.lastFailure =
+        "The selected model connection does not match the frozen model binding; start a fresh context.";
+      value.lastFailureKind = "context_unavailable";
+      value.events.push({
+        id: value.nextEventId++,
+        kind: "failure",
+        message: value.lastFailure,
+        failureKind: value.lastFailureKind,
+      });
+    }
+    await worlds.playTimeline.persist(value);
+    const cold = new PlayCallChain(worlds);
+    const expectedStatus = kind === "binding" ? "ready" : "interrupted";
+    expect((await worlds.playTimeline.readPage(worldId, 40)).activeStatus).toBe(
+      expectedStatus,
+    );
+    expect((await cold.inspectWorld(worldId))?.status).toBe(expectedStatus);
+    const next = new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [{ outcome: "response", text: "Recovered." }],
+    });
+    const append = cold.append({
+      worldId,
+      chainId: initial.chainId,
+      exchangeId: "after",
+      playerText: "Continue.",
+      modelHost: next,
+    });
+    if (kind === "binding") expect((await append).status).toBe("ready");
+    else {
+      await expect(append).rejects.toThrow();
+      expect(next.requests).toHaveLength(0);
+    }
+  },
+);
+
+test("冷恢复重试沿用请求模型快照，下一次发送采用当前配置", async () => {
+  const { worlds, worldId } = await createWorld("request-model-snapshot");
+  const connection = {
+    provider: "chat_completions" as const,
+    baseUrl: "https://original.invalid/v1",
+    apiKey: "secret",
+    modelId: "original",
+    reasoningEffort: "high" as const,
+    contextWindowTokens: 64000,
+    maxOutputTokens: 4096,
+  };
+  const original = new FileNativeModelHost(connection);
+  const changed = new FileNativeModelHost({
+    ...connection,
+    modelId: "changed",
+    reasoningEffort: "low",
+    contextWindowTokens: 128000,
+    maxOutputTokens: 2048,
+  });
+  const initial = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "request-model-snapshot",
+    exchangeId: "first",
+    playerText: "Begin.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: original.binding(),
+    modelHost: {
+      binding: () => original.binding(),
+      freezeRequest: (request) => original.freezeRequest(request),
+      exchange: () =>
+        Promise.reject(new ModelHostFailureError("Rejected before generation")),
+    },
+  });
+  const saved = (await worlds.playTimeline.readCurrent(worldId))!.value
+    .lastRequest!;
+  expect(initial.canRetry).toBe(true);
+  expect(saved.modelConfig?.modelId).toBe("original");
+  const scripted = new ScriptedModelHost({
+    binding: changed.binding(),
+    steps: [
+      { outcome: "response", text: "Retried." },
+      { outcome: "response", text: "New parameters." },
+    ],
+  });
+  const changedHost: ModelHost = {
+    binding: () => changed.binding(),
+    freezeRequest: (request) => changed.freezeRequest(request),
+    exchange: (request, observer) => scripted.exchange(request, observer),
+  };
+  const cold = new PlayCallChain(worlds);
+  expect(
+    (
+      await cold.append({
+        worldId,
+        chainId: initial.chainId,
+        exchangeId: "retry",
+        playerText: "",
+        modelHost: changedHost,
+      })
+    ).status,
+  ).toBe("ready");
+  expect(scripted.requests[0]).toEqual(saved);
+  expect(changed.previewRequest(scripted.requests[0]!)).toEqual(
+    original.previewRequest(saved),
+  );
+  const next = await cold.append({
+    worldId,
+    chainId: initial.chainId,
+    exchangeId: "next",
+    playerText: "Continue.",
+    modelHost: changedHost,
+  });
+  expect(next.status).toBe("ready");
+  expect(next.contextWindowTokens).toBe(128000);
+  expect(scripted.requests[1]?.modelConfig).toMatchObject({
+    modelId: "changed",
+    reasoningEffort: "low",
+    maxOutputTokens: 2048,
+  });
 });
 
 test("只有 reasoning 的响应仍持久化原生续传载荷，但不会进入叙事 Authority", async () => {
@@ -6111,7 +6757,6 @@ test("后置请求在整轮结束后各跑一次，共享同一主链前缀且�
   // Only the first request belongs to the main chain. Both follow-ups must use
   // the exact transcript at main-chain completion and cannot see each other.
   const mainPrefix = [
-    expectedRoundMarker(0),
     { kind: "player", text: "I signal Alex to open the door." },
     {
       kind: "assistant",
@@ -6128,11 +6773,15 @@ test("后置请求在整轮结束后各跑一次，共享同一主链前缀且�
   ];
   const statusRequest = modelHost.requests[1]!;
   const optionsRequest = modelHost.requests[2]!;
-  expect(statusRequest.appended.slice(0, 3)).toEqual(mainPrefix);
-  expect(optionsRequest.appended.slice(0, 3)).toEqual(mainPrefix);
-  expect(statusRequest.appended).toHaveLength(4);
-  expect(optionsRequest.appended).toHaveLength(4);
-  expect(optionsRequest.appended[3]).not.toEqual(statusRequest.appended[3]);
+  expect(statusRequest.appended.slice(0, mainPrefix.length)).toEqual(
+    mainPrefix,
+  );
+  expect(optionsRequest.appended.slice(0, mainPrefix.length)).toEqual(
+    mainPrefix,
+  );
+  expect(statusRequest.appended).toHaveLength(3);
+  expect(optionsRequest.appended).toHaveLength(3);
+  expect(optionsRequest.appended[2]).not.toEqual(statusRequest.appended[2]);
   expect(JSON.stringify(optionsRequest.appended)).not.toContain("status_bar");
   expect(JSON.stringify(statusRequest.appended)).not.toContain(
     "The panel is ready",
@@ -6210,7 +6859,6 @@ test("后置请求在整轮结束后各跑一次，共享同一主链前缀且�
   });
   expect(nextHost.requests[0]!.appended).toEqual([
     ...mainPrefix,
-    expectedRoundMarker(1),
     { kind: "player", text: "I follow." },
   ]);
 
@@ -6606,16 +7254,6 @@ async function readUtf8Tree(root: string): Promise<string> {
     }),
   );
   return contents.join("\n");
-}
-
-function expectedRoundMarker(rounds: number): unknown {
-  return expect.objectContaining({
-    kind: "runtime_notice",
-    notice: "checkpoint_rounds",
-    text: expect.stringContaining(
-      `Completed player rounds since the last checkpoint: ${rounds}.`,
-    ) as unknown,
-  });
 }
 
 test("浏览器观察保持40项尾部并恢复活动片段，旧历史仍只能分页读取", async () => {
@@ -7951,4 +8589,72 @@ test("普通虚构请求编译出的游玩工具与改动前完全一致", async
   expect(modelHost.requests[0]?.tools.map(({ name }) => name)).toEqual(
     fictionPlayToolNames,
   );
+});
+test("世界在故事外前进后仍可修改或重新生成已提交玩家消息", async () => {
+  const { worlds, worldId } = await createWorld(
+    "play-chain-edit-after-out-of-story-advance",
+  );
+  const chains = new PlayCallChain(worlds);
+  const source = await chains.start({
+    worldId,
+    chainId: "play-chain-edit-after-advance-source",
+    exchangeId: "exchange-edit-after-advance-source",
+    playerText: "I take the eastern path.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [{ outcome: "response", text: "The eastern path is quiet." }],
+    }),
+  });
+  const selected = source.events.find(
+    (event) => event.kind === "player" && event.context === "fresh",
+  );
+  if (selected?.kind !== "player") throw new Error("missing first player");
+
+  // Anything that moves the world head without the chain (an applied world
+  // revision, or a timeline revision whose chain publication failed) leaves
+  // the persisted chain behind the current world.
+  await worlds.commitCorrection({
+    worldId,
+    operationId: "out-of-story-advance",
+    parentHead: source.parentHead,
+    stateChanges: [],
+    nextMaterials: [],
+  });
+  const advancedHead = await worlds.currentHead(worldId);
+  expect(advancedHead).not.toBe(source.parentHead);
+  await expect(chains.inspectWorld(worldId)).resolves.toMatchObject({
+    parentHead: source.parentHead,
+  });
+
+  const revised = await chains.revisePlayer({
+    operationId: "revise-after-out-of-story-advance",
+    worldId,
+    chainId: source.chainId,
+    eventId: selected.id,
+    replacementExchangeId: "exchange-edit-after-advance-replacement",
+    replacementText: "I take the western path.",
+    continuation: "continue_context",
+  });
+  const revisedHead = await worlds.currentHead(worldId);
+  expect(revised.playCallChain.parentHead).toBe(revisedHead);
+  expect(
+    (await worlds.recoverEndpoint(worldId)).history.map(
+      ({ exactText }) => exactText,
+    ),
+  ).toEqual(["门外传来三声短促的铃响。\n", "I take the western path."]);
+
+  const continued = await chains.append({
+    worldId,
+    chainId: revised.playCallChain.chainId,
+    exchangeId: "exchange-edit-after-advance-continue",
+    playerText: "",
+    modelHost: new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [{ outcome: "response", text: "The western path opens." }],
+    }),
+  });
+  expect(continued.status).toBe("ready");
 });

@@ -1,6 +1,10 @@
 import type {
   ModelPromptCacheStrategy,
   ModelProviderKind,
+  ModelProviderDialect,
+  ModelReasoningEffort,
+  ModelReasoningSummary,
+  ModelThinkingMode,
 } from "../../protocol/modelConnections.ts";
 import type {
   ModelUsage as ModelHostUsage,
@@ -92,7 +96,21 @@ export type ModelHostAppendItem =
       isError?: boolean;
     };
 
+/** Credential-free encoding settings frozen per request, not per context. */
+export interface ModelHostRequestConfig {
+  provider: ModelProviderKind;
+  modelId: string;
+  dialect: ModelProviderDialect;
+  reasoningEffort: ModelReasoningEffort;
+  reasoningSummary: ModelReasoningSummary;
+  thinkingMode: ModelThinkingMode;
+  thinkingBudgetTokens: number | null;
+  contextWindowTokens: number;
+  maxOutputTokens: number;
+}
+
 export interface ModelHostExchange {
+  modelConfig?: ModelHostRequestConfig;
   bootstrap: PromptCompilation;
   /** Stable definitions for the complete logical operation. */
   toolUniverse?: PromptCompilation["tools"];
@@ -147,6 +165,7 @@ export interface ModelHostWireRequest {
 }
 
 export interface ModelHost {
+  freezeRequest?(request: ModelHostExchange): ModelHostExchange;
   /** Optional credential-free production encoding, used only for request diagnostics. */
   previewRequest?(request: ModelHostExchange): ModelHostWireRequest;
   binding(): ModelHostBinding;
@@ -202,7 +221,7 @@ export function assertModelOutputComplete(stopReason: unknown): void {
     stopReason === "incomplete:max_output_tokens"
   ) {
     throw new ModelHostFailureError(
-      "模型输出已达到 Token 上限，回复未完成。请在模型配置中调高“最大输出 Token”，保存后使用全新上下文重新发送。推理过程也可能占用输出额度。",
+      "The model response reached the output token limit before completion. Increase maxOutputTokens and start a fresh context; reasoning may also consume the output budget.",
       { details: { code: "model_output_limit", stopReason } },
     );
   }

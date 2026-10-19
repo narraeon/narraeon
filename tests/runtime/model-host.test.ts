@@ -709,7 +709,7 @@ test.each([
     ).rejects.toMatchObject({
       kind: "failed",
       message:
-        "模型输出已达到 Token 上限，回复未完成。请在模型配置中调高“最大输出 Token”，保存后使用全新上下文重新发送。推理过程也可能占用输出额度。",
+        "The model response reached the output token limit before completion. Increase maxOutputTokens and start a fresh context; reasoning may also consume the output budget.",
     });
   },
 );
@@ -819,7 +819,7 @@ test.each([
     ).rejects.toMatchObject({
       kind: "failed",
       message:
-        "模型输出已达到 Token 上限，回复未完成。请在模型配置中调高“最大输出 Token”，保存后使用全新上下文重新发送。推理过程也可能占用输出额度。",
+        "The model response reached the output token limit before completion. Increase maxOutputTokens and start a fresh context; reasoning may also consume the output budget.",
       details: { code: "model_output_limit" },
     });
   },
@@ -850,3 +850,50 @@ test("output limit requires a fresh context while other stop reasons stay unchan
   ])
     expect(() => assertModelOutputComplete(reason)).not.toThrow();
 });
+
+test.each([
+  "chat_completions",
+  "openai_responses",
+  "anthropic_messages",
+] as const)(
+  "请求快照保持 %s 的模型与推理参数，正常新请求使用新配置",
+  (provider) => {
+    const connection = {
+      provider,
+      baseUrl: "https://old.invalid/v1",
+      apiKey: "old-secret",
+      modelId: "original-model",
+      reasoningEffort: "high" as const,
+      contextWindowTokens: 64000,
+      maxOutputTokens: 2048,
+    };
+    const original = new FileNativeModelHost(connection);
+    const changed = new FileNativeModelHost({
+      ...connection,
+      baseUrl: "https://new.invalid/v1",
+      apiKey: "new-secret",
+      modelId: "new-model",
+      reasoningEffort: "low",
+      maxOutputTokens: 1024,
+    });
+    const request = exchangeFor(
+      provider,
+      connection.modelId,
+      original.binding().cacheStrategy,
+    );
+    const saved = JSON.parse(
+      JSON.stringify(original.freezeRequest(request)),
+    ) as ModelHostExchange;
+    expect(JSON.stringify(saved)).not.toContain("old-secret");
+    expect(JSON.stringify(saved)).not.toContain("https://old.invalid");
+    expect(changed.previewRequest(changed.freezeRequest(saved))).toEqual(
+      original.previewRequest(saved),
+    );
+    const next = changed.freezeRequest({ ...request, maxOutputTokens: 1024 });
+    expect(changed.previewRequest(next).body).toMatchObject({
+      model: "new-model",
+    });
+    expect(next.modelConfig?.reasoningEffort).toBe("low");
+    expect(saved.modelConfig?.reasoningEffort).toBe("high");
+  },
+);

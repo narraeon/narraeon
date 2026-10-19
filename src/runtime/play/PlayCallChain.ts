@@ -1,3 +1,5 @@
+import { projectLegacyModelBindingFailure } from "./LegacyModelBindingFailure.ts";
+import { classifyPlayFailure } from "./PlayFailure.ts";
 import {
   isResolutionTool,
   resolutionMarkdown,
@@ -60,6 +62,7 @@ import type {
 } from "../model/ModelHost.ts";
 import {
   equalModelHostBinding,
+  ModelHostBindingMismatchError,
   ModelHostCancelledError,
   ModelHostContinuationError,
   ModelHostFailureError,
@@ -383,6 +386,7 @@ export class PlayCallChain {
     this.#active.set(session.chainId, session);
     this.#worldChains.set(session.worldId, session.chainId);
     await this.#persist(session);
+    await this.#worlds.completeArchiveFreshContext(session.worldId);
     return this.#submitPlayer(
       session,
       input.exchangeId,
@@ -403,6 +407,10 @@ export class PlayCallChain {
     signal: AbortSignal,
   ): Promise<V1PlayCallChainView> {
     validateIdentity(input.exchangeId, "exchange ID");
+    if (await this.#worlds.archiveNeedsFreshContext(input.worldId))
+      throw new PlayCallChainError(
+        "This world was imported from a backup; start a fresh context before continuing.",
+      );
     const session = await this.#requireChain(input.worldId, input.chainId);
     await this.#assertCurrentHead(session);
     assertSessionModelHostBinding(session, input.modelHost);
@@ -413,6 +421,18 @@ export class PlayCallChain {
         if (!session.canRetry || session.lastRequest === null)
           throw new PlayCallChainError(
             "The current model context cannot continue; use a fresh context.",
+          );
+        // Pre-snapshot requests have only a binding fingerprint. Do not invent
+        // their original encoding settings from a newly selected connection.
+        if (
+          session.lastRequest.modelConfig === undefined &&
+          !equalModelHostBinding(
+            session.modelBinding!,
+            input.modelHost.binding(),
+          )
+        )
+          throw new PlayCallChainError(
+            "This older saved request has no model configuration snapshot. Restore its original settings to retry it, or start a fresh context.",
           );
         return this.#dispatch(
           session,
@@ -828,7 +848,9 @@ export class PlayCallChain {
       chainId: session.chainId,
       baselineHead: session.baselineHead,
       parentHead: session.parentHead,
-      stale: session.parentHead !== worldHead,
+      stale:
+        session.parentHead !== worldHead ||
+        (await this.#worlds.archiveNeedsFreshContext(worldId)),
       playPreset: structuredClone(recordedPlayPrompt(session).playPreset),
       updatedAt: session.updatedAt,
       bootstrap: {
@@ -848,20 +870,47 @@ export class PlayCallChain {
     sourceWorldId: string;
     sourceHead: string;
     hostPresetId: string;
-  }): Promise<{ outcome: "derived"; world: FileNativeWorldSummary }> {
+    targetDataRoot?: string;
+    targetName?: string;
+    publish?: false;
+    targetWorldRoot?: string;
+    identityPrefix?: "import";
+    resetPackageScriptPermissions?: boolean;
+    requireMaterialized?: boolean;
+    retainCompleteTimeline?: true;
+  }): Promise<{
+    outcome: "derived";
+    world: FileNativeWorldSummary;
+    worldRoot: string;
+  }> {
     const result = await this.#worlds.deriveWorld({
       ...input,
-      stageTarget: async ({ targetWorldRoot, targetWorldId, binding }) => {
+      stageTarget: async ({
+        targetWorldRoot,
+        targetWorldId,
+        binding,
+        sourceHead,
+      }) => {
         await this.stageForkToDerivedWorld({
           sourceWorldId: input.sourceWorldId,
-          sourceHead: input.sourceHead,
+          sourceHead,
           targetWorldId,
           targetWorldRoot,
           targetBinding: binding,
+          ...(input.retainCompleteTimeline
+            ? { retainCompleteTimeline: true }
+            : {}),
+          ...(input.identityPrefix === "import"
+            ? { markImportedContexts: true }
+            : {}),
         });
       },
     });
-    if ((await this.inspectWorld(result.world.worldId)) === null)
+    if (
+      input.targetDataRoot === undefined &&
+      input.publish !== false &&
+      (await this.inspectWorld(result.world.worldId)) === null
+    )
       await this.forkToDerivedWorld({
         sourceWorldId: input.sourceWorldId,
         sourceHead: input.sourceHead,
@@ -908,20 +957,26 @@ export class PlayCallChain {
     targetWorldId: string;
     targetWorldRoot: string;
     targetBinding: FileNativePlayBinding;
+    retainCompleteTimeline?: true;
+    markImportedContexts?: true;
   }): Promise<V1PlayCallChainView | null> {
     const source = await this.#readPersisted(input.sourceWorldId);
     if (source === null) return null;
     const sourceContexts = await this.#worlds.playTimeline.readAllContexts(
       input.sourceWorldId,
     );
-    const selectedContextIndex = sourceContexts.findIndex(
-      ({ events }) => eventsThroughHead(events, input.sourceHead) !== null,
-    );
+    const selectedContextIndex = input.retainCompleteTimeline
+      ? sourceContexts.length - 1
+      : sourceContexts.findIndex(
+          ({ events }) => eventsThroughHead(events, input.sourceHead) !== null,
+        );
     if (selectedContextIndex < 0) return null;
-    const sourceEvents = eventsThroughHead(
-      sourceContexts[selectedContextIndex]!.events,
-      input.sourceHead,
-    )!;
+    const sourceEvents = input.retainCompleteTimeline
+      ? sourceContexts[selectedContextIndex]!.events
+      : eventsThroughHead(
+          sourceContexts[selectedContextIndex]!.events,
+          input.sourceHead,
+        )!;
     return this.#forkSelectionToDerivedWorld({
       sourceWorldId: input.sourceWorldId,
       sourceContexts,
@@ -932,6 +987,8 @@ export class PlayCallChain {
       branchIdentity: input.sourceHead,
       targetWorldRoot: input.targetWorldRoot,
       targetBinding: input.targetBinding,
+      ...(input.retainCompleteTimeline ? { retainCompleteTimeline: true } : {}),
+      ...(input.markImportedContexts ? { markImportedContexts: true } : {}),
     });
   }
 
@@ -1056,6 +1113,13 @@ export class PlayCallChain {
         "The model context to revise does not exist.",
       );
     const sourceContext = sourceContexts[selectedContextIndex]!;
+    if (
+      input.continuation === "continue_context" &&
+      sourceContext.importedFromArchive
+    )
+      throw new PlayCallChainError(
+        "This model context was imported from a backup; start a fresh context before continuing.",
+      );
     const selectedEventIndex = sourceContext.events.findIndex(
       (event) => event.id === input.eventId,
     );
@@ -1123,10 +1187,15 @@ export class PlayCallChain {
       sourceContext,
       input.selectedEventIndex,
     );
+    // A timeline revision appends on the current audit head and restores the
+    // selected message's logical parent, so a chain that lags the world (an
+    // out-of-story world revision, or an earlier revision whose chain was not
+    // published) must not block it. The commit still rechecks this head under
+    // the world lock.
     const outcome = await this.#worlds.reviseTimeline({
       operationId: request.operationId,
       worldId: request.worldId,
-      expectedCurrentHead: input.source.parentHead,
+      expectedCurrentHead: await this.#worlds.currentHead(request.worldId),
       restoresHead,
       replacesHead: input.selectedEvent.committedHead,
       replacementText: request.replacementText,
@@ -1138,11 +1207,10 @@ export class PlayCallChain {
       this.#worlds.recoverEndpoint(request.worldId, restoresHead),
       this.#worlds.bindPlayCallChain(request.worldId),
     ]);
-    const continuedTrace = traceRetention.withReplacement(selected, {
+    const continuedTrace = traceRetention.withReplacement({
       head: outcome.head,
       exchangeId: request.replacementExchangeId,
       text: request.replacementText,
-      locale: this.#compiler.locale,
     });
     if (binding.parentHead !== outcome.head)
       throw new PlayCallChainError(
@@ -1168,6 +1236,7 @@ export class PlayCallChain {
         freshPreparation,
       });
       await this.#worlds.playTimeline.persist(structuredClone(revised));
+      await this.#worlds.completeArchiveFreshContext(request.worldId);
       const activeId = this.#worldChains.get(request.worldId);
       if (activeId !== undefined) this.#active.delete(activeId);
       this.#active.delete(sourceContext.chainId);
@@ -1348,15 +1417,7 @@ export class PlayCallChain {
         }),
         1,
       ),
-      transcript: playerInputAppend({
-        history: fresh.binding.history,
-        checkpoint: fresh.binding.narrativeCheckpoint,
-        text: request.replacementText,
-        locale: this.#compiler.locale,
-        checkpointAvailable: fresh.tools.some(
-          ({ name }) => name === "world_checkpoint",
-        ),
-      }),
+      transcript: playerInputAppend(request.replacementText),
       events: [
         {
           id: 1,
@@ -1395,6 +1456,8 @@ export class PlayCallChain {
     branchIdentity: string;
     targetWorldRoot?: string;
     targetBinding?: FileNativePlayBinding;
+    retainCompleteTimeline?: true;
+    markImportedContexts?: true;
   }): Promise<V1PlayCallChainView> {
     if (input.targetWorldRoot === undefined) {
       const existing = await this.#readPersisted(input.targetWorldId);
@@ -1410,29 +1473,42 @@ export class PlayCallChain {
         "The forked world's Authority does not match the selected history endpoint, so the call chain cannot be written.",
       );
 
-    const [baseline, selected] = await Promise.all([
-      this.#worlds.recoverEndpoint(
-        input.targetWorldRoot === undefined
-          ? input.targetWorldId
-          : input.sourceWorldId,
-        sourceContext.baselineHead,
-      ),
-      this.#worlds.recoverEndpoint(
-        input.targetWorldRoot === undefined
-          ? input.targetWorldId
-          : input.sourceWorldId,
-        input.sourceHead,
-      ),
-    ]);
-    const traceRetention = prepareForkTrace(sourceContext, input.sourceEvents);
-    const derivedBinding =
-      input.targetBinding ??
-      (await this.#worlds.bindPlayCallChain(input.targetWorldId));
-    const retainedTrace = traceRetention.atEndpoint({
-      baseline,
-      selected,
-      binding: derivedBinding,
-    });
+    let retainedTrace: Omit<
+      PersistedPlayCallChainContext,
+      "chainId" | "parentHead" | "updatedAt"
+    >;
+    if (input.retainCompleteTimeline) {
+      // A backup retains the current page closure, even when its last context
+      // precedes a correction or contains an uncommitted response diagnostic.
+      retainedTrace = independentContextCopy(sourceContext);
+    } else {
+      const [baseline, selected] = await Promise.all([
+        this.#worlds.recoverEndpoint(
+          input.targetWorldRoot === undefined
+            ? input.targetWorldId
+            : input.sourceWorldId,
+          sourceContext.baselineHead,
+        ),
+        this.#worlds.recoverEndpoint(
+          input.targetWorldRoot === undefined
+            ? input.targetWorldId
+            : input.sourceWorldId,
+          input.sourceHead,
+        ),
+      ]);
+      const traceRetention = prepareForkTrace(
+        sourceContext,
+        input.sourceEvents,
+      );
+      const derivedBinding =
+        input.targetBinding ??
+        (await this.#worlds.bindPlayCallChain(input.targetWorldId));
+      retainedTrace = traceRetention.atEndpoint({
+        baseline,
+        selected,
+        binding: derivedBinding,
+      });
+    }
     const now = Date.now();
     const timelineGeneration = this.#worlds.playTimeline.newGeneration();
     let previousChainId: string | null = null;
@@ -1446,6 +1522,7 @@ export class PlayCallChain {
       );
       const previousContext = {
         ...independentContextCopy(context),
+        ...(input.markImportedContexts ? { importedFromArchive: true } : {}),
         schemaVersion: 3,
         kind: "play_call_chain",
         worldId: input.targetWorldId,
@@ -1462,11 +1539,15 @@ export class PlayCallChain {
           targetWorldRoot: input.targetWorldRoot,
           source: context,
           target: previousContext,
+          ...(input.retainCompleteTimeline
+            ? { retainCompleteContext: true }
+            : {}),
         });
       previousChainId = chainId;
     }
     const derived: PersistedPlayCallChain = {
       ...retainedTrace,
+      ...(input.markImportedContexts ? { importedFromArchive: true } : {}),
       schemaVersion: 3,
       kind: "play_call_chain",
       chainId: derivedChainId(
@@ -1478,7 +1559,9 @@ export class PlayCallChain {
       previousContexts: [],
       previousChainId,
       timelineGeneration,
-      parentHead: input.sourceHead,
+      parentHead: input.retainCompleteTimeline
+        ? sourceContext.parentHead
+        : input.sourceHead,
       updatedAt: now,
     };
     if (input.targetWorldRoot === undefined)
@@ -1489,6 +1572,9 @@ export class PlayCallChain {
         targetWorldRoot: input.targetWorldRoot,
         source: sourceContext,
         target: structuredClone(derived),
+        ...(input.retainCompleteTimeline
+          ? { retainCompleteContext: true }
+          : {}),
       });
     if (input.targetWorldRoot !== undefined) {
       const retainedContexts = [
@@ -1567,17 +1653,7 @@ export class PlayCallChain {
     const exchange = session.exchange + 1;
     const nextRequest = createRequest(session, modelHost, exchange, [
       ...session.transcript,
-      ...playerInputAppend({
-        history: Object.fromEntries(
-          session.history.map(({ path, contents }) => [path, contents]),
-        ),
-        checkpoint: session.narrativeCheckpoint,
-        text: playerText,
-        locale: this.#compiler.locale,
-        checkpointAvailable: currentPlayPrompt(session).tools.some(
-          ({ name }) => name === "world_checkpoint",
-        ),
-      }),
+      ...playerInputAppend(playerText),
     ]);
     const operationKey = `player:${exchangeId}`;
     const playerOperationId = operationId(session.chainId, operationKey);
@@ -1626,14 +1702,17 @@ export class PlayCallChain {
         error instanceof Error
           ? error.message
           : "Failed to write the original player text.";
+      const failureKind = classifyPlayFailure(error, false);
       session.events.push({
         id: session.nextEventId++,
         kind: "failure",
         message,
+        failureKind,
       });
       session.status = "interrupted";
       session.canRetry = false;
       session.lastFailure = message;
+      session.lastFailureKind = failureKind;
       await this.#persist(session);
       await this.#worlds.playAdvances.markSettled(advance, session.parentHead);
       throw new PlayCallChainError(message);
@@ -1715,6 +1794,7 @@ export class PlayCallChain {
     session.canRetry = true;
     session.lastFailure =
       "The player message is committed; the frozen model request is ready to continue.";
+    session.lastFailureKind = "retryable";
     await this.#persist(session);
     crashAtPlayAdvanceEdge("after_timeline_settled");
     await this.#worlds.playAdvances.markSettled(advance, outcome.head);
@@ -2070,6 +2150,7 @@ export class PlayCallChain {
     session.exchange = Math.max(session.exchange, advance.exchange);
     session.canRetry = false;
     session.lastFailure = null;
+    delete session.lastFailureKind;
     let result:
       | { kind: "terminal"; status: "ready" | "interrupted" }
       | { kind: "continue"; nextRequest: ModelHostExchange };
@@ -2080,9 +2161,11 @@ export class PlayCallChain {
         id: session.nextEventId++,
         kind: "failure",
         message,
+        failureKind: "context_unavailable",
       });
       session.status = "interrupted";
       session.lastFailure = message;
+      session.lastFailureKind = "context_unavailable";
       result = { kind: "terminal", status: "interrupted" };
     } else if (hasToolCalls) {
       session.exchange += 1;
@@ -2091,12 +2174,17 @@ export class PlayCallChain {
         session.lastRequest?.maxOutputTokens ?? 1,
         session.exchange,
       );
+      if (session.lastRequest?.modelConfig !== undefined)
+        nextRequest.modelConfig = structuredClone(
+          session.lastRequest.modelConfig,
+        );
       session.lastRequest = structuredClone(nextRequest);
       session.lastRequestAttempt = 0;
       session.status = "interrupted";
       session.canRetry = true;
       session.lastFailure =
         "The completed tool response is settled; its frozen continuation request is ready.";
+      session.lastFailureKind = "retryable";
       result = { kind: "continue", nextRequest };
     } else {
       session.status = settlement.visibleText ? "ready" : "interrupted";
@@ -2107,8 +2195,10 @@ export class PlayCallChain {
           id: session.nextEventId++,
           kind: "failure",
           message,
+          failureKind: "other",
         });
         session.lastFailure = message;
+        session.lastFailureKind = "other";
       }
       result = { kind: "terminal", status: session.status };
     }
@@ -2164,7 +2254,8 @@ export class PlayCallChain {
     signal: AbortSignal,
     observer?: PlayCallChainObserver,
   ): Promise<V1PlayCallChainView> {
-    let request = structuredClone(firstRequest);
+    let request =
+      modelHost.freezeRequest?.(firstRequest) ?? structuredClone(firstRequest);
     let attempt = firstAttempt;
     for (;;) {
       this.#setInvocationAbortable(session.chainId, true);
@@ -2179,6 +2270,7 @@ export class PlayCallChain {
       session.status = "running";
       session.canRetry = false;
       session.lastFailure = null;
+      delete session.lastFailureKind;
       session.lastRequest = structuredClone(request);
       session.lastRequestAttempt = attempt;
       const responseExchange = request.exchange ?? session.exchange;
@@ -2287,22 +2379,34 @@ export class PlayCallChain {
           error instanceof Error
             ? error.message
             : "The model request was interrupted.";
-        session.events.push({
-          id: session.nextEventId++,
-          kind:
-            error instanceof ModelHostCancelledError
-              ? "cancellation"
-              : "failure",
-          message,
-        });
         session.status = "interrupted";
         const requiresFreshContext =
+          error instanceof ModelHostBindingMismatchError ||
           error instanceof ModelHostContinuationError ||
           error instanceof ModelHostOutcomeUnknownError ||
           modelHostFailureRequiresFreshContext(error);
         session.canRetry =
           !requiresFreshContext && error instanceof ModelHostFailureError;
         session.lastFailure = message;
+        if (error instanceof ModelHostCancelledError) {
+          delete session.lastFailureKind;
+          session.events.push({
+            id: session.nextEventId++,
+            kind: "cancellation",
+            message,
+          });
+        } else {
+          session.lastFailureKind = classifyPlayFailure(
+            error,
+            session.canRetry,
+          );
+          session.events.push({
+            id: session.nextEventId++,
+            kind: "failure",
+            message,
+            failureKind: session.lastFailureKind,
+          });
+        }
         await this.#persist(session);
         await this.#worlds.playAdvances.markSettled(
           advance,
@@ -2453,14 +2557,17 @@ export class PlayCallChain {
               },
             ],
           });
+        const failureKind = classifyPlayFailure(error, false);
         session.events.push({
           id: session.nextEventId++,
           kind: "failure",
           message,
+          failureKind,
         });
         session.status = "interrupted";
         session.canRetry = false;
         session.lastFailure = message;
+        session.lastFailureKind = failureKind;
         await this.#persist(session);
         this.#notifySnapshot(observer, session);
         return projectView(session);
@@ -2496,6 +2603,7 @@ export class PlayCallChain {
     session.lastRequest = structuredClone(request);
     session.lastRequestAttempt = Math.max(0, attempt - 1);
     session.lastFailure = message;
+    delete session.lastFailureKind;
     await this.#persist(session);
     if (advance !== undefined)
       await this.#worlds.playAdvances.markSettled(advance, session.parentHead);
@@ -2802,14 +2910,21 @@ export class PlayCallChain {
       : canRetry
         ? "The service stopped before model dispatch; the frozen request can be retried."
         : "The service stopped before preparing a model request; use a fresh context.";
+    const failureKind = dispatchMayHaveStarted
+      ? "outcome_unknown"
+      : canRetry
+        ? "retryable"
+        : "other";
     session.events.push({
       id: session.nextEventId++,
       kind: "failure",
       message,
+      failureKind,
     });
     session.status = "interrupted";
     session.canRetry = canRetry;
     session.lastFailure = message;
+    session.lastFailureKind = failureKind;
     await this.#persist(session);
   }
 
@@ -2870,12 +2985,13 @@ function createRequest(
   exchange: number,
   appended: readonly ModelHostAppendItem[] = session.transcript,
 ): ModelHostExchange {
-  return createRequestWithMaxOutputTokens(
+  const request = createRequestWithMaxOutputTokens(
     session,
     modelHost.binding().maxOutputTokens,
     exchange,
     appended,
   );
+  return modelHost.freezeRequest?.(request) ?? request;
 }
 
 function createRequestWithMaxOutputTokens(
@@ -3131,7 +3247,11 @@ function mergeChangedDocuments(
 function projectContext(
   context: PersistedPlayCallChainContext,
 ): V1PlayCallChainContextView {
+  const response = context.events.findLast(
+    (event) => event.kind === "assistant" && event.status === "completed",
+  );
   return {
+    ...(context.importedFromArchive ? { requiresFreshContext: true } : {}),
     chainId: context.chainId,
     baselineHead: context.baselineHead,
     ...(context.baselineHistoryLength === undefined
@@ -3139,6 +3259,23 @@ function projectContext(
       : { baselineHistoryLength: context.baselineHistoryLength }),
     parentHead: context.parentHead,
     playPreset: structuredClone(recordedPlayPrompt(context).playPreset),
+    ...(context.modelBinding === undefined
+      ? {}
+      : {
+          contextWindowTokens:
+            context.lastRequest?.modelConfig?.contextWindowTokens ??
+            context.modelBinding.contextWindowTokens,
+        }),
+    ...(response?.kind !== "assistant"
+      ? {}
+      : {
+          latestCompletedResponse: {
+            id: response.id,
+            ...(response.usage === undefined
+              ? {}
+              : { usage: structuredClone(response.usage) }),
+          },
+        }),
     status: context.status,
     canRetry: context.canRetry,
     events: context.events
@@ -3146,6 +3283,9 @@ function projectContext(
       .map((event) => projectActivityEvent(event)),
     changedDocuments: structuredClone(context.changedDocuments),
     lastFailure: context.lastFailure,
+    ...(context.lastFailureKind === undefined
+      ? {}
+      : { lastFailureKind: context.lastFailureKind }),
     updatedAt: context.updatedAt,
   };
 }
@@ -3158,7 +3298,7 @@ function projectActivityEvent(
     event.kind === "failure" ||
     event.kind === "cancellation"
   )
-    return structuredClone(event);
+    return structuredClone(projectLegacyModelBindingFailure(event));
   if (event.kind === "assistant") {
     const { reasoning, toolFragment, usage, ...summary } = event;
     void reasoning;
@@ -3402,7 +3542,11 @@ function assertSessionModelHostBinding(
     throw new PlayCallChainError(
       "This model context predates durable provider continuation bindings; start a fresh context.",
     );
-  assertModelHostBinding(session.modelBinding, modelHost);
+  if (session.modelBinding.provider !== modelHost.binding().provider)
+    throw new PlayCallChainError(
+      "The selected model protocol differs from this context. Switch back to its original protocol to continue, or start a fresh context.",
+      "model_protocol_mismatch",
+    );
 }
 
 function validateIdentity(value: string, label: string): void {

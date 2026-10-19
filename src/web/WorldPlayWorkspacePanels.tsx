@@ -260,6 +260,16 @@ export function ReadingPreferencesPopover({
           ×
         </button>
       </header>
+      <label className="world-reading-technical-toggle">
+        <input
+          type="checkbox"
+          checked={value.showTechnicalInfo}
+          onChange={(event) =>
+            onChange({ ...value, showTechnicalInfo: event.target.checked })
+          }
+        />
+        <span>{uiText("显示技术信息")}</span>
+      </label>
       <div className="world-density-picker">
         <span>{uiText("排版密度")}</span>
         <div>
@@ -620,6 +630,7 @@ function baseRef(handle: string): string {
 }
 
 export function WorldManagementDialog({
+  worldBackupExport,
   packageScriptPermission,
   world,
   worldTitle,
@@ -633,6 +644,7 @@ export function WorldManagementDialog({
   onControlFiles,
   onResetControl,
   onRename,
+  onExportStory,
   onDerive,
   onPreviewControl,
   onApplyControl,
@@ -640,6 +652,7 @@ export function WorldManagementDialog({
   modelConfigured,
   revisionLocked,
 }: {
+  worldBackupExport?: ReactNode;
   packageScriptPermission?: ReactNode;
   world: { worldId: string; head: string; runtime: unknown };
   worldTitle: string;
@@ -653,6 +666,7 @@ export function WorldManagementDialog({
   onControlFiles: (value: string) => void;
   onResetControl: () => void;
   onRename: () => void;
+  onExportStory: (format: "markdown" | "text") => void;
   onDerive: () => void;
   onPreviewControl: () => void;
   onApplyControl: () => void;
@@ -725,6 +739,28 @@ export function WorldManagementDialog({
               </button>
             </form>
           </article>
+          <article className="manage-card">
+            <div className="manage-card-copy">
+              <h3>{uiText("导出故事")}</h3>
+              <p>{uiText("下载当前时间线的开场白、玩家原文与主持正文。")}</p>
+            </div>
+            <div className="button-row">
+              <button
+                type="button"
+                disabled={pending !== null}
+                onClick={() => onExportStory("markdown")}
+              >
+                {uiText("导出 Markdown")}
+              </button>
+              <button
+                type="button"
+                disabled={pending !== null}
+                onClick={() => onExportStory("text")}
+              >
+                {uiText("导出纯文本")}
+              </button>
+            </div>
+          </article>
           <article className="manage-card derive-card">
             <div>
               <h3>{uiText("从当前端点创建分叉")}</h3>
@@ -740,6 +776,7 @@ export function WorldManagementDialog({
               {uiText("创建分叉")}
             </button>
           </article>
+          {worldBackupExport}
           <details className="manage-disclosure">
             <summary>{uiText("世界控制 · 高级编辑")}</summary>
             <article className="manage-card control-card">

@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
 import { gameplayLabel, type Gameplay } from "../protocol/gameplay.ts";
+import type {
+  ProtagonistTemplate,
+  ProtagonistTemplatesView,
+} from "../protocol/protagonistTemplates.ts";
+import { ProtagonistTemplateManager } from "./ProtagonistTemplateManager.tsx";
 import type { ContentTreeFile } from "../protocol/v1.ts";
 import type { RuntimeClient } from "./runtimeClient.ts";
 import { getWebLocale, uiText } from "./i18n.ts";
@@ -14,6 +19,7 @@ export function CreateWorldScreen({
   onCreate,
   onEdit,
   onConfigureModel,
+  onNavigationLockChange,
 }: {
   client: Pick<RuntimeClient, "request">;
   packages: readonly {
@@ -26,10 +32,40 @@ export function CreateWorldScreen({
   pending: boolean;
   modelConfigured: boolean;
   onSelect: (id: string) => void;
-  onCreate: () => void;
+  onCreate: (template?: ProtagonistTemplate) => void;
   onEdit: () => void;
   onConfigureModel: () => void;
+  onNavigationLockChange?: (locked: boolean) => void;
 }): React.JSX.Element {
+  const [templates, setTemplates] = useState<ProtagonistTemplate[]>([]);
+  const [templateId, setTemplateId] = useState("");
+  const [templatesLoading, setTemplatesLoading] = useState(true);
+  const [templatesFailure, setTemplatesFailure] = useState("");
+  const [templateRead, setTemplateRead] = useState(0);
+  const [managingTemplates, setManagingTemplates] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void client
+      .request<ProtagonistTemplatesView>({ type: "protagonist-templates.read" })
+      .then((view) => {
+        if (active) {
+          setTemplates(view.templates);
+          setTemplatesFailure("");
+        }
+      })
+      .catch((error: unknown) => {
+        if (active)
+          setTemplatesFailure(
+            error instanceof Error ? error.message : uiText("主角模板读取失败"),
+          );
+      })
+      .finally(() => {
+        if (active) setTemplatesLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [client, templateRead]);
   const selected = packages.find(({ localId }) => localId === selectedId);
   const [preview, setPreview] = useState<{
     packageId: string;
@@ -95,6 +131,44 @@ export function CreateWorldScreen({
             </select>
           </label>
         )}
+        <label>
+          {uiText("主角模板")}
+          <select
+            aria-label={uiText("主角模板")}
+            value={templateId}
+            disabled={pending || templatesLoading}
+            onChange={(event) => setTemplateId(event.currentTarget.value)}
+          >
+            <option value="">{uiText("不使用")}</option>
+            {templates.map((template) => (
+              <option key={template.id} value={template.id}>
+                {template.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          type="button"
+          disabled={pending || templatesLoading || templatesFailure !== ""}
+          onClick={() => setManagingTemplates(true)}
+        >
+          {uiText("管理主角模板")}
+        </button>
+        {templatesFailure && (
+          <p role="alert">
+            {templatesFailure}
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => {
+                setTemplatesLoading(true);
+                setTemplateRead((value) => value + 1);
+              }}
+            >
+              {uiText("重新读取主角模板")}
+            </button>
+          </p>
+        )}
         {selected?.status === "needs_repair" && (
           <p role="status">{uiText("内容包需要修复后才能创建世界。")}</p>
         )}
@@ -109,7 +183,9 @@ export function CreateWorldScreen({
           disabled={
             pending || !modelConfigured || selected?.status !== "usable"
           }
-          onClick={onCreate}
+          onClick={() =>
+            onCreate(templates.find(({ id }) => id === templateId))
+          }
         >
           {pending ? uiText("正在创建世界…") : uiText("从当前内容包创建")}
         </button>
@@ -136,6 +212,21 @@ export function CreateWorldScreen({
           <p role="status">{uiText("正在读取开场白…")}</p>
         ) : null}
       </article>
+      {managingTemplates && (
+        <ProtagonistTemplateManager
+          client={client}
+          templates={templates}
+          onChange={(view) => {
+            setTemplates(view.templates);
+            if (!view.templates.some(({ id }) => id === templateId))
+              setTemplateId("");
+          }}
+          onClose={() => setManagingTemplates(false)}
+          {...(onNavigationLockChange === undefined
+            ? {}
+            : { onNavigationLockChange })}
+        />
+      )}
     </main>
   );
 }

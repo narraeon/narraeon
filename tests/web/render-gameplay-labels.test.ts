@@ -46,7 +46,14 @@ describe("玩法标签", () => {
           },
         ],
         worlds: [
-          { worldId: "world-1", title: "雾港第一夜", gameplay: tabletopBag },
+          {
+            worldId: "world-1",
+            title: "雾港第一夜",
+            gameplay: tabletopBag,
+            lastActivityAt: null,
+            excerpt: null,
+            playerTurns: 0,
+          },
         ],
         selectedPackageId: "package-tabletop",
         modelConfigured: true,
@@ -57,6 +64,8 @@ describe("玩法标签", () => {
         onImportArchiveChange: vi.fn(),
         onCreateWorld: vi.fn(),
         onCreatePackage: vi.fn(),
+        onCreateSamplePackage: vi.fn(),
+        onConfigureModel: vi.fn(),
         onImportPackage: vi.fn(),
         onOpenPackage: vi.fn(),
         onRenamePackage: vi.fn(),
@@ -86,10 +95,12 @@ describe("玩法标签", () => {
 
   test("新建世界的内容包选项与开场预览都显示玩法标签", async () => {
     const client = {
-      request: <T = unknown>() =>
-        Promise.resolve({
-          files: [{ path: "opening.md", contents: "雾起" }],
-        } as T),
+      request: <T = unknown>(input: { type: string }) =>
+        Promise.resolve(
+          input.type === "protagonist-templates.read"
+            ? { templates: [] }
+            : { files: [{ path: "opening.md", contents: "雾起" }] },
+        ) as Promise<T>,
     };
     render(
       createElement(CreateWorldScreen, {

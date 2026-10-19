@@ -13,6 +13,8 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import type { V1Request } from "../../src/protocol/v1.ts";
 import { App } from "../../src/web/App.tsx";
 import { HomeScreen } from "../../src/web/HomeScreen.tsx";
+import { setWebLocale } from "../../src/web/i18n.ts";
+import { relativeActivityTime } from "../../src/web/worldActivityPresentation.ts";
 import type { RuntimeClient } from "../../src/web/runtimeClient.ts";
 
 afterEach(cleanup);
@@ -22,6 +24,7 @@ describe("世界工作区主页", () => {
     const onOpenWorld = vi.fn();
     const onOpenPackage = vi.fn();
     const onImportPackage = vi.fn();
+    const onCreateSamplePackage = vi.fn();
     const importArchive = new File(["zip fixture"], "雾港来信.zip", {
       type: "application/zip",
     });
@@ -47,6 +50,9 @@ describe("世界工作区主页", () => {
             worldId: "world-1",
             title: "雾港第一夜",
             gameplay: { mode: "interactive-fiction" },
+            lastActivityAt: Date.now(),
+            excerpt: "船长把灯挂在舱门前。",
+            playerTurns: 6,
           },
         ],
         selectedPackageId: "package-ready",
@@ -58,6 +64,8 @@ describe("世界工作区主页", () => {
         onImportArchiveChange: vi.fn(),
         onCreateWorld: vi.fn(),
         onCreatePackage: vi.fn(),
+        onCreateSamplePackage,
+        onConfigureModel: vi.fn(),
         onImportPackage,
         onOpenPackage,
         onRenamePackage: vi.fn(),
@@ -73,6 +81,12 @@ describe("世界工作区主页", () => {
     expect(screen.getByRole("button", { name: "新建世界" })).toBeTruthy();
     expect(screen.getByText(/1 份待修复/u)).toBeTruthy();
     expect(screen.getByText(/本地主持模型/u)).toBeTruthy();
+    expect(screen.getByText("刚刚")).toBeTruthy();
+    expect(screen.getByText("6 回合")).toBeTruthy();
+    expect(screen.getByText("船长把灯挂在舱门前。")).toBeTruthy();
+    expect(
+      document.querySelector("time")?.getAttribute("datetime"),
+    ).toBeTruthy();
 
     fireEvent.click(
       screen.getByRole("button", { name: "打开世界：雾港第一夜" }),
@@ -87,10 +101,15 @@ describe("世界工作区主页", () => {
     expect(screen.getByText(/雾港来信\.zip/u)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "导入 ZIP" }));
     expect(onImportPackage).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("button", { name: "从示例开始" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "从示例新建" }));
+    expect(onCreateSamplePackage).toHaveBeenCalledOnce();
   });
 
   test("为空工作区说明起步路径并阻止未选择 ZIP 时导入", () => {
     const onImportArchiveChange = vi.fn();
+    const onCreateSamplePackage = vi.fn();
+    const onConfigureModel = vi.fn();
     render(
       createElement(HomeScreen, {
         contentPackages: [],
@@ -104,6 +123,8 @@ describe("世界工作区主页", () => {
         onImportArchiveChange,
         onCreateWorld: vi.fn(),
         onCreatePackage: vi.fn(),
+        onCreateSamplePackage,
+        onConfigureModel,
         onImportPackage: vi.fn(),
         onOpenPackage: vi.fn(),
         onRenamePackage: vi.fn(),
@@ -117,6 +138,10 @@ describe("世界工作区主页", () => {
     expect(screen.getByText("还没有正在游玩的世界")).toBeTruthy();
     expect(screen.getByText("从一组人类可读文件开始")).toBeTruthy();
     expect(screen.getAllByText(/尚未配置/u).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "从示例开始" }));
+    expect(onCreateSamplePackage).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: "配置模型连接" }));
+    expect(onConfigureModel).toHaveBeenCalledOnce();
     expect(
       screen.getByRole("button", { name: "导入 ZIP" }).hasAttribute("disabled"),
     ).toBe(true);
@@ -142,6 +167,9 @@ describe("世界工作区主页", () => {
             worldId: "world-1",
             title: "雾港第一夜",
             gameplay: { mode: "interactive-fiction" },
+            lastActivityAt: null,
+            excerpt: null,
+            playerTurns: 0,
           },
         ],
         selectedPackageId: "",
@@ -153,6 +181,8 @@ describe("世界工作区主页", () => {
         onImportArchiveChange: vi.fn(),
         onCreateWorld: vi.fn(),
         onCreatePackage: vi.fn(),
+        onCreateSamplePackage: vi.fn(),
+        onConfigureModel: vi.fn(),
         onImportPackage: vi.fn(),
         onOpenPackage: vi.fn(),
         onRenamePackage: vi.fn(),
@@ -176,11 +206,28 @@ describe("世界工作区主页", () => {
         worldId: "world-1",
         title: "雾港第一夜",
         gameplay: { mode: "interactive-fiction" },
+        lastActivityAt: null,
+        excerpt: null,
+        playerTurns: 0,
       },
       "雾港第二夜",
     );
     expect(onOpenWorld).not.toHaveBeenCalled();
     expect(onDeleteWorld).not.toHaveBeenCalled();
+  });
+
+  test("相对活动时间使用界面语言，未来时间显示刚刚", () => {
+    const now = 1_790_000_000_000;
+    setWebLocale("zh-CN");
+    expect(relativeActivityTime(now - 3 * 60 * 60 * 1000, now)).toBe("3小时前");
+    expect(relativeActivityTime(now + 1000, now)).toBe("刚刚");
+    setWebLocale("en");
+    expect(relativeActivityTime(now - 3 * 60 * 60 * 1000, now)).toBe(
+      "3 hours ago",
+    );
+    expect(relativeActivityTime(now - 60 * 1000, now)).toBe("1 minute ago");
+    expect(relativeActivityTime(now, now)).toBe("Just now");
+    setWebLocale("zh-CN");
   });
 
   test("应用把世界卡片提交的新名称保存到 Runtime 并刷新工作区", async () => {

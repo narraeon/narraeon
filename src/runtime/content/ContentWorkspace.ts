@@ -26,6 +26,7 @@ import {
   normalizeCurrentContentTreeFiles,
 } from "./CurrentTreeContentLibrary.ts";
 import type { ContentTreeFile } from "./ContentTreeFile.ts";
+import { sampleContentPackageForLocale } from "../../shared/sample-packages/index.ts";
 import {
   inspectContentPackageCurrentTree,
   isContentPackageWorldDocumentPath,
@@ -121,6 +122,11 @@ export class ContentWorkspace {
         ...(chosen.mode === "tabletop" ? [gameplayFile(chosen)] : []),
       ],
     });
+  }
+
+  createSampleContentPackage(locale: AppLocale) {
+    const sample = sampleContentPackageForLocale(locale);
+    return this.#currentTreeLibrary.createPackage(sample);
   }
 
   listCurrentTreeContentPackages() {

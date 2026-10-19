@@ -163,6 +163,8 @@ By default, the browser talks only to the same-machine Runtime. Local-first does
 
 When a provider, response-format, Runtime-tool, or candidate-check error occurs, Narraeon creates a JSONL incident under `NARRAEON_LOG_ROOT/ai-failures`. It preserves the raw provider exchange and later recovery attempts, including reasoning or thinking actually returned by the provider. It does not invent hidden reasoning or record API keys and request headers. The files can still contain private prompts, world content, tool arguments, and provider-returned reasoning, so treat the log directory as sensitive.
 
+Every Runtime request that fails, every play call that ends interrupted, and every failed live conversation sync is also appended to `NARRAEON_LOG_ROOT/runtime-errors/<UTC date>.jsonl` with the request type, its identifiers (world, context, event, and operation IDs), and the error message, code, stack, and cause chain. Player and world text from the request is not recorded. Include the matching line when reporting a bug.
+
 ## Development
 
 ```bash

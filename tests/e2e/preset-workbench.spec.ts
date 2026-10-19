@@ -324,6 +324,9 @@ test("A 工作台真实保存、独立三产物、正则、JS、导入及下一�
     await expect(
       page.getByText("A45 narrative complete.", { exact: true }),
     ).toBeVisible();
+    // Narrative commits before followups finish. The composer is enabled only
+    // once the complete invocation, including its artifact generation, settles.
+    await expect(page.getByLabel("你的行动")).toBeEnabled({ timeout: 30000 });
     await expect(
       page
         .frameLocator(`iframe[title="${names[0]}"]`)

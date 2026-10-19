@@ -1,3 +1,6 @@
+import { WorldArchives } from "./archive/WorldArchives.ts";
+import { WorldArchiveError } from "./archive/WorldArchiveZip.ts";
+import { FileNativeWorldCreationError } from "./world/FileNativeWorldStore.ts";
 import type { WorldExtensionsView } from "../protocol/worldExtensions.ts";
 import { PackageScriptPermissions } from "./extension/PackageScriptPermissions.ts";
 import { comparePromptPrefixes } from "./prompt/WorldPromptDiagnostics.ts";
@@ -10,6 +13,7 @@ import {
 import {
   V1ProtocolError,
   v1Protocol,
+  type V1PlayCallChainView,
   type V1Request,
   type V1Response,
 } from "../protocol/v1.ts";
@@ -29,10 +33,7 @@ import {
 import { contentTreeFingerprint } from "./content/ContentTreeFingerprint.ts";
 import { inspectContentPackageCurrentTree } from "./content/FileNativeContentTree.ts";
 import { FileNativeModelHost } from "./model/FileNativeModelAdapters.ts";
-import {
-  equalModelHostBinding,
-  type ModelHostBinding,
-} from "./model/ModelHost.ts";
+import { type ModelHostBinding } from "./model/ModelHost.ts";
 import { ModelConnectionStore } from "./model/ModelConnectionStore.ts";
 import { FileNativeContinuityCorrection } from "./play/FileNativeContinuityCorrection.ts";
 import { fingerprintControl } from "./play/PlayDocumentTools.ts";
@@ -68,6 +69,8 @@ import {
 import { FileNativeWorldStore } from "./world/FileNativeWorldStore.ts";
 import { WorldDocumentStore } from "./world/WorldDocumentStore.ts";
 import { FileNativeAiFailureLog } from "./model/AiFailureLog.ts";
+import { FileNativeRuntimeErrorLog } from "./RuntimeErrorLog.ts";
+import { ProtagonistTemplateStore } from "./config/ProtagonistTemplateStore.ts";
 import { AppPreferencesStore } from "./config/AppPreferencesStore.ts";
 import { FileNativeWorldRevisionStore } from "./world-revision/FileNativeWorldRevisionStore.ts";
 import { WorldRevisionSession } from "./world-revision/WorldRevisionSession.ts";
@@ -83,6 +86,7 @@ import type {
 } from "../protocol/conversationObservation.ts";
 
 export class V1Runtime {
+  readonly worldArchives: WorldArchives;
   readonly #conversationChanges = new ConversationChanges();
   readonly #content: ContentWorkspace;
   readonly #playPresets: FileNativePlayPresetStore;
@@ -92,7 +96,9 @@ export class V1Runtime {
   readonly #corrections: FileNativeContinuityCorrection;
   readonly #playCallChains: PlayCallChain;
   readonly #failureLog: FileNativeAiFailureLog | undefined;
+  readonly #errorLog: FileNativeRuntimeErrorLog | undefined;
   readonly #preferences: AppPreferencesStore;
+  readonly #protagonistTemplates: ProtagonistTemplateStore;
   readonly #settingImprovements: SettingImprovementSession;
   readonly #worldRevisions: WorldRevisionSession;
   readonly #compiler = new FileNativePromptCompiler();
@@ -104,6 +110,7 @@ export class V1Runtime {
     logRoot?: string;
   }) {
     this.#preferences = new AppPreferencesStore(input.configRoot);
+    this.#protagonistTemplates = new ProtagonistTemplateStore(input.configRoot);
     this.#content = new ContentWorkspace(input.dataRoot, {
       locale: () => this.#locale,
     });
@@ -116,6 +123,10 @@ export class V1Runtime {
       input.logRoot === undefined
         ? undefined
         : new FileNativeAiFailureLog(join(input.logRoot, "ai-failures"));
+    this.#errorLog =
+      input.logRoot === undefined
+        ? undefined
+        : new FileNativeRuntimeErrorLog(join(input.logRoot, "runtime-errors"));
     this.#playCallChains = new PlayCallChain(
       this.#worlds,
       this.#compiler,
@@ -123,6 +134,11 @@ export class V1Runtime {
       this.#failureLog,
       (id) => this.#conversationChanges.publish(`play:${id}`),
     );
+    this.worldArchives = new WorldArchives({
+      dataRoot: input.dataRoot,
+      worlds: this.#worlds,
+      chains: this.#playCallChains,
+    });
     this.#models = new ModelConnectionStore(input.configRoot);
     this.#corrections = new FileNativeContinuityCorrection(this.#worlds, {
       compiler: this.#compiler,
@@ -228,6 +244,7 @@ export class V1Runtime {
     this.#locale = (await this.#preferences.view()).locale;
     this.#compiler.setLocale(this.#locale);
     await this.#playPresets.initialize();
+    await this.worldArchives.initialize();
   }
 
   async handle(
@@ -236,11 +253,25 @@ export class V1Runtime {
   ): Promise<V1Response> {
     try {
       const result = await this.#dispatch(request, playCallChainObserver);
+      await this.#recordPlayInterruption(request, result);
       return { protocol: v1Protocol, result };
+    } catch (error) {
+      await this.#errorLog?.recordRequestFailure(request, error);
+      if (error instanceof WorldArchiveError)
+        throw new V1ProtocolError(error.code, error.message, { cause: error });
+      if (
+        request.type === "world.archive.export" &&
+        error instanceof FileNativeWorldCreationError &&
+        (error.code === "operation_conflict" ||
+          error.code === "inconsistent_materialization")
+      )
+        throw new V1ProtocolError(error.code, error.message, { cause: error });
+      throw error;
     } finally {
       // Explicit commands may partially settle before failing. Readers recover
       // through the same Runtime projection, never infer success from this signal.
       if (
+        request.type !== "world.story.export" &&
         !/\.(read|status|overview|inspect|page|detail|list|preview)$/.test(
           request.type,
         )
@@ -253,6 +284,47 @@ export class V1Runtime {
         }
       }
     }
+  }
+
+  async #recordPlayInterruption(
+    request: V1Request,
+    result: unknown,
+  ): Promise<void> {
+    if (
+      this.#errorLog === undefined ||
+      (request.type !== "play.chain.start" &&
+        request.type !== "play.chain.append")
+    )
+      return;
+    const chain = result as Partial<V1PlayCallChainView> | null;
+    if (
+      chain?.status !== "interrupted" ||
+      typeof chain.lastFailure !== "string" ||
+      chain.events?.at(-1)?.kind === "cancellation"
+    )
+      return;
+    await this.#errorLog.recordPlayInterruption(request, {
+      message: chain.lastFailure,
+      ...(chain.lastFailureKind === undefined
+        ? {}
+        : { kind: chain.lastFailureKind }),
+    });
+  }
+
+  async recordConversationFailure(
+    target: ConversationTarget,
+    error: unknown,
+  ): Promise<void> {
+    await this.#errorLog?.recordRequestFailure(
+      {
+        type: `${target.kind}.observe`,
+        targetId: target.id,
+        ...("sessionId" in target && target.sessionId !== undefined
+          ? { sessionId: target.sessionId }
+          : {}),
+      },
+      error,
+    );
   }
 
   subscribeConversation(
@@ -338,6 +410,14 @@ export class V1Runtime {
         await this.#playPresets.syncBuiltinDefaultLocale();
         return preferences;
       }
+      case "protagonist-templates.read":
+        return this.#protagonistTemplates.view();
+      case "protagonist-templates.save":
+        return this.#protagonistTemplates.save(request);
+      case "protagonist-templates.copy":
+        return this.#protagonistTemplates.copy(request.id);
+      case "protagonist-templates.delete":
+        return this.#protagonistTemplates.delete(request.id);
       case "model.read":
         return this.#models.view();
       case "model.save":
@@ -366,6 +446,8 @@ export class V1Runtime {
           throw error;
         }
       }
+      case "content.create-sample":
+        return this.#content.createSampleContentPackage(request.locale);
       case "content.scripts.read":
         return this.#content.packageScriptPermissions(request.packageId);
       case "content.scripts.set":
@@ -611,12 +693,22 @@ export class V1Runtime {
         return this.#worlds.getCreationOutcome(request.operationId);
       case "world.rename":
         return this.#worlds.renameWorld(request.worldId, request.name);
+      case "world.story.export":
+        return this.#worlds.exportStory(
+          request.worldId,
+          request.format,
+          this.#locale,
+        );
       case "world.delete":
         return playCall(async () => {
           await this.#worlds.assertWorldRevisionUnlocked(request.worldId);
           this.#playCallChains.forgetWorld(request.worldId);
           return this.#worlds.deleteWorld(request.worldId);
         });
+      case "world.archive.export":
+        return this.worldArchives.exportWorld(request);
+      case "world.archive.import":
+        return this.worldArchives.importWorld(request);
       case "world.read": {
         const head = await this.#worlds.currentHead(request.worldId);
         const playerViews = await this.#worlds.renderPlayerViewsAtHead(
@@ -656,6 +748,9 @@ export class V1Runtime {
           playCallChain: null,
           playTimeline,
           worldRevision: revisionEpoch,
+          archiveNeedsFreshContext: await this.#worlds.archiveNeedsFreshContext(
+            request.worldId,
+          ),
         };
       }
       case "world.surface.read":
@@ -816,7 +911,7 @@ export class V1Runtime {
           hostPresetId: preset.id,
         });
         await this.#reconcileResultArtifacts(result);
-        return result;
+        return { outcome: result.outcome, world: result.world };
       }
       case "play.chain.revise-player": {
         const base = {
@@ -928,8 +1023,7 @@ export class V1Runtime {
         const continueContext =
           currentContext !== null &&
           !currentContext.stale &&
-          frozenBinding !== undefined &&
-          equalModelHostBinding(frozenBinding, modelBinding);
+          frozenBinding?.provider === modelBinding.provider;
         const baseline = continueContext
           ? await this.#worlds.bindPlayCallChainAt(
               request.worldId,
@@ -1380,7 +1474,7 @@ async function playCall<Value>(
     return await operation();
   } catch (error: unknown) {
     if (error instanceof PlayCallChainError)
-      throw new V1ProtocolError("invalid_request", error.message, {
+      throw new V1ProtocolError(error.code, error.message, {
         cause: error,
       });
     throw error;

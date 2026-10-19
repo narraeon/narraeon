@@ -1,5 +1,4 @@
 import { captureNarrativeOrigin } from "../history/HistoryBackground.ts";
-import type { AppLocale } from "../../protocol/appPreferences.ts";
 import type {
   V1PlayCallChainEvent,
   V1PlayCallChainView,
@@ -55,15 +54,11 @@ export function preparePlayerRevisionTrace(
   >;
   return {
     // This append precedes the operation's materialization check, as before.
-    withReplacement(
-      selected: FileNativeRecoveredEndpoint,
-      replacement: {
-        head: string;
-        exchangeId: string;
-        text: string;
-        locale: AppLocale;
-      },
-    ) {
+    withReplacement(replacement: {
+      head: string;
+      exchangeId: string;
+      text: string;
+    }) {
       const events: V1PlayCallChainEvent[] = [
         ...prefix,
         {
@@ -77,20 +72,7 @@ export function preparePlayerRevisionTrace(
       ];
       const continuedTranscript = [
         ...transcript,
-        ...playerInputAppend({
-          history: Object.fromEntries(
-            selected.history.map(({ messageId, exactText }) => [
-              messageId,
-              exactText,
-            ]),
-          ),
-          checkpoint: selected.narrativeCheckpoint,
-          text: replacement.text,
-          locale: replacement.locale,
-          checkpointAvailable: source.tools.some(
-            ({ name }) => name === "world_checkpoint",
-          ),
-        }),
+        ...playerInputAppend(replacement.text),
       ];
       return {
         atEndpoint(endpoint: TraceEndpoint): RetainedPlayTrace {
@@ -173,6 +155,7 @@ function assembleRetainedTrace(
   );
   const lastEvent = selection.events.at(-1);
   return {
+    ...(source.importedFromArchive ? { importedFromArchive: true } : {}),
     continuityContextId: source.continuityContextId ?? source.chainId,
     baselineHead: source.baselineHead,
     baselineHistoryLength:

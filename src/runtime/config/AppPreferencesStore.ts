@@ -23,7 +23,7 @@ const preferencesFileName = "preferences-v1.json";
 
 type AppPreferencesDocument =
   | { schemaVersion: 1; locale: AppPreferences["locale"] }
-  | ({ schemaVersion: 2 } & AppPreferences);
+  | ({ schemaVersion: 3 } & AppPreferences);
 
 export class AppPreferencesStore {
   readonly #configRoot: string;
@@ -54,7 +54,7 @@ export class AppPreferencesStore {
         throw new Error("Unsupported app preferences update");
       const current = toView(await this.#readDocument());
       const document: AppPreferencesDocument = {
-        schemaVersion: 2,
+        schemaVersion: 3,
         locale: update.locale ?? current.locale,
         reading: structuredClone(update.reading ?? current.reading),
       };
@@ -86,7 +86,7 @@ export class AppPreferencesStore {
       if (!isMissingFile(error)) throw error;
     }
     return {
-      schemaVersion: 2,
+      schemaVersion: 3,
       locale: defaultAppLocale,
       reading: structuredClone(defaultAppReadingPreferences),
     };
@@ -131,21 +131,40 @@ function validateDocument(value: unknown): AppPreferencesDocument {
     return { schemaVersion: 1, locale: value.locale };
   if (
     "schemaVersion" in value &&
-    value.schemaVersion === 2 &&
+    (value.schemaVersion === 2 || value.schemaVersion === 3) &&
     "locale" in value &&
     isAppLocale(value.locale) &&
     "reading" in value &&
-    isAppReadingPreferences(value.reading) &&
     Object.keys(value).every(
       (key) => key === "schemaVersion" || key === "locale" || key === "reading",
     )
-  )
-    return {
-      schemaVersion: 2,
-      locale: value.locale,
-      reading: structuredClone(value.reading),
-    };
+  ) {
+    const reading =
+      value.schemaVersion === 2
+        ? isLegacyReadingPreferences(value.reading)
+          ? { ...value.reading, showTechnicalInfo: false }
+          : null
+        : value.reading;
+    if (isAppReadingPreferences(reading))
+      return {
+        schemaVersion: 3,
+        locale: value.locale,
+        reading: structuredClone(reading),
+      };
+  }
   throw new Error("App preferences file does not match a supported schema");
+}
+
+function isLegacyReadingPreferences(
+  value: unknown,
+): value is Omit<AppPreferences["reading"], "showTechnicalInfo"> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === 5 &&
+    isAppReadingPreferences({ ...value, showTechnicalInfo: false })
+  );
 }
 
 function toView(document: AppPreferencesDocument): AppPreferences {

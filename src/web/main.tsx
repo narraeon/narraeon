@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { App } from "./App.tsx";
+import { AppErrorBoundary } from "./AppErrorBoundary.tsx";
 import { RuntimeClient } from "./runtimeClient.ts";
 import "./styles.css";
 import "./workspace-layout.css";
@@ -15,6 +16,8 @@ const runtimeClient = new RuntimeClient();
 
 createRoot(root).render(
   <StrictMode>
-    <App client={runtimeClient} />
+    <AppErrorBoundary>
+      <App client={runtimeClient} />
+    </AppErrorBoundary>
   </StrictMode>,
 );

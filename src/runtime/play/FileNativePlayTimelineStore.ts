@@ -1,5 +1,13 @@
 import { isResolutionReceipt } from "../../protocol/resolution.ts";
 import {
+  legacyModelBindingFailure,
+  projectLegacyModelBindingFailure,
+} from "./LegacyModelBindingFailure.ts";
+import {
+  isPlayFailureKind,
+  type PlayFailureKind,
+} from "../../protocol/playFailure.ts";
+import {
   isNarrativeOrigin,
   type NarrativeOrigin,
 } from "../history/HistoryBackground.ts";
@@ -60,6 +68,8 @@ export interface PersistedDocumentAuthorizationCheckpoint {
 }
 
 export interface PersistedPlayCallChainContext {
+  /** Source-machine contexts stay readable but can never resume Provider state. */
+  importedFromArchive?: true;
   narrativeOrigin?: NarrativeOrigin;
   promptRuns?: PlayPromptRun[];
   /** Narrative context identity survives transport chain renaming on forks. */
@@ -95,6 +105,7 @@ export interface PersistedPlayCallChainContext {
   lastRequest: ModelHostExchange | null;
   lastRequestAttempt: number;
   lastFailure: string | null;
+  lastFailureKind?: PlayFailureKind;
   updatedAt: number;
 }
 
@@ -108,6 +119,7 @@ export interface PersistedPlayCallChain extends PersistedPlayCallChainContext {
 }
 
 interface PersistedContextIndex {
+  importedFromArchive?: true;
   schemaVersion: 3;
   kind: "play_context_index";
   worldId: string;
@@ -152,6 +164,7 @@ interface PersistedContextState {
   continuationDigest: string;
   lastRequestAttempt: number;
   lastFailure: string | null;
+  lastFailureKind?: PlayFailureKind;
   updatedAt: number;
 }
 
@@ -305,6 +318,7 @@ export class FileNativePlayTimelineStore {
     targetWorldRoot: string;
     source: PersistedPlayCallChainContext;
     target: PersistedPlayCallChain;
+    retainCompleteContext?: true;
   }): Promise<PlayContextPersistenceCursor> {
     assertIdentity(input.sourceWorldId, "Source world ID");
     assertIdentity(input.source.chainId, "Source call-chain ID");
@@ -332,6 +346,7 @@ export class FileNativePlayTimelineStore {
       input.target.documentAuthorizationCheckpoints ?? [],
     );
     if (
+      input.retainCompleteContext ||
       input.target.events.some(
         (event) => event.kind === "assistant" && event.status === "completed",
       )
@@ -550,6 +565,9 @@ export class FileNativePlayTimelineStore {
       continuationDigest,
       lastRequestAttempt: value.lastRequestAttempt,
       lastFailure: value.lastFailure,
+      ...(value.lastFailureKind === undefined
+        ? {}
+        : { lastFailureKind: value.lastFailureKind }),
       updatedAt: value.updatedAt,
     };
     await publishJson(join(root, "state.json"), state);
@@ -577,6 +595,24 @@ export class FileNativePlayTimelineStore {
     if (loaded !== null && loaded.value.timelineGeneration !== head.generation)
       throw new Error("Play timeline head generation is inconsistent");
     return loaded;
+  }
+
+  /** Read only the small active context index, never its transcript or bootstrap. */
+  async currentContextRequiresFreshContext(worldId: string): Promise<boolean> {
+    assertIdentity(worldId, "World ID");
+    const head = await this.#readTimelineHead(worldId);
+    if (head === null) return false;
+    const index = await readJson<unknown>(
+      join(this.#contextRoot(worldId, head.chainId), "index.json"),
+    );
+    assertContextIndex(index);
+    if (
+      index.worldId !== worldId ||
+      index.chainId !== head.chainId ||
+      index.timelineGeneration !== head.generation
+    )
+      throw new Error("Play context durable identity is inconsistent");
+    return index.importedFromArchive === true;
   }
 
   async readContext(
@@ -662,6 +698,7 @@ export class FileNativePlayTimelineStore {
       chainId,
       previousChainId: indexValue.previousChainId,
       timelineGeneration: indexValue.timelineGeneration,
+      ...(indexValue.importedFromArchive ? { importedFromArchive: true } : {}),
       ...(baseValue.continuityContextId === undefined
         ? {}
         : { continuityContextId: baseValue.continuityContextId }),
@@ -714,6 +751,9 @@ export class FileNativePlayTimelineStore {
       lastRequest,
       lastRequestAttempt: stateValue.lastRequestAttempt,
       lastFailure: stateValue.lastFailure,
+      ...(stateValue.lastFailureKind === undefined
+        ? {}
+        : { lastFailureKind: stateValue.lastFailureKind }),
       updatedAt: stateValue.updatedAt,
     };
     return {
@@ -905,7 +945,10 @@ export class FileNativePlayTimelineStore {
           kind: "event",
           chainId: pointer.chainId,
           current: pointer.chainId === head?.chainId,
-          event: summary,
+          ...(context.index.importedFromArchive
+            ? { requiresFreshContext: true }
+            : {}),
+          event: projectLegacyModelBindingFailure(summary),
         });
         pointer = { ...pointer, eventId: pointer.eventId - 1 };
         continue;
@@ -960,6 +1003,9 @@ export class FileNativePlayTimelineStore {
       activeStatus: active?.state.status ?? null,
       activeCanRetry: active?.state.canRetry ?? false,
       activeLastFailure: active?.state.lastFailure ?? null,
+      ...(active?.state.lastFailureKind === undefined
+        ? {}
+        : { activeLastFailureKind: active.state.lastFailureKind }),
       items: reverse.reverse(),
       nextCursor:
         pointer.chainId === null && pointer.genesisIndex < 0
@@ -986,7 +1032,7 @@ export class FileNativePlayTimelineStore {
     assertPlayEvent(event);
     if (event.id !== eventId)
       throw new Error("Play timeline event identity is inconsistent");
-    return normalizePlayEvent(event);
+    return projectLegacyModelBindingFailure(normalizePlayEvent(event));
   }
 
   newGeneration(): string {
@@ -1116,12 +1162,55 @@ export class FileNativePlayTimelineStore {
       stateValue.chainId !== chainId
     )
       throw new Error("Play context durable identity is inconsistent");
+    // Old versions persisted a configuration preflight failure as a terminal
+    // context failure. Recover only the disposition proven by its event prefix.
+    // Archive contexts and genuine provider failures retain their restrictions.
+    if (
+      !indexValue.importedFromArchive &&
+      stateValue.status === "interrupted" &&
+      stateValue.lastFailure === legacyModelBindingFailure &&
+      (stateValue.lastFailureKind === undefined ||
+        stateValue.lastFailureKind === "context_unavailable")
+    ) {
+      for (let id = stateValue.eventCount; id > 0; id -= 1) {
+        const event = await readJson<unknown>(
+          join(root, "events", numbered(id)),
+        );
+        assertPlayEvent(event);
+        if (
+          event.kind === "followup" ||
+          (event.kind === "failure" &&
+            event.message === legacyModelBindingFailure)
+        )
+          continue;
+        if (
+          event.kind === "assistant" &&
+          event.status === "completed" &&
+          event.responseKind === "narrative" &&
+          event.continuation === "available" &&
+          event.committedHead === stateValue.parentHead
+        ) {
+          stateValue.status = "ready";
+          stateValue.canRetry = false;
+          stateValue.lastFailure = null;
+          delete stateValue.lastFailureKind;
+        } else if (event.kind === "failure") {
+          stateValue.canRetry = event.failureKind === "retryable";
+          stateValue.lastFailure = event.message;
+          if (event.failureKind === undefined)
+            delete stateValue.lastFailureKind;
+          else stateValue.lastFailureKind = event.failureKind;
+        }
+        break;
+      }
+    }
     return { root, index: indexValue, state: stateValue };
   }
 }
 
 function contextIndex(value: PersistedPlayCallChain): PersistedContextIndex {
   return {
+    ...(value.importedFromArchive ? { importedFromArchive: true } : {}),
     schemaVersion: 3,
     kind: "play_context_index",
     worldId: value.worldId,
@@ -1259,6 +1348,8 @@ function assertContextIndex(
     !isRecord(value) ||
     value.schemaVersion !== 3 ||
     value.kind !== "play_context_index" ||
+    (value.importedFromArchive !== undefined &&
+      value.importedFromArchive !== true) ||
     typeof value.worldId !== "string" ||
     typeof value.chainId !== "string" ||
     (value.previousChainId !== null &&
@@ -1314,6 +1405,8 @@ function assertContextState(
     !/^[a-f0-9]{64}$/u.test(value.continuationDigest) ||
     !validCount(value.lastRequestAttempt) ||
     (value.lastFailure !== null && typeof value.lastFailure !== "string") ||
+    (value.lastFailureKind !== undefined &&
+      !isPlayFailureKind(value.lastFailureKind)) ||
     typeof value.updatedAt !== "number"
   )
     throw new Error("Play context state has an invalid shape");
@@ -1408,6 +1501,8 @@ function isReleasedPlayContext(
     (value.lastRequest !== null && !isRecord(value.lastRequest)) ||
     !validCount(value.lastRequestAttempt) ||
     (value.lastFailure !== null && typeof value.lastFailure !== "string") ||
+    (value.lastFailureKind !== undefined &&
+      !isPlayFailureKind(value.lastFailureKind)) ||
     typeof value.updatedAt !== "number"
   )
     return false;
@@ -1594,7 +1689,10 @@ function assertPlayEvent(
   }
   if (
     (value.kind !== "failure" && value.kind !== "cancellation") ||
-    typeof value.message !== "string"
+    typeof value.message !== "string" ||
+    (value.kind === "failure" &&
+      value.failureKind !== undefined &&
+      !isPlayFailureKind(value.failureKind))
   )
     throw new Error("Play timeline event has an invalid kind");
 }

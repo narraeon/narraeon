@@ -1,6 +1,11 @@
 export class PlayCallChainError extends Error {
-  constructor(message: string) {
+  readonly code: "invalid_request" | "model_protocol_mismatch";
+  constructor(
+    message: string,
+    code: PlayCallChainError["code"] = "invalid_request",
+  ) {
     super(message);
     this.name = "PlayCallChainError";
+    this.code = code;
   }
 }

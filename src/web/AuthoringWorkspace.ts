@@ -4,7 +4,10 @@ import type {
   V1SettingImprovementView,
 } from "../protocol/v1.ts";
 import { uiText } from "./i18n.ts";
-import type { ObserveConversation } from "./ConversationObserver.ts";
+import {
+  conversationConnectionText,
+  type ObserveConversation,
+} from "./ConversationObserver.ts";
 import {
   type AuthoringTarget,
   type AuthoringTargetSnapshot,
@@ -222,17 +225,10 @@ export class AuthoringWorkspace {
         }
         if (alive()) this.update({ now: Date.now() });
       },
-      (connection) => {
+      (connection, message) => {
         if (alive())
           this.update({
-            observationFailure:
-              connection === "connected"
-                ? null
-                : uiText(
-                    connection === "reconnecting"
-                      ? "对话连接已断开，正在重新连接…"
-                      : "对话同步失败，请重新打开此页面。",
-                  ),
+            observationFailure: conversationConnectionText(connection, message),
           });
       },
     );

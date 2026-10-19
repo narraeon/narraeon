@@ -23,6 +23,247 @@ import { defaultOrderedAuthorPrompts } from "../../src/shared/ordered-author-pro
 
 afterEach(cleanup);
 
+function delayedPresetCopyFixture() {
+  const { client, request } = fixture();
+  const original = request.getMockImplementation()!;
+  const base: PlayPresetScreenPreset = {
+    id: "preset-first",
+    name: "第一份预设",
+    revision: "rev-original",
+    files: structuredClone(firstPartyActionChoicesPresetFiles),
+    validation: { status: "valid" },
+  };
+  const other = { ...base, id: "preset-other", name: "第二份预设" };
+  const copied = { ...base, id: "preset-copy", name: "复制的预设" };
+  let library = { currentPresetId: base.id, presets: [base, other] };
+  let finishRead: (value: typeof library) => void = () => undefined;
+  request.mockImplementation(async (input) => {
+    if (input.type === "workspace.read")
+      return { ...((await original(input)) as object), playPresets: library };
+    if (input.type === "play.copy") {
+      library = { ...library, presets: [...library.presets, copied] };
+      return { preset: copied };
+    }
+    if (input.type === "play.read")
+      return new Promise((resolve) => {
+        finishRead = resolve;
+      });
+    return original(input);
+  });
+  return {
+    client,
+    request,
+    finishRead: () => finishRead(library),
+    firstId: base.id,
+    otherId: other.id,
+    copyId: copied.id,
+  };
+}
+
+test.each(["model-draft", "reopened-presets"])(
+  "离开预设页面后迟到的复制读取不能导航或覆盖当前选择：%s",
+  async (destination) => {
+    const scenario = delayedPresetCopyFixture();
+    render(createElement(App, { client: scenario.client }));
+    await screen.findByRole("heading", { name: "世界工作区" });
+    const presets = () =>
+      within(screen.getByRole("navigation", { name: "工作区导航" })).getByRole(
+        "button",
+        { name: "预设" },
+      );
+    fireEvent.click(presets());
+    expect(window.location.hash).toBe(`#/presets/${scenario.firstId}`);
+    fireEvent.click(screen.getByText("预设操作", { selector: "summary" }));
+    fireEvent.click(screen.getByRole("button", { name: "复制为新预设" }));
+    await waitFor(() =>
+      expect(scenario.request).toHaveBeenCalledWith({ type: "play.read" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "模型连接" }));
+    if (destination === "model-draft") {
+      fireEvent.change(screen.getByLabelText("配置名称"), {
+        target: { value: "新的模型草稿" },
+      });
+    } else {
+      fireEvent.click(presets());
+      fireEvent.change(screen.getByLabelText("切换预设"), {
+        target: { value: scenario.otherId },
+      });
+    }
+    const address = window.location.hash;
+    const historyLength = window.history.length;
+    await act(async () => {
+      scenario.finishRead();
+      await Promise.resolve();
+    });
+    expect(window.location.hash).toBe(address);
+    expect(window.history.length).toBe(historyLength);
+    if (destination === "model-draft") {
+      expect(screen.getByLabelText<HTMLInputElement>("配置名称").value).toBe(
+        "新的模型草稿",
+      );
+      expect(screen.queryByRole("heading", { name: "玩法预设" })).toBeNull();
+    } else {
+      expect(screen.getByLabelText<HTMLSelectElement>("切换预设").value).toBe(
+        scenario.otherId,
+      );
+      expect(window.location.hash).toBe(`#/presets/${scenario.otherId}`);
+    }
+  },
+);
+
+test("当前预设页面的选择和有效复制回调仍替换 URL", async () => {
+  const scenario = delayedPresetCopyFixture();
+  render(createElement(App, { client: scenario.client }));
+  await screen.findByRole("heading", { name: "世界工作区" });
+  fireEvent.click(
+    within(screen.getByRole("navigation", { name: "工作区导航" })).getByRole(
+      "button",
+      { name: "预设" },
+    ),
+  );
+  const historyLength = window.history.length;
+  fireEvent.change(screen.getByLabelText("切换预设"), {
+    target: { value: scenario.otherId },
+  });
+  expect(window.location.hash).toBe(`#/presets/${scenario.otherId}`);
+  expect(window.history.length).toBe(historyLength);
+  fireEvent.click(screen.getByText("预设操作", { selector: "summary" }));
+  fireEvent.click(screen.getByRole("button", { name: "复制为新预设" }));
+  await waitFor(() =>
+    expect(scenario.request).toHaveBeenCalledWith({ type: "play.read" }),
+  );
+  await act(async () => {
+    scenario.finishRead();
+    await Promise.resolve();
+  });
+  expect(screen.getByLabelText<HTMLSelectElement>("切换预设").value).toBe(
+    scenario.copyId,
+  );
+  expect(window.location.hash).toBe(`#/presets/${scenario.copyId}`);
+  expect(window.history.length).toBe(historyLength);
+  expect(screen.getByText("已复制为独立预设。")).toBeTruthy();
+});
+
+test("启动恢复指定内容包，读取地址不会创建新的内容包", async () => {
+  window.history.replaceState(null, "", "#/content/chosen");
+  const { client, request } = fixture();
+  render(createElement(App, { client }));
+  await screen.findByRole("heading", { name: "当前创作 · AI 设定完善" });
+  expect(window.location.hash).toBe("#/content/chosen");
+  expect(request.mock.calls.some(([r]) => r.type === "content.create")).toBe(
+    false,
+  );
+});
+
+test.each([
+  ["#/content", "找不到该内容包。"],
+  ["#/content/deleted", "找不到该内容包。"],
+  ["#/content/%E0%A4%A", "找不到该内容包。"],
+  ["#/world/deleted", "找不到该世界。"],
+  ["#/presets/deleted", "找不到该预设。"],
+  ["#/unknown", "找不到该页面。"],
+])("无效书签 %s 返回首页并显示通知", async (hash, message) => {
+  window.history.replaceState(null, "", hash);
+  const { client, request } = fixture();
+  render(createElement(App, { client }));
+  await screen.findByRole("heading", { name: "世界工作区" });
+  expect(screen.getByText(message)).toBeTruthy();
+  expect(window.location.hash).toBe("#/");
+  expect(request.mock.calls.some(([r]) => r.type === "content.create")).toBe(
+    false,
+  );
+});
+
+test("后退立即恢复地址并保留模型草稿", async () => {
+  const { client, request } = fixture();
+  render(createElement(App, { client }));
+  await screen.findByRole("heading", { name: "世界工作区" });
+  fireEvent.click(screen.getByRole("button", { name: "模型连接" }));
+  expect(window.location.hash).toBe("#/models");
+  fireEvent.change(screen.getByLabelText("配置名称"), {
+    target: { value: "未保存的模型名称" },
+  });
+  const calls = request.mock.calls.length;
+  window.history.replaceState(null, "", "#/");
+  fireEvent(window, new PopStateEvent("popstate"));
+  expect(window.location.hash).toBe("#/models");
+  expect(
+    screen.getByText("已保留当前页面的未保存修改，请保存或放弃后再切换。"),
+  ).toBeTruthy();
+  expect(screen.getByLabelText<HTMLInputElement>("配置名称").value).toBe(
+    "未保存的模型名称",
+  );
+  expect(request.mock.calls.length).toBe(calls);
+});
+
+test("世界创建进行中时后退保持来源页面和地址", async () => {
+  window.history.replaceState(null, "", "#/create");
+  const { client, request } = fixture();
+  const original = request.getMockImplementation()!;
+  let rejectCreation: (error: Error) => void = () => undefined;
+  request.mockImplementation((r) =>
+    r.type === "world.create"
+      ? new Promise((_resolve, reject) => {
+          rejectCreation = reject;
+        })
+      : original(r),
+  );
+  render(createElement(App, { client }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "从当前内容包创建" }),
+  );
+  await waitFor(() =>
+    expect(request.mock.calls.some(([r]) => r.type === "world.create")).toBe(
+      true,
+    ),
+  );
+  window.history.replaceState(null, "", "#/");
+  fireEvent(window, new PopStateEvent("popstate"));
+  expect(window.location.hash).toBe("#/create");
+  expect(
+    screen.getByText("已保留当前页面的未保存修改，请保存或放弃后再切换。"),
+  ).toBeTruthy();
+  await act(async () => {
+    rejectCreation(new Error("已结束创建测试"));
+    await Promise.resolve();
+  });
+  await screen.findByText("已结束创建测试");
+});
+
+test("较晚的内容读取不能覆盖更新的浏览器地址", async () => {
+  const { client, request } = fixture();
+  const original = request.getMockImplementation()!;
+  let finish: (value: unknown) => void = () => undefined;
+  request.mockImplementation((r) =>
+    r.type === "content.read"
+      ? new Promise((resolve) => {
+          finish = resolve;
+        })
+      : original(r),
+  );
+  render(createElement(App, { client }));
+  await screen.findByRole("heading", { name: "世界工作区" });
+  window.history.replaceState(null, "", "#/content/chosen");
+  fireEvent(window, new PopStateEvent("popstate"));
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith({
+      type: "content.read",
+      packageId: "chosen",
+    }),
+  );
+  window.history.replaceState(null, "", "#/models");
+  fireEvent(window, new PopStateEvent("popstate"));
+  await screen.findByLabelText("配置名称");
+  await act(async () => {
+    finish({ localId: "chosen", files: [], issues: [] });
+    await Promise.resolve();
+  });
+  expect(window.location.hash).toBe("#/models");
+  expect(
+    screen.queryByRole("heading", { name: "当前创作 · AI 设定完善" }),
+  ).toBeNull();
+});
+
 test.each(["model", "preset"])(
   "模型切换与预设删除提示可以各自关闭（先关闭 %s）",
   async (first) => {
@@ -274,13 +515,15 @@ test("文件草稿阻止全局导航与快捷创建，放弃草稿后恢复", as
 test("切换创建来源时迟到的开场读取不能替换当前预览", async () => {
   let resolveFirst: (value: unknown) => void = () => undefined;
   const request = vi.fn((r: V1Request) =>
-    r.type === "content.read" && r.packageId === "first"
-      ? new Promise((resolve) => {
-          resolveFirst = resolve;
-        })
-      : Promise.resolve({
-          files: [{ path: "opening.md", contents: "当前开场" }],
-        }),
+    r.type === "protagonist-templates.read"
+      ? Promise.resolve({ templates: [] })
+      : r.type === "content.read" && r.packageId === "first"
+        ? new Promise((resolve) => {
+            resolveFirst = resolve;
+          })
+        : Promise.resolve({
+            files: [{ path: "opening.md", contents: "当前开场" }],
+          }),
   );
   const props = {
     client: { request } as unknown as RuntimeClient,

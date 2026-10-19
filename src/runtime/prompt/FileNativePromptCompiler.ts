@@ -46,8 +46,6 @@ import { renderPlayerViewBindings } from "../world/PlayerViewBindings.ts";
 import {
   checkpointHistory,
   checkpointReplayBlocks,
-  playerInputAppend,
-  isPlayerRoundMarker,
   type NarrativeCheckpoint,
 } from "../play/PlayContinuity.ts";
 
@@ -812,7 +810,6 @@ export class FileNativePromptCompiler {
       playPreset,
       playCompilation?.bootstrap ?? this.compileBootstrap(input),
       playCompilation,
-      this.#locale,
     );
   }
 
@@ -826,7 +823,6 @@ export class FileNativePromptCompiler {
       playPreset,
       playCompilation.bootstrap,
       playCompilation,
-      this.#locale,
     );
   }
 
@@ -1588,18 +1584,7 @@ function promptPreview(
   playPreset: PlayPresetBinding | undefined,
   compilation: PromptCompilation,
   playCompilation: PlayPresetCompilation | undefined,
-  locale: AppLocale = defaultAppLocale,
 ): PromptPreview {
-  const marker = playerInputAppend({
-    history: input.world.history ?? {},
-    checkpoint: input.world.narrativeCheckpoint,
-    text: input.playerInput,
-    locale,
-    checkpointAvailable:
-      playCompilation?.toolUniverse.some(
-        ({ name }) => name === "world_checkpoint",
-      ) ?? false,
-  })[0];
   const result: PromptPreview = {
     diagnosticBinding: {
       endpoint: input.endpoint.id,
@@ -1620,17 +1605,6 @@ function promptPreview(
           initialAppend: {
             logical: { kind: "player", text: input.playerInput },
             provider: { role: "user", content: input.playerInput },
-            ...(isPlayerRoundMarker(marker)
-              ? {
-                  beforePlayer: {
-                    logical: marker,
-                    provider: {
-                      role: "user" as const,
-                      content: marker.text,
-                    },
-                  },
-                }
-              : {}),
           },
         }
       : {}),

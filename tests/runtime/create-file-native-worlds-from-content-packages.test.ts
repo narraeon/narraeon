@@ -347,6 +347,7 @@ describe("从内容包创建文件原生世界", () => {
     await expect(
       store.renameWorld(created.world.worldId, "  雾港第一夜  "),
     ).resolves.toEqual({
+      ...created.world,
       worldId: created.world.worldId,
       title: "雾港第一夜",
       parentEndpoint: "genesis",
@@ -356,6 +357,7 @@ describe("从内容包创建文件原生世界", () => {
     const reopened = new FileNativeWorldStore(root);
     expect(await reopened.listWorlds()).toEqual([
       {
+        ...created.world,
         worldId: created.world.worldId,
         title: "雾港第一夜",
         parentEndpoint: "genesis",
@@ -365,6 +367,7 @@ describe("从内容包创建文件原生世界", () => {
     expect(await reopened.getCreationOutcome("create-op-1")).toEqual({
       outcome: "created",
       world: {
+        ...created.world,
         worldId: created.world.worldId,
         title: "雾港第一夜",
         parentEndpoint: "genesis",

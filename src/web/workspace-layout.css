@@ -146,6 +146,12 @@
 .home-section-heading > button {
   margin-left: auto;
 }
+.home-content-library .home-section-heading {
+  flex-wrap: wrap;
+}
+.home-section-heading > button + button {
+  margin-left: 0;
+}
 .home-section-heading h2 {
   margin: 0;
   font-size: 16px;
@@ -179,15 +185,29 @@
   font-size: 16px;
   font-weight: 500;
 }
-.home-world-card-main {
+.home-world-card-story {
   flex: 1;
   min-width: 0;
   display: grid;
-  gap: 3px;
+  gap: 6px;
 }
 .home-world-card-gameplay {
   color: var(--muted);
   font-size: 12px;
+}
+.home-world-card-activity {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.home-world-card-excerpt {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 13px;
 }
 .home-world-card-action {
   display: flex;
@@ -395,10 +415,26 @@
 .world-reader-shell {
   height: 100%;
 }
+.world-reader-page {
+  --world-header-height: 80px;
+}
+/* Cover the story between the floating controls and behind the title. */
+.world-reader-shell::before {
+  content: "";
+  position: absolute;
+  z-index: 11;
+  inset: 0 0 auto;
+  height: var(--world-header-height);
+  background: var(--surface);
+  pointer-events: none;
+}
 .setting-story-column,
 .world-story-column {
   min-height: 100%;
   padding-top: 90px;
+}
+.world-story-column {
+  padding-top: calc(var(--world-header-height) + 10px);
 }
 .setting-reader-scroll,
 .world-reader-scroll,
@@ -1264,6 +1300,12 @@
   .world-story-column {
     padding-top: 86px;
   }
+  .world-reader-page {
+    --world-header-height: 76px;
+  }
+  .world-story-column {
+    padding-top: calc(var(--world-header-height) + 10px);
+  }
   .setting-floating-title {
     top: 82px;
   }
@@ -1336,5 +1378,57 @@
 @media (max-width: 42rem) {
   .world-rail-resize-handle {
     display: none;
+  }
+}
+
+.protagonist-template-scrim {
+  position: fixed;
+  z-index: 60;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgb(37 49 59 / 18%);
+}
+.protagonist-template-manager {
+  width: min(64rem, 100%);
+  max-height: 100%;
+  overflow: auto;
+  padding: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.protagonist-template-manager > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+.protagonist-template-columns {
+  display: grid;
+  grid-template-columns: minmax(10rem, 1fr) minmax(0, 3fr);
+  gap: 1rem;
+}
+.protagonist-template-columns nav,
+.protagonist-template-columns form,
+.protagonist-template-columns label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.protagonist-template-columns nav {
+  max-height: 65vh;
+  overflow: auto;
+}
+.protagonist-template-columns textarea {
+  min-height: 20rem;
+  resize: vertical;
+}
+@media (max-width: 600px) {
+  .protagonist-template-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .protagonist-template-columns nav {
+    max-height: 8rem;
   }
 }

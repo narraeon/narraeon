@@ -18,6 +18,9 @@ import {
   readGameplay,
   type Gameplay,
 } from "../../protocol/gameplay.ts";
+import type { V1StoryExport, V1StoryExportFormat } from "../../protocol/v1.ts";
+import { HistoryQuery } from "../history/HistoryQuery.ts";
+import { exportStory } from "../history/StoryExport.ts";
 import { PackageScriptPermissions } from "../extension/PackageScriptPermissions.ts";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -47,6 +50,12 @@ import {
 } from "../prompt/FileNativePromptCompiler.ts";
 import { PlayerViewRenderer } from "./PlayerViewRenderer.ts";
 import { WorldDocumentStore } from "./WorldDocumentStore.ts";
+import {
+  readWorldActivity,
+  updateWorldActivity,
+  type WorldActivity,
+  type WorldActivitySummary,
+} from "./WorldActivity.ts";
 import { FileNativePlayTimelineStore } from "../play/FileNativePlayTimelineStore.ts";
 import { FileNativePlayAdvanceStore } from "../play/FileNativePlayAdvanceStore.ts";
 import { FileNativeWorldStorageMigrator } from "./FileNativeWorldStorageMigrator.ts";
@@ -112,14 +121,17 @@ export interface FileNativeWorldCreationInput {
   };
 }
 
-export interface FileNativeWorldSummary {
+export interface FileNativeWorldSummary extends WorldActivitySummary {
   worldId: string;
   title: string;
   parentEndpoint: "genesis";
   gameplay: Gameplay;
 }
 
-interface Publication extends Omit<FileNativeWorldSummary, "gameplay"> {
+interface Publication extends Pick<
+  FileNativeWorldSummary,
+  "worldId" | "title" | "parentEndpoint"
+> {
   schemaVersion: 1;
   operationId: string;
   sourceFingerprint: string;
@@ -233,17 +245,27 @@ export type FileNativeDerivationOutcome =
   | { outcome: "derived"; world: FileNativeWorldSummary }
   | { outcome: "not_derived" | "in_progress" };
 
-interface FileNativeWorldDerivationInput {
+export interface FileNativeWorldDerivationInput {
   operationId: string;
   sourceWorldId: string;
   sourceHead: string;
   hostPresetId: string;
+  targetDataRoot?: string;
+  targetName?: string;
+  /** An unpublished closure, outside the world's library. */
+  publish?: false;
+  targetWorldRoot?: string;
+  identityPrefix?: "import";
+  resetPackageScriptPermissions?: boolean;
+  requireMaterialized?: boolean;
+  retainCompleteTimeline?: true;
   /** Additional idempotency identity for a higher-level branch request. */
   requestDiscriminator?: string;
   stageTarget?: (input: {
     targetWorldRoot: string;
     targetWorldId: string;
     binding: FileNativePlayBinding;
+    sourceHead: string;
   }) => Promise<void>;
 }
 
@@ -258,6 +280,7 @@ export class FileNativeWorldStore {
   readonly #promptCompiler: FileNativePromptCompiler;
   readonly #activeControlUsers = new Map<string, Set<string>>();
   readonly #openingWorldRevisions = new Set<string>();
+  readonly #archiveExports = new Set<string>();
   readonly operations: FileNativeWorldOperationCoordinator;
   readonly playTimeline: FileNativePlayTimelineStore;
   readonly playAdvances: FileNativePlayAdvanceStore;
@@ -352,17 +375,67 @@ export class FileNativeWorldStore {
     return readWorldGameplayAt(root);
   }
 
+  async readWorldSummary(worldId: string): Promise<FileNativeWorldSummary> {
+    assertIdentity(worldId, "World ID");
+    return readWorldSummaryAt(join(this.#worldsRoot, worldId));
+  }
+
   async listWorlds(): Promise<FileNativeWorldSummary[]> {
     await mkdir(this.#worldsRoot, { recursive: true, mode: 0o700 });
-    const entries = await readdir(this.#worldsRoot, { withFileTypes: true });
+    const entries = (
+      await readdir(this.#worldsRoot, { withFileTypes: true })
+    ).filter((entry) => entry.isDirectory() && !entry.name.startsWith("."));
     const worlds: FileNativeWorldSummary[] = [];
-    for (const entry of entries.sort((left, right) =>
-      left.name.localeCompare(right.name),
-    )) {
-      if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
-      worlds.push(await readWorldSummaryAt(join(this.#worldsRoot, entry.name)));
+    // Bound concurrent shell/head/cache reads even in a large workspace.
+    for (let offset = 0; offset < entries.length; offset += 16) {
+      worlds.push(
+        ...(await Promise.all(
+          entries
+            .slice(offset, offset + 16)
+            .map((entry) =>
+              readWorldSummaryAt(
+                join(this.#worldsRoot, entry.name),
+                undefined,
+                (rebuild) =>
+                  this.operations.withWorldAuthorityLock(entry.name, rebuild),
+              ),
+            ),
+        )),
+      );
     }
-    return worlds;
+    return worlds.sort(
+      (left, right) =>
+        (right.lastActivityAt ?? -1) - (left.lastActivityAt ?? -1) ||
+        left.title.localeCompare(right.title) ||
+        left.worldId.localeCompare(right.worldId),
+    );
+  }
+
+  /** Explicit full-history read; independent of page and model projections. */
+  async exportStory(
+    worldId: string,
+    format: V1StoryExportFormat,
+    locale: AppLocale,
+  ): Promise<V1StoryExport> {
+    assertIdentity(worldId, "World ID");
+    await this.ensureCurrentStorage(worldId);
+    return this.operations.withWorldAuthorityLock(worldId, async () => {
+      const root = join(this.#worldsRoot, worldId);
+      const publication = await readPublicationAt(root);
+      const title = await readWorldTitleAt(root, publication);
+      const endpoint = await new FileNativeAuthorityV3(
+        root,
+      ).recoverHeadResult();
+      const history = new HistoryQuery(
+        worldId,
+        endpoint.history.map(({ messageId, role, exactText }) => ({
+          id: messageId,
+          role,
+          text: exactText,
+        })),
+      );
+      return exportStory(title, history.messages, format, locale);
+    });
   }
 
   async renameWorld(
@@ -390,10 +463,7 @@ export class FileNativeWorldStore {
         worldId,
         name: trimmed,
       } satisfies WorldLocalMetadata);
-      return {
-        ...toSummary(publication, await readWorldGameplayAt(root)),
-        title: trimmed,
-      };
+      return readWorldSummaryAt(root, publication);
     });
   }
 
@@ -658,6 +728,12 @@ export class FileNativeWorldStore {
         sourceFingerprint,
       };
       await writeJson(join(stagingRoot, publicationFile), publication);
+      await updateWorldActivity(
+        stagingRoot,
+        "genesis",
+        [openingMessage],
+        Date.now(),
+      );
       await durableTree(stagingRoot);
       crashAtFileNativeWorldCreationEdge("after_staging");
       await rename(stagingRoot, finalRoot);
@@ -769,6 +845,51 @@ export class FileNativeWorldStore {
     return (await new FileNativeAuthorityV3(root).readHead()).head;
   }
 
+  async withArchiveExport<T>(
+    worldId: string,
+    action: () => Promise<T>,
+  ): Promise<T> {
+    assertIdentity(worldId, "World ID");
+    if (
+      (this.#activeControlUsers.get(worldId)?.size ?? 0) > 0 ||
+      this.#archiveExports.has(worldId) ||
+      this.#openingWorldRevisions.has(worldId)
+    )
+      throw new FileNativeWorldCreationError(
+        "operation_conflict",
+        "Wait for the current generation or world operation before exporting a backup",
+      );
+    this.#archiveExports.add(worldId);
+    try {
+      if (await this.readWorldRevisionLock(worldId))
+        throw new FileNativeWorldCreationError(
+          "operation_conflict",
+          "Please apply or discard the world revision before exporting a backup",
+        );
+      return await action();
+    } finally {
+      this.#archiveExports.delete(worldId);
+    }
+  }
+
+  async archiveNeedsFreshContext(worldId: string): Promise<boolean> {
+    assertIdentity(worldId, "World ID");
+    return (
+      (await readOptionalJson(
+        join(this.#worldsRoot, worldId, "runtime", "archive-import.json"),
+      )) !== null ||
+      (await this.playTimeline.currentContextRequiresFreshContext(worldId))
+    );
+  }
+
+  async completeArchiveFreshContext(worldId: string): Promise<void> {
+    assertIdentity(worldId, "World ID");
+    await rm(
+      join(this.#worldsRoot, worldId, "runtime", "archive-import.json"),
+      { force: true },
+    );
+  }
+
   async currentHeadOperationId(worldId: string): Promise<string | null> {
     assertIdentity(worldId, "World ID");
     await this.ensureCurrentStorage(worldId);
@@ -816,7 +937,8 @@ export class FileNativeWorldStore {
   async acquireWorldRevisionLock(worldId: string, epochId: string) {
     if (
       (this.#activeControlUsers.get(worldId)?.size ?? 0) > 0 ||
-      this.#openingWorldRevisions.has(worldId)
+      this.#openingWorldRevisions.has(worldId) ||
+      this.#archiveExports.has(worldId)
     )
       return { kind: "busy" } as const;
     this.#openingWorldRevisions.add(worldId);
@@ -1034,6 +1156,11 @@ export class FileNativeWorldStore {
   freezeControl(worldId: string, operationId: string): void {
     assertIdentity(worldId, "World ID");
     assertIdentity(operationId, "operation ID");
+    if (this.#archiveExports.has(worldId))
+      throw new FileNativeWorldCreationError(
+        "operation_conflict",
+        "A world backup is being exported; wait for it to finish",
+      );
     if (this.#openingWorldRevisions.has(worldId))
       throw new FileNativeWorldCreationError(
         "operation_conflict",
@@ -1318,9 +1445,11 @@ export class FileNativeWorldStore {
     }
   }
 
-  async deriveWorld(
-    input: FileNativeWorldDerivationInput,
-  ): Promise<{ outcome: "derived"; world: FileNativeWorldSummary }> {
+  async deriveWorld(input: FileNativeWorldDerivationInput): Promise<{
+    outcome: "derived";
+    world: FileNativeWorldSummary;
+    worldRoot: string;
+  }> {
     assertIdentity(input.operationId, "Fork operation ID");
     assertIdentity(input.sourceWorldId, "Source world ID");
     assertIdentity(input.hostPresetId, "Host-preset ID");
@@ -1328,19 +1457,40 @@ export class FileNativeWorldStore {
       assertIdentity(input.requestDiscriminator, "Fork request discriminator");
     if (
       input.sourceHead !== "genesis" &&
+      input.sourceHead !== "current" &&
       !/^commit:[1-9][0-9]*$/u.test(input.sourceHead)
     )
       throw new TypeError("Source endpoint is invalid");
-    const operationPath = this.#derivationOperationPath(input.operationId);
+    if (input.targetName !== undefined && !validWorldName(input.targetName))
+      throw new TypeError("Target world name is invalid");
+    if (input.publish === false && input.targetWorldRoot === undefined)
+      throw new TypeError("An unpublished closure requires a target directory");
+    const target =
+      input.targetDataRoot === undefined
+        ? this
+        : new FileNativeWorldStore(input.targetDataRoot);
+    const operationPath =
+      input.identityPrefix === "import"
+        ? join(
+            target.#operationsRoot,
+            `import-${operationDigest(input.operationId)}.json`,
+          )
+        : target.#derivationOperationPath(input.operationId);
     const requestFingerprint = derivationRequestFingerprint(input);
-    const worldId = `world-${operationDigest(`derive:${input.operationId}`).slice(0, 24)}`;
-    const finalRoot = join(this.#worldsRoot, worldId);
-    const previous = await readOptionalJson<Publication>(operationPath);
+    const worldId = `world-${operationDigest(`${input.identityPrefix ?? "derive"}:${input.operationId}`).slice(0, 24)}`;
+    const finalRoot =
+      input.publish === false
+        ? resolve(input.targetWorldRoot!)
+        : join(target.#worldsRoot, worldId);
+    const previous =
+      input.publish === false
+        ? null
+        : await readOptionalJson<Publication>(operationPath);
     if (previous !== null) {
-      await this.ensureCurrentStorage(previous.worldId);
+      await target.ensureCurrentStorage(previous.worldId);
       if (
         !(await derivationPublicationMatches(
-          join(this.#worldsRoot, previous.worldId),
+          join(target.#worldsRoot, previous.worldId),
           previous,
           input,
           requestFingerprint,
@@ -1352,7 +1502,8 @@ export class FileNativeWorldStore {
         );
       return {
         outcome: "derived",
-        world: await this.#currentSummary(previous),
+        world: await target.#currentSummary(previous),
+        worldRoot: finalRoot,
       };
     }
 
@@ -1360,7 +1511,8 @@ export class FileNativeWorldStore {
       join(finalRoot, publicationFile),
     );
     if (alreadyPublished !== null) {
-      await this.ensureCurrentStorage(alreadyPublished.worldId);
+      if (input.publish !== false)
+        await target.ensureCurrentStorage(alreadyPublished.worldId);
       if (
         !(await derivationPublicationMatches(
           finalRoot,
@@ -1373,11 +1525,14 @@ export class FileNativeWorldStore {
           "operation_conflict",
           "Published fork world does not match the operation payload",
         );
-      await mkdir(this.#operationsRoot, { recursive: true, mode: 0o700 });
-      await publishJson(operationPath, alreadyPublished);
+      if (input.publish !== false) {
+        await mkdir(target.#operationsRoot, { recursive: true, mode: 0o700 });
+        await publishJson(operationPath, alreadyPublished);
+      }
       return {
         outcome: "derived",
-        world: await this.#currentSummary(alreadyPublished),
+        world: await readWorldSummaryAt(finalRoot, alreadyPublished),
+        worldRoot: finalRoot,
       };
     }
 
@@ -1385,6 +1540,7 @@ export class FileNativeWorldStore {
     const retainSourceSnapshot = async (): Promise<{
       outcome: "derived";
       world: FileNativeWorldSummary;
+      worldRoot: string;
     }> => {
       const sourceRoot = join(this.#worldsRoot, input.sourceWorldId);
       const sourcePublication = await readPublicationAt(sourceRoot);
@@ -1393,21 +1549,38 @@ export class FileNativeWorldStore {
         sourcePublication,
       );
       const sourceAuthority = new FileNativeAuthorityV3(sourceRoot);
+      const sourceHead =
+        input.sourceHead === "current"
+          ? (await sourceAuthority.readHead()).head
+          : input.sourceHead;
+      if (input.requireMaterialized) {
+        const authorityHead = await sourceAuthority.readHead();
+        const materialized = await readMaterializedCheckpoint(sourceRoot);
+        if (
+          materialized?.head !== authorityHead.head ||
+          materialized.commitDigest !== authorityHead.commitDigest
+        )
+          throw new FileNativeWorldCreationError(
+            "inconsistent_materialization",
+            "Please repair the world before exporting a backup",
+          );
+      }
       const [sourceGenesis, control] = await Promise.all([
         readGenesisForFork(sourceRoot, input.sourceWorldId),
         readTree(join(sourceRoot, "control")),
       ]);
       const staging = join(
-        this.#worldsRoot,
+        dirname(finalRoot),
         `.staging-${worldId}-${randomUUID()}`,
       );
-      await mkdir(this.#worldsRoot, { recursive: true, mode: 0o700 });
-      await mkdir(this.#operationsRoot, { recursive: true, mode: 0o700 });
+      await mkdir(dirname(finalRoot), { recursive: true, mode: 0o700 });
+      if (input.publish !== false)
+        await mkdir(target.#operationsRoot, { recursive: true, mode: 0o700 });
       try {
         await mkdir(join(staging, "runtime"), { recursive: true });
         const clonedHead = await sourceAuthority.clonePrefixTo({
           targetWorldRoot: staging,
-          selectedHead: input.sourceHead,
+          selectedHead: sourceHead,
           operationId: input.operationId,
         });
         const selected = await new FileNativeAuthorityV3(
@@ -1417,7 +1590,9 @@ export class FileNativeWorldStore {
         await writeSurface(staging, "control", control);
         await PackageScriptPermissions.write(
           staging,
-          await PackageScriptPermissions.read(sourceRoot),
+          input.resetPackageScriptPermissions
+            ? []
+            : await PackageScriptPermissions.read(sourceRoot),
         );
         await WorldExtensionControls.copy(sourceRoot, staging);
         await mkdir(join(staging, "history"), { recursive: true });
@@ -1453,22 +1628,23 @@ export class FileNativeWorldStore {
           },
         );
         await writeJson(join(staging, "runtime", "additional-materials.json"), {
-          head: input.sourceHead,
+          head: sourceHead,
           items: selected.additionalMaterials,
         });
         await writeJson(join(staging, "runtime", "materialized-head.json"), {
           schemaVersion: 3,
-          head: input.sourceHead,
+          head: sourceHead,
           sequence: clonedHead.sequence,
           commitDigest: clonedHead.commitDigest,
           ...backgroundCount(selected.history),
         } satisfies FileNativeMaterializedCheckpoint);
         await input.stageTarget?.({
+          sourceHead,
           targetWorldRoot: staging,
           targetWorldId: worldId,
           binding: {
             worldId,
-            parentHead: input.sourceHead,
+            parentHead: sourceHead,
             files: [...selected.state, ...control].reduce<
               Record<string, string>
             >((files, { path, contents }, index) => {
@@ -1487,25 +1663,40 @@ export class FileNativeWorldStore {
             ),
           },
         });
+        if (
+          input.identityPrefix === "import" ||
+          (await this.archiveNeedsFreshContext(input.sourceWorldId))
+        )
+          await writeJson(join(staging, "runtime", "archive-import.json"), {
+            schemaVersion: 1,
+          });
         crashAtFileNativeAuthorityEdge("derivation_after_target_staging");
         const publication: Publication = {
           schemaVersion: 1,
           worldId,
-          title: derivedWorldName(sourceSummary.title),
+          title: input.targetName ?? derivedWorldName(sourceSummary.title),
           parentEndpoint: "genesis",
           operationId: input.operationId,
           sourceFingerprint: requestFingerprint,
         };
         await writeJson(join(staging, publicationFile), publication);
+        await updateWorldActivity(
+          staging,
+          sourceHead,
+          selected.history,
+          Date.now(),
+        );
         await durableTree(staging);
         crashAtFileNativeAuthorityEdge("derivation_before_publish");
         await rename(staging, finalRoot);
-        await syncDirectory(this.#worldsRoot);
+        await syncDirectory(dirname(finalRoot));
         crashAtFileNativeAuthorityEdge("derivation_after_publish");
-        await publishJson(operationPath, publication);
+        if (input.publish !== false)
+          await publishJson(operationPath, publication);
         return {
           outcome: "derived",
-          world: await this.#currentSummary(publication),
+          world: await readWorldSummaryAt(finalRoot, publication),
+          worldRoot: finalRoot,
         };
       } catch (error: unknown) {
         await rm(staging, { recursive: true, force: true }).catch(
@@ -1527,10 +1718,12 @@ export class FileNativeWorldStore {
               "operation_conflict",
               "Published fork world does not match the operation payload",
             );
-          await publishJson(operationPath, published);
+          if (input.publish !== false)
+            await publishJson(operationPath, published);
           return {
             outcome: "derived",
-            world: await this.#currentSummary(published),
+            world: await readWorldSummaryAt(finalRoot, published),
+            worldRoot: finalRoot,
           };
         }
         throw error;
@@ -2157,6 +2350,7 @@ export class FileNativeWorldStore {
           });
           crashAtFileNativeAuthorityEdge("after_acceptance_prepared");
           await authorityStore.publishPrepared(preparedAppend);
+          const acceptedAt = Date.now();
           crashAtFileNativeAuthorityEdge("after_commit_acceptance");
           await publishJson(
             this.#operationOutcomePath(input.operationId),
@@ -2169,6 +2363,7 @@ export class FileNativeWorldStore {
               root,
               preparedAppend.nextHead,
               recovered,
+              acceptedAt,
             );
             crashAtFileNativeAuthorityEdge("after_materialization");
             const outcome = { ...pending, outcome: "committed" as const };
@@ -2949,6 +3144,7 @@ async function materializeRecoveredEndpoint(
   root: string,
   authority: FileNativeAuthorityHeadV3,
   endpoint: AuthorityRecoveredEndpoint,
+  lastActivityAt: number | null = null,
 ): Promise<void> {
   if (authority.head !== endpoint.head)
     throw new FileNativeWorldCreationError(
@@ -2976,6 +3172,12 @@ async function materializeRecoveredEndpoint(
     commitDigest: authority.commitDigest,
     ...backgroundCount(endpoint.history),
   } satisfies FileNativeMaterializedCheckpoint);
+  await updateWorldActivity(
+    root,
+    authority.head,
+    endpoint.history,
+    lastActivityAt,
+  );
 }
 
 async function replaceMaterializedTree(
@@ -3373,19 +3575,40 @@ async function readPublicationAt(root: string): Promise<Publication> {
 async function readWorldSummaryAt(
   root: string,
   publication?: Publication,
+  serializeRebuild?: (
+    rebuild: () => Promise<WorldActivity>,
+  ) => Promise<WorldActivity>,
 ): Promise<FileNativeWorldSummary> {
   const published = publication ?? (await readPublicationAt(root));
   const gameplay = await readWorldGameplayAt(root);
+  const { lastActivityAt, excerpt, playerTurns } = await readWorldActivity(
+    root,
+    serializeRebuild,
+  );
+  const summary = {
+    ...toSummary(published, gameplay),
+    title: await readWorldTitleAt(root, published),
+    lastActivityAt,
+    excerpt,
+    playerTurns,
+  };
+  return summary;
+}
+
+async function readWorldTitleAt(
+  root: string,
+  published: Publication,
+): Promise<string> {
   const metadata = await readOptionalJson<unknown>(
     join(root, localMetadataFile),
   );
-  if (metadata === null) return toSummary(published, gameplay);
+  if (metadata === null) return published.title;
   if (!isWorldLocalMetadata(metadata) || metadata.worldId !== published.worldId)
     throw new FileNativeWorldCreationError(
       "world_corrupt",
       "Local world shell is corrupt",
     );
-  return { ...toSummary(published, gameplay), title: metadata.name };
+  return metadata.name;
 }
 
 /** Worlds copy the package's gameplay identity with control; its absence means interactive fiction. */
@@ -3419,7 +3642,10 @@ async function readOptionalJson<T>(path: string): Promise<T | null> {
 function toSummary(
   publication: Publication,
   gameplay: Gameplay,
-): FileNativeWorldSummary {
+): Pick<
+  FileNativeWorldSummary,
+  "worldId" | "title" | "parentEndpoint" | "gameplay"
+> {
   return {
     worldId: publication.worldId,
     title: publication.title,
@@ -3476,6 +3702,17 @@ function derivationRequestFingerprint(
       sourceHead: input.sourceHead,
       hostPresetId: input.hostPresetId,
       requestDiscriminator: input.requestDiscriminator ?? null,
+      ...(input.retainCompleteTimeline ? { retainCompleteTimeline: true } : {}),
+      ...(input.targetName === undefined &&
+      input.identityPrefix === undefined &&
+      !input.resetPackageScriptPermissions
+        ? {}
+        : {
+            targetName: input.targetName ?? null,
+            identityPrefix: input.identityPrefix ?? "derive",
+            resetPackageScriptPermissions:
+              input.resetPackageScriptPermissions ?? false,
+          }),
     }),
   );
 }

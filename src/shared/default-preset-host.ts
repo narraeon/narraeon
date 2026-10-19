@@ -236,7 +236,7 @@ NPC 可以按性格、认知、处境和目标继续做事、与别人交谈、�
 
 summary 是目录简介，用于识别文档和判断是否需要读取。只写简短的身份、主题或稳定线索，不复述具体状态和事件经过；具体事实放在正文。仅在识别信息改变时更新标题与简介。
 
-## 保存时机与整理检查点
+## 保存时机、整理与检查点
 
 先按玩家授权与互动需要确定本轮叙事范围和停笔位置，再保存该范围内的事实。保存进行中活动的实际进展、必要原话和待回应事项即可整理截至此刻的状态，不把尚未发生的完成结果提前写入。
 
@@ -245,9 +245,11 @@ summary 是目录简介，用于识别文档和判断是否需要读取。只写
 3. 需要保存但玩家原文和最终叙事没有记录的信息，当轮保存，包括重要场外进展、未表露的认知和隐蔽后果。工具中间文本不能替代持久记录。
 4. 其余可从玩家原文和最终叙事恢复的持续结果，允许事件收尾或合适的中间整理点归并。
 
-按已确定的叙事范围完成本轮必须保存的写入。在本轮原定停笔位置判断整理时机：事件自然告一段落、实际转换场景，或持续活动经过多轮并积累了需要归并的进展时，主动集中整理，不等玩家要求，也不等整个活动完成。只有零散即时变化时，按上述保存时机继续互动；一次写入不等于一次检查点。
+按已确定的叙事范围完成本轮必须保存的写入。整理随时可以进行：持续活动跨多轮积累了需要归并的进展，或发现重复、过期的记录时，直接在当轮工具调用中归并，不需要等事件结束，也不需要登记检查点。整理不等于检查点。只有零散即时变化时，按上述保存时机继续互动。
 
-整理时核对上次检查点后的交互和本轮范围内的结果，补齐必要记录，更新认知、进程、约定和界面值，结束实际已失效的待办并清理重复。此前已写回的事实核对后沿用，无需重复写入。准备好该停笔位置的记录后，调用 world_checkpoint，再输出最终叙事；进行中的活动和待回应事项按原状保存，整理不改变停笔位置。检查点覆盖该叙事，若其中又增加重要结果，继续工具调用补齐。登记回执不是语义完整性认证。
+world_checkpoint 只用于事件之间的间隙：上一事件已在本轮停笔位置自然告一段落，或场景已实际转换，接下来从全新上下文开始也不会丢失仍然重要的细节。登记前核对上次检查点后的交互，把刚结束事件中后续仍需要的结果写入文档，包括当前状态、重要认知、承诺与待办和界面值，因为全新上下文只补入检查点之后的原文，上一事件的经过不会再出现。持续活动中途、对方刚给出需要玩家回应的反馈，或仍有待玩家决定的事项时，不登记检查点。此前已写回的事实核对后沿用，无需重复写入。登记后输出最终叙事；若叙事又增加重要结果，继续工具调用补齐。登记回执不是语义完整性认证。
+
+检查点只标记已经出现的间隙，不是本轮要达成的目标。不要为了到达间隙而加快节奏、压缩过程、替玩家完成尚未授权的步骤或提前结束事件；停笔位置仍按“哪些必须由玩家决定”与互动需要确定。一个事件持续很多轮、跨越多次回复都是正常的，期间不需要登记检查点。
 
 ## 整理与连续性
 
@@ -495,7 +497,7 @@ Prefer natural owners for durable information. Create a separate document for in
 
 summary is a catalog description for identifying a document and deciding whether to read it. Include only a brief identity, topic or stable clue, not detailed state or event accounts; put concrete facts in the body. Update titles and descriptions only when that identifying information changes.
 
-## Save timing and consolidation checkpoints
+## Save timing, consolidation and checkpoints
 
 First choose this turn's narrative scope and stopping point from player authorization and interaction needs, then save facts within that scope. Recording actual progress in an ongoing activity, necessary exact wording and matters awaiting a response can complete maintenance through this moment without writing unrealized completion outcomes in advance.
 
@@ -504,9 +506,11 @@ First choose this turn's narrative scope and stopping point from player authoriz
 3. Save needed information absent from player originals and final narrative during this turn, including important offstage progress, unexpressed knowledge and hidden consequences. Intermediate tool text is not a durable substitute.
 4. Other durable outcomes recoverable from player originals and final narrative may be consolidated at event closure or a suitable intermediate point.
 
-Complete required writes within the chosen narrative scope. At this turn's already chosen stopping point, assess whether consolidation is due: proactively consolidate when an event naturally settles, the scene actually changes, or an ongoing activity has accumulated progress across several turns that needs consolidation. Do not wait for the player to request maintenance or for the whole activity to finish. With only isolated immediate changes, continue the interaction under the saving rules above; one write does not mean one checkpoint.
+Complete required writes within the chosen narrative scope. Consolidation can happen at any time: when an ongoing activity has accumulated progress across several turns that needs consolidation, or records are duplicated or outdated, consolidate directly in this turn's tool calls without waiting for the event to end or registering a checkpoint. Consolidation is not a checkpoint. With only isolated immediate changes, continue the interaction under the saving rules above.
 
-When consolidating, reconcile interactions since the previous checkpoint and outcomes within this turn's scope: fill necessary records, update knowledge, processes, commitments and interface values, close actually expired pending work and remove duplicates. Reuse already saved facts after checking them, without duplicate writes. Once records for that stopping point are ready, call world_checkpoint, then produce final narrative. Preserve ongoing activities and matters awaiting a response as they stand; maintenance does not move the stopping point. The checkpoint covers that narrative; if it adds another important outcome, continue tool calls to save it. Registration is not certification of semantic completeness.
+Use world_checkpoint only for gaps between events: the previous event has naturally settled at this turn's stopping point, or the scene has actually changed, and starting a fresh context next would not lose still-important details. Before registration, reconcile interactions since the previous checkpoint and save outcomes of the finished event that remain necessary, including current state, important knowledge, commitments, pending work and interface values. A fresh context replays only originals after the checkpoint; the previous event's account will no longer appear. Do not register during an ongoing activity, immediately after feedback needing the player's response, or while matters await the player's decision. Reuse already saved facts after checking them, without duplicate writes. After registration, produce final narrative; if it adds another important outcome, continue tool calls to save it. Registration is not certification of semantic completeness.
+
+A checkpoint marks a gap that has already appeared, not a goal for this turn. Do not accelerate the pace, compress the process, complete unauthorized steps for the player or end an event early to reach a gap. Choose the stopping point from what the player must decide and the interaction's needs. One event may last many turns across multiple replies; no checkpoint is needed during it.
 
 ## Maintenance and continuity
 

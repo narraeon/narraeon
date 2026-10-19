@@ -150,6 +150,23 @@ summary {
   align-content: center;
 }
 
+.app-error-boundary {
+  gap: 0.75rem;
+}
+
+.app-error-message {
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}
+
+.app-error-boundary pre {
+  max-height: 40vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.8rem;
+}
+
 .workspace-header,
 .config-header,
 .section-heading-row {
@@ -8126,6 +8143,43 @@ summary:focus-visible {
   margin: 1.5rem 0 0;
 }
 
+.is-story-mode .world-story-column .story-context-boundary {
+  gap: 0;
+}
+
+.is-story-mode .world-story-column .story-context-boundary::before,
+.is-story-mode .world-story-column .story-context-boundary::after {
+  background: var(--border);
+}
+
+.is-story-mode .world-story-column .history-restart-button {
+  opacity: 0;
+}
+
+.is-story-mode .world-story-column article:hover .history-restart-button,
+.is-story-mode
+  .world-story-column
+  article:focus-within
+  .history-restart-button {
+  opacity: 1;
+}
+
+@media (max-width: 720px), (hover: none), (pointer: coarse) {
+  .is-story-mode .world-story-column .history-restart-button {
+    opacity: 1;
+  }
+}
+
+.play-checkpoint-marker {
+  color: var(--muted);
+}
+
+.world-reading-technical-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .world-story-column .story-context-boundary .call-chain-summary {
   display: block;
   gap: 0;
@@ -8383,7 +8437,37 @@ summary:focus-visible {
   padding: 0.5rem 0.65rem;
 }
 
+.play-failure-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
 .world-fresh-context-note {
+  padding: 0.35rem 0.6rem;
+  border-radius: 3px;
+  color: var(--warning);
+  background: var(--danger-surface);
+  font-size: 0.75rem;
+}
+
+.world-context-usage {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.world-context-usage-label {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.world-context-usage-warning {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.35rem;
   padding: 0.35rem 0.6rem;
   border-radius: 3px;
   color: var(--warning);

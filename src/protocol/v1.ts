@@ -5,6 +5,8 @@ import {
   type ResolutionScheme,
 } from "./gameplay.ts";
 import type { ResolutionReceipt } from "./resolution.ts";
+import type { SaveProtagonistTemplateInput } from "./protagonistTemplates.ts";
+import type { WorldArchiveErrorCode } from "./worldArchives.ts";
 import type { WorldExtensionChoice } from "./worldExtensions.ts";
 import type { WorldPromptPrefixComparison } from "./worldPromptDiagnostics.ts";
 import type { WorldPromptMaintenance } from "./worldMaintenance.ts";
@@ -13,8 +15,13 @@ import type {
   ModelProviderKind,
   SaveModelConnectionInput,
 } from "./modelConnections.ts";
-import type { AppLocale, AppReadingPreferences } from "./appPreferences.ts";
+import {
+  isAppReadingPreferences,
+  type AppLocale,
+  type AppReadingPreferences,
+} from "./appPreferences.ts";
 import type { ModelUsage } from "./modelUsage.ts";
+import type { PlayFailureKind } from "./playFailure.ts";
 import { maxPortableContentArchiveBase64Characters } from "./contentTree.ts";
 
 export interface ContentTreeFile {
@@ -31,6 +38,13 @@ export interface ModelBinding {
 }
 
 export const v1Protocol = "narraeon.runtime/v1" as const;
+
+export type V1StoryExportFormat = "markdown" | "text";
+
+export interface V1StoryExport {
+  fileName: string;
+  content: string;
+}
 
 export interface V1Envelope {
   protocol: typeof v1Protocol;
@@ -51,6 +65,10 @@ export type V1Request =
       locale?: AppLocale;
       reading?: AppReadingPreferences;
     }
+  | { type: "protagonist-templates.read" }
+  | ({ type: "protagonist-templates.save" } & SaveProtagonistTemplateInput)
+  | { type: "protagonist-templates.copy"; id: string }
+  | { type: "protagonist-templates.delete"; id: string }
   | { type: "model.read" }
   | {
       type: "model.save";
@@ -66,6 +84,7 @@ export type V1Request =
       packageId: string;
       scheme: ResolutionScheme;
     }
+  | { type: "content.create-sample"; locale: AppLocale }
   | { type: "content.scripts.read"; packageId: string }
   | { type: "content.scripts.set"; packageId: string; enabled: boolean }
   | { type: "world.package-scripts.read"; worldId: string }
@@ -156,8 +175,15 @@ export type V1Request =
       packageId: string;
       model: ModelBinding;
     }
+  | { type: "world.archive.export"; worldId: string; operationId: string }
+  | { type: "world.archive.import"; operationId: string; uploadId: string }
   | { type: "world.read"; worldId: string }
   | { type: "world.rename"; worldId: string; name: string }
+  | {
+      type: "world.story.export";
+      worldId: string;
+      format: V1StoryExportFormat;
+    }
   | { type: "world.delete"; worldId: string }
   | { type: "artifacts.read"; worldId: string; channel?: string }
   | { type: "artifacts.debug"; worldId: string; operationId?: string }
@@ -712,6 +738,7 @@ export type V1PlayCallChainEvent =
       id: number;
       kind: "failure";
       message: string;
+      failureKind?: PlayFailureKind;
     }
   | {
       id: number;
@@ -761,6 +788,7 @@ export type V1PlayTimelineItem =
       kind: "event";
       chainId: string;
       current: boolean;
+      requiresFreshContext?: true;
       event: V1PlayTimelineEventSummary;
     }
   | {
@@ -777,18 +805,24 @@ export interface V1PlayTimelinePage {
   activeStatus: V1PlayCallChainStatus | null;
   activeCanRetry: boolean;
   activeLastFailure: string | null;
+  activeLastFailureKind?: PlayFailureKind | undefined;
   items: V1PlayTimelineItem[];
   nextCursor: string | null;
 }
 
 /** One model context as projected into the durable player-visible timeline. */
 export interface V1PlayCallChainContextView {
+  requiresFreshContext?: true;
   chainId: string;
   baselineHead: string;
   /** Number of committed messages that precede the first event in this chain. */
   baselineHistoryLength?: number;
   parentHead: string;
   playPreset: { id: string; name: string; revision: string };
+  /** Provider window from this context's frozen model binding, if recorded. */
+  contextWindowTokens?: number;
+  /** Keeps the latest complete input report available beyond the event tail. */
+  latestCompletedResponse?: { id: number; usage?: ModelUsage };
   status: V1PlayCallChainStatus;
   canRetry: boolean;
   events: V1PlayCallChainEvent[];
@@ -798,6 +832,7 @@ export interface V1PlayCallChainContextView {
     path: string;
   }[];
   lastFailure: string | null;
+  lastFailureKind?: PlayFailureKind;
   updatedAt: number;
 }
 
@@ -833,7 +868,13 @@ export type V1PlayCallChainStreamFrame =
     };
 
 export class V1ProtocolError extends Error {
-  readonly code: "incompatible_data" | "invalid_request";
+  readonly code:
+    | "incompatible_data"
+    | "invalid_request"
+    | WorldArchiveErrorCode
+    | "operation_conflict"
+    | "inconsistent_materialization"
+    | "model_protocol_mismatch";
 
   constructor(
     code: V1ProtocolError["code"],
@@ -871,11 +912,15 @@ const requiredFields: Record<
   Record<string, "string" | "number" | "boolean" | "object" | "array">
 > = {
   "preferences.save": {},
+  "protagonist-templates.save": { name: "string", body: "string" },
+  "protagonist-templates.copy": { id: "string" },
+  "protagonist-templates.delete": { id: "string" },
   "model.save": { connection: "object" },
   "model.copy": { connectionId: "string", name: "string" },
   "model.select": { connectionId: "string" },
   "model.delete": { connectionId: "string" },
   "model.models": { provider: "string", baseUrl: "string" },
+  "content.create-sample": { locale: "string" },
   "content.scripts.read": { packageId: "string" },
   "content.scripts.set": { packageId: "string", enabled: "boolean" },
   "world.package-scripts.read": { worldId: "string" },
@@ -934,8 +979,11 @@ const requiredFields: Record<
     packageId: "string",
     model: "object",
   },
+  "world.archive.export": { worldId: "string", operationId: "string" },
+  "world.archive.import": { operationId: "string", uploadId: "string" },
   "world.read": { worldId: "string" },
   "world.rename": { worldId: "string", name: "string" },
+  "world.story.export": { worldId: "string", format: "string" },
   "world.delete": { worldId: "string" },
   "artifacts.read": { worldId: "string" },
   "artifacts.debug": { worldId: "string" },
@@ -1065,6 +1113,24 @@ function validateRequestFields(request: Record<string, unknown>): void {
       );
   }
   if (
+    request.type === "world.story.export" &&
+    request.format !== "markdown" &&
+    request.format !== "text"
+  )
+    throw new V1ProtocolError(
+      "invalid_request",
+      "world.story.export.format must be markdown or text",
+    );
+  if (
+    request.type === "content.create-sample" &&
+    (Object.keys(request).some((key) => key !== "type" && key !== "locale") ||
+      (request.locale !== "en" && request.locale !== "zh-CN"))
+  )
+    throw new V1ProtocolError(
+      "invalid_request",
+      "content.create-sample.locale must be en or zh-CN, with no extra fields",
+    );
+  if (
     request.type === "world.extensions.set" &&
     !["on", "off", "default"].includes(String(request.value))
   )
@@ -1094,7 +1160,7 @@ function validateRequestFields(request: Record<string, unknown>): void {
       );
     if (
       request.reading !== undefined &&
-      !isValidReadingPreferences(request.reading)
+      !isAppReadingPreferences(request.reading)
     )
       throw new V1ProtocolError(
         "invalid_request",
@@ -1409,6 +1475,10 @@ function validateRequestFields(request: Record<string, unknown>): void {
 const requestTypes = new Set([
   "workspace.read",
   "preferences.read",
+  "protagonist-templates.read",
+  "protagonist-templates.save",
+  "protagonist-templates.copy",
+  "protagonist-templates.delete",
   "preferences.save",
   "model.read",
   "model.save",
@@ -1418,6 +1488,7 @@ const requestTypes = new Set([
   "model.models",
   "content.create",
   "content.gameplay.set",
+  "content.create-sample",
   "content.scripts.read",
   "content.scripts.set",
   "world.package-scripts.read",
@@ -1452,8 +1523,11 @@ const requestTypes = new Set([
   "play.workbench.read",
   "prompt.preview",
   "world.create",
+  "world.archive.export",
+  "world.archive.import",
   "world.read",
   "world.rename",
+  "world.story.export",
   "world.delete",
   "artifacts.read",
   "artifacts.debug",
@@ -1498,27 +1572,4 @@ const requestTypes = new Set([
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isValidReadingPreferences(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  return (
-    Object.keys(value).length === 5 &&
-    (value.density === "compact" ||
-      value.density === "standard" ||
-      value.density === "relaxed") &&
-    isFiniteRange(value.fontSize, 15, 24) &&
-    isFiniteRange(value.lineHeight, 1.4, 2.4) &&
-    isFiniteRange(value.letterSpacing, 0, 0.12) &&
-    isFiniteRange(value.measure, 32, 72)
-  );
-}
-
-function isFiniteRange(value: unknown, minimum: number, maximum: number) {
-  return (
-    typeof value === "number" &&
-    Number.isFinite(value) &&
-    value >= minimum &&
-    value <= maximum
-  );
 }

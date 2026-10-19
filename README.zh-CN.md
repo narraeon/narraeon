@@ -153,6 +153,8 @@ Narraeon 默认使用当前操作系统的标准用户应用目录。如果要�
 
 发生 Provider、响应格式、Runtime 工具或候选检查错误时，Narraeon 会在 `NARRAEON_LOG_ROOT/ai-failures` 下创建 JSONL 事故记录。它会保存原始 Provider 交换和后续恢复尝试，包括 Provider 真实返回的 reasoning／thinking。它不会伪造隐藏思考，也不会记录 API Key 和请求 header。不过日志仍可能包含私密提示词、世界内容、工具参数和 Provider 返回的思考，因此应当把该目录视为敏感数据。
 
+每个失败的 Runtime 请求、每次以中断结束的游玩调用、每次失败的对话实时同步，也会追加到 `NARRAEON_LOG_ROOT/runtime-errors/<UTC 日期>.jsonl`，记录请求类型、请求中的标识（世界、上下文、事件和操作 ID）以及错误信息、错误码、调用栈和 cause 链，不记录请求里的玩家原文和世界内容。反馈问题时附上对应的那一行即可。
+
 ## 仓库开发
 
 ```bash
