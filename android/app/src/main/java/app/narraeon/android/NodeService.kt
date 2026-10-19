@@ -38,40 +38,41 @@ class NodeService : Service() {
             } catch (error: Throwable) {
                 Log.e(TAG, "node failed to start", error)
             } finally {
-                nodeStarted.set(false)
+                // node::Start cannot be re-entered in this process, so the guard stays set.
+                Log.w(TAG, "node thread finished; restart requires a new app process")
             }
         }, "narraeon-node").start()
 
         return START_STICKY
     }
 
-    // Copies assets/narraeon into filesDir/narraeon when bundle-version.txt changes. Data
-    // directories live outside that folder and survive upgrades.
+    // Copies assets/narraeon into filesDir/narraeon when bundle-version.txt changes. The file
+    // list comes from bundle-files.txt, written by build-android-bundle.mjs, because walking
+    // AssetManager directories is slow for node_modules. Data directories live outside this
+    // folder and survive upgrades. The version marker is written last, so an interrupted copy
+    // is redone on the next launch.
     private fun prepareBundle(): File {
         val target = File(filesDir, "narraeon")
-        val assetVersion = assets.open("$ASSET_ROOT/bundle-version.txt").bufferedReader().readText()
-        val installedVersion = File(target, "bundle-version.txt").takeIf { it.exists() }?.readText()
+        val assetVersion = readAsset("$ASSET_ROOT/$VERSION_FILE")
+        val installedVersion = File(target, VERSION_FILE).takeIf { it.exists() }?.readText()
         if (installedVersion != assetVersion) {
             target.deleteRecursively()
-            copyAssetDir(ASSET_ROOT, target)
+            target.mkdirs()
+            for (relative in readAsset("$ASSET_ROOT/$FILE_LIST").lineSequence()) {
+                if (relative.isEmpty()) continue
+                val destination = File(target, relative)
+                destination.parentFile?.mkdirs()
+                assets.open("$ASSET_ROOT/$relative").use { input ->
+                    destination.outputStream().use { input.copyTo(it) }
+                }
+            }
+            File(target, VERSION_FILE).writeText(assetVersion)
         }
         return target
     }
 
-    private fun copyAssetDir(assetPath: String, destination: File) {
-        destination.mkdirs()
-        for (name in assets.list(assetPath).orEmpty()) {
-            val child = "$assetPath/$name"
-            val children = assets.list(child).orEmpty()
-            if (children.isEmpty()) {
-                assets.open(child).use { input ->
-                    File(destination, name).outputStream().use { input.copyTo(it) }
-                }
-            } else {
-                copyAssetDir(child, File(destination, name))
-            }
-        }
-    }
+    private fun readAsset(path: String): String =
+        assets.open(path).bufferedReader().use { it.readText() }
 
     private fun startForegroundCompat() {
         val channelId = "narraeon-backend"
@@ -100,6 +101,8 @@ class NodeService : Service() {
         const val PORT = 4317
         private const val TAG = "NARRAEON-SERVICE"
         private const val ASSET_ROOT = "narraeon"
+        private const val VERSION_FILE = "bundle-version.txt"
+        private const val FILE_LIST = "bundle-files.txt"
         private const val NOTIFICATION_ID = 4317
         private val nodeStarted = java.util.concurrent.atomic.AtomicBoolean(false)
     }

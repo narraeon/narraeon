@@ -11,6 +11,9 @@ the Node runtime (digidem/nodejs-mobile `libnode.so`, Node 24.20.0), and a WebVi
 - Android SDK with platform 34 and build-tools 34
 - NDK 26.3.11579264 with CMake 3.22.1 (install through the SDK manager)
 - Node.js 24.12 or later, for the bundle build
+- Known limit: Android 15 (API 35) caps `dataSync` foreground services at 6 hours per day.
+  The current `targetSdk` is 34 and is not affected. Raising `targetSdk` to 35 or later needs
+  a different foreground service type or a different way to keep the backend running.
 
 ## Build
 
@@ -32,8 +35,8 @@ cd android
    `android/app/libnode/`. The folder is generated and is not committed.
 3. `./gradlew assembleDebug` builds the APK at `app/build/outputs/apk/debug/`.
 
-The wrapper is not checked in yet. Generate it once with a local Gradle install
-(`gradle wrapper --gradle-version 8.9`), or open `android/` in Android Studio.
+The Gradle wrapper (8.9) is checked in, so no separate Gradle install is needed. Open
+`android/` in Android Studio, or use `./gradlew` as shown above.
 
 ## Runtime layout
 

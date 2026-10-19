@@ -35,8 +35,6 @@ android {
 
     sourceSets {
         getByName("main") {
-            // Packages app/libnode/bin/arm64-v8a/libnode.so into the APK.
-            jniLibs.srcDirs("libnode/bin")
         }
     }
 

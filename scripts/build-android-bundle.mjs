@@ -1,5 +1,15 @@
 import { execFileSync } from "node:child_process";
-import { cp, copyFile, readFile, rm, mkdir, writeFile } from "node:fs/promises";
+import {
+  cp,
+  copyFile,
+  readdir,
+  readFile,
+  rm,
+  mkdir,
+  stat,
+  writeFile,
+} from "node:fs/promises";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Stages the backend, web assets and production dependencies into the Android
@@ -49,5 +59,16 @@ await writeFile(
   `${assetPath}bundle-version.txt`,
   `${packageJson.version}+${sha}\n`,
 );
+
+// Lists every staged file (relative to the bundle root) so the native side can copy
+// them without walking AssetManager directories.
+const files = [];
+for (const name of await readdir(assetPath, { recursive: true })) {
+  const relative = name.split(path.sep).join("/");
+  if (relative === "bundle-version.txt" || relative === "bundle-files.txt")
+    continue;
+  if ((await stat(`${assetPath}${relative}`)).isFile()) files.push(relative);
+}
+await writeFile(`${assetPath}bundle-files.txt`, `${files.sort().join("\n")}\n`);
 
 console.log(`Android bundle staged at ${assetPath}`);
