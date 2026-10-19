@@ -144,6 +144,13 @@ English is the default interface language. Switching to Simplified Chinese updat
 
 Existing content packages, worlds, imported presets, copied presets, and user-edited prompt files are not translated or rewritten automatically.
 
+## Android
+
+An experimental Android app runs the same backend inside the app process: a
+foreground service starts the embedded Node runtime, and a WebView opens
+`127.0.0.1:4317`. It supports `arm64-v8a` devices only. Build steps and the
+runtime layout are in [android/README.md](android/README.md).
+
 ## Local data and privacy
 
 Narraeon uses the operating system's standard per-user application directories. To isolate an instance or choose explicit locations, set these variables before startup:

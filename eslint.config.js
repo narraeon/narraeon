@@ -11,6 +11,7 @@ export default tseslint.config(
     ignores: [
       ".claude/**",
       ".scratch/**",
+      "android/app/src/main/assets/narraeon/**",
       ".test-data/**",
       "dist/**",
       "node_modules/**",
