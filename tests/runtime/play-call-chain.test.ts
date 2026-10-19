@@ -8658,3 +8658,111 @@ test("世界在故事外前进后仍可修改或重新生成已提交玩家消�
   });
   expect(continued.status).toBe("ready");
 });
+
+test("判定回合重新生成最新玩家消息会创建新推进，新判定使用新种子且回执可复算", async () => {
+  const label = "play-chain-resolution-regenerate";
+  const { worlds, worldId, root } = await createWorld(
+    label,
+    tabletopWorldFiles(),
+  );
+  const chains = new PlayCallChain(worlds, resolutionCompiler());
+  const started = await chains.start({
+    worldId,
+    chainId: label,
+    exchangeId: `${label}-player`,
+    playerText: "我推开石门。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [
+        d20ToolStep("roll-old"),
+        { outcome: "response", text: "石门缓缓开启。" },
+      ],
+    }),
+  });
+  const player = started.events.find(
+    (event) => event.kind === "player" && event.context === "fresh",
+  );
+  if (player?.kind !== "player") throw new Error("missing first player");
+  const [oldSeed] = await resolutionSeedFiles(root);
+  expect(oldSeed).toBeDefined();
+
+  const revised = await chains.revisePlayer({
+    operationId: "regenerate-resolution",
+    worldId,
+    chainId: label,
+    eventId: player.id,
+    replacementExchangeId: `${label}-regenerate`,
+    replacementText: "我推开石门。",
+    continuation: "continue_context",
+  });
+  const regenerationHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      d20ToolStep("roll-new"),
+      { outcome: "response", text: "石门缓缓开启。" },
+    ],
+  });
+  const regenerated = await chains.append({
+    worldId,
+    chainId: revised.playCallChain.chainId,
+    exchangeId: `${label}-regenerate-continue`,
+    playerText: "",
+    modelHost: regenerationHost,
+    resolvePrompt: () =>
+      Promise.resolve({ hostBinding: hostBinding(), playPreset: playPreset() }),
+  });
+  expect(regenerated).toMatchObject({ status: "ready" });
+  expect(regenerationHost.requests[0]?.tools.map(({ name }) => name)).toContain(
+    "d20_check",
+  );
+  const result = regenerated.events.find(
+    (event) => event.kind === "tool_result" && event.callId === "roll-new",
+  );
+  expect(result).toMatchObject({ ok: true, name: "d20_check" });
+  const receipt = (result as { resolution: ResolutionReceipt }).resolution;
+  expect(isResolutionReceipt(receipt)).toBe(true);
+
+  const seeds = await resolutionSeedFiles(root);
+  const fresh = seeds.find(({ seed }) => seed !== oldSeed!.seed);
+  expect(fresh).toBeDefined();
+  expect(receipt).toEqual(
+    resolveTabletop(
+      "d20_check",
+      { goal: "推开石门", modifier: 3, difficulty: 15 },
+      seededRandom(fresh!.seed, "1:roll-new"),
+    ),
+  );
+});
+
+test("判定回合之后导出故事只含已提交的玩家与叙事原文，判定结果不进入导出也不使导出失败", async () => {
+  const label = "play-chain-resolution-story-export";
+  const { worlds, worldId } = await createWorld(label, tabletopWorldFiles());
+  await new PlayCallChain(worlds, resolutionCompiler()).start({
+    worldId,
+    chainId: label,
+    exchangeId: `${label}-player`,
+    playerText: "我推开石门。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [
+        d20ToolStep("roll-export"),
+        { outcome: "response", text: "石门缓缓开启。" },
+      ],
+    }),
+  });
+
+  const text = await worlds.exportStory(worldId, "text", "zh-CN");
+  expect(text.content).toContain("我：我推开石门。");
+  expect(text.content).toContain("石门缓缓开启。");
+  expect(text.content).not.toMatch(/d20 \d/u);
+  expect(text.content).not.toContain("≥");
+  const markdown = await worlds.exportStory(worldId, "markdown", "zh-CN");
+  expect(markdown.content).toContain("> **我**：我推开石门。");
+  expect(markdown.content).not.toMatch(/d20 \d/u);
+});

@@ -139,6 +139,58 @@ describe("玩法标签", () => {
     expect(within(preview).getByText("跑团 · d20")).toBeTruthy();
   });
 
+  test("新建世界同时保留主角模板选择与玩法标签，并把所选模板交给创建", async () => {
+    const template = {
+      id: "template-night-watch",
+      name: "夜巡人",
+      body: "姓名：林夜\n身份：夜巡人",
+      updatedAt: 1,
+    };
+    const client = {
+      request: <T = unknown>(input: { type: string }) =>
+        Promise.resolve(
+          input.type === "protagonist-templates.read"
+            ? { templates: [template] }
+            : { files: [{ path: "opening.md", contents: "雾起" }] },
+        ) as Promise<T>,
+    };
+    const onCreate = vi.fn();
+    render(
+      createElement(CreateWorldScreen, {
+        client,
+        packages: [
+          {
+            localId: "package-tabletop",
+            title: "雾港来信",
+            status: "usable" as const,
+            gameplay: tabletopD20,
+          },
+        ],
+        selectedId: "package-tabletop",
+        pending: false,
+        modelConfigured: true,
+        onSelect: vi.fn(),
+        onCreate,
+        onEdit: vi.fn(),
+        onConfigureModel: vi.fn(),
+      }),
+    );
+
+    const templates = await screen.findByRole("combobox", { name: "主角模板" });
+    expect(
+      within(templates)
+        .getAllByRole("option")
+        .map((option) => option.textContent),
+    ).toEqual(["不使用", "夜巡人"]);
+    expect(screen.getByRole("button", { name: "管理主角模板" })).toBeTruthy();
+    const preview = screen.getByRole("article", { name: "开场白预览" });
+    expect(within(preview).getByText("跑团 · d20")).toBeTruthy();
+
+    fireEvent.change(templates, { target: { value: template.id } });
+    fireEvent.click(screen.getByRole("button", { name: "从当前内容包创建" }));
+    expect(onCreate).toHaveBeenCalledWith(template);
+  });
+
   test("提示词预览在所选内容包旁显示它的玩法", () => {
     const requests: V1Request[] = [];
     render(

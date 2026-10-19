@@ -14,6 +14,7 @@ import {
   ScriptedModelHost,
   type ModelHostBinding,
 } from "../../src/runtime/model/ModelHost.ts";
+import type { ContentTreeFile } from "../../src/protocol/v1.ts";
 
 export const archiveModelBinding: ModelHostBinding = {
   provider: "chat_completions",
@@ -34,7 +35,9 @@ export function archiveStores(root: string) {
   const archives = new WorldArchives({ dataRoot: root, worlds, chains });
   return { root, worlds, artifacts, chains, archives };
 }
-export async function worldArchiveFixture() {
+export async function worldArchiveFixture(
+  options: { extraPackageFiles?: readonly ContentTreeFile[] } = {},
+) {
   const root = await mkdtemp(join(tmpdir(), "narraeon-world-archive-"));
   const fixture = archiveStores(root);
   await fixture.archives.initialize();
@@ -44,6 +47,7 @@ export async function worldArchiveFixture() {
     sourcePackageId: "archive-package",
     sourcePackageTitle: "雨夜旅店",
     packageFiles: [
+      ...(options.extraPackageFiles ?? []),
       { path: "opening.md", contents: "门外传来三声短促的铃响。\n" },
       {
         path: "world/current-situation.yaml",

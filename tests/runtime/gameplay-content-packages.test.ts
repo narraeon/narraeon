@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { gameplayFile, gameplayPath } from "../../src/protocol/gameplay.ts";
+import { appLocales } from "../../src/protocol/appPreferences.ts";
 import {
   parseV1Envelope,
   V1ProtocolError,
@@ -259,6 +260,41 @@ describe("内容包玩法 V1 请求", () => {
       packageId: fiction.localId,
     })) as { files: { path: string }[] };
     expect(read.files.map(({ path }) => path)).not.toContain(gameplayPath);
+  });
+
+  test("示例内容包是互动式小说：创建、工作区摘要与导入导出往返都报告互动式小说", async () => {
+    const root = await temporaryRoot();
+    const runtime = new V1Runtime({
+      dataRoot: root,
+      configRoot: join(root, "config"),
+    });
+    const fiction = { mode: "interactive-fiction" };
+    for (const locale of appLocales) {
+      const sample = (await call(runtime, {
+        type: "content.create-sample",
+        locale,
+      })) as { localId: string; gameplay: unknown };
+      expect(sample.gameplay).toEqual(fiction);
+      const exported = (await call(runtime, {
+        type: "content.export",
+        packageId: sample.localId,
+      })) as { base64: string };
+      const imported = (await call(runtime, {
+        type: "content.import",
+        archiveBase64: exported.base64,
+        title: "示例导入",
+      })) as { localId: string; gameplay: unknown; files: { path: string }[] };
+      expect(imported.gameplay).toEqual(fiction);
+      expect(imported.files.map(({ path }) => path)).not.toContain(
+        gameplayPath,
+      );
+    }
+    const workspace = (await call(runtime, { type: "workspace.read" })) as {
+      contentPackages: { gameplay: unknown }[];
+    };
+    expect(workspace.contentPackages).toHaveLength(appLocales.length * 2);
+    for (const item of workspace.contentPackages)
+      expect(item.gameplay).toEqual(fiction);
   });
 
   test("content.replace 改变玩法模式时返回 invalid_request，而不是内部错误", async () => {
