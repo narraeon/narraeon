@@ -22,6 +22,8 @@ android {
         externalNativeBuild {
             cmake {
                 cppFlags += "-std=c++20"
+                // libnode.so links libc++_shared.so, so the app must ship it too.
+                arguments += "-DANDROID_STL=c++_shared"
             }
         }
     }
