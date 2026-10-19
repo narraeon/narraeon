@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 
 import type { AppPaths } from "../runtime/config/appPaths.ts";
+import { acquireDataRootLock } from "../runtime/config/dataRootLock.ts";
 import { createRuntime } from "./createRuntime.ts";
 import { createServer } from "./createServer.ts";
 
@@ -21,18 +22,22 @@ export interface StartWebServerInput {
 export async function startWebServer(
   input: StartWebServerInput,
 ): Promise<FastifyInstance> {
-  const runtime = await createRuntime(input.paths);
-  const server = await createServer({
-    runtime,
-    staticRoot: input.staticRoot,
-    port: input.port,
-    ...(input.logger === undefined ? {} : { logger: input.logger }),
-  });
+  const lock = await acquireDataRootLock(input.paths.dataRoot);
+  let server: FastifyInstance | undefined;
   try {
+    const runtime = await createRuntime(input.paths);
+    server = await createServer({
+      runtime,
+      staticRoot: input.staticRoot,
+      port: input.port,
+      ...(input.logger === undefined ? {} : { logger: input.logger }),
+    });
+    server.addHook("onClose", () => lock.release());
     await server.listen({ host: input.host, port: input.port });
     return server;
   } catch (error: unknown) {
-    await server.close().catch(() => undefined);
+    if (server !== undefined) await server.close().catch(() => undefined);
+    else await lock.release();
     throw error;
   }
 }
