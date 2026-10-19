@@ -16,3 +16,10 @@ test-results/
 /docs/step-*.md
 /research/model-api-and-tool-strategy.md
 /METHODOLOGY.md
+
+# Android app: staged Node bundle and libnode artifacts are generated.
+/android/app/src/main/assets/narraeon/
+/android/app/libnode/
+/android/.gradle/
+/android/app/build/
+/android/build/
