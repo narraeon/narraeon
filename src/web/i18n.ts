@@ -548,7 +548,7 @@ const englishMessages: Record<string, string> = {
     "Inspect real roles, material, tools, budgets, and cache boundaries.",
   模型已就绪: "Model ready",
   需要模型连接: "Model connection required",
-  新建内容包: "New content package",
+  新建内容包: "Create content package",
   从示例新建: "Create from sample",
   从示例开始: "Start with a sample",
   "正在创建示例…": "Creating sample…",

@@ -175,7 +175,9 @@ describe("新建内容包对话框", () => {
   test("英文界面使用英文标题、方案说明和按钮", () => {
     setWebLocale("en");
     renderDialog();
-    const dialog = screen.getByRole("dialog", { name: "New content package" });
+    const dialog = screen.getByRole("dialog", {
+      name: "Create content package",
+    });
     fireEvent.click(within(dialog).getByRole("radio", { name: "Tabletop" }));
 
     expect(
