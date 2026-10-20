@@ -1,0 +1,97 @@
+name: Build Android APK
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-android
+  cancel-in-progress: false
+
+jobs:
+  build-apk:
+    name: Build and attach the arm64 APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out the release tag
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Verify the release source and metadata
+        env:
+          RELEASE_IS_PRERELEASE: ${{ github.event.release.prerelease }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          git merge-base --is-ancestor HEAD refs/remotes/origin/main || {
+            echo "Release tag must point to a commit contained in origin/main." >&2
+            exit 1
+          }
+          node scripts/check-release.mjs \
+            --tag "$RELEASE_TAG" \
+            --prerelease "$RELEASE_IS_PRERELEASE"
+
+      - name: Set up Java
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Android SDK components
+        run: |
+          sdkmanager="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$sdkmanager" --licenses > /dev/null
+          "$sdkmanager" \
+            "platforms;android-34" \
+            "build-tools;34.0.0" \
+            "ndk;26.3.11579264" \
+            "cmake;3.22.1"
+
+      - name: Install locked dependencies
+        run: npm ci --registry=https://registry.npmjs.org/
+
+      - name: Stage the Node bundle into the Android assets
+        run: npm run build:android
+
+      - name: Restore libnode cache
+        id: libnode-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: android/app/libnode
+          key: libnode-24.20.0-0-${{ runner.os }}
+
+      - name: Fetch libnode
+        run: ./android/scripts/fetch-libnode.sh
+
+      - name: Build the release APK
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        working-directory: android
+        run: ./gradlew --no-daemon assembleRelease
+
+      - name: Name and attach the APK
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          apk="narraeon-${version}-android-arm64.apk"
+          cp android/app/build/outputs/apk/release/app-release.apk "$apk"
+          gh release upload "$RELEASE_TAG" "$apk" --clobber

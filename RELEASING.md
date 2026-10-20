@@ -111,3 +111,41 @@ the Docker job has a transient failure after npm succeeds, use **Re-run failed
 jobs** so the successful npm job is not repeated. If npm already accepted the
 version and the fix requires changing source or workflow files, do not reuse
 the version or Release tag; bump the version and create a new Release instead.
+
+## Android APK
+
+The `Build Android APK` workflow (`.github/workflows/android-release.yml`)
+runs on every published GitHub Release, including prereleases. It builds the
+arm64 release APK and uploads it to the same Release as
+`narraeon-<version>-android-arm64.apk`. The workflow has its own filename, so
+it does not affect the npm Trusted Publishing registration.
+
+- The APK version comes from `package.json`. `versionCode` is
+  `major * 10000 + minor * 100 + patch`, so patch numbers must stay below 100.
+- The APK supports `arm64-v8a` only.
+- Without signing secrets, the APK is signed with the debug key. It installs
+  and runs, but it is not a production signature, so do not publish it as the
+  long-term distribution key.
+
+### Signing secrets
+
+Create one release keystore once, and keep a backup. Losing it means existing
+installs can no longer be upgraded in place.
+
+```bash
+keytool -genkeypair -v -storetype PKCS12 -keystore narraeon-release.jks \
+  -alias narraeon -keyalg RSA -keysize 2048 -validity 10000
+base64 -w0 narraeon-release.jks > narraeon-release.jks.b64   # use base64 -i on macOS
+```
+
+Store these repository secrets:
+
+- `ANDROID_KEYSTORE_BASE64`: the contents of `narraeon-release.jks.b64`
+- `ANDROID_KEYSTORE_PASSWORD`: the keystore password
+- `ANDROID_KEY_ALIAS`: `narraeon`
+- `ANDROID_KEY_PASSWORD`: the key password. For PKCS12 keystores this must equal
+  the keystore password.
+
+Delete the `.jks` and `.b64` files after the secrets are stored. If any of the
+four secrets is missing, the workflow still succeeds and prints a warning that
+the release is signed with the debug key.

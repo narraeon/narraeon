@@ -52,3 +52,9 @@ adb logcat -s NARRAEON-NODE NARRAEON-SERVICE
 
 Node stdout and stderr appear under `NARRAEON-NODE`. The mobile entry prints
 `NARRAEON_READY <port>` once the server is listening.
+
+## Release APK in CI
+
+Published GitHub Releases build and attach the arm64 release APK automatically.
+Version, signing, and the attachment name are described in
+[RELEASING.md](../RELEASING.md#android-apk).
