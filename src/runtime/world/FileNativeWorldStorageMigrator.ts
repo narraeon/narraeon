@@ -1,3 +1,4 @@
+import type { HistoryBackground } from "../history/HistoryBackground.ts";
 import { createHash, randomUUID } from "node:crypto";
 import {
   link,
@@ -19,10 +20,9 @@ import type {
 import {
   authorityV3Directory,
   continuityHeadFile,
-  FileNativeAuthorityV3,
+  LegacyAuthorityV3Reader,
   type FileNativeAuthorityCommitV3,
-  type FileNativeAuthorityRecoveredEndpoint,
-} from "./FileNativeAuthorityV3.ts";
+} from "./LegacyAuthorityV3Reader.ts";
 import {
   projectFileNativeHistorySurface,
   projectHistoryBackgrounds,
@@ -145,7 +145,7 @@ export class FileNativeWorldStorageMigrator {
         callChainContexts: 0,
       };
     }
-    const currentAuthority = new FileNativeAuthorityV3(worldRoot);
+    const currentAuthority = new LegacyAuthorityV3Reader(worldRoot);
     if (await currentAuthority.exists()) {
       const { commits } = await convertAuthorityV3ToLedger(worldRoot);
       return {
@@ -273,15 +273,11 @@ export class FileNativeWorldStorageMigrator {
     checkpoint: CurrentMaterializedCheckpoint;
     callChainContexts: number;
   }): Promise<FileNativeWorldStorageMigrationResult> {
-    const result = await migrateCurrentAuthorityToV3({
-      ...input,
-    });
-    const { commits } = await convertAuthorityV3ToLedger(input.worldRoot);
-    return { ...result, authorityCommits: commits };
+    return migrateCurrentAuthorityToLedger({ ...input });
   }
 }
 
-async function migrateCurrentAuthorityToV3(input: {
+async function migrateCurrentAuthorityToLedger(input: {
   worldId: string;
   worldRoot: string;
   commits: readonly CurrentPlayCommit[];
@@ -291,201 +287,126 @@ async function migrateCurrentAuthorityToV3(input: {
   const runtimeRoot = join(input.worldRoot, "runtime");
   const genesis = await readCurrentGenesis(input.worldRoot, input.worldId);
   const normalized = normalizeAuthorityIdentity(genesis.history, input.commits);
-  const stagingWorld = join(runtimeRoot, ".authority-v3-migration");
-  const stagedRuntime = join(stagingWorld, "runtime");
-  const targetAuthority = join(runtimeRoot, authorityV3Directory);
-  await rm(stagingWorld, { recursive: true, force: true });
-  const staged = new FileNativeAuthorityV3(stagingWorld);
-  try {
-    const genesisMaterials = normalizeMaterials(
-      genesis.additionalMaterials,
+  const genesisMaterials = normalizeMaterials(
+    genesis.additionalMaterials,
+    normalized.messageIds,
+    input.worldId,
+  );
+  const expectedByHead = new Map<string, MigratedEndpointExpectation>([
+    [
+      "genesis",
+      {
+        state: structuredClone(genesis.state),
+        history: structuredClone(normalized.genesisHistory),
+        additionalMaterials: structuredClone(genesisMaterials),
+      },
+    ],
+  ]);
+  const endpoints = new Map<number, LedgerEndpointInput>([
+    [
+      0,
+      { head: "genesis", ...structuredClone(expectedByHead.get("genesis")!) },
+    ],
+  ]);
+  const steps: LedgerStepInput[] = [];
+  for (const [index, source] of input.commits.entries()) {
+    const sequence = index + 1;
+    if (headPositionOf(source.head) !== sequence)
+      throw new Error("Released Authority commits are not sequential");
+    const historyAppend = source.historyAppend.map((message) =>
+      normalizeHistoryMessage(message, normalized.messageIds),
+    );
+    const nextMaterials = normalizeMaterials(
+      source.nextAdditionalMaterials,
       normalized.messageIds,
       input.worldId,
     );
-    await staged.initialize({
-      operationId: genesis.operationId,
-      state: genesis.state,
-      history: normalized.genesisHistory,
-      additionalMaterials: genesisMaterials,
-    });
-    const expectedEndpoints = new Map<string, MigratedEndpointExpectation>([
-      [
-        "genesis",
-        {
-          state: structuredClone(genesis.state),
-          history: structuredClone(normalized.genesisHistory),
-          additionalMaterials: structuredClone(genesisMaterials),
-        },
-      ],
-    ]);
-    const migrated: {
-      source: CurrentPlayCommit;
-      fact: FileNativeAuthorityCommitV3;
-      digest: string;
-    }[] = [];
-    for (const source of input.commits) {
-      const historyAppend = source.historyAppend.map((message) =>
-        normalizeHistoryMessage(message, normalized.messageIds),
+    const basisHead =
+      source.timelineRevision?.restoresHead ?? source.parentHead;
+    const basis = expectedByHead.get(basisHead);
+    if (basis === undefined)
+      throw new Error(
+        "Released Authority transition references an unknown result basis",
       );
-      const nextMaterials = normalizeMaterials(
-        source.nextAdditionalMaterials,
-        normalized.messageIds,
-        input.worldId,
+    if (source.timelineRevision !== undefined) {
+      const expectedHistory = source.timelineRevision.replacementHistory.map(
+        (message) => normalizeHistoryMessage(message, normalized.messageIds),
       );
-      const basisHead =
-        source.timelineRevision?.restoresHead ?? source.parentHead;
-      const basis = expectedEndpoints.get(basisHead);
-      if (basis === undefined)
+      if (
+        !isDeepStrictEqual(
+          canonicalState(basis.state),
+          canonicalLegacyState(source.timelineRevision.replacementState),
+        ) ||
+        !isDeepStrictEqual(basis.history, expectedHistory) ||
+        !isDeepStrictEqual(basis.additionalMaterials, nextMaterials)
+      )
         throw new Error(
-          "Released Authority transition references an unknown result basis",
+          "Released timeline revision does not exactly restore its logical parent",
         );
-      if (source.timelineRevision !== undefined) {
-        const restored = await staged.recover(
-          source.timelineRevision.restoresHead,
-        );
-        const expectedHistory = source.timelineRevision.replacementHistory.map(
-          (message) => normalizeHistoryMessage(message, normalized.messageIds),
-        );
-        if (
-          !isDeepStrictEqual(
-            canonicalState(restored.state),
-            canonicalLegacyState(source.timelineRevision.replacementState),
-          ) ||
-          !isDeepStrictEqual(restored.history, expectedHistory) ||
-          !isDeepStrictEqual(restored.additionalMaterials, nextMaterials)
-        )
-          throw new Error(
-            "Released timeline revision does not exactly restore its logical parent",
-          );
-      }
-      const prepared = await staged.prepareAppend({
-        operationId: source.operationId,
-        parentHead: source.parentHead,
-        ...(source.timelineRevision === undefined
-          ? {}
-          : { timelineParentHead: source.timelineRevision.restoresHead }),
-        mode: source.mode,
-        historyAppend: historyAppend.map(({ role, exactText }) => ({
-          role,
-          exactText,
-        })),
-        stateChanges: source.stateChanges,
-        nextMaterials,
+    }
+    const expected = applyReleasedTransition(
+      basis,
+      source,
+      historyAppend,
+      nextMaterials,
+    );
+    expectedByHead.set(source.head, expected);
+    endpoints.set(sequence, { head: source.head, ...expected });
+    const basisSequence = headPositionOf(basisHead);
+    steps.push({
+      sequence,
+      basisSequence,
+      ...(source.timelineRevision === undefined
+        ? {}
+        : { restoresSequence: basisSequence }),
+      mode: source.mode === "correction" ? "correction" : "play",
+      payload: {
+        sequence,
+        head: source.head,
+        operationId:
+          sequence === input.commits.length
+            ? (source.operationId ?? null)
+            : null,
+        parentHead: basisHead,
+        mode: source.mode === "correction" ? "correction" : "play",
+        historyAppend,
+        stateChanges: source.stateChanges.map((change) => {
+          const { canonicalNextBytes, ...stored } = change;
+          void canonicalNextBytes;
+          return structuredClone(stored);
+        }),
+        nextAdditionalMaterials: structuredClone([...nextMaterials]),
         ...(source.correctionTargets === undefined
           ? {}
-          : { correctionTargets: source.correctionTargets }),
+          : { correctionTargets: [...source.correctionTargets] }),
         ...(source.corrects === undefined ? {} : { corrects: source.corrects }),
-        ...(source.timelineRevision === undefined
-          ? {}
-          : {
-              timelineRevision: {
-                restoresHead: source.timelineRevision.restoresHead,
-                replacesHead: source.timelineRevision.replacesHead,
-                requestFingerprint: source.timelineRevision.requestFingerprint,
-              },
-            }),
-      });
-      if (
-        !isDeepStrictEqual(prepared.commit.historyAppend, historyAppend) ||
-        prepared.commit.head !== source.head
-      )
-        throw new Error("Migrated Authority fact changed released semantics");
-      await staged.publishPrepared(prepared);
-      const expected = applyReleasedTransition(
-        basis,
-        source,
-        historyAppend,
-        nextMaterials,
-      );
-      const recovered = await staged.recover(source.head);
-      if (
-        !isDeepStrictEqual(
-          canonicalState(recovered.state),
-          canonicalState(expected.state),
-        ) ||
-        !isDeepStrictEqual(recovered.history, expected.history) ||
-        !isDeepStrictEqual(
-          recovered.additionalMaterials,
-          expected.additionalMaterials,
-        )
-      )
-        throw new Error(
-          `Migrated Authority endpoint changed released semantics: ${source.head}`,
-        );
-      expectedEndpoints.set(source.head, expected);
-      migrated.push({
-        source,
-        fact: prepared.commit,
-        digest: prepared.commitDigest,
-      });
-    }
-
-    const finalHead = await staged.readHead();
-    if (
-      finalHead.sequence !== input.commits.length ||
-      finalHead.head !== (input.commits.at(-1)?.head ?? "genesis")
-    )
-      throw new Error(
-        "Migrated Authority head does not match released history",
-      );
-    await staged.readHistory();
-    const checkpointFact =
-      input.checkpoint.sequence === 0
-        ? null
-        : migrated[input.checkpoint.sequence - 1];
-    if (
-      (input.checkpoint.sequence === 0 &&
-        input.checkpoint.head !== "genesis") ||
-      (input.checkpoint.sequence > 0 &&
-        checkpointFact?.fact.head !== input.checkpoint.head)
-    )
-      throw new Error(
-        "Released materialized checkpoint is not in migrated Authority",
-      );
-    const checkpointEndpoint = await staged.recover(input.checkpoint.head);
-
-    await rm(targetAuthority, { recursive: true, force: true });
-    await rename(join(stagedRuntime, authorityV3Directory), targetAuthority);
-    await publishJson(join(runtimeRoot, "play-genesis-timeline.json"), {
-      schemaVersion: 1,
-      worldId: input.worldId,
-      history: normalized.genesisHistory,
+      },
     });
-    // V2 filenames hash world-scoped message IDs. Rebuild this derived surface
-    // from the normalized checkpoint before publishing the V3 checkpoint/head.
-    await replaceMaterializedHistory(
-      join(input.worldRoot, "history"),
-      projectFileNativeHistorySurface(
-        checkpointEndpoint.history,
-        (messageId) => {
-          throw new Error(
-            `Migrated history-message identity cannot form a materialization path: ${messageId}`,
-          );
-        },
-      ),
-    );
-    await publishJson(join(runtimeRoot, "additional-materials.json"), {
-      head: input.checkpoint.head,
-      items: checkpointEndpoint.additionalMaterials,
-    });
-    await publishJson(join(runtimeRoot, "materialized-head.json"), {
-      schemaVersion: 3,
-      head: input.checkpoint.head,
-      sequence: input.checkpoint.sequence,
-      commitDigest: checkpointFact?.digest ?? null,
-    });
-    await rm(stagingWorld, { recursive: true, force: true });
-    await publishJson(join(runtimeRoot, continuityHeadFile), finalHead);
-    return {
-      outcome: "migrated",
-      authorityCommits: migrated.length,
-      callChainContexts: input.callChainContexts,
-    };
-  } finally {
-    await rm(stagingWorld, { recursive: true, force: true }).catch(
-      () => undefined,
-    );
   }
+  const checkpointHead = input.checkpoint.head;
+  if (
+    (input.checkpoint.sequence === 0 && checkpointHead !== "genesis") ||
+    (input.checkpoint.sequence > 0 &&
+      input.commits[input.checkpoint.sequence - 1]?.head !== checkpointHead)
+  )
+    throw new Error(
+      "Released materialized checkpoint is not in migrated Authority",
+    );
+  await publishJson(join(runtimeRoot, "play-genesis-timeline.json"), {
+    schemaVersion: 1,
+    worldId: input.worldId,
+    history: normalized.genesisHistory,
+  });
+  await writeTurnLedger(input.worldRoot, {
+    endpoints,
+    steps,
+    headSequence: input.commits.length,
+  });
+  return {
+    outcome: "migrated",
+    authorityCommits: input.commits.length,
+    callChainContexts: input.callChainContexts,
+  };
 }
 
 interface MigratedEndpointExpectation {
@@ -1400,47 +1321,6 @@ async function readDirectoryFileNames(root: string): Promise<string[]> {
   }
 }
 
-async function replaceMaterializedHistory(
-  root: string,
-  files: readonly { path: string; contents: string }[],
-): Promise<void> {
-  await mkdir(root, { recursive: true, mode: 0o700 });
-  const entries = await readdir(root, { withFileTypes: true });
-  if (entries.some((entry) => !entry.isFile()))
-    throw new Error("Materialized history projection must be a flat file tree");
-  const current = new Map(
-    await Promise.all(
-      entries.map(
-        async (entry) =>
-          [entry.name, await readFile(join(root, entry.name), "utf8")] as const,
-      ),
-    ),
-  );
-  const expected = new Set<string>();
-  for (const file of files) {
-    if (!validRelativePath(file.path) || file.path.includes("/"))
-      throw new Error(
-        `Migrated history projection has an invalid path: ${file.path}`,
-      );
-    if (expected.has(file.path))
-      throw new Error(
-        `Migrated history projection has a duplicate path: ${file.path}`,
-      );
-    expected.add(file.path);
-    if (current.get(file.path) === file.contents) continue;
-    const temporary = join(root, `${file.path}.${randomUUID()}.tmp`);
-    await writeFile(temporary, file.contents, {
-      encoding: "utf8",
-      mode: 0o600,
-    });
-    await rename(temporary, join(root, file.path));
-  }
-  for (const entry of entries) {
-    if (expected.has(entry.name)) continue;
-    await rm(join(root, entry.name), { force: true });
-  }
-}
-
 async function publishJson(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const temporary = `${path}.${randomUUID()}.tmp`;
@@ -1481,64 +1361,95 @@ async function publishImmutableJson(
   }
 }
 
+/** One endpoint as the ledger sees it: the current files a position must reproduce. */
+interface LedgerEndpointInput {
+  head: string;
+  state: { path: string; contents: string }[];
+  history: {
+    messageId: string;
+    role: "player" | "narrator";
+    exactText: string;
+    background?: HistoryBackground;
+  }[];
+  additionalMaterials: MaterialSelection[];
+}
+
+/** One committed turn: the basis endpoint it is computed from and its payload. */
+interface LedgerStepInput {
+  sequence: number;
+  basisSequence: number;
+  restoresSequence?: number;
+  mode: "play" | "correction";
+  payload: WorldTurnCommit;
+}
+
+const retiredAuthorityPaths = [
+  join("runtime", authorityV3Directory),
+  join("runtime", continuityHeadFile),
+  join("runtime", "materialized-head.json"),
+  join("runtime", "play-commits"),
+  join("runtime", ".authority-v3-migration"),
+  join("runtime", "play-authority-head.json"),
+];
+
 /**
- * Convert the Authority V3 fact chain into the current-files-plus-turn-ledger
- * layout. Every endpoint is recovered from V3, consecutive endpoints give each
- * turn's before-images, and a timeline revision folds into one turn that
- * restores its logical parent, so committed numbering stays unchanged. V3 stays
- * authoritative until head.json is published last; an interrupted conversion
- * simply runs again.
+ * Write the current-files-plus-turn-ledger layout for a migrated world.
+ * Each turn's before-images come from its basis endpoint; a timeline revision
+ * folds into one turn that restores its logical parent, so committed numbering
+ * is unchanged. The result is verified by reverse replay before anything is
+ * published, and head.json is written last: an interrupted migration simply
+ * runs again.
  */
-export async function convertAuthorityV3ToLedger(
+async function writeTurnLedger(
   worldRoot: string,
-): Promise<{ commits: number }> {
-  const authority = new FileNativeAuthorityV3(worldRoot);
-  const head = await authority.readHead();
-  const { commits } = await authority.readHistory();
-  const genesis = await authority.recover("genesis");
-  const endpoints = new Map<number, Map<string, string>>([
-    [0, endpointFiles(genesis)],
-  ]);
-  const basisPositions = new Map<number, number>();
+  input: {
+    endpoints: ReadonlyMap<number, LedgerEndpointInput>;
+    steps: readonly LedgerStepInput[];
+    headSequence: number;
+  },
+): Promise<void> {
+  const filesOf = new Map<number, Map<string, string>>();
+  const filesAt = (sequence: number): Map<string, string> => {
+    const cached = filesOf.get(sequence);
+    if (cached !== undefined) return cached;
+    const endpoint = input.endpoints.get(sequence);
+    if (endpoint === undefined)
+      throw new Error(`Migrated world has no endpoint at ${String(sequence)}`);
+    const files = endpointFiles(endpoint);
+    filesOf.set(sequence, files);
+    return files;
+  };
+  const finalFiles = filesAt(input.headSequence);
+
   let records: WorldTurnRecord[] = [];
-  for (const commit of commits) {
-    const revision = commit.timelineRevision;
-    const basisHead = revision?.restoresHead ?? commit.auditParent.head;
-    const basisPosition = headPositionOf(basisHead);
-    const basis =
-      endpoints.get(basisPosition) ??
-      endpointFiles(await authority.recover(basisHead));
-    const target = endpointFiles(await authority.recover(commit.head));
-    endpoints.set(commit.sequence, target);
-    basisPositions.set(commit.sequence, basisPosition);
-    if (revision !== undefined)
-      records = records.filter((record) => record.sequence <= basisPosition);
+  const basisOf = new Map<number, number>();
+  for (const step of input.steps) {
+    basisOf.set(step.sequence, step.basisSequence);
+    if (step.restoresSequence !== undefined)
+      records = records.filter(
+        (record) => record.sequence <= step.restoresSequence!,
+      );
     records.push({
-      sequence: commit.sequence,
-      mode: commit.mode === "correction" ? "correction" : "play",
+      sequence: step.sequence,
+      mode: step.mode,
       createdAt: new Date().toISOString(),
-      ...(revision === undefined ? {} : { restoresSequence: basisPosition }),
-      payload: payloadOf(
-        commit,
-        basisHead,
-        commit.sequence === head.sequence ? head.operationId : null,
-      ),
-      files: diffEndpoints(basis, target),
+      ...(step.restoresSequence === undefined
+        ? {}
+        : { restoresSequence: step.restoresSequence }),
+      payload: step.payload,
+      files: diffEndpoints(filesAt(step.basisSequence), filesAt(step.sequence)),
     });
   }
 
   // 逆向回放：从最终端点倒推每一轮，必须逐轮复现它的基底端点。
-  const finalFiles = endpoints.get(head.sequence);
-  if (finalFiles === undefined)
-    throw new Error("Authority V3 head has no recovered endpoint");
   const current = new Map(finalFiles);
   for (const record of [...records].reverse()) {
     for (const file of record.files) {
       if (file.before === null) current.delete(file.path);
       else current.set(file.path, file.before);
     }
-    const expected = endpoints.get(basisPositions.get(record.sequence) ?? -1);
-    if (expected === undefined || !sameFiles(current, expected))
+    const expected = filesAt(basisOf.get(record.sequence) ?? -1);
+    if (!sameFiles(current, expected))
       throw new Error(
         `World ledger migration cannot reproduce the endpoint before commit ${String(record.sequence)}`,
       );
@@ -1569,19 +1480,48 @@ export async function convertAuthorityV3ToLedger(
       record,
     );
   await publishJson(join(worldRoot, "runtime", "head.json"), {
-    sequence: head.sequence,
+    sequence: input.headSequence,
   });
-
-  // 账本已经发布：V3 与物化文件不再被读取，移除它们。
-  for (const retired of [
-    join("runtime", authorityV3Directory),
-    join("runtime", continuityHeadFile),
-    join("runtime", "materialized-head.json"),
-    join("runtime", "play-commits"),
-    join("runtime", ".authority-v3-migration"),
-    join("runtime", "play-authority-head.json"),
-  ])
+  // 账本已经发布：旧的 V3 与物化文件不再被读取，移除它们。
+  for (const retired of retiredAuthorityPaths)
     await rm(join(worldRoot, retired), { recursive: true, force: true });
+}
+
+/**
+ * Convert an Authority V3 fact chain into the current layout. Every endpoint is
+ * recovered from V3 and handed to the shared writer.
+ */
+export async function convertAuthorityV3ToLedger(
+  worldRoot: string,
+): Promise<{ commits: number }> {
+  const authority = new LegacyAuthorityV3Reader(worldRoot);
+  const head = await authority.readHead();
+  const { commits } = await authority.readHistory();
+  const endpoints = new Map<number, LedgerEndpointInput>();
+  endpoints.set(0, await authority.recover("genesis"));
+  const steps: LedgerStepInput[] = [];
+  for (const commit of commits) {
+    const revision = commit.timelineRevision;
+    const basisHead = revision?.restoresHead ?? commit.auditParent.head;
+    const basisSequence = headPositionOf(basisHead);
+    endpoints.set(commit.sequence, await authority.recover(commit.head));
+    steps.push({
+      sequence: commit.sequence,
+      basisSequence,
+      ...(revision === undefined ? {} : { restoresSequence: basisSequence }),
+      mode: commit.mode === "correction" ? "correction" : "play",
+      payload: payloadOf(
+        commit,
+        basisHead,
+        commit.sequence === head.sequence ? head.operationId : null,
+      ),
+    });
+  }
+  await writeTurnLedger(worldRoot, {
+    endpoints,
+    steps,
+    headSequence: head.sequence,
+  });
   return { commits: commits.length };
 }
 
@@ -1592,9 +1532,7 @@ function headPositionOf(head: string): number {
   return Number.parseInt(match[1]!, 10);
 }
 
-function endpointFiles(
-  endpoint: FileNativeAuthorityRecoveredEndpoint,
-): Map<string, string> {
+function endpointFiles(endpoint: LedgerEndpointInput): Map<string, string> {
   const files = new Map<string, string>();
   for (const file of endpoint.state)
     files.set(`state/${file.path}`, file.contents);
@@ -1680,8 +1618,7 @@ async function replaceDirectoryFiles(
   files: ReadonlyMap<string, string>,
 ): Promise<void> {
   const prefix = `${directory}/`;
-  const root = join(worldRoot, directory);
-  await rm(root, { recursive: true, force: true });
+  await rm(join(worldRoot, directory), { recursive: true, force: true });
   for (const [path, contents] of files) {
     if (!path.startsWith(prefix)) continue;
     await publishText(join(worldRoot, path), contents);

@@ -2,9 +2,9 @@ import {
   isHistoryBackground,
   type HistoryBackground,
 } from "../history/HistoryBackground.ts";
-import { createHash, randomUUID } from "node:crypto";
-import { link, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import type { ContentTreeFile } from "../content/ContentWorkspace.ts";
@@ -154,6 +154,10 @@ export class FileNativeAuthorityV3Error extends Error {
 }
 
 /**
+ * Read-only access to the retired Authority V3 fact chain. It exists only so
+ * the storage migrator can convert a V3 world into the current layout; nothing
+ * on the live path writes V3 facts.
+ *
  * World-neutral immutable Authority facts with one target-local mutable head.
  *
  * Every sequence owns an immutable epoch directory. A fork can therefore
@@ -161,7 +165,7 @@ export class FileNativeAuthorityV3Error extends Error {
  * ancestor facts. Object references include their creation epoch so unchanged
  * state/history/material objects remain directly addressable after a fork.
  */
-export class FileNativeAuthorityV3 {
+export class LegacyAuthorityV3Reader {
   readonly #runtimeRoot: string;
   readonly #authorityRoot: string;
 
@@ -180,80 +184,6 @@ export class FileNativeAuthorityV3 {
     }
   }
 
-  async initialize(input: {
-    operationId: string | null;
-    state: readonly ContentTreeFile[];
-    history: readonly FileNativeAuthorityHistoryMessage[];
-    additionalMaterials: readonly MaterialSelection[];
-  }): Promise<FileNativeAuthorityHeadV3> {
-    const epoch = 0;
-    const state = await this.#writeStateManifest(epoch, input.state);
-    const historySegment: FileNativeAuthorityHistorySegmentV3 = {
-      schemaVersion: 3,
-      type: "file_native_history_segment",
-      previous: null,
-      messages: structuredClone(input.history),
-    };
-    assertHistorySegment(historySegment);
-    assertGenesisHistory(historySegment.messages);
-    const history =
-      input.history.length === 0
-        ? null
-        : await this.#writeObject<FileNativeAuthorityHistorySegmentV3>(
-            epoch,
-            "history.json",
-            historySegment,
-          );
-    const materialSet: FileNativeAuthorityMaterialSetV3 = {
-      schemaVersion: 3,
-      type: "file_native_material_set",
-      items: structuredClone(input.additionalMaterials),
-    };
-    assertMaterialSet(materialSet);
-    const materials = await this.#writeObject<FileNativeAuthorityMaterialSetV3>(
-      epoch,
-      "materials.json",
-      materialSet,
-    );
-    const endpointValue: FileNativeAuthorityEndpointV3 = {
-      schemaVersion: 3,
-      type: "file_native_authority_endpoint",
-      state,
-      history,
-      historyLength: input.history.length,
-      materials,
-    };
-    assertEndpoint(endpointValue);
-    const endpoint = await this.#writeObject<FileNativeAuthorityEndpointV3>(
-      epoch,
-      "endpoint.json",
-      endpointValue,
-    );
-    const genesisValue: FileNativeAuthorityGenesisV3 = {
-      schemaVersion: 3,
-      type: "file_native_authority_genesis",
-      result: endpoint,
-    };
-    assertGenesis(genesisValue);
-    const genesis = await this.#writeObject<FileNativeAuthorityGenesisV3>(
-      epoch,
-      "authority.json",
-      genesisValue,
-    );
-    const head: FileNativeAuthorityHeadV3 = {
-      schemaVersion: 3,
-      type: "file_native_continuity_head",
-      head: "genesis",
-      sequence: 0,
-      genesisDigest: genesis.digest,
-      commitDigest: null,
-      result: endpoint,
-      operationId: input.operationId,
-    };
-    await publishJson(join(this.#runtimeRoot, continuityHeadFile), head);
-    return head;
-  }
-
   async readHead(): Promise<FileNativeAuthorityHeadV3> {
     const value = await readJson<unknown>(
       join(this.#runtimeRoot, continuityHeadFile),
@@ -264,195 +194,6 @@ export class FileNativeAuthorityV3 {
 
   async currentOperationId(): Promise<string | null> {
     return (await this.readHead()).operationId;
-  }
-
-  async discardUnacceptedNextEpoch(): Promise<void> {
-    const current = await this.readHead();
-    await rm(this.#epochRoot(current.sequence + 1), {
-      recursive: true,
-      force: true,
-    });
-  }
-
-  async prepareAppend(input: {
-    playContext?: string;
-    worldClock?: string;
-    operationId: string;
-    parentHead: string;
-    timelineParentHead?: string;
-    mode: FileNativeAuthorityCommitV3["mode"];
-    historyAppend: readonly {
-      role: "player" | "narrator";
-      exactText: string;
-      background?: HistoryBackground;
-    }[];
-    stateChanges: readonly FileNativeAuthorityStateChangeInput[];
-    nextMaterials: readonly MaterialSelection[];
-    correctionTargets?: readonly string[];
-    corrects?: string;
-    timelineRevision?: FileNativeAuthorityTimelineRevision;
-    narrativeCheckpoint?: NarrativeCheckpointDeclaration;
-  }): Promise<FileNativeAuthorityPreparedAppend> {
-    const current = await this.readHead();
-    if (current.head !== input.parentHead)
-      throw new FileNativeAuthorityV3Error(
-        "stale",
-        "The parent endpoint of the Authority operation has changed",
-      );
-    const sequence = current.sequence + 1;
-    const head = `commit:${sequence}`;
-    const basisHead = input.timelineParentHead ?? input.parentHead;
-    const basisResult = await this.#resultRefAt(basisHead);
-    const basis = await this.#readEndpoint(basisResult);
-    const state = await this.#nextState(
-      sequence,
-      basis.state,
-      input.stateChanges,
-    );
-    const historyAppend = input.historyAppend.map((message, index) => ({
-      messageId: `message.${sequence}.${index + 1}.${message.role}`,
-      ...structuredClone(message),
-    }));
-    const history =
-      historyAppend.length === 0
-        ? basis.history
-        : await this.#writeHistorySegment(sequence, {
-            schemaVersion: 3,
-            type: "file_native_history_segment",
-            previous: basis.history,
-            messages: historyAppend,
-          });
-    const basisMaterials = await this.#readMaterials(basis.materials);
-    const nextMaterialSet: FileNativeAuthorityMaterialSetV3 = {
-      schemaVersion: 3,
-      type: "file_native_material_set",
-      items: structuredClone(input.nextMaterials),
-    };
-    assertMaterialSet(nextMaterialSet);
-    const materials = isDeepStrictEqual(
-      basisMaterials.items,
-      input.nextMaterials,
-    )
-      ? basis.materials
-      : await this.#writeObject<FileNativeAuthorityMaterialSetV3>(
-          sequence,
-          "materials.json",
-          nextMaterialSet,
-        );
-    const endpointValue: FileNativeAuthorityEndpointV3 = {
-      schemaVersion: 3,
-      type: "file_native_authority_endpoint",
-      state,
-      history,
-      historyLength: basis.historyLength + historyAppend.length,
-      materials,
-      ...(input.narrativeCheckpoint === undefined
-        ? basis.narrativeCheckpoint === undefined
-          ? {}
-          : { narrativeCheckpoint: basis.narrativeCheckpoint }
-        : {
-            narrativeCheckpoint: {
-              ...input.narrativeCheckpoint,
-              head,
-              historyMessageId: historyAppend.at(-1)?.messageId ?? "",
-            },
-          }),
-    };
-    assertEndpoint(endpointValue);
-    const endpoint = await this.#writeObject<FileNativeAuthorityEndpointV3>(
-      sequence,
-      "endpoint.json",
-      endpointValue,
-    );
-    const storedChanges: FileNativeAuthorityStoredStateChange[] = [];
-    for (const change of input.stateChanges) {
-      const blob = await this.#writeBlob(sequence, change.canonicalNextBytes);
-      storedChanges.push({
-        kind: change.kind,
-        documentId: change.documentId,
-        stableShortRef: change.stableShortRef,
-        relativePath: change.relativePath,
-        codec: change.codec,
-        expectedPreviousHash: change.expectedPreviousHash,
-        nextHash: change.nextHash,
-        nextBlob: blob,
-      });
-    }
-    const auditParent = {
-      head: current.head,
-      digest: current.commitDigest ?? current.genesisDigest,
-    };
-    const timelineParent = await this.#authorityRefAt(basisHead);
-    const commit: FileNativeAuthorityCommitV3 = {
-      ...(input.playContext === undefined
-        ? {}
-        : { playContext: input.playContext }),
-      ...(input.worldClock === undefined
-        ? {}
-        : { worldClock: input.worldClock }),
-      schemaVersion: 3,
-      type: "file_native_authority_commit",
-      sequence,
-      head,
-      auditParent,
-      timelineParent,
-      mode: input.mode,
-      historyAppend,
-      stateChanges: storedChanges,
-      nextAdditionalMaterials: structuredClone(input.nextMaterials),
-      result: endpoint,
-      ...(input.narrativeCheckpoint === undefined
-        ? {}
-        : { narrativeCheckpoint: structuredClone(input.narrativeCheckpoint) }),
-      ...(input.correctionTargets === undefined
-        ? {}
-        : { correctionTargets: structuredClone(input.correctionTargets) }),
-      ...(input.corrects === undefined ? {} : { corrects: input.corrects }),
-      ...(input.timelineRevision === undefined
-        ? {}
-        : { timelineRevision: structuredClone(input.timelineRevision) }),
-    };
-    assertCommit(commit);
-    const authority = await this.#writeObject<FileNativeAuthorityCommitV3>(
-      sequence,
-      "authority.json",
-      commit,
-    );
-    return {
-      commit,
-      commitDigest: authority.digest,
-      nextHead: {
-        schemaVersion: 3,
-        type: "file_native_continuity_head",
-        head,
-        sequence,
-        genesisDigest: current.genesisDigest,
-        commitDigest: authority.digest,
-        result: endpoint,
-        operationId: input.operationId,
-      },
-      stateChanges: structuredClone(input.stateChanges),
-    };
-  }
-
-  async publishPrepared(
-    prepared: FileNativeAuthorityPreparedAppend,
-  ): Promise<void> {
-    const current = await this.readHead();
-    if (
-      current.sequence + 1 !== prepared.nextHead.sequence ||
-      current.head !== prepared.commit.auditParent.head ||
-      (current.commitDigest ?? current.genesisDigest) !==
-        prepared.commit.auditParent.digest
-    )
-      throw new FileNativeAuthorityV3Error(
-        "stale",
-        "The prepared Authority fact no longer extends the current endpoint",
-      );
-    await publishJson(
-      join(this.#runtimeRoot, continuityHeadFile),
-      prepared.nextHead,
-    );
   }
 
   async recover(
@@ -683,25 +424,6 @@ export class FileNativeAuthorityV3 {
     return value.result;
   }
 
-  async #authorityRefAt(
-    head: string,
-  ): Promise<{ head: string; digest: string }> {
-    const current = await this.readHead();
-    if (head === "genesis") {
-      await this.#assertAcceptedGenesis(current);
-      return { head, digest: current.genesisDigest };
-    }
-    const sequence = parseHeadSequence(head);
-    const { value, digest } = await this.#readAuthorityCommit(sequence);
-    if (value.head !== head || sequence > current.sequence)
-      throw new FileNativeAuthorityV3Error(
-        "conflict",
-        `Authority endpoint does not exist: ${head}`,
-      );
-    await this.#assertAcceptedAuthorityRef(current, sequence, head, digest);
-    return { head, digest };
-  }
-
   async #assertAcceptedAuthorityRef(
     current: FileNativeAuthorityHeadV3,
     sequence: number,
@@ -742,96 +464,6 @@ export class FileNativeAuthorityV3 {
         "corrupt",
         "Authority audit chain does not extend its genesis anchor",
       );
-  }
-
-  async #nextState(
-    epoch: number,
-    basisRef: FileNativeAuthorityObjectRef,
-    changes: readonly FileNativeAuthorityStateChangeInput[],
-  ): Promise<FileNativeAuthorityObjectRef> {
-    if (changes.length === 0) return basisRef;
-    const basis = await this.#readStateManifest(basisRef);
-    const files = new Map(basis.files.map((file) => [file.path, file]));
-    for (const change of changes) {
-      const previous = files.get(change.relativePath);
-      if ((previous?.sha256 ?? null) !== change.expectedPreviousHash)
-        throw new FileNativeAuthorityV3Error(
-          "conflict",
-          `State-change previous hash conflicts: ${change.relativePath}`,
-        );
-      if (hashWithPrefix(change.canonicalNextBytes) !== change.nextHash)
-        throw new FileNativeAuthorityV3Error(
-          "conflict",
-          `State-change next hash conflicts: ${change.relativePath}`,
-        );
-      const blob = await this.#writeBlob(epoch, change.canonicalNextBytes);
-      files.set(change.relativePath, {
-        path: change.relativePath,
-        sha256: change.nextHash,
-        blob,
-      });
-    }
-    const manifest: FileNativeAuthorityStateManifestV3 = {
-      schemaVersion: 3,
-      type: "file_native_state_manifest",
-      files: [...files.values()].sort((left, right) =>
-        left.path.localeCompare(right.path),
-      ),
-    };
-    assertStateManifest(manifest);
-    return this.#writeObject<FileNativeAuthorityStateManifestV3>(
-      epoch,
-      "state.json",
-      manifest,
-    );
-  }
-
-  async #writeStateManifest(
-    epoch: number,
-    files: readonly ContentTreeFile[],
-  ): Promise<FileNativeAuthorityObjectRef> {
-    const entries: FileNativeAuthorityStateManifestV3["files"][number][] = [];
-    for (const file of files) {
-      const blob = await this.#writeBlob(epoch, file.contents);
-      entries.push({
-        path: file.path,
-        sha256: hashWithPrefix(file.contents),
-        blob,
-      });
-    }
-    const manifest: FileNativeAuthorityStateManifestV3 = {
-      schemaVersion: 3,
-      type: "file_native_state_manifest",
-      files: entries.sort((left, right) => left.path.localeCompare(right.path)),
-    };
-    assertStateManifest(manifest);
-    return this.#writeObject<FileNativeAuthorityStateManifestV3>(
-      epoch,
-      "state.json",
-      manifest,
-    );
-  }
-
-  async #writeHistorySegment(
-    epoch: number,
-    segment: FileNativeAuthorityHistorySegmentV3,
-  ): Promise<FileNativeAuthorityObjectRef> {
-    assertHistorySegment(segment);
-    return this.#writeObject<FileNativeAuthorityHistorySegmentV3>(
-      epoch,
-      "history.json",
-      segment,
-    );
-  }
-
-  async #writeBlob(
-    epoch: number,
-    contents: string,
-  ): Promise<FileNativeAuthorityBlobRef> {
-    const digest = hashHex(contents);
-    const path = join(this.#epochRoot(epoch), "blobs", `${digest}.txt`);
-    await publishImmutableText(path, contents);
-    return { epoch, digest, sha256: `sha256:${digest}` };
   }
 
   async #recoverState(
@@ -954,16 +586,6 @@ export class FileNativeAuthorityV3 {
     return { value: commit, digest: objectDigest(commit) };
   }
 
-  async #writeObject<Value>(
-    epoch: number,
-    name: string,
-    value: Value,
-  ): Promise<FileNativeAuthorityObjectRef> {
-    const digest = objectDigest(value);
-    await publishImmutableJson(join(this.#epochRoot(epoch), name), value);
-    return { epoch, digest };
-  }
-
   async #readObject<Value extends { type: string }>(
     ref: FileNativeAuthorityObjectRef,
     name: string,
@@ -1078,19 +700,6 @@ function assertHistorySegment(
     !value.messages.every(isHistoryMessage)
   )
     throw corruptShape("Authority history segment");
-}
-
-function assertGenesisHistory(
-  messages: readonly FileNativeAuthorityHistoryMessage[],
-): void {
-  for (const [index, message] of messages.entries()) {
-    const expected =
-      index === 0 && message.role === "narrator"
-        ? "message.genesis.narrator"
-        : `message.genesis.${index + 1}.${message.role}`;
-    if (message.messageId !== expected)
-      throw corruptShape("Authority genesis history-message identity");
-  }
 }
 
 function assertMaterialSet(
@@ -1500,50 +1109,6 @@ function hashWithPrefix(value: string): string {
 
 function isDigest(value: string): boolean {
   return /^[a-f0-9]{64}$/u.test(value);
-}
-
-async function publishImmutableJson(
-  path: string,
-  value: unknown,
-): Promise<void> {
-  await publishImmutableText(path, `${JSON.stringify(value, null, 2)}\n`);
-}
-
-async function publishImmutableText(
-  path: string,
-  contents: string,
-): Promise<void> {
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  const temporary = `${path}.${randomUUID()}.tmp`;
-  try {
-    await writeFile(temporary, contents, {
-      encoding: "utf8",
-      flag: "wx",
-      mode: 0o600,
-    });
-    try {
-      await link(temporary, path);
-    } catch (error: unknown) {
-      if (!isNodeError(error) || error.code !== "EEXIST") throw error;
-      if ((await readFile(path, "utf8")) !== contents)
-        throw new FileNativeAuthorityV3Error(
-          "corrupt",
-          `Immutable Authority object conflicts: ${path}`,
-        );
-    }
-  } finally {
-    await rm(temporary, { force: true });
-  }
-}
-
-async function publishJson(path: string, value: unknown): Promise<void> {
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  const temporary = `${path}.${randomUUID()}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
-  });
-  await rename(temporary, path);
 }
 
 async function readJson<Value>(path: string): Promise<Value> {

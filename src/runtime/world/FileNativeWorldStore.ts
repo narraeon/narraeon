@@ -1214,7 +1214,7 @@ export class FileNativeWorldStore {
   /**
    * Bind an immutable historical endpoint with the world's current control
    * surface. This is the same semantic input as a fresh context started while
-   * that endpoint was current, without rematerializing it over today's head.
+   * that endpoint was current, without rewinding today's head.
    */
   async bindPlayCallChainAt(
     worldId: string,
