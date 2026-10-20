@@ -169,6 +169,83 @@ test("自动检查把改动文档在真实游玩提示中的覆盖方式返回�
   });
 });
 
+test("自动检查只向模型报告本次工具响应的改动，存储的检查结果仍按用户请求累计", () => {
+  const transaction = new SettingAuthoringTransaction({
+    baseFiles: minimalFileNativeContentScaffold("en"),
+    locale: "en",
+    preview: productionPreview,
+  });
+  const create = (id: string, ref: string, title: string) => ({
+    id,
+    name: "setting_create",
+    arguments: {
+      path: `world/characters/${ref}.yaml`,
+      ref,
+      title,
+      summary: `${title} is waiting at the gate.`,
+      aliases: [],
+      body: "status: waiting\n",
+    },
+  });
+  transaction.execute([
+    create("create-alex", "alex", "Alex"),
+    create("create-bram", "bram", "Bram"),
+  ]);
+
+  const markdown = transaction
+    .execute([create("create-cara", "cara", "Cara")])
+    .at(-1)!.markdown;
+
+  expect(markdown).toContain(
+    "This tool response changed 1 file(s) in the content package; 3 file(s) changed so far in this user request.",
+  );
+  expect(markdown).toContain(
+    "world/characters/cara.yaml — catalog summary only",
+  );
+  expect(markdown).not.toContain("world/characters/alex.yaml —");
+  expect(markdown).toContain("body / injection contribution\n@cara: ");
+  expect(markdown).not.toContain("@alex:");
+  expect(markdown).not.toContain("@current-situation:");
+  expect(markdown).not.toContain("advisory /");
+  expect(markdown).not.toContain("World materials /");
+  expect(transaction.review().playCoverage?.changed).toHaveLength(3);
+});
+
+test("文档整理报告保留超过建议上限的未改动文档", () => {
+  const baseFiles = minimalFileNativeContentScaffold("en").map((file) =>
+    file.path === "control/frame.yaml"
+      ? {
+          ...file,
+          contents: `${file.contents}maintenance:\n  documents:\n    '@current-situation': 10\n`,
+        }
+      : file,
+  );
+  const transaction = new SettingAuthoringTransaction({
+    baseFiles,
+    locale: "en",
+    preview: productionPreview,
+  });
+
+  const markdown = transaction
+    .execute([
+      {
+        id: "write-unused-control",
+        name: "setting_write_file",
+        arguments: {
+          path: "control/blocks/unused.md",
+          contents: "# Unused world instruction\n\nThis block is not enabled.",
+        },
+      },
+    ])
+    .at(-1)!.markdown;
+
+  expect(markdown).toContain("World materials /");
+  expect(markdown).toContain("body / injection contribution / advisory\n");
+  expect(markdown).toMatch(
+    /@current-situation: \d+ \/ \d+ \/ 10 \(over advisory\)/u,
+  );
+});
+
 test("每个写调用独立结算，失败只回到对应调用且不回滚成功调用", () => {
   const baseFiles = minimalFileNativeContentScaffold("en");
   const transaction = new SettingAuthoringTransaction({

@@ -342,22 +342,69 @@ export function renderDocumentWritePosition(
     : `Last committed write @${shortRef}:\nBody: ${worldWritePositionText(fact.lastBodyWrite, locale)}\nMetadata: ${worldWritePositionText(fact.lastMetadataWrite, locale)}`;
 }
 
+/**
+ * Lists only documents the current tool response changed or that exceed their
+ * advisory limit, so the report stays proportional to the edit rather than to
+ * the package size.
+ */
 export function renderWorldMaintenanceReport(
   report: WorldPromptMaintenance | undefined,
+  changedShortRefs: ReadonlySet<string>,
   locale: AppLocale,
 ): string {
   if (report === undefined) return "";
   const zh = locale === "zh-CN";
+  const heading = zh
+    ? "# 文档整理报告（UTF-8 字节；超限仅提示）"
+    : "# Document maintenance (UTF-8 bytes; advisory only)";
+  const documents = report.documents.filter(
+    (document) =>
+      document.overAdvisory || changedShortRefs.has(document.shortRef),
+  );
+  const slots = report.slots.filter(
+    (slot) =>
+      slot.overAdvisory ||
+      slot.documents.some((shortRef) => changedShortRefs.has(shortRef)),
+  );
+  if (documents.length === 0 && slots.length === 0)
+    return `${heading}\n${zh ? "本次没有改动世界文档，也没有文档或材料槽超过建议上限。" : "No world document changed in this response, and no document or slot exceeds its advisory limit."}`;
+  const allColumns: {
+    label: string;
+    value: (
+      document: WorldPromptMaintenance["documents"][number],
+    ) => number | null;
+  }[] = [
+    { label: zh ? "正文" : "body", value: (d) => d.bodyBytes },
+    {
+      label: zh ? "注入贡献" : "injection contribution",
+      value: (d) => d.injectedBytes,
+    },
+    { label: zh ? "建议上限" : "advisory", value: (d) => d.advisoryBytes },
+    { label: zh ? "基准" : "baseline", value: (d) => d.baselineBytes },
+    { label: zh ? "增长" : "growth", value: (d) => d.growthBytes },
+  ];
+  // Columns that are unset for every listed document carry no information.
+  const columns = allColumns.filter(({ value }) =>
+    documents.some((document) => value(document) !== null),
+  );
+  const overAdvisory =
+    report.documents.some(({ overAdvisory }) => overAdvisory) ||
+    report.slots.some(({ overAdvisory }) => overAdvisory);
   return [
-    zh
-      ? "# 文档整理报告（UTF-8 字节；超限仅提示）"
-      : "# Document maintenance (UTF-8 bytes; advisory only)",
-    `${zh ? "世界材料 / 其中检查点历史 / 作者提示 / Runtime 提示 / 工具定义" : "World materials / checkpoint history subset / author instructions / Runtime instructions / tool definitions"}: ${report.worldMaterialsBytes} / ${report.checkpointHistoryBytes} / ${report.authorInstructionBytes} / ${report.runtimeInstructionBytes} / ${report.toolDefinitionBytes}`,
-    ...report.documents.map(
+    heading,
+    ...(overAdvisory
+      ? [
+          `${zh ? "世界材料 / 其中检查点历史 / 作者提示 / Runtime 提示 / 工具定义" : "World materials / checkpoint history subset / author instructions / Runtime instructions / tool definitions"}: ${report.worldMaterialsBytes} / ${report.checkpointHistoryBytes} / ${report.authorInstructionBytes} / ${report.runtimeInstructionBytes} / ${report.toolDefinitionBytes}`,
+        ]
+      : []),
+    ...(documents.length > 0
+      ? [columns.map(({ label }) => label).join(" / ")]
+      : []),
+    ...documents.map(
       (document) =>
-        `@${document.shortRef}: ${zh ? "正文 / 注入贡献 / 建议上限 / 基准 / 增长" : "body / injection contribution / advisory / baseline / growth"}: ${document.bodyBytes} / ${document.injectedBytes} / ${document.advisoryBytes ?? "—"} / ${document.baselineBytes ?? "—"} / ${document.growthBytes ?? "—"}${document.overAdvisory ? (zh ? "（超过建议）" : " (over advisory)") : ""}`,
+        `@${document.shortRef}: ${columns.map(({ value }) => value(document) ?? "—").join(" / ")}${document.overAdvisory ? (zh ? "（超过建议）" : " (over advisory)") : ""}`,
     ),
-    ...report.slots.map(
+    ...slots.map(
       (slot) =>
         `${zh ? "材料槽" : "Slot"} ${slot.id}: ${slot.bytes} / ${slot.advisoryBytes ?? "—"}${slot.overAdvisory ? (zh ? "（超过建议）" : " (over advisory)") : ""}`,
     ),

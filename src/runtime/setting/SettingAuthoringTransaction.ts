@@ -496,6 +496,7 @@ export class SettingAuthoringTransaction {
   execute(calls: readonly ModelHostToolCall[]): SettingAuthoringToolResult[] {
     const normalized = calls.map(normalizeCall);
     const results: SettingAuthoringToolResult[] = [];
+    const responseBase = this.files();
     let lastSuccessfulWrite = -1;
 
     for (const call of normalized) {
@@ -518,8 +519,12 @@ export class SettingAuthoringTransaction {
     if (lastSuccessfulWrite >= 0) {
       this.#review = this.#inspect();
       const settled = results[lastSuccessfulWrite]!;
+      // The stored review stays cumulative for the whole user request; the
+      // model only needs what this tool response changed.
       settled.markdown = `${settled.markdown}\n\n${renderAutomaticReview(
         this.#review,
+        fileDiff(responseBase, this.#snapshot.files),
+        this.#snapshot,
         this.#locale,
       )}`;
     }
@@ -663,14 +668,32 @@ export class SettingAuthoringTransaction {
 
 function renderAutomaticReview(
   review: SettingAuthoringReview,
+  responseDiff: readonly SettingAuthoringDiff[],
+  snapshot: WorldDocumentStore,
   locale: AppLocale,
 ): string {
-  if (review.status === "usable")
+  if (review.status === "usable" && review.preview !== null) {
+    const changed = responseDiff.length;
+    const cumulative = review.diff.length;
+    const changedPaths = new Set(responseDiff.map(({ path }) => path));
+    const changedShortRefs = new Set(
+      listQueryableWorldDocuments(snapshot)
+        .filter(({ logicalPath }) => changedPaths.has(logicalPath))
+        .map(({ shortRef }) => shortRef),
+    );
     return `${localized(
       locale,
-      `# Current-tree review passed\n\nContent-tree validation and the real Prompt Preview both passed. This tool response changes ${review.diff.length} file(s) directly in the content package. Use this review and the coverage below to decide whether the current user request is satisfied or further edits are needed.`,
-      `# 当前树自动检查通过\n\n内容树校验和真实 Prompt Preview 均已通过；本次工具响应直接修改内容包中的 ${review.diff.length} 个文件。请根据本次检查与下方覆盖报告判断当前用户要求是否已经满足，或是否还需修改。`,
-    )}\n\n${renderPlayCoverage(review.playCoverage, locale)}\n\n${renderWorldMaintenanceReport(review.preview?.compilation.maintenance, locale)}`;
+      `# Current-tree review passed\n\nContent-tree validation and the real Prompt Preview both passed. This tool response changed ${changed} file(s) in the content package${cumulative === changed ? "" : `; ${cumulative} file(s) changed so far in this user request`}. Use this review and the coverage below to decide whether the current user request is satisfied or further edits are needed.`,
+      `# 当前树自动检查通过\n\n内容树校验和真实 Prompt Preview 均已通过；本次工具响应修改内容包中的 ${changed} 个文件${cumulative === changed ? "" : `，本次用户请求累计改动 ${cumulative} 个文件`}。请根据本次检查与下方覆盖报告判断当前用户要求是否已经满足，或是否还需修改。`,
+    )}\n\n${renderPlayCoverage(
+      buildSettingAuthoringPlayCoverage(snapshot, review.preview, responseDiff),
+      locale,
+    )}\n\n${renderWorldMaintenanceReport(
+      review.preview.compilation.maintenance,
+      changedShortRefs,
+      locale,
+    )}`;
+  }
   return [
     localized(
       locale,
@@ -816,15 +839,9 @@ function playAccessDetail(access: SettingAuthoringPlayAccess): string {
 }
 
 function renderPlayCoverage(
-  coverage: SettingAuthoringPlayCoverage | null,
+  coverage: SettingAuthoringPlayCoverage,
   locale: AppLocale,
 ): string {
-  if (coverage === null)
-    return localized(
-      locale,
-      "# Play-consumption coverage\n\nCoverage is unavailable until the real Prompt Preview succeeds.",
-      "# 游玩读取覆盖\n\n真实 Prompt Preview 通过后才会提供覆盖报告。",
-    );
   const labels: Record<SettingAuthoringPlayAccess, string> =
     locale === "zh-CN"
       ? {
