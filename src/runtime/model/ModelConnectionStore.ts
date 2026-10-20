@@ -310,7 +310,6 @@ export class ModelConnectionStore {
     try {
       handle = await open(temporary, "wx", 0o600);
       await handle.writeFile(`${JSON.stringify(document, null, 2)}\n`, "utf8");
-      await handle.sync();
       await handle.close();
       handle = undefined;
       await chmod(temporary, 0o600);

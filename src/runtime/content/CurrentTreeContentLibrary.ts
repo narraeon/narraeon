@@ -221,7 +221,6 @@ export class CurrentTreeContentLibrary {
         try {
           options.signal?.throwIfAborted();
           await rename(this.#packageRoot(localId), tombstonePath);
-          await syncDirectory(this.#packagesRoot);
         } catch (error: unknown) {
           if (isAbortError(error)) throw error;
           throw new CurrentTreeContentLibraryError(
@@ -477,7 +476,6 @@ export class CurrentTreeContentLibrary {
     try {
       handle = await open(temporaryPath, "wx", 0o600);
       await handle.writeFile(`${JSON.stringify(marker)}\n`, "utf8");
-      await handle.sync();
       await handle.close();
       handle = undefined;
       try {
@@ -571,9 +569,7 @@ export class CurrentTreeContentLibrary {
         if (!isNodeErrorCode(error, "ENOENT")) throw error;
       });
       await link(join(packageRoot, currentTreeFileName), previousPath);
-      await syncDirectory(packageRoot);
       await rename(temporaryPath, join(packageRoot, currentTreeFileName));
-      await syncDirectory(packageRoot);
       await crashProcessAtCurrentTreeEdge("after_current_tree_replace");
       failCurrentTreeAfterReplaceForTest();
       await unlink(previousPath).catch(() => undefined);
@@ -583,7 +579,6 @@ export class CurrentTreeContentLibrary {
       if (await pathExists(previousPath).catch(() => false)) {
         try {
           await rename(previousPath, join(packageRoot, currentTreeFileName));
-          await syncDirectory(packageRoot);
         } catch (rollbackError: unknown) {
           rollbackFailure = rollbackError;
         }
@@ -645,13 +640,11 @@ export class CurrentTreeContentLibrary {
           files: normalized,
         } satisfies StoredCurrentTree),
       );
-      await syncDirectory(stagingPath);
       await crashProcessAtCurrentTreeEdge("after_package_staging");
       signal?.throwIfAborted();
       await this.#beforePackagePublish?.();
       signal?.throwIfAborted();
       await rename(stagingPath, finalPath);
-      await syncDirectory(this.#packagesRoot);
       await crashProcessAtCurrentTreeEdge("after_package_publish");
     } catch (error: unknown) {
       await rm(stagingPath, { force: true, recursive: true }).catch(
@@ -705,7 +698,6 @@ export class CurrentTreeContentLibrary {
     try {
       handle = await open(temporaryPath, "wx", 0o600);
       await handle.writeFile(`${JSON.stringify(reclaim)}\n`, "utf8");
-      await handle.sync();
       await handle.close();
       handle = undefined;
       await link(temporaryPath, reclaimPath);
@@ -1020,7 +1012,6 @@ async function writeStoredLocalMetadata(
   try {
     await writeDurableNewFile(temporaryPath, serialize(metadata));
     await rename(temporaryPath, join(packageRoot, localMetadataFileName));
-    await syncDirectory(packageRoot);
   } catch (error: unknown) {
     await rm(temporaryPath, { force: true }).catch(() => undefined);
     throw error;
@@ -1035,16 +1026,6 @@ async function writeDurableNewFile(
   const handle = await open(path, "wx", 0o600);
   try {
     await handle.writeFile(contents, "utf8");
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-}
-
-async function syncDirectory(path: string): Promise<void> {
-  const handle = await open(path, "r");
-  try {
-    await handle.sync();
   } finally {
     await handle.close();
   }

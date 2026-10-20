@@ -2208,11 +2208,9 @@ async function writeDurableJson(
     handle = await open(target, "wx", 0o600);
     created = true;
     await handle.writeFile(JSON.stringify(value), "utf8");
-    await handle.sync();
     await handle.close();
     handle = undefined;
     if (!exclusive) await rename(target, path);
-    await syncArtifactDirectory(directory);
   } catch (error: unknown) {
     await handle?.close().catch(() => undefined);
     if (created) await rm(target, { force: true }).catch(() => undefined);
@@ -2228,15 +2226,6 @@ function parseArtifactJson<Value>(bytes: string, label: string): Value {
       `${label} JSON is corrupt`,
       error instanceof Error ? { cause: error } : undefined,
     );
-  }
-}
-
-async function syncArtifactDirectory(path: string): Promise<void> {
-  const handle = await open(path, "r");
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
   }
 }
 

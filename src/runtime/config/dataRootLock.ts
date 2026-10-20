@@ -42,7 +42,6 @@ export async function acquireDataRootLock(
       const handle = await open(path, "wx", 0o600);
       try {
         await handle.writeFile(`${process.pid}\n`, "utf8");
-        await handle.sync();
       } finally {
         await handle.close();
       }

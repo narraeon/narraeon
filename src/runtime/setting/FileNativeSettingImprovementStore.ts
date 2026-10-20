@@ -1467,12 +1467,10 @@ async function publishJson(path: string, value: unknown): Promise<void> {
     const handle = await open(temporary, "wx", 0o600);
     try {
       await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, "utf8");
-      await handle.sync();
     } finally {
       await handle.close();
     }
     await rename(temporary, path);
-    await syncDirectory(dirname(path));
   } finally {
     await rm(temporary, { force: true });
   }
@@ -1488,13 +1486,11 @@ async function publishImmutableSource(
     const handle = await open(temporary, "wx", 0o600);
     try {
       await handle.writeFile(contents, "utf8");
-      await handle.sync();
     } finally {
       await handle.close();
     }
     try {
       await link(temporary, path);
-      await syncDirectory(dirname(path));
     } catch (error: unknown) {
       if (!isNodeError(error) || error.code !== "EEXIST") throw error;
       if ((await readFile(path, "utf8")) !== contents)
@@ -1505,15 +1501,6 @@ async function publishImmutableSource(
     }
   } finally {
     await rm(temporary, { force: true });
-  }
-}
-
-async function syncDirectory(path: string): Promise<void> {
-  const handle = await open(path, "r");
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
   }
 }
 

@@ -25,7 +25,6 @@ import { PackageScriptPermissions } from "../extension/PackageScriptPermissions.
 import { createHash, randomUUID } from "node:crypto";
 import {
   mkdir,
-  open,
   readFile,
   readdir,
   rename,
@@ -738,10 +737,8 @@ export class FileNativeWorldStore {
         [openingMessage],
         Date.now(),
       );
-      await durableTree(stagingRoot);
       crashAtFileNativeWorldCreationEdge("after_staging");
       await rename(stagingRoot, finalRoot);
-      await syncDirectory(this.#worldsRoot);
       crashAtFileNativeWorldCreationEdge("after_atomic_publish");
       await publishOperation(operationPath, publication);
       return {
@@ -1013,7 +1010,6 @@ export class FileNativeWorldStore {
       if (currentFingerprint === nextFingerprint) {
         await rm(stagingRoot, { recursive: true, force: true });
         await rm(previousPath, { recursive: true, force: true });
-        await syncDirectory(runtimeRoot);
         return { fingerprint: nextFingerprint };
       }
       const previous = await readTree(previousPath);
@@ -1024,16 +1020,11 @@ export class FileNativeWorldStore {
       ) {
         if (fingerprint(staged) === nextFingerprint) {
           await rename(stagedPath, currentPath);
-          await syncDirectory(root);
-          await syncDirectory(stagingRoot);
           await rm(previousPath, { recursive: true, force: true });
           await rm(stagingRoot, { recursive: true, force: true });
-          await syncDirectory(runtimeRoot);
           return { fingerprint: nextFingerprint };
         }
         await rename(previousPath, currentPath);
-        await syncDirectory(root);
-        await syncDirectory(runtimeRoot);
         current = await readTree(currentPath);
         currentFingerprint = fingerprint(current);
       }
@@ -1046,16 +1037,10 @@ export class FileNativeWorldStore {
       await rm(stagingRoot, { recursive: true, force: true });
       await rm(previousPath, { recursive: true, force: true });
       await writeSurface(stagingRoot, "control", input.files);
-      await durableTree(stagingRoot);
       await rename(currentPath, previousPath);
-      await syncDirectory(root);
-      await syncDirectory(runtimeRoot);
       await rename(stagedPath, currentPath);
-      await syncDirectory(root);
-      await syncDirectory(stagingRoot);
       await rm(previousPath, { recursive: true, force: true });
       await rm(stagingRoot, { recursive: true, force: true });
-      await syncDirectory(runtimeRoot);
       return { fingerprint: nextFingerprint };
     });
   }
@@ -1367,8 +1352,6 @@ export class FileNativeWorldStore {
         `${JSON.stringify({ outcome: "in_progress" }, null, 2)}\n`,
         { encoding: "utf8", flag: "wx", mode: 0o600 },
       );
-      await syncFile(path);
-      await syncDirectory(this.#operationsRoot);
       return true;
     } catch (error: unknown) {
       if (isNodeError(error) && error.code === "EEXIST") return false;
@@ -1391,7 +1374,6 @@ export class FileNativeWorldStore {
         "Operation reservation to release has an invalid shape",
       );
     await rm(path, { force: true });
-    await syncDirectory(this.#operationsRoot);
   }
 
   async recoverEndpoint(
@@ -1690,10 +1672,8 @@ export class FileNativeWorldStore {
           selected.history,
           Date.now(),
         );
-        await durableTree(staging);
         crashAtFileNativeAuthorityEdge("derivation_before_publish");
         await rename(staging, finalRoot);
-        await syncDirectory(dirname(finalRoot));
         crashAtFileNativeAuthorityEdge("derivation_after_publish");
         if (input.publish !== false)
           await publishJson(operationPath, publication);
@@ -2772,7 +2752,6 @@ async function publishOperation(
   const temporary = `${path}.${randomUUID()}.tmp`;
   await writeJson(temporary, value);
   await rename(temporary, path);
-  await syncDirectory(dirname(path));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -3081,7 +3060,6 @@ async function publishJson(path: string, value: unknown): Promise<void> {
   const temporary = `${path}.${randomUUID()}.tmp`;
   await writeJson(temporary, value);
   await rename(temporary, path);
-  await syncDirectory(dirname(path));
 }
 
 async function readMaterializedCheckpoint(
@@ -3207,7 +3185,6 @@ async function replaceMaterializedTree(
     if (next.has(file.path)) continue;
     const path = join(root, file.path);
     await rm(path, { force: true });
-    await syncDirectory(dirname(path));
   }
 }
 
@@ -3215,9 +3192,7 @@ async function publishText(path: string, contents: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const temporary = `${path}.${randomUUID()}.tmp`;
   await writeFile(temporary, contents, "utf8");
-  await syncFile(temporary);
   await rename(temporary, path);
-  await syncDirectory(dirname(path));
 }
 
 function historySurfaceFiles(
@@ -3267,9 +3242,7 @@ async function writeIdempotentText(
     if (!isNodeError(error) || error.code !== "ENOENT") throw error;
     const temporary = `${path}.${randomUUID()}.tmp`;
     await writeFile(temporary, contents, "utf8");
-    await syncFile(temporary);
     await rename(temporary, path);
-    await syncDirectory(dirname(path));
   }
 }
 
@@ -3437,35 +3410,6 @@ async function writeJson(path: string, value: unknown): Promise<void> {
     encoding: "utf8",
     mode: 0o600,
   });
-  await syncFile(path);
-}
-
-async function syncFile(path: string): Promise<void> {
-  const handle = await open(path, "r");
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-}
-
-async function syncDirectory(path: string): Promise<void> {
-  const handle = await open(path, "r");
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-}
-
-async function durableTree(root: string): Promise<void> {
-  const entries = await readdir(root, { withFileTypes: true });
-  for (const entry of entries) {
-    const path = join(root, entry.name);
-    if (entry.isDirectory()) await durableTree(path);
-    else if (entry.isFile()) await syncFile(path);
-  }
-  await syncDirectory(root);
 }
 
 async function readGenesisForFork(

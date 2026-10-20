@@ -17,15 +17,7 @@ import {
   type PlayPromptRun,
 } from "./PlayPromptRun.ts";
 import { createHash, randomUUID } from "node:crypto";
-import {
-  link,
-  mkdir,
-  open,
-  readFile,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { link, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
@@ -1998,9 +1990,7 @@ async function publishJson(path: string, value: unknown): Promise<void> {
     encoding: "utf8",
     mode: 0o600,
   });
-  await syncFile(temporary);
   await rename(temporary, path);
-  await syncDirectory(dirname(path));
 }
 
 async function publishImmutableJson(
@@ -2016,10 +2006,8 @@ async function publishImmutableJson(
       flag: "wx",
       mode: 0o600,
     });
-    await syncFile(temporary);
     try {
       await link(temporary, path);
-      await syncDirectory(dirname(path));
     } catch (error: unknown) {
       if (!isNodeError(error) || error.code !== "EEXIST") throw error;
       if ((await readFile(path, "utf8")) !== contents)
@@ -2029,23 +2017,5 @@ async function publishImmutableJson(
     }
   } finally {
     await rm(temporary, { force: true });
-  }
-}
-
-async function syncFile(path: string): Promise<void> {
-  const handle = await open(path, "r");
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-}
-
-async function syncDirectory(path: string): Promise<void> {
-  const handle = await open(path, "r");
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
   }
 }

@@ -2,7 +2,6 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   link,
   mkdir,
-  open,
   readFile,
   readdir,
   rename,
@@ -459,7 +458,6 @@ async function migrateCurrentAuthorityToV3(input: {
 
     await rm(targetAuthority, { recursive: true, force: true });
     await rename(join(stagedRuntime, authorityV3Directory), targetAuthority);
-    await syncDirectory(runtimeRoot);
     await publishJson(join(runtimeRoot, "play-genesis-timeline.json"), {
       schemaVersion: 1,
       worldId: input.worldId,
@@ -1475,14 +1473,11 @@ async function replaceMaterializedHistory(
       encoding: "utf8",
       mode: 0o600,
     });
-    await syncFile(temporary);
     await rename(temporary, join(root, file.path));
-    await syncDirectory(root);
   }
   for (const entry of entries) {
     if (expected.has(entry.name)) continue;
     await rm(join(root, entry.name), { force: true });
-    await syncDirectory(root);
   }
 }
 
@@ -1493,9 +1488,7 @@ async function publishJson(path: string, value: unknown): Promise<void> {
     encoding: "utf8",
     mode: 0o600,
   });
-  await syncFile(temporary);
   await rename(temporary, path);
-  await syncDirectory(dirname(path));
 }
 
 async function publishImmutableJson(
@@ -1511,10 +1504,8 @@ async function publishImmutableJson(
       flag: "wx",
       mode: 0o600,
     });
-    await syncFile(temporary);
     try {
       await link(temporary, path);
-      await syncDirectory(dirname(path));
     } catch (error: unknown) {
       if (!isNodeError(error) || error.code !== "EEXIST") throw error;
       if ((await readFile(path, "utf8")) !== contents)
@@ -1527,27 +1518,6 @@ async function publishImmutableJson(
     }
   } finally {
     await rm(temporary, { force: true });
-  }
-}
-
-async function syncFile(path: string): Promise<void> {
-  const handle = await open(path, "r");
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-}
-
-async function syncDirectory(path: string): Promise<void> {
-  let handle;
-  try {
-    handle = await open(path, "r");
-    await handle.sync();
-  } catch (error: unknown) {
-    if (!isNodeError(error) || error.code !== "EINVAL") throw error;
-  } finally {
-    await handle?.close();
   }
 }
 

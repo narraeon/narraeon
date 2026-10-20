@@ -47,17 +47,10 @@ export class PackageScriptPermissions {
       const file = await open(temporary, "wx", 0o600);
       try {
         await file.writeFile(JSON.stringify({ schemaVersion: 1, grants }));
-        await file.sync();
       } finally {
         await file.close();
       }
       await rename(temporary, path);
-      const directory = await open(ownerRoot, "r");
-      try {
-        await directory.sync();
-      } finally {
-        await directory.close();
-      }
     } finally {
       await rm(temporary, { force: true });
     }

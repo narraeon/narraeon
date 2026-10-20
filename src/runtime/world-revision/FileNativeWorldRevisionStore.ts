@@ -242,7 +242,6 @@ export class FileNativeWorldRevisionStore {
       if (session.worldId !== worldId)
         throw new Error("World-revision conversation belongs to another world");
       await rm(this.#sessionPath(sessionId));
-      await syncDirectory(this.#sessionsRoot);
     });
   }
 
@@ -908,23 +907,12 @@ async function publishJson(path: string, value: unknown): Promise<void> {
     const handle = await open(temporary, "wx", 0o600);
     try {
       await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, "utf8");
-      await handle.sync();
     } finally {
       await handle.close();
     }
     await rename(temporary, path);
-    await syncDirectory(dirname(path));
   } finally {
     await rm(temporary, { force: true });
-  }
-}
-
-async function syncDirectory(path: string): Promise<void> {
-  const handle = await open(path, "r");
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
   }
 }
 

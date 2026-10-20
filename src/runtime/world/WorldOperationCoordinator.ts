@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { type WorldQueue, worldQueueFor } from "./WorldQueue.ts";
 
@@ -211,7 +211,6 @@ export class FileNativeWorldOperationCoordinator {
       const current = await this.#readRevisionLock(handle.worldId);
       if (current?.epochId !== handle.epochId) return;
       await rm(this.#revisionLockPath(handle.worldId), { force: true });
-      await syncDirectory(this.#revisionLocksRoot);
     });
   }
 
@@ -331,9 +330,7 @@ async function publishJson(path: string, value: unknown): Promise<void> {
     encoding: "utf8",
     mode: 0o600,
   });
-  await syncFile(temporary);
   await rename(temporary, path);
-  await syncDirectory(dirname(path));
 }
 
 function assertNonEmptyIdentity(value: string, label: string): void {
@@ -364,24 +361,6 @@ function hasExactKeys(
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error;
-}
-
-async function syncFile(path: string): Promise<void> {
-  const handle = await open(path, "r");
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-}
-
-async function syncDirectory(path: string): Promise<void> {
-  const handle = await open(path, "r");
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
 }
 
 function digest(value: string): string {

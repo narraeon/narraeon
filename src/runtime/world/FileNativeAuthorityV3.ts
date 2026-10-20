@@ -6,7 +6,6 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   link,
   mkdir,
-  open,
   readFile,
   readdir,
   rename,
@@ -278,12 +277,10 @@ export class FileNativeAuthorityV3 {
 
   async discardUnacceptedNextEpoch(): Promise<void> {
     const current = await this.readHead();
-    const epochsRoot = join(this.#authorityRoot, "epochs");
     await rm(this.#epochRoot(current.sequence + 1), {
       recursive: true,
       force: true,
     });
-    await syncDirectory(epochsRoot);
   }
 
   async prepareAppend(input: {
@@ -1647,10 +1644,8 @@ async function publishImmutableText(
       flag: "wx",
       mode: 0o600,
     });
-    await syncFile(temporary);
     try {
       await link(temporary, path);
-      await syncDirectory(dirname(path));
     } catch (error: unknown) {
       if (!isNodeError(error) || error.code !== "EEXIST") throw error;
       if ((await readFile(path, "utf8")) !== contents)
@@ -1671,27 +1666,7 @@ async function publishJson(path: string, value: unknown): Promise<void> {
     encoding: "utf8",
     mode: 0o600,
   });
-  await syncFile(temporary);
   await rename(temporary, path);
-  await syncDirectory(dirname(path));
-}
-
-async function syncFile(path: string): Promise<void> {
-  const handle = await open(path, "r");
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-}
-
-async function syncDirectory(path: string): Promise<void> {
-  const handle = await open(path, "r");
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
 }
 
 async function readJson<Value>(path: string): Promise<Value> {

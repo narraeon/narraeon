@@ -55,17 +55,10 @@ export class WorldExtensionControls {
       const file = await open(temporary, "wx", 0o600);
       try {
         await file.writeFile(JSON.stringify(state));
-        await file.sync();
       } finally {
         await file.close();
       }
       await rename(temporary, path);
-      const directory = await open(root, "r");
-      try {
-        await directory.sync();
-      } finally {
-        await directory.close();
-      }
     } finally {
       await rm(temporary, { force: true });
     }

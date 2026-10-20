@@ -109,7 +109,6 @@ export class ProtagonistTemplateStore {
         `${JSON.stringify({ schemaVersion: 1, ...view }, null, 2)}\n`,
         "utf8",
       );
-      await handle.sync();
       await handle.close();
       handle = undefined;
       await rename(temporary, this.#path);
