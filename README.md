@@ -165,6 +165,10 @@ When a provider, response-format, Runtime-tool, or candidate-check error occurs,
 
 Every Runtime request that fails, every play call that ends interrupted, and every failed live conversation sync is also appended to `NARRAEON_LOG_ROOT/runtime-errors/<UTC date>.jsonl` with the request type, its identifiers (world, context, event, and operation IDs), and the error message, code, stack, and cause chain. Player and world text from the request is not recorded. Include the matching line when reporting a bug.
 
+## Upgrading worlds
+
+Worlds written by v0.3.0 through v0.6.0 upgrade automatically the first time a current version opens them. Worlds written by v0.2.0 or earlier are not upgraded directly: open each one once with v0.3.0–v0.6.0, then open it with the current version. A world that cannot be upgraded is shown as unavailable and is not modified.
+
 ## Development
 
 ```bash
