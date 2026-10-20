@@ -23,7 +23,7 @@ import {
 import {
   parseOrderedPlayPrompts,
   migrateLegacyPlayPrompts,
-  withTabletopPromptBuiltins,
+  withCurrentPromptBuiltins,
 } from "./OrderedPlayPrompts.ts";
 import {
   defaultOrderedPlayPrompts,
@@ -884,8 +884,8 @@ export class FileNativePlayPresetStore {
     name: string;
     files: readonly ContentTreeFile[] | Record<string, string>;
   }): Promise<{ currentPresetId: string; preset: FileNativePlayPresetView }> {
-    // A released preset gains the tabletop builtins at import, as at upgrade.
-    const files = withTabletopPromptBuiltins(
+    // A released preset gains the current builtins at import, as at upgrade.
+    const files = withCurrentPromptBuiltins(
       toFileMap(input.files, this.#limits),
     );
     const parsed = parsePlayPresetFiles(files, this.#limits);
@@ -1009,8 +1009,8 @@ export class FileNativePlayPresetStore {
   }
 
   /**
-   * One-time upgrade for ordered presets saved before the tabletop builtins
-   * existed. An affected revision is replaced by a new revision that inserts
+   * One-time upgrade for ordered presets saved before the tabletop or
+   * continuation builtins existed. An affected revision is replaced by a new revision that inserts
    * them; the old revision stays for frozen requests. A pending draft gets the
    * same insertion, because a draft that kept the old list would fail the
    * builtin-retention rule on save. The library is one atomically written file,
@@ -1021,7 +1021,7 @@ export class FileNativePlayPresetStore {
     for (const stored of document.presets) {
       const current = stored.revisions[stored.currentRevision];
       if (current !== undefined) {
-        const migrated = withTabletopPromptBuiltins(current);
+        const migrated = withCurrentPromptBuiltins(current);
         if (migrated !== current) {
           const revision = revisionForFiles(migrated, this.#limits);
           stored.revisions[revision] = cloneFiles(migrated);
@@ -1034,7 +1034,7 @@ export class FileNativePlayPresetStore {
           ? undefined
           : stored.revisions[stored.draftRevision];
       if (draft !== undefined) {
-        const migrated = withTabletopPromptBuiltins(draft);
+        const migrated = withCurrentPromptBuiltins(draft);
         if (migrated !== draft) {
           const revision = revisionForFiles(migrated, this.#limits);
           stored.revisions[revision] = cloneFiles(migrated);

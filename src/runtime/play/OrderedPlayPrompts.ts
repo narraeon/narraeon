@@ -161,6 +161,80 @@ export function withTabletopPromptBuiltins(
   return changed ? { ...files, "preset.yaml": document.toString() } : files;
 }
 
+/**
+ * Insert the continuation builtins that an ordered preset does not list yet:
+ * play.continue-stage enabled and play.continue-advance disabled, right after
+ * play.narrative (or before the tabletop builtin and world placeholder when
+ * the narrative builtin is gone). A preset that already lists either one is left alone, so a player
+ * who swapped them keeps that choice. Same identity contract as the tabletop
+ * insertion.
+ */
+export function withContinuationPromptBuiltins(
+  files: Record<string, string>,
+): Record<string, string> {
+  const source = files["preset.yaml"];
+  if (source === undefined) return files;
+  const document = parseDocument(source, { uniqueKeys: true });
+  if (
+    document.errors.length > 0 ||
+    document.warnings.length > 0 ||
+    !isMap(document.contents) ||
+    document.get("format") !== "narraeon.play-preset/v2"
+  )
+    return files;
+  const playPrompts = document.get("playPrompts", true);
+  if (
+    !isSeq(playPrompts) ||
+    hasEntry(playPrompts, "play.continue-stage") ||
+    hasEntry(playPrompts, "play.continue-advance")
+  )
+    return files;
+  const narrative = playPrompts.items.findIndex(
+    (item) => entryField(item, "id") === "play.narrative",
+  );
+  const fallback = playPrompts.items.findIndex(
+    (item) =>
+      entryField(item, "id") === "play.tabletop" ||
+      entryField(item, "kind") === "world",
+  );
+  const at =
+    narrative >= 0
+      ? narrative + 1
+      : fallback >= 0
+        ? fallback
+        : playPrompts.items.length;
+  playPrompts.items.splice(
+    at,
+    0,
+    ...continuationPromptEntries().map((entry) => document.createNode(entry)),
+  );
+  return { ...files, "preset.yaml": document.toString() };
+}
+
+/** Every builtin insertion a stored or imported ordered preset must receive. */
+export function withCurrentPromptBuiltins(
+  files: Record<string, string>,
+): Record<string, string> {
+  return withContinuationPromptBuiltins(withTabletopPromptBuiltins(files));
+}
+
+function continuationPromptEntries(): OrderedPlayPrompt[] {
+  return [
+    {
+      id: "play.continue-stage",
+      kind: "builtin",
+      builtin: "play.continue-stage",
+      enabled: true,
+    },
+    {
+      id: "play.continue-advance",
+      kind: "builtin",
+      builtin: "play.continue-advance",
+      enabled: false,
+    },
+  ];
+}
+
 function hasEntry(sequence: YAMLSeq, id: string): boolean {
   return sequence.items.some((item) => entryField(item, "id") === id);
 }
@@ -296,9 +370,11 @@ export function migrateLegacyPlayPrompts(
       path.endsWith(".md")
     )
       add(path, false);
-  // The tabletop builtin joins converted presets just before the world placeholder.
+  // Converted presets gain the continuation builtins and then the tabletop
+  // builtin just before the world placeholder. The legacy narrative copy keeps
+  // its own wording as user text; staging arrives as the current builtin.
   const worldIndex = entries.findIndex((entry) => entry.kind === "world");
-  entries.splice(worldIndex, 0, {
+  entries.splice(worldIndex, 0, ...continuationPromptEntries(), {
     id: "play.tabletop",
     kind: "builtin",
     builtin: "play.tabletop",

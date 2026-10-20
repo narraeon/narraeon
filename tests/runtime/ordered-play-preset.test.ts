@@ -55,7 +55,19 @@ test("portable ordered play preserves identities, disabled text, and protects re
         enabled: false,
         body: "Retain this text",
       },
-      // A released ordered preset gains the tabletop builtin on import.
+      // A released ordered preset gains the continuation and tabletop builtins on import.
+      {
+        id: "play.continue-stage",
+        kind: "builtin",
+        builtin: "play.continue-stage",
+        enabled: true,
+      },
+      {
+        id: "play.continue-advance",
+        kind: "builtin",
+        builtin: "play.continue-advance",
+        enabled: false,
+      },
       {
         id: "play.tabletop",
         kind: "builtin",
@@ -295,7 +307,8 @@ test("legacy migration retains disabled copies and resources while frozen reques
     enabled: false,
     body: files["blocks/style-horror.md"],
   });
-  // Converted v1 presets gain the tabletop builtin, which compiles only for tabletop worlds.
+  // Converted v1 presets gain the continuation builtins and the tabletop
+  // builtin, which compiles only for tabletop worlds.
   expect(
     structure.playPrompts?.filter((entry) => entry.kind === "builtin"),
   ).toEqual([
@@ -304,6 +317,18 @@ test("legacy migration retains disabled copies and resources while frozen reques
       kind: "builtin",
       builtin: "play.mechanics",
       enabled: true,
+    },
+    {
+      id: "play.continue-stage",
+      kind: "builtin",
+      builtin: "play.continue-stage",
+      enabled: true,
+    },
+    {
+      id: "play.continue-advance",
+      kind: "builtin",
+      builtin: "play.continue-advance",
+      enabled: false,
     },
     {
       id: "play.tabletop",

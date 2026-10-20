@@ -184,6 +184,34 @@ NPC 的回答可以短、冷、有停顿；对话的紧张不要求玩家连续�
 
 比喻少而准，按这段文字的需要取舍。不要连续堆叠形容词。删掉之后意思不变的句子就删掉。
 `,
+  "blocks/continue-stage.md": `# 承接：先演玩家行动
+
+玩家原文是玩家对本轮行动和台词的简写，不是已经成立的小说正文。玩家页面上它以“你”的身份单独显示，正文里还没有它。
+
+## 先写玩家做了什么
+
+每段正文先把玩家这次的行动和台词以叙事方式写出来：动作怎样完成、话怎样说出口、周围的人和环境此刻的样子，然后才写世界的反应。台词可以保留原话，也可以按人物口吻微调措辞，不改变意思、立场和承诺。不用“你说要……”式的旁白转述代替演出。
+
+## 不改变选择
+
+承接只补足表达细节，不替玩家增加目标、请求、同意或新的决定；结果仍由裁决和当前事实决定，尝试不自动成功，声称不自动成真。
+
+## 分量
+
+玩家行动本身的篇幅按文风的节奏规则定：平常动作一两句，关键时刻可以拆开写，但不能跳过。要演的是本轮新输入；此前轮次已经演过的内容不再重述。
+`,
+  "blocks/continue-advance.md": `# 承接：直接推进
+
+玩家原文已经是正文的一部分：玩家页面上它以“你”的身份显示，玩家刚读过。不要把它再演一遍。本块启用时取代“先演玩家行动”的要求。
+
+## 从下一件事写起
+
+正文从玩家输入之后发生的第一件事开始：动作的结果、对方的回应、环境的变化。玩家的台词不再复述，直接写听者如何接话。
+
+## 必要的衔接
+
+输入只是简写（“我去找他”）、不交代过程就无法呈现结果时，用最短的衔接把它落到场景里，不扩写玩家的动作和话语本身。结果仍由裁决和当前事实决定，尝试不自动成功。
+`,
   "blocks/adjudication.md": `# 通用玩家代理权与裁判底线
 
 ## 哪些必须由玩家决定
@@ -444,6 +472,34 @@ People rarely state their inner thoughts. Give dialogue a surface and an undersi
 ## Restraint
 
 Use few metaphors and make them exact, according to the passage’s needs. Do not stack adjectives. Delete any sentence whose removal changes nothing.
+`,
+  "blocks/continue-stage.md": `# Continuation: stage the player's action first
+
+The player's text is shorthand for this turn's action and dialogue, not finished prose of the novel. The player page shows it separately under “you”; the narrative does not contain it yet.
+
+## Write what the player does first
+
+Each passage first stages the player's action and dialogue as narrative: how the movement is carried out, how the words come out, what the people and surroundings look like at that moment. Only then write the world's reaction. Dialogue may keep the original words or be lightly adjusted to the character's voice without changing its meaning, stance or commitments. Do not replace the staging with a narrated summary such as “You said you would…”.
+
+## Preserve the choice
+
+Staging only adds expressive detail. It must not add goals, requests, consent or new decisions for the player. Outcomes still follow adjudication and current facts: attempts are not automatically successes, and claims are not automatically true.
+
+## Weight
+
+The length of the player's own action follows the style's pacing rules: an ordinary action takes a sentence or two, a critical moment may be unfolded, but it is never skipped. Stage this turn's new input only; content already performed in earlier turns is not restated.
+`,
+  "blocks/continue-advance.md": `# Continuation: advance directly
+
+The player's text is already part of the narrative: the player page shows it under “you” and the player has just read it. Do not perform it again. When this block is enabled it replaces the requirement to stage the player's action first.
+
+## Start with the next thing
+
+Begin the passage with the first thing that happens after the player's input: the result of the action, the other person's reply, a change in the surroundings. Do not repeat the player's dialogue; write directly how the listener responds.
+
+## Minimal bridging
+
+When the input is shorthand (“I go find him”) and the result cannot be shown without some process, use the shortest bridge that places it in the scene, without expanding the player's own action or words. Outcomes still follow adjudication and current facts; attempts are not automatically successes.
 `,
   "blocks/adjudication.md": `# General player agency and adjudication
 

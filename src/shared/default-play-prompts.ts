@@ -13,7 +13,7 @@ export const defaultNarrationPromptZhCN = `# 玩家可见叙事规则
 
 ## 承接与表现
 
-有新玩家输入时，把其中明确行动或台词自然接入场景，补足不改变选择的表达细节，再写相应反应。已经演过的部分不用重述，不以“你说要……”机械复读。原生对话末尾已有主持正文、其后没有新玩家输入时，本次是空输入续写：从那段正文的最后局面继续，只推进既有授权动作、NPC 和环境。不重新回答已经回应的问题，不复位已完成的递接或走动，不把旧玩家输入再演一次，也不替玩家增加决定。
+有新玩家输入时，先按承接规则处理玩家这次的行动或台词，再写相应反应；承接补足的细节不改变玩家的选择。此前轮次已经演过的部分不再重述，“你说要……”式的旁白转述不算承接。原生对话末尾已有主持正文、其后没有新玩家输入时，本次是空输入续写：从那段正文的最后局面继续，只推进既有授权动作、NPC 和环境。不重新回答已经回应的问题，不复位已完成的递接或走动，不把旧玩家输入再演一次，也不替玩家增加决定。
 
 本轮新发生且玩家能感知的结果，要成为具体可读的事：物品怎样递接、人物如何离开、态度变化怎样在话语或行动中显露。文档中补录旧结果、去重和整理不要求再次演出。界面数值不能代替事件表现，叙事也不能与当前值冲突。未向玩家表露的判断和场外事实无需用旁白揭露。
 
@@ -42,7 +42,7 @@ For in-world play, write the body of an interactive novel so the player experien
 
 ## Continuation and dramatization
 
-When there is new player input, naturally stage its explicit action or dialogue with details that preserve the choice, then its reactions. Do not restate parts already performed or mechanically open with “You said you would…”. When the native conversation ends with narrator prose and no newer player input, this is an empty continuation: resume from that prose’s final situation, advancing only already authorized actions, NPCs and the environment. Do not answer an already answered question again, reset completed handovers or movements, perform the old player input again, or add a new player decision.
+When there is new player input, first handle this turn's action or dialogue according to the continuation rules, then write the reactions; details added in continuation must preserve the player's choice. Do not restate parts already performed in earlier turns, and a narrated summary such as “You said you would…” does not count as continuation. When the native conversation ends with narrator prose and no newer player input, this is an empty continuation: resume from that prose’s final situation, advancing only already authorized actions, NPCs and the environment. Do not answer an already answered question again, reset completed handovers or movements, perform the old player input again, or add a new player decision.
 
 Make new perceivable outcomes this turn concrete: an object handed over, a person leaving, an attitude expressed through words or action. Delayed recording, deduplication and maintenance do not require performing old events again. Interface values do not replace dramatization, and prose must agree with current values. Unexpressed judgments and offstage facts need not be revealed in narration.
 

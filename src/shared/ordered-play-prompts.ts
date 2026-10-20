@@ -115,6 +115,17 @@ ${historyUseGuidance(locale)}`,
       body: defaultNarrationPromptForLocale(locale),
       required: false,
     },
+    // Continuation blocks decide how this turn's player input enters the
+    // prose. They are alternatives, not layers: staging ships enabled and
+    // direct advancement disabled, and the player may swap them.
+    ...["stage", "advance"].map((id) => ({
+      id: `play.continue-${id}`,
+      name:
+        /^#\s+(.+)$/mu.exec(host[`blocks/continue-${id}.md`]!)?.[1] ??
+        `blocks/continue-${id}.md`,
+      body: host[`blocks/continue-${id}.md`]!,
+      required: false,
+    })),
     ...Object.entries(host)
       .filter(([path]) => path.startsWith("blocks/style-"))
       .map(([path, body]) => ({
@@ -139,7 +150,7 @@ export function defaultOrderedPlayPrompts(): OrderedPlayPrompt[] {
       id,
       kind: "builtin",
       builtin: id,
-      enabled: !id.startsWith("play.style-"),
+      enabled: !id.startsWith("play.style-") && id !== "play.continue-advance",
     }))
     .concat([{ id: "world", kind: "world" }]);
 }

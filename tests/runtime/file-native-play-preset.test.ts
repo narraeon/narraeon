@@ -626,6 +626,8 @@ extensions:
     // Style blocks ship with it, while frame.yaml decides whether they are enabled.
     expect(Object.keys(preset.files).sort()).toEqual([
       "blocks/adjudication.md",
+      "blocks/continue-advance.md",
+      "blocks/continue-stage.md",
       "blocks/state.md",
       "blocks/style-action.md",
       "blocks/style-horror.md",
