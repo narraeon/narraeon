@@ -33,6 +33,11 @@ class NodeService : Service() {
                     "HOME=${filesDir.path}",
                     "TMPDIR=${cacheDir.path}",
                 )
+                // The data-root lock (server.pid) survives an app kill. After a restart, its PID can
+                // belong to another process; kill(pid, 0) then reports EPERM, which the server reads as
+                // alive, and startup is refused. Android runs one app process at a time, so no live
+                // Narraeon owner can exist here. Remove the stale file before starting Node.
+                File(filesDir, "data/server.pid").delete()
                 val code = NativeNode.startNode(arguments, environment)
                 Log.e(TAG, "node exited with code $code")
             } catch (error: Throwable) {
