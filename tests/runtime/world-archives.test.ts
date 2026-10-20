@@ -558,10 +558,6 @@ test("完整世界跨根往返保留 Authority、故事、冻结产物与名称�
   );
   // Keep only the ZIP: neither the original world nor its artifacts may supply an imported read.
   await source.worlds.deleteWorld(source.worldId);
-  await rm(join(source.root, "artifact-store"), {
-    recursive: true,
-    force: true,
-  });
   const target = await empty();
   const upload = await target.archives.upload(createReadStream(archive.zip));
   const first = await target.archives.importWorld({

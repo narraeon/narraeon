@@ -1,0 +1,370 @@
+{
+  "world-1": {
+    "activeProjection": [
+      {
+        "attachment": {
+          "contextId": "ctx",
+          "eventId": 2,
+          "head": "commit:2",
+          "runId": "run-b"
+        },
+        "recordId": "artifact:21:34939be05320b698",
+        "worldId": "world-1",
+        "operationId": "operation-b",
+        "playPresetId": "fixture-preset",
+        "playPresetRevision": "rev-1",
+        "playPresetScriptsEnabled": false,
+        "requestId": "decorate",
+        "requestAttempt": 2,
+        "output": "panel",
+        "channel": "ui.panel",
+        "contentType": "text/plain",
+        "payload": "B-panel-2",
+        "projection": "replace",
+        "save": "commit",
+        "sequence": 21,
+        "head": "commit:2"
+      }
+    ],
+    "extensionSummaries": [
+      {
+        "attachment": {
+          "contextId": "ctx",
+          "eventId": 1,
+          "head": "commit:1",
+          "runId": "run-a"
+        },
+        "requests": [
+          {
+            "requestId": "decorate",
+            "displayName": "decorate",
+            "mounts": [],
+            "status": "running"
+          }
+        ],
+        "operationId": "operation-a",
+        "status": "completed",
+        "completedRequests": [
+          "decorate"
+        ],
+        "coreCommitted": true,
+        "head": "commit:1"
+      },
+      {
+        "attachment": {
+          "contextId": "ctx",
+          "eventId": 2,
+          "head": "commit:2",
+          "runId": "run-b"
+        },
+        "requests": [
+          {
+            "requestId": "decorate",
+            "displayName": "decorate",
+            "mounts": [],
+            "status": "running"
+          }
+        ],
+        "operationId": "operation-b",
+        "status": "completed",
+        "completedRequests": [
+          "decorate"
+        ],
+        "coreCommitted": true,
+        "head": "commit:2"
+      },
+      {
+        "requests": [
+          {
+            "requestId": "decorate",
+            "displayName": "decorate",
+            "mounts": [],
+            "status": "running"
+          }
+        ],
+        "operationId": "operation-c",
+        "status": "not_started",
+        "completedRequests": [],
+        "coreCommitted": false
+      }
+    ],
+    "debug": [
+      {
+        "attachment": {
+          "contextId": "ctx",
+          "eventId": 1,
+          "head": "commit:1",
+          "runId": "run-a"
+        },
+        "recordId": "artifact:1:32da4f1b572dc119",
+        "sequence": 1,
+        "operationId": "operation-a",
+        "worldId": "world-1",
+        "playPresetId": "fixture-preset",
+        "playPresetRevision": "rev-1",
+        "playPresetScriptsEnabled": false,
+        "parentHead": "genesis",
+        "newHead": "commit:1",
+        "requestId": "decorate",
+        "requestAttempt": 1,
+        "output": "panel",
+        "channel": "ui.panel",
+        "contentType": "text/plain",
+        "save": "commit",
+        "projection": "replace",
+        "payloadBytes": 7,
+        "payload": "A-panel",
+        "payloadFingerprint": "sha256:32da4f1b572dc1193d726b9a2f6b77ba4bc231e9b905ddb6d2976881a9ebf9b8",
+        "status": "superseded"
+      },
+      {
+        "attachment": {
+          "contextId": "ctx",
+          "eventId": 1,
+          "head": "commit:1",
+          "runId": "run-a"
+        },
+        "recordId": "artifact:4:33e130d845bfe5a0",
+        "sequence": 4,
+        "operationId": "operation-a",
+        "worldId": "world-1",
+        "playPresetId": "fixture-preset",
+        "playPresetRevision": "rev-1",
+        "playPresetScriptsEnabled": false,
+        "parentHead": "genesis",
+        "newHead": "commit:1",
+        "requestId": "decorate",
+        "requestAttempt": 1,
+        "output": "status",
+        "channel": "ui.status",
+        "key": "bar",
+        "contentType": "text/plain",
+        "save": "operation",
+        "projection": "upsert",
+        "payloadBytes": 8,
+        "payload": "A-status",
+        "payloadFingerprint": "sha256:33e130d845bfe5a0e8f94ed88646ef9b67fe80f9f98b7381341a2e9f9ff73776",
+        "status": "superseded"
+      },
+      {
+        "attachment": {
+          "contextId": "ctx",
+          "eventId": 2,
+          "head": "commit:2",
+          "runId": "run-b"
+        },
+        "recordId": "artifact:9:f59aac0d228f72fd",
+        "sequence": 9,
+        "operationId": "operation-b",
+        "worldId": "world-1",
+        "playPresetId": "fixture-preset",
+        "playPresetRevision": "rev-1",
+        "playPresetScriptsEnabled": false,
+        "parentHead": "commit:1",
+        "newHead": "commit:2",
+        "requestId": "decorate",
+        "requestAttempt": 1,
+        "output": "panel",
+        "channel": "ui.panel",
+        "contentType": "text/plain",
+        "save": "commit",
+        "projection": "replace",
+        "payloadBytes": 9,
+        "payload": "B-panel-1",
+        "payloadFingerprint": "sha256:f59aac0d228f72fd01d5a509e6866182425e7dc4259a50bfde6c9723aef105ab",
+        "status": "superseded"
+      },
+      {
+        "attachment": {
+          "contextId": "ctx",
+          "eventId": 2,
+          "head": "commit:2",
+          "runId": "run-b"
+        },
+        "recordId": "artifact:12:bb10e553097918f1",
+        "sequence": 12,
+        "operationId": "operation-b",
+        "worldId": "world-1",
+        "playPresetId": "fixture-preset",
+        "playPresetRevision": "rev-1",
+        "playPresetScriptsEnabled": false,
+        "parentHead": "commit:1",
+        "newHead": "commit:2",
+        "requestId": "decorate",
+        "requestAttempt": 1,
+        "output": "status",
+        "channel": "ui.status",
+        "key": "bar",
+        "contentType": "text/plain",
+        "save": "operation",
+        "projection": "upsert",
+        "payloadBytes": 10,
+        "payload": "B-status-1",
+        "payloadFingerprint": "sha256:bb10e553097918f19c7d530b2b84e766d11e096636d1c8101bbb7c86611eb6bd",
+        "status": "superseded"
+      },
+      {
+        "attachment": {
+          "contextId": "ctx",
+          "eventId": 2,
+          "head": "commit:2",
+          "runId": "run-b"
+        },
+        "recordId": "artifact:18:bec9c5140ac1a6aa",
+        "sequence": 18,
+        "operationId": "operation-b",
+        "worldId": "world-1",
+        "playPresetId": "fixture-preset",
+        "playPresetRevision": "rev-1",
+        "playPresetScriptsEnabled": false,
+        "parentHead": "commit:1",
+        "newHead": "commit:2",
+        "requestId": "decorate",
+        "requestAttempt": 2,
+        "output": "status",
+        "channel": "ui.status",
+        "key": "bar",
+        "contentType": "text/plain",
+        "save": "operation",
+        "projection": "upsert",
+        "payloadBytes": 10,
+        "payload": "B-status-2",
+        "payloadFingerprint": "sha256:bec9c5140ac1a6aa9e804cf893bcc34a165348b5d6009d9df7796db05a77aec2",
+        "status": "superseded"
+      },
+      {
+        "attachment": {
+          "contextId": "ctx",
+          "eventId": 2,
+          "head": "commit:2",
+          "runId": "run-b"
+        },
+        "recordId": "artifact:21:34939be05320b698",
+        "sequence": 21,
+        "operationId": "operation-b",
+        "worldId": "world-1",
+        "playPresetId": "fixture-preset",
+        "playPresetRevision": "rev-1",
+        "playPresetScriptsEnabled": false,
+        "parentHead": "commit:1",
+        "newHead": "commit:2",
+        "requestId": "decorate",
+        "requestAttempt": 2,
+        "output": "panel",
+        "channel": "ui.panel",
+        "contentType": "text/plain",
+        "save": "commit",
+        "projection": "replace",
+        "payloadBytes": 9,
+        "payload": "B-panel-2",
+        "payloadFingerprint": "sha256:34939be05320b69822c37597e03734c050b891c13aec8d81c639f8909a5695cf",
+        "status": "active"
+      },
+      {
+        "recordId": "artifact:25:835c5b26f8f2bb1b",
+        "sequence": 25,
+        "operationId": "operation-c",
+        "worldId": "world-1",
+        "playPresetId": "fixture-preset",
+        "playPresetRevision": "rev-1",
+        "playPresetScriptsEnabled": false,
+        "parentHead": "commit:2",
+        "newHead": null,
+        "requestId": "decorate",
+        "requestAttempt": 1,
+        "output": "panel",
+        "channel": "ui.panel",
+        "contentType": "text/plain",
+        "save": "commit",
+        "projection": "replace",
+        "payloadBytes": 9,
+        "payload": "C-pending",
+        "payloadFingerprint": "sha256:835c5b26f8f2bb1bff36425aae680f6e42b8694b839d6197550ecc41e2f0b3e5",
+        "status": "pending"
+      }
+    ]
+  },
+  "world-fork": {
+    "activeProjection": [
+      {
+        "attachment": {
+          "contextId": "ctx",
+          "eventId": 2,
+          "head": "commit:2",
+          "runId": "run-b"
+        },
+        "recordId": "artifact:21:34939be05320b698",
+        "worldId": "world-fork",
+        "operationId": "artifact-fork:world-fork:7328ec5bd43c2d2886544e90659d707de2d897452c86be99baf04f2286c33de2",
+        "playPresetId": "fixture-preset",
+        "playPresetRevision": "rev-1",
+        "playPresetScriptsEnabled": false,
+        "requestId": "decorate",
+        "requestAttempt": 2,
+        "output": "panel",
+        "channel": "ui.panel",
+        "contentType": "text/plain",
+        "payload": "B-panel-2",
+        "projection": "replace",
+        "save": "commit",
+        "sequence": 21,
+        "head": "commit:2"
+      }
+    ],
+    "extensionSummaries": [
+      {
+        "attachment": {
+          "contextId": "ctx",
+          "eventId": 2,
+          "head": "commit:2",
+          "runId": "run-b"
+        },
+        "requests": [
+          {
+            "requestId": "decorate",
+            "displayName": "decorate",
+            "mounts": [],
+            "status": "running"
+          }
+        ],
+        "operationId": "artifact-fork:world-fork:7328ec5bd43c2d2886544e90659d707de2d897452c86be99baf04f2286c33de2",
+        "status": "completed",
+        "completedRequests": [
+          "decorate"
+        ],
+        "coreCommitted": true,
+        "head": "commit:2"
+      }
+    ],
+    "debug": [
+      {
+        "attachment": {
+          "contextId": "ctx",
+          "eventId": 2,
+          "head": "commit:2",
+          "runId": "run-b"
+        },
+        "recordId": "artifact:21:34939be05320b698",
+        "sequence": 21,
+        "operationId": "artifact-fork:world-fork:7328ec5bd43c2d2886544e90659d707de2d897452c86be99baf04f2286c33de2",
+        "worldId": "world-fork",
+        "playPresetId": "fixture-preset",
+        "playPresetRevision": "rev-1",
+        "playPresetScriptsEnabled": false,
+        "parentHead": "commit:1",
+        "newHead": "commit:2",
+        "requestId": "decorate",
+        "requestAttempt": 2,
+        "output": "panel",
+        "channel": "ui.panel",
+        "contentType": "text/plain",
+        "save": "commit",
+        "projection": "replace",
+        "payloadBytes": 9,
+        "payload": "B-panel-2",
+        "payloadFingerprint": "sha256:34939be05320b69822c37597e03734c050b891c13aec8d81c639f8909a5695cf",
+        "status": "active"
+      }
+    ]
+  }
+}

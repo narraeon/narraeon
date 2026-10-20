@@ -1,0 +1,1 @@
+{"schemaVersion":1,"kind":"clear","operationId":"operation-b","output":"status","channel":"ui.status","key":"bar","reason":"explicit_clear","sequence":15,"toolCallId":"b-clear-1","toolName":"artifact_clear","callFingerprint":"sha256:25ce7a7e2a12dbb4ce302c9bdb6ac195d523a4f85ffdc374e172eba1d5b487de","requestId":"decorate","requestAttempt":1}
