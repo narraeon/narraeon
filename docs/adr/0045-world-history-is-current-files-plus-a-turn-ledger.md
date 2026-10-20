@@ -16,7 +16,7 @@ status: accepted
 
 **分叉与备份是目录复制。** 创建分叉把世界目录整份复制到暂存区，在副本上执行到所选轮的回退并重新分配世界身份，再一次 rename 发布；不再区分不可变与可变部分，不用 hardlink 或 reflink，不保留物理闭包。备份导出就是分叉到导出暂存区后打包；导入解压到隔离区、做路径安全、体积与账本结构校验后以分叉发布，不再逐轮审计。
 
-**旧布局按 ADR-0034 一次性迁移。** 首次打开 Authority V3 世界时，从 genesis 逐提交恢复端点、按相邻差异生成每轮前像记录，写出当前文件和 head，再删除 `authority-v3/`；V1/V2 世界先经既有迁移器到 V3 再转换。迁移保持 `commit:N` 编号与历史消息身份不变。V1/V2 迁移器已按 #85 删除，不再直接升级：由 v0.2.0 及更早版本创建的世界须先用 v0.3.0–v0.6.0 打开一次（见 [ADR-0034](0034-released-storage-formats-require-atomic-migrations.md) 的迁移链约定）。
+**旧布局按 ADR-0034 一次性迁移。** 首次打开 Authority V3 世界时，从 genesis 逐提交恢复端点、按相邻差异生成每轮前像记录，写出当前文件和 head，再删除 `authority-v3/`。迁移保持 `commit:N` 编号与历史消息身份不变。更早的 V1/V2 格式不再由当前 Runtime 迁移（#85）：由 v0.2.0 及更早版本创建的世界须先用 v0.3.0–v0.6.0 打开一次（见 [ADR-0034](0034-released-storage-formats-require-atomic-migrations.md) 的迁移链约定）。
 
 被拒绝的方案：
 
