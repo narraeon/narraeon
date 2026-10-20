@@ -7178,6 +7178,25 @@ summary:focus-visible {
   white-space: pre-wrap;
 }
 
+.setting-conversation-paused {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--surface);
+}
+
+.setting-conversation-paused p {
+  margin: 0 0 0.35rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.setting-conversation-paused button {
+  justify-self: start;
+}
+
 .setting-live-trace {
   display: grid;
   gap: 0.3rem;
@@ -7600,6 +7619,7 @@ summary:focus-visible {
 }
 
 .setting-reader-page .setting-conversation-running,
+.setting-reader-page .setting-conversation-paused,
 .setting-reader-page .setting-conversation-failure,
 .setting-reader-page .model-usage-breakdown,
 .setting-reader-page .setting-legacy-draft-history {

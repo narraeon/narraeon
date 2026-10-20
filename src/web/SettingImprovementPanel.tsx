@@ -44,6 +44,7 @@ interface SettingImprovementPanelProps {
   initialMessage?: string;
   onInitialMessageStarted?: () => void;
   onCancel: () => Promise<void>;
+  onResume: () => Promise<void>;
   onFreshContext: () => void;
   onSelectSession: (sessionId: string) => Promise<void>;
   onDeleteSession: (sessionId: string) => Promise<void>;
@@ -96,6 +97,7 @@ export function SettingImprovementPanel({
   onInitialMessageStarted,
   onPreview,
   onCancel,
+  onResume,
   onFreshContext,
   onSelectSession,
   onDeleteSession,
@@ -170,6 +172,20 @@ export function SettingImprovementPanel({
     },
     [disabled, onSend],
   );
+
+  const resume = async (): Promise<void> => {
+    if (disabled || submittingRef.current) return;
+    submittingRef.current = true;
+    setSubmitting(true);
+    try {
+      await onResume();
+    } catch {
+      // The parent projects the Runtime failure into the conversation surface.
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
+  };
 
   useEffect(() => {
     if (initialMessage === undefined || initialMessageSent.current || disabled)
@@ -605,6 +621,25 @@ export function SettingImprovementPanel({
                   </p>
                 </div>
               ) : null}
+              {view?.runStatus === "paused" && !running ? (
+                <div className="setting-conversation-paused" role="status">
+                  <strong>
+                    {uiText("已暂停：模型调用次数达到单条消息上限")}
+                  </strong>
+                  <p>
+                    {uiText(
+                      "已完成的改动都已保存。可以让 AI 从这里接着做，也可以先查看改动或直接发新消息。",
+                    )}
+                  </p>
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => void resume()}
+                  >
+                    {uiText("继续")}
+                  </button>
+                </div>
+              ) : null}
               {requestFailure !== null ? (
                 <div className="setting-conversation-failure" role="alert">
                   {requestFailure}
@@ -870,11 +905,13 @@ function SettingConversationHistory({
                   >
                     {item.runStatus === "running"
                       ? uiText("回复中")
-                      : item.sessionId === selectedSessionId
-                        ? uiText("当前所选")
-                        : item.sessionId === latestSessionId
-                          ? uiText("最近")
-                          : uiText("可继续")}
+                      : item.runStatus === "paused"
+                        ? uiText("已暂停")
+                        : item.sessionId === selectedSessionId
+                          ? uiText("当前所选")
+                          : item.sessionId === latestSessionId
+                            ? uiText("最近")
+                            : uiText("可继续")}
                   </span>
                   <small className="setting-history-counts">
                     {uiText(

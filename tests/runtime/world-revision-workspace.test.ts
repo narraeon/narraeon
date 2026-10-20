@@ -794,6 +794,86 @@ test("应用前的真实预览失败会保留工作树和修订锁", async () =>
   });
 });
 
+test("世界修订对话达到调用上限后暂停，可在同一修订中继续，修订结束后拒绝继续", async () => {
+  const { root, worldId, worlds, workspace } = await createdWorld();
+  const reads = (prefix: string) =>
+    Array.from({ length: 64 }, (_, index) => ({
+      outcome: "response" as const,
+      toolCalls: [
+        {
+          id: `${prefix}-${index}`,
+          name: "world_revision_read",
+          arguments: { path: "state/current-situation.yaml" },
+        },
+      ],
+    }));
+  const host = new ScriptedModelHost({
+    binding: modelBinding,
+    steps: [
+      ...reads("first-read"),
+      { outcome: "response", text: "继续后完成。", toolCalls: [] },
+      ...reads("second-read"),
+    ],
+  });
+  const service = new WorldRevisionSession({
+    store: new FileNativeWorldRevisionStore(root),
+    workspace,
+    worlds,
+    compiler: new FileNativePromptCompiler({ locale: "zh-CN" }),
+    locale: () => "zh-CN",
+    bindModelHost: () => Promise.resolve(host),
+    bindExistingModelHost: () => Promise.resolve(host),
+    bindPlayPreset: () =>
+      Promise.resolve(builtinDefaultPlayPresetBinding("zh-CN")),
+    preview: () => preview,
+  });
+
+  const paused = await service.send({
+    worldId,
+    requestId: "long-world-revision",
+    message: "反复检查当前局面。",
+    continuation: { kind: "fresh_context" },
+  });
+  expect(paused).toMatchObject({ runStatus: "paused", lastFailure: null });
+
+  const resumed = await service.resume({
+    worldId,
+    sessionId: paused.sessionId,
+    requestId: "resume-world-revision",
+  });
+  expect(resumed.runStatus).toBe("ready");
+  expect(host.requests.at(-1)?.appended.at(-1)).toMatchObject({
+    kind: "tool",
+    toolCallId: "first-read-63",
+  });
+  expect(resumed.messages.map(({ role }) => role)).toEqual([
+    "user",
+    "assistant",
+  ]);
+
+  const pausedAgain = await service.send({
+    worldId,
+    requestId: "second-long-world-revision",
+    message: "再检查一遍。",
+    continuation: { kind: "continue_context", sessionId: paused.sessionId },
+  });
+  expect(pausedAgain.runStatus).toBe("paused");
+  const epoch = await workspace.active(worldId);
+  if (epoch === null) throw new Error("Expected an active revision");
+  await service.apply({
+    worldId,
+    epochId: epoch.epochId,
+    expectedRevision: epoch.revision,
+  });
+  await expect(
+    service.resume({
+      worldId,
+      sessionId: paused.sessionId,
+      requestId: "resume-after-apply",
+    }),
+  ).rejects.toThrow("no longer active");
+});
+
 test("AI 对话写入同一工作树，应用后继续原对话会收到新 epoch 并强制重新读取", async () => {
   const { root, worldId, worlds, workspace } = await createdWorld();
   const source = worldRevisionFiles().find(

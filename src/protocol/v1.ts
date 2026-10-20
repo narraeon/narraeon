@@ -130,6 +130,12 @@ export type V1Request =
         | { kind: "continue_context"; sessionId: string };
     }
   | { type: "setting-improvement.cancel"; sessionId: string }
+  | {
+      type: "setting-improvement.resume";
+      packageId: string;
+      sessionId: string;
+      requestId: string;
+    }
   | { type: "play.read" }
   | { type: "play.create"; name: string; files?: Record<string, string> }
   | { type: "play.copy"; presetId: string }
@@ -218,6 +224,12 @@ export type V1Request =
         | { kind: "continue_context"; sessionId: string };
     }
   | { type: "world.revision.cancel"; sessionId: string }
+  | {
+      type: "world.revision.resume";
+      worldId: string;
+      sessionId: string;
+      requestId: string;
+    }
   | {
       type: "world.revision.files.replace";
       worldId: string;
@@ -379,7 +391,7 @@ export interface V1SettingConversationTurn {
 
 export interface V1SettingImprovementHistoryItem {
   sessionId: string;
-  runStatus: "ready" | "running" | "interrupted";
+  runStatus: "ready" | "running" | "paused" | "interrupted";
   createdAt: number;
   updatedAt: number;
   excerpt: string;
@@ -399,7 +411,7 @@ export interface V1SettingImprovementStatus {
   revision: string;
   selected: null | {
     sessionId: string;
-    runStatus: "ready" | "running" | "interrupted";
+    runStatus: "ready" | "running" | "paused" | "interrupted";
     progress: V1SettingImprovementView["progress"];
   };
 }
@@ -533,7 +545,7 @@ export interface V1SettingImprovementView {
   requestPreviews?: V1AuthoringRequestPreview[];
   sessionId: string;
   packageId: string;
-  runStatus: "ready" | "running" | "interrupted";
+  runStatus: "ready" | "running" | "paused" | "interrupted";
   messages: V1SettingConversationMessage[];
   turns: V1SettingConversationTurn[];
   /** Audit-only changes from a pre-v2 isolated draft; never auto-applied. */
@@ -609,7 +621,7 @@ export interface V1WorldRevisionView {
   sessionId: string;
   worldId: string;
   epochId: string;
-  runStatus: "ready" | "running" | "interrupted";
+  runStatus: "ready" | "running" | "paused" | "interrupted";
   messages: V1SettingConversationMessage[];
   turns: V1SettingConversationTurn[];
   usage: ModelUsage;
@@ -629,7 +641,7 @@ export interface V1WorldRevisionStatus {
   revision: string;
   selected: null | {
     sessionId: string;
-    runStatus: "ready" | "running" | "interrupted";
+    runStatus: "ready" | "running" | "paused" | "interrupted";
     progress: V1WorldRevisionView["progress"];
   };
 }
@@ -957,6 +969,11 @@ const requiredFields: Record<
     continuation: "object",
   },
   "setting-improvement.cancel": { sessionId: "string" },
+  "setting-improvement.resume": {
+    packageId: "string",
+    sessionId: "string",
+    requestId: "string",
+  },
   "play.create": { name: "string" },
   "play.copy": { presetId: "string" },
   "play.save": { presetId: "string", name: "string", files: "object" },
@@ -1009,6 +1026,11 @@ const requiredFields: Record<
     continuation: "object",
   },
   "world.revision.cancel": { sessionId: "string" },
+  "world.revision.resume": {
+    worldId: "string",
+    sessionId: "string",
+    requestId: "string",
+  },
   "world.revision.files.replace": {
     worldId: "string",
     epochId: "string",
@@ -1507,6 +1529,7 @@ const requestTypes = new Set([
   "setting-improvement.rollback",
   "setting-improvement.message",
   "setting-improvement.cancel",
+  "setting-improvement.resume",
   "play.read",
   "play.create",
   "play.copy",
@@ -1541,6 +1564,7 @@ const requestTypes = new Set([
   "world.revision.session.delete",
   "world.revision.message",
   "world.revision.cancel",
+  "world.revision.resume",
   "world.revision.files.replace",
   "world.revision.rollback",
   "world.revision.apply",

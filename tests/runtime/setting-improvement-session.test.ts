@@ -181,6 +181,65 @@ test("全新上下文创建持久对话，普通回复不产生候选或快照",
   expect(resumed.contentPackageTitle).toBe("Harbor Letters");
 });
 
+test("模型调用达到单条消息上限时暂停，继续时不追加用户消息并沿用冻结请求", async () => {
+  const fixture = await createFixture([
+    ...Array.from({ length: 64 }, (_, index) => ({
+      outcome: "response" as const,
+      toolCalls: [
+        {
+          id: `read-opening-${index}`,
+          name: "setting_read",
+          arguments: { path: "opening.md" },
+        },
+      ],
+    })),
+    { outcome: "response", text: "Finished after continuing.", toolCalls: [] },
+  ]);
+
+  const paused = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "request-long",
+    "Inspect the opening repeatedly.",
+  );
+
+  expect(paused).toMatchObject({ runStatus: "paused", lastFailure: null });
+  expect(fixture.host.requests).toHaveLength(64);
+
+  const resume = () =>
+    fixture.session.resume({
+      packageId: fixture.packageId,
+      sessionId: paused.sessionId,
+      requestId: "resume-long",
+    });
+  const resumed = await resume();
+
+  expect(resumed).toMatchObject({ runStatus: "ready", lastFailure: null });
+  expect(fixture.host.requests).toHaveLength(65);
+  const continued = fixture.host.requests.at(-1)!;
+  expect(continued.appended.at(-1)).toMatchObject({
+    kind: "tool",
+    toolCallId: "read-opening-63",
+  });
+  expect(continued.bootstrap).toEqual(fixture.host.requests[0]!.bootstrap);
+  expect(resumed.messages.map(({ role }) => role)).toEqual([
+    "user",
+    "assistant",
+  ]);
+  expect(resumed.turns).toHaveLength(1);
+  expect(resumed.turns[0]?.exchanges).toHaveLength(65);
+
+  await expect(resume()).resolves.toMatchObject({ runStatus: "ready" });
+  expect(fixture.host.requests).toHaveLength(65);
+  await expect(
+    fixture.session.resume({
+      packageId: fixture.packageId,
+      sessionId: paused.sessionId,
+      requestId: "resume-ready",
+    }),
+  ).rejects.toThrow("Only a paused authoring conversation can be continued");
+});
+
 test("完整工具响应直接原子发布当前树，并把推理、调用、结果和逐调用 diff 留在历史", async () => {
   const fixture = await createFixture([
     {

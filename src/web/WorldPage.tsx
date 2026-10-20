@@ -1390,6 +1390,7 @@ export function WorldPage({
             })}
         onSend={(message) => revisionWorkspace.send(message)}
         onCancel={() => revisionWorkspace.cancel()}
+        onResume={() => revisionWorkspace.resume()}
         onFreshContext={() => revisionWorkspace.startFresh()}
         onSelectSession={(id) => revisionWorkspace.selectSession(id)}
         onDeleteSession={(id) => revisionWorkspace.deleteSession(id)}

@@ -15,6 +15,7 @@ import {
   appendAuthoringUserMessage,
   ModelToolConversation,
   rememberAuthoringRequest,
+  resumePausedAuthoringConversation,
 } from "../authoring/ModelToolConversation.ts";
 import { contentTreeFingerprint } from "../content/ContentTreeFingerprint.ts";
 import type {
@@ -360,6 +361,45 @@ export class WorldRevisionSession {
     return prepared.run ?? this.#view(prepared.session);
   }
 
+  /** Continues a paused conversation within the revision it paused in. */
+  async resume(input: {
+    worldId: string;
+    sessionId: string;
+    requestId: string;
+  }): Promise<V1WorldRevisionView> {
+    const requestId = requiredRequestId(input.requestId);
+    const prepared = await this.#mutate(async () => {
+      let session = await this.#store.readSession(input.sessionId);
+      assertWorld(session, input.worldId);
+      session = await this.#recoverIfNeeded(session);
+      if (session.completedRequestIds.includes(requestId))
+        return { session, run: null as Promise<V1WorldRevisionView> | null };
+      const running = this.#conversation.running(session.sessionId);
+      if (running !== null) {
+        if (running.requestId !== requestId)
+          throw new Error(
+            "Another message in this world-revision conversation is still running",
+          );
+        return { session, run: running.promise };
+      }
+      await this.#assertNoRunningConversation(input.worldId, session.sessionId);
+      const epoch = await this.#workspace.active(input.worldId);
+      if (epoch?.epochId !== session.epochId)
+        throw new WorldRevisionWorkspaceError(
+          "The paused conversation belongs to a revision that is no longer active; send a new message instead",
+        );
+      const host = await this.#bindExistingModelHost(session.modelBinding);
+      if (!equalModelHostBinding(session.modelBinding, host.binding()))
+        throw new Error(
+          "No saved model connection matches this world-revision conversation",
+        );
+      resumePausedAuthoringConversation(session);
+      await this.#store.saveSession(session);
+      return { session, run: this.#startRun(session, host, requestId) };
+    });
+    return prepared.run ?? this.#view(prepared.session);
+  }
+
   async preview(worldId: string, sessionId?: string) {
     const session =
       sessionId === undefined ? null : await this.#store.readSession(sessionId);
@@ -490,8 +530,6 @@ export class WorldRevisionSession {
       },
       view: (next) => this.#view(next),
       failure: {
-        exchangeLimit:
-          "World revision exceeded 64 model exchanges for one user message",
         cancelled:
           "The world-revision response was cancelled. Settled worktree changes were retained.",
         interrupted: "The world-revision response was interrupted",

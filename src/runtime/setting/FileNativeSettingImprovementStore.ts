@@ -109,7 +109,7 @@ interface LegacySettingImprovementSession {
   contentPackageTitle?: string;
   locale: AppLocale;
   lifecycle: "open" | "applied" | "discarded";
-  runStatus: "ready" | "running" | "interrupted";
+  runStatus: "ready" | "running" | "paused" | "interrupted";
   createdAt: number;
   updatedAt: number;
   baseFingerprint: string;
@@ -143,7 +143,7 @@ export interface StoredSettingImprovementSession {
   packageId: string;
   contentPackageTitle?: string;
   locale: AppLocale;
-  runStatus: "ready" | "running" | "interrupted";
+  runStatus: "ready" | "running" | "paused" | "interrupted";
   createdAt: number;
   updatedAt: number;
   /** Idempotency key used only when this conversation was first created. */
@@ -834,7 +834,12 @@ function validOptionalTitle(value: unknown): boolean {
 }
 
 function validRunStatus(value: unknown): boolean {
-  return value === "ready" || value === "running" || value === "interrupted";
+  return (
+    value === "ready" ||
+    value === "running" ||
+    value === "paused" ||
+    value === "interrupted"
+  );
 }
 
 function validCount(value: unknown): boolean {

@@ -552,6 +552,8 @@ export class V1Runtime {
         return this.#settingImprovements.send(request);
       case "setting-improvement.cancel":
         return this.#settingImprovements.cancel(request.sessionId);
+      case "setting-improvement.resume":
+        return this.#settingImprovements.resume(request);
       case "play.read":
         return this.#playPresets.list();
       case "play.create":
@@ -876,6 +878,10 @@ export class V1Runtime {
       case "world.revision.cancel":
         return this.#worldRevisionCall(() =>
           this.#worldRevisions.cancel(request.sessionId),
+        );
+      case "world.revision.resume":
+        return this.#worldRevisionCall(() =>
+          this.#worldRevisions.resume(request),
         );
       case "world.revision.files.replace":
         return this.#worldRevisionCall(() =>

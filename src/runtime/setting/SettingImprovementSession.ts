@@ -35,6 +35,7 @@ import {
   appendAuthoringUserMessage,
   ModelToolConversation,
   rememberAuthoringRequest,
+  resumePausedAuthoringConversation,
 } from "../authoring/ModelToolConversation.ts";
 import {
   summarizeStoredSettingImprovementSession,
@@ -313,39 +314,69 @@ export class SettingImprovementSession {
         session = await this.#store.read(input.continuation.sessionId);
         assertPackage(session, input.packageId);
       }
-      session = await this.#recoverIfNeeded(session);
-      if (session.completedRequestIds.includes(requestId))
-        return { session, run: null as Promise<SettingImprovementView> | null };
-      const running = this.#conversation.running(session.sessionId);
-      if (running !== null) {
-        if (running.requestId !== requestId)
-          throw new Error(
-            "Another message in this setting-improvement conversation is still running",
-          );
-        return { session, run: running.promise };
-      }
-      const host = await this.#bindExistingModelHost(session.modelBinding);
-      if (!equalModelHostBinding(session.modelBinding, host.binding()))
-        throw new Error(
-          "No saved model connection matches this setting-improvement conversation",
+      return this.#startRequest(session, requestId, async (next) => {
+        const { playPreset, bootstrap } = await this.#compileCurrent(
+          input.packageId,
+          next.modelBinding,
         );
-      const { playPreset, bootstrap } = await this.#compileCurrent(
-        input.packageId,
-        session.modelBinding,
-      );
-      session.schemaVersion = 3;
-      session.requests ??= [];
-      session.requests.push({
-        requestId,
-        modelItemStart: session.modelItems.length,
-        bootstrap,
-        playPreset: structuredClone(playPreset),
+        next.schemaVersion = 3;
+        next.requests ??= [];
+        next.requests.push({
+          requestId,
+          modelItemStart: next.modelItems.length,
+          bootstrap,
+          playPreset: structuredClone(playPreset),
+        });
+        appendAuthoringUserMessage(next, message, requestId);
       });
-      appendAuthoringUserMessage(session, message, requestId);
-      await this.#store.save(session);
-      return { session, run: this.#startRun(session, host, requestId) };
     });
     return prepared.run ?? this.#view(prepared.session);
+  }
+
+  /** Continues a paused conversation with the frozen request it paused in. */
+  async resume(input: {
+    packageId: string;
+    sessionId: string;
+    requestId: string;
+  }): Promise<SettingImprovementView> {
+    const requestId = requiredRequestId(input.requestId);
+    const prepared = await this.#mutate(async () => {
+      const session = await this.#store.read(input.sessionId);
+      assertPackage(session, input.packageId);
+      return this.#startRequest(session, requestId, (next) =>
+        resumePausedAuthoringConversation(next),
+      );
+    });
+    return prepared.run ?? this.#view(prepared.session);
+  }
+
+  async #startRequest(
+    stored: StoredSettingImprovementSession,
+    requestId: string,
+    prepare: (session: StoredSettingImprovementSession) => Promise<void> | void,
+  ): Promise<{
+    session: StoredSettingImprovementSession;
+    run: Promise<SettingImprovementView> | null;
+  }> {
+    const session = await this.#recoverIfNeeded(stored);
+    if (session.completedRequestIds.includes(requestId))
+      return { session, run: null };
+    const running = this.#conversation.running(session.sessionId);
+    if (running !== null) {
+      if (running.requestId !== requestId)
+        throw new Error(
+          "Another message in this setting-improvement conversation is still running",
+        );
+      return { session, run: running.promise };
+    }
+    const host = await this.#bindExistingModelHost(session.modelBinding);
+    if (!equalModelHostBinding(session.modelBinding, host.binding()))
+      throw new Error(
+        "No saved model connection matches this setting-improvement conversation",
+      );
+    await prepare(session);
+    await this.#store.save(session);
+    return { session, run: this.#startRun(session, host, requestId) };
   }
 
   async preview(packageId: string, sessionId?: string) {
@@ -476,8 +507,6 @@ export class SettingImprovementSession {
       failure: {
         emptyResponse:
           "The model returned an empty tool-free authoring response",
-        exchangeLimit:
-          "Setting improvement exceeded 64 model exchanges for one user message",
         cancelled:
           "The setting-improvement response was cancelled. Complete tool responses already published to the current tree were retained.",
         interrupted: "The setting-improvement response was interrupted",

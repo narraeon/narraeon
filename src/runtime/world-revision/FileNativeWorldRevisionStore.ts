@@ -98,7 +98,7 @@ export interface StoredWorldRevisionSession {
   worldTitle: string;
   epochId: string;
   locale: AppLocale;
-  runStatus: "ready" | "running" | "interrupted";
+  runStatus: "ready" | "running" | "paused" | "interrupted";
   createdAt: number;
   updatedAt: number;
   creationRequestId: string;
@@ -403,7 +403,9 @@ function validateSession(value: unknown): StoredWorldRevisionSession {
     /[\r\n\0]/u.test(value.worldTitle) ||
     typeof value.epochId !== "string" ||
     (value.locale !== "en" && value.locale !== "zh-CN") ||
-    !["ready", "running", "interrupted"].includes(String(value.runStatus)) ||
+    !["ready", "running", "paused", "interrupted"].includes(
+      String(value.runStatus),
+    ) ||
     !finite(value.createdAt) ||
     !finite(value.updatedAt) ||
     value.updatedAt < value.createdAt ||

@@ -151,6 +151,14 @@ test("旧 Apply 收据无法确认时不把历史差异冒认为已生效", () =
   expect(html).not.toContain("迁移前已应用的差异");
 });
 
+test("达到调用上限而暂停的对话显示本地化说明和继续按钮，不显示失败", () => {
+  const html = render(view({ runStatus: "paused" }));
+
+  expect(html).toContain("已暂停：模型调用次数达到单条消息上限");
+  expect(html).toMatch(/<button[^>]*>继续<\/button>/u);
+  expect(html).not.toContain("上一次操作未完成");
+});
+
 function render(value: SettingImprovementView): string {
   return renderWith({ value, latestSessionId: value.sessionId, history: [] });
 }
@@ -192,6 +200,7 @@ function renderWith({
       },
       onSend: () => Promise.resolve(),
       onCancel: () => Promise.resolve(),
+      onResume: () => Promise.resolve(),
       onFreshContext: () => undefined,
       onSelectSession: () => Promise.resolve(),
       onDeleteSession: () => Promise.resolve(),

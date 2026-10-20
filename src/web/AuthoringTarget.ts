@@ -71,6 +71,7 @@ export interface AuthoringTarget {
     sessionId: string | null,
   ): Promise<V1SettingImprovementView>;
   cancel(sessionId: string): Promise<V1SettingImprovementView>;
+  resume(sessionId: string): Promise<V1SettingImprovementView>;
   deleteSession(sessionId: string): Promise<AuthoringTargetSnapshot>;
   beginEdit(
     snapshot: AuthoringTargetSnapshot,
@@ -155,6 +156,13 @@ export function contentPackageTarget(
       }),
     cancel: (sessionId) =>
       request(client, { type: "setting-improvement.cancel", sessionId }),
+    resume: (sessionId) =>
+      request(client, {
+        type: "setting-improvement.resume",
+        packageId: id,
+        sessionId,
+        requestId: createClientId("setting-resume"),
+      }),
     deleteSession: async (sessionId) => {
       const overview = await request<V1SettingImprovementOverview>(client, {
         type: "setting-improvement.session.delete",
@@ -268,6 +276,15 @@ export function worldRevisionTarget(
     cancel: async (sessionId) =>
       normalizeView(
         await request(client, { type: "world.revision.cancel", sessionId }),
+      ),
+    resume: async (sessionId) =>
+      normalizeView(
+        await request(client, {
+          type: "world.revision.resume",
+          worldId: id,
+          sessionId,
+          requestId: createClientId("world-revision-resume"),
+        }),
       ),
     deleteSession: async (sessionId) =>
       snapshot(

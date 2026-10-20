@@ -782,6 +782,10 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
           return authoringWorkspace.send(message);
         }}
         onCancel={() => authoringWorkspace.cancel()}
+        onResume={() => {
+          setNotice("");
+          return authoringWorkspace.resume();
+        }}
         onFreshContext={() => authoringWorkspace.startFresh()}
         onSelectSession={(id) => authoringWorkspace.selectSession(id)}
         onDeleteSession={(id) => {

@@ -27,13 +27,19 @@ export interface AuthoringConversationMessage {
 }
 
 /**
+ * `paused` means the per-run exchange budget ran out after a fully settled tool
+ * response; the conversation can continue without a new user message.
+ */
+export type AuthoringRunStatus = "ready" | "running" | "paused" | "interrupted";
+
+/**
  * Target-neutral durable state required by one model-directed authoring
  * conversation. Target Modules own every additional field and all publication
  * semantics; this Module owns only the Provider/tool exchange lifecycle.
  */
 export interface ModelToolConversationState {
   sessionId: string;
-  runStatus: "ready" | "running" | "interrupted";
+  runStatus: AuthoringRunStatus;
   updatedAt: number;
   bootstrap: PromptCompilation;
   requests?: AuthoringRequestSnapshot[];
@@ -83,7 +89,6 @@ export interface ModelToolConversationRun<
   changed?: (durable: boolean) => void;
   failure?: {
     emptyResponse?: string;
-    exchangeLimit?: string;
     cancelled?: string;
     interrupted?: string;
   };
@@ -233,10 +238,18 @@ export class ModelToolConversation<
         );
         input.changed?.(true);
       }
-      throw new Error(
-        input.failure?.exchangeLimit ??
-          `Authoring exceeded ${maximumExchangesPerMessage} model exchanges for one user message`,
+      // The exchange budget only bounds a runaway loop. Every tool response is
+      // already settled, so the conversation pauses and can resume unchanged.
+      session.runStatus = "paused";
+      session.activeRequestId = null;
+      session.completedRequestIds = rememberRequest(
+        session.completedRequestIds,
+        live.requestId,
       );
+      session.lastFailure = null;
+      session.updatedAt = Date.now();
+      await input.save(session);
+      return input.view(session);
     } catch (error: unknown) {
       session.runStatus = "interrupted";
       session.activeRequestId = null;
@@ -276,6 +289,27 @@ export function appendAuthoringUserMessage(
   session.activeRequestId = requiredAuthoringRequestId(requestId);
   session.lastFailure = null;
   session.updatedAt = now;
+}
+
+/**
+ * Starts another exchange budget for a paused conversation without appending a
+ * user message; the next request replays the settled transcript as-is. The run
+ * still belongs to the paused user request, so that request stays active; the
+ * caller's resume request ID only deduplicates the resume itself.
+ */
+export function resumePausedAuthoringConversation(
+  session: ModelToolConversationState,
+): void {
+  if (session.runStatus !== "paused")
+    throw new Error("Only a paused authoring conversation can be continued");
+  if (session.modelItems.at(-1)?.kind !== "tool")
+    throw new Error(
+      "The paused authoring conversation does not end with settled tool results",
+    );
+  session.runStatus = "running";
+  session.activeRequestId = session.requests?.at(-1)?.requestId ?? null;
+  session.lastFailure = null;
+  session.updatedAt = Date.now();
 }
 
 export function requiredAuthoringMessage(message: string): string {

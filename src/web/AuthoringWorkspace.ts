@@ -289,9 +289,29 @@ export class AuthoringWorkspace {
     }
     const sessionId =
       typeof this.selection === "string" ? this.selection : null;
+    await this.settleRequest(valid, () => this.target.send(message, sessionId));
+  }
+  /** Continues the selected conversation after it paused at its exchange budget. */
+  async resume(): Promise<void> {
+    if (
+      !this.active ||
+      this.state.applying ||
+      typeof this.selection !== "string"
+    )
+      return;
+    const valid = this.current();
+    if (this.state.dirty)
+      throw new Error(uiText("请先保存文件编辑，再继续 AI 设定完善。"));
+    const sessionId = this.selection;
+    await this.settleRequest(valid, () => this.target.resume(sessionId));
+  }
+  private async settleRequest(
+    valid: () => boolean,
+    request: () => Promise<V1SettingImprovementView>,
+  ): Promise<void> {
     this.update({ requestFailure: null, notice: "" });
     try {
-      const view = await this.target.send(message, sessionId);
+      const view = await request();
       if (!valid()) return;
       this.selection = view.sessionId;
       this.update({ view });

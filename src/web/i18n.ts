@@ -1290,6 +1290,12 @@ const settingImprovementEnglishMessages: Record<string, string> = {
     "The next message appends to this conversation's original Provider context; writes still target the current content package tree.",
   "完整对话和已经结算的当前树改动都已保留，可以直接继续说。":
     "The complete conversation and every settled current-tree change were retained. You can continue directly.",
+  "已暂停：模型调用次数达到单条消息上限":
+    "Paused: this message reached its model-call limit",
+  "已完成的改动都已保存。可以让 AI 从这里接着做，也可以先查看改动或直接发新消息。":
+    "Every completed change was saved. Let the AI pick up from here, review the changes first, or send a new message.",
+  继续: "Continue",
+  已暂停: "Paused",
   "用全新上下文给 AI 发消息": "Message the model in a fresh context",
   继续这段对话: "Continue this conversation",
   "可以讨论、要求它检查某份设定，也可以直接让它修改内容包。":

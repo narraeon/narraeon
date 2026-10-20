@@ -244,6 +244,7 @@ function renderPanel(
         : { onCreateWorld: options.onCreateWorld }),
       onSend: options.onSend ?? (() => Promise.resolve()),
       onCancel: () => Promise.resolve(),
+      onResume: () => Promise.resolve(),
       onFreshContext: () => undefined,
       onSelectSession: () => Promise.resolve(),
       onDeleteSession,
