@@ -148,7 +148,7 @@ describe("FileNativeArtifactStore", () => {
         payload: "保留正文",
         toolCallId: "emit-second",
       });
-      await fixture.store.completeExtension(operation.operationId, [
+      await fixture.store.completeExtension("world-1", operation.operationId, [
         request.requestId,
       ]);
       // A fork is a directory copy whose artifact identities are then rewritten.
@@ -200,7 +200,7 @@ describe("FileNativeArtifactStore", () => {
         payload: "保留正文",
         toolCallId: "emit-next",
       });
-      await cold.completeExtension(nextOperation.operationId, [
+      await cold.completeExtension("fork", nextOperation.operationId, [
         nextRequest.requestId,
       ]);
       expect(await cold.readActiveProjection("fork")).toMatchObject([
@@ -240,9 +240,11 @@ describe("FileNativeArtifactStore", () => {
           payload: `reply-${index}`,
           toolCallId: `emit-${index}`,
         });
-        await fixture.store.completeExtension(operation.operationId, [
-          request.requestId,
-        ]);
+        await fixture.store.completeExtension(
+          "world-1",
+          operation.operationId,
+          [request.requestId],
+        );
       }
       const cold = new FileNativeArtifactStore(root);
       const projection = await cold.readActiveProjection("world-1", undefined, [
@@ -269,6 +271,7 @@ describe("FileNativeArtifactStore", () => {
 
     await expect(
       new FileNativeArtifactStore(root).resumeExtension(
+        "world-1",
         fixture.operation.operationId,
       ),
     ).resolves.toMatchObject({
@@ -277,7 +280,7 @@ describe("FileNativeArtifactStore", () => {
       coreCommitted: false,
     });
     await expect(
-      fixture.store.readExtension(fixture.operation.operationId),
+      fixture.store.readExtension("world-1", fixture.operation.operationId),
     ).resolves.toMatchObject({ status: "not_started", coreCommitted: false });
     await rm(root, { recursive: true, force: true });
   });
@@ -353,6 +356,7 @@ describe("FileNativeArtifactStore", () => {
       await writeFile(path, JSON.stringify(value), "utf8");
       await expect(
         new FileNativeArtifactStore(root).readExtension(
+          "world-1",
           fixture.operation.operationId,
         ),
       ).rejects.toThrow(/Artifact operation state is corrupt/u);
@@ -405,7 +409,10 @@ describe("FileNativeArtifactStore", () => {
       await readFile(operationFile(root, fixture.operation.operationId)),
     );
     await expect(
-      new FileNativeArtifactStore(root).readExtension(copiedOperationId),
+      new FileNativeArtifactStore(root).readExtension(
+        "world-1",
+        copiedOperationId,
+      ),
     ).rejects.toThrow(/operation.*identity/u);
     await rm(operationFile(root, copiedOperationId));
 
@@ -474,6 +481,7 @@ describe("FileNativeArtifactStore", () => {
     await fixture.store.beginExtension(fixture.operation);
     await expect(
       new FileNativeArtifactStore(root).resumeExtension(
+        "world-1",
         fixture.operation.operationId,
       ),
     ).resolves.toMatchObject({ status: "recovery_required" });
@@ -487,12 +495,15 @@ describe("FileNativeArtifactStore", () => {
       }),
     ).resolves.toMatchObject({ ok: true });
     await expect(
-      fixture.store.completeExtension(fixture.operation.operationId, [
-        fixture.request.requestId,
-      ]),
+      fixture.store.completeExtension(
+        "world-1",
+        fixture.operation.operationId,
+        [fixture.request.requestId],
+      ),
     ).resolves.toMatchObject({ status: "recovery_required" });
     await expect(
       fixture.store.failExtension(
+        "world-1",
         fixture.operation.operationId,
         "failed",
         "late owner failure",
@@ -558,17 +569,22 @@ describe("FileNativeArtifactStore", () => {
     };
     await store.beginOperation(coreOnly);
     await store.markCoreCommitted(coreOnly, "commit:1");
-    await store.completeExtension(coreOnly.operationId, []);
+    await store.completeExtension("world-summary", coreOnly.operationId, []);
 
     const coreFailed = { ...coreOnly, operationId: "core-failed" };
     await store.beginOperation(coreFailed);
-    await store.markCoreFailed(coreFailed.operationId, "核心失败");
+    await store.markCoreFailed(
+      "world-summary",
+      coreFailed.operationId,
+      "核心失败",
+    );
 
     const extensionFailed = { ...coreOnly, operationId: "extension-failed" };
     await store.beginOperation(extensionFailed);
     await store.markCoreCommitted(extensionFailed, "commit:2");
     await store.beginExtension(extensionFailed);
     await store.failExtension(
+      "world-summary",
       extensionFailed.operationId,
       "failed",
       "首次扩展请求失败",
@@ -769,6 +785,7 @@ describe("FileNativeArtifactStore", () => {
       toolCallId: "old-1",
     });
     await first.store.markCoreFailed(
+      "world-1",
       first.operation.operationId,
       "core failed",
     );
@@ -852,9 +869,9 @@ describe("FileNativeArtifactStore", () => {
     await first.store.beginOperation(secondOperation);
     await first.store.beginRequestAttempt(secondRequest);
     const cold = new FileNativeArtifactStore(root);
-    expect(await cold.readExtension(first.operation.operationId)).toEqual(
-      expect.objectContaining({ status: "superseded" }),
-    );
+    expect(
+      await cold.readExtension("world-1", first.operation.operationId),
+    ).toEqual(expect.objectContaining({ status: "superseded" }));
     await cold.emit({
       context: first.request,
       output: "panel",
@@ -948,7 +965,7 @@ describe("FileNativeArtifactStore", () => {
       { payload: "new", head: "commit:2" },
     ]);
     expect(
-      await first.store.readExtension(first.operation.operationId),
+      await first.store.readExtension("world-1", first.operation.operationId),
     ).toEqual(expect.objectContaining({ status: "superseded" }));
   });
 
@@ -975,6 +992,7 @@ describe("FileNativeArtifactStore", () => {
       await operationEnd.store.readActiveProjection("world-1"),
     ).toHaveLength(1);
     await operationEnd.store.completeExtension(
+      "world-1",
       operationEnd.operation.operationId,
       ["decorate"],
     );
@@ -999,6 +1017,7 @@ describe("FileNativeArtifactStore", () => {
       { output: "failed" },
     ]);
     await failed.store.failExtension(
+      "world-1",
       failed.operation.operationId,
       "failed",
       "post-commit failed",
@@ -1025,9 +1044,11 @@ describe("FileNativeArtifactStore", () => {
     expect(await transient.store.readActiveProjection("world-1")).toMatchObject(
       [{ output: "live", payload: "post-commit" }],
     );
-    await transient.store.completeExtension(transient.operation.operationId, [
-      "decorate",
-    ]);
+    await transient.store.completeExtension(
+      "world-1",
+      transient.operation.operationId,
+      ["decorate"],
+    );
     expect(await transient.store.readActiveProjection("world-1")).toEqual([]);
   });
 
@@ -1244,13 +1265,13 @@ describe("FileNativeArtifactStore", () => {
     );
     const restarted = new FileNativeArtifactStore(root);
     await restarted.beginOperation(secondOperation);
-    expect(await restarted.readExtension(first.operation.operationId)).toEqual(
-      expect.objectContaining({ status: "superseded" }),
-    );
+    expect(
+      await restarted.readExtension("world-1", first.operation.operationId),
+    ).toEqual(expect.objectContaining({ status: "superseded" }));
     await restarted.beginOperation(secondOperation);
-    expect(await restarted.readExtension(first.operation.operationId)).toEqual(
-      expect.objectContaining({ status: "superseded" }),
-    );
+    expect(
+      await restarted.readExtension("world-1", first.operation.operationId),
+    ).toEqual(expect.objectContaining({ status: "superseded" }));
   });
 
   test("core_committed/not_started 的 receipt 窗口会在新 operation 时 supersede", async () => {
@@ -1272,11 +1293,11 @@ describe("FileNativeArtifactStore", () => {
     await first.store.beginOperation(secondOperation);
     await first.store.beginRequestAttempt(secondRequest);
     const cold = new FileNativeArtifactStore(root);
-    expect(await cold.readExtension(first.operation.operationId)).toEqual(
-      expect.objectContaining({ status: "superseded" }),
-    );
     expect(
-      await cold.resumeExtension(first.operation.operationId),
+      await cold.readExtension("world-1", first.operation.operationId),
+    ).toEqual(expect.objectContaining({ status: "superseded" }));
+    expect(
+      await cold.resumeExtension("world-1", first.operation.operationId),
     ).toMatchObject({ status: "superseded" });
     await cold.emit({
       context: first.request,
@@ -1328,10 +1349,14 @@ describe("FileNativeArtifactStore", () => {
       toolCallId: "mixed-keep",
     });
     await mixed.store.markCoreCommitted(mixed.operation, "commit:1");
-    await mixed.store.completeExtension(mixed.operation.operationId, []);
+    await mixed.store.completeExtension(
+      "world-1",
+      mixed.operation.operationId,
+      [],
+    );
     await mixed.store.reconcileHead("world-1", "commit:2");
     expect(
-      await mixed.store.readExtension(mixed.operation.operationId),
+      await mixed.store.readExtension("world-1", mixed.operation.operationId),
     ).toEqual(expect.objectContaining({ status: "completed" }));
     expect(await mixed.store.readActiveProjection("world-1")).toMatchObject([
       { output: "keep", payload: "keep-after-head-change" },
@@ -1367,6 +1392,7 @@ describe("FileNativeArtifactStore", () => {
       "commit:completed-none",
     );
     await completed.store.completeExtension(
+      "world-1",
       completed.operation.operationId,
       [],
     );
@@ -1397,6 +1423,7 @@ describe("FileNativeArtifactStore", () => {
       "commit:failed-none",
     );
     await failed.store.failExtension(
+      "world-1",
       failed.operation.operationId,
       "failed",
       "extension failed",
@@ -1424,7 +1451,11 @@ describe("FileNativeArtifactStore", () => {
       toolCallId: "commit-never-1",
     });
     await retained.store.markCoreCommitted(retained.operation, "commit:1");
-    await retained.store.completeExtension(retained.operation.operationId, []);
+    await retained.store.completeExtension(
+      "world-1",
+      retained.operation.operationId,
+      [],
+    );
     expect(await retained.store.readActiveProjection("world-1")).toMatchObject([
       { output: "commit-never", payload: "keep-on-complete" },
     ]);
@@ -1446,15 +1477,25 @@ describe("FileNativeArtifactStore", () => {
     await current.store.beginExtension(current.operation);
     await current.store.markCoreCommitted(current.operation, "commit:1");
     expect(
-      await current.store.readExtension(current.operation.operationId),
+      await current.store.readExtension(
+        "world-1",
+        current.operation.operationId,
+      ),
     ).toEqual(expect.objectContaining({ status: "running" }));
     expect(
       await current.store.readDebug("world-1", current.operation.operationId),
     ).toHaveLength(1);
-    await current.store.completeExtension(current.operation.operationId, []);
+    await current.store.completeExtension(
+      "world-1",
+      current.operation.operationId,
+      [],
+    );
     await current.store.beginExtension(current.operation);
     expect(
-      await current.store.readExtension(current.operation.operationId),
+      await current.store.readExtension(
+        "world-1",
+        current.operation.operationId,
+      ),
     ).toEqual(expect.objectContaining({ status: "completed" }));
     await expect(
       current.store.markCoreCommitted(current.operation, "commit:2"),
@@ -1463,9 +1504,9 @@ describe("FileNativeArtifactStore", () => {
     );
     await current.store.markCoreCommitted(current.operation, "commit:1");
     const cold = new FileNativeArtifactStore(root);
-    expect(await cold.readExtension(current.operation.operationId)).toEqual(
-      expect.objectContaining({ status: "completed" }),
-    );
+    expect(
+      await cold.readExtension("world-1", current.operation.operationId),
+    ).toEqual(expect.objectContaining({ status: "completed" }));
     expect(await cold.readActiveProjection("world-1")).toMatchObject([
       { payload: "committed", head: "commit:1" },
     ]);
@@ -1494,7 +1535,7 @@ describe("FileNativeArtifactStore", () => {
       await first.store.readDebug("world-1", first.operation.operationId),
     ).toMatchObject([{ status: "superseded" }]);
     expect(
-      await first.store.readExtension(first.operation.operationId),
+      await first.store.readExtension("world-1", first.operation.operationId),
     ).toEqual(expect.objectContaining({ status: "superseded" }));
   });
 
@@ -1545,7 +1586,11 @@ describe("FileNativeArtifactStore", () => {
       toolCallId: "parent-reconcile-old",
     });
     await first.store.markCoreCommitted(first.operation, "commit:1");
-    await first.store.completeExtension(first.operation.operationId, []);
+    await first.store.completeExtension(
+      "world-1",
+      first.operation.operationId,
+      [],
+    );
     const secondOperation = {
       ...first.operation,
       operationId: "operation-parent-reconcile-second",
@@ -1554,7 +1599,7 @@ describe("FileNativeArtifactStore", () => {
     await first.store.beginOperation(secondOperation);
     expect(await first.store.readActiveProjection("world-1")).toEqual([]);
     expect(
-      await first.store.readExtension(first.operation.operationId),
+      await first.store.readExtension("world-1", first.operation.operationId),
     ).toEqual(expect.objectContaining({ status: "completed" }));
     expect(
       await first.store.readDebug("world-1", first.operation.operationId),
@@ -1668,7 +1713,7 @@ describe("FileNativeArtifactStore", () => {
         }),
       ]),
     );
-    await store.completeExtension(operation.operationId, [
+    await store.completeExtension("world-1", operation.operationId, [
       postRequest.requestId,
     ]);
     expect(await store.readActiveProjection("world-1")).toEqual([]);
@@ -1794,7 +1839,11 @@ describe("FileNativeArtifactStore", () => {
       toolCallId: "cross-clear-old",
     });
     await first.store.markCoreCommitted(first.operation, "commit:old");
-    await first.store.completeExtension(first.operation.operationId, []);
+    await first.store.completeExtension(
+      "world-1",
+      first.operation.operationId,
+      [],
+    );
 
     const secondOperation = {
       ...first.operation,

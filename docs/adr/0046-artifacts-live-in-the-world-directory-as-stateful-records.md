@@ -4,7 +4,7 @@ status: accepted
 
 # 产物随世界目录保存，记录自带状态，没有事件日志
 
-玩法产物（[ADR-0028](0028-play-artifacts-project-through-channels-into-trusted-frontend-extensions.md)）保存在 `worlds-file-native/<worldId>/artifacts/` 中，与世界的 `state/`、`control/`、`history/` 同处一个目录。每条产物一个文件 `records/<sequence>.json`，记录自带 `status`（`pending`、`active`、`superseded`、`cleared`）、绑定的核心端点 `head`，以及被清除时的清除来源；状态变化通过临时文件加 rename 就地更新。operation 生命周期文件保留在 `artifacts/operations/<sha256(operationId)>.json`，供扩展状态显示与冷恢复使用。
+玩法产物（[ADR-0028](0028-artifacts-project-through-a-trusted-frontend-host.md)）保存在 `worlds-file-native/<worldId>/artifacts/` 中，与世界的 `state/`、`control/`、`history/` 同处一个目录。每条产物一个文件 `records/<sequence>.json`，记录自带 `status`（`pending`、`active`、`superseded`、`cleared`）、绑定的核心端点 `head`，以及被清除时的清除来源；状态变化通过临时文件加 rename 就地更新。operation 生命周期文件保留在 `artifacts/operations/<sha256(operationId)>.json`，供扩展状态显示与冷恢复使用。
 
 **不再有事件日志。** 投影事件（activate、supersede、bind_head、clear）、幂等事件追加、`ignored_call` 身份账本、`core_materialization_pending` 状态和由事件补写记录的修复路径全部删除。读取不再重放事件：读取目录、校验每条记录，就得到当前状态。
 
@@ -24,4 +24,4 @@ status: accepted
 - **把产物纳入轮账本的前像。** 玩法产物由提交之后运行的后置请求生成，不属于任何一轮的提交；把它们放进轮账本会把后置请求的写入与轮的回退耦合。
 - **清除保持为事件，以保留跨尝试回滚。** 回滚需要知道清除来源，把来源记在记录上与记在事件上信息相同，而前者不需要读取整个日志。
 
-本 ADR 取代 [ADR-0028](0028-play-artifacts-project-through-channels-into-trusted-frontend-extensions.md) 与 [ADR-0036](0036-authority-facts-are-world-neutral-and-forks-retain-physical-closures.md) 中关于产物持久化位置、事件模型与分叉暂存的决定；频道投影、可信前端宿主与权威提交的边界保持 ADR-0028 的决定。
+本 ADR 取代 [ADR-0028](0028-artifacts-project-through-a-trusted-frontend-host.md) 与 [ADR-0036](0036-authority-facts-are-world-neutral-and-forks-retain-physical-closures.md) 中关于产物持久化位置、事件模型与分叉暂存的决定；频道投影、可信前端宿主与权威提交的边界保持 ADR-0028 的决定。

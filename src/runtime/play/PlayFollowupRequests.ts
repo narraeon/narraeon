@@ -147,10 +147,12 @@ export async function runPlayFollowupRequests(
   const extension =
     failure === undefined
       ? await input.artifacts.completeExtension(
+          input.context.worldId,
           input.context.operationId,
           completed,
         )
       : await input.artifacts.failExtension(
+          input.context.worldId,
           input.context.operationId,
           "recovery_required",
           failure,

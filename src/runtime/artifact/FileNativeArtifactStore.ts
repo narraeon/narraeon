@@ -214,13 +214,19 @@ export interface ArtifactStore {
     context: ArtifactOperationContext,
     head: string,
   ): Promise<void>;
-  markCoreFailed(operationId: string, message?: string): Promise<void>;
+  markCoreFailed(
+    worldId: string,
+    operationId: string,
+    message?: string,
+  ): Promise<void>;
   beginExtension(context: ArtifactOperationContext): Promise<void>;
   completeExtension(
+    worldId: string,
     operationId: string,
     requests: string[],
   ): Promise<ArtifactExtensionSummary>;
   failExtension(
+    worldId: string,
     operationId: string,
     status: Exclude<
       ArtifactExtensionStatus,
@@ -229,10 +235,16 @@ export interface ArtifactStore {
     message: string,
     requests?: string[],
   ): Promise<ArtifactExtensionSummary>;
-  readExtension(operationId: string): Promise<ArtifactExtensionSummary | null>;
+  readExtension(
+    worldId: string,
+    operationId: string,
+  ): Promise<ArtifactExtensionSummary | null>;
   /** Read persisted extension lifecycle summaries without raw/provider data. */
   readExtensionSummaries(worldId: string): Promise<ArtifactExtensionSummary[]>;
-  resumeExtension(operationId: string): Promise<ArtifactExtensionSummary>;
+  resumeExtension(
+    worldId: string,
+    operationId: string,
+  ): Promise<ArtifactExtensionSummary>;
   readActiveProjection(
     worldId: string,
     channel?: string,
@@ -850,9 +862,11 @@ export class FileNativeArtifactStore implements ArtifactStore {
     }
   }
 
-  async markCoreFailed(operationId: string, message?: string): Promise<void> {
-    const worldId = await this.#worldForOperation(operationId);
-    if (worldId === null) return;
+  async markCoreFailed(
+    worldId: string,
+    operationId: string,
+    message?: string,
+  ): Promise<void> {
     return this.#withWorldMutation(worldId, () =>
       this.#markCoreFailed(worldId, operationId, message),
     );
@@ -907,11 +921,10 @@ export class FileNativeArtifactStore implements ArtifactStore {
   }
 
   async completeExtension(
+    worldId: string,
     operationId: string,
     requests: string[],
   ): Promise<ArtifactExtensionSummary> {
-    const worldId = await this.#worldForOperation(operationId);
-    if (worldId === null) return recoveryRequired(operationId, [], undefined);
     return this.#withWorldMutation(worldId, () =>
       this.#completeExtension(worldId, operationId, requests),
     );
@@ -948,6 +961,7 @@ export class FileNativeArtifactStore implements ArtifactStore {
   }
 
   async failExtension(
+    worldId: string,
     operationId: string,
     status: Exclude<
       ArtifactExtensionStatus,
@@ -956,9 +970,6 @@ export class FileNativeArtifactStore implements ArtifactStore {
     message: string,
     requests: string[] = [],
   ): Promise<ArtifactExtensionSummary> {
-    const worldId = await this.#worldForOperation(operationId);
-    if (worldId === null)
-      return recoveryRequired(operationId, requests, message);
     return this.#withWorldMutation(worldId, () =>
       this.#failExtension(worldId, operationId, status, message, requests),
     );
@@ -1012,10 +1023,10 @@ export class FileNativeArtifactStore implements ArtifactStore {
   }
 
   async readExtension(
+    worldId: string,
     operationId: string,
   ): Promise<ArtifactExtensionSummary | null> {
-    const worldId = await this.#worldForOperation(operationId);
-    if (worldId === null) return null;
+    await this.#ensureReadable(worldId);
     const operation = await this.#readOperation(worldId, operationId);
     return operation === null ? null : summary(operation);
   }
@@ -1041,17 +1052,9 @@ export class FileNativeArtifactStore implements ArtifactStore {
   }
 
   async resumeExtension(
+    worldId: string,
     operationId: string,
   ): Promise<ArtifactExtensionSummary> {
-    const worldId = await this.#worldForOperation(operationId);
-    if (worldId === null)
-      return {
-        operationId,
-        status: "recovery_required",
-        completedRequests: [],
-        message: "No recoverable extension checkpoint was found",
-        coreCommitted: false,
-      };
     return this.#withWorldMutation(worldId, async () => {
       const operation = await this.#readOperation(worldId, operationId);
       if (operation === null)
@@ -1390,24 +1393,6 @@ export class FileNativeArtifactStore implements ArtifactStore {
       ),
       operation,
     );
-  }
-
-  async #worldForOperation(operationId: string): Promise<string | null> {
-    for (const worldId of await this.#worldIds())
-      if ((await this.#readOperation(worldId, operationId)) !== null)
-        return worldId;
-    return null;
-  }
-
-  async #worldIds(): Promise<string[]> {
-    try {
-      return (await readdir(this.#worldsRoot, { withFileTypes: true }))
-        .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
-        .map((entry) => entry.name);
-    } catch (error: unknown) {
-      if (isMissing(error)) return [];
-      throw error;
-    }
   }
 
   /** Reads of a world whose artifacts are still in the legacy layout migrate it first. */

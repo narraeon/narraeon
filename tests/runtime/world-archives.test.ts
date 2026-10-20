@@ -540,9 +540,11 @@ test("完整世界跨根往返保留 Authority、故事、冻结产物与名称�
     payload: "备份保留正文",
     toolCallId: "emit",
   });
-  await source.artifacts.completeExtension(operation.operationId, [
-    request.requestId,
-  ]);
+  await source.artifacts.completeExtension(
+    source.worldId,
+    operation.operationId,
+    [request.requestId],
+  );
   const archive = await exported(source);
   expect(archive.metadata.fileName).toBe("雨夜-旅店.narraeon-world.zip");
   expect(await source.worlds.listWorlds()).toHaveLength(1);
