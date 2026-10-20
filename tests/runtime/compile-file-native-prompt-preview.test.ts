@@ -302,7 +302,11 @@ test("主持块分别约束玩家代理权与默认叙事视角", () => {
   expect(defaultPresetHostFiles["blocks/adjudication.md"]).toContain(
     "an attempt is not success",
   );
+  // The person moved out of the general style into the person-second block.
   expect(defaultPresetHostFiles["blocks/style.md"]).toContain(
+    "in the person set by the narrative-person rules",
+  );
+  expect(defaultPresetHostFiles["blocks/person-second.md"]).toContain(
     "Address the player character as “you”",
   );
 });

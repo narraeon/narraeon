@@ -14,7 +14,7 @@ import {
   defaultPlayPresetFilesForLocale,
   revisionForPlayPresetFiles,
 } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
-import { withContinuationPromptBuiltins } from "../../src/runtime/play/OrderedPlayPrompts.ts";
+import { withAlternativePromptBuiltins } from "../../src/runtime/play/OrderedPlayPrompts.ts";
 import {
   builtinPlayPrompts,
   defaultOrderedPlayPrompts,
@@ -164,12 +164,12 @@ describe("continuation blocks", () => {
       });
       return items;
     });
-    expect(withContinuationPromptBuiltins(swapped)).toBe(swapped);
+    expect(withAlternativePromptBuiltins(swapped)).toBe(swapped);
 
     const noNarrative = releasedFiles((items) =>
       items.filter(({ id }) => id !== "play.narrative"),
     );
-    const migrated = playList(withContinuationPromptBuiltins(noNarrative));
+    const migrated = playList(withAlternativePromptBuiltins(noNarrative));
     // Without a narrative block they stay ahead of the tabletop builtin, which
     // sits just before the world placeholder.
     const tabletop = migrated.findIndex(({ id }) => id === "play.tabletop");

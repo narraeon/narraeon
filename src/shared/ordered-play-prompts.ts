@@ -97,6 +97,16 @@ ${historyUseGuidance(locale)}`,
       body: host["blocks/style.md"]!,
       required: false,
     },
+    // Narrative-person blocks are alternatives like the continuation blocks:
+    // second person ships enabled, first and third disabled.
+    ...["second", "first", "third"].map((id) => ({
+      id: `play.person-${id}`,
+      name:
+        /^#\s+(.+)$/mu.exec(host[`blocks/person-${id}.md`]!)?.[1] ??
+        `blocks/person-${id}.md`,
+      body: host[`blocks/person-${id}.md`]!,
+      required: false,
+    })),
     ...["adjudication", "state"].map((id) => ({
       id: `play.${id}`,
       name: zh
@@ -150,7 +160,13 @@ export function defaultOrderedPlayPrompts(): OrderedPlayPrompt[] {
       id,
       kind: "builtin",
       builtin: id,
-      enabled: !id.startsWith("play.style-") && id !== "play.continue-advance",
+      enabled:
+        !id.startsWith("play.style-") &&
+        ![
+          "play.continue-advance",
+          "play.person-first",
+          "play.person-third",
+        ].includes(id),
     }))
     .concat([{ id: "world", kind: "world" }]);
 }

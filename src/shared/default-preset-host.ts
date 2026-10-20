@@ -24,7 +24,7 @@ roles:
 `,
   "blocks/style.md": `# 通用叙事呈现
 
-这是一部互动式小说，玩家是其中的主角。玩家可见叙事以第二人称“你”称呼玩家角色，保持已经建立的观察视角，只写虚构世界中的体验。
+这是一部互动式小说，玩家是其中的主角。称呼玩家角色的人称按人称规则执行，保持已经建立的观察视角，只写虚构世界中的体验。
 
 ## 写出小说的质感
 
@@ -41,6 +41,18 @@ roles:
 ## 人物与场面
 
 用正在进行的事呈现场面，不把所有在场者按名字点一遍。人物之间可以交谈、忙自己的事；细节按场景需要选取。名字已知就自然使用名字，避免不断重新介绍。文风负责表现，不能改变已经成立的结果。
+`,
+  "blocks/person-second.md": `# 人称：第二人称
+
+玩家可见叙事以第二人称“你”称呼玩家角色。玩家的知觉、动作和话语都以“你”写出；其他人物按名字或第三人称称呼。观察视角跟随玩家角色，不写他无法感知的事。
+`,
+  "blocks/person-first.md": `# 人称：第一人称
+
+玩家可见叙事以第一人称“我”写玩家角色，像玩家角色自己在讲述。知觉、判断和情绪只能是“我”能感知到的；其他人物按名字或第三人称称呼。叙述口吻贴近玩家角色已经建立的性格，不替他下结论或表态。本块启用时取代第二人称的要求。
+`,
+  "blocks/person-third.md": `# 人称：第三人称
+
+玩家可见叙事以第三人称写玩家角色：已知名字时用名字，否则用与其性别一致的“他／她”，并与其他人物明确区分。观察视角仍跟随玩家角色，不越入其他人物未表露的内心。玩家原文里的“我”“你”在正文中转为相应的第三人称。本块启用时取代第二人称的要求。
 `,
   "blocks/style-intimate.md": `# 文风：情感与亲密
 
@@ -313,7 +325,7 @@ roles:
 `,
   "blocks/style.md": `# General narrative presentation
 
-This is an interactive novel with the player as its protagonist. Address the player character as “you”, preserve the established viewpoint, and describe only experiences within the fictional world.
+This is an interactive novel with the player as its protagonist. Refer to the player character in the person set by the narrative-person rules, preserve the established viewpoint, and describe only experiences within the fictional world.
 
 ## Give the prose the texture of a novel
 
@@ -330,6 +342,18 @@ Detail adds information: how an action unfolds, a sound changes or attention shi
 ## People and scenes
 
 Show a scene through ongoing activity. Do not inventory everyone by name. People can talk to each other or pursue their own business; select details that serve this scene. Once a name is known, use it naturally instead of reintroducing the person. Style shapes expression without changing established outcomes.
+`,
+  "blocks/person-second.md": `# Person: second person
+
+Address the player character as “you” in all player-visible narrative. Their perceptions, actions and words are written as “you”; other characters are named or referred to in the third person. The viewpoint follows the player character and does not describe what they cannot perceive.
+`,
+  "blocks/person-first.md": `# Person: first person
+
+Write the player character in the first person, “I”, as if the player character were telling the story. Perceptions, judgments and feelings are limited to what “I” can perceive; other characters are named or referred to in the third person. Keep the voice close to the player character's established personality without drawing conclusions or taking stances on their behalf. When this block is enabled it replaces the second-person requirement.
+`,
+  "blocks/person-third.md": `# Person: third person
+
+Write the player character in the third person: by name when known, otherwise with a pronoun that matches their gender, clearly distinguished from other characters. The viewpoint still follows the player character and does not enter other characters' unexpressed thoughts. “I” and “you” in the player's text become the corresponding third person in the prose. When this block is enabled it replaces the second-person requirement.
 `,
   "blocks/style-intimate.md": `# Style: emotion and intimacy
 

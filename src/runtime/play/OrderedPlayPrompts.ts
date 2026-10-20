@@ -162,14 +162,43 @@ export function withTabletopPromptBuiltins(
 }
 
 /**
- * Insert the continuation builtins that an ordered preset does not list yet:
- * play.continue-stage enabled and play.continue-advance disabled, right after
- * play.narrative (or before the tabletop builtin and world placeholder when
- * the narrative builtin is gone). A preset that already lists either one is left alone, so a player
- * who swapped them keeps that choice. Same identity contract as the tabletop
- * insertion.
+ * A group of alternative builtins (one enabled, the rest disabled) that a
+ * stored preset may still lack. It is inserted right after `anchor`, or before
+ * the first of `before` when the anchor is gone. A preset that already lists
+ * any member is left alone, so a player who swapped them keeps that choice.
  */
-export function withContinuationPromptBuiltins(
+interface AlternativeBuiltinGroup {
+  anchor: string;
+  before: string[];
+  entries: OrderedPlayPrompt[];
+}
+
+const alternativeGroups = (): AlternativeBuiltinGroup[] => [
+  {
+    anchor: "play.style",
+    before: [
+      "play.adjudication",
+      "play.state",
+      "play.narrative",
+      "play.continue-stage",
+      "play.tabletop",
+    ],
+    entries: personPromptEntries(),
+  },
+  {
+    anchor: "play.narrative",
+    before: ["play.tabletop"],
+    entries: continuationPromptEntries(),
+  },
+];
+
+/**
+ * Insert the narrative-person and continuation builtins that an ordered preset
+ * does not list yet. Same identity contract as the tabletop insertion: files
+ * that are not ordered v2 or do not parse come back unchanged, and the same
+ * object is returned when nothing needs inserting.
+ */
+export function withAlternativePromptBuiltins(
   files: Record<string, string>,
 ): Record<string, string> {
   const source = files["preset.yaml"];
@@ -183,56 +212,67 @@ export function withContinuationPromptBuiltins(
   )
     return files;
   const playPrompts = document.get("playPrompts", true);
-  if (
-    !isSeq(playPrompts) ||
-    hasEntry(playPrompts, "play.continue-stage") ||
-    hasEntry(playPrompts, "play.continue-advance")
-  )
-    return files;
-  const narrative = playPrompts.items.findIndex(
-    (item) => entryField(item, "id") === "play.narrative",
-  );
-  const fallback = playPrompts.items.findIndex(
-    (item) =>
-      entryField(item, "id") === "play.tabletop" ||
-      entryField(item, "kind") === "world",
-  );
-  const at =
-    narrative >= 0
-      ? narrative + 1
-      : fallback >= 0
-        ? fallback
-        : playPrompts.items.length;
-  playPrompts.items.splice(
-    at,
-    0,
-    ...continuationPromptEntries().map((entry) => document.createNode(entry)),
-  );
-  return { ...files, "preset.yaml": document.toString() };
+  if (!isSeq(playPrompts)) return files;
+  let changed = false;
+  for (const group of alternativeGroups()) {
+    if (group.entries.some((entry) => hasEntry(playPrompts, entry.id)))
+      continue;
+    const anchor = playPrompts.items.findIndex(
+      (item) => entryField(item, "id") === group.anchor,
+    );
+    const fallback = playPrompts.items.findIndex((item) => {
+      const id = entryField(item, "id");
+      return (
+        (typeof id === "string" && group.before.includes(id)) ||
+        entryField(item, "kind") === "world"
+      );
+    });
+    const at =
+      anchor >= 0
+        ? anchor + 1
+        : fallback >= 0
+          ? fallback
+          : playPrompts.items.length;
+    playPrompts.items.splice(
+      at,
+      0,
+      ...group.entries.map((entry) => document.createNode(entry)),
+    );
+    changed = true;
+  }
+  return changed ? { ...files, "preset.yaml": document.toString() } : files;
 }
 
 /** Every builtin insertion a stored or imported ordered preset must receive. */
 export function withCurrentPromptBuiltins(
   files: Record<string, string>,
 ): Record<string, string> {
-  return withContinuationPromptBuiltins(withTabletopPromptBuiltins(files));
+  return withAlternativePromptBuiltins(withTabletopPromptBuiltins(files));
+}
+
+function alternativeEntries(
+  prefix: string,
+  ids: string[],
+  enabledId: string,
+): OrderedPlayPrompt[] {
+  return ids.map((id) => ({
+    id: `${prefix}${id}`,
+    kind: "builtin",
+    builtin: `${prefix}${id}`,
+    enabled: id === enabledId,
+  }));
+}
+
+function personPromptEntries(): OrderedPlayPrompt[] {
+  return alternativeEntries(
+    "play.person-",
+    ["second", "first", "third"],
+    "second",
+  );
 }
 
 function continuationPromptEntries(): OrderedPlayPrompt[] {
-  return [
-    {
-      id: "play.continue-stage",
-      kind: "builtin",
-      builtin: "play.continue-stage",
-      enabled: true,
-    },
-    {
-      id: "play.continue-advance",
-      kind: "builtin",
-      builtin: "play.continue-advance",
-      enabled: false,
-    },
-  ];
+  return alternativeEntries("play.continue-", ["stage", "advance"], "stage");
 }
 
 function hasEntry(sequence: YAMLSeq, id: string): boolean {
@@ -370,15 +410,22 @@ export function migrateLegacyPlayPrompts(
       path.endsWith(".md")
     )
       add(path, false);
-  // Converted presets gain the continuation builtins and then the tabletop
-  // builtin just before the world placeholder. The legacy narrative copy keeps
-  // its own wording as user text; staging arrives as the current builtin.
+  // Converted presets gain the person and continuation builtins and then the
+  // tabletop builtin just before the world placeholder. The legacy style and
+  // narrative copies keep their own wording as user text; the current builtins
+  // arrive beside them.
   const worldIndex = entries.findIndex((entry) => entry.kind === "world");
-  entries.splice(worldIndex, 0, ...continuationPromptEntries(), {
-    id: "play.tabletop",
-    kind: "builtin",
-    builtin: "play.tabletop",
-    enabled: true,
-  });
+  entries.splice(
+    worldIndex,
+    0,
+    ...personPromptEntries(),
+    ...continuationPromptEntries(),
+    {
+      id: "play.tabletop",
+      kind: "builtin",
+      builtin: "play.tabletop",
+      enabled: true,
+    },
+  );
   return entries;
 }
