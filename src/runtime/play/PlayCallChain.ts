@@ -96,13 +96,11 @@ import {
 import {
   FileNativePlayDocuments,
   fingerprintControl,
-  type PlayDocumentAuthorizationCheckpoint,
   type PlayDocumentToolResult,
 } from "./PlayDocumentTools.ts";
 import type { AiFailureRecorder } from "../model/AiFailureLog.ts";
 import type {
   PersistedCompletedToolCall,
-  PersistedDocumentAuthorizationCheckpoint,
   PersistedPlayCallChain,
   PersistedPlayCallChainContext,
   PlayContextPersistenceCursor,
@@ -133,7 +131,6 @@ type CompletedToolCall = PersistedCompletedToolCall;
 
 interface PlayCallChainSession extends PersistedPlayCallChain {
   narrativeCheckpoint?: NarrativeCheckpoint | undefined;
-  documentAuthorizationCheckpoints: PersistedDocumentAuthorizationCheckpoint[];
   documents: FileNativePlayDocuments;
   history: { path: string; contents: string; background?: HistoryBackground }[];
   completedToolMap: Map<string, CompletedToolCall>;
@@ -199,7 +196,6 @@ interface PreparedFreshPlayerRevision {
   bootstrap: PromptCompilation;
   tools: PromptCompilation["tools"];
   followups: PlayPresetCompilation["followups"];
-  authorization: PlayDocumentAuthorizationCheckpoint;
 }
 
 interface ActivePlayInvocation extends V1PlayRunProgress {
@@ -362,12 +358,6 @@ export class PlayCallChain {
       transcript: [],
       events: [],
       completedTools: [],
-      documentAuthorizationCheckpoints: [
-        {
-          afterEventId: 0,
-          authorization: documents.authorizationCheckpoint(),
-        },
-      ],
       changedDocuments: [],
       nextMaterials: structuredClone(binding.additionalMaterials),
       nextEventId: 1,
@@ -552,10 +542,6 @@ export class PlayCallChain {
       followups: structuredClone(compilation.followups ?? []),
       playPresetScriptsEnabled: playPreset.scriptsEnabled,
       presetFiles: structuredClone(playPreset.files),
-    });
-    session.documentAuthorizationCheckpoints.push({
-      afterEventId: session.nextEventId,
-      authorization: session.documents.authorizationCheckpoint(),
     });
     await this.#persist(session);
   }
@@ -1352,7 +1338,6 @@ export class PlayCallChain {
       bootstrap,
       tools: structuredClone(compilation.toolUniverse),
       followups: structuredClone(compilation.followups ?? []),
-      authorization: documents.authorizationCheckpoint(),
     };
   }
 
@@ -1453,12 +1438,6 @@ export class PlayCallChain {
         },
       ],
       completedTools: [],
-      documentAuthorizationCheckpoints: [
-        {
-          afterEventId: 0,
-          authorization: structuredClone(fresh.authorization),
-        },
-      ],
       changedDocuments: [],
       nextMaterials: structuredClone(input.binding.additionalMaterials),
       nextEventId: 2,
@@ -2029,7 +2008,6 @@ export class PlayCallChain {
       completedTools: [...workingTools.values()].map((item) =>
         structuredClone(item),
       ),
-      authorizationCheckpoint: session.documents.authorizationCheckpoint(),
       stateChanges: structuredClone(stateChanges),
       visibleText,
       ...(narrativeCheckpoint === undefined ? {} : { narrativeCheckpoint }),
@@ -2133,39 +2111,9 @@ export class PlayCallChain {
         structuredClone(item),
       ]),
     );
-    const lastToolEventId = settlement.trailingEvents.findLast(
-      ({ kind }) => kind === "tool_result",
-    )?.id;
-    if (lastToolEventId !== undefined) {
-      session.documentAuthorizationCheckpoints =
-        session.documentAuthorizationCheckpoints.filter(
-          ({ afterEventId }) => afterEventId < advance.eventId,
-        );
-      session.documentAuthorizationCheckpoints.push({
-        afterEventId: lastToolEventId,
-        authorization: structuredClone(settlement.authorizationCheckpoint),
-      });
-    }
     if (committedHead !== undefined) session.parentHead = committedHead;
     if (settlement.stateChanges.length > 0) {
-      const currentAuthorization = session.documents.authorizationCheckpoint();
-      if (
-        currentAuthorization.stateFingerprint ===
-        settlement.authorizationCheckpoint.stateFingerprint
-      )
-        session.documents.acceptCommittedState();
-      else {
-        const binding = await this.#worlds.bindPlayCallChain(session.worldId);
-        session.documents = new FileNativePlayDocuments(binding.files);
-        session.documents.restoreAuthorizationCheckpoint(
-          settlement.authorizationCheckpoint,
-        );
-        session.history = historyEntries(
-          binding.history,
-          binding.historyBackgrounds,
-        );
-        session.nextMaterials = structuredClone(binding.additionalMaterials);
-      }
+      session.documents.acceptCommittedState();
       mergeChangedDocuments(session, settlement.stateChanges);
     }
     if (settlement.stateChanges.length > 0)
@@ -2771,10 +2719,8 @@ export class PlayCallChain {
     );
     return {
       ...structuredClone(persisted),
-      documentAuthorizationCheckpoints:
-        persisted.documentAuthorizationCheckpoints?.map((checkpoint) =>
-          structuredClone(checkpoint),
-        ) ?? [],
+      // Read authorizations are memory-only; legacy checkpoints are ignored.
+      documentAuthorizationCheckpoints: [],
       nextMaterials: structuredClone(binding.additionalMaterials),
       documents,
       history: historyEntries(binding.history, binding.historyBackgrounds),

@@ -51,10 +51,7 @@ import type {
   PlayFollowupCompilation,
   PromptCompilation,
 } from "../prompt/FileNativePromptCompiler.ts";
-import type {
-  PlayDocumentAuthorizationCheckpoint,
-  PlayDocumentToolResult,
-} from "./PlayDocumentTools.ts";
+import type { PlayDocumentToolResult } from "./PlayDocumentTools.ts";
 
 export interface PersistedCompletedToolCall {
   key: string;
@@ -63,9 +60,14 @@ export interface PersistedCompletedToolCall {
   result: PlayDocumentToolResult;
 }
 
+/**
+ * Legacy durable read-authorization snapshots. Authorizations are memory-only
+ * (ADR-0044), so new contexts never write these; old records stay readable and
+ * are ignored by recovery.
+ */
 export interface PersistedDocumentAuthorizationCheckpoint {
   afterEventId: number;
-  authorization: PlayDocumentAuthorizationCheckpoint;
+  authorization: unknown;
 }
 
 export interface PersistedPlayCallChainContext {

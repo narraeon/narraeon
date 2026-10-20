@@ -8,14 +8,8 @@ import type {
   FileNativePlayBinding,
   FileNativeRecoveredEndpoint,
 } from "../world/FileNativeWorldStore.ts";
-import type {
-  PersistedPlayCallChainContext,
-  PersistedDocumentAuthorizationCheckpoint,
-} from "./FileNativePlayTimelineStore.ts";
-import {
-  FileNativePlayDocuments,
-  type PlayDocumentAuthorizationCheckpoint,
-} from "./PlayDocumentTools.ts";
+import type { PersistedPlayCallChainContext } from "./FileNativePlayTimelineStore.ts";
+import { FileNativePlayDocuments } from "./PlayDocumentTools.ts";
 import {
   currentPlayPrompt,
   playPromptRunsThroughEvents,
@@ -191,11 +185,6 @@ function assembleRetainedTrace(
     completedTools: source.completedTools
       .filter(({ key }) => completedKeys === null || completedKeys.has(key))
       .map((item) => structuredClone(item)),
-    documentAuthorizationCheckpoints: authorizationCheckpointsThroughEvents(
-      source,
-      selection.events,
-      documents.authorizationCheckpoint(),
-    ),
     changedDocuments: changedDocumentsAtHead(
       source.changedDocuments,
       endpoint.baseline.state,
@@ -220,20 +209,17 @@ export function restorePlayDocuments(
     | "followups"
     | "playPresetScriptsEnabled"
     | "promptRuns"
-    | "documentAuthorizationCheckpoints"
   >,
   events: readonly V1PlayCallChainEvent[],
 ): FileNativePlayDocuments {
   const documents = new FileNativePlayDocuments(files);
   try {
-    const checkpoint = documentAuthorizationThroughEvents(context, events);
+    // Read authorizations are memory-only: a restored prefix always starts from
+    // its bootstrap, and stale write authority is caught by the commit's hash.
     const runs = playPromptRunsThroughEvents(context, events);
-    if (checkpoint === undefined || runs.length > 0)
-      documents.bindBootstrap(
-        currentPlayPrompt({ ...context, promptRuns: runs }).bootstrap,
-      );
-    if (checkpoint !== undefined)
-      documents.restoreAuthorizationCheckpoint(checkpoint.authorization);
+    documents.bindBootstrap(
+      currentPlayPrompt({ ...context, promptRuns: runs }).bootstrap,
+    );
   } catch (error: unknown) {
     throw new PlayCallChainError(
       `Call-chain document authorization could not be restored: ${
@@ -244,26 +230,6 @@ export function restorePlayDocuments(
   return documents;
 }
 
-function documentAuthorizationThroughEvents(
-  context: Pick<
-    PersistedPlayCallChainContext,
-    "documentAuthorizationCheckpoints"
-  >,
-  events: readonly V1PlayCallChainEvent[],
-): PersistedDocumentAuthorizationCheckpoint | undefined {
-  const checkpoints = context.documentAuthorizationCheckpoints;
-  if (checkpoints === undefined || checkpoints.length === 0) return undefined;
-  const selectedEventIds = new Set(events.map(({ id }) => id));
-  const selected = checkpoints.findLast(
-    ({ afterEventId }) =>
-      afterEventId === 0 || selectedEventIds.has(afterEventId),
-  );
-  // Legacy V1 records had no durable dynamic authorization. If the selected
-  // prefix predates their first lazily-written checkpoint, retain the exact
-  // old recovery behavior and rebuild only bootstrap authorization.
-  return selected === undefined ? undefined : structuredClone(selected);
-}
-
 export function independentContextCopy(
   source: PersistedPlayCallChainContext,
 ): PersistedPlayCallChainContext {
@@ -272,26 +238,6 @@ export function independentContextCopy(
   delete context.derivedFrom;
   delete context.branchedBeforePlayer;
   return context;
-}
-
-function authorizationCheckpointsThroughEvents(
-  context: PersistedPlayCallChainContext,
-  events: readonly V1PlayCallChainEvent[],
-  fallback: PlayDocumentAuthorizationCheckpoint,
-): PersistedDocumentAuthorizationCheckpoint[] {
-  const eventIds = new Set(events.map(({ id }) => id));
-  const selected = (context.documentAuthorizationCheckpoints ?? [])
-    .filter(
-      ({ afterEventId }) => afterEventId === 0 || eventIds.has(afterEventId),
-    )
-    .map((checkpoint) => structuredClone(checkpoint));
-  if (selected.length > 0) return selected;
-  return [
-    {
-      afterEventId: Math.max(0, ...events.map(({ id }) => id)),
-      authorization: structuredClone(fallback),
-    },
-  ];
 }
 
 function transcriptThroughEvents(

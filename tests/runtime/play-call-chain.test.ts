@@ -405,16 +405,10 @@ test("上下文窗口只读投影冻结绑定，旧无绑定记录不补窗口�
   expect(legacy?.previousContexts).toEqual([]);
 });
 
-test("修改轨迹统一保留前缀工具及原生载荷，并按含同 ID 修改稿的事件选择运行快照与授权", async () => {
+test("修改轨迹统一保留前缀工具及原生载荷，并按含同 ID 修改稿的事件选择运行快照", async () => {
   const { source, prefix, eventIndex, endpoint } =
     await createTraceRetentionFixture();
   const player = source.events[eventIndex]!;
-  const authorization =
-    prefix.documentAuthorizationCheckpoints!.at(-1)!.authorization;
-  source.documentAuthorizationCheckpoints!.push({
-    afterEventId: player.id,
-    authorization: structuredClone(authorization),
-  });
   const original = structuredClone(source);
   const prepared = preparePlayerRevisionTrace(source, eventIndex);
   const retained = prepared
@@ -432,9 +426,7 @@ test("修改轨迹统一保留前缀工具及原生载荷，并按含同 ID 修�
     committedHead: "commit:replacement",
   });
   expect(retained.promptRuns).toEqual(source.promptRuns);
-  expect(retained.documentAuthorizationCheckpoints!.at(-1)?.afterEventId).toBe(
-    player.id,
-  );
+  expect(retained).not.toHaveProperty("documentAuthorizationCheckpoints");
   expect(retained.exchange).toBe(2);
   expect(retained.nextEventId).toBe(player.id + 1);
   expect(source).toEqual(original);
@@ -442,7 +434,7 @@ test("修改轨迹统一保留前缀工具及原生载荷，并按含同 ID 修�
   expect(source).toEqual(original);
 });
 
-test("fresh 修改按页面前缀选择快照和授权，缺少旧 binding 仍能保留，空前缀不生成记录", async () => {
+test("fresh 修改按页面前缀选择快照，缺少旧 binding 仍能保留，空前缀不生成记录", async () => {
   const { source, prefix, eventIndex, endpoint } =
     await createTraceRetentionFixture();
   delete source.modelBinding;
@@ -452,9 +444,6 @@ test("fresh 修改按页面前缀选择快照和授权，缺少旧 binding 仍�
   expect(retained.transcript).toEqual(prefix.transcript);
   expect(retained.completedTools).toEqual(prefix.completedTools);
   expect(retained.promptRuns).toEqual(prefix.promptRuns);
-  expect(retained.documentAuthorizationCheckpoints).toEqual(
-    prefix.documentAuthorizationCheckpoints,
-  );
   expect(retained.changedDocuments).toEqual([
     {
       kind: "replace",
@@ -475,9 +464,7 @@ test("完整分叉保留原生轨迹及全部工具，部分分叉恢复所选�
   expect(partial.transcript).toEqual(prefix.transcript);
   expect(partial.completedTools).toEqual(prefix.completedTools);
   expect(partial.promptRuns).toEqual(prefix.promptRuns);
-  expect(partial.documentAuthorizationCheckpoints).toEqual(
-    prefix.documentAuthorizationCheckpoints,
-  );
+  expect(partial).not.toHaveProperty("documentAuthorizationCheckpoints");
   expect(partial.changedDocuments).toEqual([
     {
       kind: "replace",
@@ -1152,7 +1139,7 @@ test("工具中编辑不替换快照，拒绝后的冷重试不读取新配置",
   });
 });
 
-test("跨发送精读授权在重启、成功写入和空输入刷新后保留，且不扩大到未读节点", async () => {
+test("精读授权在同一进程的发送间保留；重启后从 bootstrap 重新开始，需重新精读，且不扩大到未读节点", async () => {
   const { worlds, worldId, root } = await createWorld("retained-read", [
     ...worldFiles(),
     {
@@ -1189,8 +1176,19 @@ test("跨发送精读授权在重启、成功写入和空输入刷新后保留�
       },
       { outcome: "response", text: "Qin greets you." },
       {
+        // Read authority is memory-only: after a restart the writes must re-read.
         outcome: "response",
         toolCalls: [
+          {
+            id: "reread-relationship",
+            name: "context_read",
+            arguments: { ref: "@qin#/relationship" },
+          },
+          {
+            id: "reread-pending",
+            name: "context_read",
+            arguments: { ref: "@qin#/pending" },
+          },
           patch(
             "second-write",
             "relationship",
@@ -1210,6 +1208,11 @@ test("跨发送精读授权在重启、成功写入和空输入刷新后保留�
       {
         outcome: "response",
         toolCalls: [
+          {
+            id: "reread-relationship-again",
+            name: "context_read",
+            arguments: { ref: "@qin#/relationship" },
+          },
           patch(
             "third-write",
             "relationship",
@@ -3692,107 +3695,6 @@ test("游玩调用链可在 frame 声明的空 catalog 中创建首份文档", a
   ).toContain("提灯 [ref: @lantern] — 一盏可持续追踪的提灯。");
 });
 
-test("冷启动恢复 world_create 授予的写权限，后续无需重新读取即可 patch", async () => {
-  const { worlds, worldId } = await createWorld(
-    "play-chain-create-authorization-cold-recovery",
-  );
-  const interruptedHost = new ScriptedModelHost({
-    binding: modelBinding(),
-    steps: [
-      {
-        outcome: "response",
-        toolCalls: [
-          {
-            id: "create-cold-character",
-            name: "world_create",
-            arguments: {
-              parent: "@dir-/",
-              codec: "yaml",
-              refHint: "cold-character",
-              title: "冷启动角色",
-              summary: "用于验证创建后写授权。",
-              aliases: [],
-              body: "状态: 初始\n",
-            },
-          },
-        ],
-      },
-      { outcome: "failure", message: "创建后的下一次模型请求被拒绝。" },
-    ],
-  });
-
-  const interrupted = await new PlayCallChain(worlds).start({
-    worldId,
-    chainId: "play-chain-create-authorization-cold-recovery",
-    exchangeId: "play-chain-create-authorization-cold-recovery-player",
-    playerText: "Record a new character.",
-    hostBinding: hostBinding(),
-    playPreset: playPreset(),
-    modelBinding: modelBinding(),
-    modelHost: interruptedHost,
-  });
-  expect(interrupted).toMatchObject({
-    status: "interrupted",
-    parentHead: "commit:2",
-  });
-  expect(interruptedHost.requests[1]?.appended.at(-1)).toEqual({
-    kind: "tool",
-    toolCallId: "create-cold-character",
-    markdown:
-      "@cold-character write succeeded\nIf a fresh context started now: not directly injected; read on demand",
-  });
-
-  const recoveredHost = new ScriptedModelHost({
-    binding: modelBinding(),
-    steps: [
-      {
-        outcome: "response",
-        toolCalls: [
-          {
-            id: "patch-cold-character",
-            name: "world_patch",
-            arguments: {
-              target: "@cold-character",
-              edits: [
-                {
-                  op: "replace",
-                  locator: { yaml: ["状态"] },
-                  value: "冷启动后已更新",
-                },
-              ],
-            },
-          },
-        ],
-      },
-      {
-        outcome: "response",
-        text: "The new character record has been updated.",
-      },
-    ],
-  });
-  const recovered = await new PlayCallChain(worlds).append({
-    worldId,
-    chainId: interrupted.chainId,
-    exchangeId: "play-chain-create-authorization-cold-recovery-resume",
-    playerText: "",
-    modelHost: recoveredHost,
-  });
-
-  expect(recovered.status).toBe("ready");
-  expect(recovered.events).toContainEqual(
-    expect.objectContaining({
-      kind: "tool_result",
-      callId: "patch-cold-character",
-      ok: true,
-    }),
-  );
-  expect(
-    (await worlds.recoverEndpoint(worldId)).state.find(
-      ({ path }) => path === "cold-character.yaml",
-    )?.contents,
-  ).toContain("状态: 冷启动后已更新");
-});
-
 test("当前格式不会双读旁路遗留累计调用链文件", async () => {
   const { worlds, worldId, root } = await createWorld(
     "play-chain-legacy-authorization-recovery",
@@ -3810,147 +3712,6 @@ test("当前格式不会双读旁路遗留累计调用链文件", async () => {
   await expect(
     new PlayCallChain(worlds).inspectWorld(worldId),
   ).resolves.toBeNull();
-});
-
-test("派生世界恢复所选分叉点的文档写授权，不携带分叉点之后的状态", async () => {
-  const { worlds, worldId } = await createWorld(
-    "play-chain-create-authorization-derived",
-  );
-  const sourceHost = new ScriptedModelHost({
-    binding: modelBinding(),
-    steps: [
-      {
-        outcome: "response",
-        toolCalls: [
-          {
-            id: "create-derived-character",
-            name: "world_create",
-            arguments: {
-              parent: "@dir-/",
-              codec: "yaml",
-              refHint: "derived-character",
-              title: "派生角色",
-              summary: "用于验证分叉点写授权。",
-              aliases: [],
-              body: "状态: 初始\n",
-            },
-          },
-        ],
-      },
-      {
-        outcome: "response",
-        toolCalls: [
-          {
-            id: "patch-source-derived-character",
-            name: "world_patch",
-            arguments: {
-              target: "@derived-character",
-              edits: [
-                {
-                  op: "replace",
-                  locator: { yaml: ["状态"] },
-                  value: "来源世界后续状态",
-                },
-              ],
-            },
-          },
-        ],
-      },
-      { outcome: "response", text: "The source world continues forward." },
-    ],
-  });
-  const sourceChains = new PlayCallChain(worlds);
-  const source = await sourceChains.start({
-    worldId,
-    chainId: "play-chain-create-authorization-derived-source",
-    exchangeId: "play-chain-create-authorization-derived-player",
-    playerText: "Create a record that can be forked.",
-    hostBinding: hostBinding(),
-    playPreset: playPreset(),
-    modelBinding: modelBinding(),
-    modelHost: sourceHost,
-  });
-  const createHead = source.events.find(
-    (
-      event,
-    ): event is Extract<
-      V1PlayCallChainView["events"][number],
-      { kind: "assistant" }
-    > => event.kind === "assistant" && event.exchange === 1,
-  )?.committedHead;
-  expect(createHead).toBe("commit:2");
-  expect(
-    (await worlds.recoverEndpoint(worldId)).state.find(
-      ({ path }) => path === "derived-character.yaml",
-    )?.contents,
-  ).toContain("状态: 来源世界后续状态");
-
-  const derived = await worlds.deriveWorld({
-    operationId: "derive-create-authorization-at-create-head",
-    sourceWorldId: worldId,
-    sourceHead: createHead!,
-    hostPresetId: "play-chain-host",
-  });
-  const derivedTrace = await sourceChains.forkToDerivedWorld({
-    sourceWorldId: worldId,
-    sourceHead: createHead!,
-    targetWorldId: derived.world.worldId,
-  });
-  expect(derivedTrace).not.toBeNull();
-
-  const derivedHost = new ScriptedModelHost({
-    binding: modelBinding(),
-    steps: [
-      {
-        outcome: "response",
-        toolCalls: [
-          {
-            id: "patch-derived-branch-character",
-            name: "world_patch",
-            arguments: {
-              target: "@derived-character",
-              edits: [
-                {
-                  op: "replace",
-                  locator: { yaml: ["状态"] },
-                  value: "派生世界独立状态",
-                },
-              ],
-            },
-          },
-        ],
-      },
-      {
-        outcome: "response",
-        text: "The derived world continues from the branch point.",
-      },
-    ],
-  });
-  const continued = await new PlayCallChain(worlds).append({
-    worldId: derived.world.worldId,
-    chainId: derivedTrace!.chainId,
-    exchangeId: "patch-derived-branch-with-restored-authorization",
-    playerText: "",
-    modelHost: derivedHost,
-  });
-
-  expect(continued.events).toContainEqual(
-    expect.objectContaining({
-      kind: "tool_result",
-      callId: "patch-derived-branch-character",
-      ok: true,
-    }),
-  );
-  expect(
-    (await worlds.recoverEndpoint(derived.world.worldId)).state.find(
-      ({ path }) => path === "derived-character.yaml",
-    )?.contents,
-  ).toContain("状态: 派生世界独立状态");
-  expect(
-    (await worlds.recoverEndpoint(derived.world.worldId)).state.find(
-      ({ path }) => path === "derived-character.yaml",
-    )?.contents,
-  ).not.toContain("来源世界后续状态");
 });
 
 test("全新上下文只重建模型上下文，持久保留此前调用轨迹并允许从旧节点派生", async () => {
@@ -7928,4 +7689,88 @@ test("旧格式操作回执文件被忽略：世界照常打开、游玩与分�
   });
   expect(fork.outcome).toBe("derived");
   expect(await new FileNativeWorldStore(root).listWorlds()).toHaveLength(2);
+});
+
+test("文档授权只在内存中：重启后未重新精读的写入被拒绝，重新精读后可写", async () => {
+  const { worlds, worldId, root } = await createWorld("memory-only-read", [
+    ...worldFiles(),
+    {
+      path: "world/characters/qin.yaml",
+      contents:
+        "$document:\n  id: person.qin\n  ref: qin\n  title: Qin\n  summary: Courier\n  aliases: []\nrelationship: Just met\n",
+    },
+  ]);
+  const patch = (id: string) => ({
+    id,
+    name: "world_patch",
+    arguments: {
+      target: "@qin",
+      edits: [
+        {
+          op: "replace",
+          locator: { yaml: ["relationship"] },
+          value: "Trusted",
+        },
+      ],
+    },
+  });
+  const read = (id: string) => ({
+    id,
+    name: "context_read",
+    arguments: { ref: "@qin#/relationship" },
+  });
+  const host = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      { outcome: "response", toolCalls: [read("first-read")] },
+      { outcome: "response", text: "Qin greets you." },
+      { outcome: "response", toolCalls: [patch("blind-write")] },
+      { outcome: "response", text: "Qin frowns." },
+      { outcome: "response", toolCalls: [read("reread"), patch("read-write")] },
+      { outcome: "response", text: "Qin smiles." },
+    ],
+  });
+  await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "memory-only-read",
+    exchangeId: "first",
+    playerText: "Hello",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: host,
+  });
+  // A new process starts from the bootstrap authority, not a persisted proof.
+  const restarted = new PlayCallChain(new FileNativeWorldStore(root));
+  const blind = await restarted.append({
+    worldId,
+    chainId: "memory-only-read",
+    exchangeId: "second",
+    playerText: "I lend the umbrella",
+    modelHost: host,
+  });
+  expect(
+    blind.events.find(
+      (event) => event.kind === "tool_result" && event.callId === "blind-write",
+    ),
+  ).toMatchObject({ ok: false });
+  expect(
+    (await worlds.bindPlayCallChain(worldId)).files[
+      "state/characters/qin.yaml"
+    ],
+  ).toContain("Just met");
+  const reread = await new PlayCallChain(new FileNativeWorldStore(root)).append(
+    {
+      worldId,
+      chainId: "memory-only-read",
+      exchangeId: "third",
+      playerText: "",
+      modelHost: host,
+    },
+  );
+  expect(
+    reread.events.find(
+      (event) => event.kind === "tool_result" && event.callId === "read-write",
+    ),
+  ).toMatchObject({ ok: true });
 });

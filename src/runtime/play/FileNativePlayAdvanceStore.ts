@@ -14,7 +14,6 @@ import type {
   ModelHostExchange,
 } from "../model/ModelHost.ts";
 import type { FileNativeStateChange } from "../world/FileNativeWorldStore.ts";
-import type { PlayDocumentAuthorizationCheckpoint } from "./PlayDocumentTools.ts";
 import type { PersistedCompletedToolCall } from "./FileNativePlayTimelineStore.ts";
 import type { HistoryBackground } from "../history/HistoryBackground.ts";
 
@@ -33,7 +32,6 @@ export interface PreparedPlayResponseSettlement {
   transcriptStart: number;
   transcriptAppend: ModelHostAppendItem[];
   completedTools: PersistedCompletedToolCall[];
-  authorizationCheckpoint: PlayDocumentAuthorizationCheckpoint;
   stateChanges: FileNativeStateChange[];
   /** Legacy field name: true only for tool-free text eligible for narrative. */
   visibleText: boolean;

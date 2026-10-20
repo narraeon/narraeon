@@ -99,10 +99,21 @@ test("a refreshed prefix merges exact old scopes with new material without grant
     "context:\n  - slot: { kind: node, document: '@qin', locator: { yaml: [location] } }\n",
   );
   const refreshed = new FileNativePlayDocuments(current);
-  refreshed.bindBootstrap(
-    compile(refreshed),
-    original.authorizationCheckpoint(),
-  );
+  refreshed.bindBootstrap(compile(refreshed));
+  // A refreshed prefix does not carry the old read proof; the read is repeated.
+  expect(
+    patch(refreshed, "relationship", "Trust after keeping a promise").ok,
+  ).toBe(false);
+  expect(
+    refreshed.execute(
+      {
+        id: "reread",
+        name: "context_read",
+        arguments: { ref: "@qin#/relationship" },
+      },
+      [],
+    ).ok,
+  ).toBe(true);
   expect(
     patch(refreshed, "relationship", "Trust after keeping a promise").ok,
   ).toBe(true);
@@ -128,7 +139,7 @@ test("a refreshed prefix merges exact old scopes with new material without grant
   ).toBe(false);
 });
 
-test("a changed state tree or a fresh context cannot reuse an old read proof", () => {
+test("a changed state tree or a fresh context cannot reuse an old read authorization", () => {
   const original = new FileNativePlayDocuments(files());
   original.bindBootstrap(compile(original));
   expect(
@@ -142,10 +153,7 @@ test("a changed state tree or a fresh context cannot reuse an old read proof", (
     "state/characters/qin.yaml"
   ].replace("Just met", "Explicitly revised");
   const refreshed = new FileNativePlayDocuments(changed);
-  refreshed.bindBootstrap(
-    compile(refreshed),
-    original.authorizationCheckpoint(),
-  );
+  refreshed.bindBootstrap(compile(refreshed));
   expect(patch(refreshed, "relationship", "Stale overwrite").ok).toBe(false);
   const fresh = new FileNativePlayDocuments(files());
   fresh.bindBootstrap(compile(fresh));
@@ -180,7 +188,7 @@ test.each([
   contents: string;
   ref: string;
   edit: WorldDocumentRevisionEdit;
-}[])("$name cannot leave a stale scope in a durable read proof", (scenario) => {
+}[])("$name cannot leave a stale scope in a read authorization", (scenario) => {
   const current: Record<string, string> = files();
   const header =
     current["state/characters/qin.yaml"]!.split("relationship:")[0]!;
@@ -207,19 +215,12 @@ test.each([
       [],
     ).ok,
   ).toBe(true);
-  const proof = original.authorizationCheckpoint();
-  expect(
-    proof.documents.find(({ shortRef }) => shortRef === "qin"),
-  ).toBeUndefined();
   const refreshed = new FileNativePlayDocuments(
     Object.fromEntries(
       original.snapshot.files.map(({ path, contents }) => [path, contents]),
     ),
   );
-  expect(() =>
-    refreshed.bindBootstrap(compile(refreshed), proof),
-  ).not.toThrow();
-  expect(() => refreshed.restoreAuthorizationCheckpoint(proof)).not.toThrow();
+  expect(() => refreshed.bindBootstrap(compile(refreshed))).not.toThrow();
   expect(patch(refreshed, "knowledge", "Unseen").ok).toBe(false);
   if (scenario.name === "removed array item") {
     expect(

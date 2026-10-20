@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { ResolutionReceipt } from "../../protocol/resolution.ts";
 import type { HistoryBackground } from "../history/HistoryBackground.ts";
 import { HistoryQuery, historyInputs } from "../history/HistoryQuery.ts";
@@ -9,7 +10,6 @@ import {
 import type { AppLocale } from "../../protocol/appPreferences.ts";
 import type { WorldDocumentMaintenance } from "../../protocol/worldMaintenance.ts";
 import { renderDocumentWritePosition } from "../prompt/WorldMaintenanceReport.ts";
-import { createHash } from "node:crypto";
 
 import { stringify } from "yaml";
 import { renderPlayerViewBindings } from "../world/PlayerViewBindings.ts";
@@ -48,22 +48,6 @@ export interface PlayDocumentToolResult extends ContextToolResult {
     changed: boolean;
     freshContextCoverage?: string;
   };
-}
-
-/**
- * Durable proof of which exact world-document scopes the current model context
- * has already seen. The snapshot object itself is process-local, so recovery
- * rebinds this proof only when the complete state tree still has the same
- * deterministic fingerprint.
- */
-export interface PlayDocumentAuthorizationCheckpoint {
-  readonly schemaVersion: 1;
-  readonly kind: "play_document_authorizations";
-  readonly stateFingerprint: string;
-  readonly documents: readonly {
-    readonly shortRef: string;
-    readonly locators: readonly WorldDocumentLocator[] | null;
-  }[];
 }
 
 class PlayDocumentToolFailure extends Error {
@@ -130,93 +114,15 @@ export class FileNativePlayDocuments {
     return this.#committedSnapshot;
   }
 
-  bindBootstrap(
-    bootstrap: PromptCompilation,
-    previousAuthorization?: PlayDocumentAuthorizationCheckpoint,
-  ): void {
-    const injected = bootstrapAuthorizations(
-      bootstrap,
-      this.#candidate.snapshot,
-    );
-    this.#reads = injected;
-    // Refreshing a prefix retains the native conversation. Its exact reads
-    // remain valid only on the identical state tree, including our own writes.
-    if (
-      previousAuthorization?.stateFingerprint ===
-      fingerprintStateFiles(this.#candidate.files)
-    ) {
-      this.restoreAuthorizationCheckpoint(previousAuthorization);
-      for (const [ref, locators] of injected.documents) {
-        for (const locator of locators ?? [null])
-          authorizeRead(this.#reads, this.#candidate.snapshot.id, ref, locator);
-      }
-    }
+  /**
+   * Read authorizations live only in memory (ADR-0044). A fresh binding starts
+   * from the bootstrap's own reads; writes are guarded at commit time by the
+   * previous-content hash of each changed file.
+   */
+  bindBootstrap(bootstrap: PromptCompilation): void {
+    this.#reads = bootstrapAuthorizations(bootstrap, this.#candidate.snapshot);
     // Creation capabilities come from this prefix, not past directory slots.
     this.#declaredDirectories = declaredStateDirectories(bootstrap);
-  }
-
-  authorizationCheckpoint(): PlayDocumentAuthorizationCheckpoint {
-    return {
-      schemaVersion: 1,
-      kind: "play_document_authorizations",
-      stateFingerprint: fingerprintStateFiles(this.#candidate.files),
-      documents: [...this.#reads.documents.entries()]
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([shortRef, locators]) => ({
-          shortRef,
-          locators:
-            locators === null
-              ? null
-              : locators
-                  .filter(
-                    (locator, index, all) =>
-                      all.findIndex((candidate) =>
-                        sameLocator(candidate, locator),
-                      ) === index,
-                  )
-                  .map((locator) => structuredClone(locator)),
-        })),
-    };
-  }
-
-  restoreAuthorizationCheckpoint(
-    checkpoint: PlayDocumentAuthorizationCheckpoint,
-  ): void {
-    if (!isPlayDocumentAuthorizationCheckpoint(checkpoint))
-      throw new TypeError(
-        "The play-document authorization checkpoint has an invalid format",
-      );
-    if (
-      checkpoint.stateFingerprint !==
-      fingerprintStateFiles(this.#candidate.files)
-    )
-      throw new TypeError(
-        "The play-document authorization checkpoint does not match the current state",
-      );
-    const documents = new Map<string, AuthorizedLocator[] | null>();
-    for (const { shortRef, locators } of checkpoint.documents) {
-      if (documentDescriptorByRef(this.#candidate.snapshot, shortRef) === null)
-        throw new TypeError(
-          `The play-document authorization checkpoint refers to missing @${shortRef}`,
-        );
-      const restoredLocators = locators?.map((locator) => {
-        const selected = this.#candidate.snapshot.query({
-          kind: "select_node",
-          document: { shortRef },
-          locator,
-        });
-        if (selected.kind !== "select_node" || !selected.ok)
-          throw new TypeError(
-            `The play-document authorization checkpoint refers to a missing node in @${shortRef}`,
-          );
-        return structuredClone(selected.node.locator);
-      });
-      documents.set(shortRef, restoredLocators ?? null);
-    }
-    this.#reads = {
-      snapshotId: this.#candidate.snapshot.id,
-      documents,
-    };
   }
 
   execute(
@@ -449,20 +355,6 @@ function authorizeToolRead(
     snapshot.id,
     authorization.shortRef,
     authorization.locator,
-  );
-}
-
-function sameLocator(
-  left: AuthorizedLocator | null,
-  right: AuthorizedLocator | null,
-): boolean {
-  if (left === null || right === null) return left === right;
-  const leftPath = "yaml" in left ? left.yaml : left.markdown;
-  const rightPath = "yaml" in right ? right.yaml : right.markdown;
-  return (
-    "yaml" in left === "yaml" in right &&
-    leftPath.length === rightPath.length &&
-    leftPath.every((segment, index) => segment === rightPath[index])
   );
 }
 
@@ -1376,89 +1268,6 @@ export function fingerprintControl(files: Record<string, string>): string {
     .sort(([a], [b]) => a.localeCompare(b)))
     hash.update(path).update("\0").update(contents).update("\0");
   return `sha256:${hash.digest("hex")}`;
-}
-
-export function isPlayDocumentAuthorizationCheckpoint(
-  value: unknown,
-): value is PlayDocumentAuthorizationCheckpoint {
-  if (
-    !record(value) ||
-    !hasExactKeys(value, [
-      "schemaVersion",
-      "kind",
-      "stateFingerprint",
-      "documents",
-    ]) ||
-    value.schemaVersion !== 1 ||
-    value.kind !== "play_document_authorizations" ||
-    typeof value.stateFingerprint !== "string" ||
-    !/^sha256:[0-9a-f]{64}$/u.test(value.stateFingerprint) ||
-    !Array.isArray(value.documents) ||
-    value.documents.length > 100_000
-  )
-    return false;
-  const refs = new Set<string>();
-  for (const document of value.documents) {
-    if (
-      !record(document) ||
-      !hasExactKeys(document, ["shortRef", "locators"]) ||
-      typeof document.shortRef !== "string" ||
-      !/^[a-z][a-z0-9-]*$/u.test(document.shortRef) ||
-      refs.has(document.shortRef) ||
-      (document.locators !== null &&
-        (!Array.isArray(document.locators) ||
-          document.locators.length > 100_000 ||
-          !document.locators.every(isPersistedAuthorizedLocator)))
-    )
-      return false;
-    refs.add(document.shortRef);
-  }
-  return true;
-}
-
-function fingerprintStateFiles(
-  files: Readonly<Record<string, string>>,
-): string {
-  const hash = createHash("sha256");
-  for (const [path, contents] of Object.entries(files)
-    .filter(([path]) => path.startsWith("state/"))
-    .sort(([left], [right]) => left.localeCompare(right)))
-    hash.update(path).update("\0").update(contents).update("\0");
-  return `sha256:${hash.digest("hex")}`;
-}
-
-function isPersistedAuthorizedLocator(
-  value: unknown,
-): value is AuthorizedLocator {
-  if (!record(value)) return false;
-  if (hasExactKeys(value, ["yaml"]))
-    return (
-      Array.isArray(value.yaml) &&
-      value.yaml.length <= 64 &&
-      value.yaml.every(
-        (segment) =>
-          typeof segment === "string" ||
-          (Number.isSafeInteger(segment) && Number(segment) >= 0),
-      )
-    );
-  if (hasExactKeys(value, ["markdown"]))
-    return (
-      Array.isArray(value.markdown) &&
-      value.markdown.length <= 64 &&
-      value.markdown.every((segment) => typeof segment === "string")
-    );
-  return false;
-}
-
-function hasExactKeys(
-  value: Record<string, unknown>,
-  expected: readonly string[],
-): boolean {
-  const keys = Object.keys(value);
-  return (
-    keys.length === expected.length &&
-    expected.every((key) => Object.hasOwn(value, key))
-  );
 }
 
 function record(value: unknown): value is Record<string, unknown> {
