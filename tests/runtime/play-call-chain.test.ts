@@ -70,6 +70,7 @@ import { V1Runtime } from "../../src/runtime/V1Runtime.ts";
 import { FileNativeWorldStore } from "../../src/runtime/world/FileNativeWorldStore.ts";
 import { FileNativeWorldRevisionStore } from "../../src/runtime/world-revision/FileNativeWorldRevisionStore.ts";
 import { WorldRevisionWorkspace } from "../../src/runtime/world-revision/WorldRevisionWorkspace.ts";
+import { revisePlayerTimeline } from "./support/player-timeline-edit.ts";
 
 const roots: string[] = [];
 
@@ -6744,7 +6745,7 @@ test("历史查询沿真实时间线修订与分叉恢复位置，状态修正�
   expect(
     (await open(branch.world.worldId)).list({ cursor: page.earlierCursor }),
   ).toMatchObject({ code: "history_invalid_cursor" });
-  await worlds.reviseTimeline({
+  await revisePlayerTimeline(worlds, {
     worldId,
     operationId: "history-revision",
     expectedCurrentHead: await worlds.currentHead(worldId),
@@ -7773,4 +7774,138 @@ test("文档授权只在内存中：重启后未重新精读的写入被拒绝�
       (event) => event.kind === "tool_result" && event.callId === "read-write",
     ),
   ).toMatchObject({ ok: true });
+});
+
+test.each([
+  { stage: "intent written", rewound: false, committed: false },
+  { stage: "world rewound", rewound: true, committed: false },
+  { stage: "replacement committed", rewound: true, committed: true },
+])(
+  "编辑在进程退出后于阶段「$stage」恢复：加载时补完回退与提交，之后可继续游玩",
+  async ({ rewound, committed }) => {
+    const { worlds, worldId, root } = await createWorld(
+      `edit-recovery-${rewound}-${committed}`,
+    );
+    const sourceHost = new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [
+        { outcome: "response", text: "Alex says to meet downstairs at eight." },
+        {
+          outcome: "response",
+          text: "Alex nods and says he will arrive five minutes early.",
+        },
+      ],
+    });
+    const chainId = "edit-recovery";
+    const sourceChains = new PlayCallChain(worlds);
+    await sourceChains.start({
+      worldId,
+      chainId,
+      exchangeId: "exchange-first",
+      playerText: "I ask Alex when we are meeting.",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: modelBinding(),
+      modelHost: sourceHost,
+    });
+    const source = await sourceChains.append({
+      worldId,
+      chainId,
+      exchangeId: "exchange-second",
+      playerText: "Then I will go downstairs five minutes early.",
+      modelHost: sourceHost,
+    });
+    const edited = source.events.find(
+      (event) =>
+        event.kind === "player" && event.exchangeId === "exchange-second",
+    )!;
+    const replacementText = "Then let's meet fifteen minutes early.";
+    const operationId = "edit-interrupted";
+    // Stages before the replacement commit leave the old endpoint in place.
+    if (rewound) await worlds.rewindPlayerRevision(worldId, "commit:2");
+    if (committed)
+      await revisePlayerTimeline(worlds, {
+        operationId,
+        worldId,
+        restoresHead: "commit:2",
+        replacementText,
+      });
+    await worlds.writePlayerRevisionIntent(worldId, {
+      schemaVersion: 1,
+      kind: "player_revision_intent",
+      operationId,
+      worldId,
+      chainId,
+      eventId: edited.id,
+      replacementExchangeId: "exchange-replacement",
+      replacementText,
+      continuation: "continue_context",
+      restoresHead: "commit:2",
+    });
+
+    // A new process loads the world: the interrupted edit is completed first.
+    const replacementHost = new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [
+        {
+          outcome: "response",
+          text: "Alex agrees to wait downstairs at seven forty-five.",
+        },
+      ],
+    });
+    const restarted = new PlayCallChain(new FileNativeWorldStore(root));
+    const recovered = await restarted.inspectWorld(worldId);
+    expect(
+      recovered?.events.filter((event) => event.kind === "player"),
+    ).toEqual([
+      expect.objectContaining({ text: "I ask Alex when we are meeting." }),
+      expect.objectContaining({ text: replacementText }),
+    ]);
+    expect(await worlds.readPlayerRevisionIntent(worldId)).toBeNull();
+    expect(
+      recovered?.events.some(
+        (event) =>
+          event.kind === "assistant" &&
+          event.text.includes("five minutes early"),
+      ),
+    ).toBe(false);
+    await restarted.append({
+      worldId,
+      chainId: recovered!.chainId,
+      exchangeId: "exchange-continue",
+      playerText: "",
+      modelHost: replacementHost,
+    });
+    expect(
+      (await worlds.recoverEndpoint(worldId)).history.map(
+        ({ exactText }) => exactText,
+      ),
+    ).toEqual([
+      "门外传来三声短促的铃响。\n",
+      "I ask Alex when we are meeting.",
+      "Alex says to meet downstairs at eight.",
+      replacementText,
+      "Alex agrees to wait downstairs at seven forty-five.",
+    ]);
+  },
+);
+
+test("持久化的游玩上下文不再写入文档授权检查点", async () => {
+  const { worlds, worldId } = await createWorld("no-checkpoint-persistence");
+  const host = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [{ outcome: "response", text: "The lamp flickers." }],
+  });
+  await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "no-checkpoint",
+    exchangeId: "first",
+    playerText: "Look around.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: host,
+  });
+  const current = await worlds.playTimeline.readCurrent(worldId);
+  expect(current?.value.documentAuthorizationCheckpoints ?? []).toEqual([]);
 });

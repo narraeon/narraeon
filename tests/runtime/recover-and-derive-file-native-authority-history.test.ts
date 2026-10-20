@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
 
 import { FileNativeWorldStore } from "../../src/runtime/world/FileNativeWorldStore.ts";
+import { revisePlayerTimeline } from "./support/player-timeline-edit.ts";
 
 const roots: string[] = [];
 
@@ -159,7 +160,7 @@ test("时间线修订回退到被替换消息的父端点后追加修改稿，�
     "commit:2",
   );
 
-  const revised = await fixture.store.reviseTimeline({
+  const revised = await revisePlayerTimeline(fixture.store, {
     operationId: "revision-edit",
     worldId: fixture.worldId,
     expectedCurrentHead: "commit:4",

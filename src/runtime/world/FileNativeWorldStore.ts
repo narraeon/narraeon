@@ -1525,125 +1525,56 @@ export class FileNativeWorldStore {
   }
 
   /**
-   * Replace one committed player message on the world's active timeline
-   * without changing world identity or destructively rewriting Authority.
-   * The new immutable commit restores the selected player's logical parent
-   * snapshot and appends the replacement player text in one acceptance step.
+   * Roll the world back to a player message's logical parent endpoint before an
+   * edited replacement is submitted (ADR-0045). Rewinding to the current head is
+   * a no-op, so the edit's steps can repeat safely.
    */
-  async reviseTimeline(input: {
-    operationId: string;
-    worldId: string;
-    expectedCurrentHead: string;
-    restoresHead: string;
-    replacesHead: string;
-    replacementText: string;
-  }): Promise<Extract<FileNativeOperationOutcome, { outcome: "committed" }>> {
-    assertIdentity(input.operationId, "Timeline-revision operation ID");
-    assertIdentity(input.worldId, "World ID");
-    if (
-      !/^(?:genesis|commit:[1-9][0-9]*)$/u.test(input.expectedCurrentHead) ||
-      !/^(?:genesis|commit:[1-9][0-9]*)$/u.test(input.restoresHead) ||
-      !/^commit:[1-9][0-9]*$/u.test(input.replacesHead)
-    )
-      throw new TypeError("Timeline-revision endpoint is invalid");
-    if (input.replacementText.trim() === "")
-      throw new TypeError("Edited player message cannot be empty");
-    await this.ensureCurrentStorage(input.worldId);
-
+  async rewindPlayerRevision(
+    worldId: string,
+    restoresHead: string,
+  ): Promise<void> {
+    assertIdentity(worldId, "World ID");
+    if (!/^(?:genesis|commit:[1-9][0-9]*)$/u.test(restoresHead))
+      throw new TypeError("Player-revision endpoint is invalid");
+    await this.ensureCurrentStorage(worldId);
     try {
-      return await this.operations.withExclusiveWorldStateMutation(
-        input.worldId,
-        () => this.#reviseTimelineUnlocked(input),
+      await this.operations.withExclusiveWorldStateMutation(worldId, () =>
+        rewindTo(join(this.#worldsRoot, worldId), headPosition(restoresHead)),
       );
     } catch (error: unknown) {
       if (error instanceof WorldOperationBusyError)
         throw new FileNativeWorldCreationError(
           "operation_conflict",
-          "Timeline editing is locked while a world revision is open",
+          "Player edits are locked while a world revision is open",
         );
       throw error;
     }
   }
 
-  async #reviseTimelineUnlocked(input: {
-    operationId: string;
-    worldId: string;
-    expectedCurrentHead: string;
-    restoresHead: string;
-    replacesHead: string;
-    replacementText: string;
-  }): Promise<Extract<FileNativeOperationOutcome, { outcome: "committed" }>> {
-    const existing = await this.getOperationOutcome(input.operationId);
-    if (isCommittedOutcome(existing)) {
-      if (
-        existing.worldId !== input.worldId ||
-        !isDeepStrictEqual(
-          existing.historyAppend.map(({ role, exactText }) => ({
-            role,
-            exactText,
-          })),
-          [{ role: "player", exactText: input.replacementText }],
-        )
-      )
-        throw new FileNativeWorldCreationError(
-          "operation_conflict",
-          "The same timeline-revision operation ID is bound to a different request",
-        );
-      return existing;
-    }
+  /** The in-progress player edit record; written before the first world change. */
+  async readPlayerRevisionIntent(worldId: string): Promise<unknown> {
+    assertIdentity(worldId, "World ID");
+    return readOptionalJsonFile(
+      playerRevisionIntentPath(this.#worldsRoot, worldId),
+    );
+  }
 
-    const root = join(this.#worldsRoot, input.worldId);
-    const authorityStore = new WorldLedgerAuthority(root);
-    const current = await authorityStore.readHead();
-    if (current.head !== input.expectedCurrentHead)
-      throw new FileNativeWorldCreationError(
-        "operation_conflict",
-        "The parent endpoint of the timeline revision has changed",
-      );
-    const replaced = await authorityStore.commitAt(input.replacesHead);
-    if (
-      replaced === null ||
-      !replaced.historyAppend.some(({ role }) => role === "player") ||
-      replaced.parentHead !== input.restoresHead
-    )
-      throw new FileNativeWorldCreationError(
-        "operation_conflict",
-        "Selected player message does not match the logical parent endpoint to restore",
-      );
+  async writePlayerRevisionIntent(
+    worldId: string,
+    intent: unknown,
+  ): Promise<void> {
+    assertIdentity(worldId, "World ID");
+    const path = playerRevisionIntentPath(this.#worldsRoot, worldId);
+    await mkdir(dirname(path), { recursive: true });
+    const temporary = `${path}.${randomUUID()}.tmp`;
+    await writeFile(temporary, `${JSON.stringify(intent)}\n`, "utf8");
+    await rename(temporary, path);
+  }
 
-    const replacementMaterials = await authorityStore.recoverMaterials(
-      input.restoresHead,
-    );
-    const binding = await this.bindPlayCallChainAt(
-      input.worldId,
-      input.restoresHead,
-    );
-    const snapshot = WorldDocumentStore.open({
-      layout: "world_state",
-      files: Object.entries(binding.files).map(([path, contents]) => ({
-        path,
-        contents,
-      })),
-    });
-    const background = snapshotBackground(
-      captureNarrativeOrigin(snapshot, 1).value,
-    );
-    // ADR-0045: 回退到被替换消息的逻辑父端点，再作为一次普通游玩提交追加修改稿。
-    await rewindTo(root, headPosition(input.restoresHead));
-    return this.#commitHistoryChange({
-      operationId: input.operationId,
-      worldId: input.worldId,
-      parentHead: input.restoresHead,
-      historyAppend: [
-        {
-          role: "player",
-          exactText: input.replacementText,
-          ...backgroundField(background),
-        },
-      ],
-      nextMaterials: worldNeutralMaterials(input.worldId, replacementMaterials),
-      stateChanges: [],
-      mode: "play",
+  async clearPlayerRevisionIntent(worldId: string): Promise<void> {
+    assertIdentity(worldId, "World ID");
+    await rm(playerRevisionIntentPath(this.#worldsRoot, worldId), {
+      force: true,
     });
   }
 
@@ -2397,12 +2328,6 @@ async function writeIdempotentText(
   }
 }
 
-function isCommittedOutcome(
-  outcome: FileNativeOperationOutcome,
-): outcome is Extract<FileNativeOperationOutcome, { outcome: "committed" }> {
-  return outcome.outcome === "committed";
-}
-
 function assertSameOperationOutcome(
   outcome: Extract<FileNativeOperationOutcome, { outcome: "committed" }>,
   input: {
@@ -2910,4 +2835,17 @@ function backgroundField(background: HistoryBackground | undefined): {
   background?: HistoryBackground;
 } {
   return background === undefined ? {} : { background };
+}
+
+function playerRevisionIntentPath(worldsRoot: string, worldId: string): string {
+  return join(worldsRoot, worldId, "runtime", "player-revision-intent.json");
+}
+
+async function readOptionalJsonFile(path: string): Promise<unknown> {
+  try {
+    return JSON.parse(await readFile(path, "utf8")) as unknown;
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
 }

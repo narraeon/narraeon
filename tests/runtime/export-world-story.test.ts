@@ -13,6 +13,7 @@ import {
 } from "../../src/protocol/v1.ts";
 import { V1Runtime } from "../../src/runtime/V1Runtime.ts";
 import { FileNativeWorldStore } from "../../src/runtime/world/FileNativeWorldStore.ts";
+import { revisePlayerTimeline } from "./support/player-timeline-edit.ts";
 
 const roots: string[] = [];
 const opening = "  清晨，门外传来脚步。\n\n窗户仍敞着。  \n";
@@ -130,7 +131,7 @@ test("修订排除被替换后续，分叉保留所选前缀且不依赖来源",
   await append(worlds, worldId, "narrator", "第一段正文");
   await append(worlds, worldId, "player", "已被替换的行动");
   await append(worlds, worldId, "narrator", "已被替换的后续");
-  await worlds.reviseTimeline({
+  await revisePlayerTimeline(worlds, {
     operationId: "story-revision",
     worldId,
     expectedCurrentHead: "commit:4",

@@ -198,6 +198,49 @@ interface PreparedFreshPlayerRevision {
   followups: PlayPresetCompilation["followups"];
 }
 
+type PlayerRevisionFreshContext = Pick<
+  PlayCallChainStartInput,
+  "hostBinding" | "playPreset" | "modelBinding"
+>;
+
+/**
+ * The durable record of an edit in progress, written before the first world
+ * change so an interrupted edit resumes through the same steps (ADR-0044).
+ */
+interface PlayerRevisionIntent {
+  schemaVersion: 1;
+  kind: "player_revision_intent";
+  operationId: string;
+  worldId: string;
+  chainId: string;
+  eventId: number;
+  replacementExchangeId: string;
+  replacementText: string;
+  continuation: PlayCallChainRevisionInput["continuation"];
+  restoresHead: string;
+  freshContext?: PlayerRevisionFreshContext;
+}
+
+function isPlayerRevisionIntent(value: unknown): value is PlayerRevisionIntent {
+  if (typeof value !== "object" || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    record.schemaVersion === 1 &&
+    record.kind === "player_revision_intent" &&
+    typeof record.operationId === "string" &&
+    typeof record.worldId === "string" &&
+    typeof record.chainId === "string" &&
+    Number.isSafeInteger(record.eventId) &&
+    typeof record.replacementExchangeId === "string" &&
+    typeof record.replacementText === "string" &&
+    (record.continuation === "continue_context" ||
+      record.continuation === "fresh_context") &&
+    typeof record.restoresHead === "string" &&
+    (record.continuation === "continue_context" ||
+      typeof record.freshContext === "object")
+  );
+}
+
 interface ActivePlayInvocation extends V1PlayRunProgress {
   worldId: string;
   controller: AbortController;
@@ -751,6 +794,7 @@ export class PlayCallChain {
     worldId: string,
     token: symbol,
   ): Promise<PlayCallChainSession | null> {
+    await this.#recoverPlayerRevision(worldId);
     const persisted = await this.#readPersisted(worldId);
     if (persisted === null) return null;
     const advance = await this.#worlds.playAdvances.readCurrent(
@@ -1020,9 +1064,10 @@ export class PlayCallChain {
   }
 
   /**
-   * Revise one committed player message in place. Authority remains
-   * append-only: one timeline-revision commit restores the player's logical
-   * parent snapshot and appends the replacement text atomically.
+   * Edit one committed player message as a rewind followed by an ordinary
+   * submission (ADR-0044, ADR-0045). The intent is written before the first
+   * world change; every later step is repeatable, so an exit at any point is
+   * completed by the same path on the next load.
    */
   async revisePlayer(input: PlayCallChainRevisionInput): Promise<{
     outcome: "revised";
@@ -1045,75 +1090,29 @@ export class PlayCallChain {
         "A model request is still running; wait for it to return before revising committed history.",
       );
 
+    await this.#recoverPlayerRevision(input.worldId);
     const source = await this.#readPersisted(input.worldId);
     if (source === null)
       throw new PlayCallChainError(
         "The current world has no model call chain to revise.",
       );
-    const sourceContexts = await this.#worlds.playTimeline.readAllContexts(
+    const contexts = await this.#worlds.playTimeline.readAllContexts(
       input.worldId,
     );
-    const appliedContext = sourceContexts.find(({ events }) =>
-      events.some(
+    // A replacement exchange that already reached the timeline is a repeat of
+    // the same request: answer with the current view and do not redo it.
+    const applied = contexts
+      .flatMap(({ events }) => events)
+      .find(
         (event) =>
           event.kind === "player" &&
           event.exchangeId === input.replacementExchangeId &&
           event.committedHead !== undefined,
-      ),
-    );
-    const appliedEvent = appliedContext?.events.find(
-      (
-        event,
-      ): event is Extract<V1PlayCallChainEvent, { kind: "player" }> & {
-        committedHead: string;
-      } =>
-        event.kind === "player" &&
-        event.exchangeId === input.replacementExchangeId &&
-        event.committedHead !== undefined,
-    );
-    if (appliedEvent !== undefined) {
-      if (appliedEvent.text !== input.replacementText)
+      );
+    if (applied !== undefined) {
+      if (applied.kind === "player" && applied.text !== input.replacementText)
         throw new PlayCallChainError(
           "The same replacement exchange ID is already bound to different player text.",
-        );
-      const requestedSource = await this.#worlds.playTimeline.readContext(
-        input.worldId,
-        input.chainId,
-      );
-      const requestedEventIndex = requestedSource?.value.events.findIndex(
-        ({ id }) => id === input.eventId,
-      );
-      const requestedEvent =
-        requestedEventIndex === undefined || requestedEventIndex < 0
-          ? undefined
-          : requestedSource?.value.events[requestedEventIndex];
-      if (
-        requestedSource === null ||
-        requestedEventIndex === undefined ||
-        requestedEventIndex < 0 ||
-        requestedEvent?.kind !== "player" ||
-        requestedEvent.committedHead === undefined
-      )
-        throw new PlayCallChainError(
-          "The replacement exchange ID is already used by another commit.",
-        );
-      const requestedRestoresHead = playerRevisionRestoresHead(
-        requestedSource.value,
-        requestedEventIndex,
-      );
-      const authority = await this.#worlds.readAuthorityHistory(input.worldId);
-      const commit = authority.commits.find(
-        ({ head }) => head === appliedEvent.committedHead,
-      );
-      // 修改稿以同一父端点与同一原文提交；两者都相同才视为同一次请求的重放。
-      if (
-        commit?.mode !== "play" ||
-        commit.parentHead !== requestedRestoresHead ||
-        commit.historyAppend.find(({ role }) => role === "player")
-          ?.exactText !== input.replacementText
-      )
-        throw new PlayCallChainError(
-          "The replacement exchange ID is already used by another commit.",
         );
       return {
         outcome: "revised",
@@ -1121,14 +1120,15 @@ export class PlayCallChain {
         playCallChain: projectView(source),
       };
     }
-    const selectedContextIndex = sourceContexts.findIndex(
+
+    const contextIndex = contexts.findIndex(
       ({ chainId }) => chainId === input.chainId,
     );
-    if (selectedContextIndex < 0)
+    if (contextIndex < 0)
       throw new PlayCallChainError(
         "The model context to revise does not exist.",
       );
-    const sourceContext = sourceContexts[selectedContextIndex]!;
+    const sourceContext = contexts[contextIndex]!;
     if (
       input.continuation === "continue_context" &&
       sourceContext.importedFromArchive
@@ -1136,12 +1136,12 @@ export class PlayCallChain {
       throw new PlayCallChainError(
         "This model context was imported from a backup; start a fresh context before continuing.",
       );
-    const selectedEventIndex = sourceContext.events.findIndex(
+    const eventIndex = sourceContext.events.findIndex(
       (event) => event.id === input.eventId,
     );
-    const selectedEvent = sourceContext.events[selectedEventIndex];
+    const selectedEvent = sourceContext.events[eventIndex];
     if (
-      selectedEventIndex < 0 ||
+      eventIndex < 0 ||
       selectedEvent?.kind !== "player" ||
       selectedEvent.committedHead === undefined
     )
@@ -1149,172 +1149,240 @@ export class PlayCallChain {
         "The selected event is not a committed player message.",
       );
 
-    return this.#applyPlayerRevision({
-      request: input,
-      source,
-      sourceContexts,
-      selectedContextIndex,
-      selectedEventIndex,
-      selectedEvent: {
-        ...selectedEvent,
-        committedHead: selectedEvent.committedHead,
-      },
-    });
-  }
-
-  async #applyPlayerRevision(input: {
-    request: PlayCallChainRevisionInput;
-    source: PersistedPlayCallChain;
-    sourceContexts: PersistedPlayCallChainContext[];
-    selectedContextIndex: number;
-    selectedEventIndex: number;
-    selectedEvent: Extract<V1PlayCallChainEvent, { kind: "player" }> & {
-      committedHead: string;
+    const intent: PlayerRevisionIntent = {
+      schemaVersion: 1,
+      kind: "player_revision_intent",
+      operationId: input.operationId,
+      worldId: input.worldId,
+      chainId: input.chainId,
+      eventId: input.eventId,
+      replacementExchangeId: input.replacementExchangeId,
+      replacementText: input.replacementText,
+      continuation: input.continuation,
+      restoresHead: playerRevisionRestoresHead(sourceContext, eventIndex),
+      ...(input.continuation === "fresh_context"
+        ? { freshContext: structuredClone(input.freshContext) }
+        : {}),
     };
-  }): Promise<{
-    outcome: "revised";
-    worldId: string;
-    playCallChain: V1PlayCallChainView;
-  }> {
-    const request = input.request;
-    const sourceContext = input.sourceContexts[input.selectedContextIndex]!;
-    const restoresHead = playerRevisionRestoresHead(
-      sourceContext,
-      input.selectedEventIndex,
-    );
-
-    const freshPreparation =
-      request.continuation === "fresh_context"
-        ? await this.#prepareFreshPlayerRevision(request, restoresHead)
-        : null;
-    const timelineGeneration = playerRevisionTimelineGeneration(
-      input.source.timelineGeneration,
-      request.operationId,
-      request.worldId,
-      request.continuation,
-    );
-
-    const traceRetention = preparePlayerRevisionTrace(
-      sourceContext,
-      input.selectedEventIndex,
-    );
-    // A timeline revision appends on the current audit head and restores the
-    // selected message's logical parent, so a chain that lags the world (an
-    // out-of-story world revision, or an earlier revision whose chain was not
-    // published) must not block it. The commit still rechecks this head under
-    // the world lock.
-    const outcome = await this.#worlds.reviseTimeline({
-      operationId: request.operationId,
-      worldId: request.worldId,
-      expectedCurrentHead: await this.#worlds.currentHead(request.worldId),
-      restoresHead,
-      replacesHead: input.selectedEvent.committedHead,
-      replacementText: request.replacementText,
-    });
-
-    const [baseline, selected, binding] = await Promise.all([
-      this.#worlds.recoverEndpoint(request.worldId, sourceContext.baselineHead),
-      this.#worlds.recoverEndpoint(request.worldId, restoresHead),
-      this.#worlds.bindPlayCallChain(request.worldId),
-    ]);
-    const continuedTrace = traceRetention.withReplacement({
-      head: outcome.head,
-      exchangeId: request.replacementExchangeId,
-      text: request.replacementText,
-    });
-    if (binding.parentHead !== outcome.head)
-      throw new PlayCallChainError(
-        "The timeline revision was committed, but current-world materialization has not reached the new endpoint.",
-      );
-    if (request.continuation === "fresh_context") {
-      if (freshPreparation === null)
-        throw new PlayCallChainError(
-          "The fresh model context was not prepared before committing the timeline revision.",
-        );
-      const revised = await this.#buildFreshPlayerRevision({
-        request,
-        sourceContext,
-        sourceContexts: input.sourceContexts,
-        selectedContextIndex: input.selectedContextIndex,
-        traceRetention,
-        baseline,
-        selected,
-        binding,
-        restoresHead,
-        outcomeHead: outcome.head,
-        timelineGeneration,
-        freshPreparation,
-      });
-      await this.#worlds.playTimeline.persist(structuredClone(revised));
-      await this.#worlds.completeArchiveFreshContext(request.worldId);
-      const activeId = this.#worldChains.get(request.worldId);
-      if (activeId !== undefined) this.#active.delete(activeId);
-      this.#active.delete(sourceContext.chainId);
-      this.#worldChains.delete(request.worldId);
-      return {
-        outcome: "revised",
-        worldId: request.worldId,
-        playCallChain: projectView(revised),
-      };
-    }
-    const revised: PersistedPlayCallChain = {
-      ...continuedTrace.atEndpoint({ baseline, selected, binding }),
-      schemaVersion: 3,
-      kind: "play_call_chain",
-      chainId: playerRevisionChainId(
-        sourceContext.chainId,
-        request.operationId,
-        request.worldId,
-        request.continuation,
-      ),
-      worldId: request.worldId,
-      previousContexts: [],
-      previousChainId:
-        input.selectedContextIndex === 0
-          ? null
-          : input.sourceContexts[input.selectedContextIndex - 1]!.chainId,
-      timelineGeneration,
-      parentHead: outcome.head,
-      updatedAt: Date.now(),
-    };
-    await this.#worlds.playTimeline.persist(structuredClone(revised));
-    const activeId = this.#worldChains.get(request.worldId);
-    if (activeId !== undefined) this.#active.delete(activeId);
-    this.#active.delete(sourceContext.chainId);
-    this.#worldChains.delete(request.worldId);
+    await this.#worlds.writePlayerRevisionIntent(input.worldId, intent);
+    const revised = await this.#completePlayerRevision(intent);
     return {
       outcome: "revised",
-      worldId: request.worldId,
+      worldId: input.worldId,
       playCallChain: projectView(revised),
     };
   }
 
+  /** Complete an interrupted revision recorded by a previous process. */
+  async #recoverPlayerRevision(worldId: string): Promise<void> {
+    const intent = await this.#worlds.readPlayerRevisionIntent(worldId);
+    if (intent === null) return;
+    if (!isPlayerRevisionIntent(intent) || intent.worldId !== worldId)
+      throw new PlayCallChainError(
+        "The interrupted player revision record is invalid.",
+      );
+    await this.#completePlayerRevision(intent);
+  }
+
+  /**
+   * Run the revision steps in order. Each step either checks whether it is
+   * already done or repeats harmlessly: rewinding to the restored endpoint is a
+   * no-op at that endpoint, the commit uses the intent's operation ID, and the
+   * context is published last, so it is the only step that changes what the
+   * next load sees.
+   */
+  async #completePlayerRevision(
+    intent: PlayerRevisionIntent,
+  ): Promise<PersistedPlayCallChain> {
+    const worldId = intent.worldId;
+    const resultChainId = revisionChainId(
+      intent.chainId,
+      intent.operationId,
+      worldId,
+      intent.continuation,
+    );
+    const current = await this.#readPersisted(worldId);
+    if (current?.chainId === resultChainId) {
+      await this.#worlds.clearPlayerRevisionIntent(worldId);
+      return current;
+    }
+
+    const contexts = await this.#worlds.playTimeline.readAllContexts(worldId);
+    const sourceIndex = contexts.findIndex(
+      ({ chainId }) => chainId === intent.chainId,
+    );
+    const sourceContext = contexts[sourceIndex];
+    if (sourceContext === undefined)
+      throw new PlayCallChainError(
+        "The model context to revise does not exist.",
+      );
+    const eventIndex = sourceContext.events.findIndex(
+      ({ id }) => id === intent.eventId,
+    );
+    if (eventIndex < 0)
+      throw new PlayCallChainError(
+        "The selected event is no longer in its model context.",
+      );
+
+    // Fresh-context bootstrap is compiled before any world change.
+    const fresh =
+      intent.continuation === "fresh_context" && intent.freshContext
+        ? await this.#prepareFreshPlayerRevision(
+            worldId,
+            intent.freshContext,
+            intent.restoresHead,
+            intent.replacementText,
+          )
+        : null;
+    const head = await this.#commitPlayerRevision(intent);
+
+    const [baseline, selected, binding] = await Promise.all([
+      this.#worlds.recoverEndpoint(worldId, sourceContext.baselineHead),
+      this.#worlds.recoverEndpoint(worldId, intent.restoresHead),
+      this.#worlds.bindPlayCallChain(worldId),
+    ]);
+    if (binding.parentHead !== head)
+      throw new PlayCallChainError(
+        "The player revision was committed, but current-world materialization has not reached the new endpoint.",
+      );
+    const timelineGeneration = revisionTimelineGeneration(
+      current?.timelineGeneration ?? "none",
+      intent.operationId,
+      worldId,
+      intent.continuation,
+    );
+    const previousChainId =
+      sourceIndex === 0 ? null : contexts[sourceIndex - 1]!.chainId;
+    const traceRetention = preparePlayerRevisionTrace(
+      sourceContext,
+      eventIndex,
+    );
+
+    let revised: PersistedPlayCallChain;
+    if (intent.continuation === "fresh_context") {
+      if (fresh === null || intent.freshContext === undefined)
+        throw new PlayCallChainError(
+          "The fresh model context was not prepared before committing the player revision.",
+        );
+      revised = await this.#buildFreshPlayerRevision({
+        intent,
+        freshContext: intent.freshContext,
+        sourceContext,
+        traceRetention,
+        baseline,
+        selected,
+        binding,
+        head,
+        chainId: resultChainId,
+        previousChainId,
+        timelineGeneration,
+        fresh,
+      });
+    } else {
+      revised = {
+        ...traceRetention
+          .withReplacement({
+            head,
+            exchangeId: intent.replacementExchangeId,
+            text: intent.replacementText,
+          })
+          .atEndpoint({ baseline, selected, binding }),
+        schemaVersion: 3,
+        kind: "play_call_chain",
+        chainId: resultChainId,
+        worldId,
+        previousContexts: [],
+        previousChainId,
+        timelineGeneration,
+        parentHead: head,
+        updatedAt: Date.now(),
+      };
+    }
+
+    await this.#worlds.playTimeline.persist(structuredClone(revised));
+    if (intent.continuation === "fresh_context")
+      await this.#worlds.completeArchiveFreshContext(worldId);
+    const activeId = this.#worldChains.get(worldId);
+    if (activeId !== undefined) this.#active.delete(activeId);
+    this.#active.delete(sourceContext.chainId);
+    this.#worldChains.delete(worldId);
+    await this.#worlds.clearPlayerRevisionIntent(worldId);
+    return revised;
+  }
+
+  /**
+   * Rewind the world to the message's logical parent and commit the replacement
+   * as an ordinary player step. Returns the committed head. A commit already
+   * made in this process is reused rather than rewound and repeated.
+   */
+  async #commitPlayerRevision(intent: PlayerRevisionIntent): Promise<string> {
+    const done = await this.#worlds.getOperationOutcome(intent.operationId);
+    if (done.outcome === "committed") return done.head;
+    await this.#worlds.rewindPlayerRevision(
+      intent.worldId,
+      intent.restoresHead,
+    );
+    const binding = await this.#worlds.bindPlayCallChainAt(
+      intent.worldId,
+      intent.restoresHead,
+    );
+    const origin = captureNarrativeOrigin(
+      WorldDocumentStore.open({
+        layout: "world_state",
+        files: Object.entries(binding.files).map(([path, contents]) => ({
+          path,
+          contents,
+        })),
+      }),
+      intent.eventId,
+    );
+    const outcome = await this.#worlds.commitPlayStep({
+      operationId: intent.operationId,
+      worldId: intent.worldId,
+      parentHead: intent.restoresHead,
+      historyAppend: [
+        {
+          role: "player",
+          exactText: intent.replacementText,
+          ...(origin.value == null
+            ? {}
+            : { background: snapshotBackground(origin.value)! }),
+        },
+      ],
+      nextMaterials: structuredClone(binding.additionalMaterials),
+      stateChanges: [],
+    });
+    return outcome.head;
+  }
+
   async #prepareFreshPlayerRevision(
-    request: PlayCallChainRevisionInput & { continuation: "fresh_context" },
+    worldId: string,
+    freshContext: PlayerRevisionFreshContext,
     restoresHead: string,
+    replacementText: string,
   ): Promise<PreparedFreshPlayerRevision> {
     const binding = await this.#worlds.bindPlayCallChainAt(
-      request.worldId,
+      worldId,
       restoresHead,
     );
     const documents = new FileNativePlayDocuments(binding.files);
     const documentMaintenance = await this.#bindDocumentMaintenance(
       documents,
-      request.worldId,
+      worldId,
       binding.parentHead,
     );
     const compilation = this.#compiler.compilePlayCallChain(
       {
         extensionControls: await this.#worlds.extensionControls(
-          request.worldId,
-          request.freshContext.playPreset,
+          worldId,
+          freshContext.playPreset,
           this.#compiler.locale,
         ),
         endpoint: {
-          id: `${request.worldId}:${binding.parentHead}`,
+          id: `${worldId}:${binding.parentHead}`,
           commit: binding.parentHead,
         },
-        hostBinding: structuredClone(request.freshContext.hostBinding),
+        hostBinding: structuredClone(freshContext.hostBinding),
         world: {
           controlFingerprint: fingerprintControl(binding.files),
           documentSnapshot: documents.snapshot,
@@ -1326,41 +1394,36 @@ export class PlayCallChain {
           documentMaintenanceUnavailableReason: documents.maintenanceWarning,
         },
         playerInputPlacement: "append",
-        playerInput: request.replacementText,
-        modelBinding: structuredClone(request.freshContext.modelBinding),
+        playerInput: replacementText,
+        modelBinding: structuredClone(freshContext.modelBinding),
       },
-      request.freshContext.playPreset,
+      freshContext.playPreset,
     );
-    const bootstrap = structuredClone(compilation.bootstrap);
-    documents.bindBootstrap(bootstrap);
+    documents.bindBootstrap(compilation.bootstrap);
     return {
       binding,
-      bootstrap,
+      bootstrap: structuredClone(compilation.bootstrap),
       tools: structuredClone(compilation.toolUniverse),
       followups: structuredClone(compilation.followups ?? []),
     };
   }
 
   async #buildFreshPlayerRevision(input: {
-    request: PlayCallChainRevisionInput & { continuation: "fresh_context" };
+    intent: PlayerRevisionIntent;
+    freshContext: PlayerRevisionFreshContext;
     sourceContext: PersistedPlayCallChainContext;
-    sourceContexts: PersistedPlayCallChainContext[];
-    selectedContextIndex: number;
     traceRetention: ReturnType<typeof preparePlayerRevisionTrace>;
     baseline: FileNativeRecoveredEndpoint;
     selected: FileNativeRecoveredEndpoint;
     binding: FileNativePlayBinding;
-    restoresHead: string;
-    outcomeHead: string;
+    head: string;
+    chainId: string;
+    previousChainId: string | null;
     timelineGeneration: string;
-    freshPreparation: PreparedFreshPlayerRevision;
+    fresh: PreparedFreshPlayerRevision;
   }): Promise<PersistedPlayCallChain> {
-    const { request, sourceContext } = input;
-    let previousChainId =
-      input.selectedContextIndex === 0
-        ? null
-        : input.sourceContexts[input.selectedContextIndex - 1]!.chainId;
-
+    const { intent, sourceContext, fresh } = input;
+    let previousChainId = input.previousChainId;
     const retainedPrefix = input.traceRetention.pagePrefixAtEndpoint({
       baseline: input.baseline,
       selected: input.selected,
@@ -1373,46 +1436,40 @@ export class PlayCallChain {
         kind: "play_call_chain",
         chainId: derivedChainId(
           sourceContext.chainId,
-          "timeline-revision-prefix:" + request.operationId,
-          request.worldId,
+          "timeline-revision-prefix:" + intent.operationId,
+          intent.worldId,
         ),
-        worldId: request.worldId,
+        worldId: intent.worldId,
         previousContexts: [],
         previousChainId,
         timelineGeneration: input.timelineGeneration,
-        parentHead: input.restoresHead,
+        parentHead: intent.restoresHead,
         updatedAt: Date.now(),
       };
       await this.#worlds.playTimeline.persistDetached(structuredClone(prefix));
       previousChainId = prefix.chainId;
     }
 
-    const fresh = input.freshPreparation;
     return {
       schemaVersion: 3,
       kind: "play_call_chain",
-      chainId: playerRevisionChainId(
-        sourceContext.chainId,
-        request.operationId,
-        request.worldId,
-        request.continuation,
-      ),
-      worldId: request.worldId,
+      chainId: input.chainId,
+      worldId: intent.worldId,
       previousContexts: [],
       previousChainId,
       timelineGeneration: input.timelineGeneration,
-      baselineHead: input.restoresHead,
+      baselineHead: intent.restoresHead,
       baselineHistoryLength: Object.keys(fresh.binding.history).length,
-      parentHead: input.outcomeHead,
+      parentHead: input.head,
       playPreset: {
-        id: request.freshContext.playPreset.id,
-        name: request.freshContext.playPreset.name,
-        revision: request.freshContext.playPreset.revision,
+        id: input.freshContext.playPreset.id,
+        name: input.freshContext.playPreset.name,
+        revision: input.freshContext.playPreset.revision,
       },
       followups: structuredClone(fresh.followups),
-      playPresetScriptsEnabled: request.freshContext.playPreset.scriptsEnabled,
-      presetFiles: structuredClone(request.freshContext.playPreset.files),
-      modelBinding: structuredClone(request.freshContext.modelBinding),
+      playPresetScriptsEnabled: input.freshContext.playPreset.scriptsEnabled,
+      presetFiles: structuredClone(input.freshContext.playPreset.files),
+      modelBinding: structuredClone(input.freshContext.modelBinding),
       status: "ready",
       canRetry: false,
       bootstrap: structuredClone(fresh.bootstrap),
@@ -1426,15 +1483,15 @@ export class PlayCallChain {
         }),
         1,
       ),
-      transcript: playerInputAppend(request.replacementText),
+      transcript: playerInputAppend(intent.replacementText),
       events: [
         {
           id: 1,
           kind: "player",
-          exchangeId: request.replacementExchangeId,
-          text: request.replacementText,
+          exchangeId: intent.replacementExchangeId,
+          text: intent.replacementText,
           context: "fresh",
-          committedHead: input.outcomeHead,
+          committedHead: input.head,
         },
       ],
       completedTools: [],
@@ -3320,7 +3377,7 @@ function playerRevisionRestoresHead(
   return restoresHead;
 }
 
-function playerRevisionChainId(
+function revisionChainId(
   sourceChainId: string,
   operationId: string,
   worldId: string,
@@ -3333,7 +3390,7 @@ function playerRevisionChainId(
   );
 }
 
-function playerRevisionTimelineGeneration(
+function revisionTimelineGeneration(
   sourceGeneration: string,
   operationId: string,
   worldId: string,

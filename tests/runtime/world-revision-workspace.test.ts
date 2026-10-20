@@ -38,6 +38,7 @@ import { WorldRevisionWorkspace } from "../../src/runtime/world-revision/WorldRe
 import { FileNativeWorldStore } from "../../src/runtime/world/FileNativeWorldStore.ts";
 import { FileNativeModelHost } from "../../src/runtime/model/FileNativeModelAdapters.ts";
 import { V1Runtime } from "../../src/runtime/V1Runtime.ts";
+import { revisePlayerTimeline } from "./support/player-timeline-edit.ts";
 
 const roots: string[] = [];
 
@@ -323,7 +324,7 @@ test("持久修订锁阻止游玩与其他写入，重启后仍由同一 epoch �
     worlds.applyControlDraft(worldId, prompt()),
   ).rejects.toMatchObject({ code: "operation_conflict" });
   await expect(
-    worlds.reviseTimeline({
+    revisePlayerTimeline(worlds, {
       operationId: "timeline-while-revising",
       worldId,
       expectedCurrentHead: "genesis",

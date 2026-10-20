@@ -10,6 +10,7 @@ import { FileNativeWorldRevisionStore } from "../../src/runtime/world-revision/F
 import { WorldRevisionWorkspace } from "../../src/runtime/world-revision/WorldRevisionWorkspace.ts";
 import { FileNativeWorldStore } from "../../src/runtime/world/FileNativeWorldStore.ts";
 import type { WorldActivity } from "../../src/runtime/world/WorldActivity.ts";
+import { revisePlayerTimeline } from "./support/player-timeline-edit.ts";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof fs>();
@@ -129,7 +130,7 @@ test("连续性修正、时间线修订、旧端点分叉和世界修订应用�
     playerTurns: 1,
   });
   clock.mockReturnValue(now + 4000);
-  const revision = await fixture.store.reviseTimeline({
+  const revision = await revisePlayerTimeline(fixture.store, {
     operationId: "edit-player",
     worldId: fixture.worldId,
     expectedCurrentHead: correction.head,
