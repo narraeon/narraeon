@@ -1,0 +1,159 @@
+import { createHash } from "node:crypto";
+import { mkdtemp, readdir, readFile } from "node:fs/promises";
+import { gzipSync } from "node:zlib";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "vitest";
+import { FileNativeWorldStore } from "../src/runtime/world/FileNativeWorldStore.ts";
+import { writeFile } from "node:fs/promises";
+
+function releasePrompt() {
+  return {
+    hostBinding: {
+      hostPresetId: "released-host",
+      files: {
+        "frame.yaml": `format: narraeon.host-frame/v1
+roles:
+  runtime_system:
+    - builtin: runtime.play-contract
+    - builtin: runtime.tool-contract
+    - builtin: runtime.operation-contract
+  author_instruction:
+    - markdown: blocks/style.md
+    - include: world.instructions
+  world_context:
+    - builtin: runtime.coverage
+    - include: world.context
+`,
+        "blocks/style.md": "# Style\n",
+      },
+    },
+    modelBinding: {
+      provider: "chat_completions" as const,
+      modelId: "released-model",
+      contextWindowTokens: 32_000,
+      maxOutputTokens: 2_000,
+    },
+  };
+}
+
+function worldFiles() {
+  return [
+    { path: "opening.md", contents: "门外传来三声短促的铃响。\n" },
+    {
+      path: "world/current-situation.yaml",
+      contents: `$document:
+  id: situation.current
+  ref: current-situation
+  title: 当前情境
+  summary: 当前局面。
+  aliases: []
+情况: 门仍然关着
+`,
+    },
+    {
+      path: "control/frame.yaml",
+      contents: `format: narraeon.world-frame/v1
+bindings:
+  currentSituation: situation.current
+instructions:
+  - markdown: blocks/world.md
+context:
+  - slot: { kind: current_situation }
+  - slot: { kind: additional_materials }
+`,
+    },
+    { path: "control/blocks/world.md", contents: "# World Rules\n" },
+    {
+      path: "control/player-views.yaml",
+      contents: "format: narraeon.player-views/v1\nviews: []\n",
+    },
+  ];
+}
+
+
+function hash(value: string): string {
+  return "sha256:" + createHash("sha256").update(value).digest("hex");
+}
+
+async function listFiles(root: string, prefix = ""): Promise<{ path: string; base64: string }[]> {
+  const out: { path: string; base64: string }[] = [];
+  for (const entry of await readdir(join(root, prefix), { withFileTypes: true })) {
+    const path = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) out.push(...(await listFiles(root, path)));
+    else out.push({ path, base64: (await readFile(join(root, path))).toString("base64") });
+  }
+  return out.sort((a, b) => a.path.localeCompare(b.path));
+}
+
+test("generate V3 fixture", async () => {
+  const root = await mkdtemp(join(tmpdir(), "gen-v3-"));
+  const store = new FileNativeWorldStore(root);
+  const out: Record<string, unknown> = {};
+  for (const label of ["plain", "revised"] as const) {
+    const created = await store.createFromContentPackage({
+      operationId: `create-${label}`,
+      sourcePackageId: `package-${label}`,
+      sourcePackageTitle: `${label} package`,
+      packageFiles: worldFiles(),
+      prompt: releasePrompt(),
+    });
+    const worldId = created.world.worldId;
+    const genesis = await store.recoverEndpoint(worldId, "genesis");
+    const before = genesis.state.find((f) => f.path === "current-situation.yaml")!.contents;
+    const after = before.replace("门仍然关着", "门已经打开");
+    const steps = [
+      ["player", "我推开门。"],
+      ["narrator", "冷风从门外灌进来。"],
+      ["player", "我点亮提灯。"],
+      ["narrator", "昏黄的光照亮走廊。"],
+    ] as const;
+    let parentHead = "genesis";
+    for (const [index, [role, exactText]] of steps.entries()) {
+      const outcome = await store.commitPlayStep({
+        operationId: `${label}-step-${index + 1}`,
+        worldId,
+        parentHead,
+        historyAppend: [{ role, exactText }],
+        nextMaterials: [],
+        stateChanges: index === 1 ? [{
+          kind: "replace",
+          documentId: "situation.current",
+          stableShortRef: "current-situation",
+          relativePath: "current-situation.yaml",
+          codec: "yaml",
+          expectedPreviousHash: hash(before),
+          nextHash: hash(after),
+          canonicalNextBytes: after,
+        }] : [],
+      });
+      parentHead = outcome.head;
+    }
+    if (label === "revised") {
+      await store.reviseTimeline({
+        operationId: "revised-revision",
+        worldId,
+        expectedCurrentHead: "commit:4",
+        restoresHead: "genesis",
+        replacesHead: "commit:1",
+        replacementText: "我换一种方式推开门。",
+        requestFingerprint: hash("revised-revision"),
+      });
+    }
+    const heads = ["genesis", "commit:1", "commit:2", "commit:3", "commit:4", "commit:5"];
+    const endpoints: Record<string, unknown> = {};
+    for (const head of heads) {
+      try {
+        endpoints[head] = await store.recoverEndpoint(worldId, head);
+      } catch {
+        // head does not exist in this world
+      }
+    }
+    out[label] = {
+      worldId,
+      files: await listFiles(join(root, "worlds-file-native", worldId)),
+      endpoints,
+    };
+  }
+  await writeFile(join(process.env.GEN_OUT!), gzipSync(JSON.stringify(out)));
+});

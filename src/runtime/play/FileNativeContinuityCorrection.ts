@@ -322,12 +322,7 @@ export class FileNativeContinuityCorrection {
   async apply(input: {
     candidateId: string;
     expectedVersion: number;
-  }): Promise<
-    Extract<
-      FileNativeOperationOutcome,
-      { outcome: "committed" | "committed_materialization_pending" }
-    >
-  > {
+  }): Promise<Extract<FileNativeOperationOutcome, { outcome: "committed" }>> {
     const candidate = this.#atVersion(input.candidateId, input.expectedVersion);
     if (candidate.previewedVersion !== candidate.version)
       throw new Error(

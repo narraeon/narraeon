@@ -821,13 +821,6 @@ export class V1Runtime {
       case "artifacts.debug":
         await this.#reconcileArtifacts(request.worldId);
         return this.#frontendDebug(request.worldId, request.operationId);
-      case "world.repair-materialization": {
-        const result = await this.#worlds.repairMaterialization(
-          request.worldId,
-        );
-        await this.#reconcileArtifacts(request.worldId);
-        return result;
-      }
       case "world.control-draft.save":
         await this.#worlds.assertWorldRevisionUnlocked(request.worldId);
         return this.#worlds.saveControlDraft(request.worldId, request.files);

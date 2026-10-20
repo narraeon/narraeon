@@ -141,6 +141,8 @@ test("修订排除被替换后续，分叉保留所选前缀且不依赖来源",
     requestFingerprint: `sha256:${createHash("sha256").update("story-revision").digest("hex")}`,
   });
   await append(worlds, worldId, "narrator", "修改后的正文");
+  // 修订先回退（轮 5），再追加修改稿（轮 6）与正文（轮 7）：轮号不重用。
+  expect(await worlds.currentHead(worldId)).toBe("commit:7");
   const expected = [
     "雾港",
     opening,
@@ -161,7 +163,7 @@ test("修订排除被替换后续，分叉保留所选前缀且不依赖来源",
   const currentFork = await worlds.deriveWorld({
     operationId: "current-story-fork",
     sourceWorldId: worldId,
-    sourceHead: "commit:6",
+    sourceHead: "commit:7",
     hostPresetId: "story-host",
   });
   await worlds.deleteWorld(worldId);

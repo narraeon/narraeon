@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { FileNativeAuthorityV3 } from "./FileNativeAuthorityV3.ts";
+import { WorldLedgerAuthority } from "./WorldLedgerAuthority.ts";
 import { fileNativeHistoryMessageIdFromProjectionPath } from "./FileNativeHistoryProjection.ts";
 
 export interface WorldActivity {
@@ -39,13 +39,7 @@ export async function readWorldActivity(
       excerpt: null,
       playerTurns: 0,
     };
-    // An accepted endpoint may still be awaiting recovery. Never label its old
-    // materialized history as a valid cache for the new endpoint.
-    const materialized = await readJson(
-      join(root, "runtime/materialized-head.json"),
-    );
-    if (!isRecord(materialized) || materialized.head !== latestHead)
-      return empty;
+    // history/ is the current endpoint's own projection, so it is always valid to rebuild from.
     const entries = await readdir(join(root, "history"), {
       withFileTypes: true,
     });
@@ -107,7 +101,7 @@ function excerpt(text: string): string | null {
 
 async function currentHead(root: string): Promise<string> {
   try {
-    return (await new FileNativeAuthorityV3(root).readHead()).head;
+    return (await new WorldLedgerAuthority(root).readHead()).head;
   } catch (error: unknown) {
     if (!isMissing(error)) throw error;
     // Listing a released layout must not trigger an Authority migration/replay.

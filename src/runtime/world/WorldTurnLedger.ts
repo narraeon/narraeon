@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   mkdir,
   readFile,
@@ -30,6 +30,7 @@ export interface WorldTurnRecord {
   mode: WorldTurnMode;
   createdAt: string;
   restoresSequence?: number;
+  payload?: unknown;
   files: WorldTurnFileBefore[];
 }
 
@@ -159,9 +160,7 @@ function viewOf(head: number, records: WorldTurnRecord[]): LedgerView {
   }
   const discarded = new Set<number>();
   for (const record of byPosition.values()) {
-    if (record.mode !== "rewind" || record.restoresSequence === undefined) {
-      continue;
-    }
+    if (record.restoresSequence === undefined) continue;
     for (
       let position = record.restoresSequence + 1;
       position < record.sequence;
@@ -255,6 +254,7 @@ export async function beginTurn(
     mode: WorldTurnMode;
     changes: readonly WorldTurnFileChange[];
     restoresSequence?: number;
+    payload?: unknown;
     createdAt?: string;
   },
 ): Promise<WorldTurnRecord> {
@@ -266,6 +266,7 @@ export async function beginTurn(
     ...(input.restoresSequence === undefined
       ? {}
       : { restoresSequence: input.restoresSequence }),
+    ...(input.payload === undefined ? {} : { payload: input.payload }),
     files: await captureBefore(
       root,
       input.changes.map((change) => change.path),
@@ -308,6 +309,7 @@ export async function appendTurn(
     mode: WorldTurnMode;
     changes: readonly WorldTurnFileChange[];
     restoresSequence?: number;
+    payload?: unknown;
   },
 ): Promise<WorldTurnRecord> {
   const record = await beginTurn(root, input);
@@ -358,6 +360,24 @@ export async function listTurns(root: string): Promise<WorldTurnRecord[]> {
     turns.push(record);
   }
   return turns;
+}
+
+// 把端点解析为它所表示的逻辑位置（rewind 位置等价于它恢复的位置）。
+export async function resolveEndpoint(
+  root: string,
+  sequence: number,
+): Promise<number> {
+  return resolvePosition(await loadView(root), sequence);
+}
+
+// 第 sequence 轮记录文件的 sha256；0 轮没有记录，返回 null。
+export async function readTurnDigest(
+  root: string,
+  sequence: number,
+): Promise<string | null> {
+  if (sequence === 0) return null;
+  const text = await readFile(join(root, turnFileName(sequence)), "utf8");
+  return createHash("sha256").update(text).digest("hex");
 }
 
 // 读取端点 sequence 处某个文件的内容；不存在返回 null。

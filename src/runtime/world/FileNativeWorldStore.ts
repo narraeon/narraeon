@@ -24,6 +24,7 @@ import { exportStory } from "../history/StoryExport.ts";
 import { PackageScriptPermissions } from "../extension/PackageScriptPermissions.ts";
 import { createHash, randomUUID } from "node:crypto";
 import {
+  cp,
   mkdir,
   readFile,
   readdir,
@@ -59,13 +60,11 @@ import { FileNativePlayTimelineStore } from "../play/FileNativePlayTimelineStore
 import { FileNativePlayAdvanceStore } from "../play/FileNativePlayAdvanceStore.ts";
 import { FileNativeWorldStorageMigrator } from "./FileNativeWorldStorageMigrator.ts";
 import {
-  FileNativeAuthorityV3,
-  FileNativeAuthorityV3Error,
-  type FileNativeAuthorityCommitV3,
-  type FileNativeAuthorityHeadV3,
-  type FileNativeAuthorityRecoveredEndpoint as AuthorityRecoveredEndpoint,
-  type FileNativeAuthorityTimelineRevision,
-} from "./FileNativeAuthorityV3.ts";
+  WorldAuthorityError,
+  WorldLedgerAuthority,
+  type WorldTurnCommit,
+} from "./WorldLedgerAuthority.ts";
+import { rewindTo } from "./WorldTurnLedger.ts";
 import {
   FileNativeWorldOperationCoordinator,
   WorldOperationBusyError,
@@ -73,7 +72,6 @@ import {
   type WorldRevisionLockHandle,
 } from "./WorldOperationCoordinator.ts";
 import {
-  fileNativeHistoryMessageIdFromProjectionPath,
   projectFileNativeHistorySurface,
   projectHistoryBackgrounds,
   historyBackgroundRecord,
@@ -189,20 +187,12 @@ export interface FileNativeStateChange {
   canonicalNextBytes: string;
 }
 
-export type FileNativePlayCommit = FileNativeAuthorityCommitV3;
-
-interface FileNativeMaterializedCheckpoint {
-  historyBackgroundCount?: number;
-  schemaVersion: 3;
-  head: string;
-  sequence: number;
-  commitDigest: string | null;
-}
+export type FileNativePlayCommit = WorldTurnCommit;
 
 export type FileNativeOperationOutcome =
   | { outcome: "not_started" | "in_progress" }
   | {
-      outcome: "committed" | "committed_materialization_pending";
+      outcome: "committed";
       worldId: string;
       parentHead: string;
       head: string;
@@ -213,12 +203,12 @@ export type FileNativeOperationOutcome =
         background?: HistoryBackground;
       }[];
       nextAdditionalMaterials: MaterialSelection[];
-      mode: "play" | "correction" | "timeline_revision";
+      mode: "play" | "correction";
     };
 
 type CommittedOperationOutcome = Extract<
   FileNativeOperationOutcome,
-  { outcome: "committed" | "committed_materialization_pending" }
+  { outcome: "committed" }
 >;
 
 type OperationEntry =
@@ -255,7 +245,6 @@ export interface FileNativeWorldDerivationInput {
   targetWorldRoot?: string;
   identityPrefix?: "import";
   resetPackageScriptPermissions?: boolean;
-  requireMaterialized?: boolean;
   retainCompleteTimeline?: true;
   /** Additional idempotency identity for a higher-level branch request. */
   requestDiscriminator?: string;
@@ -333,7 +322,7 @@ export class FileNativeWorldStore {
   async #ensureCurrentStorageSerialized(worldId: string): Promise<void> {
     try {
       const root = join(this.#worldsRoot, worldId);
-      const authority = new FileNativeAuthorityV3(root);
+      const authority = new WorldLedgerAuthority(root);
       if (await authority.exists()) {
         await authority.readHead();
         this.#currentStorage.add(worldId);
@@ -426,9 +415,7 @@ export class FileNativeWorldStore {
       const root = join(this.#worldsRoot, worldId);
       const publication = await readPublicationAt(root);
       const title = await readWorldTitleAt(root, publication);
-      const endpoint = await new FileNativeAuthorityV3(
-        root,
-      ).recoverHeadResult();
+      const endpoint = await new WorldLedgerAuthority(root).recoverHeadResult();
       const history = new HistoryQuery(
         worldId,
         endpoint.history.map(({ messageId, role, exactText }) => ({
@@ -703,19 +690,7 @@ export class FileNativeWorldStore {
           history: genesis.history,
         },
       );
-      await new FileNativeAuthorityV3(stagingRoot).initialize({
-        operationId: input.operationId,
-        state,
-        history: [openingMessage],
-        additionalMaterials: initialMaterials,
-      });
-      await writeJson(join(stagingRoot, "runtime", "materialized-head.json"), {
-        schemaVersion: 3,
-        head: "genesis",
-        sequence: 0,
-        commitDigest: null,
-        ...backgroundCount([openingMessage]),
-      } satisfies FileNativeMaterializedCheckpoint);
+      await new WorldLedgerAuthority(stagingRoot).initialize();
       await writeJson(
         join(stagingRoot, "runtime", "additional-materials.json"),
         { head: "genesis", items: initialMaterials },
@@ -816,14 +791,8 @@ export class FileNativeWorldStore {
    * must never pair a mutable state tree with a different response head.
    */
   async renderPlayerViewsAtHead(worldId: string, head: string) {
-    const root = join(this.#worldsRoot, worldId);
-    const materialized = await readOptionalJson<{ head: string }>(
-      join(root, "runtime", "materialized-head.json"),
-    );
     const [state, control] = await Promise.all([
-      materialized?.head === head
-        ? readTree(join(root, "state"))
-        : this.recoverEndpoint(worldId, head).then(({ state }) => state),
+      this.recoverEndpoint(worldId, head).then(({ state }) => state),
       this.readSurface(worldId, "control"),
     ]);
     const source = control.find(({ path }) => path === "player-views.yaml");
@@ -838,7 +807,7 @@ export class FileNativeWorldStore {
     await this.ensureCurrentStorage(worldId);
     const root = join(this.#worldsRoot, worldId);
     await readPublicationAt(root);
-    return (await new FileNativeAuthorityV3(root).readHead()).head;
+    return (await new WorldLedgerAuthority(root).readHead()).head;
   }
 
   async withArchiveExport<T>(
@@ -891,7 +860,7 @@ export class FileNativeWorldStore {
     await this.ensureCurrentStorage(worldId);
     const root = join(this.#worldsRoot, worldId);
     await readPublicationAt(root);
-    return new FileNativeAuthorityV3(root).currentOperationId();
+    return new WorldLedgerAuthority(root).currentOperationId();
   }
 
   async saveControlDraft(
@@ -1208,52 +1177,28 @@ export class FileNativeWorldStore {
     }
     try {
       return await this.operations.withWorldAuthorityLock(worldId, async () => {
-        const authorityStore = new FileNativeAuthorityV3(root);
-        const authority = await authorityStore.readHead();
-        const checkpoint = await readMaterializedCheckpoint(root);
-        const cachedBackgrounds = await readTree(
-          join(root, "runtime", "history-backgrounds"),
-        );
-        if (
-          !sameMaterializedEndpoint(checkpoint, authority) ||
-          (checkpoint?.historyBackgroundCount ?? 0) !== cachedBackgrounds.length
-        ) {
-          const recovered = await authorityStore.recover();
-          await materializeRecoveredEndpoint(root, authority, recovered);
-        }
-        const [state, control, history, materials, backgrounds] =
-          await Promise.all([
-            readTree(join(root, "state")),
-            readTree(join(root, "control")),
-            readTree(join(root, "history")),
-            readOptionalJson<{ head: string; items: MaterialSelection[] }>(
-              join(root, "runtime", "additional-materials.json"),
-            ),
-            readTree(join(root, "runtime", "history-backgrounds")),
-          ]);
-        if ((materials?.head ?? "genesis") !== authority.head)
-          throw new FileNativeWorldCreationError(
-            "inconsistent_materialization",
-            "Materialized additional materials do not match the current Authority endpoint",
-          );
+        const recovered = await new WorldLedgerAuthority(root).recover();
+        const control = await readTree(join(root, "control"));
         return {
           worldId,
-          parentHead: authority.head,
-          files: [...state, ...control].reduce<Record<string, string>>(
-            (files, { path, contents }, index) => {
-              files[`${index < state.length ? "state" : "control"}/${path}`] =
-                contents;
-              return files;
-            },
-            {},
+          parentHead: recovered.head,
+          files: [...recovered.state, ...control].reduce<
+            Record<string, string>
+          >((files, { path, contents }, index) => {
+            files[
+              `${index < recovered.state.length ? "state" : "control"}/${path}`
+            ] = contents;
+            return files;
+          }, {}),
+          additionalMaterials: recovered.additionalMaterials,
+          history: Object.fromEntries(
+            recovered.history.map(({ messageId, exactText }) => [
+              messageId,
+              exactText,
+            ]),
           ),
-          additionalMaterials: materials?.items ?? [],
-          history: materializedHistoryRecord(history),
-          historyBackgrounds: materializedBackgroundRecord(
-            backgrounds,
-            materializedHistoryRecord(history),
-          ),
-          narrativeCheckpoint: await authorityStore.readNarrativeCheckpoint(),
+          historyBackgrounds: historyBackgroundRecord(recovered.history),
+          narrativeCheckpoint: recovered.narrativeCheckpoint,
         };
       });
     } catch (error: unknown) {
@@ -1327,7 +1272,7 @@ export class FileNativeWorldStore {
     const root = join(this.#worldsRoot, worldId);
     await readPublicationAt(root);
     try {
-      const recovered = await new FileNativeAuthorityV3(root).recover(head);
+      const recovered = await new WorldLedgerAuthority(root).recover(head);
       return {
         worldId,
         head: recovered.head,
@@ -1343,53 +1288,6 @@ export class FileNativeWorldStore {
         `Cannot recover immutable Authority endpoint${head === undefined ? "" : `: ${head}`}`,
         error instanceof Error ? { cause: error } : undefined,
       );
-    }
-  }
-
-  async repairMaterialization(
-    worldId: string,
-  ): Promise<FileNativeOperationOutcome> {
-    assertIdentity(worldId, "World ID");
-    await this.ensureCurrentStorage(worldId);
-    try {
-      const operationId = await this.operations.withExclusiveWorldStateMutation(
-        worldId,
-        async () => {
-          await this.bindPlayCallChain(worldId);
-          const root = join(this.#worldsRoot, worldId);
-          return (await new FileNativeAuthorityV3(root).readHead()).operationId;
-        },
-      );
-      if (operationId === null) return { outcome: "not_started" };
-      // Materialization is idempotent and rebuilt from the Authority head, so
-      // the answer does not depend on any process-local operation record.
-      const authority = new FileNativeAuthorityV3(
-        join(this.#worldsRoot, worldId),
-      );
-      const head = await authority.readHead();
-      const { commit, digest } = await authority.authorityFactAt(head.head);
-      return {
-        outcome: "committed",
-        worldId,
-        parentHead: commit.auditParent.head,
-        head: head.head,
-        commitDigest: digest,
-        historyAppend: commit.historyAppend.map(({ role, exactText }) => ({
-          role,
-          exactText,
-        })),
-        nextAdditionalMaterials: structuredClone([
-          ...commit.nextAdditionalMaterials,
-        ]),
-        mode: commit.mode,
-      };
-    } catch (error: unknown) {
-      if (error instanceof WorldOperationBusyError)
-        throw new FileNativeWorldCreationError(
-          "operation_conflict",
-          "This world has a durable state operation and cannot repair materialization yet",
-        );
-      throw error;
     }
   }
 
@@ -1460,23 +1358,11 @@ export class FileNativeWorldStore {
         sourceRoot,
         sourcePublication,
       );
-      const sourceAuthority = new FileNativeAuthorityV3(sourceRoot);
+      const sourceAuthority = new WorldLedgerAuthority(sourceRoot);
       const sourceHead =
         input.sourceHead === "current"
           ? (await sourceAuthority.readHead()).head
           : input.sourceHead;
-      if (input.requireMaterialized) {
-        const authorityHead = await sourceAuthority.readHead();
-        const materialized = await readMaterializedCheckpoint(sourceRoot);
-        if (
-          materialized?.head !== authorityHead.head ||
-          materialized.commitDigest !== authorityHead.commitDigest
-        )
-          throw new FileNativeWorldCreationError(
-            "inconsistent_materialization",
-            "Please repair the world before exporting a backup",
-          );
-      }
       const [sourceGenesis, control] = await Promise.all([
         readGenesisForFork(sourceRoot, input.sourceWorldId),
         readTree(join(sourceRoot, "control")),
@@ -1487,17 +1373,11 @@ export class FileNativeWorldStore {
       );
       await mkdir(dirname(finalRoot), { recursive: true, mode: 0o700 });
       try {
-        await mkdir(join(staging, "runtime"), { recursive: true });
-        const clonedHead = await sourceAuthority.clonePrefixTo({
-          targetWorldRoot: staging,
-          selectedHead: sourceHead,
-          operationId: input.operationId,
-        });
-        const selected = await new FileNativeAuthorityV3(
-          staging,
-        ).recoverHeadResult();
-        await writeSurface(staging, "state", selected.state);
-        await writeSurface(staging, "control", control);
+        await copyForkClosure(sourceRoot, staging);
+        await rewindTo(staging, headPosition(sourceHead));
+        // 分叉不信任来源的投影文件：当前文件由副本上的账本端点重建。
+        await new WorldLedgerAuthority(staging).materializeCurrentFiles();
+        const selected = await new WorldLedgerAuthority(staging).recover();
         await PackageScriptPermissions.write(
           staging,
           input.resetPackageScriptPermissions
@@ -1505,16 +1385,6 @@ export class FileNativeWorldStore {
             : await PackageScriptPermissions.read(sourceRoot),
         );
         await WorldExtensionControls.copy(sourceRoot, staging);
-        await mkdir(join(staging, "history"), { recursive: true });
-        for (const file of historySurfaceFiles(selected.history))
-          await writeIdempotentText(
-            join(staging, "history", file.path),
-            file.contents,
-          );
-        await replaceMaterializedTree(
-          join(staging, "runtime", "history-backgrounds"),
-          projectHistoryBackgrounds(selected.history),
-        );
         const genesis: Genesis = {
           schemaVersion: 1,
           type: "file_native_genesis",
@@ -1537,17 +1407,6 @@ export class FileNativeWorldStore {
             history: genesis.history,
           },
         );
-        await writeJson(join(staging, "runtime", "additional-materials.json"), {
-          head: sourceHead,
-          items: selected.additionalMaterials,
-        });
-        await writeJson(join(staging, "runtime", "materialized-head.json"), {
-          schemaVersion: 3,
-          head: sourceHead,
-          sequence: clonedHead.sequence,
-          commitDigest: clonedHead.commitDigest,
-          ...backgroundCount(selected.history),
-        } satisfies FileNativeMaterializedCheckpoint);
         await input.stageTarget?.({
           sourceHead,
           targetWorldRoot: staging,
@@ -1658,16 +1517,11 @@ export class FileNativeWorldStore {
     if (entry === undefined) return { outcome: "not_started" };
     if (entry.phase === "in_progress") return { outcome: "in_progress" };
     const outcome = structuredClone(entry.outcome);
-    const worldRoot = join(this.#worldsRoot, outcome.worldId);
-    const commit = await assertCommittedAuthorityOutcomeMatches(
-      worldRoot,
+    await assertCommittedAuthorityOutcomeMatches(
+      join(this.#worldsRoot, outcome.worldId),
       outcome,
     );
-    const materialized = await readMaterializedCheckpoint(worldRoot);
-    if (materialized !== null && materialized.sequence >= commit.sequence)
-      return { ...outcome, outcome: "committed" };
-    await assertPendingMaterializationCompatible(worldRoot, outcome);
-    return { ...outcome, outcome: "committed_materialization_pending" };
+    return outcome;
   }
 
   /**
@@ -1684,12 +1538,7 @@ export class FileNativeWorldStore {
     replacesHead: string;
     replacementText: string;
     requestFingerprint: string;
-  }): Promise<
-    Extract<
-      FileNativeOperationOutcome,
-      { outcome: "committed" | "committed_materialization_pending" }
-    >
-  > {
+  }): Promise<Extract<FileNativeOperationOutcome, { outcome: "committed" }>> {
     assertIdentity(input.operationId, "Timeline-revision operation ID");
     assertIdentity(input.worldId, "World ID");
     if (
@@ -1727,28 +1576,13 @@ export class FileNativeWorldStore {
     replacesHead: string;
     replacementText: string;
     requestFingerprint: string;
-  }): Promise<
-    Extract<
-      FileNativeOperationOutcome,
-      { outcome: "committed" | "committed_materialization_pending" }
-    >
-  > {
+  }): Promise<Extract<FileNativeOperationOutcome, { outcome: "committed" }>> {
     const existing = await this.getOperationOutcome(input.operationId);
     if (isCommittedOutcome(existing)) {
-      const fact = await new FileNativeAuthorityV3(
-        join(this.#worldsRoot, existing.worldId),
-      ).authorityFactAt(existing.head);
-      const commit = fact.commit;
       if (
         existing.worldId !== input.worldId ||
-        fact.digest !== existing.commitDigest ||
-        commit?.mode !== "timeline_revision" ||
-        commit.timelineRevision?.restoresHead !== input.restoresHead ||
-        commit.timelineRevision.replacesHead !== input.replacesHead ||
-        commit.timelineRevision.requestFingerprint !==
-          input.requestFingerprint ||
         !isDeepStrictEqual(
-          commit.historyAppend.map(({ role, exactText }) => ({
+          existing.historyAppend.map(({ role, exactText }) => ({
             role,
             exactText,
           })),
@@ -1763,22 +1597,27 @@ export class FileNativeWorldStore {
     }
 
     const root = join(this.#worldsRoot, input.worldId);
-    const authorityStore = new FileNativeAuthorityV3(root);
-    const [replaced, replacementMaterials] = await Promise.all([
-      authorityStore.commitAt(input.replacesHead),
-      authorityStore.recoverMaterials(input.restoresHead),
-    ]);
-    const logicalParent = replaced?.timelineParent.head;
+    const authorityStore = new WorldLedgerAuthority(root);
+    const current = await authorityStore.readHead();
+    if (current.head !== input.expectedCurrentHead)
+      throw new FileNativeWorldCreationError(
+        "operation_conflict",
+        "The parent endpoint of the timeline revision has changed",
+      );
+    const replaced = await authorityStore.commitAt(input.replacesHead);
     if (
       replaced === null ||
       !replaced.historyAppend.some(({ role }) => role === "player") ||
-      logicalParent !== input.restoresHead
+      replaced.parentHead !== input.restoresHead
     )
       throw new FileNativeWorldCreationError(
         "operation_conflict",
         "Selected player message does not match the logical parent endpoint to restore",
       );
 
+    const replacementMaterials = await authorityStore.recoverMaterials(
+      input.restoresHead,
+    );
     const binding = await this.bindPlayCallChainAt(
       input.worldId,
       input.restoresHead,
@@ -1793,10 +1632,12 @@ export class FileNativeWorldStore {
     const background = snapshotBackground(
       captureNarrativeOrigin(snapshot, 1).value,
     );
+    // ADR-0045: 回退到被替换消息的逻辑父端点，再作为一次普通游玩提交追加修改稿。
+    await rewindTo(root, headPosition(input.restoresHead));
     return this.#commitHistoryChange({
       operationId: input.operationId,
       worldId: input.worldId,
-      parentHead: input.expectedCurrentHead,
+      parentHead: input.restoresHead,
       historyAppend: [
         {
           role: "player",
@@ -1806,12 +1647,7 @@ export class FileNativeWorldStore {
       ],
       nextMaterials: worldNeutralMaterials(input.worldId, replacementMaterials),
       stateChanges: [],
-      mode: "timeline_revision",
-      timelineRevision: {
-        restoresHead: input.restoresHead,
-        replacesHead: input.replacesHead,
-        requestFingerprint: input.requestFingerprint,
-      },
+      mode: "play",
     });
   }
 
@@ -1825,12 +1661,7 @@ export class FileNativeWorldStore {
     stateOperationClaim?: ContinuityCorrectionWorldClaimHandle;
     worldRevisionLock?: WorldRevisionLockHandle;
     validationControl?: readonly ContentTreeFile[];
-  }): Promise<
-    Extract<
-      FileNativeOperationOutcome,
-      { outcome: "committed" | "committed_materialization_pending" }
-    >
-  > {
+  }): Promise<Extract<FileNativeOperationOutcome, { outcome: "committed" }>> {
     await this.ensureCurrentStorage(input.worldId);
     try {
       const commit = async () => {
@@ -1910,12 +1741,7 @@ export class FileNativeWorldStore {
     nextMaterials: MaterialSelection[];
     stateChanges: FileNativeStateChange[];
     narrativeCheckpoint?: NarrativeCheckpointDeclaration;
-  }): Promise<
-    Extract<
-      FileNativeOperationOutcome,
-      { outcome: "committed" | "committed_materialization_pending" }
-    >
-  > {
+  }): Promise<Extract<FileNativeOperationOutcome, { outcome: "committed" }>> {
     await this.ensureCurrentStorage(input.worldId);
     if (input.historyAppend.length === 0 && input.stateChanges.length === 0)
       throw new TypeError(
@@ -1958,24 +1784,17 @@ export class FileNativeWorldStore {
     nextMaterials: MaterialSelection[];
     stateChanges: FileNativeStateChange[];
     narrativeCheckpoint?: NarrativeCheckpointDeclaration;
-    mode: "play" | "correction" | "timeline_revision";
-    timelineRevision?: FileNativeAuthorityTimelineRevision;
+    mode: "play" | "correction";
     operationReserved?: boolean;
     validationControl?: readonly ContentTreeFile[];
-  }): Promise<
-    Extract<
-      FileNativeOperationOutcome,
-      { outcome: "committed" | "committed_materialization_pending" }
-    >
-  > {
+  }): Promise<CommittedOperationOutcome> {
     const existing = this.#operationOutcomes.get(input.operationId);
     if (existing?.phase === "done") {
       const outcome = existing.outcome;
       assertSameOperationOutcome(outcome, input);
-      const authority = new FileNativeAuthorityV3(
+      const fact = await new WorldLedgerAuthority(
         join(this.#worldsRoot, outcome.worldId),
-      );
-      const fact = await authority.authorityFactAt(outcome.head);
+      ).authorityFactAt(outcome.head);
       if (
         fact.digest !== outcome.commitDigest ||
         !authorityCommitMatchesInput(fact.commit, input)
@@ -2000,7 +1819,7 @@ export class FileNativeWorldStore {
           if (concurrent?.phase === "done") {
             const outcome = concurrent.outcome;
             assertSameOperationOutcome(outcome, input);
-            const known = await new FileNativeAuthorityV3(
+            const known = await new WorldLedgerAuthority(
               join(this.#worldsRoot, outcome.worldId),
             ).authorityFactAt(outcome.head);
             if (
@@ -2021,64 +1840,34 @@ export class FileNativeWorldStore {
               "operation_conflict",
               "The same play operation ID is occupied by another durable operation",
             );
-          const authorityStore = new FileNativeAuthorityV3(root);
+          const authorityStore = new WorldLedgerAuthority(root);
           const authority = await authorityStore.readHead();
-          if (authority.head !== input.parentHead) {
+          if (authority.head !== input.parentHead)
             throw new FileNativeWorldCreationError(
               "operation_conflict",
               "The parent endpoint of the play operation has changed",
             );
-          }
-          const materialized = await readOptionalJson<{ head: string }>(
-            join(root, "runtime", "materialized-head.json"),
-          );
-          if ((materialized?.head ?? "genesis") !== authority.head)
-            throw new FileNativeWorldCreationError(
-              "operation_conflict",
-              "The world has accepted but unrepaired materialization; new competing writes are forbidden",
-            );
           const [basisState, storedControl] = await Promise.all([
-            authorityStore.recoverState(
-              input.timelineRevision?.restoresHead ?? authority.head,
-            ),
+            authorityStore.recoverState(authority.head),
             readTree(join(root, "control")),
           ]);
           const candidateState = new Map(
             basisState.map((file) => [file.path, file.contents]),
           );
-          if (input.mode === "timeline_revision") {
+          for (const change of input.stateChanges) {
+            assertRelativePath(change.relativePath);
+            const previous = candidateState.get(change.relativePath);
+            const previousHash =
+              previous === undefined ? null : sha256(previous);
             if (
-              input.timelineRevision === undefined ||
-              input.stateChanges.length !== 0
+              previousHash !== change.expectedPreviousHash ||
+              sha256(change.canonicalNextBytes) !== change.nextHash
             )
               throw new FileNativeWorldCreationError(
                 "operation_conflict",
-                "Timeline-revision commit payload is invalid",
+                `State-change hash conflicts: ${change.relativePath}`,
               );
-          } else {
-            if (input.timelineRevision !== undefined)
-              throw new FileNativeWorldCreationError(
-                "operation_conflict",
-                "A regular commit cannot carry a timeline-revision payload",
-              );
-            for (const change of input.stateChanges) {
-              assertRelativePath(change.relativePath);
-              const previous = candidateState.get(change.relativePath);
-              const previousHash =
-                previous === undefined ? null : sha256(previous);
-              if (
-                previousHash !== change.expectedPreviousHash ||
-                sha256(change.canonicalNextBytes) !== change.nextHash
-              )
-                throw new FileNativeWorldCreationError(
-                  "operation_conflict",
-                  `State-change hash conflicts: ${change.relativePath}`,
-                );
-              candidateState.set(
-                change.relativePath,
-                change.canonicalNextBytes,
-              );
-            }
+            candidateState.set(change.relativePath, change.canonicalNextBytes);
           }
           const inspection = inspectContentPackageCurrentTree(
             [
@@ -2100,8 +1889,7 @@ export class FileNativeWorldStore {
               "candidate_validation_failed",
               `Candidate world failed mechanical validation: ${inspection.issues.map(({ message }) => message).join("; ")}`,
             );
-          await authorityStore.discardUnacceptedNextEpoch();
-          const preparedAppend = await authorityStore.prepareAppend({
+          const { commit, commitDigest } = await authorityStore.appendCommit({
             ...(input.playContext === undefined
               ? {}
               : { playContext: input.playContext }),
@@ -2110,12 +1898,9 @@ export class FileNativeWorldStore {
               : { worldClock: input.worldClock }),
             operationId: input.operationId,
             parentHead: input.parentHead,
-            ...(input.timelineRevision === undefined
-              ? {}
-              : { timelineParentHead: input.timelineRevision.restoresHead }),
             mode: input.mode,
             historyAppend: input.historyAppend,
-            stateChanges: structuredClone(input.stateChanges),
+            stateChanges: input.stateChanges,
             nextMaterials: input.nextMaterials,
             ...(input.narrativeCheckpoint === undefined
               ? {}
@@ -2128,51 +1913,29 @@ export class FileNativeWorldStore {
                   corrects: input.parentHead,
                 }
               : {}),
-            ...(input.timelineRevision === undefined
-              ? {}
-              : { timelineRevision: input.timelineRevision }),
           });
-          const { commit } = preparedAppend;
-          const pending = {
-            outcome: "committed_materialization_pending" as const,
+          const outcome: CommittedOperationOutcome = {
+            outcome: "committed",
             worldId: input.worldId,
             parentHead: input.parentHead,
             head: commit.head,
-            commitDigest: preparedAppend.commitDigest,
+            commitDigest,
             historyAppend: structuredClone(input.historyAppend),
             nextAdditionalMaterials: structuredClone(input.nextMaterials),
             mode: input.mode,
           };
-          await authorityStore.publishPrepared(preparedAppend);
-          const acceptedAt = Date.now();
           this.#operationOutcomes.set(input.operationId, {
             phase: "done",
-            outcome: pending,
+            outcome,
           });
-          try {
-            const recovered = await authorityStore.recover(commit.head);
-            await assertPendingMaterializationCompatible(root, pending);
-            await materializeRecoveredEndpoint(
-              root,
-              preparedAppend.nextHead,
-              recovered,
-              acceptedAt,
-            );
-            const outcome = { ...pending, outcome: "committed" as const };
-            this.#operationOutcomes.set(input.operationId, {
-              phase: "done",
-              outcome,
-            });
-            return outcome;
-          } catch (error: unknown) {
-            if (
-              error instanceof FileNativeWorldCreationError &&
-              (error.code === "world_corrupt" ||
-                error.code === "inconsistent_materialization")
-            )
-              throw error;
-            return pending;
-          }
+          const recovered = await authorityStore.recover(commit.head);
+          await updateWorldActivity(
+            root,
+            commit.head,
+            recovered.history,
+            Date.now(),
+          );
+          return outcome;
         },
       );
     } catch (error: unknown) {
@@ -2181,7 +1944,7 @@ export class FileNativeWorldStore {
           "operation_conflict",
           "World Authority commit is being serialized by another process",
         );
-      if (error instanceof FileNativeAuthorityV3Error)
+      if (error instanceof WorldAuthorityError)
         throw new FileNativeWorldCreationError(
           error.code === "corrupt" ? "world_corrupt" : "operation_conflict",
           error.message,
@@ -2193,12 +1956,12 @@ export class FileNativeWorldStore {
 
   async readAuthorityHistory(
     worldId: string,
-  ): Promise<{ head: string; commits: FileNativeAuthorityCommitV3[] }> {
+  ): Promise<{ head: string; commits: WorldTurnCommit[] }> {
     assertIdentity(worldId, "World ID");
     await this.ensureCurrentStorage(worldId);
     const root = join(this.#worldsRoot, worldId);
     await readPublicationAt(root);
-    const authority = await new FileNativeAuthorityV3(root).readHistory();
+    const authority = await new WorldLedgerAuthority(root).readHistory();
     return structuredClone(authority);
   }
 
@@ -2232,7 +1995,7 @@ export class FileNativeWorldStore {
     await this.ensureCurrentStorage(worldId);
     const root = join(this.#worldsRoot, worldId);
     await readPublicationAt(root);
-    const authority = new FileNativeAuthorityV3(root);
+    const authority = new WorldLedgerAuthority(root);
     const selectedHead = head ?? (await authority.readHead()).head;
     let cache = this.#documentMaintenanceCache.get(worldId);
     if (cache === undefined) {
@@ -2547,18 +2310,15 @@ function corruptOperationOutcome(): FileNativeWorldCreationError {
 
 async function assertCommittedAuthorityOutcomeMatches(
   worldRoot: string,
-  outcome: Extract<
-    FileNativeOperationOutcome,
-    { outcome: "committed" | "committed_materialization_pending" }
-  >,
-): Promise<FileNativeAuthorityCommitV3> {
-  const fact = await new FileNativeAuthorityV3(worldRoot).authorityFactAt(
+  outcome: Extract<FileNativeOperationOutcome, { outcome: "committed" }>,
+): Promise<WorldTurnCommit> {
+  const fact = await new WorldLedgerAuthority(worldRoot).authorityFactAt(
     outcome.head,
   );
   const { commit } = fact;
   if (
     fact.digest !== outcome.commitDigest ||
-    commit.auditParent.head !== outcome.parentHead ||
+    commit.parentHead !== outcome.parentHead ||
     commit.head !== outcome.head ||
     commit.mode !== outcome.mode ||
     !isDeepStrictEqual(
@@ -2576,193 +2336,6 @@ async function assertCommittedAuthorityOutcomeMatches(
   )
     throw corruptOperationOutcome();
   return commit;
-}
-
-async function assertPendingMaterializationCompatible(
-  worldRoot: string,
-  outcome: Extract<
-    FileNativeOperationOutcome,
-    { outcome: "committed" | "committed_materialization_pending" }
-  >,
-): Promise<void> {
-  const authority = new FileNativeAuthorityV3(worldRoot);
-  await assertCommittedAuthorityOutcomeMatches(worldRoot, outcome);
-  const [parent, target, state, history] = await Promise.all([
-    authority.recover(outcome.parentHead),
-    authority.recover(outcome.head),
-    readTree(join(worldRoot, "state")),
-    readTree(join(worldRoot, "history")),
-  ]);
-  assertProjectionBetweenEndpoints("state", state, parent.state, target.state);
-  assertHistoryProjectionBetweenEndpoints(
-    history,
-    historySurfaceFiles(parent.history),
-    historySurfaceFiles(target.history),
-  );
-  const existingMaterials = await readOptionalJson<{
-    head: string;
-    items: MaterialSelection[];
-  }>(join(worldRoot, "runtime", "additional-materials.json"));
-  if (
-    existingMaterials !== null &&
-    !(
-      (existingMaterials.head === parent.head &&
-        isDeepStrictEqual(
-          existingMaterials.items,
-          parent.additionalMaterials,
-        )) ||
-      (existingMaterials.head === target.head &&
-        isDeepStrictEqual(existingMaterials.items, target.additionalMaterials))
-    )
-  )
-    throw new FileNativeWorldCreationError(
-      "inconsistent_materialization",
-      "Additional-material list content conflicts at the same endpoint",
-    );
-}
-
-function assertProjectionBetweenEndpoints(
-  surface: string,
-  current: readonly ContentTreeFile[],
-  parent: readonly ContentTreeFile[],
-  target: readonly ContentTreeFile[],
-): void {
-  const parentFiles = new Map(parent.map((file) => [file.path, file.contents]));
-  const targetFiles = new Map(target.map((file) => [file.path, file.contents]));
-  for (const file of current) {
-    if (
-      file.contents !== parentFiles.get(file.path) &&
-      file.contents !== targetFiles.get(file.path)
-    )
-      throw new FileNativeWorldCreationError(
-        "inconsistent_materialization",
-        `World ${surface} projection conflicts with both accepted endpoints: ${file.path}`,
-      );
-  }
-}
-
-function assertHistoryProjectionBetweenEndpoints(
-  current: readonly ContentTreeFile[],
-  parent: readonly ContentTreeFile[],
-  target: readonly ContentTreeFile[],
-): void {
-  const byMessageId = (files: readonly ContentTreeFile[]) =>
-    new Map(
-      files.map((file) => [
-        fileNativeHistoryMessageIdFromProjectionPath(file.path),
-        file.contents,
-      ]),
-    );
-  const parentFiles = byMessageId(parent);
-  const targetFiles = byMessageId(target);
-  const seen = new Set<string>();
-  for (const file of current) {
-    const messageId = fileNativeHistoryMessageIdFromProjectionPath(file.path);
-    if (
-      messageId === null ||
-      seen.has(messageId) ||
-      (file.contents !== parentFiles.get(messageId) &&
-        file.contents !== targetFiles.get(messageId))
-    )
-      throw new FileNativeWorldCreationError(
-        "inconsistent_materialization",
-        `World history projection conflicts with both accepted endpoints: ${file.path}`,
-      );
-    seen.add(messageId);
-  }
-}
-
-async function publishJson(path: string, value: unknown): Promise<void> {
-  const temporary = `${path}.${randomUUID()}.tmp`;
-  await writeJson(temporary, value);
-  await rename(temporary, path);
-}
-
-async function readMaterializedCheckpoint(
-  root: string,
-): Promise<FileNativeMaterializedCheckpoint | null> {
-  const value = await readOptionalJson<unknown>(
-    join(root, "runtime", "materialized-head.json"),
-  );
-  if (value === null) return null;
-  if (
-    !isRecord(value) ||
-    !hasRequiredAndOptionalKeys(
-      value,
-      ["schemaVersion", "head", "sequence", "commitDigest"],
-      ["historyBackgroundCount"],
-    ) ||
-    (value.historyBackgroundCount !== undefined &&
-      (!Number.isSafeInteger(value.historyBackgroundCount) ||
-        Number(value.historyBackgroundCount) < 1)) ||
-    value.schemaVersion !== 3 ||
-    typeof value.head !== "string" ||
-    !Number.isSafeInteger(value.sequence) ||
-    Number(value.sequence) < 0 ||
-    (value.commitDigest !== null &&
-      (typeof value.commitDigest !== "string" ||
-        !/^[a-f0-9]{64}$/u.test(value.commitDigest))) ||
-    (Number(value.sequence) === 0
-      ? value.head !== "genesis" || value.commitDigest !== null
-      : value.head !== `commit:${String(value.sequence)}` ||
-        value.commitDigest === null)
-  )
-    throw new FileNativeWorldCreationError(
-      "world_corrupt",
-      "Materialized world checkpoint has an invalid shape",
-    );
-  return value as unknown as FileNativeMaterializedCheckpoint;
-}
-
-function sameMaterializedEndpoint(
-  checkpoint: FileNativeMaterializedCheckpoint | null,
-  authority: FileNativeAuthorityHeadV3,
-): boolean {
-  return (
-    checkpoint !== null &&
-    checkpoint.head === authority.head &&
-    checkpoint.sequence === authority.sequence &&
-    checkpoint.commitDigest === authority.commitDigest
-  );
-}
-
-async function materializeRecoveredEndpoint(
-  root: string,
-  authority: FileNativeAuthorityHeadV3,
-  endpoint: AuthorityRecoveredEndpoint,
-  lastActivityAt: number | null = null,
-): Promise<void> {
-  if (authority.head !== endpoint.head)
-    throw new FileNativeWorldCreationError(
-      "world_corrupt",
-      "Recovered endpoint does not match the Authority head to materialize",
-    );
-  await replaceMaterializedTree(join(root, "state"), endpoint.state);
-  await replaceMaterializedTree(
-    join(root, "history"),
-    historySurfaceFiles(endpoint.history),
-  );
-  await replaceMaterializedTree(
-    join(root, "runtime", "history-backgrounds"),
-    projectHistoryBackgrounds(endpoint.history),
-  );
-  await publishJson(join(root, "runtime", "additional-materials.json"), {
-    head: authority.head,
-    items: endpoint.additionalMaterials,
-  });
-  await publishJson(join(root, "runtime", "materialized-head.json"), {
-    schemaVersion: 3,
-    head: authority.head,
-    sequence: authority.sequence,
-    commitDigest: authority.commitDigest,
-    ...backgroundCount(endpoint.history),
-  } satisfies FileNativeMaterializedCheckpoint);
-  await updateWorldActivity(
-    root,
-    authority.head,
-    endpoint.history,
-    lastActivityAt,
-  );
 }
 
 async function replaceMaterializedTree(
@@ -2809,27 +2382,6 @@ function historySurfaceFiles(
   });
 }
 
-function materializedHistoryRecord(
-  files: readonly ContentTreeFile[],
-): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const file of files) {
-    const messageId = fileNativeHistoryMessageIdFromProjectionPath(file.path);
-    if (messageId === null)
-      throw new FileNativeWorldCreationError(
-        "world_corrupt",
-        `Materialized history path is invalid: ${file.path}`,
-      );
-    if (messageId in result)
-      throw new FileNativeWorldCreationError(
-        "world_corrupt",
-        `Materialized history contains a duplicate message: ${messageId}`,
-      );
-    result[messageId] = file.contents;
-  }
-  return result;
-}
-
 async function writeIdempotentText(
   path: string,
   contents: string,
@@ -2851,21 +2403,12 @@ async function writeIdempotentText(
 
 function isCommittedOutcome(
   outcome: FileNativeOperationOutcome,
-): outcome is Extract<
-  FileNativeOperationOutcome,
-  { outcome: "committed" | "committed_materialization_pending" }
-> {
-  return (
-    outcome.outcome === "committed" ||
-    outcome.outcome === "committed_materialization_pending"
-  );
+): outcome is Extract<FileNativeOperationOutcome, { outcome: "committed" }> {
+  return outcome.outcome === "committed";
 }
 
 function assertSameOperationOutcome(
-  outcome: Extract<
-    FileNativeOperationOutcome,
-    { outcome: "committed" | "committed_materialization_pending" }
-  >,
+  outcome: Extract<FileNativeOperationOutcome, { outcome: "committed" }>,
   input: {
     worldId: string;
     parentHead: string;
@@ -2927,7 +2470,7 @@ function worldNeutralMaterials(
 }
 
 function authorityCommitMatchesInput(
-  commit: FileNativeAuthorityCommitV3,
+  commit: WorldTurnCommit,
   input: {
     playContext?: string;
     worldClock?: string;
@@ -2939,8 +2482,7 @@ function authorityCommitMatchesInput(
     }[];
     nextMaterials: MaterialSelection[];
     stateChanges: FileNativeStateChange[];
-    mode: "play" | "correction" | "timeline_revision";
-    timelineRevision?: FileNativeAuthorityTimelineRevision;
+    mode: "play" | "correction";
     narrativeCheckpoint?: NarrativeCheckpointDeclaration;
   },
 ): boolean {
@@ -2949,8 +2491,7 @@ function authorityCommitMatchesInput(
     commit.stateChanges.every((stored, index) => {
       const candidate = input.stateChanges[index];
       if (candidate === undefined) return false;
-      const { nextBlob, ...metadata } = stored;
-      const expected = {
+      return isDeepStrictEqual(stored, {
         kind: candidate.kind,
         documentId: candidate.documentId,
         stableShortRef: candidate.stableShortRef,
@@ -2958,12 +2499,7 @@ function authorityCommitMatchesInput(
         codec: candidate.codec,
         expectedPreviousHash: candidate.expectedPreviousHash,
         nextHash: candidate.nextHash,
-      };
-      return (
-        nextBlob.epoch === commit.sequence &&
-        `sha256:${nextBlob.digest}` === candidate.nextHash &&
-        isDeepStrictEqual(metadata, expected)
-      );
+      });
     });
   const expectedCorrection =
     input.mode === "correction"
@@ -2973,9 +2509,7 @@ function authorityCommitMatchesInput(
     commit.mode === input.mode &&
     commit.playContext === input.playContext &&
     commit.worldClock === input.worldClock &&
-    commit.auditParent.head === input.parentHead &&
-    commit.timelineParent.head ===
-      (input.timelineRevision?.restoresHead ?? input.parentHead) &&
+    commit.parentHead === input.parentHead &&
     isDeepStrictEqual(
       commit.historyAppend.map(({ role, exactText, background }) => ({
         role,
@@ -2986,12 +2520,49 @@ function authorityCommitMatchesInput(
     ) &&
     stateChangesMatch &&
     isDeepStrictEqual(commit.nextAdditionalMaterials, input.nextMaterials) &&
-    isDeepStrictEqual(commit.timelineRevision, input.timelineRevision) &&
     isDeepStrictEqual(commit.narrativeCheckpoint, input.narrativeCheckpoint) &&
     isDeepStrictEqual(commit.correctionTargets, expectedCorrection) &&
     commit.corrects ===
       (input.mode === "correction" ? input.parentHead : undefined)
   );
+}
+
+function headPosition(head: string): number {
+  if (head === "genesis") return 0;
+  const match = /^commit:([1-9][0-9]*)$/u.exec(head);
+  if (match === null) throw new TypeError(`Endpoint is invalid: ${head}`);
+  return Number.parseInt(match[1]!, 10);
+}
+
+// 分叉只复制一个世界的闭包；回退与身份重分配由调用方在副本上完成。
+const forkClosureEntries = [
+  "state",
+  "control",
+  "history",
+  join("runtime", "head.json"),
+  join("runtime", "turns"),
+  join("runtime", "history-backgrounds"),
+  join("runtime", "additional-materials.json"),
+  join("runtime", "genesis.json"),
+  join("runtime", "play-genesis-timeline.json"),
+];
+
+async function copyForkClosure(
+  sourceRoot: string,
+  target: string,
+): Promise<void> {
+  await mkdir(join(target, "runtime"), { recursive: true, mode: 0o700 });
+  for (const entry of forkClosureEntries) {
+    const source = join(sourceRoot, entry);
+    try {
+      await stat(source);
+    } catch (error: unknown) {
+      if (isNodeError(error) && error.code === "ENOENT") continue;
+      throw error;
+    }
+    await mkdir(dirname(join(target, entry)), { recursive: true, mode: 0o700 });
+    await cp(source, join(target, entry), { recursive: true });
+  }
 }
 
 function openWorldDocumentSnapshot(
@@ -3013,6 +2584,12 @@ async function writeJson(path: string, value: unknown): Promise<void> {
     encoding: "utf8",
     mode: 0o600,
   });
+}
+
+async function publishJson(path: string, value: unknown): Promise<void> {
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  await writeJson(temporary, value);
+  await rename(temporary, path);
 }
 
 async function readGenesisForFork(
@@ -3337,34 +2914,4 @@ function backgroundField(background: HistoryBackground | undefined): {
   background?: HistoryBackground;
 } {
   return background === undefined ? {} : { background };
-}
-function materializedBackgroundRecord(
-  files: readonly ContentTreeFile[],
-  history: Record<string, string>,
-): Record<string, HistoryBackground> {
-  return Object.fromEntries(
-    files.map(({ path, contents }) => {
-      const id = path.replace(/\.json$/u, "");
-      const value: unknown = JSON.parse(contents);
-      if (
-        path !== `${id}.json` ||
-        !Object.hasOwn(history, id) ||
-        !isHistoryBackground(value)
-      )
-        throw new FileNativeWorldCreationError(
-          "world_corrupt",
-          "Materialized history background is invalid or unreachable",
-        );
-      return [id, value];
-    }),
-  );
-}
-
-function backgroundCount(messages: readonly Genesis["history"][number][]): {
-  historyBackgroundCount?: number;
-} {
-  const count = messages.filter(
-    ({ background }) => background !== undefined,
-  ).length;
-  return count === 0 ? {} : { historyBackgroundCount: count };
 }

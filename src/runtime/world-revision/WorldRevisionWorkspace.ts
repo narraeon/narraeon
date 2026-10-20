@@ -450,10 +450,7 @@ export class WorldRevisionWorkspace {
 
   async #recordStateCommit(
     handle: WorldRevisionLockHandle,
-    outcome: Extract<
-      FileNativeOperationOutcome,
-      { outcome: "committed" | "committed_materialization_pending" }
-    >,
+    outcome: Extract<FileNativeOperationOutcome, { outcome: "committed" }>,
   ): Promise<StoredWorldRevisionEpoch> {
     return this.#withRevisionOwnership(handle, async () => {
       const epoch = await this.#store.readEpoch(handle.epochId);

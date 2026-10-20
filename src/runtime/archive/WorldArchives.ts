@@ -19,7 +19,7 @@ import {
 import { FileNativeArtifactStore } from "../artifact/FileNativeArtifactStore.ts";
 import { PlayCallChain } from "../play/PlayCallChain.ts";
 import { FileNativePromptCompiler } from "../prompt/FileNativePromptCompiler.ts";
-import { FileNativeAuthorityV3 } from "../world/FileNativeAuthorityV3.ts";
+import { WorldLedgerAuthority } from "../world/WorldLedgerAuthority.ts";
 import {
   FileNativeWorldStore,
   type FileNativeWorldSummary,
@@ -118,7 +118,6 @@ export class WorldArchives {
           targetName: source.title,
           publish: false,
           targetWorldRoot: join(root, "world"),
-          requireMaterialized: true,
           resetPackageScriptPermissions: true,
           retainCompleteTimeline: true,
         });
@@ -133,7 +132,7 @@ export class WorldArchives {
           exportedAt: new Date().toISOString(),
           worldName: source.title,
           archivedWorldId: fork.world.worldId,
-          head: (await new FileNativeAuthorityV3(fork.worldRoot).readHead())
+          head: (await new WorldLedgerAuthority(fork.worldRoot).readHead())
             .head,
           files,
         };
@@ -328,13 +327,12 @@ export class WorldArchives {
             if (publication?.worldId !== manifest.archivedWorldId)
               throw new Error("Archive world identity mismatch");
             await sourceWorlds.ensureCurrentStorage(manifest.archivedWorldId);
-            const authority = new FileNativeAuthorityV3(sourceRoot);
-            const history = await authority.readHistory();
-            if (history.head !== manifest.head)
+            // 结构校验：端点与清单一致，账本能倒推回 genesis；投影在分叉时重建。
+            const authority = new WorldLedgerAuthority(sourceRoot);
+            const head = await authority.readHead();
+            if (head.head !== manifest.head)
               throw new Error("Archive head mismatch");
-            await authority.recover("genesis");
-            for (const commit of history.commits)
-              await authority.recover(commit.head);
+            await authority.verifyStructure();
           } catch (error) {
             throw new WorldArchiveError(
               "integrity_failed",

@@ -5,9 +5,9 @@ import type {
 import { listWorldDocuments } from "../prompt/WorldMaintenanceReport.ts";
 import { WorldDocumentStore } from "./WorldDocumentStore.ts";
 import type {
-  FileNativeAuthorityV3,
-  FileNativeAuthorityCommitV3,
-} from "./FileNativeAuthorityV3.ts";
+  WorldLedgerAuthority,
+  WorldTurnCommit,
+} from "./WorldLedgerAuthority.ts";
 
 export interface DocumentMaintenanceState {
   files: Map<string, string>;
@@ -21,13 +21,13 @@ export interface DocumentMaintenanceState {
 
 /** Reachable committed bytes only. Cached prefixes are disposable accelerators. */
 export async function readDocumentMaintenanceFacts(
-  authority: FileNativeAuthorityV3,
+  authority: WorldLedgerAuthority,
   head: string,
   cache: Map<string, DocumentMaintenanceState>,
 ): Promise<Record<string, WorldDocumentMaintenance>> {
   const exact = cache.get(head);
   if (exact !== undefined) return structuredClone(exact.facts);
-  const timeline: FileNativeAuthorityCommitV3[] = [];
+  const timeline: WorldTurnCommit[] = [];
   let cursor = head;
   const seen = new Set<string>();
   while (cursor !== "genesis" && !cache.has(cursor)) {
@@ -36,7 +36,7 @@ export async function readDocumentMaintenanceFacts(
       throw new Error("Document maintenance history is not reachable");
     seen.add(cursor);
     timeline.push(commit);
-    cursor = commit.timelineParent.head;
+    cursor = commit.parentHead;
   }
   timeline.reverse();
   const prefix = cache.get(cursor);
@@ -118,7 +118,7 @@ export async function readDocumentMaintenanceFacts(
     const changed = await Promise.all(
       commit.stateChanges.map(async (change) => ({
         change,
-        contents: await authority.readStateChangeContents(change),
+        contents: await authority.readStateChangeContents(commit, change),
       })),
     );
     for (const { change, contents } of changed)

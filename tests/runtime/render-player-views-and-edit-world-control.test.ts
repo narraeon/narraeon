@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -520,12 +520,9 @@ test("玩家视图按精确 Authority head 渲染，不读取落后的 materiali
     ],
   });
   const worldRoot = join(root, "worlds-file-native", worldId);
-  await writeFile(join(worldRoot, "state", stateFile.path), before);
-  await rm(join(worldRoot, "runtime/materialized-head.json"), {
-    force: true,
-  });
+  // 当前文件就是当前端点：渲染 commit:1 时读取账本，而不是一份可能落后的物化投影。
   expect(await readFile(join(worldRoot, "state", stateFile.path), "utf8")).toBe(
-    before,
+    after,
   );
   const renderedAtHead = await store.renderPlayerViewsAtHead(
     worldId,

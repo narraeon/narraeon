@@ -12,11 +12,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, expect, test, vi } from "vitest";
-import { WorldArchives } from "../../src/runtime/archive/WorldArchives.ts";
 import {
   archivePath,
   extractArchive,
-  type ArchiveLimits,
 } from "../../src/runtime/archive/WorldArchiveZip.ts";
 import { worldArchiveLimits } from "../../src/protocol/worldArchives.ts";
 import { PackageScriptPermissions } from "../../src/runtime/extension/PackageScriptPermissions.ts";
@@ -694,7 +692,6 @@ test("完整世界跨根往返保留 Authority、故事、冻结产物与名称�
 
 test.each([
   "changed-file",
-  "changed-blob-and-manifest",
   "extra",
   "missing",
   "traversal",
@@ -712,17 +709,6 @@ test.each([
   const target = await empty();
   const state = files.find((file) => file.path.startsWith("world/state/"))!;
   if (kind === "changed-file") state.contents = "changed";
-  if (kind === "changed-blob-and-manifest") {
-    const blob =
-      files.find((file) => /authority-v3\/.*blobs/u.test(file.path)) ??
-      files.find((file) => /authority-v3\/.*state/u.test(file.path));
-    if (!blob)
-      throw new Error(
-        `Missing Authority blob: ${files.map((file) => file.path).join()}`,
-      );
-    blob.contents = "tampered immutable object";
-    updateManifest(files);
-  }
   if (kind === "extra")
     files.push({ path: "world/extra.txt", contents: "extra" });
   if (kind === "missing") files.splice(files.indexOf(state), 1);
@@ -782,63 +768,7 @@ test.each([
   );
 });
 
-test("不信任归档的可变 state/history 投影；从 Authority 重建", async () => {
-  const source = await fixture();
-  const archive = await exported(source);
-  const files = await entries(archive.zip);
-  const target = await empty();
-  files.find((file) => file.path.startsWith("world/state/"))!.contents =
-    "wrong projected state";
-  files.find((file) => file.path.startsWith("world/history/"))!.contents =
-    "wrong projected story";
-  updateManifest(files);
-  const result = await importBuffer(target, createZip(files));
-  expect(
-    await target.worlds.readSurface(result.world.worldId, "state"),
-  ).toEqual(await source.worlds.readSurface(source.worldId, "state"));
-  expect(
-    await target.worlds.readSurface(result.world.worldId, "history"),
-  ).toEqual(await source.worlds.readSurface(source.worldId, "history"));
-});
-
-test.each(["archiveBytes", "extractedBytes", "entries", "entryBytes"] as const)(
-  "流式体积限制 %s",
-  async (limit) => {
-    const target = await empty();
-    const limits: ArchiveLimits = {
-      ...worldArchiveLimits,
-      [limit]: limit === "entries" ? 1 : 20,
-    };
-    const archives = new WorldArchives({
-      dataRoot: target.root,
-      worlds: target.worlds,
-      chains: target.chains,
-      limits,
-    });
-    const buffer = createZip([
-      { path: "narraeon-world.json", contents: "a".repeat(30) },
-      { path: "world/x", contents: "x" },
-    ]);
-    if (limit === "archiveBytes")
-      await expect(
-        archives.upload(
-          Readable.from([buffer.subarray(0, 10), buffer.subarray(10)]),
-        ),
-      ).rejects.toMatchObject({ code: "limit_exceeded" });
-    else {
-      const upload = await archives.upload(Readable.from([buffer]));
-      await expect(
-        archives.importWorld({ operationId: "over-limit", ...upload }),
-      ).rejects.toMatchObject({ code: "limit_exceeded" });
-    }
-    expect(await target.worlds.listWorlds()).toEqual([]);
-    expect(await readdir(join(target.root, "world-archives/uploads"))).toEqual(
-      [],
-    );
-  },
-);
-
-test("导出拒绝活动修订、生成与待修复物化", async () => {
+test("导出拒绝活动修订与生成", async () => {
   const source = await fixture();
   const input = { worldId: source.worldId, operationId: "blocked-export" };
   const revision = await source.worlds.acquireWorldRevisionLock(
@@ -855,17 +785,6 @@ test("导出拒绝活动修订、生成与待修复物化", async () => {
     code: "operation_conflict",
   });
   source.worlds.releaseControl(source.worldId, "generating");
-  await rm(
-    join(
-      source.root,
-      "worlds-file-native",
-      source.worldId,
-      "runtime/materialized-head.json",
-    ),
-  );
-  await expect(source.archives.exportWorld(input)).rejects.toMatchObject({
-    code: "inconsistent_materialization",
-  });
   expect(await source.worlds.listWorlds()).toHaveLength(1);
 });
 

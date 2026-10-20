@@ -21,8 +21,18 @@ import {
   continuityHeadFile,
   FileNativeAuthorityV3,
   type FileNativeAuthorityCommitV3,
+  type FileNativeAuthorityRecoveredEndpoint,
 } from "./FileNativeAuthorityV3.ts";
-import { projectFileNativeHistorySurface } from "./FileNativeHistoryProjection.ts";
+import {
+  projectFileNativeHistorySurface,
+  projectHistoryBackgrounds,
+} from "./FileNativeHistoryProjection.ts";
+import type { WorldTurnCommit } from "./WorldLedgerAuthority.ts";
+import { WorldLedgerAuthority } from "./WorldLedgerAuthority.ts";
+import type {
+  WorldTurnFileBefore,
+  WorldTurnRecord,
+} from "./WorldTurnLedger.ts";
 
 const currentAuthorityHeadFile = "play-authority-head.json";
 const releasedAuthorityFile = "play-authority.json";
@@ -126,12 +136,21 @@ export class FileNativeWorldStorageMigrator {
     assertIdentity(worldId, "World ID");
     const worldRoot = join(this.#worldsRoot, worldId);
     const runtimeRoot = join(worldRoot, "runtime");
-    const currentAuthority = new FileNativeAuthorityV3(worldRoot);
-    if (await currentAuthority.exists()) {
-      const head = await currentAuthority.readHead();
+    const ledger = new WorldLedgerAuthority(worldRoot);
+    if (await ledger.exists()) {
+      const head = await ledger.readHead();
       return {
         outcome: "already_current",
         authorityCommits: head.sequence,
+        callChainContexts: 0,
+      };
+    }
+    const currentAuthority = new FileNativeAuthorityV3(worldRoot);
+    if (await currentAuthority.exists()) {
+      const { commits } = await convertAuthorityV3ToLedger(worldRoot);
+      return {
+        outcome: "migrated",
+        authorityCommits: commits,
         callChainContexts: 0,
       };
     }
@@ -254,9 +273,11 @@ export class FileNativeWorldStorageMigrator {
     checkpoint: CurrentMaterializedCheckpoint;
     callChainContexts: number;
   }): Promise<FileNativeWorldStorageMigrationResult> {
-    return migrateCurrentAuthorityToV3({
+    const result = await migrateCurrentAuthorityToV3({
       ...input,
     });
+    const { commits } = await convertAuthorityV3ToLedger(input.worldRoot);
+    return { ...result, authorityCommits: commits };
   }
 }
 
@@ -1458,4 +1479,218 @@ async function publishImmutableJson(
   } finally {
     await rm(temporary, { force: true });
   }
+}
+
+/**
+ * Convert the Authority V3 fact chain into the current-files-plus-turn-ledger
+ * layout. Every endpoint is recovered from V3, consecutive endpoints give each
+ * turn's before-images, and a timeline revision folds into one turn that
+ * restores its logical parent, so committed numbering stays unchanged. V3 stays
+ * authoritative until head.json is published last; an interrupted conversion
+ * simply runs again.
+ */
+export async function convertAuthorityV3ToLedger(
+  worldRoot: string,
+): Promise<{ commits: number }> {
+  const authority = new FileNativeAuthorityV3(worldRoot);
+  const head = await authority.readHead();
+  const { commits } = await authority.readHistory();
+  const genesis = await authority.recover("genesis");
+  const endpoints = new Map<number, Map<string, string>>([
+    [0, endpointFiles(genesis)],
+  ]);
+  const basisPositions = new Map<number, number>();
+  let records: WorldTurnRecord[] = [];
+  for (const commit of commits) {
+    const revision = commit.timelineRevision;
+    const basisHead = revision?.restoresHead ?? commit.auditParent.head;
+    const basisPosition = headPositionOf(basisHead);
+    const basis =
+      endpoints.get(basisPosition) ??
+      endpointFiles(await authority.recover(basisHead));
+    const target = endpointFiles(await authority.recover(commit.head));
+    endpoints.set(commit.sequence, target);
+    basisPositions.set(commit.sequence, basisPosition);
+    if (revision !== undefined)
+      records = records.filter((record) => record.sequence <= basisPosition);
+    records.push({
+      sequence: commit.sequence,
+      mode: commit.mode === "correction" ? "correction" : "play",
+      createdAt: new Date().toISOString(),
+      ...(revision === undefined ? {} : { restoresSequence: basisPosition }),
+      payload: payloadOf(
+        commit,
+        basisHead,
+        commit.sequence === head.sequence ? head.operationId : null,
+      ),
+      files: diffEndpoints(basis, target),
+    });
+  }
+
+  // 逆向回放：从最终端点倒推每一轮，必须逐轮复现它的基底端点。
+  const finalFiles = endpoints.get(head.sequence);
+  if (finalFiles === undefined)
+    throw new Error("Authority V3 head has no recovered endpoint");
+  const current = new Map(finalFiles);
+  for (const record of [...records].reverse()) {
+    for (const file of record.files) {
+      if (file.before === null) current.delete(file.path);
+      else current.set(file.path, file.before);
+    }
+    const expected = endpoints.get(basisPositions.get(record.sequence) ?? -1);
+    if (expected === undefined || !sameFiles(current, expected))
+      throw new Error(
+        `World ledger migration cannot reproduce the endpoint before commit ${String(record.sequence)}`,
+      );
+  }
+
+  for (const directory of [
+    "state",
+    "history",
+    join("runtime", "history-backgrounds"),
+  ])
+    await replaceDirectoryFiles(worldRoot, directory, finalFiles);
+  await publishText(
+    join(worldRoot, "runtime", "additional-materials.json"),
+    finalFiles.get(join("runtime", "additional-materials.json")) ?? "",
+  );
+  await rm(join(worldRoot, "runtime", "turns"), {
+    recursive: true,
+    force: true,
+  });
+  for (const record of records)
+    await publishJson(
+      join(
+        worldRoot,
+        "runtime",
+        "turns",
+        `${String(record.sequence).padStart(8, "0")}.json`,
+      ),
+      record,
+    );
+  await publishJson(join(worldRoot, "runtime", "head.json"), {
+    sequence: head.sequence,
+  });
+
+  // 账本已经发布：V3 与物化文件不再被读取，移除它们。
+  for (const retired of [
+    join("runtime", authorityV3Directory),
+    join("runtime", continuityHeadFile),
+    join("runtime", "materialized-head.json"),
+    join("runtime", "play-commits"),
+    join("runtime", ".authority-v3-migration"),
+    join("runtime", "play-authority-head.json"),
+  ])
+    await rm(join(worldRoot, retired), { recursive: true, force: true });
+  return { commits: commits.length };
+}
+
+function headPositionOf(head: string): number {
+  if (head === "genesis") return 0;
+  const match = /^commit:([1-9][0-9]*)$/u.exec(head);
+  if (match === null) throw new Error(`Authority endpoint is invalid: ${head}`);
+  return Number.parseInt(match[1]!, 10);
+}
+
+function endpointFiles(
+  endpoint: FileNativeAuthorityRecoveredEndpoint,
+): Map<string, string> {
+  const files = new Map<string, string>();
+  for (const file of endpoint.state)
+    files.set(`state/${file.path}`, file.contents);
+  for (const file of projectFileNativeHistorySurface(
+    endpoint.history,
+    (messageId) => {
+      throw new Error(
+        `History-message identity cannot form a path: ${messageId}`,
+      );
+    },
+  ))
+    files.set(`history/${file.path}`, file.contents);
+  for (const file of projectHistoryBackgrounds(endpoint.history))
+    files.set(`runtime/history-backgrounds/${file.path}`, file.contents);
+  files.set(
+    join("runtime", "additional-materials.json"),
+    `${JSON.stringify({ head: endpoint.head, items: endpoint.additionalMaterials }, null, 2)}\n`,
+  );
+  return files;
+}
+
+function diffEndpoints(
+  basis: ReadonlyMap<string, string>,
+  target: ReadonlyMap<string, string>,
+): WorldTurnFileBefore[] {
+  const paths = new Set([...basis.keys(), ...target.keys()]);
+  const changed: WorldTurnFileBefore[] = [];
+  for (const path of [...paths].sort()) {
+    const before = basis.get(path) ?? null;
+    if ((target.get(path) ?? null) !== before) changed.push({ path, before });
+  }
+  return changed;
+}
+
+function sameFiles(
+  left: ReadonlyMap<string, string>,
+  right: ReadonlyMap<string, string>,
+): boolean {
+  if (left.size !== right.size) return false;
+  for (const [path, contents] of left)
+    if (right.get(path) !== contents) return false;
+  return true;
+}
+
+function payloadOf(
+  commit: FileNativeAuthorityCommitV3,
+  parentHead: string,
+  operationId: string | null,
+): WorldTurnCommit {
+  return {
+    sequence: commit.sequence,
+    head: commit.head,
+    operationId,
+    parentHead,
+    mode: commit.mode === "correction" ? "correction" : "play",
+    ...(commit.playContext === undefined
+      ? {}
+      : { playContext: commit.playContext }),
+    ...(commit.worldClock === undefined
+      ? {}
+      : { worldClock: commit.worldClock }),
+    historyAppend: structuredClone([...commit.historyAppend]),
+    stateChanges: commit.stateChanges.map(({ nextBlob, ...stored }) => {
+      void nextBlob;
+      return structuredClone(stored);
+    }),
+    nextAdditionalMaterials: structuredClone([
+      ...commit.nextAdditionalMaterials,
+    ]),
+    ...(commit.correctionTargets === undefined
+      ? {}
+      : { correctionTargets: [...commit.correctionTargets] }),
+    ...(commit.corrects === undefined ? {} : { corrects: commit.corrects }),
+    ...(commit.narrativeCheckpoint === undefined
+      ? {}
+      : { narrativeCheckpoint: structuredClone(commit.narrativeCheckpoint) }),
+  };
+}
+
+async function replaceDirectoryFiles(
+  worldRoot: string,
+  directory: string,
+  files: ReadonlyMap<string, string>,
+): Promise<void> {
+  const prefix = `${directory}/`;
+  const root = join(worldRoot, directory);
+  await rm(root, { recursive: true, force: true });
+  for (const [path, contents] of files) {
+    if (!path.startsWith(prefix)) continue;
+    await publishText(join(worldRoot, path), contents);
+  }
+}
+
+async function publishText(path: string, contents: string): Promise<void> {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  await writeFile(temporary, contents, { encoding: "utf8", mode: 0o600 });
+  await rename(temporary, path);
 }

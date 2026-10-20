@@ -918,7 +918,6 @@ export class PlayCallChain {
     targetWorldRoot?: string;
     identityPrefix?: "import";
     resetPackageScriptPermissions?: boolean;
-    requireMaterialized?: boolean;
     retainCompleteTimeline?: true;
   }): Promise<{
     outcome: "derived";
@@ -1120,16 +1119,12 @@ export class PlayCallChain {
       const commit = authority.commits.find(
         ({ head }) => head === appliedEvent.committedHead,
       );
+      // 修改稿以同一父端点与同一原文提交；两者都相同才视为同一次请求的重放。
       if (
-        commit?.mode !== "timeline_revision" ||
-        commit.timelineRevision?.restoresHead !== requestedRestoresHead ||
-        commit.timelineRevision.replacesHead !== requestedEvent.committedHead ||
-        commit.timelineRevision.requestFingerprint !==
-          playerRevisionRequestFingerprint(
-            input,
-            requestedEvent.committedHead,
-            requestedRestoresHead,
-          )
+        commit?.mode !== "play" ||
+        commit.parentHead !== requestedRestoresHead ||
+        commit.historyAppend.find(({ role }) => role === "player")
+          ?.exactText !== input.replacementText
       )
         throw new PlayCallChainError(
           "The replacement exchange ID is already used by another commit.",

@@ -115,6 +115,19 @@ test("连续性修正、时间线修订、旧端点分叉和世界修订应用�
     excerpt: "船已经离港。",
     playerTurns: 1,
   });
+  // 修订会丢弃 second 之后的端点，所以先从仍可达的 second 分叉。
+  clock.mockReturnValue(now + 3500);
+  const fork = await fixture.store.deriveWorld({
+    operationId: "fork-old-endpoint",
+    sourceWorldId: fixture.worldId,
+    sourceHead: second.head,
+    hostPresetId: "host-activity",
+  });
+  expect(fork.world).toMatchObject({
+    lastActivityAt: now + 3500,
+    excerpt: "船已经离港。",
+    playerTurns: 1,
+  });
   clock.mockReturnValue(now + 4000);
   const revision = await fixture.store.reviseTimeline({
     operationId: "edit-player",
@@ -130,21 +143,6 @@ test("连续性修正、时间线修订、旧端点分叉和世界修订应用�
     lastActivityAt: now + 4000,
     excerpt: "雾港的灯亮了。 你站在码头。",
     playerTurns: 1,
-  });
-  clock.mockReturnValue(now + 5000);
-  const fork = await fixture.store.deriveWorld({
-    operationId: "fork-old-endpoint",
-    sourceWorldId: fixture.worldId,
-    sourceHead: second.head,
-    hostPresetId: "host-activity",
-  });
-  expect(fork.world).toMatchObject({
-    lastActivityAt: now + 5000,
-    excerpt: "船已经离港。",
-    playerTurns: 1,
-  });
-  expect(await activity(fixture.root, fixture.worldId)).toMatchObject({
-    lastActivityAt: now + 4000,
   });
   const workspace = new WorldRevisionWorkspace({
     store: new FileNativeWorldRevisionStore(fixture.root),
@@ -295,14 +293,8 @@ test("缓存写入失败只记录日志，不影响已接受提交或列表", as
   expect(warning).toHaveBeenCalled();
 });
 
-test("物化落后时不把旧历史缓存为新 head，恢复后重建时间为空", async () => {
+test("缓存头与当前端点不一致时从 history/ 重建摘要，重建时间保持为空", async () => {
   const fixture = await world();
-  const headPath = join(
-    fixture.root,
-    "worlds-file-native",
-    fixture.worldId,
-    "runtime/materialized-head.json",
-  );
   const committed = await play(
     fixture,
     "雨停了。",
@@ -311,29 +303,21 @@ test("物化落后时不把旧历史缓存为新 head，恢复后重建时间为
     now + 1000,
   );
   await writeFile(
-    headPath,
+    activityPath(fixture.root, fixture.worldId),
     JSON.stringify({
-      schemaVersion: 3,
+      schemaVersion: 1,
       head: "genesis",
-      sequence: 0,
-      commitDigest: null,
+      lastActivityAt: null,
+      excerpt: null,
+      playerTurns: 0,
     }),
   );
-  await rm(activityPath(fixture.root, fixture.worldId));
-  expect(await fixture.store.listWorlds()).toMatchObject([
-    { lastActivityAt: null, excerpt: null, playerTurns: 0 },
-  ]);
-  await expect(
-    readFile(activityPath(fixture.root, fixture.worldId)),
-  ).rejects.toMatchObject({ code: "ENOENT" });
-  await expect(
-    fixture.store.repairMaterialization(fixture.worldId),
-  ).resolves.toMatchObject({ outcome: "committed", head: committed.head });
   expect(await fixture.store.listWorlds()).toMatchObject([
     { lastActivityAt: null, excerpt: "雨停了。" },
   ]);
   expect(await activity(fixture.root, fixture.worldId)).toMatchObject({
     head: committed.head,
+    excerpt: "雨停了。",
   });
 });
 

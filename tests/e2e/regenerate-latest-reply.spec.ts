@@ -167,11 +167,10 @@ test("重新生成最新回复追加一次时间线修订，保留原文和旧�
     ).toHaveLength(1);
 
     const after = await store.readAuthorityHistory(worldId);
-    const added = after.commits.slice(before.commits.length);
-    expect(added.map(({ mode }) => mode)).toEqual([
-      "timeline_revision",
-      "play",
-    ]);
+    // 修订会丢弃被替换消息之后的提交，新增的两轮是列表末尾。
+    const added = after.commits.slice(-2);
+    // 修订先回退到被替换消息的父端点，再以普通游玩提交追加修改稿（轮号不重用）。
+    expect(added.map(({ mode }) => mode)).toEqual(["play", "play"]);
     expect(added[0]!.historyAppend).toEqual([
       expect.objectContaining({ role: "player", exactText: originalText }),
     ]);
@@ -181,16 +180,15 @@ test("重新生成最新回复追加一次时间线修订，保留原文和旧�
         exactText: "重新生成的第二段回复",
       }),
     ]);
-    expect(added[0]!.auditParent.head).toBe(before.head);
-    expect(added[0]!.timelineParent.head).toBe(before.commits[1]!.head);
+    expect(added[0]!.parentHead).toBe(before.commits[1]!.head);
     const recovered = await store.recoverEndpoint(worldId, after.head);
     expect(
       recovered.history
         .filter(({ role }) => role === "player")
         .map(({ exactText }) => exactText),
     ).toEqual(["第一次行动", originalText]);
-    const oldEndpoint = await store.recoverEndpoint(worldId, before.head);
-    expect(oldEndpoint.history.at(-1)?.exactText).toBe("原来的第二段回复");
+    // 被替换的旧端点已被丢弃，不再可达。
+    await expect(store.recoverEndpoint(worldId, before.head)).rejects.toThrow();
     const workspace = await runtime<{ worlds: { worldId: string }[] }>(page, {
       type: "workspace.read",
     });

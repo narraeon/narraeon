@@ -163,8 +163,7 @@ test("文档修正先读后 patch、Preview并追加 correction commit", async (
   const trace = await store.readAuthorityHistory(worldId);
   expect(trace.commits[0]).toMatchObject({
     mode: "correction",
-    auditParent: { head: "genesis" },
-    timelineParent: { head: "genesis" },
+    parentHead: "genesis",
     head: "commit:1",
     correctionTargets: ["character.alex"],
   });

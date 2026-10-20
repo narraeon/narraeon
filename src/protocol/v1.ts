@@ -188,7 +188,6 @@ export type V1Request =
   | { type: "artifacts.read"; worldId: string; channel?: string }
   | { type: "artifacts.debug"; worldId: string; operationId?: string }
   | { type: "world.creation-outcome"; operationId: string }
-  | { type: "world.repair-materialization"; worldId: string }
   | {
       type: "world.control-draft.save";
       worldId: string;
@@ -988,7 +987,6 @@ const requiredFields: Record<
   "artifacts.read": { worldId: "string" },
   "artifacts.debug": { worldId: "string" },
   "world.creation-outcome": { operationId: "string" },
-  "world.repair-materialization": { worldId: "string" },
   "world.control-draft.save": { worldId: "string", files: "array" },
   "world.control-draft.preview": { worldId: "string" },
   "world.control-draft.apply": { worldId: "string" },
@@ -1532,7 +1530,6 @@ const requestTypes = new Set([
   "artifacts.read",
   "artifacts.debug",
   "world.creation-outcome",
-  "world.repair-materialization",
   "world.control-draft.save",
   "world.control-draft.preview",
   "world.control-draft.apply",
