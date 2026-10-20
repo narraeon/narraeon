@@ -1,20 +1,10 @@
 import {
   isNarrativeOrigin,
-  isHistoryBackground,
   type NarrativeOrigin,
-  type HistoryBackground,
 } from "../history/HistoryBackground.ts";
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { NarrativeCheckpointDeclaration } from "./PlayContinuity.ts";
-import {
-  link,
-  mkdir,
-  open,
-  readFile,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
@@ -22,14 +12,17 @@ import type { V1PlayCallChainEvent } from "../../protocol/v1.ts";
 import type {
   ModelHostAppendItem,
   ModelHostExchange,
-  ModelHostResponse,
 } from "../model/ModelHost.ts";
 import type { FileNativeStateChange } from "../world/FileNativeWorldStore.ts";
 import type { PlayDocumentAuthorizationCheckpoint } from "./PlayDocumentTools.ts";
 import type { PersistedCompletedToolCall } from "./FileNativePlayTimelineStore.ts";
+import type { HistoryBackground } from "../history/HistoryBackground.ts";
 
-export type DurableModelHostResponse = Omit<ModelHostResponse, "diagnostics">;
-
+/**
+ * In-memory result of settling one model response. It is never persisted:
+ * a process that dies mid-generation is recovered by marking the exchange
+ * interrupted and letting the player retry (ADR-0044).
+ */
 export interface PreparedPlayResponseSettlement {
   background?: HistoryBackground;
   playContext?: string;
@@ -83,54 +76,13 @@ export type PlayAdvanceBase =
       createdAt: number;
     };
 
-interface ProviderCompletedFact {
-  schemaVersion: 1;
-  stage: "provider_completed";
-  response: DurableModelHostResponse;
-  recordedAt: number;
-}
-
-interface SettlementPreparedFact {
-  schemaVersion: 1;
-  stage: "settlement_prepared";
-  settlement: PreparedPlayResponseSettlement;
-  recordedAt: number;
-}
-
-interface SettledFact {
-  schemaVersion: 1;
-  stage: "settled";
-  head: string;
-  recordedAt: number;
-}
-
-interface ResolutionSeedFact {
-  schemaVersion: 1;
-  stage: "resolution_seed";
-  seed: string;
-  recordedAt: number;
-}
-
-interface CurrentAdvancePointer {
-  schemaVersion: 1;
-  worldId: string;
-  chainId: string;
-  advanceId: string;
-}
-
-export interface LoadedPlayAdvance {
-  base: PlayAdvanceBase;
-  providerCompleted: ProviderCompletedFact | null;
-  settlementPrepared: SettlementPreparedFact | null;
-  settled: SettledFact | null;
-}
-
 /**
- * Durable progress facts for the one play advance currently being settled.
+ * The single in-progress play advance of a call chain, if any.
  *
- * Every stage is immutable. `current.json` is only a small lookup projection;
- * deleting it cannot change Authority and a repeated user operation keeps the
- * same deterministic advance identity.
+ * It exists only between `begin` and `markSettled`. A marker that survives a
+ * restart means the advance was interrupted; the runtime marks the chain
+ * interrupted and the player retries. Legacy records from earlier layouts are
+ * ignored, so they never block a world from opening.
  */
 export class FileNativePlayAdvanceStore {
   readonly #worldsRoot: string;
@@ -142,169 +94,46 @@ export class FileNativePlayAdvanceStore {
   async begin(base: PlayAdvanceBase): Promise<void> {
     assertBase(base);
     const current = await this.readCurrent(base.worldId, base.chainId);
-    if (current !== null && current.settled === null) {
-      if (!sameAdvanceBase(current.base, base))
+    if (current !== null) {
+      if (!sameAdvanceBase(current, base))
         throw new Error("Another play advance is still awaiting settlement");
       return;
     }
-    const basePath = this.#factPath(base, "base.json");
-    const existing = await readOptionalJson<unknown>(basePath);
-    if (existing === null) await publishImmutableJson(basePath, base);
-    else {
-      assertBase(existing);
-      if (!sameAdvanceBase(existing, base))
-        throw new Error("A play advance identity is bound to different data");
-    }
-    await publishJson(this.#currentPath(base.worldId, base.chainId), {
-      schemaVersion: 1,
-      worldId: base.worldId,
-      chainId: base.chainId,
-      advanceId: base.advanceId,
-    } satisfies CurrentAdvancePointer);
-  }
-
-  async recordProviderCompleted(
-    base: Extract<PlayAdvanceBase, { advanceKind: "response" }>,
-    response: DurableModelHostResponse,
-  ): Promise<void> {
-    const durableBase = await this.#assertCurrent(base);
-    await publishImmutableJson(
-      this.#factPath(base, "provider-completed.json"),
-      {
-        schemaVersion: 1,
-        stage: "provider_completed",
-        response: structuredClone(response),
-        recordedAt: durableBase.createdAt,
-      } satisfies ProviderCompletedFact,
-    );
-  }
-
-  async recordSettlementPrepared(
-    base: Extract<PlayAdvanceBase, { advanceKind: "response" }>,
-    settlement: PreparedPlayResponseSettlement,
-  ): Promise<void> {
-    const durableBase = await this.#assertCurrent(base);
-    await publishImmutableJson(
-      this.#factPath(base, "settlement-prepared.json"),
-      {
-        schemaVersion: 1,
-        stage: "settlement_prepared",
-        settlement: structuredClone(settlement),
-        recordedAt: durableBase.createdAt,
-      } satisfies SettlementPreparedFact,
-    );
-  }
-
-  /**
-   * Return the advance's secret resolution seed, creating it on first need.
-   * Recovery reads the same fact, so every tool call in the advance draws from
-   * one persisted stream and a crashed batch cannot resample.
-   */
-  async resolutionSeed(
-    base: Extract<PlayAdvanceBase, { advanceKind: "response" }>,
-  ): Promise<string> {
-    const durableBase = await this.#assertCurrent(base);
-    const path = this.#factPath(base, "resolution-seed.json");
-    if ((await readOptionalJson<unknown>(path)) === null) {
-      try {
-        await publishImmutableJson(path, {
-          schemaVersion: 1,
-          stage: "resolution_seed",
-          seed: randomBytes(32).toString("hex"),
-          recordedAt: durableBase.createdAt,
-        } satisfies ResolutionSeedFact);
-      } catch (error: unknown) {
-        // A concurrent writer may have published first; the stored fact wins.
-        if ((await readOptionalJson<unknown>(path)) === null) throw error;
-      }
-    }
-    const fact = await readJson<unknown>(path);
-    assertResolutionSeedFact(fact);
-    return fact.seed;
-  }
-
-  async markSettled(base: PlayAdvanceBase, head: string): Promise<void> {
-    const durableBase = await this.#assertCurrent(base);
-    await publishImmutableJson(this.#factPath(base, "settled.json"), {
-      schemaVersion: 1,
-      stage: "settled",
-      head,
-      recordedAt: durableBase.createdAt,
-    } satisfies SettledFact);
+    await publishJson(this.#markerPath(base.worldId, base.chainId), base);
   }
 
   async readCurrent(
     worldId: string,
     chainId: string,
-  ): Promise<LoadedPlayAdvance | null> {
+  ): Promise<PlayAdvanceBase | null> {
     assertIdentity(worldId, "World ID");
     assertIdentity(chainId, "Call-chain ID");
-    const pointer = await readOptionalJson<unknown>(
-      this.#currentPath(worldId, chainId),
+    const value = await readOptionalJson<unknown>(
+      this.#markerPath(worldId, chainId),
     );
-    if (pointer === null) return null;
-    assertPointer(pointer);
-    if (pointer.worldId !== worldId || pointer.chainId !== chainId)
-      throw new Error("Play advance pointer belongs to another context");
-    const recordRoot = this.#recordRoot(worldId, chainId, pointer.advanceId);
-    const [base, providerCompleted, settlementPrepared, settled] =
-      await Promise.all([
-        readJson<unknown>(join(recordRoot, "base.json")),
-        readOptionalJson<ProviderCompletedFact>(
-          join(recordRoot, "provider-completed.json"),
-        ),
-        readOptionalJson<SettlementPreparedFact>(
-          join(recordRoot, "settlement-prepared.json"),
-        ),
-        readOptionalJson<SettledFact>(join(recordRoot, "settled.json")),
-      ]);
-    assertBase(base);
-    if (
-      base.worldId !== worldId ||
-      base.chainId !== chainId ||
-      base.advanceId !== pointer.advanceId
-    )
-      throw new Error("Play advance durable identity is inconsistent");
-    assertProviderCompleted(providerCompleted);
-    assertSettlementPrepared(settlementPrepared);
-    assertSettled(settled);
-    return { base, providerCompleted, settlementPrepared, settled };
+    if (value === null) return null;
+    assertBase(value);
+    if (value.worldId !== worldId || value.chainId !== chainId)
+      throw new Error("Play advance marker belongs to another context");
+    return value;
   }
 
-  async #assertCurrent(base: PlayAdvanceBase): Promise<PlayAdvanceBase> {
+  async markSettled(base: PlayAdvanceBase): Promise<void> {
     const current = await this.readCurrent(base.worldId, base.chainId);
-    if (current === null || !sameAdvanceBase(current.base, base))
+    if (current === null) return;
+    if (!sameAdvanceBase(current, base))
       throw new Error("Play advance is no longer current");
-    return current.base;
+    await rm(this.#markerPath(base.worldId, base.chainId), { force: true });
   }
 
-  #currentPath(worldId: string, chainId: string): string {
+  #markerPath(worldId: string, chainId: string): string {
     return join(
       this.#worldsRoot,
       worldId,
       "runtime",
       "play-advances",
       digest(chainId),
-      "current.json",
-    );
-  }
-
-  #recordRoot(worldId: string, chainId: string, advanceId: string): string {
-    return join(
-      this.#worldsRoot,
-      worldId,
-      "runtime",
-      "play-advances",
-      digest(chainId),
-      "records",
-      digest(advanceId),
-    );
-  }
-
-  #factPath(base: PlayAdvanceBase, name: string): string {
-    return join(
-      this.#recordRoot(base.worldId, base.chainId, base.advanceId),
-      name,
+      "in-progress.json",
     );
   }
 }
@@ -318,20 +147,6 @@ function sameAdvanceBase(
   void leftCreatedAt;
   void rightCreatedAt;
   return isDeepStrictEqual(leftIdentity, rightIdentity);
-}
-
-function assertResolutionSeedFact(
-  value: unknown,
-): asserts value is ResolutionSeedFact {
-  if (
-    !isRecord(value) ||
-    value.schemaVersion !== 1 ||
-    value.stage !== "resolution_seed" ||
-    typeof value.seed !== "string" ||
-    !/^[a-f0-9]{64}$/.test(value.seed) ||
-    typeof value.recordedAt !== "number"
-  )
-    throw new Error("Invalid persisted resolution seed");
 }
 
 function assertBase(value: unknown): asserts value is PlayAdvanceBase {
@@ -377,52 +192,6 @@ function assertBase(value: unknown): asserts value is PlayAdvanceBase {
     throw new Error("Response advance has an invalid shape");
 }
 
-function assertPointer(value: unknown): asserts value is CurrentAdvancePointer {
-  if (
-    !isRecord(value) ||
-    value.schemaVersion !== 1 ||
-    typeof value.worldId !== "string" ||
-    typeof value.chainId !== "string" ||
-    typeof value.advanceId !== "string"
-  )
-    throw new Error("Play advance pointer has an invalid shape");
-}
-
-function assertProviderCompleted(value: ProviderCompletedFact | null): void {
-  if (
-    value !== null &&
-    (value.schemaVersion !== 1 ||
-      value.stage !== "provider_completed" ||
-      !isRecord(value.response) ||
-      typeof value.recordedAt !== "number")
-  )
-    throw new Error("Provider-completed play fact has an invalid shape");
-}
-
-function assertSettlementPrepared(value: SettlementPreparedFact | null): void {
-  if (
-    value !== null &&
-    (value.schemaVersion !== 1 ||
-      value.stage !== "settlement_prepared" ||
-      !isRecord(value.settlement) ||
-      (value.settlement.background !== undefined &&
-        !isHistoryBackground(value.settlement.background)) ||
-      typeof value.recordedAt !== "number")
-  )
-    throw new Error("Settlement-prepared play fact has an invalid shape");
-}
-
-function assertSettled(value: SettledFact | null): void {
-  if (
-    value !== null &&
-    (value.schemaVersion !== 1 ||
-      value.stage !== "settled" ||
-      typeof value.head !== "string" ||
-      typeof value.recordedAt !== "number")
-  )
-    throw new Error("Settled play fact has an invalid shape");
-}
-
 function digest(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -436,19 +205,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-async function readJson<T>(path: string): Promise<T> {
-  return JSON.parse(await readFile(path, "utf8")) as T;
-}
-
 async function readOptionalJson<T>(path: string): Promise<T | null> {
   try {
-    return await readJson<T>(path);
+    return JSON.parse(await readFile(path, "utf8")) as T;
   } catch (error: unknown) {
     if (isNodeError(error) && error.code === "ENOENT") return null;
     throw error;
   }
 }
 
+/** Atomic publish: write a temporary file, then rename over the target. */
 async function publishJson(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const temporary = `${path}.${randomUUID()}.tmp`;
@@ -456,59 +222,7 @@ async function publishJson(path: string, value: unknown): Promise<void> {
     encoding: "utf8",
     mode: 0o600,
   });
-  await syncFile(temporary);
   await rename(temporary, path);
-  await syncDirectory(dirname(path));
-}
-
-async function publishImmutableJson(
-  path: string,
-  value: unknown,
-): Promise<void> {
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  const existing = await readOptionalJson<unknown>(path);
-  if (existing !== null) {
-    if (!isDeepStrictEqual(existing, value))
-      throw new Error("Immutable play-advance fact already has different data");
-    return;
-  }
-  const temporary = `${path}.${randomUUID()}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
-  });
-  await syncFile(temporary);
-  try {
-    await link(temporary, path);
-  } catch (error: unknown) {
-    if (!isNodeError(error) || error.code !== "EEXIST") throw error;
-    const published = await readJson<unknown>(path);
-    if (!isDeepStrictEqual(published, value))
-      throw new Error("Concurrent immutable play-advance fact conflicts", {
-        cause: error,
-      });
-  } finally {
-    await rm(temporary, { force: true });
-  }
-  await syncDirectory(dirname(path));
-}
-
-async function syncFile(path: string): Promise<void> {
-  const handle = await open(path, "r");
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-}
-
-async function syncDirectory(path: string): Promise<void> {
-  const handle = await open(path, "r");
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {

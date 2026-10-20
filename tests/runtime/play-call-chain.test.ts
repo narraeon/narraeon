@@ -51,20 +51,12 @@ import {
   preparePlayerRevisionTrace,
   prepareForkTrace,
 } from "../../src/runtime/play/PlayTraceRetention.ts";
-import {
-  FileNativePlayAdvanceStore,
-  type PlayAdvanceBase,
-} from "../../src/runtime/play/FileNativePlayAdvanceStore.ts";
 import { FileNativeArtifactStore } from "../../src/runtime/artifact/FileNativeArtifactStore.ts";
 import {
   isResolutionReceipt,
   type ResolutionReceipt,
 } from "../../src/protocol/resolution.ts";
-import {
-  resolutionMarkdown,
-  resolveTabletop,
-  seededRandom,
-} from "../../src/runtime/play/TabletopResolution.ts";
+import { resolutionMarkdown } from "../../src/runtime/play/TabletopResolution.ts";
 import {
   baseRuntimeToolNames,
   registeredRuntimeToolNames,
@@ -781,74 +773,6 @@ test.each([
   },
 );
 
-test("快照准备后进程退出不冒充已发送请求，下一次发送重新编译", async () => {
-  const { worlds, worldId } = await createWorld("prepared-live-prompt");
-  const host = new ScriptedModelHost({
-    binding: modelBinding(),
-    steps: [
-      { outcome: "response", text: "First story." },
-      { outcome: "response", text: "Next story." },
-    ],
-  });
-  const chains = new PlayCallChain(worlds);
-  const first = await chains.start({
-    worldId,
-    chainId: "prepared",
-    exchangeId: "first",
-    playerText: "Start.",
-    hostBinding: hostBinding(),
-    playPreset: playPreset(),
-    modelBinding: modelBinding(),
-    modelHost: host,
-  });
-  const abandoned = playPreset();
-  abandoned.definition.playPrompts!.unshift({
-    kind: "user",
-    id: "abandoned",
-    name: "Abandoned",
-    enabled: true,
-    body: "NEVER SENT RULE",
-  });
-  process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE =
-    "after_prompt_run_prepared";
-  await expect(
-    chains.append({
-      worldId,
-      chainId: "prepared",
-      exchangeId: "abandoned",
-      playerText: "Never submitted.",
-      modelHost: host,
-      resolvePrompt: () =>
-        Promise.resolve({
-          hostBinding: hostBinding(),
-          playPreset: abandoned,
-        }),
-    }),
-  ).rejects.toThrow("after_prompt_run_prepared");
-  delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE;
-  const resumed = new PlayCallChain(worlds);
-  expect(host.requests).toHaveLength(1);
-  expect(
-    JSON.stringify(await resumed.inspectReading(worldId, first.parentHead)),
-  ).not.toContain("NEVER SENT RULE");
-  const next = await resumed.append({
-    worldId,
-    chainId: "prepared",
-    exchangeId: "next",
-    playerText: "Actually submitted.",
-    modelHost: host,
-    resolvePrompt: () =>
-      Promise.resolve({
-        hostBinding: hostBinding(),
-        playPreset: playPreset(),
-      }),
-  });
-  expect(host.requests).toHaveLength(2);
-  expect(JSON.stringify(host.requests[1])).not.toContain("NEVER SENT RULE");
-  const reading = await resumed.inspectReading(worldId, next.parentHead);
-  expect(reading?.promptHistory).toHaveLength(2);
-});
-
 test("后置定义与资源跨冷恢复完整保留，旧请求不解析新预设", async () => {
   const { worlds, worldId, root } = await createWorld(
     "live-followup-resources",
@@ -1467,142 +1391,6 @@ test("新的发送与空输入重编译，冷恢复保留原生对话和当轮�
   });
 });
 
-test("推进事实先写入、当前指针尚未发布时，可按同一身份恢复而不改写事实", async () => {
-  const root = await mkdtemp(join(tmpdir(), "narraeon-play-advance-pointer-"));
-  roots.push(root);
-  const store = new FileNativePlayAdvanceStore(root);
-  const base = {
-    schemaVersion: 1,
-    kind: "play_advance",
-    advanceKind: "response",
-    worldId: "world-pointer-recovery",
-    chainId: "chain-pointer-recovery",
-    advanceId: "advance-pointer-recovery",
-    operationId: "operation-pointer-recovery",
-    parentHead: "commit:1",
-    eventId: 2,
-    exchange: 1,
-    attempt: 1,
-    createdAt: 100,
-  } satisfies Extract<PlayAdvanceBase, { advanceKind: "response" }>;
-  await store.begin(base);
-
-  const chainDigest = createHash("sha256").update(base.chainId).digest("hex");
-  await rm(
-    join(
-      root,
-      "worlds-file-native",
-      base.worldId,
-      "runtime",
-      "play-advances",
-      chainDigest,
-      "current.json",
-    ),
-  );
-
-  const retried = { ...base, createdAt: 200 };
-  await store.begin(retried);
-  await store.recordProviderCompleted(retried, { text: "Recovered once." });
-  const recovered = await store.readCurrent(base.worldId, base.chainId);
-  expect(recovered).toMatchObject({
-    base: { createdAt: 100 },
-    providerCompleted: {
-      recordedAt: 100,
-      response: { text: "Recovered once." },
-    },
-  });
-});
-
-test("Provider 完整结果先落盘，冷恢复不重新调用模型即可继续结算", async () => {
-  const { worlds, worldId } = await createWorld(
-    "play-chain-provider-result-recovery",
-  );
-  const modelHost = new ScriptedModelHost({
-    binding: modelBinding(),
-    steps: [
-      {
-        outcome: "response",
-        text: "Alex opens the recovered door exactly once.",
-      },
-    ],
-  });
-  process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE =
-    "after_provider_completed";
-
-  const interrupted = await new PlayCallChain(worlds).start({
-    worldId,
-    chainId: "play-chain-provider-result-recovery",
-    exchangeId: "play-chain-provider-result-recovery-player",
-    playerText: "I ask Alex to open the recovered door.",
-    hostBinding: hostBinding(),
-    playPreset: playPreset(),
-    modelBinding: modelBinding(),
-    modelHost,
-  });
-  expect(interrupted).toMatchObject({
-    status: "interrupted",
-    parentHead: "commit:1",
-  });
-  expect(modelHost.requests).toHaveLength(1);
-
-  delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE;
-  const recovered = await new PlayCallChain(worlds).inspectWorld(worldId);
-  expect(recovered).toMatchObject({
-    status: "ready",
-    parentHead: "commit:2",
-  });
-  expect(modelHost.requests).toHaveLength(1);
-  expect(
-    (await worlds.recoverEndpoint(worldId)).history
-      .map(({ exactText }) => exactText)
-      .filter((text) => text === "Alex opens the recovered door exactly once."),
-  ).toHaveLength(1);
-});
-
-test("派发推进存在但结果未落盘时按 outcome unknown 终止，冷恢复不允许重放", async () => {
-  const { worlds, worldId } = await createWorld(
-    "play-chain-abandoned-dispatch-unknown",
-  );
-  const modelHost = new ScriptedModelHost({
-    binding: modelBinding(),
-    steps: [{ outcome: "response", text: "Must never be dispatched." }],
-  });
-  process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE =
-    "after_response_advance_began";
-
-  await expect(
-    new PlayCallChain(worlds).start({
-      worldId,
-      chainId: "play-chain-abandoned-dispatch-unknown",
-      exchangeId: "play-chain-abandoned-dispatch-player",
-      playerText: "I wait while the service exits.",
-      hostBinding: hostBinding(),
-      playPreset: playPreset(),
-      modelBinding: modelBinding(),
-      modelHost,
-    }),
-  ).rejects.toThrow("after_response_advance_began");
-  expect(modelHost.requests).toHaveLength(0);
-
-  delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE;
-  const recovered = await new PlayCallChain(worlds).inspectWorld(worldId);
-
-  expect(recovered).toMatchObject({
-    status: "interrupted",
-    canRetry: false,
-    lastFailureKind: "outcome_unknown",
-  });
-  expect(
-    recovered?.events.some(
-      (event) =>
-        event.kind === "failure" &&
-        event.failureKind === "outcome_unknown" &&
-        event.message.includes("outcome is unknown"),
-    ),
-  ).toBe(true);
-  expect(modelHost.requests).toHaveLength(0);
-});
-
 test("修正后并发观察与续写：单飞水合不让磁盘快照覆盖运行中的会话", async () => {
   const { worlds, worldId } = await createWorld("play-chain-revise-concurrent");
   const host = new ScriptedModelHost({
@@ -2140,154 +1928,6 @@ test("Provider 派发前取消保留冻结请求，空输入可继续且不重�
     "I ask Alex a question, then pause before dispatch.",
     "Alex answers only after the explicitly resumed request.",
   ]);
-});
-
-test("精确结算已准备但 Authority 尚未接受时，冷恢复提交同一结果", async () => {
-  const { worlds, worldId } = await createWorld(
-    "play-chain-settlement-prepared-recovery",
-  );
-  const modelHost = new ScriptedModelHost({
-    binding: modelBinding(),
-    steps: [
-      {
-        outcome: "response",
-        text: "The prepared response is committed after restart.",
-      },
-    ],
-  });
-  process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE =
-    "after_settlement_prepared";
-
-  const interrupted = await new PlayCallChain(worlds).start({
-    worldId,
-    chainId: "play-chain-settlement-prepared-recovery",
-    exchangeId: "play-chain-settlement-prepared-player",
-    playerText: "I wait for the prepared response.",
-    hostBinding: hostBinding(),
-    playPreset: playPreset(),
-    modelBinding: modelBinding(),
-    modelHost,
-  });
-  expect(interrupted).toMatchObject({
-    status: "interrupted",
-    parentHead: "commit:1",
-  });
-  expect(modelHost.requests).toHaveLength(1);
-
-  delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE;
-  const recovered = await new PlayCallChain(worlds).inspectWorld(worldId);
-  expect(recovered).toMatchObject({ status: "ready", parentHead: "commit:2" });
-  expect(modelHost.requests).toHaveLength(1);
-  expect(
-    (await worlds.readAuthorityHistory(worldId)).commits.filter(
-      ({ historyAppend }) =>
-        historyAppend[0]?.exactText ===
-        "The prepared response is committed after restart.",
-    ),
-  ).toHaveLength(1);
-});
-
-test("页面时间线已落盘但推进尚未标记完成时，冷恢复只补完成标记", async () => {
-  const { worlds, worldId } = await createWorld(
-    "play-chain-timeline-settled-recovery",
-  );
-  const scripted = new ScriptedModelHost({
-    binding: modelBinding(),
-    steps: [
-      {
-        outcome: "response",
-        text: "The projected response remains exactly once.",
-      },
-    ],
-  });
-  const modelHost: ModelHost = {
-    binding: () => scripted.binding(),
-    exchange(request, observer) {
-      process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE =
-        "after_timeline_settled";
-      return scripted.exchange(request, observer);
-    },
-  };
-
-  await expect(
-    new PlayCallChain(worlds).start({
-      worldId,
-      chainId: "play-chain-timeline-settled-recovery",
-      exchangeId: "play-chain-timeline-settled-player",
-      playerText: "I wait for the projected response.",
-      hostBinding: hostBinding(),
-      playPreset: playPreset(),
-      modelBinding: modelBinding(),
-      modelHost,
-    }),
-  ).rejects.toThrow("after_timeline_settled");
-  expect(scripted.requests).toHaveLength(1);
-  expect(await worlds.currentHead(worldId)).toBe("commit:2");
-
-  delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE;
-  const recovered = await new PlayCallChain(worlds).inspectWorld(worldId);
-  expect(recovered).toMatchObject({ status: "ready", parentHead: "commit:2" });
-  expect(scripted.requests).toHaveLength(1);
-  expect(
-    (await worlds.readAuthorityHistory(worldId)).commits.filter(
-      ({ historyAppend }) =>
-        historyAppend[0]?.exactText ===
-        "The projected response remains exactly once.",
-    ),
-  ).toHaveLength(1);
-});
-
-test("Authority 已接受但时间线未结算时，冷恢复补齐同一响应而不重复提交", async () => {
-  const { worlds, worldId } = await createWorld(
-    "play-chain-authority-accepted-recovery",
-  );
-  const scripted = new ScriptedModelHost({
-    binding: modelBinding(),
-    steps: [
-      {
-        outcome: "response",
-        text: "The accepted response survives the process exit.",
-      },
-    ],
-  });
-  const modelHost: ModelHost = {
-    binding: () => scripted.binding(),
-    exchange(request, observer) {
-      process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE =
-        "after_authority_accepted";
-      return scripted.exchange(request, observer);
-    },
-  };
-
-  await expect(
-    new PlayCallChain(worlds).start({
-      worldId,
-      chainId: "play-chain-authority-accepted-recovery",
-      exchangeId: "play-chain-authority-accepted-recovery-player",
-      playerText: "I wait for the accepted response.",
-      hostBinding: hostBinding(),
-      playPreset: playPreset(),
-      modelBinding: modelBinding(),
-      modelHost,
-    }),
-  ).rejects.toThrow("after_authority_accepted");
-  expect(await worlds.currentHead(worldId)).toBe("commit:2");
-  expect(scripted.requests).toHaveLength(1);
-
-  delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE;
-  const recovered = await new PlayCallChain(worlds).inspectWorld(worldId);
-  expect(recovered).toMatchObject({
-    status: "ready",
-    parentHead: "commit:2",
-  });
-  expect(scripted.requests).toHaveLength(1);
-  expect(
-    (await worlds.readAuthorityHistory(worldId)).commits.filter(
-      ({ historyAppend }) =>
-        historyAppend[0]?.exactText ===
-        "The accepted response survives the process exit.",
-    ),
-  ).toHaveLength(1);
 });
 
 test("长调用轨迹按稳定游标读取摘要，重型详情与旧事件不会随尾部追加重写", async () => {
@@ -3148,182 +2788,6 @@ test("登记后补齐收尾承诺，再过一轮切换上下文时仍从状态�
       checkpoint!.historyMessageId
     ],
   ).toBe(closing);
-});
-
-test("检查点登记尚未生效，最终叙事接受后崩溃仍只恢复一次检查点", async () => {
-  const { worlds, worldId } = await createWorld("checkpoint-crash");
-  const scripted = new ScriptedModelHost({
-    binding: modelBinding(),
-    steps: [
-      {
-        outcome: "response",
-        toolCalls: [
-          { id: "checkpoint", name: "world_checkpoint", arguments: {} },
-        ],
-      },
-      { outcome: "response", text: "整理后的一段完整叙事。" },
-    ],
-  });
-  const modelHost: ModelHost = {
-    binding: () => scripted.binding(),
-    async exchange(request, observer) {
-      if (request.exchange === 2) {
-        expect(
-          (await worlds.recoverEndpoint(worldId)).narrativeCheckpoint,
-        ).toBeUndefined();
-        process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE =
-          "after_authority_accepted";
-      }
-      return scripted.exchange(request, observer);
-    },
-  };
-  await expect(
-    new PlayCallChain(worlds).start({
-      worldId,
-      chainId: "checkpoint-crash",
-      exchangeId: "first",
-      playerText: "整理这一段。",
-      hostBinding: hostBinding(),
-      playPreset: playPreset(),
-      modelBinding: modelBinding(),
-      modelHost,
-    }),
-  ).rejects.toThrow("after_authority_accepted");
-  delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE;
-  const recovered = await new PlayCallChain(worlds).inspectWorld(worldId);
-  expect(
-    recovered?.events.filter(
-      (event) => event.kind === "assistant" && event.checkpoint === true,
-    ),
-  ).toHaveLength(1);
-  expect(
-    (await worlds.readAuthorityHistory(worldId)).commits.filter(
-      ({ narrativeCheckpoint }) => narrativeCheckpoint !== undefined,
-    ),
-  ).toHaveLength(1);
-  expect(scripted.requests).toHaveLength(2);
-  const before = await worlds.deriveWorld({
-    operationId: "checkpoint-before",
-    sourceWorldId: worldId,
-    sourceHead: "commit:1",
-    hostPresetId: "host-main",
-  });
-  const after = await worlds.deriveWorld({
-    operationId: "checkpoint-after",
-    sourceWorldId: worldId,
-    sourceHead: "commit:2",
-    hostPresetId: "host-main",
-  });
-  expect(
-    (await worlds.recoverEndpoint(before.world.worldId)).narrativeCheckpoint,
-  ).toBeUndefined();
-  expect(
-    (await worlds.recoverEndpoint(after.world.worldId)).narrativeCheckpoint,
-  ).toMatchObject({
-    head: "commit:2",
-    historyMessageId: "message.2.1.narrator",
-  });
-});
-
-test("仅登记检查点后重启可原样继续，空输入叙事进入重放但不增加玩家回合", async () => {
-  const { worlds, worldId } = await createWorld(
-    "checkpoint-registration-restart",
-  );
-  const scripted = new ScriptedModelHost({
-    binding: modelBinding(),
-    steps: [
-      {
-        outcome: "response",
-        toolCalls: [
-          { id: "checkpoint", name: "world_checkpoint", arguments: {} },
-        ],
-      },
-    ],
-  });
-  const modelHost: ModelHost = {
-    binding: () => scripted.binding(),
-    exchange(request, observer) {
-      process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE =
-        "after_timeline_settled";
-      return scripted.exchange(request, observer);
-    },
-  };
-  const interrupted = await new PlayCallChain(worlds).start({
-    worldId,
-    chainId: "checkpoint-registration-restart",
-    exchangeId: "first",
-    playerText: "把事情整理好。",
-    hostBinding: hostBinding(),
-    playPreset: playPreset(),
-    modelBinding: modelBinding(),
-    modelHost,
-  });
-  expect(interrupted).toMatchObject({
-    status: "interrupted",
-    lastFailure: expect.stringContaining("after_timeline_settled") as unknown,
-  });
-  delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE;
-  expect(
-    (await worlds.recoverEndpoint(worldId)).narrativeCheckpoint,
-  ).toBeUndefined();
-  const restored = new PlayCallChain(worlds);
-  const continuation = new ScriptedModelHost({
-    binding: modelBinding(),
-    steps: [
-      { outcome: "response", text: "Alex 合上笔记本。" },
-      { outcome: "response", text: "窗外的灯亮了起来。" },
-    ],
-  });
-  await restored.append({
-    worldId,
-    chainId: "checkpoint-registration-restart",
-    exchangeId: "retry",
-    playerText: "",
-    modelHost: continuation,
-  });
-  expect(
-    (await worlds.recoverEndpoint(worldId)).narrativeCheckpoint,
-  ).toMatchObject({ completedPlayerRounds: 1 });
-  const prefix = continuation.requests[0]!.appended;
-  await restored.append({
-    worldId,
-    chainId: "checkpoint-registration-restart",
-    exchangeId: "continue",
-    playerText: "",
-    modelHost: continuation,
-  });
-  expect(continuation.requests[1]!.appended.slice(0, prefix.length)).toEqual(
-    prefix,
-  );
-  expect(
-    continuation.requests[1]!.appended.filter(
-      (item) =>
-        item.kind === "runtime_notice" && item.notice === "checkpoint_rounds",
-    ),
-  ).toHaveLength(0);
-  const next = new ScriptedModelHost({
-    binding: modelBinding(),
-    steps: [{ outcome: "response", text: "你看向窗外。" }],
-  });
-  await new PlayCallChain(worlds).start({
-    worldId,
-    chainId: "checkpoint-after-empty",
-    exchangeId: "new",
-    playerText: "看看外面。",
-    hostBinding: hostBinding(),
-    playPreset: playPreset(),
-    modelBinding: modelBinding(),
-    modelHost: next,
-  });
-  expect(next.requests[0]!.appended).toEqual([
-    { kind: "player", text: "看看外面。" },
-  ]);
-  expect(
-    next.requests[0]!.bootstrap.logicalMessages.flatMap(({ blocks }) => blocks)
-      .filter(({ source }) => source.startsWith("runtime:checkpoint-history"))
-      .map(({ markdown }) => markdown)
-      .join("\n"),
-  ).toContain("窗外的灯亮了起来。");
 });
 
 test("已提交写入回执报告下次真实目录覆盖并回显更新后的摘要", async () => {
@@ -7844,228 +7308,6 @@ test("历史背景在工具前冻结，多次工具后提交终点，冷续写�
   expect(read.markdown).toContain(after);
 });
 
-test.each([
-  "after_provider_completed",
-  "after_settlement_prepared",
-  "after_timeline_settled",
-] as const)(
-  "历史背景在 %s 切点恢复只提交一次，不调用 Provider",
-  async (edge) => {
-    const { worlds, worldId, root } = await createWorld(
-      `background-${edge}`,
-      backgroundWorldFiles(),
-    );
-    const scripted = new ScriptedModelHost({
-      binding: modelBinding(),
-      steps: [
-        {
-          outcome: "response",
-          toolCalls: backgroundPatch("advance", "第三天"),
-        },
-        { outcome: "response", text: "明天会到。" },
-      ],
-    });
-    const host: ModelHost = {
-      binding: () => modelBinding(),
-      exchange: async (request, observer) => {
-        if (request.exchange === 2)
-          process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE = edge;
-        return scripted.exchange(request, observer);
-      },
-    };
-    const interrupted = await new PlayCallChain(worlds)
-      .start(backgroundStart(worldId, `background-${edge}`, host))
-      .catch((error: unknown) => {
-        expect(String(error)).toContain("after_timeline_settled");
-        return { chainId: `background-${edge}` };
-      });
-    delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE;
-    const coldWorlds = new FileNativeWorldStore(root);
-    await new PlayCallChain(coldWorlds).inspectWorld(worldId);
-    const recovered = await coldWorlds.recoverEndpoint(worldId);
-    expect(
-      recovered.history.filter(({ exactText }) => exactText === "明天会到。"),
-    ).toHaveLength(1);
-    expect(recovered.history.at(-1)?.background).toEqual({
-      kind: "narrative",
-      before: "时间: 第一天\n地点: 客栈",
-      after: "时间: 第三天\n地点: 山门",
-    });
-    expect(scripted.requests).toHaveLength(2);
-    await new PlayCallChain(coldWorlds).inspectWorld(worldId);
-    expect((await coldWorlds.recoverEndpoint(worldId)).history).toEqual(
-      recovered.history,
-    );
-    expect(interrupted.chainId).toBe(`background-${edge}`);
-  },
-);
-
-test.each(["continue_context", "fresh_context"] as const)(
-  "历史背景分叉保留前缀，%s 修改稿按新绑定重新采集",
-  async (continuation) => {
-    const { worlds, worldId } = await createWorld(
-      `background-revision-${continuation}`,
-      backgroundWorldFiles(),
-    );
-    const host = new ScriptedModelHost({
-      binding: modelBinding(),
-      steps: [
-        {
-          outcome: "response",
-          toolCalls: backgroundPatch("advance", "第三天"),
-        },
-        { outcome: "response", text: "第三天的叙事。" },
-      ],
-    });
-    const chains = new PlayCallChain(worlds);
-    const first = await chains.start(
-      backgroundStart(worldId, `background-revision-${continuation}`, host),
-    );
-    const old = await worlds.recoverEndpoint(worldId);
-    const control = (await worlds.readSurface(worldId, "control")).map(
-      (file) =>
-        file.path === "frame.yaml"
-          ? {
-              ...file,
-              contents: file.contents.replace(
-                "currentSituation: situation.current",
-                'currentSituation: "@alternate"',
-              ),
-            }
-          : file,
-    );
-    await worlds.saveControlDraft(worldId, control);
-    await worlds.applyControlDraft(worldId, {
-      hostBinding: hostBinding(),
-      modelBinding: modelBinding(),
-    });
-    const unchanged = await worlds.bindPlayCallChain(worldId);
-    expect(unchanged.historyBackgrounds).toEqual(
-      Object.fromEntries(
-        old.history.map(({ messageId, background }) => [messageId, background]),
-      ),
-    );
-    const branch = await chains.deriveWorld({
-      operationId: `background-fork-${continuation}`,
-      sourceWorldId: worldId,
-      sourceHead: first.parentHead,
-      hostPresetId: "host",
-    });
-    expect(
-      (await worlds.recoverEndpoint(branch.world.worldId)).history,
-    ).toEqual(old.history);
-    const player = first.events.find((event) => event.kind === "player")!;
-    const revision = await chains.revisePlayer({
-      operationId: `background-edit-${continuation}`,
-      worldId,
-      chainId: first.chainId,
-      eventId: player.id,
-      replacementExchangeId: "edited",
-      replacementText: "修改为明天启程。",
-      ...(continuation === "fresh_context"
-        ? {
-            continuation,
-            freshContext: {
-              hostBinding: hostBinding(),
-              playPreset: playPreset(),
-              modelBinding: modelBinding(),
-            },
-          }
-        : { continuation }),
-    });
-    const revised = await worlds.recoverEndpoint(worldId);
-    expect(revised.history).toHaveLength(2);
-    expect(revised.history[0]).toEqual(old.history[0]);
-    expect(revised.history[1]?.background).toEqual({
-      kind: "snapshot",
-      value: "时间: 第九天\n地点: 城门",
-    });
-    expect(
-      (await worlds.recoverEndpoint(worldId, first.parentHead)).history,
-    ).toEqual(old.history);
-    const newHost = new ScriptedModelHost({
-      binding: modelBinding(),
-      steps: [{ outcome: "response", text: "新回复。" }],
-    });
-    await new PlayCallChain(worlds).append({
-      worldId,
-      chainId: revision.playCallChain.chainId,
-      exchangeId: "regenerate",
-      playerText: "",
-      modelHost: newHost,
-    });
-    expect(
-      (await worlds.recoverEndpoint(worldId)).history.at(-1)?.background,
-    ).toEqual({
-      kind: "narrative",
-      before: "时间: 第九天\n地点: 城门",
-      after: "时间: 第九天\n地点: 城门",
-    });
-  },
-);
-
-test("工具修改后原样重试保留旧段起点和完整请求，不重新读取已更换绑定", async () => {
-  const { worlds, worldId } = await createWorld(
-    "background-safe-retry",
-    backgroundWorldFiles(),
-  );
-  const scripted = new ScriptedModelHost({
-    binding: modelBinding(),
-    steps: [
-      {
-        outcome: "response",
-        toolCalls: backgroundPatch("before-refusal", "第三天"),
-      },
-      { outcome: "response", text: "终于呈现旧段正文。" },
-    ],
-  });
-  const requests: ModelHostExchange[] = [];
-  const host: ModelHost = {
-    binding: modelBinding,
-    exchange: async (request, observer) => {
-      requests.push(structuredClone(request));
-      if (requests.length === 2)
-        throw new ModelHostFailureError("Rejected before generation");
-      return scripted.exchange(request, observer);
-    },
-  };
-  const interrupted = await new PlayCallChain(worlds).start(
-    backgroundStart(worldId, "background-retry", host),
-  );
-  expect(interrupted).toMatchObject({ status: "interrupted", canRetry: true });
-  const control = (await worlds.readSurface(worldId, "control")).map((file) =>
-    file.path === "frame.yaml"
-      ? {
-          ...file,
-          contents: file.contents.replace(
-            "currentSituation: situation.current",
-            'currentSituation: "@alternate"',
-          ),
-        }
-      : file,
-  );
-  await worlds.saveControlDraft(worldId, control);
-  await worlds.applyControlDraft(worldId, {
-    hostBinding: hostBinding(),
-    modelBinding: modelBinding(),
-  });
-  await new PlayCallChain(worlds).append({
-    worldId,
-    chainId: interrupted.chainId,
-    exchangeId: "retry",
-    playerText: "",
-    modelHost: host,
-  });
-  expect(requests[2]).toEqual(requests[1]);
-  expect(
-    (await worlds.recoverEndpoint(worldId)).history.at(-1)?.background,
-  ).toEqual({
-    kind: "narrative",
-    before: "时间: 第一天\n地点: 客栈",
-    after: "时间: 第三天\n地点: 山门",
-  });
-});
-
 test("历史背景投影丢失时从 Authority 修复，不用修订后的当前情境回填", async () => {
   const { worlds, worldId, root } = await createWorld(
     "background-projection-repair",
@@ -8313,26 +7555,6 @@ function resolutionCompiler(): FileNativePromptCompiler {
   return new FileNativePromptCompiler();
 }
 
-async function resolutionSeedFiles(
-  directory: string,
-): Promise<{ path: string; seed: string }[]> {
-  const files: { path: string; seed: string }[] = [];
-  for (const entry of await readdir(directory, {
-    withFileTypes: true,
-    recursive: true,
-  })) {
-    if (!entry.isFile() || entry.name !== "resolution-seed.json") continue;
-    const path = join(entry.parentPath, entry.name);
-    const fact = JSON.parse(await readFile(path, "utf8")) as {
-      stage: string;
-      seed: string;
-    };
-    expect(fact.stage).toBe("resolution_seed");
-    files.push({ path, seed: fact.seed });
-  }
-  return files;
-}
-
 function d20ToolStep(id = "roll-1") {
   return {
     outcome: "response" as const,
@@ -8348,10 +7570,7 @@ function d20ToolStep(id = "roll-1") {
 
 test("冻结宇宙含判定工具时执行判定，回执与持久种子逐位复算一致", async () => {
   const label = "play-chain-resolution-receipt";
-  const { worlds, worldId, root } = await createWorld(
-    label,
-    tabletopWorldFiles(),
-  );
+  const { worlds, worldId } = await createWorld(label, tabletopWorldFiles());
   const modelHost = new ScriptedModelHost({
     binding: modelBinding(),
     steps: [d20ToolStep(), { outcome: "response", text: "石门缓缓开启。" }],
@@ -8387,91 +7606,14 @@ test("冻结宇宙含判定工具时执行判定，回执与持久种子逐位�
   });
   const receipt = (result as { resolution: ResolutionReceipt }).resolution;
   expect(isResolutionReceipt(receipt)).toBe(true);
-  const [seedFile] = await resolutionSeedFiles(root);
-  expect(seedFile).toBeDefined();
-  const recomputed = resolveTabletop(
-    "d20_check",
-    { goal: "推开石门", modifier: 3, difficulty: 15 },
-    seededRandom(seedFile!.seed, "1:roll-1"),
-  );
-  expect(receipt).toEqual(recomputed);
+  // Rolls are generated in memory per settlement and not persisted, so the
+  // receipt is checked by its shape and by the markdown fed back to the model.
   expect(modelHost.requests[1]?.appended.at(-1)).toMatchObject({
     kind: "tool",
     toolCallId: "roll-1",
-    markdown: resolutionMarkdown(recomputed, "en"),
+    markdown: resolutionMarkdown(receipt, "en"),
   });
   expect(modelHost.requests[1]?.appended.at(-1)).not.toHaveProperty("isError");
-});
-
-test("判定边界崩溃后冷恢复复用同一种子，不重新抽样也不重新派发模型", async () => {
-  const label = "play-chain-resolution-recovery";
-  const { worlds, worldId, root } = await createWorld(
-    label,
-    tabletopWorldFiles(),
-  );
-  const modelHost = new ScriptedModelHost({
-    binding: modelBinding(),
-    steps: [d20ToolStep(), { outcome: "response", text: "石门缓缓开启。" }],
-  });
-  process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE =
-    "after_resolution";
-
-  const interrupted = await new PlayCallChain(
-    worlds,
-    resolutionCompiler(),
-  ).start({
-    worldId,
-    chainId: label,
-    exchangeId: `${label}-player`,
-    playerText: "我推开石门。",
-    hostBinding: hostBinding(),
-    playPreset: playPreset(),
-    modelBinding: modelBinding(),
-    modelHost,
-  });
-  expect(interrupted).toMatchObject({ status: "interrupted" });
-  expect(modelHost.requests).toHaveLength(1);
-  const [seedBefore] = await resolutionSeedFiles(root);
-
-  delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE;
-  const recovered = await new PlayCallChain(
-    worlds,
-    resolutionCompiler(),
-  ).inspectWorld(worldId);
-  expect(recovered).toMatchObject({
-    status: "interrupted",
-  });
-  expect(recovered?.lastFailure).toContain("continuation request is ready");
-  expect(modelHost.requests).toHaveLength(1);
-  expect(await resolutionSeedFiles(root)).toEqual([seedBefore]);
-  const result = recovered?.events.find(
-    (event) => event.kind === "tool_result" && event.callId === "roll-1",
-  );
-  const expected = resolveTabletop(
-    "d20_check",
-    { goal: "推开石门", modifier: 3, difficulty: 15 },
-    seededRandom(seedBefore!.seed, "1:roll-1"),
-  );
-  expect(result).toMatchObject({ resolution: expected });
-  const continued = await new PlayCallChain(
-    worlds,
-    resolutionCompiler(),
-  ).append({
-    worldId,
-    chainId: label,
-    exchangeId: `${label}-continue`,
-    playerText: "",
-    modelHost,
-    resolvePrompt: () =>
-      Promise.resolve({ hostBinding: hostBinding(), playPreset: playPreset() }),
-  });
-  expect(continued).toMatchObject({ status: "ready" });
-  expect(modelHost.requests).toHaveLength(2);
-  expect(modelHost.requests[1]?.appended.at(-1)).toMatchObject({
-    kind: "tool",
-    toolCallId: "roll-1",
-    markdown: resolutionMarkdown(expected, "en"),
-  });
 });
 
 test("持久化判定回执被篡改后，时间线读取拒绝该回执", async () => {
@@ -8525,49 +7667,6 @@ test("持久化判定回执被篡改后，时间线读取拒绝该回执", async
   await expect(
     new PlayCallChain(worlds, resolutionCompiler()).inspectWorld(worldId),
   ).rejects.toThrow("Invalid resolution receipt");
-});
-
-test("判定种子稳定复用，持久化损坏时拒绝恢复", async () => {
-  const label = "play-chain-resolution-seed";
-  const { worlds, worldId, root } = await createWorld(
-    label,
-    tabletopWorldFiles(),
-  );
-  const modelHost = new ScriptedModelHost({
-    binding: modelBinding(),
-    steps: [d20ToolStep(), { outcome: "response", text: "石门缓缓开启。" }],
-  });
-  await new PlayCallChain(worlds, resolutionCompiler()).start({
-    worldId,
-    chainId: label,
-    exchangeId: `${label}-player`,
-    playerText: "我推开石门。",
-    hostBinding: hostBinding(),
-    playPreset: playPreset(),
-    modelBinding: modelBinding(),
-    modelHost,
-  });
-  const advances = new FileNativePlayAdvanceStore(root);
-  const current = await advances.readCurrent(worldId, label);
-  expect(current?.base.advanceKind).toBe("response");
-  const base = current!.base as Extract<
-    PlayAdvanceBase,
-    { advanceKind: "response" }
-  >;
-  const seed = await advances.resolutionSeed(base);
-  expect(await advances.resolutionSeed(base)).toBe(seed);
-  expect(seed).toMatch(/^[a-f0-9]{64}$/);
-
-  const [target] = (await resolutionSeedFiles(root)).filter(
-    (item) => item.seed === seed,
-  );
-  await writeFile(
-    target!.path,
-    `${JSON.stringify({ schemaVersion: 1, stage: "resolution_seed", seed: "not-hex", recordedAt: 1 })}\n`,
-  );
-  await expect(advances.resolutionSeed(base)).rejects.toThrow(
-    "Invalid persisted resolution seed",
-  );
 });
 
 test("判定工具不在冻结宇宙中时被拒绝，非法参数只产生工具错误", async () => {
@@ -8765,12 +7864,9 @@ test("世界在故事外前进后仍可修改或重新生成已提交玩家消�
   expect(continued.status).toBe("ready");
 });
 
-test("判定回合重新生成最新玩家消息会创建新推进，新判定使用新种子且回执可复算", async () => {
+test("判定回合重新生成最新玩家消息会创建新推进，新判定重新掷骰", async () => {
   const label = "play-chain-resolution-regenerate";
-  const { worlds, worldId, root } = await createWorld(
-    label,
-    tabletopWorldFiles(),
-  );
+  const { worlds, worldId } = await createWorld(label, tabletopWorldFiles());
   const chains = new PlayCallChain(worlds, resolutionCompiler());
   const started = await chains.start({
     worldId,
@@ -8792,8 +7888,6 @@ test("判定回合重新生成最新玩家消息会创建新推进，新判定�
     (event) => event.kind === "player" && event.context === "fresh",
   );
   if (player?.kind !== "player") throw new Error("missing first player");
-  const [oldSeed] = await resolutionSeedFiles(root);
-  expect(oldSeed).toBeDefined();
 
   const revised = await chains.revisePlayer({
     operationId: "regenerate-resolution",
@@ -8831,16 +7925,7 @@ test("判定回合重新生成最新玩家消息会创建新推进，新判定�
   const receipt = (result as { resolution: ResolutionReceipt }).resolution;
   expect(isResolutionReceipt(receipt)).toBe(true);
 
-  const seeds = await resolutionSeedFiles(root);
-  const fresh = seeds.find(({ seed }) => seed !== oldSeed!.seed);
-  expect(fresh).toBeDefined();
-  expect(receipt).toEqual(
-    resolveTabletop(
-      "d20_check",
-      { goal: "推开石门", modifier: 3, difficulty: 15 },
-      seededRandom(fresh!.seed, "1:roll-new"),
-    ),
-  );
+  expect(receipt.kind).toBe("d20");
 });
 
 test("判定回合之后导出故事只含已提交的玩家与叙事原文，判定结果不进入导出也不使导出失败", async () => {
@@ -8871,4 +7956,56 @@ test("判定回合之后导出故事只含已提交的玩家与叙事原文，�
   const markdown = await worlds.exportStory(worldId, "markdown", "zh-CN");
   expect(markdown.content).toContain("> **我**：我推开石门。");
   expect(markdown.content).not.toMatch(/d20 \d/u);
+});
+
+test("生成中进程退出后重启标记为中断，重试重新调用模型并成功", async () => {
+  const label = "interrupted-generation-retry";
+  const { worlds, worldId, root } = await createWorld(label);
+  const dispatched: ModelHostExchange[] = [];
+  // The first runtime's dispatch never returns, as if the process exited
+  // while the model was generating. The promise is simply abandoned.
+  const neverReturns: ModelHost = {
+    binding: () => modelBinding(),
+    exchange: (request) => {
+      dispatched.push(structuredClone(request));
+      return new Promise<ModelHostResponse>(() => undefined);
+    },
+  };
+  void new PlayCallChain(worlds)
+    .start({
+      worldId,
+      chainId: label,
+      exchangeId: `${label}-player`,
+      playerText: "我推开石门。",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: modelBinding(),
+      modelHost: neverReturns,
+    })
+    .catch(() => undefined);
+  await vi.waitFor(() => expect(dispatched).toHaveLength(1));
+
+  // A new runtime over the same data directory sees the interrupted round.
+  const restarted = new PlayCallChain(new FileNativeWorldStore(root));
+  expect(await restarted.inspectWorld(worldId)).toMatchObject({
+    status: "interrupted",
+    canRetry: true,
+    lastFailureKind: "retryable",
+  });
+
+  const retryHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [{ outcome: "response", text: "石门缓缓开启。" }],
+  });
+  const retried = await restarted.append({
+    worldId,
+    chainId: label,
+    exchangeId: `${label}-retry`,
+    playerText: "",
+    modelHost: retryHost,
+    resolvePrompt: () =>
+      Promise.resolve({ hostBinding: hostBinding(), playPreset: playPreset() }),
+  });
+  expect(retryHost.requests).toHaveLength(1);
+  expect(retried).toMatchObject({ status: "ready" });
 });

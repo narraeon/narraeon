@@ -29,7 +29,7 @@ import {
   playPromptRunsThroughEvents,
 } from "./PlayPromptRun.ts";
 import { comparePromptPrefixes } from "../prompt/WorldPromptDiagnostics.ts";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import type { AppLocale } from "../../protocol/appPreferences.ts";
 import {
   completedPlayerRounds,
@@ -108,8 +108,6 @@ import type {
   PlayContextPersistenceCursor,
 } from "./FileNativePlayTimelineStore.ts";
 import type {
-  DurableModelHostResponse,
-  LoadedPlayAdvance,
   PlayAdvanceBase,
   PreparedPlayResponseSettlement,
 } from "./FileNativePlayAdvanceStore.ts";
@@ -560,7 +558,6 @@ export class PlayCallChain {
       authorization: session.documents.authorizationCheckpoint(),
     });
     await this.#persist(session);
-    crashAtPlayAdvanceEdge("after_prompt_run_prepared");
   }
 
   cancel(input: { worldId: string; chainId: string; exchangeId: string }): {
@@ -783,8 +780,6 @@ export class PlayCallChain {
     this.#active.set(hydrated.chainId, hydrated);
     this.#worldChains.set(worldId, hydrated.chainId);
     await this.#reconcileSessionAdvance(hydrated, advance);
-    if (hydrated.status === "running")
-      await this.#interruptAbandonedDispatch(hydrated);
     return hydrated;
   }
 
@@ -1753,23 +1748,6 @@ export class PlayCallChain {
     try {
       await this.#settlePlayerAdvance(session, advance);
     } catch (error: unknown) {
-      const accepted = await this.#worlds
-        .getOperationOutcome(advance.operationId)
-        .catch(() => ({ outcome: "not_started" as const }));
-      if (
-        accepted.outcome === "committed" ||
-        accepted.outcome === "committed_materialization_pending"
-      ) {
-        await this.#settlePlayerAdvance(session, advance);
-        return this.#dispatch(
-          session,
-          modelHost,
-          structuredClone(nextRequest),
-          1,
-          signal,
-          observer,
-        );
-      }
       const message =
         error instanceof Error
           ? error.message
@@ -1786,7 +1764,7 @@ export class PlayCallChain {
       session.lastFailure = message;
       session.lastFailureKind = failureKind;
       await this.#persist(session);
-      await this.#worlds.playAdvances.markSettled(advance, session.parentHead);
+      await this.#worlds.playAdvances.markSettled(advance);
       throw new PlayCallChainError(message);
     }
     return this.#dispatch(
@@ -1868,8 +1846,7 @@ export class PlayCallChain {
       "The player message is committed; the frozen model request is ready to continue.";
     session.lastFailureKind = "retryable";
     await this.#persist(session);
-    crashAtPlayAdvanceEdge("after_timeline_settled");
-    await this.#worlds.playAdvances.markSettled(advance, outcome.head);
+    await this.#worlds.playAdvances.markSettled(advance);
   }
 
   async #prepareResponseSettlement(
@@ -1914,10 +1891,10 @@ export class PlayCallChain {
     const prepared: PreparedToolResult[] = [];
     const trailingEvents: V1PlayCallChainEvent[] = [];
     let nextEventId = advance.eventId + 1;
-    // One persisted seed per advance: every resolution call draws from it by
-    // call identity, so recovery reproduces the same receipts.
+    // Fresh in-memory seed per settlement. It is never persisted: a crashed
+    // exchange is retried by the player and re-rolls (ADR-0044).
     const resolutionSeed = calls.some(({ name }) => isResolutionTool(name))
-      ? await this.#worlds.playAdvances.resolutionSeed(advance)
+      ? randomBytes(32).toString("hex")
       : undefined;
     for (const call of calls) {
       const item = prepareTool(
@@ -1928,8 +1905,6 @@ export class PlayCallChain {
         this.#compiler.locale,
         resolutionSeed,
       );
-      if (item.result.resolution !== undefined)
-        crashAtPlayAdvanceEdge("after_resolution");
       prepared.push(item);
       trailingEvents.push({
         id: nextEventId++,
@@ -2147,7 +2122,6 @@ export class PlayCallChain {
           historyMessageId: `message.${outcome.head.slice("commit:".length)}.1.narrator`,
         };
       }
-      crashAtPlayAdvanceEdge("after_authority_accepted");
       appendCommittedHistory(session, outcome.head, outcome.historyAppend);
     }
 
@@ -2275,47 +2249,8 @@ export class PlayCallChain {
       result = { kind: "terminal", status: session.status };
     }
     await this.#persist(session);
-    crashAtPlayAdvanceEdge("after_timeline_settled");
-    await this.#worlds.playAdvances.markSettled(
-      advance,
-      committedHead ?? session.parentHead,
-    );
+    await this.#worlds.playAdvances.markSettled(advance);
     return result;
-  }
-
-  async #recoverAcceptedResponseAdvance(
-    session: PlayCallChainSession,
-    advance: Extract<PlayAdvanceBase, { advanceKind: "response" }>,
-  ): Promise<
-    | { kind: "terminal"; status: "ready" | "interrupted" }
-    | { kind: "continue"; nextRequest: ModelHostExchange }
-    | null
-  > {
-    const outcome = await this.#worlds
-      .getOperationOutcome(advance.operationId)
-      .catch(() => ({ outcome: "not_started" as const }));
-    if (
-      outcome.outcome !== "committed" &&
-      outcome.outcome !== "committed_materialization_pending"
-    )
-      return null;
-    const current = await this.#worlds.playAdvances.readCurrent(
-      advance.worldId,
-      advance.chainId,
-    );
-    if (
-      current?.base.advanceKind !== "response" ||
-      current.base.advanceId !== advance.advanceId ||
-      current.settlementPrepared === null
-    )
-      throw new PlayCallChainError(
-        "Authority accepted a response whose durable settlement is missing.",
-      );
-    return this.#settleResponseAdvance(
-      session,
-      advance,
-      current.settlementPrepared.settlement,
-    );
   }
 
   async #dispatch(
@@ -2379,7 +2314,6 @@ export class PlayCallChain {
         createdAt: Date.now(),
       } satisfies Extract<PlayAdvanceBase, { advanceKind: "response" }>;
       await this.#worlds.playAdvances.begin(advance);
-      crashAtPlayAdvanceEdge("after_response_advance_began");
       this.#notifySnapshot(observer, session);
       if (signal.aborted)
         return this.#cancelBeforeProviderDispatch(
@@ -2480,31 +2414,18 @@ export class PlayCallChain {
           });
         }
         await this.#persist(session);
-        await this.#worlds.playAdvances.markSettled(
-          advance,
-          session.parentHead,
-        );
+        await this.#worlds.playAdvances.markSettled(advance);
         this.#notifySnapshot(observer, session);
         return projectView(session);
       }
 
       const durableResponse = durableModelResponse(response);
       try {
-        await this.#worlds.playAdvances.recordProviderCompleted(
-          advance,
-          durableResponse,
-        );
-        crashAtPlayAdvanceEdge("after_provider_completed");
         const settlement = await this.#prepareResponseSettlement(
           session,
           advance,
           durableResponse,
         );
-        await this.#worlds.playAdvances.recordSettlementPrepared(
-          advance,
-          settlement,
-        );
-        crashAtPlayAdvanceEdge("after_settlement_prepared");
 
         const failedTools = settlement.trailingEvents.filter(
           (
@@ -2601,20 +2522,6 @@ export class PlayCallChain {
         request = settled.nextRequest;
         attempt = 1;
       } catch (error: unknown) {
-        const recovered = await this.#recoverAcceptedResponseAdvance(
-          session,
-          advance,
-        );
-        if (recovered !== null) {
-          if (recovered.kind === "continue") {
-            request = recovered.nextRequest;
-            attempt = 1;
-            this.#notifySnapshot(observer, session);
-            continue;
-          }
-          this.#notifySnapshot(observer, session);
-          return projectView(session);
-        }
         const message =
           error instanceof Error
             ? error.message
@@ -2678,7 +2585,7 @@ export class PlayCallChain {
     delete session.lastFailureKind;
     await this.#persist(session);
     if (advance !== undefined)
-      await this.#worlds.playAdvances.markSettled(advance, session.parentHead);
+      await this.#worlds.playAdvances.markSettled(advance);
     this.#notifySnapshot(observer, session);
     return projectView(session);
   }
@@ -2854,38 +2761,27 @@ export class PlayCallChain {
 
   async #hydrateSession(
     persisted: PersistedPlayCallChain,
-    advance: LoadedPlayAdvance | null,
+    advance: PlayAdvanceBase | null,
   ): Promise<PlayCallChainSession> {
     const currentBinding = await this.#worlds.bindPlayCallChain(
       persisted.worldId,
     );
     // A completed chain still describes its own immutable endpoint after a
     // world revision. Restore its reads against that state, not the revised
-    // current tree. An unsettled advance keeps the existing crash-recovery
-    // path because Authority may already contain its prepared result.
+    // current tree. An in-progress advance reads the current tree; it is
+    // interrupted on load and retried against that tree.
     const binding =
-      currentBinding.parentHead !== persisted.parentHead &&
-      advance?.settled !== null
+      currentBinding.parentHead !== persisted.parentHead && advance === null
         ? await this.#worlds.bindPlayCallChainAt(
             persisted.worldId,
             persisted.parentHead,
           )
         : currentBinding;
-    let documents: FileNativePlayDocuments;
-    try {
-      documents = restorePlayDocuments(
-        binding.files,
-        persisted,
-        persisted.events,
-      );
-    } catch (error: unknown) {
-      const prepared = advance?.settlementPrepared?.settlement;
-      if (prepared === undefined) throw error;
-      documents = new FileNativePlayDocuments(binding.files);
-      documents.restoreAuthorizationCheckpoint(
-        prepared.authorizationCheckpoint,
-      );
-    }
+    const documents = restorePlayDocuments(
+      binding.files,
+      persisted,
+      persisted.events,
+    );
     await this.#bindDocumentMaintenance(
       documents,
       persisted.worldId,
@@ -2916,67 +2812,56 @@ export class PlayCallChain {
     };
   }
 
+  /**
+   * An in-progress advance, or a session still marked running, means a model
+   * dispatch or settlement was cut off by a process exit. Nothing is replayed:
+   * the exchange is interrupted and the player retries (ADR-0044).
+   */
   async #reconcileSessionAdvance(
     session: PlayCallChainSession,
-    loaded?: LoadedPlayAdvance | null,
+    loaded?: PlayAdvanceBase | null,
   ): Promise<void> {
-    const current =
-      loaded ??
-      (await this.#worlds.playAdvances.readCurrent(
-        session.worldId,
-        session.chainId,
-      ));
-    if (current?.settled !== null) return;
-    if (current.base.advanceKind === "player") {
-      await this.#settlePlayerAdvance(session, current.base);
-      return;
-    }
-    if (current.providerCompleted === null) {
-      await this.#interruptAbandonedDispatch(session, current.base);
-      await this.#worlds.playAdvances.markSettled(
-        current.base,
-        session.parentHead,
-      );
-      return;
-    }
-    let settlement = current.settlementPrepared?.settlement;
-    if (settlement === undefined) {
-      settlement = await this.#prepareResponseSettlement(
-        session,
-        current.base,
-        current.providerCompleted.response,
-      );
-      await this.#worlds.playAdvances.recordSettlementPrepared(
-        current.base,
-        settlement,
-      );
-    }
-    await this.#settleResponseAdvance(session, current.base, settlement);
+    const advance =
+      loaded === undefined
+        ? await this.#worlds.playAdvances.readCurrent(
+            session.worldId,
+            session.chainId,
+          )
+        : loaded;
+    if (advance === null && session.status !== "running") return;
+    await this.#interruptAbandonedDispatch(session, advance);
+    if (advance !== null) await this.#worlds.playAdvances.markSettled(advance);
   }
 
   async #interruptAbandonedDispatch(
     session: PlayCallChainSession,
-    advance?: Extract<PlayAdvanceBase, { advanceKind: "response" }>,
+    advance: PlayAdvanceBase | null,
   ): Promise<void> {
-    const streaming = session.events.findLast(
-      (event): event is Extract<V1PlayCallChainEvent, { kind: "assistant" }> =>
-        event.kind === "assistant" &&
-        event.status === "streaming" &&
-        (advance === undefined || event.id === advance.eventId),
-    );
+    const headMoved =
+      (await this.#worlds.currentHead(session.worldId)) !== session.parentHead;
+    const playerPhase = advance?.advanceKind === "player";
+    const streaming = playerPhase
+      ? undefined
+      : session.events.findLast(
+          (
+            event,
+          ): event is Extract<V1PlayCallChainEvent, { kind: "assistant" }> =>
+            event.kind === "assistant" &&
+            event.status === "streaming" &&
+            (advance === null || event.id === advance.eventId),
+        );
     if (streaming !== undefined) streaming.status = "interrupted";
-    const dispatchMayHaveStarted = advance !== undefined;
-    const canRetry = !dispatchMayHaveStarted && session.lastRequest !== null;
-    const message = dispatchMayHaveStarted
-      ? "The service stopped after model dispatch may have started; the outcome is unknown and the request cannot be replayed. Use a fresh context."
-      : canRetry
-        ? "The service stopped before model dispatch; the frozen request can be retried."
-        : "The service stopped before preparing a model request; use a fresh context.";
-    const failureKind = dispatchMayHaveStarted
-      ? "outcome_unknown"
-      : canRetry
-        ? "retryable"
-        : "other";
+    // Authority already moved past the persisted parent head: the world
+    // cannot be replayed onto that head, so a fresh context is required.
+    const canRetry = !headMoved && !playerPhase && session.lastRequest !== null;
+    const message = headMoved
+      ? "The service stopped after the world was updated; use a fresh context."
+      : playerPhase
+        ? "The service stopped while saving the player message; use a fresh context."
+        : canRetry
+          ? "The service stopped while the model request was in progress; retry to call the model again."
+          : "The service stopped before preparing a model request; use a fresh context.";
+    const failureKind = canRetry ? "retryable" : "other";
     session.events.push({
       id: session.nextEventId++,
       kind: "failure",
@@ -3086,6 +2971,8 @@ function createRequestWithMaxOutputTokens(
     maxOutputTokens,
   };
 }
+
+type DurableModelHostResponse = Omit<ModelHostResponse, "diagnostics">;
 
 function durableModelResponse(
   response: ModelHostResponse,
@@ -3651,14 +3538,6 @@ function resolutionToolResult(
     markdown: resolutionMarkdown(resolution, locale),
     resolution,
   };
-}
-
-function crashAtPlayAdvanceEdge(edge: string): void {
-  if (
-    process.env.NODE_ENV === "test" &&
-    process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE === edge
-  )
-    throw new Error(`Simulated process exit at play advance edge: ${edge}`);
 }
 
 function frozenFollowupPresentations(
