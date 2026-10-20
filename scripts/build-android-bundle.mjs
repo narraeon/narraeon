@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   cp,
   copyFile,
@@ -85,10 +86,6 @@ const sha = execFileSync("git", ["rev-parse", "--short", "HEAD"], {
   cwd: root,
   encoding: "utf8",
 }).trim();
-await writeFile(
-  `${assetPath}bundle-version.txt`,
-  `${packageJson.version}+${sha}\n`,
-);
 
 // Lists every staged file (relative to the bundle root) so the native side can copy
 // them without walking AssetManager directories.
@@ -102,5 +99,17 @@ for (const name of await readdir(assetPath, { recursive: true })) {
   if ((await stat(`${assetPath}${relative}`)).isFile()) files.push(relative);
 }
 await writeFile(`${assetPath}bundle-files.txt`, `${files.sort().join("\n")}\n`);
+
+// The version marker ends with a hash of every staged file, so a rebuild with
+// uncommitted changes (same HEAD) still makes the app recopy the bundle.
+const contentHash = createHash("sha256");
+for (const relative of files) {
+  contentHash.update(`${relative}\0`);
+  contentHash.update(await readFile(`${assetPath}${relative}`));
+}
+await writeFile(
+  `${assetPath}bundle-version.txt`,
+  `${packageJson.version}+${sha}.${contentHash.digest("hex").slice(0, 12)}\n`,
+);
 
 console.log(`Android bundle staged at ${assetPath}`);
