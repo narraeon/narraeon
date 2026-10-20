@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
 
-import { FileNativePlayTimelineStore } from "../../src/runtime/play/FileNativePlayTimelineStore.ts";
 import { FileNativeWorldStorageMigrator } from "../../src/runtime/world/FileNativeWorldStorageMigrator.ts";
 import {
   appendTurn,
@@ -61,17 +60,13 @@ test("already-current world drops interrupted V3 residue without touching the le
   await mkdir(join(runtime, ".authority-v3-migration"), { recursive: true });
 
   const turnsBefore = (await listTurns(worldRoot)).map((turn) => turn.sequence);
-  const migrator = new FileNativeWorldStorageMigrator(
-    dataRoot,
-    new FileNativePlayTimelineStore(dataRoot),
-  );
+  const migrator = new FileNativeWorldStorageMigrator(dataRoot);
 
   const result = await migrator.migrate("world-residue");
 
   expect(result).toEqual({
     outcome: "already_current",
     authorityCommits: 2,
-    callChainContexts: 0,
   });
   expect(await exists(join(runtime, "authority-v3"))).toBe(false);
   expect(await exists(join(runtime, ".authority-v3-migration"))).toBe(false);

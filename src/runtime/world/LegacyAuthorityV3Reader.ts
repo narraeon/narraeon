@@ -16,6 +16,11 @@ import type {
 
 export const continuityHeadFile = "continuity-head.json";
 export const authorityV3Directory = "authority-v3";
+/**
+ * Stale files that v0.3.0–v0.6.0 worlds still carry from the layout they
+ * replaced. The conversion to the turn ledger removes them; nothing reads them.
+ */
+export const staleV3WorldFiles = [join("runtime", "materialized-head.json")];
 
 export interface FileNativeAuthorityObjectRef {
   epoch: number;

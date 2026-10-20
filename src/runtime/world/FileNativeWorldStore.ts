@@ -62,7 +62,10 @@ import {
 } from "./WorldActivity.ts";
 import { FileNativePlayTimelineStore } from "../play/FileNativePlayTimelineStore.ts";
 import { FileNativePlayAdvanceStore } from "../play/FileNativePlayAdvanceStore.ts";
-import { FileNativeWorldStorageMigrator } from "./FileNativeWorldStorageMigrator.ts";
+import {
+  FileNativeWorldStorageMigrator,
+  UnsupportedLegacyStorageError,
+} from "./FileNativeWorldStorageMigrator.ts";
 import {
   WorldAuthorityError,
   WorldLedgerAuthority,
@@ -302,15 +305,12 @@ export class FileNativeWorldStore {
     this.operations = new FileNativeWorldOperationCoordinator(root);
     this.playTimeline = new FileNativePlayTimelineStore(root);
     this.playAdvances = new FileNativePlayAdvanceStore(root);
-    this.#storageMigrator = new FileNativeWorldStorageMigrator(
-      root,
-      this.playTimeline,
-    );
+    this.#storageMigrator = new FileNativeWorldStorageMigrator(root);
   }
 
   /**
-   * Upgrade a formally released cumulative layout before current Authority or
-   * play-timeline behavior crosses its seam. Concurrent callers share one
+   * Upgrade an Authority V3 world to the current ledger layout before current
+   * Authority or play-timeline behavior crosses its seam. Concurrent callers share one
    * in-process promise; the durable world lock serializes processes.
    */
   async ensureCurrentStorage(worldId: string): Promise<void> {
@@ -365,9 +365,15 @@ export class FileNativeWorldStore {
           "World storage is being upgraded by another durable operation",
           { cause: error },
         );
+      if (error instanceof UnsupportedLegacyStorageError)
+        throw new FileNativeWorldCreationError(
+          "world_corrupt",
+          "This world was created by v0.2.0 or earlier; open it once with v0.3.0–v0.6.0 before upgrading",
+          { cause: error },
+        );
       throw new FileNativeWorldCreationError(
         "world_corrupt",
-        "Released world storage could not be migrated to the current format",
+        "World storage could not be migrated to the current format",
         error instanceof Error ? { cause: error } : undefined,
       );
     }
