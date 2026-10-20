@@ -428,7 +428,6 @@ test("修改轨迹统一保留前缀工具及原生载荷，并按含同 ID 修�
     committedHead: "commit:replacement",
   });
   expect(retained.promptRuns).toEqual(source.promptRuns);
-  expect(retained).not.toHaveProperty("documentAuthorizationCheckpoints");
   expect(retained.exchange).toBe(2);
   expect(retained.nextEventId).toBe(player.id + 1);
   expect(source).toEqual(original);
@@ -466,7 +465,6 @@ test("完整分叉保留原生轨迹及全部工具，部分分叉恢复所选�
   expect(partial.transcript).toEqual(prefix.transcript);
   expect(partial.completedTools).toEqual(prefix.completedTools);
   expect(partial.promptRuns).toEqual(prefix.promptRuns);
-  expect(partial).not.toHaveProperty("documentAuthorizationCheckpoints");
   expect(partial.changedDocuments).toEqual([
     {
       kind: "replace",
@@ -7953,7 +7951,9 @@ test.each([
 );
 
 test("持久化的游玩上下文不再写入文档授权检查点", async () => {
-  const { worlds, worldId } = await createWorld("no-checkpoint-persistence");
+  const { worlds, worldId, root } = await createWorld(
+    "no-checkpoint-persistence",
+  );
   const host = new ScriptedModelHost({
     binding: modelBinding(),
     steps: [{ outcome: "response", text: "The lamp flickers." }],
@@ -7968,6 +7968,73 @@ test("持久化的游玩上下文不再写入文档授权检查点", async () =>
     modelBinding: modelBinding(),
     modelHost: host,
   });
-  const current = await worlds.playTimeline.readCurrent(worldId);
-  expect(current?.value.documentAuthorizationCheckpoints ?? []).toEqual([]);
+  const [contextDirectory] = await readdir(
+    join(root, "worlds-file-native", worldId, "runtime", "play-contexts"),
+  );
+  await expect(
+    stat(
+      join(
+        root,
+        "worlds-file-native",
+        worldId,
+        "runtime",
+        "play-contexts",
+        contextDirectory!,
+        "authorization",
+      ),
+    ),
+  ).rejects.toThrow();
 });
+
+test("旧版上下文的授权检查点计数与目录被忽略，读取不报错", async () => {
+  const { worlds, worldId, root } = await createWorld("legacy-checkpoint-read");
+  const host = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [{ outcome: "response", text: "The lamp flickers." }],
+  });
+  await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "legacy-checkpoint",
+    exchangeId: "first",
+    playerText: "Look around.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: host,
+  });
+  const [contextDirectory] = await readdir(
+    join(root, "worlds-file-native", worldId, "runtime", "play-contexts"),
+  );
+  const contextRoot = join(
+    root,
+    "worlds-file-native",
+    worldId,
+    "runtime",
+    "play-contexts",
+    contextDirectory!,
+  );
+  const statePath = join(contextRoot, "state.json");
+  const state = JSON.parse(await readFile(statePath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  await writeFile(
+    statePath,
+    JSON.stringify({ ...state, authorizationCheckpointCount: 2 }),
+  );
+  await mkdir(join(contextRoot, "authorization"));
+  for (const index of [1, 2])
+    await writeFile(
+      join(contextRoot, "authorization", numberedFileName(index)),
+      JSON.stringify({ afterEventId: 0, authorization: {} }),
+    );
+  const current = await worlds.playTimeline.readCurrent(worldId);
+  expect(current).not.toBeNull();
+  expect(current?.value.events.length).toBeGreaterThan(0);
+  expect(current?.value).not.toHaveProperty("documentAuthorizationCheckpoints");
+  expect(current?.cursor).not.toHaveProperty("authorizationCheckpointCount");
+});
+
+function numberedFileName(index: number): string {
+  return `${String(index).padStart(10, "0")}.json`;
+}

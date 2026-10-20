@@ -419,7 +419,6 @@ export class PlayCallChain {
         eventCount: 0,
         transcriptCount: 0,
         completedToolCount: 0,
-        authorizationCheckpointCount: 0,
       },
     };
     if (activeId !== undefined) this.#active.delete(activeId);
@@ -2818,8 +2817,6 @@ export class PlayCallChain {
     );
     return {
       ...structuredClone(persisted),
-      // Read authorizations are memory-only; legacy checkpoints are ignored.
-      documentAuthorizationCheckpoints: [],
       nextMaterials: structuredClone(binding.additionalMaterials),
       documents,
       history: historyEntries(binding.history, binding.historyBackgrounds),
@@ -2834,7 +2831,6 @@ export class PlayCallChain {
         eventCount: 0,
         transcriptCount: 0,
         completedToolCount: 0,
-        authorizationCheckpointCount: 0,
       },
     };
   }

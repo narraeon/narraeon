@@ -60,16 +60,6 @@ export interface PersistedCompletedToolCall {
   result: PlayDocumentToolResult;
 }
 
-/**
- * Legacy durable read-authorization snapshots. Authorizations are memory-only
- * (ADR-0044), so new contexts never write these; old records stay readable and
- * are ignored by recovery.
- */
-export interface PersistedDocumentAuthorizationCheckpoint {
-  afterEventId: number;
-  authorization: unknown;
-}
-
 export interface PersistedPlayCallChainContext {
   /** Source-machine contexts stay readable but can never resume Provider state. */
   importedFromArchive?: true;
@@ -100,7 +90,6 @@ export interface PersistedPlayCallChainContext {
   transcript: ModelHostAppendItem[];
   events: V1PlayCallChainEvent[];
   completedTools: PersistedCompletedToolCall[];
-  documentAuthorizationCheckpoints?: PersistedDocumentAuthorizationCheckpoint[];
   changedDocuments: V1PlayCallChainView["changedDocuments"];
   nextMaterials: MaterialSelection[];
   nextEventId: number;
@@ -159,7 +148,6 @@ interface PersistedContextState {
   eventCount: number;
   transcriptCount: number;
   completedToolCount: number;
-  authorizationCheckpointCount: number;
   promptRunCount?: number;
   changedDocuments: V1PlayCallChainView["changedDocuments"];
   nextEventId: number;
@@ -191,7 +179,6 @@ export interface PlayContextPersistenceCursor {
   eventCount: number;
   transcriptCount: number;
   completedToolCount: number;
-  authorizationCheckpointCount: number;
   promptRunCount?: number;
 }
 
@@ -262,9 +249,6 @@ export class FileNativePlayTimelineStore {
         worldId,
         previousChainId,
         timelineGeneration: generation,
-        documentAuthorizationCheckpoints: structuredClone(
-          context.documentAuthorizationCheckpoints ?? [],
-        ),
       });
       previousChainId = context.chainId;
     }
@@ -358,10 +342,6 @@ export class FileNativePlayTimelineStore {
       input.source.completedTools,
       input.target.completedTools,
     );
-    const authorizationCheckpointCount = prefixLength(
-      input.source.documentAuthorizationCheckpoints ?? [],
-      input.target.documentAuthorizationCheckpoints ?? [],
-    );
     if (
       input.retainCompleteContext ||
       input.target.events.some(
@@ -419,19 +399,11 @@ export class FileNativePlayTimelineStore {
         count: completedToolCount,
         immutable: true,
       }),
-      cloneNumberedPrefix({
-        sourceRoot,
-        targetRoot,
-        directory: "authorization",
-        count: authorizationCheckpointCount,
-        immutable: true,
-      }),
     ]);
     return this.persistStaged(input.targetWorldRoot, input.target, {
       transcriptCount,
       eventCount,
       completedToolCount,
-      authorizationCheckpointCount,
     });
   }
 
@@ -484,10 +456,6 @@ export class FileNativePlayTimelineStore {
       completedToolCount: Math.min(
         supplied.completedToolCount,
         value.completedTools.length,
-      ),
-      authorizationCheckpointCount: Math.min(
-        supplied.authorizationCheckpointCount,
-        value.documentAuthorizationCheckpoints?.length ?? 0,
       ),
     };
 
@@ -542,17 +510,6 @@ export class FileNativePlayTimelineStore {
         join(root, "completed-tools", numbered(index + 1)),
         value.completedTools[index],
       );
-    const checkpoints = value.documentAuthorizationCheckpoints ?? [];
-    for (
-      let index = previous.authorizationCheckpointCount;
-      index < checkpoints.length;
-      index += 1
-    )
-      await publishImmutableJson(
-        join(root, "authorization", numbered(index + 1)),
-        checkpoints[index],
-      );
-
     const promptRuns = value.promptRuns ?? [];
     for (
       let index = supplied.promptRunCount ?? 0;
@@ -574,7 +531,6 @@ export class FileNativePlayTimelineStore {
       eventCount: value.events.length,
       transcriptCount: value.transcript.length,
       completedToolCount: value.completedTools.length,
-      authorizationCheckpointCount: checkpoints.length,
       promptRunCount: promptRuns.length,
       changedDocuments: structuredClone(value.changedDocuments),
       nextEventId: value.nextEventId,
@@ -599,7 +555,6 @@ export class FileNativePlayTimelineStore {
       eventCount: value.events.length,
       transcriptCount: value.transcript.length,
       completedToolCount: value.completedTools.length,
-      authorizationCheckpointCount: checkpoints.length,
       promptRunCount: promptRuns.length,
     };
   }
@@ -647,7 +602,6 @@ export class FileNativePlayTimelineStore {
       transcript,
       rawEvents,
       completedTools,
-      checkpoints,
       promptRuns,
     ] = await Promise.all([
       readJson<unknown>(join(root, "base.json")),
@@ -666,10 +620,6 @@ export class FileNativePlayTimelineStore {
       readNumbered<PersistedCompletedToolCall>(
         join(root, "completed-tools"),
         stateValue.completedToolCount,
-      ),
-      readNumbered<PersistedDocumentAuthorizationCheckpoint>(
-        join(root, "authorization"),
-        stateValue.authorizationCheckpointCount,
       ),
       readNumbered<unknown>(
         join(root, "prompt-runs"),
@@ -754,7 +704,6 @@ export class FileNativePlayTimelineStore {
       transcript,
       events,
       completedTools,
-      documentAuthorizationCheckpoints: checkpoints,
       promptRuns,
       changedDocuments: structuredClone(stateValue.changedDocuments),
       nextMaterials: structuredClone(continuationValue.nextMaterials),
@@ -779,7 +728,6 @@ export class FileNativePlayTimelineStore {
         eventCount: stateValue.eventCount,
         transcriptCount: stateValue.transcriptCount,
         completedToolCount: stateValue.completedToolCount,
-        authorizationCheckpointCount: stateValue.authorizationCheckpointCount,
         promptRunCount: stateValue.promptRunCount ?? 0,
       },
     };
@@ -1324,7 +1272,6 @@ function emptyPersistenceCursor(): PlayContextPersistenceCursor {
     eventCount: 0,
     transcriptCount: 0,
     completedToolCount: 0,
-    authorizationCheckpointCount: 0,
   };
 }
 
@@ -1413,7 +1360,6 @@ function assertContextState(
     !validCount(value.eventCount) ||
     !validCount(value.transcriptCount) ||
     !validCount(value.completedToolCount) ||
-    !validCount(value.authorizationCheckpointCount) ||
     (value.promptRunCount !== undefined && !validCount(value.promptRunCount)) ||
     !Array.isArray(value.changedDocuments) ||
     !validCount(value.nextEventId) ||
@@ -1528,10 +1474,7 @@ function isReleasedPlayContext(
   } catch {
     return false;
   }
-  return validReleasedAuthorizationCheckpoints(
-    value.documentAuthorizationCheckpoints,
-    value.events,
-  );
+  return true;
 }
 
 function validModelHostBinding(value: unknown): value is ModelHostBinding {
@@ -1578,39 +1521,6 @@ function validReleasedBranchedBeforePlayer(value: unknown): boolean {
       Number.isSafeInteger(value.eventId) &&
       Number(value.eventId) > 0)
   );
-}
-
-function validReleasedAuthorizationCheckpoints(
-  value: unknown,
-  events: unknown[],
-): boolean {
-  if (value === undefined) return true;
-  if (!Array.isArray(value) || value.length > 100_000) return false;
-  const eventIds = new Set(
-    events.flatMap((event) =>
-      isRecord(event) && Number.isSafeInteger(event.id) && Number(event.id) > 0
-        ? [Number(event.id)]
-        : [],
-    ),
-  );
-  let previousEventId = -1;
-  for (const checkpoint of value) {
-    if (
-      !isRecord(checkpoint) ||
-      Object.keys(checkpoint).length !== 2 ||
-      !Object.hasOwn(checkpoint, "afterEventId") ||
-      !Object.hasOwn(checkpoint, "authorization") ||
-      !Number.isSafeInteger(checkpoint.afterEventId) ||
-      Number(checkpoint.afterEventId) < 0 ||
-      Number(checkpoint.afterEventId) <= previousEventId ||
-      (Number(checkpoint.afterEventId) !== 0 &&
-        !eventIds.has(Number(checkpoint.afterEventId))) ||
-      !isRecord(checkpoint.authorization)
-    )
-      return false;
-    previousEventId = Number(checkpoint.afterEventId);
-  }
-  return true;
 }
 
 function releasedCurrentContext(
