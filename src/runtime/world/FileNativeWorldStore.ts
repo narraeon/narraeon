@@ -201,8 +201,6 @@ interface FileNativeMaterializedCheckpoint {
 
 export type FileNativeOperationOutcome =
   | { outcome: "not_started" | "in_progress" }
-  | { outcome: "failed"; operationId?: string }
-  | { outcome: "cancelled"; operationId?: string }
   | {
       outcome: "committed" | "committed_materialization_pending";
       worldId: string;
@@ -218,13 +216,14 @@ export type FileNativeOperationOutcome =
       mode: "play" | "correction" | "timeline_revision";
     };
 
-type FileNativeAcceptancePreparedOutcome = Omit<
-  Extract<
-    FileNativeOperationOutcome,
-    { outcome: "committed" | "committed_materialization_pending" }
-  >,
-  "outcome"
-> & { outcome: "acceptance_prepared" };
+type CommittedOperationOutcome = Extract<
+  FileNativeOperationOutcome,
+  { outcome: "committed" | "committed_materialization_pending" }
+>;
+
+type OperationEntry =
+  | { phase: "in_progress" }
+  | { phase: "done"; outcome: CommittedOperationOutcome };
 
 export interface FileNativeRecoveredEndpoint {
   worldId: string;
@@ -275,7 +274,9 @@ export class FileNativeWorldStore {
     Map<string, DocumentMaintenanceState>
   >();
   readonly #worldsRoot: string;
-  readonly #operationsRoot: string;
+  // Process-local duplicate guard keyed by operation ID (ADR-0044): entries are
+  // not persisted, so a restart forgets them and a repeated operation redoes.
+  readonly #operationOutcomes = new Map<string, OperationEntry>();
   readonly #promptCompiler: FileNativePromptCompiler;
   readonly #activeControlUsers = new Map<string, Set<string>>();
   readonly #openingWorldRevisions = new Set<string>();
@@ -294,7 +295,6 @@ export class FileNativeWorldStore {
     const root = resolve(dataRoot);
     this.#worldsRoot = join(root, "worlds-file-native");
     this.extensionRequests = new WorldExtensionRequests(this.#worldsRoot);
-    this.#operationsRoot = join(root, "operations");
     this.#promptCompiler =
       options.promptCompiler ?? new FileNativePromptCompiler();
     this.operations = new FileNativeWorldOperationCoordinator(root);
@@ -647,9 +647,7 @@ export class FileNativeWorldStore {
       this.#worldsRoot,
       `.staging-${worldId}-${randomUUID()}`,
     );
-    const operationPath = this.#operationPath(input.operationId);
     await mkdir(this.#worldsRoot, { recursive: true, mode: 0o700 });
-    await mkdir(this.#operationsRoot, { recursive: true, mode: 0o700 });
     await rm(stagingRoot, { recursive: true, force: true });
     try {
       const openingMessage = {
@@ -738,7 +736,6 @@ export class FileNativeWorldStore {
         Date.now(),
       );
       await rename(stagingRoot, finalRoot);
-      await publishOperation(operationPath, publication);
       return {
         outcome: "created",
         world: await this.#currentSummary(publication),
@@ -1222,40 +1219,7 @@ export class FileNativeWorldStore {
           (checkpoint?.historyBackgroundCount ?? 0) !== cachedBackgrounds.length
         ) {
           const recovered = await authorityStore.recover();
-          let operation: Extract<
-            FileNativeOperationOutcome,
-            {
-              outcome: "committed" | "committed_materialization_pending";
-            }
-          > | null = null;
-          if (authority.operationId !== null && authority.sequence > 0) {
-            const candidate = await this.getOperationOutcome(
-              authority.operationId,
-            );
-            if (isCommittedOutcome(candidate)) {
-              if (
-                candidate.worldId !== worldId ||
-                candidate.head !== authority.head ||
-                candidate.commitDigest !== authority.commitDigest
-              )
-                throw new FileNativeWorldCreationError(
-                  "world_corrupt",
-                  "Current Authority head is bound to a different operation receipt",
-                );
-              operation = candidate;
-            } else if (candidate.outcome !== "not_started") {
-              throw new FileNativeWorldCreationError(
-                "world_corrupt",
-                "Current Authority head has no recoverable acceptance receipt",
-              );
-            }
-          }
           await materializeRecoveredEndpoint(root, authority, recovered);
-          if (operation !== null)
-            await publishJson(
-              this.#operationOutcomePath(authority.operationId!),
-              { ...operation, outcome: "committed" },
-            );
         }
         const [state, control, history, materials, backgrounds] =
           await Promise.all([
@@ -1340,38 +1304,18 @@ export class FileNativeWorldStore {
     };
   }
 
-  async reserveOperation(operationId: string): Promise<boolean> {
+  reserveOperation(operationId: string): Promise<boolean> {
     assertIdentity(operationId, "operation ID");
-    await mkdir(this.#operationsRoot, { recursive: true, mode: 0o700 });
-    const path = this.#operationOutcomePath(operationId);
-    try {
-      await writeFile(
-        path,
-        `${JSON.stringify({ outcome: "in_progress" }, null, 2)}\n`,
-        { encoding: "utf8", flag: "wx", mode: 0o600 },
-      );
-      return true;
-    } catch (error: unknown) {
-      if (isNodeError(error) && error.code === "EEXIST") return false;
-      throw error;
-    }
+    if (this.#operationOutcomes.has(operationId)) return Promise.resolve(false);
+    this.#operationOutcomes.set(operationId, { phase: "in_progress" });
+    return Promise.resolve(true);
   }
 
-  async releaseOperationReservation(operationId: string): Promise<void> {
+  releaseOperationReservation(operationId: string): Promise<void> {
     assertIdentity(operationId, "operation ID");
-    const path = this.#operationOutcomePath(operationId);
-    const current = await readOptionalJson<unknown>(path);
-    if (current === null) return;
-    if (
-      !isRecord(current) ||
-      !hasExactKeys(current, ["outcome"]) ||
-      current.outcome !== "in_progress"
-    )
-      throw new FileNativeWorldCreationError(
-        "world_corrupt",
-        "Operation reservation to release has an invalid shape",
-      );
-    await rm(path, { force: true });
+    if (this.#operationOutcomes.get(operationId)?.phase === "in_progress")
+      this.#operationOutcomes.delete(operationId);
+    return Promise.resolve();
   }
 
   async recoverEndpoint(
@@ -1416,9 +1360,29 @@ export class FileNativeWorldStore {
           return (await new FileNativeAuthorityV3(root).readHead()).operationId;
         },
       );
-      return operationId === null
-        ? { outcome: "not_started" }
-        : this.getOperationOutcome(operationId);
+      if (operationId === null) return { outcome: "not_started" };
+      // Materialization is idempotent and rebuilt from the Authority head, so
+      // the answer does not depend on any process-local operation record.
+      const authority = new FileNativeAuthorityV3(
+        join(this.#worldsRoot, worldId),
+      );
+      const head = await authority.readHead();
+      const { commit, digest } = await authority.authorityFactAt(head.head);
+      return {
+        outcome: "committed",
+        worldId,
+        parentHead: commit.auditParent.head,
+        head: head.head,
+        commitDigest: digest,
+        historyAppend: commit.historyAppend.map(({ role, exactText }) => ({
+          role,
+          exactText,
+        })),
+        nextAdditionalMaterials: structuredClone([
+          ...commit.nextAdditionalMaterials,
+        ]),
+        mode: commit.mode,
+      };
     } catch (error: unknown) {
       if (error instanceof WorldOperationBusyError)
         throw new FileNativeWorldCreationError(
@@ -1453,44 +1417,12 @@ export class FileNativeWorldStore {
       input.targetDataRoot === undefined
         ? this
         : new FileNativeWorldStore(input.targetDataRoot);
-    const operationPath =
-      input.identityPrefix === "import"
-        ? join(
-            target.#operationsRoot,
-            `import-${operationDigest(input.operationId)}.json`,
-          )
-        : target.#derivationOperationPath(input.operationId);
     const requestFingerprint = derivationRequestFingerprint(input);
     const worldId = `world-${operationDigest(`${input.identityPrefix ?? "derive"}:${input.operationId}`).slice(0, 24)}`;
     const finalRoot =
       input.publish === false
         ? resolve(input.targetWorldRoot!)
         : join(target.#worldsRoot, worldId);
-    const previous =
-      input.publish === false
-        ? null
-        : await readOptionalJson<Publication>(operationPath);
-    if (previous !== null) {
-      await target.ensureCurrentStorage(previous.worldId);
-      if (
-        !(await derivationPublicationMatches(
-          join(target.#worldsRoot, previous.worldId),
-          previous,
-          input,
-          requestFingerprint,
-        ))
-      )
-        throw new FileNativeWorldCreationError(
-          "operation_conflict",
-          "The same fork operation ID is bound to a different fork payload",
-        );
-      return {
-        outcome: "derived",
-        world: await target.#currentSummary(previous),
-        worldRoot: finalRoot,
-      };
-    }
-
     const alreadyPublished = await readOptionalJson<Publication>(
       join(finalRoot, publicationFile),
     );
@@ -1509,10 +1441,6 @@ export class FileNativeWorldStore {
           "operation_conflict",
           "Published fork world does not match the operation payload",
         );
-      if (input.publish !== false) {
-        await mkdir(target.#operationsRoot, { recursive: true, mode: 0o700 });
-        await publishJson(operationPath, alreadyPublished);
-      }
       return {
         outcome: "derived",
         world: await readWorldSummaryAt(finalRoot, alreadyPublished),
@@ -1558,8 +1486,6 @@ export class FileNativeWorldStore {
         `.staging-${worldId}-${randomUUID()}`,
       );
       await mkdir(dirname(finalRoot), { recursive: true, mode: 0o700 });
-      if (input.publish !== false)
-        await mkdir(target.#operationsRoot, { recursive: true, mode: 0o700 });
       try {
         await mkdir(join(staging, "runtime"), { recursive: true });
         const clonedHead = await sourceAuthority.clonePrefixTo({
@@ -1670,8 +1596,6 @@ export class FileNativeWorldStore {
           Date.now(),
         );
         await rename(staging, finalRoot);
-        if (input.publish !== false)
-          await publishJson(operationPath, publication);
         return {
           outcome: "derived",
           world: await readWorldSummaryAt(finalRoot, publication),
@@ -1697,8 +1621,6 @@ export class FileNativeWorldStore {
               "operation_conflict",
               "Published fork world does not match the operation payload",
             );
-          if (input.publish !== false)
-            await publishJson(operationPath, published);
           return {
             outcome: "derived",
             world: await readWorldSummaryAt(finalRoot, published),
@@ -1728,81 +1650,24 @@ export class FileNativeWorldStore {
     }
   }
 
-  async failOperation(
-    operationId: string,
-    outcome: "failed" | "cancelled" = "failed",
-  ): Promise<void> {
-    const current = await this.getOperationOutcome(operationId);
-    if (isCommittedOutcome(current)) return;
-    await writeJson(this.#operationOutcomePath(operationId), { outcome });
-  }
-
   async getOperationOutcome(
     operationId: string,
   ): Promise<FileNativeOperationOutcome> {
-    return this.#readOperationOutcome(operationId);
-  }
-
-  async #readOperationOutcome(
-    operationId: string,
-  ): Promise<FileNativeOperationOutcome> {
     assertIdentity(operationId, "operation ID");
-    let directRecord: Record<string, unknown> | null;
-    try {
-      let value = await readOptionalJson<unknown>(
-        this.#operationOutcomePath(operationId),
-      );
-      if (
-        isRecord(value) &&
-        (value.outcome === "acceptance_prepared" ||
-          value.outcome === "committed" ||
-          value.outcome === "committed_materialization_pending") &&
-        typeof value.worldId === "string"
-      ) {
-        await this.ensureCurrentStorage(value.worldId);
-        value = await readOptionalJson<unknown>(
-          this.#operationOutcomePath(operationId),
-        );
-      }
-      if (value === null) directRecord = null;
-      else {
-        assertOperationOutcomeIntegrity(value);
-        directRecord = value;
-      }
-    } catch (error: unknown) {
-      if (error instanceof FileNativeWorldCreationError) throw error;
-      throw new FileNativeWorldCreationError(
-        "world_corrupt",
-        "Authority operation outcome has an invalid structure",
-        error instanceof Error ? { cause: error } : undefined,
-      );
-    }
-    if (directRecord?.outcome === "acceptance_prepared")
-      return resolvePreparedOperationOutcome(
-        this.#worldsRoot,
-        operationId,
-        directRecord,
-      );
-    const direct =
-      directRecord === null ? null : projectOperationOutcome(directRecord);
-    if (
-      direct?.outcome === "committed" ||
-      direct?.outcome === "committed_materialization_pending"
-    ) {
-      const worldRoot = join(this.#worldsRoot, direct.worldId);
-      const commit = await assertCommittedAuthorityOutcomeMatches(
-        worldRoot,
-        direct,
-      );
-      const materialized = await readMaterializedCheckpoint(worldRoot);
-      if (materialized !== null && materialized.sequence >= commit.sequence)
-        return { ...direct, outcome: "committed" };
-      await assertPendingMaterializationCompatible(worldRoot, direct);
-      return { ...direct, outcome: "committed_materialization_pending" };
-    }
-    return direct?.outcome === "in_progress"
-      ? { outcome: "in_progress" }
-      : (direct ?? { outcome: "not_started" });
+    const entry = this.#operationOutcomes.get(operationId);
+    if (entry === undefined) return { outcome: "not_started" };
+    if (entry.phase === "in_progress") return { outcome: "in_progress" };
+    const outcome = structuredClone(entry.outcome);
+    const worldRoot = join(this.#worldsRoot, outcome.worldId);
+    const commit = await assertCommittedAuthorityOutcomeMatches(
+      worldRoot,
+      outcome,
+    );
+    const materialized = await readMaterializedCheckpoint(worldRoot);
+    if (materialized !== null && materialized.sequence >= commit.sequence)
+      return { ...outcome, outcome: "committed" };
+    await assertPendingMaterializationCompatible(worldRoot, outcome);
+    return { ...outcome, outcome: "committed_materialization_pending" };
   }
 
   /**
@@ -2103,43 +1968,25 @@ export class FileNativeWorldStore {
       { outcome: "committed" | "committed_materialization_pending" }
     >
   > {
-    const existing = await this.getOperationOutcome(input.operationId);
-    if (isCommittedOutcome(existing)) {
-      assertSameOperationOutcome(existing, input);
+    const existing = this.#operationOutcomes.get(input.operationId);
+    if (existing?.phase === "done") {
+      const outcome = existing.outcome;
+      assertSameOperationOutcome(outcome, input);
       const authority = new FileNativeAuthorityV3(
-        join(this.#worldsRoot, existing.worldId),
+        join(this.#worldsRoot, outcome.worldId),
       );
-      const fact = await authority.authorityFactAt(existing.head);
+      const fact = await authority.authorityFactAt(outcome.head);
       if (
-        fact.digest !== existing.commitDigest ||
+        fact.digest !== outcome.commitDigest ||
         !authorityCommitMatchesInput(fact.commit, input)
       )
         throw new FileNativeWorldCreationError(
           "operation_conflict",
           "The same play operation ID is bound to a different complete commit payload",
         );
-      return existing;
+      return outcome;
     }
-    const prepared =
-      existing.outcome === "in_progress"
-        ? await readAcceptancePreparedOutcome(
-            this.#operationOutcomePath(input.operationId),
-          )
-        : null;
-    if (prepared !== null) {
-      const comparable = {
-        ...structuredClone(prepared),
-        outcome: "committed_materialization_pending" as const,
-      };
-      assertSameOperationOutcome(comparable, input);
-    }
-    if (
-      existing.outcome !== "not_started" &&
-      !(
-        existing.outcome === "in_progress" &&
-        (input.operationReserved === true || prepared !== null)
-      )
-    )
+    if (existing?.phase === "in_progress" && input.operationReserved !== true)
       throw new FileNativeWorldCreationError(
         "operation_conflict",
         "The same play operation ID is occupied by another durable operation",
@@ -2149,40 +1996,25 @@ export class FileNativeWorldStore {
       return await this.operations.withWorldAuthorityLock(
         input.worldId,
         async () => {
-          const concurrent = await this.#readOperationOutcome(
-            input.operationId,
-          );
-          if (isCommittedOutcome(concurrent)) {
-            assertSameOperationOutcome(concurrent, input);
+          const concurrent = this.#operationOutcomes.get(input.operationId);
+          if (concurrent?.phase === "done") {
+            const outcome = concurrent.outcome;
+            assertSameOperationOutcome(outcome, input);
             const known = await new FileNativeAuthorityV3(
-              join(this.#worldsRoot, concurrent.worldId),
-            ).authorityFactAt(concurrent.head);
+              join(this.#worldsRoot, outcome.worldId),
+            ).authorityFactAt(outcome.head);
             if (
-              known.digest !== concurrent.commitDigest ||
+              known.digest !== outcome.commitDigest ||
               !authorityCommitMatchesInput(known.commit, input)
             )
               throw new FileNativeWorldCreationError(
                 "operation_conflict",
                 "The same play operation ID is bound to a different complete commit payload",
               );
-            return concurrent;
+            return outcome;
           }
-          const concurrentPrepared =
-            concurrent.outcome === "in_progress"
-              ? await readAcceptancePreparedOutcome(
-                  this.#operationOutcomePath(input.operationId),
-                )
-              : null;
-          if (concurrentPrepared !== null)
-            assertSameOperationOutcome(
-              {
-                ...structuredClone(concurrentPrepared),
-                outcome: "committed_materialization_pending",
-              },
-              input,
-            );
-          else if (
-            concurrent.outcome === "in_progress" &&
+          if (
+            concurrent?.phase === "in_progress" &&
             input.operationReserved !== true
           )
             throw new FileNativeWorldCreationError(
@@ -2268,8 +2100,7 @@ export class FileNativeWorldStore {
               "candidate_validation_failed",
               `Candidate world failed mechanical validation: ${inspection.issues.map(({ message }) => message).join("; ")}`,
             );
-          if (concurrentPrepared === null)
-            await authorityStore.discardUnacceptedNextEpoch();
+          await authorityStore.discardUnacceptedNextEpoch();
           const preparedAppend = await authorityStore.prepareAppend({
             ...(input.playContext === undefined
               ? {}
@@ -2301,15 +2132,6 @@ export class FileNativeWorldStore {
               ? {}
               : { timelineRevision: input.timelineRevision }),
           });
-          const acceptedPreparation = concurrentPrepared ?? prepared;
-          if (
-            acceptedPreparation !== null &&
-            acceptedPreparation.commitDigest !== preparedAppend.commitDigest
-          )
-            throw new FileNativeWorldCreationError(
-              "operation_conflict",
-              "The prepared Authority fact does not match the reserved operation",
-            );
           const { commit } = preparedAppend;
           const pending = {
             outcome: "committed_materialization_pending" as const,
@@ -2321,16 +2143,12 @@ export class FileNativeWorldStore {
             nextAdditionalMaterials: structuredClone(input.nextMaterials),
             mode: input.mode,
           };
-          await publishJson(this.#operationOutcomePath(input.operationId), {
-            ...pending,
-            outcome: "acceptance_prepared",
-          });
           await authorityStore.publishPrepared(preparedAppend);
           const acceptedAt = Date.now();
-          await publishJson(
-            this.#operationOutcomePath(input.operationId),
-            pending,
-          );
+          this.#operationOutcomes.set(input.operationId, {
+            phase: "done",
+            outcome: pending,
+          });
           try {
             const recovered = await authorityStore.recover(commit.head);
             await assertPendingMaterializationCompatible(root, pending);
@@ -2341,10 +2159,10 @@ export class FileNativeWorldStore {
               acceptedAt,
             );
             const outcome = { ...pending, outcome: "committed" as const };
-            await publishJson(
-              this.#operationOutcomePath(input.operationId),
+            this.#operationOutcomes.set(input.operationId, {
+              phase: "done",
               outcome,
-            );
+            });
             return outcome;
           } catch (error: unknown) {
             if (
@@ -2483,42 +2301,19 @@ export class FileNativeWorldStore {
   }
 
   async #readPublication(operationId: string): Promise<Publication | null> {
+    // The world root's own publication record is the only creation receipt.
+    const worldId = `world-${operationDigest(operationId).slice(0, 24)}`;
     let publication: Publication;
     try {
-      publication = await readJson<Publication>(
-        this.#operationPath(operationId),
-      );
+      publication = await readPublicationAt(join(this.#worldsRoot, worldId));
     } catch (error: unknown) {
-      if (isNodeError(error) && error.code === "ENOENT") {
-        const worldId = `world-${operationDigest(operationId).slice(0, 24)}`;
-        try {
-          publication = await readPublicationAt(
-            join(this.#worldsRoot, worldId),
-          );
-        } catch (worldError: unknown) {
-          if (isNodeError(worldError) && worldError.code === "ENOENT")
-            return null;
-          throw worldError;
-        }
-        if (publication.operationId !== operationId) {
-          throw new FileNativeWorldCreationError(
-            "operation_conflict",
-            "Deterministic world identity is occupied by another creation operation",
-          );
-        }
-        await mkdir(this.#operationsRoot, { recursive: true, mode: 0o700 });
-        await publishOperation(this.#operationPath(operationId), publication);
-      } else {
-        throw error;
-      }
+      if (isNodeError(error) && error.code === "ENOENT") return null;
+      throw error;
     }
-    const worldPublication = await readPublicationAt(
-      join(this.#worldsRoot, publication.worldId),
-    );
-    if (JSON.stringify(worldPublication) !== JSON.stringify(publication)) {
+    if (publication.operationId !== operationId) {
       throw new FileNativeWorldCreationError(
-        "world_corrupt",
-        "Creation operation does not match the world publication record",
+        "operation_conflict",
+        "Deterministic world identity is occupied by another creation operation",
       );
     }
     return publication;
@@ -2528,24 +2323,6 @@ export class FileNativeWorldStore {
     return readWorldSummaryAt(
       join(this.#worldsRoot, publication.worldId),
       publication,
-    );
-  }
-
-  #operationPath(operationId: string): string {
-    return join(this.#operationsRoot, `${operationDigest(operationId)}.json`);
-  }
-
-  #operationOutcomePath(operationId: string): string {
-    return join(
-      this.#operationsRoot,
-      `outcome-${operationDigest(operationId)}.json`,
-    );
-  }
-
-  #derivationOperationPath(operationId: string): string {
-    return join(
-      this.#operationsRoot,
-      `derive-${operationDigest(operationId)}.json`,
     );
   }
 
@@ -2735,15 +2512,6 @@ function operationDigest(operationId: string): string {
   return createHash("sha256").update(operationId).digest("hex");
 }
 
-async function publishOperation(
-  path: string,
-  value: Publication,
-): Promise<void> {
-  const temporary = `${path}.${randomUUID()}.tmp`;
-  await writeJson(temporary, value);
-  await rename(temporary, path);
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -2768,107 +2536,6 @@ function hasRequiredAndOptionalKeys(
     required.every((key) => Object.hasOwn(value, key)) &&
     Object.keys(value).every((key) => allowed.has(key))
   );
-}
-
-function assertOperationOutcomeIntegrity(
-  value: unknown,
-): asserts value is Record<string, unknown> {
-  if (!isRecord(value) || typeof value.outcome !== "string")
-    throw corruptOperationOutcome();
-  if (value.outcome === "in_progress") {
-    if (!hasExactKeys(value, ["outcome"])) throw corruptOperationOutcome();
-    return;
-  }
-  if (value.outcome === "failed" || value.outcome === "cancelled") {
-    if (!hasExactKeys(value, ["outcome"])) throw corruptOperationOutcome();
-    return;
-  }
-  if (
-    value.outcome === "acceptance_prepared" ||
-    value.outcome === "committed" ||
-    value.outcome === "committed_materialization_pending"
-  ) {
-    if (
-      !hasExactKeys(value, [
-        "outcome",
-        "worldId",
-        "parentHead",
-        "head",
-        "commitDigest",
-        "historyAppend",
-        "nextAdditionalMaterials",
-        "mode",
-      ]) ||
-      typeof value.worldId !== "string" ||
-      value.worldId.length === 0 ||
-      typeof value.parentHead !== "string" ||
-      !/^(?:genesis|commit:[1-9][0-9]*)$/u.test(value.parentHead) ||
-      typeof value.head !== "string" ||
-      !/^commit:[1-9][0-9]*$/u.test(value.head) ||
-      typeof value.commitDigest !== "string" ||
-      !/^[a-f0-9]{64}$/u.test(value.commitDigest) ||
-      !Array.isArray(value.historyAppend) ||
-      !value.historyAppend.every(isPlayHistoryAppendInput) ||
-      !Array.isArray(value.nextAdditionalMaterials) ||
-      !value.nextAdditionalMaterials.every(isAuthorityMaterialSelection) ||
-      !(
-        value.mode === "play" ||
-        value.mode === "correction" ||
-        value.mode === "timeline_revision"
-      )
-    )
-      throw corruptOperationOutcome();
-    return;
-  }
-  throw corruptOperationOutcome();
-}
-
-function projectOperationOutcome(
-  value: Record<string, unknown>,
-): FileNativeOperationOutcome {
-  return structuredClone(value) as FileNativeOperationOutcome;
-}
-
-async function readAcceptancePreparedOutcome(
-  path: string,
-): Promise<FileNativeAcceptancePreparedOutcome | null> {
-  const value = await readOptionalJson<unknown>(path);
-  if (value === null) return null;
-  assertOperationOutcomeIntegrity(value);
-  if (value.outcome !== "acceptance_prepared") return null;
-  return structuredClone(
-    value,
-  ) as unknown as FileNativeAcceptancePreparedOutcome;
-}
-
-async function resolvePreparedOperationOutcome(
-  worldsRoot: string,
-  operationId: string,
-  value: Record<string, unknown>,
-): Promise<FileNativeOperationOutcome> {
-  const prepared = value as unknown as Extract<
-    FileNativeOperationOutcome,
-    { outcome: "committed" | "committed_materialization_pending" }
-  >;
-  const worldRoot = join(worldsRoot, prepared.worldId);
-  const authorityStore = new FileNativeAuthorityV3(worldRoot);
-  const authority = await authorityStore.readHead();
-  if (authority.head === prepared.parentHead) return { outcome: "in_progress" };
-  if (authority.operationId !== operationId) throw corruptOperationOutcome();
-  const commit = await assertCommittedAuthorityOutcomeMatches(
-    worldRoot,
-    prepared,
-  );
-  if (authority.sequence < commit.sequence) throw corruptOperationOutcome();
-  const materialized = await readMaterializedCheckpoint(worldRoot);
-  const outcome: "committed" | "committed_materialization_pending" =
-    materialized !== null && materialized.sequence >= commit.sequence
-      ? "committed"
-      : "committed_materialization_pending";
-  const resolved = { ...structuredClone(prepared), outcome };
-  if (outcome === "committed_materialization_pending")
-    await assertPendingMaterializationCompatible(worldRoot, resolved);
-  return resolved;
 }
 
 function corruptOperationOutcome(): FileNativeWorldCreationError {
@@ -3005,47 +2672,6 @@ function assertHistoryProjectionBetweenEndpoints(
   }
 }
 
-function isAuthorityMaterialSelection(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  if (value.kind === "document")
-    return (
-      hasExactKeys(value, ["kind", "document"]) &&
-      typeof value.document === "string"
-    );
-  if (value.kind === "node")
-    return (
-      hasExactKeys(value, ["kind", "document", "locator"]) &&
-      typeof value.document === "string" &&
-      isAuthorityMaterialLocator(value.locator)
-    );
-  if (value.kind === "history_message")
-    return (
-      hasExactKeys(value, ["kind", "message"]) &&
-      typeof value.message === "string"
-    );
-  return (
-    value.kind === "history_commit" &&
-    hasExactKeys(value, ["kind", "commit"]) &&
-    typeof value.commit === "string"
-  );
-}
-
-function isAuthorityMaterialLocator(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    hasRequiredAndOptionalKeys(value, [], ["yaml", "markdown"]) &&
-    (value.yaml === undefined ||
-      (Array.isArray(value.yaml) &&
-        value.yaml.every(
-          (segment) =>
-            typeof segment === "string" || Number.isSafeInteger(segment),
-        ))) &&
-    (value.markdown === undefined ||
-      (Array.isArray(value.markdown) &&
-        value.markdown.every((segment) => typeof segment === "string")))
-  );
-}
-
 async function publishJson(path: string, value: unknown): Promise<void> {
   const temporary = `${path}.${randomUUID()}.tmp`;
   await writeJson(temporary, value);
@@ -3097,18 +2723,6 @@ function sameMaterializedEndpoint(
     checkpoint.head === authority.head &&
     checkpoint.sequence === authority.sequence &&
     checkpoint.commitDigest === authority.commitDigest
-  );
-}
-
-function isPlayHistoryAppendInput(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    hasRequiredAndOptionalKeys(value, ["role", "exactText"], ["background"]) &&
-    (value.background === undefined ||
-      (isHistoryBackground(value.background) &&
-        (value.role !== "player" || value.background.kind === "snapshot"))) &&
-    (value.role === "player" || value.role === "narrator") &&
-    typeof value.exactText === "string"
   );
 }
 

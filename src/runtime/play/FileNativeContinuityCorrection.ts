@@ -139,7 +139,7 @@ export class FileNativeContinuityCorrection {
     }
     if (revision.snapshot.status !== "usable") {
       this.#worlds.releaseControl(input.worldId, input.operationId);
-      await this.#worlds.failOperation(input.operationId, "failed");
+      await this.#worlds.releaseOperationReservation(input.operationId);
       await this.#worlds.operations.releaseCorrectionWorld(claimed.handle);
       throw new Error(
         "The correction candidate's world-state snapshot is unavailable",
@@ -347,7 +347,7 @@ export class FileNativeContinuityCorrection {
         stateOperationClaim: candidate.stateOperationClaim,
       });
     } catch (error: unknown) {
-      await this.#worlds.failOperation(candidate.operationId, "failed");
+      await this.#worlds.releaseOperationReservation(candidate.operationId);
       throw error;
     } finally {
       this.#worlds.releaseControl(candidate.worldId, candidate.operationId);
@@ -363,7 +363,7 @@ export class FileNativeContinuityCorrection {
     this.#candidates.delete(candidateId);
     this.#worlds.releaseControl(candidate.worldId, candidate.operationId);
     try {
-      await this.#worlds.failOperation(candidate.operationId, "cancelled");
+      await this.#worlds.releaseOperationReservation(candidate.operationId);
     } finally {
       await this.#worlds.operations.releaseCorrectionWorld(
         candidate.stateOperationClaim,

@@ -121,13 +121,10 @@ test.each([1, 2] as const)(
         },
       },
     });
+    // Legacy receipt files are ignored; duplicate guards are process-local.
     await expect(
       store.getOperationOutcome("released-player-b"),
-    ).resolves.toMatchObject({
-      outcome: "committed",
-      head: "commit:3",
-      commitDigest: digest(authority.commits[2]),
-    });
+    ).resolves.toEqual({ outcome: "not_started" });
 
     const currentHeadBefore = await readFile(
       join(fixture.runtimeRoot, "continuity-head.json"),
@@ -456,6 +453,8 @@ async function releasedWorld(label: string, callChainSchemaVersion: 1 | 2) {
   await writeJson(join(runtimeRoot, "materialized-head.json"), {
     head: authority.head,
   });
+  // Released data carried one receipt per commit; the runtime now ignores them.
+  await mkdir(join(root, "operations"), { recursive: true });
   for (const commit of releasedCommits)
     await writeJson(operationOutcomePath(root, commit.operationId), {
       outcome: "committed",

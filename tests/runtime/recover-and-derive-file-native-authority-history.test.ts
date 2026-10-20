@@ -523,9 +523,10 @@ test("历史端点派生会复制完整 Authority 前缀，并在来源删除后
   await rm(join(derivedRoot, "runtime", "materialized-head.json"), {
     force: true,
   });
+  // Repair rebuilds materialization from the Authority head, not a receipt.
   await expect(
     coldStore.repairMaterialization(derivedWorldId),
-  ).resolves.toEqual({ outcome: "not_started" });
+  ).resolves.toMatchObject({ outcome: "committed", head: "commit:1" });
   await expect(coldStore.getOperationOutcome("derive-1")).resolves.toEqual({
     outcome: "not_started",
   });

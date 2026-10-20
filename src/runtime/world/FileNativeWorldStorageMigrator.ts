@@ -112,13 +112,11 @@ export interface FileNativeWorldStorageMigrationResult {
  */
 export class FileNativeWorldStorageMigrator {
   readonly #worldsRoot: string;
-  readonly #operationsRoot: string;
   readonly #timeline: FileNativePlayTimelineStore;
 
   constructor(dataRoot: string, timeline: FileNativePlayTimelineStore) {
     const root = resolve(dataRoot);
     this.#worldsRoot = join(root, "worlds-file-native");
-    this.#operationsRoot = join(root, "operations");
     this.#timeline = timeline;
   }
 
@@ -220,31 +218,6 @@ export class FileNativeWorldStorageMigrator {
       currentCommits,
     );
     await publishJson(join(runtimeRoot, "materialized-head.json"), checkpoint);
-    await mkdir(this.#operationsRoot, { recursive: true, mode: 0o700 });
-    for (const commit of currentCommits) {
-      const outcome = {
-        outcome:
-          checkpoint.sequence >= commit.sequence
-            ? ("committed" as const)
-            : ("committed_materialization_pending" as const),
-        worldId,
-        parentHead: commit.parentHead,
-        head: commit.head,
-        commitDigest: currentCommitDigest(commit),
-        historyAppend: commit.historyAppend.map(({ role, exactText }) => ({
-          role,
-          exactText,
-        })),
-        nextAdditionalMaterials: structuredClone(
-          commit.nextAdditionalMaterials,
-        ),
-        mode: commit.mode,
-      };
-      await publishJson(
-        operationOutcomePath(this.#operationsRoot, commit.operationId),
-        outcome,
-      );
-    }
 
     await verifyCurrentFacts(runtimeRoot, currentCommits, checkpoint);
     const tip = currentCommits.at(-1);
@@ -283,7 +256,6 @@ export class FileNativeWorldStorageMigrator {
   }): Promise<FileNativeWorldStorageMigrationResult> {
     return migrateCurrentAuthorityToV3({
       ...input,
-      operationsRoot: this.#operationsRoot,
     });
   }
 }
@@ -291,7 +263,6 @@ export class FileNativeWorldStorageMigrator {
 async function migrateCurrentAuthorityToV3(input: {
   worldId: string;
   worldRoot: string;
-  operationsRoot: string;
   commits: readonly CurrentPlayCommit[];
   checkpoint: CurrentMaterializedCheckpoint;
   callChainContexts: number;
@@ -482,28 +453,6 @@ async function migrateCurrentAuthorityToV3(input: {
       sequence: input.checkpoint.sequence,
       commitDigest: checkpointFact?.digest ?? null,
     });
-    await mkdir(input.operationsRoot, { recursive: true, mode: 0o700 });
-    for (const { source, fact, digest } of migrated) {
-      await publishJson(
-        operationOutcomePath(input.operationsRoot, source.operationId),
-        {
-          outcome:
-            input.checkpoint.sequence >= fact.sequence
-              ? "committed"
-              : "committed_materialization_pending",
-          worldId: input.worldId,
-          parentHead: fact.auditParent.head,
-          head: fact.head,
-          commitDigest: digest,
-          historyAppend: fact.historyAppend.map(({ role, exactText }) => ({
-            role,
-            exactText,
-          })),
-          nextAdditionalMaterials: fact.nextAdditionalMaterials,
-          mode: fact.mode,
-        },
-      );
-    }
     await rm(stagingWorld, { recursive: true, force: true });
     await publishJson(join(runtimeRoot, continuityHeadFile), finalHead);
     return {
@@ -1336,10 +1285,6 @@ function currentCommitDigest(commit: CurrentPlayCommit): string {
 
 function releasedCommitDigest(commit: ReleasedPlayCommit): string {
   return sha256Hex(JSON.stringify(commit));
-}
-
-function operationOutcomePath(root: string, operationId: string): string {
-  return join(root, `outcome-${sha256Hex(operationId)}.json`);
 }
 
 function validRelativePath(path: string): boolean {

@@ -1120,15 +1120,8 @@ export class PlayCallChain {
       const commit = authority.commits.find(
         ({ head }) => head === appliedEvent.committedHead,
       );
-      const operation = await this.#worlds.getOperationOutcome(
-        input.operationId,
-      );
       if (
         commit?.mode !== "timeline_revision" ||
-        (operation.outcome !== "committed" &&
-          operation.outcome !== "committed_materialization_pending") ||
-        operation.worldId !== input.worldId ||
-        operation.head !== appliedEvent.committedHead ||
         commit.timelineRevision?.restoresHead !== requestedRestoresHead ||
         commit.timelineRevision.replacesHead !== requestedEvent.committedHead ||
         commit.timelineRevision.requestFingerprint !==

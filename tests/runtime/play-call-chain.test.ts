@@ -8007,3 +8007,56 @@ test("生成中进程退出后重启标记为中断，重试重新调用模型�
   expect(retryHost.requests).toHaveLength(1);
   expect(retried).toMatchObject({ status: "ready" });
 });
+
+test("旧格式操作回执文件被忽略：世界照常打开、游玩与分叉", async () => {
+  const label = "legacy-operation-receipt";
+  const { worldId, root } = await createWorld(label);
+  const operations = join(root, "operations");
+  await mkdir(operations, { recursive: true });
+  const receiptPath = (operationId: string) =>
+    join(
+      operations,
+      `outcome-${createHash("sha256").update(operationId).digest("hex")}.json`,
+    );
+  // Shapes written by earlier releases: an acceptance-prepared stage, and a
+  // committed record whose head does not exist in Authority.
+  await writeFile(
+    receiptPath("legacy-fork"),
+    `${JSON.stringify({
+      outcome: "acceptance_prepared",
+      worldId,
+      parentHead: "genesis",
+      head: "commit:9",
+      commitDigest: "f".repeat(64),
+      historyAppend: [],
+      nextAdditionalMaterials: [],
+      mode: "play",
+    })}\n`,
+  );
+  await writeFile(receiptPath("legacy-committed"), '{"outcome":"committed"}\n');
+
+  const restarted = new FileNativeWorldStore(root);
+  const played = await new PlayCallChain(restarted).start({
+    worldId,
+    chainId: label,
+    exchangeId: `${label}-player`,
+    playerText: "我推开石门。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [{ outcome: "response", text: "石门缓缓开启。" }],
+    }),
+  });
+  expect(played).toMatchObject({ status: "ready" });
+
+  const fork = await restarted.deriveWorld({
+    operationId: "legacy-fork",
+    sourceWorldId: worldId,
+    sourceHead: "genesis",
+    hostPresetId: "host-1",
+  });
+  expect(fork.outcome).toBe("derived");
+  expect(await new FileNativeWorldStore(root).listWorlds()).toHaveLength(2);
+});

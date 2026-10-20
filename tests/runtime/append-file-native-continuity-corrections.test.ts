@@ -398,10 +398,11 @@ test("材料清单修正整份替换，不能夹带文档变化，取消不留�
   });
   await corrections.cancel(started.candidateId, replaced.version);
   expect((await store.bindPlayCallChain(worldId)).parentHead).toBe("genesis");
+  // Cancelling releases the in-process reservation; nothing is recorded.
   await expect(
     store.getOperationOutcome("correction-materials"),
   ).resolves.toEqual({
-    outcome: "cancelled",
+    outcome: "not_started",
   });
 });
 
