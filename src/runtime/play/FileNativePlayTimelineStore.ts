@@ -17,7 +17,17 @@ import {
   type PlayPromptRun,
 } from "./PlayPromptRun.ts";
 import { createHash, randomUUID } from "node:crypto";
-import { link, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import {
+  chmod,
+  copyFile,
+  link,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
@@ -41,7 +51,6 @@ import type {
   PlayFollowupCompilation,
   PromptCompilation,
 } from "../prompt/FileNativePromptCompiler.ts";
-import { cloneFilePhysically } from "../FileNativePhysicalClone.ts";
 import type {
   PlayDocumentAuthorizationCheckpoint,
   PlayDocumentToolResult,
@@ -1928,12 +1937,15 @@ async function cloneTimelineFile(
   target: string,
   immutable: boolean,
 ): Promise<void> {
-  await cloneFilePhysically({
-    source,
-    target,
-    immutable,
-    onTargetExists: assertSameFileBytes,
-  });
+  await mkdir(dirname(target), { recursive: true });
+  try {
+    await copyFile(source, target, constants.COPYFILE_EXCL);
+  } catch (error: unknown) {
+    if (!isNodeError(error) || error.code !== "EEXIST") throw error;
+    await assertSameFileBytes(source, target);
+    return;
+  }
+  if (immutable) await chmod(target, 0o444);
 }
 
 async function assertSameFileBytes(

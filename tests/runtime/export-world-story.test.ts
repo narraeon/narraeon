@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -138,7 +137,6 @@ test("修订排除被替换后续，分叉保留所选前缀且不依赖来源",
     restoresHead: "commit:2",
     replacesHead: "commit:3",
     replacementText: "修改后的行动",
-    requestFingerprint: `sha256:${createHash("sha256").update("story-revision").digest("hex")}`,
   });
   await append(worlds, worldId, "narrator", "修改后的正文");
   // 修订先回退（轮 5），再追加修改稿（轮 6）与正文（轮 7）：轮号不重用。

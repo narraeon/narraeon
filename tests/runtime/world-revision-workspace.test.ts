@@ -330,7 +330,6 @@ test("持久修订锁阻止游玩与其他写入，重启后仍由同一 epoch �
       restoresHead: "genesis",
       replacesHead: "commit:1",
       replacementText: "改写行动",
-      requestFingerprint: `sha256:${"0".repeat(64)}`,
     }),
   ).rejects.toMatchObject({ code: "operation_conflict" });
   await expect(

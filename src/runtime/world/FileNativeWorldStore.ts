@@ -1537,7 +1537,6 @@ export class FileNativeWorldStore {
     restoresHead: string;
     replacesHead: string;
     replacementText: string;
-    requestFingerprint: string;
   }): Promise<Extract<FileNativeOperationOutcome, { outcome: "committed" }>> {
     assertIdentity(input.operationId, "Timeline-revision operation ID");
     assertIdentity(input.worldId, "World ID");
@@ -1549,8 +1548,6 @@ export class FileNativeWorldStore {
       throw new TypeError("Timeline-revision endpoint is invalid");
     if (input.replacementText.trim() === "")
       throw new TypeError("Edited player message cannot be empty");
-    if (!/^sha256:[a-f0-9]{64}$/u.test(input.requestFingerprint))
-      throw new TypeError("Timeline-revision request fingerprint is invalid");
     await this.ensureCurrentStorage(input.worldId);
 
     try {
@@ -1575,7 +1572,6 @@ export class FileNativeWorldStore {
     restoresHead: string;
     replacesHead: string;
     replacementText: string;
-    requestFingerprint: string;
   }): Promise<Extract<FileNativeOperationOutcome, { outcome: "committed" }>> {
     const existing = await this.getOperationOutcome(input.operationId);
     if (isCommittedOutcome(existing)) {

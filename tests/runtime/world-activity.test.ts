@@ -136,7 +136,6 @@ test("连续性修正、时间线修订、旧端点分叉和世界修订应用�
     restoresHead: "genesis",
     replacesHead: first.head,
     replacementText: "我留在码头。",
-    requestFingerprint: `sha256:${"a".repeat(64)}`,
   });
   expect(await activity(fixture.root, fixture.worldId)).toMatchObject({
     head: revision.head,

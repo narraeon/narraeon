@@ -166,7 +166,6 @@ test("时间线修订回退到被替换消息的父端点后追加修改稿，�
     restoresHead: "commit:2",
     replacesHead: "commit:3",
     replacementText: "修改后的第二句。",
-    requestFingerprint: hash("revision-edit"),
   });
   // 修订先回退再追加：轮号不重用，修改稿的端点是新的轮号。
   expect(revised).toMatchObject({ outcome: "committed", head: "commit:6" });

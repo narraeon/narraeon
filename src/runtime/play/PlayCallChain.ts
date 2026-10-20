@@ -1208,11 +1208,6 @@ export class PlayCallChain {
       request.continuation,
     );
 
-    const requestFingerprint = playerRevisionRequestFingerprint(
-      request,
-      input.selectedEvent.committedHead,
-      restoresHead,
-    );
     const traceRetention = preparePlayerRevisionTrace(
       sourceContext,
       input.selectedEventIndex,
@@ -1229,7 +1224,6 @@ export class PlayCallChain {
       restoresHead,
       replacesHead: input.selectedEvent.committedHead,
       replacementText: request.replacementText,
-      requestFingerprint,
     });
 
     const [baseline, selected, binding] = await Promise.all([
@@ -3378,35 +3372,6 @@ function playerRevisionRestoresHead(
     )
       restoresHead = event.committedHead;
   return restoresHead;
-}
-
-function playerRevisionRequestFingerprint(
-  request: PlayCallChainRevisionInput,
-  selectedHead: string,
-  restoresHead: string,
-): string {
-  const base = {
-    schema: "narraeon.timeline-revision-request/v1",
-    chainId: request.chainId,
-    eventId: request.eventId,
-    selectedHead,
-    restoresHead,
-    replacementExchangeId: request.replacementExchangeId,
-    replacementText: request.replacementText,
-  };
-  // Keep the released continuation fingerprint byte-for-byte recoverable;
-  // the fresh strategy owns a new request shape with an explicit mode.
-  const value =
-    request.continuation === "continue_context"
-      ? base
-      : {
-          ...base,
-          schema: "narraeon.timeline-revision-request/v2",
-          continuation: request.continuation,
-        };
-  return (
-    "sha256:" + createHash("sha256").update(JSON.stringify(value)).digest("hex")
-  );
 }
 
 function playerRevisionChainId(

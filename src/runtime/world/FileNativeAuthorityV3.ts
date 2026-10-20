@@ -3,19 +3,10 @@ import {
   type HistoryBackground,
 } from "../history/HistoryBackground.ts";
 import { createHash, randomUUID } from "node:crypto";
-import {
-  link,
-  mkdir,
-  readFile,
-  readdir,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { link, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
-import { cloneFilePhysically } from "../FileNativePhysicalClone.ts";
 import type { ContentTreeFile } from "../content/ContentWorkspace.ts";
 import type { MaterialSelection } from "../prompt/MaterialSelection.ts";
 import type {
@@ -635,89 +626,6 @@ export class FileNativeAuthorityV3 {
     return { commit: value, digest };
   }
 
-  async clonePrefixTo(input: {
-    targetWorldRoot: string;
-    selectedHead: string;
-    operationId: string;
-  }): Promise<FileNativeAuthorityHeadV3> {
-    const sourceHead = await this.readHead();
-    const selectedSequence =
-      input.selectedHead === "genesis"
-        ? 0
-        : parseHeadSequence(input.selectedHead);
-    if (selectedSequence > sourceHead.sequence)
-      throw new FileNativeAuthorityV3Error(
-        "conflict",
-        `Cannot fork a nonexistent Authority endpoint: ${input.selectedHead}`,
-      );
-    const selected =
-      input.selectedHead === sourceHead.head
-        ? { ...structuredClone(sourceHead), operationId: input.operationId }
-        : selectedSequence === 0
-          ? await this.#headAtGenesis(sourceHead, input.operationId)
-          : await this.#headAtCommit(
-              sourceHead,
-              selectedSequence,
-              input.operationId,
-            );
-    const targetRuntime = join(input.targetWorldRoot, "runtime");
-    const targetAuthority = join(targetRuntime, authorityV3Directory);
-    for (let epoch = 0; epoch <= selectedSequence; epoch += 1)
-      await cloneImmutableTree(
-        this.#epochRoot(epoch),
-        join(targetAuthority, "epochs", epochName(epoch)),
-      );
-    await publishJson(join(targetRuntime, continuityHeadFile), selected);
-    return selected;
-  }
-
-  async #headAtGenesis(
-    current: FileNativeAuthorityHeadV3,
-    operationId: string,
-  ): Promise<FileNativeAuthorityHeadV3> {
-    const genesis = await this.#readObject<FileNativeAuthorityGenesisV3>(
-      { epoch: 0, digest: current.genesisDigest },
-      "authority.json",
-      "file_native_authority_genesis",
-    );
-    assertGenesis(genesis);
-    await this.#assertAcceptedGenesis(current);
-    return {
-      schemaVersion: 3,
-      type: "file_native_continuity_head",
-      head: "genesis",
-      sequence: 0,
-      genesisDigest: current.genesisDigest,
-      commitDigest: null,
-      result: genesis.result,
-      operationId,
-    };
-  }
-
-  async #headAtCommit(
-    current: FileNativeAuthorityHeadV3,
-    sequence: number,
-    operationId: string,
-  ): Promise<FileNativeAuthorityHeadV3> {
-    const { value, digest } = await this.#readAuthorityCommit(sequence);
-    await this.#assertAcceptedAuthorityRef(
-      current,
-      sequence,
-      value.head,
-      digest,
-    );
-    return {
-      schemaVersion: 3,
-      type: "file_native_continuity_head",
-      head: value.head,
-      sequence,
-      genesisDigest: current.genesisDigest,
-      commitDigest: digest,
-      result: value.result,
-      operationId,
-    };
-  }
-
   async #resultRefAt(head: string): Promise<FileNativeAuthorityObjectRef> {
     const current = await this.readHead();
     if (head === current.head) {
@@ -1030,7 +938,6 @@ export class FileNativeAuthorityV3 {
     value: FileNativeAuthorityCommitV3;
     digest: string;
   }> {
-    forbidAuthorityFactDecodeForTest();
     const path = join(this.#epochRoot(sequence), "authority.json");
     const value = await readJson<unknown>(path);
     if (
@@ -1062,7 +969,6 @@ export class FileNativeAuthorityV3 {
     name: string,
     type: Value["type"],
   ): Promise<Value> {
-    if (name === "authority.json") forbidAuthorityFactDecodeForTest();
     const value = await readJson<unknown>(
       join(this.#epochRoot(ref.epoch), name),
     );
@@ -1596,35 +1502,6 @@ function isDigest(value: string): boolean {
   return /^[a-f0-9]{64}$/u.test(value);
 }
 
-async function cloneImmutableTree(
-  source: string,
-  target: string,
-): Promise<void> {
-  await mkdir(target, { recursive: true, mode: 0o700 });
-  const entries = await readdir(source, { withFileTypes: true });
-  for (const entry of entries) {
-    const sourcePath = join(source, entry.name);
-    const targetPath = join(target, entry.name);
-    if (entry.isDirectory()) {
-      await cloneImmutableTree(sourcePath, targetPath);
-      continue;
-    }
-    if (!entry.isFile())
-      throw new FileNativeAuthorityV3Error(
-        "corrupt",
-        `Immutable Authority closure contains a non-file entry: ${entry.name}`,
-      );
-    await cloneImmutableFile(sourcePath, targetPath);
-  }
-}
-
-async function cloneImmutableFile(
-  source: string,
-  target: string,
-): Promise<void> {
-  await cloneFilePhysically({ source, target, immutable: true });
-}
-
 async function publishImmutableJson(
   path: string,
   value: unknown,
@@ -1679,9 +1556,4 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error;
-}
-
-function forbidAuthorityFactDecodeForTest(): void {
-  if (process.env.NARRAEON_INTERNAL_TEST_FORBID_AUTHORITY_FACT_DECODE === "1")
-    throw new Error("Authority fact decoding is forbidden by this test");
 }
