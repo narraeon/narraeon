@@ -10,6 +10,7 @@ import type {
 } from "../world/FileNativeWorldStore.ts";
 import type { PersistedPlayCallChainContext } from "./FileNativePlayTimelineStore.ts";
 import { FileNativePlayDocuments } from "./PlayDocumentTools.ts";
+import type { WorldDocumentLocator } from "../world/WorldDocumentStore.ts";
 import {
   currentPlayPrompt,
   playPromptRunsThroughEvents,
@@ -209,17 +210,22 @@ export function restorePlayDocuments(
     | "followups"
     | "playPresetScriptsEnabled"
     | "promptRuns"
+    | "completedTools"
   >,
   events: readonly V1PlayCallChainEvent[],
 ): FileNativePlayDocuments {
   const documents = new FileNativePlayDocuments(files);
   try {
-    // Read authorizations are memory-only: a restored prefix always starts from
-    // its bootstrap, and stale write authority is caught by the commit's hash.
+    // Read authorizations are memory-only (ADR-0044). A restored prefix starts
+    // from its bootstrap, then replays the exact reads the retained transcript
+    // still shows the model, so it is not asked to read again what it has
+    // already seen. Stale write authority is caught by the commit's hash.
     const runs = playPromptRunsThroughEvents(context, events);
     documents.bindBootstrap(
       currentPlayPrompt({ ...context, promptRuns: runs }).bootstrap,
     );
+    for (const read of completedReadsThroughEvents(context, events))
+      documents.replayRead(read.shortRef, read.locator);
   } catch (error: unknown) {
     throw new PlayCallChainError(
       `Call-chain document authorization could not be restored: ${
@@ -228,6 +234,59 @@ export function restorePlayDocuments(
     );
   }
   return documents;
+}
+
+/**
+ * The exact document scopes successfully read by context_read within the
+ * selected event prefix, in event order. Tool results are keyed by exchange and
+ * call ID, and the exchange is the one of the nearest preceding assistant event.
+ */
+function completedReadsThroughEvents(
+  context: Pick<PersistedPlayCallChainContext, "completedTools">,
+  events: readonly V1PlayCallChainEvent[],
+): { shortRef: string; locator: WorldDocumentLocator | null }[] {
+  const completed = new Map(
+    context.completedTools.map((tool) => [tool.key, tool.result]),
+  );
+  const reads: { shortRef: string; locator: WorldDocumentLocator | null }[] =
+    [];
+  let exchange = 0;
+  for (const event of events) {
+    if (event.kind === "assistant") {
+      exchange = event.exchange;
+      continue;
+    }
+    if (event.kind !== "tool_result" || !event.ok) continue;
+    const result = completed.get(`${exchange}:${event.callId}`);
+    const authorization: unknown = result?.readAuthorization;
+    if (!result?.ok || !isReplayableReadAuthorization(authorization)) continue;
+    reads.push({
+      shortRef: authorization.shortRef,
+      locator: structuredClone(authorization.locator),
+    });
+  }
+  return reads;
+}
+
+function isReplayableReadAuthorization(
+  value: unknown,
+): value is { shortRef: string; locator: WorldDocumentLocator | null } {
+  if (typeof value !== "object" || value === null) return false;
+  const { shortRef, locator } = value as Record<string, unknown>;
+  if (typeof shortRef !== "string") return false;
+  if (locator === null) return true;
+  if (typeof locator !== "object" || locator === null) return false;
+  const { yaml, markdown } = locator as Record<string, unknown>;
+  if (Array.isArray(yaml))
+    return yaml.every(
+      (segment) =>
+        typeof segment === "string" ||
+        (Number.isSafeInteger(segment) && Number(segment) >= 0),
+    );
+  return (
+    Array.isArray(markdown) &&
+    markdown.every((segment) => typeof segment === "string")
+  );
 }
 
 export function independentContextCopy(

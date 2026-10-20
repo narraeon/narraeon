@@ -125,6 +125,21 @@ export class FileNativePlayDocuments {
     this.#declaredDirectories = declaredStateDirectories(bootstrap);
   }
 
+  /**
+   * Re-grant one exact read the model already completed in a retained
+   * transcript. The scope is resolved against the current snapshot again, so a
+   * document or node that no longer exists grants nothing. Returns whether the
+   * scope resolved.
+   */
+  replayRead(shortRef: string, locator: AuthorizedLocator | null): boolean {
+    return authorizeResolvedRead(
+      this.#reads,
+      this.#candidate.snapshot,
+      shortRef,
+      locator,
+    );
+  }
+
   execute(
     call: ModelHostToolCall,
     history: {
@@ -286,29 +301,49 @@ function bootstrapAuthorizations(
   for (const { status, complete, readAuthorization } of bootstrap.coverage) {
     if (status !== "resolved" || !complete || readAuthorization === undefined)
       continue;
-    if (readAuthorization.locator === null) {
-      const resolved = snapshot.query({
-        kind: "read_document",
-        document: { shortRef: readAuthorization.shortRef },
-      });
-      if (resolved.kind === "read_document" && resolved.ok)
-        authorizeRead(result, snapshot.id, resolved.document.shortRef, null);
-    } else {
-      const selected = snapshot.query({
-        kind: "select_node",
-        document: { shortRef: readAuthorization.shortRef },
-        locator: readAuthorization.locator,
-      });
-      if (selected.kind === "select_node" && selected.ok)
-        authorizeRead(
-          result,
-          snapshot.id,
-          selected.document.shortRef,
-          selected.node.locator,
-        );
-    }
+    authorizeResolvedRead(
+      result,
+      snapshot,
+      readAuthorization.shortRef,
+      readAuthorization.locator,
+    );
   }
   return result;
+}
+
+function authorizeResolvedRead(
+  authorizations: WriteAuthorizations,
+  snapshot: WorldDocumentStore,
+  shortRef: string,
+  locator: AuthorizedLocator | null,
+): boolean {
+  if (locator === null) {
+    const resolved = snapshot.query({
+      kind: "read_document",
+      document: { shortRef },
+    });
+    if (resolved.kind !== "read_document" || !resolved.ok) return false;
+    authorizeRead(
+      authorizations,
+      snapshot.id,
+      resolved.document.shortRef,
+      null,
+    );
+    return true;
+  }
+  const selected = snapshot.query({
+    kind: "select_node",
+    document: { shortRef },
+    locator,
+  });
+  if (selected.kind !== "select_node" || !selected.ok) return false;
+  authorizeRead(
+    authorizations,
+    snapshot.id,
+    selected.document.shortRef,
+    selected.node.locator,
+  );
+  return true;
 }
 
 function declaredStateDirectories(bootstrap: PromptCompilation): string[] {

@@ -1139,7 +1139,7 @@ test("工具中编辑不替换快照，拒绝后的冷重试不读取新配置",
   });
 });
 
-test("精读授权在同一进程的发送间保留；重启后从 bootstrap 重新开始，需重新精读，且不扩大到未读节点", async () => {
+test("精读授权在同一进程的发送间保留；重启后从保留的对话记录回放，无需重新精读，且不扩大到未读节点", async () => {
   const { worlds, worldId, root } = await createWorld("retained-read", [
     ...worldFiles(),
     {
@@ -1176,19 +1176,10 @@ test("精读授权在同一进程的发送间保留；重启后从 bootstrap 重
       },
       { outcome: "response", text: "Qin greets you." },
       {
-        // Read authority is memory-only: after a restart the writes must re-read.
+        // Read authority is memory-only, but a restart replays the exact reads
+        // the retained transcript still shows the model (ADR-0044).
         outcome: "response",
         toolCalls: [
-          {
-            id: "reread-relationship",
-            name: "context_read",
-            arguments: { ref: "@qin#/relationship" },
-          },
-          {
-            id: "reread-pending",
-            name: "context_read",
-            arguments: { ref: "@qin#/pending" },
-          },
           patch(
             "second-write",
             "relationship",
@@ -1208,11 +1199,6 @@ test("精读授权在同一进程的发送间保留；重启后从 bootstrap 重
       {
         outcome: "response",
         toolCalls: [
-          {
-            id: "reread-relationship-again",
-            name: "context_read",
-            arguments: { ref: "@qin#/relationship" },
-          },
           patch(
             "third-write",
             "relationship",
@@ -1298,6 +1284,111 @@ test("精读授权在同一进程的发送间保留；重启后从 bootstrap 重
       (event) => event.kind === "tool_result" && event.callId === "fresh-write",
     ),
   ).toMatchObject({ ok: false });
+});
+
+test("重新生成或修改消息后，保留前缀中的精读授权被回放，模型无需重读即可修改", async () => {
+  const { worlds, worldId, root } = await createWorld("revised-read", [
+    ...worldFiles(),
+    {
+      path: "world/characters/qin.yaml",
+      contents:
+        "$document:\n  id: person.qin\n  ref: qin\n  title: Qin\n  summary: Courier\n  aliases: []\nrelationship: Just met\nprivate: Unknown\n",
+    },
+  ]);
+  const patch = (id: string, key: string, value: string) => ({
+    id,
+    name: "world_patch",
+    arguments: {
+      target: "@qin",
+      edits: [{ op: "replace", locator: { yaml: [key] }, value }],
+    },
+  });
+  const host = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "read",
+            name: "context_read",
+            arguments: { ref: "@qin#/relationship" },
+          },
+        ],
+      },
+      { outcome: "response", text: "Qin greets you." },
+      { outcome: "response", text: "Qin waits." },
+    ],
+  });
+  const chains = new PlayCallChain(worlds);
+  await chains.start({
+    worldId,
+    chainId: "revised-read",
+    exchangeId: "first",
+    playerText: "Hello",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: host,
+  });
+  const second = await chains.append({
+    worldId,
+    chainId: "revised-read",
+    exchangeId: "second",
+    playerText: "I wait.",
+    modelHost: host,
+  });
+  const secondPlayer = second.events.findLast(
+    (event) => event.kind === "player",
+  )!;
+  const revised = await chains.revisePlayer({
+    operationId: "revise-read",
+    worldId,
+    chainId: "revised-read",
+    eventId: secondPlayer.id,
+    replacementExchangeId: "second-revised",
+    replacementText: "I lend the umbrella",
+    continuation: "continue_context",
+  });
+  const revisedHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          patch("revised-write", "relationship", "Trust after an umbrella"),
+          patch("forbidden", "private", "Forged"),
+        ],
+      },
+      { outcome: "response", text: "Qin accepts the umbrella." },
+    ],
+  });
+  const view = await new PlayCallChain(new FileNativeWorldStore(root)).append({
+    worldId,
+    chainId: revised.playCallChain.chainId,
+    exchangeId: "second-revised",
+    playerText: "",
+    modelHost: revisedHost,
+    resolvePrompt: () =>
+      Promise.resolve({ hostBinding: hostBinding(), playPreset: playPreset() }),
+  });
+  expect(view.status).toBe("ready");
+  expect(
+    view.events.find(
+      (event) =>
+        event.kind === "tool_result" && event.callId === "revised-write",
+    ),
+  ).toMatchObject({ ok: true });
+  expect(
+    view.events.find(
+      (event) => event.kind === "tool_result" && event.callId === "forbidden",
+    ),
+  ).toMatchObject({ ok: false });
+  expect(
+    (await worlds.bindPlayCallChain(worldId)).files[
+      "state/characters/qin.yaml"
+    ],
+  ).toContain("Trust after an umbrella");
 });
 
 test("新的发送与空输入重编译，冷恢复保留原生对话和当轮快照", async () => {
@@ -7692,7 +7783,7 @@ test("旧格式操作回执文件被忽略：世界照常打开、游玩与分�
   expect(await new FileNativeWorldStore(root).listWorlds()).toHaveLength(2);
 });
 
-test("文档授权只在内存中：重启后未重新精读的写入被拒绝，重新精读后可写", async () => {
+test("文档授权只在内存中：重启后回放对话记录里的精读，未读过的文档仍被拒绝", async () => {
   const { worlds, worldId, root } = await createWorld("memory-only-read", [
     ...worldFiles(),
     {
@@ -7700,12 +7791,17 @@ test("文档授权只在内存中：重启后未重新精读的写入被拒绝�
       contents:
         "$document:\n  id: person.qin\n  ref: qin\n  title: Qin\n  summary: Courier\n  aliases: []\nrelationship: Just met\n",
     },
+    {
+      path: "world/characters/wei.yaml",
+      contents:
+        "$document:\n  id: person.wei\n  ref: wei\n  title: Wei\n  summary: Innkeeper\n  aliases: []\nrelationship: Stranger\n",
+    },
   ]);
-  const patch = (id: string) => ({
+  const patch = (id: string, target: string) => ({
     id,
     name: "world_patch",
     arguments: {
-      target: "@qin",
+      target,
       edits: [
         {
           op: "replace",
@@ -7715,19 +7811,27 @@ test("文档授权只在内存中：重启后未重新精读的写入被拒绝�
       ],
     },
   });
-  const read = (id: string) => ({
-    id,
-    name: "context_read",
-    arguments: { ref: "@qin#/relationship" },
-  });
   const host = new ScriptedModelHost({
     binding: modelBinding(),
     steps: [
-      { outcome: "response", toolCalls: [read("first-read")] },
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "first-read",
+            name: "context_read",
+            arguments: { ref: "@qin#/relationship" },
+          },
+        ],
+      },
       { outcome: "response", text: "Qin greets you." },
-      { outcome: "response", toolCalls: [patch("blind-write")] },
-      { outcome: "response", text: "Qin frowns." },
-      { outcome: "response", toolCalls: [read("reread"), patch("read-write")] },
+      {
+        outcome: "response",
+        toolCalls: [
+          patch("replayed-write", "@qin"),
+          patch("blind-write", "@wei"),
+        ],
+      },
       { outcome: "response", text: "Qin smiles." },
     ],
   });
@@ -7741,9 +7845,10 @@ test("文档授权只在内存中：重启后未重新精读的写入被拒绝�
     modelBinding: modelBinding(),
     modelHost: host,
   });
-  // A new process starts from the bootstrap authority, not a persisted proof.
+  // A new process has no persisted proof; it rebuilds read authority from the
+  // bootstrap plus the exact reads the retained transcript still shows the model.
   const restarted = new PlayCallChain(new FileNativeWorldStore(root));
-  const blind = await restarted.append({
+  const view = await restarted.append({
     worldId,
     chainId: "memory-only-read",
     exchangeId: "second",
@@ -7751,29 +7856,19 @@ test("文档授权只在内存中：重启后未重新精读的写入被拒绝�
     modelHost: host,
   });
   expect(
-    blind.events.find(
+    view.events.find(
+      (event) =>
+        event.kind === "tool_result" && event.callId === "replayed-write",
+    ),
+  ).toMatchObject({ ok: true });
+  expect(
+    view.events.find(
       (event) => event.kind === "tool_result" && event.callId === "blind-write",
     ),
   ).toMatchObject({ ok: false });
-  expect(
-    (await worlds.bindPlayCallChain(worldId)).files[
-      "state/characters/qin.yaml"
-    ],
-  ).toContain("Just met");
-  const reread = await new PlayCallChain(new FileNativeWorldStore(root)).append(
-    {
-      worldId,
-      chainId: "memory-only-read",
-      exchangeId: "third",
-      playerText: "",
-      modelHost: host,
-    },
-  );
-  expect(
-    reread.events.find(
-      (event) => event.kind === "tool_result" && event.callId === "read-write",
-    ),
-  ).toMatchObject({ ok: true });
+  const files = (await worlds.bindPlayCallChain(worldId)).files;
+  expect(files["state/characters/qin.yaml"]).toContain("Trusted");
+  expect(files["state/characters/wei.yaml"]).toContain("Stranger");
 });
 
 test.each([
