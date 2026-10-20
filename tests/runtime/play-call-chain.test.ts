@@ -3872,7 +3872,9 @@ test("全新上下文只重建模型上下文，持久保留此前调用轨迹�
   expect(branchTrace?.events).toContainEqual(
     expect.objectContaining({ kind: "tool_call", name: "state_list" }),
   );
-  if (process.platform === "linux") {
+  // Forks copy context files byte for byte (no hard links since #79), so the
+  // derived context carries the same transcript while its files stay independent.
+  {
     const contextRoot = (targetWorldId: string, chainId: string) =>
       join(
         root,
@@ -3897,14 +3899,11 @@ test("全新上下文只重建模型上下文，持久保留此前调用轨迹�
       "transcript",
       "0000000001.json",
     );
-    expect((await stat(targetTranscript)).ino).toBe(
-      (await stat(sourceTranscript)).ino,
+    await expect(readFile(targetTranscript, "utf8")).resolves.toBe(
+      await readFile(sourceTranscript, "utf8"),
     );
     const sourceEvent = join(sourceContextRoot, "events", "0000000001.json");
     const targetEvent = join(targetContextRoot, "events", "0000000001.json");
-    expect((await stat(targetEvent)).ino).not.toBe(
-      (await stat(sourceEvent)).ino,
-    );
     const sourceEventBytes = await readFile(sourceEvent, "utf8");
     await writeFile(targetEvent, `${await readFile(targetEvent, "utf8")} `);
     await expect(readFile(sourceEvent, "utf8")).resolves.toBe(sourceEventBytes);
