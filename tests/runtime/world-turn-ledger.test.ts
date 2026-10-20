@@ -169,6 +169,34 @@ describe("world turn ledger", () => {
     expect(await readFileAt(root, 4, "state/a.yaml")).toBe("v1-a\n");
   });
 
+  test("rewindTo also removes runtime files written by discarded turns", async () => {
+    await appendTurn(root, {
+      mode: "play",
+      changes: [
+        { path: "runtime/history-backgrounds/0001.json", content: "{}\n" },
+      ],
+    });
+    await appendTurn(root, {
+      mode: "play",
+      changes: [
+        { path: "runtime/history-backgrounds/0002.json", content: "{}\n" },
+      ],
+    });
+    await rewindTo(root, 1);
+    await expect(
+      readFile(join(root, "runtime/history-backgrounds/0002.json"), "utf8"),
+    ).rejects.toThrow();
+    expect(
+      await readFile(
+        join(root, "runtime/history-backgrounds/0001.json"),
+        "utf8",
+      ),
+    ).toBe("{}\n");
+    await expect(
+      readFile(join(root, "runtime/turns/00000002.json")),
+    ).rejects.toThrow();
+  });
+
   test("rewinding to the current endpoint is a no-op", async () => {
     await appendTurn(root, {
       mode: "play",

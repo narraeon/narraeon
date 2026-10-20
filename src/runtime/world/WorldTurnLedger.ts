@@ -58,8 +58,9 @@ function assertSafePath(relativePath: string): void {
     normalized.startsWith(`..${sep}`) ||
     normalized === ".." ||
     normalized.length === 0 ||
-    normalized.startsWith("runtime" + sep) ||
-    normalized === "runtime"
+    normalized === headFile ||
+    normalized === turnsDirectory ||
+    normalized.startsWith(turnsDirectory + sep)
   ) {
     throw new WorldTurnLedgerError(
       "invalid_path",
@@ -446,6 +447,11 @@ export async function rewindTo(
     changes,
     restoresSequence: sequence,
   });
-  await recoverIncomplete(root);
+  // 端点已发布，丢弃的记录即可删除；失败可忽略，读取已把它们当作不可达，下次回退或恢复会再清理。
+  for (let position = target + 1; position <= view.head; position += 1) {
+    await rm(join(root, turnFileName(position)), { force: true }).catch(
+      () => undefined,
+    );
+  }
   return record;
 }
