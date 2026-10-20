@@ -8,7 +8,13 @@ import { WorldBackupExportButton } from "./WorldArchiveControls.tsx";
 import { WorldExtensionMenu } from "./WorldExtensionMenu.tsx";
 import type { WorldExtensionsView } from "../protocol/worldExtensions.ts";
 import { PackageScriptPermissionControl } from "./PackageScriptPermissionControl.tsx";
-import { PlayerValue } from "./PlayerViewValue.tsx";
+import { Entry } from "./PlayerViewValue.tsx";
+import { FoldToggle } from "./PlayerViewFold.tsx";
+import {
+  PlayerViewFoldProvider,
+  useFold,
+  usePlayerViewFoldController,
+} from "./PlayerViewFoldState.ts";
 import { useConversationComposer } from "./useConversationComposer.ts";
 import {
   conversationConnectionText,
@@ -203,6 +209,7 @@ export function WorldPage({
   const decorationRequestId = useRef(0);
   const [leftRailOpen, setLeftRailOpen] = useState(false);
   const [leftRailWidth, setLeftRailWidth] = useState(320);
+  const playerViewFold = usePlayerViewFoldController();
   const leftRailDrag = useRef<{
     pointerId: number;
     x: number;
@@ -1984,46 +1991,60 @@ export function WorldPage({
               <div>
                 <strong>{uiText("此刻")}</strong>
               </div>
-              <button
-                type="button"
-                aria-label={uiText("收起状态栏")}
-                onClick={() => setLeftRailOpen(false)}
-              >
-                ×
-              </button>
+              <div className="world-rail-header-actions">
+                <div className="world-rail-fold-actions">
+                  <button type="button" onClick={playerViewFold.expandAll}>
+                    {uiText("全部展开")}
+                  </button>
+                  <button type="button" onClick={playerViewFold.collapseAll}>
+                    {uiText("全部收起")}
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  aria-label={uiText("收起状态栏")}
+                  onClick={() => setLeftRailOpen(false)}
+                >
+                  ×
+                </button>
+              </div>
             </header>
-            <div className="world-overlay-rail-body">
-              <ArtifactExtensionMount mount="sidebar" />
-              {playerViewFallback.views.length === 0 ? (
-                playerViewFallback.coveredViewIds.size > 0 ? null : (
-                  <div className="player-view-empty">
-                    <p>{uiText("这个世界还没有配置常驻玩家视图。")}</p>
-                    <small>
-                      {uiText("你仍然可以正常游玩；未显示不代表秘密。")}
-                    </small>
-                  </div>
-                )
-              ) : (
-                playerViewFallback.views.map((view) => (
-                  <PlayerViewCard key={view.id} view={view} />
-                ))
-              )}
-              {playerViewFallback.diagnostics.length === 0 ? null : (
-                <details className="player-view-diagnostics">
-                  <summary>
-                    {playerViewFallback.diagnostics.length}{" "}
-                    {uiText("项视图诊断")}
-                  </summary>
-                  <ul>
-                    {playerViewFallback.diagnostics.map((diagnostic, index) => (
-                      <li key={diagnostic.code + "-" + index}>
-                        {diagnostic.message}
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-              )}
-            </div>
+            <PlayerViewFoldProvider value={playerViewFold.fold}>
+              <div className="world-overlay-rail-body">
+                <ArtifactExtensionMount mount="sidebar" />
+                {playerViewFallback.views.length === 0 ? (
+                  playerViewFallback.coveredViewIds.size > 0 ? null : (
+                    <div className="player-view-empty">
+                      <p>{uiText("这个世界还没有配置常驻玩家视图。")}</p>
+                      <small>
+                        {uiText("你仍然可以正常游玩；未显示不代表秘密。")}
+                      </small>
+                    </div>
+                  )
+                ) : (
+                  playerViewFallback.views.map((view) => (
+                    <PlayerViewCard key={view.id} view={view} />
+                  ))
+                )}
+                {playerViewFallback.diagnostics.length === 0 ? null : (
+                  <details className="player-view-diagnostics">
+                    <summary>
+                      {playerViewFallback.diagnostics.length}{" "}
+                      {uiText("项视图诊断")}
+                    </summary>
+                    <ul>
+                      {playerViewFallback.diagnostics.map(
+                        (diagnostic, index) => (
+                          <li key={diagnostic.code + "-" + index}>
+                            {diagnostic.message}
+                          </li>
+                        ),
+                      )}
+                    </ul>
+                  </details>
+                )}
+              </div>
+            </PlayerViewFoldProvider>
           </aside>
 
           <aside
@@ -3097,22 +3118,31 @@ function PlayerViewCard({
 }: {
   view: RenderedPlayerView;
 }): React.JSX.Element {
+  const { open, toggle } = useFold(view.id, true);
   return (
     <article className="player-view-card">
-      <h3>{view.title}</h3>
+      <h3>
+        <FoldToggle
+          open={open}
+          onToggle={toggle}
+          label={view.title}
+          hint={uiText("{count} 项", { count: view.items.length })}
+        />
+      </h3>
       {view.items.length === 0 ? (
-        <p className="player-view-empty-value">
+        <p className="player-view-empty-value player-fold-body" hidden={!open}>
           {uiText("当前没有可显示项目。")}
         </p>
       ) : (
-        <dl>
+        <dl className="player-fold-body" hidden={!open}>
           {view.items.map((item) => (
-            <div key={item.id}>
-              <dt>{item.label}</dt>
-              <dd>
-                <PlayerValue value={item.value} />
-              </dd>
-            </div>
+            <Entry
+              key={item.id}
+              path={view.id + "/" + item.id}
+              label={item.label}
+              value={item.value}
+              defaultOpen
+            />
           ))}
         </dl>
       )}

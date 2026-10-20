@@ -5077,6 +5077,97 @@ summary:focus-visible {
   white-space: pre-wrap;
 }
 
+.player-fold-toggle {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  width: 100%;
+  min-height: 0;
+  padding: 0.15rem 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+}
+
+.player-fold-toggle:hover:not(:disabled) {
+  border: 0;
+  background: transparent;
+}
+
+.player-fold-chevron {
+  flex: none;
+  width: 0.4rem;
+  height: 0.4rem;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: translateY(-0.12rem) rotate(-45deg);
+  transition: transform 0.12s ease;
+}
+
+.player-fold-toggle[aria-expanded="true"] .player-fold-chevron {
+  transform: translateY(-0.18rem) rotate(45deg);
+}
+
+.player-fold-hint {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.player-fold-body[hidden] {
+  display: none !important;
+}
+
+.player-view-card h4 {
+  margin: 0 0 0.55rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.player-view-card .player-fold-row > dt,
+.player-view-card .player-fold-row > .player-fold-toggle {
+  grid-column: 1 / -1;
+}
+
+.player-value-map > .player-fold-row {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.2rem;
+}
+
+.player-value-list > .player-fold-row {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.world-overlay-rail > header .world-rail-header-actions,
+.world-overlay-rail > header .world-rail-fold-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.world-overlay-rail > header .world-rail-fold-actions button {
+  width: auto;
+  height: 1.9rem;
+  padding: 0 0.45rem;
+  font-size: 0.72rem;
+}
+
+@media (pointer: coarse) {
+  .player-fold-toggle {
+    min-height: 2.25rem;
+    align-items: center;
+  }
+}
+
 .player-value-map {
   gap: 0.35rem;
   padding-left: 0.65rem;

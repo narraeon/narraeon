@@ -1,4 +1,6 @@
-import { PlayerValue } from "./PlayerViewValue.tsx";
+import { FoldToggle } from "./PlayerViewFold.tsx";
+import { useFold } from "./PlayerViewFoldState.ts";
+import { Entry } from "./PlayerViewValue.tsx";
 import { uiText } from "./i18n.ts";
 
 /** Safe host rendering for player-view panels that select no custom resources. */
@@ -44,9 +46,19 @@ export function BuiltinPlayerViewPanel({
     items: items.filter((item) => !used.has(item.id)),
   });
   const layout = config.layout === "grid" ? "grid" : "stack";
+  const viewPath =
+    typeof payload.viewId === "string"
+      ? payload.viewId
+      : typeof payload.title === "string"
+        ? payload.title
+        : "view";
   return (
-    <section className="player-view-card" data-player-view-layout={layout}>
-      {typeof payload.title === "string" ? <h3>{payload.title}</h3> : null}
+    <FoldedView
+      viewPath={viewPath}
+      title={typeof payload.title === "string" ? payload.title : null}
+      itemCount={items.length}
+      layout={layout}
+    >
       {items.length === 0 && config.empty !== "show" ? (
         <p>
           {typeof config.emptyMessage === "string"
@@ -57,8 +69,11 @@ export function BuiltinPlayerViewPanel({
       {sections
         .filter((section) => section.items.length > 0)
         .map((section, index) => (
-          <section key={index}>
-            {section.label === "" ? null : <h4>{section.label}</h4>}
+          <FoldedGroup
+            key={index}
+            path={viewPath + "/group:" + String(index)}
+            label={section.label}
+          >
             <dl
               style={{
                 display: "grid",
@@ -69,17 +84,78 @@ export function BuiltinPlayerViewPanel({
                     : "minmax(0, 1fr)",
               }}
             >
-              {section.items.map((item, index) => (
-                <div key={index}>
-                  <dt>{typeof item.label === "string" ? item.label : ""}</dt>
-                  <dd>
-                    <PlayerValue value={item.value} />
-                  </dd>
-                </div>
+              {section.items.map((item, itemIndex) => (
+                <Entry
+                  key={typeof item.id === "string" ? item.id : itemIndex}
+                  path={
+                    viewPath +
+                    "/" +
+                    (typeof item.id === "string" ? item.id : String(itemIndex))
+                  }
+                  label={typeof item.label === "string" ? item.label : ""}
+                  value={item.value}
+                  defaultOpen
+                />
               ))}
             </dl>
-          </section>
+          </FoldedGroup>
         ))}
+    </FoldedView>
+  );
+}
+
+function FoldedView({
+  viewPath,
+  title,
+  itemCount,
+  layout,
+  children,
+}: {
+  viewPath: string;
+  title: string | null;
+  itemCount: number;
+  layout: string;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  const { open, toggle } = useFold(viewPath, true);
+  return (
+    <section className="player-view-card" data-player-view-layout={layout}>
+      {title === null ? null : (
+        <h3>
+          <FoldToggle
+            open={open}
+            onToggle={toggle}
+            label={title}
+            hint={uiText("{count} 项", { count: itemCount })}
+          />
+        </h3>
+      )}
+      <div className="player-fold-body" hidden={title !== null && !open}>
+        {children}
+      </div>
+    </section>
+  );
+}
+
+function FoldedGroup({
+  path,
+  label,
+  children,
+}: {
+  path: string;
+  label: string;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  const { open, toggle } = useFold(path, true);
+  if (label === "") return <section>{children}</section>;
+  return (
+    <section>
+      <h4>
+        <FoldToggle open={open} onToggle={toggle} label={label} />
+      </h4>
+      <div className="player-fold-body" hidden={!open}>
+        {children}
+      </div>
     </section>
   );
 }
