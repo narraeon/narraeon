@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { AppLocale } from "../protocol/appPreferences.ts";
+import { canExportAndroidLogs, exportAndroidLogs } from "./androidBridge.ts";
 import { uiText } from "./i18n.ts";
 
 export type WorkspaceScreen =
@@ -71,6 +72,17 @@ export function WorkspaceHeader({
             {uiText(label)}
           </button>
         ))}
+        {canExportAndroidLogs() && (
+          <button
+            type="button"
+            onClick={() => {
+              setMenuOpen(false);
+              exportAndroidLogs();
+            }}
+          >
+            {uiText("导出诊断日志")}
+          </button>
+        )}
       </nav>
       <div className="workspace-header-actions">
         <label className="workspace-locale-picker">

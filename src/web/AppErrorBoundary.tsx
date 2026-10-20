@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 
+import { canExportAndroidLogs, exportAndroidLogs } from "./androidBridge.ts";
 import { uiText } from "./i18n.ts";
 
 interface AppErrorBoundaryState {
@@ -49,6 +50,11 @@ export class AppErrorBoundary extends Component<
           <button type="button" onClick={() => window.location.reload()}>
             {uiText("重新加载页面")}
           </button>
+          {canExportAndroidLogs() && (
+            <button type="button" onClick={exportAndroidLogs}>
+              {uiText("导出诊断日志")}
+            </button>
+          )}
         </div>
         <details>
           <summary>{uiText("技术详情")}</summary>

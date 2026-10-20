@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="export_logs">Export diagnostic logs</string>
+    <string name="export_preparing">Collecting diagnostic logs…</string>
+    <string name="export_failed">Could not export diagnostic logs.</string>
+    <string name="export_chooser_title">Send Narraeon diagnostic logs</string>
+    <string name="close_app">Close app</string>
+    <string name="dismiss">Not now</string>
+    <string name="failure_backend_exited">The Narraeon backend stopped (%1$s). Export the diagnostic logs, then close the app and open it again.</string>
+    <string name="failure_backend_timeout">The Narraeon backend did not start within 60 seconds. Export the diagnostic logs, then close the app and open it again.</string>
+    <string name="failure_renderer_repeated">The page crashed several times in a row. Your saved data is not affected. Export the diagnostic logs, then close the app and open it again.</string>
+    <string name="abnormal_exit_title">Narraeon closed unexpectedly</string>
+    <string name="abnormal_exit_message">Narraeon closed unexpectedly last time (%1$s). Export the diagnostic logs to send to the developers?</string>
+    <string name="exit_reason_crash">app crash</string>
+    <string name="exit_reason_crash_native">native crash</string>
+    <string name="exit_reason_anr">not responding</string>
+    <string name="exit_reason_exit_self">backend exited</string>
+    <string name="exit_reason_low_memory">closed by the system for low memory</string>
+    <string name="exit_reason_other">other</string>
+</resources>

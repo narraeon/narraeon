@@ -1,6 +1,10 @@
+#include <fcntl.h>
 #include <jni.h>
 #include <pthread.h>
+#include <sys/stat.h>
 #include <unistd.h>
+
+#include <cstdio>
 
 #include <cstdlib>
 #include <cstring>
@@ -22,6 +26,32 @@ const char* kLogTag = "NARRAEON-NODE";
 int pipe_stdout[2];
 int pipe_stderr[2];
 
+// Node stderr is also appended to the file named by NARRAEON_STDERR_LOG, so fatal
+// errors that end the process (V8 out of memory, aborts) survive for log export
+// after logcat has rotated. The file is renamed to "<path>.1" once it passes
+// kStderrLogLimit bytes. Only the stderr pump thread touches these.
+constexpr off_t kStderrLogLimit = 1024 * 1024;
+std::string stderr_log_path;
+int stderr_log_fd = -1;
+
+void open_stderr_log() {
+  stderr_log_fd = open(stderr_log_path.c_str(),
+                       O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
+}
+
+void append_stderr_log(const char* text, size_t size) {
+  if (stderr_log_fd < 0) return;
+  struct stat info {};
+  if (fstat(stderr_log_fd, &info) == 0 && info.st_size > kStderrLogLimit) {
+    close(stderr_log_fd);
+    std::rename(stderr_log_path.c_str(), (stderr_log_path + ".1").c_str());
+    open_stderr_log();
+    if (stderr_log_fd < 0) return;
+  }
+  write(stderr_log_fd, text, size);
+  write(stderr_log_fd, "\n", 1);
+}
+
 void* pump_pipe(void* arg) {
   const int fd = *static_cast<int*>(arg);
   const int priority =
@@ -32,6 +62,7 @@ void* pump_pipe(void* arg) {
     if (buf[size - 1] == '\n') --size;
     buf[size] = 0;
     __android_log_write(priority, kLogTag, buf);
+    if (fd == pipe_stderr[0]) append_stderr_log(buf, static_cast<size_t>(size));
   }
   return nullptr;
 }
@@ -39,6 +70,10 @@ void* pump_pipe(void* arg) {
 // Redirects stdout/stderr into logcat. The fds are kept in static storage so the
 // reader threads can use them for the life of the process.
 void redirect_output_to_logcat() {
+  if (const char* path = std::getenv("NARRAEON_STDERR_LOG")) {
+    stderr_log_path = path;
+    open_stderr_log();
+  }
   setvbuf(stdout, nullptr, _IONBF, 0);
   setvbuf(stderr, nullptr, _IONBF, 0);
   pipe(pipe_stdout);

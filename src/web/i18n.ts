@@ -8,6 +8,7 @@ let activeLocale: AppLocale = defaultAppLocale;
 
 const englishMessages: Record<string, string> = {
   页面出错了: "Something went wrong",
+  导出诊断日志: "Export diagnostic logs",
   "页面显示时发生错误，已保存的故事和世界不受影响。请重新加载页面；如果反复出现，请把下面的技术详情发给开发者。":
     "The page hit an error while displaying. Your saved stories and worlds are not affected. Reload the page; if this keeps happening, send the technical details below to the developers.",
   重新加载页面: "Reload page",

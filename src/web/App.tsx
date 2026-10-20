@@ -20,6 +20,7 @@ import type {
 } from "../protocol/v1.ts";
 import { firstPartyPlayPresetTemplatesForLocale } from "../shared/first-party-play-preset-templates.ts";
 import type { RuntimeClient } from "./runtimeClient.ts";
+import { saveFile } from "./androidBridge.ts";
 import { createClientId } from "./ClientId.ts";
 import { setWebLocale, uiText } from "./i18n.ts";
 import type { ContentTreeIssue } from "./ContentTreeEditor.tsx";
@@ -470,14 +471,9 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       const bytes = Uint8Array.from(atob(exported.base64), (character) =>
         character.charCodeAt(0),
       );
-      const url = URL.createObjectURL(
-        new Blob([bytes], { type: "application/zip" }),
-      );
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = exported.fileName;
-      link.click();
-      URL.revokeObjectURL(url);
+      await saveFile(exported.fileName, {
+        blob: new Blob([bytes], { type: "application/zip" }),
+      });
     } catch (error: unknown) {
       report(error);
     }

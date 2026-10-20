@@ -19,6 +19,7 @@ import {
   describePresetFile,
 } from "./playPresetEditorLabels.ts";
 import type { OrderedPlayPrompt } from "../shared/ordered-play-prompts.ts";
+import { saveFile } from "./androidBridge.ts";
 import { getWebLocale, uiText } from "./i18n.ts";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
@@ -539,13 +540,11 @@ export function PlayPresetScreen({
       const blob = new Blob([JSON.stringify(result.files, null, 2)], {
         type: "application/json",
       });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `${draft.name}.play-preset.json`;
-      anchor.click();
-      URL.revokeObjectURL(url);
-      setFeedback({ kind: "status", text: uiText("预设已导出。") });
+      const outcome = await saveFile(`${draft.name}.play-preset.json`, {
+        blob,
+      });
+      if (outcome !== "cancelled")
+        setFeedback({ kind: "status", text: uiText("预设已导出。") });
     });
   }
 

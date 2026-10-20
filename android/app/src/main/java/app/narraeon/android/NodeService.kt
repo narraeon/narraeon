@@ -22,7 +22,9 @@ class NodeService : Service() {
 
         Thread({
             try {
+                nodeState = NodeState.Preparing
                 val root = prepareBundle()
+                val crashDir = DiagnosticLog.crashDir(this)
                 val arguments = arrayOf("node", File(root, "node/server/mobile.js").path)
                 val environment = arrayOf(
                     "NARRAEON_PORT=$PORT",
@@ -32,16 +34,22 @@ class NodeService : Service() {
                     "NARRAEON_LOG_ROOT=${File(filesDir, "log").path}",
                     "HOME=${filesDir.path}",
                     "TMPDIR=${cacheDir.path}",
+                    "NARRAEON_STDERR_LOG=${File(crashDir, "node-stderr.log").path}",
                 )
                 // The data-root lock (server.pid) survives an app kill. After a restart, its PID can
                 // belong to another process; kill(pid, 0) then reports EPERM, which the server reads as
                 // alive, and startup is refused. Android runs one app process at a time, so no live
                 // Narraeon owner can exist here. Remove the stale file before starting Node.
                 File(filesDir, "data/server.pid").delete()
+                nodeState = NodeState.Running
                 val code = NativeNode.startNode(arguments, environment)
+                nodeState = NodeState.Exited("node exited with code $code")
                 Log.e(TAG, "node exited with code $code")
+                DiagnosticLog.append(this, "node-service.log", "node exited with code $code")
             } catch (error: Throwable) {
+                nodeState = NodeState.Exited("node failed to start: $error")
                 Log.e(TAG, "node failed to start", error)
+                DiagnosticLog.append(this, "node-service.log", "node failed to start\n${Log.getStackTraceString(error)}")
             } finally {
                 // node::Start cannot be re-entered in this process, so the guard stays set.
                 Log.w(TAG, "node thread finished; restart requires a new app process")
@@ -110,5 +118,18 @@ class NodeService : Service() {
         private const val FILE_LIST = "bundle-files.txt"
         private const val NOTIFICATION_ID = 4317
         private val nodeStarted = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        @Volatile
+        var nodeState: NodeState = NodeState.NotStarted
+            private set
+    }
+
+    sealed interface NodeState {
+        data object NotStarted : NodeState
+        data object Preparing : NodeState
+        data object Running : NodeState
+
+        // node::Start returned or threw. It cannot run again in this process.
+        data class Exited(val detail: String) : NodeState
     }
 }

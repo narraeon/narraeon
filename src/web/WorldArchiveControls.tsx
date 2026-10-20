@@ -6,6 +6,7 @@ import {
 import type { V1Request } from "../protocol/v1.ts";
 import { createClientId } from "./ClientId.ts";
 import { RuntimeRequestError } from "./runtimeClient.ts";
+import { saveFile } from "./androidBridge.ts";
 import { uiText } from "./i18n.ts";
 import {
   runtimeErrorText,
@@ -43,13 +44,10 @@ export function WorldBackupExportButton({
         worldId,
         operationId: createClientId("archive-export"),
       })) as WorldArchiveDownload;
-      const link = document.createElement("a");
-      link.href = `/api/runtime/v1/world-archives/${encodeURIComponent(archive.archiveId)}`;
-      link.download = archive.fileName;
-      document.body.append(link);
-      link.click();
-      link.remove();
-      setMessage(uiText("世界备份已开始下载。"));
+      const outcome = await saveFile(archive.fileName, {
+        path: `/api/runtime/v1/world-archives/${encodeURIComponent(archive.archiveId)}`,
+      });
+      setMessage(outcome === "cancelled" ? "" : uiText("世界备份已开始下载。"));
     } catch (error) {
       setMessage(archiveErrorMessage(error));
     } finally {

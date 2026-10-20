@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="export_logs">导出诊断日志</string>
+    <string name="export_preparing">正在收集诊断日志…</string>
+    <string name="export_failed">诊断日志导出失败。</string>
+    <string name="export_chooser_title">发送 Narraeon 诊断日志</string>
+    <string name="close_app">关闭应用</string>
+    <string name="dismiss">暂不</string>
+    <string name="failure_backend_exited">Narraeon 后端已停止（%1$s）。请先导出诊断日志，再关闭应用后重新打开。</string>
+    <string name="failure_backend_timeout">Narraeon 后端 60 秒内没有启动。请先导出诊断日志，再关闭应用后重新打开。</string>
+    <string name="failure_renderer_repeated">页面连续崩溃了几次，已保存的数据不受影响。请先导出诊断日志，再关闭应用后重新打开。</string>
+    <string name="abnormal_exit_title">Narraeon 上次意外关闭</string>
+    <string name="abnormal_exit_message">Narraeon 上次意外关闭（%1$s）。要导出诊断日志发给开发者吗？</string>
+    <string name="exit_reason_crash">应用崩溃</string>
+    <string name="exit_reason_crash_native">原生崩溃</string>
+    <string name="exit_reason_anr">无响应</string>
+    <string name="exit_reason_exit_self">后端退出</string>
+    <string name="exit_reason_low_memory">内存不足被系统关闭</string>
+    <string name="exit_reason_other">其他</string>
+</resources>

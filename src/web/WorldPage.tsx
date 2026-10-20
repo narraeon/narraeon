@@ -15,6 +15,7 @@ import {
   type ObserveConversation,
 } from "./ConversationObserver.ts";
 import { useAuthoringWorkspace } from "./useAuthoringWorkspace.ts";
+import { saveFile } from "./androidBridge.ts";
 import { uiText } from "./i18n.ts";
 import {
   hasHandledCheckpoint,
@@ -1249,23 +1250,16 @@ export function WorldPage({
         worldId,
         format,
       })) as V1StoryExport;
-      const url = URL.createObjectURL(
-        new Blob([exported.content], {
+      const outcome = await saveFile(exported.fileName, {
+        blob: new Blob([exported.content], {
           type:
             format === "markdown"
               ? "text/markdown;charset=utf-8"
               : "text/plain;charset=utf-8",
         }),
-      );
-      try {
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = exported.fileName;
-        link.click();
-      } finally {
-        URL.revokeObjectURL(url);
-      }
-      setFeedback({ kind: "status", text: uiText("故事已导出。") });
+      });
+      if (outcome !== "cancelled")
+        setFeedback({ kind: "status", text: uiText("故事已导出。") });
     } catch (reason: unknown) {
       setFeedback({ kind: "error", text: errorMessage(reason) });
     } finally {

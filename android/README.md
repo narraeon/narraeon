@@ -42,7 +42,9 @@ The Gradle wrapper (8.9) is checked in, so no separate Gradle install is needed.
 
 On first launch, and whenever `bundle-version.txt` changes, `NodeService` copies
 `assets/narraeon/` into `filesDir/narraeon/`. User data stays in `filesDir/data`,
-`filesDir/config` and `filesDir/log`, which upgrades do not touch.
+`filesDir/config` and `filesDir/log`, which upgrades do not touch. The marker reads
+`<version>+<commit>.<content hash>`, so a rebuild with uncommitted changes is also
+recopied.
 
 ## Logs
 
@@ -52,6 +54,47 @@ adb logcat -s NARRAEON-NODE NARRAEON-SERVICE
 
 Node stdout and stderr appear under `NARRAEON-NODE`. The mobile entry prints
 `NARRAEON_READY <port>` once the server is listening.
+
+## File inputs
+
+`<input type="file">` opens the system document picker (`ACTION_OPEN_DOCUMENT`). The
+picker shows all file types, because the pages' `accept` lists mix extensions and MIME
+types and file managers often label a `.zip` as `application/octet-stream`. The backend
+validates whatever is chosen.
+
+## File exports
+
+The WebView ignores `<a download>`. Inside the app, `saveFile` in
+`src/web/androidBridge.ts` sends a `save-file` message to `WebFileSaver` instead: small
+files go as base64, and world backups go as a same-origin path that the native side
+streams from the backend. `WebFileSaver` opens the system save dialog, writes the file,
+and replies `saved`, `cancelled` or `failed` to the page. Browsers keep the normal
+download.
+
+## Crash handling and diagnostic export
+
+The app keeps its own crash records in `filesDir/log/crash/`, so users can send logs
+without adb:
+
+- `node-errors.log`: uncaught exceptions and unhandled rejections in Node. The mobile
+  entry records them and keeps serving, because Node calling `exit()` would close the
+  whole app.
+- `node-stderr.log`: a copy of Node stderr written by the native layer (1 MB, then
+  rotated to `.1`). It keeps fatal V8 errors that end the process.
+- `java-crash.log`, `webview.log`, `webview-console.log`, `node-service.log`: JVM
+  crashes, WebView renderer deaths, page console errors, and Node start/exit.
+- `exit-reasons.log` (Android 11+): why earlier app processes ended, with ANR traces and
+  native tombstones when Android keeps them.
+
+If the WebView renderer dies, the app rebuilds the WebView and reloads it instead of
+being killed. After three renderer deaths within a minute, or when Node stops, the app
+shows a native screen with **Export diagnostic logs** and **Close app**. After an
+abnormal exit (crash, native crash, ANR, Node exit, fatal signal, or a low-memory kill
+while on screen) the next launch offers an export.
+
+**Export diagnostic logs** is also in the ☰ menu. It zips a device report, this app's
+logcat, `log/crash/`, and the last 7 days of `log/runtime-errors/`, then opens the share
+sheet. `log/ai-failures/` is left out because it can hold world text sent to the model.
 
 ## Release APK in CI
 

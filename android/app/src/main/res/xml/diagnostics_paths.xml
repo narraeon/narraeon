@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- LogExport writes diagnostic zips to cacheDir/diagnostics; only that folder is shareable. -->
+<paths>
+    <cache-path name="diagnostics" path="diagnostics/" />
+</paths>
