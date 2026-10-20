@@ -7,7 +7,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { dirname, isAbsolute, join, normalize, sep } from "node:path";
+import { dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 
 // 世界轮账本：当前文件就是当前端点；每轮只记录它改动过的文件的修改前像。
 // 回退只追加一轮 rewind，它在读取时被视为逻辑上的空操作，被丢弃的轮不再可达。
@@ -99,6 +99,7 @@ function isMissing(error: unknown): boolean {
 }
 
 export async function initializeLedger(root: string): Promise<void> {
+  forgetLedger(root);
   await writeFileAtomic(
     join(root, headFile),
     `${JSON.stringify({ sequence: 0 }, null, 2)}\n`,
@@ -172,9 +173,24 @@ function viewOf(head: number, records: WorldTurnRecord[]): LedgerView {
   return { head, byPosition, discarded };
 }
 
+// 进程内视图缓存，按端点失效。一个数据目录只被一个进程操作（ADR-0044），
+// 所以 head 相同即记录相同：任何改变可见记录的写入都会先推进 head。
+// 只有 beginTurn 与 recoverIncomplete 会在 head 之上写入或删除记录，它们不影响视图
+// （视图只包含序号不大于 head 的记录，且 recoverIncomplete 本身会在结束时失效缓存）。
+const viewCache = new Map<string, LedgerView>();
+
 async function loadView(root: string): Promise<LedgerView> {
   const head = await readHead(root);
-  return viewOf(head, await readAllRecords(root));
+  const cached = viewCache.get(resolve(root));
+  if (cached?.head === head) return cached;
+  const view = viewOf(head, await readAllRecords(root));
+  viewCache.set(resolve(root), view);
+  return view;
+}
+
+// 世界目录被删除、归档导入或分叉发布到已存在路径之前调用：下一次读取从磁盘重建视图。
+export function forgetLedger(root: string): void {
+  viewCache.delete(resolve(root));
 }
 
 // 把一个端点解析到它的逻辑位置：rewind 位置等价于它所恢复的位置。
@@ -342,6 +358,7 @@ export async function recoverIncomplete(root: string): Promise<boolean> {
   for (const position of view.discarded) {
     await rm(join(root, turnFileName(position)), { force: true });
   }
+  forgetLedger(root);
   return incomplete.length > 0;
 }
 

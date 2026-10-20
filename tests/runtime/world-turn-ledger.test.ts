@@ -1,4 +1,11 @@
-import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
+import {
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+  mkdir,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
@@ -7,6 +14,7 @@ import {
   appendTurn,
   beginTurn,
   commitTurnHead,
+  forgetLedger,
   initializeLedger,
   listTurns,
   readFileAt,
@@ -238,5 +246,59 @@ describe("world turn ledger", () => {
     expect((await listTurns(root)).map((turn) => turn.sequence)).toEqual([
       1, 3,
     ]);
+  });
+});
+
+describe("world turn ledger view cache", () => {
+  test("reuses the view for the same endpoint and refreshes after appendTurn", async () => {
+    await appendTurn(root, {
+      mode: "play",
+      changes: [{ path: "state/a.yaml", content: "v1-a\n" }],
+    });
+    expect((await listTurns(root)).map((turn) => turn.sequence)).toEqual([1]);
+
+    // 同一端点的第二次读取不再读取轮目录：把目录移开，视图仍然可读。
+    const turns = join(root, "runtime", "turns");
+    const moved = join(root, "runtime", "turns-away");
+    await rename(turns, moved);
+    try {
+      expect((await listTurns(root)).map((turn) => turn.sequence)).toEqual([1]);
+      expect(await readFileAt(root, 1, "state/a.yaml")).toBe("v1-a\n");
+
+      await rename(moved, turns);
+      await appendTurn(root, {
+        mode: "play",
+        changes: [{ path: "state/a.yaml", content: "v2-a\n" }],
+      });
+      expect((await listTurns(root)).map((turn) => turn.sequence)).toEqual([
+        1, 2,
+      ]);
+      expect(await readFileAt(root, 2, "state/a.yaml")).toBe("v2-a\n");
+    } finally {
+      await rm(moved, { recursive: true, force: true });
+    }
+  });
+
+  test("forgetLedger makes the next read come from disk", async () => {
+    await appendTurn(root, {
+      mode: "play",
+      changes: [{ path: "state/a.yaml", content: "v1-a\n" }],
+    });
+    expect((await listTurns(root)).length).toBe(1);
+
+    const turns = join(root, "runtime", "turns");
+    const moved = join(root, "runtime", "turns-away");
+    await rename(turns, moved);
+    try {
+      forgetLedger(root);
+      await expect(listTurns(root)).rejects.toMatchObject({
+        code: "missing_record",
+      });
+    } finally {
+      await rename(moved, turns);
+    }
+    // 上面的失败读取已经按残缺目录填充了视图，恢复目录后需要再次失效。
+    forgetLedger(root);
+    expect((await listTurns(root)).length).toBe(1);
   });
 });

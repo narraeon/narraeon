@@ -68,7 +68,7 @@ import {
   WorldLedgerAuthority,
   type WorldTurnCommit,
 } from "./WorldLedgerAuthority.ts";
-import { rewindTo } from "./WorldTurnLedger.ts";
+import { forgetLedger, rewindTo } from "./WorldTurnLedger.ts";
 import {
   FileNativeWorldOperationCoordinator,
   WorldOperationBusyError,
@@ -488,7 +488,10 @@ export class FileNativeWorldStore {
     }
     return this.operations.withExclusiveWorldStateMutation(worldId, () =>
       this.operations.withWorldAuthorityLock(worldId, async () => {
+        forgetLedger(root);
         await rm(root, { recursive: true, force: true });
+        // 删除期间的并发读取可能重新填充缓存，删除后再失效一次。
+        forgetLedger(root);
         this.#currentStorage.delete(worldId);
         for (const operationId of this.#retainedOperationIds.get(worldId) ?? [])
           this.#operationOutcomes.delete(operationId);
@@ -1491,6 +1494,7 @@ export class FileNativeWorldStore {
           selected.history,
           Date.now(),
         );
+        forgetLedger(finalRoot);
         await rename(staging, finalRoot);
         return {
           outcome: "derived",

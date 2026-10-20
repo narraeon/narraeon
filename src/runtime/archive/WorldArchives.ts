@@ -20,6 +20,7 @@ import { FileNativeArtifactStore } from "../artifact/FileNativeArtifactStore.ts"
 import { PlayCallChain } from "../play/PlayCallChain.ts";
 import { FileNativePromptCompiler } from "../prompt/FileNativePromptCompiler.ts";
 import { WorldLedgerAuthority } from "../world/WorldLedgerAuthority.ts";
+import { forgetLedger } from "../world/WorldTurnLedger.ts";
 import {
   FileNativeWorldStore,
   type FileNativeWorldSummary,
@@ -295,6 +296,7 @@ export class WorldArchives {
             manifest.archivedWorldId,
           );
           await mkdir(dirname(sourceRoot), { recursive: true });
+          forgetLedger(sourceRoot);
           try {
             await rename(join(extracted, "world"), sourceRoot);
           } catch (error) {
