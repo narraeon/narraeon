@@ -138,6 +138,13 @@ export class FileNativeWorldStorageMigrator {
     const runtimeRoot = join(worldRoot, "runtime");
     const ledger = new WorldLedgerAuthority(worldRoot);
     if (await ledger.exists()) {
+      // V3 迁移在写完 head.json 后、删除旧目录前若中断，会留下只读不写的残留。
+      // 账本已经是端点，残留目录不再被读取，这里一并清理。
+      for (const residue of [
+        join(runtimeRoot, authorityV3Directory),
+        join(runtimeRoot, ".authority-v3-migration"),
+      ])
+        await rm(residue, { recursive: true, force: true });
       const head = await ledger.readHead();
       return {
         outcome: "already_current",
