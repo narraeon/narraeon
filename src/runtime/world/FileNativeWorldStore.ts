@@ -215,6 +215,13 @@ type OperationEntry =
   | { phase: "in_progress" }
   | { phase: "done"; outcome: CommittedOperationOutcome };
 
+/**
+ * Completed operations kept per world for same-process duplicate guards. A
+ * pending player-revision intent resumes against its own world's entry, so
+ * retention is per world: another world's traffic cannot evict it.
+ */
+const RETAINED_OPERATION_OUTCOMES_PER_WORLD = 256;
+
 export interface FileNativeRecoveredEndpoint {
   worldId: string;
   head: string;
@@ -265,7 +272,9 @@ export class FileNativeWorldStore {
   readonly #worldsRoot: string;
   // Process-local duplicate guard keyed by operation ID (ADR-0044): entries are
   // not persisted, so a restart forgets them and a repeated operation redoes.
+  // Completed entries are bounded per world; in-progress entries are not.
   readonly #operationOutcomes = new Map<string, OperationEntry>();
+  readonly #retainedOperationIds = new Map<string, string[]>();
   readonly #promptCompiler: FileNativePromptCompiler;
   readonly #activeControlUsers = new Map<string, Set<string>>();
   readonly #openingWorldRevisions = new Set<string>();
@@ -476,6 +485,9 @@ export class FileNativeWorldStore {
       this.operations.withWorldAuthorityLock(worldId, async () => {
         await rm(root, { recursive: true, force: true });
         this.#currentStorage.delete(worldId);
+        for (const operationId of this.#retainedOperationIds.get(worldId) ?? [])
+          this.#operationOutcomes.delete(operationId);
+        this.#retainedOperationIds.delete(worldId);
         return { deleted: true } as const;
       }),
     );
@@ -1256,6 +1268,21 @@ export class FileNativeWorldStore {
     return Promise.resolve(true);
   }
 
+  #rememberOperationOutcome(
+    worldId: string,
+    operationId: string,
+    outcome: CommittedOperationOutcome,
+  ): void {
+    this.#operationOutcomes.set(operationId, { phase: "done", outcome });
+    const retained = this.#retainedOperationIds.get(worldId) ?? [];
+    retained.push(operationId);
+    while (retained.length > RETAINED_OPERATION_OUTCOMES_PER_WORLD) {
+      const evicted = retained.shift();
+      if (evicted !== undefined) this.#operationOutcomes.delete(evicted);
+    }
+    this.#retainedOperationIds.set(worldId, retained);
+  }
+
   releaseOperationReservation(operationId: string): Promise<void> {
     assertIdentity(operationId, "operation ID");
     if (this.#operationOutcomes.get(operationId)?.phase === "in_progress")
@@ -1851,10 +1878,11 @@ export class FileNativeWorldStore {
             nextAdditionalMaterials: structuredClone(input.nextMaterials),
             mode: input.mode,
           };
-          this.#operationOutcomes.set(input.operationId, {
-            phase: "done",
+          this.#rememberOperationOutcome(
+            input.worldId,
+            input.operationId,
             outcome,
-          });
+          );
           const recovered = await authorityStore.recover(commit.head);
           await updateWorldActivity(
             root,

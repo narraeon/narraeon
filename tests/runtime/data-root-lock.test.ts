@@ -58,6 +58,41 @@ test("首个服务异常退出（owner pid 已不存在）后，重启可以拿�
   await lock.release();
 });
 
+test("启动时删除旧的操作回执（含导入回执），保留世界修订 epoch 标记", async () => {
+  const root = await dataRoot();
+  const operations = join(root, "operations");
+  await mkdir(join(operations, "world-revision-locks"), { recursive: true });
+  await writeFile(
+    join(operations, "world-revision-locks", "world.json"),
+    "{}",
+    "utf8",
+  );
+  await writeFile(join(operations, "import-abc.json"), "{}", "utf8");
+  await writeFile(join(operations, "create-world.json"), "{}", "utf8");
+
+  const lock = await acquireDataRootLock(root);
+  for (const receipt of ["import-abc.json", "create-world.json"])
+    await expect(stat(join(operations, receipt))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  await expect(
+    stat(join(operations, "world-revision-locks", "world.json")),
+  ).resolves.toBeDefined();
+  await lock.release();
+});
+
+test("启动时只剩旧回执的 operations 目录会被整体删除", async () => {
+  const root = await dataRoot();
+  await mkdir(join(root, "operations"), { recursive: true });
+  await writeFile(join(root, "operations", "import-abc.json"), "{}", "utf8");
+
+  const lock = await acquireDataRootLock(root);
+  await expect(stat(join(root, "operations"))).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+  await lock.release();
+});
+
 test("启动时清理旧的世界锁、authority 锁与修正 claim 目录", async () => {
   const root = await dataRoot();
   const legacy = [

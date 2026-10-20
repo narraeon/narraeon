@@ -234,16 +234,6 @@ export class WorldArchives {
                 "Import publication does not match its operation",
               );
             await this.#worlds.ensureCurrentStorage(worldId);
-            await durableJson(
-              join(
-                this.#dataRoot,
-                "operations",
-                `import-${createHash("sha256").update(input.operationId).digest("hex")}.json`,
-              ),
-              JSON.parse(
-                await readFile(join(targetRoot, "publication.json"), "utf8"),
-              ) as unknown,
-            );
             const world = await this.#worlds.readWorldSummary(worldId);
             return { outcome: "imported", world };
           }

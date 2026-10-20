@@ -272,6 +272,47 @@ test("分叉的当前文件与来源该端点逐字节一致，且不与来源�
   expect((await stat(forkState)).ino).not.toBe((await stat(sourceState)).ino);
 });
 
+test("完成的操作结果按世界保留最近 256 条，更早的操作 ID 视为未开始", async () => {
+  const fixture = await world();
+  let parentHead = "genesis";
+  for (let index = 0; index < 257; index += 1) {
+    const committed = await fixture.store.commitPlayStep({
+      operationId: `retain-${index}`,
+      worldId: fixture.worldId,
+      parentHead,
+      historyAppend: [{ role: "player", exactText: `Action ${index}` }],
+      nextMaterials: [],
+      stateChanges: [],
+    });
+    parentHead = committed.head;
+  }
+  await expect(fixture.store.getOperationOutcome("retain-0")).resolves.toEqual({
+    outcome: "not_started",
+  });
+  await expect(
+    fixture.store.getOperationOutcome("retain-1"),
+  ).resolves.toMatchObject({ outcome: "committed" });
+  await expect(
+    fixture.store.getOperationOutcome("retain-256"),
+  ).resolves.toMatchObject({ outcome: "committed" });
+}, 120_000);
+
+test("删除世界时清空该世界保留的操作结果", async () => {
+  const fixture = await world();
+  await fixture.store.commitPlayStep({
+    operationId: "before-delete",
+    worldId: fixture.worldId,
+    parentHead: "genesis",
+    historyAppend: [{ role: "player", exactText: "Before deletion" }],
+    nextMaterials: [],
+    stateChanges: [],
+  });
+  await fixture.store.deleteWorld(fixture.worldId);
+  await expect(
+    fixture.store.getOperationOutcome("before-delete"),
+  ).resolves.toEqual({ outcome: "not_started" });
+});
+
 async function world() {
   const root = await mkdtemp(join(tmpdir(), "narraeon-file-authority-"));
   roots.push(root);

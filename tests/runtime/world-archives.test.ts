@@ -46,7 +46,7 @@ async function empty() {
   roots.push(root);
   const value = archiveStores(root);
   await value.archives.initialize();
-  return value;
+  return { ...value, root };
 }
 async function exported(source: Awaited<ReturnType<typeof fixture>>) {
   const metadata = await source.archives.exportWorld({
@@ -162,6 +162,9 @@ test("故事之后的世界修正端点归档保留完整页面轨迹与调用�
     operationId: "corrected-import",
     ...(await target.archives.upload(createReadStream(archive.zip))),
   });
+  expect(
+    await readdir(join(target.root, "operations")).catch(() => []),
+  ).not.toContainEqual(expect.stringMatching(/^import-/u));
   const after = await target.worlds.playTimeline.readPage(
     result.world.worldId,
     40,

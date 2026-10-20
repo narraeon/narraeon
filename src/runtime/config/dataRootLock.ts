@@ -1,4 +1,4 @@
-import { mkdir, open, readFile, rm } from "node:fs/promises";
+import { mkdir, open, readdir, readFile, rm, rmdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 /**
@@ -87,6 +87,30 @@ function processIsAlive(pid: number): boolean {
 async function removeLegacyLocks(root: string): Promise<void> {
   for (const relative of legacyLockPaths)
     await rm(join(root, relative), { recursive: true, force: true });
+  await removeLegacyOperationReceipts(root);
+}
+
+/**
+ * Operation receipts written before #76 (including archive import receipts) have
+ * no readers. The world-revision epoch markers in the same directory are kept.
+ */
+async function removeLegacyOperationReceipts(root: string): Promise<void> {
+  const directory = join(root, "operations");
+  const entries = await readdir(directory, { withFileTypes: true }).catch(
+    (error: unknown) => {
+      if (isNodeError(error) && error.code === "ENOENT") return null;
+      throw error;
+    },
+  );
+  if (entries === null) return;
+  for (const entry of entries)
+    if (entry.isFile() && entry.name.endsWith(".json"))
+      await rm(join(directory, entry.name), { force: true });
+  try {
+    await rmdir(directory);
+  } catch (error: unknown) {
+    if (!isNodeError(error) || error.code !== "ENOTEMPTY") throw error;
+  }
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
