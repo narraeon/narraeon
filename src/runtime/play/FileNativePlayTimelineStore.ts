@@ -187,13 +187,6 @@ export interface LoadedPlayContext {
   cursor: PlayContextPersistenceCursor;
 }
 
-interface ReleasedPersistedPlayCallChain extends PersistedPlayCallChainContext {
-  schemaVersion: 1 | 2;
-  kind: "play_call_chain";
-  worldId: string;
-  previousContexts?: PersistedPlayCallChainContext[];
-}
-
 interface TimelineCursor {
   generation: string;
   chainId: string | null;
@@ -207,61 +200,6 @@ export class FileNativePlayTimelineStore {
 
   constructor(dataRoot: string) {
     this.#worldsRoot = join(resolve(dataRoot), "worlds-file-native");
-  }
-
-  /**
-   * Convert the cumulative call-chain record written by every released
-   * Narraeon version through v0.1.1 into immutable context segments. The
-   * source digest makes interrupted retries reproduce the same generation and
-   * identities; callers publish the world-wide storage marker only after this
-   * method has completed.
-   */
-  async migrateReleasedRecord(
-    worldId: string,
-    value: unknown,
-    sourceDigest: string,
-  ): Promise<void> {
-    assertIdentity(worldId, "World ID");
-    if (!/^[a-f0-9]{64}$/u.test(sourceDigest))
-      throw new TypeError("Released call-chain source digest is invalid");
-    assertReleasedPersistedPlayCallChain(value, worldId);
-    const contexts = [
-      ...(value.previousContexts ?? []).map((context) =>
-        structuredClone(context),
-      ),
-      releasedCurrentContext(value),
-    ];
-    const seen = new Set<string>();
-    const generation = `released:${sourceDigest}`;
-    let previousChainId: string | null = null;
-    for (const context of contexts) {
-      assertIdentity(context.chainId, "Call-chain ID");
-      if (seen.has(context.chainId))
-        throw new Error(
-          "Released play-call-chain contexts contain a duplicate identity",
-        );
-      seen.add(context.chainId);
-      await this.persist({
-        ...structuredClone(context),
-        events: context.events.map(normalizePlayEvent),
-        schemaVersion: 3,
-        kind: "play_call_chain",
-        worldId,
-        previousChainId,
-        timelineGeneration: generation,
-      });
-      previousChainId = context.chainId;
-    }
-    const migrated = await this.readAllContexts(worldId);
-    if (
-      migrated.length !== contexts.length ||
-      migrated.some(
-        (context, index) => context.chainId !== contexts[index]?.chainId,
-      )
-    )
-      throw new Error(
-        "Released play-call-chain migration did not reproduce its context chain",
-      );
   }
 
   async persist(
@@ -600,7 +538,7 @@ export class FileNativePlayTimelineStore {
       baseValue,
       continuationValue,
       transcript,
-      rawEvents,
+      events,
       completedTools,
       promptRuns,
     ] = await Promise.all([
@@ -626,7 +564,6 @@ export class FileNativePlayTimelineStore {
         stateValue.promptRunCount ?? 0,
       ).then((records) => records.map(decodePlayPromptRun)),
     ]);
-    const events = rawEvents.map(normalizePlayEvent);
     assertContextBase(baseValue);
     assertContextContinuation(continuationValue);
     if (
@@ -997,7 +934,7 @@ export class FileNativePlayTimelineStore {
     assertPlayEvent(event);
     if (event.id !== eventId)
       throw new Error("Play timeline event identity is inconsistent");
-    return projectLegacyModelBindingFailure(normalizePlayEvent(event));
+    return projectLegacyModelBindingFailure(event);
   }
 
   newGeneration(): string {
@@ -1406,77 +1343,6 @@ function assertTimelineHead(
     throw new Error("Play timeline head has an invalid shape");
 }
 
-function assertReleasedPersistedPlayCallChain(
-  value: unknown,
-  worldId: string,
-): asserts value is ReleasedPersistedPlayCallChain {
-  if (
-    !isRecord(value) ||
-    (value.schemaVersion !== 1 && value.schemaVersion !== 2) ||
-    value.kind !== "play_call_chain" ||
-    value.worldId !== worldId ||
-    !isReleasedPlayContext(value) ||
-    (value.previousContexts !== undefined &&
-      (!Array.isArray(value.previousContexts) ||
-        value.previousContexts.some(
-          (context) => !isReleasedPlayContext(context),
-        )))
-  )
-    throw new Error(
-      "Released play-call-chain durable data has an invalid shape",
-    );
-}
-
-function isReleasedPlayContext(
-  value: unknown,
-): value is PersistedPlayCallChainContext {
-  if (!isRecord(value)) return false;
-  if (
-    typeof value.chainId !== "string" ||
-    typeof value.baselineHead !== "string" ||
-    (value.continuityContextId !== undefined &&
-      (typeof value.continuityContextId !== "string" ||
-        value.continuityContextId.length === 0)) ||
-    (value.baselineHistoryLength !== undefined &&
-      !validCount(value.baselineHistoryLength)) ||
-    typeof value.parentHead !== "string" ||
-    !validReleasedDerivedFrom(value.derivedFrom) ||
-    !validReleasedBranchedBeforePlayer(value.branchedBeforePlayer) ||
-    !isRecord(value.playPreset) ||
-    (value.followups !== undefined && !Array.isArray(value.followups)) ||
-    (value.playPresetScriptsEnabled !== undefined &&
-      typeof value.playPresetScriptsEnabled !== "boolean") ||
-    (value.modelBinding !== undefined &&
-      !validModelHostBinding(value.modelBinding)) ||
-    (value.status !== "ready" &&
-      value.status !== "running" &&
-      value.status !== "interrupted") ||
-    typeof value.canRetry !== "boolean" ||
-    !isRecord(value.bootstrap) ||
-    !Array.isArray(value.tools) ||
-    !Array.isArray(value.transcript) ||
-    !Array.isArray(value.events) ||
-    !Array.isArray(value.completedTools) ||
-    !Array.isArray(value.changedDocuments) ||
-    !Array.isArray(value.nextMaterials) ||
-    !validCount(value.nextEventId) ||
-    !validCount(value.exchange) ||
-    (value.lastRequest !== null && !isRecord(value.lastRequest)) ||
-    !validCount(value.lastRequestAttempt) ||
-    (value.lastFailure !== null && typeof value.lastFailure !== "string") ||
-    (value.lastFailureKind !== undefined &&
-      !isPlayFailureKind(value.lastFailureKind)) ||
-    typeof value.updatedAt !== "number"
-  )
-    return false;
-  try {
-    for (const event of value.events) assertPlayEvent(event);
-  } catch {
-    return false;
-  }
-  return true;
-}
-
 function validModelHostBinding(value: unknown): value is ModelHostBinding {
   return (
     isRecord(value) &&
@@ -1500,44 +1366,6 @@ function validModelHostBinding(value: unknown): value is ModelHostBinding {
       value.cacheStrategy === "explicit_cliproxyapi_message" ||
       value.cacheStrategy === "provider_managed")
   );
-}
-
-function validReleasedDerivedFrom(value: unknown): boolean {
-  return (
-    value === undefined ||
-    (isRecord(value) &&
-      typeof value.worldId === "string" &&
-      typeof value.chainId === "string" &&
-      typeof value.head === "string")
-  );
-}
-
-function validReleasedBranchedBeforePlayer(value: unknown): boolean {
-  return (
-    value === undefined ||
-    (isRecord(value) &&
-      typeof value.worldId === "string" &&
-      typeof value.chainId === "string" &&
-      Number.isSafeInteger(value.eventId) &&
-      Number(value.eventId) > 0)
-  );
-}
-
-function releasedCurrentContext(
-  value: ReleasedPersistedPlayCallChain,
-): PersistedPlayCallChainContext {
-  const {
-    schemaVersion: _schemaVersion,
-    kind: _kind,
-    worldId: _worldId,
-    previousContexts: _previousContexts,
-    ...context
-  } = value;
-  void _schemaVersion;
-  void _kind;
-  void _worldId;
-  void _previousContexts;
-  return structuredClone(context);
 }
 
 function assertPlayEvent(
@@ -1729,52 +1557,7 @@ function validOptionalString(value: unknown): boolean {
 }
 
 function validOptionalUsage(value: unknown): boolean {
-  return (
-    value === undefined ||
-    (isRecord(value) &&
-      validUsageToken(value.inputTokens) &&
-      validUsageToken(value.outputTokens) &&
-      (value.provenance === undefined || validFullUsage(value)))
-  );
-}
-
-/**
- * v0.1.1 stored only input/output usage. Keep that released shape readable,
- * but expose one current protocol projection with honest unavailable fields.
- */
-function normalizePlayEvent(event: V1PlayCallChainEvent): V1PlayCallChainEvent {
-  if (
-    (event.kind !== "assistant" && event.kind !== "followup") ||
-    event.usage === undefined ||
-    validFullUsage(event.usage)
-  )
-    return structuredClone(event);
-  const legacy = event.usage as unknown as {
-    inputTokens: number | null;
-    outputTokens: number | null;
-  };
-  const unavailable: ModelUsageField = "unavailable";
-  const provider = (value: number | null): ModelUsageField =>
-    value === null ? unavailable : "provider";
-  const usage: ModelUsage = {
-    inputTokens: legacy.inputTokens,
-    uncachedInputTokens: null,
-    cacheReadTokens: null,
-    cacheWriteTokens: null,
-    reasoningTokens: null,
-    outputTokens: legacy.outputTokens,
-    totalTokens: null,
-    provenance: {
-      inputTokens: provider(legacy.inputTokens),
-      uncachedInputTokens: unavailable,
-      cacheReadTokens: unavailable,
-      cacheWriteTokens: unavailable,
-      reasoningTokens: unavailable,
-      outputTokens: provider(legacy.outputTokens),
-      totalTokens: unavailable,
-    },
-  };
-  return { ...structuredClone(event), usage };
+  return value === undefined || validFullUsage(value);
 }
 
 function validFullUsage(value: unknown): value is ModelUsage {
