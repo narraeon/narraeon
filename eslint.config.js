@@ -9,6 +9,7 @@ const applicationFiles = ["src/**/*.{ts,tsx}", "tests/**/*.ts"];
 export default tseslint.config(
   {
     ignores: [
+      ".claude/**",
       ".scratch/**",
       ".test-data/**",
       "dist/**",
