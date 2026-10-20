@@ -1677,30 +1677,6 @@ export class PlayCallChain {
           ? { retainCompleteContext: true }
           : {}),
       });
-    if (input.targetWorldRoot !== undefined) {
-      const retainedContexts = [
-        ...input.sourceContexts.slice(0, input.selectedContextIndex),
-        { ...sourceContext, events: input.sourceEvents },
-      ];
-      await this.#artifacts?.stageFork?.({
-        sourceWorldId: input.sourceWorldId,
-        targetWorldId: input.targetWorldId,
-        targetWorldRoot: input.targetWorldRoot,
-        timeline: retainedContexts.flatMap((context) =>
-          context.events.flatMap((event) =>
-            event.kind === "assistant" && event.committedHead !== undefined
-              ? [
-                  {
-                    contextId: context.continuityContextId ?? context.chainId,
-                    eventId: event.id,
-                    head: event.committedHead,
-                  },
-                ]
-              : [],
-          ),
-        ),
-      });
-    }
     return projectView(derived);
   }
 

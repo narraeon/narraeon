@@ -4,7 +4,11 @@ import {
   isHistoryBackground,
   type HistoryBackground,
 } from "../history/HistoryBackground.ts";
-import { FileNativeArtifactStore } from "../artifact/FileNativeArtifactStore.ts";
+import {
+  FileNativeArtifactStore,
+  forkArtifactClosure,
+} from "../artifact/FileNativeArtifactStore.ts";
+import { migrateLegacyArtifactStore } from "../artifact/LegacyArtifactStoreMigration.ts";
 import { WorldExtensionRequests } from "../extension/WorldExtensionRequests.ts";
 import {
   WorldExtensionControls,
@@ -339,6 +343,7 @@ export class FileNativeWorldStore {
       }
       await this.operations.withWorldAuthorityLock(worldId, async () => {
         await this.#storageMigrator.migrate(worldId);
+        await migrateLegacyArtifactStore(dirname(this.#worldsRoot), worldId);
       });
       this.#currentStorage.add(worldId);
     } catch (error: unknown) {
@@ -1402,6 +1407,11 @@ export class FileNativeWorldStore {
       try {
         await copyForkClosure(sourceRoot, staging);
         await rewindTo(staging, headPosition(sourceHead));
+        await forkArtifactClosure(staging, {
+          sourceWorldId: input.sourceWorldId,
+          targetWorldId: worldId,
+          restoredHead: sourceHead,
+        });
         // 分叉不信任来源的投影文件：当前文件由副本上的账本端点重建。
         await new WorldLedgerAuthority(staging).materializeCurrentFiles();
         const selected = await new WorldLedgerAuthority(staging).recover();
@@ -2494,6 +2504,7 @@ const forkClosureEntries = [
   join("runtime", "additional-materials.json"),
   join("runtime", "genesis.json"),
   join("runtime", "play-genesis-timeline.json"),
+  "artifacts",
 ];
 
 async function copyForkClosure(

@@ -6,26 +6,44 @@ import {
 import { Buffer } from "node:buffer";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
-import {
-  mkdir,
-  open,
-  readdir,
-  readFile,
-  rename,
-  rm,
-  stat,
-} from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { readdir, readFile, rm } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { worldQueueFor } from "../world/WorldQueue.ts";
 
 import {
   validatePlayPresetArtifactPayload,
-  isFrozenArtifactPresentation,
   type FrozenArtifactPresentation,
   type PlayPresetArtifactDeclaration,
   type PlayPresetArtifactStrategy,
 } from "../play/FileNativePlayPresetStore.ts";
+import {
+  ArtifactStoreCorruptionError,
+  ArtifactStoreInvariantError,
+  artifactSequenceFileName,
+  assertOperation,
+  assertRawRecord,
+  hasExactKeys,
+  identityHash,
+  isJsonValue,
+  isMissing,
+  isRecord,
+  parseArtifactJson,
+  payloadFingerprint,
+  rawRecordFingerprint,
+  stableSerialize,
+  validAttachment,
+  headOrdinal,
+  writeArtifactJson,
+  type ArtifactOperationFile,
+  type ArtifactRawRecord,
+} from "./ArtifactStoreFiles.ts";
+import {
+  hasLegacyArtifactState,
+  migrateLegacyArtifactStore,
+} from "./LegacyArtifactStoreMigration.ts";
+
+export { ArtifactStoreCorruptionError, ArtifactStoreInvariantError };
 
 export type ArtifactPayload =
   | string
@@ -36,7 +54,7 @@ export type ArtifactPayload =
   | { [key: string]: ArtifactPayload };
 
 export type ArtifactRecordStatus =
-  "pending" | "active" | "superseded" | "failed" | "cleared";
+  "pending" | "active" | "superseded" | "cleared";
 
 export type ArtifactExtensionStatus =
   | "not_started"
@@ -48,20 +66,6 @@ export type ArtifactExtensionStatus =
   | "unknown"
   | "recovery_required"
   | "superseded";
-
-export class ArtifactStoreInvariantError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
-    super(message, options);
-    this.name = "ArtifactStoreInvariantError";
-  }
-}
-
-export class ArtifactStoreCorruptionError extends ArtifactStoreInvariantError {
-  constructor(message: string, options?: ErrorOptions) {
-    super(message, options);
-    this.name = "ArtifactStoreCorruptionError";
-  }
-}
 
 export interface ArtifactReplyTarget {
   head: string;
@@ -188,15 +192,7 @@ export interface ArtifactExtensionSummary {
   head?: string;
 }
 
-export interface ArtifactForkInput {
-  sourceWorldId: string;
-  targetWorldId: string;
-  targetWorldRoot: string;
-  timeline: readonly ArtifactReplyTarget[];
-}
-
 export interface ArtifactStore {
-  stageFork?(input: ArtifactForkInput): Promise<void>;
   finishRequest?(
     context: ArtifactRequestContext,
     failed: boolean,
@@ -206,7 +202,7 @@ export interface ArtifactStore {
   beginRequestAttempt(context: ArtifactRequestContext): Promise<void>;
   /** Physically discard artifact state bound to heads after a rewind. */
   discardAfterHead(worldId: string, restoredHead: string): Promise<void>;
-  /** Reconcile head-bound projections without exposing raw event mechanics. */
+  /** Reconcile head-bound projections without exposing raw record mechanics. */
   reconcileHead(
     worldId: string,
     head: string,
@@ -218,11 +214,6 @@ export interface ArtifactStore {
     context: ArtifactOperationContext,
     head: string,
   ): Promise<void>;
-  markCoreMaterializationPending(
-    context: ArtifactOperationContext,
-    head: string,
-    message: string,
-  ): Promise<ArtifactExtensionSummary>;
   markCoreFailed(operationId: string, message?: string): Promise<void>;
   beginExtension(context: ArtifactOperationContext): Promise<void>;
   completeExtension(
@@ -253,104 +244,27 @@ export interface ArtifactStore {
   ): Promise<ArtifactDebugRecord[]>;
 }
 
-interface ArtifactRawRecord {
-  extensionControl?: WorldExtensionControl;
-  frozenPresentation?: FrozenArtifactPresentation;
-  schemaVersion: 1;
-  recordId: string;
-  sequence: number;
-  worldId: string;
-  parentHead: string;
-  newHead: string | null;
-  operationId: string;
-  playPresetId: string;
-  playPresetRevision: string;
-  playPresetScriptsEnabled: boolean;
-  requestId: string;
-  requestAttempt: number;
-  output: string;
-  channel: string;
-  key?: string;
-  contentType: PlayPresetArtifactDeclaration["contentType"];
-  renderer?: string;
-  rendererRevision?: string;
-  payload: ArtifactPayload;
-  save: PlayPresetArtifactDeclaration["save"];
-  projection: PlayPresetArtifactStrategy;
-  invalidation: PlayPresetArtifactDeclaration["invalidation"];
-  toolCallId: string;
-  toolName: "artifact_emit";
-  callFingerprint: string;
-  payloadFingerprint: string;
-  recordFingerprint: string;
-  status: "pending";
-}
-
-interface ArtifactEvent {
-  schemaVersion: 1;
-  kind: "activate" | "supersede" | "clear" | "bind_head" | "ignored_call";
-  sequence: number;
-  recordId?: string;
-  operationId: string;
-  output?: string;
-  channel?: string;
-  key?: string;
-  head?: string;
-  requestId?: string;
-  requestAttempt?: number;
-  reason?: string;
-  toolCallId?: string;
-  toolName?: "artifact_emit" | "artifact_clear";
-  callFingerprint?: string;
-}
-
-interface ArtifactOperationFile {
-  requests?: ArtifactRequestProgress[];
-  schemaVersion: 1;
-  context: ArtifactOperationContext;
-  status:
-    | "running"
-    | "core_failed"
-    | "core_materialization_pending"
-    | "core_committed"
-    | "completed";
-  extensionStatus: ArtifactExtensionStatus;
-  message?: string;
-  completedRequests: string[];
-  head?: string;
-  artifactProjectionStatus: "active" | "superseded";
-  /** Latest registered attempt per request; persisted for cold projection rebuild. */
-  requestAttempts: Record<string, number>;
-}
-
-interface EffectiveRecord {
-  record: ArtifactRawRecord;
-  status: ArtifactRecordStatus;
-  head: string | null;
-}
-
 const maxPayloadBytes = 4 * 1024 * 1024;
 
 /**
- * File-native artifact module. Raw records never change after publication;
- * projection events and operation state are the only mutable layers. The
- * public interface deliberately exposes no filesystem paths or provider
- * transcript and is the seam used by the play-call-chain coordinator and tests.
+ * File-native artifact module. Artifacts live in the world directory as
+ * `artifacts/records/<sequence>.json` and `artifacts/operations/<hash>.json`.
+ * A record carries its own status and head and is updated in place; there is
+ * no event log. Forks and archives copy the world directory and then rewrite
+ * identities with {@link forkArtifactClosure}.
  */
 export class FileNativeArtifactStore implements ArtifactStore {
-  readonly #root: string;
-  readonly #extensionControls: WorldExtensionRequests;
+  readonly #dataRoot: string;
   readonly #worldsRoot: string;
+  readonly #extensionControls: WorldExtensionRequests;
+  /** Records with `save: "none"` are never written to disk. */
   readonly #memoryRecords = new Map<string, ArtifactRawRecord[]>();
-  readonly #memoryEvents = new Map<string, ArtifactEvent[]>();
   readonly #mutationContext = new AsyncLocalStorage<ReadonlySet<string>>();
 
   constructor(dataRoot: string) {
-    this.#root = join(resolve(dataRoot), "artifact-store");
-    this.#extensionControls = new WorldExtensionRequests(
-      join(resolve(dataRoot), "worlds-file-native"),
-    );
-    this.#worldsRoot = join(resolve(dataRoot), "worlds-file-native");
+    this.#dataRoot = resolve(dataRoot);
+    this.#worldsRoot = join(this.#dataRoot, "worlds-file-native");
+    this.#extensionControls = new WorldExtensionRequests(this.#worldsRoot);
   }
 
   /** Control acceptance and artifact publication share the in-process world queue. */
@@ -362,206 +276,28 @@ export class FileNativeArtifactStore implements ArtifactStore {
     return worldQueueFor(resolve(dataRoot)).run(worldId, action);
   }
 
-  /** The immutable closure publishes atomically with the derived world. */
-  async stageFork(input: ArtifactForkInput): Promise<void> {
-    await this.#withWorldMutation(input.sourceWorldId, async () => {
-      const projection = await this.readActiveProjection(
-        input.sourceWorldId,
-        undefined,
-        input.timeline,
+  async finishRequest(
+    context: ArtifactRequestContext,
+    failed: boolean,
+  ): Promise<void> {
+    await this.#withWorldMutation(context.worldId, async () => {
+      const operation = await this.#readOperation(
+        context.worldId,
+        context.operationId,
       );
-      const retained = new Set(
-        projection
-          .filter(
-            (item) => item.save === "commit" && item.attachment !== undefined,
-          )
-          .map((item) => item.recordId),
-      );
-      const effective = (
-        await this.#effectiveRecords(input.sourceWorldId)
-      ).filter(({ record }) => retained.has(record.recordId));
-      const operations: ArtifactOperationFile[] = [];
-      const records: ArtifactRawRecord[] = [];
-      const events: ArtifactEvent[] = [];
-      let sequence = Math.max(
-        0,
-        ...effective.map(({ record }) => record.sequence),
-      );
-      for (const { record, head } of effective) {
-        const source = (await this.#readOperation(record.operationId))!;
-        const operationId = `artifact-fork:${input.targetWorldId}:${identityHash(record.operationId)}`;
-        if (
-          !operations.some(
-            (operation) => operation.context.operationId === operationId,
-          )
-        ) {
-          operations.push({
-            ...source,
-            context: {
-              ...source.context,
-              worldId: input.targetWorldId,
-              operationId,
-            },
-          });
-        }
-        const copy = {
-          ...record,
-          worldId: input.targetWorldId,
-          operationId,
-          sequence: record.sequence,
-        };
-        copy.recordFingerprint = rawRecordFingerprint(copy);
-        records.push(copy);
-        events.push({
-          schemaVersion: 1,
-          kind: "activate",
-          sequence: ++sequence,
-          operationId,
-          recordId: copy.recordId,
-        });
-        events.push({
-          schemaVersion: 1,
-          kind: "bind_head",
-          sequence: ++sequence,
-          operationId,
-          recordId: copy.recordId,
-          head: head!,
-        });
-      }
-      const snapshot = {
-        schemaVersion: 1,
-        worldId: input.targetWorldId,
-        operations,
-        records,
-        events,
-      };
-      await mkdir(join(input.targetWorldRoot, "runtime"), { recursive: true });
-      await writeDurableJson(
-        join(input.targetWorldRoot, "runtime", "artifact-fork.json"),
-        snapshot,
-        true,
-      );
+      if (
+        operation?.requestAttempts[context.requestId] !== context.requestAttempt
+      )
+        return;
+      await this.#writeOperation({
+        ...operation,
+        requests: (operation.requests ?? []).map((item) =>
+          item.requestId === context.requestId
+            ? { ...item, status: failed ? "failed" : "completed" }
+            : item,
+        ),
+      });
     });
-  }
-
-  async #ensureForkRestored(worldId: string): Promise<void> {
-    if (dirname(resolve(this.#worldsRoot, worldId)) !== this.#worldsRoot)
-      return;
-    try {
-      await stat(join(this.#worldRoot(worldId), "fork-restored.json"));
-      return;
-    } catch (error: unknown) {
-      if (!isMissing(error)) throw error;
-    }
-    try {
-      await stat(
-        join(this.#worldsRoot, worldId, "runtime", "artifact-fork.json"),
-      );
-    } catch (error: unknown) {
-      if (isMissing(error)) return;
-      throw error;
-    }
-    await this.#withWorldMutation(worldId, () => Promise.resolve());
-  }
-
-  async #restoreFork(worldId: string): Promise<void> {
-    if (dirname(resolve(this.#worldsRoot, worldId)) !== this.#worldsRoot)
-      return;
-    const marker = join(this.#worldRoot(worldId), "fork-restored.json");
-    try {
-      await readFile(marker);
-      return;
-    } catch (error: unknown) {
-      if (!isMissing(error)) throw error;
-    }
-    let snapshot: {
-      schemaVersion: number;
-      worldId: string;
-      operations: ArtifactOperationFile[];
-      records: ArtifactRawRecord[];
-      events: ArtifactEvent[];
-    };
-    try {
-      snapshot = parseArtifactJson(
-        await readFile(
-          join(this.#worldsRoot, worldId, "runtime", "artifact-fork.json"),
-          "utf8",
-        ),
-        "artifact fork",
-      );
-    } catch (error: unknown) {
-      if (isMissing(error)) return;
-      throw error;
-    }
-    if (
-      !isRecord(snapshot) ||
-      !hasExactKeys(snapshot, [
-        "schemaVersion",
-        "worldId",
-        "operations",
-        "records",
-        "events",
-      ]) ||
-      snapshot.schemaVersion !== 1 ||
-      snapshot.worldId !== worldId ||
-      !Array.isArray(snapshot.operations) ||
-      !Array.isArray(snapshot.records) ||
-      !Array.isArray(snapshot.events)
-    )
-      throw new ArtifactStoreCorruptionError(
-        "Artifact fork snapshot is invalid",
-      );
-    for (const operation of snapshot.operations) {
-      assertOperation(operation);
-      if (operation.context.worldId !== worldId)
-        throw new ArtifactStoreCorruptionError("Artifact fork world mismatch");
-    }
-    for (const record of snapshot.records) {
-      assertRawRecord(record);
-      if (
-        record.worldId !== worldId ||
-        !snapshot.operations.some(
-          (operation) => operation.context.operationId === record.operationId,
-        )
-      )
-        throw new ArtifactStoreCorruptionError("Artifact fork record mismatch");
-    }
-    for (const event of snapshot.events) {
-      assertEvent(event);
-      if (
-        !snapshot.records.some(
-          (record) =>
-            record.recordId === event.recordId &&
-            record.operationId === event.operationId,
-        )
-      )
-        throw new ArtifactStoreCorruptionError("Artifact fork event mismatch");
-    }
-    // No mutation can start until this idempotent restore finishes under the world lock.
-    for (const operation of snapshot.operations)
-      await this.#writeOperation(operation);
-    for (const record of snapshot.records)
-      await writeDurableJson(
-        join(
-          this.#worldRoot(worldId),
-          "records",
-          artifactSequenceFileName(record.sequence),
-        ),
-        record,
-        false,
-      );
-    for (const event of snapshot.events)
-      await writeDurableJson(
-        join(
-          this.#worldRoot(worldId),
-          "events",
-          artifactSequenceFileName(event.sequence),
-        ),
-        event,
-        false,
-      );
-    await mkdir(this.#worldRoot(worldId), { recursive: true });
-    await writeDurableJson(marker, { schemaVersion: 1 }, false);
   }
 
   async beginOperation(context: ArtifactOperationContext): Promise<void> {
@@ -572,15 +308,17 @@ export class FileNativeArtifactStore implements ArtifactStore {
 
   async #beginOperation(context: ArtifactOperationContext): Promise<void> {
     assertContext(context);
-    const existing = await this.#readOperation(context.operationId);
+    const existing = await this.#readOperation(
+      context.worldId,
+      context.operationId,
+    );
     if (existing !== null && !sameContext(existing.context, context))
       throw new ArtifactStoreInvariantError(
         "Artifact operation is bound to a different frozen payload",
       );
     // A direct orchestrator/store caller must not rely on a later UI read to
-    // invalidate artifacts bound to the parent head. This call is safe on a
-    // retry because projection events are appended idempotently below.
-    await this.reconcileHead(
+    // invalidate artifacts bound to the parent head.
+    await this.#reconcileHead(
       context.worldId,
       context.parentHead,
       context.operationId,
@@ -597,37 +335,28 @@ export class FileNativeArtifactStore implements ArtifactStore {
         requestAttempts: {},
       });
 
-    // Operation state is indexed independently of raw records. This closes the
-    // no-artifact gap: a running/unknown extension is superseded even when it
-    // has not emitted anything yet. Its execution status is retained unless it
-    // is an actually open extension, while projection invalidation is tracked
-    // separately for late raw results.
-    const prior = await this.#effectiveRecords(context.worldId);
+    // An open extension is superseded even when it has not emitted anything
+    // yet; its execution status is kept unless it is actually open.
+    const records = await this.#records(context.worldId);
     for (const priorOperation of priorOperations) {
       if (priorOperation.context.operationId === context.operationId) continue;
       const openExtension = isOpenExtension(priorOperation);
       const operationAlreadySuperseded =
         priorOperation.artifactProjectionStatus === "superseded";
-      const priorRecords = prior.filter(
-        ({ record, status }) =>
-          record.operationId === priorOperation.context.operationId &&
-          status === "active",
-      );
-      const invalidatedRecords = priorRecords.filter(
-        ({ record }) =>
+      for (const record of records) {
+        if (
+          record.operationId !== priorOperation.context.operationId ||
+          record.status !== "active"
+        )
+          continue;
+        if (!(
           openExtension ||
           operationAlreadySuperseded ||
-          record.invalidation === "new_operation",
-      );
-      for (const item of invalidatedRecords)
-        await this.#appendEventOnce({
-          schemaVersion: 1,
-          kind: "supersede",
-          operationId: item.record.operationId,
-          recordId: item.record.recordId,
-          reason: "new_operation",
-          sequence: await this.#nextSequence(context.worldId),
-        });
+          record.invalidation === "new_operation"
+        ))
+          continue;
+        await this.#putRecord({ ...record, status: "superseded" });
+      }
       if (openExtension) {
         const next: ArtifactOperationFile = {
           ...priorOperation,
@@ -635,8 +364,7 @@ export class FileNativeArtifactStore implements ArtifactStore {
           extensionStatus: "superseded",
           message: "This extension was superseded by a newer operation",
         };
-        if (JSON.stringify(next) !== JSON.stringify(priorOperation))
-          await this.#writeOperation(next);
+        await this.#writeOperation(next);
       }
     }
   }
@@ -649,7 +377,10 @@ export class FileNativeArtifactStore implements ArtifactStore {
 
   async #beginRequestAttempt(context: ArtifactRequestContext): Promise<void> {
     assertRequestContext(context);
-    const operation = await this.#readOperation(context.operationId);
+    const operation = await this.#readOperation(
+      context.worldId,
+      context.operationId,
+    );
     if (operation === null)
       throw new ArtifactStoreInvariantError(
         "Artifact request attempt is missing an operation checkpoint",
@@ -676,7 +407,7 @@ export class FileNativeArtifactStore implements ArtifactStore {
           ),
       ),
     ];
-    operation.requests = [
+    const requests = [
       ...(operation.requests ?? []).filter(
         (item) => item.requestId !== context.requestId,
       ),
@@ -684,71 +415,55 @@ export class FileNativeArtifactStore implements ArtifactStore {
         requestId: context.requestId,
         displayName: context.displayName ?? context.requestId,
         mounts,
-        status: "running",
+        status: "running" as const,
       },
     ];
     const current = operation.requestAttempts[context.requestId];
     if (current !== undefined && context.requestAttempt < current) return;
 
-    // Persist the monotonic marker before projection events. If a process dies
-    // between these writes, cold rebuild still treats the old attempt as
-    // stale, and a retry below completes the missing supersede events.
-    if (current === undefined || context.requestAttempt > current) {
+    if (current === undefined || context.requestAttempt > current)
       await this.#writeOperation({
         ...operation,
+        requests,
         requestAttempts: {
           ...operation.requestAttempts,
           [context.requestId]: context.requestAttempt,
         },
       });
-    }
 
-    const records = await this.#recordsForOperation(context.operationId);
+    // A clear made by an earlier attempt of this request is rolled back: that
+    // attempt did not finish, and its retry decides again.
+    const records = await this.#records(context.worldId);
     for (const record of records) {
       if (
+        record.status === "cleared" &&
+        record.clearedBy?.operationId === context.operationId &&
+        record.clearedBy.requestId === context.requestId &&
+        record.clearedBy.requestAttempt < context.requestAttempt
+      ) {
+        await this.#putRecord({
+          ...record,
+          status: record.clearedBy.priorStatus,
+        });
+      }
+    }
+    for (const record of records) {
+      if (
+        record.operationId !== context.operationId ||
         record.requestId !== context.requestId ||
-        record.requestAttempt >= context.requestAttempt
+        record.requestAttempt >= context.requestAttempt ||
+        record.status === "superseded"
       )
         continue;
-      const event: ArtifactEvent = {
-        schemaVersion: 1,
-        kind: "supersede",
-        operationId: context.operationId,
-        recordId: record.recordId,
-        requestId: record.requestId,
-        requestAttempt: record.requestAttempt,
-        reason: "request_attempt_superseded",
-        sequence: await this.#nextSequence(context.worldId),
-      };
-      await this.#appendRecordEvent(record, event);
+      await this.#putRecord({ ...record, status: "superseded" });
     }
-  }
-
-  async finishRequest(
-    context: ArtifactRequestContext,
-    failed: boolean,
-  ): Promise<void> {
-    await this.#withWorldMutation(context.worldId, async () => {
-      const operation = await this.#readOperation(context.operationId);
-      if (
-        operation?.requestAttempts[context.requestId] !== context.requestAttempt
-      )
-        return;
-      await this.#writeOperation({
-        ...operation,
-        requests: (operation.requests ?? []).map((item) =>
-          item.requestId === context.requestId
-            ? { ...item, status: failed ? "failed" : "completed" }
-            : item,
-        ),
-      });
-    });
   }
 
   /**
-   * Remove the operations, raw records and projection events whose head is after
-   * restoredHead. A rewind discards those rounds, and their replies, attachments
-   * and extension results must not survive on disk (ADR-0045).
+   * Remove the operations and records whose head is after restoredHead. A
+   * rewind discards those rounds, and their replies, attachments and extension
+   * results must not survive on disk (ADR-0045). Each artifact is one file, so
+   * the discard deletes files.
    */
   async discardAfterHead(worldId: string, restoredHead: string): Promise<void> {
     return this.#withWorldMutation(worldId, () =>
@@ -761,42 +476,26 @@ export class FileNativeArtifactStore implements ArtifactStore {
     restoredHead: string,
   ): Promise<void> {
     const limit = headOrdinal(restoredHead);
+    const operations = await this.#operationsForWorld(worldId);
     const discardedOperations = new Set(
-      (await this.#operationsForWorld(worldId))
+      operations
         .filter(
           (operation) =>
             headOrdinal(operation.head ?? operation.context.parentHead) > limit,
         )
         .map(({ context }) => context.operationId),
     );
-    const discardedRecords = new Set(
-      (await this.#effectiveRecords(worldId))
-        .filter(
-          ({ record, head }) =>
-            discardedOperations.has(record.operationId) ||
-            headOrdinal(head ?? record.parentHead) > limit,
-        )
-        .map(({ record }) => record.recordId),
-    );
-    const worldRoot = this.#worldRoot(worldId);
-    await removeMatchingFiles(join(worldRoot, "records"), (value) =>
-      discardedRecords.has((value as { recordId: string }).recordId),
-    );
-    await removeMatchingFiles(join(worldRoot, "events"), (value) => {
-      const event = value as { operationId?: string; recordId?: string };
-      return (
-        (event.operationId !== undefined &&
-          discardedOperations.has(event.operationId)) ||
-        (event.recordId !== undefined && discardedRecords.has(event.recordId))
-      );
-    });
+    for (const record of await this.#records(worldId)) {
+      if (
+        !discardedOperations.has(record.operationId) &&
+        headOrdinal(record.head ?? record.parentHead) <= limit
+      )
+        continue;
+      await this.#removeRecord(record);
+    }
     for (const operationId of discardedOperations) {
-      await rm(
-        join(this.#root, "operations", `${identityHash(operationId)}.json`),
-        { force: true },
-      );
+      await rm(this.#operationPath(worldId, operationId), { force: true });
       this.#memoryRecords.delete(operationId);
-      this.#memoryEvents.delete(operationId);
     }
   }
 
@@ -820,36 +519,30 @@ export class FileNativeArtifactStore implements ArtifactStore {
         "Artifact head-reconciliation arguments are invalid",
       );
     const operations = await this.#operationsForWorld(worldId);
-    const effective = await this.#effectiveRecords(worldId);
+    const records = await this.#records(worldId);
     const affected = new Set<string>();
-    for (const item of effective) {
-      const operationId = item.record.operationId;
-      if (operationId === exceptOperationId || item.status !== "active")
+    for (const record of records) {
+      if (
+        record.operationId === exceptOperationId ||
+        record.status !== "active"
+      )
         continue;
-      if (item.record.invalidation !== "head_change") continue;
-      const boundHead = item.head ?? item.record.parentHead;
-      if (boundHead === head) continue;
-      await this.#appendEventOnce({
-        schemaVersion: 1,
-        kind: "supersede",
-        operationId,
-        recordId: item.record.recordId,
-        reason: "head_change",
-        sequence: await this.#nextSequence(worldId),
-      });
-      affected.add(operationId);
+      if (record.invalidation !== "head_change") continue;
+      if ((record.head ?? record.parentHead) === head) continue;
+      await this.#putRecord({ ...record, status: "superseded" });
+      affected.add(record.operationId);
     }
     for (const operation of operations) {
       const operationId = operation.context.operationId;
       if (operationId === exceptOperationId) continue;
       const boundHead = operation.head ?? operation.context.parentHead;
       if (boundHead === head) continue;
-      const hasActiveHeadBoundRecord = effective.some(
-        ({ record, status, head: recordHead }) =>
+      const hasActiveHeadBoundRecord = records.some(
+        (record) =>
           record.operationId === operationId &&
-          status === "active" &&
+          record.status === "active" &&
           record.invalidation === "head_change" &&
-          (recordHead ?? record.parentHead) !== head,
+          (record.head ?? record.parentHead) !== head,
       );
       if (!hasActiveHeadBoundRecord && !isOpenProjectionOperation(operation))
         continue;
@@ -888,7 +581,10 @@ export class FileNativeArtifactStore implements ArtifactStore {
     if (!payload.ok) return artifactFailure(payload.message);
     if (input.toolCallId.trim() === "")
       return artifactFailure("Tool-call ID cannot be empty");
-    const operation = await this.#readOperation(input.context.operationId);
+    const operation = await this.#readOperation(
+      input.context.worldId,
+      input.context.operationId,
+    );
     if (operation === null)
       throw new ArtifactStoreInvariantError(
         "Artifact emit is missing an operation checkpoint",
@@ -908,7 +604,12 @@ export class FileNativeArtifactStore implements ArtifactStore {
       input.context,
       { output: declaration.name, payload: payload.value },
     );
-    const prior = await this.#recordsForOperation(input.context.operationId);
+    const prior = await this.#recordsForOperation(
+      input.context.worldId,
+      input.context.operationId,
+    );
+    // A tool-call ID is an identity only within one operation. A cold retry
+    // re-calls the model and gets new IDs (ADR-0044), so no wider ledger exists.
     const previousByCall = prior.find(
       (record) => record.toolCallId === input.toolCallId,
     );
@@ -917,11 +618,6 @@ export class FileNativeArtifactStore implements ArtifactStore {
         return artifactFailure(
           "The same artifact tool-call ID is bound to different arguments",
         );
-      await this.#repairRecordPublication(
-        previousByCall,
-        operation,
-        currentAttempt,
-      );
       return {
         ok: true,
         idempotent: true,
@@ -929,15 +625,6 @@ export class FileNativeArtifactStore implements ArtifactStore {
         markdown: `# Runtime artifact already exists\n\noutput=${input.output}`,
       };
     }
-    const previousEvent = (await this.#events(input.context.worldId)).find(
-      (event) =>
-        event.operationId === input.context.operationId &&
-        event.toolCallId === input.toolCallId,
-    );
-    if (previousEvent !== undefined)
-      return artifactFailure(
-        "The same artifact tool-call ID is bound to a different tool call",
-      );
     const staleAttempt = currentAttempt !== input.context.requestAttempt;
     const sameOutput = prior.filter(
       (record) =>
@@ -965,153 +652,39 @@ export class FileNativeArtifactStore implements ArtifactStore {
       return artifactFailure(
         "Follow-up request artifacts exceed maxArtifactBytes",
       );
-    const record = await this.#newRecord(
-      input,
-      declaration,
-      payload.value,
+    const sequence = await this.#nextSequence(input.context.worldId);
+    const base = newRecord(input, declaration, payload.value, {
+      sequence,
       fingerprint,
       callFingerprint,
-    );
+    });
     const stale =
       isStaleOperation(operation) ||
       staleAttempt ||
-      !(await this.#extensionControls.visible(record.worldId, record));
-    if (declaration.save === "none") {
-      const records = this.#memoryRecords.get(input.context.operationId) ?? [];
-      records.push(record);
-      this.#memoryRecords.set(input.context.operationId, records);
-      await this.#appendRecordEvent(record, {
-        schemaVersion: 1,
-        kind: stale ? "supersede" : "activate",
-        sequence: await this.#nextSequence(input.context.worldId),
-        operationId: input.context.operationId,
-        recordId: record.recordId,
-        requestId: record.requestId,
-        requestAttempt: record.requestAttempt,
-        ...(stale ? { reason: "late_superseded_operation_result" } : {}),
-      });
-      if (
-        !stale &&
-        operation?.status === "core_committed" &&
-        operation.head !== undefined
-      ) {
-        await this.#appendRecordEvent(record, {
-          schemaVersion: 1,
-          kind: "bind_head",
-          sequence: await this.#nextSequence(input.context.worldId),
-          operationId: input.context.operationId,
-          recordId: record.recordId,
-          head: operation.head,
-        });
-      }
-    } else {
-      await this.#appendRaw(record);
-      if (stale)
-        await this.#appendRecordEvent(record, {
-          schemaVersion: 1,
-          kind: "supersede",
-          sequence: await this.#nextSequence(input.context.worldId),
-          operationId: input.context.operationId,
-          recordId: record.recordId,
-          requestId: record.requestId,
-          requestAttempt: record.requestAttempt,
-          reason: "late_superseded_operation_result",
-        });
-      else if (
-        operation?.status === "core_committed" &&
-        operation.head !== undefined
-      ) {
-        await this.#appendRecordEvent(record, {
-          schemaVersion: 1,
-          kind: "bind_head",
-          sequence: await this.#nextSequence(input.context.worldId),
-          operationId: input.context.operationId,
-          recordId: record.recordId,
-          head: operation.head,
-        });
-        await this.#appendRecordEvent(record, {
-          schemaVersion: 1,
-          kind: "activate",
-          sequence: await this.#nextSequence(input.context.worldId),
-          operationId: input.context.operationId,
-          recordId: record.recordId,
-        });
-      } else if (declaration.save === "operation")
-        await this.#appendRecordEvent(record, {
-          schemaVersion: 1,
-          kind: "activate",
-          sequence: await this.#nextSequence(input.context.worldId),
-          operationId: input.context.operationId,
-          recordId: record.recordId,
-        });
-    }
+      !(await this.#extensionControls.visible(base.worldId, base));
+    const committed =
+      !stale &&
+      operation.status === "core_committed" &&
+      operation.head !== undefined;
+    // A stale result is kept as superseded. A live result is active when its
+    // core committed or when it does not wait for the core; a commit-saved
+    // result waits as pending until markCoreCommitted binds it.
+    const status: ArtifactRecordStatus = stale
+      ? "superseded"
+      : committed || declaration.save !== "commit"
+        ? "active"
+        : "pending";
+    const record = {
+      ...base,
+      status,
+      head: committed ? (operation.head ?? null) : null,
+    };
+    await this.#putRecord(record);
     return {
       ok: true,
       recordId: record.recordId,
       markdown: `# Runtime artifact accepted\n\noutput=${input.output}`,
     };
-  }
-
-  async #repairRecordPublication(
-    record: ArtifactRawRecord,
-    operation: ArtifactOperationFile,
-    currentAttempt: number,
-  ): Promise<void> {
-    const events = await this.#events(record.worldId);
-    const hasEvent = (kind: ArtifactEvent["kind"], head?: string): boolean =>
-      events.some(
-        (event) =>
-          event.kind === kind &&
-          event.operationId === record.operationId &&
-          event.recordId === record.recordId &&
-          (head === undefined || event.head === head),
-      );
-    const stale =
-      isStaleOperation(operation) ||
-      currentAttempt !== record.requestAttempt ||
-      !(await this.#extensionControls.visible(record.worldId, record));
-    if (stale) {
-      if (!hasEvent("supersede"))
-        await this.#appendRecordEvent(record, {
-          schemaVersion: 1,
-          kind: "supersede",
-          sequence: await this.#nextSequence(record.worldId),
-          operationId: record.operationId,
-          recordId: record.recordId,
-          requestId: record.requestId,
-          requestAttempt: record.requestAttempt,
-          reason: "late_superseded_operation_result",
-        });
-      return;
-    }
-    if (operation.status === "core_committed" && operation.head !== undefined) {
-      if (!hasEvent("bind_head", operation.head))
-        await this.#appendRecordEvent(record, {
-          schemaVersion: 1,
-          kind: "bind_head",
-          sequence: await this.#nextSequence(record.worldId),
-          operationId: record.operationId,
-          recordId: record.recordId,
-          head: operation.head,
-        });
-      if (!hasEvent("activate"))
-        await this.#appendRecordEvent(record, {
-          schemaVersion: 1,
-          kind: "activate",
-          sequence: await this.#nextSequence(record.worldId),
-          operationId: record.operationId,
-          recordId: record.recordId,
-        });
-      return;
-    }
-    if (record.save === "operation" && !hasEvent("activate"))
-      await this.#appendRecordEvent(record, {
-        schemaVersion: 1,
-        kind: "activate",
-        sequence: await this.#nextSequence(record.worldId),
-        operationId: record.operationId,
-        recordId: record.recordId,
-      });
   }
 
   async clear(input: ArtifactClearInput): Promise<ArtifactToolResult> {
@@ -1127,7 +700,10 @@ export class FileNativeArtifactStore implements ArtifactStore {
       return artifactFailure(`Undeclared artifact output: ${input.output}`);
     if (input.toolCallId.trim() === "")
       return artifactFailure("Tool-call ID cannot be empty");
-    const operation = await this.#readOperation(input.context.operationId);
+    const operation = await this.#readOperation(
+      input.context.worldId,
+      input.context.operationId,
+    );
     if (operation === null)
       throw new ArtifactStoreInvariantError(
         "Artifact clear is missing an operation checkpoint",
@@ -1141,35 +717,14 @@ export class FileNativeArtifactStore implements ArtifactStore {
       throw new ArtifactStoreInvariantError(
         "Artifact clear request attempt is not registered",
       );
-    const clearFingerprint = artifactCallFingerprint(
-      "artifact_clear",
-      input.context,
-      { output: declaration.name },
+    const prior = await this.#recordsForOperation(
+      input.context.worldId,
+      input.context.operationId,
     );
-    const records = await this.#recordsForOperation(input.context.operationId);
-    const prior = records.find(
-      (record) => record.toolCallId === input.toolCallId,
-    );
-    if (prior !== undefined)
+    if (prior.some((record) => record.toolCallId === input.toolCallId))
       return artifactFailure(
         "The same artifact tool-call ID is bound to a different tool call",
       );
-    const priorCall = (await this.#events(input.context.worldId)).find(
-      (event) =>
-        event.operationId === input.context.operationId &&
-        event.toolCallId === input.toolCallId,
-    );
-    if (priorCall !== undefined) {
-      if (priorCall.callFingerprint !== clearFingerprint)
-        return artifactFailure(
-          "The same artifact tool-call ID is bound to different arguments",
-        );
-      return {
-        ok: true,
-        idempotent: true,
-        markdown: `# Runtime artifact clear confirmed\n\noutput=${input.output}`,
-      };
-    }
     const staleAttempt = currentAttempt !== input.context.requestAttempt;
     if (
       isStaleOperation(operation) ||
@@ -1178,49 +733,33 @@ export class FileNativeArtifactStore implements ArtifactStore {
         input.context.worldId,
         input.context,
       ))
-    ) {
-      const event: ArtifactEvent = {
-        schemaVersion: 1,
-        kind: "ignored_call",
-        operationId: input.context.operationId,
-        output: declaration.name,
-        channel: declaration.channel,
-        ...(declaration.key === undefined ? {} : { key: declaration.key }),
-        reason: "stale_clear_ignored",
-        sequence: await this.#nextSequence(input.context.worldId),
-        toolCallId: input.toolCallId,
-        toolName: "artifact_clear",
-        callFingerprint: clearFingerprint,
-        requestId: input.context.requestId,
-        requestAttempt: input.context.requestAttempt,
-      };
-      // An ignored stale call is a durable identity ledger even for save:none:
-      // no raw payload is persisted, but a cold retry must distinguish the
-      // exact same call from a changed request/attempt/parameter.
-      await this.#appendEventOnce(event);
+    )
       return {
         ok: true,
         markdown: `# Runtime artifact clear ignored\n\noutput=${input.output}`,
       };
+    // Projection clears are durable even for save:none records. Only the raw
+    // payload is ephemeral, so a cold restart cannot resurrect an old panel.
+    for (const record of await this.#records(input.context.worldId)) {
+      if (
+        record.status === "superseded" ||
+        record.status === "cleared" ||
+        record.channel !== declaration.channel ||
+        record.output !== declaration.name ||
+        (declaration.key !== undefined && record.key !== declaration.key)
+      )
+        continue;
+      await this.#putRecord({
+        ...record,
+        status: "cleared",
+        clearedBy: {
+          operationId: input.context.operationId,
+          requestId: input.context.requestId,
+          requestAttempt: input.context.requestAttempt,
+          priorStatus: record.status,
+        },
+      });
     }
-    const event: ArtifactEvent = {
-      schemaVersion: 1,
-      kind: "clear",
-      operationId: input.context.operationId,
-      output: declaration.name,
-      channel: declaration.channel,
-      ...(declaration.key === undefined ? {} : { key: declaration.key }),
-      reason: "explicit_clear",
-      sequence: await this.#nextSequence(input.context.worldId),
-      toolCallId: input.toolCallId,
-      toolName: "artifact_clear",
-      callFingerprint: clearFingerprint,
-      requestId: input.context.requestId,
-      requestAttempt: input.context.requestAttempt,
-    };
-    // Projection clears are durable even for save:none. Only the raw payload
-    // is ephemeral; otherwise a cold restart would resurrect an old panel.
-    await this.#appendEventOnce(event);
     return {
       ok: true,
       markdown: `# Runtime artifact clear confirmed\n\noutput=${input.output}`,
@@ -1243,7 +782,10 @@ export class FileNativeArtifactStore implements ArtifactStore {
     assertContext(context);
     if (head.trim() === "")
       throw new ArtifactStoreInvariantError("Core commit head is invalid");
-    const operation = await this.#readOperation(context.operationId);
+    const operation = await this.#readOperation(
+      context.worldId,
+      context.operationId,
+    );
     if (operation === null)
       throw new ArtifactStoreInvariantError(
         "Core commit is missing an artifact-operation checkpoint",
@@ -1268,121 +810,43 @@ export class FileNativeArtifactStore implements ArtifactStore {
         throw new ArtifactStoreInvariantError(
           "Committed artifact operation has a conflicting core head",
         );
-      await this.#activateCommittedRecords(operation, context, head);
+      await this.#activateCommittedRecords(operation, head);
       return;
     }
-    const recoveredFromMaterializationPending =
-      operation.status === "core_materialization_pending";
-    if (recoveredFromMaterializationPending && operation.head !== head)
-      throw new ArtifactStoreInvariantError(
-        "Artifact operation awaiting materialization has a conflicting core head",
-      );
-    await this.reconcileHead(context.worldId, head, context.operationId);
+    await this.#reconcileHead(context.worldId, head, context.operationId);
     const committed: ArtifactOperationFile = {
       ...operation,
       status: "core_committed",
-      extensionStatus: recoveredFromMaterializationPending
-        ? "not_started"
-        : operation.extensionStatus,
-      ...(recoveredFromMaterializationPending ? { completedRequests: [] } : {}),
       head,
     };
-    if (recoveredFromMaterializationPending) delete committed.message;
-    // Persist the receipt/head before projection events. A crash after this
+    // The head is persisted before records bind to it. A crash after this
     // write is repaired by the idempotent same-head path above.
     await this.#writeOperation(committed);
-    await this.#activateCommittedRecords(committed, context, head);
-  }
-
-  async markCoreMaterializationPending(
-    context: ArtifactOperationContext,
-    head: string,
-    message: string,
-  ): Promise<ArtifactExtensionSummary> {
-    return this.#withWorldMutation(context.worldId, () =>
-      this.#markCoreMaterializationPending(context, head, message),
-    );
-  }
-
-  async #markCoreMaterializationPending(
-    context: ArtifactOperationContext,
-    head: string,
-    message: string,
-  ): Promise<ArtifactExtensionSummary> {
-    const operation = await this.#readOperation(context.operationId);
-    if (operation === null)
-      throw new ArtifactStoreInvariantError(
-        "Artifact operation awaiting materialization does not exist",
-      );
-    if (!sameContext(operation.context, context))
-      throw new ArtifactStoreInvariantError(
-        "Artifact operation awaiting materialization does not match the frozen operation",
-      );
-    if (operation.status === "core_failed")
-      throw new ArtifactStoreInvariantError(
-        "An artifact operation whose core failed cannot await materialization",
-      );
-    if (
-      operation.status === "core_committed" ||
-      operation.status === "completed"
-    )
-      return summary(operation);
-    if (
-      operation.status === "core_materialization_pending" &&
-      operation.head !== head
-    )
-      throw new ArtifactStoreInvariantError(
-        "Artifact operation awaiting materialization has a conflicting core head",
-      );
-    const pending: ArtifactOperationFile = {
-      ...operation,
-      status: "core_materialization_pending",
-      extensionStatus: "recovery_required",
-      message,
-      completedRequests: [],
-      head,
-    };
-    await this.#writeOperation(pending);
-    return summary(pending);
+    await this.#activateCommittedRecords(committed, head);
   }
 
   async #activateCommittedRecords(
     operation: ArtifactOperationFile,
-    context: ArtifactOperationContext,
     head: string,
   ): Promise<void> {
     if (operation.artifactProjectionStatus === "superseded") return;
-    const effective = await this.#effectiveRecords(context.worldId);
-    for (const item of effective) {
-      const { record, status, head: boundHead } = item;
-      if (record.operationId !== context.operationId) continue;
-      if (
-        status === "superseded" ||
-        status === "cleared" ||
-        status === "failed"
-      )
+    const records = await this.#recordsForOperation(
+      operation.context.worldId,
+      operation.context.operationId,
+    );
+    for (const record of records) {
+      if (record.status === "superseded" || record.status === "cleared")
         continue;
-      if (boundHead !== null && boundHead !== head)
+      if (record.head !== null && record.head !== head)
         throw new ArtifactStoreInvariantError(
           "Artifact record is bound to a different core head",
         );
-      if (boundHead !== head)
-        await this.#appendRecordEvent(record, {
-          schemaVersion: 1,
-          kind: "bind_head",
-          operationId: context.operationId,
-          recordId: record.recordId,
-          head,
-          sequence: await this.#nextSequence(context.worldId),
-        });
-      if (status === "pending")
-        await this.#appendRecordEvent(record, {
-          schemaVersion: 1,
-          kind: "activate",
-          operationId: context.operationId,
-          recordId: record.recordId,
-          sequence: await this.#nextSequence(context.worldId),
-        });
+      if (record.head === head && record.status !== "pending") continue;
+      await this.#putRecord({
+        ...record,
+        head,
+        status: record.status === "pending" ? "active" : record.status,
+      });
     }
   }
 
@@ -1390,24 +854,21 @@ export class FileNativeArtifactStore implements ArtifactStore {
     const worldId = await this.#worldForOperation(operationId);
     if (worldId === null) return;
     return this.#withWorldMutation(worldId, () =>
-      this.#markCoreFailed(operationId, message),
+      this.#markCoreFailed(worldId, operationId, message),
     );
   }
 
-  async #markCoreFailed(operationId: string, message?: string): Promise<void> {
-    const operation = await this.#readOperation(operationId);
+  async #markCoreFailed(
+    worldId: string,
+    operationId: string,
+    message?: string,
+  ): Promise<void> {
+    const operation = await this.#readOperation(worldId, operationId);
     if (operation === null) return;
     if (operation.status !== "running") return;
-    const records = await this.#recordsForOperation(operationId);
-    for (const record of records)
-      await this.#appendEventOnce({
-        schemaVersion: 1,
-        kind: "supersede",
-        operationId,
-        recordId: record.recordId,
-        reason: "core_failed",
-        sequence: await this.#nextSequence(operation.context.worldId),
-      });
+    for (const record of await this.#recordsForOperation(worldId, operationId))
+      if (record.status !== "superseded")
+        await this.#putRecord({ ...record, status: "superseded" });
     await this.#writeOperation({
       ...operation,
       status: "core_failed",
@@ -1424,7 +885,10 @@ export class FileNativeArtifactStore implements ArtifactStore {
   }
 
   async #beginExtension(context: ArtifactOperationContext): Promise<void> {
-    const operation = await this.#readOperation(context.operationId);
+    const operation = await this.#readOperation(
+      context.worldId,
+      context.operationId,
+    );
     if (operation === null)
       throw new ArtifactStoreInvariantError(
         "Artifact extension is missing an operation checkpoint",
@@ -1447,24 +911,19 @@ export class FileNativeArtifactStore implements ArtifactStore {
     requests: string[],
   ): Promise<ArtifactExtensionSummary> {
     const worldId = await this.#worldForOperation(operationId);
-    if (worldId === null) return this.#completeExtension(operationId, requests);
+    if (worldId === null) return recoveryRequired(operationId, [], undefined);
     return this.#withWorldMutation(worldId, () =>
-      this.#completeExtension(operationId, requests),
+      this.#completeExtension(worldId, operationId, requests),
     );
   }
 
   async #completeExtension(
+    worldId: string,
     operationId: string,
     requests: string[],
   ): Promise<ArtifactExtensionSummary> {
-    const operation = await this.#readOperation(operationId);
-    if (operation === null)
-      return {
-        operationId,
-        status: "recovery_required",
-        completedRequests: [],
-        coreCommitted: false,
-      };
+    const operation = await this.#readOperation(worldId, operationId);
+    if (operation === null) return recoveryRequired(operationId, [], undefined);
     if (operation.status === "running") return summary(operation);
     if (
       isTerminalExtensionStatus(operation.extensionStatus) ||
@@ -1476,17 +935,7 @@ export class FileNativeArtifactStore implements ArtifactStore {
       throw new ArtifactStoreInvariantError(
         "Artifact extension cannot complete before the core is committed",
       );
-    const records = await this.#recordsForOperation(operationId);
-    for (const record of records)
-      if (record.save === "none" || record.invalidation === "operation_end")
-        await this.#appendRecordEvent(record, {
-          schemaVersion: 1,
-          kind: "supersede",
-          operationId,
-          recordId: record.recordId,
-          reason: "operation_end",
-          sequence: await this.#nextSequence(operation.context.worldId),
-        });
+    await this.#endOperationRecords(worldId, operationId);
     const next: ArtifactOperationFile = {
       ...operation,
       status: "completed",
@@ -1509,30 +958,25 @@ export class FileNativeArtifactStore implements ArtifactStore {
   ): Promise<ArtifactExtensionSummary> {
     const worldId = await this.#worldForOperation(operationId);
     if (worldId === null)
-      return this.#failExtension(operationId, status, message, requests);
+      return recoveryRequired(operationId, requests, message);
     return this.#withWorldMutation(worldId, () =>
-      this.#failExtension(operationId, status, message, requests),
+      this.#failExtension(worldId, operationId, status, message, requests),
     );
   }
 
   async #failExtension(
+    worldId: string,
     operationId: string,
     status: Exclude<
       ArtifactExtensionStatus,
       "not_started" | "running" | "completed"
     >,
     message: string,
-    requests: string[] = [],
+    requests: string[],
   ): Promise<ArtifactExtensionSummary> {
-    const operation = await this.#readOperation(operationId);
+    const operation = await this.#readOperation(worldId, operationId);
     if (operation === null)
-      return {
-        operationId,
-        status: "recovery_required",
-        completedRequests: requests,
-        message,
-        coreCommitted: false,
-      };
+      return recoveryRequired(operationId, requests, message);
     if (
       isTerminalExtensionStatus(operation.extensionStatus) ||
       operation.extensionStatus === "unknown" ||
@@ -1543,38 +987,43 @@ export class FileNativeArtifactStore implements ArtifactStore {
       throw new ArtifactStoreInvariantError(
         "Artifact extension cannot fail before the core is committed",
       );
-    const records = await this.#recordsForOperation(operationId);
-    for (const record of records)
-      if (record.save === "none" || record.invalidation === "operation_end")
-        await this.#appendRecordEvent(record, {
-          schemaVersion: 1,
-          kind: "supersede",
-          operationId,
-          recordId: record.recordId,
-          reason: "extension_failed",
-          sequence: await this.#nextSequence(operation.context.worldId),
-        });
-    const next = {
+    await this.#endOperationRecords(worldId, operationId);
+    const next: ArtifactOperationFile = {
       ...operation,
       extensionStatus: status,
       message,
       completedRequests: [...requests],
-    } satisfies ArtifactOperationFile;
+    };
     await this.#writeOperation(next);
     return summary(next);
+  }
+
+  /** Save-none and operation-end records do not survive the extension that produced them. */
+  async #endOperationRecords(
+    worldId: string,
+    operationId: string,
+  ): Promise<void> {
+    for (const record of await this.#recordsForOperation(worldId, operationId))
+      if (
+        (record.save === "none" || record.invalidation === "operation_end") &&
+        record.status !== "superseded"
+      )
+        await this.#putRecord({ ...record, status: "superseded" });
   }
 
   async readExtension(
     operationId: string,
   ): Promise<ArtifactExtensionSummary | null> {
-    const operation = await this.#readOperation(operationId);
+    const worldId = await this.#worldForOperation(operationId);
+    if (worldId === null) return null;
+    const operation = await this.#readOperation(worldId, operationId);
     return operation === null ? null : summary(operation);
   }
 
   async readExtensionSummaries(
     worldId: string,
   ): Promise<ArtifactExtensionSummary[]> {
-    await this.#ensureForkRestored(worldId);
+    await this.#ensureReadable(worldId);
     return (await this.#operationsForWorld(worldId))
       .filter(
         (operation) =>
@@ -1595,17 +1044,7 @@ export class FileNativeArtifactStore implements ArtifactStore {
     operationId: string,
   ): Promise<ArtifactExtensionSummary> {
     const worldId = await this.#worldForOperation(operationId);
-    if (worldId === null) return this.#resumeExtension(operationId);
-    return this.#withWorldMutation(worldId, () =>
-      this.#resumeExtension(operationId),
-    );
-  }
-
-  async #resumeExtension(
-    operationId: string,
-  ): Promise<ArtifactExtensionSummary> {
-    const operation = await this.#readOperation(operationId);
-    if (operation === null)
+    if (worldId === null)
       return {
         operationId,
         status: "recovery_required",
@@ -1613,20 +1052,31 @@ export class FileNativeArtifactStore implements ArtifactStore {
         message: "No recoverable extension checkpoint was found",
         coreCommitted: false,
       };
-    if (operation.status === "running") return summary(operation);
-    if (
-      isTerminalExtensionStatus(operation.extensionStatus) ||
-      operation.extensionStatus === "recovery_required"
-    )
-      return summary(operation);
-    const next = {
-      ...operation,
-      extensionStatus: "recovery_required" as const,
-      message:
-        "Extension dispatch state cannot be replayed safely; the original request attempt requires explicit manual recovery",
-    };
-    await this.#writeOperation(next);
-    return summary(next);
+    return this.#withWorldMutation(worldId, async () => {
+      const operation = await this.#readOperation(worldId, operationId);
+      if (operation === null)
+        return {
+          operationId,
+          status: "recovery_required",
+          completedRequests: [],
+          message: "No recoverable extension checkpoint was found",
+          coreCommitted: false,
+        };
+      if (operation.status === "running") return summary(operation);
+      if (
+        isTerminalExtensionStatus(operation.extensionStatus) ||
+        operation.extensionStatus === "recovery_required"
+      )
+        return summary(operation);
+      const next = {
+        ...operation,
+        extensionStatus: "recovery_required" as const,
+        message:
+          "Extension dispatch state cannot be replayed safely; the original request attempt requires explicit manual recovery",
+      };
+      await this.#writeOperation(next);
+      return summary(next);
+    });
   }
 
   async readActiveProjection(
@@ -1634,19 +1084,18 @@ export class FileNativeArtifactStore implements ArtifactStore {
     channel?: string,
     timeline?: readonly ArtifactReplyTarget[],
   ): Promise<ArtifactProjectionItem[]> {
-    await this.#ensureForkRestored(worldId);
-    const effective = await this.#effectiveRecords(worldId);
-    const operationStates = new Map<string, ArtifactOperationFile>();
-    for (const item of effective)
-      if (!operationStates.has(item.record.operationId)) {
-        const operation = await this.#readOperation(item.record.operationId);
-        if (operation !== null)
-          operationStates.set(item.record.operationId, operation);
-      }
-    const active = effective.filter(({ record, status, head }) => {
-      if (status !== "active" || record.projection === "hidden") return false;
+    await this.#ensureReadable(worldId);
+    const operations = new Map(
+      (await this.#operationsForWorld(worldId)).map((operation) => [
+        operation.context.operationId,
+        operation,
+      ]),
+    );
+    const active = (await this.#records(worldId)).filter((record) => {
+      if (record.status !== "active" || record.projection === "hidden")
+        return false;
       if (channel !== undefined && record.channel !== channel) return false;
-      const operation = operationStates.get(record.operationId);
+      const operation = operations.get(record.operationId);
       if (
         operation === undefined ||
         operation.artifactProjectionStatus === "superseded"
@@ -1665,26 +1114,25 @@ export class FileNativeArtifactStore implements ArtifactStore {
         return false;
       if (record.projection === "transient" && !isActiveInteraction(operation))
         return false;
-      if (record.save === "operation" && operation?.status === "completed")
+      if (record.save === "operation" && operation.status === "completed")
         return false;
-      if (record.save === "commit" && head === null) return false;
+      if (record.save === "commit" && record.head === null) return false;
       return true;
     });
     const visible = await Promise.all(
-      active.map(async (item) =>
-        (await this.#extensionControls.visible(worldId, item.record))
-          ? item
+      active.map(async (record) =>
+        (await this.#extensionControls.visible(worldId, record))
+          ? record
           : null,
       ),
     );
     const selected = selectProjection(visible.filter((item) => item !== null));
-    return selected.map(({ record, head }) => ({
-      ...(operationStates.get(record.operationId)?.context.attachment ===
-      undefined
+    return selected.map((record) => ({
+      ...(operations.get(record.operationId)?.context.attachment === undefined
         ? {}
         : {
             attachment: structuredClone(
-              operationStates.get(record.operationId)!.context.attachment!,
+              operations.get(record.operationId)!.context.attachment!,
             ),
           }),
       recordId: record.recordId,
@@ -1713,7 +1161,7 @@ export class FileNativeArtifactStore implements ArtifactStore {
       projection: record.projection,
       save: record.save,
       sequence: record.sequence,
-      head: head ?? record.parentHead,
+      head: record.head ?? record.parentHead,
     }));
   }
 
@@ -1721,21 +1169,20 @@ export class FileNativeArtifactStore implements ArtifactStore {
     worldId: string,
     operationId?: string,
   ): Promise<ArtifactDebugRecord[]> {
-    await this.#ensureForkRestored(worldId);
-    const effective = await this.#effectiveRecords(worldId);
+    await this.#ensureReadable(worldId);
     const operations = new Map(
       (await this.#operationsForWorld(worldId)).map((operation) => [
         operation.context.operationId,
         operation,
       ]),
     );
-    return effective
+    return (await this.#records(worldId))
       .filter(
-        ({ record }) =>
+        (record) =>
           operationId === undefined || record.operationId === operationId,
       )
-      .sort((left, right) => left.record.sequence - right.record.sequence)
-      .map(({ record, status, head }) => ({
+      .sort((left, right) => left.sequence - right.sequence)
+      .map((record) => ({
         ...(operations.get(record.operationId)?.context.attachment === undefined
           ? {}
           : {
@@ -1751,7 +1198,7 @@ export class FileNativeArtifactStore implements ArtifactStore {
         playPresetRevision: record.playPresetRevision,
         playPresetScriptsEnabled: record.playPresetScriptsEnabled,
         parentHead: record.parentHead,
-        newHead: head,
+        newHead: record.head,
         requestId: record.requestId,
         requestAttempt: record.requestAttempt,
         output: record.output,
@@ -1773,192 +1220,27 @@ export class FileNativeArtifactStore implements ArtifactStore {
           : { frozenPresentation: structuredClone(record.frozenPresentation) }),
         payload: structuredClone(record.payload),
         payloadFingerprint: record.payloadFingerprint,
-        status,
+        status: record.status,
       }));
   }
 
-  async #newRecord(
-    input: ArtifactEmitInput,
-    declaration: PlayPresetArtifactDeclaration,
-    payload: ArtifactPayload,
-    fingerprint: string,
-    callFingerprint: string,
-  ): Promise<ArtifactRawRecord> {
-    const sequence = await this.#nextSequence(input.context.worldId);
-    const recordId = `artifact:${sequence}:${fingerprint.slice(7, 23)}`;
-    const record = {
-      schemaVersion: 1,
-      recordId,
-      sequence,
-      worldId: input.context.worldId,
-      parentHead: input.context.parentHead,
-      newHead: null,
-      operationId: input.context.operationId,
-      playPresetId: input.context.playPresetId,
-      playPresetRevision: input.context.playPresetRevision,
-      playPresetScriptsEnabled: input.context.playPresetScriptsEnabled,
-      requestId: input.context.requestId,
-      requestAttempt: input.context.requestAttempt,
-      output: declaration.name,
-      channel: declaration.channel,
-      ...(declaration.key === undefined ? {} : { key: declaration.key }),
-      contentType: declaration.contentType,
-      ...(declaration.renderer === undefined
-        ? {}
-        : { renderer: declaration.renderer }),
-      ...(declaration.rendererRevision === undefined
-        ? {}
-        : { rendererRevision: declaration.rendererRevision }),
-      ...(input.context.extensionControl === undefined
-        ? {}
-        : {
-            extensionControl: structuredClone(input.context.extensionControl),
-          }),
-      ...(input.context.frozenPresentations?.[declaration.name] !== undefined
-        ? {
-            frozenPresentation: structuredClone(
-              input.context.frozenPresentations[declaration.name],
-            ),
-          }
-        : input.context.frozenResources === undefined
-          ? {}
-          : {
-              frozenPresentation: {
-                ...structuredClone(input.context.frozenResources),
-                declaration: structuredClone(declaration),
-              },
-            }),
-      payload: structuredClone(payload),
-      save: declaration.save,
-      projection: declaration.strategy,
-      invalidation: declaration.invalidation,
-      toolCallId: input.toolCallId,
-      toolName: "artifact_emit",
-      callFingerprint,
-      payloadFingerprint: fingerprint,
-      status: "pending",
-    } satisfies Omit<ArtifactRawRecord, "recordFingerprint">;
-    return {
-      ...record,
-      recordFingerprint: rawRecordFingerprint(record),
-    };
-  }
-
-  async #appendRaw(record: ArtifactRawRecord): Promise<void> {
-    const directory = join(this.#worldRoot(record.worldId), "records");
-    await mkdir(directory, { recursive: true, mode: 0o700 });
-    await writeDurableJson(
-      join(directory, `${String(record.sequence).padStart(12, "0")}.json`),
-      record,
-      true,
-    );
-  }
-
-  async #appendRecordEvent(
-    record: ArtifactRawRecord,
-    event: ArtifactEvent,
-  ): Promise<void> {
-    await this.#appendCallEvent(
-      {
-        worldId: record.worldId,
-        parentHead: record.parentHead,
-        operationId: record.operationId,
-        playPresetId: record.playPresetId,
-        playPresetRevision: record.playPresetRevision,
-        playPresetScriptsEnabled: record.playPresetScriptsEnabled,
-        requestId: record.requestId,
-        requestAttempt: record.requestAttempt,
-        maxArtifactBytes: maxPayloadBytes,
-        declarations: [],
-      },
-      record.save,
-      event,
-    );
-  }
-
-  async #appendCallEvent(
-    context: ArtifactRequestContext,
-    save: PlayPresetArtifactDeclaration["save"],
-    event: ArtifactEvent,
-  ): Promise<void> {
-    if (save === "none") {
-      const events = this.#memoryEvents.get(context.operationId) ?? [];
-      if (!events.some((candidate) => sameEventIdentity(candidate, event))) {
-        events.push(event);
-        this.#memoryEvents.set(context.operationId, events);
-      }
-      return;
-    }
-    await this.#appendEventOnce(event);
-  }
-
-  async #appendEvent(event: ArtifactEvent): Promise<void> {
-    const worldId = await this.#worldForOperation(event.operationId);
-    if (worldId === null) {
-      const memory = this.#memoryEvents.get(event.operationId) ?? [];
-      memory.push(event);
-      this.#memoryEvents.set(event.operationId, memory);
-      return;
-    }
-    const path = join(
-      this.#worldRoot(worldId),
-      "events",
-      `${String(event.sequence).padStart(12, "0")}.json`,
-    );
-    await mkdir(join(this.#worldRoot(worldId), "events"), {
-      recursive: true,
-      mode: 0o700,
-    });
-    await writeDurableJson(path, event, true);
-  }
-
-  async #appendEventOnce(event: ArtifactEvent): Promise<void> {
-    const worldId = await this.#worldForOperation(event.operationId);
-    if (worldId !== null) {
-      const existing = await this.#events(worldId);
-      if (existing.some((candidate) => sameEventIdentity(candidate, event)))
-        return;
-    } else {
-      const existing = this.#memoryEvents.get(event.operationId) ?? [];
-      if (existing.some((candidate) => sameEventIdentity(candidate, event)))
-        return;
-    }
-    await this.#appendEvent(event);
-  }
-
-  async #effectiveRecords(worldId: string): Promise<EffectiveRecord[]> {
-    const raw: ArtifactRawRecord[] = [];
-    const memory = this.#memoryRecords;
-    const recordsDirectory = join(this.#worldRoot(worldId), "records");
-    try {
-      const names = (await readdir(recordsDirectory))
-        .filter((name) => name.endsWith(".json"))
-        .sort();
-      for (const name of names) {
-        const parsed = parseArtifactJson<ArtifactRawRecord>(
-          await readFile(join(recordsDirectory, name), "utf8"),
-          "artifact raw record",
-        );
-        assertRawRecord(parsed);
-        if (name !== artifactSequenceFileName(parsed.sequence))
-          throw new ArtifactStoreCorruptionError(
-            "Artifact raw-record file name does not match its sequence",
-          );
-        if (parsed.worldId !== worldId)
-          throw new ArtifactStoreCorruptionError(
-            "Artifact raw record does not match the world path",
-          );
-        raw.push(parsed);
-      }
-    } catch (error: unknown) {
-      if (!isMissing(error)) throw error;
-    }
-    for (const records of memory.values())
-      for (const record of records)
-        if (record.worldId === worldId) raw.push(record);
+  /** Records and operations of a world, read from its directory; memory-only records are included. */
+  async #records(worldId: string): Promise<ArtifactRawRecord[]> {
+    const raw = [
+      ...(await readRecordFiles(this.#artifactsRoot(worldId))),
+      ...[...this.#memoryRecords.values()]
+        .flat()
+        .filter((record) => record.worldId === worldId),
+    ];
     raw.sort((left, right) => left.sequence - right.sequence);
     const recordIds = new Set<string>();
     const sequences = new Set<number>();
+    const operations = new Map(
+      (await this.#operationsForWorld(worldId)).map((operation) => [
+        operation.context.operationId,
+        operation,
+      ]),
+    );
     for (const record of raw) {
       if (recordIds.has(record.recordId))
         throw new ArtifactStoreCorruptionError(
@@ -1970,18 +1252,7 @@ export class FileNativeArtifactStore implements ArtifactStore {
         );
       recordIds.add(record.recordId);
       sequences.add(record.sequence);
-    }
-    const state = new Map<
-      string,
-      { status: ArtifactRecordStatus; head: string | null }
-    >();
-    for (const record of raw)
-      state.set(record.recordId, { status: "pending", head: null });
-    const operationStates = new Map<string, ArtifactOperationFile>();
-    for (const operation of await this.#operationsForWorld(worldId))
-      operationStates.set(operation.context.operationId, operation);
-    for (const record of raw) {
-      const operation = operationStates.get(record.operationId);
+      const operation = operations.get(record.operationId);
       if (
         operation?.context.worldId !== record.worldId ||
         operation.context.parentHead !== record.parentHead ||
@@ -1994,211 +1265,108 @@ export class FileNativeArtifactStore implements ArtifactStore {
           "Artifact raw record does not match the operation identity",
         );
     }
-    const events = await this.#events(worldId);
-    for (const event of events) {
-      if (sequences.has(event.sequence))
-        throw new ArtifactStoreCorruptionError(
-          "Artifact world sequence is duplicated",
-        );
-      sequences.add(event.sequence);
-      const eventOperation = operationStates.get(event.operationId);
-      if (eventOperation === undefined)
-        throw new ArtifactStoreCorruptionError(
-          "Artifact projection-event operation does not exist",
-        );
-      if (event.recordId !== undefined) {
-        const record = raw.find(({ recordId }) => recordId === event.recordId);
-        if (record?.operationId !== event.operationId)
-          throw new ArtifactStoreCorruptionError(
-            "Artifact projection event does not match the record identity",
-          );
-      }
-      if (event.kind === "activate" && event.recordId !== undefined) {
-        const current = state.get(event.recordId);
-        if (current?.status === "pending") current.status = "active";
-      } else if (event.kind === "supersede" && event.recordId !== undefined) {
-        const current = state.get(event.recordId);
-        if (current !== undefined) current.status = "superseded";
-      } else if (event.kind === "bind_head" && event.recordId !== undefined) {
-        if (
-          (eventOperation.status !== "core_committed" &&
-            eventOperation.status !== "completed") ||
-          eventOperation.head !== event.head
-        )
-          throw new ArtifactStoreCorruptionError(
-            "Artifact bind_head event does not match the operation core head",
-          );
-        const current = state.get(event.recordId);
-        if (current !== undefined) current.head = event.head ?? null;
-      } else if (event.kind === "clear") {
-        const initiator = operationStates.get(event.operationId);
-        if (
-          initiator === undefined ||
-          initiator.artifactProjectionStatus === "superseded" ||
-          (initiator.requestAttempts[event.requestId!] !== undefined &&
-            initiator.requestAttempts[event.requestId!] !==
-              event.requestAttempt)
-        )
-          continue;
-        for (const record of raw) {
-          const current = state.get(record.recordId);
-          if (
-            current !== undefined &&
-            current.status !== "superseded" &&
-            current.status !== "cleared" &&
-            record.sequence < event.sequence &&
-            record.channel === event.channel &&
-            record.output === event.output &&
-            (event.key === undefined || record.key === event.key)
-          )
-            current.status = "cleared";
-        }
-      }
-    }
-    return raw.map((record) => {
-      const current = state.get(record.recordId);
-      let status = current?.status ?? "failed";
-      const operation = operationStates.get(record.operationId);
-      const currentAttempt = operation?.requestAttempts[record.requestId];
-      if (
-        currentAttempt !== undefined &&
-        currentAttempt !== record.requestAttempt &&
-        status !== "failed"
-      )
-        status = "superseded";
-      if (
-        operation?.artifactProjectionStatus === "superseded" &&
-        status !== "failed"
-      )
-        status = "superseded";
-      return {
-        record,
-        status,
-        head: current?.head ?? null,
-      };
-    });
-  }
-
-  async #events(worldId: string): Promise<ArtifactEvent[]> {
-    const result: ArtifactEvent[] = [];
-    const directory = join(this.#worldRoot(worldId), "events");
-    try {
-      const names = (await readdir(directory))
-        .filter((name) => name.endsWith(".json"))
-        .sort();
-      for (const name of names) {
-        const event = parseArtifactJson<ArtifactEvent>(
-          await readFile(join(directory, name), "utf8"),
-          "artifact projection event",
-        );
-        assertEvent(event);
-        if (name !== artifactSequenceFileName(event.sequence))
-          throw new ArtifactStoreCorruptionError(
-            "Artifact projection-event file name does not match its sequence",
-          );
-        result.push(event);
-      }
-    } catch (error: unknown) {
-      if (!isMissing(error)) throw error;
-    }
-    for (const [operationId, events] of this.#memoryEvents) {
-      const operation = await this.#readOperation(operationId);
-      if (operation?.context.worldId === worldId) result.push(...events);
-    }
-    return result.sort((left, right) => left.sequence - right.sequence);
+    return raw;
   }
 
   async #recordsForOperation(
+    worldId: string,
     operationId: string,
   ): Promise<ArtifactRawRecord[]> {
-    const operation = await this.#readOperation(operationId);
-    if (operation === null) return this.#memoryRecords.get(operationId) ?? [];
-    const records = await this.#effectiveRecords(operation.context.worldId);
-    return records
-      .filter(({ record }) => record.operationId === operationId)
-      .map(({ record }) => record);
+    return (await this.#records(worldId)).filter(
+      (record) => record.operationId === operationId,
+    );
+  }
+
+  /** Writes or replaces one record; save:none records stay in memory only. */
+  async #putRecord(
+    input: Omit<ArtifactRawRecord, "recordFingerprint">,
+  ): Promise<void> {
+    // Only a cleared record keeps the clear that made it so.
+    const record = input.status === "cleared" ? input : withoutClearedBy(input);
+    const finalized: ArtifactRawRecord = {
+      ...record,
+      recordFingerprint: rawRecordFingerprint(record),
+    };
+    assertRawRecord(finalized);
+    if (record.save === "none") {
+      const records = this.#memoryRecords.get(record.operationId) ?? [];
+      const index = records.findIndex(
+        (candidate) => candidate.recordId === record.recordId,
+      );
+      if (index < 0) records.push(finalized);
+      else records[index] = finalized;
+      this.#memoryRecords.set(record.operationId, records);
+      return;
+    }
+    await writeArtifactJson(
+      join(
+        this.#artifactsRoot(record.worldId),
+        "records",
+        artifactSequenceFileName(record.sequence),
+      ),
+      finalized,
+    );
+  }
+
+  async #removeRecord(record: ArtifactRawRecord): Promise<void> {
+    if (record.save === "none") {
+      const records = (
+        this.#memoryRecords.get(record.operationId) ?? []
+      ).filter((candidate) => candidate.recordId !== record.recordId);
+      this.#memoryRecords.set(record.operationId, records);
+      return;
+    }
+    await rm(
+      join(
+        this.#artifactsRoot(record.worldId),
+        "records",
+        artifactSequenceFileName(record.sequence),
+      ),
+      { force: true },
+    );
   }
 
   async #operationsForWorld(worldId: string): Promise<ArtifactOperationFile[]> {
-    const byId = new Map<string, ArtifactOperationFile>();
-    const directory = join(this.#root, "operations");
-    try {
-      const names = (await readdir(directory))
-        .filter((name) => name.endsWith(".json"))
-        .sort();
-      for (const name of names) {
-        const operation = parseArtifactJson<ArtifactOperationFile>(
-          await readFile(join(directory, name), "utf8"),
-          "artifact operation",
-        );
-        assertOperation(operation);
-        if (name !== `${identityHash(operation.context.operationId)}.json`)
-          throw new ArtifactStoreCorruptionError(
-            "Artifact operation does not match the file-path identity",
-          );
-        if (byId.has(operation.context.operationId))
-          throw new ArtifactStoreCorruptionError(
-            "Artifact operation ID is duplicated",
-          );
-        if (operation.context.worldId === worldId)
-          byId.set(operation.context.operationId, structuredClone(operation));
-      }
-    } catch (error: unknown) {
-      if (!isMissing(error)) throw error;
-    }
-    return [...byId.values()];
+    return [
+      ...(await readOperationFiles(this.#artifactsRoot(worldId))).values(),
+    ].filter((operation) => operation.context.worldId === worldId);
   }
 
   async #nextSequence(worldId: string): Promise<number> {
     let maximum = 0;
-    const directories = [
-      join(this.#worldRoot(worldId), "records"),
-      join(this.#worldRoot(worldId), "events"),
-    ];
-    for (const directory of directories) {
-      try {
-        const names = (await readdir(directory)).filter((name) =>
-          name.endsWith(".json"),
-        );
-        for (const name of names) {
-          const value = Number.parseInt(name.slice(0, -5), 10);
-          if (
-            !Number.isSafeInteger(value) ||
-            value < 1 ||
-            name !== artifactSequenceFileName(value)
-          )
-            throw new ArtifactStoreCorruptionError(
-              "Artifact sequence file name is invalid",
-            );
-          maximum = Math.max(maximum, value);
-        }
-      } catch (error: unknown) {
-        if (!isMissing(error)) throw error;
+    try {
+      for (const name of await readdir(
+        join(this.#artifactsRoot(worldId), "records"),
+      )) {
+        if (!name.endsWith(".json")) continue;
+        const value = Number.parseInt(name.slice(0, -5), 10);
+        if (
+          !Number.isSafeInteger(value) ||
+          value < 1 ||
+          name !== artifactSequenceFileName(value)
+        )
+          throw new ArtifactStoreCorruptionError(
+            "Artifact sequence file name is invalid",
+          );
+        maximum = Math.max(maximum, value);
       }
+    } catch (error: unknown) {
+      if (!isMissing(error)) throw error;
     }
     for (const records of this.#memoryRecords.values())
       for (const record of records)
         if (record.worldId === worldId)
           maximum = Math.max(maximum, record.sequence);
-    for (const [operationId, events] of this.#memoryEvents) {
-      const operation = await this.#readOperation(operationId);
-      if (operation?.context.worldId !== worldId) continue;
-      for (const event of events) maximum = Math.max(maximum, event.sequence);
-    }
     return maximum + 1;
   }
 
   async #readOperation(
+    worldId: string,
     operationId: string,
   ): Promise<ArtifactOperationFile | null> {
-    const path = join(
-      this.#root,
-      "operations",
-      `${identityHash(operationId)}.json`,
-    );
     try {
       const operation = parseArtifactJson<ArtifactOperationFile>(
-        await readFile(path, "utf8"),
+        await readFile(this.#operationPath(worldId, operationId), "utf8"),
         "artifact operation",
       );
       assertOperation(operation);
@@ -2215,18 +1383,37 @@ export class FileNativeArtifactStore implements ArtifactStore {
 
   async #writeOperation(operation: ArtifactOperationFile): Promise<void> {
     assertOperation(operation);
-    const directory = join(this.#root, "operations");
-    await mkdir(directory, { recursive: true, mode: 0o700 });
-    const path = join(
-      directory,
-      `${identityHash(operation.context.operationId)}.json`,
+    await writeArtifactJson(
+      this.#operationPath(
+        operation.context.worldId,
+        operation.context.operationId,
+      ),
+      operation,
     );
-    await writeDurableJson(path, operation, false);
   }
 
   async #worldForOperation(operationId: string): Promise<string | null> {
-    const operation = await this.#readOperation(operationId);
-    return operation?.context.worldId ?? null;
+    for (const worldId of await this.#worldIds())
+      if ((await this.#readOperation(worldId, operationId)) !== null)
+        return worldId;
+    return null;
+  }
+
+  async #worldIds(): Promise<string[]> {
+    try {
+      return (await readdir(this.#worldsRoot, { withFileTypes: true }))
+        .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+        .map((entry) => entry.name);
+    } catch (error: unknown) {
+      if (isMissing(error)) return [];
+      throw error;
+    }
+  }
+
+  /** Reads of a world whose artifacts are still in the legacy layout migrate it first. */
+  async #ensureReadable(worldId: string): Promise<void> {
+    if (await hasLegacyArtifactState(this.#dataRoot, worldId))
+      await this.#withWorldMutation(worldId, () => Promise.resolve());
   }
 
   async #withWorldMutation<T>(
@@ -2235,61 +1422,264 @@ export class FileNativeArtifactStore implements ArtifactStore {
   ): Promise<T> {
     const active = this.#mutationContext.getStore();
     if (active?.has(worldId) === true) return action();
-    return worldQueueFor(dirname(this.#root)).run(worldId, () =>
+    return worldQueueFor(this.#dataRoot).run(worldId, () =>
       this.#mutationContext.run(
         new Set([...(active ?? []), worldId]),
         async () => {
-          await this.#restoreFork(worldId);
+          await migrateLegacyArtifactStore(this.#dataRoot, worldId);
           return action();
         },
       ),
     );
   }
 
-  #worldRoot(worldId: string): string {
-    return join(this.#root, "worlds", identityHash(worldId));
+  #artifactsRoot(worldId: string): string {
+    assertWorldDirectoryId(worldId);
+    return join(this.#worldsRoot, worldId, "artifacts");
   }
-}
 
-async function writeDurableJson(
-  path: string,
-  value: unknown,
-  exclusive: boolean,
-): Promise<void> {
-  const directory = dirname(path);
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  const target = exclusive ? path : `${path}.${randomUUID()}.tmp`;
-  let handle: Awaited<ReturnType<typeof open>> | undefined;
-  let created = false;
-  try {
-    handle = await open(target, "wx", 0o600);
-    created = true;
-    await handle.writeFile(JSON.stringify(value), "utf8");
-    await handle.close();
-    handle = undefined;
-    if (!exclusive) await rename(target, path);
-  } catch (error: unknown) {
-    await handle?.close().catch(() => undefined);
-    if (created) await rm(target, { force: true }).catch(() => undefined);
-    throw error;
-  }
-}
-
-function parseArtifactJson<Value>(bytes: string, label: string): Value {
-  try {
-    return JSON.parse(bytes) as Value;
-  } catch (error: unknown) {
-    throw new ArtifactStoreCorruptionError(
-      `${label} JSON is corrupt`,
-      error instanceof Error ? { cause: error } : undefined,
+  #operationPath(worldId: string, operationId: string): string {
+    return join(
+      this.#artifactsRoot(worldId),
+      "operations",
+      `${identityHash(operationId)}.json`,
     );
   }
+}
+
+/**
+ * Rewrites a copied world directory into a fork target: records and operations
+ * are kept only when they are committed, active, attached to a reply and bound
+ * at or before the restored head. Everything else is deleted file by file, and
+ * the survivors take the target identity. Runs on an unpublished staging copy.
+ */
+export async function forkArtifactClosure(
+  worldRoot: string,
+  input: { sourceWorldId: string; targetWorldId: string; restoredHead: string },
+): Promise<void> {
+  const artifactsRoot = join(worldRoot, "artifacts");
+  const limit = headOrdinal(input.restoredHead);
+  const records = await readRecordFiles(artifactsRoot);
+  const operations = await readOperationFiles(artifactsRoot);
+  for (const record of records)
+    if (record.worldId !== input.sourceWorldId)
+      throw new ArtifactStoreCorruptionError(
+        "Artifact fork record belongs to another world",
+      );
+  // A fork keeps what the source's projection would show at that head: the
+  // committed, attached, selected records. Superseded or unselected records
+  // stay behind with the source.
+  const candidates = records.filter((record) => {
+    const operation = operations.get(record.operationId);
+    return (
+      record.save === "commit" &&
+      record.status === "active" &&
+      record.projection !== "hidden" &&
+      (record.projection !== "transient" || isActiveInteraction(operation)) &&
+      operation !== undefined &&
+      operation.artifactProjectionStatus !== "superseded" &&
+      operation.context.attachment !== undefined &&
+      headOrdinal(record.head ?? record.parentHead) <= limit
+    );
+  });
+  const retained = selectProjection(candidates);
+  const retainedRecordIds = new Set(retained.map((record) => record.recordId));
+  for (const record of records)
+    if (!retainedRecordIds.has(record.recordId))
+      await rm(
+        join(
+          artifactsRoot,
+          "records",
+          artifactSequenceFileName(record.sequence),
+        ),
+        { force: true },
+      );
+  const retainedOperations = new Set(
+    retained.map((record) => record.operationId),
+  );
+  for (const operationId of operations.keys())
+    if (!retainedOperations.has(operationId))
+      await rm(
+        join(artifactsRoot, "operations", `${identityHash(operationId)}.json`),
+        {
+          force: true,
+        },
+      );
+  for (const record of retained) {
+    const next = {
+      ...record,
+      worldId: input.targetWorldId,
+      operationId: forkOperationId(input.targetWorldId, record.operationId),
+    };
+    await writeArtifactJson(
+      join(artifactsRoot, "records", artifactSequenceFileName(record.sequence)),
+      { ...next, recordFingerprint: rawRecordFingerprint(next) },
+    );
+  }
+  for (const operationId of retainedOperations) {
+    const operation = operations.get(operationId)!;
+    const nextId = forkOperationId(input.targetWorldId, operationId);
+    const next: ArtifactOperationFile = {
+      ...operation,
+      context: {
+        ...operation.context,
+        worldId: input.targetWorldId,
+        operationId: nextId,
+      },
+    };
+    await writeArtifactJson(
+      join(artifactsRoot, "operations", `${identityHash(nextId)}.json`),
+      next,
+    );
+    await rm(
+      join(artifactsRoot, "operations", `${identityHash(operationId)}.json`),
+      {
+        force: true,
+      },
+    );
+  }
+}
+
+function withoutClearedBy(
+  record: Omit<ArtifactRawRecord, "recordFingerprint">,
+): Omit<ArtifactRawRecord, "recordFingerprint"> {
+  const copy = { ...record };
+  delete copy.clearedBy;
+  return copy;
+}
+
+function forkOperationId(targetWorldId: string, operationId: string): string {
+  return `artifact-fork:${targetWorldId}:${identityHash(operationId)}`;
+}
+
+async function readRecordFiles(
+  artifactsRoot: string,
+): Promise<ArtifactRawRecord[]> {
+  const directory = join(artifactsRoot, "records");
+  let names: string[];
+  try {
+    names = (await readdir(directory)).filter((name) => name.endsWith(".json"));
+  } catch (error: unknown) {
+    if (isMissing(error)) return [];
+    throw error;
+  }
+  const records: ArtifactRawRecord[] = [];
+  for (const name of names.sort()) {
+    const parsed = parseArtifactJson<ArtifactRawRecord>(
+      await readFile(join(directory, name), "utf8"),
+      "artifact raw record",
+    );
+    assertRawRecord(parsed);
+    if (name !== artifactSequenceFileName(parsed.sequence))
+      throw new ArtifactStoreCorruptionError(
+        "Artifact raw-record file name does not match its sequence",
+      );
+    records.push(parsed);
+  }
+  return records.sort((left, right) => left.sequence - right.sequence);
+}
+
+async function readOperationFiles(
+  artifactsRoot: string,
+): Promise<Map<string, ArtifactOperationFile>> {
+  const directory = join(artifactsRoot, "operations");
+  const byId = new Map<string, ArtifactOperationFile>();
+  let names: string[];
+  try {
+    names = (await readdir(directory)).filter((name) => name.endsWith(".json"));
+  } catch (error: unknown) {
+    if (isMissing(error)) return byId;
+    throw error;
+  }
+  for (const name of names.sort()) {
+    const operation = parseArtifactJson<ArtifactOperationFile>(
+      await readFile(join(directory, name), "utf8"),
+      "artifact operation",
+    );
+    assertOperation(operation);
+    if (name !== `${identityHash(operation.context.operationId)}.json`)
+      throw new ArtifactStoreCorruptionError(
+        "Artifact operation does not match the file-path identity",
+      );
+    byId.set(operation.context.operationId, operation);
+  }
+  return byId;
+}
+
+function assertWorldDirectoryId(worldId: string): void {
+  if (
+    worldId === "" ||
+    worldId === "." ||
+    worldId === ".." ||
+    worldId.includes("/") ||
+    worldId.includes("\\")
+  )
+    throw new ArtifactStoreInvariantError("Artifact world ID is not a path");
 }
 
 export class InMemoryArtifactStore extends FileNativeArtifactStore {
   constructor() {
     super(join(tmpdir(), "narraeon-ephemeral-artifacts", randomUUID()));
   }
+}
+
+function newRecord(
+  input: ArtifactEmitInput,
+  declaration: PlayPresetArtifactDeclaration,
+  payload: ArtifactPayload,
+  identity: { sequence: number; fingerprint: string; callFingerprint: string },
+): Omit<ArtifactRawRecord, "status" | "head" | "recordFingerprint"> {
+  const record = {
+    schemaVersion: 1 as const,
+    recordId: `artifact:${identity.sequence}:${identity.fingerprint.slice(7, 23)}`,
+    sequence: identity.sequence,
+    worldId: input.context.worldId,
+    parentHead: input.context.parentHead,
+    operationId: input.context.operationId,
+    playPresetId: input.context.playPresetId,
+    playPresetRevision: input.context.playPresetRevision,
+    playPresetScriptsEnabled: input.context.playPresetScriptsEnabled,
+    requestId: input.context.requestId,
+    requestAttempt: input.context.requestAttempt,
+    output: declaration.name,
+    channel: declaration.channel,
+    ...(declaration.key === undefined ? {} : { key: declaration.key }),
+    contentType: declaration.contentType,
+    ...(declaration.renderer === undefined
+      ? {}
+      : { renderer: declaration.renderer }),
+    ...(declaration.rendererRevision === undefined
+      ? {}
+      : { rendererRevision: declaration.rendererRevision }),
+    ...(input.context.extensionControl === undefined
+      ? {}
+      : {
+          extensionControl: structuredClone(input.context.extensionControl),
+        }),
+    ...(input.context.frozenPresentations?.[declaration.name] !== undefined
+      ? {
+          frozenPresentation: structuredClone(
+            input.context.frozenPresentations[declaration.name],
+          ),
+        }
+      : input.context.frozenResources === undefined
+        ? {}
+        : {
+            frozenPresentation: {
+              ...structuredClone(input.context.frozenResources),
+              declaration: structuredClone(declaration),
+            },
+          }),
+    payload: structuredClone(payload),
+    save: declaration.save,
+    projection: declaration.strategy,
+    invalidation: declaration.invalidation,
+    toolCallId: input.toolCallId,
+    toolName: "artifact_emit" as const,
+    callFingerprint: identity.callFingerprint,
+    payloadFingerprint: identity.fingerprint,
+  };
+  return record;
 }
 
 function findDeclaration(
@@ -2329,15 +1719,6 @@ function normalizePayload(
   return { ok: true, value: structuredClone(input) };
 }
 
-function isJsonValue(value: unknown): value is ArtifactPayload {
-  if (value === null || typeof value === "string" || typeof value === "boolean")
-    return true;
-  if (typeof value === "number") return Number.isFinite(value);
-  if (Array.isArray(value)) return value.every(isJsonValue);
-  if (typeof value !== "object") return false;
-  return Object.values(value).every(isJsonValue);
-}
-
 function byteLength(payload: ArtifactPayload, contentType: string): number {
   return Buffer.byteLength(payloadText(payload, contentType), "utf8");
 }
@@ -2347,12 +1728,8 @@ function payloadText(payload: ArtifactPayload, contentType: string): string {
   return typeof payload === "string" ? payload : JSON.stringify(payload);
 }
 
-function payloadFingerprint(output: string, payload: ArtifactPayload): string {
-  return `sha256:${createHash("sha256").update(JSON.stringify({ output, payload })).digest("hex")}`;
-}
-
 function artifactCallFingerprint(
-  toolName: "artifact_emit" | "artifact_clear",
+  toolName: "artifact_emit",
   context: ArtifactRequestContext,
   parameters: { output: string; payload?: ArtifactPayload },
 ): string {
@@ -2377,47 +1754,22 @@ function artifactCallFingerprint(
     .digest("hex")}`;
 }
 
-function stableSerialize(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value))
-    return `[${value.map((item) => stableSerialize(item)).join(",")}]`;
-  return `{${Object.keys(value as Record<string, unknown>)
-    .sort()
-    .map(
-      (key) =>
-        `${JSON.stringify(key)}:${stableSerialize((value as Record<string, unknown>)[key])}`,
-    )
-    .join(",")}}`;
-}
-
-function rawRecordFingerprint(
-  record: Omit<ArtifactRawRecord, "recordFingerprint"> | ArtifactRawRecord,
-): string {
-  const content: Partial<ArtifactRawRecord> = { ...record };
-  delete content.recordFingerprint;
-  return `sha256:${createHash("sha256").update(JSON.stringify(content)).digest("hex")}`;
-}
-
-function sameEventIdentity(left: ArtifactEvent, right: ArtifactEvent): boolean {
-  return (
-    left.kind === right.kind &&
-    left.operationId === right.operationId &&
-    left.recordId === right.recordId &&
-    left.output === right.output &&
-    left.channel === right.channel &&
-    left.key === right.key &&
-    left.head === right.head &&
-    left.requestId === right.requestId &&
-    left.requestAttempt === right.requestAttempt &&
-    left.reason === right.reason &&
-    left.toolCallId === right.toolCallId &&
-    left.toolName === right.toolName &&
-    left.callFingerprint === right.callFingerprint
-  );
-}
-
 function artifactFailure(message: string): ArtifactToolResult {
   return { ok: false, markdown: `# Runtime artifact rejected\n\n${message}` };
+}
+
+function recoveryRequired(
+  operationId: string,
+  completedRequests: string[],
+  message: string | undefined,
+): ArtifactExtensionSummary {
+  return {
+    operationId,
+    status: "recovery_required",
+    completedRequests,
+    ...(message === undefined ? {} : { message }),
+    coreCommitted: false,
+  };
 }
 
 function isOpenExtension(operation: ArtifactOperationFile): boolean {
@@ -2469,14 +1821,6 @@ function isActiveInteraction(
   );
 }
 
-function identityHash(value: string): string {
-  return createHash("sha256").update(value, "utf8").digest("hex");
-}
-
-function artifactSequenceFileName(sequence: number): string {
-  return `${String(sequence).padStart(12, "0")}.json`;
-}
-
 function summary(operation: ArtifactOperationFile): ArtifactExtensionSummary {
   return {
     ...(operation.context.attachment === undefined
@@ -2490,32 +1834,27 @@ function summary(operation: ArtifactOperationFile): ArtifactExtensionSummary {
     ...(operation.message === undefined ? {} : { message: operation.message }),
     completedRequests: [...operation.completedRequests],
     coreCommitted:
-      operation.status === "core_materialization_pending" ||
-      operation.status === "core_committed" ||
-      operation.status === "completed",
+      operation.status === "core_committed" || operation.status === "completed",
     ...(operation.head === undefined ? {} : { head: operation.head }),
   };
 }
 
-function selectProjection(active: EffectiveRecord[]): EffectiveRecord[] {
-  const append: EffectiveRecord[] = [];
-  const replace = new Map<string, EffectiveRecord>();
-  const upsert = new Map<string, EffectiveRecord>();
-  for (const item of active.sort(
-    (left, right) => left.record.sequence - right.record.sequence,
+function selectProjection(active: ArtifactRawRecord[]): ArtifactRawRecord[] {
+  const append: ArtifactRawRecord[] = [];
+  const replace = new Map<string, ArtifactRawRecord>();
+  const upsert = new Map<string, ArtifactRawRecord>();
+  for (const record of [...active].sort(
+    (left, right) => left.sequence - right.sequence,
   )) {
-    if (
-      item.record.projection === "append" ||
-      item.record.projection === "transient"
-    )
-      append.push(item);
-    else if (item.record.projection === "replace")
-      replace.set(item.record.channel, item);
-    else if (item.record.projection === "upsert")
-      upsert.set(`${item.record.channel}\0${item.record.key ?? ""}`, item);
+    if (record.projection === "append" || record.projection === "transient")
+      append.push(record);
+    else if (record.projection === "replace")
+      replace.set(record.channel, record);
+    else if (record.projection === "upsert")
+      upsert.set(`${record.channel}\0${record.key ?? ""}`, record);
   }
   return [...append, ...replace.values(), ...upsert.values()].sort(
-    (left, right) => left.record.sequence - right.record.sequence,
+    (left, right) => left.sequence - right.sequence,
   );
 }
 
@@ -2608,450 +1947,5 @@ function sameContext(
     left.playPresetId === right.playPresetId &&
     left.playPresetRevision === right.playPresetRevision &&
     left.playPresetScriptsEnabled === right.playPresetScriptsEnabled
-  );
-}
-
-function assertRawRecord(record: ArtifactRawRecord): void {
-  if (
-    !isRecord(record) ||
-    !hasExactKeys(
-      record,
-      [
-        "schemaVersion",
-        "recordId",
-        "sequence",
-        "worldId",
-        "parentHead",
-        "newHead",
-        "operationId",
-        "playPresetId",
-        "playPresetRevision",
-        "playPresetScriptsEnabled",
-        "requestId",
-        "requestAttempt",
-        "output",
-        "channel",
-        "contentType",
-        "payload",
-        "save",
-        "projection",
-        "invalidation",
-        "toolCallId",
-        "toolName",
-        "callFingerprint",
-        "payloadFingerprint",
-        "recordFingerprint",
-        "status",
-      ],
-      [
-        "key",
-        "renderer",
-        "rendererRevision",
-        "frozenPresentation",
-        "extensionControl",
-      ],
-    ) ||
-    (record.extensionControl !== undefined &&
-      !isWorldExtensionControl(record.extensionControl)) ||
-    (record.frozenPresentation !== undefined &&
-      !isFrozenArtifactPresentation(record.frozenPresentation)) ||
-    record.schemaVersion !== 1 ||
-    !isNonEmptyString(record.recordId) ||
-    !Number.isSafeInteger(record.sequence) ||
-    record.sequence < 1 ||
-    !isNonEmptyString(record.worldId) ||
-    !isNonEmptyString(record.operationId) ||
-    !isNonEmptyString(record.output) ||
-    !isNonEmptyString(record.channel) ||
-    !isNonEmptyString(record.parentHead) ||
-    !isNonEmptyString(record.playPresetId) ||
-    !isNonEmptyString(record.playPresetRevision) ||
-    !isNonEmptyString(record.requestId) ||
-    !Number.isSafeInteger(record.requestAttempt) ||
-    record.requestAttempt < 1 ||
-    record.newHead !== null ||
-    typeof record.playPresetScriptsEnabled !== "boolean" ||
-    !["text/plain", "text/markdown", "application/json", "text/html"].includes(
-      record.contentType,
-    ) ||
-    !["none", "operation", "commit"].includes(record.save) ||
-    !["append", "replace", "upsert", "transient", "hidden"].includes(
-      record.projection,
-    ) ||
-    ![
-      "new_operation",
-      "head_change",
-      "operation_end",
-      "explicit_clear",
-      "never",
-    ].includes(record.invalidation) ||
-    typeof record.toolCallId !== "string" ||
-    record.toolName !== "artifact_emit" ||
-    !isSha256(record.callFingerprint) ||
-    !isSha256(record.payloadFingerprint) ||
-    !isSha256(record.recordFingerprint) ||
-    (record.renderer === undefined) !==
-      (record.rendererRevision === undefined) ||
-    (record.renderer !== undefined && !isNonEmptyString(record.renderer)) ||
-    (record.rendererRevision !== undefined &&
-      !isNonEmptyString(record.rendererRevision)) ||
-    (record.projection === "upsert"
-      ? !isNonEmptyString(record.key)
-      : record.key !== undefined) ||
-    record.status !== "pending"
-  )
-    throw new ArtifactStoreCorruptionError("Artifact raw record is corrupt");
-  if (!isJsonValue(record.payload))
-    throw new ArtifactStoreCorruptionError(
-      "Artifact payload is not a JSON value",
-    );
-  if (
-    record.payloadFingerprint !==
-    payloadFingerprint(record.output, record.payload)
-  )
-    throw new ArtifactStoreCorruptionError(
-      "Artifact payload fingerprint does not match",
-    );
-  if (record.recordFingerprint !== rawRecordFingerprint(record))
-    throw new ArtifactStoreCorruptionError(
-      "Artifact raw-record fingerprint does not match",
-    );
-}
-
-function assertOperation(operation: ArtifactOperationFile): void {
-  const context = operation.context;
-  if (
-    !isRecord(operation) ||
-    !hasExactKeys(
-      operation,
-      [
-        "schemaVersion",
-        "context",
-        "status",
-        "extensionStatus",
-        "completedRequests",
-        "artifactProjectionStatus",
-        "requestAttempts",
-      ],
-      ["message", "head", "requests"],
-    ) ||
-    (operation.requests !== undefined &&
-      (!Array.isArray(operation.requests) ||
-        !operation.requests.every(
-          (item) =>
-            isRecord(item) &&
-            hasExactKeys(item, [
-              "requestId",
-              "displayName",
-              "mounts",
-              "status",
-            ]) &&
-            isNonEmptyString(item.requestId) &&
-            isNonEmptyString(item.displayName) &&
-            Array.isArray(item.mounts) &&
-            item.mounts.every(
-              (mount) =>
-                typeof mount === "string" &&
-                [
-                  "story",
-                  "sidebar",
-                  "composer_above",
-                  "composer_below",
-                  "overlay",
-                  "debug",
-                ].includes(mount),
-            ) &&
-            ["running", "completed", "failed"].includes(item.status),
-        ))) ||
-    operation.schemaVersion !== 1 ||
-    !isRecord(context) ||
-    !hasExactKeys(
-      context,
-      [
-        "worldId",
-        "parentHead",
-        "operationId",
-        "playPresetId",
-        "playPresetRevision",
-        "playPresetScriptsEnabled",
-      ],
-      ["attachment"],
-    ) ||
-    (context.attachment !== undefined &&
-      !validAttachment(context.attachment)) ||
-    !isNonEmptyString(context.worldId) ||
-    !isNonEmptyString(context.parentHead) ||
-    !isNonEmptyString(context.operationId) ||
-    !isNonEmptyString(context.playPresetId) ||
-    !isNonEmptyString(context.playPresetRevision) ||
-    typeof context.playPresetScriptsEnabled !== "boolean" ||
-    ![
-      "running",
-      "core_failed",
-      "core_materialization_pending",
-      "core_committed",
-      "completed",
-    ].includes(operation.status) ||
-    ![
-      "not_started",
-      "running",
-      "completed",
-      "failed",
-      "cancelled",
-      "budget_exceeded",
-      "unknown",
-      "recovery_required",
-      "superseded",
-    ].includes(operation.extensionStatus) ||
-    !Array.isArray(operation.completedRequests) ||
-    !operation.completedRequests.every(isNonEmptyString) ||
-    (operation.message !== undefined &&
-      typeof operation.message !== "string") ||
-    !validArtifactOperationState(operation) ||
-    !["active", "superseded"].includes(operation.artifactProjectionStatus) ||
-    !isRecord(operation.requestAttempts) ||
-    !Object.entries(operation.requestAttempts).every(
-      ([request, attempt]) =>
-        request.trim() !== "" &&
-        typeof attempt === "number" &&
-        Number.isSafeInteger(attempt) &&
-        attempt >= 1,
-    )
-  )
-    throw new ArtifactStoreCorruptionError(
-      "Artifact operation state is corrupt",
-    );
-}
-
-function validArtifactOperationState(
-  operation: ArtifactOperationFile,
-): boolean {
-  if (operation.status === "running")
-    return (
-      operation.extensionStatus === "not_started" &&
-      operation.completedRequests.length === 0 &&
-      operation.message === undefined &&
-      operation.head === undefined
-    );
-  if (operation.status === "core_failed")
-    return (
-      operation.extensionStatus === "failed" &&
-      operation.completedRequests.length === 0 &&
-      operation.artifactProjectionStatus === "superseded" &&
-      operation.head === undefined
-    );
-  if (operation.status === "core_materialization_pending")
-    return (
-      operation.extensionStatus === "recovery_required" &&
-      operation.completedRequests.length === 0 &&
-      operation.artifactProjectionStatus === "active" &&
-      isNonEmptyString(operation.head) &&
-      isNonEmptyString(operation.message)
-    );
-  if (operation.status === "completed")
-    return (
-      operation.extensionStatus === "completed" &&
-      isNonEmptyString(operation.head) &&
-      operation.message === undefined
-    );
-  if (!isNonEmptyString(operation.head)) return false;
-  if (operation.extensionStatus === "completed") return false;
-  if (
-    operation.extensionStatus === "not_started" ||
-    operation.extensionStatus === "running"
-  )
-    return (
-      operation.completedRequests.length === 0 &&
-      operation.message === undefined
-    );
-  return (
-    isNonEmptyString(operation.message) &&
-    (operation.extensionStatus !== "superseded" ||
-      operation.artifactProjectionStatus === "superseded")
-  );
-}
-
-function assertEvent(event: ArtifactEvent): void {
-  if (
-    !isRecord(event) ||
-    event.schemaVersion !== 1 ||
-    !Number.isSafeInteger(event.sequence) ||
-    event.sequence < 1 ||
-    !isNonEmptyString(event.operationId)
-  )
-    throw new ArtifactStoreCorruptionError(
-      "Artifact projection event is corrupt",
-    );
-  const requestPair =
-    event.requestId === undefined && event.requestAttempt === undefined
-      ? true
-      : isNonEmptyString(event.requestId) &&
-        Number.isSafeInteger(event.requestAttempt) &&
-        Number(event.requestAttempt) >= 1;
-  if (event.kind === "activate") {
-    if (
-      !hasExactKeys(
-        event,
-        ["schemaVersion", "kind", "sequence", "operationId", "recordId"],
-        ["requestId", "requestAttempt"],
-      ) ||
-      !isNonEmptyString(event.recordId) ||
-      !requestPair
-    )
-      throw new ArtifactStoreCorruptionError(
-        "Artifact projection event is corrupt",
-      );
-    return;
-  }
-  if (event.kind === "bind_head") {
-    if (
-      !hasExactKeys(event, [
-        "schemaVersion",
-        "kind",
-        "sequence",
-        "operationId",
-        "recordId",
-        "head",
-      ]) ||
-      !isNonEmptyString(event.recordId) ||
-      !isNonEmptyString(event.head)
-    )
-      throw new ArtifactStoreCorruptionError(
-        "Artifact projection event is corrupt",
-      );
-    return;
-  }
-  if (event.kind === "supersede") {
-    if (
-      !hasExactKeys(
-        event,
-        [
-          "schemaVersion",
-          "kind",
-          "sequence",
-          "operationId",
-          "recordId",
-          "reason",
-        ],
-        ["requestId", "requestAttempt"],
-      ) ||
-      !isNonEmptyString(event.recordId) ||
-      !isNonEmptyString(event.reason) ||
-      !requestPair
-    )
-      throw new ArtifactStoreCorruptionError(
-        "Artifact projection event is corrupt",
-      );
-    return;
-  }
-  if (event.kind === "clear" || event.kind === "ignored_call") {
-    if (
-      !hasExactKeys(
-        event,
-        [
-          "schemaVersion",
-          "kind",
-          "sequence",
-          "operationId",
-          "output",
-          "channel",
-          "reason",
-          "toolCallId",
-          "toolName",
-          "callFingerprint",
-          "requestId",
-          "requestAttempt",
-        ],
-        ["key"],
-      ) ||
-      !isNonEmptyString(event.output) ||
-      !isNonEmptyString(event.channel) ||
-      !isNonEmptyString(event.reason) ||
-      !isNonEmptyString(event.toolCallId) ||
-      event.toolName !== "artifact_clear" ||
-      !isSha256(event.callFingerprint) ||
-      !isNonEmptyString(event.requestId) ||
-      !Number.isSafeInteger(event.requestAttempt) ||
-      Number(event.requestAttempt) < 1 ||
-      (event.key !== undefined && !isNonEmptyString(event.key))
-    )
-      throw new ArtifactStoreCorruptionError(
-        "Artifact projection event is corrupt",
-      );
-    return;
-  }
-  throw new ArtifactStoreCorruptionError(
-    "Artifact projection event is corrupt",
-  );
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function hasExactKeys(
-  value: Record<string, unknown>,
-  required: readonly string[],
-  optional: readonly string[] = [],
-): boolean {
-  const allowed = new Set([...required, ...optional]);
-  return (
-    required.every((key) => Object.hasOwn(value, key)) &&
-    Object.keys(value).every((key) => allowed.has(key))
-  );
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.trim() !== "";
-}
-
-function isSha256(value: unknown): value is string {
-  return typeof value === "string" && /^sha256:[a-f0-9]{64}$/u.test(value);
-}
-
-/** Heads are linear: genesis is round 0 and commit:N is round N. */
-function headOrdinal(head: string): number {
-  if (head === "genesis") return 0;
-  const match = /^commit:([1-9][0-9]*)$/u.exec(head);
-  if (match === null)
-    throw new ArtifactStoreInvariantError("Artifact head is invalid");
-  return Number(match[1]);
-}
-
-async function removeMatchingFiles(
-  directory: string,
-  shouldRemove: (value: unknown) => boolean,
-): Promise<void> {
-  let names: string[];
-  try {
-    names = await readdir(directory);
-  } catch (error: unknown) {
-    if (isMissing(error)) return;
-    throw error;
-  }
-  for (const name of names.filter((item) => item.endsWith(".json"))) {
-    const path = join(directory, name);
-    const value = parseArtifactJson<unknown>(
-      await readFile(path, "utf8"),
-      "artifact file",
-    );
-    if (shouldRemove(value)) await rm(path, { force: true });
-  }
-}
-
-function isMissing(error: unknown): boolean {
-  return isRecord(error) && error.code === "ENOENT";
-}
-
-function validAttachment(value: unknown): value is ArtifactAttachment {
-  return (
-    isRecord(value) &&
-    hasExactKeys(value, ["contextId", "eventId", "runId", "head"]) &&
-    isNonEmptyString(value.head) &&
-    isNonEmptyString(value.contextId) &&
-    isNonEmptyString(value.runId) &&
-    typeof value.eventId === "number" &&
-    Number.isSafeInteger(value.eventId) &&
-    value.eventId > 0
   );
 }

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  cp,
   mkdir,
   mkdtemp,
   readFile,
@@ -15,6 +16,7 @@ import { describe, expect, test } from "vitest";
 
 import {
   FileNativeArtifactStore,
+  forkArtifactClosure,
   type ArtifactOperationContext,
   type ArtifactRequestContext,
 } from "../../src/runtime/artifact/FileNativeArtifactStore.ts";
@@ -67,9 +69,20 @@ function context(
   return { store, operation, request };
 }
 
-function operationFile(root: string, operationId: string): string {
+function operationFile(
+  root: string,
+  operationId: string,
+  worldId = "world-1",
+): string {
   const hash = createHash("sha256").update(operationId, "utf8").digest("hex");
-  return join(root, "artifact-store", "operations", `${hash}.json`);
+  return join(
+    root,
+    "worlds-file-native",
+    worldId,
+    "artifacts",
+    "operations",
+    `${hash}.json`,
+  );
 }
 
 async function beginRequestFixture(fixture: {
@@ -138,16 +151,21 @@ describe("FileNativeArtifactStore", () => {
       await fixture.store.completeExtension(operation.operationId, [
         request.requestId,
       ]);
+      // A fork is a directory copy whose artifact identities are then rewritten.
       const staging = join(root, "worlds-file-native", ".staging-fork");
-      await fixture.store.stageFork({
+      await cp(join(root, "worlds-file-native", "world-1"), staging, {
+        recursive: true,
+      });
+      await forkArtifactClosure(staging, {
         sourceWorldId: "world-1",
         targetWorldId: "fork",
-        targetWorldRoot: staging,
-        timeline: [{ contextId: "ctx", eventId: 2, head: "commit:2" }],
+        restoredHead: "commit:2",
       });
-      expect(await fixture.store.readActiveProjection("fork")).toEqual([]);
       await rename(staging, join(root, "worlds-file-native", "fork"));
-      await rm(join(root, "artifact-store"), { recursive: true, force: true });
+      await rm(join(root, "worlds-file-native", "world-1"), {
+        recursive: true,
+        force: true,
+      });
       const cold = new FileNativeArtifactStore(root);
       expect(await cold.readActiveProjection("fork")).toMatchObject([
         {
@@ -156,21 +174,6 @@ describe("FileNativeArtifactStore", () => {
           frozenPresentation: { files: { "panel.html": "<b>独立资源</b>" } },
         },
       ]);
-      const importedRoot = join(
-        root,
-        "artifact-store",
-        "worlds",
-        createHash("sha256").update("fork").digest("hex"),
-      );
-      await rm(join(importedRoot, "fork-restored.json"));
-      const importedRecord = (await readdir(join(importedRoot, "records")))[0]!;
-      await writeFile(
-        join(importedRoot, "records", importedRecord),
-        "interrupted import",
-      );
-      expect(
-        await new FileNativeArtifactStore(root).readActiveProjection("fork"),
-      ).toMatchObject([{ payload: "保留正文" }]);
       await cold.beginOperation({
         ...fixture.operation,
         worldId: "fork",
@@ -356,7 +359,7 @@ describe("FileNativeArtifactStore", () => {
     }
   });
 
-  test("冷读取严格拒绝 raw/event 的缺字段与未知字段", async () => {
+  test("冷读取严格拒绝 raw record 的缺字段与未知字段", async () => {
     const root = await mkdtemp(join(tmpdir(), "narraeon-artifact-strict-log-"));
     const fixture = context(root, "operation", "replace");
     await beginRequestFixture(fixture);
@@ -366,14 +369,11 @@ describe("FileNativeArtifactStore", () => {
       payload: "strict",
       toolCallId: "strict-log",
     });
-    const worldHash = createHash("sha256")
-      .update(fixture.operation.worldId, "utf8")
-      .digest("hex");
     const rawPath = join(
       root,
-      "artifact-store",
-      "worlds",
-      worldHash,
+      "worlds-file-native",
+      "world-1",
+      "artifacts",
       "records",
       "000000000001.json",
     );
@@ -386,70 +386,9 @@ describe("FileNativeArtifactStore", () => {
     await expect(
       new FileNativeArtifactStore(root).readDebug("world-1"),
     ).rejects.toThrow(/Artifact raw record is corrupt/u);
-
-    const cleanRoot = await mkdtemp(
-      join(tmpdir(), "narraeon-artifact-strict-event-"),
-    );
-    const clean = context(cleanRoot, "operation", "replace");
-    await beginRequestFixture(clean);
-    await clean.store.emit({
-      context: clean.request,
-      output: "panel",
-      payload: "strict",
-      toolCallId: "strict-event",
-    });
-    const eventPath = join(
-      cleanRoot,
-      "artifact-store",
-      "worlds",
-      worldHash,
-      "events",
-      "000000000002.json",
-    );
-    const event = JSON.parse(await readFile(eventPath, "utf8")) as Record<
-      string,
-      unknown
-    >;
-    event.unexpectedField = true;
-    await writeFile(eventPath, JSON.stringify(event), "utf8");
-    await expect(
-      new FileNativeArtifactStore(cleanRoot).readDebug("world-1"),
-    ).rejects.toThrow(/Artifact projection event is corrupt/u);
   });
 
-  test("bind_head event 必须与冻结 operation 的核心 head 一致", async () => {
-    const root = await mkdtemp(join(tmpdir(), "narraeon-artifact-bind-head-"));
-    const fixture = context(root, "commit", "replace");
-    await beginRequestFixture(fixture);
-    await fixture.store.emit({
-      context: fixture.request,
-      output: "panel",
-      payload: "bound payload",
-      toolCallId: "bind-head",
-    });
-    await fixture.store.markCoreCommitted(fixture.operation, "commit:1");
-    const worldHash = createHash("sha256")
-      .update(fixture.operation.worldId, "utf8")
-      .digest("hex");
-    const bindPath = join(
-      root,
-      "artifact-store",
-      "worlds",
-      worldHash,
-      "events",
-      "000000000002.json",
-    );
-    const bind = JSON.parse(await readFile(bindPath, "utf8")) as {
-      head: string;
-    };
-    bind.head = "commit:2";
-    await writeFile(bindPath, JSON.stringify(bind), "utf8");
-    await expect(
-      new FileNativeArtifactStore(root).readActiveProjection("world-1"),
-    ).rejects.toThrow(/bind_head.*operation core head/u);
-  });
-
-  test("冷读取把 operation 与 raw/event 文件名绑定到内容身份", async () => {
+  test("冷读取把 operation 与 record 文件名绑定到内容身份", async () => {
     const root = await mkdtemp(join(tmpdir(), "narraeon-artifact-path-id-"));
     const fixture = context(root, "operation", "replace");
     await beginRequestFixture(fixture);
@@ -468,15 +407,13 @@ describe("FileNativeArtifactStore", () => {
     await expect(
       new FileNativeArtifactStore(root).readExtension(copiedOperationId),
     ).rejects.toThrow(/operation.*identity/u);
+    await rm(operationFile(root, copiedOperationId));
 
-    const worldHash = createHash("sha256")
-      .update(fixture.operation.worldId, "utf8")
-      .digest("hex");
     const records = join(
       root,
-      "artifact-store",
-      "worlds",
-      worldHash,
+      "worlds-file-native",
+      fixture.operation.worldId,
+      "artifacts",
       "records",
     );
     await rename(
@@ -488,7 +425,7 @@ describe("FileNativeArtifactStore", () => {
     ).rejects.toThrow(/file name.*sequence/u);
   });
 
-  test("operation 缺失后 emit/clear fail loud 且不写 raw/event", async () => {
+  test("operation 缺失后 emit/clear fail loud 且不写 record", async () => {
     const root = await mkdtemp(join(tmpdir(), "narraeon-artifact-missing-op-"));
     const fixture = context(root, "operation", "replace");
     await beginRequestFixture(fixture);
@@ -516,68 +453,15 @@ describe("FileNativeArtifactStore", () => {
     await expect(
       fixture.store.beginExtension(fixture.operation),
     ).rejects.toThrow(/extension is missing an operation checkpoint/u);
-    const worldHash = createHash("sha256")
-      .update(fixture.operation.worldId, "utf8")
-      .digest("hex");
-    const worldRoot = join(root, "artifact-store", "worlds", worldHash);
-    await expect(readdir(join(worldRoot, "records"))).rejects.toMatchObject({
+    const artifacts = join(
+      root,
+      "worlds-file-native",
+      fixture.operation.worldId,
+      "artifacts",
+    );
+    await expect(readdir(join(artifacts, "records"))).rejects.toMatchObject({
       code: "ENOENT",
     });
-    await expect(readdir(join(worldRoot, "events"))).rejects.toMatchObject({
-      code: "ENOENT",
-    });
-  });
-
-  test("同 toolCallId 冷重试会补齐 raw-only 与 bind-only 的投影事件", async () => {
-    for (const scenario of ["raw-only", "bind-only"] as const) {
-      const root = await mkdtemp(
-        join(tmpdir(), `narraeon-artifact-${scenario}-`),
-      );
-      const fixture = context(
-        root,
-        scenario === "raw-only" ? "operation" : "commit",
-        "replace",
-      );
-      fixture.operation.operationId = `operation-${scenario}`;
-      fixture.request.operationId = fixture.operation.operationId;
-      await beginRequestFixture(fixture);
-      if (scenario === "bind-only")
-        await fixture.store.markCoreCommitted(
-          fixture.operation,
-          "commit:repair",
-        );
-      const emit = {
-        context: fixture.request,
-        output: "panel",
-        payload: `payload-${scenario}`,
-        toolCallId: `call-${scenario}`,
-      } as const;
-      await fixture.store.emit(emit);
-      const worldHash = createHash("sha256")
-        .update(fixture.operation.worldId, "utf8")
-        .digest("hex");
-      const eventsRoot = join(
-        root,
-        "artifact-store",
-        "worlds",
-        worldHash,
-        "events",
-      );
-      await rm(
-        join(
-          eventsRoot,
-          scenario === "raw-only" ? "000000000002.json" : "000000000003.json",
-        ),
-      );
-      await expect(
-        new FileNativeArtifactStore(root).emit(emit),
-      ).resolves.toMatchObject({ ok: true, idempotent: true });
-      await expect(
-        new FileNativeArtifactStore(root).readActiveProjection(
-          fixture.operation.worldId,
-        ),
-      ).resolves.toMatchObject([{ payload: `payload-${scenario}` }]);
-    }
   });
 
   test("recovery_required 会 fence 迟到 owner 的 emit/complete/fail", async () => {
@@ -857,13 +741,15 @@ describe("FileNativeArtifactStore", () => {
       toolCallId: "clear-1",
     });
     expect(clear.ok).toBe(true);
+    // A repeated clear re-applies to nothing that is still active; the clear
+    // needs no ledger entry, so it is not reported as idempotent.
     expect(
       await store.clear({
         context: request,
         output: "panel",
         toolCallId: "clear-1",
       }),
-    ).toMatchObject({ ok: true, idempotent: true });
+    ).toMatchObject({ ok: true });
     await store.markCoreCommitted(operation, "commit:1");
     expect(await store.readActiveProjection("world-1")).toEqual([]);
     const restarted = new FileNativeArtifactStore(root);
@@ -1020,14 +906,9 @@ describe("FileNativeArtifactStore", () => {
         toolCallId: "late-none-clear",
       }),
     ).toMatchObject({ ok: true });
+    // Clears leave no ledger entry; a cold store simply finds nothing to clear.
     const cold = new FileNativeArtifactStore(root);
-    expect(
-      await cold.clear({
-        context: first.request,
-        output: "panel",
-        toolCallId: "late-none-clear",
-      }),
-    ).toMatchObject({ ok: true, idempotent: true });
+    expect(await cold.readActiveProjection("world-1")).toEqual([]);
   });
 
   test("新核心 head 通过高层 reconciliation 失效旧 head 产物和扩展", async () => {
@@ -1261,14 +1142,15 @@ describe("FileNativeArtifactStore", () => {
         output: "panel",
         toolCallId: "clear-call",
       }),
-    ).toMatchObject({ ok: true, idempotent: true });
+    ).toMatchObject({ ok: true });
+    // A stale attempt's clear is ignored, not rejected: no clear ledger remains.
     expect(
       await store.clear({
         context: { ...request, requestAttempt: 2 },
         output: "panel",
         toolCallId: "clear-call",
       }),
-    ).toMatchObject({ ok: false });
+    ).toMatchObject({ ok: true });
   });
 
   test("debug 返回获准 raw payload，且不泄漏 provider 内部字段", async () => {
@@ -1303,9 +1185,12 @@ describe("FileNativeArtifactStore", () => {
       operationId: "operation-begin-retry-second",
       parentHead: "commit:1",
     } satisfies ArtifactOperationContext;
-    await mkdir(join(root, "artifact-store", "operations"), {
-      recursive: true,
-    });
+    await mkdir(
+      join(root, "worlds-file-native", "world-1", "artifacts", "operations"),
+      {
+        recursive: true,
+      },
+    );
     await writeFile(
       operationFile(root, secondOperation.operationId),
       JSON.stringify({
@@ -1575,7 +1460,7 @@ describe("FileNativeArtifactStore", () => {
     ).toEqual(expect.objectContaining({ status: "superseded" }));
   });
 
-  test("stale clear 记录 ignored-call ledger，变参冲突且冷重启一致", async () => {
+  test("stale clear 被忽略且不留账本，冷重启后同一调用仍只是忽略", async () => {
     const root = await mkdtemp(
       join(tmpdir(), "narraeon-artifact-stale-clear-"),
     );
@@ -1589,42 +1474,23 @@ describe("FileNativeArtifactStore", () => {
       parentHead: "commit:1",
     } satisfies ArtifactOperationContext;
     await first.store.beginOperation(secondOperation);
-    expect(
-      await first.store.clear({
-        context: first.request,
-        output: "panel",
-        toolCallId: "stale-clear-ledger",
-      }),
-    ).toMatchObject({ ok: true });
-    expect(
-      await first.store.clear({
-        context: first.request,
-        output: "panel",
-        toolCallId: "stale-clear-ledger",
-      }),
-    ).toMatchObject({ ok: true, idempotent: true });
-    expect(
-      await first.store.clear({
-        context: { ...first.request, requestAttempt: 2 },
-        output: "panel",
-        toolCallId: "stale-clear-ledger",
-      }),
-    ).toMatchObject({ ok: false });
+    for (const requestAttempt of [1, 2]) {
+      expect(
+        await first.store.clear({
+          context: { ...first.request, requestAttempt },
+          output: "panel",
+          toolCallId: "stale-clear",
+        }),
+      ).toMatchObject({ ok: true });
+    }
     const cold = new FileNativeArtifactStore(root);
     expect(
       await cold.clear({
         context: first.request,
         output: "panel",
-        toolCallId: "stale-clear-ledger",
+        toolCallId: "stale-clear",
       }),
-    ).toMatchObject({ ok: true, idempotent: true });
-    expect(
-      await cold.clear({
-        context: { ...first.request, requestAttempt: 3 },
-        output: "panel",
-        toolCallId: "stale-clear-ledger",
-      }),
-    ).toMatchObject({ ok: false });
+    ).toMatchObject({ ok: true });
     expect(await cold.readActiveProjection("world-1")).toEqual([]);
   });
 
