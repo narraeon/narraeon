@@ -3,7 +3,7 @@
 The Android app embeds the Narraeon backend in its own process. A foreground service starts
 the Node runtime (digidem/nodejs-mobile `libnode.so`, Node 24.20.0), and a WebView opens
 `http://127.0.0.1:4317`. Only `arm64-v8a` is supported. See
-[ADR-0045](../docs/adr/0045-android-embeds-backend-in-app-process.md).
+[ADR-0047](../docs/adr/0047-android-embeds-backend-in-app-process.md).
 
 ## Prerequisites
 
