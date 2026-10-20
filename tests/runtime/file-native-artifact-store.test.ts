@@ -1172,6 +1172,44 @@ describe("FileNativeArtifactStore", () => {
     expect(debug[0]).not.toHaveProperty("path");
   });
 
+  test("回退到更早端点时按文件删除之后的记录与 operation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "narraeon-artifact-discard-"));
+    const fixture = context(root, "commit", "replace");
+    const artifacts = join(root, "worlds-file-native", "world-1", "artifacts");
+    await fixture.store.beginOperation(fixture.operation);
+    await fixture.store.markCoreCommitted(fixture.operation, "commit:1");
+    const later = {
+      ...fixture.operation,
+      operationId: "later",
+      parentHead: "commit:1",
+    };
+    await fixture.store.beginOperation(later);
+    await fixture.store.markCoreCommitted(later, "commit:2");
+    await fixture.store.beginRequestAttempt({
+      ...fixture.request,
+      ...later,
+    });
+    await fixture.store.emit({
+      context: { ...fixture.request, ...later },
+      output: "panel",
+      payload: "after rewind",
+      toolCallId: "after-rewind",
+    });
+    expect(await readdir(join(artifacts, "records"))).toHaveLength(1);
+    expect(await readdir(join(artifacts, "operations"))).toHaveLength(2);
+
+    await fixture.store.discardAfterHead("world-1", "commit:1");
+
+    expect(await readdir(join(artifacts, "records"))).toEqual([]);
+    await expect(
+      readFile(operationFile(root, "later"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    expect(
+      await new FileNativeArtifactStore(root).readDebug("world-1"),
+    ).toEqual([]);
+    await rm(root, { recursive: true, force: true });
+  });
+
   test("beginOperation 在已写入 current operation 后重试仍完成旧扩展失效", async () => {
     const root = await mkdtemp(
       join(tmpdir(), "narraeon-artifact-begin-retry-"),
