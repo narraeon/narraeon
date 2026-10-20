@@ -1,5 +1,5 @@
 ---
-status: superseded by ADR-0032
+status: superseded by ADR-0045
 ---
 
 # V1 历史线性且不可改写

@@ -4,7 +4,7 @@ status: accepted
 
 # 世界归档复用分叉闭包，并经隔离区导入
 
-> 按 [ADR-0044](0044-runtime-is-single-process-and-recovers-by-retry.md)，导出时的来源快照锁与导入的 operation 幂等重试由进程内按世界串行取代。路径安全、体积上限与内容校验仍然有效；导入是否继续审计全部 Authority 提交随 #77 的存储决定一并确定。
+> 按 [ADR-0044](0044-runtime-is-single-process-and-recovers-by-retry.md)，导出时的来源快照锁与导入的 operation 幂等重试由进程内按世界串行取代。按 [ADR-0045](0045-world-history-is-current-files-plus-a-turn-ledger.md)，分叉闭包、hardlink／reflink 与导入时的全链审计不再存在：导出是目录复制加回退后打包，导入只做路径安全、体积上限与账本结构校验。
 
 世界归档是一个便携 ZIP：一份 `narraeon.world-archive/v1` 清单，加上一棵由“创建分叉”产出的自足世界目录。导出在来源快照锁下把当前端点分叉到导出暂存区，不写入世界列表，再按条目流式打包。导入先按条目解到与正常数据根隔离的临时数据根，完成路径与体积检查、完整文件清单与摘要校验、既有格式迁移和全部 Authority 提交的审计，再以跨数据根分叉发布为新的本地世界，最后删除隔离区。
 

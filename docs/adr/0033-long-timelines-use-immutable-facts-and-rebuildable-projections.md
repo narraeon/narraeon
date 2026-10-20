@@ -1,10 +1,10 @@
 ---
-status: accepted
+status: superseded by ADR-0045
 ---
 
 # 长时间线使用不可变事实、小端点与可重建投影
 
-> 关于持久推进、Provider 结果重放与崩溃后从已有事实继续的决定已由 [ADR-0044](0044-runtime-is-single-process-and-recovers-by-retry.md) 取代：崩溃后的生成标记为中断，由玩家重试并重新调用模型。有界页面读取的决定仍然有效；不可变事实链的存储模型在 #77 评估。
+> 持久推进与 Provider 重放已由 [ADR-0044](0044-runtime-is-single-process-and-recovers-by-retry.md) 取代；不可变事实链与物化检查点的存储模型已由 [ADR-0045](0045-world-history-is-current-files-plus-a-turn-ledger.md) 取代。页面时间线有界尾页读取的决定仍然有效。
 
 > Authority 结果 root、世界中立身份与物理闭包分叉机制见 [ADR-0036](0036-authority-facts-are-world-neutral-and-forks-retain-physical-closures.md)；本 ADR 保留小 head、不可变事实和有界页面读取的决定。
 

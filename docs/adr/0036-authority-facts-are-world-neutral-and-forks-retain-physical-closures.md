@@ -1,10 +1,10 @@
 ---
-status: accepted
+status: superseded by ADR-0045
 ---
 
 # Authority 事实世界中立，分叉保留物理闭包
 
-> 其中 operation receipt、prepared receipt 与来源 snapshot lease 等跨进程幂等和加锁机制已由 [ADR-0044](0044-runtime-is-single-process-and-recovers-by-retry.md) 取代。存储模型本身在 #77 评估，在此之前仍然有效。
+> 回执与 lease 机制已由 [ADR-0044](0044-runtime-is-single-process-and-recovers-by-retry.md) 取代；内容寻址事实、双父关系、结果 root 与分叉物理闭包已由 [ADR-0045](0045-world-history-is-current-files-plus-a-turn-ledger.md) 取代。历史消息使用世界内局部身份、`commit:N` 作为端点别名的决定保留。
 
 世界所有权、不可变连续性事实、operation 幂等和活动模型会话是四种不同身份。`worldId` 只属于世界本地外壳与可变投影；历史消息使用 Authority 内局部身份，不可变提交不保存 `worldId` 或 `operationId`。operation receipt 单独把一次请求绑定到已接受事实；`commit:N` 继续作为 V1 世界内端点别名，事实父关系同时携带内容摘要，genesis 摘要是第一笔提交的真实锚点。
 
