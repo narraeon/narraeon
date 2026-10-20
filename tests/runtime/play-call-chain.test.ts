@@ -604,8 +604,6 @@ async function createTraceRetentionFixture() {
 }
 
 afterEach(async () => {
-  delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PLAY_ADVANCE_EDGE;
-  delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_FILE_NATIVE_AUTHORITY_EDGE;
   delete process.env.NARRAEON_INTERNAL_TEST_CLONE_STRATEGY;
   delete process.env.NARRAEON_INTERNAL_TEST_REFLINK_ERROR_CODE;
   await Promise.all(

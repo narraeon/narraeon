@@ -250,7 +250,6 @@ export class ContentWorkspace {
       await this.#beforePortableContentExport?.();
       options.signal?.throwIfAborted();
       const archive = createPortableContentArchive(package_.files);
-      await crashProcessAtPortableContentExportEdge("after_archive_created");
       options.signal?.throwIfAborted();
       return {
         fileName: `${portableArchiveBaseName(package_.title)}.zip`,
@@ -936,18 +935,4 @@ function isAbortError(error: unknown): error is Error {
 
 function compareStrings(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
-}
-
-async function crashProcessAtPortableContentExportEdge(
-  edge: "after_archive_created",
-): Promise<void> {
-  if (
-    process.env.NODE_ENV !== "test" ||
-    process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_PORTABLE_CONTENT_EXPORT_EDGE !==
-      edge
-  ) {
-    return;
-  }
-  process.kill(process.pid, "SIGKILL");
-  await new Promise<never>(() => undefined);
 }

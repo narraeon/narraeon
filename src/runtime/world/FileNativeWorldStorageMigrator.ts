@@ -198,7 +198,6 @@ export class FileNativeWorldStorageMigrator {
         sha256Hex(callChainSource),
       );
     }
-    crashAtStorageMigrationEdge("after_timeline");
     const migratedContexts = await this.#timeline.readAllContexts(worldId);
     if (migratedContexts.length !== callChainContexts)
       throw new Error(
@@ -246,10 +245,8 @@ export class FileNativeWorldStorageMigrator {
         outcome,
       );
     }
-    crashAtStorageMigrationEdge("after_current_facts");
 
     await verifyCurrentFacts(runtimeRoot, currentCommits, checkpoint);
-    crashAtStorageMigrationEdge("before_current_head");
     const tip = currentCommits.at(-1);
     const head: CurrentAuthorityHead =
       tip === undefined
@@ -268,7 +265,6 @@ export class FileNativeWorldStorageMigrator {
             operationId: tip.operationId,
           };
     await publishJson(join(runtimeRoot, currentAuthorityHeadFile), head);
-    crashAtStorageMigrationEdge("after_current_head");
     return this.#migrateCurrentAuthority({
       worldId,
       worldRoot,
@@ -509,9 +505,7 @@ async function migrateCurrentAuthorityToV3(input: {
       );
     }
     await rm(stagingWorld, { recursive: true, force: true });
-    crashAtStorageMigrationEdge("before_authority_v3_head");
     await publishJson(join(runtimeRoot, continuityHeadFile), finalHead);
-    crashAtStorageMigrationEdge("after_authority_v3_head");
     return {
       outcome: "migrated",
       authorityCommits: migrated.length,
@@ -1519,12 +1513,4 @@ async function publishImmutableJson(
   } finally {
     await rm(temporary, { force: true });
   }
-}
-
-function crashAtStorageMigrationEdge(edge: string): void {
-  if (
-    process.env.NODE_ENV === "test" &&
-    process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_STORAGE_MIGRATION_EDGE === edge
-  )
-    process.kill(process.pid, "SIGKILL");
 }

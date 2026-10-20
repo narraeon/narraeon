@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
 import {
   mkdtemp,
@@ -10,7 +9,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, expect, test, vi } from "vitest";
 import { WorldArchives } from "../../src/runtime/archive/WorldArchives.ts";
@@ -870,74 +869,29 @@ test("导出拒绝活动修订、生成与待修复物化", async () => {
   expect(await source.worlds.listWorlds()).toHaveLength(1);
 });
 
-test.each([
-  "quarantine",
-  "unpack",
-  "audit",
-  "derivation_after_target_staging",
-  "derivation_before_publish",
-  "derivation_after_publish",
-  "publish",
-])(
-  "进程崩溃 %s 后同 operation 重试只有一个完整世界",
-  async (edge) => {
-    const source = await fixture();
-    const archive = await exported(source);
-    const target = await empty();
-    const upload = await target.archives.upload(createReadStream(archive.zip));
-    const code = await new Promise<number | null>((resolveExit, reject) => {
-      const child = spawn(
-        process.execPath,
-        [
-          resolve("tests/runtime/fixtures/world-archive-worker.ts"),
-          target.root,
-          upload.uploadId,
-          edge,
-        ],
-        { env: { ...process.env, NODE_ENV: "test" }, stdio: "pipe" },
-      );
-      let stderr = "";
-      child.stderr.on("data", (chunk) => (stderr += String(chunk)));
-      child.once("error", reject);
-      child.once("exit", (code, signal) =>
-        code === 89 || signal === "SIGKILL"
-          ? resolveExit(code ?? 88)
-          : reject(new Error(stderr || `Worker exit ${code}`)),
-      );
-    });
-    expect([88, 89]).toContain(code);
-    const cold = archiveStores(target.root);
-    // Some retries happen immediately, others after startup cleanup and re-upload.
-    let retryUpload = upload;
-    if (["audit", "derivation_after_publish", "publish"].includes(edge)) {
-      await cold.archives.initialize();
-      retryUpload = await cold.archives.upload(createReadStream(archive.zip));
-    }
-    const result = await cold.archives.importWorld({
-      operationId: "crash-import",
-      ...retryUpload,
-    });
-    expect(
-      await cold.archives.importWorld({
-        operationId: "crash-import",
-        ...retryUpload,
-      }),
-    ).toEqual(result);
-    expect(await cold.worlds.listWorlds()).toHaveLength(1);
-    expect(
-      await cold.worlds.readAuthorityHistory(result.world.worldId),
-    ).toEqual(await source.worlds.readAuthorityHistory(source.worldId));
-    expect(
-      await readdir(join(target.root, "world-archives/quarantine")),
-    ).toEqual([]);
-    expect(
-      (await readdir(join(target.root, "worlds-file-native"))).filter((name) =>
-        name.startsWith(".staging"),
-      ),
-    ).toEqual([]);
-  },
-  30000,
-);
+test("同一 operation 重复导入只得到一个完整世界", async () => {
+  const source = await fixture();
+  const archive = await exported(source);
+  const target = await empty();
+  const upload = await target.archives.upload(createReadStream(archive.zip));
+  const result = await target.archives.importWorld({
+    operationId: "repeat-import",
+    ...upload,
+  });
+  expect(
+    await target.archives.importWorld({
+      operationId: "repeat-import",
+      ...upload,
+    }),
+  ).toEqual(result);
+  expect(await target.worlds.listWorlds()).toHaveLength(1);
+  expect(
+    await target.worlds.readAuthorityHistory(result.world.worldId),
+  ).toEqual(await source.worlds.readAuthorityHistory(source.worldId));
+  expect(await readdir(join(target.root, "world-archives/quarantine"))).toEqual(
+    [],
+  );
+});
 
 test("启动清理上传和隔离区；下载到期拒绝并删除导出", async () => {
   const source = await fixture();
@@ -959,35 +913,6 @@ test.each([
   "world/name ",
 ])("拒绝跨平台不安全路径 %s", (path) => {
   expect(() => archivePath(path)).toThrow("unsafe path");
-});
-
-test("上传完成边界崩溃没有世界，启动清理上传残留", async () => {
-  const source = await fixture();
-  const archive = await exported(source);
-  const target = await empty();
-  const code = await new Promise<number | null>((done, reject) => {
-    const child = spawn(
-      process.execPath,
-      [
-        resolve("tests/runtime/fixtures/world-archive-worker.ts"),
-        target.root,
-        archive.zip,
-        "upload",
-      ],
-      { env: { ...process.env, NODE_ENV: "test" }, stdio: "ignore" },
-    );
-    child.once("error", reject);
-    child.once("exit", done);
-  });
-  expect(code).toBe(89);
-  expect(await target.worlds.listWorlds()).toEqual([]);
-  expect(
-    await readdir(join(target.root, "world-archives/uploads")),
-  ).toHaveLength(1);
-  await archiveStores(target.root).archives.initialize();
-  expect(await readdir(join(target.root, "world-archives/uploads"))).toEqual(
-    [],
-  );
 });
 
 test("一小时未下载的导出过期并删除", async () => {

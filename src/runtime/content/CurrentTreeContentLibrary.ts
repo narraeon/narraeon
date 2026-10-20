@@ -561,7 +561,6 @@ export class CurrentTreeContentLibrary {
           files: normalized,
         } satisfies StoredCurrentTree),
       );
-      await crashProcessAtCurrentTreeEdge("after_current_tree_staging");
       signal?.throwIfAborted();
       await this.#beforeCurrentTreeReplace?.();
       signal?.throwIfAborted();
@@ -570,8 +569,6 @@ export class CurrentTreeContentLibrary {
       });
       await link(join(packageRoot, currentTreeFileName), previousPath);
       await rename(temporaryPath, join(packageRoot, currentTreeFileName));
-      await crashProcessAtCurrentTreeEdge("after_current_tree_replace");
-      failCurrentTreeAfterReplaceForTest();
       await unlink(previousPath).catch(() => undefined);
     } catch (error: unknown) {
       await rm(temporaryPath, { force: true }).catch(() => undefined);
@@ -640,12 +637,10 @@ export class CurrentTreeContentLibrary {
           files: normalized,
         } satisfies StoredCurrentTree),
       );
-      await crashProcessAtCurrentTreeEdge("after_package_staging");
       signal?.throwIfAborted();
       await this.#beforePackagePublish?.();
       signal?.throwIfAborted();
       await rename(stagingPath, finalPath);
-      await crashProcessAtCurrentTreeEdge("after_package_publish");
     } catch (error: unknown) {
       await rm(stagingPath, { force: true, recursive: true }).catch(
         () => undefined,
@@ -1211,32 +1206,6 @@ function isNodeErrorCode(error: unknown, code: string): boolean {
 
 function isAbortError(error: unknown): error is Error {
   return error instanceof Error && error.name === "AbortError";
-}
-
-async function crashProcessAtCurrentTreeEdge(
-  edge:
-    | "after_current_tree_replace"
-    | "after_current_tree_staging"
-    | "after_package_publish"
-    | "after_package_staging",
-): Promise<void> {
-  if (
-    process.env.NODE_ENV !== "test" ||
-    process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_CURRENT_TREE_EDGE !== edge
-  ) {
-    return;
-  }
-  process.kill(process.pid, "SIGKILL");
-  await new Promise<never>(() => undefined);
-}
-
-function failCurrentTreeAfterReplaceForTest(): void {
-  if (
-    process.env.NODE_ENV === "test" &&
-    process.env.NARRAEON_INTERNAL_TEST_FAIL_AFTER_CURRENT_TREE_REPLACE === "1"
-  ) {
-    throw new Error("simulated failure after current tree replace");
-  }
 }
 
 function compareStrings(left: string, right: string): number {

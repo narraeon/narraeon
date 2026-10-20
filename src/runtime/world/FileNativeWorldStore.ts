@@ -737,9 +737,7 @@ export class FileNativeWorldStore {
         [openingMessage],
         Date.now(),
       );
-      crashAtFileNativeWorldCreationEdge("after_staging");
       await rename(stagingRoot, finalRoot);
-      crashAtFileNativeWorldCreationEdge("after_atomic_publish");
       await publishOperation(operationPath, publication);
       return {
         outcome: "created",
@@ -1656,7 +1654,6 @@ export class FileNativeWorldStore {
           await writeJson(join(staging, "runtime", "archive-import.json"), {
             schemaVersion: 1,
           });
-        crashAtFileNativeAuthorityEdge("derivation_after_target_staging");
         const publication: Publication = {
           schemaVersion: 1,
           worldId,
@@ -1672,9 +1669,7 @@ export class FileNativeWorldStore {
           selected.history,
           Date.now(),
         );
-        crashAtFileNativeAuthorityEdge("derivation_before_publish");
         await rename(staging, finalRoot);
-        crashAtFileNativeAuthorityEdge("derivation_after_publish");
         if (input.publish !== false)
           await publishJson(operationPath, publication);
         return {
@@ -2275,7 +2270,6 @@ export class FileNativeWorldStore {
             );
           if (concurrentPrepared === null)
             await authorityStore.discardUnacceptedNextEpoch();
-          crashAtFileNativeAuthorityEdge("before_commit_acceptance");
           const preparedAppend = await authorityStore.prepareAppend({
             ...(input.playContext === undefined
               ? {}
@@ -2307,7 +2301,6 @@ export class FileNativeWorldStore {
               ? {}
               : { timelineRevision: input.timelineRevision }),
           });
-          crashAtFileNativeAuthorityEdge("after_authority_objects");
           const acceptedPreparation = concurrentPrepared ?? prepared;
           if (
             acceptedPreparation !== null &&
@@ -2332,10 +2325,8 @@ export class FileNativeWorldStore {
             ...pending,
             outcome: "acceptance_prepared",
           });
-          crashAtFileNativeAuthorityEdge("after_acceptance_prepared");
           await authorityStore.publishPrepared(preparedAppend);
           const acceptedAt = Date.now();
-          crashAtFileNativeAuthorityEdge("after_commit_acceptance");
           await publishJson(
             this.#operationOutcomePath(input.operationId),
             pending,
@@ -2349,7 +2340,6 @@ export class FileNativeWorldStore {
               recovered,
               acceptedAt,
             );
-            crashAtFileNativeAuthorityEdge("after_materialization");
             const outcome = { ...pending, outcome: "committed" as const };
             await publishJson(
               this.#operationOutcomePath(input.operationId),
@@ -3134,7 +3124,6 @@ async function materializeRecoveredEndpoint(
       "Recovered endpoint does not match the Authority head to materialize",
     );
   await replaceMaterializedTree(join(root, "state"), endpoint.state);
-  crashAtFileNativeAuthorityEdge("after_state_materialization");
   await replaceMaterializedTree(
     join(root, "history"),
     historySurfaceFiles(endpoint.history),
@@ -3720,25 +3709,6 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error;
 }
 
-function crashAtFileNativeWorldCreationEdge(edge: string): void {
-  if (
-    process.env.NODE_ENV === "test" &&
-    process.env
-      .NARRAEON_INTERNAL_TEST_CRASH_AT_FILE_NATIVE_WORLD_CREATION_EDGE === edge
-  ) {
-    process.kill(process.pid, "SIGKILL");
-  }
-}
-
-function crashAtFileNativeAuthorityEdge(edge: string): void {
-  if (
-    process.env.NODE_ENV === "test" &&
-    process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_FILE_NATIVE_AUTHORITY_EDGE ===
-      edge
-  ) {
-    process.kill(process.pid, "SIGKILL");
-  }
-}
 import type {
   NarrativeCheckpoint,
   NarrativeCheckpointDeclaration,

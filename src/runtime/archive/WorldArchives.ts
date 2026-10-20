@@ -88,7 +88,6 @@ export class WorldArchives {
     const path = this.#uploadPath(uploadId);
     try {
       await streamFile(source, path, this.#limits.archiveBytes);
-      crashAt("upload");
       return { uploadId };
     } catch (error) {
       await rm(path, { force: true });
@@ -259,7 +258,6 @@ export class WorldArchives {
               });
           const extracted = join(quarantine, "extracted");
           await mkdir(extracted, { recursive: true, mode: 0o700 });
-          crashAt("quarantine");
           let actual: Map<string, ArchiveFile>;
           try {
             actual = await extractArchive(upload, extracted, this.#limits);
@@ -271,7 +269,6 @@ export class WorldArchives {
               );
             throw error;
           }
-          crashAt("unpack");
           if (!actual.has("narraeon-world.json"))
             throw new WorldArchiveError(
               "invalid_archive",
@@ -345,7 +342,6 @@ export class WorldArchives {
               { cause: error },
             );
           }
-          crashAt("audit");
           const sourceChains = new PlayCallChain(
             sourceWorlds,
             new FileNativePromptCompiler(),
@@ -371,7 +367,6 @@ export class WorldArchives {
               { cause: error },
             );
           }
-          crashAt("publish");
           return { outcome: "imported", world: result.world };
         } finally {
           await rm(quarantine, { recursive: true, force: true });
@@ -509,11 +504,4 @@ async function appVersion(): Promise<string> {
       throw new Error("Application version is unavailable");
     directory = parent;
   }
-}
-function crashAt(edge: string): void {
-  if (
-    process.env.NODE_ENV === "test" &&
-    process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_WORLD_ARCHIVE_EDGE === edge
-  )
-    process.exit(89);
 }

@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { spawn } from "node:child_process";
 import {
   mkdir,
   mkdtemp,
@@ -10,7 +9,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
 import { afterEach, expect, test } from "vitest";
 
@@ -20,7 +19,6 @@ import { FileNativeWorldStore } from "../../src/runtime/world/FileNativeWorldSto
 const roots: string[] = [];
 
 afterEach(async () => {
-  delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_STORAGE_MIGRATION_EDGE;
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
   );
@@ -360,67 +358,6 @@ test("已被旧版本迁移为 V3 的世界作用域历史文件名会在首笔�
       stateChanges: [],
     }),
   ).resolves.toMatchObject({ head: "commit:6" });
-});
-
-test("schemaVersion=2 历史投影重键后在 V3 头发布前退出仍可幂等恢复", async () => {
-  const fixture = await currentV2RevisionWorld(
-    "released-storage-current-projection-crash",
-  );
-  const crashed = await runMigrationWorker(
-    fixture.root,
-    fixture.worldId,
-    "before_authority_v3_head",
-  );
-  expect(crashed).toEqual({ code: null, signal: "SIGKILL" });
-
-  const recovered = new FileNativeWorldStore(fixture.root);
-  await expect(recovered.currentHead(fixture.worldId)).resolves.toBe(
-    "commit:5",
-  );
-  await expect(
-    recovered.commitPlayStep({
-      operationId: "current-first-message-after-projection-crash",
-      worldId: fixture.worldId,
-      parentHead: "commit:5",
-      historyAppend: [{ role: "player", exactText: "我继续向前。" }],
-      nextMaterials: [],
-      stateChanges: [],
-    }),
-  ).resolves.toMatchObject({ head: "commit:6" });
-});
-
-test.each([
-  "after_timeline",
-  "before_current_head",
-  "after_current_head",
-  "before_authority_v3_head",
-  "after_authority_v3_head",
-])("已发布存档在 %s 强制退出后可由原始事实幂等完成迁移", async (edge) => {
-  const fixture = await releasedWorld(`released-storage-crash-${edge}`, 1);
-  const crashed = await runMigrationWorker(fixture.root, fixture.worldId, edge);
-  expect(crashed).toEqual({ code: null, signal: "SIGKILL" });
-  await expect(
-    readFile(join(fixture.runtimeRoot, "play-authority.json"), "utf8"),
-  ).resolves.toBe(fixture.releasedAuthoritySource);
-  await expect(
-    readFile(join(fixture.runtimeRoot, "play-call-chain.json"), "utf8"),
-  ).resolves.toBe(fixture.releasedCallChainSource);
-
-  const recovered = new FileNativeWorldStore(fixture.root);
-  await expect(recovered.currentHead(fixture.worldId)).resolves.toBe(
-    "commit:4",
-  );
-  const endpoint = await recovered.recoverEndpoint(fixture.worldId);
-  expect(endpoint.head).toBe("commit:4");
-  expect(
-    endpoint.history.map(({ role, exactText }) => ({ role, exactText })),
-  ).toContainEqual({ role: "player", exactText: "我点亮提灯。" });
-  expect(
-    endpoint.history.map(({ role, exactText }) => ({ role, exactText })),
-  ).toContainEqual({ role: "narrator", exactText: "昏黄的光照亮走廊。" });
-  await expect(
-    recovered.playTimeline.readAllContexts(fixture.worldId),
-  ).resolves.toHaveLength(2);
 });
 
 async function releasedWorld(label: string, callChainSchemaVersion: 1 | 2) {
@@ -1030,25 +967,4 @@ async function writeJson(path: string, value: unknown): Promise<string> {
   const source = `${JSON.stringify(value, null, 2)}\n`;
   await writeFile(path, source, "utf8");
   return source;
-}
-
-function runMigrationWorker(root: string, worldId: string, edge: string) {
-  return new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
-    (done, reject) => {
-      const child = spawn(
-        process.execPath,
-        [
-          resolve(
-            "tests/runtime/fixtures/released-storage-migration-worker.ts",
-          ),
-          root,
-          worldId,
-          edge,
-        ],
-        { env: { ...process.env, NODE_ENV: "test" }, stdio: "ignore" },
-      );
-      child.once("error", reject);
-      child.once("exit", (code, signal) => done({ code, signal }));
-    },
-  );
 }

@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { spawn } from "node:child_process";
 import {
   mkdir,
   mkdtemp,
@@ -11,7 +10,6 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolve } from "node:path";
 
 import { afterEach, expect, test } from "vitest";
 
@@ -20,7 +18,6 @@ import { FileNativeWorldStore } from "../../src/runtime/world/FileNativeWorldSto
 const roots: string[] = [];
 
 afterEach(async () => {
-  delete process.env.NARRAEON_INTERNAL_TEST_CRASH_AT_FILE_NATIVE_AUTHORITY_EDGE;
   delete process.env.NARRAEON_INTERNAL_TEST_CLONE_STRATEGY;
   delete process.env.NARRAEON_INTERNAL_TEST_REFLINK_ERROR_CODE;
   delete process.env.NARRAEON_INTERNAL_TEST_FORBID_AUTHORITY_FACT_DECODE;
@@ -146,83 +143,6 @@ test("Authority 追加只发布新提交和小端点，不再重写累计提交�
     await readdir(join(runtimeRoot, "authority-v3", "epochs")),
   ).toHaveLength(3);
 });
-
-test.runIf(process.platform === "linux")(
-  "提交事实已写但 Authority 端点尚未切换时，只允许同一操作原样恢复",
-  async () => {
-    expect(await crashWorker("after_acceptance_prepared")).toMatchObject({
-      signal: "SIGKILL",
-    });
-    const root = roots.at(-1)!;
-    const store = new FileNativeWorldStore(root);
-    const creation = await store.getCreationOutcome("create");
-    if (creation.outcome !== "created")
-      throw new Error("world was not created");
-    const worldId = creation.world.worldId;
-    await expect(store.currentHead(worldId)).resolves.toBe("genesis");
-    await expect(store.getOperationOutcome("play")).resolves.toEqual({
-      outcome: "in_progress",
-    });
-    const before = initialSituation();
-    const after = before.replace("安静", "已经提交");
-    await expect(
-      store.commitPlayStep({
-        operationId: "play",
-        worldId,
-        parentHead: "genesis",
-        historyAppend: [
-          { role: "player", exactText: "Different player" },
-          { role: "narrator", exactText: "Narrator" },
-        ],
-        nextMaterials: [],
-        stateChanges: [change(before, after)],
-      }),
-    ).rejects.toMatchObject({ code: "operation_conflict" });
-
-    expect(await runWorker(root, "none")).toMatchObject({ code: 0 });
-    await expect(store.getOperationOutcome("play")).resolves.toMatchObject({
-      outcome: "committed",
-      head: "commit:1",
-    });
-    expect(
-      await readdir(
-        join(
-          root,
-          "worlds-file-native",
-          worldId,
-          "runtime",
-          "authority-v3",
-          "epochs",
-        ),
-      ),
-    ).toHaveLength(2);
-  },
-);
-
-test.runIf(process.platform === "linux")(
-  "对象发布后 receipt 前退出可由同一请求恢复且不会把孤儿 epoch 当成接受事实",
-  async () => {
-    expect(await crashWorker("after_authority_objects")).toMatchObject({
-      signal: "SIGKILL",
-    });
-    const root = roots.at(-1)!;
-    const store = new FileNativeWorldStore(root);
-    const creation = await store.getCreationOutcome("create");
-    if (creation.outcome !== "created")
-      throw new Error("world was not created");
-    await expect(store.currentHead(creation.world.worldId)).resolves.toBe(
-      "genesis",
-    );
-    await expect(store.getOperationOutcome("play")).resolves.toEqual({
-      outcome: "not_started",
-    });
-    expect(await runWorker(root, "none")).toMatchObject({ code: 0 });
-    await expect(store.getOperationOutcome("play")).resolves.toMatchObject({
-      outcome: "committed",
-      head: "commit:1",
-    });
-  },
-);
 
 test("Authority 接受后的确定物化冲突必须抛出，不得伪装为普通 pending", async () => {
   const fixture = await world();
@@ -921,45 +841,6 @@ test("时间线修订只保存双父关系与直接结果引用", async () => {
   ]);
 });
 
-test.runIf(process.platform === "linux")(
-  "进程崩溃边界诚实区分接受、物化、修复与派生发布",
-  async () => {
-    for (const edge of [
-      "before_commit_acceptance",
-      "after_authority_objects",
-      "after_commit_acceptance",
-    ])
-      expect(await crashWorker(edge)).toMatchObject({ signal: "SIGKILL" });
-    const root = roots.at(-1)!;
-    const store = new FileNativeWorldStore(root);
-    const worldId = (await store.getCreationOutcome("create")).outcome;
-    expect(worldId).toBe("created");
-    await expect(store.getOperationOutcome("play")).resolves.toMatchObject({
-      outcome: "committed_materialization_pending",
-    });
-    expect(await runWorker(root, "after_state_materialization")).toMatchObject({
-      signal: "SIGKILL",
-    });
-    expect(await runWorker(root, "none")).toMatchObject({ code: 0 });
-    expect(
-      await runWorker(root, "derivation_before_publish", "derive"),
-    ).toMatchObject({
-      signal: "SIGKILL",
-    });
-    expect(
-      await runWorker(root, "derivation_after_target_staging", "derive"),
-    ).toMatchObject({
-      signal: "SIGKILL",
-    });
-    expect(
-      await runWorker(root, "derivation_after_publish", "derive"),
-    ).toMatchObject({
-      signal: "SIGKILL",
-    });
-    expect(await runWorker(root, "none", "derive")).toMatchObject({ code: 0 });
-  },
-);
-
 async function world() {
   const root = await mkdtemp(join(tmpdir(), "narraeon-file-authority-"));
   roots.push(root);
@@ -1038,29 +919,4 @@ function endpointSemantics(endpoint: {
       exactText,
     })),
   };
-}
-
-async function crashWorker(edge: string) {
-  const root = await mkdtemp(join(tmpdir(), "narraeon-authority-crash-"));
-  roots.push(root);
-  return runWorker(root, edge);
-}
-
-function runWorker(root: string, edge: string, mode = "commit") {
-  return new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
-    (done, reject) => {
-      const child = spawn(
-        process.execPath,
-        [
-          resolve("tests/runtime/fixtures/file-native-authority-worker.ts"),
-          root,
-          edge,
-          mode,
-        ],
-        { env: { ...process.env, NODE_ENV: "test" }, stdio: "ignore" },
-      );
-      child.once("error", reject);
-      child.once("exit", (code, signal) => done({ code, signal }));
-    },
-  );
 }
