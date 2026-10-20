@@ -214,6 +214,12 @@ test("publishes a least-privilege multi-platform image after npm succeeds", () =
       "type=raw,value=next,enable=${{ github.event.release.prerelease == true }}",
     ),
   );
+  assert.match(
+    containerJob,
+    /^\s+name: npm-package\n\s+path: release-artifact$/mu,
+    "the image must be built from the validated tarball artifact",
+  );
+  assert.match(containerJob, /^\s+build-contexts: package=release-artifact$/mu);
   assert.match(containerJob, /^\s+provenance: mode=max$/mu);
   assert.match(containerJob, /^\s+sbom: true$/mu);
 
@@ -236,11 +242,24 @@ test("builds a pinned non-root runtime with one durable volume", () => {
     /^ARG NODE_IMAGE=node:24\.20\.0-bookworm-slim@sha256:[a-f0-9]{64}$/mu,
   );
   assert.equal(
-    dockerfile.match(/^FROM \$\{NODE_IMAGE\}/gmu)?.length,
+    dockerfile.match(
+      /^FROM (?:--platform=\$BUILDPLATFORM )?\$\{NODE_IMAGE\}/gmu,
+    )?.length,
     2,
-    "build and runtime stages must share the pinned multi-platform base",
+    "install and runtime stages must share the pinned multi-platform base",
   );
   assert.match(dockerfile, /^FROM \$\{NODE_IMAGE\} AS runtime$/mu);
+  assert.match(
+    dockerfile,
+    /from=package,target=\/package/u,
+    "the image must install the npm tarball from the package build context",
+  );
+  assert.doesNotMatch(
+    dockerfile,
+    /^COPY (?!--from=)/mu,
+    "the image must not copy the source tree",
+  );
+  assert.doesNotMatch(dockerfile, /npm run build/u);
   assert.match(dockerfile, /^USER 1000:1000$/mu);
   assert.match(dockerfile, /^VOLUME \["\/var\/lib\/narraeon"\]$/mu);
   assert.match(dockerfile, /^\s+NARRAEON_HOST=0\.0\.0\.0 \\$/mu);

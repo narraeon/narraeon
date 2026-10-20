@@ -1,17 +1,16 @@
 ARG NODE_IMAGE=node:24.20.0-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e
 
-FROM ${NODE_IMAGE} AS build
+# The image does not build from source. It installs the validated npm tarball
+# (the same file published to the registry) from the `package` build context:
+#   docker build --build-context package=<dir with narraeon-*.tgz> .
+# The package has no native dependencies, so it is installed once on the build
+# platform and copied into each target platform's runtime stage.
+FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS install
 
-WORKDIR /app
-
-COPY package.json package-lock.json ./
-RUN npm ci --ignore-scripts --registry=https://registry.npmjs.org/
-
-COPY index.html vite.config.ts ./
-COPY tsconfig.base.json tsconfig.node.json tsconfig.web.json tsconfig.build.json ./
-COPY scripts/clean-dist.mjs ./scripts/clean-dist.mjs
-COPY src ./src
-RUN npm run build
+RUN --mount=type=bind,from=package,target=/package \
+    npm install --global --ignore-scripts --no-audit --no-fund \
+      --registry=https://registry.npmjs.org/ /package/narraeon-*.tgz \
+    && npm cache clean --force
 
 FROM ${NODE_IMAGE} AS runtime
 
@@ -23,12 +22,8 @@ ENV HOME=/home/node \
     NARRAEON_LOG_ROOT=/var/lib/narraeon/log \
     NARRAEON_PORT=4317
 
+COPY --from=install --chown=1000:1000 /usr/local/lib/node_modules/narraeon /app
 WORKDIR /app
-
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev --ignore-scripts --registry=https://registry.npmjs.org/ \
-    && npm cache clean --force
-COPY --from=build --chown=1000:1000 /app/dist ./dist
 
 RUN install -d -o 1000 -g 1000 \
     /var/lib/narraeon/config \
