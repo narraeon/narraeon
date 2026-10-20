@@ -204,6 +204,8 @@ export interface ArtifactStore {
   beginOperation(context: ArtifactOperationContext): Promise<void>;
   /** Register the current monotonic attempt for one follow-up request. */
   beginRequestAttempt(context: ArtifactRequestContext): Promise<void>;
+  /** Physically discard artifact state bound to heads after a rewind. */
+  discardAfterHead(worldId: string, restoredHead: string): Promise<void>;
   /** Reconcile head-bound projections without exposing raw event mechanics. */
   reconcileHead(
     worldId: string,
@@ -741,6 +743,61 @@ export class FileNativeArtifactStore implements ArtifactStore {
         ),
       });
     });
+  }
+
+  /**
+   * Remove the operations, raw records and projection events whose head is after
+   * restoredHead. A rewind discards those rounds, and their replies, attachments
+   * and extension results must not survive on disk (ADR-0045).
+   */
+  async discardAfterHead(worldId: string, restoredHead: string): Promise<void> {
+    return this.#withWorldMutation(worldId, () =>
+      this.#discardAfterHead(worldId, restoredHead),
+    );
+  }
+
+  async #discardAfterHead(
+    worldId: string,
+    restoredHead: string,
+  ): Promise<void> {
+    const limit = headOrdinal(restoredHead);
+    const discardedOperations = new Set(
+      (await this.#operationsForWorld(worldId))
+        .filter(
+          (operation) =>
+            headOrdinal(operation.head ?? operation.context.parentHead) > limit,
+        )
+        .map(({ context }) => context.operationId),
+    );
+    const discardedRecords = new Set(
+      (await this.#effectiveRecords(worldId))
+        .filter(
+          ({ record, head }) =>
+            discardedOperations.has(record.operationId) ||
+            headOrdinal(head ?? record.parentHead) > limit,
+        )
+        .map(({ record }) => record.recordId),
+    );
+    const worldRoot = this.#worldRoot(worldId);
+    await removeMatchingFiles(join(worldRoot, "records"), (value) =>
+      discardedRecords.has((value as { recordId: string }).recordId),
+    );
+    await removeMatchingFiles(join(worldRoot, "events"), (value) => {
+      const event = value as { operationId?: string; recordId?: string };
+      return (
+        (event.operationId !== undefined &&
+          discardedOperations.has(event.operationId)) ||
+        (event.recordId !== undefined && discardedRecords.has(event.recordId))
+      );
+    });
+    for (const operationId of discardedOperations) {
+      await rm(
+        join(this.#root, "operations", `${identityHash(operationId)}.json`),
+        { force: true },
+      );
+      this.#memoryRecords.delete(operationId);
+      this.#memoryEvents.delete(operationId);
+    }
   }
 
   async reconcileHead(
@@ -2950,6 +3007,36 @@ function isNonEmptyString(value: unknown): value is string {
 
 function isSha256(value: unknown): value is string {
   return typeof value === "string" && /^sha256:[a-f0-9]{64}$/u.test(value);
+}
+
+/** Heads are linear: genesis is round 0 and commit:N is round N. */
+function headOrdinal(head: string): number {
+  if (head === "genesis") return 0;
+  const match = /^commit:([1-9][0-9]*)$/u.exec(head);
+  if (match === null)
+    throw new ArtifactStoreInvariantError("Artifact head is invalid");
+  return Number(match[1]);
+}
+
+async function removeMatchingFiles(
+  directory: string,
+  shouldRemove: (value: unknown) => boolean,
+): Promise<void> {
+  let names: string[];
+  try {
+    names = await readdir(directory);
+  } catch (error: unknown) {
+    if (isMissing(error)) return;
+    throw error;
+  }
+  for (const name of names.filter((item) => item.endsWith(".json"))) {
+    const path = join(directory, name);
+    const value = parseArtifactJson<unknown>(
+      await readFile(path, "utf8"),
+      "artifact file",
+    );
+    if (shouldRemove(value)) await rm(path, { force: true });
+  }
 }
 
 function isMissing(error: unknown): boolean {

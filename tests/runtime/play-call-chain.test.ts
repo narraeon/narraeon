@@ -2,6 +2,7 @@ import { FileNativePlayDocuments } from "../../src/runtime/play/PlayDocumentTool
 import { emptyAggregatedModelUsage } from "../../src/protocol/modelUsage.ts";
 import { FileNativeModelHost } from "../../src/runtime/model/FileNativeModelAdapters.ts";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import {
   mkdtemp,
   mkdir,
@@ -6360,9 +6361,11 @@ test("后置结算通知可读取同端点产物，失败和冷 Runtime 恢复�
   expect(
     await runtime.handle({ type: "artifacts.read", worldId }),
   ).toMatchObject({ result: [] });
+  // The discarded round's artifact records are removed from disk, not merely
+  // superseded, so the debug view no longer carries them (ADR-0045).
   expect(
     await runtime.handle({ type: "artifacts.debug", worldId }),
-  ).toMatchObject({ result: [{ payload: { hp: 9 } }] });
+  ).toMatchObject({ result: [] });
   await worlds.deleteWorld(worldId);
   const cold = new V1Runtime({
     dataRoot: root,
@@ -7777,12 +7780,39 @@ test("文档授权只在内存中：重启后未重新精读的写入被拒绝�
 });
 
 test.each([
-  { stage: "intent written", rewound: false, committed: false },
-  { stage: "world rewound", rewound: true, committed: false },
-  { stage: "replacement committed", rewound: true, committed: true },
+  {
+    stage: "intent written",
+    rewound: false,
+    committed: false,
+    continuation: "continue_context" as const,
+  },
+  {
+    stage: "world rewound",
+    rewound: true,
+    committed: false,
+    continuation: "continue_context" as const,
+  },
+  {
+    stage: "replacement committed",
+    rewound: true,
+    committed: true,
+    continuation: "continue_context" as const,
+  },
+  {
+    stage: "intent written, fresh context",
+    rewound: false,
+    committed: false,
+    continuation: "fresh_context" as const,
+  },
+  {
+    stage: "replacement committed, fresh context",
+    rewound: true,
+    committed: true,
+    continuation: "fresh_context" as const,
+  },
 ])(
-  "编辑在进程退出后于阶段「$stage」恢复：加载时补完回退与提交，之后可继续游玩",
-  async ({ rewound, committed }) => {
+  "编辑在进程退出后于阶段「$stage」恢复：加载时补完回退与提交，丢弃的上下文从磁盘删除，之后可继续游玩",
+  async ({ rewound, committed, continuation }) => {
     const { worlds, worldId, root } = await createWorld(
       `edit-recovery-${rewound}-${committed}`,
     );
@@ -7823,7 +7853,7 @@ test.each([
     const operationId = "edit-interrupted";
     // Stages before the replacement commit leave the old endpoint in place.
     if (rewound) await worlds.rewindPlayerRevision(worldId, "commit:2");
-    if (committed)
+    if (committed && continuation === "continue_context")
       await revisePlayerTimeline(worlds, {
         operationId,
         worldId,
@@ -7839,8 +7869,18 @@ test.each([
       eventId: edited.id,
       replacementExchangeId: "exchange-replacement",
       replacementText,
-      continuation: "continue_context",
+      continuation,
       restoresHead: "commit:2",
+      discardChainIds: [chainId],
+      ...(continuation === "fresh_context"
+        ? {
+            freshContext: {
+              hostBinding: hostBinding(),
+              playPreset: playPreset(),
+              modelBinding: modelBinding(),
+            },
+          }
+        : {}),
     });
 
     // A new process loads the world: the interrupted edit is completed first.
@@ -7857,11 +7897,33 @@ test.each([
     const recovered = await restarted.inspectWorld(worldId);
     expect(
       recovered?.events.filter((event) => event.kind === "player"),
-    ).toEqual([
-      expect.objectContaining({ text: "I ask Alex when we are meeting." }),
-      expect.objectContaining({ text: replacementText }),
-    ]);
+    ).toEqual(
+      continuation === "fresh_context"
+        ? // A fresh context keeps its earlier page only as a detached prefix.
+          [expect.objectContaining({ text: replacementText })]
+        : [
+            expect.objectContaining({
+              text: "I ask Alex when we are meeting.",
+            }),
+            expect.objectContaining({ text: replacementText }),
+          ],
+    );
     expect(await worlds.readPlayerRevisionIntent(worldId)).toBeNull();
+    // The discarded context's segments and in-progress markers are gone.
+    const digest = createHash("sha256").update(chainId).digest("hex");
+    for (const directory of ["play-contexts", "play-advances"])
+      expect(
+        existsSync(
+          join(
+            root,
+            "worlds-file-native",
+            worldId,
+            "runtime",
+            directory,
+            digest,
+          ),
+        ),
+      ).toBe(false);
     expect(
       recovered?.events.some(
         (event) =>

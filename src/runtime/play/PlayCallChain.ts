@@ -218,6 +218,8 @@ interface PlayerRevisionIntent {
   replacementText: string;
   continuation: PlayCallChainRevisionInput["continuation"];
   restoresHead: string;
+  /** Contexts from the edited one onward; a rewind discards them from disk. */
+  discardChainIds: string[];
   freshContext?: PlayerRevisionFreshContext;
 }
 
@@ -1160,6 +1162,9 @@ export class PlayCallChain {
       replacementText: input.replacementText,
       continuation: input.continuation,
       restoresHead: playerRevisionRestoresHead(sourceContext, eventIndex),
+      discardChainIds: contexts
+        .slice(contextIndex)
+        .map(({ chainId }) => chainId),
       ...(input.continuation === "fresh_context"
         ? { freshContext: structuredClone(input.freshContext) }
         : {}),
@@ -1175,13 +1180,18 @@ export class PlayCallChain {
 
   /** Complete an interrupted revision recorded by a previous process. */
   async #recoverPlayerRevision(worldId: string): Promise<void> {
-    const intent = await this.#worlds.readPlayerRevisionIntent(worldId);
-    if (intent === null) return;
-    if (!isPlayerRevisionIntent(intent) || intent.worldId !== worldId)
-      throw new PlayCallChainError(
-        "The interrupted player revision record is invalid.",
-      );
-    await this.#completePlayerRevision(intent);
+    await this.#worlds.operations.withExclusiveWorldStateMutation(
+      worldId,
+      async () => {
+        const intent = await this.#worlds.readPlayerRevisionIntent(worldId);
+        if (intent === null) return;
+        if (!isPlayerRevisionIntent(intent) || intent.worldId !== worldId)
+          throw new PlayCallChainError(
+            "The interrupted player revision record is invalid.",
+          );
+        await this.#completePlayerRevision(intent);
+      },
+    );
   }
 
   /**
@@ -1194,6 +1204,15 @@ export class PlayCallChain {
   async #completePlayerRevision(
     intent: PlayerRevisionIntent,
   ): Promise<PersistedPlayCallChain> {
+    return this.#worlds.operations.withExclusiveWorldStateMutation(
+      intent.worldId,
+      () => this.#completePlayerRevisionQueued(intent),
+    );
+  }
+
+  async #completePlayerRevisionQueued(
+    intent: PlayerRevisionIntent,
+  ): Promise<PersistedPlayCallChain> {
     const worldId = intent.worldId;
     const resultChainId = revisionChainId(
       intent.chainId,
@@ -1203,6 +1222,7 @@ export class PlayCallChain {
     );
     const current = await this.#readPersisted(worldId);
     if (current?.chainId === resultChainId) {
+      await this.#discardRevisedContexts(intent, resultChainId);
       await this.#worlds.clearPlayerRevisionIntent(worldId);
       return current;
     }
@@ -1302,12 +1322,30 @@ export class PlayCallChain {
     await this.#worlds.playTimeline.persist(structuredClone(revised));
     if (intent.continuation === "fresh_context")
       await this.#worlds.completeArchiveFreshContext(worldId);
+    await this.#discardRevisedContexts(intent, resultChainId);
     const activeId = this.#worldChains.get(worldId);
     if (activeId !== undefined) this.#active.delete(activeId);
     this.#active.delete(sourceContext.chainId);
     this.#worldChains.delete(worldId);
     await this.#worlds.clearPlayerRevisionIntent(worldId);
     return revised;
+  }
+
+  /**
+   * Delete the segments of the edited context and every later one. Their
+   * surviving content has been copied into the revised context, so only the
+   * discarded rounds and their in-progress markers are removed from disk.
+   */
+  async #discardRevisedContexts(
+    intent: PlayerRevisionIntent,
+    keepChainId: string,
+  ): Promise<void> {
+    const discarded = intent.discardChainIds.filter(
+      (chainId) => chainId !== keepChainId,
+    );
+    await this.#worlds.playTimeline.discardContexts(intent.worldId, discarded);
+    for (const chainId of discarded)
+      await this.#worlds.playAdvances.discardChain(intent.worldId, chainId);
   }
 
   /**
@@ -1319,6 +1357,10 @@ export class PlayCallChain {
     const done = await this.#worlds.getOperationOutcome(intent.operationId);
     if (done.outcome === "committed") return done.head;
     await this.#worlds.rewindPlayerRevision(
+      intent.worldId,
+      intent.restoresHead,
+    );
+    await this.#artifacts?.discardAfterHead(
       intent.worldId,
       intent.restoresHead,
     );

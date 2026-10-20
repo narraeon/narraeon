@@ -124,6 +124,14 @@ export class FileNativePlayAdvanceStore {
     await rm(this.#markerPath(base.worldId, base.chainId), { force: true });
   }
 
+  /** Remove the in-progress marker and all advance records of a discarded chain. */
+  async discardChain(worldId: string, chainId: string): Promise<void> {
+    await rm(dirname(this.#markerPath(worldId, chainId)), {
+      recursive: true,
+      force: true,
+    });
+  }
+
   #markerPath(worldId: string, chainId: string): string {
     return join(
       this.#worldsRoot,

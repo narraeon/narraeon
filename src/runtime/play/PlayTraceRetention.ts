@@ -33,8 +33,9 @@ type RetainedPlayTrace = Omit<
 >;
 
 /**
- * Prepare the selected player's prefix at the existing pre-commit seam.
- * Endpoint reads, revision submission and publication belong to the operation.
+ * Split a context at a selected player message for an edit: the prefix before
+ * it is kept, and the replacement is appended once the world has rewound and
+ * committed it (PlayCallChain.revisePlayer).
  */
 export function preparePlayerRevisionTrace(
   source: PersistedPlayCallChainContext,
@@ -47,7 +48,6 @@ export function preparePlayerRevisionTrace(
     { kind: "player" }
   >;
   return {
-    // This append precedes the operation's materialization check, as before.
     withReplacement(replacement: {
       head: string;
       exchangeId: string;
@@ -84,7 +84,7 @@ export function preparePlayerRevisionTrace(
     },
     pagePrefixAtEndpoint(endpoint: TraceEndpoint): RetainedPlayTrace | null {
       if (prefix.length === 0) return null;
-      // Preserve the fresh path's post-commit prefix reconstruction seam.
+      // A fresh context keeps the page before the edit as a detached prefix.
       const prefixTranscript = transcriptThroughEvents(
         source.transcript,
         prefix,

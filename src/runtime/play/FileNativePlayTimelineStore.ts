@@ -292,6 +292,20 @@ export class FileNativePlayTimelineStore {
   }
 
   /** Write a sealed context segment without making it the active timeline. */
+  /** Physically remove the segments of contexts a rewind discarded. */
+  async discardContexts(
+    worldId: string,
+    chainIds: readonly string[],
+  ): Promise<void> {
+    for (const chainId of chainIds) {
+      assertIdentity(chainId, "Call-chain ID");
+      await rm(this.#contextRoot(worldId, chainId), {
+        recursive: true,
+        force: true,
+      });
+    }
+  }
+
   async persistDetached(
     value: PersistedPlayCallChain,
     cursor?: PlayContextPersistenceCursor,
