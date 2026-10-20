@@ -17,6 +17,8 @@ export interface HomeWorld {
   lastActivityAt: number | null;
   excerpt: string | null;
   playerTurns: number;
+  /** No turn ledger yet; opening the world runs the storage upgrade. */
+  pendingUpgrade?: true;
 }
 
 export function HomeScreen({
@@ -128,7 +130,9 @@ export function HomeScreen({
                         {gameplayLabel(world.gameplay, getWebLocale())}
                       </small>
                       <span className="home-world-card-activity">
-                        {world.lastActivityAt == null ? (
+                        {world.pendingUpgrade === true ? (
+                          <span>{uiText("待升级")}</span>
+                        ) : world.lastActivityAt == null ? (
                           <span>{uiText("活动时间未记录")}</span>
                         ) : (
                           <time
@@ -142,16 +146,20 @@ export function HomeScreen({
                             {relativeActivityTime(world.lastActivityAt)}
                           </time>
                         )}
-                        <span>
-                          {uiText(
-                            world.playerTurns === 1 ? "1 回合" : "{count} 回合",
-                            {
-                              count: (world.playerTurns ?? 0).toLocaleString(
-                                getWebLocale(),
-                              ),
-                            },
-                          )}
-                        </span>
+                        {world.pendingUpgrade === true ? null : (
+                          <span>
+                            {uiText(
+                              world.playerTurns === 1
+                                ? "1 回合"
+                                : "{count} 回合",
+                              {
+                                count: (world.playerTurns ?? 0).toLocaleString(
+                                  getWebLocale(),
+                                ),
+                              },
+                            )}
+                          </span>
+                        )}
                       </span>
                       {world.excerpt == null ? null : (
                         <span

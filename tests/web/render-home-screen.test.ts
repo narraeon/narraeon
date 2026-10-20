@@ -453,4 +453,44 @@ describe("世界工作区主页", () => {
       "zh-CN",
     );
   });
+  test("待升级的世界只显示待升级，不显示回合数", () => {
+    render(
+      createElement(HomeScreen, {
+        contentPackages: [],
+        worlds: [
+          {
+            worldId: "world-old",
+            title: "旧世界",
+            gameplay: { mode: "interactive-fiction" },
+            lastActivityAt: null,
+            excerpt: null,
+            playerTurns: 0,
+            pendingUpgrade: true,
+          },
+        ],
+        selectedPackageId: "",
+        modelConfigured: true,
+        activeModelName: "本地主持模型",
+        currentPresetName: "克制叙事",
+        importArchive: null,
+        importPending: false,
+        onImportArchiveChange: vi.fn(),
+        onCreateWorld: vi.fn(),
+        onCreatePackage: vi.fn(),
+        onCreateSamplePackage: vi.fn(),
+        onConfigureModel: vi.fn(),
+        onImportPackage: vi.fn(),
+        onOpenPackage: vi.fn(),
+        onRenamePackage: vi.fn(),
+        onDeletePackage: vi.fn(),
+        onOpenWorld: vi.fn(),
+        onRenameWorld: vi.fn(),
+        onDeleteWorld: vi.fn(),
+      }),
+    );
+
+    expect(screen.getByText("待升级")).toBeTruthy();
+    expect(screen.queryByText("0 回合")).toBeNull();
+    expect(screen.queryByText("活动时间未记录")).toBeNull();
+  });
 });

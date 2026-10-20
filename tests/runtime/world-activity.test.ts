@@ -379,3 +379,29 @@ async function activity(root: string, worldId: string): Promise<WorldActivity> {
     await readFile(activityPath(root, worldId), "utf8"),
   ) as WorldActivity;
 }
+
+test("没有轮账本的世界在列表里显示为待升级，不读旧文件也不触发迁移", async () => {
+  const fixture = await world();
+  const worldRoot = join(fixture.root, "worlds-file-native", fixture.worldId);
+  await rm(join(worldRoot, "runtime", "head.json"));
+  await writeFile(
+    join(worldRoot, "runtime", "materialized-head.json"),
+    JSON.stringify({ schemaVersion: 2, head: "commit:9", sequence: 9 }),
+  );
+  await rm(activityPath(fixture.root, fixture.worldId), { force: true });
+  expect(await fixture.store.listWorlds()).toMatchObject([
+    {
+      worldId: fixture.worldId,
+      pendingUpgrade: true,
+      lastActivityAt: null,
+      excerpt: null,
+      playerTurns: 0,
+    },
+  ]);
+  await expect(
+    readFile(activityPath(fixture.root, fixture.worldId)),
+  ).rejects.toThrow();
+  await expect(
+    readFile(join(worldRoot, "runtime", "head.json")),
+  ).rejects.toThrow();
+});

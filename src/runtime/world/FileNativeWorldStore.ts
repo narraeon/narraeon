@@ -2679,18 +2679,15 @@ async function readWorldSummaryAt(
 ): Promise<FileNativeWorldSummary> {
   const published = publication ?? (await readPublicationAt(root));
   const gameplay = await readWorldGameplayAt(root);
-  const { lastActivityAt, excerpt, playerTurns } = await readWorldActivity(
-    root,
-    serializeRebuild,
-  );
-  const summary = {
+  const activity = await readWorldActivity(root, serializeRebuild);
+  return {
     ...toSummary(published, gameplay),
     title: await readWorldTitleAt(root, published),
-    lastActivityAt,
-    excerpt,
-    playerTurns,
+    lastActivityAt: activity.lastActivityAt,
+    excerpt: activity.excerpt,
+    playerTurns: activity.playerTurns,
+    ...(activity.pendingUpgrade === true ? { pendingUpgrade: true } : {}),
   };
-  return summary;
 }
 
 async function readWorldTitleAt(

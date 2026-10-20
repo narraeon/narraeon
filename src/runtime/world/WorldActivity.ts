@@ -13,10 +13,21 @@ export interface WorldActivity {
   playerTurns: number;
 }
 
-export type WorldActivitySummary = Pick<
+export interface WorldActivitySummary extends Pick<
   WorldActivity,
   "lastActivityAt" | "excerpt" | "playerTurns"
->;
+> {
+  /** The world has no turn ledger yet; opening it runs the storage upgrade. */
+  pendingUpgrade?: true;
+}
+
+/** Listing never upgrades storage: a world without a ledger shows as pending. */
+export const pendingUpgradeActivity: WorldActivitySummary = {
+  lastActivityAt: null,
+  excerpt: null,
+  playerTurns: 0,
+  pendingUpgrade: true,
+};
 
 /** Read only the small head/cache on a hit; repair misses from the local projection. */
 export async function readWorldActivity(
@@ -24,12 +35,14 @@ export async function readWorldActivity(
   serializeRebuild: (
     rebuild: () => Promise<WorldActivity>,
   ) => Promise<WorldActivity> = (rebuild) => rebuild(),
-): Promise<WorldActivity> {
-  const head = await currentHead(root);
+): Promise<WorldActivitySummary> {
+  const ledger = new WorldLedgerAuthority(root);
+  if (!(await ledger.exists())) return pendingUpgradeActivity;
+  const head = (await ledger.readHead()).head;
   const cached = await readCache(root);
   if (cached?.head === head) return cached;
   return serializeRebuild(async () => {
-    const latestHead = await currentHead(root);
+    const latestHead = (await ledger.readHead()).head;
     const latestCache = await readCache(root);
     if (latestCache?.head === latestHead) return latestCache;
     const empty: WorldActivity = {
@@ -97,21 +110,6 @@ function excerpt(text: string): string | null {
   return singleLine === ""
     ? null
     : Array.from(singleLine).slice(0, 80).join("");
-}
-
-async function currentHead(root: string): Promise<string> {
-  try {
-    return (await new WorldLedgerAuthority(root).readHead()).head;
-  } catch (error: unknown) {
-    if (!isMissing(error)) throw error;
-    // Listing a released layout must not trigger an Authority migration/replay.
-    const checkpoint = await readJson(
-      join(root, "runtime/materialized-head.json"),
-    );
-    return isRecord(checkpoint) && typeof checkpoint.head === "string"
-      ? checkpoint.head
-      : "genesis";
-  }
 }
 
 async function readCache(root: string): Promise<WorldActivity | null> {

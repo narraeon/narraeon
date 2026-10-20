@@ -146,6 +146,7 @@ const englishMessages: Record<string, string> = {
   "世界操作：{title}": "World actions: {title}",
   刚刚: "Just now",
   活动时间未记录: "Activity time not recorded",
+  待升级: "Upgrade pending",
   "1 回合": "1 turn",
   "{count} 回合": "{count} turns",
   "先新建或导入一份内容包，再完善开场与世界设定。":
