@@ -13,7 +13,6 @@ import {
 } from "../authoring/AuthoringRequestSnapshot.ts";
 import { randomUUID } from "node:crypto";
 import {
-  link,
   mkdir,
   open,
   readFile,
@@ -22,6 +21,7 @@ import {
   rm,
   stat,
 } from "node:fs/promises";
+import { linkExclusive } from "../FileNativeExclusiveLink.ts";
 import { dirname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
@@ -1490,7 +1490,7 @@ async function publishImmutableSource(
       await handle.close();
     }
     try {
-      await link(temporary, path);
+      await linkExclusive(temporary, path);
     } catch (error: unknown) {
       if (!isNodeError(error) || error.code !== "EEXIST") throw error;
       if ((await readFile(path, "utf8")) !== contents)

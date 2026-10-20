@@ -21,13 +21,13 @@ import { constants } from "node:fs";
 import {
   chmod,
   copyFile,
-  link,
   mkdir,
   readFile,
   rename,
   rm,
   writeFile,
 } from "node:fs/promises";
+import { linkExclusive } from "../FileNativeExclusiveLink.ts";
 import { dirname, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
@@ -1728,7 +1728,7 @@ async function publishImmutableJson(
       mode: 0o600,
     });
     try {
-      await link(temporary, path);
+      await linkExclusive(temporary, path);
     } catch (error: unknown) {
       if (!isNodeError(error) || error.code !== "EEXIST") throw error;
       if ((await readFile(path, "utf8")) !== contents)

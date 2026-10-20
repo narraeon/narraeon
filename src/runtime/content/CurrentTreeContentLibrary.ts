@@ -2,7 +2,6 @@ import { PackageScriptPermissions } from "../extension/PackageScriptPermissions.
 import { randomUUID } from "node:crypto";
 import { readFileSync, unlinkSync } from "node:fs";
 import {
-  link,
   open,
   mkdir,
   readFile,
@@ -12,6 +11,7 @@ import {
   stat,
   unlink,
 } from "node:fs/promises";
+import { linkExclusive } from "../FileNativeExclusiveLink.ts";
 import { basename, dirname, isAbsolute, join, posix, win32 } from "node:path";
 
 import { portableContentTreePathKey } from "../../protocol/contentTree.ts";
@@ -479,7 +479,7 @@ export class CurrentTreeContentLibrary {
       await handle.close();
       handle = undefined;
       try {
-        await link(temporaryPath, lockPath);
+        await linkExclusive(temporaryPath, lockPath);
       } catch (error: unknown) {
         if (!isNodeErrorCode(error, "EEXIST")) throw error;
         if (options.wait === true) {
@@ -567,7 +567,7 @@ export class CurrentTreeContentLibrary {
       await unlink(previousPath).catch((error: unknown) => {
         if (!isNodeErrorCode(error, "ENOENT")) throw error;
       });
-      await link(join(packageRoot, currentTreeFileName), previousPath);
+      await linkExclusive(join(packageRoot, currentTreeFileName), previousPath);
       await rename(temporaryPath, join(packageRoot, currentTreeFileName));
       await unlink(previousPath).catch(() => undefined);
     } catch (error: unknown) {
@@ -695,7 +695,7 @@ export class CurrentTreeContentLibrary {
       await handle.writeFile(`${JSON.stringify(reclaim)}\n`, "utf8");
       await handle.close();
       handle = undefined;
-      await link(temporaryPath, reclaimPath);
+      await linkExclusive(temporaryPath, reclaimPath);
     } catch (error: unknown) {
       await handle?.close().catch(() => undefined);
       if (isNodeErrorCode(error, "EEXIST")) return false;
@@ -711,7 +711,7 @@ export class CurrentTreeContentLibrary {
       await unlink(lockPath).catch((error: unknown) => {
         if (!isNodeErrorCode(error, "ENOENT")) throw error;
       });
-      await link(replacementPath, lockPath);
+      await linkExclusive(replacementPath, lockPath);
       return true;
     } finally {
       const owner = await readPackageLockMarker(reclaimPath);
@@ -733,7 +733,7 @@ export class CurrentTreeContentLibrary {
           reclaimPath,
           replacementPath,
         )) ||
-        (await link(replacementPath, lockPath)
+        (await linkExclusive(replacementPath, lockPath)
           .then(() => true)
           .catch((error: unknown) => {
             if (isNodeErrorCode(error, "EEXIST")) return false;
