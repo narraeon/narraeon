@@ -17,4 +17,7 @@
     <string name="exit_reason_exit_self">backend exited</string>
     <string name="exit_reason_low_memory">closed by the system for low memory</string>
     <string name="exit_reason_other">other</string>
+    <string name="backend_channel_name">Narraeon backend</string>
+    <string name="backend_running">Running in the background</string>
+    <string name="backend_exit">Exit</string>
 </resources>

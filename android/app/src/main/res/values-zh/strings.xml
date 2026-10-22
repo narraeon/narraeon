@@ -17,4 +17,7 @@
     <string name="exit_reason_exit_self">后端退出</string>
     <string name="exit_reason_low_memory">内存不足被系统关闭</string>
     <string name="exit_reason_other">其他</string>
+    <string name="backend_channel_name">Narraeon 后端</string>
+    <string name="backend_running">正在后台运行</string>
+    <string name="backend_exit">退出</string>
 </resources>

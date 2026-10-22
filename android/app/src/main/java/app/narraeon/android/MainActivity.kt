@@ -1,9 +1,11 @@
 package app.narraeon.android
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -54,6 +56,8 @@ class MainActivity : AppCompatActivity() {
         pendingFileChooser = null
     }
 
+    private val notificationPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         container = FrameLayout(this)
@@ -66,9 +70,18 @@ class MainActivity : AppCompatActivity() {
         val intent = Intent(this, NodeService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent)
         else startService(intent)
+        if (savedInstanceState == null) requestNotificationPermission()
 
         waitForBackend()
         if (savedInstanceState == null) offerExportAfterAbnormalExit()
+    }
+
+    // Android 13+ hides the backend's notification, and with it the Exit action, until
+    // the user allows notifications. The service runs either way, so a denial is final.
+    private fun requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return
+        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
     // The page keeps its screens in history entries, so Back walks them. At the first

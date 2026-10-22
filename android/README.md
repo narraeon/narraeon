@@ -46,6 +46,17 @@ On first launch, and whenever `bundle-version.txt` changes, `NodeService` copies
 `<version>+<commit>.<content hash>`, so a rebuild with uncommitted changes is also
 recopied.
 
+## Background running
+
+The foreground service keeps the process alive when the app leaves the screen, and it
+holds a partial wake lock while Node runs, so the CPU keeps serving requests with the
+screen off. The wake lock also keeps the device out of deep sleep while the app is idle.
+The service notification opens the app when tapped, and its **Exit** action releases the
+wake lock and ends the process. On Android 13 and later the app asks for the notification
+permission at launch; if it is denied, the service still runs but the notification and its
+Exit action stay hidden. Vendor ROMs that kill background apps despite a foreground
+service are not handled.
+
 ## Logs
 
 ```bash

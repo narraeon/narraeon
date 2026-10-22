@@ -1,22 +1,34 @@
 package app.narraeon.android
 
+import android.annotation.SuppressLint
+import android.app.ActivityManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
+import android.os.Process
 import android.util.Log
 import java.io.File
 
 // Runs the Narraeon backend inside this app process. The Node runtime can only start
 // once per process, so a second start is ignored.
 class NodeService : Service() {
+    @Volatile
+    private var wakeLock: PowerManager.WakeLock? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_EXIT) {
+            exitApp()
+            return START_NOT_STICKY
+        }
         startForegroundCompat()
         if (!nodeStarted.compareAndSet(false, true)) return START_STICKY
 
@@ -41,6 +53,7 @@ class NodeService : Service() {
                 // alive, and startup is refused. Android runs one app process at a time, so no live
                 // Narraeon owner can exist here. Remove the stale file before starting Node.
                 File(filesDir, "data/server.pid").delete()
+                acquireWakeLock()
                 nodeState = NodeState.Running
                 val code = NativeNode.startNode(arguments, environment)
                 nodeState = NodeState.Exited("node exited with code $code")
@@ -51,6 +64,7 @@ class NodeService : Service() {
                 Log.e(TAG, "node failed to start", error)
                 DiagnosticLog.append(this, "node-service.log", "node failed to start\n${Log.getStackTraceString(error)}")
             } finally {
+                releaseWakeLock()
                 // node::Start cannot be re-entered in this process, so the guard stays set.
                 Log.w(TAG, "node thread finished; restart requires a new app process")
             }
@@ -87,21 +101,65 @@ class NodeService : Service() {
     private fun readAsset(path: String): String =
         assets.open(path).bufferedReader().use { it.readText() }
 
+    // The foreground service keeps the process alive, but with the screen off the CPU
+    // still sleeps and Node stops mid-request. A partial wake lock keeps it running for
+    // as long as Node does; the notification's Exit action ends both.
+    @SuppressLint("WakelockTimeout")
+    private fun acquireWakeLock() {
+        val lock = getSystemService(PowerManager::class.java)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Narraeon:node")
+        lock.setReferenceCounted(false)
+        lock.acquire()
+        wakeLock = lock
+    }
+
+    private fun releaseWakeLock() {
+        wakeLock?.takeIf { it.isHeld }?.release()
+        wakeLock = null
+    }
+
+    // Node cannot be started twice in one process, so exiting ends the process.
+    private fun exitApp() {
+        releaseWakeLock()
+        getSystemService(ActivityManager::class.java).appTasks.forEach { it.finishAndRemoveTask() }
+        stopSelf()
+        Process.killProcess(Process.myPid())
+    }
+
     private fun startForegroundCompat() {
         val channelId = "narraeon-backend"
         val manager = getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             manager.createNotificationChannel(
-                NotificationChannel(channelId, "Narraeon backend", NotificationManager.IMPORTANCE_LOW),
+                NotificationChannel(channelId, getString(R.string.backend_channel_name), NotificationManager.IMPORTANCE_LOW),
             )
         }
+        // Tapping the notification brings the existing task forward, as the launcher does.
+        val openApp = PendingIntent.getActivity(
+            this,
+            0,
+            packageManager.getLaunchIntentForPackage(packageName)!!
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED),
+            PendingIntent.FLAG_IMMUTABLE,
+        )
+        val exit = PendingIntent.getService(
+            this,
+            0,
+            Intent(this, NodeService::class.java).setAction(ACTION_EXIT),
+            PendingIntent.FLAG_IMMUTABLE,
+        )
         val notification: Notification = (
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) Notification.Builder(this, channelId)
             else Notification.Builder(this)
             )
             .setContentTitle("Narraeon")
-            .setContentText("Backend is running")
+            .setContentText(getString(R.string.backend_running))
             .setSmallIcon(android.R.drawable.ic_popup_sync)
+            .setContentIntent(openApp)
+            .setOngoing(true)
+            .addAction(
+                Notification.Action.Builder(null, getString(R.string.backend_exit), exit).build(),
+            )
             .build()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
@@ -117,6 +175,7 @@ class NodeService : Service() {
         private const val VERSION_FILE = "bundle-version.txt"
         private const val FILE_LIST = "bundle-files.txt"
         private const val NOTIFICATION_ID = 4317
+        private const val ACTION_EXIT = "app.narraeon.android.action.EXIT"
         private val nodeStarted = java.util.concurrent.atomic.AtomicBoolean(false)
 
         @Volatile
