@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import {
   mkdir,
   mkdtemp,
@@ -12,10 +11,7 @@ import { join } from "node:path";
 
 import { afterEach, expect, test } from "vitest";
 
-import {
-  acquireDataRootLock,
-  DataRootBusyError,
-} from "../../src/runtime/config/dataRootLock.ts";
+import { prepareDataRoot } from "../../src/runtime/config/dataRootCleanup.ts";
 
 const roots: string[] = [];
 
@@ -26,36 +22,18 @@ afterEach(async () => {
 });
 
 async function dataRoot(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "narraeon-data-root-lock-"));
+  const root = await mkdtemp(join(tmpdir(), "narraeon-data-root-cleanup-"));
   roots.push(root);
   return root;
 }
 
-function exitedPid(): number {
-  // A child that has exited: its pid is no longer a live process.
-  const child = spawnSync(process.execPath, ["-e", "process.exit(0)"]);
-  return child.pid;
-}
-
-test("同一数据目录的第二个服务拒绝启动，释放后可以重新拿到启动锁", async () => {
+test("启动时删除旧版本留下的启动锁文件，即使其 pid 仍存活", async () => {
   const root = await dataRoot();
-  const first = await acquireDataRootLock(root);
-  await expect(acquireDataRootLock(root)).rejects.toBeInstanceOf(
-    DataRootBusyError,
-  );
-  await first.release();
-  const second = await acquireDataRootLock(root);
-  await second.release();
-});
-
-test("首个服务异常退出（owner pid 已不存在）后，重启可以拿到启动锁", async () => {
-  const root = await dataRoot();
-  await writeFile(join(root, "server.pid"), `${exitedPid()}\n`, "utf8");
-  const lock = await acquireDataRootLock(root);
-  expect(await readFile(join(root, "server.pid"), "utf8")).toBe(
-    `${process.pid}\n`,
-  );
-  await lock.release();
+  await writeFile(join(root, "server.pid"), `${process.pid}\n`, "utf8");
+  await prepareDataRoot(root);
+  await expect(stat(join(root, "server.pid"))).rejects.toMatchObject({
+    code: "ENOENT",
+  });
 });
 
 test("启动时删除旧的操作回执（含导入回执），保留世界修订 epoch 标记", async () => {
@@ -70,7 +48,7 @@ test("启动时删除旧的操作回执（含导入回执），保留世界修�
   await writeFile(join(operations, "import-abc.json"), "{}", "utf8");
   await writeFile(join(operations, "create-world.json"), "{}", "utf8");
 
-  const lock = await acquireDataRootLock(root);
+  await prepareDataRoot(root);
   for (const receipt of ["import-abc.json", "create-world.json"])
     await expect(stat(join(operations, receipt))).rejects.toMatchObject({
       code: "ENOENT",
@@ -78,7 +56,6 @@ test("启动时删除旧的操作回执（含导入回执），保留世界修�
   await expect(
     stat(join(operations, "world-revision-locks", "world.json")),
   ).resolves.toBeDefined();
-  await lock.release();
 });
 
 test("启动时只剩旧回执的 operations 目录会被整体删除", async () => {
@@ -86,11 +63,10 @@ test("启动时只剩旧回执的 operations 目录会被整体删除", async ()
   await mkdir(join(root, "operations"), { recursive: true });
   await writeFile(join(root, "operations", "import-abc.json"), "{}", "utf8");
 
-  const lock = await acquireDataRootLock(root);
+  await prepareDataRoot(root);
   await expect(stat(join(root, "operations"))).rejects.toMatchObject({
     code: "ENOENT",
   });
-  await lock.release();
 });
 
 test("启动时清理旧的世界锁、authority 锁与修正 claim 目录", async () => {
@@ -108,12 +84,11 @@ test("启动时清理旧的世界锁、authority 锁与修正 claim 目录", asy
   const kept = join(root, "operations", "world-revision-locks");
   await mkdir(kept, { recursive: true });
 
-  const lock = await acquireDataRootLock(root);
+  await prepareDataRoot(root);
   for (const path of legacy) {
     await expect(readFile(join(path, "owner.json"))).rejects.toMatchObject({
       code: "ENOENT",
     });
   }
   await expect(stat(kept)).resolves.toMatchObject({});
-  await lock.release();
 });
