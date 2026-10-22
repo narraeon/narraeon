@@ -1,6 +1,10 @@
 import { useState } from "react";
 import type { AppLocale } from "../protocol/appPreferences.ts";
-import { canExportAndroidLogs, exportAndroidLogs } from "./androidBridge.ts";
+import {
+  canExportAndroidLogs,
+  exportAndroidLogs,
+  useAndroidBack,
+} from "./androidBridge.ts";
 import { uiText } from "./i18n.ts";
 
 export type WorkspaceScreen =
@@ -32,6 +36,7 @@ export function WorkspaceHeader({
   onLocaleChange: (locale: AppLocale) => void;
 }): React.JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false);
+  useAndroidBack(menuOpen, () => setMenuOpen(false));
   function navigate(next: WorkspaceScreen): void {
     if (navigationLocked) return;
     setMenuOpen(false);

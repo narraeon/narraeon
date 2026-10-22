@@ -19,7 +19,7 @@ import {
   describePresetFile,
 } from "./playPresetEditorLabels.ts";
 import type { OrderedPlayPrompt } from "../shared/ordered-play-prompts.ts";
-import { saveFile } from "./androidBridge.ts";
+import { saveFile, useAndroidBack } from "./androidBridge.ts";
 import { getWebLocale, uiText } from "./i18n.ts";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
@@ -270,6 +270,11 @@ function preferredPresetFilePath(files: Record<string, string>): string {
   return Object.keys(files).sort()[0] ?? "";
 }
 
+// The library and operations menus are <details>; Escape, an outside press and
+// Android Back close them.
+const openPresetMenus =
+  ".play-preset-operations[open], .play-preset-library > details[open]";
+
 export function PlayPresetScreen({
   client,
   initialLibrary,
@@ -294,6 +299,15 @@ export function PlayPresetScreen({
 }): React.JSX.Element {
   const [library, setLibrary] = useState(initialLibrary);
   const libraryMenu = useRef<HTMLDetailsElement>(null);
+  const screenRef = useRef<HTMLElement>(null);
+  useAndroidBack(true, () => {
+    const menus =
+      screenRef.current?.querySelectorAll<HTMLDetailsElement>(
+        openPresetMenus,
+      ) ?? [];
+    for (const menu of menus) menu.open = false;
+    return menus.length > 0;
+  });
   const initial =
     initialLibrary.presets.find(({ id }) => id === initialSelectedId) ??
     initialLibrary.presets.find(
@@ -585,11 +599,12 @@ export function PlayPresetScreen({
 
   return (
     <section
+      ref={screenRef}
       className="play-preset-screen"
       aria-labelledby="play-preset-title"
       onPointerDownCapture={(event) => {
         for (const menu of event.currentTarget.querySelectorAll<HTMLDetailsElement>(
-          ".play-preset-operations[open], .play-preset-library > details[open]",
+          openPresetMenus,
         ))
           if (event.target instanceof Node && !menu.contains(event.target))
             menu.open = false;
@@ -597,7 +612,7 @@ export function PlayPresetScreen({
       onKeyDown={(event) => {
         if (event.key === "Escape")
           for (const menu of event.currentTarget.querySelectorAll<HTMLDetailsElement>(
-            ".play-preset-operations[open], .play-preset-library > details[open]",
+            openPresetMenus,
           ))
             menu.open = false;
       }}

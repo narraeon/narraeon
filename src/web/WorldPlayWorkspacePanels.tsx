@@ -10,6 +10,7 @@ import type {
   ContentTreeFile,
   V1PlayContextReadingView,
 } from "../protocol/v1.ts";
+import { useAndroidBack } from "./androidBridge.ts";
 import { worldDocumentPresentation } from "./worldDocumentPresentation.ts";
 import { uiText } from "./i18n.ts";
 
@@ -28,6 +29,7 @@ export function WorldDocumentRail({
 }): React.JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false);
   const [query, setQuery] = useState("");
+  useAndroidBack(menuOpen, () => setMenuOpen(false));
   const selected =
     documents.find(({ path }) => path === selectedPath) ?? documents[0];
   const normalizedQuery = query.trim().toLocaleLowerCase("zh-CN");
@@ -217,6 +219,7 @@ export function AiReadingDialog({
   documents: readonly ContentTreeFile[];
   onClose: () => void;
 }): React.JSX.Element {
+  useAndroidBack(true, onClose);
   return (
     <div className="world-dialog-scrim">
       <section
@@ -252,6 +255,7 @@ export function ReadingPreferencesPopover({
   onChange: (value: AppReadingPreferences) => void;
   onClose: () => void;
 }): React.JSX.Element {
+  useAndroidBack(true, onClose);
   return (
     <aside className="world-reading-popover" aria-label={uiText("阅读设置")}>
       <header>
@@ -674,6 +678,7 @@ export function WorldManagementDialog({
   modelConfigured: boolean;
   revisionLocked: boolean;
 }): React.JSX.Element {
+  useAndroidBack(true, onClose);
   return (
     <div className="world-dialog-scrim">
       <section

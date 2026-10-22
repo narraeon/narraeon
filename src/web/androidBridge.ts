@@ -1,3 +1,5 @@
+import { useEffect, useEffectEvent } from "react";
+
 // The Android app injects `NarraeonAndroid` into the backend page only (see
 // android/.../MainActivity.kt). In a regular browser it is absent.
 interface AndroidBridge {
@@ -19,6 +21,47 @@ export function canExportAndroidLogs(): boolean {
 /** Asks the Android shell to zip its diagnostic logs and open the share sheet. */
 export function exportAndroidLogs(): void {
   androidBridge()?.postMessage("export-logs");
+}
+
+/**
+ * Back handlers of the overlays that are open now, oldest first. A handler
+ * returns false when it had nothing to close; any other result counts as handled.
+ */
+const backHandlers: (() => boolean)[] = [];
+
+/**
+ * Called by the Android shell when the Back key is pressed, before it walks page
+ * history. Offers Back to the most recently opened overlay first and returns
+ * whether one handled it.
+ */
+export function handleAndroidBack(): boolean {
+  for (let index = backHandlers.length - 1; index >= 0; index -= 1)
+    if (backHandlers[index]?.()) return true;
+  return false;
+}
+
+if (typeof window !== "undefined")
+  (window as { narraeonAndroidBack?: () => boolean }).narraeonAndroidBack =
+    handleAndroidBack;
+
+/**
+ * While `active`, the Android Back key goes to `onBack` instead of page history.
+ * An overlay that should stay open (a pending create, an unsaved draft) still
+ * handles Back, so Back does not leave the page behind it.
+ */
+export function useAndroidBack(
+  active: boolean,
+  onBack: () => boolean | void,
+): void {
+  const handle = useEffectEvent(() => onBack() !== false);
+  useEffect(() => {
+    if (!active) return;
+    const handler = () => handle();
+    backHandlers.push(handler);
+    return () => {
+      backHandlers.splice(backHandlers.indexOf(handler), 1);
+    };
+  }, [active]);
 }
 
 export type SaveFileSource =

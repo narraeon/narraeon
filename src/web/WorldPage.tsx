@@ -21,7 +21,7 @@ import {
   type ObserveConversation,
 } from "./ConversationObserver.ts";
 import { useAuthoringWorkspace } from "./useAuthoringWorkspace.ts";
-import { saveFile } from "./androidBridge.ts";
+import { saveFile, useAndroidBack } from "./androidBridge.ts";
 import { uiText } from "./i18n.ts";
 import {
   hasHandledCheckpoint,
@@ -223,6 +223,10 @@ export function WorldPage({
   const [rightRailOpen, setRightRailOpen] = useState(false);
   const [rightRailTab, setRightRailTab] = useState<RightRailTab>("documents");
   const [readingOpen, setReadingOpen] = useState(false);
+  useAndroidBack(leftRailOpen || rightRailOpen, () => {
+    setLeftRailOpen(false);
+    setRightRailOpen(false);
+  });
   const [dialog, setDialog] = useState<WorldDialog>(
     protagonistRevision === undefined ? null : "revision",
   );

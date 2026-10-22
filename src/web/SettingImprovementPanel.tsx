@@ -21,6 +21,7 @@ import {
 } from "./ContentTreeEditor.tsx";
 import { ModelUsageBreakdown } from "./ModelUsageBreakdown.tsx";
 import { PackageGameplaySection } from "./PackageGameplaySection.tsx";
+import { useAndroidBack } from "./androidBridge.ts";
 import { getWebLocale, uiText } from "./i18n.ts";
 import { UnifiedTextDiff } from "./UnifiedTextDiff.tsx";
 
@@ -256,6 +257,17 @@ export function SettingImprovementPanel({
       setRollingBackFile(null);
     }
   };
+
+  // During a world revision Back returns to play like the ← button, and stays on
+  // the page while that button is disabled. Elsewhere this page has its own
+  // address, so page history handles Back.
+  useAndroidBack(revisingWorld, () => {
+    if (!interactionLocked && !hasUnsavedFileDraft) onBack();
+  });
+  useAndroidBack(leftRailOpen || rightRailOpen, () => {
+    setLeftRailOpen(false);
+    setRightRailOpen(false);
+  });
 
   return (
     <main

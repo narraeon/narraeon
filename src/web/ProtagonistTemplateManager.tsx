@@ -6,6 +6,7 @@ import {
 } from "../protocol/protagonistTemplates.ts";
 import type { V1Request } from "../protocol/v1.ts";
 import type { RuntimeClient } from "./runtimeClient.ts";
+import { useAndroidBack } from "./androidBridge.ts";
 import { uiText } from "./i18n.ts";
 
 export function ProtagonistTemplateManager({
@@ -39,6 +40,10 @@ export function ProtagonistTemplateManager({
       (!dirty || globalThis.confirm(uiText("放弃未保存的主角模板修改？")))
     );
   }
+  // Back closes like the Close button, which stays inert while a save is pending.
+  useAndroidBack(true, () => {
+    if (!pending && mayLeave()) onClose();
+  });
   function select(template: ProtagonistTemplate | null): void {
     setBaseline(template);
     setName(template?.name ?? "");

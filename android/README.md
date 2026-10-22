@@ -57,6 +57,13 @@ permission at launch; if it is denied, the service still runs but the notificati
 Exit action stay hidden. Vendor ROMs that kill background apps despite a foreground
 service are not handled.
 
+## Back key
+
+Back first calls `window.narraeonAndroidBack()` in the page. Overlays that are open
+(dialogs, menus, side rails) register with `useAndroidBack` in `src/web/androidBridge.ts`,
+and the most recently opened one closes. When none is open, Back walks the page history,
+and at the first screen it moves the app to the background without ending the process.
+
 ## Logs
 
 ```bash

@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 
 import type { Gameplay, ResolutionScheme } from "../protocol/gameplay.ts";
+import { useAndroidBack } from "./androidBridge.ts";
 import { resolutionSchemeChoices } from "./gameplayChoices.ts";
 import { uiText } from "./i18n.ts";
 
@@ -29,6 +30,10 @@ export function CreateContentPackageDialog({
       if (dialog?.open === true) dialog.close();
     };
   }, []);
+  // Like Escape, Android Back closes through the parent and never while a create is pending.
+  useAndroidBack(true, () => {
+    if (!pending) onCancel();
+  });
 
   async function submit(): Promise<void> {
     if (pending) return;

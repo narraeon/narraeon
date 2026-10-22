@@ -92,16 +92,17 @@ class MainActivity : AppCompatActivity() {
         notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
-    // The page keeps its screens in history entries, so Back walks them. At the first
-    // screen the app moves to the background instead of finishing: the Node backend
-    // cannot restart in this process, and a stray Back should not end a running play.
-    // The native failure screen has no WebView and simply closes.
+    // Back first goes to the page, which closes its open dialog or menu
+    // (narraeonAndroidBack in src/web/androidBridge.ts). Otherwise the page keeps its
+    // screens in history entries, so Back walks them. At the first screen the app
+    // moves to the background instead of finishing: the Node backend cannot restart
+    // in this process, and a stray Back should not end a running play. The native
+    // failure screen has no WebView and simply closes.
     private fun onBack() {
-        val view = webView
-        when {
-            view == null -> finish()
-            view.canGoBack() -> view.goBack()
-            else -> moveTaskToBack(true)
+        val view = webView ?: return finish()
+        view.evaluateJavascript(PAGE_BACK_SCRIPT) { handled ->
+            if (handled == "true" || webView !== view) return@evaluateJavascript
+            if (view.canGoBack()) view.goBack() else moveTaskToBack(true)
         }
     }
 
@@ -308,6 +309,7 @@ class MainActivity : AppCompatActivity() {
         private const val BACKEND_URL = "$BACKEND_ORIGIN/"
         private const val BRIDGE_NAME = "NarraeonAndroid"
         private const val EXPORT_LOGS_MESSAGE = "export-logs"
+        private const val PAGE_BACK_SCRIPT = "window.narraeonAndroidBack?.() === true"
         private const val POLL_INTERVAL_MS = 300L
         private const val STARTUP_TIMEOUT_MS = 60_000L
         private const val RENDERER_CRASH_LIMIT = 3
