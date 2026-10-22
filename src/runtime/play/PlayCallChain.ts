@@ -24,9 +24,12 @@ import {
   independentContextCopy,
 } from "./PlayTraceRetention.ts";
 import {
+  cloneSharingPromptRuns,
   currentPlayPrompt,
   recordedPlayPrompt,
   playPromptRunsThroughEvents,
+  promptRunStrings,
+  sharePromptRun,
 } from "./PlayPromptRun.ts";
 import { comparePromptPrefixes } from "../prompt/WorldPromptDiagnostics.ts";
 import { createHash, randomBytes } from "node:crypto";
@@ -317,7 +320,15 @@ export class PlayCallChain {
     validatePlayerText(input.playerText);
     assertModelHostBinding(input.modelBinding, input.modelHost);
 
-    const existing = await this.#readPersisted(input.worldId);
+    // Only a resubmission to the current context needs that context loaded.
+    await this.#worlds.ensureCurrentStorage(input.worldId);
+    const outline = await this.#worlds.playTimeline.readTimelineOutline(
+      input.worldId,
+    );
+    const existing =
+      outline?.chainIds.at(-1) === input.chainId
+        ? await this.#readPersisted(input.worldId)
+        : null;
     if (existing?.chainId === input.chainId) {
       const duplicate = duplicatePlayerExchange(
         existing,
@@ -381,10 +392,9 @@ export class PlayCallChain {
       continuityContextId: input.chainId,
       worldId: input.worldId,
       previousContexts: [],
-      previousChainId: existing?.chainId ?? null,
+      previousChainId: outline?.chainIds.at(-1) ?? null,
       timelineGeneration:
-        existing?.timelineGeneration ??
-        this.#worlds.playTimeline.newGeneration(),
+        outline?.generation ?? this.#worlds.playTimeline.newGeneration(),
       baselineHead: binding.parentHead,
       baselineHistoryLength: Object.keys(binding.history).length,
       parentHead: binding.parentHead,
@@ -572,22 +582,28 @@ export class PlayCallChain {
     );
     session.narrativeCheckpoint = binding.narrativeCheckpoint;
     session.nextMaterials = structuredClone(binding.additionalMaterials);
-    (session.promptRuns ??= []).push({
-      schemaVersion: 1,
-      firstEventId: session.nextEventId,
-      head: binding.parentHead,
-      exchange: session.exchange + 1,
-      playPreset: {
-        id: playPreset.id,
-        name: playPreset.name,
-        revision: playPreset.revision,
-      },
-      bootstrap: structuredClone(compilation.bootstrap),
-      tools: structuredClone(compilation.toolUniverse),
-      followups: structuredClone(compilation.followups ?? []),
-      playPresetScriptsEnabled: playPreset.scriptsEnabled,
-      presetFiles: structuredClone(playPreset.files),
-    });
+    const previousRun = session.promptRuns?.at(-1);
+    (session.promptRuns ??= []).push(
+      sharePromptRun(
+        {
+          schemaVersion: 1,
+          firstEventId: session.nextEventId,
+          head: binding.parentHead,
+          exchange: session.exchange + 1,
+          playPreset: {
+            id: playPreset.id,
+            name: playPreset.name,
+            revision: playPreset.revision,
+          },
+          bootstrap: structuredClone(compilation.bootstrap),
+          tools: structuredClone(compilation.toolUniverse),
+          followups: structuredClone(compilation.followups ?? []),
+          playPresetScriptsEnabled: playPreset.scriptsEnabled,
+          presetFiles: structuredClone(playPreset.files),
+        },
+        promptRunStrings(previousRun),
+      ),
+    );
     await this.#persist(session);
   }
 
@@ -755,6 +771,20 @@ export class PlayCallChain {
         : event,
     );
     return view;
+  }
+
+  /** The live context's frozen binding and transcript, without reloading it. */
+  async currentContinuation(worldId: string): Promise<{
+    modelBinding: ModelHostBinding | undefined;
+    transcript: ModelHostAppendItem[];
+  } | null> {
+    const session = await this.#worldSession(worldId);
+    return session === null
+      ? null
+      : {
+          modelBinding: session.modelBinding,
+          transcript: structuredClone(session.transcript),
+        };
   }
 
   async #worldSession(worldId: string): Promise<PlayCallChainSession | null> {
@@ -999,11 +1029,11 @@ export class PlayCallChain {
   }): Promise<V1PlayCallChainView | null> {
     const existing = await this.#readPersisted(input.targetWorldId);
     if (existing !== null) return projectView(existing);
-    const source = await this.#readPersisted(input.sourceWorldId);
-    if (source === null) return null;
+    await this.#worlds.ensureCurrentStorage(input.sourceWorldId);
     const sourceContexts = await this.#worlds.playTimeline.readAllContexts(
       input.sourceWorldId,
     );
+    if (sourceContexts.length === 0) return null;
     const selectedContextIndex = sourceContexts.findIndex(
       ({ events }) => eventsThroughHead(events, input.sourceHead) !== null,
     );
@@ -1033,11 +1063,11 @@ export class PlayCallChain {
     retainCompleteTimeline?: true;
     markImportedContexts?: true;
   }): Promise<V1PlayCallChainView | null> {
-    const source = await this.#readPersisted(input.sourceWorldId);
-    if (source === null) return null;
+    await this.#worlds.ensureCurrentStorage(input.sourceWorldId);
     const sourceContexts = await this.#worlds.playTimeline.readAllContexts(
       input.sourceWorldId,
     );
+    if (sourceContexts.length === 0) return null;
     const selectedContextIndex = input.retainCompleteTimeline
       ? sourceContexts.length - 1
       : sourceContexts.findIndex(
@@ -1093,14 +1123,43 @@ export class PlayCallChain {
       );
 
     await this.#recoverPlayerRevision(input.worldId);
-    const source = await this.#readPersisted(input.worldId);
-    if (source === null)
-      throw new PlayCallChainError(
-        "The current world has no model call chain to revise.",
-      );
+    // The plan's fully loaded contexts are out of scope once it returns, so
+    // completion does not hold a second copy of a long timeline.
+    const plan = await this.#planPlayerRevision(input);
+    if (plan.kind === "applied") {
+      const current = await this.#readPersisted(input.worldId);
+      if (current === null)
+        throw new PlayCallChainError(
+          "The current world has no model call chain to revise.",
+        );
+      return {
+        outcome: "revised",
+        worldId: input.worldId,
+        playCallChain: projectView(current),
+      };
+    }
+    await this.#worlds.writePlayerRevisionIntent(input.worldId, plan.intent);
+    const revised = await this.#completePlayerRevision(plan.intent);
+    return {
+      outcome: "revised",
+      worldId: input.worldId,
+      playCallChain: projectView(revised),
+    };
+  }
+
+  async #planPlayerRevision(
+    input: PlayCallChainRevisionInput,
+  ): Promise<
+    { kind: "applied" } | { kind: "intent"; intent: PlayerRevisionIntent }
+  > {
+    await this.#worlds.ensureCurrentStorage(input.worldId);
     const contexts = await this.#worlds.playTimeline.readAllContexts(
       input.worldId,
     );
+    if (contexts.length === 0)
+      throw new PlayCallChainError(
+        "The current world has no model call chain to revise.",
+      );
     // A replacement exchange that already reached the timeline is a repeat of
     // the same request: answer with the current view and do not redo it.
     const applied = contexts
@@ -1116,11 +1175,7 @@ export class PlayCallChain {
         throw new PlayCallChainError(
           "The same replacement exchange ID is already bound to different player text.",
         );
-      return {
-        outcome: "revised",
-        worldId: input.worldId,
-        playCallChain: projectView(source),
-      };
+      return { kind: "applied" };
     }
 
     const contextIndex = contexts.findIndex(
@@ -1169,13 +1224,7 @@ export class PlayCallChain {
         ? { freshContext: structuredClone(input.freshContext) }
         : {}),
     };
-    await this.#worlds.writePlayerRevisionIntent(input.worldId, intent);
-    const revised = await this.#completePlayerRevision(intent);
-    return {
-      outcome: "revised",
-      worldId: input.worldId,
-      playCallChain: projectView(revised),
-    };
+    return { kind: "intent", intent };
   }
 
   /** Complete an interrupted revision recorded by a previous process. */
@@ -1220,19 +1269,31 @@ export class PlayCallChain {
       worldId,
       intent.continuation,
     );
-    const current = await this.#readPersisted(worldId);
-    if (current?.chainId === resultChainId) {
+    await this.#worlds.ensureCurrentStorage(worldId);
+    // Only the edited context is loaded in full; a long timeline's prompt runs
+    // would otherwise be held several times over.
+    const outline =
+      await this.#worlds.playTimeline.readTimelineOutline(worldId);
+    if (outline?.chainIds.at(-1) === resultChainId) {
+      const current = await this.#readPersisted(worldId);
+      if (current === null)
+        throw new PlayCallChainError(
+          "The revised model context could not be read.",
+        );
       await this.#discardRevisedContexts(intent, resultChainId);
       await this.#worlds.clearPlayerRevisionIntent(worldId);
       return current;
     }
 
-    const contexts = await this.#worlds.playTimeline.readAllContexts(worldId);
-    const sourceIndex = contexts.findIndex(
-      ({ chainId }) => chainId === intent.chainId,
-    );
-    const sourceContext = contexts[sourceIndex];
-    if (sourceContext === undefined)
+    const sourceIndex =
+      outline?.chainIds.findIndex((chainId) => chainId === intent.chainId) ??
+      -1;
+    const sourceContext =
+      sourceIndex < 0
+        ? undefined
+        : (await this.#worlds.playTimeline.readContext(worldId, intent.chainId))
+            ?.value;
+    if (outline === null || sourceContext === undefined)
       throw new PlayCallChainError(
         "The model context to revise does not exist.",
       );
@@ -1266,13 +1327,13 @@ export class PlayCallChain {
         "The player revision was committed, but current-world materialization has not reached the new endpoint.",
       );
     const timelineGeneration = revisionTimelineGeneration(
-      current?.timelineGeneration ?? "none",
+      outline.generation,
       intent.operationId,
       worldId,
       intent.continuation,
     );
     const previousChainId =
-      sourceIndex === 0 ? null : contexts[sourceIndex - 1]!.chainId;
+      sourceIndex === 0 ? null : outline.chainIds[sourceIndex - 1]!;
     const traceRetention = preparePlayerRevisionTrace(
       sourceContext,
       eventIndex,
@@ -1319,7 +1380,7 @@ export class PlayCallChain {
       };
     }
 
-    await this.#worlds.playTimeline.persist(structuredClone(revised));
+    await this.#worlds.playTimeline.persist(revised);
     if (intent.continuation === "fresh_context")
       await this.#worlds.completeArchiveFreshContext(worldId);
     await this.#discardRevisedContexts(intent, resultChainId);
@@ -1667,13 +1728,13 @@ export class PlayCallChain {
       updatedAt: now,
     };
     if (input.targetWorldRoot === undefined)
-      await this.#worlds.playTimeline.persist(structuredClone(derived));
+      await this.#worlds.playTimeline.persist(cloneSharingPromptRuns(derived));
     else
       await this.#worlds.playTimeline.cloneContextPrefixToStaging({
         sourceWorldId: input.sourceWorldId,
         targetWorldRoot: input.targetWorldRoot,
         source: sourceContext,
-        target: structuredClone(derived),
+        target: cloneSharingPromptRuns(derived),
         ...(input.retainCompleteTimeline
           ? { retainCompleteContext: true }
           : {}),
@@ -2793,7 +2854,7 @@ export class PlayCallChain {
       binding.parentHead,
     );
     return {
-      ...structuredClone(persisted),
+      ...cloneSharingPromptRuns(persisted),
       nextMaterials: structuredClone(binding.additionalMaterials),
       documents,
       history: historyEntries(binding.history, binding.historyBackgrounds),
@@ -2891,7 +2952,8 @@ export class PlayCallChain {
     const loaded = await this.#worlds.playTimeline.readCurrent(worldId);
     if (loaded === null) return null;
     this.#loadedCursors.set(loaded.value.chainId, loaded.cursor);
-    return structuredClone(loaded.value);
+    // A fresh read shares nothing, so it needs no defensive copy.
+    return loaded.value;
   }
 
   async #persist(session: PlayCallChainSession): Promise<void> {
@@ -2911,7 +2973,7 @@ export class PlayCallChain {
     void _completedToolMap;
     void _persistenceCursor;
     session.persistenceCursor = await this.#worlds.playTimeline.persist(
-      structuredClone(persisted),
+      cloneSharingPromptRuns(persisted),
       session.persistenceCursor,
     );
   }

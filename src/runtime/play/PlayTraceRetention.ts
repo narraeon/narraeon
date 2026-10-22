@@ -12,6 +12,7 @@ import type { PersistedPlayCallChainContext } from "./FileNativePlayTimelineStor
 import { FileNativePlayDocuments } from "./PlayDocumentTools.ts";
 import type { WorldDocumentLocator } from "../world/WorldDocumentStore.ts";
 import {
+  cloneSharingPromptRuns,
   currentPlayPrompt,
   playPromptRunsThroughEvents,
 } from "./PlayPromptRun.ts";
@@ -292,7 +293,7 @@ function isReplayableReadAuthorization(
 export function independentContextCopy(
   source: PersistedPlayCallChainContext,
 ): PersistedPlayCallChainContext {
-  const context = structuredClone(source);
+  const context = cloneSharingPromptRuns(source);
   context.continuityContextId ??= source.chainId;
   delete context.derivedFrom;
   delete context.branchedBeforePlayer;

@@ -47,6 +47,7 @@ export function recordedPlayPrompt(
   );
 }
 
+/** Shared runs are frozen, so the returned runs are the context's own. */
 export function playPromptRunsThroughEvents(
   context: Pick<PersistedPlayCallChainContext, "promptRuns">,
   events: readonly PersistedPlayCallChainContext["events"][number][],
@@ -55,9 +56,83 @@ export function playPromptRunsThroughEvents(
   const runs = (context.promptRuns ?? []).filter(
     ({ firstEventId }) => firstEventId <= lastEvent,
   );
-  return structuredClone([
-    ...new Map(runs.map((run) => [run.firstEventId, run])).values(),
-  ]);
+  return [...new Map(runs.map((run) => [run.firstEventId, run])).values()];
+}
+
+/**
+ * Every send records the whole compiled prompt, so a long context repeats the
+ * same large strings in each of its runs (over 99% of a 143-run context). The
+ * strings of one context's runs are pooled while they are read or recorded.
+ */
+export type PromptRunStrings = Map<string, string>;
+
+/** Strings shorter than this are not worth a pool entry. */
+const sharedStringLength = 128;
+
+/**
+ * Make a freshly built or decoded run share the pool's equal strings, then
+ * freeze it: contexts and their copies hold the same run instead of a clone.
+ */
+export function sharePromptRun(
+  run: PlayPromptRun,
+  strings: PromptRunStrings,
+): PlayPromptRun {
+  return deepFreeze(internStrings(run, strings));
+}
+
+/** A pool seeded with an already shared run's strings. */
+export function promptRunStrings(
+  run: PlayPromptRun | undefined,
+): PromptRunStrings {
+  const strings: PromptRunStrings = new Map();
+  if (run !== undefined) collectStrings(run, strings);
+  return strings;
+}
+
+/**
+ * Deep-copy a context or session while sharing its frozen prompt runs, the
+ * only part of it that is large.
+ */
+export function cloneSharingPromptRuns<
+  T extends { promptRuns?: PlayPromptRun[] },
+>(value: T): T {
+  const { promptRuns, ...rest } = value;
+  const copy = structuredClone(rest) as T;
+  if (promptRuns !== undefined) copy.promptRuns = [...promptRuns];
+  return copy;
+}
+
+function internStrings<T>(value: T, strings: PromptRunStrings): T {
+  if (typeof value === "string") return intern(value, strings) as T;
+  if (typeof value !== "object" || value === null) return value;
+  const record = value as Record<string, unknown>;
+  for (const key of Object.keys(record))
+    record[key] = internStrings(record[key], strings);
+  return value;
+}
+
+function intern(value: string, strings: PromptRunStrings): string {
+  if (value.length < sharedStringLength) return value;
+  const shared = strings.get(value);
+  if (shared !== undefined) return shared;
+  strings.set(value, value);
+  return value;
+}
+
+function collectStrings(value: unknown, strings: PromptRunStrings): void {
+  if (typeof value === "string") {
+    intern(value, strings);
+    return;
+  }
+  if (typeof value !== "object" || value === null) return;
+  for (const item of Object.values(value)) collectStrings(item, strings);
+}
+
+function deepFreeze<T>(value: T): T {
+  if (typeof value !== "object" || value === null || Object.isFrozen(value))
+    return value;
+  for (const item of Object.values(value)) deepFreeze(item);
+  return Object.freeze(value);
 }
 
 export function assertPlayPromptRun(

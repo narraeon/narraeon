@@ -8059,6 +8059,63 @@ test.each([
   },
 );
 
+test("编辑已发布新上下文但意图未清除时，重启只收尾，不重做回退与提交", async () => {
+  const { worlds, worldId, root } = await createWorld(
+    "edit-recovery-published",
+  );
+  const host = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      { outcome: "response", text: "Alex says to meet downstairs at eight." },
+      { outcome: "response", text: "Alex nods." },
+    ],
+  });
+  const chains = new PlayCallChain(worlds);
+  await chains.start({
+    worldId,
+    chainId: "published-edit",
+    exchangeId: "first",
+    playerText: "I ask Alex when we are meeting.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: host,
+  });
+  const source = await chains.append({
+    worldId,
+    chainId: "published-edit",
+    exchangeId: "second",
+    playerText: "I go downstairs early.",
+    modelHost: host,
+  });
+  const edited = source.events.findLast((event) => event.kind === "player")!;
+  const writeIntent = vi.spyOn(worlds, "writePlayerRevisionIntent");
+  const revised = await chains.revisePlayer({
+    operationId: "edit-published",
+    worldId,
+    chainId: "published-edit",
+    eventId: edited.id,
+    replacementExchangeId: "second-revised",
+    replacementText: "Let's meet fifteen minutes early.",
+    continuation: "continue_context",
+  });
+  const history = (await worlds.recoverEndpoint(worldId)).history;
+  // The process exited after publishing the revised context but before the
+  // intent was cleared.
+  await worlds.writePlayerRevisionIntent(
+    worldId,
+    writeIntent.mock.calls[0]![1],
+  );
+
+  const recovered = await new PlayCallChain(
+    new FileNativeWorldStore(root),
+  ).inspectWorld(worldId);
+  expect(recovered?.chainId).toBe(revised.playCallChain.chainId);
+  expect(recovered?.events).toEqual(revised.playCallChain.events);
+  expect(await worlds.readPlayerRevisionIntent(worldId)).toBeNull();
+  expect((await worlds.recoverEndpoint(worldId)).history).toEqual(history);
+});
+
 test("持久化的游玩上下文不再写入文档授权检查点", async () => {
   const { worlds, worldId, root } = await createWorld(
     "no-checkpoint-persistence",

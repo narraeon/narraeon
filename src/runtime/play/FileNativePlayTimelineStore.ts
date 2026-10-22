@@ -14,7 +14,9 @@ import {
 import {
   encodePlayPromptRun,
   decodePlayPromptRun,
+  sharePromptRun,
   type PlayPromptRun,
+  type PromptRunStrings,
 } from "./PlayPromptRun.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
@@ -559,10 +561,7 @@ export class FileNativePlayTimelineStore {
         join(root, "completed-tools"),
         stateValue.completedToolCount,
       ),
-      readNumbered<unknown>(
-        join(root, "prompt-runs"),
-        stateValue.promptRunCount ?? 0,
-      ).then((records) => records.map(decodePlayPromptRun)),
+      readPromptRuns(join(root, "prompt-runs"), stateValue.promptRunCount ?? 0),
     ]);
     assertContextBase(baseValue);
     assertContextContinuation(continuationValue);
@@ -730,6 +729,28 @@ export class FileNativePlayTimelineStore {
       previous = loaded.value.previousChainId;
     }
     return reverse.reverse();
+  }
+
+  /**
+   * The timeline's context IDs, oldest first, and its generation, read from the
+   * small context indexes only, never their transcripts or prompt runs.
+   */
+  async readTimelineOutline(
+    worldId: string,
+  ): Promise<{ generation: string; chainIds: string[] } | null> {
+    assertIdentity(worldId, "World ID");
+    const head = await this.#readTimelineHead(worldId);
+    if (head === null) return null;
+    const reverse: string[] = [];
+    let chainId: string | null = head.chainId;
+    while (chainId !== null) {
+      const metadata = await this.#readContextMetadata(worldId, chainId);
+      if (metadata === null)
+        throw new Error("Play timeline points to a missing context");
+      reverse.push(chainId);
+      chainId = metadata.index.previousChainId;
+    }
+    return { generation: head.generation, chainIds: reverse.reverse() };
   }
 
   /** Resolve only requested reply summaries; decoration reads never load Provider transcripts. */
@@ -1675,6 +1696,28 @@ async function readNumbered<T>(root: string, count: number): Promise<T[]> {
       readJson<T>(join(root, numbered(index + 1))),
     ),
   );
+}
+
+/**
+ * Runs are read one at a time and share their strings as they are decoded, so
+ * a long context never holds every run's raw text and parsed copy at once.
+ */
+async function readPromptRuns(
+  root: string,
+  count: number,
+): Promise<PlayPromptRun[]> {
+  const strings: PromptRunStrings = new Map();
+  const runs: PlayPromptRun[] = [];
+  for (let index = 0; index < count; index += 1)
+    runs.push(
+      sharePromptRun(
+        decodePlayPromptRun(
+          await readJson<unknown>(join(root, numbered(index + 1))),
+        ),
+        strings,
+      ),
+    );
+  return runs;
 }
 
 async function readNumberedValidated<T>(

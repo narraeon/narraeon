@@ -1018,11 +1018,11 @@ export class V1Runtime {
           };
         const { modelHost, hostBinding, playPreset, modelBinding } =
           await this.#continuousBinding();
-        const persisted =
+        const live =
           currentContext === null
             ? null
-            : await this.#worlds.playTimeline.readCurrent(request.worldId);
-        const frozenBinding = persisted?.value.modelBinding;
+            : await this.#playCallChains.currentContinuation(request.worldId);
+        const frozenBinding = live?.modelBinding;
         const continueContext =
           currentContext !== null &&
           !currentContext.stale &&
@@ -1080,7 +1080,7 @@ export class V1Runtime {
           toolUniverse: tools,
           allowedTools: tools.map(({ name }) => name),
           toolStrategy: preview.compilation.toolStrategy,
-          appended: continueContext ? (persisted?.value.transcript ?? []) : [],
+          appended: continueContext ? (live?.transcript ?? []) : [],
           operationId: continueContext
             ? currentContext.chainId
             : "next-fresh-context-preview",
