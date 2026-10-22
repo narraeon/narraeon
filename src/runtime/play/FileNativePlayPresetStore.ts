@@ -954,6 +954,8 @@ export class FileNativePlayPresetStore {
    * surface to fix it from. The damaged file is preserved under a new name
    * instead, so nothing is lost and the workspace can still open.
    */
+  #validated: { raw: string; document: StoredDocument } | undefined;
+
   async #read(): Promise<StoredDocument> {
     let raw: string;
     try {
@@ -965,7 +967,14 @@ export class FileNativePlayPresetStore {
       return document;
     }
     try {
-      return parseStoredDocument(JSON.parse(raw), this.#limits);
+      // Validation hashes and parses every stored revision, so a library
+      // whose bytes were already validated is served from that result. Each
+      // caller gets its own copy because callers edit what they read.
+      if (this.#validated !== undefined && raw === this.#validated.raw)
+        return structuredClone(this.#validated.document);
+      const document = parseStoredDocument(JSON.parse(raw), this.#limits);
+      this.#validated = { raw, document: structuredClone(document) };
+      return document;
     } catch (error: unknown) {
       const quarantined = await this.#quarantine();
       this.recovery = {
@@ -3256,6 +3265,7 @@ function parseStoredDocument(
       // load-time migration makes it so, and its bytes stay as written.
       if (
         revision !== raw.draftRevision &&
+        validatePlayPresetFiles(clone, limits).status !== "valid" &&
         validatePlayPresetFiles(withCurrentPromptBuiltins(clone), limits)
           .status !== "valid"
       )
