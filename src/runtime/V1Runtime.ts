@@ -662,6 +662,9 @@ export class V1Runtime {
                       kind: "player" as const,
                       text: preview.initialAppend.logical.text,
                     },
+                    ...(preview.initialAppend.afterPlayer === undefined
+                      ? []
+                      : [preview.initialAppend.afterPlayer.logical]),
                   ],
             requestId: "play_call_chain",
             operationId: "prompt-preview",

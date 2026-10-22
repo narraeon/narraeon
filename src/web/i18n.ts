@@ -1275,6 +1275,27 @@ const settingImprovementEnglishMessages: Record<string, string> = {
   取消全新上下文: "Cancel fresh context",
   下一条消息使用全新上下文: "Use a fresh context for the next message",
   玩家输入前的回合提示: "Round marker before player input",
+  玩家输入后的本轮提示: "Turn guide after player input",
+  " + 1 条本轮提示": " + 1 turn guide",
+  "与 1 条本轮提示": " and 1 turn guide",
+  本轮提示: "Turn guide",
+  "每次发送追加在原生对话末尾，由已启用条目的尾部行按编排顺序拼成；它只属于本次请求，不进入历史、Authority 或回合计数。":
+    "Appended at the end of the native conversation on every send, assembled from the enabled entries' tail lines in arranged order. It belongs to this request only and never enters history, Authority or the round count.",
+  本轮提示各行来源: "Turn guide line sources",
+  查看发送的完整本轮提示: "Show the complete turn guide as sent",
+  本轮提示超出软上限: "Turn guide exceeds its soft limits",
+  "单行建议不超过 120 字、总行数不超过 10；超出不阻止编译，但尾部正在接近前部规则的体量。":
+    "Keep each line within 120 characters and the total within 10 lines. Exceeding them does not block compilation, but the suffix is approaching the size of the prefix rules.",
+  "共 {count} 行": "{count} lines in total",
+  "第 {index} 行超过 120 字": "Line {index} exceeds 120 characters",
+  "这些 Markdown 块按顺序进入主持预设预留的世界指令位置；正文仍在独立文件中编辑。每项可附一行尾部提示，或只保留尾部提示：它们在每次游玩发送追加的本轮提示中占据世界位置，只放本世界特有且最容易丢的约束。":
+    "These Markdown blocks enter the world-instruction position reserved by the host preset in order; their bodies are edited in separate files. Each entry may carry one tail line, or consist of a tail line alone: these lines take the world position in the turn guide appended on every play send. Keep them to world-specific constraints that are easily lost.",
+  独立尾部行: "Standalone tail line",
+  尾部提示: "Tail line",
+  "尾部提示 {title}": "Tail line for {title}",
+  留空则本项不进入本轮提示:
+    "Leave empty to keep this entry out of the turn guide",
+  加入独立尾部行: "Add standalone tail line",
   " + 1 条回合提示": " + 1 round marker",
   "这里没有隔离草稿或应用步骤：每个已完成工具响应的绿色新增和红色删除都已经生效。":
     "There is no isolated draft or Apply step. Green additions and red removals from every completed tool response are already effective.",

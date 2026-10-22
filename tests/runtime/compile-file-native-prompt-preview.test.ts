@@ -197,12 +197,20 @@ test.each([
         ? "整理不等于检查点"
         : "Consolidation is not a checkpoint",
     );
+    // The gap policy is an author block; the Runtime contract only defers to it.
     const gapPolicy =
       locale === "zh-CN"
-        ? "world_checkpoint 只在事件间隙登记"
-        : "world_checkpoint registers only at gaps between events";
-    expect(runtimePrompt).toContain(gapPolicy);
+        ? "world_checkpoint 只用于事件之间的间隙"
+        : "Use world_checkpoint only for gaps between events";
+    const deferral =
+      locale === "zh-CN"
+        ? "何时登记由检查点政策块规定"
+        : "The checkpoint policy block decides when to register";
+    expect(authorPrompt).toContain(gapPolicy);
+    expect(runtimePrompt).toContain(deferral);
+    expect(runtimePrompt).not.toContain(gapPolicy);
     expect(encoded).toContain(gapPolicy);
+    expect(encoded).toContain(deferral);
     expect(checkpointTool.description).toContain(
       locale === "zh-CN"
         ? "整理与归并不需要调用本工具"
@@ -295,17 +303,15 @@ test("文档软上限只报告 UTF-8 体积，实际注入按去重材料计数"
   });
 });
 
-test("主持块分别约束玩家代理权与默认叙事视角", () => {
-  expect(defaultPresetHostFiles["blocks/adjudication.md"]).toContain(
-    "Decisions that belong to the player",
+test("主持块分别约束玩家代理权、事实裁决与默认叙事视角", () => {
+  expect(defaultPresetHostFiles["blocks/agency-default.md"]).toContain(
+    "require the player's explicit expression in their text",
   );
-  expect(defaultPresetHostFiles["blocks/adjudication.md"]).toContain(
-    "an attempt is not success",
+  expect(defaultPresetHostFiles["blocks/facts.md"]).toContain(
+    "Attempts are not automatically successes",
   );
-  // The person moved out of the general style into the person-second block.
-  expect(defaultPresetHostFiles["blocks/style.md"]).toContain(
-    "in the person set by the narrative-person rules",
-  );
+  // The person lives in its own block; the prose block no longer fixes it.
+  expect(defaultPresetHostFiles["blocks/prose.md"]).not.toContain("“you”");
   expect(defaultPresetHostFiles["blocks/person-second.md"]).toContain(
     "Address the player character as “you”",
   );

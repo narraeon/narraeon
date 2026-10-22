@@ -14,14 +14,14 @@ test.each([
     locale: "zh-CN" as const,
     heading: "创建后游玩语义边界（只读参考）",
     hostGroup: "游玩作者语义（编排顺序）",
-    narrativeGroup: "preset:builtin/play.narrative",
+    narrativeGroup: "preset:builtin/play.output",
     warning: "不要模仿这些块的句式、节奏或镜头写入 world/",
   },
   {
     locale: "en" as const,
     heading: "Post-creation play semantics (read-only reference)",
     hostGroup: "Play author semantics (arranged order)",
-    narrativeGroup: "preset:builtin/play.narrative",
+    narrativeGroup: "preset:builtin/play.output",
     warning:
       "Do not imitate their sentences, pacing or staged gestures in world/",
   },
@@ -119,23 +119,29 @@ test.each([
     expect(serialized).toContain("内容包当前树写入边界");
     expect(serialized).toContain("创建后游玩语义边界（只读参考）");
     expect(serialized).toContain("游玩作者语义（编排顺序）");
-    expect(serialized).toContain("preset:builtin/play.narrative");
+    expect(serialized).toContain("preset:builtin/play.output");
     expect(serialized).toContain("不要模仿这些块的句式、节奏或镜头写入 world/");
     expect(serialized).toContain("不要把跨世界规则复制进 control/");
     expect(serialized).toContain(
       "frame 选定材料仅在全新游玩上下文中作为初始工具结果提供",
     );
-    expect(serialized).toContain("通用状态维护判据");
-    expect(serialized).toContain("玩家可见叙事规则");
+    expect(serialized).toContain("保存时机与整理");
+    expect(serialized).toContain("输出边界");
+    // Blocks follow the preset's list order: the output block precedes the
+    // state-maintenance blocks, and the per-send turn guide closes the group.
     expect(serialized.indexOf("游玩作者语义（编排顺序）")).toBeLessThan(
-      serialized.indexOf("通用状态维护判据"),
+      serialized.indexOf("preset:builtin/play.output"),
     );
-    expect(serialized.indexOf("通用状态维护判据")).toBeLessThan(
-      serialized.indexOf("preset:builtin/play.narrative"),
+    expect(serialized.indexOf("preset:builtin/play.output")).toBeLessThan(
+      serialized.indexOf("输出边界"),
     );
-    expect(serialized.indexOf("preset:builtin/play.narrative")).toBeLessThan(
-      serialized.indexOf("玩家可见叙事规则"),
+    expect(serialized.indexOf("输出边界")).toBeLessThan(
+      serialized.indexOf("保存时机与整理"),
     );
+    expect(serialized.indexOf("保存时机与整理")).toBeLessThan(
+      serialized.indexOf("本轮提示（每次发送的尾部）"),
+    );
+    expect(serialized).toContain("play-preset:turn-guide");
     expect(serialized).not.toContain("UNLISTED-PRESET-BLOCK-MUST-NOT-LEAK");
     for (const name of [
       "setting_list",

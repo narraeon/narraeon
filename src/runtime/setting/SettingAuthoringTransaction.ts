@@ -202,7 +202,7 @@ export function settingImprovementRuntimeContract(
 
 ## 游玩怎样读取并使用设定
 
-- control/frame.yaml 的 instructions 把世界专属提示块作为作者指令；context 只按声明顺序执行确定性材料选择。
+- control/frame.yaml 的 instructions 把世界专属提示块作为作者指令；每项可带 turnGuide（单行），或只含 turnGuide：这些行成为每次游玩发送追加在玩家输入之后的本轮提示中的世界尾部行，只放本世界特有且最容易丢的约束，一到两行，不复制跨世界规则。context 只按声明顺序执行确定性材料选择。
 - 可在 frame.maintenance.documents 中用 @短引用声明正文建议 UTF-8 字节数；slot 可声明唯一稳定 id 和 advisoryBytes。超限只提示，不截断或拒绝写入。frame.maintenance.clock 可明确绑定 {document: "@ref", locator: {yaml: [时间]}}；只记录该次写入时的标量或 Markdown 文本，不推断时钟。
 - current_situation、document 和 reference_targets 选择的整份正文会直接注入；node 只注入精确节点。catalog 只注入该目录直接子文档的 title、summary 与 @短引用，不注入正文；history 与 additional_materials 也只按精确声明注入。
 - frame 声明的 catalog 目录即使当前没有文档，也会作为空状态目录由 state_list 返回，并可作为 world_create 目标；目录声明不是另一份持久状态。
@@ -238,7 +238,7 @@ export function settingImprovementRuntimeContract(
 
 ## How play reads and uses the setting
 
-- control/frame.yaml instructions insert world-specific prompt blocks as author instructions. Its context entries perform deterministic material selections in their declared order.
+- control/frame.yaml instructions insert world-specific prompt blocks as author instructions. Each entry may carry a single-line turnGuide, or consist of turnGuide alone: these lines become the world's tail lines in the turn guide appended after the player input on every play send. Keep them to one or two world-specific, easily lost constraints; never copy cross-world rules. Its context entries perform deterministic material selections in their declared order.
 - Optional frame.maintenance.documents maps @short-refs to advisory body UTF-8 byte counts; slots can declare a unique stable id and advisoryBytes. Excess size only produces advice. Optional frame.maintenance.clock binds {document: "@ref", locator: {yaml: [time]}} to record scalar or Markdown world time at actual writes, without inferring a clock.
 - current_situation, document, and reference_targets selections inject whole bodies; node injects only one exact node. A catalog injects only title, summary, and @short-ref for direct child documents, never their bodies. History and additional materials are likewise exact selections.
 - A catalog directory declared by the frame remains available through state_list as an empty state directory and as a world_create destination even when it currently contains no documents. The declaration is not a second piece of persistent state.

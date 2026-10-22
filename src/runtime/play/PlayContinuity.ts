@@ -71,9 +71,20 @@ export function continuationNotice(
     notice: "continuation",
     text:
       locale === "zh-CN"
-        ? "[Runtime 续写提示]\n本次发送没有追加新的玩家原文。已有的最终主持正文已展示并提交为历史；本次响应接在其后，不重新提交旧正文。回复提交不表示世界内活动已经结束。"
-        : "[Runtime continuation]\nThis send adds no new player input. Existing final narrator prose has been displayed and committed as history; this response follows it without resubmitting it. A committed reply does not mean an in-world activity has ended.",
+        ? "[Runtime 续写提示]\n本次发送没有追加新的玩家原文。已有的最终主持正文已展示并提交为历史；本次响应接在其后，从那段正文的最后局面继续，只推进既有的动作、NPC 和环境：不重新回答已经回应的问题，不复位已完成的递接或走动，不把旧玩家输入再演一次，不替玩家增加决定，也不代玩家接受邀请或作出承诺。回复提交不表示世界内活动已经结束。"
+        : "[Runtime continuation]\nThis send adds no new player input. Existing final narrator prose has been displayed and committed as history; this response follows it, resuming from that prose's final situation and advancing only existing actions, NPCs and the environment: do not answer an already answered question again, reset a completed handover or movement, perform the old player input again, add a decision for the player, or accept an invitation or make a promise on their behalf. A committed reply does not mean an in-world activity has ended.",
   };
+}
+
+/**
+ * The per-send turn guide. It is request-level: appended after the current
+ * transcript on every dispatch and never stored in the transcript, so the next
+ * dispatch appends a fresh copy at the new end.
+ */
+export function turnGuideNotice(
+  text: string,
+): Extract<ModelHostAppendItem, { kind: "runtime_notice" }> {
+  return { kind: "runtime_notice", notice: "turn_guide", text };
 }
 
 export function toolStepNotice(

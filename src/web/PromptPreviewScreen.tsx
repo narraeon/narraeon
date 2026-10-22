@@ -1,4 +1,5 @@
 import { gameplayLabel, type Gameplay } from "../protocol/gameplay.ts";
+import { turnGuideWarnings } from "../shared/turn-guide.ts";
 import type { WorldPromptMaintenance } from "../protocol/worldMaintenance.ts";
 import { WorldMaintenancePanel } from "./WorldMaintenancePanel.tsx";
 import { getWebLocale, uiText } from "./i18n.ts";
@@ -46,6 +47,7 @@ export interface PromptPreviewData {
   };
   compilation: {
     maintenance?: WorldPromptMaintenance;
+    turnGuide?: { text: string; lines: { source: string; text: string }[] };
     logicalMessages: {
       role: LogicalRole;
       markdown: string;
@@ -100,6 +102,10 @@ export interface PromptPreviewData {
     logical: { kind: "player"; text: string };
     provider: { role: "user"; content: string };
     beforePlayer?: {
+      logical: unknown;
+      provider: { role: "user"; content: string };
+    };
+    afterPlayer?: {
       logical: unknown;
       provider: { role: "user"; content: string };
     };
@@ -575,6 +581,9 @@ function PromptPreviewResult({
               {preview.initialAppend === undefined
                 ? ""
                 : uiText("；另有 1 条玩家追加")}
+              {preview.initialAppend?.afterPlayer === undefined
+                ? ""
+                : uiText("与 1 条本轮提示")}
             </small>
           </div>
           <div>
@@ -648,7 +657,8 @@ function PromptPreviewResult({
           active={section === "provider"}
           count={
             compilation.provider.messages.length +
-            (preview.initialAppend === undefined ? 0 : 1)
+            (preview.initialAppend === undefined ? 0 : 1) +
+            (preview.initialAppend?.afterPlayer === undefined ? 0 : 1)
           }
           label={uiText("Provider 映射")}
           onClick={() => setSection("provider")}
@@ -667,6 +677,7 @@ function PromptPreviewResult({
           {preview.initialAppend === undefined ? null : (
             <InitialPlayerAppend append={preview.initialAppend} />
           )}
+          <TurnGuidePanel turnGuide={compilation.turnGuide} />
         </>
       ) : null}
       {section === "callChain" && preview.playPreset !== undefined ? (
@@ -732,6 +743,15 @@ function InitialPlayerAppend({
             </header>
             <pre>{append.provider.content}</pre>
           </li>
+          {append.afterPlayer === undefined ? null : (
+            <li>
+              <header>
+                <strong>{uiText("玩家输入后的本轮提示")}</strong>
+                <span>{append.afterPlayer.provider.role}</span>
+              </header>
+              <pre>{append.afterPlayer.provider.content}</pre>
+            </li>
+          )}
         </ol>
       </div>
     </section>
@@ -852,6 +872,80 @@ function ResultButton({
       <span>{label}</span>
       <small>{count}</small>
     </button>
+  );
+}
+
+function TurnGuidePanel({
+  turnGuide,
+}: {
+  turnGuide: PromptPreviewData["compilation"]["turnGuide"];
+}): React.JSX.Element | null {
+  if (turnGuide === undefined) return null;
+  return (
+    <section
+      className="panel-card prompt-preview-detail"
+      aria-labelledby="turn-guide-title"
+    >
+      <div className="prompt-preview-detail-heading">
+        <div>
+          <p className="prompt-preview-kicker">PER-SEND SUFFIX</p>
+          <h3 id="turn-guide-title">{uiText("本轮提示")}</h3>
+        </div>
+        <p>
+          {uiText(
+            "每次发送追加在原生对话末尾，由已启用条目的尾部行按编排顺序拼成；它只属于本次请求，不进入历史、Authority 或回合计数。",
+          )}
+        </p>
+      </div>
+      <ol className="turn-guide-lines" aria-label={uiText("本轮提示各行来源")}>
+        {turnGuide.lines.map((line, index) => (
+          <li key={index}>
+            <span>{line.text}</span>
+            <code>{line.source}</code>
+          </li>
+        ))}
+      </ol>
+      <details className="prompt-preview-raw">
+        <summary>{uiText("查看发送的完整本轮提示")}</summary>
+        <pre>{turnGuide.text}</pre>
+      </details>
+    </section>
+  );
+}
+
+function TurnGuideDiagnostics({
+  turnGuide,
+}: {
+  turnGuide: PromptPreviewData["compilation"]["turnGuide"];
+}): React.JSX.Element | null {
+  if (turnGuide === undefined) return null;
+  const warnings = turnGuideWarnings(turnGuide.lines);
+  if (warnings.length === 0) return null;
+  return (
+    <section className="prompt-leakage-report turn-guide-warnings" role="alert">
+      <div>
+        <span aria-hidden="true">!</span>
+        <div>
+          <h4>{uiText("本轮提示超出软上限")}</h4>
+          <p>
+            {uiText(
+              "单行建议不超过 120 字、总行数不超过 10；超出不阻止编译，但尾部正在接近前部规则的体量。",
+            )}
+          </p>
+        </div>
+      </div>
+      <ul>
+        {warnings.map((warning, index) => (
+          <li key={index}>
+            {warning.kind === "line_count"
+              ? uiText("共 {count} 行", { count: turnGuide.lines.length })
+              : uiText("第 {index} 行超过 120 字", {
+                  index: (warning.index ?? 0) + 1,
+                })}
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
@@ -1115,6 +1209,9 @@ function ProviderMapping({
             {initialAppend?.beforePlayer === undefined
               ? ""
               : uiText(" + 1 条回合提示")}
+            {initialAppend?.afterPlayer === undefined
+              ? ""
+              : uiText(" + 1 条本轮提示")}
           </span>
         </div>
         <ol>
@@ -1150,6 +1247,17 @@ function ProviderMapping({
                 </header>
                 <ProviderContent content={initialAppend.provider.content} />
               </li>
+              {initialAppend.afterPlayer === undefined ? null : (
+                <li>
+                  <header>
+                    <span>turn_guide</span>
+                    <strong>{initialAppend.afterPlayer.provider.role}</strong>
+                  </header>
+                  <ProviderContent
+                    content={initialAppend.afterPlayer.provider.content}
+                  />
+                </li>
+              )}
             </ol>
           </>
         )}
@@ -1303,6 +1411,8 @@ function BudgetAndDiagnostics({
           </dl>
         </section>
       </div>
+
+      <TurnGuideDiagnostics turnGuide={preview.compilation.turnGuide} />
 
       <section
         className="prompt-leakage-report"

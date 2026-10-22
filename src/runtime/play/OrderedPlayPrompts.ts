@@ -3,9 +3,15 @@ import { isMap, isSeq, parseDocument, type YAMLSeq } from "yaml";
 import {
   builtinPlayPrompts,
   isPromptMessageRole,
+  promptGroups,
   type OrderedPlayPrompt,
   type BuiltinPlayPrompt,
+  type PromptGroup,
 } from "../../shared/ordered-play-prompts.ts";
+
+/** One turn-guide line: no line breaks, bounded length; empty clears a builtin default. */
+const turnGuideLine = /^[^\r\n\0]{0,1000}$/u;
+const promptName = /^[^\r\n\0]{1,160}$/u;
 
 /** The same strict permission gate is used by portable imports and structured saves. */
 export function parseOrderedPlayPrompts(
@@ -22,7 +28,7 @@ export function parseOrderedPlayPrompts(
   const ids = new Set<string>();
   const builtins = new Set<string>();
   let worlds = 0;
-  const entries = value.map((raw): OrderedPlayPrompt => {
+  const entries = value.flatMap((raw): OrderedPlayPrompt[] => {
     if (typeof raw !== "object" || raw === null || Array.isArray(raw))
       return fail();
     const item = raw as Record<string, unknown>;
@@ -49,51 +55,117 @@ export function parseOrderedPlayPrompts(
           key === "id" ||
           key === "kind",
       ) && keys.every((key) => Object.hasOwn(item, key));
+    const validTurnGuide =
+      item.turnGuide === undefined ||
+      (typeof item.turnGuide === "string" &&
+        turnGuideLine.test(item.turnGuide));
+    const turnGuide =
+      typeof item.turnGuide === "string" ? { turnGuide: item.turnGuide } : {};
     if (item.kind === "world" && exact(["id", "kind"])) {
       worlds++;
-      return { id: item.id, kind: "world", ...messageRole };
+      return [{ id: item.id, kind: "world", ...messageRole }];
     }
     if (
-      item.kind === "user" &&
-      exact(["id", "kind", "name", "enabled", "body"], ["gameplay"]) &&
+      item.kind === "tail" &&
+      exact(["id", "kind", "name", "enabled", "body"]) &&
+      item.messageRole === undefined &&
       typeof item.name === "string" &&
       item.name.trim().length > 0 &&
-      /^[^\r\n\0]{1,160}$/u.test(item.name) &&
+      promptName.test(item.name) &&
+      typeof item.body === "string" &&
+      turnGuideLine.test(item.body) &&
+      typeof item.enabled === "boolean"
+    )
+      return [
+        {
+          id: item.id,
+          kind: "tail",
+          name: item.name,
+          enabled: item.enabled,
+          body: item.body,
+        },
+      ];
+    if (
+      item.kind === "user" &&
+      exact(
+        ["id", "kind", "name", "enabled", "body"],
+        ["gameplay", "turnGuide"],
+      ) &&
+      typeof item.name === "string" &&
+      item.name.trim().length > 0 &&
+      promptName.test(item.name) &&
       typeof item.body === "string" &&
       typeof item.enabled === "boolean" &&
+      validTurnGuide &&
       (item.gameplay === undefined || item.gameplay === "tabletop")
     )
-      return {
-        id: item.id,
-        kind: "user",
-        name: item.name,
-        enabled: item.enabled,
-        body: item.body,
-        ...messageRole,
-        ...(item.gameplay === "tabletop"
-          ? { gameplay: "tabletop" as const }
-          : {}),
-      };
+      return [
+        {
+          id: item.id,
+          kind: "user",
+          name: item.name,
+          enabled: item.enabled,
+          body: item.body,
+          ...messageRole,
+          ...(item.gameplay === "tabletop"
+            ? { gameplay: "tabletop" as const }
+            : {}),
+          ...turnGuide,
+        },
+      ];
+    // A frozen list (an old preset revision, or the preset a stored author
+    // session captured) may still name a retired composite builtin. It reads
+    // as the single-rule blocks that replaced it, exactly as the stored
+    // library migrates it, so old bindings keep parsing and compiling.
+    const retired =
+      item.kind === "builtin" && typeof item.builtin === "string"
+        ? retiredBuiltinReplacements[item.builtin]
+        : undefined;
+    if (
+      retired !== undefined &&
+      exact(["id", "kind", "builtin", "enabled"]) &&
+      typeof item.enabled === "boolean"
+    ) {
+      const enabled = item.enabled;
+      return retired.flatMap(({ builtin, selected }) => {
+        if (builtins.has(builtin) || ids.has(builtin)) return [];
+        builtins.add(builtin);
+        ids.add(builtin);
+        return [
+          {
+            id: builtin,
+            kind: "builtin" as const,
+            builtin,
+            enabled: selected === false ? false : enabled,
+            ...messageRole,
+          },
+        ];
+      });
+    }
     const builtin = catalog.find((entry) => entry.id === item.builtin);
     if (
       item.kind !== "builtin" ||
-      !exact(["id", "kind", "builtin", "enabled"]) ||
+      !exact(["id", "kind", "builtin", "enabled"], ["turnGuide"]) ||
       !builtin ||
       builtins.has(builtin.id) ||
       typeof item.enabled !== "boolean" ||
+      !validTurnGuide ||
       (builtin.required &&
         (!item.enabled ||
           (item.messageRole !== undefined && item.messageRole !== "system")))
     )
       return fail();
     builtins.add(builtin.id);
-    return {
-      id: item.id,
-      kind: "builtin",
-      builtin: builtin.id,
-      enabled: item.enabled,
-      ...messageRole,
-    };
+    return [
+      {
+        id: item.id,
+        kind: "builtin",
+        builtin: builtin.id,
+        enabled: item.enabled,
+        ...messageRole,
+        ...turnGuide,
+      },
+    ];
   });
   if (
     worlds !== (worldRequired ? 1 : 0) ||
@@ -101,6 +173,20 @@ export function parseOrderedPlayPrompts(
   )
     return fail();
   return entries;
+}
+
+function orderedPresetDocument(files: Record<string, string>) {
+  const source = files["preset.yaml"];
+  if (source === undefined) return undefined;
+  const document = parseDocument(source, { uniqueKeys: true });
+  if (
+    document.errors.length > 0 ||
+    document.warnings.length > 0 ||
+    !isMap(document.contents) ||
+    document.get("format") !== "narraeon.play-preset/v2"
+  )
+    return undefined;
+  return document;
 }
 
 /**
@@ -113,16 +199,8 @@ export function parseOrderedPlayPrompts(
 export function withTabletopPromptBuiltins(
   files: Record<string, string>,
 ): Record<string, string> {
-  const source = files["preset.yaml"];
-  if (source === undefined) return files;
-  const document = parseDocument(source, { uniqueKeys: true });
-  if (
-    document.errors.length > 0 ||
-    document.warnings.length > 0 ||
-    !isMap(document.contents) ||
-    document.get("format") !== "narraeon.play-preset/v2"
-  )
-    return files;
+  const document = orderedPresetDocument(files);
+  if (document === undefined) return files;
   let changed = false;
   const playPrompts = document.get("playPrompts", true);
   if (isSeq(playPrompts) && !hasEntry(playPrompts, "play.tabletop")) {
@@ -162,64 +240,139 @@ export function withTabletopPromptBuiltins(
 }
 
 /**
+ * The retired composite builtins and the blocks that replaced each of them.
+ * A stored entry for a retired builtin is replaced in place by its successors,
+ * which inherit its enabled state and message role; the unselected members of
+ * a choice group arrive disabled. User copies of the old text are not touched.
+ */
+const retiredBuiltinReplacements: Record<
+  string,
+  { builtin: string; selected?: boolean }[]
+> = {
+  "play.style": [{ builtin: "play.prose" }, { builtin: "play.scene" }],
+  "play.adjudication": [
+    { builtin: "play.agency-default" },
+    { builtin: "play.agency-strict", selected: false },
+    { builtin: "play.agency-open", selected: false },
+    { builtin: "play.facts" },
+    { builtin: "play.npc" },
+  ],
+  "play.narrative": [
+    { builtin: "play.stop-beat" },
+    { builtin: "play.stop-scene", selected: false },
+    { builtin: "play.ending" },
+    { builtin: "play.output" },
+  ],
+  "play.state": [
+    { builtin: "play.save-timing" },
+    { builtin: "play.ownership" },
+    { builtin: "play.situation" },
+    { builtin: "play.checkpoint-policy" },
+  ],
+};
+
+export const retiredPlayBuiltins = Object.keys(retiredBuiltinReplacements);
+
+/**
+ * Replace the retired composite builtins (style, adjudication, narrative and
+ * state) with the single-rule blocks that succeeded them, each at the old
+ * entry's position. Same identity contract as the other insertions.
+ */
+export function withRestructuredPromptBuiltins(
+  files: Record<string, string>,
+): Record<string, string> {
+  const document = orderedPresetDocument(files);
+  if (document === undefined) return files;
+  const playPrompts = document.get("playPrompts", true);
+  if (!isSeq(playPrompts)) return files;
+  let changed = false;
+  for (const [retired, replacements] of Object.entries(
+    retiredBuiltinReplacements,
+  )) {
+    const at = playPrompts.items.findIndex(
+      (item) =>
+        entryField(item, "kind") === "builtin" &&
+        entryField(item, "builtin") === retired,
+    );
+    if (at < 0) continue;
+    const old = playPrompts.items[at];
+    const enabled = entryField(old, "enabled") === true;
+    const messageRole = entryField(old, "messageRole");
+    const successors = replacements
+      .filter(({ builtin }) => !hasEntry(playPrompts, builtin))
+      .map(({ builtin, selected }) =>
+        document.createNode({
+          id: builtin,
+          kind: "builtin",
+          builtin,
+          enabled: selected === false ? false : enabled,
+          ...(typeof messageRole === "string" ? { messageRole } : {}),
+        }),
+      );
+    playPrompts.items.splice(at, 1, ...successors);
+    changed = true;
+  }
+  return changed ? { ...files, "preset.yaml": document.toString() } : files;
+}
+
+/**
  * A group of alternative builtins (one enabled, the rest disabled) that a
- * stored preset may still lack. It is inserted right after `anchor`, or before
- * the first of `before` when the anchor is gone. A preset that already lists
- * any member is left alone, so a player who swapped them keeps that choice.
+ * stored preset may still lack. It is inserted right after the first of
+ * `after` that the list contains, or before the first of `before` (or the
+ * world placeholder) when none is present. A preset that already lists any
+ * member is left alone, so a player who swapped them keeps that choice.
  */
 interface AlternativeBuiltinGroup {
-  anchor: string;
+  after: string[];
   before: string[];
   entries: OrderedPlayPrompt[];
 }
 
-const alternativeGroups = (): AlternativeBuiltinGroup[] => [
-  {
-    anchor: "play.style",
+const alternativeGroups = (): AlternativeBuiltinGroup[] => {
+  const members = (group: PromptGroup) =>
+    builtinPlayPrompts("en")
+      .filter((item) => item.group === group)
+      .map(({ id }) => id);
+  const order = promptGroups.map((group) => members(group));
+  // The default list runs mechanics, then the choice groups in `promptGroups`
+  // order, then the policy blocks: a missing group lands after the previous
+  // group (or mechanics), else ahead of the first later group or policy block.
+  return promptGroups.map((group, index) => ({
+    after: [...order.slice(0, index).flat().reverse(), "play.mechanics"],
     before: [
-      "play.adjudication",
-      "play.state",
-      "play.narrative",
-      "play.continue-stage",
+      ...order.slice(index + 1).flat(),
+      "play.prose",
+      "play.scene",
+      "play.ending",
+      "play.output",
+      "play.facts",
       "play.tabletop",
     ],
-    entries: personPromptEntries(),
-  },
-  {
-    anchor: "play.narrative",
-    before: ["play.tabletop"],
-    entries: continuationPromptEntries(),
-  },
-];
+    entries: groupPromptEntries(group),
+  }));
+};
 
 /**
- * Insert the narrative-person and continuation builtins that an ordered preset
- * does not list yet. Same identity contract as the tabletop insertion: files
- * that are not ordered v2 or do not parse come back unchanged, and the same
- * object is returned when nothing needs inserting.
+ * Insert the choice-group builtins (person, continuation, agency, stopping)
+ * that an ordered preset does not list yet. Same identity contract as the
+ * tabletop insertion.
  */
 export function withAlternativePromptBuiltins(
   files: Record<string, string>,
 ): Record<string, string> {
-  const source = files["preset.yaml"];
-  if (source === undefined) return files;
-  const document = parseDocument(source, { uniqueKeys: true });
-  if (
-    document.errors.length > 0 ||
-    document.warnings.length > 0 ||
-    !isMap(document.contents) ||
-    document.get("format") !== "narraeon.play-preset/v2"
-  )
-    return files;
+  const document = orderedPresetDocument(files);
+  if (document === undefined) return files;
   const playPrompts = document.get("playPrompts", true);
   if (!isSeq(playPrompts)) return files;
   let changed = false;
   for (const group of alternativeGroups()) {
     if (group.entries.some((entry) => hasEntry(playPrompts, entry.id)))
       continue;
-    const anchor = playPrompts.items.findIndex(
-      (item) => entryField(item, "id") === group.anchor,
-    );
+    const anchor = group.after
+      .map((id) =>
+        playPrompts.items.findIndex((item) => entryField(item, "id") === id),
+      )
+      .find((index) => index >= 0);
     const fallback = playPrompts.items.findIndex((item) => {
       const id = entryField(item, "id");
       return (
@@ -228,7 +381,7 @@ export function withAlternativePromptBuiltins(
       );
     });
     const at =
-      anchor >= 0
+      anchor !== undefined
         ? anchor + 1
         : fallback >= 0
           ? fallback
@@ -243,36 +396,25 @@ export function withAlternativePromptBuiltins(
   return changed ? { ...files, "preset.yaml": document.toString() } : files;
 }
 
-/** Every builtin insertion a stored or imported ordered preset must receive. */
+/** Every builtin upgrade a stored or imported ordered preset must receive. */
 export function withCurrentPromptBuiltins(
   files: Record<string, string>,
 ): Record<string, string> {
-  return withAlternativePromptBuiltins(withTabletopPromptBuiltins(files));
-}
-
-function alternativeEntries(
-  prefix: string,
-  ids: string[],
-  enabledId: string,
-): OrderedPlayPrompt[] {
-  return ids.map((id) => ({
-    id: `${prefix}${id}`,
-    kind: "builtin",
-    builtin: `${prefix}${id}`,
-    enabled: id === enabledId,
-  }));
-}
-
-function personPromptEntries(): OrderedPlayPrompt[] {
-  return alternativeEntries(
-    "play.person-",
-    ["second", "first", "third"],
-    "second",
+  return withAlternativePromptBuiltins(
+    withRestructuredPromptBuiltins(withTabletopPromptBuiltins(files)),
   );
 }
 
-function continuationPromptEntries(): OrderedPlayPrompt[] {
-  return alternativeEntries("play.continue-", ["stage", "advance"], "stage");
+/** A choice group's entries: the first member enabled, the rest disabled. */
+function groupPromptEntries(group: PromptGroup): OrderedPlayPrompt[] {
+  return builtinPlayPrompts("en")
+    .filter((item) => item.group === group)
+    .map(({ id }, index) => ({
+      id,
+      kind: "builtin",
+      builtin: id,
+      enabled: index === 0,
+    }));
 }
 
 function hasEntry(sequence: YAMLSeq, id: string): boolean {
@@ -410,16 +552,14 @@ export function migrateLegacyPlayPrompts(
       path.endsWith(".md")
     )
       add(path, false);
-  // Converted presets gain the person and continuation builtins and then the
-  // tabletop builtin just before the world placeholder. The legacy style and
-  // narrative copies keep their own wording as user text; the current builtins
-  // arrive beside them.
+  // Converted presets gain the choice-group builtins and then the tabletop
+  // builtin just before the world placeholder. The legacy block copies keep
+  // their own wording as user text; the current builtins arrive beside them.
   const worldIndex = entries.findIndex((entry) => entry.kind === "world");
   entries.splice(
     worldIndex,
     0,
-    ...personPromptEntries(),
-    ...continuationPromptEntries(),
+    ...promptGroups.flatMap((group) => groupPromptEntries(group)),
     {
       id: "play.tabletop",
       kind: "builtin",

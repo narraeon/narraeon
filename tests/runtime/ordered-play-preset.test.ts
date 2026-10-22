@@ -55,7 +55,7 @@ test("portable ordered play preserves identities, disabled text, and protects re
         enabled: false,
         body: "Retain this text",
       },
-      // A released ordered preset gains the person, continuation and tabletop builtins on import.
+      // A released ordered preset gains the choice groups and the tabletop builtin on import.
       {
         id: "play.person-second",
         kind: "builtin",
@@ -84,6 +84,36 @@ test("portable ordered play preserves identities, disabled text, and protects re
         id: "play.continue-advance",
         kind: "builtin",
         builtin: "play.continue-advance",
+        enabled: false,
+      },
+      {
+        id: "play.agency-default",
+        kind: "builtin",
+        builtin: "play.agency-default",
+        enabled: true,
+      },
+      {
+        id: "play.agency-strict",
+        kind: "builtin",
+        builtin: "play.agency-strict",
+        enabled: false,
+      },
+      {
+        id: "play.agency-open",
+        kind: "builtin",
+        builtin: "play.agency-open",
+        enabled: false,
+      },
+      {
+        id: "play.stop-beat",
+        kind: "builtin",
+        builtin: "play.stop-beat",
+        enabled: true,
+      },
+      {
+        id: "play.stop-scene",
+        kind: "builtin",
+        builtin: "play.stop-scene",
         enabled: false,
       },
       {
@@ -325,8 +355,8 @@ test("legacy migration retains disabled copies and resources while frozen reques
     enabled: false,
     body: files["blocks/style-horror.md"],
   });
-  // Converted v1 presets gain the person and continuation builtins and the
-  // tabletop builtin, which compiles only for tabletop worlds.
+  // Converted v1 presets gain the choice-group builtins and the tabletop
+  // builtin, which compiles only for tabletop worlds.
   expect(
     structure.playPrompts?.filter((entry) => entry.kind === "builtin"),
   ).toEqual([
@@ -367,6 +397,36 @@ test("legacy migration retains disabled copies and resources while frozen reques
       enabled: false,
     },
     {
+      id: "play.agency-default",
+      kind: "builtin",
+      builtin: "play.agency-default",
+      enabled: true,
+    },
+    {
+      id: "play.agency-strict",
+      kind: "builtin",
+      builtin: "play.agency-strict",
+      enabled: false,
+    },
+    {
+      id: "play.agency-open",
+      kind: "builtin",
+      builtin: "play.agency-open",
+      enabled: false,
+    },
+    {
+      id: "play.stop-beat",
+      kind: "builtin",
+      builtin: "play.stop-beat",
+      enabled: true,
+    },
+    {
+      id: "play.stop-scene",
+      kind: "builtin",
+      builtin: "play.stop-scene",
+      enabled: false,
+    },
+    {
       id: "play.tabletop",
       kind: "builtin",
       builtin: "play.tabletop",
@@ -398,7 +458,7 @@ test("current builtin resolution, fixed clones and saved request text have separ
   const preset = (await store.list()).presets[0]!;
   const structure = preset.structure!;
   const body = builtinPlayPrompts("en").find(
-    (entry) => entry.id === "play.narrative",
+    (entry) => entry.id === "play.output",
   )!.body;
   structure.playPrompts!.push({
     id: "fixed-copy",
@@ -434,9 +494,9 @@ test("current builtin resolution, fixed clones and saved request text have separ
     expect.arrayContaining([
       { source: "preset:prompt/fixed-copy", markdown: body },
       {
-        source: "runtime:ordered/play.narrative",
+        source: "runtime:ordered/play.output",
         markdown: builtinPlayPrompts("zh-CN").find(
-          (entry) => entry.id === "play.narrative",
+          (entry) => entry.id === "play.output",
         )!.body,
       },
     ]),
@@ -457,11 +517,11 @@ test("save rejects removal, source substitution, downgrade and required-disable 
     const structure = structuredClone(preset.structure!);
     if (mode === "remove")
       structure.playPrompts = structure.playPrompts!.filter(
-        (entry) => entry.id !== "play.state",
+        (entry) => entry.id !== "play.save-timing",
       );
     if (mode === "substitute")
       structure.playPrompts = structure.playPrompts!.map((entry) =>
-        entry.id === "play.state"
+        entry.id === "play.save-timing"
           ? {
               id: entry.id,
               kind: "user",

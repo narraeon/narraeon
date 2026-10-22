@@ -168,6 +168,23 @@ function validArtifactPayloadContract(value: unknown): boolean {
   );
 }
 
+function validTurnGuide(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["text", "lines"]) &&
+    typeof value.text === "string" &&
+    Array.isArray(value.lines) &&
+    value.lines.length > 0 &&
+    value.lines.every(
+      (line) =>
+        isRecord(line) &&
+        hasExactKeys(line, ["source", "text"]) &&
+        typeof line.source === "string" &&
+        typeof line.text === "string",
+    )
+  );
+}
+
 export function validPromptCompilation(
   value: unknown,
 ): value is PromptCompilation {
@@ -185,10 +202,11 @@ export function validPromptCompilation(
         "budget",
         "cache",
       ],
-      ["maintenance"],
+      ["maintenance", "turnGuide"],
     ) &&
     (value.maintenance === undefined ||
       isWorldPromptMaintenance(value.maintenance)) &&
+    (value.turnGuide === undefined || validTurnGuide(value.turnGuide)) &&
     validLogicalMessages(value.logicalMessages) &&
     validPromptProvider(value.provider) &&
     validPromptTools(value.tools) &&

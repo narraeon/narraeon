@@ -1,4 +1,3 @@
-import { historyUseGuidance } from "../../shared/history-use-guidance.ts";
 import type { ModelProviderKind } from "../../protocol/modelConnections.ts";
 import {
   defaultAppLocale,
@@ -202,7 +201,7 @@ function createToolDefinitions(
       ),
     },
     history_list: {
-      description: descriptions.history_list + " " + historyUseGuidance(locale),
+      description: descriptions.history_list,
       inputSchema: object(
         {
           before: string,
@@ -214,8 +213,7 @@ function createToolDefinitions(
       ),
     },
     history_search: {
-      description:
-        descriptions.history_search + " " + historyUseGuidance(locale),
+      description: descriptions.history_search,
       inputSchema: object(
         {
           queries: {
@@ -236,7 +234,7 @@ function createToolDefinitions(
       ),
     },
     history_read: {
-      description: descriptions.history_read + " " + historyUseGuidance(locale),
+      description: descriptions.history_read,
       inputSchema: object(
         {
           latest: { type: "integer", minimum: 1, maximum: 21 },
@@ -408,7 +406,7 @@ const toolDescriptions: Record<
 > = {
   en: {
     world_checkpoint:
-      "Register a gap between events: the previous event has naturally settled at this turn's stopping point, or the scene has actually changed, suggesting that the player start a fresh context here. Arguments must be an empty object. Registration takes effect only after the subsequent nonempty tool-free final prose successfully commits, and includes that prose. A fresh context replays only committed player inputs and final narratives after this boundary, so save still-needed outcomes before registration. Consolidation and maintenance do not require this tool. Do not advance the story to register a checkpoint; registration neither switches context nor ends an in-world event. Further tool calls may follow registration; Runtime does not verify semantic completeness.",
+      "Register a gap between events and suggest that the player start a fresh context here. Arguments must be an empty object. The effect and replay scope are defined by the tools-and-settlement rules; when to register is defined by the checkpoint policy. Consolidation and maintenance do not require this tool; do not advance the story to register a checkpoint.",
     state_list:
       "List document and state directory handles known to Runtime. parent must be @dir-/ for the state root or an @dir-* handle from the initial directory index or an earlier state_list result; no preliminary listing is needed for an already supplied handle. Catalog directories declared by the frozen world frame remain listed and usable when empty. A cursor is valid only for the same state snapshot, parent, and limit. Pass returned document handles to context_read. This tool never lists committed history.",
     history_list:
@@ -434,7 +432,7 @@ const toolDescriptions: Record<
   },
   "zh-CN": {
     world_checkpoint:
-      "登记事件间隙：上一事件已在本轮停笔位置自然告一段落，或场景已实际转换，建议玩家从这里开始全新上下文。参数为空对象。仅在随后非空且无工具调用的最终正文成功提交后生效，边界包含该正文；全新上下文只补入边界之后的已提交玩家原文与最终叙事，因此登记前应已保存后续仍需要的结果。整理与归并不需要调用本工具。不要为了登记而推进剧情；登记不切换上下文，也不结束世界内事件。登记后仍可继续工具调用；Runtime 不认证语义完整。",
+      "登记事件间隙，向玩家建议从这里开始全新上下文。参数为空对象。生效条件与补入范围见“工具与响应结算”；何时登记见检查点政策。整理与归并不需要调用本工具；不要为了登记而推进剧情。",
     state_list:
       "列出 Runtime 已知的文档与状态目录句柄。状态根目录的 parent 使用 @dir-/；继续下级时使用初始目录索引或 state_list 返回的 @dir-*；已有句柄无需再次列目录确认。冻结世界 frame 声明的 catalog 目录即使为空，也会继续列出并可用。cursor 只对同一状态快照、parent 和 limit 有效。返回的文档句柄交给 context_read；本工具不列出已提交历史。",
     history_list:

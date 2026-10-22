@@ -118,6 +118,88 @@ describe("提示词预览界面", () => {
     expect(screen.getByText("sha256:stable-prefix")).toBeTruthy();
   });
 
+  test("本轮提示作为玩家输入后的尾部单独展示并标注每行来源", async () => {
+    const fixture = previewFixture();
+    const text =
+      "[Runtime 本轮提示]\n以下是本轮写正文时最容易丢的要求，不要回应本提示，直接写正文。\n- 以第二人称“你”称呼玩家角色。\n- 宿舍里 Alex 不会先开口。";
+    fixture.compilation.turnGuide = {
+      text,
+      lines: [
+        {
+          source: "preset:builtin/play.person-second",
+          text: "以第二人称“你”称呼玩家角色。",
+        },
+        {
+          source: "world:control/frame.yaml#instructions[0]",
+          text: "宿舍里 Alex 不会先开口。",
+        },
+      ],
+    };
+    fixture.initialAppend!.afterPlayer = {
+      logical: { kind: "runtime_notice", notice: "turn_guide", text },
+      provider: { role: "user", content: text },
+    };
+    render(
+      createElement(PromptPreviewScreen, {
+        client: {
+          request<T = unknown>(): Promise<T> {
+            return Promise.resolve(fixture as T);
+          },
+        },
+        packages: [
+          {
+            localId: "package-dormitory",
+            title: "宿舍内容",
+            status: "usable" as const,
+            gameplay: { mode: "interactive-fiction" },
+          },
+        ],
+        initialPackageId: "package-dormitory",
+        playPresets: presetLibrary(),
+        model: modelLibrary(),
+        onPackageSelect: vi.fn(),
+      }),
+    );
+    fireEvent.change(screen.getByLabelText("预览玩家输入"), {
+      target: { value: "我向 Alex 点头。" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "生成真实预览" }));
+    await screen.findByRole("heading", { name: "编译通过" });
+
+    const panel = screen
+      .getByRole("heading", { name: "本轮提示" })
+      .closest("section");
+    expect(panel).not.toBeNull();
+    const lines = within(panel!).getByRole("list", {
+      name: "本轮提示各行来源",
+    });
+    expect(
+      within(lines)
+        .getAllByRole("listitem")
+        .map((item) => item.textContent),
+    ).toEqual([
+      "以第二人称“你”称呼玩家角色。preset:builtin/play.person-second",
+      "宿舍里 Alex 不会先开口。world:control/frame.yaml#instructions[0]",
+    ]);
+    expect(within(panel!).getByText("查看发送的完整本轮提示")).toBeTruthy();
+    // The suffix is shown after the player input, not among the prefix messages.
+    const initialAppend = screen
+      .getByRole("heading", { name: "首条玩家追加" })
+      .closest("section");
+    expect(
+      within(initialAppend!).getByText("玩家输入后的本轮提示"),
+    ).toBeTruthy();
+    expect(
+      within(initialAppend!).getByText(
+        "I ask Alex whether we are training tonight.",
+      ),
+    ).toBeTruthy();
+    const logicalOrder = screen.getByRole("list", { name: "逻辑消息顺序" });
+    expect(within(logicalOrder).queryByText("本轮提示")).toBeNull();
+    // Lines within the soft limits raise no diagnostic.
+    expect(screen.queryByText("本轮提示超出软上限")).toBeNull();
+  });
+
   test("需要修复的内容不能编译，输入变化会让过期请求失效", async () => {
     let resolvePreview: ((preview: PromptPreviewData) => void) | undefined;
     const request = vi.fn();

@@ -603,19 +603,30 @@ function validateFrameMarkdownFiles(
     ? frame.instructions
     : [];
   for (const entry of instructions) {
+    // An instruction references a Markdown block, carries one turn-guide
+    // line for the per-send suffix, or both.
+    const keysValid =
+      isRecord(entry) &&
+      Object.keys(entry).every(
+        (key) => key === "markdown" || key === "turnGuide",
+      ) &&
+      (entry.markdown !== undefined || entry.turnGuide !== undefined) &&
+      (entry.turnGuide === undefined ||
+        (typeof entry.turnGuide === "string" &&
+          !/[\r\n]/u.test(entry.turnGuide)));
     if (
-      !isRecord(entry) ||
-      Object.keys(entry).length !== 1 ||
-      typeof entry.markdown !== "string" ||
-      entry.markdown.startsWith("/") ||
-      entry.markdown.includes("..") ||
-      !files.has(`control/${entry.markdown}`)
+      !keysValid ||
+      (entry.markdown !== undefined &&
+        (typeof entry.markdown !== "string" ||
+          entry.markdown.startsWith("/") ||
+          entry.markdown.includes("..") ||
+          !files.has(`control/${entry.markdown}`)))
     ) {
       issue(
         issues,
         "invalid_world_frame",
         "control/frame.yaml",
-        "A Markdown block referenced by the world frame is missing or escapes the control directory",
+        "A world instruction must reference an existing Markdown block inside the control directory or carry a single-line turn-guide entry",
       );
     }
   }

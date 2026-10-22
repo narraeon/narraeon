@@ -10,8 +10,10 @@ const worldFrameFormat = "narraeon.world-frame/v1";
 type FrameRecord = Record<string, unknown>;
 type FrameSlot = Record<string, unknown> & { kind: string };
 
+/** `{ markdown }`, `{ markdown, turnGuide }` or a bare `{ turnGuide }` tail line. */
 interface FrameInstruction {
-  markdown: string;
+  markdown?: string;
+  turnGuide?: string;
   [key: string]: unknown;
 }
 
@@ -404,7 +406,7 @@ export function WorldFrameEditor({
             </header>
             <p>
               {uiText(
-                "这些 Markdown 块按顺序进入主持预设预留的世界指令位置；正文仍在独立文件中编辑。",
+                "这些 Markdown 块按顺序进入主持预设预留的世界指令位置；正文仍在独立文件中编辑。每项可附一行尾部提示，或只保留尾部提示：它们在每次游玩发送追加的本轮提示中占据世界位置，只放本世界特有且最容易丢的约束。",
               )}
             </p>
             {instructions === null ? (
@@ -423,21 +425,55 @@ export function WorldFrameEditor({
                   aria-label={uiText("世界指令顺序")}
                 >
                   {instructions.map((instruction, index) => {
-                    const block = markdownBlocks.find(
-                      ({ path }) => path === instruction.markdown,
-                    );
-                    const title = block?.title ?? instruction.markdown;
+                    const block =
+                      instruction.markdown === undefined
+                        ? undefined
+                        : markdownBlocks.find(
+                            ({ path }) => path === instruction.markdown,
+                          );
+                    const title =
+                      block?.title ??
+                      instruction.markdown ??
+                      uiText("独立尾部行");
+                    const updateLine = (value: string) =>
+                      updateInstructions(
+                        instructions.map((candidate, position) => {
+                          if (position !== index) return candidate;
+                          const next = { ...candidate };
+                          // A block row drops its line when cleared; a
+                          // tail-only row keeps the (empty) line so the
+                          // entry stays valid until it is removed.
+                          if (value === "" && candidate.markdown !== undefined)
+                            delete next.turnGuide;
+                          else next.turnGuide = value;
+                          return next;
+                        }),
+                      );
                     return (
-                      <li key={`${instruction.markdown}-${index}`}>
+                      <li key={`${instruction.markdown ?? "tail"}-${index}`}>
                         <span className="world-frame-order-number">
                           {String(index + 1).padStart(2, "0")}
                         </span>
                         <div>
                           <strong>{title}</strong>
-                          <code>{instruction.markdown}</code>
-                          {block === undefined && (
-                            <span>{uiText("引用的文件不存在")}</span>
+                          {instruction.markdown === undefined ? null : (
+                            <code>{instruction.markdown}</code>
                           )}
+                          {instruction.markdown !== undefined &&
+                            block === undefined && (
+                              <span>{uiText("引用的文件不存在")}</span>
+                            )}
+                          <label className="world-frame-turn-guide">
+                            {uiText("尾部提示")}
+                            <input
+                              aria-label={uiText("尾部提示 {title}", { title })}
+                              value={instruction.turnGuide ?? ""}
+                              placeholder={uiText("留空则本项不进入本轮提示")}
+                              onChange={(event) =>
+                                updateLine(event.currentTarget.value)
+                              }
+                            />
+                          </label>
                         </div>
                         <div className="world-frame-order-actions">
                           <span>{uiText("调整顺序")}</span>
@@ -526,6 +562,15 @@ export function WorldFrameEditor({
                     }}
                   >
                     {uiText("加入指令顺序")}
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() =>
+                      updateInstructions([...instructions, { turnGuide: "" }])
+                    }
+                  >
+                    {uiText("加入独立尾部行")}
                   </button>
                 </div>
               </>
@@ -1268,7 +1313,12 @@ function frameInstructions(frame: FrameRecord): FrameInstruction[] | null {
   if (!Array.isArray(frame.instructions)) return null;
   if (
     !frame.instructions.every(
-      (entry) => isRecord(entry) && typeof entry.markdown === "string",
+      (entry) =>
+        isRecord(entry) &&
+        (typeof entry.markdown === "string" ||
+          typeof entry.turnGuide === "string") &&
+        (entry.markdown === undefined || typeof entry.markdown === "string") &&
+        (entry.turnGuide === undefined || typeof entry.turnGuide === "string"),
     )
   )
     return null;

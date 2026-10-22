@@ -218,3 +218,35 @@ function baseFiles() {
     },
   ];
 }
+
+test("世界指令可附单行尾部提示或只保留尾部提示，多行与非字符串被拒绝", () => {
+  const withInstructions = (
+    instructions: string,
+  ) => `format: narraeon.world-frame/v1
+bindings:
+  currentSituation: situation.current
+instructions:
+${instructions}
+context:
+  - slot: { kind: current_situation }
+  - slot: { kind: additional_materials }
+`;
+  expect(
+    controlIssues({
+      "control/frame.yaml": withInstructions(
+        '  - markdown: blocks/world.md\n    turnGuide: 宿舍里 Alex 不会先开口。\n  - turnGuide: 走廊的灯一直亮着。\n  - turnGuide: ""',
+      ),
+    }),
+  ).toEqual([]);
+  for (const bad of [
+    "  - turnGuide: |\n      two\n      lines",
+    "  - turnGuide: 3",
+    "  - markdown: blocks/world.md\n    turnGuide: [a]",
+    "  - {}",
+  ])
+    expect(
+      controlIssues({ "control/frame.yaml": withInstructions(bad) }),
+    ).toEqual([
+      "A world instruction must reference an existing Markdown block inside the control directory or carry a single-line turn-guide entry",
+    ]);
+});

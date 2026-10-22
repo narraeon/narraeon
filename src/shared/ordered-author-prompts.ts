@@ -16,18 +16,21 @@ export function builtinAuthorPrompts(locale: AppLocale): BuiltinPlayPrompt[] {
         ? "创作工具与结算（必选）"
         : "Authoring tools and settlement (required)",
       required: true,
+      category: "mechanics",
       body: authoringMechanics(locale, "setting"),
     },
     {
       id: "author.guidance",
       name: zh ? "创作建议" : "Authoring guidance",
       required: false,
+      category: "policy",
       body: defaultSettingImprovementPromptForLocale(locale),
     },
     {
       id: "author.tabletop",
       name: zh ? "跑团创作建议" : "Tabletop authoring guidance",
       required: false,
+      category: "policy",
       body: tabletopAuthorBody(locale),
       gameplay: "tabletop",
     },
@@ -37,6 +40,7 @@ export function builtinAuthorPrompts(locale: AppLocale): BuiltinPlayPrompt[] {
         ? "创作目标与读取授权（动态必选）"
         : "Target and read authorization (required, dynamic)",
       required: true,
+      category: "mechanics",
       body: zh
         ? "实际请求在此显示内容包或修订世界身份及当前树边界。世界修订保留独占 epoch；跨 epoch 继续时在用户消息前显式通知并清空读取授权。文件正文只通过工具按需读取，不预注入整棵树。"
         : "The actual request shows the content package or revision world identity and current-tree boundary here. World revision retains its exclusive epoch; continuing across epochs announces the transition before the user message and clears read authorization. Files are read on demand through tools, never injected as a whole tree.",
@@ -45,6 +49,7 @@ export function builtinAuthorPrompts(locale: AppLocale): BuiltinPlayPrompt[] {
       id: "author.play-reference",
       name: zh ? "未来游玩参考（动态）" : "Future play reference (dynamic)",
       required: false,
+      category: "policy",
       body: zh
         ? "在此展开当前预设已启用的游玩编排，明确标为未来游玩参考，不是本轮叙事要求。内容包及世界正文仍通过创作工具读取。"
         : "Expands the current preset's enabled play arrangement as future-play reference, not narrative instructions for this conversation. Actual package and world content remains behind authoring tools.",

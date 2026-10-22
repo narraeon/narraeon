@@ -282,7 +282,7 @@ function FrameHarness({
 
 interface ParsedFrameFixture {
   bindings: { currentSituation: string };
-  instructions: { markdown: string }[];
+  instructions: { markdown?: string; turnGuide?: string }[];
   context: { slot: Record<string, unknown> }[];
 }
 
@@ -386,3 +386,46 @@ $document:
 示例正文。
 `;
 }
+
+describe("世界 frame 的尾部提示", () => {
+  test("每条指令可附一行尾部提示，独立尾部行不依赖 Markdown 块", () => {
+    const changed = vi.fn<(contents: string) => void>();
+    render(
+      createElement(FrameHarness, {
+        initialContents: frame(),
+        files: files(),
+        onContentsChange: changed,
+        onSave: vi.fn(),
+      }),
+    );
+    fireEvent.change(screen.getByLabelText("尾部提示 World Style"), {
+      target: { value: "宿舍里 Alex 不会先开口。" },
+    });
+    expect(latestFrame(changed).instructions).toEqual([
+      { markdown: "blocks/style.md", turnGuide: "宿舍里 Alex 不会先开口。" },
+      { markdown: "blocks/state.md" },
+    ]);
+
+    fireEvent.click(screen.getByRole("button", { name: "加入独立尾部行" }));
+    expect(latestFrame(changed).instructions.at(-1)).toEqual({ turnGuide: "" });
+    fireEvent.change(screen.getByLabelText("尾部提示 独立尾部行"), {
+      target: { value: "走廊的灯一直亮着。" },
+    });
+    expect(latestFrame(changed).instructions.at(-1)).toEqual({
+      turnGuide: "走廊的灯一直亮着。",
+    });
+    // Clearing a block row drops its line; a tail-only row keeps an empty
+    // line so the entry stays well-formed.
+    fireEvent.change(screen.getByLabelText("尾部提示 World Style"), {
+      target: { value: "" },
+    });
+    fireEvent.change(screen.getByLabelText("尾部提示 独立尾部行"), {
+      target: { value: "" },
+    });
+    expect(latestFrame(changed).instructions).toEqual([
+      { markdown: "blocks/style.md" },
+      { markdown: "blocks/state.md" },
+      { turnGuide: "" },
+    ]);
+  });
+});

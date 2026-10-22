@@ -97,13 +97,16 @@ describe("旧格式默认提示词职责", () => {
 
   test("默认 frame 保留职责顺序，世界 scaffold 不复制通用状态流程", () => {
     const frame = defaultPresetHostFiles["frame.yaml"]!;
-    expect(frame.indexOf("blocks/style.md")).toBeLessThan(
-      frame.indexOf("blocks/adjudication.md"),
+    expect(frame.indexOf("blocks/prose.md")).toBeLessThan(
+      frame.indexOf("blocks/agency-default.md"),
     );
-    expect(frame.indexOf("blocks/adjudication.md")).toBeLessThan(
-      frame.indexOf("blocks/state.md"),
+    expect(frame.indexOf("blocks/agency-default.md")).toBeLessThan(
+      frame.indexOf("blocks/save-timing.md"),
     );
-    expect(frame.indexOf("blocks/state.md")).toBeLessThan(
+    expect(frame.indexOf("blocks/save-timing.md")).toBeLessThan(
+      frame.indexOf("blocks/checkpoint-policy.md"),
+    );
+    expect(frame.indexOf("blocks/checkpoint-policy.md")).toBeLessThan(
       frame.indexOf("world.instructions"),
     );
     const files = minimalFileNativeContentScaffold();
@@ -111,7 +114,9 @@ describe("旧格式默认提示词职责", () => {
       ({ path }) => path === "control/blocks/world.md",
     )?.contents;
     expect(world).toContain("World documents and where changes belong");
-    expect(world).not.toContain(defaultPresetHostFiles["blocks/state.md"]!);
+    expect(world).not.toContain(
+      defaultPresetHostFiles["blocks/save-timing.md"]!,
+    );
     expect(inspectContentPackageCurrentTree(files).status).toBe("usable");
   });
 
@@ -131,12 +136,12 @@ describe("旧格式默认提示词职责", () => {
           "其余可从玩家原文和最终叙事恢复的持续结果",
           "world_checkpoint 只用于事件之间的间隙",
           "整理不等于检查点",
-          "不登记检查点",
-          "不是本轮要达成的目标",
-          "不需要登记检查点",
+          "仍有待玩家决定的事项时，不登记",
+          "不是本轮目标",
+          "整理随时可做且不需要登记",
           "未达到独立建档门槛的信息仍可嵌入自然所有者",
           "足够维持连续性与意义的信息",
-          "按已确定的叙事范围完成本轮必须保存的写入",
+          "先按停笔位置确定本轮叙事范围",
           "不必再造一份逐轮日志",
         ],
         stateAbsent: ["先写文档还是先写叙事都可以"],
@@ -160,7 +165,7 @@ describe("旧格式默认提示词职责", () => {
           "not a goal for this turn",
           "Information below the independent-document threshold",
           "Save enough to preserve continuity and meaning",
-          "Complete required writes within the chosen narrative scope",
+          "First fix this turn's narrative scope from the stopping point",
           "do not create a second turn-by-turn log",
         ],
         stateAbsent: ["Documents or narrative may be written first"],
@@ -348,15 +353,14 @@ describe("旧格式提示块启用清单", () => {
     const bothEnabled: Record<string, string> = {
       ...withExtraStyle,
       "frame.yaml": withExtraStyle["frame.yaml"]!.replace(
-        "    - markdown: blocks/style.md\n",
-        "    - markdown: blocks/style.md\n    - markdown: blocks/style-noir.md\n",
+        "    - markdown: blocks/prose.md\n",
+        "    - markdown: blocks/prose.md\n    - markdown: blocks/style-noir.md\n",
       ),
     };
     expect(authorBlockSources(bothEnabled)).toEqual([
-      "host:blocks/style.md",
+      "host:blocks/prose.md",
       "host:blocks/style-noir.md",
-      "host:blocks/adjudication.md",
-      "host:blocks/state.md",
+      ...defaultPolicySources.slice(1),
       "world:control/blocks/world-style.md",
       "play:prompts/narrate.md",
     ]);
@@ -365,18 +369,27 @@ describe("旧格式提示块启用清单", () => {
     const disabled: Record<string, string> = {
       ...defaultPlayPresetFiles,
       "frame.yaml": defaultPlayPresetFiles["frame.yaml"]!.replace(
-        "    - markdown: blocks/adjudication.md\n",
+        "    - markdown: blocks/npc.md\n",
         "",
       ),
     };
-    expect(authorBlockSources(disabled)).not.toContain(
-      "host:blocks/adjudication.md",
-    );
-    expect(disabled["blocks/adjudication.md"]).toContain(
-      "NPCs have lives of their own",
-    );
+    expect(authorBlockSources(disabled)).not.toContain("host:blocks/npc.md");
+    expect(disabled["blocks/npc.md"]).toContain("NPCs have lives of their own");
   });
 });
+
+/** The host blocks the v1 frame lists, in frame order. */
+const defaultPolicySources = [
+  "host:blocks/prose.md",
+  "host:blocks/scene.md",
+  "host:blocks/agency-default.md",
+  "host:blocks/facts.md",
+  "host:blocks/npc.md",
+  "host:blocks/save-timing.md",
+  "host:blocks/ownership.md",
+  "host:blocks/situation.md",
+  "host:blocks/checkpoint-policy.md",
+];
 
 function authorBlockSources(files: Record<string, string>): string[] {
   const parsed = parsePlayPresetFiles(files);
@@ -410,13 +423,13 @@ function authorBlockSources(files: Record<string, string>): string[] {
 
 describe("旧格式文风块库", () => {
   test("通用块讲变速，六种文风预置在库里但默认不启用", () => {
-    const style = defaultPresetHostFiles["blocks/style.md"]!;
-    // The general style requires detail where it matters, not only anti-padding.
-    expect(style).toContain("Slow down where it matters");
-    expect(style).toContain("Raising a hand may take three lines");
-    expect(style).toContain("Padding repeats the same fact in different words");
-    // The player character's natural sensory and bodily experience may be stated directly.
-    expect(style).toContain(
+    const prose = defaultPresetHostFiles["blocks/prose.md"]!;
+    // The prose block requires detail where it matters, not only anti-padding.
+    expect(prose).toContain("Slow down where it matters");
+    expect(prose).toContain("Raising a hand may take three lines");
+    expect(prose).toContain("Padding repeats the same fact in different words");
+    // Sensation lives with the agency rule it must not override.
+    expect(defaultPresetHostFiles["blocks/agency-default.md"]).toContain(
       "player character's natural sensory and bodily experience may be stated directly",
     );
     expect(defaultNarrationPrompt).toContain(
@@ -435,14 +448,12 @@ describe("旧格式文风块库", () => {
       "blocks/style-wuxia.md",
     ]);
 
-    // Shipped does not mean enabled: frame.yaml lists only the general block.
+    // Shipped does not mean enabled: frame.yaml lists only the policy blocks.
     const frame = defaultPresetHostFiles["frame.yaml"]!;
-    expect(frame).toContain("markdown: blocks/style.md");
+    expect(frame).toContain("markdown: blocks/prose.md");
     for (const path of styles) expect(frame).not.toContain(path);
     expect(authorBlockSources(defaultPlayPresetFiles)).toEqual([
-      "host:blocks/style.md",
-      "host:blocks/adjudication.md",
-      "host:blocks/state.md",
+      ...defaultPolicySources,
       "world:control/blocks/world-style.md",
       "play:prompts/narrate.md",
     ]);
@@ -467,16 +478,15 @@ describe("旧格式文风块库", () => {
     const stacked: Record<string, string> = {
       ...defaultPlayPresetFiles,
       "frame.yaml": defaultPresetHostFiles["frame.yaml"]!.replace(
-        "    - markdown: blocks/style.md\n",
-        "    - markdown: blocks/style.md\n    - markdown: blocks/style-intimate.md\n    - markdown: blocks/style-wuxia.md\n",
+        "    - markdown: blocks/prose.md\n",
+        "    - markdown: blocks/prose.md\n    - markdown: blocks/style-intimate.md\n    - markdown: blocks/style-wuxia.md\n",
       ),
     };
     expect(authorBlockSources(stacked)).toEqual([
-      "host:blocks/style.md",
+      "host:blocks/prose.md",
       "host:blocks/style-intimate.md",
       "host:blocks/style-wuxia.md",
-      "host:blocks/adjudication.md",
-      "host:blocks/state.md",
+      ...defaultPolicySources.slice(1),
       "world:control/blocks/world-style.md",
       "play:prompts/narrate.md",
     ]);

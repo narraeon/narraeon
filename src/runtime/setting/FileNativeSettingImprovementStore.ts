@@ -875,7 +875,8 @@ function validModelItemShape(
       hasExactKeys(value, ["kind", "notice", "text"]) &&
       (value.notice === "checkpoint_rounds" ||
         value.notice === "continuation" ||
-        value.notice === "tool_step") &&
+        value.notice === "tool_step" ||
+        value.notice === "turn_guide") &&
       typeof value.text === "string"
     );
   if (value.kind === "prompt_delta")
@@ -1144,18 +1145,29 @@ function validDiagnosticBinding(value: unknown): boolean {
   );
 }
 
+function validNoticeAppend(value: unknown): boolean {
+  return (
+    value === undefined ||
+    (isRecord(value) &&
+      hasExactKeys(value, ["logical", "provider"]) &&
+      validLegacyModelItem(value.logical) &&
+      isRecord(value.provider) &&
+      hasExactKeys(value.provider, ["role", "content"]) &&
+      value.provider.role === "user" &&
+      typeof value.provider.content === "string")
+  );
+}
+
 function validInitialAppend(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["logical", "provider"], ["beforePlayer"]) &&
-    (value.beforePlayer === undefined ||
-      (isRecord(value.beforePlayer) &&
-        hasExactKeys(value.beforePlayer, ["logical", "provider"]) &&
-        validLegacyModelItem(value.beforePlayer.logical) &&
-        isRecord(value.beforePlayer.provider) &&
-        hasExactKeys(value.beforePlayer.provider, ["role", "content"]) &&
-        value.beforePlayer.provider.role === "user" &&
-        typeof value.beforePlayer.provider.content === "string")) &&
+    hasExactKeys(
+      value,
+      ["logical", "provider"],
+      ["beforePlayer", "afterPlayer"],
+    ) &&
+    validNoticeAppend(value.beforePlayer) &&
+    validNoticeAppend(value.afterPlayer) &&
     isRecord(value.logical) &&
     hasExactKeys(value.logical, ["kind", "text"]) &&
     value.logical.kind === "player" &&

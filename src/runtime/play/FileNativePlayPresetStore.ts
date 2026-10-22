@@ -333,9 +333,29 @@ export function isPlayPresetBinding(
       isDeepStrictEqual(files, legacyDefaultPlayPresetFilesForLocale("zh-CN")));
   return (
     parsed.kind === "valid" &&
-    isDeepStrictEqual(value.definition, parsed.definition) &&
+    isDeepStrictEqual(
+      normalizedFrozenDefinition(value.definition),
+      parsed.definition,
+    ) &&
     (builtInDefault || value.revision === revisionForPlayPresetFiles(files))
   );
+}
+
+/**
+ * A frozen definition captured before a builtin was retired still lists the
+ * old entry; reading its ordered list through the parser yields the same
+ * successors the files now parse to, so the binding stays consistent.
+ */
+function normalizedFrozenDefinition(definition: Record<string, unknown>) {
+  if (!Array.isArray(definition.playPrompts)) return definition;
+  try {
+    return {
+      ...definition,
+      playPrompts: parseOrderedPlayPrompts(definition.playPrompts),
+    };
+  } catch {
+    return definition;
+  }
 }
 
 export type PlayPresetValidation =
@@ -639,7 +659,7 @@ export class FileNativePlayPresetStore {
           );
         const candidates = parseOrderedPlayPrompts(candidate.playPrompts);
         for (const entry of previous.definition.playPrompts.filter(
-          (entry) => entry.kind !== "user",
+          (entry) => entry.kind === "builtin" || entry.kind === "world",
         )) {
           const retained = candidates.find((item) => item.id === entry.id);
           if (
@@ -744,6 +764,9 @@ export class FileNativePlayPresetStore {
         "revision_not_found",
         "The requested play-preset revision was not found",
       );
+    // A frozen revision may still name a retired composite builtin; the
+    // ordered-prompt parser reads it as the blocks that replaced it, so old
+    // requests keep a readable preset while the stored bytes stay as written.
     const parsed = parsePlayPresetFiles(files, this.#limits);
     if (parsed.kind === "invalid")
       throw new FileNativePlayPresetError(
@@ -3228,9 +3251,13 @@ function parseStoredDocument(
           "store_invalid",
           "Play-preset revision content hash does not match",
         );
+      // A revision saved by an earlier release may still name builtins that
+      // the catalog has since replaced; it counts as current-format when the
+      // load-time migration makes it so, and its bytes stay as written.
       if (
         revision !== raw.draftRevision &&
-        validatePlayPresetFiles(clone, limits).status !== "valid"
+        validatePlayPresetFiles(withCurrentPromptBuiltins(clone), limits)
+          .status !== "valid"
       )
         throw new FileNativePlayPresetError(
           "store_invalid",

@@ -24,8 +24,14 @@ import {
   type PromptMessageRole,
   builtinPlayPrompts,
   orderedPromptScope,
+  orderedPromptTurnGuide,
   promptScopeApplies,
 } from "../../shared/ordered-play-prompts.ts";
+import {
+  turnGuideHeader,
+  turnGuideText,
+  type TurnGuideLine,
+} from "../../shared/turn-guide.ts";
 import { parseOrderedPlayPrompts } from "../play/OrderedPlayPrompts.ts";
 import { renderDocumentWritePosition } from "./WorldMaintenanceReport.ts";
 import { parseDocument } from "yaml";
@@ -141,6 +147,12 @@ export interface FileNativePromptInput {
 
 export interface PromptCompilation {
   maintenance?: WorldPromptMaintenance;
+  /**
+   * The per-send suffix derived from the enabled ordered entries' turn-guide
+   * lines, with the fixed Runtime header already applied. Absent when no
+   * enabled entry contributes a line.
+   */
+  turnGuide?: { text: string; lines: TurnGuideLine[] };
   logicalMessages: {
     role: LogicalRole;
     messageRole?: PromptMessageRole;
@@ -250,6 +262,11 @@ export interface PromptPreview {
     logical: { kind: "player"; text: string };
     provider: { role: "user"; content: string };
     beforePlayer?: {
+      logical: ModelHostAppendItem;
+      provider: { role: "user"; content: string };
+    };
+    /** The turn guide appended after the player input on every send. */
+    afterPlayer?: {
       logical: ModelHostAppendItem;
       provider: { role: "user"; content: string };
     };
@@ -714,7 +731,7 @@ export class FileNativePromptCompiler {
     requireFormat(hostFrame, "narraeon.host-frame/v1", "host frame");
     requireFormat(worldFrame, "narraeon.world-frame/v1", "world frame");
 
-    const instructions = readWorldInstructions(worldFiles, worldFrame);
+    const instructions = readWorldInstructions(worldFiles, worldFrame).blocks;
     const {
       coverage,
       blocks: context,
@@ -999,6 +1016,7 @@ export class FileNativePromptCompiler {
     };
     const playCatalog = builtinPlayPrompts(this.#locale);
     const gameplay = playGameplay(effective.world.documentSnapshot);
+    const turnGuideLines: TurnGuideLine[] = [];
     for (const entry of parseOrderedPlayPrompts(
       binding.definition.playPrompts,
     )) {
@@ -1009,9 +1027,25 @@ export class FileNativePromptCompiler {
         messageRole: entry.messageRole ?? "system",
         promptId: entry.id,
       };
+      // The turn guide follows list order: each enabled entry's line, and
+      // the world frame's lines at the world placeholder.
+      if (entry.kind === "world")
+        turnGuideLines.push(...instructions.turnGuide);
+      else if (entry.enabled) {
+        const line = orderedPromptTurnGuide(entry, playCatalog);
+        if (line !== undefined)
+          turnGuideLines.push({
+            source:
+              entry.kind === "builtin"
+                ? `preset:builtin/${entry.builtin}`
+                : `preset:prompt/${entry.id}`,
+            text: line,
+          });
+      }
+      if (entry.kind === "tail") continue;
       if (entry.kind === "user" && !entry.body.trim()) continue;
       if (entry.kind === "world") {
-        append("author_instruction", instructions);
+        append("author_instruction", instructions.blocks);
         append("world_context", [
           ...materials.blocks,
           {
@@ -1042,7 +1076,27 @@ export class FileNativePromptCompiler {
       append("player_input", [
         { source: "player:input", markdown: effective.playerInput },
       ]);
-    scanRuntimeLeakage(logicalMessages);
+    const turnGuide =
+      turnGuideLines.length === 0
+        ? undefined
+        : {
+            text: turnGuideText(this.#locale, turnGuideLines),
+            lines: turnGuideLines,
+          };
+    scanRuntimeLeakage([
+      ...logicalMessages,
+      ...(turnGuide === undefined
+        ? []
+        : [
+            {
+              role: "author_instruction" as const,
+              markdown: turnGuide.text,
+              blocks: [
+                { source: "runtime:turn-guide", markdown: turnGuide.text },
+              ],
+            },
+          ]),
+    ]);
     const tools = runtimeToolsForNames(
       runtimeToolNamesForGameplay(
         playGameplay(effective.world.documentSnapshot),
@@ -1074,6 +1128,7 @@ export class FileNativePromptCompiler {
       ...(materials.maintenance === undefined
         ? {}
         : { maintenance: materials.maintenance }),
+      ...(turnGuide === undefined ? {} : { turnGuide }),
       budget: disabledPromptBudget(effective),
       cache: {
         ...stableCacheBoundary(
@@ -1438,7 +1493,7 @@ function settingImprovementPresetReference(
                     : "World instructions expand here; frame-selected material is supplied as an initial tool result only for a fresh play context. Inspect actual content through the current authoring tools.",
               },
             ];
-          if (!entry.enabled) return [];
+          if (entry.kind === "tail" || !entry.enabled) return [];
           if (
             !promptScopeApplies(
               orderedPromptScope(entry, builtinPlayPrompts(locale)),
@@ -1464,6 +1519,46 @@ function settingImprovementPresetReference(
         });
   const narrativeBlocks =
     ordered === undefined ? playNarrativeBlocks(binding) : [];
+  // The preset half of the turn guide: the world frame's lines are read from
+  // the package or world itself through the authoring tools.
+  const turnGuideLines =
+    ordered === undefined
+      ? []
+      : parseOrderedPlayPrompts(ordered).flatMap((entry) => {
+          if (entry.kind === "world" || !entry.enabled) return [];
+          if (
+            !promptScopeApplies(
+              orderedPromptScope(entry, builtinPlayPrompts(locale)),
+              gameplay,
+            )
+          )
+            return [];
+          const line = orderedPromptTurnGuide(
+            entry,
+            builtinPlayPrompts(locale),
+          );
+          return line === undefined
+            ? []
+            : [
+                `- ${line} （${entry.kind === "builtin" ? `preset:builtin/${entry.builtin}` : `preset:prompt/${entry.id}`}）`,
+              ];
+        });
+  const turnGuideBlocks =
+    turnGuideLines.length === 0
+      ? []
+      : [
+          {
+            source: "play-preset:turn-guide",
+            markdown: [
+              turnGuideHeader(locale),
+              ...turnGuideLines,
+              "",
+              locale === "zh-CN"
+                ? "世界 frame 的 instructions 可用 turnGuide 在世界占位处补充一到两行本世界特有、最容易丢的约束；不要复制上述跨世界规则。"
+                : "The world frame's instructions may add one or two world-specific, easily lost constraints with turnGuide at the world placeholder; do not copy the cross-world lines above.",
+            ].join("\n"),
+          },
+        ];
   const heading =
     locale === "zh-CN"
       ? `# ${revision ? "继续游玩" : "创建后游玩"}语义边界（只读参考）`
@@ -1498,6 +1593,15 @@ function settingImprovementPresetReference(
         ? "这些块只在未来游玩生成玩家可见正文时生效；不得把它们当作本轮 YAML 或 Markdown 设定正文的范文。"
         : "These blocks apply only when future play produces player-visible story. Do not use them as prose models for YAML or Markdown setting documents in this conversation.",
       narrativeBlocks,
+    ),
+    settingImprovementReferenceGroup(
+      locale === "zh-CN"
+        ? "本轮提示（每次发送的尾部）"
+        : "Turn guide (per-send suffix)",
+      locale === "zh-CN"
+        ? "这些行在每次游玩发送时追加在玩家输入之后，由已启用块的尾部行按同一顺序拼成；它们是提醒，不是世界事实。"
+        : "These lines are appended after the player input on every play send, assembled from the enabled blocks' turn-guide lines in the same order. They are reminders, not world facts.",
+      turnGuideBlocks,
     ),
   ].filter((group) => group !== null);
   return [
@@ -1605,6 +1709,21 @@ function promptPreview(
           initialAppend: {
             logical: { kind: "player", text: input.playerInput },
             provider: { role: "user", content: input.playerInput },
+            ...(compilation.turnGuide === undefined
+              ? {}
+              : {
+                  afterPlayer: {
+                    logical: {
+                      kind: "runtime_notice",
+                      notice: "turn_guide",
+                      text: compilation.turnGuide.text,
+                    },
+                    provider: {
+                      role: "user",
+                      content: compilation.turnGuide.text,
+                    },
+                  },
+                }),
           },
         }
       : {}),
@@ -2845,27 +2964,58 @@ function isPathPrefix(prefix: string[], path: string[]): boolean {
   );
 }
 
+interface WorldInstructions {
+  blocks: { source: string; markdown: string }[];
+  turnGuide: TurnGuideLine[];
+}
+
+/**
+ * A world instruction is `{ markdown }`, `{ markdown, turnGuide }` or a bare
+ * `{ turnGuide }`: the block joins the prefix and the line joins the turn
+ * guide at the world placeholder's position.
+ */
 function readWorldInstructions(
   files: Record<string, string>,
   frame: Record<string, unknown>,
-): { source: string; markdown: string }[] {
+): WorldInstructions {
   if (!Array.isArray(frame.instructions))
     throw new PromptCompilationError(
       "world_frame_invalid",
       "world frame.instructions must be an array",
     );
-  return frame.instructions.map((entry) => {
-    if (!isRecord(entry) || typeof entry.markdown !== "string")
+  const result: WorldInstructions = { blocks: [], turnGuide: [] };
+  frame.instructions.forEach((entry, index) => {
+    const valid =
+      isRecord(entry) &&
+      Object.keys(entry).every(
+        (key) => key === "markdown" || key === "turnGuide",
+      ) &&
+      (entry.markdown === undefined || typeof entry.markdown === "string") &&
+      (entry.turnGuide === undefined ||
+        (typeof entry.turnGuide === "string" &&
+          !/[\r\n]/u.test(entry.turnGuide))) &&
+      (entry.markdown !== undefined || entry.turnGuide !== undefined);
+    if (!valid)
       throw new PromptCompilationError(
         "world_frame_invalid",
-        "A world instruction must reference a Markdown block",
+        "A world instruction must reference a Markdown block, carry a turn-guide line, or both",
       );
-    const path = `control/${entry.markdown}`;
-    return {
-      source: `world:${path}`,
-      markdown: readMarkdown(files, path, "world prompt block"),
-    };
+    if (typeof entry.markdown === "string") {
+      const path = `control/${entry.markdown}`;
+      result.blocks.push({
+        source: `world:${path}`,
+        markdown: readMarkdown(files, path, "world prompt block"),
+      });
+    }
+    const line =
+      typeof entry.turnGuide === "string" ? entry.turnGuide.trim() : "";
+    if (line)
+      result.turnGuide.push({
+        source: `world:control/frame.yaml#instructions[${index}]`,
+        text: line,
+      });
   });
+  return result;
 }
 
 function compileHostRoles(

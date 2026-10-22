@@ -36,6 +36,7 @@ import {
   continuationNotice,
   playerInputAppend,
   toolStepNotice,
+  turnGuideNotice,
   type NarrativeCheckpoint,
 } from "./PlayContinuity.ts";
 import { renderFreshContextCoverage } from "../prompt/WorldMaterialCoverage.ts";
@@ -1864,7 +1865,7 @@ export class PlayCallChain {
     session.transcript = [
       ...session.transcript.slice(0, advance.transcriptStart),
       ...structuredClone(
-        advance.nextRequest.appended.slice(advance.transcriptStart),
+        transcriptAppendOf(advance.nextRequest).slice(advance.transcriptStart),
       ),
     ];
     session.nextEventId = advance.eventId + 1;
@@ -2956,19 +2957,39 @@ function createRequestWithMaxOutputTokens(
   exchange: number,
   appended: readonly ModelHostAppendItem[] = session.transcript,
 ): ModelHostExchange {
+  // The turn guide is a request-level suffix: it follows whatever this
+  // dispatch appends and is never part of the transcript it is built on.
+  const turnGuide = currentPlayPrompt(session).bootstrap.turnGuide;
   return {
     bootstrap: structuredClone(currentPlayPrompt(session).bootstrap),
     tools: structuredClone(currentPlayPrompt(session).tools),
     toolUniverse: structuredClone(currentPlayPrompt(session).tools),
     allowedTools: currentPlayPrompt(session).tools.map(({ name }) => name),
     toolStrategy: currentPlayPrompt(session).bootstrap.toolStrategy,
-    appended: structuredClone([...appended]),
+    appended: structuredClone([
+      ...appended,
+      ...(turnGuide === undefined ? [] : [turnGuideNotice(turnGuide.text)]),
+    ]),
     requestId: "play_call_chain",
     operationId: session.chainId,
     requestAttempt: 1,
     exchange,
     maxOutputTokens,
   };
+}
+
+/**
+ * The items a frozen request contributes to the transcript: everything it
+ * appended except the request-level turn-guide suffix, which is re-attached to
+ * every dispatch and never stored.
+ */
+function transcriptAppendOf(
+  request: Pick<ModelHostExchange, "appended">,
+): readonly ModelHostAppendItem[] {
+  const last = request.appended.at(-1);
+  return last?.kind === "runtime_notice" && last.notice === "turn_guide"
+    ? request.appended.slice(0, -1)
+    : request.appended;
 }
 
 type DurableModelHostResponse = Omit<ModelHostResponse, "diagnostics">;

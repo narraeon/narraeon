@@ -441,6 +441,8 @@ export interface V1SettingPromptPreview {
   };
   compilation: {
     maintenance?: WorldPromptMaintenance;
+    /** The per-send suffix: header applied, one line per contributing entry. */
+    turnGuide?: { text: string; lines: { source: string; text: string }[] };
     logicalMessages: {
       role: string;
       markdown: string;

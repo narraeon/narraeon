@@ -89,17 +89,17 @@ async function libraryWith(files: Record<string, string>): Promise<string> {
 }
 
 describe("continuation blocks", () => {
-  test("the catalog offers staging and direct advancement after the narrative block, staging on by default", () => {
+  test("the catalog offers staging and direct advancement after the person group, staging on by default", () => {
     for (const locale of ["en", "zh-CN"] as const) {
       const ids = builtinPlayPrompts(locale).map(({ id }) => id);
-      const narrative = ids.indexOf("play.narrative");
-      expect(ids.slice(narrative, narrative + 3)).toEqual([
-        "play.narrative",
+      const person = ids.indexOf("play.person-third");
+      expect(ids.slice(person, person + 3)).toEqual([
+        "play.person-third",
         "play.continue-stage",
         "play.continue-advance",
       ]);
-      // The narrative block no longer carries the staging rule itself; it
-      // defers to whichever continuation block is enabled.
+      // The legacy v1 narration prompt carries the default staging choice as
+      // its own block text instead of a reference to it.
       const narration = defaultNarrationPromptForLocale(locale);
       expect(narration).not.toContain(
         locale === "zh-CN"
@@ -107,7 +107,14 @@ describe("continuation blocks", () => {
           : "naturally stage its explicit action",
       );
       expect(narration).toContain(
-        locale === "zh-CN" ? "承接规则" : "continuation rules",
+        locale === "zh-CN"
+          ? "承接：先演玩家行动"
+          : "Continuation: stage the player's action first",
+      );
+      expect(narration).not.toContain(
+        locale === "zh-CN"
+          ? "承接：直接推进"
+          : "Continuation: advance directly",
       );
     }
     const enabled = Object.fromEntries(
@@ -119,7 +126,7 @@ describe("continuation blocks", () => {
     expect(enabled["play.continue-advance"]).toBe(false);
   });
 
-  test("a stored preset without the blocks gains both after the narrative block, staging enabled", async () => {
+  test("a stored preset without the blocks gains both after the person group, staging enabled", async () => {
     const files = releasedFiles();
     const root = await libraryWith(files);
     const store = new FileNativePlayPresetStore(root);
@@ -131,8 +138,8 @@ describe("continuation blocks", () => {
     expect(
       after.filter(({ id }) => before.some((old) => old.id === id)),
     ).toEqual(before);
-    const narrative = after.findIndex(({ id }) => id === "play.narrative");
-    expect(after.slice(narrative + 1, narrative + 3)).toEqual([
+    const person = after.findIndex(({ id }) => id === "play.person-third");
+    expect(after.slice(person + 1, person + 3)).toEqual([
       {
         id: "play.continue-stage",
         kind: "builtin",
@@ -153,7 +160,7 @@ describe("continuation blocks", () => {
     ).toEqual(files);
   });
 
-  test("a preset that already lists either block, or has no narrative block, is handled without duplicates", () => {
+  test("a preset that already lists either block, or has no group anchors, is handled without duplicates", () => {
     const swapped = releasedFiles((items) => {
       const world = items.findIndex(({ kind }) => kind === "world");
       items.splice(world, 0, {
@@ -166,20 +173,21 @@ describe("continuation blocks", () => {
     });
     expect(withAlternativePromptBuiltins(swapped)).toBe(swapped);
 
-    const noNarrative = releasedFiles((items) =>
-      items.filter(({ id }) => id !== "play.narrative"),
+    const noAnchors = releasedFiles((items) =>
+      items.filter(
+        ({ id }) => id !== "play.mechanics" && !id.startsWith("play.person-"),
+      ),
     );
-    const migrated = playList(withAlternativePromptBuiltins(noNarrative));
-    // Without a narrative block they stay ahead of the tabletop builtin, which
-    // sits just before the world placeholder.
-    const tabletop = migrated.findIndex(({ id }) => id === "play.tabletop");
-    expect(
-      migrated.slice(tabletop - 2, tabletop + 2).map(({ id }) => id),
-    ).toEqual([
+    const migrated = playList(withAlternativePromptBuiltins(noAnchors));
+    // Without the mechanics block or an earlier group, the missing groups land
+    // ahead of the agency group, still in catalog order.
+    const agency = migrated.findIndex(({ id }) => id === "play.agency-default");
+    expect(migrated.slice(agency - 5, agency).map(({ id }) => id)).toEqual([
+      "play.person-second",
+      "play.person-first",
+      "play.person-third",
       "play.continue-stage",
       "play.continue-advance",
-      "play.tabletop",
-      "world",
     ]);
     expect(
       migrated.filter(({ id }) => id.startsWith("play.continue-")),

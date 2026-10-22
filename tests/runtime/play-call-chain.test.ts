@@ -72,6 +72,7 @@ import { FileNativeWorldStore } from "../../src/runtime/world/FileNativeWorldSto
 import { FileNativeWorldRevisionStore } from "../../src/runtime/world-revision/FileNativeWorldRevisionStore.ts";
 import { WorldRevisionWorkspace } from "../../src/runtime/world-revision/WorldRevisionWorkspace.ts";
 import { revisePlayerTimeline } from "./support/player-timeline-edit.ts";
+import { turnGuideHeader } from "../../src/shared/turn-guide.ts";
 
 const roots: string[] = [];
 
@@ -495,6 +496,17 @@ test("完整分叉保留原生轨迹及全部工具，部分分叉恢复所选�
   };
   expect(source.events[0]?.kind).toBe("player");
 });
+
+/**
+ * The transcript items a request carries, without the per-send turn guide
+ * that every dispatch appends after them (see the turn-guide tests below).
+ */
+function sent(request: ModelHostExchange): ModelHostExchange["appended"] {
+  const last = request.appended.at(-1);
+  return last?.kind === "runtime_notice" && last.notice === "turn_guide"
+    ? request.appended.slice(0, -1)
+    : request.appended;
+}
 
 async function createTraceRetentionFixture() {
   const { worlds, worldId } = await createWorld("trace-retention-revision");
@@ -1133,7 +1145,7 @@ test("工具中编辑不替换快照，拒绝后的冷重试不读取新配置",
   expect(scripted.requests[3]!.appended).toEqual(
     scripted.requests[2]!.appended,
   );
-  expect(scripted.requests[3]!.appended.at(-1)).toMatchObject({
+  expect(sent(scripted.requests[3]!).at(-1)).toMatchObject({
     kind: "tool",
     toolCallId: "read",
   });
@@ -1439,12 +1451,12 @@ test("新的发送与空输入重编译，冷恢复保留原生对话和当轮�
     "LATEST LIVE RULE",
   );
   expect(
-    modelHost.requests[1]!.appended.slice(
+    sent(modelHost.requests[1]!).slice(
       0,
-      modelHost.requests[0]!.appended.length + 1,
+      sent(modelHost.requests[0]!).length + 1,
     ),
   ).toEqual([
-    ...modelHost.requests[0]!.appended,
+    ...sent(modelHost.requests[0]!),
     expect.objectContaining({
       kind: "assistant",
       text: "First exact native response.",
@@ -1472,10 +1484,10 @@ test("新的发送与空输入重编译，冷恢复保留原生对话和当轮�
   expect(JSON.stringify(modelHost.requests[2]!.bootstrap)).not.toContain(
     "LATEST LIVE RULE",
   );
-  expect(modelHost.requests[2]!.appended.slice(0, -2)).toEqual(
-    modelHost.requests[1]!.appended,
+  expect(sent(modelHost.requests[2]!).slice(0, -2)).toEqual(
+    sent(modelHost.requests[1]!),
   );
-  expect(modelHost.requests[2]!.appended.at(-1)).toMatchObject({
+  expect(sent(modelHost.requests[2]!).at(-1)).toMatchObject({
     kind: "runtime_notice",
     notice: "continuation",
   });
@@ -2237,7 +2249,7 @@ test("新调用链拒绝未冻结的旧 context_list 名称", async () => {
       ok: false,
     }),
   );
-  expect(modelHost.requests[1]?.appended.at(-1)).toMatchObject({
+  expect(sent(modelHost.requests[1]!).at(-1)).toMatchObject({
     kind: "tool",
     toolCallId: "legacy-list",
     isError: true,
@@ -2447,16 +2459,16 @@ test("工具中间步文本不进入叙事，状态与终态叙事分别推进�
     throw new Error("Expected a tool-result timeline detail");
   expect(patchDetail.markdown).not.toContain("Alex守在宿舍门边。");
   expect(patchDetail.markdown).not.toContain("Alex已经把宿舍门打开。");
-  expect(modelHost.requests[1]?.appended.at(-1)).toMatchObject({
+  expect(sent(modelHost.requests[1]!).at(-1)).toMatchObject({
     kind: "runtime_notice",
     notice: "tool_step",
   });
-  expect(modelHost.requests[1]?.appended.at(-2)).toEqual({
+  expect(sent(modelHost.requests[1]!).at(-2)).toEqual({
     kind: "tool",
     toolCallId: "patch-door",
     markdown: patchDetail.markdown,
   });
-  expect(modelHost.requests[1]?.appended.at(-3)).toMatchObject({
+  expect(sent(modelHost.requests[1]!).at(-3)).toMatchObject({
     kind: "assistant",
     text: "I will update the door before narrating the result.",
     toolCalls: [
@@ -2479,7 +2491,7 @@ test("工具中间步文本不进入叙事，状态与终态叙事分别推进�
   expect(modelHost.requests[0]?.maxOutputTokens).toBe(
     modelBinding().maxOutputTokens,
   );
-  expect(modelHost.requests[0]?.appended).toEqual([
+  expect(sent(modelHost.requests[0]!)).toEqual([
     { kind: "player", text: "I signal Alex to open the door." },
   ]);
   expect(
@@ -2518,7 +2530,7 @@ test("工具中间步文本不进入叙事，状态与终态叙事分别推进�
   });
 
   expect(continued).toMatchObject({ status: "ready", parentHead: "commit:5" });
-  expect(modelHost.requests.at(-1)?.appended.at(-1)).toEqual({
+  expect(sent(modelHost.requests.at(-1)!).at(-1)).toEqual({
     kind: "player",
     text: "I walk into the corridor.",
   });
@@ -2586,7 +2598,7 @@ test("整理检查点随最终叙事提交，冷启动保留边界并补入跨�
     "我们结束讨论。",
     firstHost,
   );
-  expect(firstHost.requests[1]?.appended.at(-1)).toMatchObject({
+  expect(sent(firstHost.requests[1]!).at(-1)).toMatchObject({
     kind: "tool",
     toolCallId: "checkpoint",
     markdown: expect.stringContaining("registered") as unknown,
@@ -2724,7 +2736,7 @@ test.each(
     expect(
       endpoint.history.some(({ exactText }) => exactText === intermediate),
     ).toBe(false);
-    expect(host.requests[1]?.appended.at(-1)).toMatchObject({
+    expect(sent(host.requests[1]!).at(-1)).toMatchObject({
       kind: "runtime_notice",
       notice: "tool_step",
     });
@@ -2776,7 +2788,7 @@ test.each(
       expect(originals).toContain("Begin teaching me the first movement.");
       expect(originals).toContain(final);
     }
-    expect(next.requests[0]?.appended).toEqual([
+    expect(sent(next.requests[0]!)).toEqual([
       {
         kind: "player",
         text: "I adjust my wrist and ask him to check the angle.",
@@ -2928,7 +2940,7 @@ test("已提交写入回执报告下次真实目录覆盖并回显更新后的�
     modelBinding: modelBinding(),
     modelHost,
   });
-  const receipt = modelHost.requests[2]!.appended.at(-1);
+  const receipt = sent(modelHost.requests[2]!).at(-1);
   expect(receipt).toMatchObject({ kind: "tool", toolCallId: "write" });
   if (receipt?.kind !== "tool")
     throw new Error("Missing committed write receipt");
@@ -3006,7 +3018,7 @@ test("维护诊断失败不阻断已提交写入、终态叙事或冷恢复", as
   expect(completed.status).toBe("ready");
   expect(completed.parentHead).toBe("commit:3");
   expect(host.requests).toHaveLength(3);
-  expect(JSON.stringify(host.requests.at(-1)?.appended.at(-1))).toContain(
+  expect(JSON.stringify(sent(host.requests.at(-1)!).at(-1))).toContain(
     "maintenance unavailable",
   );
   expect((await new PlayCallChain(worlds).inspectWorld(worldId))?.status).toBe(
@@ -3080,7 +3092,7 @@ test("增长基准与正文写入位置跨重启和分叉保留，摘要修改�
     modelBinding: modelBinding(),
     modelHost: host,
   });
-  expect(JSON.stringify(host.requests[1]!.appended.at(-1))).toContain(
+  expect(JSON.stringify(sent(host.requests[1]!).at(-1))).toContain(
     "advisory limit 10",
   );
   const first = (await worlds.readDocumentMaintenance(worldId))[
@@ -3102,7 +3114,7 @@ test("增长基准与正文写入位置跨重启和分叉保留，摘要修改�
     "current-situation"
   ]!;
   expect(after.lastBodyWrite).toEqual(first.lastBodyWrite);
-  const readPosition = JSON.stringify(host.requests.at(-1)?.appended.at(-1));
+  const readPosition = JSON.stringify(sent(host.requests.at(-1)!).at(-1));
   expect(readPosition).toContain("Body: Context 1 · round 1");
   expect(readPosition).toContain("Metadata: Context 1 · round 2");
   expect(readPosition).toContain("World time at write: 午夜");
@@ -3567,7 +3579,7 @@ test("world_patch no-op 保留匹配的紧凑工具结果且不推进世界", as
   });
   if (patchDetail.kind !== "tool_result")
     throw new Error("Expected a tool-result timeline detail");
-  expect(modelHost.requests[1]?.appended.at(-1)).toEqual({
+  expect(sent(modelHost.requests[1]!).at(-1)).toEqual({
     kind: "tool",
     toolCallId: "patch-same-situation",
     markdown: patchDetail.markdown,
@@ -3739,7 +3751,7 @@ test("游玩调用链可在 frame 声明的空 catalog 中创建首份文档", a
   });
 
   expect(completed.status).toBe("ready");
-  const listResult = firstHost.requests[1]?.appended.at(-1);
+  const listResult = sent(firstHost.requests[1]!).at(-1);
   expect(listResult).toMatchObject({
     kind: "tool",
     toolCallId: "list-empty-items",
@@ -3753,7 +3765,7 @@ test("游玩调用链可在 frame 声明的空 catalog 中创建首份文档", a
       baselineBytes: Buffer.byteLength("状态: 完好\n", "utf8"),
     },
   );
-  expect(firstHost.requests[2]?.appended.at(-1)).toEqual({
+  expect(sent(firstHost.requests[2]!).at(-1)).toEqual({
     kind: "tool",
     toolCallId: "create-first-item",
     markdown:
@@ -3860,7 +3872,7 @@ test("全新上下文只重建模型上下文，持久保留此前调用轨迹�
   });
   const withHistory = second;
 
-  expect(secondHost.requests[0]?.appended).toEqual([
+  expect(sent(secondHost.requests[0]!)).toEqual([
     { kind: "player", text: "Player input for the new context." },
   ]);
   expect(withHistory.previousContexts).toEqual([]);
@@ -4226,10 +4238,13 @@ test("从调用链节点派生会保留截至该节点的调用轨迹，并可�
     playerText: "",
     modelHost: continuedToolHost,
   });
-  expect(
-    continuedToolHost.requests[0]?.appended.map(({ kind }) => kind),
-  ).toEqual(["player", "assistant", "tool", "runtime_notice"]);
-  expect(continuedToolHost.requests[0]?.appended.at(-1)).toMatchObject({
+  expect(sent(continuedToolHost.requests[0]!).map(({ kind }) => kind)).toEqual([
+    "player",
+    "assistant",
+    "tool",
+    "runtime_notice",
+  ]);
+  expect(sent(continuedToolHost.requests[0]!).at(-1)).toMatchObject({
     kind: "runtime_notice",
     notice: "tool_step",
   });
@@ -4297,7 +4312,7 @@ test("从调用链节点派生会保留截至该节点的调用轨迹，并可�
     modelHost: regeneratedHost,
   });
   expect(regenerated.status).toBe("ready");
-  expect(regeneratedHost.requests[0]?.appended).toEqual([
+  expect(sent(regeneratedHost.requests[0]!)).toEqual([
     { kind: "player", text: "I signal Alex to open the door." },
   ]);
   expect(
@@ -4430,7 +4445,7 @@ test.each(["continue_context", "fresh_context"] as const)(
       playerText: "",
       modelHost: replacementHost,
     });
-    expect(replacementHost.requests[0]!.appended).toEqual([
+    expect(sent(replacementHost.requests[0]!)).toEqual([
       ...(continuation === "continue_context" ? continuedTranscript : []),
       { kind: "player", text: "I stay inside." },
     ]);
@@ -4878,7 +4893,7 @@ test("把上下文中较后的修改稿另存为全新上下文时保留页面�
     playerText: "",
     modelHost: replacementHost,
   });
-  expect(replacementHost.requests[0]?.appended).toEqual([
+  expect(sent(replacementHost.requests[0]!)).toEqual([
     { kind: "player", text: "I take the western path instead." },
   ]);
 });
@@ -5093,7 +5108,7 @@ test.each(["en", "zh-CN"] as const)(
           item.kind === "runtime_notice" && item.notice === "checkpoint_rounds",
       ),
     ).toEqual([marker]);
-    expect(resumed.requests[1]!.appended.at(-1)).toEqual({
+    expect(sent(resumed.requests[1]!).at(-1)).toEqual({
       kind: "player",
       text: "I adjust my wrist.",
     });
@@ -5272,7 +5287,7 @@ test("空输入追加会从完整逻辑 transcript 继续生成，并把 Provide
   expect(continued.events.filter(({ kind }) => kind === "player")).toHaveLength(
     1,
   );
-  expect(modelHost.requests[1]?.appended).toEqual([
+  expect(sent(modelHost.requests[1]!)).toEqual([
     { kind: "player", text: "I signal Alex to open the door." },
     {
       kind: "assistant",
@@ -5291,7 +5306,7 @@ test("空输入追加会从完整逻辑 transcript 继续生成，并把 Provide
     {
       kind: "runtime_notice",
       notice: "continuation",
-      text: "[Runtime continuation]\nThis send adds no new player input. Existing final narrator prose has been displayed and committed as history; this response follows it without resubmitting it. A committed reply does not mean an in-world activity has ended.",
+      text: "[Runtime continuation]\nThis send adds no new player input. Existing final narrator prose has been displayed and committed as history; this response follows it, resuming from that prose's final situation and advancing only existing actions, NPCs and the environment: do not answer an already answered question again, reset a completed handover or movement, perform the old player input again, add a decision for the player, or accept an invitation or make a promise on their behalf. A committed reply does not mean an in-world activity has ended.",
     },
   ]);
   expect(
@@ -7328,7 +7343,7 @@ test("冻结宇宙含判定工具时执行判定，回执与持久种子逐位�
   expect(isResolutionReceipt(receipt)).toBe(true);
   // Rolls are generated in memory per settlement and not persisted, so the
   // receipt is checked by its shape and by the markdown fed back to the model.
-  expect(modelHost.requests[1]?.appended.at(-1)).toMatchObject({
+  expect(sent(modelHost.requests[1]!).at(-1)).toMatchObject({
     kind: "tool",
     toolCallId: "roll-1",
     markdown: resolutionMarkdown(receipt, "en"),
@@ -7423,7 +7438,7 @@ test("判定工具不在冻结宇宙中时被拒绝，非法参数只产生工�
       (event) => event.kind === "tool_result" && event.callId === "not-frozen",
     ),
   ).not.toHaveProperty("resolution");
-  expect(rejectedHost.requests[1]?.appended.at(-1)).toMatchObject({
+  expect(sent(rejectedHost.requests[1]!).at(-1)).toMatchObject({
     kind: "tool",
     toolCallId: "not-frozen",
     isError: true,
@@ -7468,7 +7483,7 @@ test("判定工具不在冻结宇宙中时被拒绝，非法参数只产生工�
   );
   expect(result).toMatchObject({ ok: false, name: "d20_check" });
   expect(result).not.toHaveProperty("resolution");
-  expect(invalidHost.requests[1]?.appended.at(-1)).toMatchObject({
+  expect(sent(invalidHost.requests[1]!).at(-1)).toMatchObject({
     kind: "tool",
     toolCallId: "bad-args",
     isError: true,
@@ -8132,3 +8147,101 @@ test("旧版上下文的授权检查点计数与目录被忽略，读取不报�
 function numberedFileName(index: number): string {
   return `${String(index).padStart(10, "0")}.json`;
 }
+
+test("本轮提示只作为每次发送的尾部出现，不进入 transcript，也不出现在后续请求的前缀中", async () => {
+  const { worlds, worldId } = await createWorld("turn-guide-suffix");
+  const modelHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [{ id: "list", name: "state_list", arguments: {} }],
+      },
+      { outcome: "response", text: "Alex looks up from the jersey." },
+      { outcome: "response", text: "He waits." },
+    ],
+  });
+  const chains = new PlayCallChain(worlds);
+  await chains.start({
+    worldId,
+    chainId: "turn-guide",
+    exchangeId: "first",
+    playerText: "I nod to Alex.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+  await chains.append({
+    worldId,
+    chainId: "turn-guide",
+    exchangeId: "continue",
+    playerText: "",
+    modelHost,
+  });
+  const isGuide = (item: ModelHostExchange["appended"][number]) =>
+    item.kind === "runtime_notice" && item.notice === "turn_guide";
+  expect(modelHost.requests).toHaveLength(3);
+  for (const request of modelHost.requests) {
+    // Exactly one suffix per dispatch, after everything else the request
+    // appends, with the text the bootstrap compiled.
+    expect(request.appended.filter(isGuide)).toHaveLength(1);
+    expect(request.appended.at(-1)).toEqual({
+      kind: "runtime_notice",
+      notice: "turn_guide",
+      text: request.bootstrap.turnGuide!.text,
+    });
+    expect(
+      request.bootstrap.turnGuide!.text.startsWith(turnGuideHeader("en")),
+    ).toBe(true);
+  }
+  expect(sent(modelHost.requests[0]!).map(({ kind }) => kind)).toEqual([
+    "player",
+  ]);
+  expect(sent(modelHost.requests[1]!).map(({ kind }) => kind)).toEqual([
+    "player",
+    "assistant",
+    "tool",
+  ]);
+  expect(
+    sent(modelHost.requests[2]!).map((item) =>
+      item.kind === "runtime_notice" ? `notice:${item.notice}` : item.kind,
+    ),
+  ).toEqual([
+    "player",
+    "assistant",
+    "tool",
+    "assistant",
+    "notice:continuation",
+  ]);
+  // The stored transcript never contains the suffix, so later requests and
+  // forks are built without it.
+  const stored = (await worlds.playTimeline.readCurrent(worldId))!.value
+    .transcript;
+  expect(stored.some(isGuide)).toBe(false);
+  expect(stored.slice(0, sent(modelHost.requests[2]!).length)).toEqual(
+    sent(modelHost.requests[2]!),
+  );
+  expect(stored.at(-1)).toMatchObject({ kind: "assistant", text: "He waits." });
+
+  // A legacy v1 preset compiles no turn guide, so nothing is appended.
+  const legacyHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [{ outcome: "response", text: "Quiet." }],
+  });
+  const legacy = await createWorld("turn-guide-legacy");
+  await new PlayCallChain(legacy.worlds).start({
+    worldId: legacy.worldId,
+    chainId: "turn-guide-legacy",
+    exchangeId: "first",
+    playerText: "I nod to Alex.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(legacyDefaultPlayPresetFilesForLocale("en")),
+    modelBinding: modelBinding(),
+    modelHost: legacyHost,
+  });
+  expect(legacyHost.requests[0]!.bootstrap.turnGuide).toBeUndefined();
+  expect(legacyHost.requests[0]!.appended).toEqual([
+    { kind: "player", text: "I nod to Alex." },
+  ]);
+});

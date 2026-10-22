@@ -39,11 +39,32 @@ function releasedFiles(
   return files;
 }
 
+const personEntries = [
+  {
+    id: "play.person-second",
+    kind: "builtin",
+    builtin: "play.person-second",
+    enabled: true,
+  },
+  {
+    id: "play.person-first",
+    kind: "builtin",
+    builtin: "play.person-first",
+    enabled: false,
+  },
+  {
+    id: "play.person-third",
+    kind: "builtin",
+    builtin: "play.person-third",
+    enabled: false,
+  },
+];
+
 describe("narrative-person blocks", () => {
-  test("the general style no longer fixes the person; three alternatives follow it, second person on by default", () => {
+  test("the prose block does not fix the person; three alternatives follow the mechanics block, second person on by default", () => {
     for (const locale of ["en", "zh-CN"] as const) {
       const host = defaultPresetHostFilesForLocale(locale);
-      expect(host["blocks/style.md"]).not.toContain(
+      expect(host["blocks/prose.md"]).not.toContain(
         locale === "zh-CN" ? "第二人称" : "as “you”",
       );
       expect(host["blocks/person-second.md"]).toContain(
@@ -56,9 +77,9 @@ describe("narrative-person blocks", () => {
         locale === "zh-CN" ? "第三人称" : "third person",
       );
       const ids = builtinPlayPrompts(locale).map(({ id }) => id);
-      const style = ids.indexOf("play.style");
-      expect(ids.slice(style, style + 4)).toEqual([
-        "play.style",
+      const mechanics = ids.indexOf("play.mechanics");
+      expect(ids.slice(mechanics, mechanics + 4)).toEqual([
+        "play.mechanics",
         "play.person-second",
         "play.person-first",
         "play.person-third",
@@ -74,40 +95,21 @@ describe("narrative-person blocks", () => {
     expect(enabled["play.person-third"]).toBe(false);
   });
 
-  test("a stored preset without the blocks gains all three after the general style", () => {
+  test("a stored preset without the blocks gains all three right after the mechanics block", () => {
     const files = releasedFiles();
     const migrated = playList(withAlternativePromptBuiltins(files));
     const before = playList(files);
     expect(
       migrated.filter(({ id }) => before.some((old) => old.id === id)),
     ).toEqual(before);
-    const style = migrated.findIndex(({ id }) => id === "play.style");
-    expect(migrated.slice(style + 1, style + 4)).toEqual([
-      {
-        id: "play.person-second",
-        kind: "builtin",
-        builtin: "play.person-second",
-        enabled: true,
-      },
-      {
-        id: "play.person-first",
-        kind: "builtin",
-        builtin: "play.person-first",
-        enabled: false,
-      },
-      {
-        id: "play.person-third",
-        kind: "builtin",
-        builtin: "play.person-third",
-        enabled: false,
-      },
-    ]);
+    const mechanics = migrated.findIndex(({ id }) => id === "play.mechanics");
+    expect(migrated.slice(mechanics + 1, mechanics + 4)).toEqual(personEntries);
   });
 
-  test("a swapped choice is kept, and without the style block they precede the adjudication block", () => {
+  test("a swapped choice is kept, and without the mechanics block they precede the continuation group", () => {
     const swapped = releasedFiles((items) => {
-      const style = items.findIndex(({ id }) => id === "play.style");
-      items.splice(style + 1, 0, {
+      const mechanics = items.findIndex(({ id }) => id === "play.mechanics");
+      items.splice(mechanics + 1, 0, {
         id: "play.person-first",
         kind: "builtin",
         builtin: "play.person-first",
@@ -117,16 +119,16 @@ describe("narrative-person blocks", () => {
     });
     expect(withAlternativePromptBuiltins(swapped)).toBe(swapped);
 
-    const noStyle = releasedFiles((items) =>
-      items.filter(({ id }) => id !== "play.style"),
+    const noMechanics = releasedFiles((items) =>
+      items.filter(({ id }) => id !== "play.mechanics"),
     );
-    const migrated = playList(withAlternativePromptBuiltins(noStyle));
-    const adjudication = migrated.findIndex(
-      ({ id }) => id === "play.adjudication",
-    );
-    expect(
-      migrated.slice(adjudication - 3, adjudication).map(({ id }) => id),
-    ).toEqual(["play.person-second", "play.person-first", "play.person-third"]);
+    const migrated = playList(withAlternativePromptBuiltins(noMechanics));
+    const stage = migrated.findIndex(({ id }) => id === "play.continue-stage");
+    expect(migrated.slice(stage - 3, stage).map(({ id }) => id)).toEqual([
+      "play.person-second",
+      "play.person-first",
+      "play.person-third",
+    ]);
     expect(
       migrated.filter(({ id }) => id.startsWith("play.person-")),
     ).toHaveLength(3);
