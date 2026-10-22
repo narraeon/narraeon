@@ -23,6 +23,7 @@ import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AlertDialog
@@ -58,6 +59,9 @@ class MainActivity : AppCompatActivity() {
         container = FrameLayout(this)
         setContentView(container)
         attachWebView()
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() = onBack()
+        })
 
         val intent = Intent(this, NodeService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent)
@@ -65,6 +69,19 @@ class MainActivity : AppCompatActivity() {
 
         waitForBackend()
         if (savedInstanceState == null) offerExportAfterAbnormalExit()
+    }
+
+    // The page keeps its screens in history entries, so Back walks them. At the first
+    // screen the app moves to the background instead of finishing: the Node backend
+    // cannot restart in this process, and a stray Back should not end a running play.
+    // The native failure screen has no WebView and simply closes.
+    private fun onBack() {
+        val view = webView
+        when {
+            view == null -> finish()
+            view.canGoBack() -> view.goBack()
+            else -> moveTaskToBack(true)
+        }
     }
 
     @SuppressLint("SetJavaScriptEnabled")
