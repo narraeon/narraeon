@@ -56,7 +56,11 @@ class MainActivity : AppCompatActivity() {
         pendingFileChooser = null
     }
 
-    private val notificationPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    // A notification posted before the grant stays hidden, so starting the service again
+    // re-posts it. The Node start guard makes the second start harmless.
+    private val notificationPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) startNodeService()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -67,13 +71,17 @@ class MainActivity : AppCompatActivity() {
             override fun handleOnBackPressed() = onBack()
         })
 
-        val intent = Intent(this, NodeService::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent)
-        else startService(intent)
+        startNodeService()
         if (savedInstanceState == null) requestNotificationPermission()
 
         waitForBackend()
         if (savedInstanceState == null) offerExportAfterAbnormalExit()
+    }
+
+    private fun startNodeService() {
+        val intent = Intent(this, NodeService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent)
+        else startService(intent)
     }
 
     // Android 13+ hides the backend's notification, and with it the Exit action, until
