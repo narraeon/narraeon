@@ -12,6 +12,7 @@ import { resolve } from "node:path";
  */
 export class WorldQueue {
   readonly #tails = new Map<string, Promise<void>>();
+  readonly #pending = new Map<string, number>();
   readonly #held = new AsyncLocalStorage<ReadonlySet<string>>();
 
   run<Value>(worldId: string, action: () => Promise<Value>): Promise<Value> {
@@ -20,10 +21,11 @@ export class WorldQueue {
     const previous = this.#tails.get(worldId) ?? Promise.resolve();
     const nextHeld = new Set(held ?? []);
     nextHeld.add(worldId);
+    this.#pending.set(worldId, this.pendingCount(worldId) + 1);
     const result = previous.then(() => this.#held.run(nextHeld, action));
     const tail = result.then(
-      () => undefined,
-      () => undefined,
+      () => this.#finish(worldId),
+      () => this.#finish(worldId),
     );
     this.#tails.set(worldId, tail);
     void tail.then(() => {
@@ -32,9 +34,20 @@ export class WorldQueue {
     return result;
   }
 
+  /** Operations for worldId that are running or waiting for their turn. */
+  pendingCount(worldId: string): number {
+    return this.#pending.get(worldId) ?? 0;
+  }
+
   /** True while the current async context is inside an operation for worldId. */
   isHeld(worldId: string): boolean {
     return this.#held.getStore()?.has(worldId) ?? false;
+  }
+
+  #finish(worldId: string): void {
+    const remaining = this.pendingCount(worldId) - 1;
+    if (remaining > 0) this.#pending.set(worldId, remaining);
+    else this.#pending.delete(worldId);
   }
 }
 

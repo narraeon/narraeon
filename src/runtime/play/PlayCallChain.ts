@@ -247,6 +247,13 @@ function isPlayerRevisionIntent(value: unknown): value is PlayerRevisionIntent {
   );
 }
 
+/**
+ * Play sessions kept in memory at once, one per most recently used world. An
+ * idle session beyond this is released and reloaded from disk on next use,
+ * which behaves like a process restart (ADR-0044). Not a user setting.
+ */
+const residentWorldLimit = 3;
+
 interface ActivePlayInvocation extends V1PlayRunProgress {
   worldId: string;
   controller: AbortController;
@@ -290,6 +297,8 @@ export class PlayCallChain {
   readonly #activeInvocations = new Map<string, ActivePlayInvocation>();
   /** Resolves when the matching invocation has left the active table. */
   readonly #invocationSettled = new Map<string, Promise<void>>();
+  /** Worlds whose release is queued in their WorldQueue slot. */
+  readonly #releasing = new Set<string>();
 
   constructor(
     worlds: FileNativeWorldStore,
@@ -433,8 +442,7 @@ export class PlayCallChain {
       },
     };
     if (activeId !== undefined) this.#active.delete(activeId);
-    this.#active.set(session.chainId, session);
-    this.#worldChains.set(session.worldId, session.chainId);
+    this.#registerResident(session);
     await this.#persist(session);
     await this.#worlds.completeArchiveFreshContext(session.worldId);
     return this.#submitPlayer(
@@ -675,6 +683,7 @@ export class PlayCallChain {
     this.#worlds.freezeControl(input.worldId, controlUseId);
     this.#activeInvocations.set(input.chainId, invocation);
     this.#invocationSettled.set(input.chainId, settled);
+    this.#touchWorld(input.worldId);
     this.changed(input.worldId);
     try {
       await this.#worlds.assertWorldRevisionUnlocked(input.worldId);
@@ -682,6 +691,7 @@ export class PlayCallChain {
     } finally {
       if (this.#activeInvocations.get(input.chainId) === invocation)
         this.#activeInvocations.delete(input.chainId);
+      this.#enforceResidentLimit();
       this.#worlds.releaseControl(input.worldId, controlUseId);
       this.changed(input.worldId);
       this.#invocationSettled.delete(input.chainId);
@@ -749,6 +759,11 @@ export class PlayCallChain {
     }
   }
 
+  /** Worlds whose play session is held in memory, least recently used first. */
+  residentWorldIds(): string[] {
+    return [...this.#worldChains.keys()];
+  }
+
   async inspectWorld(worldId: string): Promise<V1PlayCallChainView | null> {
     const session = await this.#worldSession(worldId);
     return session === null ? null : this.#projectActiveView(session);
@@ -803,11 +818,14 @@ export class PlayCallChain {
     const active =
       activeId === undefined ? undefined : this.#active.get(activeId);
     if (active !== undefined) {
+      this.#touchWorld(worldId);
       if (
         this.#activeInvocations.get(active.chainId)?.worldId !== active.worldId
       )
         await this.#reconcileSessionAdvance(active);
-      return active;
+      // Released while reconciling: load the current session, not this copy.
+      if (this.#active.get(active.chainId) === active) return active;
+      return this.#loadWorldSession(worldId);
     }
     const pending = this.#hydrating.get(worldId);
     if (pending !== undefined) return pending.session;
@@ -839,8 +857,7 @@ export class PlayCallChain {
     if (live !== undefined) return live;
     // forgetWorld ran during hydration; do not resurrect the old session.
     if (this.#hydrating.get(worldId)?.token !== token) return null;
-    this.#active.set(hydrated.chainId, hydrated);
-    this.#worldChains.set(worldId, hydrated.chainId);
+    this.#registerResident(hydrated);
     await this.#reconcileSessionAdvance(hydrated, advance);
     return hydrated;
   }
@@ -2782,7 +2799,7 @@ export class PlayCallChain {
           "The call chain does not belong to this world.",
         );
       await this.#reconcileSessionAdvance(active);
-      return active;
+      if (this.#active.get(chainId) === active) return active;
     }
     const session = await this.#loadWorldSession(worldId);
     if (session?.chainId !== chainId)
@@ -2950,7 +2967,85 @@ export class PlayCallChain {
     return loaded.value;
   }
 
+  /** Makes a session the live one for its world, then trims idle worlds. */
+  #registerResident(session: PlayCallChainSession): void {
+    this.#active.set(session.chainId, session);
+    this.#worldChains.delete(session.worldId);
+    this.#worldChains.set(session.worldId, session.chainId);
+    this.#enforceResidentLimit();
+  }
+
+  #touchWorld(worldId: string): void {
+    const chainId = this.#worldChains.get(worldId);
+    if (chainId === undefined) return;
+    this.#worldChains.delete(worldId);
+    this.#worldChains.set(worldId, chainId);
+  }
+
+  /**
+   * Schedules release of least recently used idle worlds until at most
+   * residentWorldLimit remain. The most recently used world is never a
+   * candidate. A busy or queued world is skipped, and a later call trims it
+   * once it has gone idle.
+   */
+  #enforceResidentLimit(): void {
+    const worldIds = [...this.#worldChains.keys()];
+    let excess = worldIds.length - residentWorldLimit - this.#releasing.size;
+    for (const worldId of worldIds.slice(0, -1)) {
+      if (excess <= 0) return;
+      if (this.#releasing.has(worldId)) continue;
+      if (
+        this.#worlds.operations.pendingWorldOperations(worldId) > 0 ||
+        !this.#isIdle(worldId)
+      )
+        continue;
+      excess -= 1;
+      this.#releasing.add(worldId);
+      void this.#worlds.operations.withWorldAuthorityLock(worldId, () => {
+        this.#releaseIfIdle(worldId);
+        return Promise.resolve();
+      });
+    }
+  }
+
+  /**
+   * Runs in the world's queue slot, so no world operation can hold this
+   * session while it is released. An operation queued after the release was
+   * scheduled is counted, and the release waits for a later call.
+   */
+  #releaseIfIdle(worldId: string): void {
+    this.#releasing.delete(worldId);
+    if (
+      this.#worlds.operations.pendingWorldOperations(worldId) > 1 ||
+      !this.#isIdle(worldId)
+    )
+      return;
+    const chainId = this.#worldChains.get(worldId);
+    if (chainId === undefined) return;
+    this.#active.delete(chainId);
+    this.#worldChains.delete(worldId);
+    this.#loadedCursors.delete(chainId);
+  }
+
+  /** No call, hydration, or running request holds this world's session. */
+  #isIdle(worldId: string): boolean {
+    const chainId = this.#worldChains.get(worldId);
+    const session =
+      chainId === undefined ? undefined : this.#active.get(chainId);
+    if (session === undefined || session.status === "running") return false;
+    if (this.#hydrating.has(worldId)) return false;
+    return ![...this.#activeInvocations.values()].some(
+      (invocation) => invocation.worldId === worldId,
+    );
+  }
+
   async #persist(session: PlayCallChainSession): Promise<void> {
+    // Only the live session may write. A copy released from memory would fork
+    // the world's session; readers that hold one reload on their next step.
+    if (this.#active.get(session.chainId) !== session)
+      throw new PlayCallChainError(
+        "The play context was released from memory; reload it before writing.",
+      );
     touch(session);
     session.completedTools = [...session.completedToolMap.values()].map(
       (item) => structuredClone(item),
