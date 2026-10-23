@@ -343,7 +343,8 @@ export class FileNativeWorldStore {
       const authority = new WorldLedgerAuthority(root);
       if (
         (await authority.exists()) &&
-        (await this.playTimeline.layoutCurrent(worldId))
+        (await this.playTimeline.layoutCurrent(worldId)) &&
+        (await this.playAdvances.layoutCurrent(worldId))
       ) {
         await authority.readHead();
         this.#currentStorage.add(worldId);
