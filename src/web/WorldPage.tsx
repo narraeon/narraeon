@@ -23,6 +23,7 @@ import {
 import { useAuthoringWorkspace } from "./useAuthoringWorkspace.ts";
 import { saveFile, useAndroidBack } from "./androidBridge.ts";
 import { uiText } from "./i18n.ts";
+import { runtimeErrorText } from "./RuntimeErrorText.ts";
 import {
   hasHandledCheckpoint,
   rememberHandledCheckpoint,
@@ -206,6 +207,10 @@ export function WorldPage({
     (WorldPlayDecorationsView & { worldId: string }) | null
   >(null);
   const [decorationRevision, setDecorationRevision] = useState(0);
+  const [decorationFailure, setDecorationFailure] = useState<{
+    worldId: string;
+    message: string;
+  } | null>(null);
   const decorationRequestId = useRef(0);
   const [leftRailOpen, setLeftRailOpen] = useState(false);
   const [leftRailWidth, setLeftRailWidth] = useState(320);
@@ -336,14 +341,20 @@ export function WorldPage({
     let active = true;
     const expectedHead = world.head;
     const requestId = ++decorationRequestId.current;
-    void requestPlayDecorations(client, worldId).then((next) => {
-      if (
-        active &&
-        requestId === decorationRequestId.current &&
-        next?.head === expectedHead
-      )
-        setDecorations({ ...next, worldId });
-    });
+    void requestPlayDecorations(client, worldId).then(
+      (next) => {
+        if (!active || requestId !== decorationRequestId.current) return;
+        setDecorationFailure(null);
+        if (next.head === expectedHead) setDecorations({ ...next, worldId });
+      },
+      (reason: unknown) => {
+        if (!active || requestId !== decorationRequestId.current) return;
+        setDecorationFailure({
+          worldId,
+          message: decorationFailureMessage(reason),
+        });
+      },
+    );
     return () => {
       active = false;
     };
@@ -1679,6 +1690,23 @@ export function WorldPage({
 
           <footer ref={composerRef} className="world-composer-dock">
             <ArtifactExtensionMount mount="composer_above" />
+            {decorationFailure?.worldId === worldId ? (
+              <div className="extension-read-failure" role="alert">
+                <p>
+                  {uiText("扩展内容读取失败：{reason}", {
+                    reason: decorationFailure.message,
+                  })}
+                </p>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setDecorationRevision((current) => current + 1)
+                  }
+                >
+                  {uiText("重试")}
+                </button>
+              </div>
+            ) : null}
             {(displayedDecorations?.extensionControls ??
               world.extensionControls) === undefined ? null : (
               <WorldExtensionMenu
@@ -1694,12 +1722,19 @@ export function WorldPage({
                     key,
                     value,
                   });
-                  const next = await requestPlayDecorations(client, worldId);
-                  if (
-                    next !== null &&
-                    requestId === decorationRequestId.current
-                  )
-                    setDecorations({ ...next, worldId });
+                  try {
+                    const next = await requestPlayDecorations(client, worldId);
+                    if (requestId === decorationRequestId.current) {
+                      setDecorations({ ...next, worldId });
+                      setDecorationFailure(null);
+                    }
+                  } catch (reason: unknown) {
+                    if (requestId === decorationRequestId.current)
+                      setDecorationFailure({
+                        worldId,
+                        message: decorationFailureMessage(reason),
+                      });
+                  }
                   setDecorationRevision((current) => current + 1);
                 }}
               />
@@ -3515,14 +3550,14 @@ function legacyTimelinePage(world: WorldReadView): V1PlayTimelinePage {
 async function requestPlayDecorations(
   client: WorldPageClient,
   worldId: string,
-): Promise<WorldPlayDecorationsView | null> {
-  try {
-    const result = await client.request({
-      type: "world.play-decorations.read",
-      worldId,
-    });
-    return result as WorldPlayDecorationsView;
-  } catch {
-    return null;
-  }
+): Promise<WorldPlayDecorationsView> {
+  const result = await client.request({
+    type: "world.play-decorations.read",
+    worldId,
+  });
+  return result as WorldPlayDecorationsView;
+}
+
+function decorationFailureMessage(reason: unknown): string {
+  return runtimeErrorText(errorMessage(reason));
 }

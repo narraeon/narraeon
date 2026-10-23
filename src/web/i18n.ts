@@ -1737,6 +1737,8 @@ const worldPageEnglishMessages: Record<string, string> = {
   "当前没有可显示项目。": "There are no items to display.",
   "[无法显示]": "[Unable to display]",
   操作失败: "Operation failed",
+  "扩展内容读取失败：{reason}": "Failed to read extension content: {reason}",
+  重试: "Retry",
 };
 
 Object.assign(englishMessages, worldPageEnglishMessages);
