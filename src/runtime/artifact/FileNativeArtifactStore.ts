@@ -269,8 +269,13 @@ export class FileNativeArtifactStore implements ArtifactStore {
   readonly #dataRoot: string;
   readonly #worldsRoot: string;
   readonly #extensionControls: WorldExtensionRequests;
-  /** Records with `save: "none"` are never written to disk. */
+  /**
+   * Records with `save: "none"` are never written to disk. Superseded ones are
+   * dropped at once, cleared ones once their clearing operation closes.
+   */
   readonly #memoryRecords = new Map<string, ArtifactRawRecord[]>();
+  /** Highest sequence handed out per world in this process, so removals never reuse one. */
+  readonly #sequenceHighWater = new Map<string, number>();
   readonly #mutationContext = new AsyncLocalStorage<ReadonlySet<string>>();
 
   constructor(dataRoot: string) {
@@ -401,12 +406,7 @@ export class FileNativeArtifactStore implements ArtifactStore {
       throw new ArtifactStoreInvariantError(
         "Artifact request attempt does not match the frozen operation",
       );
-    if (
-      operation.status === "core_failed" ||
-      operation.status === "completed" ||
-      operation.artifactProjectionStatus === "superseded"
-    )
-      return;
+    if (isClosedOperation(operation)) return;
 
     const mounts = [
       ...new Set(
@@ -1292,6 +1292,12 @@ export class FileNativeArtifactStore implements ArtifactStore {
     };
     assertRawRecord(finalized);
     if (record.save === "none") {
+      // A superseded record has no reader left: the debug listing shows only
+      // records that still exist, so it is not kept.
+      if (record.status === "superseded") {
+        await this.#removeRecord(finalized);
+        return;
+      }
       const records = this.#memoryRecords.get(record.operationId) ?? [];
       const index = records.findIndex(
         (candidate) => candidate.recordId === record.recordId,
@@ -1316,7 +1322,8 @@ export class FileNativeArtifactStore implements ArtifactStore {
       const records = (
         this.#memoryRecords.get(record.operationId) ?? []
       ).filter((candidate) => candidate.recordId !== record.recordId);
-      this.#memoryRecords.set(record.operationId, records);
+      if (records.length === 0) this.#memoryRecords.delete(record.operationId);
+      else this.#memoryRecords.set(record.operationId, records);
       return;
     }
     await rm(
@@ -1329,14 +1336,47 @@ export class FileNativeArtifactStore implements ArtifactStore {
     );
   }
 
+  /**
+   * A cleared save:none record stays only while its clearing operation can still
+   * roll the clear back (see beginRequestAttempt). Once that operation is closed
+   * nothing reads the record, so it leaves memory.
+   */
+  async #releaseClosedClears(worldId: string): Promise<void> {
+    const cleared = [...this.#memoryRecords.values()]
+      .flat()
+      .filter(
+        (record) => record.worldId === worldId && record.status === "cleared",
+      );
+    if (cleared.length === 0) return;
+    const operations = new Map(
+      (await this.#operationsForWorld(worldId)).map((operation) => [
+        operation.context.operationId,
+        operation,
+      ]),
+    );
+    for (const record of cleared) {
+      const clearing =
+        record.clearedBy === undefined
+          ? undefined
+          : operations.get(record.clearedBy.operationId);
+      if (clearing !== undefined && !isClosedOperation(clearing)) continue;
+      await this.#removeRecord(record);
+    }
+  }
+
   async #operationsForWorld(worldId: string): Promise<ArtifactOperationFile[]> {
     return [
       ...(await readOperationFiles(this.#artifactsRoot(worldId))).values(),
     ].filter((operation) => operation.context.worldId === worldId);
   }
 
+  /**
+   * The next sequence is one past the largest on disk or handed out in this
+   * process. The high-water mark outlives removed save:none records, so their
+   * sequences are never reused.
+   */
   async #nextSequence(worldId: string): Promise<number> {
-    let maximum = 0;
+    let maximum = this.#sequenceHighWater.get(worldId) ?? 0;
     try {
       for (const name of await readdir(
         join(this.#artifactsRoot(worldId), "records"),
@@ -1356,11 +1396,9 @@ export class FileNativeArtifactStore implements ArtifactStore {
     } catch (error: unknown) {
       if (!isMissing(error)) throw error;
     }
-    for (const records of this.#memoryRecords.values())
-      for (const record of records)
-        if (record.worldId === worldId)
-          maximum = Math.max(maximum, record.sequence);
-    return maximum + 1;
+    const next = maximum + 1;
+    this.#sequenceHighWater.set(worldId, next);
+    return next;
   }
 
   async #readOperation(
@@ -1412,7 +1450,9 @@ export class FileNativeArtifactStore implements ArtifactStore {
         new Set([...(active ?? []), worldId]),
         async () => {
           await migrateLegacyArtifactStore(this.#dataRoot, worldId);
-          return action();
+          const result = await action();
+          await this.#releaseClosedClears(worldId);
+          return result;
         },
       ),
     );
@@ -1778,6 +1818,15 @@ function isTerminalExtensionStatus(status: ArtifactExtensionStatus): boolean {
     "budget_exceeded",
     "superseded",
   ].includes(status);
+}
+
+/** A closed operation registers no further request attempts, so its clears are final. */
+function isClosedOperation(operation: ArtifactOperationFile): boolean {
+  return (
+    operation.status === "core_failed" ||
+    operation.status === "completed" ||
+    operation.artifactProjectionStatus === "superseded"
+  );
 }
 
 function isStaleOperation(operation: ArtifactOperationFile | null): boolean {

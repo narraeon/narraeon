@@ -94,6 +94,69 @@ async function beginRequestFixture(fixture: {
   await fixture.store.beginRequestAttempt(fixture.request);
 }
 
+/** One play turn that emits a save:none panel and leaves its operation open. */
+function noneRound(turn: number): {
+  operation: ArtifactOperationContext;
+  request: ArtifactRequestContext;
+} {
+  const operation = {
+    worldId: "world-1",
+    parentHead: "genesis",
+    operationId: `none-round-${turn}`,
+    playPresetId: "play-1",
+    playPresetRevision: "rev-1",
+    playPresetScriptsEnabled: true,
+  } satisfies ArtifactOperationContext;
+  const request = {
+    ...operation,
+    requestId: "decorate",
+    requestAttempt: 1,
+    maxArtifactBytes: 4096,
+    declarations: [
+      declaration("none", "replace", { invalidation: "new_operation" }),
+    ],
+  } satisfies ArtifactRequestContext;
+  return { operation, request };
+}
+
+/** A save:none panel emitted by one operation and cleared by a later, still-open one. */
+async function clearedNonePanel(root: string): Promise<{
+  store: FileNativeArtifactStore;
+  clearOperation: ArtifactOperationContext;
+  clearRequest: ArtifactRequestContext;
+}> {
+  const { store, operation, request } = context(root, "none", "upsert", {
+    key: "main",
+    invalidation: "never",
+  });
+  await store.beginOperation(operation);
+  await store.beginRequestAttempt(request);
+  await store.emit({
+    context: request,
+    output: "panel",
+    payload: "kept",
+    toolCallId: "kept-1",
+  });
+  const clearOperation = {
+    ...operation,
+    operationId: "operation-none-clearer",
+  } satisfies ArtifactOperationContext;
+  const clearRequest = {
+    ...request,
+    ...clearOperation,
+    requestId: "clear-request",
+    requestAttempt: 1,
+  } satisfies ArtifactRequestContext;
+  await store.beginOperation(clearOperation);
+  await store.beginRequestAttempt(clearRequest);
+  await store.clear({
+    context: clearRequest,
+    output: "panel",
+    toolCallId: "clear-1",
+  });
+  return { store, clearOperation, clearRequest };
+}
+
 describe("FileNativeArtifactStore", () => {
   test("无分叉快照的只读查询不创建锁目录", async () => {
     const root = await mkdtemp(join(tmpdir(), "artifact-read-only-"));
@@ -913,9 +976,10 @@ describe("FileNativeArtifactStore", () => {
       toolCallId: "late-memory-1",
     });
     expect(await first.store.readActiveProjection("world-1")).toEqual([]);
+    // A superseded save:none record is not kept, so the debug listing is empty.
     expect(
       await first.store.readDebug("world-1", first.operation.operationId),
-    ).toMatchObject([{ status: "superseded", payload: "late-memory" }]);
+    ).toEqual([]);
     expect(
       await first.store.clear({
         context: first.request,
@@ -1907,5 +1971,72 @@ describe("FileNativeArtifactStore", () => {
     expect(
       await cold.readDebug("world-1", noneClearOperation.operationId),
     ).toEqual([]);
+  });
+
+  test("save:none 多轮游玩只在内存保留未被取代的记录", async () => {
+    const root = await mkdtemp(
+      join(tmpdir(), "narraeon-artifact-none-rounds-"),
+    );
+    const store = new FileNativeArtifactStore(root);
+    for (let turn = 1; turn <= 5; turn += 1) {
+      const { operation, request } = noneRound(turn);
+      await store.beginOperation(operation);
+      await store.beginRequestAttempt(request);
+      await store.emit({
+        context: request,
+        output: "panel",
+        payload: `turn-${turn}`,
+        toolCallId: `round-${turn}`,
+      });
+      expect(await store.readDebug("world-1")).toMatchObject([
+        { status: "active", payload: `turn-${turn}` },
+      ]);
+    }
+  });
+
+  test("save:none 记录移除后新序号仍大于此前分配过的序号", async () => {
+    const root = await mkdtemp(
+      join(tmpdir(), "narraeon-artifact-none-sequence-"),
+    );
+    const store = new FileNativeArtifactStore(root);
+    const sequences: number[] = [];
+    for (let turn = 1; turn <= 3; turn += 1) {
+      const { operation, request } = noneRound(turn);
+      await store.beginOperation(operation);
+      await store.beginRequestAttempt(request);
+      await store.emit({
+        context: request,
+        output: "panel",
+        payload: `turn-${turn}`,
+        toolCallId: `sequence-${turn}`,
+      });
+      const debug = await store.readDebug("world-1");
+      expect(debug).toHaveLength(1);
+      sequences.push(debug[0]!.sequence);
+    }
+    expect(sequences).toEqual([1, 2, 3]);
+  });
+
+  test("save:none 清除被失败的 attempt 回滚后面板恢复", async () => {
+    const root = await mkdtemp(
+      join(tmpdir(), "narraeon-artifact-none-clear-rollback-"),
+    );
+    const { store, clearRequest } = await clearedNonePanel(root);
+    expect(await store.readActiveProjection("world-1")).toEqual([]);
+
+    await store.beginRequestAttempt({ ...clearRequest, requestAttempt: 2 });
+    expect(await store.readActiveProjection("world-1")).toMatchObject([
+      { payload: "kept" },
+    ]);
+  });
+
+  test("save:none 被清除的记录在清除者结束后不再留在内存中", async () => {
+    const root = await mkdtemp(
+      join(tmpdir(), "narraeon-artifact-none-clear-released-"),
+    );
+    const { store, clearOperation } = await clearedNonePanel(root);
+    await store.markCoreCommitted(clearOperation, "commit:clear");
+    await store.completeExtension("world-1", clearOperation.operationId, []);
+    expect(await store.readDebug("world-1")).toEqual([]);
   });
 });
