@@ -17,8 +17,11 @@ export interface ContentTreeEditorProps {
   status: "usable" | "needs_repair";
   issues: readonly ContentTreeIssue[];
   dirty: boolean;
+  /** The last save was rejected because the saved tree changed; the draft is kept. */
+  conflict?: boolean;
   onFilesChange: (files: ContentTreeFile[]) => void;
   onSave: () => void;
+  onLoadLatest?: () => void;
   onReset: () => void;
   onCopy: () => void;
   onExport: () => void;
@@ -37,8 +40,10 @@ export function ContentTreeEditor({
   status,
   issues,
   dirty,
+  conflict = false,
   onFilesChange,
   onSave,
+  onLoadLatest,
   onReset,
   onCopy,
   onExport,
@@ -169,6 +174,14 @@ export function ContentTreeEditor({
       )}
 
       <footer className="content-tree-actions">
+        {conflict && onLoadLatest !== undefined && (
+          <div className="content-save-conflict" role="alert">
+            <p>{uiText("内容包已被其他操作修改，草稿已保留，尚未保存。")}</p>
+            <button type="button" onClick={onLoadLatest}>
+              {uiText("加载最新版本")}
+            </button>
+          </div>
+        )}
         <div className="content-save-boundary">
           <div>
             <strong>

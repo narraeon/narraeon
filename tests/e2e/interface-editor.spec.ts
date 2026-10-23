@@ -47,6 +47,12 @@ test("纯界面编辑、草稿预览和游玩显示不增加模型调用，字�
     await runtime(page, {
       type: "content.replace",
       packageId: content.localId,
+      baseTreeRevision: (
+        await runtime<{ treeRevision: string }>(page, {
+          type: "content.read",
+          packageId: content.localId,
+        })
+      ).treeRevision,
       files: contentFiles(),
     });
     await runtime(page, {

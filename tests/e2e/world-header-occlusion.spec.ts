@@ -58,6 +58,12 @@ for (const width of [1440, 375]) {
       await runtime(page, {
         type: "content.replace",
         packageId: content.localId,
+        baseTreeRevision: (
+          await runtime<{ treeRevision: string }>(page, {
+            type: "content.read",
+            packageId: content.localId,
+          })
+        ).treeRevision,
         files: minimalFileNativeContentScaffold().map((file) =>
           file.path === "opening.md"
             ? {

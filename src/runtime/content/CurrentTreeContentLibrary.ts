@@ -1,5 +1,5 @@
 import { PackageScriptPermissions } from "../extension/PackageScriptPermissions.ts";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync, unlinkSync } from "node:fs";
 import {
   open,
@@ -77,6 +77,8 @@ export interface EditableContentPackageSummary {
 }
 
 export interface EditableContentPackageDetail extends EditableContentPackageSummary {
+  /** Digest of the whole current tree; a save must name the revision it was based on. */
+  treeRevision: string;
   files: ContentTreeFile[];
   documents: FileNativeContentDocument[];
   issues: FileNativeContentIssue[];
@@ -93,6 +95,11 @@ export interface CurrentTreeContentLibraryOptions {
 export interface CurrentTreeMutationOptions {
   signal?: AbortSignal;
   waitForLease?: boolean;
+}
+
+export interface CurrentTreeReplaceOptions extends CurrentTreeMutationOptions {
+  /** The `treeRevision` the caller's draft was opened from. */
+  baseTreeRevision: string;
 }
 
 export interface CurrentTreeContentPackageOperationLease {
@@ -122,6 +129,22 @@ export class CurrentTreeContentPackageBusyError extends CurrentTreeContentLibrar
   constructor() {
     super("Another source-package save or model operation is still running");
     this.name = "CurrentTreeContentPackageBusyError";
+  }
+}
+
+/**
+ * The current tree changed after the caller's base revision. Nothing was
+ * written; `current` is the tree the caller must reload before saving again.
+ */
+export class ContentTreeConflictError extends CurrentTreeContentLibraryError {
+  readonly current: EditableContentPackageDetail;
+
+  constructor(current: EditableContentPackageDetail) {
+    super(
+      "The content package changed after this draft was opened; load the latest tree before saving",
+    );
+    this.name = "ContentTreeConflictError";
+    this.current = current;
   }
 }
 
@@ -403,16 +426,23 @@ export class CurrentTreeContentLibrary {
     });
   }
 
+  /**
+   * Replace the whole tree only if it is still the revision the draft was
+   * based on. The comparison runs under the package lease, so a publish that
+   * landed after the draft opened cannot be overwritten.
+   */
   replaceCurrentTree(
     localId: string,
     files: readonly ContentTreeFile[],
-    options: CurrentTreeMutationOptions = {},
+    options: CurrentTreeReplaceOptions,
   ): Promise<EditableContentPackageDetail> {
     return this.#mutate(async () => {
       const lease = await this.acquireOperationLease(localId, {
         wait: options.waitForLease !== false,
       });
       try {
+        if (lease.package.treeRevision !== options.baseTreeRevision)
+          throw new ContentTreeConflictError(lease.package);
         return await lease.replace(files, options);
       } finally {
         lease.release();
@@ -770,12 +800,30 @@ function detail(
 ): EditableContentPackageDetail {
   return {
     ...summary(localId, title, readGameplay(files), inspection),
+    treeRevision: treeRevisionOf(files),
     files: files.map((file) => ({ ...file })),
     documents: structuredClone(inspection.documents),
     issues: structuredClone(inspection.issues),
     opening: inspection.opening,
     control: structuredClone(inspection.control),
   };
+}
+
+/**
+ * Digest of every file's path, encoding and contents, independent of file
+ * order. Equal trees always share a revision; a tree that returns to earlier
+ * content is equal to it, so a draft based on that content loses nothing.
+ */
+function treeRevisionOf(files: readonly ContentTreeFile[]): string {
+  const hash = createHash("sha256");
+  for (const file of [...files].sort((left, right) =>
+    compareStrings(left.path, right.path),
+  )) {
+    hash.update(
+      JSON.stringify([file.path, file.encoding ?? null, file.contents]),
+    );
+  }
+  return hash.digest("hex");
 }
 
 function summary(

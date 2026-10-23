@@ -27,6 +27,7 @@ import type {
 } from "../protocol/playerViews.ts";
 import {
   ContentPackageImportError,
+  ContentTreeConflictError,
   ContentWorkspace,
   InvalidContentTreeError,
 } from "./content/ContentWorkspace.ts";
@@ -477,11 +478,17 @@ export class V1Runtime {
           return await this.#content.replaceCurrentTreeContentPackage(
             request.packageId,
             request.files,
+            { baseTreeRevision: request.baseTreeRevision },
           );
         } catch (error: unknown) {
           if (error instanceof InvalidContentTreeError)
             throw new V1ProtocolError("invalid_request", error.message, {
               cause: error,
+            });
+          if (error instanceof ContentTreeConflictError)
+            throw new V1ProtocolError("content_conflict", error.message, {
+              cause: error,
+              details: { current: error.current },
             });
           throw error;
         }

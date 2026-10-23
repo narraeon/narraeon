@@ -11,6 +11,7 @@ import type {
 } from "../protocol/v1.ts";
 import { createClientId } from "./ClientId.ts";
 import { uiText } from "./i18n.ts";
+import { RuntimeRequestError } from "./runtimeClient.ts";
 
 export interface AuthoringClient {
   request(request: V1Request): Promise<unknown>;
@@ -20,8 +21,24 @@ export interface AuthoringPackageDetail {
   title: string;
   gameplay: Gameplay;
   status: "usable" | "needs_repair";
+  treeRevision: string;
   files: ContentTreeFile[];
   issues: { code: string; path: string; message: string }[];
+}
+/** What a draft was opened from: the saved files, and the package tree revision when there is one. */
+export interface AuthoringDraftBase {
+  files: ContentTreeFile[];
+  treeRevision: string | null;
+}
+/** The saved tree changed under the draft. Nothing was written; `latest` is the tree Runtime now holds. */
+export class AuthoringConflictError extends Error {
+  readonly latest: AuthoringTargetSnapshot;
+
+  constructor(latest: AuthoringTargetSnapshot) {
+    super("The content package changed after this draft was opened");
+    this.name = "AuthoringConflictError";
+    this.latest = latest;
+  }
 }
 export interface AuthoringTargetSnapshot extends V1SettingImprovementOverview {
   files: ContentTreeFile[];
@@ -78,7 +95,7 @@ export interface AuthoringTarget {
   ): Promise<AuthoringTargetSnapshot> | null;
   save(
     files: ContentTreeFile[],
-    baseline: ContentTreeFile[],
+    base: AuthoringDraftBase,
     snapshot: AuthoringTargetSnapshot,
   ): Promise<AuthoringTargetSnapshot>;
   rollback(
@@ -116,6 +133,20 @@ export function sameAuthoringFiles(
       );
     })
   );
+}
+
+/** The current package detail a rejected save carries, or null for any other failure. */
+function conflictingPackageDetail(
+  error: unknown,
+): AuthoringPackageDetail | null {
+  if (
+    !(error instanceof RuntimeRequestError) ||
+    error.protocolCode !== "content_conflict"
+  )
+    return null;
+  const details = error.details as
+    { current?: AuthoringPackageDetail } | undefined;
+  return details?.current ?? null;
 }
 
 export function contentPackageTarget(
@@ -176,12 +207,26 @@ export function contentPackageTarget(
       return { ...overview, files: detail.files, packageDetail: detail };
     },
     beginEdit: () => null,
-    save: async (files, _baseline, snapshot) => {
-      const detail = await request<AuthoringPackageDetail>(client, {
-        type: "content.replace",
-        packageId: id,
-        files,
-      });
+    save: async (files, base, snapshot) => {
+      if (base.treeRevision === null)
+        throw new Error(uiText("内容包版本缺失，请重新读取后再保存。"));
+      let detail: AuthoringPackageDetail;
+      try {
+        detail = await request<AuthoringPackageDetail>(client, {
+          type: "content.replace",
+          packageId: id,
+          files,
+          baseTreeRevision: base.treeRevision,
+        });
+      } catch (error: unknown) {
+        const current = conflictingPackageDetail(error);
+        if (current === null) throw error;
+        throw new AuthoringConflictError({
+          ...snapshot,
+          files: current.files,
+          packageDetail: current,
+        });
+      }
       return { ...snapshot, files: detail.files, packageDetail: detail };
     },
     rollback: (sessionId, changeSetId, path) =>
@@ -301,9 +346,9 @@ export function worldRevisionTarget(
             type: "world.revision.open",
             worldId: id,
           }).then(snapshot),
-    save: async (files, baseline, current) => {
+    save: async (files, base, current) => {
       const epoch = activeEpoch(current);
-      if (!sameAuthoringFiles(baseline, epoch.files))
+      if (!sameAuthoringFiles(base.files, epoch.files))
         throw new Error(
           uiText("世界已在浏览期间发生变化；请重置草稿并重新编辑。"),
         );

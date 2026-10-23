@@ -83,6 +83,12 @@ test("重新生成最新回复追加一次时间线修订，保留原文和旧�
     await runtime(page, {
       type: "content.replace",
       packageId: package_.localId,
+      baseTreeRevision: (
+        await runtime<{ treeRevision: string }>(page, {
+          type: "content.read",
+          packageId: package_.localId,
+        })
+      ).treeRevision,
       files: contentFiles(),
     });
     const created = await runtime<{ world: { worldId: string } }>(page, {

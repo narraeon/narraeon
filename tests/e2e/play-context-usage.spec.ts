@@ -98,6 +98,12 @@ test("实报 85% 提示可准备下一条全新上下文，超过窗口仍可追
   await runtime(page, {
     type: "content.replace",
     packageId: package_.localId,
+    baseTreeRevision: (
+      await runtime<{ treeRevision: string }>(page, {
+        type: "content.read",
+        packageId: package_.localId,
+      })
+    ).treeRevision,
     files: contentFiles(),
   });
   const { world } = await runtime<{ world: { worldId: string } }>(page, {

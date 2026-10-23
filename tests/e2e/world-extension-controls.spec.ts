@@ -171,6 +171,12 @@ test("真实世界扩展菜单阻止派发、取消在途、隐藏全部输出�
     await api(page, {
       type: "content.replace",
       packageId: content.localId,
+      baseTreeRevision: (
+        await api<{ treeRevision: string }>(page, {
+          type: "content.read",
+          packageId: content.localId,
+        })
+      ).treeRevision,
       files,
     });
     const created = await api<{ world: { worldId: string } }>(page, {

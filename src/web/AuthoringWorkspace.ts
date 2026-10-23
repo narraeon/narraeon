@@ -9,6 +9,7 @@ import {
   type ObserveConversation,
 } from "./ConversationObserver.ts";
 import {
+  AuthoringConflictError,
   type AuthoringTarget,
   type AuthoringTargetSnapshot,
   sameAuthoringFiles,
@@ -19,8 +20,12 @@ export interface AuthoringWorkspaceState {
   view: V1SettingImprovementView | null;
   files: ContentTreeFile[];
   baseline: ContentTreeFile[];
+  /** The tree revision `baseline` was saved at; a save must say it is based on this. */
+  baselineRevision: string | null;
   serverFiles: ContentTreeFile[];
   dirty: boolean;
+  /** True after a save was rejected because the saved tree changed; the draft is kept. */
+  conflict: boolean;
   /** True while Runtime changes the saved tree outside the editor; no file draft can start. */
   draftsLocked: boolean;
   loading: boolean;
@@ -33,6 +38,9 @@ export interface AuthoringWorkspaceState {
 const cloneFiles = (files: readonly ContentTreeFile[]) =>
   files.map((file) => ({ ...file }));
 
+const revisionOf = (snapshot: AuthoringTargetSnapshot | null) =>
+  snapshot?.packageDetail?.treeRevision ?? null;
+
 /** Browser lifetime of one authoring target. Runtime publication belongs to the adapter. */
 export class AuthoringWorkspace {
   private state: AuthoringWorkspaceState = {
@@ -40,8 +48,10 @@ export class AuthoringWorkspace {
     view: null,
     files: [],
     baseline: [],
+    baselineRevision: null,
     serverFiles: [],
     dirty: false,
+    conflict: false,
     draftsLocked: false,
     loading: true,
     applying: false,
@@ -92,7 +102,11 @@ export class AuthoringWorkspace {
       target: snapshot,
       serverFiles: files,
       ...(!this.state.dirty && this.saving === null
-        ? { files: cloneFiles(files), baseline: cloneFiles(files) }
+        ? {
+            files: cloneFiles(files),
+            baseline: cloneFiles(files),
+            baselineRevision: revisionOf(snapshot),
+          }
         : {}),
     });
   }
@@ -131,8 +145,10 @@ export class AuthoringWorkspace {
       view: null,
       files: [],
       baseline: [],
+      baselineRevision: null,
       serverFiles: [],
       dirty: false,
+      conflict: false,
       loading: true,
       applying: false,
       requestFailure: null,
@@ -520,7 +536,10 @@ export class AuthoringWorkspace {
     try {
       const next = await this.target.save(
         submitted,
-        this.state.baseline,
+        {
+          files: this.state.baseline,
+          treeRevision: this.state.baselineRevision,
+        },
         this.state.target,
       );
       if (!valid()) return;
@@ -530,6 +549,8 @@ export class AuthoringWorkspace {
       const baseline = cloneFiles(next.files);
       this.update({
         baseline,
+        baselineRevision: revisionOf(next),
+        conflict: false,
         ...(unchanged
           ? { files: cloneFiles(baseline), dirty: false }
           : { files: draft, dirty: !sameAuthoringFiles(baseline, draft) }),
@@ -537,16 +558,35 @@ export class AuthoringWorkspace {
       });
       this.observeSelection();
     } catch (error: unknown) {
-      if (valid()) this.update({ requestFailure: errorMessage(error) });
+      if (!valid()) return;
+      if (error instanceof AuthoringConflictError) {
+        this.accept(error.latest);
+        this.update({ conflict: true, requestFailure: null });
+      } else this.update({ requestFailure: errorMessage(error) });
     } finally {
       if (valid()) this.update({ loading: false });
     }
+  }
+  /** Discards the draft after a rejected save and adopts the saved tree Runtime reported. */
+  loadLatest(): void {
+    if (!this.active || this.state.applying || !this.state.conflict) return;
+    this.update({
+      files: cloneFiles(this.state.serverFiles),
+      baseline: cloneFiles(this.state.serverFiles),
+      baselineRevision: revisionOf(this.state.target),
+      dirty: false,
+      conflict: false,
+      requestFailure: null,
+      notice: uiText("已放弃草稿，载入内容包最新版本。"),
+    });
   }
   resetFiles(): void {
     if (!this.active || this.state.applying) return;
     this.update({
       files: cloneFiles(this.state.serverFiles),
       baseline: cloneFiles(this.state.serverFiles),
+      baselineRevision: revisionOf(this.state.target),
+      conflict: false,
       dirty: false,
       requestFailure: null,
       notice:

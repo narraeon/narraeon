@@ -2,7 +2,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { V1ProtocolError, type V1Request } from "../../src/protocol/v1.ts";
+import {
+  parseV1Envelope,
+  V1ProtocolError,
+  type V1Request,
+  v1Protocol,
+} from "../../src/protocol/v1.ts";
 import { V1Runtime } from "../../src/runtime/V1Runtime.ts";
 import { ContentTreeConflictError } from "../../src/runtime/content/CurrentTreeContentLibrary.ts";
 import { ContentWorkspace } from "../../src/runtime/content/ContentWorkspace.ts";
@@ -22,7 +27,9 @@ function edited(
   path: string,
   contents: string,
 ) {
-  return files.map((file) => (file.path === path ? { ...file, contents } : file));
+  return files.map((file) =>
+    file.path === path ? { ...file, contents } : file,
+  );
 }
 
 describe("内容包当前树版本", () => {
@@ -60,7 +67,9 @@ describe("内容包当前树版本", () => {
     );
     await expect(stale).rejects.toBeInstanceOf(ContentTreeConflictError);
 
-    const current = await content.readCurrentTreeContentPackage(created.localId);
+    const current = await content.readCurrentTreeContentPackage(
+      created.localId,
+    );
     expect(current.files).toEqual(otherTab);
   });
 
@@ -73,12 +82,13 @@ describe("内容包当前树版本", () => {
       edited(base.files, "control/frame.yaml", "saved"),
       { baseTreeRevision: base.treeRevision },
     );
-    expect(saved.files.find((f) => f.path === "control/frame.yaml")).toMatchObject(
-      { contents: "saved" },
-    );
+    expect(
+      saved.files.find((f) => f.path === "control/frame.yaml"),
+    ).toMatchObject({ contents: "saved" });
     expect(saved.treeRevision).not.toBe(base.treeRevision);
     expect(
-      (await content.readCurrentTreeContentPackage(created.localId)).treeRevision,
+      (await content.readCurrentTreeContentPackage(created.localId))
+        .treeRevision,
     ).toBe(saved.treeRevision);
   });
 
@@ -133,12 +143,24 @@ describe("content.replace 协议", () => {
       packageId: created.localId,
     })) as { files: { path: string; contents: string }[] };
 
-    const rejected = runtime.handle({
-      type: "content.replace",
-      packageId: created.localId,
-      files: edited(before.files, "control/frame.yaml", "no base"),
-    } as unknown as V1Request);
-    await expect(rejected).rejects.toMatchObject({ code: "invalid_request" });
+    // The wire boundary rejects the envelope before any runtime handling runs.
+    const wire = (() => {
+      try {
+        parseV1Envelope({
+          protocol: v1Protocol,
+          request: {
+            type: "content.replace",
+            packageId: created.localId,
+            files: edited(before.files, "control/frame.yaml", "no base"),
+          },
+        });
+        return null;
+      } catch (error: unknown) {
+        return error;
+      }
+    })();
+    expect(wire).toBeInstanceOf(V1ProtocolError);
+    expect(wire).toMatchObject({ code: "invalid_request" });
     expect(
       (await call(runtime, {
         type: "content.read",
@@ -158,7 +180,10 @@ describe("content.replace 协议", () => {
     const base = (await call(runtime, {
       type: "content.read",
       packageId: created.localId,
-    })) as { files: { path: string; contents: string }[]; treeRevision: string };
+    })) as {
+      files: { path: string; contents: string }[];
+      treeRevision: string;
+    };
     await call(runtime, {
       type: "content.replace",
       packageId: created.localId,

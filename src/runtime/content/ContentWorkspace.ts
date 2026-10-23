@@ -22,6 +22,7 @@ import {
   CurrentTreeContentLibrary,
   type CurrentTreeContentPackageOperationLease,
   type CurrentTreeContentLibraryOptions,
+  type CurrentTreeReplaceOptions,
   InvalidContentTreeError,
   normalizeCurrentContentTreeFiles,
 } from "./CurrentTreeContentLibrary.ts";
@@ -33,6 +34,7 @@ import {
   worldDocumentTextRequirement,
 } from "./FileNativeContentTree.ts";
 export {
+  ContentTreeConflictError,
   CurrentTreeContentPackageBusyError,
   CurrentTreeContentLibraryError,
   CurrentTreeContentPackageNotFoundError,
@@ -167,7 +169,7 @@ export class ContentWorkspace {
   replaceCurrentTreeContentPackage(
     localId: string,
     files: readonly ContentTreeFile[],
-    options: ContentWorkspaceOperationOptions = {},
+    options: CurrentTreeReplaceOptions,
   ) {
     return this.#currentTreeLibrary.replaceCurrentTree(localId, files, options);
   }

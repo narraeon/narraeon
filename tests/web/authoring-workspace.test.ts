@@ -432,7 +432,10 @@ test("保存基线过期时保留草稿并提示冲突，加载最新版本后�
       throw new RuntimeRequestError("The content package changed", {
         protocolCode: "content_conflict",
         details: {
-          current: await original({ type: "content.read", packageId: "target" }),
+          current: await original({
+            type: "content.read",
+            packageId: "target",
+          }),
         },
       });
     }

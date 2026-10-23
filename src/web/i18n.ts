@@ -299,6 +299,13 @@ const englishMessages: Record<string, string> = {
   "正在读取工作区…": "Loading workspace…",
   工作区读取失败: "Failed to load the workspace",
   "内容包当前树已整批保存。": "The content package tree has been saved.",
+  "内容包已被其他操作修改，草稿已保留，尚未保存。":
+    "The content package changed elsewhere. Your draft is kept and has not been saved.",
+  加载最新版本: "Load latest version",
+  "已放弃草稿，载入内容包最新版本。":
+    "Discarded the draft and loaded the latest content package.",
+  "内容包版本缺失，请重新读取后再保存。":
+    "The content package version is missing. Reload it before saving.",
   "内容包已重命名。": "The content package has been renamed.",
   "内容包 ZIP 自身大小超过安全上限。":
     "The content package ZIP exceeds the safety limit.",

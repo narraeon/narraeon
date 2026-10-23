@@ -70,6 +70,12 @@ test("游玩后返回首页按最新活动排序，显示当前正文、相对�
     await runtime(page, {
       type: "content.replace",
       packageId: content.localId,
+      baseTreeRevision: (
+        await runtime<{ treeRevision: string }>(page, {
+          type: "content.read",
+          packageId: content.localId,
+        })
+      ).treeRevision,
       files: detail.files.map((file) =>
         file.path === "opening.md"
           ? { ...file, contents: `${title}的开场。` }
