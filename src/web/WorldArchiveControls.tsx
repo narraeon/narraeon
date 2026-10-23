@@ -44,12 +44,12 @@ export function WorldBackupExportButton({
         worldId,
         operationId: createClientId("archive-export"),
       })) as WorldArchiveDownload;
-      const outcome = await saveFile(archive.fileName, {
-        path: `/api/runtime/v1/world-archives/${encodeURIComponent(archive.archiveId)}`,
-      });
+      const path = `/api/runtime/v1/world-archives/${encodeURIComponent(archive.archiveId)}`;
+      await confirmArchiveDownload(path);
+      const outcome = await saveFile(archive.fileName, { path });
       setMessage(outcome === "cancelled" ? "" : uiText("世界备份已开始下载。"));
     } catch (error) {
-      setMessage(archiveErrorMessage(error));
+      setMessage(archiveDownloadErrorMessage(error));
     } finally {
       setBusy(false);
       onBusyChange?.(false);
@@ -189,6 +189,37 @@ function uploadWorldBackup(
     request.send(file);
   });
 }
+
+/**
+ * Asks the server whether the export at `path` can be downloaded, without
+ * transferring it. The download itself is one-time and is started afterwards,
+ * so a missing or failing export is reported here instead of by the browser.
+ */
+async function confirmArchiveDownload(path: string): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetch(`${path}/check`);
+  } catch {
+    throw new RuntimeRequestError(uiText("下载失败，请重试。"));
+  }
+  if (response.ok) return;
+  const body = (await response.json().catch(() => undefined)) as
+    { error?: { code?: string; message?: string } } | undefined;
+  throw new RuntimeRequestError(
+    body?.error?.message === undefined
+      ? uiText("下载失败，请重试。")
+      : runtimeErrorText(body.error.message),
+    { protocolCode: body?.error?.code },
+  );
+}
+
+function archiveDownloadErrorMessage(error: unknown): string {
+  return error instanceof RuntimeRequestError &&
+    error.protocolCode === "invalid_archive"
+    ? uiText("备份已失效或不存在，请重新导出。")
+    : archiveErrorMessage(error);
+}
+
 function archiveErrorMessage(error: unknown): string {
   const code =
     error instanceof RuntimeRequestError ? error.protocolCode : undefined;

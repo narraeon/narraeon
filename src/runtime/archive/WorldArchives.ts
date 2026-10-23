@@ -167,11 +167,31 @@ export class WorldArchives {
     });
   }
 
+  /**
+   * Confirms that `download` can serve this export without consuming it, so the
+   * browser can check before it starts the one-time download.
+   */
+  async checkDownload(archiveId: string): Promise<void> {
+    const { root } = await this.#readExport(archiveId);
+    await stat(join(root, "archive.zip"));
+  }
+
   async download(archiveId: string): Promise<{
     metadata: WorldArchiveDownload;
     stream: Readable;
     cleanup: () => Promise<void>;
   }> {
+    const { root, metadata } = await this.#readExport(archiveId);
+    return {
+      metadata,
+      stream: createReadStream(join(root, "archive.zip")),
+      cleanup: () => rm(root, { recursive: true, force: true }),
+    };
+  }
+
+  async #readExport(
+    archiveId: string,
+  ): Promise<{ root: string; metadata: WorldArchiveDownload }> {
     identity(archiveId);
     const root = join(this.#root, "exports", archiveId);
     const metadata = JSON.parse(
@@ -187,11 +207,7 @@ export class WorldArchives {
         "The download has expired; export the world again",
       );
     }
-    return {
-      metadata,
-      stream: createReadStream(join(root, "archive.zip")),
-      cleanup: () => rm(root, { recursive: true, force: true }),
-    };
+    return { root, metadata };
   }
 
   async importWorld(input: {

@@ -84,6 +84,9 @@ const englishMessages: Record<string, string> = {
   "正在导出世界备份…": "Exporting world backup…",
   "正在导出…": "Exporting…",
   "世界备份已开始下载。": "Your world backup download has started.",
+  "备份已失效或不存在，请重新导出。":
+    "This backup is no longer available or does not exist. Export the world again.",
+  "下载失败，请重试。": "The download failed. Try again.",
   "备份包含完整故事、世界文档和模型调用记录，不包含 API Key 和模型配置。":
     "Backups include the complete story, world documents, and model call records. API keys and model configuration are excluded.",
   "世界备份超过容量限制。": "The world backup exceeds the size limits.",
