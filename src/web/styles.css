@@ -9941,6 +9941,29 @@ summary:focus-visible {
 .world-extension-child {
   margin-inline-start: 1rem;
 }
+.world-extension-failure {
+  flex: 1 0 100%;
+  margin: 0;
+  color: var(--danger);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+.extension-read-failure {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--danger);
+  border-radius: 3px;
+  color: var(--danger);
+  background: var(--danger-surface);
+  font-size: 0.78rem;
+}
+.extension-read-failure p {
+  margin: 0;
+  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+}
 
 /* Creation dialog: the mode is always chosen; the scheme appears only for tabletop. */
 .create-package-dialog {

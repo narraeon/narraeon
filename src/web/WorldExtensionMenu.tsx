@@ -14,14 +14,20 @@ export function WorldExtensionMenu({
   onChange: (key: string, value: WorldExtensionChoice) => Promise<void>;
 }): React.JSX.Element {
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [failure, setFailure] = useState<{
+    key: string;
+    message: string;
+  } | null>(null);
   const change = async (key: string, value: WorldExtensionChoice) => {
     setBusy(true);
-    setError(null);
+    setFailure(null);
     try {
       await onChange(key, value);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      setFailure({
+        key,
+        message: reason instanceof Error ? reason.message : String(reason),
+      });
     } finally {
       setBusy(false);
     }
@@ -68,6 +74,11 @@ export function WorldExtensionMenu({
       >
         {uiText("恢复默认")}
       </button>
+      {failure?.key === item.key ? (
+        <p className="world-extension-failure" role="alert">
+          {failure.message}
+        </p>
+      ) : null}
     </div>
   );
   return (
@@ -91,7 +102,6 @@ export function WorldExtensionMenu({
             .filter((item) => item.kind === "panel" || item.kind === "view")
             .map(row)}
         </fieldset>
-        {error === null ? null : <p role="alert">{error}</p>}
       </div>
     </details>
   );

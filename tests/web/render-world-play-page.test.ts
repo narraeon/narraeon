@@ -2319,6 +2319,12 @@ describe("世界游玩页面", () => {
       request: vi.fn(<T>(request: V1Request) => {
         if (request.type === "world.read")
           return Promise.resolve(worldView(chain) as T);
+        if (request.type === "world.play-decorations.read")
+          return Promise.resolve({
+            ...worldView(chain),
+            playerViewPanels: [],
+            artifactDebug: [],
+          } as T);
         if (request.type === "artifacts.debug") return Promise.resolve([] as T);
         if (request.type === "play.chain.inspect")
           return Promise.resolve(chain as T);
@@ -2487,6 +2493,12 @@ describe("世界游玩页面", () => {
       request: vi.fn(<T>(request: V1Request) => {
         if (request.type === "world.read")
           return Promise.resolve(worldView(chain) as T);
+        if (request.type === "world.play-decorations.read")
+          return Promise.resolve({
+            ...worldView(chain),
+            playerViewPanels: [],
+            artifactDebug: [],
+          } as T);
         if (request.type === "artifacts.debug") return Promise.resolve([] as T);
         if (request.type === "play.chain.inspect")
           return Promise.resolve(chain as T);
@@ -2557,6 +2569,12 @@ describe("世界游玩页面", () => {
       request: vi.fn(<T>(request: V1Request) => {
         if (request.type === "world.read")
           return Promise.resolve(worldView(chain) as T);
+        if (request.type === "world.play-decorations.read")
+          return Promise.resolve({
+            ...worldView(chain),
+            playerViewPanels: [],
+            artifactDebug: [],
+          } as T);
         if (request.type === "artifacts.debug") return Promise.resolve([] as T);
         if (request.type === "play.chain.inspect")
           return Promise.resolve(chain as T);
@@ -4932,6 +4950,128 @@ test("世界扩展菜单提交 Runtime 选择；无调用链的同端点通知�
       request.type.startsWith("play.chain"),
     ),
   ).toBe(false);
+});
+
+test("装饰读取失败时在扩展区域显示原因，重试成功后提示消失并恢复面板", async () => {
+  let reads = 0;
+  const client = {
+    request: vi.fn((request: V1Request): Promise<unknown> => {
+      if (request.type === "world.read")
+        return Promise.resolve(worldView(null));
+      if (request.type === "world.play-decorations.read") {
+        reads += 1;
+        return reads === 1
+          ? Promise.reject(new Error("World does not exist"))
+          : Promise.resolve(
+              playDecorations("正文附件", "world-one", "commit:1"),
+            );
+      }
+      if (request.type === "artifacts.debug") return Promise.resolve([]);
+      return Promise.reject(new Error(`Unexpected request: ${request.type}`));
+    }),
+  };
+  renderWorld(client);
+  await screen.findByRole("heading", { name: "宿舍世界" });
+  const notice = "扩展内容读取失败：世界不存在，可能已被删除。";
+  await screen.findByText(notice);
+  expect(screen.queryByTitle("panel")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "重试" }));
+  await screen.findByTitle("panel");
+  expect(screen.queryByText(notice)).toBeNull();
+  expect(reads).toBe(2);
+});
+
+test("同一世界装饰读取连续失败时只保留一条提示", async () => {
+  const client = {
+    request: vi.fn((request: V1Request): Promise<unknown> => {
+      if (request.type === "world.read")
+        return Promise.resolve(worldView(null));
+      if (request.type === "world.play-decorations.read")
+        return Promise.reject(new Error("World does not exist"));
+      if (request.type === "artifacts.debug") return Promise.resolve([]);
+      return Promise.reject(new Error(`Unexpected request: ${request.type}`));
+    }),
+  };
+  renderWorld(client);
+  await screen.findByRole("heading", { name: "宿舍世界" });
+  const notice = "扩展内容读取失败：世界不存在，可能已被删除。";
+  await screen.findByText(notice);
+  fireEvent.click(screen.getByRole("button", { name: "重试" }));
+  await waitFor(() =>
+    expect(
+      client.request.mock.calls.filter(
+        ([request]) => request.type === "world.play-decorations.read",
+      ),
+    ).toHaveLength(2),
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "重试" })).toBeTruthy(),
+  );
+  expect(screen.getAllByText(notice)).toHaveLength(1);
+});
+
+test("世界扩展开关设置失败时原因显示在该开关旁，开关保持服务端状态", async () => {
+  const controls = {
+    revision: 1,
+    items: [
+      {
+        key: "view:status",
+        id: "status",
+        name: "当前状态",
+        source: "world" as const,
+        kind: "view" as const,
+        defaultEnabled: true,
+        selected: true,
+        enabled: true,
+        overridden: false,
+        generation: 0,
+      },
+    ],
+  };
+  const client = {
+    request: vi.fn((request: V1Request): Promise<unknown> => {
+      if (request.type === "world.read")
+        return Promise.resolve({
+          ...worldView(null),
+          extensionControls: controls,
+        });
+      if (request.type === "world.play-decorations.read")
+        return Promise.resolve({
+          ...playDecorations(null, "world-one", "commit:1"),
+          extensionControls: controls,
+          playerViews: worldView(null).playerViews,
+          playerViewPanels: [],
+          suppressedPlayerViewIds: [],
+        });
+      if (request.type === "world.extensions.set")
+        return Promise.reject(
+          new Error("World extension setting was rejected"),
+        );
+      if (request.type === "artifacts.debug") return Promise.resolve([]);
+      return Promise.reject(new Error(`Unexpected request: ${request.type}`));
+    }),
+  };
+  renderWorld(client);
+  await screen.findByRole("heading", { name: "宿舍世界" });
+  fireEvent.click(screen.getByText("世界扩展", { exact: true }));
+  const checkbox = screen.getByRole<HTMLInputElement>("checkbox", {
+    name: "当前状态",
+  });
+  fireEvent.click(checkbox);
+  const row = checkbox.closest<HTMLElement>(".world-extension-choice");
+  expect(row).not.toBeNull();
+  await waitFor(() =>
+    expect(
+      within(row!).getByText("World extension setting was rejected"),
+    ).toBeTruthy(),
+  );
+  expect(checkbox.checked).toBe(true);
+  expect(client.request).toHaveBeenCalledWith({
+    type: "world.extensions.set",
+    worldId: "world-one",
+    key: "view:status",
+    value: "off",
+  });
 });
 
 function deferredProtagonistRevision() {
