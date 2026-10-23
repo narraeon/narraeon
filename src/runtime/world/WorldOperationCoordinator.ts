@@ -236,6 +236,11 @@ export class FileNativeWorldOperationCoordinator {
     return this.#queue.isHeld(worldId);
   }
 
+  /** World operations for this world that are running or waiting for their turn. */
+  pendingWorldOperations(worldId: string): number {
+    return this.#queue.pendingCount(worldId);
+  }
+
   #releaseClaim(handle: ContinuityCorrectionWorldClaimHandle): void {
     const current = this.#claims.get(handle.worldId);
     if (

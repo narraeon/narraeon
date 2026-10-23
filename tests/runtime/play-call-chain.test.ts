@@ -1557,6 +1557,306 @@ test("修正后并发观察与续写：单飞水合不让磁盘快照覆盖运�
   ).resolves.toMatchObject({ status: "ready" });
 });
 
+test("内存中的游玩会话最多保留最近使用的 3 个世界，打开第 4 个时回收最久未用的会话（#93）", async () => {
+  const { worlds, worldId: oldest } = await createWorld("residency-lru");
+  const later = [
+    await createWorldIn(worlds, "residency-lru-b"),
+    await createWorldIn(worlds, "residency-lru-c"),
+    await createWorldIn(worlds, "residency-lru-d"),
+  ];
+  const chains = new PlayCallChain(worlds);
+  await startChain(chains, oldest, "lru-a");
+  for (const [index, worldId] of later.entries())
+    await startChain(chains, worldId, `lru-${index}`);
+  await vi.waitFor(() => expect(chains.residentWorldIds()).toEqual(later));
+});
+
+test("有进行中调用的世界即使最久未用也不会被回收（#93）", async () => {
+  const { worlds, worldId: busy } = await createWorld("residency-busy");
+  const idle = [
+    await createWorldIn(worlds, "residency-busy-b"),
+    await createWorldIn(worlds, "residency-busy-c"),
+    await createWorldIn(worlds, "residency-busy-d"),
+  ] as const;
+  const chains = new PlayCallChain(worlds);
+  const answer = scriptedHost("进行中的回复");
+  let reachProvider!: () => void;
+  const providerReached = new Promise<void>((resolve) => {
+    reachProvider = resolve;
+  });
+  let release!: () => void;
+  const providerReleased = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const inFlight = chains.start({
+    worldId: busy,
+    chainId: "busy-chain",
+    exchangeId: "busy-start",
+    playerText: "进入房间。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: {
+      binding: modelBinding,
+      exchange: async (request, observer) => {
+        reachProvider();
+        await providerReleased;
+        return answer.exchange(request, observer);
+      },
+    },
+  });
+  await providerReached;
+  for (const [index, worldId] of idle.entries())
+    await startChain(chains, worldId, `busy-${index}`);
+  await vi.waitFor(() =>
+    expect(chains.residentWorldIds()).toEqual([busy, idle[1], idle[2]]),
+  );
+  release();
+  await expect(inFlight).resolves.toMatchObject({ status: "ready" });
+});
+
+test("有排队或正在执行的世界操作时，即使最久未用也不回收该世界的会话（#93）", async () => {
+  const { worlds, worldId: queued } = await createWorld("residency-queued");
+  const others = [
+    await createWorldIn(worlds, "residency-queued-b"),
+    await createWorldIn(worlds, "residency-queued-c"),
+    await createWorldIn(worlds, "residency-queued-d"),
+  ] as const;
+  const chains = new PlayCallChain(worlds);
+  await startChain(chains, queued, "queued-0");
+  await startChain(chains, others[0], "queued-1");
+  await startChain(chains, others[1], "queued-2");
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const operation = worlds.operations.withWorldAuthorityLock(
+    queued,
+    () => held,
+  );
+  await startChain(chains, others[2], "queued-3");
+  await vi.waitFor(() =>
+    expect(chains.residentWorldIds()).toEqual([queued, others[1], others[2]]),
+  );
+  release();
+  await operation;
+  const fifth = await createWorldIn(worlds, "residency-queued-e");
+  await startChain(chains, fifth, "queued-4");
+  await vi.waitFor(() =>
+    expect(chains.residentWorldIds()).toEqual([others[1], others[2], fifth]),
+  );
+});
+
+test("回收后继续游玩、修改玩家消息并读取上下文，结果与未回收的会话一致（#93）", async () => {
+  const { worlds, worldId: evicted } = await createWorld(
+    "residency-equivalent",
+  );
+  const control = await createWorldIn(worlds, "residency-equivalent-control");
+  const extra = [
+    await createWorldIn(worlds, "residency-equivalent-b"),
+    await createWorldIn(worlds, "residency-equivalent-c"),
+    await createWorldIn(worlds, "residency-equivalent-d"),
+  ];
+  const chains = new PlayCallChain(worlds);
+  const controlChains = new PlayCallChain(worlds);
+  const playThrough = async (
+    playChains: PlayCallChain,
+    worldId: string,
+    label: string,
+    between: () => Promise<void>,
+  ) => {
+    const host = scriptedHost(
+      "第一段回复",
+      "第二段回复",
+      "第三段回复",
+      "修正后的回复",
+    );
+    await playChains.start({
+      worldId,
+      chainId: `${label}-chain`,
+      exchangeId: `${label}-first`,
+      playerText: "第一次行动",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: modelBinding(),
+      modelHost: host,
+    });
+    const second = await playChains.append({
+      worldId,
+      chainId: `${label}-chain`,
+      exchangeId: `${label}-second`,
+      playerText: "第二次行动",
+      modelHost: host,
+    });
+    await between();
+    const secondPlayer = second.events.findLast(
+      (event) => event.kind === "player",
+    )!;
+    const revised = await playChains.revisePlayer({
+      operationId: `${label}-revise`,
+      worldId,
+      chainId: second.chainId,
+      eventId: secondPlayer.id,
+      replacementExchangeId: `${label}-replacement`,
+      replacementText: "第二次行动（修正）",
+      continuation: "continue_context",
+    });
+    const continued = await playChains.append({
+      worldId,
+      chainId: revised.playCallChain.chainId,
+      exchangeId: `${label}-third`,
+      playerText: "第三次行动",
+      modelHost: host,
+    });
+    const reading = await playChains.inspectReading(
+      worldId,
+      continued.parentHead,
+    );
+    return {
+      revised: playTrace(revised.playCallChain),
+      continued: playTrace(continued),
+      reading: {
+        requestExchange: reading?.requestExchange,
+        promptExchanges: reading?.promptHistory?.map((run) => run.exchange),
+      },
+    };
+  };
+  const evictedTrace = await playThrough(
+    chains,
+    evicted,
+    "evicted",
+    async () => {
+      for (const [index, worldId] of extra.entries())
+        await startChain(chains, worldId, `equivalent-${index}`);
+      await vi.waitFor(() =>
+        expect(chains.residentWorldIds()).not.toContain(evicted),
+      );
+    },
+  );
+  const controlTrace = await playThrough(
+    controlChains,
+    control,
+    "control",
+    () => Promise.resolve(),
+  );
+  expect(evictedTrace).toEqual(controlTrace);
+});
+
+test("回收与同一世界的读取交错时，读取不写回旧会话，发送结果不丢失（#93）", async () => {
+  const { worlds, worldId: evicted } = await createWorld(
+    "residency-interleave",
+  );
+  const others = [
+    await createWorldIn(worlds, "residency-interleave-b"),
+    await createWorldIn(worlds, "residency-interleave-c"),
+    await createWorldIn(worlds, "residency-interleave-d"),
+  ] as const;
+  const chains = new PlayCallChain(worlds);
+  await startChain(chains, evicted, "interleave");
+  await startChain(chains, others[0], "interleave-b");
+  await startChain(chains, others[1], "interleave-c");
+  // Injection point: the read pauses after it has loaded the evicted session.
+  const readCurrent = worlds.playAdvances.readCurrent.bind(worlds.playAdvances);
+  let reachGate!: () => void;
+  const readPaused = new Promise<void>((resolve) => {
+    reachGate = resolve;
+  });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let paused = false;
+  vi.spyOn(worlds.playAdvances, "readCurrent").mockImplementation(
+    async (worldId, chainId) => {
+      if (worldId === evicted && !paused) {
+        paused = true;
+        reachGate();
+        await gate;
+      }
+      return readCurrent(worldId, chainId);
+    },
+  );
+  const reading = chains.inspectWorld(evicted);
+  await readPaused;
+  // While the read is paused, the evicted world becomes least recently used.
+  await chains.inspectWorld(others[0]);
+  await chains.inspectWorld(others[1]);
+  await startChain(chains, others[2], "interleave-d");
+  await vi.waitFor(() =>
+    expect(chains.residentWorldIds()).toEqual([
+      others[0],
+      others[1],
+      others[2],
+    ]),
+  );
+  const sent = await chains.append({
+    worldId: evicted,
+    chainId: "interleave-chain",
+    exchangeId: "interleave-send",
+    playerText: "发送中的行动",
+    modelHost: scriptedHost("发送后的回复"),
+  });
+  release();
+  const observed = await reading;
+  expect(observed).not.toBeNull();
+  expect(playTrace(observed!)).toEqual(playTrace(sent));
+  const durable = await new PlayCallChain(worlds).inspectWorld(evicted);
+  expect(playTrace(durable!)).toEqual(playTrace(sent));
+  expect(
+    sent.events.filter(
+      (event) => event.kind === "player" && event.text === "发送中的行动",
+    ),
+  ).toHaveLength(1);
+});
+
+/** Opens another world in an existing store; residency tests need several. */
+async function createWorldIn(
+  worlds: FileNativeWorldStore,
+  label: string,
+): Promise<string> {
+  const created = await worlds.createFromContentPackage({
+    operationId: `create-${label}-world`,
+    sourcePackageId: `${label}-package`,
+    sourcePackageTitle: `${label} package`,
+    packageFiles: worldFiles(),
+    prompt: { hostBinding: hostBinding(), modelBinding: modelBinding() },
+  });
+  if (created.outcome !== "created") throw new Error("world was not created");
+  return created.world.worldId;
+}
+
+function scriptedHost(...texts: string[]): ScriptedModelHost {
+  return new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: texts.map((text) => ({ outcome: "response", text })),
+  });
+}
+
+/** Starts a one-exchange chain whose chain ID is `${label}-chain`. */
+function startChain(chains: PlayCallChain, worldId: string, label: string) {
+  return chains.start({
+    worldId,
+    chainId: `${label}-chain`,
+    exchangeId: `${label}-start`,
+    playerText: "进入房间。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: scriptedHost(`${label} 回复`),
+  });
+}
+
+/** Observable play state, without IDs that legitimately differ between worlds. */
+function playTrace(view: V1PlayCallChainView) {
+  return {
+    status: view.status,
+    events: view.events.map((event) => [
+      event.kind,
+      "text" in event ? event.text : undefined,
+    ]),
+  };
+}
+
 test("玩家取消会终止当前 Provider 派发并保留已提交玩家原文", async () => {
   const { worlds, worldId } = await createWorld("play-chain-player-cancel");
   let signal: AbortSignal | undefined;
