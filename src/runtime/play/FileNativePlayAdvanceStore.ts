@@ -4,7 +4,15 @@ import {
 } from "../history/HistoryBackground.ts";
 import { createHash, randomUUID } from "node:crypto";
 import type { NarrativeCheckpointDeclaration } from "./PlayContinuity.ts";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
@@ -74,13 +82,17 @@ export type PlayAdvanceBase =
       createdAt: number;
     };
 
+/** Written last by the released-record cleanup (ADR-0034); its absence means "not yet run". */
+const LAYOUT_MARKER = "play-advance-layout.json";
+
 /**
  * The single in-progress play advance of a call chain, if any.
  *
  * It exists only between `begin` and `markSettled`. A marker that survives a
  * restart means the advance was interrupted; the runtime marks the chain
- * interrupted and the player retries. Legacy records from earlier layouts are
- * ignored, so they never block a world from opening.
+ * interrupted and the player retries. Released records from earlier layouts
+ * never block a world from opening, and the storage upgrade removes them
+ * (see `migrateLayout`).
  */
 export class FileNativePlayAdvanceStore {
   readonly #worldsRoot: string;
@@ -130,6 +142,62 @@ export class FileNativePlayAdvanceStore {
       recursive: true,
       force: true,
     });
+  }
+
+  /**
+   * Whether the world's advance records are free of the pre-ADR-0044 layout
+   * (ADR-0034). Reads never write: a world with no released records is current
+   * without a marker.
+   */
+  async layoutCurrent(worldId: string): Promise<boolean> {
+    assertIdentity(worldId, "World ID");
+    if (
+      (await readOptionalJson<unknown>(this.#layoutMarkerPath(worldId))) !==
+      null
+    )
+      return true;
+    return (await this.#releasedChainRoots(worldId)).length === 0;
+  }
+
+  /**
+   * Remove the released `records/` and `current.json` of every chain. Each
+   * chain's `in-progress.json` stays as it is, and a chain left empty is removed.
+   * The marker is written last, so an interrupted run simply runs again.
+   */
+  async migrateLayout(worldId: string): Promise<void> {
+    assertIdentity(worldId, "World ID");
+    if (await this.layoutCurrent(worldId)) return;
+    for (const chainRoot of await this.#releasedChainRoots(worldId)) {
+      await rm(join(chainRoot, "records"), { recursive: true, force: true });
+      await rm(join(chainRoot, "current.json"), { force: true });
+      if ((await readdir(chainRoot)).length === 0)
+        await rm(chainRoot, { recursive: true, force: true });
+    }
+    await publishJson(this.#layoutMarkerPath(worldId), layoutMarker());
+  }
+
+  /** Chain directories that still hold a released record or pointer. */
+  async #releasedChainRoots(worldId: string): Promise<string[]> {
+    const advancesRoot = join(
+      this.#worldsRoot,
+      worldId,
+      "runtime",
+      "play-advances",
+    );
+    const roots: string[] = [];
+    for (const name of await readDirectoryNames(advancesRoot)) {
+      const chainRoot = join(advancesRoot, name);
+      if (
+        (await pathExists(join(chainRoot, "records"))) ||
+        (await pathExists(join(chainRoot, "current.json")))
+      )
+        roots.push(chainRoot);
+    }
+    return roots;
+  }
+
+  #layoutMarkerPath(worldId: string): string {
+    return join(this.#worldsRoot, worldId, "runtime", LAYOUT_MARKER);
   }
 
   #markerPath(worldId: string, chainId: string): string {
@@ -218,6 +286,29 @@ async function readOptionalJson<T>(path: string): Promise<T | null> {
     if (isNodeError(error) && error.code === "ENOENT") return null;
     throw error;
   }
+}
+
+async function readDirectoryNames(directory: string): Promise<string[]> {
+  try {
+    return await readdir(directory);
+  } catch (error: unknown) {
+    if (isNodeError(error) && error.code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  return stat(path).then(
+    () => true,
+    (error: unknown) => {
+      if (isNodeError(error) && error.code === "ENOENT") return false;
+      throw error;
+    },
+  );
+}
+
+function layoutMarker(): { schemaVersion: 1; kind: "play_advance_layout" } {
+  return { schemaVersion: 1, kind: "play_advance_layout" };
 }
 
 /** Atomic publish: write a temporary file, then rename over the target. */
