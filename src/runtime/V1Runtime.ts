@@ -85,6 +85,9 @@ import type {
   ConversationState,
 } from "../protocol/conversationObservation.ts";
 
+// 先取得当前端点再按它读取的请求，在端点被回退丢弃时最多重做这么多次（#94）。
+const currentEndpointReadAttempts = 3;
+
 export class V1Runtime {
   readonly worldArchives: WorldArchives;
   readonly #conversationChanges = new ConversationChanges();
@@ -258,6 +261,11 @@ export class V1Runtime {
     } catch (error) {
       await this.#errorLog?.recordRequestFailure(request, error);
       if (error instanceof WorldArchiveError)
+        throw new V1ProtocolError(error.code, error.message, { cause: error });
+      if (
+        error instanceof FileNativeWorldCreationError &&
+        error.code === "endpoint_discarded"
+      )
         throw new V1ProtocolError(error.code, error.message, { cause: error });
       if (
         request.type === "world.archive.export" &&
@@ -595,16 +603,19 @@ export class V1Runtime {
             undefined,
             request.draft,
           );
-        const head = await this.#worlds.currentHead(request.worldId);
-        const playerViews = await this.#worlds.renderPlayerViewsAtHead(
-          request.worldId,
-          head,
-        );
-        return buildPlayPresetWorkbenchSnapshot(
-          binding,
-          { worldId: request.worldId, head, playerViews },
-          request.draft,
-        );
+        const { worldId } = request;
+        return this.#readingCurrentEndpoint(async () => {
+          const head = await this.#worlds.currentHead(worldId);
+          const playerViews = await this.#worlds.renderPlayerViewsAtHead(
+            worldId,
+            head,
+          );
+          return buildPlayPresetWorkbenchSnapshot(
+            binding,
+            { worldId, head, playerViews },
+            request.draft,
+          );
+        });
       }
       case "prompt.preview": {
         const [package_, connection, playPreset] = await Promise.all([
@@ -715,50 +726,50 @@ export class V1Runtime {
         return this.worldArchives.exportWorld(request);
       case "world.archive.import":
         return this.worldArchives.importWorld(request);
-      case "world.read": {
-        const head = await this.#worlds.currentHead(request.worldId);
-        const playerViews = await this.#worlds.renderPlayerViewsAtHead(
-          request.worldId,
-          head,
-        );
-        const extensionControls = await this.#currentExtensionControls(
-          request.worldId,
-        );
-        const [playerViewPanels, playTimeline, revisionEpoch] =
-          await Promise.all([
-            this.#frontendPlayerViewPanels(
-              request.worldId,
-              head,
-              playerViews,
-              extensionControls,
-            ),
-            this.#worlds.playTimeline.readPage(request.worldId, 40),
-            this.#worldRevisions.activeEpoch(request.worldId),
-          ]);
-        return {
-          worldId: request.worldId,
-          head,
-          state: [],
-          control: [],
-          history: [],
-          runtime: { head, surfaces: "lazy" },
-          playerViews,
-          committedMessages: [],
-          artifacts: [],
-          extensions: [],
-          playerViewPanels,
-          extensionControls,
-          suppressedPlayerViewIds:
-            await this.#suppressedPlayerViewIds(extensionControls),
-          artifactDebug: [],
-          playCallChain: null,
-          playTimeline,
-          worldRevision: revisionEpoch,
-          archiveNeedsFreshContext: await this.#worlds.archiveNeedsFreshContext(
+      case "world.read":
+        return this.#readingCurrentEndpoint(async () => {
+          const head = await this.#worlds.currentHead(request.worldId);
+          const playerViews = await this.#worlds.renderPlayerViewsAtHead(
             request.worldId,
-          ),
-        };
-      }
+            head,
+          );
+          const extensionControls = await this.#currentExtensionControls(
+            request.worldId,
+          );
+          const [playerViewPanels, playTimeline, revisionEpoch] =
+            await Promise.all([
+              this.#frontendPlayerViewPanels(
+                request.worldId,
+                head,
+                playerViews,
+                extensionControls,
+              ),
+              this.#worlds.playTimeline.readPage(request.worldId, 40),
+              this.#worldRevisions.activeEpoch(request.worldId),
+            ]);
+          return {
+            worldId: request.worldId,
+            head,
+            state: [],
+            control: [],
+            history: [],
+            runtime: { head, surfaces: "lazy" },
+            playerViews,
+            committedMessages: [],
+            artifacts: [],
+            extensions: [],
+            playerViewPanels,
+            extensionControls,
+            suppressedPlayerViewIds:
+              await this.#suppressedPlayerViewIds(extensionControls),
+            artifactDebug: [],
+            playCallChain: null,
+            playTimeline,
+            worldRevision: revisionEpoch,
+            archiveNeedsFreshContext:
+              await this.#worlds.archiveNeedsFreshContext(request.worldId),
+          };
+        });
       case "world.surface.read":
         return request.surface === "runtime"
           ? this.#worlds.readSurface(request.worldId, "runtime")
@@ -778,46 +789,48 @@ export class V1Runtime {
         );
         return result;
       }
-      case "world.play-decorations.read": {
-        for (;;) {
-          const extensionControls = await this.#currentExtensionControls(
-            request.worldId,
-          );
-          const head = await this.#reconcileArtifacts(request.worldId);
-          const [projection, artifactDebug] = await Promise.all([
-            this.#frontendDecorations(request.worldId),
-            this.#frontendDebug(request.worldId),
-          ]);
-          const playerViews = await this.#worlds.renderPlayerViewsAtHead(
-            request.worldId,
-            head,
-          );
-          const playerViewPanels = await this.#frontendPlayerViewPanels(
-            request.worldId,
-            head,
-            playerViews,
-            extensionControls,
-          );
-          const suppressedPlayerViewIds =
-            await this.#suppressedPlayerViewIds(extensionControls);
-          // Never attach a newer controls revision to a projection read before
-          // that choice was accepted. Concurrent toggles restart this read.
-          if (
-            (await this.#worlds.extensionControlsRevision(request.worldId)) !==
-            extensionControls.revision
-          )
-            continue;
-          return {
-            head,
-            ...projection,
-            artifactDebug,
-            playerViews,
-            playerViewPanels,
-            extensionControls,
-            suppressedPlayerViewIds,
-          };
-        }
-      }
+      case "world.play-decorations.read":
+        return this.#readingCurrentEndpoint(async () => {
+          for (;;) {
+            const extensionControls = await this.#currentExtensionControls(
+              request.worldId,
+            );
+            const head = await this.#reconcileArtifacts(request.worldId);
+            const [projection, artifactDebug] = await Promise.all([
+              this.#frontendDecorations(request.worldId),
+              this.#frontendDebug(request.worldId),
+            ]);
+            const playerViews = await this.#worlds.renderPlayerViewsAtHead(
+              request.worldId,
+              head,
+            );
+            const playerViewPanels = await this.#frontendPlayerViewPanels(
+              request.worldId,
+              head,
+              playerViews,
+              extensionControls,
+            );
+            const suppressedPlayerViewIds =
+              await this.#suppressedPlayerViewIds(extensionControls);
+            // Never attach a newer controls revision to a projection read before
+            // that choice was accepted. Concurrent toggles restart this read.
+            if (
+              (await this.#worlds.extensionControlsRevision(
+                request.worldId,
+              )) !== extensionControls.revision
+            )
+              continue;
+            return {
+              head,
+              ...projection,
+              artifactDebug,
+              playerViews,
+              playerViewPanels,
+              extensionControls,
+              suppressedPlayerViewIds,
+            };
+          }
+        });
       case "artifacts.read":
         await this.#reconcileArtifacts(request.worldId);
         return (
@@ -1187,15 +1200,34 @@ export class V1Runtime {
     );
   }
 
+  /**
+   * Reads that take the current endpoint first and then read at it (ADR-0044):
+   * a rewind published in between discards that endpoint, so the read starts
+   * again from the new current endpoint instead of failing.
+   */
+  async #readingCurrentEndpoint<T>(read: () => Promise<T>): Promise<T> {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await read();
+      } catch (error: unknown) {
+        if (
+          !(
+            error instanceof FileNativeWorldCreationError &&
+            error.code === "endpoint_discarded"
+          ) ||
+          attempt >= currentEndpointReadAttempts
+        )
+          throw error;
+      }
+    }
+  }
+
   async #reconcileArtifacts(worldId: string): Promise<string> {
-    const [head, currentOperationId] = await Promise.all([
-      this.#worlds.currentHead(worldId),
-      this.#worlds.currentHeadOperationId(worldId),
-    ]);
+    const { head, operationId } = await this.#worlds.currentEndpoint(worldId);
     await this.#artifacts.reconcileHead(
       worldId,
       head,
-      currentOperationId ?? undefined,
+      operationId ?? undefined,
     );
     return head;
   }

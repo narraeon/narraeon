@@ -235,7 +235,9 @@ export async function createServer(input: {
         return reply.send(response);
       } catch (error: unknown) {
         if (error instanceof V1ProtocolError) {
-          return reply.status(400).send({
+          // 端点已被回退丢弃：客户端应重新读取当前世界，不是服务端错误。
+          const status = error.code === "endpoint_discarded" ? 409 : 400;
+          return reply.status(status).send({
             protocol: "narraeon.runtime/v1",
             error: {
               code: error.code,

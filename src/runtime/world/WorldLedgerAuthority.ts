@@ -17,6 +17,7 @@ import {
   appendTurn,
   initializeLedger,
   listTurns,
+  readEndpoint,
   readFileAt,
   readHead as readLedgerHead,
   readTreeAt,
@@ -141,15 +142,15 @@ export class WorldLedgerAuthority {
     await initializeLedger(this.#root);
   }
 
-  /** 当前端点：逻辑位置（回退后即被恢复的轮）及其元数据。 */
+  /** 当前端点：逻辑位置（回退后即被恢复的轮）及其元数据，三者取自同一份账本视图。 */
   async readHead(): Promise<WorldHeadState> {
-    const physical = await readLedgerHead(this.#root);
-    const position = await resolveEndpoint(this.#root, physical);
+    const endpoint = await readEndpoint(this.#root);
+    const { sequence } = endpoint;
     return {
-      head: headName(position),
-      sequence: position,
-      operationId: await this.#operationIdAt(position),
-      commitDigest: await readTurnDigest(this.#root, position),
+      head: headName(sequence),
+      sequence,
+      operationId: await this.#operationIdAt(sequence, endpoint.record),
+      commitDigest: endpoint.digest,
     };
   }
 
@@ -157,7 +158,10 @@ export class WorldLedgerAuthority {
     return (await this.readHead()).operationId;
   }
 
-  async #operationIdAt(position: number): Promise<string | null> {
+  async #operationIdAt(
+    position: number,
+    record: WorldTurnRecord | null,
+  ): Promise<string | null> {
     if (position === 0) {
       const genesis = await readJsonOrNull<{ operationId?: unknown }>(
         join(this.#root, genesisFile),
@@ -166,7 +170,13 @@ export class WorldLedgerAuthority {
         ? genesis.operationId
         : null;
     }
-    return (await this.#commitAtPosition(position)).operationId;
+    const commit = record?.payload as WorldTurnCommit | undefined;
+    if (commit?.sequence !== position)
+      throw new WorldAuthorityError(
+        "corrupt",
+        `第 ${position} 轮缺少提交元数据`,
+      );
+    return commit.operationId;
   }
 
   async #positionOf(head?: string): Promise<number> {

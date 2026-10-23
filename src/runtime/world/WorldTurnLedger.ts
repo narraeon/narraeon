@@ -36,7 +36,12 @@ export interface WorldTurnRecord {
 
 export class WorldTurnLedgerError extends Error {
   readonly code:
-    "no_head" | "unreachable" | "corrupt" | "invalid_path" | "missing_record";
+    | "no_head"
+    | "unreachable"
+    | "discarded"
+    | "corrupt"
+    | "invalid_path"
+    | "missing_record";
 
   constructor(code: WorldTurnLedgerError["code"], message: string) {
     super(message);
@@ -129,7 +134,12 @@ async function publishHead(root: string, sequence: number): Promise<void> {
   );
 }
 
-async function readAllRecords(root: string): Promise<WorldTurnRecord[]> {
+interface StoredTurn {
+  record: WorldTurnRecord;
+  digest: string;
+}
+
+async function readAllRecords(root: string): Promise<StoredTurn[]> {
   let names: string[];
   try {
     names = await readdir(join(root, turnsDirectory));
@@ -137,27 +147,39 @@ async function readAllRecords(root: string): Promise<WorldTurnRecord[]> {
     if (isMissing(error)) return [];
     throw error;
   }
-  const records: WorldTurnRecord[] = [];
+  const turns: StoredTurn[] = [];
   for (const name of names) {
     if (!name.endsWith(".json")) continue;
-    const text = await readFile(join(root, turnsDirectory, name), "utf8");
-    records.push(JSON.parse(text) as WorldTurnRecord);
+    // 回退在发布端点之后才删除被丢弃的轮记录：读到一半消失的记录一定已被丢弃，跳过即可。
+    // 端点若在读取期间变化，loadView 会重新读取。
+    const text = await readTextOrNull(join(root, turnsDirectory, name));
+    if (text === null) continue;
+    turns.push({
+      record: JSON.parse(text) as WorldTurnRecord,
+      digest: createHash("sha256").update(text).digest("hex"),
+    });
   }
-  return records.sort((left, right) => left.sequence - right.sequence);
+  return turns.sort(
+    (left, right) => left.record.sequence - right.record.sequence,
+  );
 }
 
 interface LedgerView {
   head: number;
   byPosition: Map<number, WorldTurnRecord>;
+  digests: Map<number, string>;
   discarded: Set<number>;
 }
 
 // 被某个 rewind 丢弃的轮是 (restores, rewind) 之间的位置；它们可能仍在磁盘上，
 // 直到清理完成，但读取时一律忽略。
-function viewOf(head: number, records: WorldTurnRecord[]): LedgerView {
+function viewOf(head: number, turns: readonly StoredTurn[]): LedgerView {
   const byPosition = new Map<number, WorldTurnRecord>();
-  for (const record of records) {
-    if (record.sequence <= head) byPosition.set(record.sequence, record);
+  const digests = new Map<number, string>();
+  for (const { record, digest } of turns) {
+    if (record.sequence > head) continue;
+    byPosition.set(record.sequence, record);
+    digests.set(record.sequence, digest);
   }
   const discarded = new Set<number>();
   for (const record of byPosition.values()) {
@@ -170,7 +192,7 @@ function viewOf(head: number, records: WorldTurnRecord[]): LedgerView {
       discarded.add(position);
     }
   }
-  return { head, byPosition, discarded };
+  return { head, byPosition, digests, discarded };
 }
 
 // 进程内视图缓存，按端点失效。一个数据目录只被一个进程操作（ADR-0044），
@@ -179,13 +201,19 @@ function viewOf(head: number, records: WorldTurnRecord[]): LedgerView {
 // （视图只包含序号不大于 head 的记录，且 recoverIncomplete 本身会在结束时失效缓存）。
 const viewCache = new Map<string, LedgerView>();
 
+// 一次读取只解析一个视图。回退先发布新端点、再删除被丢弃的轮记录：读完记录后端点仍未变化，
+// 说明读到的记录与这个端点一致；端点变了就用新端点重新读取。
 async function loadView(root: string): Promise<LedgerView> {
-  const head = await readHead(root);
-  const cached = viewCache.get(resolve(root));
-  if (cached?.head === head) return cached;
-  const view = viewOf(head, await readAllRecords(root));
-  viewCache.set(resolve(root), view);
-  return view;
+  for (;;) {
+    const head = await readHead(root);
+    const cached = viewCache.get(resolve(root));
+    if (cached?.head === head) return cached;
+    const turns = await readAllRecords(root);
+    if ((await readHead(root)) !== head) continue;
+    const view = viewOf(head, turns);
+    viewCache.set(resolve(root), view);
+    return view;
+  }
 }
 
 // 世界目录被删除、归档导入或分叉发布到已存在路径之前调用：下一次读取从磁盘重建视图。
@@ -206,7 +234,7 @@ function resolvePosition(view: LedgerView, sequence: number): number {
     if (position === 0) return 0;
     if (view.discarded.has(position)) {
       throw new WorldTurnLedgerError(
-        "unreachable",
+        "discarded",
         `端点 ${sequence} 已被回退丢弃`,
       );
     }
@@ -338,8 +366,9 @@ export async function appendTurn(
 // 被丢弃的轮记录（读取时已忽略）在这里清理。返回是否回滚了未完成的轮。
 export async function recoverIncomplete(root: string): Promise<boolean> {
   const head = await readHead(root);
-  const records = await readAllRecords(root);
-  const incomplete = records
+  const turns = await readAllRecords(root);
+  const incomplete = turns
+    .map(({ record }) => record)
     .filter((record) => record.sequence > head)
     .sort((left, right) => right.sequence - left.sequence);
   for (const record of incomplete) {
@@ -354,7 +383,7 @@ export async function recoverIncomplete(root: string): Promise<boolean> {
     }
     await rm(join(root, turnFileName(record.sequence)), { force: true });
   }
-  const view = viewOf(head, records);
+  const view = viewOf(head, turns);
   for (const position of view.discarded) {
     await rm(join(root, turnFileName(position)), { force: true });
   }
@@ -385,6 +414,21 @@ export async function resolveEndpoint(
   sequence: number,
 ): Promise<number> {
   return resolvePosition(await loadView(root), sequence);
+}
+
+// 当前端点的逻辑位置、它的轮记录与记录摘要，三者来自同一个视图。
+export async function readEndpoint(root: string): Promise<{
+  sequence: number;
+  record: WorldTurnRecord | null;
+  digest: string | null;
+}> {
+  const view = await loadView(root);
+  const sequence = resolvePosition(view, view.head);
+  return {
+    sequence,
+    record: view.byPosition.get(sequence) ?? null,
+    digest: view.digests.get(sequence) ?? null,
+  };
 }
 
 // 第 sequence 轮记录文件的 sha256；0 轮没有记录，返回 null。
