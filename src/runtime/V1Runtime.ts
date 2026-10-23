@@ -335,6 +335,17 @@ export class V1Runtime {
     );
   }
 
+  /** Archive routes sit outside `handle`, so they record their own failures. */
+  async recordArchiveFailure(
+    target: {
+      type: "world.archive.download" | "world.archive.upload";
+      archiveId?: string;
+    },
+    error: unknown,
+  ): Promise<void> {
+    await this.#errorLog?.recordRequestFailure(target, error);
+  }
+
   subscribeConversation(
     target: ConversationTarget,
     changed: (durable: boolean) => void,

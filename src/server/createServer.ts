@@ -143,6 +143,10 @@ export async function createServer(input: {
           request.body as Readable,
         );
       } catch (error) {
+        await input.runtime.recordArchiveFailure(
+          { type: "world.archive.upload" },
+          error,
+        );
         if (error instanceof WorldArchiveError)
           return reply
             .status(error.code === "limit_exceeded" ? 413 : 400)
@@ -150,6 +154,28 @@ export async function createServer(input: {
         throw error;
       }
     });
+    // The browser checks this before it starts the one-time download, so a
+    // missing or failing export is reported on the page instead of a blank file.
+    archives.get<{ Params: { archiveId: string } }>(
+      "/api/runtime/v1/world-archives/:archiveId/check",
+      async (request, reply) => {
+        try {
+          await input.runtime.worldArchives.checkDownload(
+            request.params.archiveId,
+          );
+          return reply.status(204).send();
+        } catch (error) {
+          await input.runtime.recordArchiveFailure(
+            {
+              type: "world.archive.download",
+              archiveId: request.params.archiveId,
+            },
+            error,
+          );
+          return archiveDownloadFailure(reply, error);
+        }
+      },
+    );
     archives.get<{ Params: { archiveId: string } }>(
       "/api/runtime/v1/world-archives/:archiveId",
       async (request, reply) => {
@@ -169,22 +195,14 @@ export async function createServer(input: {
             )
             .send(archive.stream);
         } catch (error) {
-          if (error instanceof WorldArchiveError)
-            return reply
-              .status(400)
-              .send({ error: { code: error.code, message: error.message } });
-          if (
-            error instanceof Error &&
-            "code" in error &&
-            error.code === "ENOENT"
-          )
-            return reply.status(404).send({
-              error: {
-                code: "invalid_archive",
-                message: "The archive download is unavailable",
-              },
-            });
-          throw error;
+          await input.runtime.recordArchiveFailure(
+            {
+              type: "world.archive.download",
+              archiveId: request.params.archiveId,
+            },
+            error,
+          );
+          return archiveDownloadFailure(reply, error);
         }
       },
     );
@@ -258,6 +276,24 @@ export async function createServer(input: {
   server.get("/", index);
   server.get("/index.html", index);
   return server;
+}
+
+function archiveDownloadFailure(
+  reply: FastifyReply,
+  error: unknown,
+): FastifyReply {
+  if (error instanceof WorldArchiveError)
+    return reply
+      .status(400)
+      .send({ error: { code: error.code, message: error.message } });
+  if (error instanceof Error && "code" in error && error.code === "ENOENT")
+    return reply.status(404).send({
+      error: {
+        code: "invalid_archive",
+        message: "The archive download is unavailable",
+      },
+    });
+  throw error;
 }
 
 function acceptsPlayCallChainStream(request: FastifyRequest): boolean {
