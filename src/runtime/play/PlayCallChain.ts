@@ -1702,9 +1702,6 @@ export class PlayCallChain {
           targetWorldRoot: input.targetWorldRoot,
           source: context,
           target: previousContext,
-          ...(input.retainCompleteTimeline
-            ? { retainCompleteContext: true }
-            : {}),
         });
       previousChainId = chainId;
     }
@@ -1735,9 +1732,6 @@ export class PlayCallChain {
         targetWorldRoot: input.targetWorldRoot,
         source: sourceContext,
         target: cloneSharingPromptRuns(derived),
-        ...(input.retainCompleteTimeline
-          ? { retainCompleteContext: true }
-          : {}),
       });
     return projectView(derived);
   }

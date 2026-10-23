@@ -1,4 +1,5 @@
 import type { HistoryBackground } from "../history/HistoryBackground.ts";
+import { FileNativePlayTimelineStore } from "../play/FileNativePlayTimelineStore.ts";
 import { randomUUID } from "node:crypto";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -46,9 +47,11 @@ export class UnsupportedLegacyStorageError extends Error {
  */
 export class FileNativeWorldStorageMigrator {
   readonly #worldsRoot: string;
+  readonly #playTimeline: FileNativePlayTimelineStore;
 
   constructor(dataRoot: string) {
     this.#worldsRoot = join(resolve(dataRoot), "worlds-file-native");
+    this.#playTimeline = new FileNativePlayTimelineStore(dataRoot);
   }
 
   async migrate(
@@ -66,12 +69,14 @@ export class FileNativeWorldStorageMigrator {
         join(runtimeRoot, ".authority-v3-migration"),
       ])
         await rm(residue, { recursive: true, force: true });
+      await this.#playTimeline.migrateLayout(worldId);
       const head = await ledger.readHead();
       return { outcome: "already_current", authorityCommits: head.sequence };
     }
     const authority = new LegacyAuthorityV3Reader(worldRoot);
     if (await authority.exists()) {
       const { commits } = await convertAuthorityV3ToLedger(worldRoot);
+      await this.#playTimeline.migrateLayout(worldId);
       return { outcome: "migrated", authorityCommits: commits };
     }
     throw new UnsupportedLegacyStorageError(worldId);
