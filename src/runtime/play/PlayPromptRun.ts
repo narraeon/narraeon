@@ -186,6 +186,169 @@ export function encodePlayPromptRun(run: PlayPromptRun): unknown {
   };
 }
 
+/** What a run repeats from its basis: everything but its event, head and exchange. */
+export type PromptRunCompiled = Pick<
+  PlayPromptRun,
+  | "playPreset"
+  | "bootstrap"
+  | "tools"
+  | "followups"
+  | "playPresetScriptsEnabled"
+  | "presetFiles"
+>;
+
+/** The earlier compiled prompt a run may repeat: 0 is the context base, N is run N. */
+export interface PromptRunBasis {
+  index: number;
+  compiled: PromptRunCompiled;
+}
+
+/** A run whose compiled prompt repeats its basis stores only this reference. */
+export interface PlayPromptRunReference {
+  kind: "play_prompt_run_reference";
+  schemaVersion: 1;
+  firstEventId: number;
+  head: string;
+  exchange: number;
+  basisRun: number;
+  /** Digest of the compiled prompt it repeats; a read checks the basis against it. */
+  digest: string;
+}
+
+export function promptRunCompiled(
+  source: PromptRunCompiled,
+): PromptRunCompiled {
+  return {
+    playPreset: source.playPreset,
+    bootstrap: source.bootstrap,
+    tools: source.tools,
+    followups: source.followups,
+    playPresetScriptsEnabled: source.playPresetScriptsEnabled,
+    presetFiles: source.presetFiles,
+  };
+}
+
+/**
+ * The compiled prompt a context base holds. A base written without its follow-up,
+ * script or file fields cannot be a basis, so runs are then stored in full.
+ */
+export function contextPromptBasis(source: {
+  playPreset: PromptRunCompiled["playPreset"];
+  bootstrap: PromptRunCompiled["bootstrap"];
+  tools: PromptRunCompiled["tools"];
+  followups?: PromptRunCompiled["followups"];
+  playPresetScriptsEnabled?: boolean;
+  presetFiles?: PromptRunCompiled["presetFiles"];
+}): PromptRunCompiled | null {
+  if (
+    source.followups === undefined ||
+    source.playPresetScriptsEnabled === undefined ||
+    source.presetFiles === undefined
+  )
+    return null;
+  return promptRunCompiled(source as PromptRunCompiled);
+}
+
+/** Sorted-key JSON, so equal prompts digest equally whatever their key order. */
+export function compiledPromptDigest(compiled: PromptRunCompiled): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify(promptRunCompiled(compiled), (_key, value: unknown) =>
+        typeof value === "object" && value !== null && !Array.isArray(value)
+          ? Object.fromEntries(
+              Object.entries(value).sort(([left], [right]) =>
+                left < right ? -1 : left > right ? 1 : 0,
+              ),
+            )
+          : value,
+      ),
+    )
+    .digest("hex");
+}
+
+/** A compiled prompt shared into a pool and frozen, as the runs built on it are. */
+export function sharePromptCompiled(
+  compiled: PromptRunCompiled,
+  strings: PromptRunStrings,
+): PromptRunCompiled {
+  return deepFreeze(
+    internStrings(structuredClone(promptRunCompiled(compiled)), strings),
+  );
+}
+
+/** Full record, unless the compiled prompt repeats the basis. */
+export function encodePlayPromptRunRecord(
+  run: PlayPromptRun,
+  basis: PromptRunBasis | null,
+): unknown {
+  if (
+    basis !== null &&
+    compiledPromptDigest(run) === compiledPromptDigest(basis.compiled)
+  )
+    return {
+      kind: "play_prompt_run_reference",
+      schemaVersion: 1,
+      firstEventId: run.firstEventId,
+      head: run.head,
+      exchange: run.exchange,
+      basisRun: basis.index,
+      digest: compiledPromptDigest(basis.compiled),
+    } satisfies PlayPromptRunReference;
+  return encodePlayPromptRun(run);
+}
+
+export function isPlayPromptRunReference(value: unknown): boolean {
+  return isRecordValue(value) && value.kind === "play_prompt_run_reference";
+}
+
+/**
+ * Rebuild a referenced run from the basis it names. The caller resolves the
+ * basis number from runs it has already read; the run shares its frozen parts.
+ */
+export function promptRunFromReference(
+  record: unknown,
+  basisOf: (basisRun: number) => PromptRunCompiled | null,
+): PlayPromptRun {
+  if (
+    !isRecordValue(record) ||
+    !exactKeys(record, [
+      "kind",
+      "schemaVersion",
+      "firstEventId",
+      "head",
+      "exchange",
+      "basisRun",
+      "digest",
+    ]) ||
+    record.schemaVersion !== 1 ||
+    !Number.isSafeInteger(record.firstEventId) ||
+    Number(record.firstEventId) < 1 ||
+    !Number.isSafeInteger(record.exchange) ||
+    Number(record.exchange) < 1 ||
+    typeof record.head !== "string" ||
+    !Number.isSafeInteger(record.basisRun) ||
+    Number(record.basisRun) < 0 ||
+    typeof record.digest !== "string"
+  )
+    throw new Error("Invalid play prompt run reference");
+  const basis = basisOf(Number(record.basisRun));
+  if (basis === null)
+    throw new Error("Play prompt run reference has no earlier basis");
+  if (compiledPromptDigest(basis) !== record.digest)
+    throw new Error("Play prompt run reference does not match its basis");
+  return Object.freeze({
+    schemaVersion: 1,
+    firstEventId: Number(record.firstEventId),
+    head: record.head,
+    exchange: Number(record.exchange),
+    ...promptRunCompiled(basis),
+  });
+}
+
+function isRecordValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 export function decodePlayPromptRun(value: unknown): PlayPromptRun {
   if (typeof value !== "object" || value === null)
     throw new Error("Invalid play prompt run record");

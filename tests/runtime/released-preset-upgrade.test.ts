@@ -1,4 +1,12 @@
-import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  writeFile,
+  rm,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { gunzipSync } from "node:zlib";
@@ -99,8 +107,47 @@ test("v0.4.0 实际发布代码写出的预设、世界、原生请求与产物�
       path.includes("/runtime/play-requests/"),
     );
     expect(savedRequests).toHaveLength(2);
-    for (const [path, exactBytes] of savedRequests)
-      expect(await readFile(join(root, path), "utf8")).toBe(exactBytes);
+    // The context keeps only its latest request, byte for byte, in its own directory.
+    const latestDigest = createHash("sha256")
+      .update(JSON.stringify(fixture.requests[1]))
+      .digest("hex");
+    const contextsRoot = join(
+      root,
+      "worlds-file-native",
+      fixture.worldId,
+      "runtime",
+      "play-contexts",
+    );
+    const [contextDirectory] = await readdir(contextsRoot);
+    expect(
+      await readFile(
+        join(
+          contextsRoot,
+          contextDirectory!,
+          "requests",
+          `${latestDigest}.json`,
+        ),
+        "utf8",
+      ),
+    ).toBe(
+      savedRequests.find(([path]) =>
+        path.endsWith(`/${latestDigest}.json`),
+      )![1],
+    );
+    expect(
+      await readdir(join(contextsRoot, contextDirectory!, "requests")),
+    ).toEqual([`${latestDigest}.json`]);
+    await expect(
+      readdir(
+        join(
+          root,
+          "worlds-file-native",
+          fixture.worldId,
+          "runtime",
+          "play-requests",
+        ),
+      ),
+    ).rejects.toThrow();
   } finally {
     await rm(root, { recursive: true, force: true });
   }

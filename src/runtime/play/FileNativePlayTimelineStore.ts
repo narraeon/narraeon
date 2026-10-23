@@ -12,10 +12,17 @@ import {
   type NarrativeOrigin,
 } from "../history/HistoryBackground.ts";
 import {
-  encodePlayPromptRun,
+  contextPromptBasis,
   decodePlayPromptRun,
+  encodePlayPromptRunRecord,
+  isPlayPromptRunReference,
+  promptRunCompiled,
+  promptRunFromReference,
+  sharePromptCompiled,
   sharePromptRun,
   type PlayPromptRun,
+  type PromptRunBasis,
+  type PromptRunCompiled,
   type PromptRunStrings,
 } from "./PlayPromptRun.ts";
 import { createHash, randomUUID } from "node:crypto";
@@ -25,8 +32,10 @@ import {
   copyFile,
   mkdir,
   readFile,
+  readdir,
   rename,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { linkExclusive } from "../FileNativeExclusiveLink.ts";
@@ -259,7 +268,6 @@ export class FileNativePlayTimelineStore {
     targetWorldRoot: string;
     source: PersistedPlayCallChainContext;
     target: PersistedPlayCallChain;
-    retainCompleteContext?: true;
   }): Promise<PlayContextPersistenceCursor> {
     assertIdentity(input.sourceWorldId, "Source world ID");
     assertIdentity(input.source.chainId, "Source call-chain ID");
@@ -282,31 +290,18 @@ export class FileNativePlayTimelineStore {
       input.source.completedTools,
       input.target.completedTools,
     );
-    if (
-      input.retainCompleteContext ||
-      input.target.events.some(
-        (event) => event.kind === "assistant" && event.status === "completed",
-      )
-    ) {
+    for (const exchange of (await recordedEncodingExchanges(sourceRoot)).slice(
+      0,
+      2,
+    )) {
       const encoding = await this.readInitialEncoding(
         input.sourceWorldId,
         input.source.chainId,
+        exchange,
       ).catch(() => null);
       if (encoding !== null)
         await publishImmutableJson(
-          join(targetRoot, "initial-request-encoding.json"),
-          encoding,
-        );
-    }
-    for (const run of input.target.promptRuns ?? []) {
-      const encoding = await this.readInitialEncoding(
-        input.sourceWorldId,
-        input.source.chainId,
-        run.exchange,
-      ).catch(() => null);
-      if (encoding !== null)
-        await publishImmutableJson(
-          join(targetRoot, `request-encoding-${run.exchange}.json`),
+          join(targetRoot, encodingFileName(exchange)),
           encoding,
         );
     }
@@ -402,7 +397,7 @@ export class FileNativePlayTimelineStore {
     const lastRequestDigest =
       value.lastRequest === null
         ? null
-        : await this.#publishRequest(runtimeRoot, value.lastRequest);
+        : await this.#publishRequest(root, value.lastRequest);
     const continuation = {
       schemaVersion: 3,
       kind: "play_context_continuation",
@@ -451,6 +446,7 @@ export class FileNativePlayTimelineStore {
         value.completedTools[index],
       );
     const promptRuns = value.promptRuns ?? [];
+    const promptBase = contextPromptBasis(value);
     for (
       let index = supplied.promptRunCount ?? 0;
       index < promptRuns.length;
@@ -458,7 +454,10 @@ export class FileNativePlayTimelineStore {
     ) {
       await publishImmutableJson(
         join(root, "prompt-runs", numbered(index + 1)),
-        encodePlayPromptRun(promptRuns[index]!),
+        encodePlayPromptRunRecord(
+          promptRuns[index]!,
+          promptRunBasisAt(promptRuns, index, promptBase),
+        ),
       );
     }
 
@@ -484,6 +483,19 @@ export class FileNativePlayTimelineStore {
       updatedAt: value.updatedAt,
     };
     await publishJson(join(root, "state.json"), state);
+    // Only after state.json names the new continuation and request do the
+    // superseded ones go; a reader holding the old state retries (readContext).
+    await pruneSupersededContextFiles(root, {
+      continuationDigest,
+      lastRequestDigest,
+    });
+    // Every write path upgrades the world first (ensureCurrentStorage), so a
+    // context written here is already in the current layout.
+    if (
+      (await readOptionalJson<unknown>(join(runtimeRoot, LAYOUT_MARKER))) ===
+      null
+    )
+      await publishJson(join(runtimeRoot, LAYOUT_MARKER), layoutMarker());
     if (publishHead)
       await publishJson(join(runtimeRoot, "play-timeline-head.json"), {
         schemaVersion: 3,
@@ -533,38 +545,52 @@ export class FileNativePlayTimelineStore {
   ): Promise<LoadedPlayContext | null> {
     assertIdentity(worldId, "World ID");
     assertIdentity(chainId, "Call-chain ID");
+    // Reads take no lock. A writer prunes the superseded continuation and request
+    // only after publishing the state that names their replacements, so a reader
+    // that loaded the older state retries from the current one.
+    for (let attempt = 1; ; attempt += 1)
+      try {
+        return await this.#readContextOnce(worldId, chainId);
+      } catch (error: unknown) {
+        if (attempt === 3 || !isNodeError(error) || error.code !== "ENOENT")
+          throw error;
+      }
+  }
+
+  async #readContextOnce(
+    worldId: string,
+    chainId: string,
+  ): Promise<LoadedPlayContext | null> {
     const metadata = await this.#readContextMetadata(worldId, chainId);
     if (metadata === null) return null;
     const { index: indexValue, state: stateValue, root } = metadata;
-    const [
-      baseValue,
-      continuationValue,
-      transcript,
-      events,
-      completedTools,
-      promptRuns,
-    ] = await Promise.all([
-      readJson<unknown>(join(root, "base.json")),
-      readJson<unknown>(
-        join(root, "continuations", `${stateValue.continuationDigest}.json`),
-      ),
-      readNumbered<ModelHostAppendItem>(
-        join(root, "transcript"),
-        stateValue.transcriptCount,
-      ),
-      readNumberedValidated<V1PlayCallChainEvent>(
-        join(root, "events"),
-        stateValue.eventCount,
-        assertPlayEvent,
-      ),
-      readNumbered<PersistedCompletedToolCall>(
-        join(root, "completed-tools"),
-        stateValue.completedToolCount,
-      ),
-      readPromptRuns(join(root, "prompt-runs"), stateValue.promptRunCount ?? 0),
-    ]);
+    const [baseValue, continuationValue, transcript, events, completedTools] =
+      await Promise.all([
+        readJson<unknown>(join(root, "base.json")),
+        readJson<unknown>(
+          join(root, "continuations", `${stateValue.continuationDigest}.json`),
+        ),
+        readNumbered<ModelHostAppendItem>(
+          join(root, "transcript"),
+          stateValue.transcriptCount,
+        ),
+        readNumberedValidated<V1PlayCallChainEvent>(
+          join(root, "events"),
+          stateValue.eventCount,
+          assertPlayEvent,
+        ),
+        readNumbered<PersistedCompletedToolCall>(
+          join(root, "completed-tools"),
+          stateValue.completedToolCount,
+        ),
+      ]);
     assertContextBase(baseValue);
     assertContextContinuation(continuationValue);
+    const promptRuns = await readPromptRuns(
+      join(root, "prompt-runs"),
+      stateValue.promptRunCount ?? 0,
+      contextPromptBasis({ ...baseValue, playPreset: indexValue.playPreset }),
+    );
     if (
       baseValue.worldId !== worldId ||
       baseValue.chainId !== chainId ||
@@ -579,8 +605,8 @@ export class FileNativePlayTimelineStore {
         ? null
         : await readJson<ModelHostExchange>(
             join(
-              this.#worldRuntimeRoot(worldId),
-              "play-requests",
+              root,
+              "requests",
               `${continuationValue.lastRequestDigest}.json`,
             ),
           );
@@ -669,20 +695,23 @@ export class FileNativePlayTimelineStore {
     };
   }
 
-  /** The first dispatched request encoding is diagnostic evidence, not Authority. */
+  /**
+   * The first dispatched request encoding is diagnostic evidence, not Authority.
+   * A context keeps only the encodings of its two latest exchanges, which are
+   * what the AI-reading diagnostics compare.
+   */
   async recordInitialEncoding(
     worldId: string,
     chainId: string,
     encoding: ModelHostWireRequest,
     exchange = 1,
   ): Promise<void> {
-    const path = join(
-      this.#contextRoot(worldId, chainId),
-      exchange === 1
-        ? "initial-request-encoding.json"
-        : `request-encoding-${exchange}.json`,
+    const root = this.#contextRoot(worldId, chainId);
+    await publishImmutableJson(
+      join(root, encodingFileName(exchange)),
+      encoding,
     );
-    await publishImmutableJson(path, encoding);
+    await pruneEncodings(root);
   }
 
   async readInitialEncoding(
@@ -691,12 +720,7 @@ export class FileNativePlayTimelineStore {
     exchange = 1,
   ): Promise<ModelHostWireRequest | null> {
     const value = await readOptionalJson<unknown>(
-      join(
-        this.#contextRoot(worldId, chainId),
-        exchange === 1
-          ? "initial-request-encoding.json"
-          : `request-encoding-${exchange}.json`,
-      ),
+      join(this.#contextRoot(worldId, chainId), encodingFileName(exchange)),
     );
     if (value === null) return null;
     if (
@@ -962,6 +986,53 @@ export class FileNativePlayTimelineStore {
     return `timeline:${randomUUID()}`;
   }
 
+  /**
+   * Whether the world's play timeline is in the current layout (ADR-0034). A world
+   * with no play timeline has nothing to upgrade, so reads never write its marker.
+   */
+  async layoutCurrent(worldId: string): Promise<boolean> {
+    assertIdentity(worldId, "World ID");
+    const runtimeRoot = this.#worldRuntimeRoot(worldId);
+    if (
+      (await readOptionalJson<unknown>(this.#layoutMarkerPath(worldId))) !==
+      null
+    )
+      return true;
+    return (
+      (await pathExists(join(runtimeRoot, "play-contexts"))) === false &&
+      (await pathExists(join(runtimeRoot, "play-requests"))) === false
+    );
+  }
+
+  /**
+   * Upgrade a released play timeline in place: each context takes its own copy
+   * of its frozen request, snapshots that repeat their basis become references,
+   * and superseded encodings and records go. The released request directory is
+   * removed only after every context is complete, and the marker is written
+   * last, so an interrupted run starts again from the released files.
+   */
+  async migrateLayout(worldId: string): Promise<void> {
+    assertIdentity(worldId, "World ID");
+    if (await this.layoutCurrent(worldId)) return;
+    const runtimeRoot = this.#worldRuntimeRoot(worldId);
+    const contextsRoot = join(runtimeRoot, "play-contexts");
+    for (const entry of await readDirectoryNames(contextsRoot)) {
+      const root = join(contextsRoot, entry);
+      if ((await readOptionalJson<unknown>(join(root, "state.json"))) === null)
+        continue;
+      await migrateContextLayout(runtimeRoot, root);
+    }
+    await rm(join(runtimeRoot, "play-requests"), {
+      recursive: true,
+      force: true,
+    });
+    await publishJson(this.#layoutMarkerPath(worldId), layoutMarker());
+  }
+
+  #layoutMarkerPath(worldId: string): string {
+    return join(this.#worldRuntimeRoot(worldId), LAYOUT_MARKER);
+  }
+
   #worldRuntimeRoot(worldId: string): string {
     return join(this.#worldsRoot, worldId, "runtime");
   }
@@ -992,15 +1063,16 @@ export class FileNativePlayTimelineStore {
     return value;
   }
 
+  /** The context's frozen request lives in the context: forks copy the one they keep. */
   async #publishRequest(
-    runtimeRoot: string,
+    contextRoot: string,
     request: ModelHostExchange,
   ): Promise<string> {
     const digest = createHash("sha256")
       .update(JSON.stringify(request))
       .digest("hex");
     await publishImmutableJson(
-      join(runtimeRoot, "play-requests", `${digest}.json`),
+      join(contextRoot, "requests", `${digest}.json`),
       request,
     );
     return digest;
@@ -1700,24 +1772,179 @@ async function readNumbered<T>(root: string, count: number): Promise<T[]> {
 
 /**
  * Runs are read one at a time and share their strings as they are decoded, so
- * a long context never holds every run's raw text and parsed copy at once.
+ * a long context never holds every run's raw text and parsed copy at once. A
+ * reference repeats an earlier compiled prompt: the context base (0) or a run
+ * decoded before it.
  */
 async function readPromptRuns(
   root: string,
   count: number,
+  base: PromptRunCompiled | null,
 ): Promise<PlayPromptRun[]> {
   const strings: PromptRunStrings = new Map();
+  const sharedBase = base === null ? null : sharePromptCompiled(base, strings);
   const runs: PlayPromptRun[] = [];
-  for (let index = 0; index < count; index += 1)
+  for (let index = 0; index < count; index += 1) {
+    const record = await readJson<unknown>(join(root, numbered(index + 1)));
     runs.push(
-      sharePromptRun(
-        decodePlayPromptRun(
-          await readJson<unknown>(join(root, numbered(index + 1))),
-        ),
-        strings,
-      ),
+      isPlayPromptRunReference(record)
+        ? promptRunFromReference(record, (basisRun) =>
+            basisRun === 0
+              ? sharedBase
+              : basisRun <= runs.length
+                ? runs[basisRun - 1]!
+                : null,
+          )
+        : sharePromptRun(decodePlayPromptRun(record), strings),
     );
+  }
   return runs;
+}
+
+/** The basis a run repeats: the context base for the first run, else the run before it. */
+function promptRunBasisAt(
+  runs: readonly PlayPromptRun[],
+  index: number,
+  base: PromptRunCompiled | null,
+): PromptRunBasis | null {
+  if (index === 0) return base === null ? null : { index: 0, compiled: base };
+  return { index, compiled: promptRunCompiled(runs[index - 1]!) };
+}
+
+const LAYOUT_MARKER = "play-timeline-layout.json";
+
+function layoutMarker(): { schemaVersion: 1; kind: "play_timeline_layout" } {
+  return { schemaVersion: 1, kind: "play_timeline_layout" };
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  return stat(path).then(
+    () => true,
+    (error: unknown) => {
+      if (isNodeError(error) && error.code === "ENOENT") return false;
+      throw error;
+    },
+  );
+}
+
+function encodingFileName(exchange: number): string {
+  return exchange === 1
+    ? "initial-request-encoding.json"
+    : `request-encoding-${exchange}.json`;
+}
+
+/** The exchanges with a recorded encoding in a context, latest first. */
+async function recordedEncodingExchanges(
+  contextRoot: string,
+): Promise<number[]> {
+  return (await readDirectoryNames(contextRoot))
+    .map((name) => {
+      if (name === "initial-request-encoding.json") return 1;
+      const match = /^request-encoding-([1-9][0-9]*)\.json$/u.exec(name);
+      return match === null ? null : Number(match[1]);
+    })
+    .filter((exchange): exchange is number => exchange !== null)
+    .sort((left, right) => right - left);
+}
+
+/**
+ * Keep the encodings of the two latest exchanges, the pair the AI-reading
+ * diagnostics compare. A context without runs is read at exchange 1.
+ */
+async function pruneEncodings(contextRoot: string): Promise<void> {
+  for (const exchange of (await recordedEncodingExchanges(contextRoot)).slice(
+    2,
+  ))
+    await rm(join(contextRoot, encodingFileName(exchange)), { force: true });
+}
+
+/**
+ * Bring one released context to the current layout. Every step is idempotent:
+ * an existing request copy is kept, and a record already in its current form is
+ * left alone, so a rerun after an interruption converges on the same files.
+ */
+async function migrateContextLayout(
+  runtimeRoot: string,
+  root: string,
+): Promise<void> {
+  const indexValue = await readJson<unknown>(join(root, "index.json"));
+  const stateValue = await readJson<unknown>(join(root, "state.json"));
+  assertContextIndex(indexValue);
+  assertContextState(stateValue);
+  const baseValue = await readJson<unknown>(join(root, "base.json"));
+  assertContextBase(baseValue);
+  const continuationValue = await readJson<unknown>(
+    join(root, "continuations", `${stateValue.continuationDigest}.json`),
+  );
+  assertContextContinuation(continuationValue);
+
+  const digest = continuationValue.lastRequestDigest;
+  if (digest !== null) {
+    const target = join(root, "requests", `${digest}.json`);
+    if ((await readOptionalJson<unknown>(target)) === null) {
+      const request = await readJson<ModelHostExchange>(
+        join(runtimeRoot, "play-requests", `${digest}.json`),
+      );
+      if (
+        !isRecord(request) ||
+        createHash("sha256").update(JSON.stringify(request)).digest("hex") !==
+          digest
+      )
+        throw new Error(
+          "Frozen play request does not match its durable identity",
+        );
+      await publishImmutableJson(target, request);
+    }
+  }
+
+  const basis = contextPromptBasis({
+    ...baseValue,
+    playPreset: indexValue.playPreset,
+  });
+  const promptRuns = await readPromptRuns(
+    join(root, "prompt-runs"),
+    stateValue.promptRunCount ?? 0,
+    basis,
+  );
+  for (let index = 0; index < promptRuns.length; index += 1) {
+    const path = join(root, "prompt-runs", numbered(index + 1));
+    const record = encodePlayPromptRunRecord(
+      promptRuns[index]!,
+      promptRunBasisAt(promptRuns, index, basis),
+    );
+    if (!isDeepStrictEqual(await readJson<unknown>(path), record))
+      await publishJson(path, record);
+  }
+
+  await pruneEncodings(root);
+  await pruneSupersededContextFiles(root, {
+    continuationDigest: stateValue.continuationDigest,
+    lastRequestDigest: digest,
+  });
+}
+
+/** Remove continuations and requests that the current state no longer names. */
+async function pruneSupersededContextFiles(
+  root: string,
+  current: { continuationDigest: string; lastRequestDigest: string | null },
+): Promise<void> {
+  for (const [directory, keep] of [
+    ["continuations", current.continuationDigest],
+    ["requests", current.lastRequestDigest],
+  ] as const) {
+    for (const name of await readDirectoryNames(join(root, directory)))
+      if (name !== `${keep}.json`)
+        await rm(join(root, directory, name), { force: true });
+  }
+}
+
+async function readDirectoryNames(directory: string): Promise<string[]> {
+  try {
+    return await readdir(directory);
+  } catch (error: unknown) {
+    if (isNodeError(error) && error.code === "ENOENT") return [];
+    throw error;
+  }
 }
 
 async function readNumberedValidated<T>(

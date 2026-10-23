@@ -5033,6 +5033,7 @@ test.each(["en", "zh-CN"] as const)(
     )!;
     const { worldId } = scenario;
     const worlds = new FileNativeWorldStore(root);
+    await worlds.ensureCurrentStorage(worldId);
     const frozen = (await worlds.playTimeline.readCurrent(worldId))!.value;
     if (frozen.modelBinding === undefined)
       throw new Error("Historical fixture is missing its model binding");
@@ -5117,10 +5118,25 @@ test.each(["en", "zh-CN"] as const)(
         ({ exactText }) => exactText,
       ),
     ).not.toContain(marker.text);
-    for (const [path, exactBytes] of Object.entries(fixture.files).filter(
-      ([path]) => path.includes("/runtime/play-requests/"),
-    ))
-      expect(await readFile(join(root, path), "utf8")).toBe(exactBytes);
+    const contextRequests = join(
+      root,
+      "worlds-file-native",
+      worldId,
+      "runtime",
+      "play-contexts",
+      createHash("sha256").update(frozen.chainId).digest("hex"),
+      "requests",
+    );
+    // The resumed send replaced the frozen request; only the context's current one remains.
+    const [currentRequest] = await readdir(contextRequests);
+    expect(await readdir(contextRequests)).toHaveLength(1);
+    expect(
+      JSON.parse(
+        await readFile(join(contextRequests, currentRequest!), "utf8"),
+      ),
+    ).toEqual(
+      (await worlds.playTimeline.readCurrent(worldId))!.value.lastRequest,
+    );
   },
 );
 
