@@ -886,6 +886,7 @@ export class V1ProtocolError extends Error {
     | "invalid_request"
     | WorldArchiveErrorCode
     | "operation_conflict"
+    | "endpoint_discarded"
     | "inconsistent_materialization"
     | "model_protocol_mismatch";
 

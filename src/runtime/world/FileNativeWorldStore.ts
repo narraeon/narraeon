@@ -71,7 +71,11 @@ import {
   WorldLedgerAuthority,
   type WorldTurnCommit,
 } from "./WorldLedgerAuthority.ts";
-import { forgetLedger, rewindTo } from "./WorldTurnLedger.ts";
+import {
+  forgetLedger,
+  rewindTo,
+  WorldTurnLedgerError,
+} from "./WorldTurnLedger.ts";
 import {
   FileNativeWorldOperationCoordinator,
   WorldOperationBusyError,
@@ -93,6 +97,7 @@ export class FileNativeWorldCreationError extends Error {
     | "content_package_title_invalid"
     | "candidate_validation_failed"
     | "operation_conflict"
+    | "endpoint_discarded"
     | "world_corrupt"
     | "inconsistent_materialization";
 
@@ -881,12 +886,18 @@ export class FileNativeWorldStore {
     );
   }
 
-  async currentHeadOperationId(worldId: string): Promise<string | null> {
+  /** 端点名称与它的操作标识取自同一次读取，回退不会让两者分属不同端点。 */
+  async currentEndpoint(
+    worldId: string,
+  ): Promise<{ head: string; operationId: string | null }> {
     assertIdentity(worldId, "World ID");
     await this.ensureCurrentStorage(worldId);
     const root = join(this.#worldsRoot, worldId);
     await readPublicationAt(root);
-    return new WorldLedgerAuthority(root).currentOperationId();
+    const { head, operationId } = await new WorldLedgerAuthority(
+      root,
+    ).readHead();
+    return { head, operationId };
   }
 
   async saveControlDraft(
@@ -1324,6 +1335,13 @@ export class FileNativeWorldStore {
       };
     } catch (error: unknown) {
       if (error instanceof FileNativeWorldCreationError) throw error;
+      // 端点在读取途中被回退丢弃不是损坏：调用方重新取得当前端点即可。
+      if (error instanceof WorldTurnLedgerError && error.code === "discarded")
+        throw new FileNativeWorldCreationError(
+          "endpoint_discarded",
+          `Authority endpoint was rewound away${head === undefined ? "" : `: ${head}`}`,
+          { cause: error },
+        );
       throw new FileNativeWorldCreationError(
         "world_corrupt",
         `Cannot recover immutable Authority endpoint${head === undefined ? "" : `: ${head}`}`,

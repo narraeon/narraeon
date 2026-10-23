@@ -160,7 +160,7 @@ describe("world turn ledger", () => {
       1, 4,
     ]);
     await expect(readFileAt(root, 2, "state/a.yaml")).rejects.toMatchObject({
-      code: "unreachable",
+      code: "discarded",
     });
 
     // 回退后的历史仍可读，并能继续追加
