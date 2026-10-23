@@ -256,7 +256,11 @@ test("包复制/ZIP、世界复制、真实主链派发和冷恢复隔离来源�
       definition,
       { ...definition, id: "disabled_request", enabled: false },
     ]);
-    await workspace.replaceCurrentTreeContentPackage(source.localId, files);
+    await workspace.replaceCurrentTreeContentPackage(source.localId, files, {
+      baseTreeRevision: (
+        await workspace.readCurrentTreeContentPackage(source.localId)
+      ).treeRevision,
+    });
     const copy = await workspace.copyCurrentTreeContentPackage(source.localId);
     const exported = await workspace.exportCurrentTreeContentPackage(
       source.localId,
@@ -290,6 +294,11 @@ test("包复制/ZIP、世界复制、真实主链派发和冷恢复隔离来源�
     await workspace.replaceCurrentTreeContentPackage(
       source.localId,
       packageFiles([]),
+      {
+        baseTreeRevision: (
+          await workspace.readCurrentTreeContentPackage(source.localId)
+        ).treeRevision,
+      },
     );
     await workspace.deleteCurrentTreeContentPackage(source.localId);
     const binding = await worlds.bindPlayCallChain(worldId);
@@ -476,6 +485,12 @@ test("包脚本授权属于本地来源，导入/复制不带授权；可信预�
     await call(runtime, {
       type: "content.replace",
       packageId: content.localId,
+      baseTreeRevision: (
+        (await call(runtime, {
+          type: "content.read",
+          packageId: content.localId,
+        })) as { treeRevision: string }
+      ).treeRevision,
       files: packageFiles(),
     });
     expect(
@@ -514,6 +529,12 @@ test("包脚本授权属于本地来源，导入/复制不带授权；可信预�
     await call(restarted, {
       type: "content.replace",
       packageId: content.localId,
+      baseTreeRevision: (
+        (await call(runtime, {
+          type: "content.read",
+          packageId: content.localId,
+        })) as { treeRevision: string }
+      ).treeRevision,
       files: packageFiles().map((file) =>
         file.path === "control/renderers/panel.html"
           ? { ...file, contents: "<script>NEW CODE</script>" }
@@ -587,6 +608,11 @@ test("世界在创建/分叉发布时独立复制本地源码授权，源包撤�
     await content.replaceCurrentTreeContentPackage(
       source.localId,
       packageFiles(),
+      {
+        baseTreeRevision: (
+          await content.readCurrentTreeContentPackage(source.localId)
+        ).treeRevision,
+      },
     );
     await content.packageScriptPermissions(source.localId, true);
     const worlds = new FileNativeWorldStore(root);

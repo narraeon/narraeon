@@ -85,6 +85,12 @@ test("修改旧玩家提交可另存为全新上下文，创建分叉才生成�
   await runtime(page, {
     type: "content.replace",
     packageId: package_.localId,
+    baseTreeRevision: (
+      await runtime<{ treeRevision: string }>(page, {
+        type: "content.read",
+        packageId: package_.localId,
+      })
+    ).treeRevision,
     files: contentFiles(),
   });
   const created = await runtime<{ world: { worldId: string } }>(page, {
@@ -247,6 +253,12 @@ test("故事模式开关持久化，最新检查点自动预选且取消后只�
   await runtime(page, {
     type: "content.replace",
     packageId: package_.localId,
+    baseTreeRevision: (
+      await runtime<{ treeRevision: string }>(page, {
+        type: "content.read",
+        packageId: package_.localId,
+      })
+    ).treeRevision,
     files: contentFiles(),
   });
   await runtime(page, {

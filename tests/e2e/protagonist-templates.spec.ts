@@ -121,6 +121,12 @@ async function setup(page: Page, locale: "en" | "zh-CN", title: string) {
   await runtime(page, {
     type: "content.replace",
     packageId: source.localId,
+    baseTreeRevision: (
+      await runtime<{ treeRevision: string }>(page, {
+        type: "content.read",
+        packageId: source.localId,
+      })
+    ).treeRevision,
     files: [
       ...detail.files.map((file) =>
         file.path === "control/frame.yaml"

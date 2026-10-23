@@ -292,6 +292,12 @@ test("A 工作台真实保存、独立三产物、正则、JS、导入及下一�
     await runtime(page, {
       type: "content.replace",
       packageId: content.localId,
+      baseTreeRevision: (
+        await runtime<{ treeRevision: string }>(page, {
+          type: "content.read",
+          packageId: content.localId,
+        })
+      ).treeRevision,
       files: contentFiles(),
     });
     await runtime(page, {

@@ -274,3 +274,39 @@ test("English authors can edit package requests and explicitly grant and revoke 
     enabled: false,
   });
 });
+
+describe("内容包保存冲突提示", () => {
+  test("冲突时说明草稿保留并提供加载最新版本，正常保存时不显示", () => {
+    const onLoadLatest = vi.fn();
+    const props = {
+      files: files(),
+      status: "usable" as const,
+      issues: [],
+      dirty: true,
+      title: "测试内容包",
+      onRename: vi.fn(),
+      onFilesChange: vi.fn(),
+      onSave: vi.fn(),
+      onReset: vi.fn(),
+      onCopy: vi.fn(),
+      onExport: vi.fn(),
+      onDelete: vi.fn(),
+    };
+    const { unmount } = render(
+      createElement(ContentTreeEditor, {
+        ...props,
+        conflict: true,
+        onLoadLatest,
+      }),
+    );
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toContain("草稿已保留");
+    fireEvent.click(screen.getByRole("button", { name: "加载最新版本" }));
+    expect(onLoadLatest).toHaveBeenCalledTimes(1);
+    unmount();
+
+    render(createElement(ContentTreeEditor, props));
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("button", { name: "加载最新版本" })).toBeNull();
+  });
+});

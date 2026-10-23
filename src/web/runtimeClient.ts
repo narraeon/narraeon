@@ -9,16 +9,19 @@ import {
 
 export class RuntimeRequestError extends Error {
   readonly protocolCode: string | undefined;
+  readonly details: unknown;
 
   constructor(
     message: string,
     options: {
       protocolCode?: string | undefined;
+      details?: unknown;
     } = {},
   ) {
     super(message);
     this.name = "RuntimeRequestError";
     this.protocolCode = options.protocolCode;
+    this.details = options.details;
   }
 }
 
@@ -36,7 +39,7 @@ export class RuntimeClient {
       throw new RuntimeRequestError(runtimeConnectionErrorText());
     }
     let payload: V1Response & {
-      error?: { code?: string; message?: string } | string;
+      error?: { code?: string; message?: string; details?: unknown } | string;
       message?: string;
     };
     try {
@@ -57,7 +60,7 @@ export class RuntimeClient {
               status: response.status,
             })
           : runtimeErrorText(message),
-        { protocolCode: error?.code },
+        { protocolCode: error?.code, details: error?.details },
       );
     }
     if (payload.protocol !== v1Protocol)

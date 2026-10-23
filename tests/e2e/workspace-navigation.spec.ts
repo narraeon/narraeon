@@ -78,6 +78,12 @@ test("手机工作区从明确的内容包快捷创建世界，并保护编辑�
     await runtime(page, {
       type: "content.replace",
       packageId: created.localId,
+      baseTreeRevision: (
+        await runtime<{ treeRevision: string }>(page, {
+          type: "content.read",
+          packageId: created.localId,
+        })
+      ).treeRevision,
       files: detail.files.map((file) =>
         file.path === "opening.md"
           ? { ...file, contents: `${name}的已保存开场。` }

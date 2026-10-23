@@ -102,6 +102,11 @@ describe("YAML/Markdown 内容包当前树", () => {
     const repaired = await workspace.replaceCurrentTreeContentPackage(
       imported.localId,
       completeFiles,
+      {
+        baseTreeRevision: (
+          await workspace.readCurrentTreeContentPackage(imported.localId)
+        ).treeRevision,
+      },
     );
     expect(repaired).toMatchObject({
       status: "usable",
@@ -198,14 +203,22 @@ describe("YAML/Markdown 内容包当前树", () => {
       created.localId,
     );
     await expect(
-      workspace.replaceCurrentTreeContentPackage(created.localId, [
-        ...before.files,
+      workspace.replaceCurrentTreeContentPackage(
+        created.localId,
+        [
+          ...before.files,
+          {
+            path: "world/characters/binary.yaml",
+            contents: "//4=",
+            encoding: "base64",
+          },
+        ],
         {
-          path: "world/characters/binary.yaml",
-          contents: "//4=",
-          encoding: "base64",
+          baseTreeRevision: (
+            await workspace.readCurrentTreeContentPackage(created.localId)
+          ).treeRevision,
         },
-      ]),
+      ),
     ).rejects.toThrow(/World documents.*UTF-8/u);
     expect(
       (await workspace.readCurrentTreeContentPackage(created.localId)).files,
@@ -294,6 +307,11 @@ describe("YAML/Markdown 内容包当前树", () => {
     const saved = await workspace.replaceCurrentTreeContentPackage(
       imported.localId,
       candidateFiles,
+      {
+        baseTreeRevision: (
+          await workspace.readCurrentTreeContentPackage(imported.localId)
+        ).treeRevision,
+      },
     );
     const copied = await workspace.copyCurrentTreeContentPackage(
       imported.localId,
@@ -324,6 +342,11 @@ describe("YAML/Markdown 内容包当前树", () => {
           ? { ...file, contents: character() }
           : file,
       ),
+      {
+        baseTreeRevision: (
+          await workspace.readCurrentTreeContentPackage(imported.localId)
+        ).treeRevision,
+      },
     );
     expect(repaired.status).toBe("usable");
     const exported = await workspace.exportCurrentTreeContentPackage(
@@ -419,18 +442,26 @@ describe("YAML/Markdown 内容包当前树", () => {
       created.localId,
     );
 
-    await workspace.replaceCurrentTreeContentPackage(created.localId, [
-      ...before.files.filter(
-        ({ path }) => path !== "world/current-situation.yaml",
-      ),
-      {
-        path: "world/current-situation.yaml",
-        contents: currentSituation().replace(
-          "title: 当前情境",
-          "title: 暴雨中的码头",
+    await workspace.replaceCurrentTreeContentPackage(
+      created.localId,
+      [
+        ...before.files.filter(
+          ({ path }) => path !== "world/current-situation.yaml",
         ),
+        {
+          path: "world/current-situation.yaml",
+          contents: currentSituation().replace(
+            "title: 当前情境",
+            "title: 暴雨中的码头",
+          ),
+        },
+      ],
+      {
+        baseTreeRevision: (
+          await workspace.readCurrentTreeContentPackage(created.localId)
+        ).treeRevision,
       },
-    ]);
+    );
 
     expect(
       (await workspace.readCurrentTreeContentPackage(created.localId)).title,
@@ -466,18 +497,26 @@ describe("YAML/Markdown 内容包当前树", () => {
         title: before.title,
       },
     );
-    await restarted.replaceCurrentTreeContentPackage(created.localId, [
-      ...before.files.filter(
-        ({ path }) => path !== "world/current-situation.yaml",
-      ),
-      {
-        path: "world/current-situation.yaml",
-        contents: currentSituation().replace(
-          "title: 当前情境",
-          "title: 暴雨中的码头",
+    await restarted.replaceCurrentTreeContentPackage(
+      created.localId,
+      [
+        ...before.files.filter(
+          ({ path }) => path !== "world/current-situation.yaml",
         ),
+        {
+          path: "world/current-situation.yaml",
+          contents: currentSituation().replace(
+            "title: 当前情境",
+            "title: 暴雨中的码头",
+          ),
+        },
+      ],
+      {
+        baseTreeRevision: (
+          await restarted.readCurrentTreeContentPackage(created.localId)
+        ).treeRevision,
       },
-    ]);
+    );
 
     expect(
       (await restarted.readCurrentTreeContentPackage(created.localId)).title,
@@ -547,18 +586,26 @@ describe("YAML/Markdown 内容包当前树", () => {
     ).toBe("雾港来信");
 
     // Changing the current-situation title does not replace the package title.
-    await workspace.replaceCurrentTreeContentPackage(created.localId, [
-      ...after.files.filter(
-        ({ path }) => path !== "world/current-situation.yaml",
-      ),
-      {
-        path: "world/current-situation.yaml",
-        contents: currentSituation().replace(
-          "title: 当前情境",
-          "title: 别的场景",
+    await workspace.replaceCurrentTreeContentPackage(
+      created.localId,
+      [
+        ...after.files.filter(
+          ({ path }) => path !== "world/current-situation.yaml",
         ),
+        {
+          path: "world/current-situation.yaml",
+          contents: currentSituation().replace(
+            "title: 当前情境",
+            "title: 别的场景",
+          ),
+        },
+      ],
+      {
+        baseTreeRevision: (
+          await workspace.readCurrentTreeContentPackage(created.localId)
+        ).treeRevision,
       },
-    ]);
+    );
     expect(
       (await workspace.readCurrentTreeContentPackage(created.localId)).title,
     ).toBe("雾港来信");

@@ -178,6 +178,12 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
     await runtime(page, {
       type: "content.replace",
       packageId: content.localId,
+      baseTreeRevision: (
+        await runtime<{ treeRevision: string }>(page, {
+          type: "content.read",
+          packageId: content.localId,
+        })
+      ).treeRevision,
       files: contentFiles(),
     });
     const created = await runtime<{ world: { worldId: string } }>(page, {

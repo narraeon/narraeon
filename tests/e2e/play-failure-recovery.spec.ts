@@ -100,6 +100,12 @@ for (const locale of ["zh-CN", "en"] as const)
     await runtime(page, {
       type: "content.replace",
       packageId: package_.localId,
+      baseTreeRevision: (
+        await runtime<{ treeRevision: string }>(page, {
+          type: "content.read",
+          packageId: package_.localId,
+        })
+      ).treeRevision,
       files: contentFiles(),
     });
     const created = await runtime<{ world: { worldId: string } }>(page, {
@@ -276,6 +282,12 @@ test("protocol switch is temporary and restored protocol accepts changed model s
   await runtime(page, {
     type: "content.replace",
     packageId: package_.localId,
+    baseTreeRevision: (
+      await runtime<{ treeRevision: string }>(page, {
+        type: "content.read",
+        packageId: package_.localId,
+      })
+    ).treeRevision,
     files: contentFiles(),
   });
   const created = await runtime<{ world: { worldId: string } }>(page, {

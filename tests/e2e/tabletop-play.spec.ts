@@ -324,6 +324,12 @@ async function createPlayWorld(
   await runtime(page, {
     type: "content.replace",
     packageId: created.localId,
+    baseTreeRevision: (
+      await runtime<{ treeRevision: string }>(page, {
+        type: "content.read",
+        packageId: created.localId,
+      })
+    ).treeRevision,
     files: [
       ...contentFiles(),
       ...(options.gameplay === undefined

@@ -22,7 +22,15 @@ describe("从内容包创建文件原生世界", () => {
     const root = await temporaryRoot();
     const workspace = new ContentWorkspace(join(root, "content"));
     const package_ = await workspace.createCurrentTreeContentPackage();
-    await workspace.replaceCurrentTreeContentPackage(package_.localId, files());
+    await workspace.replaceCurrentTreeContentPackage(
+      package_.localId,
+      files(),
+      {
+        baseTreeRevision: (
+          await workspace.readCurrentTreeContentPackage(package_.localId)
+        ).treeRevision,
+      },
+    );
     const source = await workspace.readCurrentTreeContentPackage(
       package_.localId,
     );
@@ -99,14 +107,22 @@ describe("从内容包创建文件原生世界", () => {
     expect(previewPlayer).toContain("Preview placeholder");
     expect(previewPlayer).not.toContain("Start this world");
 
-    await workspace.replaceCurrentTreeContentPackage(package_.localId, [
-      ...files().filter(
-        ({ path }) =>
-          path !== "world/characters/alex.yaml" && path !== "opening.md",
-      ),
-      { path: "world/characters/alex.yaml", contents: character("已修改") },
-      { path: "opening.md", contents: "这是后来修改的开场白。\n" },
-    ]);
+    await workspace.replaceCurrentTreeContentPackage(
+      package_.localId,
+      [
+        ...files().filter(
+          ({ path }) =>
+            path !== "world/characters/alex.yaml" && path !== "opening.md",
+        ),
+        { path: "world/characters/alex.yaml", contents: character("已修改") },
+        { path: "opening.md", contents: "这是后来修改的开场白。\n" },
+      ],
+      {
+        baseTreeRevision: (
+          await workspace.readCurrentTreeContentPackage(package_.localId)
+        ).treeRevision,
+      },
+    );
     expect(
       await store.readSurface(created.world.worldId, "state"),
     ).toContainEqual(
@@ -288,7 +304,15 @@ describe("从内容包创建文件原生世界", () => {
     const root = await temporaryRoot();
     const workspace = new ContentWorkspace(join(root, "content"));
     const package_ = await workspace.createCurrentTreeContentPackage();
-    await workspace.replaceCurrentTreeContentPackage(package_.localId, files());
+    await workspace.replaceCurrentTreeContentPackage(
+      package_.localId,
+      files(),
+      {
+        baseTreeRevision: (
+          await workspace.readCurrentTreeContentPackage(package_.localId)
+        ).treeRevision,
+      },
+    );
     const source = await workspace.readCurrentTreeContentPackage(
       package_.localId,
     );

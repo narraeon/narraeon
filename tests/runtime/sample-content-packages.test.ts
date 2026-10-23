@@ -95,6 +95,12 @@ describe.each(appLocales)("ordinary sample content package (%s)", (locale) => {
     await request(runtime, {
       type: "content.replace",
       packageId: first.localId,
+      baseTreeRevision: (
+        await request<{ treeRevision: string }>(runtime, {
+          type: "content.read",
+          packageId: first.localId,
+        })
+      ).treeRevision,
       files: edited,
     });
     await request(runtime, {

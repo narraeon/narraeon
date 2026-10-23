@@ -221,6 +221,12 @@ test("普通作者编辑包后置请求后创建世界，经真实 Runtime 派�
     await runtime(page, {
       type: "content.replace",
       packageId: imported.localId,
+      baseTreeRevision: (
+        await runtime<{ treeRevision: string }>(page, {
+          type: "content.read",
+          packageId: imported.localId,
+        })
+      ).treeRevision,
       files: source.files.filter(
         (file) => file.path !== "control/followups.yaml",
       ),

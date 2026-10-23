@@ -240,6 +240,12 @@ async function fixture(locale: AppLocale) {
   await call(runtime, {
     type: "content.replace",
     packageId: package_.localId,
+    baseTreeRevision: (
+      await call<{ treeRevision: string }>(runtime, {
+        type: "content.read",
+        packageId: package_.localId,
+      })
+    ).treeRevision,
     files: packageFiles.files.map((file) =>
       file.path === "opening.md"
         ? { ...file, contents: opening }

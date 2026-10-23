@@ -428,6 +428,11 @@ test("所选文件后来被修改时仍直接覆盖为历史前像", async () =>
         ? { ...file, contents: "Later manual edit.\n" }
         : file,
     ),
+    {
+      baseTreeRevision: (
+        await fixture.content.readCurrentTreeContentPackage(fixture.packageId)
+      ).treeRevision,
+    },
   );
 
   await expect(
@@ -892,6 +897,11 @@ test("完整工具响应若缺少原树结算意图，恢复会失败关闭而�
         ? { ...file, contents: "Newer current-tree edit.\n" }
         : file,
     ),
+    {
+      baseTreeRevision: (
+        await fixture.content.readCurrentTreeContentPackage(fixture.packageId)
+      ).treeRevision,
+    },
   );
 
   const recovered = await serviceFor(
@@ -1149,6 +1159,11 @@ test("当前树已发布但收据未落盘时，重启确认既有结算而不�
         ? { ...file, contents: "Already published change.\n" }
         : file,
     ),
+    {
+      baseTreeRevision: (
+        await interruptedContent.readCurrentTreeContentPackage(created.localId)
+      ).treeRevision,
+    },
   );
 
   let repeatedPublish = false;
@@ -1532,6 +1547,11 @@ test("schema-v1 隔离草稿严格迁移为审计历史，不改当前树", asyn
       await fixture.content.replaceCurrentTreeContentPackage(
         created.localId,
         receiptCase.current === "draft" ? draftFiles : otherFiles,
+        {
+          baseTreeRevision: (
+            await fixture.content.readCurrentTreeContentPackage(created.localId)
+          ).treeRevision,
+        },
       );
     const receiptSessionId = store.createId();
     const receiptLegacy = {

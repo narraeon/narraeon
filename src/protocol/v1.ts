@@ -90,7 +90,13 @@ export type V1Request =
   | { type: "world.package-scripts.read"; worldId: string }
   | { type: "world.package-scripts.set"; worldId: string; enabled: boolean }
   | { type: "content.read"; packageId: string }
-  | { type: "content.replace"; packageId: string; files: ContentTreeFile[] }
+  | {
+      type: "content.replace";
+      packageId: string;
+      files: ContentTreeFile[];
+      /** The `treeRevision` the draft was opened from; a stale base is rejected with `content_conflict`. */
+      baseTreeRevision: string;
+    }
   | { type: "content.copy"; packageId: string }
   | { type: "content.delete"; packageId: string }
   | { type: "content.rename"; packageId: string; name: string }
@@ -880,6 +886,11 @@ export type V1PlayCallChainStreamFrame =
       message: string;
     };
 
+export interface V1ProtocolErrorOptions extends ErrorOptions {
+  /** Structured data the client needs to recover, such as the current tree on a conflict. */
+  details?: Readonly<Record<string, unknown>>;
+}
+
 export class V1ProtocolError extends Error {
   readonly code:
     | "incompatible_data"
@@ -887,17 +898,20 @@ export class V1ProtocolError extends Error {
     | WorldArchiveErrorCode
     | "operation_conflict"
     | "endpoint_discarded"
+    | "content_conflict"
     | "inconsistent_materialization"
     | "model_protocol_mismatch";
+  readonly details: Readonly<Record<string, unknown>> | undefined;
 
   constructor(
     code: V1ProtocolError["code"],
     message: string,
-    options?: ErrorOptions,
+    options: V1ProtocolErrorOptions = {},
   ) {
     super(message, options);
     this.name = "V1ProtocolError";
     this.code = code;
+    this.details = options.details;
   }
 }
 
@@ -941,7 +955,11 @@ const requiredFields: Record<
   "world.package-scripts.set": { worldId: "string", enabled: "boolean" },
   "content.gameplay.set": { packageId: "string", scheme: "string" },
   "content.read": { packageId: "string" },
-  "content.replace": { packageId: "string", files: "array" },
+  "content.replace": {
+    packageId: "string",
+    files: "array",
+    baseTreeRevision: "string",
+  },
   "content.copy": { packageId: "string" },
   "content.delete": { packageId: "string" },
   "content.rename": { packageId: "string", name: "string" },

@@ -762,10 +762,15 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             "needs_repair",
           issues: selectedPackageDetail?.issues ?? [],
           dirty: filesDirty,
+          conflict: authoring.conflict,
           onFilesChange: (nextFiles) => authoringWorkspace.editFiles(nextFiles),
           onSave: () => {
             setNotice("");
             void authoringWorkspace.saveFiles();
+          },
+          onLoadLatest: () => {
+            setNotice("");
+            authoringWorkspace.loadLatest();
           },
           onReset: () => {
             setNotice("");

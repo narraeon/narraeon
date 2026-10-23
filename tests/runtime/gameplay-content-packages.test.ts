@@ -86,6 +86,11 @@ describe("内容包玩法身份", () => {
           ? gameplayFile({ mode: "tabletop", scheme: "d20" })
           : file,
       ),
+      {
+        baseTreeRevision: (
+          await workspace.readCurrentTreeContentPackage(created.localId)
+        ).treeRevision,
+      },
     );
     expect(retargeted.gameplay).toEqual({ mode: "tabletop", scheme: "d20" });
 
@@ -93,13 +98,26 @@ describe("内容包玩法身份", () => {
       workspace.replaceCurrentTreeContentPackage(
         created.localId,
         retargeted.files.filter(({ path }) => path !== gameplayPath),
+        {
+          baseTreeRevision: (
+            await workspace.readCurrentTreeContentPackage(created.localId)
+          ).treeRevision,
+        },
       ),
     ).rejects.toThrow(InvalidContentTreeError);
     await expect(
-      workspace.replaceCurrentTreeContentPackage(created.localId, [
-        ...retargeted.files.filter(({ path }) => path !== gameplayPath),
-        gameplayFile({ mode: "interactive-fiction" }),
-      ]),
+      workspace.replaceCurrentTreeContentPackage(
+        created.localId,
+        [
+          ...retargeted.files.filter(({ path }) => path !== gameplayPath),
+          gameplayFile({ mode: "interactive-fiction" }),
+        ],
+        {
+          baseTreeRevision: (
+            await workspace.readCurrentTreeContentPackage(created.localId)
+          ).treeRevision,
+        },
+      ),
     ).rejects.toThrow(/Gameplay mode is fixed/u);
     expect(
       await workspace.readCurrentTreeContentPackage(created.localId),
@@ -151,10 +169,18 @@ describe("内容包玩法身份", () => {
     expect(detail.status).toBe("usable");
     expect(detail.issues).toEqual([]);
     await expect(
-      workspace.replaceCurrentTreeContentPackage(created.localId, [
-        ...detail.files.filter(({ path }) => path !== gameplayPath),
-        { path: gameplayPath, contents: "{ broken" },
-      ]),
+      workspace.replaceCurrentTreeContentPackage(
+        created.localId,
+        [
+          ...detail.files.filter(({ path }) => path !== gameplayPath),
+          { path: gameplayPath, contents: "{ broken" },
+        ],
+        {
+          baseTreeRevision: (
+            await workspace.readCurrentTreeContentPackage(created.localId)
+          ).treeRevision,
+        },
+      ),
     ).rejects.toThrow(/valid JSON/u);
   });
 
@@ -315,6 +341,12 @@ describe("内容包玩法 V1 请求", () => {
     const rejected = runtime.handle({
       type: "content.replace",
       packageId: created.localId,
+      baseTreeRevision: (
+        (await call(runtime, {
+          type: "content.read",
+          packageId: created.localId,
+        })) as { treeRevision: string }
+      ).treeRevision,
       files: [
         ...current.files.filter(({ path }) => path !== gameplayPath),
         gameplayFile({ mode: "interactive-fiction" }),
