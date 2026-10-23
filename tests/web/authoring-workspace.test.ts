@@ -13,6 +13,7 @@ import {
   contentPackageTarget,
   worldRevisionTarget,
 } from "../../src/web/AuthoringTarget.ts";
+import { RuntimeRequestError } from "../../src/web/runtimeClient.ts";
 
 function fixture(kind: "setting" | "revision") {
   let files: ContentTreeFile[] = [
@@ -76,6 +77,7 @@ function fixture(kind: "setting" | "revision") {
         status: "usable",
         issues: [],
         files,
+        treeRevision: `rev:${files[0]!.contents}`,
       };
     if (input.type.endsWith("overview")) return overview();
     if ("sessionId" in input && input.type.endsWith("session.read"))
@@ -415,6 +417,52 @@ test.each(["apply", "discard"] as const)(
     f.workspace.close();
   },
 );
+
+test("保存基线过期时保留草稿并提示冲突，加载最新版本后换成当前树", async () => {
+  const f = fixture("setting");
+  await f.workspace.open();
+  f.workspace.editFiles([
+    { path: "control/frame.yaml", contents: "author draft" },
+  ]);
+  // Another source publishes after the draft was opened from "saved".
+  f.setFiles("AI published");
+  const original = f.request.getMockImplementation()!;
+  f.request.mockImplementation(async (input) => {
+    if (input.type === "content.replace") {
+      throw new RuntimeRequestError("The content package changed", {
+        protocolCode: "content_conflict",
+        details: {
+          current: await original({ type: "content.read", packageId: "target" }),
+        },
+      });
+    }
+    return original(input);
+  });
+
+  await f.workspace.saveFiles();
+
+  expect(f.request).toHaveBeenCalledWith(
+    expect.objectContaining({
+      type: "content.replace",
+      baseTreeRevision: "rev:saved",
+    }),
+  );
+  expect(f.workspace.getSnapshot()).toMatchObject({
+    conflict: true,
+    dirty: true,
+    files: [{ contents: "author draft" }],
+    serverFiles: [{ contents: "AI published" }],
+  });
+
+  f.workspace.loadLatest();
+  expect(f.workspace.getSnapshot()).toMatchObject({
+    conflict: false,
+    dirty: false,
+    files: [{ contents: "AI published" }],
+    baseline: [{ contents: "AI published" }],
+  });
+  f.workspace.close();
+});
 
 test.each(["setting", "revision"] as const)(
   "%s a hydration read started before saving cannot restore the old saved tree",
