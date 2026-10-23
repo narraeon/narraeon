@@ -3,6 +3,9 @@ import { defineConfig } from "@playwright/test";
 // Keep the test server away from common local development ports while letting
 // isolated worktrees avoid a host-reserved port.
 const port = Number(process.env.NARRAEON_E2E_PORT ?? 59_999);
+const dataRoot = ".test-data/e2e";
+const configRoot = ".test-data/e2e-config";
+const logRoot = ".test-data/e2e-log";
 
 export default defineConfig({
   testDir: "tests/e2e",
@@ -15,11 +18,16 @@ export default defineConfig({
     ? {}
     : {
         webServer: {
-          command: "node --experimental-strip-types src/server/main.ts",
+          // The reset runs before the server starts; globalSetup would run
+          // after webServer and could delete data under a live server.
+          command: [
+            `node scripts/reset-e2e-data.mjs ${dataRoot} ${configRoot} ${logRoot}`,
+            "node --experimental-strip-types src/server/main.ts",
+          ].join(" && "),
           env: {
-            NARRAEON_CONFIG_ROOT: ".test-data/e2e-config",
-            NARRAEON_DATA_ROOT: ".test-data/e2e",
-            NARRAEON_LOG_ROOT: ".test-data/e2e-log",
+            NARRAEON_CONFIG_ROOT: configRoot,
+            NARRAEON_DATA_ROOT: dataRoot,
+            NARRAEON_LOG_ROOT: logRoot,
             NARRAEON_PORT: String(port),
             NODE_ENV: "test",
           },
