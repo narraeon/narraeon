@@ -1,5 +1,12 @@
 import { projectLegacyModelBindingFailure } from "./LegacyModelBindingFailure.ts";
-import { classifyPlayFailure } from "./PlayFailure.ts";
+import {
+  dispatchFailureEnding,
+  emptyResponseEnding,
+  lastEndingCancelled,
+  noContinuationEnding,
+  PlayAdvanceLifecycle,
+  settlementFailureEnding,
+} from "./PlayAdvanceLifecycle.ts";
 import {
   isResolutionTool,
   resolutionMarkdown,
@@ -66,12 +73,7 @@ import type {
 } from "../model/ModelHost.ts";
 import {
   equalModelHostBinding,
-  ModelHostBindingMismatchError,
   ModelHostCancelledError,
-  ModelHostContinuationError,
-  ModelHostFailureError,
-  ModelHostOutcomeUnknownError,
-  modelHostFailureRequiresFreshContext,
 } from "../model/ModelHost.ts";
 import {
   FileNativePromptCompiler,
@@ -312,6 +314,7 @@ export class PlayCallChain {
   readonly #invocationSettled = new Map<string, Promise<void>>();
   /** Worlds whose release is queued in their WorldQueue slot. */
   readonly #releasing = new Set<string>();
+  readonly #advances: PlayAdvanceLifecycle<PlayCallChainSession>;
 
   constructor(
     worlds: FileNativeWorldStore,
@@ -327,6 +330,10 @@ export class PlayCallChain {
     this.#compiler = compiler;
     this.#artifacts = artifacts;
     this.#failureLog = failureLog;
+    this.#advances = new PlayAdvanceLifecycle<PlayCallChainSession>({
+      persist: (session) => this.#persist(session),
+      clearMarker: (advance) => this.#worlds.playAdvances.markSettled(advance),
+    });
   }
 
   async start(input: PlayCallChainStartInput): Promise<V1PlayCallChainView> {
@@ -1869,24 +1876,12 @@ export class PlayCallChain {
     try {
       await this.#settlePlayerAdvance(session, advance);
     } catch (error: unknown) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Failed to write the original player text.";
-      const failureKind = classifyPlayFailure(error, false);
-      session.events.push({
-        id: session.nextEventId++,
-        kind: "failure",
-        message,
-        failureKind,
-      });
-      session.status = "interrupted";
-      session.canRetry = false;
-      session.lastFailure = message;
-      session.lastFailureKind = failureKind;
-      await this.#persist(session);
-      await this.#worlds.playAdvances.markSettled(advance);
-      throw new PlayCallChainError(message);
+      const ending = settlementFailureEnding(
+        error,
+        "Failed to write the original player text.",
+      );
+      await this.#advances.end(session, ending, advance);
+      throw new PlayCallChainError(ending.message);
     }
     return this.#dispatch(
       session,
@@ -1955,15 +1950,15 @@ export class PlayCallChain {
     if (advance.narrativeOrigin === undefined) delete session.narrativeOrigin;
     else session.narrativeOrigin = structuredClone(advance.narrativeOrigin);
     session.exchange = advance.exchange;
-    session.lastRequest = structuredClone(advance.nextRequest);
-    session.lastRequestAttempt = 0;
-    session.status = "interrupted";
-    session.canRetry = true;
-    session.lastFailure =
-      "The player message is committed; the frozen model request is ready to continue.";
-    session.lastFailureKind = "retryable";
-    await this.#persist(session);
-    await this.#worlds.playAdvances.markSettled(advance);
+    await this.#advances.end(
+      session,
+      {
+        kind: "resumable",
+        reason: "player_committed",
+        request: advance.nextRequest,
+      },
+      advance,
+    );
   }
 
   /**
@@ -2257,24 +2252,13 @@ export class PlayCallChain {
 
     const hasToolCalls = calls.length > 0;
     session.exchange = Math.max(session.exchange, advance.exchange);
-    session.canRetry = false;
-    session.lastFailure = null;
-    delete session.lastFailureKind;
-    let result: ResponseSettlement;
+    // The chain has been `running` since its dispatch began, so its failure
+    // fields are already clear; the ending below replaces them.
     if (assistantEvent.continuation !== "available") {
-      const message =
-        "The complete model response has no provider-native continuation payload; use a fresh context.";
-      session.events.push({
-        id: session.nextEventId++,
-        kind: "failure",
-        message,
-        failureKind: "context_unavailable",
-      });
-      session.status = "interrupted";
-      session.lastFailure = message;
-      session.lastFailureKind = "context_unavailable";
-      result = { kind: "terminal", status: "interrupted", narrative };
-    } else if (hasToolCalls) {
+      await this.#advances.end(session, noContinuationEnding(), advance);
+      return { kind: "terminal", status: "interrupted", narrative };
+    }
+    if (hasToolCalls) {
       session.exchange += 1;
       const nextRequest = createRequestWithMaxOutputTokens(
         session,
@@ -2285,33 +2269,23 @@ export class PlayCallChain {
         nextRequest.modelConfig = structuredClone(
           session.lastRequest.modelConfig,
         );
-      session.lastRequest = structuredClone(nextRequest);
-      session.lastRequestAttempt = 0;
-      session.status = "interrupted";
-      session.canRetry = true;
-      session.lastFailure =
-        "The completed tool response is settled; its frozen continuation request is ready.";
-      session.lastFailureKind = "retryable";
-      result = { kind: "continue", nextRequest };
-    } else {
-      session.status = narrative ? "ready" : "interrupted";
-      if (!narrative) {
-        const message =
-          "The model returned neither text nor a complete tool call.";
-        session.events.push({
-          id: session.nextEventId++,
-          kind: "failure",
-          message,
-          failureKind: "other",
-        });
-        session.lastFailure = message;
-        session.lastFailureKind = "other";
-      }
-      result = { kind: "terminal", status: session.status, narrative };
+      await this.#advances.end(
+        session,
+        {
+          kind: "resumable",
+          reason: "tool_step_settled",
+          request: nextRequest,
+        },
+        advance,
+      );
+      return { kind: "continue", nextRequest };
     }
-    await this.#persist(session);
-    await this.#worlds.playAdvances.markSettled(advance);
-    return result;
+    if (!narrative) {
+      await this.#advances.end(session, emptyResponseEnding(), advance);
+      return { kind: "terminal", status: "interrupted", narrative };
+    }
+    await this.#advances.end(session, { kind: "ready" }, advance);
+    return { kind: "terminal", status: "ready", narrative };
   }
 
   async #dispatch(
@@ -2335,12 +2309,7 @@ export class PlayCallChain {
           observer,
         );
       this.#observeInvocation(session.chainId, "waiting");
-      session.status = "running";
-      session.canRetry = false;
-      session.lastFailure = null;
-      delete session.lastFailureKind;
-      session.lastRequest = structuredClone(request);
-      session.lastRequestAttempt = attempt;
+      this.#advances.beginDispatch(session, request, attempt);
       const responseExchange = request.exchange ?? session.exchange;
       const event: Extract<V1PlayCallChainEvent, { kind: "assistant" }> = {
         id: session.nextEventId++,
@@ -2441,42 +2410,12 @@ export class PlayCallChain {
         if (response.diagnostics !== undefined)
           await this.#failureLog?.recordExchangeIfActive(response.diagnostics);
       } catch (error: unknown) {
-        event.status = "interrupted";
-        const message =
-          error instanceof Error
-            ? error.message
-            : "The model request was interrupted.";
-        session.status = "interrupted";
-        const requiresFreshContext =
-          error instanceof ModelHostBindingMismatchError ||
-          error instanceof ModelHostContinuationError ||
-          error instanceof ModelHostOutcomeUnknownError ||
-          modelHostFailureRequiresFreshContext(error);
-        session.canRetry =
-          !requiresFreshContext && error instanceof ModelHostFailureError;
-        session.lastFailure = message;
-        if (error instanceof ModelHostCancelledError) {
-          delete session.lastFailureKind;
-          session.events.push({
-            id: session.nextEventId++,
-            kind: "cancellation",
-            message,
-          });
-        } else {
-          session.lastFailureKind = classifyPlayFailure(
-            error,
-            session.canRetry,
-          );
-          session.events.push({
-            id: session.nextEventId++,
-            kind: "failure",
-            message,
-            failureKind: session.lastFailureKind,
-          });
-        }
-        await this.#persist(session);
-        await this.#worlds.playAdvances.markSettled(advance);
-        this.#notifySnapshot(observer, session);
+        await this.#advances.end(
+          session,
+          dispatchFailureEnding(error, event.id),
+          advance,
+          () => this.#notifySnapshot(observer, session),
+        );
         return projectView(session);
       }
 
@@ -2526,53 +2465,35 @@ export class PlayCallChain {
           }
           await this.#runFollowups(session, modelHost, signal, observer);
           this.#setInvocationAbortable(session.chainId, false);
-          if (signal.aborted) {
-            session.events.push({
-              id: session.nextEventId++,
-              kind: "cancellation",
-              message:
-                "The player cancelled the remaining follow-up generation after the narrative was committed.",
-            });
-            touch(session);
-            this.changed(session.worldId);
-          }
-          session.status = "ready";
-          await this.#persist(session);
-          this.#notifySnapshot(observer, session);
+          await this.#advances.end(
+            session,
+            { kind: "ready", followupsCancelled: signal.aborted },
+            null,
+            () => this.#notifySnapshot(observer, session),
+          );
           return projectView(session);
         }
         this.#notifySnapshot(observer, session);
         request = settled.nextRequest;
         attempt = 1;
       } catch (error: unknown) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : "Call-chain processing failed.";
+        const ending = settlementFailureEnding(
+          error,
+          "Call-chain processing failed.",
+        );
         if (response.diagnostics !== undefined)
           await this.#failureLog?.recordFailure({
             exchange: response.diagnostics,
             failures: [
               {
                 kind: "runtime_post_processing",
-                message,
+                message: ending.message,
               },
             ],
           });
-        const failureKind = classifyPlayFailure(error, false);
-        session.events.push({
-          id: session.nextEventId++,
-          kind: "failure",
-          message,
-          failureKind,
-        });
-        session.status = "interrupted";
-        session.canRetry = false;
-        session.lastFailure = message;
-        session.lastFailureKind = failureKind;
-        await this.#persist(session);
-        await this.#worlds.playAdvances.markSettled(advance);
-        this.#notifySnapshot(observer, session);
+        await this.#advances.end(session, ending, advance, () =>
+          this.#notifySnapshot(observer, session),
+        );
         return projectView(session);
       }
     }
@@ -2585,32 +2506,17 @@ export class PlayCallChain {
     observer?: PlayCallChainObserver,
     advance?: Extract<PlayAdvanceBase, { advanceKind: "response" }>,
   ): Promise<V1PlayCallChainView> {
-    if (advance !== undefined) {
-      const streaming = session.events.find(
-        (
-          event,
-        ): event is Extract<V1PlayCallChainEvent, { kind: "assistant" }> =>
-          event.kind === "assistant" && event.id === advance.eventId,
-      );
-      if (streaming !== undefined) streaming.status = "interrupted";
-    }
-    const message =
-      "The player cancelled before the next Provider dispatch; the frozen request can be resumed without replaying a completed model result.";
-    session.events.push({
-      id: session.nextEventId++,
-      kind: "cancellation",
-      message,
-    });
-    session.status = "interrupted";
-    session.canRetry = true;
-    session.lastRequest = structuredClone(request);
-    session.lastRequestAttempt = Math.max(0, attempt - 1);
-    session.lastFailure = message;
-    delete session.lastFailureKind;
-    await this.#persist(session);
-    if (advance !== undefined)
-      await this.#worlds.playAdvances.markSettled(advance);
-    this.#notifySnapshot(observer, session);
+    await this.#advances.end(
+      session,
+      {
+        kind: "cancelled_before_dispatch",
+        request,
+        attempt,
+        ...(advance === undefined ? {} : { streamingEventId: advance.eventId }),
+      },
+      advance ?? null,
+      () => this.#notifySnapshot(observer, session),
+    );
     return projectView(session);
   }
 
@@ -2848,50 +2754,11 @@ export class PlayCallChain {
           )
         : loaded;
     if (advance === null && session.status !== "running") return;
-    await this.#interruptAbandonedDispatch(session, advance);
-    if (advance !== null) await this.#worlds.playAdvances.markSettled(advance);
-  }
-
-  async #interruptAbandonedDispatch(
-    session: PlayCallChainSession,
-    advance: PlayAdvanceBase | null,
-  ): Promise<void> {
+    // Authority already moved past the persisted parent head: the world cannot
+    // be replayed onto that head, so the recovery requires a fresh context.
     const headMoved =
       (await this.#worlds.currentHead(session.worldId)) !== session.parentHead;
-    const playerPhase = advance?.advanceKind === "player";
-    const streaming = playerPhase
-      ? undefined
-      : session.events.findLast(
-          (
-            event,
-          ): event is Extract<V1PlayCallChainEvent, { kind: "assistant" }> =>
-            event.kind === "assistant" &&
-            event.status === "streaming" &&
-            (advance === null || event.id === advance.eventId),
-        );
-    if (streaming !== undefined) streaming.status = "interrupted";
-    // Authority already moved past the persisted parent head: the world
-    // cannot be replayed onto that head, so a fresh context is required.
-    const canRetry = !headMoved && !playerPhase && session.lastRequest !== null;
-    const message = headMoved
-      ? "The service stopped after the world was updated; use a fresh context."
-      : playerPhase
-        ? "The service stopped while saving the player message; use a fresh context."
-        : canRetry
-          ? "The service stopped while the model request was in progress; retry to call the model again."
-          : "The service stopped before preparing a model request; use a fresh context.";
-    const failureKind = canRetry ? "retryable" : "other";
-    session.events.push({
-      id: session.nextEventId++,
-      kind: "failure",
-      message,
-      failureKind,
-    });
-    session.status = "interrupted";
-    session.canRetry = canRetry;
-    session.lastFailure = message;
-    session.lastFailureKind = failureKind;
-    await this.#persist(session);
+    await this.#advances.recoverAbandoned(session, advance, headMoved);
   }
 
   async #assertCurrentHead(session: PlayCallChainSession): Promise<void> {
@@ -3405,6 +3272,7 @@ function projectView(session: PersistedPlayCallChain): V1PlayCallChainView {
     previousContexts: (session.previousContexts ?? []).map((context) =>
       projectContext(context),
     ),
+    ...(lastEndingCancelled(session) ? { lastCancelled: true as const } : {}),
   };
 }
 

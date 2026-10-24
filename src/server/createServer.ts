@@ -391,7 +391,5 @@ function isPlayCallChainView(value: unknown): value is V1PlayCallChainView {
 }
 
 function hasPlayCancellation(value: unknown): boolean {
-  if (!isRecord(value) || !Array.isArray(value.events)) return false;
-  const last: unknown = value.events.at(-1);
-  return isRecord(last) && last.kind === "cancellation";
+  return isRecord(value) && value.lastCancelled === true;
 }

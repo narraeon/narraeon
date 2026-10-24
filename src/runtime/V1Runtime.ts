@@ -309,7 +309,7 @@ export class V1Runtime {
     if (
       chain?.status !== "interrupted" ||
       typeof chain.lastFailure !== "string" ||
-      chain.events?.at(-1)?.kind === "cancellation"
+      chain.lastCancelled === true
     )
       return;
     await this.#errorLog.recordPlayInterruption(request, {

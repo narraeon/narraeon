@@ -106,6 +106,7 @@ test("进度轮询不写访问日志，调用链中断写出原始 Provider 原�
           result: {
             status: "interrupted",
             lastFailure: "The player cancelled model generation.",
+            lastCancelled: true,
             events: [
               {
                 id: 1,

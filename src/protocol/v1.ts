@@ -863,6 +863,11 @@ export interface V1PlayCallChainContextView {
 export interface V1PlayCallChainView extends V1PlayCallChainContextView {
   worldId: string;
   previousContexts: V1PlayCallChainContextView[];
+  /**
+   * Present when the chain's last ending was the player's cancellation
+   * (ADR-0030). Absent otherwise, so views from before this field still parse.
+   */
+  lastCancelled?: true;
   /** Present only while this Runtime process owns the active invocation. */
   activeInvocation?: V1PlayRunProgress;
 }
