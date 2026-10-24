@@ -67,8 +67,10 @@ import {
   UnsupportedLegacyStorageError,
 } from "./FileNativeWorldStorageMigrator.ts";
 import {
+  isCorrectionCommit,
   WorldAuthorityError,
   WorldLedgerAuthority,
+  type WorldCommitMode,
   type WorldTurnCommit,
 } from "./WorldLedgerAuthority.ts";
 import {
@@ -216,7 +218,7 @@ export type FileNativeOperationOutcome =
         background?: HistoryBackground;
       }[];
       nextAdditionalMaterials: MaterialSelection[];
-      mode: "play" | "correction";
+      mode: WorldCommitMode;
     };
 
 type CommittedOperationOutcome = Extract<
@@ -832,9 +834,9 @@ export class FileNativeWorldStore {
    * must never pair a mutable state tree with a different response head.
    */
   async renderPlayerViewsAtHead(worldId: string, head: string) {
-    const [state, control] = await Promise.all([
-      this.recoverEndpoint(worldId, head).then(({ state }) => state),
-      this.readSurface(worldId, "control"),
+    const [{ state }, control] = await Promise.all([
+      this.recoverEndpoint(worldId, head),
+      this.#recoverEndpointControl(worldId, head),
     ]);
     const source = control.find(({ path }) => path === "player-views.yaml");
     return new PlayerViewRenderer().render({
@@ -990,72 +992,6 @@ export class FileNativeWorldStore {
     );
   }
 
-  /** Replace control while the matching revision epoch retains exclusive ownership. */
-  async replaceWorldRevisionControl(input: {
-    handle: WorldRevisionLockHandle;
-    expectedFingerprint: string;
-    files: readonly ContentTreeFile[];
-  }): Promise<{ fingerprint: string }> {
-    for (const file of input.files) assertRelativePath(file.path);
-    return this.operations.withWorldRevisionLock(input.handle, async () => {
-      if ((this.#activeControlUsers.get(input.handle.worldId)?.size ?? 0) > 0)
-        throw new FileNativeWorldCreationError(
-          "operation_conflict",
-          "World control is frozen by another operation",
-        );
-      const root = join(this.#worldsRoot, input.handle.worldId);
-      const currentPath = join(root, "control");
-      const runtimeRoot = join(root, "runtime");
-      const stagingRoot = join(
-        runtimeRoot,
-        `.revision-control-${input.handle.epochId}-next`,
-      );
-      const stagedPath = join(stagingRoot, "control");
-      const previousPath = join(
-        runtimeRoot,
-        `.revision-control-${input.handle.epochId}-previous`,
-      );
-      let current = await readTree(currentPath);
-      let currentFingerprint = fingerprint(current);
-      const nextFingerprint = fingerprint(input.files);
-      if (currentFingerprint === nextFingerprint) {
-        await rm(stagingRoot, { recursive: true, force: true });
-        await rm(previousPath, { recursive: true, force: true });
-        return { fingerprint: nextFingerprint };
-      }
-      const previous = await readTree(previousPath);
-      const staged = await readTree(stagedPath);
-      if (
-        current.length === 0 &&
-        fingerprint(previous) === input.expectedFingerprint
-      ) {
-        if (fingerprint(staged) === nextFingerprint) {
-          await rename(stagedPath, currentPath);
-          await rm(previousPath, { recursive: true, force: true });
-          await rm(stagingRoot, { recursive: true, force: true });
-          return { fingerprint: nextFingerprint };
-        }
-        await rename(previousPath, currentPath);
-        current = await readTree(currentPath);
-        currentFingerprint = fingerprint(current);
-      }
-      if (currentFingerprint !== input.expectedFingerprint)
-        throw new FileNativeWorldCreationError(
-          "operation_conflict",
-          "World control changed after this revision epoch opened",
-        );
-      assertControlGameplayUnchanged(current, input.files);
-      await rm(stagingRoot, { recursive: true, force: true });
-      await rm(previousPath, { recursive: true, force: true });
-      await writeSurface(stagingRoot, "control", input.files);
-      await rename(currentPath, previousPath);
-      await rename(stagedPath, currentPath);
-      await rm(previousPath, { recursive: true, force: true });
-      await rm(stagingRoot, { recursive: true, force: true });
-      return { fingerprint: nextFingerprint };
-    });
-  }
-
   async previewControlDraft(
     worldId: string,
     prompt: Pick<FileNativePromptInput, "hostBinding" | "modelBinding"> & {
@@ -1116,27 +1052,31 @@ export class FileNativeWorldStore {
             );
           const preview = await this.previewControlDraft(worldId, prompt);
           const root = join(this.#worldsRoot, worldId);
+          const draft = await readTree(join(root, "runtime/control-draft"));
+          const authority = new WorldLedgerAuthority(root);
+          const endpoint = await authority.recover();
           assertControlGameplayUnchanged(
-            await readTree(join(root, "control")),
-            await readTree(join(root, "runtime/control-draft")),
+            await authority.recoverControl(endpoint.head),
+            draft,
           );
-          const draft = join(root, "runtime/control-draft");
-          const replacement = join(
-            root,
-            `runtime/.control-apply-${randomUUID()}`,
-          );
-          await rename(draft, replacement);
-          const old = join(root, `runtime/.control-old-${randomUUID()}`);
-          await rename(join(root, "control"), old);
-          try {
-            await rename(replacement, join(root, "control"));
-            await rm(old, { recursive: true, force: true }).catch(
-              () => undefined,
-            );
-          } catch (error: unknown) {
-            await rename(old, join(root, "control")).catch(() => undefined);
-            throw error;
-          }
+          // 控制编辑应用是一轮 `control_apply`：只含 control 改动，与其他轮一样可回退。
+          await this.#commitHistoryChange({
+            operationId: `control-apply-${randomUUID()}`,
+            worldId,
+            parentHead: endpoint.head,
+            nextMaterials: worldNeutralMaterials(
+              worldId,
+              endpoint.additionalMaterials,
+            ),
+            stateChanges: [],
+            mode: "control_apply",
+            historyAppend: [],
+            control: draft,
+          });
+          await rm(join(root, "runtime/control-draft"), {
+            recursive: true,
+            force: true,
+          });
           return {
             controlFingerprint: preview.diagnosticBinding.controlFingerprint,
             preview,
@@ -1224,8 +1164,9 @@ export class FileNativeWorldStore {
     }
     try {
       return await this.operations.withWorldAuthorityLock(worldId, async () => {
-        const recovered = await new WorldLedgerAuthority(root).recover();
-        const control = await readTree(join(root, "control"));
+        const authority = new WorldLedgerAuthority(root);
+        const recovered = await authority.recover();
+        const control = await authority.recoverControl(recovered.head);
         return {
           worldId,
           parentHead: recovered.head,
@@ -1259,7 +1200,7 @@ export class FileNativeWorldStore {
   }
 
   /**
-   * Bind an immutable historical endpoint with the world's current control
+   * Bind an immutable historical endpoint with that endpoint's own control
    * surface. This is the same semantic input as a fresh context started while
    * that endpoint was current, without rewinding today's head.
    */
@@ -1270,7 +1211,7 @@ export class FileNativeWorldStore {
     assertIdentity(worldId, "World ID");
     const [endpoint, control] = await Promise.all([
       this.recoverEndpoint(worldId, head),
-      this.readSurface(worldId, "control"),
+      this.#recoverEndpointControl(worldId, head),
     ]);
     return {
       worldId,
@@ -1344,19 +1285,21 @@ export class FileNativeWorldStore {
         narrativeCheckpoint: recovered.narrativeCheckpoint,
       };
     } catch (error: unknown) {
-      if (error instanceof FileNativeWorldCreationError) throw error;
-      // 端点在读取途中被回退丢弃不是损坏：调用方重新取得当前端点即可。
-      if (error instanceof WorldTurnLedgerError && error.code === "discarded")
-        throw new FileNativeWorldCreationError(
-          "endpoint_discarded",
-          `Authority endpoint was rewound away${head === undefined ? "" : `: ${head}`}`,
-          { cause: error },
-        );
-      throw new FileNativeWorldCreationError(
-        "world_corrupt",
-        `Cannot recover immutable Authority endpoint${head === undefined ? "" : `: ${head}`}`,
-        error instanceof Error ? { cause: error } : undefined,
-      );
+      throw endpointReadError(error, head);
+    }
+  }
+
+  /** 端点的控制文件；与 recoverEndpoint 的状态取同一个端点，回退与分叉随端点恢复。 */
+  async #recoverEndpointControl(
+    worldId: string,
+    head?: string,
+  ): Promise<ContentTreeFile[]> {
+    try {
+      return await new WorldLedgerAuthority(
+        join(this.#worldsRoot, worldId),
+      ).recoverControl(head);
+    } catch (error: unknown) {
+      throw endpointReadError(error, head);
     }
   }
 
@@ -1432,10 +1375,10 @@ export class FileNativeWorldStore {
         input.sourceHead === "current"
           ? (await sourceAuthority.readHead()).head
           : input.sourceHead;
-      const [sourceGenesis, control] = await Promise.all([
-        readGenesisForFork(sourceRoot, input.sourceWorldId),
-        readTree(join(sourceRoot, "control")),
-      ]);
+      const sourceGenesis = await readGenesisForFork(
+        sourceRoot,
+        input.sourceWorldId,
+      );
       const staging = join(
         dirname(finalRoot),
         `.staging-${worldId}-${randomUUID()}`,
@@ -1451,7 +1394,11 @@ export class FileNativeWorldStore {
         });
         // 分叉不信任来源的投影文件：当前文件由副本上的账本端点重建。
         await new WorldLedgerAuthority(staging).materializeCurrentFiles();
+        // 控制与状态一样取自所选端点：回退已把副本的 control/ 恢复到该端点。
         const selected = await new WorldLedgerAuthority(staging).recover();
+        const selectedControl = await new WorldLedgerAuthority(
+          staging,
+        ).recoverControl(selected.head);
         await PackageScriptPermissions.write(
           staging,
           input.resetPackageScriptPermissions
@@ -1466,7 +1413,7 @@ export class FileNativeWorldStore {
           operationId: input.operationId,
           parentEndpoint: "genesis",
           state: structuredClone(sourceGenesis.state),
-          control: immutableFiles(control),
+          control: immutableFiles(selectedControl),
           history: structuredClone(sourceGenesis.history),
           additionalMaterials: structuredClone(
             sourceGenesis.additionalMaterials,
@@ -1488,7 +1435,7 @@ export class FileNativeWorldStore {
           binding: {
             worldId,
             parentHead: sourceHead,
-            files: [...selected.state, ...control].reduce<
+            files: [...selected.state, ...selectedControl].reduce<
               Record<string, string>
             >((files, { path, contents }, index) => {
               files[
@@ -1662,7 +1609,6 @@ export class FileNativeWorldStore {
     stateChanges: FileNativeStateChange[];
     stateOperationClaim?: ContinuityCorrectionWorldClaimHandle;
     worldRevisionLock?: WorldRevisionLockHandle;
-    validationControl?: readonly ContentTreeFile[];
   }): Promise<Extract<FileNativeOperationOutcome, { outcome: "committed" }>> {
     await this.ensureCurrentStorage(input.worldId);
     try {
@@ -1688,9 +1634,6 @@ export class FileNativeWorldStore {
           mode: "correction",
           historyAppend: [],
           operationReserved,
-          ...(input.validationControl === undefined
-            ? {}
-            : { validationControl: input.validationControl }),
         });
       };
       if (
@@ -1713,6 +1656,63 @@ export class FileNativeWorldStore {
       return await this.operations.withExclusiveWorldStateMutation(
         input.worldId,
         commit,
+      );
+    } catch (error: unknown) {
+      if (error instanceof WorldOperationBusyError)
+        throw new FileNativeWorldCreationError(
+          "operation_conflict",
+          "This world already has a durable state operation in progress",
+        );
+      throw error;
+    }
+  }
+
+  /**
+   * 世界修订应用：state 与 control 的改动作为同一轮 `revision_apply` 提交。
+   * 操作身份由 epoch 决定，同一身份已是当前端点时直接返回该提交（崩溃后重放不重复推进）。
+   */
+  async commitWorldRevisionApply(input: {
+    worldClock?: string;
+    operationId: string;
+    worldId: string;
+    parentHead: string;
+    nextMaterials: MaterialSelection[];
+    stateChanges: FileNativeStateChange[];
+    control: readonly ContentTreeFile[];
+    worldRevisionLock: WorldRevisionLockHandle;
+  }): Promise<Extract<FileNativeOperationOutcome, { outcome: "committed" }>> {
+    await this.ensureCurrentStorage(input.worldId);
+    try {
+      return await this.operations.withWorldRevisionLock(
+        input.worldRevisionLock,
+        async () => {
+          const operationReserved =
+            (await this.getOperationOutcome(input.operationId)).outcome ===
+              "not_started" && (await this.reserveOperation(input.operationId));
+          try {
+            return await this.#commitHistoryChange({
+              ...(input.worldClock === undefined
+                ? {}
+                : { worldClock: input.worldClock }),
+              operationId: input.operationId,
+              worldId: input.worldId,
+              parentHead: input.parentHead,
+              nextMaterials: worldNeutralMaterials(
+                input.worldId,
+                input.nextMaterials,
+              ),
+              stateChanges: input.stateChanges,
+              mode: "revision_apply",
+              historyAppend: [],
+              operationReserved,
+              control: input.control,
+            });
+          } catch (error: unknown) {
+            if (operationReserved)
+              await this.releaseOperationReservation(input.operationId);
+            throw error;
+          }
+        },
       );
     } catch (error: unknown) {
       if (error instanceof WorldOperationBusyError)
@@ -1786,9 +1786,10 @@ export class FileNativeWorldStore {
     nextMaterials: MaterialSelection[];
     stateChanges: FileNativeStateChange[];
     narrativeCheckpoint?: NarrativeCheckpointDeclaration;
-    mode: "play" | "correction";
+    mode: WorldCommitMode;
     operationReserved?: boolean;
-    validationControl?: readonly ContentTreeFile[];
+    /** 提交后的完整控制文件集合；省略则控制保持端点上的值。 */
+    control?: readonly ContentTreeFile[];
   }): Promise<CommittedOperationOutcome> {
     const existing = this.#operationOutcomes.get(input.operationId);
     if (existing?.phase === "done") {
@@ -1844,14 +1845,25 @@ export class FileNativeWorldStore {
             );
           const authorityStore = new WorldLedgerAuthority(root);
           const authority = await authorityStore.readHead();
+          if (
+            input.mode === "revision_apply" &&
+            authority.operationId === input.operationId
+          ) {
+            // 同一世界修订应用已经是当前端点：崩溃发生在端点发布之后、阶段记录之前。
+            return this.#committedOutcomeAtHead(
+              authorityStore,
+              input,
+              authority.head,
+            );
+          }
           if (authority.head !== input.parentHead)
             throw new FileNativeWorldCreationError(
               "operation_conflict",
               "The parent endpoint of the play operation has changed",
             );
-          const [basisState, storedControl] = await Promise.all([
+          const [basisState, basisControl] = await Promise.all([
             authorityStore.recoverState(authority.head),
-            readTree(join(root, "control")),
+            authorityStore.recoverControl(authority.head),
           ]);
           const candidateState = new Map(
             basisState.map((file) => [file.path, file.contents]),
@@ -1877,12 +1889,10 @@ export class FileNativeWorldStore {
                 path: `world/${path}`,
                 contents,
               })),
-              ...(input.validationControl ?? storedControl).map(
-                ({ path, contents }) => ({
-                  path: `control/${path}`,
-                  contents,
-                }),
-              ),
+              ...(input.control ?? basisControl).map(({ path, contents }) => ({
+                path: `control/${path}`,
+                contents,
+              })),
             ],
             { requireOpening: false },
           );
@@ -1904,10 +1914,11 @@ export class FileNativeWorldStore {
             historyAppend: input.historyAppend,
             stateChanges: input.stateChanges,
             nextMaterials: input.nextMaterials,
+            ...(input.control === undefined ? {} : { control: input.control }),
             ...(input.narrativeCheckpoint === undefined
               ? {}
               : { narrativeCheckpoint: input.narrativeCheckpoint }),
-            ...(input.mode === "correction"
+            ...(isCorrectionCommit(input.mode)
               ? {
                   correctionTargets: input.stateChanges.map(
                     ({ documentId }) => documentId,
@@ -1955,6 +1966,38 @@ export class FileNativeWorldStore {
         );
       throw error;
     }
+  }
+
+  /**
+   * 操作身份已经是当前端点的提交：核对它与本次输入一致，然后按它的结果返回。
+   * 不一致说明同一身份被用于另一份提交，拒绝而不是覆盖或重复推进。
+   */
+  async #committedOutcomeAtHead(
+    authorityStore: WorldLedgerAuthority,
+    input: Parameters<typeof authorityCommitMatchesInput>[1] & {
+      worldId: string;
+      operationId: string;
+    },
+    head: string,
+  ): Promise<CommittedOperationOutcome> {
+    const fact = await authorityStore.authorityFactAt(head);
+    if (!authorityCommitMatchesInput(fact.commit, input))
+      throw new FileNativeWorldCreationError(
+        "operation_conflict",
+        "The same operation ID is bound to a different complete commit payload",
+      );
+    const outcome: CommittedOperationOutcome = {
+      outcome: "committed",
+      worldId: input.worldId,
+      parentHead: fact.commit.parentHead,
+      head: fact.commit.head,
+      commitDigest: fact.digest,
+      historyAppend: structuredClone(input.historyAppend),
+      nextAdditionalMaterials: structuredClone(input.nextMaterials),
+      mode: input.mode,
+    };
+    this.#rememberOperationOutcome(input.worldId, input.operationId, outcome);
+    return outcome;
   }
 
   async readAuthorityHistory(
@@ -2056,11 +2099,14 @@ export class FileNativeWorldStore {
     return {
       endpoint,
       corrects:
-        commit?.mode === "correction" ? (commit.corrects ?? null) : null,
+        commit !== undefined && isCorrectionCommit(commit.mode)
+          ? (commit.corrects ?? null)
+          : null,
       correctedBy: commits
         .filter(
           (candidate) =>
-            candidate.mode === "correction" && candidate.corrects === endpoint,
+            isCorrectionCommit(candidate.mode) &&
+            candidate.corrects === endpoint,
         )
         .map(({ head }) => head),
     };
@@ -2479,7 +2525,7 @@ function authorityCommitMatchesInput(
     }[];
     nextMaterials: MaterialSelection[];
     stateChanges: FileNativeStateChange[];
-    mode: "play" | "correction";
+    mode: WorldCommitMode;
     narrativeCheckpoint?: NarrativeCheckpointDeclaration;
   },
 ): boolean {
@@ -2498,10 +2544,10 @@ function authorityCommitMatchesInput(
         nextHash: candidate.nextHash,
       });
     });
-  const expectedCorrection =
-    input.mode === "correction"
-      ? input.stateChanges.map(({ documentId }) => documentId)
-      : undefined;
+  const correction = isCorrectionCommit(input.mode);
+  const expectedCorrection = correction
+    ? input.stateChanges.map(({ documentId }) => documentId)
+    : undefined;
   return (
     commit.mode === input.mode &&
     commit.playContext === input.playContext &&
@@ -2519,8 +2565,26 @@ function authorityCommitMatchesInput(
     isDeepStrictEqual(commit.nextAdditionalMaterials, input.nextMaterials) &&
     isDeepStrictEqual(commit.narrativeCheckpoint, input.narrativeCheckpoint) &&
     isDeepStrictEqual(commit.correctionTargets, expectedCorrection) &&
-    commit.corrects ===
-      (input.mode === "correction" ? input.parentHead : undefined)
+    commit.corrects === (correction ? input.parentHead : undefined)
+  );
+}
+
+/** 读取某个端点失败的错误映射：端点在读取途中被回退丢弃不是损坏，调用方重新取得当前端点即可。 */
+function endpointReadError(
+  error: unknown,
+  head: string | undefined,
+): FileNativeWorldCreationError {
+  if (error instanceof FileNativeWorldCreationError) return error;
+  if (error instanceof WorldTurnLedgerError && error.code === "discarded")
+    return new FileNativeWorldCreationError(
+      "endpoint_discarded",
+      `Authority endpoint was rewound away${head === undefined ? "" : `: ${head}`}`,
+      { cause: error },
+    );
+  return new FileNativeWorldCreationError(
+    "world_corrupt",
+    `Cannot recover immutable Authority endpoint${head === undefined ? "" : `: ${head}`}`,
+    error instanceof Error ? { cause: error } : undefined,
   );
 }
 

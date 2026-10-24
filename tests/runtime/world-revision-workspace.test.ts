@@ -1,14 +1,7 @@
-import {
-  mkdir,
-  mkdtemp,
-  readFile,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { fictionGameplay } from "../../src/protocol/gameplay.ts";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
 import { afterEach, expect, test, vi } from "vitest";
 
@@ -482,7 +475,7 @@ test("手动与 AI 可共用工作树，逐文件回滚最后一次修改后整�
   });
   expect(applied).toMatchObject({
     lifecycle: "applied",
-    apply: { phase: "control_published", committedHead: "commit:1" },
+    apply: { phase: "committed", committedHead: "commit:1" },
   });
   expect(await worlds.readWorldRevisionLock(worldId)).toBeNull();
   expect(await worlds.currentHead(worldId)).toBe("commit:1");
@@ -662,80 +655,6 @@ test("空修订只解锁，仅 control 变化也只推进一次 Authority", asyn
       ({ path }) => path === "blocks/world.md",
     )?.contents,
   ).toContain("只修订控制。");
-});
-
-test("控制目录交换中断后可从确定路径恢复，Authority 不会重复推进", async () => {
-  const { root, worldId, worlds, workspace } = await createdWorld();
-  const revisionStore = new FileNativeWorldRevisionStore(root);
-  let epoch = await workspace.open(worldId);
-  const controlPath = "control/blocks/world.md";
-  epoch = await workspace.replace({
-    worldId,
-    epochId: epoch.epochId,
-    expectedRevision: epoch.revision,
-    files: replaceContents(
-      epoch.files,
-      controlPath,
-      (contents) => `${contents}\n恢复后的控制规则。\n`,
-    ),
-  });
-  const handle = { worldId, epochId: epoch.epochId };
-  const binding = await worlds.bindWorldRevision(handle);
-  const desiredControl = epoch.files
-    .filter(({ path }) => path.startsWith("control/"))
-    .map(({ path, contents }) => ({
-      path: path.slice("control/".length),
-      contents,
-    }));
-  const committed = await worlds.commitCorrection({
-    operationId: `world-revision-${epoch.epochId}`,
-    worldId,
-    parentHead: epoch.baseHead,
-    nextMaterials: binding.additionalMaterials,
-    stateChanges: [],
-    worldRevisionLock: handle,
-    validationControl: desiredControl,
-  });
-  epoch.lifecycle = "applying";
-  epoch.apply = {
-    operationId: `world-revision-${epoch.epochId}`,
-    expectedRevision: epoch.revision,
-    phase: "state_committed",
-    committedHead: committed.head,
-  };
-  epoch.updatedAt = Date.now();
-  await revisionStore.saveEpoch(epoch);
-
-  const worldRoot = join(root, "worlds-file-native", worldId);
-  const stagingRoot = join(
-    worldRoot,
-    "runtime",
-    `.revision-control-${epoch.epochId}-next`,
-  );
-  for (const file of desiredControl) {
-    const path = join(stagingRoot, "control", file.path);
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, file.contents, "utf8");
-  }
-  await rename(
-    join(worldRoot, "control"),
-    join(worldRoot, "runtime", `.revision-control-${epoch.epochId}-previous`),
-  );
-
-  const recoveredWorlds = new FileNativeWorldStore(root);
-  const recovered = new WorldRevisionWorkspace({
-    store: new FileNativeWorldRevisionStore(root),
-    worlds: recoveredWorlds,
-  });
-  expect(await recovered.active(worldId)).toBeNull();
-  expect(await recoveredWorlds.readWorldRevisionLock(worldId)).toBeNull();
-  expect(await recoveredWorlds.currentHead(worldId)).toBe(committed.head);
-  expect((await recovered.latest(worldId))?.lifecycle).toBe("applied");
-  expect(
-    (await recoveredWorlds.readSurface(worldId, "control")).find(
-      ({ path }) => path === "blocks/world.md",
-    )?.contents,
-  ).toContain("恢复后的控制规则。");
 });
 
 test("应用前的真实预览失败会保留工作树和修订锁", async () => {

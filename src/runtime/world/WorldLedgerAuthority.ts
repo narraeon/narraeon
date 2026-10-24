@@ -51,13 +51,25 @@ export interface WorldStateChangeInput extends WorldStateChangeStored {
   canonicalNextBytes: string;
 }
 
+/** 提交轮的模式；`genesis` 与 `rewind` 不是提交，没有提交元数据。 */
+export type WorldCommitMode =
+  "play" | "correction" | "revision_apply" | "control_apply";
+
+/**
+ * 世界修订应用与连续性修正同属修订谱系：它们记录 `corrects` 与 `correctionTargets`，
+ * 维护报告与修订追溯按此归类。
+ */
+export function isCorrectionCommit(mode: WorldCommitMode): boolean {
+  return mode === "correction" || mode === "revision_apply";
+}
+
 export interface WorldTurnCommit {
   sequence: number;
   head: string;
   /** Migrated intermediate commits do not carry an operation identity. */
   operationId: string | null;
   parentHead: string;
-  mode: "play" | "correction";
+  mode: WorldCommitMode;
   playContext?: string;
   worldClock?: string;
   historyAppend: WorldHistoryMessage[];
@@ -220,13 +232,48 @@ export class WorldLedgerAuthority {
   }
 
   async #stateAt(position: number): Promise<ContentTreeFile[]> {
-    const tree = await readTreeAt(this.#root, position, ["state"]);
+    return this.#surfaceAt(position, "state");
+  }
+
+  async #controlAt(position: number): Promise<ContentTreeFile[]> {
+    return this.#surfaceAt(position, "control");
+  }
+
+  async #surfaceAt(
+    position: number,
+    surface: "state" | "control",
+  ): Promise<ContentTreeFile[]> {
+    const prefix = `${surface}/`;
+    const tree = await readTreeAt(this.#root, position, [surface]);
     return [...tree]
       .map(([path, contents]) => ({
-        path: path.slice("state/".length),
+        path: path.slice(prefix.length),
         contents,
       }))
       .sort((left, right) => left.path.localeCompare(right.path));
+  }
+
+  /** 端点的控制文件：与状态同一账本视图，回退与分叉随端点恢复。 */
+  async recoverControl(head?: string): Promise<ContentTreeFile[]> {
+    return this.#controlAt(await this.#positionOf(head));
+  }
+
+  /** 把当前端点的控制文件替换为 next 所需的逐文件改动（写入或删除，未变化的不记录）。 */
+  async #controlChanges(
+    position: number,
+    next: readonly ContentTreeFile[],
+  ): Promise<WorldTurnFileChange[]> {
+    const current = await readTreeAt(this.#root, position, ["control"]);
+    const wanted = new Map<string, string>(
+      next.map((file) => [`control/${file.path}`, file.contents]),
+    );
+    const changes: WorldTurnFileChange[] = [];
+    for (const path of current.keys())
+      if (!wanted.has(path)) changes.push({ path, content: null });
+    for (const [path, contents] of wanted)
+      if (current.get(path) !== contents)
+        changes.push({ path, content: contents });
+    return changes;
   }
 
   #checkpointAt(
@@ -400,12 +447,13 @@ export class WorldLedgerAuthority {
 
   /**
    * 在当前端点之上追加一轮。调用方先校验内容；这里校验状态的前像哈希，
-   * 并一次性计算本轮需要替换的全部文件（状态、历史、历史背景与材料清单）。
+   * 并一次性计算本轮需要替换的全部文件（状态、控制、历史、历史背景与材料清单）。
+   * `control` 是提交后的完整控制文件集合：与端点的差异作为本轮改动，逐文件记录前像。
    */
   async appendCommit(input: {
     operationId: string;
     parentHead: string;
-    mode: "play" | "correction";
+    mode: WorldCommitMode;
     playContext?: string;
     worldClock?: string;
     historyAppend: readonly {
@@ -415,6 +463,7 @@ export class WorldLedgerAuthority {
     }[];
     stateChanges: readonly WorldStateChangeInput[];
     nextMaterials: readonly MaterialSelection[];
+    control?: readonly ContentTreeFile[];
     narrativeCheckpoint?: NarrativeCheckpointDeclaration;
     correctionTargets?: readonly string[];
     corrects?: string;
@@ -482,6 +531,11 @@ export class WorldLedgerAuthority {
         path: `runtime/history-backgrounds/${file.path}`,
         content: file.contents,
       });
+
+    if (input.control !== undefined)
+      changes.push(
+        ...(await this.#controlChanges(current.sequence, input.control)),
+      );
 
     changes.push({
       path: materialsFile,

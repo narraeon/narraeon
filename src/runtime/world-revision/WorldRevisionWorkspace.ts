@@ -293,26 +293,18 @@ export class WorldRevisionWorkspace {
           files: epoch.files,
         }),
       );
-      const outcome = await this.#worlds.commitCorrection({
+      // state 与 control 的改动是同一轮 revision_apply：要么整轮成立，要么整轮不存在（#102 的账本恢复）。
+      const outcome = await this.#worlds.commitWorldRevisionApply({
         ...(worldClock === undefined ? {} : { worldClock }),
         operationId: epoch.apply.operationId,
         worldId: epoch.worldId,
         parentHead: epoch.baseHead,
         nextMaterials: binding.additionalMaterials,
         stateChanges: stateChanges(epoch.baseFiles, epoch.files),
+        control: controlFiles(epoch.files),
         worldRevisionLock: handle,
-        validationControl: controlFiles(epoch.files),
       });
-      epoch = await this.#recordStateCommit(handle, outcome);
-    }
-
-    if (epoch.apply?.phase === "state_committed") {
-      await this.#worlds.replaceWorldRevisionControl({
-        handle,
-        expectedFingerprint: epoch.baseControlFingerprint,
-        files: controlFiles(epoch.files),
-      });
-      await this.#recordControlPublication(handle);
+      await this.#recordCommit(handle, outcome);
     }
 
     epoch = await this.#finishApply(handle);
@@ -439,7 +431,7 @@ export class WorldRevisionWorkspace {
           "Apply recovery state is damaged",
         );
       epoch.lifecycle = "applied";
-      epoch.apply.phase = "control_published";
+      epoch.apply.phase = "committed";
       epoch.apply.committedHead = epoch.baseHead;
       epoch.finishedAt = Date.now();
       epoch.updatedAt = epoch.finishedAt;
@@ -448,7 +440,7 @@ export class WorldRevisionWorkspace {
     });
   }
 
-  async #recordStateCommit(
+  async #recordCommit(
     handle: WorldRevisionLockHandle,
     outcome: Extract<FileNativeOperationOutcome, { outcome: "committed" }>,
   ): Promise<StoredWorldRevisionEpoch> {
@@ -458,24 +450,8 @@ export class WorldRevisionWorkspace {
         throw new WorldRevisionWorkspaceError(
           "Apply recovery state is damaged",
         );
-      epoch.apply.phase = "state_committed";
+      epoch.apply.phase = "committed";
       epoch.apply.committedHead = outcome.head;
-      epoch.updatedAt = Date.now();
-      await this.#store.saveEpoch(epoch);
-      return epoch;
-    });
-  }
-
-  async #recordControlPublication(
-    handle: WorldRevisionLockHandle,
-  ): Promise<StoredWorldRevisionEpoch> {
-    return this.#withRevisionOwnership(handle, async () => {
-      const epoch = await this.#store.readEpoch(handle.epochId);
-      if (epoch.lifecycle !== "applying" || epoch.apply === null)
-        throw new WorldRevisionWorkspaceError(
-          "Apply recovery state is damaged",
-        );
-      epoch.apply.phase = "control_published";
       epoch.updatedAt = Date.now();
       await this.#store.saveEpoch(epoch);
       return epoch;
@@ -487,10 +463,7 @@ export class WorldRevisionWorkspace {
   ): Promise<StoredWorldRevisionEpoch> {
     return this.#withRevisionOwnership(handle, async () => {
       const epoch = await this.#store.readEpoch(handle.epochId);
-      if (
-        epoch.lifecycle !== "applying" ||
-        epoch.apply?.phase !== "control_published"
-      )
+      if (epoch.lifecycle !== "applying" || epoch.apply?.phase !== "committed")
         throw new WorldRevisionWorkspaceError(
           "Apply recovery state is damaged",
         );

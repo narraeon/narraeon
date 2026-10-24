@@ -40,7 +40,8 @@ export interface StoredWorldRevisionChangeSet {
 export interface StoredWorldRevisionApply {
   operationId: string;
   expectedRevision: string;
-  phase: "prepared" | "state_committed" | "control_published";
+  /** `committed`：应用的 revision_apply 轮（含 state 与 control）已发布为端点。 */
+  phase: "prepared" | "committed";
   committedHead: string | null;
 }
 
@@ -492,9 +493,7 @@ function validApply(value: unknown): boolean {
       nonEmptyString(value.operationId) &&
       typeof value.expectedRevision === "string" &&
       treeRevisionPattern.test(value.expectedRevision) &&
-      (value.phase === "prepared" ||
-        value.phase === "state_committed" ||
-        value.phase === "control_published") &&
+      (value.phase === "prepared" || value.phase === "committed") &&
       (value.phase === "prepared"
         ? value.committedHead === null
         : nonEmptyString(value.committedHead)))
@@ -514,7 +513,7 @@ function validEpochLifecycle(value: Record<string, unknown>): boolean {
   if (value.lifecycle === "applied")
     return (
       isRecord(value.apply) &&
-      value.apply.phase === "control_published" &&
+      value.apply.phase === "committed" &&
       value.apply.expectedRevision === value.revision &&
       value.finishedAt !== null
     );
