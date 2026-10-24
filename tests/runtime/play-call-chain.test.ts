@@ -6124,6 +6124,7 @@ test("AI 工具被 Runtime 拒绝时保存产生该调用的原始交换与 reas
 async function createWorld(
   label: string,
   packageFiles: ContentTreeFile[] = worldFiles(),
+  binding: ModelHostBinding = modelBinding(),
 ): Promise<{
   worlds: FileNativeWorldStore;
   worldId: string;
@@ -6137,7 +6138,7 @@ async function createWorld(
     sourcePackageId: `${label}-package`,
     sourcePackageTitle: `${label} package`,
     packageFiles,
-    prompt: { hostBinding: hostBinding(), modelBinding: modelBinding() },
+    prompt: { hostBinding: hostBinding(), modelBinding: binding },
   });
   if (created.outcome !== "created") throw new Error("world was not created");
   return { worlds, worldId: created.world.worldId, root };
@@ -8617,4 +8618,288 @@ test("本轮提示只作为每次发送的尾部出现，不进入 transcript，
   expect(legacyHost.requests[0]!.appended).toEqual([
     { kind: "player", text: "I nod to Alex." },
   ]);
+});
+
+/**
+ * Cache-reuse simulation. A scripted Anthropic provider sits behind the
+ * production encoder, and PlayCallChain drives every dispatch. Each request
+ * body is replayed through Anthropic's prefix-cache rules: cache entries are
+ * written at every cache_control breakpoint and at the request end, and each
+ * breakpoint looks back at most 20 blocks for an existing entry.
+ */
+type CacheSimStep = { text: string } | { toolId: string };
+
+function cacheSimReply(): string {
+  return `Alex keeps his eyes on the jersey while the hallway light hums. ${"他把球衣折了一次，又放回桌上。".repeat(300)}`;
+}
+
+function anthropicSseFrame(event: string, value: unknown): string {
+  return `event: ${event}\ndata: ${JSON.stringify(value)}\n\n`;
+}
+
+function cacheSimResponse(step: CacheSimStep): Response {
+  const isText = "text" in step;
+  const block = isText
+    ? { type: "text", text: "" }
+    : { type: "tool_use", id: step.toolId, name: "state_list", input: {} };
+  const delta = isText
+    ? { type: "text_delta", text: step.text }
+    : { type: "input_json_delta", partial_json: "{}" };
+  const frames = [
+    anthropicSseFrame("message_start", {
+      type: "message_start",
+      message: {
+        id: "cache-sim",
+        role: "assistant",
+        model: "claude-cache-sim",
+        content: [],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+    }),
+    anthropicSseFrame("content_block_start", {
+      type: "content_block_start",
+      index: 0,
+      content_block: block,
+    }),
+    anthropicSseFrame("content_block_delta", {
+      type: "content_block_delta",
+      index: 0,
+      delta,
+    }),
+    anthropicSseFrame("content_block_stop", {
+      type: "content_block_stop",
+      index: 0,
+    }),
+    anthropicSseFrame("message_delta", {
+      type: "message_delta",
+      delta: {
+        stop_reason: isText ? "end_turn" : "tool_use",
+        stop_sequence: null,
+      },
+      usage: { output_tokens: 1 },
+    }),
+    anthropicSseFrame("message_stop", { type: "message_stop" }),
+  ];
+  return new Response(frames.join(""), {
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+  });
+}
+
+function cacheSimHost(steps: CacheSimStep[]) {
+  const queue = [...steps];
+  const fetch_ = vi.fn<typeof fetch>().mockImplementation(() => {
+    const step = queue.shift();
+    if (step === undefined)
+      return Promise.reject(new Error("scripted provider ran out of steps"));
+    return Promise.resolve(cacheSimResponse(step));
+  });
+  const host = new FileNativeModelHost(
+    {
+      provider: "anthropic_messages",
+      baseUrl: "https://provider.invalid/v1",
+      apiKey: "cache-sim-key",
+      modelId: "claude-cache-sim",
+      reasoningEffort: "provider_default",
+      reasoningSummary: "provider_default",
+      thinkingMode: "disabled",
+      contextWindowTokens: 1_000_000,
+      maxOutputTokens: 8_192,
+    },
+    fetch_,
+  );
+  return { host, fetch_ };
+}
+
+function sentRequestBodies(
+  fetch_: ReturnType<typeof vi.fn<typeof fetch>>,
+): Record<string, unknown>[] {
+  return fetch_.mock.calls.map(
+    ([, init]) => JSON.parse(init!.body as string) as Record<string, unknown>,
+  );
+}
+
+interface CacheSimRequest {
+  keys: string[];
+  chars: number[];
+  breakpoints: number[];
+  /** Blocks before the request-level suffix; the suffix is never part of the sent prefix. */
+  prefix: number;
+  hashes: string[];
+}
+
+function cacheSimRequest(body: Record<string, unknown>): CacheSimRequest {
+  const keys: string[] = [];
+  const chars: number[] = [];
+  const breakpoints: number[] = [];
+  let prefix = -1;
+  const push = (role: string, block: unknown) => {
+    const { cache_control: marker, ...content } = block as Record<
+      string,
+      unknown
+    >;
+    if (marker !== undefined) breakpoints.push(keys.length);
+    const key = JSON.stringify({ role, content });
+    keys.push(key);
+    chars.push(key.length);
+  };
+  for (const tool of (body.tools as unknown[] | undefined) ?? [])
+    push("tool", tool);
+  for (const block of (body.system as unknown[] | undefined) ?? [])
+    push("system", block);
+  for (const message of body.messages as {
+    role: string;
+    content: unknown;
+  }[]) {
+    if (
+      typeof message.content === "string" &&
+      message.content.startsWith(turnGuideHeader("en"))
+    )
+      prefix = keys.length;
+    const content =
+      typeof message.content === "string"
+        ? [{ type: "text", text: message.content }]
+        : (message.content as unknown[]);
+    for (const block of content) push(message.role, block);
+  }
+  return {
+    keys,
+    chars,
+    breakpoints,
+    prefix: prefix < 0 ? keys.length : prefix,
+    hashes: cacheSimHashes(keys),
+  };
+}
+
+function cacheSimHashes(keys: readonly string[]): string[] {
+  let previous = "";
+  return keys.map((key) => {
+    previous = createHash("sha256")
+      .update(previous)
+      .update("\0")
+      .update(key)
+      .digest("hex");
+    return previous;
+  });
+}
+
+/** Share of each request's sent prefix that the next request reads from cache. */
+function cacheReuseRatios(
+  bodies: readonly Record<string, unknown>[],
+): number[] {
+  const written = new Set<string>();
+  const ratios: number[] = [];
+  let previous: CacheSimRequest | undefined;
+  for (const body of bodies) {
+    const request = cacheSimRequest(body);
+    if (previous !== undefined) {
+      // Index of the last cached block; -1 when nothing matches.
+      let hit = -1;
+      for (const breakpoint of request.breakpoints)
+        for (
+          let index = breakpoint;
+          index >= Math.max(0, breakpoint - 20);
+          index -= 1
+        )
+          if (written.has(request.hashes[index]!)) {
+            hit = Math.max(hit, index);
+            break;
+          }
+      const sum = (values: readonly number[]) =>
+        values.reduce((total, value) => total + value, 0);
+      const sent = sum(previous.chars.slice(0, previous.prefix));
+      const reused = sum(
+        previous.chars.slice(0, Math.min(hit + 1, previous.prefix)),
+      );
+      ratios.push(sent === 0 ? 1 : reused / sent);
+    }
+    for (const breakpoint of request.breakpoints)
+      written.add(request.hashes[breakpoint]!);
+    written.add(request.hashes.at(-1)!);
+    previous = request;
+  }
+  return ratios;
+}
+
+const cacheReusePercent = (ratio: number) => Math.floor(ratio * 100);
+
+test("缓存复用模拟：连续派发复用上一次已发送的对话前缀", async () => {
+  const steps: CacheSimStep[] = Array.from({ length: 6 }, () => ({
+    text: cacheSimReply(),
+  }));
+  const { host, fetch_ } = cacheSimHost(steps);
+  const { worlds, worldId } = await createWorld(
+    "cache-reuse-dialogue",
+    worldFiles(),
+    host.binding(),
+  );
+  const chains = new PlayCallChain(worlds);
+  await chains.start({
+    worldId,
+    chainId: "cache-reuse-dialogue",
+    exchangeId: "first",
+    playerText: "I nod to Alex.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: host.binding(),
+    modelHost: host,
+  });
+  for (const exchangeId of [
+    "continue-1",
+    "continue-2",
+    "continue-3",
+    "continue-4",
+    "continue-5",
+  ])
+    await chains.append({
+      worldId,
+      chainId: "cache-reuse-dialogue",
+      exchangeId,
+      playerText: "",
+      modelHost: host,
+    });
+  const bodies = sentRequestBodies(fetch_);
+  expect(bodies).toHaveLength(6);
+  const percents = cacheReuseRatios(bodies).map(cacheReusePercent);
+  expect(percents).toHaveLength(5);
+  expect(percents.filter((percent) => percent < 99)).toEqual([]);
+});
+
+test("缓存复用模拟：工具循环中的每次再次派发同样复用已发送前缀", async () => {
+  const steps: CacheSimStep[] = [
+    { toolId: "list-1" },
+    { toolId: "list-2" },
+    { text: cacheSimReply() },
+    { toolId: "list-3" },
+    { text: cacheSimReply() },
+  ];
+  const { host, fetch_ } = cacheSimHost(steps);
+  const { worlds, worldId } = await createWorld(
+    "cache-reuse-tools",
+    worldFiles(),
+    host.binding(),
+  );
+  const chains = new PlayCallChain(worlds);
+  await chains.start({
+    worldId,
+    chainId: "cache-reuse-tools",
+    exchangeId: "first",
+    playerText: "I nod to Alex.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: host.binding(),
+    modelHost: host,
+  });
+  await chains.append({
+    worldId,
+    chainId: "cache-reuse-tools",
+    exchangeId: "continue",
+    playerText: "",
+    modelHost: host,
+  });
+  const bodies = sentRequestBodies(fetch_);
+  expect(bodies).toHaveLength(5);
+  const percents = cacheReuseRatios(bodies).map(cacheReusePercent);
+  expect(percents).toHaveLength(4);
+  expect(percents.filter((percent) => percent < 99)).toEqual([]);
 });

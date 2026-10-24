@@ -107,6 +107,8 @@ export interface ModelHostRequestConfig {
   thinkingBudgetTokens: number | null;
   contextWindowTokens: number;
   maxOutputTokens: number;
+  /** Absent in requests frozen before the transcript breakpoint existed. */
+  cacheSuffixBreakpoint?: boolean;
 }
 
 export interface ModelHostExchange {

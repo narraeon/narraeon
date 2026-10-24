@@ -897,3 +897,265 @@ test.each([
     expect(saved.modelConfig?.reasoningEffort).toBe("high");
   },
 );
+
+const turnGuideSuffix = {
+  kind: "runtime_notice" as const,
+  notice: "turn_guide" as const,
+  text: "[Runtime 本轮提示]\n- Keep the narration in second person.",
+};
+
+/** Two transcript items followed by the request-level turn guide, as a play dispatch appends them. */
+function transcriptWithTurnGuide(
+  provider: ModelHostBinding["provider"],
+  modelId: string,
+  cacheStrategy: ModelHostBinding["cacheStrategy"],
+): ModelHostExchange {
+  return {
+    ...exchangeFor(provider, modelId, cacheStrategy),
+    appended: [
+      { kind: "player", text: "First" },
+      { kind: "user", text: "Second" },
+      turnGuideSuffix,
+    ],
+  };
+}
+
+function anthropicWireHost(cacheSuffixBreakpoint?: boolean) {
+  return new FileNativeModelHost({
+    provider: "anthropic_messages",
+    baseUrl: "https://provider.invalid/v1",
+    apiKey: "must-not-appear",
+    modelId: "claude-tail",
+    reasoningEffort: "provider_default",
+    reasoningSummary: "provider_default",
+    thinkingMode: "disabled",
+    contextWindowTokens: 64_000,
+    maxOutputTokens: 2_048,
+    ...(cacheSuffixBreakpoint === undefined ? {} : { cacheSuffixBreakpoint }),
+  });
+}
+
+test("Anthropic 把对话尾部断点放在请求级后缀之前的最后一个 transcript 块上", () => {
+  const host = anthropicWireHost();
+  const exchange = transcriptWithTurnGuide(
+    "anthropic_messages",
+    "claude-tail",
+    host.binding().cacheStrategy,
+  );
+  const on = host.previewRequest(exchange).body as {
+    system: unknown;
+    messages: unknown[];
+  };
+  const off = anthropicWireHost(false).previewRequest(exchange).body as {
+    system: unknown;
+    messages: unknown[];
+  };
+
+  // The suffix stays unmarked; the marker lands on the last transcript block.
+  expect(on.messages.at(-1)).toEqual({
+    role: "user",
+    content: turnGuideSuffix.text,
+  });
+  expect(on.messages.at(-2)).toEqual({
+    role: "user",
+    content: [
+      { type: "text", text: "Second", cache_control: { type: "ephemeral" } },
+    ],
+  });
+  // Existing breakpoints and everything before the transcript tail are unchanged.
+  expect(on.system).toEqual(off.system);
+  expect(on.messages.slice(0, -2)).toEqual(off.messages.slice(0, -2));
+  expect(off.messages.at(-2)).toEqual({ role: "user", content: "Second" });
+});
+
+test("Anthropic 对话尾部断点跳过 thinking 块，落在可携带 cache_control 的最后块上", () => {
+  const host = anthropicWireHost();
+  const exchange = transcriptWithTurnGuide(
+    "anthropic_messages",
+    "claude-tail",
+    host.binding().cacheStrategy,
+  );
+  exchange.appended = [
+    { kind: "player", text: "First" },
+    {
+      kind: "assistant",
+      text: "Looks up.",
+      toolCalls: [],
+      providerState: {
+        protocol: "anthropic_messages",
+        content: [
+          { type: "thinking", thinking: "Check", signature: "sig" },
+          { type: "text", text: "Looks up." },
+        ],
+      } as never,
+    },
+    turnGuideSuffix,
+  ];
+  const messages = host.previewRequest(exchange).body as {
+    messages: { content: unknown }[];
+  };
+  expect(messages.messages.at(-2)).toEqual({
+    role: "assistant",
+    content: [
+      { type: "thinking", thinking: "Check", signature: "sig" },
+      {
+        type: "text",
+        text: "Looks up.",
+        cache_control: { type: "ephemeral" },
+      },
+    ],
+  });
+});
+
+test.each([
+  { provider: "chat_completions" as const, title: "Chat Completions" },
+  { provider: "openai_responses" as const, title: "OpenAI Responses" },
+])(
+  "CLIProxyAPI $title 方言把尾部断点写在请求级后缀之前的最后一条 transcript 消息上",
+  ({ provider }) => {
+    const host = new FileNativeModelHost({
+      provider,
+      dialect: "cliproxyapi",
+      baseUrl: "https://provider.invalid/v1",
+      apiKey: "must-not-appear",
+      modelId: "cliproxy-tail",
+      reasoningEffort: "provider_default",
+      reasoningSummary: "provider_default",
+      thinkingMode: "provider_default",
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_048,
+    });
+    const exchange = transcriptWithTurnGuide(
+      provider,
+      "cliproxy-tail",
+      host.binding().cacheStrategy,
+    );
+    const body = host.previewRequest(exchange).body as Record<string, unknown>;
+    const items = (body.messages ?? body.input) as Record<string, unknown>[];
+    expect(items.at(-1)).not.toHaveProperty("cache_control");
+    expect(items.at(-1)).toMatchObject({ content: turnGuideSuffix.text });
+    expect(items.at(-2)).toMatchObject({
+      role: "user",
+      content: "Second",
+      cache_control: { type: "ephemeral" },
+    });
+    expect(items.at(-3)).not.toHaveProperty("cache_control");
+  },
+);
+
+test.each([
+  { provider: "chat_completions" as const, dialect: "standard" as const },
+  { provider: "openai_responses" as const, dialect: "standard" as const },
+])(
+  "$provider 标准方言的编码不因请求级后缀增加 cache_control",
+  ({ provider, dialect }) => {
+    const host = new FileNativeModelHost({
+      provider,
+      dialect,
+      baseUrl: "https://provider.invalid/v1",
+      apiKey: "must-not-appear",
+      modelId: "standard-tail",
+      reasoningEffort: "provider_default",
+      reasoningSummary: "provider_default",
+      thinkingMode: "provider_default",
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_048,
+    });
+    const body = host.previewRequest(
+      transcriptWithTurnGuide(
+        provider,
+        "standard-tail",
+        host.binding().cacheStrategy,
+      ),
+    ).body;
+    expect(JSON.stringify(body)).not.toContain("cache_control");
+  },
+);
+
+test("没有请求级后缀时所有显式断点协议的编码与改动前逐字节一致", () => {
+  const exchanges: [
+    ModelHostExchange,
+    () => FileNativeModelHost,
+    () => FileNativeModelHost,
+  ][] = [];
+  const cases = [
+    { provider: "anthropic_messages" as const, dialect: "standard" as const },
+    { provider: "chat_completions" as const, dialect: "cliproxyapi" as const },
+    { provider: "openai_responses" as const, dialect: "cliproxyapi" as const },
+  ];
+  for (const { provider, dialect } of cases) {
+    const config = {
+      provider,
+      dialect,
+      baseUrl: "https://provider.invalid/v1",
+      apiKey: "must-not-appear",
+      modelId: "no-suffix",
+      reasoningEffort: "provider_default" as const,
+      reasoningSummary: "provider_default" as const,
+      thinkingMode: "provider_default" as const,
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_048,
+    };
+    const host = new FileNativeModelHost(config);
+    const exchange: ModelHostExchange = {
+      ...exchangeFor(provider, "no-suffix", host.binding().cacheStrategy),
+      appended: [
+        { kind: "player", text: "First" },
+        { kind: "user", text: "Second" },
+      ],
+    };
+    exchanges.push([
+      exchange,
+      () => new FileNativeModelHost(config),
+      () =>
+        new FileNativeModelHost({ ...config, cacheSuffixBreakpoint: false }),
+    ]);
+  }
+  for (const [exchange, current, previous] of exchanges)
+    expect(JSON.stringify(current().previewRequest(exchange))).toBe(
+      JSON.stringify(previous().previewRequest(exchange)),
+    );
+});
+
+test("冻结请求保留编码时的断点选择：旧冻结请求原样重发，新派发才加尾部断点", () => {
+  const host = anthropicWireHost();
+  const exchange = transcriptWithTurnGuide(
+    "anthropic_messages",
+    "claude-tail",
+    host.binding().cacheStrategy,
+  );
+  const frozen = host.freezeRequest(exchange);
+  expect(frozen.modelConfig).toMatchObject({ cacheSuffixBreakpoint: true });
+
+  // A request frozen before the breakpoint existed records no choice at all.
+  const predatesConfig = { ...frozen.modelConfig! };
+  delete predatesConfig.cacheSuffixBreakpoint;
+  const predates = { ...frozen, modelConfig: predatesConfig };
+  const previousEncoding = anthropicWireHost(false).previewRequest(exchange);
+  expect(JSON.stringify(host.previewRequest(predates))).toBe(
+    JSON.stringify(previousEncoding),
+  );
+  expect(JSON.stringify(host.previewRequest(frozen))).not.toBe(
+    JSON.stringify(previousEncoding),
+  );
+});
+
+test("对话尾部断点超过 Anthropic 上限时明确报错而不是丢弃", () => {
+  const host = anthropicWireHost();
+  const exchange = transcriptWithTurnGuide(
+    "anthropic_messages",
+    "claude-tail",
+    host.binding().cacheStrategy,
+  );
+  exchange.bootstrap.provider.system = Array.from(
+    { length: 4 },
+    (_, index) => ({
+      type: "text" as const,
+      text: `Stable block ${index}`,
+      cache_control: { type: "ephemeral" as const },
+    }),
+  );
+  expect(() => host.previewRequest(exchange)).toThrow(
+    /cache breakpoints; the Anthropic limit is 4/,
+  );
+});
