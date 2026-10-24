@@ -1,6 +1,5 @@
 import { isPackageFollowupControlPath } from "../content/PackageFollowups.ts";
 import type { AppLocale } from "../../protocol/appPreferences.ts";
-import { defaultAppLocale } from "../../protocol/appPreferences.ts";
 import {
   assertSameGameplay,
   gameplayPath,
@@ -15,35 +14,14 @@ import type {
   PromptPreview,
 } from "../prompt/FileNativePromptCompiler.ts";
 import {
+  authoringToolDefinitions,
   SettingAuthoringTransaction,
-  settingImprovementToolDefinitions,
+  worldRevisionAuthoringSurface,
   type SettingAuthoringAuthorization,
-  type SettingAuthoringDiff,
   type SettingAuthoringReview,
   type SettingAuthoringToolResult,
 } from "../setting/SettingAuthoringTransaction.ts";
 import { WorldDocumentStore } from "../world/WorldDocumentStore.ts";
-
-const syntheticOpening = {
-  path: "opening.md",
-  contents:
-    "# Existing world\n\nThe genesis opening is immutable in a world revision.\n",
-} satisfies ContentTreeFile;
-
-const settingToRevisionTool = new Map<string, string>([
-  ["setting_list", "world_revision_list"],
-  ["setting_search", "world_revision_search"],
-  ["setting_read", "world_revision_read"],
-  ["setting_create", "world_revision_create"],
-  ["setting_write_file", "world_revision_write_file"],
-  ["setting_patch", "world_revision_patch"],
-  ["setting_move", "world_revision_move"],
-  ["setting_delete", "world_revision_delete"],
-] as const);
-
-const revisionToSettingTool = new Map<string, string>(
-  [...settingToRevisionTool].map(([setting, revision]) => [revision, setting]),
-);
 
 export interface WorldRevisionInspection {
   status: "usable" | "needs_repair";
@@ -51,12 +29,12 @@ export interface WorldRevisionInspection {
 }
 
 /**
- * Adapter that reuses the content-package authoring mechanics while exposing
- * the current world's state/control worktree as its own logical target.
+ * The authoring transaction over a playing world's state/control worktree.
+ * Its namespace, tool names and wording come from the world-revision surface,
+ * so nothing it returns is rewritten after the transaction renders it.
  */
 export class WorldRevisionAuthoringTransaction {
   readonly #inner: SettingAuthoringTransaction;
-  readonly #locale: AppLocale;
 
   constructor(input: {
     baseFiles: readonly ContentTreeFile[];
@@ -66,34 +44,34 @@ export class WorldRevisionAuthoringTransaction {
     authorization?: SettingAuthoringAuthorization | null;
     preview: (snapshot: WorldDocumentStore) => PromptPreview;
   }) {
-    this.#locale = input.locale ?? defaultAppLocale;
     this.#inner = new SettingAuthoringTransaction({
-      baseFiles: toProjectedFiles(input.baseFiles),
-      locale: this.#locale,
+      baseFiles: input.baseFiles,
+      surface: worldRevisionAuthoringSurface,
+      ...(input.locale === undefined ? {} : { locale: input.locale }),
       ...(input.revision === undefined ? {} : { revision: input.revision }),
       ...(input.authorization === undefined
         ? {}
         : { authorization: input.authorization }),
-      validateFiles: (files) => {
-        const candidate = fromProjectedFiles(files);
-        assertUsableWorldRevisionFiles(candidate, input.immutableBaseFiles);
-      },
+      validateFiles: (files) =>
+        assertUsableWorldRevisionFiles(files, input.immutableBaseFiles),
       preview: (snapshot) =>
         input.preview(
           WorldDocumentStore.open({
             layout: "world_state",
-            files: fromProjectedFiles(snapshot.files),
+            files: [...snapshot.files].sort((left, right) =>
+              left.path.localeCompare(right.path),
+            ),
           }),
         ),
     });
   }
 
   files(): ContentTreeFile[] {
-    return fromProjectedFiles(this.#inner.files());
+    return this.#inner.files();
   }
 
   review(): SettingAuthoringReview {
-    return mapReview(this.#inner.review());
+    return this.#inner.review();
   }
 
   authorization(revision: string): SettingAuthoringAuthorization {
@@ -101,23 +79,7 @@ export class WorldRevisionAuthoringTransaction {
   }
 
   execute(calls: readonly ModelHostToolCall[]): SettingAuthoringToolResult[] {
-    const mapped = calls.map(mapToolCall);
-    const executed = this.#inner.execute(
-      mapped.flatMap((item) => ("call" in item ? [item.call] : [])),
-    );
-    let executedIndex = 0;
-    return mapped.map((item, index) => {
-      if ("error" in item)
-        return rejectedToolResult(calls[index]!.id, item.error, this.#locale);
-      const result = executed[executedIndex++];
-      if (result === undefined)
-        throw new Error("World-revision authoring returned no tool result");
-      return {
-        ...result,
-        markdown: publicWorldRevisionMarkdown(result.markdown),
-        changes: result.changes.map(mapDiff),
-      };
-    });
+    return this.#inner.execute(calls);
   }
 }
 
@@ -125,20 +87,10 @@ export function worldRevisionToolDefinitions(
   locale: AppLocale,
   gameplay: Gameplay,
 ): PromptCompilation["tools"] {
-  return settingImprovementToolDefinitions(locale, gameplay).map(
-    (definition) => {
-      const name = settingToRevisionTool.get(definition.name);
-      if (name === undefined)
-        throw new Error(
-          `Unsupported setting authoring tool: ${definition.name}`,
-        );
-      return {
-        ...structuredClone(definition),
-        name,
-        description: publicWorldRevisionMarkdown(definition.description),
-        inputSchema: mapSchema(definition.inputSchema),
-      };
-    },
+  return authoringToolDefinitions(
+    worldRevisionAuthoringSurface,
+    locale,
+    gameplay,
   );
 }
 
@@ -243,22 +195,18 @@ export function inspectWorldRevisionFiles(
       });
   }
 
-  const projected = files.map((file) => ({
-    ...structuredClone(file),
-    path: file.path.startsWith("state/")
-      ? `world/${file.path.slice("state/".length)}`
-      : file.path,
-  }));
-  const inspection = inspectContentPackageCurrentTree(projected, {
+  const inspection = inspectContentPackageCurrentTree(files, {
     requireOpening: false,
+    worldDocumentSnapshot: WorldDocumentStore.open({
+      layout: "world_revision",
+      files,
+    }),
   });
   if (inspection.status !== "usable")
     diagnostics.push(
       ...inspection.issues.map(({ code, path, message }) => ({
         code,
-        path: path.startsWith("world/")
-          ? `state/${path.slice("world/".length)}`
-          : path,
+        path,
         message,
       })),
     );
@@ -308,202 +256,6 @@ export function assertUsableWorldRevisionFiles(
     );
 }
 
-function toProjectedFiles(
-  files: readonly ContentTreeFile[],
-): ContentTreeFile[] {
-  return [
-    syntheticOpening,
-    ...files.map((file) => ({
-      ...structuredClone(file),
-      path: file.path.startsWith("state/")
-        ? `world/${file.path.slice("state/".length)}`
-        : file.path,
-    })),
-  ];
-}
-
-function fromProjectedFiles(
-  files: readonly ContentTreeFile[],
-): ContentTreeFile[] {
-  const opening = files.find(({ path }) => path === "opening.md");
-  if (
-    opening?.contents !== syntheticOpening.contents ||
-    opening.encoding !== undefined
-  )
-    throw new Error("opening.md is immutable in a world revision");
-  return files
-    .filter(({ path }) => path !== "opening.md")
-    .map((file) => ({
-      ...structuredClone(file),
-      path: file.path.startsWith("world/")
-        ? `state/${file.path.slice("world/".length)}`
-        : file.path,
-    }))
-    .sort((left, right) => left.path.localeCompare(right.path));
-}
-
-function mapToolCall(
-  call: ModelHostToolCall,
-): { call: ModelHostToolCall } | { error: "opening" | "namespace" } {
-  const name = revisionToSettingTool.get(call.name);
-  if (name === undefined)
-    return {
-      call: { ...structuredClone(call), name: `unsupported:${call.name}` },
-    };
-  const args = isRecord(call.arguments)
-    ? structuredClone(call.arguments)
-    : call.arguments;
-  if (isRecord(args)) {
-    for (const field of [
-      "path",
-      "directory",
-      "within",
-      "from",
-      "to",
-      "document",
-    ])
-      if (typeof args[field] === "string") {
-        if (args[field] === "opening.md") return { error: "opening" };
-        if (args[field] === "world" || args[field].startsWith("world/"))
-          return { error: "namespace" };
-        args[field] = toProjectedPath(args[field]);
-      }
-  }
-  return {
-    call: { ...structuredClone(call), name, arguments: args },
-  };
-}
-
-function toProjectedPath(path: string): string {
-  if (path === "state") return "world";
-  return path.startsWith("state/")
-    ? `world/${path.slice("state/".length)}`
-    : path;
-}
-
-function mapDiff(diff: SettingAuthoringDiff): SettingAuthoringDiff {
-  return {
-    ...structuredClone(diff),
-    path: diff.path.startsWith("world/")
-      ? `state/${diff.path.slice("world/".length)}`
-      : diff.path,
-  };
-}
-
-function mapReview(review: SettingAuthoringReview): SettingAuthoringReview {
-  return {
-    ...structuredClone(review),
-    diff: review.diff.filter(({ path }) => path !== "opening.md").map(mapDiff),
-    diagnostics: review.diagnostics.map((diagnostic) => ({
-      ...diagnostic,
-      path: diagnostic.path.startsWith("world/")
-        ? `state/${diagnostic.path.slice("world/".length)}`
-        : diagnostic.path,
-    })),
-    playCoverage:
-      review.playCoverage === null
-        ? null
-        : {
-            ...structuredClone(review.playCoverage),
-            changed: review.playCoverage.changed
-              .filter(({ path }) => path !== "opening.md")
-              .map((item) => ({ ...item, path: mapPublicPath(item.path) })),
-          },
-  };
-}
-
-function mapPublicPath(path: string): string {
-  return path.startsWith("world/")
-    ? `state/${path.slice("world/".length)}`
-    : path;
-}
-
-function publicWorldRevisionMarkdown(markdown: string): string {
-  let fenced = false;
-  let documentBody = false;
-  let opaqueBody = false;
-  return markdown
-    .split("\n")
-    .flatMap((line) => {
-      if (line.trim() === "[body]") {
-        documentBody = true;
-        return [line];
-      }
-      if (line.trim() === "[/body]") {
-        documentBody = false;
-        return [line];
-      }
-      if (line.trimStart().startsWith("```")) {
-        fenced = !fenced;
-        return [line];
-      }
-      if (
-        line.startsWith("# Special-file source ") ||
-        line.startsWith("# 专用文件原文 ")
-      )
-        opaqueBody = true;
-      else if (opaqueBody && line === "---") opaqueBody = false;
-      if (
-        fenced ||
-        documentBody ||
-        (opaqueBody &&
-          !line.startsWith("# Special-file source ") &&
-          !line.startsWith("# 专用文件原文 ")) ||
-        /^\s+"/u.test(line)
-      )
-        return [line];
-      const mapped = line
-        .replaceAll("setting_", "world_revision_")
-        .replaceAll("content package", "world revision")
-        .replaceAll("Content package", "World revision")
-        .replaceAll("内容包当前树", "世界修订工作树")
-        .replaceAll("内容包", "世界修订")
-        .replaceAll("opening and control", "control")
-        .replaceAll("opening/control", "control")
-        .replaceAll("opening.md, ", "")
-        .replaceAll("opening 和 control", "control")
-        .replaceAll("opening.md、", "")
-        .replaceAll("world/", "state/");
-      return /^- \[(?:special|binary)\] opening\.md$/u.test(mapped.trim())
-        ? []
-        : [mapped];
-    })
-    .join("\n");
-}
-
-function rejectedToolResult(
-  toolCallId: string,
-  error: "opening" | "namespace",
-  locale: AppLocale,
-): SettingAuthoringToolResult {
-  const message =
-    error === "opening"
-      ? locale === "zh-CN"
-        ? "世界创建后 opening.md 已成为不可变创世叙事。请改写 state/* 或 control/*。"
-        : "opening.md is immutable after a world has been created. Edit state/* or control/* instead."
-      : locale === "zh-CN"
-        ? "世界修订只公开 state/* 与 control/* 逻辑路径；不能使用内容包的 world/* 命名空间。"
-        : "World revision exposes only state/* and control/* logical paths; the content-package world/* namespace is unavailable.";
-  return {
-    toolCallId,
-    markdown: `# Runtime tool rejected\n\n${message}`,
-    isError: true,
-    changes: [],
-  };
-}
-
-function mapSchema(schema: object): object {
-  const map = (value: unknown): unknown => {
-    if (typeof value === "string") return value.replaceAll("world", "state");
-    if (Array.isArray(value)) return value.map(map);
-    if (!isRecord(value)) return value;
-    return Object.fromEntries(
-      Object.entries(value).map(([key, child]) => [key, map(child)]),
-    );
-  };
-  return map(schema) as object;
-}
-
 function isWritableWorldRevisionPath(path: string): boolean {
   if (/^state\/.+\.(?:ya?ml|md)$/u.test(path)) return true;
   return (
@@ -513,8 +265,4 @@ function isWritableWorldRevisionPath(path: string): boolean {
     path === "control/player-views.yaml" ||
     /^control\/blocks\/.+\.md$/u.test(path)
   );
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

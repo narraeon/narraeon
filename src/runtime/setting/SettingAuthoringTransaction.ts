@@ -45,6 +45,64 @@ export const settingImprovementToolNames = [
 export type SettingImprovementToolName =
   (typeof settingImprovementToolNames)[number];
 
+/** Operation shared by every authoring surface; its tool name is surface-specific. */
+export type SettingAuthoringOperation =
+  | "list"
+  | "search"
+  | "read"
+  | "create"
+  | "write_file"
+  | "patch"
+  | "move"
+  | "delete";
+
+const authoringOperations = [
+  "list",
+  "search",
+  "read",
+  "create",
+  "write_file",
+  "patch",
+  "move",
+  "delete",
+] as const satisfies readonly SettingAuthoringOperation[];
+
+/** Phrases a surface uses when Runtime writes a message or a review. */
+interface SettingAuthoringPhrases {
+  /** The editable tree, e.g. "the content package's current tree". */
+  readonly tree: string;
+  /** The same tree without its article, used in play-coverage details. */
+  readonly bareTree: string;
+  /** The tree's owner as a noun phrase, e.g. "the content package". */
+  readonly noun: string;
+  /** Hyphenated owner name for internal path diagnostics. */
+  readonly slug: string;
+  readonly directoryHeading: string;
+}
+
+/**
+ * Everything model-visible that differs between the content-package setting
+ * improvement and a world revision. Each surface renders its own words
+ * directly; nothing is rewritten after rendering.
+ */
+export interface SettingAuthoringSurface {
+  /** Store layout that owns this surface's logical document namespace. */
+  readonly layout: "content_package" | "world_revision";
+  /** Logical namespace of world documents: `world` or `state`. */
+  readonly root: "world" | "state";
+  /** Model-facing tool name prefix, e.g. `setting` or `world_revision`. */
+  readonly toolPrefix: "setting" | "world_revision";
+  /** Whether opening.md is a special file of this tree. */
+  readonly opening: boolean;
+  readonly phrases: Record<AppLocale, SettingAuthoringPhrases>;
+  readonly descriptions: Record<
+    AppLocale,
+    (tabletop: boolean) => Record<SettingAuthoringOperation, string>
+  >;
+  /** Returns the model-facing rejection for a path outside this surface, if any. */
+  readonly unavailablePath: (path: string, locale: AppLocale) => string | null;
+}
+
 export interface SettingAuthoringDiff {
   path: string;
   kind: "create" | "modify" | "delete";
@@ -256,11 +314,23 @@ export function settingImprovementToolDefinitions(
   locale: AppLocale,
   gameplay: Gameplay,
 ): PromptCompilation["tools"] {
+  return authoringToolDefinitions(
+    contentPackageAuthoringSurface,
+    locale,
+    gameplay,
+  );
+}
+
+/** Tool definitions a surface exposes; names, paths and descriptions come from the surface. */
+export function authoringToolDefinitions(
+  surface: SettingAuthoringSurface,
+  locale: AppLocale,
+  gameplay: Gameplay,
+): PromptCompilation["tools"] {
   const tabletop = gameplay.mode === "tabletop";
-  const descriptions =
-    locale === "zh-CN"
-      ? toolDescriptionsZhCN(tabletop)
-      : toolDescriptionsEn(tabletop);
+  const descriptions = surface.descriptions[locale](tabletop);
+  const name = (operation: SettingAuthoringOperation) =>
+    authoringToolName(surface, operation);
   const schema = (properties: Record<string, object>, required: string[]) => ({
     type: "object",
     additionalProperties: false,
@@ -273,11 +343,14 @@ export function settingImprovementToolDefinitions(
   const limit = { type: "integer", minimum: 1, maximum: 100 };
   return [
     {
-      name: "setting_list",
-      description: descriptions.setting_list,
+      name: name("list"),
+      description: descriptions.list,
       inputSchema: schema(
         {
-          directory: { type: "string", pattern: "^world(?:/[^\\\\]+)?$" },
+          directory: {
+            type: "string",
+            pattern: `^${surface.root}(?:/[^\\\\]+)?$`,
+          },
           limit,
           cursor,
         },
@@ -285,8 +358,8 @@ export function settingImprovementToolDefinitions(
       ),
     },
     {
-      name: "setting_search",
-      description: descriptions.setting_search,
+      name: name("search"),
+      description: descriptions.search,
       inputSchema: schema(
         {
           query: { type: "string", minLength: 1, maxLength: 256 },
@@ -299,18 +372,18 @@ export function settingImprovementToolDefinitions(
       ),
     },
     {
-      name: "setting_read",
-      description: descriptions.setting_read,
+      name: name("read"),
+      description: descriptions.read,
       inputSchema: schema({ path }, ["path"]),
     },
     {
-      name: "setting_create",
-      description: descriptions.setting_create,
+      name: name("create"),
+      description: descriptions.create,
       inputSchema: schema(
         {
           path: {
             type: "string",
-            pattern: "^world/.+\\.(?:ya?ml|md)$",
+            pattern: `^${surface.root}/.+\\.(?:ya?ml|md)$`,
           },
           ref: { type: "string", pattern: "^[a-z][a-z0-9-]{1,31}$" },
           title: { type: "string", minLength: 1, maxLength: 120 },
@@ -326,8 +399,8 @@ export function settingImprovementToolDefinitions(
       ),
     },
     {
-      name: "setting_write_file",
-      description: descriptions.setting_write_file,
+      name: name("write_file"),
+      description: descriptions.write_file,
       inputSchema: schema(
         {
           path,
@@ -345,8 +418,8 @@ export function settingImprovementToolDefinitions(
       ),
     },
     {
-      name: "setting_patch",
-      description: descriptions.setting_patch,
+      name: name("patch"),
+      description: descriptions.patch,
       inputSchema: schema(
         {
           document: text,
@@ -372,13 +445,13 @@ export function settingImprovementToolDefinitions(
       ),
     },
     {
-      name: "setting_move",
-      description: descriptions.setting_move,
+      name: name("move"),
+      description: descriptions.move,
       inputSchema: schema({ from: text, to: path }, ["from", "to"]),
     },
     {
-      name: "setting_delete",
-      description: descriptions.setting_delete,
+      name: name("delete"),
+      description: descriptions.delete,
       inputSchema: schema({ document: text }, ["document"]),
     },
   ];
@@ -386,43 +459,166 @@ export function settingImprovementToolDefinitions(
 
 const toolDescriptionsEn = (
   tabletop: boolean,
-): Record<SettingImprovementToolName, string> => ({
-  setting_list:
-    "List the world root or a world/ subdirectory from the content package's current tree. The root also lists opening and control files. A cursor is valid only for the same query and current-tree revision.",
-  setting_search:
+): Record<SettingAuthoringOperation, string> => ({
+  list: "List the world root or a world/ subdirectory from the content package's current tree. The root also lists opening and control files. A cursor is valid only for the same query and current-tree revision.",
+  search:
     "Search literal source text in world documents in the content package's current tree. within may be world, a world/ directory or path, or @ref.",
-  setting_read:
-    "Read a complete world document by world/ path or @ref, or read a complete opening/control file by exact path. Existing document selectors are projected to @refs. The result is never truncated or paginated.",
-  setting_create:
+  read: "Read a complete world document by world/ path or @ref, or read a complete opening/control file by exact path. Existing document selectors are projected to @refs. The result is never truncated or paginated.",
+  create:
     "Create one world/ .yaml or .md document. Supply a unique lowercase ASCII ref, title, summary, aliases, and body without a technical header; Runtime completes the storage envelope. The created document is already fully read.",
-  setting_write_file: `Replace a completely read world/ .yaml or .md document body while preserving its identity and metadata, or create/replace opening.md, control/frame.yaml, control/player-views.yaml, ${tabletop ? "control/blocks/*.md, or control/gameplay.json (only a tabletop resolution scheme may change)" : "or control/blocks/*.md"}, plus control/followups.yaml and its referenced prompts/*.md, renderers/*.html, scripts/*.js, regex/*.yaml and assets/* text resources. To repair a damaged world document, also provide ref, title, summary, and aliases; Runtime preserves any recoverable storage identity. Create new world documents with setting_create.`,
-  setting_patch:
+  write_file: `Replace a completely read world/ .yaml or .md document body while preserving its identity and metadata, or create/replace opening.md, control/frame.yaml, control/player-views.yaml, ${tabletop ? "control/blocks/*.md, or control/gameplay.json (only a tabletop resolution scheme may change)" : "or control/blocks/*.md"}, plus control/followups.yaml and its referenced prompts/*.md, renderers/*.html, scripts/*.js, regex/*.yaml and assets/* text resources. To repair a damaged world document, also provide ref, title, summary, and aliases; Runtime preserves any recoverable storage identity. Create new world documents with setting_create.`,
+  patch:
     'Update a completely read YAML world document without rewriting unrelated content. locator is a non-empty path whose segments are map keys or zero-based array indexes. Use add for a missing map key or array index, replace for an existing node, append for the end of an existing array, and remove for an existing map key or array item. When title, summary, or aliases are stale, update all three together with op "set_metadata". Rewrite Markdown bodies with setting_write_file.',
-  setting_move:
-    "Move a completely read world document to a new world/ .yaml or .md logical path while preserving its identity and contents.",
-  setting_delete:
+  move: "Move a completely read world document to a new world/ .yaml or .md logical path while preserving its identity and contents.",
+  delete:
     "Permanently delete a completely read world document from the content-package current tree. Runtime rejects deletion while currentSituation, a frame slot, a player-view selector, or another document's $ref still points to it, and reports every blocking location. Delete or redirect those references first.",
 });
 
 const toolDescriptionsZhCN = (
   tabletop: boolean,
-): Record<SettingImprovementToolName, string> => ({
-  setting_list:
-    "列出内容包当前树的 world 根目录或 world/ 子目录；根目录同时列出 opening 和 control 专用文件。cursor 只对同一查询和当前树 revision 有效。",
-  setting_search:
+): Record<SettingAuthoringOperation, string> => ({
+  list: "列出内容包当前树的 world 根目录或 world/ 子目录；根目录同时列出 opening 和 control 专用文件。cursor 只对同一查询和当前树 revision 有效。",
+  search:
     "在内容包当前树的 world 文档中按原文字面搜索；within 可为 world、world/ 目录或路径或 @ref。",
-  setting_read:
-    "按 world/ 路径或 @ref 完整读取世界文档，或按精确路径完整读取 opening/control；既有文档选择值自动投影为 @ref。结果不会截断或分页。",
-  setting_create:
+  read: "按 world/ 路径或 @ref 完整读取世界文档，或按精确路径完整读取 opening/control；既有文档选择值自动投影为 @ref。结果不会截断或分页。",
+  create:
     "创建一份 world/ 下的 .yaml 或 .md 文档；提供唯一的小写 ASCII ref、标题、摘要、别名和不含技术头的正文，Runtime 自行完成存储封装。创建成功的文档视为已经完整读取。",
-  setting_write_file: `整份替换已完整读取的 world/ .yaml 或 .md 正文并保留身份和元信息，或创建／替换 opening.md、control/frame.yaml、control/player-views.yaml、control/blocks/*.md${tabletop ? "、control/gameplay.json（只能修改跑团判定方案，玩法模式不可改）" : ""}，以及 control/followups.yaml 和其中引用的 prompts/*.md、renderers/*.html、scripts/*.js、regex/*.yaml、assets/* 文本资源。修复损坏世界文档时同时提供 ref、title、summary、aliases，Runtime 会保留仍可恢复的存储身份。新建世界文档使用 setting_create。`,
-  setting_patch:
+  write_file: `整份替换已完整读取的 world/ .yaml 或 .md 正文并保留身份和元信息，或创建／替换 opening.md、control/frame.yaml、control/player-views.yaml、control/blocks/*.md${tabletop ? "、control/gameplay.json（只能修改跑团判定方案，玩法模式不可改）" : ""}，以及 control/followups.yaml 和其中引用的 prompts/*.md、renderers/*.html、scripts/*.js、regex/*.yaml、assets/* 文本资源。修复损坏世界文档时同时提供 ref、title、summary、aliases，Runtime 会保留仍可恢复的存储身份。新建世界文档使用 setting_create。`,
+  patch:
     '细粒度更新已完整读取的 YAML 世界文档，不重写无关内容。locator 是非空路径，每段可以是 map key 或从 0 开始的数组下标；add 新建 map key 或数组位置，replace 更新既有节点，append 追加既有数组，remove 删除既有 map key 或数组项。title、summary 或 aliases 过时时用 op "set_metadata" 整组更新三项。Markdown 正文用 setting_write_file 整份重写。',
-  setting_move:
-    "把已完整读取的世界文档移动到新的 world/ .yaml 或 .md 逻辑路径，并保留身份与内容。",
-  setting_delete:
+  move: "把已完整读取的世界文档移动到新的 world/ .yaml 或 .md 逻辑路径，并保留身份与内容。",
+  delete:
     "从内容包当前树永久删除一份已完整读取的 world 文档。若 currentSituation、frame slot、player-view selector 或其他文档的 $ref 仍指向它，Runtime 会拒绝并返回全部精确阻挡位置；请先删除或改向这些引用。",
 });
+
+const worldRevisionDescriptionsEn = (
+  tabletop: boolean,
+): Record<SettingAuthoringOperation, string> => ({
+  list: "List the state root or a state/ subdirectory from the world revision worktree. The root also lists control files. A cursor is valid only for the same query and worktree revision.",
+  search:
+    "Search literal source text in world documents in the world revision worktree. within may be state, a state/ directory or path, or @ref.",
+  read: "Read a complete world document by state/ path or @ref, or read a complete control file by exact path. Existing document selectors are projected to @refs. The result is never truncated or paginated.",
+  create:
+    "Create one state/ .yaml or .md document. Supply a unique lowercase ASCII ref, title, summary, aliases, and body without a technical header; Runtime completes the storage envelope. The created document is already fully read.",
+  write_file: `Replace a completely read state/ .yaml or .md document body while preserving its identity and metadata, or create/replace control/frame.yaml, control/player-views.yaml, ${tabletop ? "control/blocks/*.md, or control/gameplay.json (only a tabletop resolution scheme may change)" : "or control/blocks/*.md"}, plus control/followups.yaml and its referenced prompts/*.md, renderers/*.html, scripts/*.js, regex/*.yaml and assets/* text resources. To repair a damaged world document, also provide ref, title, summary, and aliases; Runtime preserves any recoverable storage identity. Create new world documents with world_revision_create.`,
+  patch:
+    'Update a completely read YAML world document without rewriting unrelated content. locator is a non-empty path whose segments are map keys or zero-based array indexes. Use add for a missing map key or array index, replace for an existing node, append for the end of an existing array, and remove for an existing map key or array item. When title, summary, or aliases are stale, update all three together with op "set_metadata". Rewrite Markdown bodies with world_revision_write_file.',
+  move: "Move a completely read world document to a new state/ .yaml or .md logical path while preserving its identity and contents.",
+  delete:
+    "Permanently delete a completely read world document from the world revision worktree. Runtime rejects deletion while currentSituation, a frame slot, a player-view selector, or another document's $ref still points to it, and reports every blocking location. Delete or redirect those references first.",
+});
+
+const worldRevisionDescriptionsZhCN = (
+  tabletop: boolean,
+): Record<SettingAuthoringOperation, string> => ({
+  list: "列出世界修订工作树的 state 根目录或 state/ 子目录；根目录同时列出 control 文件。cursor 只对同一查询和工作树 revision 有效。",
+  search:
+    "在世界修订工作树的 state 文档中按原文字面搜索；within 可为 state、state/ 目录或路径或 @ref。",
+  read: "按 state/ 路径或 @ref 完整读取世界文档，或按精确路径完整读取 control 文件；既有文档选择值自动投影为 @ref。结果不会截断或分页。",
+  create:
+    "创建一份 state/ 下的 .yaml 或 .md 文档；提供唯一的小写 ASCII ref、标题、摘要、别名和不含技术头的正文，Runtime 自行完成存储封装。创建成功的文档视为已经完整读取。",
+  write_file: `整份替换已完整读取的 state/ .yaml 或 .md 正文并保留身份和元信息，或创建／替换 control/frame.yaml、control/player-views.yaml、control/blocks/*.md${tabletop ? "、control/gameplay.json（只能修改跑团判定方案，玩法模式不可改）" : ""}，以及 control/followups.yaml 和其中引用的 prompts/*.md、renderers/*.html、scripts/*.js、regex/*.yaml、assets/* 文本资源。修复损坏世界文档时同时提供 ref、title、summary、aliases，Runtime 会保留仍可恢复的存储身份。新建世界文档使用 world_revision_create。`,
+  patch:
+    '细粒度更新已完整读取的 YAML 世界文档，不重写无关内容。locator 是非空路径，每段可以是 map key 或从 0 开始的数组下标；add 新建 map key 或数组位置，replace 更新既有节点，append 追加既有数组，remove 删除既有 map key 或数组项。title、summary 或 aliases 过时时用 op "set_metadata" 整组更新三项。Markdown 正文用 world_revision_write_file 整份重写。',
+  move: "把已完整读取的世界文档移动到新的 state/ .yaml 或 .md 逻辑路径，并保留身份与内容。",
+  delete:
+    "从世界修订工作树永久删除一份已完整读取的 world 文档。若 currentSituation、frame slot、player-view selector 或其他文档的 $ref 仍指向它，Runtime 会拒绝并返回全部精确阻挡位置；请先删除或改向这些引用。",
+});
+
+function worldRevisionUnavailablePath(
+  path: string,
+  locale: AppLocale,
+): string | null {
+  if (path === "opening.md")
+    return localized(
+      locale,
+      "opening.md is immutable after a world has been created. Edit state/* or control/* instead.",
+      "世界创建后 opening.md 已成为不可变创世叙事。请改写 state/* 或 control/*。",
+    );
+  if (path === "world" || path.startsWith("world/"))
+    return localized(
+      locale,
+      "World revision exposes only state/* and control/* logical paths; use those instead.",
+      "世界修订只公开 state/* 与 control/* 逻辑路径；请改用这两类路径。",
+    );
+  return null;
+}
+
+/** The content package's setting improvement: templates it edits, `world/` paths, and `opening.md`. */
+export const contentPackageAuthoringSurface: SettingAuthoringSurface = {
+  layout: "content_package",
+  root: "world",
+  toolPrefix: "setting",
+  opening: true,
+  phrases: {
+    en: {
+      tree: "the content package's current tree",
+      bareTree: "the content package current tree",
+      noun: "the content package",
+      slug: "content-package",
+      directoryHeading: "Setting directory",
+    },
+    "zh-CN": {
+      tree: "内容包当前树",
+      bareTree: "内容包当前树",
+      noun: "内容包",
+      slug: "content-package",
+      directoryHeading: "设定目录",
+    },
+  },
+  descriptions: {
+    en: toolDescriptionsEn,
+    "zh-CN": toolDescriptionsZhCN,
+  },
+  unavailablePath: () => null,
+};
+
+/** A world revision: the state/control worktree of a world already in play. */
+export const worldRevisionAuthoringSurface: SettingAuthoringSurface = {
+  layout: "world_revision",
+  root: "state",
+  toolPrefix: "world_revision",
+  opening: false,
+  phrases: {
+    en: {
+      tree: "the world revision worktree",
+      bareTree: "the world revision worktree",
+      noun: "the world revision worktree",
+      slug: "world-revision",
+      directoryHeading: "World revision directory",
+    },
+    "zh-CN": {
+      tree: "世界修订工作树",
+      bareTree: "世界修订工作树",
+      noun: "世界修订工作树",
+      slug: "world-revision",
+      directoryHeading: "世界修订目录",
+    },
+  },
+  descriptions: {
+    en: worldRevisionDescriptionsEn,
+    "zh-CN": worldRevisionDescriptionsZhCN,
+  },
+  unavailablePath: worldRevisionUnavailablePath,
+};
+
+function authoringToolName(
+  surface: SettingAuthoringSurface,
+  operation: SettingAuthoringOperation,
+): string {
+  return `${surface.toolPrefix}_${operation}`;
+}
+
+function authoringOperation(
+  surface: SettingAuthoringSurface,
+  name: string,
+): SettingAuthoringOperation | null {
+  return (
+    authoringOperations.find(
+      (operation) => authoringToolName(surface, operation) === name,
+    ) ?? null
+  );
+}
 
 interface ReadAuthorizations {
   snapshotId: string;
@@ -439,6 +635,7 @@ interface QueryResult {
 export class SettingAuthoringTransaction {
   readonly #baseFiles: ContentTreeFile[];
   readonly #locale: AppLocale;
+  readonly #surface: SettingAuthoringSurface;
   readonly #preview: (snapshot: WorldDocumentStore) => PromptPreview;
   readonly #validateFiles: (files: readonly ContentTreeFile[]) => void;
   #snapshot: WorldDocumentStore;
@@ -448,6 +645,7 @@ export class SettingAuthoringTransaction {
   constructor(input: {
     baseFiles: readonly ContentTreeFile[];
     locale?: AppLocale;
+    surface?: SettingAuthoringSurface;
     preview: (snapshot: WorldDocumentStore) => PromptPreview;
     validateFiles?: (files: readonly ContentTreeFile[]) => void;
     authorization?: SettingAuthoringAuthorization | null;
@@ -455,10 +653,11 @@ export class SettingAuthoringTransaction {
   }) {
     this.#baseFiles = cloneFiles(input.baseFiles);
     this.#locale = input.locale ?? defaultAppLocale;
+    this.#surface = input.surface ?? contentPackageAuthoringSurface;
     this.#preview = input.preview;
     this.#validateFiles = input.validateFiles ?? (() => undefined);
     this.#snapshot = WorldDocumentStore.open({
-      layout: "content_package",
+      layout: this.#surface.layout,
       files: cloneFiles(input.baseFiles),
     });
     const authorization =
@@ -494,14 +693,28 @@ export class SettingAuthoringTransaction {
   }
 
   execute(calls: readonly ModelHostToolCall[]): SettingAuthoringToolResult[] {
-    const normalized = calls.map(normalizeCall);
+    const normalized = calls.map((call) => normalizeCall(call, this.#surface));
     const results: SettingAuthoringToolResult[] = [];
     const responseBase = this.files();
     let lastSuccessfulWrite = -1;
 
     for (const call of normalized) {
       const before = this.files();
-      if (isReadTool(call.name)) {
+      const unavailable = unavailableArgument(
+        this.#surface,
+        call.arguments,
+        this.#locale,
+      );
+      if (unavailable !== null) {
+        results.push({
+          toolCallId: call.id,
+          markdown: `# Runtime tool rejected\n\n${unavailable}`,
+          isError: true,
+          changes: [],
+        });
+        continue;
+      }
+      if (call.operation !== null && isReadOperation(call.operation)) {
         results.push(toToolResult(call.id, this.#executeRead(call), []));
         continue;
       }
@@ -525,6 +738,7 @@ export class SettingAuthoringTransaction {
         this.#review,
         fileDiff(responseBase, this.#snapshot.files),
         this.#snapshot,
+        this.#surface,
         this.#locale,
       )}`;
     }
@@ -532,15 +746,26 @@ export class SettingAuthoringTransaction {
   }
 
   #executeRead(call: NormalizedCall): QueryResult {
-    if (call.name === "setting_list")
-      return listDocuments(this.#snapshot, call.arguments, this.#locale);
-    if (call.name === "setting_search")
-      return searchDocuments(this.#snapshot, call.arguments, this.#locale);
-    if (call.name === "setting_read")
+    if (call.operation === "list")
+      return listDocuments(
+        this.#snapshot,
+        call.arguments,
+        this.#surface,
+        this.#locale,
+      );
+    if (call.operation === "search")
+      return searchDocuments(
+        this.#snapshot,
+        call.arguments,
+        this.#surface,
+        this.#locale,
+      );
+    if (call.operation === "read")
       return readDocument(
         this.#snapshot,
         call.arguments,
         this.#reads,
+        this.#surface,
         this.#locale,
       );
     return failure(`Unsupported read tool: ${call.name}`, this.#locale);
@@ -550,12 +775,13 @@ export class SettingAuthoringTransaction {
     const snapshot = this.#snapshot;
     const reads = cloneReads(this.#reads);
     try {
-      if (isWorldWriteCall(call)) {
-        if (call.name === "setting_delete") {
+      if (isWorldWriteCall(call, this.#surface)) {
+        if (call.operation === "delete") {
           const deleted = deleteWorldDocument(
             snapshot,
             call,
             reads,
+            this.#surface,
             this.#locale,
           );
           this.#validateFiles(deleted.snapshot.files);
@@ -564,15 +790,21 @@ export class SettingAuthoringTransaction {
           return success(deleted.markdown);
         }
         const requestedRef =
-          call.name === "setting_create"
+          call.operation === "create"
             ? requiredSettingRef(call.arguments.ref, this.#locale)
             : null;
         const revised = snapshot.revise({
-          commands: [worldRevisionCommand(snapshot, call, this.#locale)],
+          commands: [
+            worldRevisionCommand(snapshot, call, this.#surface, this.#locale),
+          ],
         });
         if (!revised.ok)
           throw new SettingAuthoringError(
-            renderRevisionFailure(revised.diagnostics, this.#locale),
+            renderRevisionFailure(
+              revised.diagnostics,
+              this.#surface,
+              this.#locale,
+            ),
           );
         if (
           requestedRef !== null &&
@@ -599,9 +831,15 @@ export class SettingAuthoringTransaction {
         this.#reads = reads;
         return success(renderWorldWriteSuccess(revised.changes, this.#locale));
       }
-      if (call.name !== "setting_write_file")
+      if (call.operation !== "write_file")
         throw new SettingAuthoringError(`Unsupported write tool: ${call.name}`);
-      const changed = writeOpaque(snapshot, call, reads, this.#locale);
+      const changed = writeOpaque(
+        snapshot,
+        call,
+        reads,
+        this.#surface,
+        this.#locale,
+      );
       this.#validateFiles(changed.snapshot.files);
       this.#snapshot = changed.snapshot;
       this.#reads = reads;
@@ -610,13 +848,14 @@ export class SettingAuthoringTransaction {
       const message =
         error instanceof Error
           ? error.message
-          : "The content-package write failed";
+          : `The ${this.#surface.phrases.en.slug} write failed`;
       return failure(message, this.#locale);
     }
   }
 
   #inspect(): SettingAuthoringReview {
     const inspection = inspectContentPackageCurrentTree(this.#snapshot.files, {
+      requireOpening: this.#surface.opening,
       worldDocumentSnapshot: this.#snapshot,
     });
     const diff = fileDiff(this.#baseFiles, this.#snapshot.files);
@@ -627,7 +866,12 @@ export class SettingAuthoringTransaction {
         diagnostics: inspection.issues.map(({ code, path, message }) => ({
           code,
           path,
-          message: publicSettingDiagnosticMessage(code, message, this.#locale),
+          message: publicSettingDiagnosticMessage(
+            code,
+            message,
+            this.#surface,
+            this.#locale,
+          ),
         })),
         preview: null,
         playCoverage: null,
@@ -643,6 +887,7 @@ export class SettingAuthoringTransaction {
           this.#snapshot,
           preview,
           diff,
+          this.#surface,
         ),
       };
     } catch (error: unknown) {
@@ -670,6 +915,7 @@ function renderAutomaticReview(
   review: SettingAuthoringReview,
   responseDiff: readonly SettingAuthoringDiff[],
   snapshot: WorldDocumentStore,
+  surface: SettingAuthoringSurface,
   locale: AppLocale,
 ): string {
   if (review.status === "usable" && review.preview !== null) {
@@ -683,10 +929,16 @@ function renderAutomaticReview(
     );
     return `${localized(
       locale,
-      `# Current-tree review passed\n\nContent-tree validation and the real Prompt Preview both passed. This tool response changed ${changed} file(s) in the content package${cumulative === changed ? "" : `; ${cumulative} file(s) changed so far in this user request`}. Use this review and the coverage below to decide whether the current user request is satisfied or further edits are needed.`,
-      `# 当前树自动检查通过\n\n内容树校验和真实 Prompt Preview 均已通过；本次工具响应修改内容包中的 ${changed} 个文件${cumulative === changed ? "" : `，本次用户请求累计改动 ${cumulative} 个文件`}。请根据本次检查与下方覆盖报告判断当前用户要求是否已经满足，或是否还需修改。`,
+      `# Current-tree review passed\n\nContent-tree validation and the real Prompt Preview both passed. This tool response changed ${changed} file(s) in ${surface.phrases.en.noun}${cumulative === changed ? "" : `; ${cumulative} file(s) changed so far in this user request`}. Use this review and the coverage below to decide whether the current user request is satisfied or further edits are needed.`,
+      `# 当前树自动检查通过\n\n内容树校验和真实 Prompt Preview 均已通过；本次工具响应修改${surface.phrases["zh-CN"].noun}中的 ${changed} 个文件${cumulative === changed ? "" : `，本次用户请求累计改动 ${cumulative} 个文件`}。请根据本次检查与下方覆盖报告判断当前用户要求是否已经满足，或是否还需修改。`,
     )}\n\n${renderPlayCoverage(
-      buildSettingAuthoringPlayCoverage(snapshot, review.preview, responseDiff),
+      buildSettingAuthoringPlayCoverage(
+        snapshot,
+        review.preview,
+        responseDiff,
+        surface,
+      ),
+      surface,
       locale,
     )}\n\n${renderWorldMaintenanceReport(
       review.preview.compilation.maintenance,
@@ -717,6 +969,7 @@ function buildSettingAuthoringPlayCoverage(
   snapshot: WorldDocumentStore,
   preview: PromptPreview,
   diff: readonly SettingAuthoringDiff[],
+  surface: SettingAuthoringSurface,
 ): SettingAuthoringPlayCoverage {
   const documents = listQueryableWorldDocuments(snapshot);
   const byShortRef = new Map(
@@ -784,7 +1037,11 @@ function buildSettingAuthoringPlayCoverage(
         accessByPath,
         enabledWorldInstructionPaths,
       );
-      return { path, access, detail: playAccessDetail(access) };
+      return {
+        path,
+        access,
+        detail: playAccessDetail(access, surface),
+      };
     }),
   };
 }
@@ -818,7 +1075,10 @@ function incrementPlayCoverageTotal(
   else if (access === "on_demand") totals.onDemand += 1;
 }
 
-function playAccessDetail(access: SettingAuthoringPlayAccess): string {
+function playAccessDetail(
+  access: SettingAuthoringPlayAccess,
+  surface: SettingAuthoringSurface,
+): string {
   const details: Record<SettingAuthoringPlayAccess, string> = {
     full_injected: "complete body is injected into every fresh play context",
     node_injected: "only a selected node is injected into fresh play context",
@@ -833,13 +1093,14 @@ function playAccessDetail(access: SettingAuthoringPlayAccess): string {
     unused_control:
       "not enabled by control/frame.yaml and unavailable to ordinary play AI",
     player_view: "projected through exact player-view selectors",
-    removed: "removed from the content package current tree",
+    removed: `removed from ${surface.phrases.en.bareTree}`,
   };
   return details[access];
 }
 
 function renderPlayCoverage(
   coverage: SettingAuthoringPlayCoverage,
+  surface: SettingAuthoringSurface,
   locale: AppLocale,
 ): string {
   const labels: Record<SettingAuthoringPlayAccess, string> =
@@ -854,7 +1115,7 @@ function renderPlayCoverage(
           play_control: "游玩控制",
           unused_control: "未被 control/frame.yaml 启用",
           player_view: "玩家视图精确投影",
-          removed: "已从内容包当前树删除",
+          removed: `已从${surface.phrases["zh-CN"].tree}删除`,
         }
       : {
           full_injected: "full text injected",
@@ -866,7 +1127,7 @@ function renderPlayCoverage(
           play_control: "play-author control",
           unused_control: "not enabled by control/frame.yaml",
           player_view: "exact player-view projection",
-          removed: "removed from the content package current tree",
+          removed: `removed from ${surface.phrases.en.bareTree}`,
         };
   const maximumReportedChanges = 64;
   const reportedChanges = coverage.changed.slice(0, maximumReportedChanges);
@@ -926,6 +1187,8 @@ function renderPlayCoverage(
 interface NormalizedCall {
   id: string;
   name: string;
+  /** The surface operation this tool name names, or null for an unknown tool. */
+  operation: SettingAuthoringOperation | null;
   arguments: Record<string, unknown>;
 }
 
@@ -936,45 +1199,64 @@ class SettingAuthoringError extends Error {
   }
 }
 
-function normalizeCall(call: ModelHostToolCall): NormalizedCall {
-  if (!isRecord(call.arguments))
-    return { id: call.id, name: call.name, arguments: {} };
+function normalizeCall(
+  call: ModelHostToolCall,
+  surface: SettingAuthoringSurface,
+): NormalizedCall {
   return {
     id: call.id,
     name: call.name,
-    arguments: structuredClone(call.arguments),
+    operation: authoringOperation(surface, call.name),
+    arguments: isRecord(call.arguments) ? structuredClone(call.arguments) : {},
   };
 }
 
-function isReadTool(name: string): boolean {
-  return (
-    name === "setting_list" ||
-    name === "setting_search" ||
-    name === "setting_read"
-  );
+function isReadOperation(operation: SettingAuthoringOperation): boolean {
+  return operation === "list" || operation === "search" || operation === "read";
 }
 
-function isWorldWriteCall(call: NormalizedCall): boolean {
+/**
+ * Rejects a call that names a path outside the surface before any store work.
+ * The check covers every path-like argument, so a read and a write fail alike.
+ */
+function unavailableArgument(
+  surface: SettingAuthoringSurface,
+  args: Record<string, unknown>,
+  locale: AppLocale,
+): string | null {
+  for (const field of ["path", "directory", "within", "from", "to", "document"])
+    if (typeof args[field] === "string") {
+      const message = surface.unavailablePath(args[field], locale);
+      if (message !== null) return message;
+    }
+  return null;
+}
+
+function isWorldWriteCall(
+  call: NormalizedCall,
+  surface: SettingAuthoringSurface,
+): boolean {
   if (
-    call.name === "setting_create" ||
-    call.name === "setting_patch" ||
-    call.name === "setting_move" ||
-    call.name === "setting_delete"
+    call.operation === "create" ||
+    call.operation === "patch" ||
+    call.operation === "move" ||
+    call.operation === "delete"
   )
     return true;
   return (
-    call.name === "setting_write_file" &&
+    call.operation === "write_file" &&
     typeof call.arguments.path === "string" &&
-    call.arguments.path.startsWith("world/")
+    call.arguments.path.startsWith(`${surface.root}/`)
   );
 }
 
 function worldRevisionCommand(
   snapshot: WorldDocumentStore,
   call: NormalizedCall,
+  surface: SettingAuthoringSurface,
   locale: AppLocale,
 ): WorldDocumentRevisionCommand {
-  if (call.name === "setting_create") {
+  if (call.operation === "create") {
     if (
       !hasOnly(call.arguments, [
         "path",
@@ -986,10 +1268,11 @@ function worldRevisionCommand(
       ])
     )
       throw new SettingAuthoringError(
-        "setting_create accepts only path, ref, title, summary, aliases, and body",
+        `${authoringToolName(surface, "create")} accepts only path, ref, title, summary, aliases, and body`,
       );
     const logicalPath = safeWorldDocumentPath(
       requiredString(call.arguments.path, "path"),
+      surface,
       locale,
     );
     const ref = requiredSettingRef(call.arguments.ref, locale);
@@ -1013,15 +1296,17 @@ function worldRevisionCommand(
       body,
     };
   }
-  if (call.name === "setting_write_file") {
+  if (call.operation === "write_file") {
     const logicalPath = safeWorldDocumentPath(
       requiredString(call.arguments.path, "path"),
+      surface,
       locale,
     );
     const contents = worldWriteContents(
       snapshot,
       logicalPath,
       call.arguments,
+      surface,
       locale,
     );
     assertNoLiteralUnicodeEscapes(contents, locale);
@@ -1031,19 +1316,25 @@ function worldRevisionCommand(
       contents,
     };
   }
-  if (call.name === "setting_move") {
-    const toLogicalPath = safePath(requiredString(call.arguments.to, "to"));
-    if (!/^world\/.+\.(?:ya?ml|md)$/u.test(toLogicalPath))
+  if (call.operation === "move") {
+    const toLogicalPath = safePath(
+      requiredString(call.arguments.to, "to"),
+      surface,
+    );
+    if (!documentPathPattern(surface).test(toLogicalPath))
       throw new SettingAuthoringError(
-        "setting_move.to must be a world/ .yaml or .md path",
+        `${authoringToolName(surface, "move")}.to must be a ${surface.root}/ .yaml or .md path`,
       );
     return {
       kind: "move",
-      document: revisionTarget(requiredString(call.arguments.from, "from")),
+      document: revisionTarget(
+        requiredString(call.arguments.from, "from"),
+        surface,
+      ),
       toLogicalPath,
     };
   }
-  if (call.name === "setting_patch") {
+  if (call.operation === "patch") {
     const op = requiredString(call.arguments.op, "op");
     if (op === "set_metadata") {
       const title = requiredString(call.arguments.title, "title");
@@ -1054,25 +1345,27 @@ function worldRevisionCommand(
         kind: "patch",
         document: revisionTarget(
           requiredString(call.arguments.document, "document"),
+          surface,
         ),
         edits: [{ op: "set_metadata", title, summary, aliases }],
       };
     }
     if (op !== "add" && op !== "replace" && op !== "append" && op !== "remove")
       throw new SettingAuthoringError(
-        "setting_patch.op must be add, replace, append, remove, or set_metadata",
+        `${authoringToolName(surface, "patch")}.op must be add, replace, append, remove, or set_metadata`,
       );
     const locator = requiredYamlLocatorPath(call.arguments.locator, "locator");
     if (op === "remove") {
       if (!hasOnly(call.arguments, ["document", "op", "locator"]))
         throw new SettingAuthoringError(
-          "setting_patch remove accepts only document, op, and locator",
+          `${authoringToolName(surface, "patch")} remove accepts only document, op, and locator`,
         );
       assertNoLiteralUnicodeEscapes(locator, locale);
       return {
         kind: "patch",
         document: revisionTarget(
           requiredString(call.arguments.document, "document"),
+          surface,
         ),
         edits: [{ op: "remove", locator: { yaml: locator } }],
       };
@@ -1082,7 +1375,7 @@ function worldRevisionCommand(
       !Object.hasOwn(call.arguments, "value")
     )
       throw new SettingAuthoringError(
-        `setting_patch ${op} requires document, op, locator, and value`,
+        `${authoringToolName(surface, "patch")} ${op} requires document, op, locator, and value`,
       );
     const value = structuredClone(
       call.arguments.value,
@@ -1092,6 +1385,7 @@ function worldRevisionCommand(
       kind: "patch",
       document: revisionTarget(
         requiredString(call.arguments.document, "document"),
+        surface,
       ),
       edits: [
         {
@@ -1107,14 +1401,23 @@ function worldRevisionCommand(
   throw new SettingAuthoringError(`Unsupported write tool: ${call.name}`);
 }
 
-function safeWorldDocumentPath(path: string, locale: AppLocale): string {
-  const logicalPath = safePath(path);
-  if (!/^world\/.+\.(?:ya?ml|md)$/u.test(logicalPath))
+/** The world-document path pattern for a surface, e.g. `world/…yaml` or `state/…md`. */
+function documentPathPattern(surface: SettingAuthoringSurface): RegExp {
+  return new RegExp(`^${surface.root}/.+\\.(?:ya?ml|md)$`, "u");
+}
+
+function safeWorldDocumentPath(
+  path: string,
+  surface: SettingAuthoringSurface,
+  locale: AppLocale,
+): string {
+  const logicalPath = safePath(path, surface);
+  if (!documentPathPattern(surface).test(logicalPath))
     throw new SettingAuthoringError(
       localized(
         locale,
-        "World files must be .yaml or .md documents below world/",
-        "world 文件必须是 world/ 下的 .yaml 或 .md 文档",
+        `World files must be .yaml or .md documents below ${surface.root}/`,
+        `world 文件必须是 ${surface.root}/ 下的 .yaml 或 .md 文档`,
       ),
     );
   return logicalPath;
@@ -1124,13 +1427,14 @@ function worldWriteContents(
   snapshot: WorldDocumentStore,
   logicalPath: string,
   args: Record<string, unknown>,
+  surface: SettingAuthoringSurface,
   locale: AppLocale,
 ): string {
   if (
     !hasOnly(args, ["path", "contents", "ref", "title", "summary", "aliases"])
   )
     throw new SettingAuthoringError(
-      "setting_write_file accepts only its declared arguments",
+      `${authoringToolName(surface, "write_file")} accepts only its declared arguments`,
     );
   const body = requiredString(args.contents, "contents");
   const metadataKeys = ["ref", "title", "summary", "aliases"] as const;
@@ -1144,8 +1448,8 @@ function worldWriteContents(
       throw new SettingAuthoringError(
         localized(
           locale,
-          "Create a new world document with setting_create",
-          "新建世界文档请使用 setting_create",
+          `Create a new world document with ${authoringToolName(surface, "create")}`,
+          `新建世界文档请使用 ${authoringToolName(surface, "create")}`,
         ),
       );
     if (
@@ -1174,16 +1478,16 @@ function worldWriteContents(
     throw new SettingAuthoringError(
       localized(
         locale,
-        "Create a new world document with setting_create",
-        "新建世界文档请使用 setting_create",
+        `Create a new world document with ${authoringToolName(surface, "create")}`,
+        `新建世界文档请使用 ${authoringToolName(surface, "create")}`,
       ),
     );
   if (existingDocument)
     throw new SettingAuthoringError(
       localized(
         locale,
-        "Repair metadata is only for a damaged document; update valid metadata with setting_patch set_metadata",
-        "修复元信息只用于损坏文档；有效文档请用 setting_patch set_metadata 更新元信息",
+        `Repair metadata is only for a damaged document; update valid metadata with ${authoringToolName(surface, "patch")} set_metadata`,
+        `修复元信息只用于损坏文档；有效文档请用 ${authoringToolName(surface, "patch")} set_metadata 更新元信息`,
       ),
     );
   const ref = requiredSettingRef(args.ref, locale);
@@ -1236,8 +1540,11 @@ function recoverStoredDocumentId(
     : null;
 }
 
-function revisionTarget(value: string): WorldDocumentRevisionTarget {
-  const selector = documentSelector(value);
+function revisionTarget(
+  value: string,
+  surface: SettingAuthoringSurface,
+): WorldDocumentRevisionTarget {
+  const selector = documentSelector(value, surface);
   if (selector === null)
     throw new SettingAuthoringError(
       `Invalid world-document selector: ${value}`,
@@ -1254,20 +1561,22 @@ function deleteWorldDocument(
   snapshot: WorldDocumentStore,
   call: NormalizedCall,
   reads: ReadAuthorizations,
+  surface: SettingAuthoringSurface,
   locale: AppLocale,
 ): { snapshot: WorldDocumentStore; markdown: string } {
+  const tool = authoringToolName(surface, "delete");
   if (!hasOnly(call.arguments, ["document"]))
     throw new SettingAuthoringError(
-      "setting_delete accepts only the document argument",
+      `${tool} accepts only the document argument`,
     );
   const supplied = requiredString(call.arguments.document, "document");
-  const selector = documentSelector(supplied);
+  const selector = documentSelector(supplied, surface);
   if (selector === null)
     throw new SettingAuthoringError(
       localized(
         locale,
-        "setting_delete.document must be an @ref or world/ document path",
-        "setting_delete.document 必须是 @ref 或 world/ 文档路径",
+        `${tool}.document must be an @ref or ${surface.root}/ document path`,
+        `${tool}.document 必须是 @ref 或 ${surface.root}/ 文档路径`,
       ),
     );
   const resolved = snapshot.query({
@@ -1276,7 +1585,7 @@ function deleteWorldDocument(
   });
   if (resolved.kind === "error")
     throw new SettingAuthoringError(
-      renderRevisionFailure(resolved.diagnostics, locale),
+      renderRevisionFailure(resolved.diagnostics, surface, locale),
     );
   if (resolved.kind !== "read_document")
     throw new Error("Unexpected world-document delete lookup result");
@@ -1306,7 +1615,7 @@ function deleteWorldDocument(
     );
   }
   const revised = WorldDocumentStore.open({
-    layout: "content_package",
+    layout: surface.layout,
     files: sortFiles(
       snapshot.files.filter(({ path }) => path !== target.logicalPath),
     ),
@@ -1435,20 +1744,27 @@ function writeOpaque(
   snapshot: WorldDocumentStore,
   call: NormalizedCall,
   reads: ReadAuthorizations,
+  surface: SettingAuthoringSurface,
   locale: AppLocale,
 ): { snapshot: WorldDocumentStore; markdown: string } {
   if (!hasOnly(call.arguments, ["path", "contents"]))
     throw new SettingAuthoringError(
       "Special-file writes accept only path and contents",
     );
-  const path = safePath(requiredString(call.arguments.path, "path"));
-  if (!writableOpaquePath(path))
+  const path = safePath(requiredString(call.arguments.path, "path"), surface);
+  if (!writableOpaquePath(path, surface))
     throw new SettingAuthoringError(
-      localized(
-        locale,
-        "Special-file writes accept only opening.md, control/frame.yaml, control/player-views.yaml, control/blocks/*.md, or control/gameplay.json",
-        "专用文件只允许写入 opening.md、control/frame.yaml、control/player-views.yaml、control/blocks/*.md 或 control/gameplay.json",
-      ),
+      surface.opening
+        ? localized(
+            locale,
+            "Special-file writes accept only opening.md, control/frame.yaml, control/player-views.yaml, control/blocks/*.md, or control/gameplay.json",
+            "专用文件只允许写入 opening.md、control/frame.yaml、control/player-views.yaml、control/blocks/*.md 或 control/gameplay.json",
+          )
+        : localized(
+            locale,
+            "Special-file writes accept only control/frame.yaml, control/player-views.yaml, control/blocks/*.md, or control/gameplay.json",
+            "专用文件只允许写入 control/frame.yaml、control/player-views.yaml、control/blocks/*.md 或 control/gameplay.json",
+          ),
     );
   const authoredContents = requiredString(call.arguments.contents, "contents");
   assertNoLiteralUnicodeEscapes(authoredContents, locale);
@@ -1471,7 +1787,7 @@ function writeOpaque(
     delete existing.encoding;
   }
   const revised = WorldDocumentStore.open({
-    layout: "content_package",
+    layout: surface.layout,
     files: sortFiles(next),
   });
   rebaseReads(reads, revised);
@@ -1483,8 +1799,8 @@ function writeOpaque(
     markdown: [
       localized(
         locale,
-        `# Current-tree write accepted\n\n${existing === undefined ? "Created" : "Updated"} ${path} in the content package's current tree. This file is already fully read; do not read it again unless a later decision needs Runtime's exact serialization.`,
-        `# 当前树写入已接受\n\n已在内容包当前树中${existing === undefined ? "创建" : "更新"} ${path}。该文件已视为完整读取；除非后续判断依赖 Runtime 的精确序列化结果，否则不要再次读取。`,
+        `# Current-tree write accepted\n\n${existing === undefined ? "Created" : "Updated"} ${path} in ${surface.phrases.en.tree}. This file is already fully read; do not read it again unless a later decision needs Runtime's exact serialization.`,
+        `# 当前树写入已接受\n\n已在${surface.phrases["zh-CN"].tree}中${existing === undefined ? "创建" : "更新"} ${path}。该文件已视为完整读取；除非后续判断依赖 Runtime 的精确序列化结果，否则不要再次读取。`,
       ),
       ...(gameplay === null
         ? []
@@ -1521,10 +1837,13 @@ function assertGameplayWriteKeepsMode(
     );
 }
 
-function writableOpaquePath(path: string): boolean {
+function writableOpaquePath(
+  path: string,
+  surface: SettingAuthoringSurface,
+): boolean {
   return (
     isPackageFollowupControlPath(path) ||
-    path === "opening.md" ||
+    (surface.opening && path === "opening.md") ||
     path === "control/frame.yaml" ||
     path === "control/player-views.yaml" ||
     path === gameplayPath ||
@@ -1594,12 +1913,13 @@ function renderRevisionFailure(
     logicalPath?: string;
     message: string;
   }[],
+  surface: SettingAuthoringSurface,
   locale: AppLocale,
 ): string {
   return diagnostics
     .map(
       ({ code, logicalPath, message }) =>
-        `${code}${logicalPath === undefined ? "" : ` · ${logicalPath}`} · ${publicSettingDiagnosticMessage(code, message, locale)}`,
+        `${code}${logicalPath === undefined ? "" : ` · ${logicalPath}`} · ${publicSettingDiagnosticMessage(code, message, surface, locale)}`,
     )
     .join("\n");
 }
@@ -1607,33 +1927,34 @@ function renderRevisionFailure(
 function listDocuments(
   snapshot: WorldDocumentStore,
   args: Record<string, unknown>,
+  surface: SettingAuthoringSurface,
   locale: AppLocale,
 ): QueryResult {
+  const tool = authoringToolName(surface, "list");
+  const root = surface.root;
   if (!hasOnly(args, ["directory", "limit", "cursor"]))
-    return failure(
-      "setting_list accepts only directory, limit, and cursor",
-      locale,
-    );
-  const directory = args.directory ?? "world";
+    return failure(`${tool} accepts only directory, limit, and cursor`, locale);
+  const directory = args.directory ?? root;
   const limit = args.limit ?? 100;
   if (
     typeof directory !== "string" ||
-    (directory !== "world" && !directory.startsWith("world/")) ||
+    (directory !== root && !directory.startsWith(`${root}/`)) ||
     typeof limit !== "number" ||
     !Number.isInteger(limit) ||
     limit < 1 ||
     limit > 100 ||
     !validCursor(args.cursor)
   )
-    return failure("Invalid setting_list directory, limit, or cursor", locale);
-  const relative = directory === "world" ? "" : directory.slice(6);
+    return failure(`Invalid ${tool} directory, limit, or cursor`, locale);
+  const relative = directory === root ? "" : directory.slice(root.length + 1);
   const result = snapshot.query({
     kind: "catalog",
     directory: relative,
     limit,
     ...(args.cursor === undefined ? {} : { cursor: args.cursor }),
   });
-  if (result.kind === "error") return renderQueryFailure(result, locale);
+  if (result.kind === "error")
+    return renderQueryFailure(result, surface, locale);
   if (result.kind !== "catalog") throw new Error("Unexpected catalog result");
   const entries = result.entries.map((entry) => {
     if (entry.kind === "directory") return `- [dir] ${entry.logicalPath}/`;
@@ -1644,21 +1965,23 @@ function listDocuments(
   if (relative === "" && result.page.start === 0)
     entries.unshift(
       ...snapshot.files
-        .filter(({ path }) => !path.startsWith("world/"))
+        .filter(({ path }) => !path.startsWith(`${root}/`))
         .map(({ path, encoding }) =>
           encoding === undefined ? `- [special] ${path}` : `- [binary] ${path}`,
         ),
     );
   return success(
-    `# ${localized(locale, "Setting directory", "设定目录")}\n\n${entries.join("\n") || localized(locale, "(empty)", "（空）")}\n\n${pageFooter(result.page, locale)}`,
+    `# ${localized(locale, surface.phrases.en.directoryHeading, surface.phrases["zh-CN"].directoryHeading)}\n\n${entries.join("\n") || localized(locale, "(empty)", "（空）")}\n\n${pageFooter(result.page, locale)}`,
   );
 }
 
 function searchDocuments(
   snapshot: WorldDocumentStore,
   args: Record<string, unknown>,
+  surface: SettingAuthoringSurface,
   locale: AppLocale,
 ): QueryResult {
+  const tool = authoringToolName(surface, "search");
   const query = args.query;
   const limit = args.limit ?? 20;
   if (
@@ -1674,10 +1997,10 @@ function searchDocuments(
       typeof args.caseSensitive !== "boolean") ||
     !validCursor(args.cursor)
   )
-    return failure("Invalid setting_search arguments", locale);
-  const within = searchScope(args.within);
+    return failure(`Invalid ${tool} arguments`, locale);
+  const within = searchScope(args.within, surface);
   if (within === invalidScope)
-    return failure("Invalid setting_search within scope", locale);
+    return failure(`Invalid ${tool} within scope`, locale);
   const result = snapshot.query({
     kind: "literal_search",
     query,
@@ -1686,7 +2009,8 @@ function searchDocuments(
     limit,
     ...(args.cursor === undefined ? {} : { cursor: args.cursor }),
   });
-  if (result.kind === "error") return renderQueryFailure(result, locale);
+  if (result.kind === "error")
+    return renderQueryFailure(result, surface, locale);
   if (result.kind !== "literal_search")
     throw new Error("Unexpected literal search result");
   const lines = result.matches.map(
@@ -1702,6 +2026,7 @@ const invalidScope = Symbol("invalid-scope");
 
 function searchScope(
   value: unknown,
+  surface: SettingAuthoringSurface,
 ):
   | undefined
   | { directory: string }
@@ -1709,16 +2034,16 @@ function searchScope(
   | typeof invalidScope {
   if (value === undefined) return undefined;
   if (typeof value !== "string" || value.length === 0) return invalidScope;
-  if (value === "world") return { directory: "" };
+  if (value === surface.root) return { directory: "" };
   if (value.startsWith("@"))
     return value.length > 1
       ? { document: { shortRef: value.slice(1) } }
       : invalidScope;
-  if (value.startsWith("world/")) {
-    const path = safePath(value);
+  if (value.startsWith(`${surface.root}/`)) {
+    const path = safePath(value, surface);
     return /\.(?:ya?ml|md)$/u.test(path)
       ? { document: { logicalPath: path } }
-      : { directory: path.slice(6) };
+      : { directory: path.slice(surface.root.length + 1) };
   }
   return invalidScope;
 }
@@ -1727,6 +2052,7 @@ function readDocument(
   snapshot: WorldDocumentStore,
   args: Record<string, unknown>,
   reads: ReadAuthorizations,
+  surface: SettingAuthoringSurface,
   locale: AppLocale,
 ): QueryResult {
   const path = args.path;
@@ -1735,9 +2061,12 @@ function readDocument(
     typeof path !== "string" ||
     path.length === 0
   )
-    return failure("Invalid setting_read arguments", locale);
+    return failure(
+      `Invalid ${authoringToolName(surface, "read")} arguments`,
+      locale,
+    );
   const opaque = snapshot.files.find(
-    (file) => file.path === path && !file.path.startsWith("world/"),
+    (file) => file.path === path && !file.path.startsWith(`${surface.root}/`),
   );
   if (opaque !== undefined) {
     if (opaque.encoding !== undefined)
@@ -1748,12 +2077,12 @@ function readDocument(
       `# ${localized(locale, "Special-file source", "专用文件原文")} ${path}\n\n${projected}\n\n---\nComplete: yes`,
     );
   }
-  const selector = documentSelector(path);
+  const selector = documentSelector(path, surface);
   if (selector === null)
     return failure(
       selector === null && typeof path === "string" && !path.includes("/")
-        ? "Use @ref or a world/ logical path"
-        : "Invalid setting_read path",
+        ? `Use @ref or a ${surface.root}/ logical path`
+        : `Invalid ${authoringToolName(surface, "read")} path`,
       locale,
     );
   const result = snapshot.query({
@@ -1762,9 +2091,9 @@ function readDocument(
     referenceProjection: "short_ref",
   });
   if (result.kind === "error") {
-    if (repairableDamagedWorldRead(snapshot, path, result))
+    if (repairableDamagedWorldRead(snapshot, path, surface, result))
       reads.damagedWorldPaths.add(path);
-    return renderQueryFailure(result, locale);
+    return renderQueryFailure(result, surface, locale);
   }
   if (result.kind !== "read_document")
     throw new Error("Unexpected read result");
@@ -1777,10 +2106,11 @@ function readDocument(
 function repairableDamagedWorldRead(
   snapshot: WorldDocumentStore,
   path: string,
+  surface: SettingAuthoringSurface,
   result: WorldDocumentQueryFailure,
 ): boolean {
   if (
-    !path.startsWith("world/") ||
+    !path.startsWith(`${surface.root}/`) ||
     !snapshot.files.some(({ path: candidate }) => candidate === path)
   )
     return false;
@@ -1796,11 +2126,14 @@ function repairableDamagedWorldRead(
   );
 }
 
-function documentSelector(value: string): WorldDocumentSelector | null {
+function documentSelector(
+  value: string,
+  surface: SettingAuthoringSurface,
+): WorldDocumentSelector | null {
   if (value.startsWith("@"))
     return value.length > 1 ? { shortRef: value.slice(1) } : null;
-  if (value.startsWith("world/")) {
-    const path = safePath(value);
+  if (value.startsWith(`${surface.root}/`)) {
+    const path = safePath(value, surface);
     return /\.(?:ya?ml|md)$/u.test(path) ? { logicalPath: path } : null;
   }
   return null;
@@ -1861,13 +2194,14 @@ function projectOpaqueDocumentIds(
 
 function renderQueryFailure(
   result: WorldDocumentQueryFailure,
+  surface: SettingAuthoringSurface,
   locale: AppLocale,
 ): QueryResult {
   return failure(
     result.diagnostics
       .map(
         ({ code, logicalPath, message }) =>
-          `${code}${logicalPath === undefined ? "" : ` · ${logicalPath}`} · ${publicSettingDiagnosticMessage(code, message, locale)}`,
+          `${code}${logicalPath === undefined ? "" : ` · ${logicalPath}`} · ${publicSettingDiagnosticMessage(code, message, surface, locale)}`,
       )
       .join("\n"),
     locale,
@@ -1877,8 +2211,10 @@ function renderQueryFailure(
 function publicSettingDiagnosticMessage(
   code: string,
   message: string,
+  surface: SettingAuthoringSurface,
   locale: AppLocale,
 ): string {
+  const writeFile = authoringToolName(surface, "write_file");
   if (
     code === "document_header_invalid" ||
     code === "document_identity_invalid" ||
@@ -1886,8 +2222,8 @@ function publicSettingDiagnosticMessage(
   )
     return localized(
       locale,
-      "Document storage metadata is missing or damaged. Repair this document with setting_write_file using its ref, title, summary, aliases, and body",
-      "文档存储元信息缺失或损坏；请用 setting_write_file 提供 ref、title、summary、aliases 和正文进行修复",
+      `Document storage metadata is missing or damaged. Repair this document with ${writeFile} using its ref, title, summary, aliases, and body`,
+      `文档存储元信息缺失或损坏；请用 ${writeFile} 提供 ref、title、summary、aliases 和正文进行修复`,
     );
   if (code === "document_identity_duplicate" || code === "duplicate_id")
     return localized(
@@ -1898,8 +2234,8 @@ function publicSettingDiagnosticMessage(
   if (code === "document_short_ref_invalid")
     return localized(
       locale,
-      "Document ref must be a 2-to-32-character lowercase ASCII short handle; repair it with setting_write_file and public metadata",
-      "文档 ref 必须是 2～32 位小写 ASCII 短句柄；请用 setting_write_file 和公开元信息修复",
+      `Document ref must be a 2-to-32-character lowercase ASCII short handle; repair it with ${writeFile} and public metadata`,
+      `文档 ref 必须是 2～32 位小写 ASCII 短句柄；请用 ${writeFile} 和公开元信息修复`,
     );
   if (code === "document_short_ref_duplicate" || code === "duplicate_ref")
     return localized(
@@ -1995,7 +2331,7 @@ function fileDiff(
     });
 }
 
-function safePath(path: string): string {
+function safePath(path: string, surface: SettingAuthoringSurface): string {
   if (
     path.startsWith("/") ||
     path.includes("\\") ||
@@ -2003,7 +2339,9 @@ function safePath(path: string): string {
       .split("/")
       .some((part) => part === "." || part === ".." || part.length === 0)
   )
-    throw new SettingAuthoringError(`Unsafe content-package path: ${path}`);
+    throw new SettingAuthoringError(
+      `Unsafe ${surface.phrases.en.slug} path: ${path}`,
+    );
   return path;
 }
 

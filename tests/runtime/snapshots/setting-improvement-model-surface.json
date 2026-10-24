@@ -1,0 +1,1408 @@
+{
+  "en": {
+    "gameplays": {
+      "interactive-fiction": {
+        "tools": [
+          {
+            "name": "setting_list",
+            "description": "List the world root or a world/ subdirectory from the content package's current tree. The root also lists opening and control files. A cursor is valid only for the same query and current-tree revision.",
+            "inputSchema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "directory": {
+                  "type": "string",
+                  "pattern": "^world(?:/[^\\\\]+)?$"
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100
+                },
+                "cursor": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": []
+            }
+          },
+          {
+            "name": "setting_search",
+            "description": "Search literal source text in world documents in the content package's current tree. within may be world, a world/ directory or path, or @ref.",
+            "inputSchema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "query": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "within": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "caseSensitive": {
+                  "type": "boolean"
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100
+                },
+                "cursor": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "query"
+              ]
+            }
+          },
+          {
+            "name": "setting_read",
+            "description": "Read a complete world document by world/ path or @ref, or read a complete opening/control file by exact path. Existing document selectors are projected to @refs. The result is never truncated or paginated.",
+            "inputSchema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "path"
+              ]
+            }
+          },
+          {
+            "name": "setting_create",
+            "description": "Create one world/ .yaml or .md document. Supply a unique lowercase ASCII ref, title, summary, aliases, and body without a technical header; Runtime completes the storage envelope. The created document is already fully read.",
+            "inputSchema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "pattern": "^world/.+\\.(?:ya?ml|md)$"
+                },
+                "ref": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9-]{1,31}$"
+                },
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120
+                },
+                "summary": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                },
+                "aliases": {
+                  "type": "array",
+                  "maxItems": 16,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                },
+                "body": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "path",
+                "ref",
+                "title",
+                "summary",
+                "aliases",
+                "body"
+              ]
+            }
+          },
+          {
+            "name": "setting_write_file",
+            "description": "Replace a completely read world/ .yaml or .md document body while preserving its identity and metadata, or create/replace opening.md, control/frame.yaml, control/player-views.yaml, or control/blocks/*.md, plus control/followups.yaml and its referenced prompts/*.md, renderers/*.html, scripts/*.js, regex/*.yaml and assets/* text resources. To repair a damaged world document, also provide ref, title, summary, and aliases; Runtime preserves any recoverable storage identity. Create new world documents with setting_create.",
+            "inputSchema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "contents": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "ref": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9-]{1,31}$"
+                },
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120
+                },
+                "summary": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                },
+                "aliases": {
+                  "type": "array",
+                  "maxItems": 16,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                }
+              },
+              "required": [
+                "path",
+                "contents"
+              ]
+            }
+          },
+          {
+            "name": "setting_patch",
+            "description": "Update a completely read YAML world document without rewriting unrelated content. locator is a non-empty path whose segments are map keys or zero-based array indexes. Use add for a missing map key or array index, replace for an existing node, append for the end of an existing array, and remove for an existing map key or array item. When title, summary, or aliases are stale, update all three together with op \"set_metadata\". Rewrite Markdown bodies with setting_write_file.",
+            "inputSchema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "document": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "op": {
+                  "type": "string",
+                  "enum": [
+                    "add",
+                    "replace",
+                    "append",
+                    "remove",
+                    "set_metadata"
+                  ]
+                },
+                "locator": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": [
+                      "string",
+                      "integer"
+                    ]
+                  }
+                },
+                "value": {},
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120
+                },
+                "summary": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                },
+                "aliases": {
+                  "type": "array",
+                  "maxItems": 16,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                }
+              },
+              "required": [
+                "document",
+                "op"
+              ]
+            }
+          },
+          {
+            "name": "setting_move",
+            "description": "Move a completely read world document to a new world/ .yaml or .md logical path while preserving its identity and contents.",
+            "inputSchema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "from": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "to": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "from",
+                "to"
+              ]
+            }
+          },
+          {
+            "name": "setting_delete",
+            "description": "Permanently delete a completely read world document from the content-package current tree. Runtime rejects deletion while currentSituation, a frame slot, a player-view selector, or another document's $ref still points to it, and reports every blocking location. Delete or redirect those references first.",
+            "inputSchema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "document": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "document"
+              ]
+            }
+          }
+        ],
+        "contract": "# Runtime setting-improvement conversation contract\n\n- Every user message is appended to the selected setting-improvement conversation. Continue its Provider context by default; only an explicit Fresh context choice compiles a new conversation from the content package's current tree. Decide whether to reply, ask, read the current tree, or change it from the user's current request.\n- The current request includes eight read/write tools. A complete response with no tool calls is shown as an ordinary assistant message and settles this user invocation. A response containing tool calls is an internal tool step; continue after all results and eventually answer with a complete tool-free response.\n- Tool writes directly modify the content package's current tree. Calls in one complete Provider tool response execute in order; its successful changes publish atomically when that response settles, immediately become authoritative, and require no second confirmation.\n- Every write tool call settles independently and sees earlier accepted calls in response order. A failure returns its precise cause only in that call's result, does not roll back successful siblings, and does not stop later calls. Runtime automatically runs content-tree checks and a real Prompt Preview after writes and appends that review to the last successful write result.\n- Read an existing file completely before changing it. Cursors from setting_list and setting_search, and read authorization from setting_read, belong only to the current-tree revision that produced them. setting_read always returns the complete exact file without truncation or pagination. Re-read after another conversation or a manual edit changes the current tree. Tools expose logical paths, never host paths.\n- World documents are .yaml or .md files under world/. Special writes are limited to opening.md, control/frame.yaml, control/player-views.yaml, and control/blocks/*.md, plus control/followups.yaml and its referenced prompts/*.md, renderers/*.html, scripts/*.js, regex/*.yaml and assets/* text resources. Put characters, places, rules, and the current situation under world/, and world-specific hosting guidance under control/.\n- opening.md is the first page shown to the player. Never decide the player's action, dialogue, or inner thoughts. Facts that constrain the first action must also live in the world document that naturally owns them.\n- Create a world document with setting_create. You provide its unique 2-to-32-character lowercase ASCII ref, path, title, summary, aliases, and body without a technical header; Runtime completes the technical storage. Existing document selectors are automatically projected to their @refs when read. Cross-document references and control selectors use only @refs.\n- A mechanical YAML reference to one whole document is a one-key map such as { $ref: \"@alex\" }; @alex inside an ordinary string is still only text. The document value in frame and player-view selectors is likewise \"@alex\", with any local position expressed separately by a locator.\n- A YAML locator may mix map keys and zero-based array indexes. Use remove for one existing node and append for a new array item; never rewrite a whole document merely to delete one key or change one array item.\n- Delete an obsolete world document with setting_delete. Runtime accepts it only when it is not currentSituation, no frame or player-view selects it, and no other document points to it with $ref; every blocking location is returned precisely.\n- If any string to be persisted still contains a literal \\uXXXX sequence, its tool arguments were double-escaped and that call is rejected. Resend real Unicode characters; Runtime will not guess-decode them.\n\n## Content-package lifecycle during play\n\n- The editing target is the current tree of a content-package template used to create worlds. Successful tool writes replace that current tree directly. Each world already created from it retains the state, control, and history copied at creation and evolves independently from then on.\n- When a world is created, world/* becomes independently mutable state/*, control/* becomes world control, and opening.md is committed verbatim as the first host narrative.\n- The opening.md body is committed only as genesis during world creation. A fresh play context is compiled from world control and current world state, then appends the current player input. Every fact that still constrains the first action also lives in the world document that naturally owns it.\n\n## How play reads and uses the setting\n\n- control/frame.yaml instructions insert world-specific prompt blocks as author instructions. Each entry may carry a single-line turnGuide, or consist of turnGuide alone: these lines become the world's tail lines in the turn guide appended after the player input on every play send. Keep them to one or two world-specific, easily lost constraints; never copy cross-world rules. Its context entries perform deterministic material selections in their declared order.\n- Optional frame.maintenance.documents maps @short-refs to advisory body UTF-8 byte counts; slots can declare a unique stable id and advisoryBytes. Excess size only produces advice. Optional frame.maintenance.clock binds {document: \"@ref\", locator: {yaml: [time]}} to record scalar or Markdown world time at actual writes, without inferring a clock.\n- current_situation, document, and reference_targets selections inject whole bodies; node injects only one exact node. A catalog injects only title, summary, and @short-ref for direct child documents, never their bodies. History and additional materials are likewise exact selections.\n- A catalog directory declared by the frame remains available through state_list as an empty state directory and as a world_create destination even when it currently contains no documents. The declaration is not a second piece of persistent state.\n- Play AI discovers the remaining world documents on demand: state_list browses Runtime-provided directory handles, context_search searches literal source text, and context_read reads an exact handle. Discovery consists of directory browsing, literal search, and exact reads; zero literal matches do not prove that a fact is absent.\n- control/player-views.yaml projects current values through exact selectors. Its responsibility is presentation; permissions, secrecy, character knowledge, and conditional visibility are expressed separately through world semantics.\n\n## How play updates the setting\n\n- Play AI writes only within state/*: after a document body is injected or completely read, world_patch adds, changes, or removes exact nodes and world_create creates a new document. Use world_retire when an entity leaves the active catalog without destroying it; the document remains readable and restorable. opening.md is authored at the content-package stage; control/* changes belong to world-external control editing.\n- Runtime commits durable state and narrative. Write results that must survive the next action to their natural owner; put short-lived cross-object situations with no single owner in the current situation; leave details that do not need to remain current in committed narrative.\n- Passing mechanical checks does not make content discoverable during play. Whenever important information is created or reorganized, decide its natural owner, initial injection or discovery path, future update location, and player-visible projection together."
+      },
+      "tabletop": {
+        "tools": [
+          {
+            "name": "setting_list",
+            "description": "List the world root or a world/ subdirectory from the content package's current tree. The root also lists opening and control files. A cursor is valid only for the same query and current-tree revision.",
+            "inputSchema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "directory": {
+                  "type": "string",
+                  "pattern": "^world(?:/[^\\\\]+)?$"
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100
+                },
+                "cursor": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": []
+            }
+          },
+          {
+            "name": "setting_search",
+            "description": "Search literal source text in world documents in the content package's current tree. within may be world, a world/ directory or path, or @ref.",
+            "inputSchema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "query": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "within": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "caseSensitive": {
+                  "type": "boolean"
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100
+                },
+                "cursor": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "query"
+              ]
+            }
+          },
+          {
+            "name": "setting_read",
+            "description": "Read a complete world document by world/ path or @ref, or read a complete opening/control file by exact path. Existing document selectors are projected to @refs. The result is never truncated or paginated.",
+            "inputSchema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "path"
+              ]
+            }
+          },
+          {
+            "name": "setting_create",
+            "description": "Create one world/ .yaml or .md document. Supply a unique lowercase ASCII ref, title, summary, aliases, and body without a technical header; Runtime completes the storage envelope. The created document is already fully read.",
+            "inputSchema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "pattern": "^world/.+\\.(?:ya?ml|md)$"
+                },
+                "ref": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9-]{1,31}$"
+                },
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120
+                },
+                "summary": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                },
+                "aliases": {
+                  "type": "array",
+                  "maxItems": 16,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                },
+                "body": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "path",
+                "ref",
+                "title",
+                "summary",
+                "aliases",
+                "body"
+              ]
+            }
+          },
+          {
+            "name": "setting_write_file",
+            "description": "Replace a completely read world/ .yaml or .md document body while preserving its identity and metadata, or create/replace opening.md, control/frame.yaml, control/player-views.yaml, control/blocks/*.md, or control/gameplay.json (only a tabletop resolution scheme may change), plus control/followups.yaml and its referenced prompts/*.md, renderers/*.html, scripts/*.js, regex/*.yaml and assets/* text resources. To repair a damaged world document, also provide ref, title, summary, and aliases; Runtime preserves any recoverable storage identity. Create new world documents with setting_create.",
+            "inputSchema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "contents": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "ref": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9-]{1,31}$"
+                },
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120
+                },
+                "summary": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                },
+                "aliases": {
+                  "type": "array",
+                  "maxItems": 16,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                }
+              },
+              "required": [
+                "path",
+                "contents"
+              ]
+            }
+          },
+          {
+            "name": "setting_patch",
+            "description": "Update a completely read YAML world document without rewriting unrelated content. locator is a non-empty path whose segments are map keys or zero-based array indexes. Use add for a missing map key or array index, replace for an existing node, append for the end of an existing array, and remove for an existing map key or array item. When title, summary, or aliases are stale, update all three together with op \"set_metadata\". Rewrite Markdown bodies with setting_write_file.",
+            "inputSchema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "document": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "op": {
+                  "type": "string",
+                  "enum": [
+                    "add",
+                    "replace",
+                    "append",
+                    "remove",
+                    "set_metadata"
+                  ]
+                },
+                "locator": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": [
+                      "string",
+                      "integer"
+                    ]
+                  }
+                },
+                "value": {},
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120
+                },
+                "summary": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                },
+                "aliases": {
+                  "type": "array",
+                  "maxItems": 16,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                }
+              },
+              "required": [
+                "document",
+                "op"
+              ]
+            }
+          },
+          {
+            "name": "setting_move",
+            "description": "Move a completely read world document to a new world/ .yaml or .md logical path while preserving its identity and contents.",
+            "inputSchema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "from": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "to": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "from",
+                "to"
+              ]
+            }
+          },
+          {
+            "name": "setting_delete",
+            "description": "Permanently delete a completely read world document from the content-package current tree. Runtime rejects deletion while currentSituation, a frame slot, a player-view selector, or another document's $ref still points to it, and reports every blocking location. Delete or redirect those references first.",
+            "inputSchema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "document": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "document"
+              ]
+            }
+          }
+        ],
+        "contract": "# Runtime setting-improvement conversation contract\n\n- Every user message is appended to the selected setting-improvement conversation. Continue its Provider context by default; only an explicit Fresh context choice compiles a new conversation from the content package's current tree. Decide whether to reply, ask, read the current tree, or change it from the user's current request.\n- The current request includes eight read/write tools. A complete response with no tool calls is shown as an ordinary assistant message and settles this user invocation. A response containing tool calls is an internal tool step; continue after all results and eventually answer with a complete tool-free response.\n- Tool writes directly modify the content package's current tree. Calls in one complete Provider tool response execute in order; its successful changes publish atomically when that response settles, immediately become authoritative, and require no second confirmation.\n- Every write tool call settles independently and sees earlier accepted calls in response order. A failure returns its precise cause only in that call's result, does not roll back successful siblings, and does not stop later calls. Runtime automatically runs content-tree checks and a real Prompt Preview after writes and appends that review to the last successful write result.\n- Read an existing file completely before changing it. Cursors from setting_list and setting_search, and read authorization from setting_read, belong only to the current-tree revision that produced them. setting_read always returns the complete exact file without truncation or pagination. Re-read after another conversation or a manual edit changes the current tree. Tools expose logical paths, never host paths.\n- World documents are .yaml or .md files under world/. Special writes are limited to opening.md, control/frame.yaml, control/player-views.yaml, control/blocks/*.md, and control/gameplay.json (only a tabletop resolution scheme may change), plus control/followups.yaml and its referenced prompts/*.md, renderers/*.html, scripts/*.js, regex/*.yaml and assets/* text resources. Put characters, places, rules, and the current situation under world/, and world-specific hosting guidance under control/.\n- opening.md is the first page shown to the player. Never decide the player's action, dialogue, or inner thoughts. Facts that constrain the first action must also live in the world document that naturally owns them.\n- Create a world document with setting_create. You provide its unique 2-to-32-character lowercase ASCII ref, path, title, summary, aliases, and body without a technical header; Runtime completes the technical storage. Existing document selectors are automatically projected to their @refs when read. Cross-document references and control selectors use only @refs.\n- A mechanical YAML reference to one whole document is a one-key map such as { $ref: \"@alex\" }; @alex inside an ordinary string is still only text. The document value in frame and player-view selectors is likewise \"@alex\", with any local position expressed separately by a locator.\n- A YAML locator may mix map keys and zero-based array indexes. Use remove for one existing node and append for a new array item; never rewrite a whole document merely to delete one key or change one array item.\n- Delete an obsolete world document with setting_delete. Runtime accepts it only when it is not currentSituation, no frame or player-view selects it, and no other document points to it with $ref; every blocking location is returned precisely.\n- If any string to be persisted still contains a literal \\uXXXX sequence, its tool arguments were double-escaped and that call is rejected. Resend real Unicode characters; Runtime will not guess-decode them.\n\n## Content-package lifecycle during play\n\n- The editing target is the current tree of a content-package template used to create worlds. Successful tool writes replace that current tree directly. Each world already created from it retains the state, control, and history copied at creation and evolves independently from then on.\n- When a world is created, world/* becomes independently mutable state/*, control/* becomes world control, and opening.md is committed verbatim as the first host narrative.\n- The opening.md body is committed only as genesis during world creation. A fresh play context is compiled from world control and current world state, then appends the current player input. Every fact that still constrains the first action also lives in the world document that naturally owns it.\n\n## How play reads and uses the setting\n\n- control/frame.yaml instructions insert world-specific prompt blocks as author instructions. Each entry may carry a single-line turnGuide, or consist of turnGuide alone: these lines become the world's tail lines in the turn guide appended after the player input on every play send. Keep them to one or two world-specific, easily lost constraints; never copy cross-world rules. Its context entries perform deterministic material selections in their declared order.\n- Optional frame.maintenance.documents maps @short-refs to advisory body UTF-8 byte counts; slots can declare a unique stable id and advisoryBytes. Excess size only produces advice. Optional frame.maintenance.clock binds {document: \"@ref\", locator: {yaml: [time]}} to record scalar or Markdown world time at actual writes, without inferring a clock.\n- current_situation, document, and reference_targets selections inject whole bodies; node injects only one exact node. A catalog injects only title, summary, and @short-ref for direct child documents, never their bodies. History and additional materials are likewise exact selections.\n- A catalog directory declared by the frame remains available through state_list as an empty state directory and as a world_create destination even when it currently contains no documents. The declaration is not a second piece of persistent state.\n- Play AI discovers the remaining world documents on demand: state_list browses Runtime-provided directory handles, context_search searches literal source text, and context_read reads an exact handle. Discovery consists of directory browsing, literal search, and exact reads; zero literal matches do not prove that a fact is absent.\n- control/player-views.yaml projects current values through exact selectors. Its responsibility is presentation; permissions, secrecy, character knowledge, and conditional visibility are expressed separately through world semantics.\n\n## How play updates the setting\n\n- Play AI writes only within state/*: after a document body is injected or completely read, world_patch adds, changes, or removes exact nodes and world_create creates a new document. Use world_retire when an entity leaves the active catalog without destroying it; the document remains readable and restorable. opening.md is authored at the content-package stage; control/* changes belong to world-external control editing.\n- Runtime commits durable state and narrative. Write results that must survive the next action to their natural owner; put short-lived cross-object situations with no single owner in the current situation; leave details that do not need to remain current in committed narrative.\n- Passing mechanical checks does not make content discoverable during play. Whenever important information is created or reorganized, decide its natural owner, initial injection or discovery path, future update location, and player-visible projection together."
+      }
+    },
+    "transcript": {
+      "results": [
+        {
+          "toolCallId": "list-root",
+          "markdown": "# Setting directory\n\n- [special] opening.md\n- [special] control/frame.yaml\n- [special] control/blocks/world.md\n- [special] control/player-views.yaml\n- @current-situation · Current situation · world/current-situation.yaml\n\nPage 0..1 / 1\nComplete: yes",
+          "isError": false,
+          "changes": []
+        },
+        {
+          "toolCallId": "search-situation",
+          "markdown": "# Literal setting search\n\n- @current-situation · world/current-situation.yaml · 4:18\n  \"  title: Current situation\"\n- @current-situation · world/current-situation.yaml · 5:27\n  \"  summary: The short-term situation happening now that must not be forgotten next.\"\n\nPage 0..2 / 2\nComplete: yes",
+          "isError": false,
+          "changes": []
+        },
+        {
+          "toolCallId": "read-opening",
+          "markdown": "# Special-file source opening.md\n\nYou stand at the threshold of a world still waiting to be written. Its places, people, and immediate circumstances remain for the author to define. Wind blows from a direction without a name. A faceless figure approaches, each footstep clearer than the last, then stops before you.\n\n\n---\nComplete: yes",
+          "isError": false,
+          "changes": []
+        },
+        {
+          "toolCallId": "read-situation",
+          "markdown": "# Exact read @current-situation\n\ntitle: Current situation\nsummary: The short-term situation happening now that must not be forgotten next.\ncodec: yaml\nlogicalPath: world/current-situation.yaml\n[body]\nlocation: Not set\npresent: []\nin_progress: Not set\nshort_term_continuity: []\n[/body]\n\n---\nComplete: yes",
+          "isError": false,
+          "changes": []
+        },
+        {
+          "toolCallId": "write-broken-yaml",
+          "markdown": "# Runtime tool rejected\n\nyaml_invalid · world/current-situation.yaml · YAML is not a safe single-document YAML 1.2 core map",
+          "isError": true,
+          "changes": []
+        },
+        {
+          "toolCallId": "write-control-block",
+          "markdown": "# Current-tree write accepted\n\nCreated control/blocks/extra.md in the content package's current tree. This file is already fully read; do not read it again unless a later decision needs Runtime's exact serialization.",
+          "isError": false,
+          "changes": [
+            {
+              "path": "control/blocks/extra.md",
+              "kind": "create",
+              "before": null,
+              "after": "# Extra\n\nKeep the table honest.\n"
+            }
+          ]
+        },
+        {
+          "toolCallId": "delete-current-situation",
+          "markdown": "# Runtime tool rejected\n\nCannot delete @current-situation; remove or redirect every reference first:\n- control/frame.yaml · bindings.currentSituation",
+          "isError": true,
+          "changes": []
+        },
+        {
+          "toolCallId": "patch-missing-node",
+          "markdown": "# Runtime tool rejected\n\nlocator_not_found · world/current-situation.yaml · YAML replace target must exist",
+          "isError": true,
+          "changes": []
+        },
+        {
+          "toolCallId": "move-current-situation",
+          "markdown": "# Current-tree revision accepted\n\n- Moved @current-situation · world/current-situation.yaml → world/moved.yaml\n\nThis call was accepted independently. Every created or changed document above is already fully read; do not read it again unless a later decision needs Runtime's exact serialization.\n\n# Current-tree review passed\n\nContent-tree validation and the real Prompt Preview both passed. This tool response changed 3 file(s) in the content package. Use this review and the coverage below to decide whether the current user request is satisfied or further edits are needed.\n\n# Play-consumption coverage\n\nWorld documents: 0 full text injected; 0 node-only; 0 catalog-summary-only; 0 directly referenced; 1 on-demand-only.\n\n- control/blocks/extra.md — not enabled by control/frame.yaml\n- world/current-situation.yaml — removed from the content package current tree\n- world/moved.yaml — on-demand only\n\nChanged world documents marked on-demand only are not present in a fresh play prompt. If play should discover them reliably, consider adding a catalog, injected reference, or world instruction.\n\nChanged control blocks not enabled by control/frame.yaml never reach ordinary play AI. Add each intended block to frame.instructions or remove the unused file.\n\n",
+          "isError": false,
+          "changes": [
+            {
+              "path": "world/current-situation.yaml",
+              "kind": "delete",
+              "before": "$document:\n  id: situation.current\n  ref: current-situation\n  title: Current situation\n  summary: The short-term situation happening now that must not be forgotten next.\n  aliases: []\nlocation: Not set\npresent: []\nin_progress: Not set\nshort_term_continuity: []\n",
+              "after": null
+            },
+            {
+              "path": "world/moved.yaml",
+              "kind": "create",
+              "before": null,
+              "after": "$document:\n  id: situation.current\n  ref: current-situation\n  title: Current situation\n  summary: The short-term situation happening now that must not be forgotten next.\n  aliases: []\nlocation: Not set\npresent: []\nin_progress: Not set\nshort_term_continuity: []\n"
+            }
+          ]
+        }
+      ],
+      "review": {
+        "status": "usable",
+        "diff": [
+          {
+            "path": "control/blocks/extra.md",
+            "kind": "create",
+            "before": null,
+            "after": "# Extra\n\nKeep the table honest.\n"
+          },
+          {
+            "path": "world/current-situation.yaml",
+            "kind": "delete",
+            "before": "$document:\n  id: situation.current\n  ref: current-situation\n  title: Current situation\n  summary: The short-term situation happening now that must not be forgotten next.\n  aliases: []\nlocation: Not set\npresent: []\nin_progress: Not set\nshort_term_continuity: []\n",
+            "after": null
+          },
+          {
+            "path": "world/moved.yaml",
+            "kind": "create",
+            "before": null,
+            "after": "$document:\n  id: situation.current\n  ref: current-situation\n  title: Current situation\n  summary: The short-term situation happening now that must not be forgotten next.\n  aliases: []\nlocation: Not set\npresent: []\nin_progress: Not set\nshort_term_continuity: []\n"
+          }
+        ],
+        "diagnostics": [],
+        "preview": {
+          "compilation": {
+            "coverage": [],
+            "logicalMessages": []
+          },
+          "leakage": {
+            "status": "clean",
+            "checkedFields": []
+          }
+        },
+        "playCoverage": {
+          "totals": {
+            "fullInjected": 0,
+            "nodeInjected": 0,
+            "catalogSummary": 0,
+            "referencedFromInjected": 0,
+            "onDemand": 1
+          },
+          "changed": [
+            {
+              "path": "control/blocks/extra.md",
+              "access": "unused_control",
+              "detail": "not enabled by control/frame.yaml and unavailable to ordinary play AI"
+            },
+            {
+              "path": "world/current-situation.yaml",
+              "access": "removed",
+              "detail": "removed from the content package current tree"
+            },
+            {
+              "path": "world/moved.yaml",
+              "access": "on_demand",
+              "detail": "available only through directory, literal search, and exact read"
+            }
+          ]
+        }
+      },
+      "authorization": {
+        "revision": "revision",
+        "readWorldDocumentIds": [
+          "situation.current"
+        ],
+        "readableDamagedWorldPaths": [],
+        "readOpaquePaths": [
+          "control/blocks/extra.md",
+          "opening.md"
+        ]
+      },
+      "files": [
+        "control/blocks/extra.md",
+        "control/blocks/world.md",
+        "control/frame.yaml",
+        "control/player-views.yaml",
+        "opening.md",
+        "world/moved.yaml"
+      ]
+    }
+  },
+  "zh-CN": {
+    "gameplays": {
+      "interactive-fiction": {
+        "tools": [
+          {
+            "name": "setting_list",
+            "description": "列出内容包当前树的 world 根目录或 world/ 子目录；根目录同时列出 opening 和 control 专用文件。cursor 只对同一查询和当前树 revision 有效。",
+            "inputSchema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "directory": {
+                  "type": "string",
+                  "pattern": "^world(?:/[^\\\\]+)?$"
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100
+                },
+                "cursor": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": []
+            }
+          },
+          {
+            "name": "setting_search",
+            "description": "在内容包当前树的 world 文档中按原文字面搜索；within 可为 world、world/ 目录或路径或 @ref。",
+            "inputSchema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "query": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "within": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "caseSensitive": {
+                  "type": "boolean"
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100
+                },
+                "cursor": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "query"
+              ]
+            }
+          },
+          {
+            "name": "setting_read",
+            "description": "按 world/ 路径或 @ref 完整读取世界文档，或按精确路径完整读取 opening/control；既有文档选择值自动投影为 @ref。结果不会截断或分页。",
+            "inputSchema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "path"
+              ]
+            }
+          },
+          {
+            "name": "setting_create",
+            "description": "创建一份 world/ 下的 .yaml 或 .md 文档；提供唯一的小写 ASCII ref、标题、摘要、别名和不含技术头的正文，Runtime 自行完成存储封装。创建成功的文档视为已经完整读取。",
+            "inputSchema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "pattern": "^world/.+\\.(?:ya?ml|md)$"
+                },
+                "ref": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9-]{1,31}$"
+                },
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120
+                },
+                "summary": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                },
+                "aliases": {
+                  "type": "array",
+                  "maxItems": 16,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                },
+                "body": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "path",
+                "ref",
+                "title",
+                "summary",
+                "aliases",
+                "body"
+              ]
+            }
+          },
+          {
+            "name": "setting_write_file",
+            "description": "整份替换已完整读取的 world/ .yaml 或 .md 正文并保留身份和元信息，或创建／替换 opening.md、control/frame.yaml、control/player-views.yaml、control/blocks/*.md，以及 control/followups.yaml 和其中引用的 prompts/*.md、renderers/*.html、scripts/*.js、regex/*.yaml、assets/* 文本资源。修复损坏世界文档时同时提供 ref、title、summary、aliases，Runtime 会保留仍可恢复的存储身份。新建世界文档使用 setting_create。",
+            "inputSchema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "contents": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "ref": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9-]{1,31}$"
+                },
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120
+                },
+                "summary": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                },
+                "aliases": {
+                  "type": "array",
+                  "maxItems": 16,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                }
+              },
+              "required": [
+                "path",
+                "contents"
+              ]
+            }
+          },
+          {
+            "name": "setting_patch",
+            "description": "细粒度更新已完整读取的 YAML 世界文档，不重写无关内容。locator 是非空路径，每段可以是 map key 或从 0 开始的数组下标；add 新建 map key 或数组位置，replace 更新既有节点，append 追加既有数组，remove 删除既有 map key 或数组项。title、summary 或 aliases 过时时用 op \"set_metadata\" 整组更新三项。Markdown 正文用 setting_write_file 整份重写。",
+            "inputSchema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "document": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "op": {
+                  "type": "string",
+                  "enum": [
+                    "add",
+                    "replace",
+                    "append",
+                    "remove",
+                    "set_metadata"
+                  ]
+                },
+                "locator": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": [
+                      "string",
+                      "integer"
+                    ]
+                  }
+                },
+                "value": {},
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120
+                },
+                "summary": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                },
+                "aliases": {
+                  "type": "array",
+                  "maxItems": 16,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                }
+              },
+              "required": [
+                "document",
+                "op"
+              ]
+            }
+          },
+          {
+            "name": "setting_move",
+            "description": "把已完整读取的世界文档移动到新的 world/ .yaml 或 .md 逻辑路径，并保留身份与内容。",
+            "inputSchema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "from": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "to": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "from",
+                "to"
+              ]
+            }
+          },
+          {
+            "name": "setting_delete",
+            "description": "从内容包当前树永久删除一份已完整读取的 world 文档。若 currentSituation、frame slot、player-view selector 或其他文档的 $ref 仍指向它，Runtime 会拒绝并返回全部精确阻挡位置；请先删除或改向这些引用。",
+            "inputSchema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "document": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "document"
+              ]
+            }
+          }
+        ],
+        "contract": "# Runtime 设定完善对话契约\n\n- 每条用户消息都追加到所选设定完善对话。默认沿该对话的 Provider 上下文继续；用户显式选择“全新上下文”时，Runtime 才从内容包当前树编译一段新对话。根据用户当前要求决定直接回复、提出问题、读取当前树或修改当前树。\n- 当前请求随附八个读写工具。不调用工具的完整响应会作为普通助手消息显示，并结束本次用户调用。含有工具调用的响应是内部工具步骤；收到全部工具结果后继续处理，最终用一个不调用工具的完整响应答复用户。\n- 工具写入直接修改内容包当前树。每个完整 Provider 工具响应中的调用按顺序执行，成功改动在该响应结算时原子发布，发布后立即成为内容包权威，无需另一步确认。\n- 每个写工具调用独立结算，并按本响应中的调用顺序读取之前已接受的结果。某个调用失败只在对应工具结果中返回精确原因，不回滚同一响应内其他成功调用，也不阻止后续调用。Runtime 在写调用结算后自动运行内容树检查和真实 Prompt Preview，并把检查结果附在最后一个成功写调用的结果中。\n- 修改既有文件前必须完整读取它。setting_list／setting_search 的 cursor，以及 setting_read 的读取授权，只属于产生它们的当前树 revision；任何其他对话或手动编辑改变当前树后，必须重新读取再写。setting_read 总是完整返回精确文件，不截断、不分页。工具只暴露逻辑路径，不暴露宿主路径。\n- world/ 下只写 .yaml 或 .md 世界文档；专用文件只允许 opening.md、control/frame.yaml、control/player-views.yaml 和 control/blocks/*.md，以及 control/followups.yaml 和其中引用的 prompts/*.md、renderers/*.html、scripts/*.js、regex/*.yaml、assets/* 文本资源。人物、地点、规则与当前情境放在 world/，本世界特有的主持要求放在 control/。\n- opening.md 是玩家看见的第一页，不得替玩家决定行动、台词或内心。会继续约束首次行动的事实也必须写入自然承载它的世界文档。\n- 新建 world 文档使用 setting_create：ref 由你提供，并同时提供路径、标题、摘要、别名与不含技术头的正文。ref 必须是唯一的 2～32 位小写 ASCII 短句柄；Runtime 自行完成技术存储。既有文档选择值会在读取时自动投影为对应的 @ref；跨文档引用和 control 中的文档选择只使用 @ref。\n- YAML 中指向整份文档的机械引用只写成单键 map，例如 { $ref: \"@alex\" }；普通字符串中的 @alex 仍只是文字。frame 与 player-view selector 的 document 值也写成 \"@alex\"，局部位置另用 locator 表达。\n- YAML locator 可混合 map key 与从 0 开始的数组下标。用 remove 删除一个既有节点；用 append 追加数组项；不要为了删一个键或改一条数组项而整份重写文档。\n- 删除不再需要的 world 文档用 setting_delete。Runtime 仅在它不是 currentSituation、没有被 frame 或 player-view 选择、也没有被其他文档以 $ref 指向时才接受，并精确返回所有阻挡位置。\n- 任何准备持久化的字符串中若仍包含字面的 \\uXXXX，说明工具参数被重复转义；该调用会被拒绝。请重新发送真实 Unicode 字符，不要要求 Runtime 猜测解码。\n\n## 内容包在游玩中的生命周期\n\n- 编辑对象是用于创建世界的内容包当前树；成功工具写入会直接替换这份当前树。每个已经创建的世界持有创建时复制的状态、控制与历史，并从此独立演化。\n- 创建世界时，world/* 逐份成为可持续修改的 state/*，control/* 成为世界控制，opening.md 逐字成为第一条已提交主持叙事。\n- opening.md 的正文只在创建时作为 genesis 提交。全新游玩上下文由世界控制与当前世界状态编译，并追加本次玩家输入；会继续约束首次行动的事实同时写入自然承载它的 world 文档。\n\n## 游玩怎样读取并使用设定\n\n- control/frame.yaml 的 instructions 把世界专属提示块作为作者指令；每项可带 turnGuide（单行），或只含 turnGuide：这些行成为每次游玩发送追加在玩家输入之后的本轮提示中的世界尾部行，只放本世界特有且最容易丢的约束，一到两行，不复制跨世界规则。context 只按声明顺序执行确定性材料选择。\n- 可在 frame.maintenance.documents 中用 @短引用声明正文建议 UTF-8 字节数；slot 可声明唯一稳定 id 和 advisoryBytes。超限只提示，不截断或拒绝写入。frame.maintenance.clock 可明确绑定 {document: \"@ref\", locator: {yaml: [时间]}}；只记录该次写入时的标量或 Markdown 文本，不推断时钟。\n- current_situation、document 和 reference_targets 选择的整份正文会直接注入；node 只注入精确节点。catalog 只注入该目录直接子文档的 title、summary 与 @短引用，不注入正文；history 与 additional_materials 也只按精确声明注入。\n- frame 声明的 catalog 目录即使当前没有文档，也会作为空状态目录由 state_list 返回，并可作为 world_create 目标；目录声明不是另一份持久状态。\n- 其余世界文档由游玩 AI 按需发现：用 state_list 浏览 Runtime 返回的目录句柄，用 context_search 做原文字面搜索，再用 context_read 精确读取。可发现路径由目录、字面搜索和精确读取组成；字面 0 命中不证明事实不存在。\n- control/followups.yaml 可用 narraeon.package-followups/v1 声明 followups 有序数组；每项包含稳定 id、displayName、enabled、mount、prompt（role: author_instruction、markdown 相对 control/）、artifacts 和 maxArtifactBytes。启停保留定义与资源；它们在主叙事提交后独立生成界面产物，不写世界。脚本授权是用户本地设置，文件不能自授信任。\n- control/player-views.yaml 用精确 selector 投影当前原值。它只负责展示；权限、秘密、人物认知与条件显示由世界语义另行表达。\n\n## 游玩怎样更新设定\n\n- 游玩 AI 的世界写入范围是 state/*：在正文已经注入或完整读取后用 world_patch 细粒度增改或删除节点，也可用 world_create 创建新文档；对象退出常驻 catalog 时用 world_retire 退役而不销毁，之后仍可读取并恢复。opening.md 的创作发生在内容包阶段；control/* 的调整属于世界外控制编辑。\n- Runtime 负责提交持续状态与叙事。需要跨下一次行动保持的结果写回自然所有者；只约束眼前、没有单一所有者的局面写入当前情境；无需作为当前状态持续保存的细节留在已提交叙事。\n- 机械检查通过不代表内容在游玩中容易发现。新增或重组重要信息时，必须同时决定自然所有者、初始注入或发现路径、未来更新位置和玩家显示方式。"
+      },
+      "tabletop": {
+        "tools": [
+          {
+            "name": "setting_list",
+            "description": "列出内容包当前树的 world 根目录或 world/ 子目录；根目录同时列出 opening 和 control 专用文件。cursor 只对同一查询和当前树 revision 有效。",
+            "inputSchema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "directory": {
+                  "type": "string",
+                  "pattern": "^world(?:/[^\\\\]+)?$"
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100
+                },
+                "cursor": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": []
+            }
+          },
+          {
+            "name": "setting_search",
+            "description": "在内容包当前树的 world 文档中按原文字面搜索；within 可为 world、world/ 目录或路径或 @ref。",
+            "inputSchema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "query": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "within": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "caseSensitive": {
+                  "type": "boolean"
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100
+                },
+                "cursor": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "query"
+              ]
+            }
+          },
+          {
+            "name": "setting_read",
+            "description": "按 world/ 路径或 @ref 完整读取世界文档，或按精确路径完整读取 opening/control；既有文档选择值自动投影为 @ref。结果不会截断或分页。",
+            "inputSchema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "path"
+              ]
+            }
+          },
+          {
+            "name": "setting_create",
+            "description": "创建一份 world/ 下的 .yaml 或 .md 文档；提供唯一的小写 ASCII ref、标题、摘要、别名和不含技术头的正文，Runtime 自行完成存储封装。创建成功的文档视为已经完整读取。",
+            "inputSchema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "pattern": "^world/.+\\.(?:ya?ml|md)$"
+                },
+                "ref": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9-]{1,31}$"
+                },
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120
+                },
+                "summary": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                },
+                "aliases": {
+                  "type": "array",
+                  "maxItems": 16,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                },
+                "body": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "path",
+                "ref",
+                "title",
+                "summary",
+                "aliases",
+                "body"
+              ]
+            }
+          },
+          {
+            "name": "setting_write_file",
+            "description": "整份替换已完整读取的 world/ .yaml 或 .md 正文并保留身份和元信息，或创建／替换 opening.md、control/frame.yaml、control/player-views.yaml、control/blocks/*.md、control/gameplay.json（只能修改跑团判定方案，玩法模式不可改），以及 control/followups.yaml 和其中引用的 prompts/*.md、renderers/*.html、scripts/*.js、regex/*.yaml、assets/* 文本资源。修复损坏世界文档时同时提供 ref、title、summary、aliases，Runtime 会保留仍可恢复的存储身份。新建世界文档使用 setting_create。",
+            "inputSchema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "contents": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "ref": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9-]{1,31}$"
+                },
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120
+                },
+                "summary": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                },
+                "aliases": {
+                  "type": "array",
+                  "maxItems": 16,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                }
+              },
+              "required": [
+                "path",
+                "contents"
+              ]
+            }
+          },
+          {
+            "name": "setting_patch",
+            "description": "细粒度更新已完整读取的 YAML 世界文档，不重写无关内容。locator 是非空路径，每段可以是 map key 或从 0 开始的数组下标；add 新建 map key 或数组位置，replace 更新既有节点，append 追加既有数组，remove 删除既有 map key 或数组项。title、summary 或 aliases 过时时用 op \"set_metadata\" 整组更新三项。Markdown 正文用 setting_write_file 整份重写。",
+            "inputSchema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "document": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "op": {
+                  "type": "string",
+                  "enum": [
+                    "add",
+                    "replace",
+                    "append",
+                    "remove",
+                    "set_metadata"
+                  ]
+                },
+                "locator": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": [
+                      "string",
+                      "integer"
+                    ]
+                  }
+                },
+                "value": {},
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120
+                },
+                "summary": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                },
+                "aliases": {
+                  "type": "array",
+                  "maxItems": 16,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                }
+              },
+              "required": [
+                "document",
+                "op"
+              ]
+            }
+          },
+          {
+            "name": "setting_move",
+            "description": "把已完整读取的世界文档移动到新的 world/ .yaml 或 .md 逻辑路径，并保留身份与内容。",
+            "inputSchema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "from": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "to": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "from",
+                "to"
+              ]
+            }
+          },
+          {
+            "name": "setting_delete",
+            "description": "从内容包当前树永久删除一份已完整读取的 world 文档。若 currentSituation、frame slot、player-view selector 或其他文档的 $ref 仍指向它，Runtime 会拒绝并返回全部精确阻挡位置；请先删除或改向这些引用。",
+            "inputSchema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "document": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "document"
+              ]
+            }
+          }
+        ],
+        "contract": "# Runtime 设定完善对话契约\n\n- 每条用户消息都追加到所选设定完善对话。默认沿该对话的 Provider 上下文继续；用户显式选择“全新上下文”时，Runtime 才从内容包当前树编译一段新对话。根据用户当前要求决定直接回复、提出问题、读取当前树或修改当前树。\n- 当前请求随附八个读写工具。不调用工具的完整响应会作为普通助手消息显示，并结束本次用户调用。含有工具调用的响应是内部工具步骤；收到全部工具结果后继续处理，最终用一个不调用工具的完整响应答复用户。\n- 工具写入直接修改内容包当前树。每个完整 Provider 工具响应中的调用按顺序执行，成功改动在该响应结算时原子发布，发布后立即成为内容包权威，无需另一步确认。\n- 每个写工具调用独立结算，并按本响应中的调用顺序读取之前已接受的结果。某个调用失败只在对应工具结果中返回精确原因，不回滚同一响应内其他成功调用，也不阻止后续调用。Runtime 在写调用结算后自动运行内容树检查和真实 Prompt Preview，并把检查结果附在最后一个成功写调用的结果中。\n- 修改既有文件前必须完整读取它。setting_list／setting_search 的 cursor，以及 setting_read 的读取授权，只属于产生它们的当前树 revision；任何其他对话或手动编辑改变当前树后，必须重新读取再写。setting_read 总是完整返回精确文件，不截断、不分页。工具只暴露逻辑路径，不暴露宿主路径。\n- world/ 下只写 .yaml 或 .md 世界文档；专用文件只允许 opening.md、control/frame.yaml、control/player-views.yaml、control/blocks/*.md 和 control/gameplay.json（只能修改跑团判定方案，玩法模式不可改），以及 control/followups.yaml 和其中引用的 prompts/*.md、renderers/*.html、scripts/*.js、regex/*.yaml、assets/* 文本资源。人物、地点、规则与当前情境放在 world/，本世界特有的主持要求放在 control/。\n- opening.md 是玩家看见的第一页，不得替玩家决定行动、台词或内心。会继续约束首次行动的事实也必须写入自然承载它的世界文档。\n- 新建 world 文档使用 setting_create：ref 由你提供，并同时提供路径、标题、摘要、别名与不含技术头的正文。ref 必须是唯一的 2～32 位小写 ASCII 短句柄；Runtime 自行完成技术存储。既有文档选择值会在读取时自动投影为对应的 @ref；跨文档引用和 control 中的文档选择只使用 @ref。\n- YAML 中指向整份文档的机械引用只写成单键 map，例如 { $ref: \"@alex\" }；普通字符串中的 @alex 仍只是文字。frame 与 player-view selector 的 document 值也写成 \"@alex\"，局部位置另用 locator 表达。\n- YAML locator 可混合 map key 与从 0 开始的数组下标。用 remove 删除一个既有节点；用 append 追加数组项；不要为了删一个键或改一条数组项而整份重写文档。\n- 删除不再需要的 world 文档用 setting_delete。Runtime 仅在它不是 currentSituation、没有被 frame 或 player-view 选择、也没有被其他文档以 $ref 指向时才接受，并精确返回所有阻挡位置。\n- 任何准备持久化的字符串中若仍包含字面的 \\uXXXX，说明工具参数被重复转义；该调用会被拒绝。请重新发送真实 Unicode 字符，不要要求 Runtime 猜测解码。\n\n## 内容包在游玩中的生命周期\n\n- 编辑对象是用于创建世界的内容包当前树；成功工具写入会直接替换这份当前树。每个已经创建的世界持有创建时复制的状态、控制与历史，并从此独立演化。\n- 创建世界时，world/* 逐份成为可持续修改的 state/*，control/* 成为世界控制，opening.md 逐字成为第一条已提交主持叙事。\n- opening.md 的正文只在创建时作为 genesis 提交。全新游玩上下文由世界控制与当前世界状态编译，并追加本次玩家输入；会继续约束首次行动的事实同时写入自然承载它的 world 文档。\n\n## 游玩怎样读取并使用设定\n\n- control/frame.yaml 的 instructions 把世界专属提示块作为作者指令；每项可带 turnGuide（单行），或只含 turnGuide：这些行成为每次游玩发送追加在玩家输入之后的本轮提示中的世界尾部行，只放本世界特有且最容易丢的约束，一到两行，不复制跨世界规则。context 只按声明顺序执行确定性材料选择。\n- 可在 frame.maintenance.documents 中用 @短引用声明正文建议 UTF-8 字节数；slot 可声明唯一稳定 id 和 advisoryBytes。超限只提示，不截断或拒绝写入。frame.maintenance.clock 可明确绑定 {document: \"@ref\", locator: {yaml: [时间]}}；只记录该次写入时的标量或 Markdown 文本，不推断时钟。\n- current_situation、document 和 reference_targets 选择的整份正文会直接注入；node 只注入精确节点。catalog 只注入该目录直接子文档的 title、summary 与 @短引用，不注入正文；history 与 additional_materials 也只按精确声明注入。\n- frame 声明的 catalog 目录即使当前没有文档，也会作为空状态目录由 state_list 返回，并可作为 world_create 目标；目录声明不是另一份持久状态。\n- 其余世界文档由游玩 AI 按需发现：用 state_list 浏览 Runtime 返回的目录句柄，用 context_search 做原文字面搜索，再用 context_read 精确读取。可发现路径由目录、字面搜索和精确读取组成；字面 0 命中不证明事实不存在。\n- control/followups.yaml 可用 narraeon.package-followups/v1 声明 followups 有序数组；每项包含稳定 id、displayName、enabled、mount、prompt（role: author_instruction、markdown 相对 control/）、artifacts 和 maxArtifactBytes。启停保留定义与资源；它们在主叙事提交后独立生成界面产物，不写世界。脚本授权是用户本地设置，文件不能自授信任。\n- control/player-views.yaml 用精确 selector 投影当前原值。它只负责展示；权限、秘密、人物认知与条件显示由世界语义另行表达。\n\n## 游玩怎样更新设定\n\n- 游玩 AI 的世界写入范围是 state/*：在正文已经注入或完整读取后用 world_patch 细粒度增改或删除节点，也可用 world_create 创建新文档；对象退出常驻 catalog 时用 world_retire 退役而不销毁，之后仍可读取并恢复。opening.md 的创作发生在内容包阶段；control/* 的调整属于世界外控制编辑。\n- Runtime 负责提交持续状态与叙事。需要跨下一次行动保持的结果写回自然所有者；只约束眼前、没有单一所有者的局面写入当前情境；无需作为当前状态持续保存的细节留在已提交叙事。\n- 机械检查通过不代表内容在游玩中容易发现。新增或重组重要信息时，必须同时决定自然所有者、初始注入或发现路径、未来更新位置和玩家显示方式。"
+      }
+    },
+    "transcript": {
+      "results": [
+        {
+          "toolCallId": "list-root",
+          "markdown": "# 设定目录\n\n- [special] opening.md\n- [special] control/frame.yaml\n- [special] control/blocks/world.md\n- [special] control/player-views.yaml\n- @current-situation · 当前情境 · world/current-situation.yaml\n\n本页 0..1 / 1\nComplete: yes",
+          "isError": false,
+          "changes": []
+        },
+        {
+          "toolCallId": "search-situation",
+          "markdown": "# 设定字面搜索\n\n0 个字面命中不证明设定中不存在该事实。\n\n本页 0..0 / 0\nComplete: yes",
+          "isError": false,
+          "changes": []
+        },
+        {
+          "toolCallId": "read-opening",
+          "markdown": "# 专用文件原文 opening.md\n\n你站在一个尚待创作的世界入口，眼前的地点、人物与局面仍等待作者补全。风从没有名字的方向吹过来，一个还没有面孔的人正朝你走近，脚步声一下比一下清楚，最后停在你面前。\n\n\n---\nComplete: yes",
+          "isError": false,
+          "changes": []
+        },
+        {
+          "toolCallId": "read-situation",
+          "markdown": "# 精确读取 @current-situation\n\ntitle: 当前情境\nsummary: 当前正在发生且接下来不能忘记的短期局面。\ncodec: yaml\nlogicalPath: world/current-situation.yaml\n[body]\n地点: 未设定\n在场: []\n正在发生: 未设定\n短期连续性: []\n[/body]\n\n---\nComplete: yes",
+          "isError": false,
+          "changes": []
+        },
+        {
+          "toolCallId": "write-broken-yaml",
+          "markdown": "# Runtime 工具拒绝\n\nyaml_invalid · world/current-situation.yaml · YAML is not a safe single-document YAML 1.2 core map",
+          "isError": true,
+          "changes": []
+        },
+        {
+          "toolCallId": "write-control-block",
+          "markdown": "# 当前树写入已接受\n\n已在内容包当前树中创建 control/blocks/extra.md。该文件已视为完整读取；除非后续判断依赖 Runtime 的精确序列化结果，否则不要再次读取。",
+          "isError": false,
+          "changes": [
+            {
+              "path": "control/blocks/extra.md",
+              "kind": "create",
+              "before": null,
+              "after": "# Extra\n\nKeep the table honest.\n"
+            }
+          ]
+        },
+        {
+          "toolCallId": "delete-current-situation",
+          "markdown": "# Runtime 工具拒绝\n\n无法删除 @current-situation；请先删除或改向全部引用：\n- control/frame.yaml · bindings.currentSituation",
+          "isError": true,
+          "changes": []
+        },
+        {
+          "toolCallId": "patch-missing-node",
+          "markdown": "# Runtime 工具拒绝\n\nlocator_not_found · world/current-situation.yaml · YAML replace target must exist",
+          "isError": true,
+          "changes": []
+        },
+        {
+          "toolCallId": "move-current-situation",
+          "markdown": "# 当前树 revision 已接受\n\n- 移动 @current-situation · world/current-situation.yaml → world/moved.yaml\n\n本调用已独立接受。上方新建或修改的文档均视为已经完整读取；除非后续判断依赖 Runtime 的精确序列化结果，否则不要再次读取。\n\n# 当前树自动检查通过\n\n内容树校验和真实 Prompt Preview 均已通过；本次工具响应修改内容包中的 3 个文件。请根据本次检查与下方覆盖报告判断当前用户要求是否已经满足，或是否还需修改。\n\n# 游玩读取覆盖\n\n世界文档：0 份全文注入；0 份仅节点注入；0 份仅目录摘要；0 份由已注入内容直接引用；1 份仅按需发现。\n\n- control/blocks/extra.md — 未被 control/frame.yaml 启用\n- world/current-situation.yaml — 已从内容包当前树删除\n- world/moved.yaml — 仅按需发现\n\n标为仅按需发现的改动世界文档不会出现在全新游玩提示中；如果游玩应可靠发现它们，请考虑增加目录、由已注入内容建立引用，或加入世界指令。\n\n未被 control/frame.yaml 启用的改动控制块不会进入普通游玩 AI；请把确实需要的块加入 frame.instructions，或删除无用文件。\n\n",
+          "isError": false,
+          "changes": [
+            {
+              "path": "world/current-situation.yaml",
+              "kind": "delete",
+              "before": "$document:\n  id: situation.current\n  ref: current-situation\n  title: 当前情境\n  summary: 当前正在发生且接下来不能忘记的短期局面。\n  aliases: []\n地点: 未设定\n在场: []\n正在发生: 未设定\n短期连续性: []\n",
+              "after": null
+            },
+            {
+              "path": "world/moved.yaml",
+              "kind": "create",
+              "before": null,
+              "after": "$document:\n  id: situation.current\n  ref: current-situation\n  title: 当前情境\n  summary: 当前正在发生且接下来不能忘记的短期局面。\n  aliases: []\n地点: 未设定\n在场: []\n正在发生: 未设定\n短期连续性: []\n"
+            }
+          ]
+        }
+      ],
+      "review": {
+        "status": "usable",
+        "diff": [
+          {
+            "path": "control/blocks/extra.md",
+            "kind": "create",
+            "before": null,
+            "after": "# Extra\n\nKeep the table honest.\n"
+          },
+          {
+            "path": "world/current-situation.yaml",
+            "kind": "delete",
+            "before": "$document:\n  id: situation.current\n  ref: current-situation\n  title: 当前情境\n  summary: 当前正在发生且接下来不能忘记的短期局面。\n  aliases: []\n地点: 未设定\n在场: []\n正在发生: 未设定\n短期连续性: []\n",
+            "after": null
+          },
+          {
+            "path": "world/moved.yaml",
+            "kind": "create",
+            "before": null,
+            "after": "$document:\n  id: situation.current\n  ref: current-situation\n  title: 当前情境\n  summary: 当前正在发生且接下来不能忘记的短期局面。\n  aliases: []\n地点: 未设定\n在场: []\n正在发生: 未设定\n短期连续性: []\n"
+          }
+        ],
+        "diagnostics": [],
+        "preview": {
+          "compilation": {
+            "coverage": [],
+            "logicalMessages": []
+          },
+          "leakage": {
+            "status": "clean",
+            "checkedFields": []
+          }
+        },
+        "playCoverage": {
+          "totals": {
+            "fullInjected": 0,
+            "nodeInjected": 0,
+            "catalogSummary": 0,
+            "referencedFromInjected": 0,
+            "onDemand": 1
+          },
+          "changed": [
+            {
+              "path": "control/blocks/extra.md",
+              "access": "unused_control",
+              "detail": "not enabled by control/frame.yaml and unavailable to ordinary play AI"
+            },
+            {
+              "path": "world/current-situation.yaml",
+              "access": "removed",
+              "detail": "removed from the content package current tree"
+            },
+            {
+              "path": "world/moved.yaml",
+              "access": "on_demand",
+              "detail": "available only through directory, literal search, and exact read"
+            }
+          ]
+        }
+      },
+      "authorization": {
+        "revision": "revision",
+        "readWorldDocumentIds": [
+          "situation.current"
+        ],
+        "readableDamagedWorldPaths": [],
+        "readOpaquePaths": [
+          "control/blocks/extra.md",
+          "opening.md"
+        ]
+      },
+      "files": [
+        "control/blocks/extra.md",
+        "control/blocks/world.md",
+        "control/frame.yaml",
+        "control/player-views.yaml",
+        "opening.md",
+        "world/moved.yaml"
+      ]
+    }
+  }
+}

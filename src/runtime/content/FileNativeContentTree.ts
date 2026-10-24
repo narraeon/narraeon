@@ -81,10 +81,14 @@ export function inspectContentPackageCurrentTree(
       layout: "content_package",
       files,
     });
-  if (worldDocumentSnapshot.layout !== "content_package")
+  if (worldDocumentSnapshot.layout === "world_state")
     throw new Error(
-      "Content-package inspection accepts only content_package document snapshots",
+      "Authoring inspection accepts only content_package or world_revision document snapshots",
     );
+  const subject =
+    worldDocumentSnapshot.layout === "world_revision"
+      ? "world revision"
+      : "content package";
   const snapshotFiles = worldDocumentSnapshot.files;
   const issues: FileNativeContentIssue[] = [];
   const documents = worldDocumentSnapshotDocuments(worldDocumentSnapshot);
@@ -103,7 +107,7 @@ export function inspectContentPackageCurrentTree(
         issues,
         "missing_opening",
         "opening.md",
-        "The content package is missing a root-level opening.md introduction",
+        `The ${subject} is missing a root-level opening.md introduction`,
       );
   } else if (openingFiles.length > 1) {
     opening = "invalid";
@@ -111,7 +115,7 @@ export function inspectContentPackageCurrentTree(
       issues,
       "invalid_opening",
       "opening.md",
-      "A content package may contain only one root-level opening.md file",
+      `A ${subject} may contain only one root-level opening.md file`,
     );
   } else {
     const openingFile = openingFiles[0]!;
@@ -139,7 +143,7 @@ export function inspectContentPackageCurrentTree(
         issues,
         "unsupported_content_file",
         file.path,
-        "The current content package does not accept manifest, seven-field JSON, schema, record, or revision files",
+        `The current ${subject} does not accept manifest, seven-field JSON, schema, record, or revision files`,
       );
     }
   }
@@ -149,7 +153,9 @@ export function inspectContentPackageCurrentTree(
         ({ logicalPath }) =>
           logicalPath === undefined || !unsupportedPaths.has(logicalPath),
       )
-      .map(worldDocumentIssue),
+      .map((diagnostic) =>
+        worldDocumentIssue(diagnostic, worldDocumentSnapshot.logicalRoot),
+      ),
   );
 
   const index = documentIndex(documents);
@@ -164,13 +170,13 @@ export function inspectContentPackageCurrentTree(
       issues,
       "missing_world_frame",
       "control/frame.yaml",
-      "The content package is missing its world prompt frame",
+      `The ${subject} is missing its world prompt frame`,
     );
     issue(
       issues,
       "missing_current_situation",
       "control/frame.yaml",
-      "The content package has not bound a current-situation document",
+      `The ${subject} has not bound a current-situation document`,
     );
   } else {
     const frame = parseRestrictedYaml(
@@ -230,7 +236,7 @@ export function inspectContentPackageCurrentTree(
       issues,
       "missing_player_view",
       "control/player-views.yaml",
-      "The content package is missing its player-view control file",
+      `The ${subject} is missing its player-view control file`,
     );
   } else {
     const player = parseRestrictedYaml(
@@ -404,10 +410,11 @@ function contentDocument(
 
 function worldDocumentIssue(
   diagnostic: WorldDocumentDiagnostic,
+  root: "world" | "state",
 ): FileNativeContentIssue {
   return {
     code: contentIssueCode(diagnostic),
-    path: diagnostic.logicalPath ?? "world",
+    path: diagnostic.logicalPath ?? root,
     message:
       diagnostic.code === "document_reference_invalid"
         ? "An explicit $ref points to a missing document, or the target identity is not unique in the snapshot"
@@ -715,7 +722,7 @@ function validateFrameContext(
       catalogDocuments(
         entry.slot.directory as string,
         index.documents(),
-        "world",
+        snapshot.logicalRoot,
       ).length === 0
     ) {
       const directory = entry.slot.directory as string;
@@ -723,7 +730,7 @@ function validateFrameContext(
         issues,
         "invalid_world_frame",
         "control/frame.yaml",
-        `Required catalog ${directory} has no associated documents; it matches only direct children named world/${directory}/<file>.yaml, .yml, or .md, and dots in file names do not create directories`,
+        `Required catalog ${directory} has no associated documents; it matches only direct children named ${snapshot.logicalRoot}/${directory}/<file>.yaml, .yml, or .md, and dots in file names do not create directories`,
       );
       continue;
     }
