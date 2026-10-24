@@ -4,9 +4,10 @@ import type {
 } from "../../protocol/worldMaintenance.ts";
 import { listWorldDocuments } from "../prompt/WorldMaintenanceReport.ts";
 import { WorldDocumentStore } from "./WorldDocumentStore.ts";
-import type {
-  WorldLedgerAuthority,
-  WorldTurnCommit,
+import {
+  isCorrectionCommit,
+  type WorldLedgerAuthority,
+  type WorldTurnCommit,
 } from "./WorldLedgerAuthority.ts";
 
 export interface DocumentMaintenanceState {
@@ -125,12 +126,11 @@ export async function readDocumentMaintenanceFacts(
       files.set(change.relativePath, contents);
     const next = snapshot();
     const position: WorldWritePosition = {
-      kind:
-        commit.mode === "correction"
-          ? "correction"
-          : context === undefined
-            ? "history"
-            : "play",
+      kind: isCorrectionCommit(commit.mode)
+        ? "correction"
+        : context === undefined
+          ? "history"
+          : "play",
       context: context?.ordinal ?? null,
       round: context?.round ?? inputPosition,
       worldTime: commit.worldClock ?? null,

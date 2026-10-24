@@ -13,7 +13,12 @@ import { dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 // 回退只追加一轮 rewind，它在读取时被视为逻辑上的空操作，被丢弃的轮不再可达。
 
 export type WorldTurnMode =
-  "genesis" | "play" | "correction" | "revision_apply" | "rewind";
+  | "genesis"
+  | "play"
+  | "correction"
+  | "revision_apply"
+  | "control_apply"
+  | "rewind";
 
 export interface WorldTurnFileChange {
   path: string;
