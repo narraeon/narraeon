@@ -241,7 +241,7 @@ Runtime 不按剩余 token 从新到旧填充历史。全新 bootstrap 完整补
 
 追加上下文在每次正常发送（含空输入续写）时更新当前预设指令，保留初始世界材料、目录索引和原顺序的 Provider 原生对话；同次发送的工具循环与后置定义使用同一运行快照。每次 Authority 写入都必须基于该上下文当前已提交端点；若世界被其他操作推进，只能选择全新上下文重新编译。全新上下文替换旧逻辑 transcript，不把旧链嵌套进新请求；它既可以由普通“全新上下文”提交开始，也可以由玩家消息修改明确选择。修改路径从所选消息的逻辑父端点重新编译当前主持／玩法／模型绑定，把已经由时间线修订提交的修改稿只作为首条普通玩家 append，不再重复推进 Authority。Web 另行持久保留当前时间线上此前成立的玩家输入、AI 正文、Provider 返回推理、工具参数与结果、失败和 usage，使其在刷新或冷恢复后仍按原顺序可达，并在每个模型上下文起点显示分隔标记；普通全新上下文保留完整旧链，修改路径只保留修改点以前的页面轨迹。页面时间线按不可变上下文链和追加事件保存，首次打开只返回最近的有界摘要页；“加载更早”使用稳定游标向前读取，普通尾部追加不会改写旧页或旧事件。
 
-Runtime 在每次模型派发前持久保存完整 `ModelHostExchange`；它属于所在游玩上下文，只保存该上下文最新的一份，写入新请求时随之替换旧的一份，原样重发只使用它（[ADR-0048](adr/0048-play-contexts-keep-one-request-and-reference-prompt-snapshots.md)）。Provider 完整返回后，Runtime 先保存去除临时诊断的完整结果和协议原生续传载荷，再执行工具、准备精确结算并尝试 Authority 提交；因此进程在 Provider 返回后退出时只能继续结算同一结果，不能再次调用模型。若 Provider 流中断或进程可能已开始派发但未保存完整结果，中断片段只在界面显示，不追加到模型 transcript，也不进入 Authority；此时外部结果未知，旧请求绝不能重发，当前模型会话终止并要求玩家使用全新上下文。玩家可以用当前 world、call chain 与 exchange 的精确身份显式取消生成；AbortSignal 必须贯穿 Chat Completions、OpenAI Responses 和 Anthropic Messages 的真实 fetch 及后置请求。已提交的玩家原文和先前 Authority 步骤不回滚，未结算输出不进入 transcript 或故事；取消发生在 Provider 派发后时同样禁止旧请求重放，只有能证明下一次派发尚未发生时才保留原样继续资格。取消是玩家操作而非错误，页面时间线以独立状态事件呈现；浏览器 SSE 断开只是呈现故障，绝不隐式取消 Runtime 正在执行的交换。Provider 明确报告 context window 已超出时，Runtime 不截断消息、文档或工具结果，也不重试同一请求；当前模型会话终止并要求玩家使用全新上下文。除这类必须重开上下文的拒绝外，只有 Provider 在开始生成前明确拒绝请求，或持久状态能证明请求尚未派发时，空输入“追加上下文”才会原样重发已保存请求，不重复玩家原文，不根据片段构造“继续写”指令，也不重新拼装 frame。若上一响应已经完整结束，同样的空输入动作会用包含其原生续传载荷的当前 transcript 发起下一次生成。完整响应的续传载荷缺失或损坏时同样必须 fail closed，不能退回到解析投影重建。界面保留“全新上下文”和“追加上下文”两个提交动作，运行中的生成另有“取消生成”控制。中断卡片按 Runtime 提供的可选失败分类显示中英文说明，原始错误折叠在技术详情；“重新发送”只走合法空输入追加路径，“从全新上下文继续”只选择新上下文并聚焦输入，不自动发送，模型连接／输出配置错误提供配置入口。这些恢复入口不构成新的提交模式，也不放宽请求重放边界；旧记录没有分类时按 canRetry 退化展示。
+Runtime 在每次模型派发前持久保存完整 `ModelHostExchange`；它属于所在游玩上下文，只保存该上下文最新的一份，写入新请求时随之替换旧的一份，原样重发只使用它（[ADR-0048](adr/0048-play-contexts-keep-one-request-and-reference-prompt-snapshots.md)）。Provider 完整返回后，Runtime 在同一进程内执行工具、结算并尝试 Authority 提交，不为重放保存 Provider 返回、结算事实或随机种子。进程在生成途中退出时，重启后这次生成一律标记为中断，由玩家重试；重试重新调用模型、重新掷骰，已经成立的前序 Authority 步骤不回滚（[ADR-0044](adr/0044-runtime-is-single-process-and-recovers-by-retry.md)）。进程仍在运行而 Provider 流中断时，中断片段只在界面显示，不追加到模型 transcript，也不进入 Authority；此时外部结果未知，旧请求不能重发，当前模型会话终止并要求玩家使用全新上下文。玩家可以用当前 world、call chain 与 exchange 的精确身份显式取消生成；AbortSignal 必须贯穿 Chat Completions、OpenAI Responses 和 Anthropic Messages 的真实 fetch 及后置请求。已提交的玩家原文和先前 Authority 步骤不回滚，未结算输出不进入 transcript 或故事；取消发生在 Provider 派发后时同样禁止旧请求重放，只有能证明下一次派发尚未发生时才保留原样继续资格。取消是玩家操作而非错误，页面时间线以独立状态事件呈现；浏览器 SSE 断开只是呈现故障，绝不隐式取消 Runtime 正在执行的交换。Provider 明确报告 context window 已超出时，Runtime 不截断消息、文档或工具结果，也不重试同一请求；当前模型会话终止并要求玩家使用全新上下文。除这类必须重开上下文的拒绝外，只有 Provider 在开始生成前明确拒绝请求，或持久状态能证明请求尚未派发时，空输入“追加上下文”才会原样重发已保存请求，不重复玩家原文，不根据片段构造“继续写”指令，也不重新拼装 frame。若上一响应已经完整结束，同样的空输入动作会用包含其原生续传载荷的当前 transcript 发起下一次生成。完整响应的续传载荷缺失或损坏时同样必须 fail closed，不能退回到解析投影重建。界面保留“全新上下文”和“追加上下文”两个提交动作，运行中的生成另有“取消生成”控制。中断卡片按 Runtime 提供的可选失败分类显示中英文说明，原始错误折叠在技术详情；“重新发送”只走合法空输入追加路径，“从全新上下文继续”只选择新上下文并聚焦输入，不自动发送，模型连接／输出配置错误提供配置入口。这些恢复入口不构成新的提交模式，也不放宽请求重放边界；旧记录没有分类时按 canRetry 退化展示。
 
 游玩上下文只以原生协议作为继续发送的配置兼容边界。正常发送使用当前同协议的 endpoint、方言、模型、Effort、Thinking、返回 thinking 内容与输出能力，并重新编译匹配的缓存策略；原生续传不转换协议。改成其他协议只在派发前临时拒绝，不持久标记上下文失效，切回原协议即可继续。旧版本仅因完整模型绑定比较失败而留下的中断，依据拦截前事件恢复可继续状态；结果未知、取消、续传缺失或损坏、备份导入等真实限制仍保留。每次请求保存不含凭据和地址的编码配置，工具循环及合法重试使用同一快照，凭据与传输地址使用当前连接。没有编码快照的旧待重试请求须恢复完整原配置后原样重试，不能用当前设置猜测旧请求。CLIProxyAPI 模型名的 thinking 后缀优先于请求 body，因此模型 ID 含 `(high)`、`(max)` 等后缀时只能把结构化 Effort 与 Thinking 都留在 `Provider 默认`，不能同时制造两个配置权威；返回 thinking 内容仍是正交的可见性意图，可以随该后缀独立传递。Provider response ID、continuation token、不透明推理项和缓存只用于协议续传或加速，不成为世界状态、已提交叙事或唯一恢复来源。Claude 通过 Chat Completions 代理时通常只能得到 `reasoning_content`，协议本身不能保证携带签名 thinking；需要可验证续传时必须使用能保留完整原生块的 Anthropic Messages，或使用携带 `reasoning.encrypted_content` 的 OpenAI Responses 兼容路径，而不是切割正文猜测。
 
@@ -303,15 +303,15 @@ Runtime 是唯一业务提交者。每笔提交绑定稳定 operation ID 和父�
 - 每份变化后完整世界文档及前后 hash；
 - 下一端点完整附加材料清单。
 
-长期恢复保存最终文件效果，不保存模型 patch 语言。提交先 durable 发布世界中立的内容 blob、state manifest、history segment、材料集合、直接结果 root 和 Authority 事实，再发布独立的“接受已准备”operation receipt，随后原子切换小型 continuity head，最后幂等物化 `state`、`history` 和材料清单；若事实已接受但投影物化失败，结果必须报告“已提交、待修复”，阻止新写入，并只根据同一结果 root 补齐，不能以新 operation 重放模型。每次追加只新增本次 epoch 并替换小 head，不重写此前事实。
+长期恢复保存最终文件效果，不保存模型 patch 语言。世界目录中的 `state/`、`control/` 与 `history/` 就是当前端点的内容（[ADR-0045](adr/0045-world-history-is-current-files-plus-a-turn-ledger.md)）。每次推进是一轮：先写下本轮记录（模式、本轮改动的 state 与 control 文件前像、附加材料清单前像、追加的历史消息身份与叙事检查点声明），再逐文件原子替换当前文件，最后推进 `runtime/head.json`。打开世界时，序号大于 head 的记录说明该轮未完成，Runtime 用它的前像恢复文件并删除记录；这是唯一的恢复路径。原子 rename 是唯一的持久化保证，不为断电做 fsync。
 
-V1 继续只用 genesis anchor 加不可变 Authority 事实作为正确性来源，不增加第二份权威日志。`worldId` 只属于世界本地外壳；历史消息使用 Authority 内局部身份，事实摘要不包含 world 或 operation 身份。`commit:N` 是 V1 世界内别名，父关系同时携带不可变摘要，结果 root 是恢复 state、history 和材料的直接入口。物化检查点只证明本地投影已经追到哪个接受点，不能接受新事实或覆盖 Authority。普通打开与继续游玩读取小 head 和当前投影；旧端点直接读取对应结果 root，完整审计才遍历 audit chain。
+`worldId` 只属于世界本地外壳；历史消息使用世界内局部身份，不嵌入 world 或 operation 身份。`commit:N` 是世界内端点别名，`genesis` 是第 0 轮，回退追加的轮也占用轮号，轮号从不重用。普通打开与继续游玩直接读取当前文件；旧端点由当前文件叠加其后各轮的前像得到，不另存快照或物化检查点。
 
-“创建分叉”是唯一创建独立世界的历史操作。玩家可以在任一已提交玩家／AI 节点点击该按钮；Runtime 先持有统一来源 snapshot lease，再保留截至所选端点的世界中立 Authority 物理闭包，使用创建分叉当下的当前控制和玩家所选主持预设，在同一 target staging 中物化一次最终 state/history／材料投影并发布新世界。当前 head 直接采用小 root 的结果引用，不解码或重算 Authority 事实；共享不可变文件优先 hardlink，失败时 reflink 或逐字节复制，可变投影绝不 hardlink，删除来源后目标仍完全自足。分叉不解析、改写、重算或逐笔物化祖先事实，也不调用 Provider 或重新执行工具。若节点属于持久游玩时间线，staging 同时保留此前完整页面轨迹，并截断所选上下文截至节点的模型 transcript 与调用轨迹，包括返回推理、工具参数和结果；分叉点之后的上下文和响应不进入目标，活动 chain 身份重新分配。截断后最后一项是玩家消息时，玩家可以留空点击“追加上下文”直接重新生成，不再提交一遍同样的玩家原文。
+“创建分叉”是唯一创建独立世界的历史操作。玩家可以在任一已提交玩家／AI 节点点击该按钮；Runtime 把来源世界目录复制到暂存区，在副本上回退到所选轮，使 state、history、附加材料与世界控制都等于该端点，再重新分配世界身份并一次 rename 发布（[ADR-0045](adr/0045-world-history-is-current-files-plus-a-turn-ledger.md)）；主持预设使用玩家创建分叉时的选择。目标不与来源共享任何文件，删除来源后仍完全自足；产物只保留已提交且绑定端点不晚于分叉点的记录（[ADR-0046](adr/0046-artifacts-live-in-the-world-directory-as-stateful-records.md)）。分叉不调用 Provider，也不重新执行工具。若节点属于持久游玩时间线，staging 同时保留此前完整页面轨迹，并截断所选上下文截至节点的模型 transcript 与调用轨迹，包括返回推理、工具参数和结果；分叉点之后的上下文和响应不进入目标，活动 chain 身份重新分配。截断后最后一项是玩家消息时，玩家可以留空点击“追加上下文”直接重新生成，不再提交一遍同样的玩家原文。
 
 当前时间线最新的已提交主持正文，在同一上下文中紧接已提交玩家消息时提供“重新生成”，复用该玩家原文，不新增玩家回合。原上下文可用时直接沿用；备份导入、续传不可用或原上下文生成失败时，说明原因并提供“用全新上下文重新生成”，由玩家明确选择后使用当前模型和预设。若时间线修订已经完成，恢复操作以修订后的同一玩家节点为起点，不重复使用旧节点。
 
-“修改”只作用于当前世界，不创建新 world ID（[ADR-0032](adr/0032-player-edits-append-current-world-timeline-revisions.md)、[ADR-0036](adr/0036-authority-facts-are-world-neutral-and-forks-retain-physical-closures.md)）。玩家确认修改稿后，Runtime 在当前 audit head 上原子追加 timeline revision：`auditParent` 指向修改前当前 head，`timelineParent` 指向所选玩家消息的逻辑父端点，事实只保存双父关系、请求指纹、修改稿与直接结果 root，不嵌入完整 replacement state/history。玩家同时明确选择后续模型上下文策略：**沿原上下文继续**时，新 chain 身份保留逻辑父端点以前的 transcript、Provider 原生续传与原冻结绑定；**作为全新上下文保存**时，页面先把修改点前的调用轨迹封成旧上下文前缀，再用当前主持预设、玩法预设和模型绑定从逻辑父端点重新编译 bootstrap，修改稿成为新上下文唯一的首条玩家 append。后一条路径不读取、不重建旧 Provider 续传，因此旧上下文缺少 durable binding 也不会阻止它。旧提交和旧端点继续精确可恢复，但不进入当前结果 root；“舍弃后续”因此不等于删除审计记录。
+“修改”只作用于当前世界，不创建新 world ID（产品决定见 [ADR-0032](adr/0032-player-edits-append-current-world-timeline-revisions.md)，机制见 [ADR-0044](adr/0044-runtime-is-single-process-and-recovers-by-retry.md)、[ADR-0045](adr/0045-world-history-is-current-files-plus-a-turn-ledger.md)）。玩家确认修改稿后，Runtime 先把世界回退到所选玩家消息的逻辑父端点：追加一轮 `rewind`，state、control、history 与附加材料回到该端点，被丢弃的轮不再可达；随后删除这些轮之后的页面轨迹、模型上下文与产物，再把修改稿作为一次普通发送提交。玩家同时明确选择后续模型上下文策略：**沿原上下文继续**时，新 chain 身份保留逻辑父端点以前的 transcript、Provider 原生续传与原冻结绑定；**作为全新上下文保存**时，页面先把修改点前的调用轨迹封成旧上下文前缀，再用当前主持预设、玩法预设和模型绑定从逻辑父端点重新编译 bootstrap，修改稿成为新上下文唯一的首条玩家 append。后一条路径不读取、不重建旧 Provider 续传，因此旧上下文缺少 durable binding 也不会阻止它。被替换的原消息及其后续不保留，也不能再从它们分叉。
 
 连续性修正仍只针对当前端点的文档或材料清单，追加普通 correction 提交；它不替换玩家消息，也不改变活动调用轨迹。时间线修订、连续性修正和创建分叉是三种不同授权，界面不得用同一个含混的“重新开始”动作代替。
 
@@ -321,7 +321,7 @@ V1 继续只用 genesis anchor 加不可变 Authority 事实作为正确性来�
 
 手动保存和每份完整 AI 工具响应都针对同一工作树 revision 串行结算，并把精确逐文件 before／after 追加到同一改动历史；二者使用同一文件编辑、对话、历史与 diff 界面，不存在“手动修订”和“AI 修订”两个模式。历史中的任一文件可以在活动 epoch 内显式恢复为某次改动的 before-image，即使它后来又被修改；这次恢复本身继续追加为一笔 rollback 改动，不删除模型 transcript 或旧差异。因此玩家可以保留早先若干次修改而只撤销最后一次，不需要整批接受或拒绝一个草稿。epoch 封存后历史继续可读，但所有回滚入口失效。
 
-“应用”先验证整棵工作树及生产等价 Prompt Preview，再用稳定 operation ID 将全部 state 变化作为一次 correction 推进 Authority，随后用确定的 staging／previous 路径幂等发布 control；Runtime 持久记录 prepared、state committed 与 control published 阶段，只有 epoch 已可恢复地标记 applied 后才释放锁。进程在任一阶段中断时只补齐同一操作，不重复推进 Authority，也不把半份 control 当作成功。“放弃”只把 epoch 标记 discarded 并释放锁，不改变 Authority、state 或 control。两种结果都封存此前回滚能力。
+“应用”先验证整棵工作树及生产等价 Prompt Preview，再把全部 state 与 control 变化作为同一轮 `revision_apply` 推进 Authority（[ADR-0045](adr/0045-world-history-is-current-files-plus-a-turn-ledger.md)），epoch 标记 applied 后才释放锁。进程在推进途中退出时，打开世界的账本恢复使这一轮要么完整成立、要么完全不存在，不会留下半份 state 或 control；未成立时 epoch 仍是活动状态，可以再次应用。“放弃”只把 epoch 标记 discarded 并释放锁，不改变 Authority、state 或 control。两种结果都封存此前回滚能力。
 
 世界修订 AI 会话复用设定完善的 Provider／工具循环，但世界工作树、锁、应用和恢复由独立目标模块拥有。会话可以在应用或放弃后继续；下一条新消息会从届时最新世界创建新的 epoch，在 Runtime-system 层追加明确的 epoch 边界，并清空此前 list／search cursor 和完整读取授权。旧 Provider 续传和工具历史原样保留，AI 必须重新读取现有文件后才能写入。浏览器通过独立只读 SSE 订阅轻量运行状态；durable revision 变化后才重新取得完整工作树和 transcript。纯流式增量从内存观察投影，不重复读取完整历史。首次连接及重连先取得当前快照，后续增量只属于这次连接；断线、关闭页面和重连均不取消生成，也不重新发送消息。手动修改、回滚和应用／放弃同样通知观察者，刷新不得覆盖尚未保存的文件草稿。
 
@@ -354,15 +354,15 @@ AI 使用受管的文档 create／write／patch／move／delete 操作修改 YAM
 - `PlayCallChain` 拥有两个提交动作、空输入续写、模型／工具循环、浏览器增量投影、tool-call 幂等、逐响应 Authority 衔接和中断请求原样重发。
 - `PlayTraceRetention` 集中所选端点的页面／模型轨迹选择与关联记录组装，供继续修改、fresh 修改的旧页面前缀和完整／部分分叉复用；分阶段计算保留既有检查时序，身份、Authority、端点读取与发布仍归操作调用方。
 - `FileNativePlayTimelineStore` 拥有跨全新上下文的页面时间线、稳定游标摘要页、单事件详情和可恢复的追加投影。
-- `FileNativePlayAdvanceStore` 拥有冻结请求、完整 Provider 结果、精确响应结算和已结算端点等不可变游玩推进事实。
-- `FileNativeAuthorityV3` 拥有世界中立不可变事实、双父关系、直接结果 root、物理闭包复制和小 continuity head；`FileNativeWorldStore` 拥有世界外壳、operation receipt、投影物化、时间线修订、原子分叉 staging 与修订 control 发布；`FileNativeWorldOperationCoordinator` 在世界语义写入和持久修订锁之间仲裁。它们都不向模型暴露提交 DTO。
+- `FileNativePlayAdvanceStore` 只保存每个上下文进行中推进的标记；重启后仍存在的标记说明该次推进被中断，由玩家重试（ADR-0044）。冻结请求属于所在游玩上下文（ADR-0048）。
+- `WorldTurnLedger` 拥有轮记录、推进顺序、按端点读取、回退和未完成轮恢复；`WorldLedgerAuthority` 在其上组装一轮的 state、control、历史与材料改动，并校验父端点与前像哈希；`FileNativeWorldStore` 拥有世界外壳、时间线修订回退、原子分叉 staging 与控制编辑应用；`FileNativeWorldOperationCoordinator` 在进程内按世界串行世界语义写入，并检查世界修订 epoch 标记。它们都不向模型暴露提交 DTO。
 - `FileNativeArtifactStore` 拥有后置请求产物的 pending 记录、结算、保留策略和活动投影；玩法产物不混入世界 Authority。
 - `ModelHost` 与 provider adapter 只拥有协议编码、流式交换和续传，不拥有世界事实或提示词语义。
 - `Runtime` 协调这些深模块，是唯一业务权威。
 
 ## 持久格式与升级边界
 
-正式发布或公开预发布过的持久格式属于产品兼容契约。Runtime 在旧世界第一次跨越对应的 Authority／页面时间线 seam 前，必须按明确版本执行一次性迁移：先校验旧 Authority、调用链、全部可达端点和物化检查点，再确定性归一旧 world-bound 身份，写完并验证当前不可变事实、operation receipts 与可重建投影，最后原子发布 `continuity-head.json` 作为当前布局已经完整成立的 durable marker。进程在 marker 发布前退出时旧累计源仍然完整，重启只从旧源重建或复用未接受对象；marker 发布后只读取和写入当前格式，旧源保留为只读恢复证据，不再随游玩增长。
+正式发布或公开预发布过的持久格式属于产品兼容契约（[ADR-0034](adr/0034-released-storage-formats-require-atomic-migrations.md)）。旧世界第一次被打开时，Runtime 在该世界的串行操作内按明确版本执行一次性迁移：Authority V3 世界从 genesis 逐提交恢复端点、按相邻差异生成每轮前像记录，写出当前文件与 head 后才删除旧目录（[ADR-0045](adr/0045-world-history-is-current-files-plus-a-turn-ledger.md)）；页面时间线、游玩推进与产物等旧布局同样各自迁移并写下完成标记。迁移中途退出时旧源仍然完整，下次打开重新迁移；完成后只读取和写入当前格式。
 
 v0.1.x（V1）与 v0.2.0（V2）世界存储已不再迁移：由 v0.2.0 及更早版本创建的世界，需先用 v0.3.0–v0.6.0 打开一次，再用当前版本打开；无法升级的世界显示为不可打开，且不被修改。
 
@@ -444,6 +444,6 @@ v0.1.x（V1）与 v0.2.0（V2）世界存储已不再迁移：由 v0.2.0 及更�
 
 ## 世界备份与迁移
 
-完整世界可从世界管理或首页世界菜单导出为 `.narraeon-world.zip`，并在首页导入为保持原名的新独立世界。备份包含完整故事、当前文档与控制、不可变 Authority、页面调用轨迹及保留的冻结产物，不包含模型连接、API Key、工作区预设、偏好或未应用的世界修订。玩法模式与判定方案随备份的 `control/gameplay.json` 保留，导入后保持固定。导出需要世界空闲、没有活动修订且物化已完成；导入通过隔离区完整审计后原子发布，同一归档可以多次导入，operation 重试只发布一次。
+完整世界可从世界管理或首页世界菜单导出为 `.narraeon-world.zip`，并在首页导入为保持原名的新独立世界。备份包含完整故事、当前文档与控制、轮账本、页面调用轨迹及保留的冻结产物，不包含模型连接、API Key、工作区预设、偏好或未应用的世界修订。玩法模式与判定方案随备份的 `control/gameplay.json` 保留，导入后保持固定。导出需要世界空闲且没有活动修订，导出本身是分叉到导出暂存区后打包；导入解压到隔离区，经路径安全、体积与账本结构校验后以分叉原子发布，同一归档可以多次导入，每次都得到新的独立世界（[ADR-0045](adr/0045-world-history-is-current-files-plus-a-turn-ledger.md)）。
 
 导入保留扩展开关，包脚本许可恢复为未授权。旧轨迹供阅读、修改与分叉，下一次行动必须以本机当前绑定开启全新上下文，页面在输入框上方说明这一边界。每个来源上下文持续禁止旧 Provider 续传；本机开始新链后再从旧端点分叉或修改，也仍须开启全新上下文，本机新链可以正常继续。世界修正与应用修订后，完整备份仍保留当前页面的全部轨迹和调用诊断。归档格式与校验契约见 [ADR-0042](adr/0042-world-archives-reuse-fork-closures-through-a-quarantine.md)。
