@@ -303,6 +303,10 @@ export async function beginTurn(
   },
 ): Promise<WorldTurnRecord> {
   const head = await readHead(root);
+  // head + 1 上还留着记录，说明上一轮没有发布端点（中断，或回滚失败）。
+  // 先恢复，否则新记录会把半写入的文件当作前像保存。
+  if ((await readTextOrNull(join(root, turnFileName(head + 1)))) !== null)
+    await recoverIncomplete(root);
   const record: WorldTurnRecord = {
     sequence: head + 1,
     mode: input.mode,
@@ -357,13 +361,21 @@ export async function appendTurn(
   },
 ): Promise<WorldTurnRecord> {
   const record = await beginTurn(root, input);
-  await applyChanges(root, input.changes);
-  await commitTurnHead(root, record);
+  try {
+    await applyChanges(root, input.changes);
+    await commitTurnHead(root, record);
+  } catch (error: unknown) {
+    // 本轮未发布：用启动恢复的同一规则回滚。回滚本身失败时保留原始错误；
+    // 残留的记录留在 head + 1 上，下一次推进开始前会先恢复（见 beginTurn）。
+    await recoverIncomplete(root).catch(() => undefined);
+    throw error;
+  }
   return record;
 }
 
-// 启动时调用：序号大于 head 的记录说明上一次推进未完成，逆序恢复其修改前像。
-// 被丢弃的轮记录（读取时已忽略）在这里清理。返回是否回滚了未完成的轮。
+// 世界首次打开时调用（FileNativeWorldStore），进程内推进失败时也调用：序号大于 head 的记录
+// 说明对应推进未完成，逆序恢复其修改前像。被丢弃的轮记录（读取时已忽略）在这里清理。
+// 返回是否回滚了未完成的轮。
 export async function recoverIncomplete(root: string): Promise<boolean> {
   const head = await readHead(root);
   const turns = await readAllRecords(root);

@@ -1,5 +1,7 @@
 import {
+  chmod,
   mkdtemp,
+  readdir,
   readFile,
   rename,
   rm,
@@ -300,5 +302,58 @@ describe("world turn ledger view cache", () => {
     // 上面的失败读取已经按残缺目录填充了视图，恢复目录后需要再次失效。
     forgetLedger(root);
     expect((await listTurns(root)).length).toBe(1);
+  });
+
+  test("a new turn first recovers an unfinished turn left at head + 1", async () => {
+    // 同一进程里上一轮只替换了文件、没有发布端点：新一轮不能把半写入的文件当作前像。
+    await beginTurn(root, {
+      mode: "play",
+      changes: [{ path: "state/a.yaml", content: "half-a\n" }],
+    });
+    await applyChanges(root, [{ path: "state/a.yaml", content: "half-a\n" }]);
+
+    const record = await appendTurn(root, {
+      mode: "play",
+      changes: [{ path: "state/a.yaml", content: "v1-a\n" }],
+    });
+
+    expect(record.sequence).toBe(1);
+    expect(record.files).toEqual([{ path: "state/a.yaml", before: "v0-a\n" }]);
+    expect(await readFileAt(root, 0, "state/a.yaml")).toBe("v0-a\n");
+    expect(await readFile(join(root, "state/a.yaml"), "utf8")).toBe("v1-a\n");
+  });
+
+  test("a failed in-process advance rolls back its turn before the error propagates", async () => {
+    const locked = join(root, "state", "locked");
+    await mkdir(locked);
+    await chmod(locked, 0o555);
+    try {
+      const before = await snapshot();
+      // a.yaml 先被替换，写入 state/locked/ 时失败（EACCES）。
+      await expect(
+        appendTurn(root, {
+          mode: "play",
+          changes: [
+            { path: "state/a.yaml", content: "next-a\n" },
+            { path: "state/locked/new.md", content: "blocked\n" },
+          ],
+        }),
+      ).rejects.toMatchObject({ code: "EACCES" });
+
+      expect(await snapshot()).toEqual(before);
+      expect(await readHead(root)).toBe(0);
+      expect(await listTurns(root)).toEqual([]);
+      expect(await readdir(join(root, "runtime", "turns"))).toEqual([]);
+    } finally {
+      await chmod(locked, 0o755);
+    }
+
+    // 回滚之后下一次推进正常，序号从 1 开始。
+    const record = await appendTurn(root, {
+      mode: "play",
+      changes: [{ path: "state/a.yaml", content: "v1-a\n" }],
+    });
+    expect(record.sequence).toBe(1);
+    expect(await readHead(root)).toBe(1);
   });
 });
