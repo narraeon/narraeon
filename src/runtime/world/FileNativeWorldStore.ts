@@ -73,6 +73,7 @@ import {
 } from "./WorldLedgerAuthority.ts";
 import {
   forgetLedger,
+  recoverIncomplete,
   rewindTo,
   WorldTurnLedgerError,
 } from "./WorldTurnLedger.ts";
@@ -314,9 +315,11 @@ export class FileNativeWorldStore {
   }
 
   /**
-   * Upgrade an Authority V3 world to the current ledger layout before current
-   * Authority or play-timeline behavior crosses its seam. Concurrent callers share one
-   * in-process promise; the durable world lock serializes processes.
+   * Open a world for this process: upgrade an Authority V3 world to the current
+   * ledger layout, then recover any turn that did not finish before the process
+   * stopped (ADR-0045). Runs once per world in the world's queue slot, so no
+   * in-process advance can interleave with recovery. Concurrent callers share one
+   * in-process promise.
    */
   async ensureCurrentStorage(worldId: string): Promise<void> {
     assertIdentity(worldId, "World ID");
@@ -340,21 +343,24 @@ export class FileNativeWorldStore {
   async #ensureCurrentStorageSerialized(worldId: string): Promise<void> {
     try {
       const root = join(this.#worldsRoot, worldId);
-      const authority = new WorldLedgerAuthority(root);
-      if (
-        (await authority.exists()) &&
-        (await this.playTimeline.layoutCurrent(worldId)) &&
-        (await this.playAdvances.layoutCurrent(worldId))
-      ) {
-        await authority.readHead();
-        this.#currentStorage.add(worldId);
-        return;
-      }
       await this.operations.withWorldAuthorityLock(worldId, async () => {
-        await this.#storageMigrator.migrate(worldId);
-        await migrateLegacyArtifactStore(dirname(this.#worldsRoot), worldId);
+        // A caller queued behind the first open finds the world already open.
+        if (this.#currentStorage.has(worldId)) return;
+        const authority = new WorldLedgerAuthority(root);
+        if (
+          (await authority.exists()) &&
+          (await this.playTimeline.layoutCurrent(worldId)) &&
+          (await this.playAdvances.layoutCurrent(worldId))
+        ) {
+          await authority.readHead();
+        } else {
+          await this.#storageMigrator.migrate(worldId);
+          await migrateLegacyArtifactStore(dirname(this.#worldsRoot), worldId);
+        }
+        // Recovery follows migration; a world with no unfinished turn writes nothing.
+        await recoverIncomplete(root);
+        this.#currentStorage.add(worldId);
       });
-      this.#currentStorage.add(worldId);
     } catch (error: unknown) {
       if (error instanceof FileNativeWorldCreationError) throw error;
       if (isNodeError(error) && error.code === "ENOENT") {
