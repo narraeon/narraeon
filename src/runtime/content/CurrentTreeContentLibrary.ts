@@ -1,6 +1,5 @@
 import { PackageScriptPermissions } from "../extension/PackageScriptPermissions.ts";
 import { createHash, randomUUID } from "node:crypto";
-import { readFileSync, unlinkSync } from "node:fs";
 import {
   open,
   mkdir,
@@ -59,12 +58,6 @@ interface LegacyStoredLocalMetadata {
 interface StoredCurrentTree {
   schemaVersion: 1;
   files: ContentTreeFile[];
-}
-
-interface CurrentTreeContentPackageLockMarker {
-  schemaVersion: 1;
-  pid: number;
-  token: string;
 }
 
 export interface EditableContentPackageSummary {
@@ -160,19 +153,20 @@ export class InvalidContentTreeError extends Error {
  * single replaceable envelope so saving cannot expose half of two file sets.
  */
 export class CurrentTreeContentLibrary {
-  readonly #locksRoot: string;
+  readonly #legacyLocksRoot: string;
   readonly #packagesRoot: string;
   readonly #stagingRoot: string;
   readonly #limits: ContentWorkspaceLimits;
   readonly #beforePackagePublish: (() => void | Promise<void>) | undefined;
   readonly #beforeCurrentTreeReplace: (() => void | Promise<void>) | undefined;
   #mutationTail: Promise<void> = Promise.resolve();
+  #legacyLocksRemoval: Promise<void> | undefined;
 
   constructor(
     dataRoot: string,
     options: CurrentTreeContentLibraryOptions = {},
   ) {
-    this.#locksRoot = join(dataRoot, "content", ".package-locks");
+    this.#legacyLocksRoot = join(dataRoot, "content", ".package-locks");
     this.#packagesRoot = join(dataRoot, "content", "packages");
     this.#stagingRoot = join(dataRoot, "content", ".package-staging");
     this.#limits = normalizeLimits(options.limits);
@@ -488,56 +482,16 @@ export class CurrentTreeContentLibrary {
     localId: string,
     options: { wait?: boolean } = {},
   ): Promise<CurrentTreeContentPackageOperationLease> {
-    this.#packageRoot(localId);
-    await mkdir(this.#locksRoot, { recursive: true, mode: 0o700 });
-    const lockPath = this.#packageLockPath(localId);
-    const reclaimPath = this.#packageReclaimPath(localId);
-    await clearDeadPackageLockMarker(reclaimPath);
-    if (await pathExists(reclaimPath)) {
-      throw new CurrentTreeContentPackageBusyError();
-    }
-
-    const marker = createPackageLockMarker();
-    const temporaryPath = join(
-      this.#locksRoot,
-      `.${localId}.${marker.token}.tmp`,
-    );
-    let handle;
-    try {
-      handle = await open(temporaryPath, "wx", 0o600);
-      await handle.writeFile(`${JSON.stringify(marker)}\n`, "utf8");
-      await handle.close();
-      handle = undefined;
-      try {
-        await linkExclusive(temporaryPath, lockPath);
-      } catch (error: unknown) {
-        if (!isNodeErrorCode(error, "EEXIST")) throw error;
-        if (options.wait === true) {
-          await this.#waitForPackageLock(lockPath, reclaimPath, temporaryPath);
-        } else if (
-          !(await this.#tryReplaceDeadPackageLock(
-            lockPath,
-            reclaimPath,
-            temporaryPath,
-          ))
-        ) {
-          throw new CurrentTreeContentPackageBusyError();
-        }
-      }
-    } catch (error: unknown) {
-      await handle?.close().catch(() => undefined);
-      if (error instanceof CurrentTreeContentPackageBusyError) throw error;
-      throw new CurrentTreeContentLibraryError(
-        "Unable to acquire the source-package save owner",
-        {
-          cause: error instanceof Error ? error : undefined,
-        },
-      );
-    } finally {
-      await unlink(temporaryPath).catch(() => undefined);
-    }
+    const packageRoot = this.#packageRoot(localId);
+    await this.#removeLegacyPackageLocks();
+    await acquireInProcessPackageLease(packageRoot, options.wait === true);
 
     let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      releaseInProcessPackageLease(packageRoot);
+    };
     try {
       const package_ = (await this.#readPackageSnapshot(localId)).package;
       return {
@@ -557,16 +511,24 @@ export class CurrentTreeContentLibrary {
             options.signal,
           );
         },
-        release: () => {
-          if (released) return;
-          released = true;
-          releasePackageOperationLockSync(lockPath, marker.token);
-        },
+        release,
       };
     } catch (error: unknown) {
-      releasePackageOperationLockSync(lockPath, marker.token);
+      release();
       throw error;
     }
+  }
+
+  /**
+   * Lock files written by versions that leased packages across processes. No
+   * code reads them any more, so the first lease in a library removes them.
+   */
+  #removeLegacyPackageLocks(): Promise<void> {
+    this.#legacyLocksRemoval ??= rm(this.#legacyLocksRoot, {
+      recursive: true,
+      force: true,
+    }).catch(() => undefined);
+    return this.#legacyLocksRemoval;
   }
 
   async #replaceNormalizedCurrentTree(
@@ -696,85 +658,6 @@ export class CurrentTreeContentLibrary {
       throw new CurrentTreeContentPackageNotFoundError();
     }
     return join(this.#packagesRoot, localId);
-  }
-
-  #packageLockPath(localId: string): string {
-    return join(this.#locksRoot, `${localId}.mutation`);
-  }
-
-  #packageReclaimPath(localId: string): string {
-    return join(this.#locksRoot, `${localId}.reclaim`);
-  }
-
-  async #tryReplaceDeadPackageLock(
-    lockPath: string,
-    reclaimPath: string,
-    replacementPath: string,
-  ): Promise<boolean> {
-    const current = await readPackageLockMarker(lockPath);
-    if (current === null || isProcessAlive(current.pid)) return false;
-
-    const reclaim = createPackageLockMarker();
-    const temporaryPath = join(
-      this.#locksRoot,
-      `.reclaim.${reclaim.token}.tmp`,
-    );
-    let handle;
-    try {
-      handle = await open(temporaryPath, "wx", 0o600);
-      await handle.writeFile(`${JSON.stringify(reclaim)}\n`, "utf8");
-      await handle.close();
-      handle = undefined;
-      await linkExclusive(temporaryPath, reclaimPath);
-    } catch (error: unknown) {
-      await handle?.close().catch(() => undefined);
-      if (isNodeErrorCode(error, "EEXIST")) return false;
-      throw error;
-    } finally {
-      await unlink(temporaryPath).catch(() => undefined);
-    }
-    try {
-      const verified = await readPackageLockMarker(lockPath);
-      if (verified?.token !== current.token || isProcessAlive(current.pid)) {
-        return false;
-      }
-      await unlink(lockPath).catch((error: unknown) => {
-        if (!isNodeErrorCode(error, "ENOENT")) throw error;
-      });
-      await linkExclusive(replacementPath, lockPath);
-      return true;
-    } finally {
-      const owner = await readPackageLockMarker(reclaimPath);
-      if (owner?.token === reclaim.token) {
-        await unlink(reclaimPath).catch(() => undefined);
-      }
-    }
-  }
-
-  async #waitForPackageLock(
-    lockPath: string,
-    reclaimPath: string,
-    replacementPath: string,
-  ): Promise<void> {
-    for (let attempt = 0; attempt < 2_000; attempt += 1) {
-      if (
-        (await this.#tryReplaceDeadPackageLock(
-          lockPath,
-          reclaimPath,
-          replacementPath,
-        )) ||
-        (await linkExclusive(replacementPath, lockPath)
-          .then(() => true)
-          .catch((error: unknown) => {
-            if (isNodeErrorCode(error, "EEXIST")) return false;
-            throw error;
-          }))
-      ) {
-        return;
-      }
-      await new Promise<void>((resolve) => setTimeout(resolve, 5));
-    }
-    throw new CurrentTreeContentPackageBusyError();
   }
 
   async #mutate<T>(operation: () => Promise<T>): Promise<T> {
@@ -1171,57 +1054,52 @@ function serialize(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
-function createPackageLockMarker(): CurrentTreeContentPackageLockMarker {
-  return { schemaVersion: 1, pid: process.pid, token: randomUUID() };
+const packageLeaseWaitMs = 10_000;
+
+/**
+ * Package leases held by this process, keyed by package root. A key is present
+ * while its lease is held; its array queues waiters in arrival order, and a
+ * release hands the lease straight to the first of them.
+ */
+const heldPackageLeases = new Map<string, PackageLeaseWaiter[]>();
+
+interface PackageLeaseWaiter {
+  grant(): void;
 }
 
-async function readPackageLockMarker(
-  path: string,
-): Promise<CurrentTreeContentPackageLockMarker | null> {
-  try {
-    const value: unknown = JSON.parse(await readFile(path, "utf8"));
-    return parsePackageLockMarker(value);
-  } catch {
-    return null;
+async function acquireInProcessPackageLease(
+  packageRoot: string,
+  wait: boolean,
+): Promise<void> {
+  const queue = heldPackageLeases.get(packageRoot);
+  if (queue === undefined) {
+    heldPackageLeases.set(packageRoot, []);
+    return;
   }
+  if (!wait) throw new CurrentTreeContentPackageBusyError();
+  await new Promise<void>((resolve, reject) => {
+    const waiter: PackageLeaseWaiter = {
+      grant: () => {
+        clearTimeout(timer);
+        resolve();
+      },
+    };
+    const timer = setTimeout(() => {
+      const index = queue.indexOf(waiter);
+      if (index === -1) return;
+      queue.splice(index, 1);
+      reject(new CurrentTreeContentPackageBusyError());
+    }, packageLeaseWaitMs);
+    queue.push(waiter);
+  });
 }
 
-function parsePackageLockMarker(
-  value: unknown,
-): CurrentTreeContentPackageLockMarker | null {
-  if (
-    isPlainObject(value) &&
-    value.schemaVersion === 1 &&
-    typeof value.pid === "number" &&
-    Number.isSafeInteger(value.pid) &&
-    value.pid > 0 &&
-    typeof value.token === "string" &&
-    /^[0-9a-f-]{36}$/u.test(value.token)
-  ) {
-    return { schemaVersion: 1, pid: value.pid, token: value.token };
-  }
-  return null;
-}
-
-function releasePackageOperationLockSync(path: string, token: string): void {
-  try {
-    const current = parsePackageLockMarker(
-      JSON.parse(readFileSync(path, "utf8")) as unknown,
-    );
-    if (current?.token === token) unlinkSync(path);
-  } catch (error: unknown) {
-    if (!isNodeErrorCode(error, "ENOENT")) throw error;
-  }
-}
-
-async function clearDeadPackageLockMarker(path: string): Promise<void> {
-  const marker = await readPackageLockMarker(path);
-  if (
-    (marker !== null && !isProcessAlive(marker.pid)) ||
-    (marker === null && (await pathExists(path)))
-  ) {
-    await unlink(path).catch(() => undefined);
-  }
+function releaseInProcessPackageLease(packageRoot: string): void {
+  const queue = heldPackageLeases.get(packageRoot);
+  if (queue === undefined) return;
+  const next = queue.shift();
+  if (next === undefined) heldPackageLeases.delete(packageRoot);
+  else next.grant();
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -1231,15 +1109,6 @@ async function pathExists(path: string): Promise<boolean> {
   } catch (error: unknown) {
     if (isNodeErrorCode(error, "ENOENT")) return false;
     throw error;
-  }
-}
-
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error: unknown) {
-    return !isNodeErrorCode(error, "ESRCH");
   }
 }
 
