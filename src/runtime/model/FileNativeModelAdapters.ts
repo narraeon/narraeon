@@ -68,6 +68,11 @@ export interface FileNativeModelConnection {
   thinkingBudgetTokens?: number | null;
   contextWindowTokens: number;
   maxOutputTokens: number;
+  /**
+   * Places the transcript breakpoint before the request-level suffix. Live
+   * connections default to on; frozen requests record their own choice.
+   */
+  cacheSuffixBreakpoint?: boolean;
 }
 
 interface ResolvedFileNativeModelConnection extends Omit<
@@ -77,13 +82,18 @@ interface ResolvedFileNativeModelConnection extends Omit<
   | "reasoningSummary"
   | "thinkingMode"
   | "thinkingBudgetTokens"
+  | "cacheSuffixBreakpoint"
 > {
   dialect: ModelProviderDialect;
   reasoningEffort: ModelReasoningEffort;
   reasoningSummary: ModelReasoningSummary;
   thinkingMode: ModelThinkingMode;
   thinkingBudgetTokens: number | null;
+  cacheSuffixBreakpoint: boolean;
 }
+
+/** Anthropic allows four cache_control breakpoints per request. */
+const explicitCacheBreakpointLimit = 4;
 
 const providerContinuationCodecVersion = 1;
 
@@ -97,6 +107,7 @@ function resolveConnection(
     reasoningSummary: connection.reasoningSummary ?? "provider_default",
     thinkingMode: connection.thinkingMode ?? "provider_default",
     thinkingBudgetTokens: connection.thinkingBudgetTokens ?? null,
+    cacheSuffixBreakpoint: connection.cacheSuffixBreakpoint ?? true,
   });
   const issue = modelReasoningPolicyIssue({
     provider: resolved.provider,
@@ -198,6 +209,9 @@ export class FileNativeModelHost implements ModelHost {
     return new FileNativeModelHost(
       {
         ...request.modelConfig,
+        // A frozen request without this choice predates the transcript breakpoint.
+        cacheSuffixBreakpoint:
+          request.modelConfig.cacheSuffixBreakpoint === true,
         baseUrl: this.#connection.baseUrl,
         apiKey: this.#connection.apiKey,
       },
@@ -727,10 +741,6 @@ async function trace(kind: string, value: unknown): Promise<void> {
   }
 }
 
-function items(request: ModelHostExchange): ModelHostAppendItem[] {
-  return request.appended;
-}
-
 type ProviderRequest = ModelHostExchange;
 
 type FrozenModelHostExchange = ModelHostExchange & {
@@ -744,12 +754,12 @@ function chatRequestBody(
   const tools = providerToolDefinitions(request);
   const allowedTools = providerAllowedTools(request);
   const hasPolicy = hasFrozenToolPolicy(request);
-  return {
+  return checkedCacheBreakpoints({
     model: connection.modelId,
     ...chatReasoningRequest(connection),
     messages: [
       ...chatBootstrapMessages(connection, request),
-      ...chatAppend(request),
+      ...chatAppend(connection, request),
     ],
     ...(connection.dialect === "cliproxyapi"
       ? { prompt_cache_key: promptCacheKey(connection, request) }
@@ -774,7 +784,7 @@ function chatRequestBody(
     max_tokens: request.maxOutputTokens,
     stream: true,
     stream_options: { include_usage: true },
-  };
+  });
 }
 
 function anthropicRequestBody(
@@ -782,13 +792,13 @@ function anthropicRequestBody(
   request: ModelHostExchange,
 ): Record<string, unknown> {
   const tools = providerToolDefinitions(request);
-  return {
+  return checkedCacheBreakpoints({
     model: connection.modelId,
     ...anthropicReasoningRequest(connection),
     system: request.bootstrap.provider.system,
     messages: [
       ...anthropicBootstrapMessages(request),
-      ...anthropicAppend(request),
+      ...anthropicAppend(connection, request),
     ],
     ...(tools.length === 0
       ? {}
@@ -805,7 +815,7 @@ function anthropicRequestBody(
       : {}),
     max_tokens: request.maxOutputTokens,
     stream: true,
-  };
+  });
 }
 
 interface ResponsesRequestBodyInput {
@@ -827,7 +837,7 @@ function responsesRequestInput(
     connection,
     input: [
       ...responsesBootstrapMessages(connection, request),
-      ...responsesAppend(request),
+      ...responsesAppend(connection, request),
     ],
     tools: providerToolDefinitions(request).map((tool) => ({
       name: tool.name,
@@ -858,7 +868,7 @@ function responsesRequestBody(
             tools: allowedTools.map((name) => ({ type: "function", name })),
           }
         : "auto";
-  return {
+  return checkedCacheBreakpoints({
     model: input.connection.modelId,
     ...responsesReasoningRequest(resolveConnection(input.connection)),
     input: input.input,
@@ -885,7 +895,7 @@ function responsesRequestBody(
     store: false,
     include: ["reasoning.encrypted_content"],
     stream: true,
-  };
+  });
 }
 
 /**
@@ -1133,8 +1143,128 @@ function promptCacheKey(
     .digest("hex");
 }
 
-function chatAppend(request: ModelHostExchange): unknown[] {
-  return items(request).flatMap((item): unknown[] => {
+/**
+ * Explicit-breakpoint encodings mark the last transcript item before the
+ * request-level suffix, so the next dispatch reads back the transcript it sent.
+ * A request without a suffix keeps its request end as the transcript's entry,
+ * so it is encoded exactly as before.
+ */
+function appendWithSuffixBreakpoint(
+  connection: ResolvedFileNativeModelConnection,
+  request: ModelHostExchange,
+  encode: (items: readonly ModelHostAppendItem[]) => unknown[],
+  markLast: (encoded: unknown[]) => unknown[],
+): unknown[] {
+  const { transcript, suffix } = splitRequestSuffix(request.appended);
+  const encoded = encode(transcript);
+  const breakpoint =
+    suffix.length > 0 &&
+    encoded.length > 0 &&
+    connection.cacheSuffixBreakpoint &&
+    modelCacheStrategy(connection) !== "provider_managed";
+  return [...(breakpoint ? markLast(encoded) : encoded), ...encode(suffix)];
+}
+
+/** Request-level suffix items are recompiled for every dispatch and never stored. */
+function splitRequestSuffix(appended: readonly ModelHostAppendItem[]): {
+  transcript: ModelHostAppendItem[];
+  suffix: ModelHostAppendItem[];
+} {
+  let end = appended.length;
+  while (end > 0 && isRequestSuffix(appended[end - 1]!)) end -= 1;
+  return { transcript: appended.slice(0, end), suffix: appended.slice(end) };
+}
+
+function isRequestSuffix(item: ModelHostAppendItem): boolean {
+  return item.kind === "runtime_notice" && item.notice === "turn_guide";
+}
+
+/** Message-level cache_control, the form the CLIProxyAPI prefix breakpoints use. */
+function markLastMessage(messages: unknown[]): unknown[] {
+  const last = messages.at(-1);
+  if (!isRecord(last))
+    throw new Error("The transcript tail cannot carry a cache breakpoint.");
+  return [
+    ...messages.slice(0, -1),
+    { ...last, cache_control: { type: "ephemeral" } },
+  ];
+}
+
+/** Thinking blocks reject cache_control, so the breakpoint lands on the last block that accepts it. */
+function markLastAnthropicBlock(messages: unknown[]): unknown[] {
+  const last = messages.at(-1);
+  if (!isRecord(last))
+    throw new Error("The transcript tail cannot carry a cache breakpoint.");
+  const content: unknown[] =
+    typeof last.content === "string"
+      ? [{ type: "text", text: last.content }]
+      : Array.isArray(last.content)
+        ? last.content
+        : [];
+  const index = content.findLastIndex(
+    (block) =>
+      isRecord(block) &&
+      block.type !== "thinking" &&
+      block.type !== "redacted_thinking",
+  );
+  if (index < 0)
+    throw new Error(
+      "The Anthropic transcript tail has no block that can carry a cache breakpoint.",
+    );
+  return [
+    ...messages.slice(0, -1),
+    {
+      ...last,
+      content: content.map((block, position) =>
+        position === index
+          ? {
+              ...(block as Record<string, unknown>),
+              cache_control: { type: "ephemeral" },
+            }
+          : block,
+      ),
+    },
+  ];
+}
+
+/** Refuses a request over the breakpoint limit instead of silently dropping one. */
+function checkedCacheBreakpoints<Body>(body: Body): Body {
+  const count = countCacheBreakpoints(body);
+  if (count > explicitCacheBreakpointLimit)
+    throw new Error(
+      `The request has ${count} cache breakpoints; the Anthropic limit is ${explicitCacheBreakpointLimit}.`,
+    );
+  return body;
+}
+
+function countCacheBreakpoints(value: unknown): number {
+  if (Array.isArray(value))
+    return value.reduce(
+      (total: number, item) => total + countCacheBreakpoints(item),
+      0,
+    );
+  if (!isRecord(value)) return 0;
+  return Object.entries(value).reduce(
+    (total, [key, item]) =>
+      total + (key === "cache_control" ? 1 : 0) + countCacheBreakpoints(item),
+    0,
+  );
+}
+
+function chatAppend(
+  connection: ResolvedFileNativeModelConnection,
+  request: ModelHostExchange,
+): unknown[] {
+  return appendWithSuffixBreakpoint(
+    connection,
+    request,
+    chatItems,
+    markLastMessage,
+  );
+}
+
+function chatItems(items: readonly ModelHostAppendItem[]): unknown[] {
+  return items.flatMap((item): unknown[] => {
     if (
       item.kind === "player" ||
       item.kind === "user" ||
@@ -1160,7 +1290,19 @@ function chatAppend(request: ModelHostExchange): unknown[] {
   });
 }
 
-function anthropicAppend(request: ModelHostExchange): unknown[] {
+function anthropicAppend(
+  connection: ResolvedFileNativeModelConnection,
+  request: ModelHostExchange,
+): unknown[] {
+  return appendWithSuffixBreakpoint(
+    connection,
+    request,
+    anthropicItems,
+    markLastAnthropicBlock,
+  );
+}
+
+function anthropicItems(items: readonly ModelHostAppendItem[]): unknown[] {
   const messages: unknown[] = [];
   let toolResults: Record<string, unknown>[] = [];
   const flushToolResults = () => {
@@ -1168,7 +1310,7 @@ function anthropicAppend(request: ModelHostExchange): unknown[] {
     messages.push({ role: "user", content: toolResults });
     toolResults = [];
   };
-  for (const item of items(request)) {
+  for (const item of items) {
     if (item.kind === "tool") {
       toolResults.push({
         type: "tool_result",
@@ -1207,8 +1349,20 @@ function anthropicAppend(request: ModelHostExchange): unknown[] {
   return messages;
 }
 
-function responsesAppend(request: ModelHostExchange): unknown[] {
-  return items(request).flatMap((item) => {
+function responsesAppend(
+  connection: ResolvedFileNativeModelConnection,
+  request: ModelHostExchange,
+): unknown[] {
+  return appendWithSuffixBreakpoint(
+    connection,
+    request,
+    responsesItems,
+    markLastMessage,
+  );
+}
+
+function responsesItems(items: readonly ModelHostAppendItem[]): unknown[] {
+  return items.flatMap((item) => {
     if (
       item.kind === "player" ||
       item.kind === "user" ||
