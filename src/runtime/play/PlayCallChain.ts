@@ -2571,6 +2571,7 @@ export class PlayCallChain {
         session.lastFailure = message;
         session.lastFailureKind = failureKind;
         await this.#persist(session);
+        await this.#worlds.playAdvances.markSettled(advance);
         this.#notifySnapshot(observer, session);
         return projectView(session);
       }

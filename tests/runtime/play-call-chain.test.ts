@@ -8114,6 +8114,74 @@ test("玩家阶段发送进行中重启后标记为中断且不可重试，提�
   });
 });
 
+/**
+ * Starts a chain whose response commit (the second `commitPlayStep`) rejects,
+ * so the failure is recorded by the post-processing branch of the dispatch.
+ */
+async function startWithSettleFailure(label: string) {
+  const { worlds, worldId, root } = await createWorld(label);
+  const commitPlayStep = worlds.commitPlayStep.bind(worlds);
+  let commits = 0;
+  vi.spyOn(worlds, "commitPlayStep").mockImplementation((input) => {
+    commits += 1;
+    if (commits === 2) return Promise.reject(new Error("settle exploded"));
+    return commitPlayStep(input);
+  });
+  const chains = new PlayCallChain(worlds);
+  const result = await chains.start({
+    worldId,
+    chainId: label,
+    exchangeId: `${label}-start`,
+    playerText: "进入房间。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: scriptedHost("灯影摇晃。"),
+  });
+  return { worlds, worldId, root, chains, result };
+}
+
+test("响应结算失败后清除推进标记，同一进程的读取不把它伪造成服务停止（#108）", async () => {
+  const label = "settle-failure-marker";
+  const { worldId, root, chains, result } = await startWithSettleFailure(label);
+  expect(result).toMatchObject({
+    status: "interrupted",
+    canRetry: false,
+    lastFailure: "settle exploded",
+  });
+
+  expect(existsSync(advanceMarkerPath(root, worldId, label))).toBe(false);
+  const inspected = await chains.inspectWorld(worldId);
+  expect(inspected).toMatchObject({
+    canRetry: result.canRetry,
+    lastFailure: result.lastFailure,
+  });
+  expect(
+    inspected?.events.filter((event) => event.kind === "failure"),
+  ).toHaveLength(1);
+});
+
+test("响应结算失败后重启读取保持原失败，不追加服务停止事件（#108）", async () => {
+  const label = "settle-failure-restart";
+  const { worldId, root, result } = await startWithSettleFailure(label);
+  expect(result).toMatchObject({
+    status: "interrupted",
+    canRetry: false,
+    lastFailure: "settle exploded",
+  });
+
+  const restarted = new PlayCallChain(new FileNativeWorldStore(root));
+  const inspected = await restarted.inspectWorld(worldId);
+  expect(existsSync(advanceMarkerPath(root, worldId, label))).toBe(false);
+  expect(inspected).toMatchObject({
+    canRetry: result.canRetry,
+    lastFailure: result.lastFailure,
+  });
+  expect(
+    inspected?.events.filter((event) => event.kind === "failure"),
+  ).toHaveLength(1);
+});
+
 test("发送进行中的推进标记不保存冻结请求，后续发送的标记体积不随上下文增长", async () => {
   const label = "advance-marker-size";
   const { worlds, worldId, root } = await createWorld(label);
