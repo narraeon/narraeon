@@ -17,7 +17,13 @@ import {
   type YAMLMap,
 } from "yaml";
 
-export type WorldDocumentLayout = "content_package" | "world_state";
+/**
+ * `content_package` edits a template under `world`; `world_revision` edits a
+ * playing world's authoring worktree under `state` with the same authoring
+ * rules; `world_state` is the read-only play snapshot under `state`.
+ */
+export type WorldDocumentLayout =
+  "content_package" | "world_revision" | "world_state";
 export type WorldDocumentCodec = "yaml" | "markdown";
 export type WorldDocumentSnapshotStatus = "usable" | "needs_repair";
 
@@ -794,8 +800,7 @@ export class WorldDocumentStore {
               code: "logical_path_invalid",
               logicalPath: command.toLogicalPath,
               documentId: target.entry.descriptor.documentId,
-              message:
-                "Move target must be a safe logical path under world/ with the original codec",
+              message: `Move target must be a safe logical path under ${this.logicalRoot}/ with the original codec`,
             });
           if (
             working.some(
