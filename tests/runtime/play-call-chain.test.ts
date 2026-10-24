@@ -2,7 +2,7 @@ import { FileNativePlayDocuments } from "../../src/runtime/play/PlayDocumentTool
 import { emptyAggregatedModelUsage } from "../../src/protocol/modelUsage.ts";
 import { FileNativeModelHost } from "../../src/runtime/model/FileNativeModelAdapters.ts";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import {
   mkdtemp,
   mkdir,
@@ -1844,6 +1844,23 @@ function startChain(chains: PlayCallChain, worldId: string, label: string) {
     modelBinding: modelBinding(),
     modelHost: scriptedHost(`${label} 回复`),
   });
+}
+
+/** The in-progress advance marker of a call chain (ADR-0044). */
+function advanceMarkerPath(
+  root: string,
+  worldId: string,
+  chainId: string,
+): string {
+  return join(
+    root,
+    "worlds-file-native",
+    worldId,
+    "runtime",
+    "play-advances",
+    createHash("sha256").update(chainId).digest("hex"),
+    "in-progress.json",
+  );
 }
 
 /** Observable play state, without IDs that legitimately differ between worlds. */
@@ -8042,6 +8059,8 @@ test("生成中进程退出后重启标记为中断，重试重新调用模型�
   expect(await restarted.inspectWorld(worldId)).toMatchObject({
     status: "interrupted",
     canRetry: true,
+    lastFailure:
+      "The service stopped while the model request was in progress; retry to call the model again.",
     lastFailureKind: "retryable",
   });
 
@@ -8060,6 +8079,126 @@ test("生成中进程退出后重启标记为中断，重试重新调用模型�
   });
   expect(retryHost.requests).toHaveLength(1);
   expect(retried).toMatchObject({ status: "ready" });
+});
+
+test("玩家阶段发送进行中重启后标记为中断且不可重试，提示文字与响应阶段的分界一致", async () => {
+  const label = "interrupted-player-save";
+  const { worlds, worldId, root } = await createWorld(label);
+  // The player message never finishes saving, as if the process exited mid-write.
+  let saving = 0;
+  vi.spyOn(worlds, "commitPlayStep").mockImplementation(() => {
+    saving += 1;
+    return new Promise(() => undefined);
+  });
+  void new PlayCallChain(worlds)
+    .start({
+      worldId,
+      chainId: label,
+      exchangeId: `${label}-player`,
+      playerText: "我推开石门。",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: modelBinding(),
+      modelHost: scriptedHost("石门缓缓开启。"),
+    })
+    .catch(() => undefined);
+  await vi.waitFor(() => expect(saving).toBe(1));
+
+  const restarted = new PlayCallChain(new FileNativeWorldStore(root));
+  expect(await restarted.inspectWorld(worldId)).toMatchObject({
+    status: "interrupted",
+    canRetry: false,
+    lastFailure:
+      "The service stopped while saving the player message; use a fresh context.",
+    lastFailureKind: "other",
+  });
+});
+
+test("发送进行中的推进标记不保存冻结请求，后续发送的标记体积不随上下文增长", async () => {
+  const label = "advance-marker-size";
+  const { worlds, worldId, root } = await createWorld(label);
+  // Each settlement of a player message records the marker as it is on disk.
+  const markers: string[] = [];
+  const commitPlayStep = worlds.commitPlayStep.bind(worlds);
+  vi.spyOn(worlds, "commitPlayStep").mockImplementation((input) => {
+    const marker = advanceMarkerPath(root, worldId, label);
+    if (existsSync(marker)) markers.push(readFileSync(marker, "utf8"));
+    return commitPlayStep(input);
+  });
+  const chains = new PlayCallChain(worlds);
+  await chains.start({
+    worldId,
+    chainId: label,
+    exchangeId: `${label}-start`,
+    playerText: "进入房间。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: scriptedHost("灯影摇晃，墙上的字迹慢慢变淡。".repeat(40)),
+  });
+  await chains.append({
+    worldId,
+    chainId: label,
+    exchangeId: `${label}-second`,
+    playerText: "继续观察墙面。",
+    modelHost: scriptedHost("墙面渐渐平静。"),
+  });
+
+  const playerMarkers = markers.filter(
+    (raw) =>
+      (JSON.parse(raw) as { advanceKind?: string }).advanceKind === "player",
+  );
+  expect(playerMarkers).toHaveLength(2);
+  for (const raw of playerMarkers)
+    expect(JSON.parse(raw)).not.toHaveProperty("nextRequest");
+  const [early, late] = playerMarkers as [string, string];
+  // The later marker was written after a long transcript; its request is not in it.
+  expect(late).not.toContain("灯影摇晃");
+  expect(Buffer.byteLength(late)).toBeLessThanOrEqual(
+    Buffer.byteLength(early) + 64,
+  );
+});
+
+test("含旧 nextRequest 的推进标记仍可读取，重启后照常标记为中断", async () => {
+  const label = "advance-marker-legacy";
+  const { worlds, worldId, root } = await createWorld(label);
+  let saving = 0;
+  vi.spyOn(worlds, "commitPlayStep").mockImplementation(() => {
+    saving += 1;
+    return new Promise(() => undefined);
+  });
+  void new PlayCallChain(worlds)
+    .start({
+      worldId,
+      chainId: label,
+      exchangeId: `${label}-player`,
+      playerText: "我推开石门。",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: modelBinding(),
+      modelHost: scriptedHost("石门缓缓开启。"),
+    })
+    .catch(() => undefined);
+  await vi.waitFor(() => expect(saving).toBe(1));
+
+  // Released layouts stored the frozen request inside the marker (ADR-0034).
+  const marker = advanceMarkerPath(root, worldId, label);
+  const current = JSON.parse(await readFile(marker, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  await writeFile(
+    marker,
+    `${JSON.stringify({ ...current, nextRequest: { exchange: 1, appended: [{ kind: "user", text: "我推开石门。" }] } }, null, 2)}\n`,
+  );
+
+  const restarted = new PlayCallChain(new FileNativeWorldStore(root));
+  expect(await restarted.inspectWorld(worldId)).toMatchObject({
+    status: "interrupted",
+    canRetry: false,
+    lastFailureKind: "other",
+  });
+  expect(existsSync(marker)).toBe(false);
 });
 
 test("旧格式操作回执文件被忽略：世界照常打开、游玩与分叉", async () => {

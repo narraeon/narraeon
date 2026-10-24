@@ -111,7 +111,7 @@ import type {
 } from "./FileNativePlayTimelineStore.ts";
 import type {
   PlayAdvanceBase,
-  PreparedPlayResponseSettlement,
+  PlayerAdvance,
 } from "./FileNativePlayAdvanceStore.ts";
 
 const callChainToolNames = new Set([
@@ -149,6 +149,11 @@ interface PreparedToolResult {
   event: Extract<V1PlayCallChainEvent, { kind: "tool_result" }>;
   transcript: Extract<ModelHostAppendItem, { kind: "tool" }>;
 }
+
+/** How a settled response leaves its exchange: finished, or continued by a frozen tool-step request. */
+type ResponseSettlement =
+  | { kind: "terminal"; status: "ready" | "interrupted"; narrative: boolean }
+  | { kind: "continue"; nextRequest: ModelHostExchange };
 
 interface PlayCallChainStartInput {
   worldId: string;
@@ -194,6 +199,14 @@ type PlayCallChainRevisionInput = PlayCallChainRevisionBaseInput &
         >;
       }
   );
+
+/** A compiled fresh context, with its documents bound to the bootstrap. */
+interface FreshContextCompilation {
+  documents: FileNativePlayDocuments;
+  bootstrap: PromptCompilation;
+  tools: PromptCompilation["tools"];
+  followups: PlayPresetCompilation["followups"];
+}
 
 interface PreparedFreshPlayerRevision {
   binding: FileNativePlayBinding;
@@ -356,43 +369,12 @@ export class PlayCallChain {
       );
 
     const binding = await this.#worlds.bindPlayCallChain(input.worldId);
-    const documents = new FileNativePlayDocuments(binding.files);
-    const documentMaintenance = await this.#bindDocumentMaintenance(
-      documents,
-      input.worldId,
-      binding.parentHead,
-    );
-    const compilation = this.#compiler.compilePlayCallChain(
-      {
-        extensionControls: await this.#worlds.extensionControls(
-          input.worldId,
-          input.playPreset,
-          this.#compiler.locale,
-        ),
-        endpoint: {
-          id: `${input.worldId}:${binding.parentHead}`,
-          commit: binding.parentHead,
-        },
-        hostBinding: structuredClone(input.hostBinding),
-        world: {
-          controlFingerprint: fingerprintControl(binding.files),
-          documentSnapshot: documents.snapshot,
-          additionalMaterials: structuredClone(binding.additionalMaterials),
-          history: structuredClone(binding.history),
-          historyBackgrounds: structuredClone(binding.historyBackgrounds ?? {}),
-          narrativeCheckpoint: binding.narrativeCheckpoint,
-          documentMaintenance,
-          documentMaintenanceUnavailableReason: documents.maintenanceWarning,
-        },
-        playerInputPlacement: "append",
-        playerInput: input.playerText,
-        modelBinding: structuredClone(input.modelBinding),
-      },
-      input.playPreset,
-    );
-    const tools = structuredClone(compilation.toolUniverse);
-    const bootstrap: PromptCompilation = structuredClone(compilation.bootstrap);
-    documents.bindBootstrap(bootstrap);
+    const fresh = await this.#compileFreshContext(input.worldId, binding, {
+      hostBinding: input.hostBinding,
+      playPreset: input.playPreset,
+      modelBinding: input.modelBinding,
+      playerText: input.playerText,
+    });
     const now = Date.now();
     const session: PlayCallChainSession = {
       schemaVersion: 3,
@@ -412,14 +394,14 @@ export class PlayCallChain {
         name: input.playPreset.name,
         revision: input.playPreset.revision,
       },
-      followups: structuredClone(compilation.followups ?? []),
+      followups: fresh.followups,
       playPresetScriptsEnabled: input.playPreset.scriptsEnabled,
       presetFiles: structuredClone(input.playPreset.files),
       modelBinding: structuredClone(input.modelBinding),
       status: "ready",
       canRetry: false,
-      bootstrap,
-      tools: structuredClone(tools),
+      bootstrap: fresh.bootstrap,
+      tools: fresh.tools,
       transcript: [],
       events: [],
       completedTools: [],
@@ -431,7 +413,7 @@ export class PlayCallChain {
       lastRequestAttempt: 0,
       lastFailure: null,
       updatedAt: now,
-      documents,
+      documents: fresh.documents,
       history: historyEntries(binding.history, binding.historyBackgrounds),
       narrativeCheckpoint: binding.narrativeCheckpoint,
       completedToolMap: new Map(),
@@ -454,6 +436,66 @@ export class PlayCallChain {
       signal,
       input.observer,
     );
+  }
+
+  /**
+   * Compiles a fresh context's input and binds its documents to the bootstrap.
+   * Starting a context and a player revision that begins one both come through
+   * here; they differ only in the world binding they read. A continuing context
+   * compiles against its frozen world context instead (`#refreshPrompt`).
+   */
+  async #compileFreshContext(
+    worldId: string,
+    binding: FileNativePlayBinding,
+    input: {
+      hostBinding: FileNativePromptInput["hostBinding"];
+      playPreset: PlayPresetBinding;
+      modelBinding: ModelHostBinding;
+      playerText: string;
+    },
+  ): Promise<FreshContextCompilation> {
+    const documents = new FileNativePlayDocuments(binding.files);
+    const documentMaintenance = await this.#bindDocumentMaintenance(
+      documents,
+      worldId,
+      binding.parentHead,
+    );
+    const compilation = this.#compiler.compilePlayCallChain(
+      {
+        extensionControls: await this.#worlds.extensionControls(
+          worldId,
+          input.playPreset,
+          this.#compiler.locale,
+        ),
+        endpoint: {
+          id: `${worldId}:${binding.parentHead}`,
+          commit: binding.parentHead,
+        },
+        hostBinding: structuredClone(input.hostBinding),
+        world: {
+          controlFingerprint: fingerprintControl(binding.files),
+          documentSnapshot: documents.snapshot,
+          additionalMaterials: structuredClone(binding.additionalMaterials),
+          history: structuredClone(binding.history),
+          historyBackgrounds: structuredClone(binding.historyBackgrounds ?? {}),
+          narrativeCheckpoint: binding.narrativeCheckpoint,
+          documentMaintenance,
+          documentMaintenanceUnavailableReason: documents.maintenanceWarning,
+        },
+        playerInputPlacement: "append",
+        playerInput: input.playerText,
+        modelBinding: structuredClone(input.modelBinding),
+      },
+      input.playPreset,
+    );
+    const bootstrap: PromptCompilation = structuredClone(compilation.bootstrap);
+    documents.bindBootstrap(bootstrap);
+    return {
+      documents,
+      bootstrap,
+      tools: structuredClone(compilation.toolUniverse),
+      followups: structuredClone(compilation.followups ?? []),
+    };
   }
 
   async append(input: PlayCallChainAppendInput): Promise<V1PlayCallChainView> {
@@ -1485,46 +1527,17 @@ export class PlayCallChain {
       worldId,
       restoresHead,
     );
-    const documents = new FileNativePlayDocuments(binding.files);
-    const documentMaintenance = await this.#bindDocumentMaintenance(
-      documents,
-      worldId,
-      binding.parentHead,
-    );
-    const compilation = this.#compiler.compilePlayCallChain(
-      {
-        extensionControls: await this.#worlds.extensionControls(
-          worldId,
-          freshContext.playPreset,
-          this.#compiler.locale,
-        ),
-        endpoint: {
-          id: `${worldId}:${binding.parentHead}`,
-          commit: binding.parentHead,
-        },
-        hostBinding: structuredClone(freshContext.hostBinding),
-        world: {
-          controlFingerprint: fingerprintControl(binding.files),
-          documentSnapshot: documents.snapshot,
-          additionalMaterials: structuredClone(binding.additionalMaterials),
-          history: structuredClone(binding.history),
-          historyBackgrounds: structuredClone(binding.historyBackgrounds ?? {}),
-          narrativeCheckpoint: binding.narrativeCheckpoint,
-          documentMaintenance,
-          documentMaintenanceUnavailableReason: documents.maintenanceWarning,
-        },
-        playerInputPlacement: "append",
-        playerInput: replacementText,
-        modelBinding: structuredClone(freshContext.modelBinding),
-      },
-      freshContext.playPreset,
-    );
-    documents.bindBootstrap(compilation.bootstrap);
+    const fresh = await this.#compileFreshContext(worldId, binding, {
+      hostBinding: freshContext.hostBinding,
+      playPreset: freshContext.playPreset,
+      modelBinding: freshContext.modelBinding,
+      playerText: replacementText,
+    });
     return {
       binding,
-      bootstrap: structuredClone(compilation.bootstrap),
-      tools: structuredClone(compilation.toolUniverse),
-      followups: structuredClone(compilation.followups ?? []),
+      bootstrap: fresh.bootstrap,
+      tools: fresh.tools,
+      followups: fresh.followups,
     };
   }
 
@@ -1851,7 +1864,7 @@ export class PlayCallChain {
       exchange,
       nextRequest: structuredClone(nextRequest),
       createdAt: Date.now(),
-    } satisfies Extract<PlayAdvanceBase, { advanceKind: "player" }>;
+    } satisfies PlayerAdvance;
     await this.#worlds.playAdvances.begin(advance);
     try {
       await this.#settlePlayerAdvance(session, advance);
@@ -1887,7 +1900,7 @@ export class PlayCallChain {
 
   async #settlePlayerAdvance(
     session: PlayCallChainSession,
-    advance: Extract<PlayAdvanceBase, { advanceKind: "player" }>,
+    advance: PlayerAdvance,
   ): Promise<void> {
     const outcome = await this.#worlds.commitPlayStep({
       ...(advance.playContext === undefined
@@ -1930,10 +1943,6 @@ export class PlayCallChain {
       ...session.events.filter(({ id }) => id < advance.eventId),
       playerEvent,
     ];
-    if (session.transcript.length < advance.transcriptStart)
-      throw new PlayCallChainError(
-        "The recovered call-chain transcript is shorter than its player prefix.",
-      );
     session.transcript = [
       ...session.transcript.slice(0, advance.transcriptStart),
       ...structuredClone(
@@ -1957,21 +1966,29 @@ export class PlayCallChain {
     await this.#worlds.playAdvances.markSettled(advance);
   }
 
-  async #prepareResponseSettlement(
+  /**
+   * Settles one complete model response in this process. The tool batch, the
+   * narrative and state commit, and the transcript and event tail advance
+   * together. Nothing is kept for a replay: a process that stops before this
+   * returns is recovered as an interrupted exchange (ADR-0044).
+   */
+  async #settleResponse(
     session: PlayCallChainSession,
     advance: Extract<PlayAdvanceBase, { advanceKind: "response" }>,
-    response: DurableModelHostResponse,
-  ): Promise<PreparedPlayResponseSettlement> {
+    response: Awaited<ReturnType<ModelHost["exchange"]>>,
+  ): Promise<ResponseSettlement> {
+    const durable = durableModelResponse(response);
     const existing = session.events.find(({ id }) => id === advance.eventId);
     if (existing?.kind !== "assistant")
       throw new PlayCallChainError(
         "The durable Provider result no longer matches its assistant event.",
       );
-    const calls = response.toolCalls ?? [];
-    const text = response.text ?? existing.text;
+    const calls = durable.toolCalls ?? [];
+    const text = durable.text ?? existing.text;
     const hasText = text.trim().length > 0;
     const responseKind =
       calls.length > 0 ? "tool_step" : hasText ? "narrative" : "empty";
+    const narrative = responseKind === "narrative";
     const assistantEvent: Extract<V1PlayCallChainEvent, { kind: "assistant" }> =
       {
         id: advance.eventId,
@@ -1981,19 +1998,19 @@ export class PlayCallChain {
         responseKind,
         exchange: advance.exchange,
         attempt: advance.attempt,
-        ...(response.reasoningContent === undefined
+        ...(durable.reasoningContent === undefined
           ? existing.reasoning === undefined
             ? {}
             : { reasoning: existing.reasoning }
-          : { reasoning: response.reasoningContent }),
-        ...(response.usage === undefined
+          : { reasoning: durable.reasoningContent }),
+        ...(durable.usage === undefined
           ? {}
-          : { usage: structuredClone(response.usage) }),
-        ...(response.stopReason === undefined
+          : { usage: structuredClone(durable.usage) }),
+        ...(durable.stopReason === undefined
           ? {}
-          : { stopReason: response.stopReason }),
+          : { stopReason: durable.stopReason }),
         continuation:
-          response.providerState === undefined ? "unavailable" : "available",
+          durable.providerState === undefined ? "unavailable" : "available",
       };
     const workingTools = new Map(session.completedToolMap);
     const prepared: PreparedToolResult[] = [];
@@ -2026,8 +2043,8 @@ export class PlayCallChain {
       trailingEvents.push(structuredClone(item.event));
     }
     const stateChanges = session.documents.stateChanges();
-    // Resolve once after the entire tool batch. Store the prediction with the
-    // prepared fact so crash recovery publishes exactly the same receipt.
+    // Resolve once after the entire tool batch, so every write result reports
+    // the prediction that the commit below makes true.
     const writes = [...workingTools.values()].filter(
       ({ result }) => result.candidateWrite !== undefined,
     );
@@ -2087,7 +2104,6 @@ export class PlayCallChain {
           result.candidateWrite!.freshContextCoverage = `${this.#compiler.locale === "zh-CN" ? "暂时无法判定下次注入；写入结果不受影响。原因" : "Fresh-context coverage unavailable; the write result is unaffected. Reason"}: ${reason}`;
       }
     }
-    const visibleText = responseKind === "narrative";
     const previousNarrative = session.events.findLast(
       (event) =>
         event.kind === "assistant" &&
@@ -2098,7 +2114,7 @@ export class PlayCallChain {
       (event) => event.kind === "player",
     );
     const checkpointRequested =
-      visibleText &&
+      narrative &&
       session.events.some(
         (event) =>
           event.id >
@@ -2121,110 +2137,85 @@ export class PlayCallChain {
     const assistantItem: Extract<ModelHostAppendItem, { kind: "assistant" }> = {
       kind: "assistant",
       text,
-      ...(response.reasoningContent === undefined
+      ...(durable.reasoningContent === undefined
         ? {}
-        : { reasoningContent: response.reasoningContent }),
-      ...(response.providerState === undefined
+        : { reasoningContent: durable.reasoningContent }),
+      ...(durable.providerState === undefined
         ? {}
-        : { providerState: response.providerState }),
+        : { providerState: durable.providerState }),
       toolCalls: structuredClone(calls),
     };
-    const background = visibleText
+    const background = narrative
       ? narrativeBackground(advance.narrativeOrigin, session.documents.snapshot)
       : undefined;
-    return {
-      ...(background === undefined ? {} : { background }),
-      assistantEvent,
-      playContext: session.continuityContextId ?? session.chainId,
-      ...(worldClock === undefined || stateChanges.length === 0
-        ? {}
-        : { worldClock }),
-      trailingEvents,
-      transcriptStart: session.transcript.length,
-      transcriptAppend: [
-        ...(calls.length > 0 ||
-        visibleText ||
-        response.providerState !== undefined
-          ? [assistantItem]
-          : []),
-        ...prepared.map(({ transcript }) => structuredClone(transcript)),
-        ...(calls.length > 0 && hasText
-          ? [toolStepNotice(this.#compiler.locale)]
-          : []),
-      ],
-      completedTools: [...workingTools.values()].map((item) =>
-        structuredClone(item),
-      ),
-      stateChanges: structuredClone(stateChanges),
-      visibleText,
-      ...(narrativeCheckpoint === undefined ? {} : { narrativeCheckpoint }),
-    };
-  }
-
-  async #settleResponseAdvance(
-    session: PlayCallChainSession,
-    advance: Extract<PlayAdvanceBase, { advanceKind: "response" }>,
-    prepared: PreparedPlayResponseSettlement,
-  ): Promise<
-    | { kind: "terminal"; status: "ready" | "interrupted" }
-    | { kind: "continue"; nextRequest: ModelHostExchange }
-  > {
-    const settlement = structuredClone(prepared);
-    const hasToolCalls = settlement.trailingEvents.some(
-      ({ kind }) => kind === "tool_call",
+    const transcriptStart = session.transcript.length;
+    const transcriptAppend: ModelHostAppendItem[] = [
+      ...(calls.length > 0 || narrative || durable.providerState !== undefined
+        ? [assistantItem]
+        : []),
+      ...prepared.map(({ transcript }) => structuredClone(transcript)),
+      ...(calls.length > 0 && hasText
+        ? [toolStepNotice(this.#compiler.locale)]
+        : []),
+    ];
+    const completedTools = [...workingTools.values()].map((item) =>
+      structuredClone(item),
     );
-    // A legacy prepared fact has no responseKind. Its visibleText decision is
-    // already part of an immutable recovery operation and must be replayed as
-    // recorded; every newly prepared fact is checked against the current rule.
-    if (settlement.assistantEvent.responseKind !== undefined) {
-      const expectedResponseKind = hasToolCalls
-        ? "tool_step"
-        : settlement.assistantEvent.text.trim().length > 0
-          ? "narrative"
-          : "empty";
-      if (
-        settlement.assistantEvent.responseKind !== expectedResponseKind ||
-        settlement.visibleText !== (expectedResponseKind === "narrative")
-      )
-        throw new PlayCallChainError(
-          "The prepared response settlement has an inconsistent narrative classification.",
-        );
-    }
+    const failedTools = trailingEvents.filter(
+      (
+        candidate,
+      ): candidate is Extract<V1PlayCallChainEvent, { kind: "tool_result" }> =>
+        candidate.kind === "tool_result" && !candidate.ok,
+    );
+    if (failedTools.length > 0 && response.diagnostics !== undefined)
+      await this.#failureLog?.recordFailure({
+        exchange: response.diagnostics,
+        failures: [
+          {
+            kind: "tool_execution",
+            message: "A Runtime tool call from the model was rejected.",
+            details: {
+              calls: failedTools.map((result) => ({
+                id: result.callId,
+                name: result.name,
+                ok: result.ok,
+                markdown: result.markdown,
+                replayed: result.replayed,
+              })),
+            },
+          },
+        ],
+      });
+
     let committedHead: string | undefined;
-    if (settlement.visibleText || settlement.stateChanges.length > 0) {
+    if (narrative || stateChanges.length > 0) {
       const outcome = await this.#worlds.commitPlayStep({
-        ...(settlement.playContext === undefined
+        playContext: session.continuityContextId ?? session.chainId,
+        ...(worldClock === undefined || stateChanges.length === 0
           ? {}
-          : { playContext: settlement.playContext }),
-        ...(settlement.worldClock === undefined
-          ? {}
-          : { worldClock: settlement.worldClock }),
+          : { worldClock }),
         operationId: advance.operationId,
         worldId: session.worldId,
         parentHead: advance.parentHead,
-        historyAppend: settlement.visibleText
+        historyAppend: narrative
           ? [
               {
                 role: "narrator",
-                exactText: settlement.assistantEvent.text,
-                ...(settlement.background === undefined
-                  ? {}
-                  : { background: settlement.background }),
+                exactText: text,
+                ...(background === undefined ? {} : { background }),
               },
             ]
           : [],
         nextMaterials: structuredClone(session.nextMaterials),
-        stateChanges: structuredClone(settlement.stateChanges),
-        ...(settlement.narrativeCheckpoint === undefined
-          ? {}
-          : { narrativeCheckpoint: settlement.narrativeCheckpoint }),
+        stateChanges: structuredClone(stateChanges),
+        ...(narrativeCheckpoint === undefined ? {} : { narrativeCheckpoint }),
       });
       committedHead = outcome.head;
-      settlement.assistantEvent.committedHead = outcome.head;
-      if (settlement.narrativeCheckpoint !== undefined) {
-        settlement.assistantEvent.checkpoint = true;
+      assistantEvent.committedHead = outcome.head;
+      if (narrativeCheckpoint !== undefined) {
+        assistantEvent.checkpoint = true;
         session.narrativeCheckpoint = {
-          ...settlement.narrativeCheckpoint,
+          ...narrativeCheckpoint,
           head: outcome.head,
           historyMessageId: `message.${outcome.head.slice("commit:".length)}.1.narrator`,
         };
@@ -2232,52 +2223,45 @@ export class PlayCallChain {
       appendCommittedHistory(session, outcome.head, outcome.historyAppend);
     }
 
-    finalizePreparedReceipts(settlement);
+    finalizeWriteReceipts({
+      stateChanges,
+      completedTools,
+      trailingEvents,
+      transcriptAppend,
+    });
     session.events = [
       ...session.events.filter(({ id }) => id < advance.eventId),
-      structuredClone(settlement.assistantEvent),
-      ...structuredClone(settlement.trailingEvents),
+      structuredClone(assistantEvent),
+      ...structuredClone(trailingEvents),
     ];
     session.nextEventId =
-      Math.max(
-        advance.eventId,
-        ...settlement.trailingEvents.map(({ id }) => id),
-      ) + 1;
-    if (session.transcript.length < settlement.transcriptStart)
-      throw new PlayCallChainError(
-        "The recovered call-chain transcript is shorter than its settlement prefix.",
-      );
+      Math.max(advance.eventId, ...trailingEvents.map(({ id }) => id)) + 1;
     session.transcript = [
-      ...session.transcript.slice(0, settlement.transcriptStart),
-      ...structuredClone(settlement.transcriptAppend),
+      ...session.transcript.slice(0, transcriptStart),
+      ...structuredClone(transcriptAppend),
     ];
-    session.completedTools = structuredClone(settlement.completedTools);
+    session.completedTools = structuredClone(completedTools);
     session.completedToolMap = new Map(
-      settlement.completedTools.map((item) => [
-        item.key,
-        structuredClone(item),
-      ]),
+      completedTools.map((item) => [item.key, structuredClone(item)]),
     );
     if (committedHead !== undefined) session.parentHead = committedHead;
-    if (settlement.stateChanges.length > 0) {
+    if (stateChanges.length > 0) {
       session.documents.acceptCommittedState();
-      mergeChangedDocuments(session, settlement.stateChanges);
-    }
-    if (settlement.stateChanges.length > 0)
+      mergeChangedDocuments(session, stateChanges);
       await this.#bindDocumentMaintenance(
         session.documents,
         session.worldId,
         session.parentHead,
       );
+    }
 
+    const hasToolCalls = calls.length > 0;
     session.exchange = Math.max(session.exchange, advance.exchange);
     session.canRetry = false;
     session.lastFailure = null;
     delete session.lastFailureKind;
-    let result:
-      | { kind: "terminal"; status: "ready" | "interrupted" }
-      | { kind: "continue"; nextRequest: ModelHostExchange };
-    if (settlement.assistantEvent.continuation !== "available") {
+    let result: ResponseSettlement;
+    if (assistantEvent.continuation !== "available") {
       const message =
         "The complete model response has no provider-native continuation payload; use a fresh context.";
       session.events.push({
@@ -2289,7 +2273,7 @@ export class PlayCallChain {
       session.status = "interrupted";
       session.lastFailure = message;
       session.lastFailureKind = "context_unavailable";
-      result = { kind: "terminal", status: "interrupted" };
+      result = { kind: "terminal", status: "interrupted", narrative };
     } else if (hasToolCalls) {
       session.exchange += 1;
       const nextRequest = createRequestWithMaxOutputTokens(
@@ -2310,8 +2294,8 @@ export class PlayCallChain {
       session.lastFailureKind = "retryable";
       result = { kind: "continue", nextRequest };
     } else {
-      session.status = settlement.visibleText ? "ready" : "interrupted";
-      if (!settlement.visibleText) {
+      session.status = narrative ? "ready" : "interrupted";
+      if (!narrative) {
         const message =
           "The model returned neither text nor a complete tool call.";
         session.events.push({
@@ -2323,7 +2307,7 @@ export class PlayCallChain {
         session.lastFailure = message;
         session.lastFailureKind = "other";
       }
-      result = { kind: "terminal", status: session.status };
+      result = { kind: "terminal", status: session.status, narrative };
     }
     await this.#persist(session);
     await this.#worlds.playAdvances.markSettled(advance);
@@ -2496,49 +2480,11 @@ export class PlayCallChain {
         return projectView(session);
       }
 
-      const durableResponse = durableModelResponse(response);
       try {
-        const settlement = await this.#prepareResponseSettlement(
-          session,
-          advance,
-          durableResponse,
-        );
-
-        const failedTools = settlement.trailingEvents.filter(
-          (
-            candidate,
-          ): candidate is Extract<
-            V1PlayCallChainEvent,
-            { kind: "tool_result" }
-          > => candidate.kind === "tool_result" && !candidate.ok,
-        );
-        if (failedTools.length > 0 && response.diagnostics !== undefined)
-          await this.#failureLog?.recordFailure({
-            exchange: response.diagnostics,
-            failures: [
-              {
-                kind: "tool_execution",
-                message: "A Runtime tool call from the model was rejected.",
-                details: {
-                  calls: failedTools.map((result) => ({
-                    id: result.callId,
-                    name: result.name,
-                    ok: result.ok,
-                    markdown: result.markdown,
-                    replayed: result.replayed,
-                  })),
-                },
-              },
-            ],
-          });
-        const settled = await this.#settleResponseAdvance(
-          session,
-          advance,
-          settlement,
-        );
+        const settled = await this.#settleResponse(session, advance, response);
 
         if (settled.kind === "terminal") {
-          if (!settlement.visibleText) {
+          if (!settled.narrative) {
             const message =
               "The model returned neither text nor a complete tool call.";
             if (response.diagnostics !== undefined)
@@ -3153,9 +3099,16 @@ function durableModelResponse(
   return structuredClone(durable);
 }
 
-function finalizePreparedReceipts(
-  settlement: PreparedPlayResponseSettlement,
-): void {
+/**
+ * Copies each committed write's receipt into the tool results that report it,
+ * then drops the candidate write. Receipts state what the commit made true.
+ */
+function finalizeWriteReceipts(settlement: {
+  stateChanges: FileNativeStateChange[];
+  completedTools: PersistedCompletedToolCall[];
+  trailingEvents: V1PlayCallChainEvent[];
+  transcriptAppend: ModelHostAppendItem[];
+}): void {
   const committedWriteRefs = new Set(
     settlement.stateChanges.map(({ stableShortRef }) => stableShortRef),
   );
