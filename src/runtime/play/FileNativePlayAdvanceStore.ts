@@ -3,7 +3,6 @@ import {
   type NarrativeOrigin,
 } from "../history/HistoryBackground.ts";
 import { createHash, randomUUID } from "node:crypto";
-import type { NarrativeCheckpointDeclaration } from "./PlayContinuity.ts";
 import {
   mkdir,
   readdir,
@@ -14,37 +13,14 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { isDeepStrictEqual } from "node:util";
 
-import type { V1PlayCallChainEvent } from "../../protocol/v1.ts";
-import type {
-  ModelHostAppendItem,
-  ModelHostExchange,
-} from "../model/ModelHost.ts";
-import type { FileNativeStateChange } from "../world/FileNativeWorldStore.ts";
-import type { PersistedCompletedToolCall } from "./FileNativePlayTimelineStore.ts";
-import type { HistoryBackground } from "../history/HistoryBackground.ts";
+import type { ModelHostExchange } from "../model/ModelHost.ts";
 
 /**
- * In-memory result of settling one model response. It is never persisted:
- * a process that dies mid-generation is recovered by marking the exchange
- * interrupted and letting the player retry (ADR-0044).
+ * A play advance as the in-progress marker records it. The marker holds only
+ * what recovery needs to recognize an interrupted advance after a restart
+ * (ADR-0044), so it does not grow with the context.
  */
-export interface PreparedPlayResponseSettlement {
-  background?: HistoryBackground;
-  playContext?: string;
-  worldClock?: string;
-  narrativeCheckpoint?: NarrativeCheckpointDeclaration;
-  assistantEvent: Extract<V1PlayCallChainEvent, { kind: "assistant" }>;
-  trailingEvents: V1PlayCallChainEvent[];
-  transcriptStart: number;
-  transcriptAppend: ModelHostAppendItem[];
-  completedTools: PersistedCompletedToolCall[];
-  stateChanges: FileNativeStateChange[];
-  /** Legacy field name: true only for tool-free text eligible for narrative. */
-  visibleText: boolean;
-}
-
 export type PlayAdvanceBase =
   | {
       schemaVersion: 1;
@@ -63,7 +39,6 @@ export type PlayAdvanceBase =
       context: "fresh" | "append";
       transcriptStart: number;
       exchange: number;
-      nextRequest: ModelHostExchange;
       createdAt: number;
     }
   | {
@@ -81,6 +56,15 @@ export type PlayAdvanceBase =
       attempt: number;
       createdAt: number;
     };
+
+/**
+ * A player advance in memory. Settlement needs its frozen first request, which
+ * is passed to `begin` and never written to the marker.
+ */
+export type PlayerAdvance = Extract<
+  PlayAdvanceBase,
+  { advanceKind: "player" }
+> & { nextRequest: ModelHostExchange };
 
 /** Written last by the released-record cleanup (ADR-0034); its absence means "not yet run". */
 const LAYOUT_MARKER = "play-advance-layout.json";
@@ -101,15 +85,16 @@ export class FileNativePlayAdvanceStore {
     this.#worldsRoot = join(resolve(dataRoot), "worlds-file-native");
   }
 
-  async begin(base: PlayAdvanceBase): Promise<void> {
-    assertBase(base);
-    const current = await this.readCurrent(base.worldId, base.chainId);
+  async begin(advance: PlayAdvanceBase | PlayerAdvance): Promise<void> {
+    assertBase(advance);
+    const marker = persistedAdvance(advance);
+    const current = await this.readCurrent(marker.worldId, marker.chainId);
     if (current !== null) {
-      if (!sameAdvanceBase(current, base))
+      if (!sameAdvance(current, marker))
         throw new Error("Another play advance is still awaiting settlement");
       return;
     }
-    await publishJson(this.#markerPath(base.worldId, base.chainId), base);
+    await publishJson(this.#markerPath(marker.worldId, marker.chainId), marker);
   }
 
   async readCurrent(
@@ -128,12 +113,14 @@ export class FileNativePlayAdvanceStore {
     return value;
   }
 
-  async markSettled(base: PlayAdvanceBase): Promise<void> {
-    const current = await this.readCurrent(base.worldId, base.chainId);
+  async markSettled(advance: PlayAdvanceBase): Promise<void> {
+    const current = await this.readCurrent(advance.worldId, advance.chainId);
     if (current === null) return;
-    if (!sameAdvanceBase(current, base))
+    if (!sameAdvance(current, advance))
       throw new Error("Play advance is no longer current");
-    await rm(this.#markerPath(base.worldId, base.chainId), { force: true });
+    await rm(this.#markerPath(advance.worldId, advance.chainId), {
+      force: true,
+    });
   }
 
   /** Remove the in-progress marker and all advance records of a discarded chain. */
@@ -212,15 +199,29 @@ export class FileNativePlayAdvanceStore {
   }
 }
 
-function sameAdvanceBase(
-  left: PlayAdvanceBase,
-  right: PlayAdvanceBase,
-): boolean {
-  const { createdAt: leftCreatedAt, ...leftIdentity } = left;
-  const { createdAt: rightCreatedAt, ...rightIdentity } = right;
-  void leftCreatedAt;
-  void rightCreatedAt;
-  return isDeepStrictEqual(leftIdentity, rightIdentity);
+/**
+ * Whether two advances are the same one. The marker is confirmed by these
+ * identity fields alone; the frozen request is never compared (ADR-0044).
+ */
+function sameAdvance(left: PlayAdvanceBase, right: PlayAdvanceBase): boolean {
+  return (
+    left.advanceKind === right.advanceKind &&
+    left.worldId === right.worldId &&
+    left.chainId === right.chainId &&
+    left.advanceId === right.advanceId &&
+    left.operationId === right.operationId &&
+    left.eventId === right.eventId
+  );
+}
+
+/** The marker form of an advance: a player advance's frozen request stays in memory. */
+function persistedAdvance(
+  advance: PlayAdvanceBase | PlayerAdvance,
+): PlayAdvanceBase {
+  if (!("nextRequest" in advance)) return advance;
+  const { nextRequest: _nextRequest, ...marker } = advance;
+  void _nextRequest;
+  return marker;
 }
 
 function assertBase(value: unknown): asserts value is PlayAdvanceBase {
@@ -253,10 +254,11 @@ function assertBase(value: unknown): asserts value is PlayAdvanceBase {
       !Number.isSafeInteger(value.transcriptStart) ||
       Number(value.transcriptStart) < 0 ||
       !Number.isSafeInteger(value.exchange) ||
-      Number(value.exchange) < 1 ||
-      !isRecord(value.nextRequest)
+      Number(value.exchange) < 1
     )
       throw new Error("Player advance has an invalid shape");
+    // A marker released before ADR-0044 may still carry `nextRequest`. Recovery
+    // never reads it, so the field is tolerated and not validated.
   } else if (
     !Number.isSafeInteger(value.exchange) ||
     Number(value.exchange) < 0 ||
