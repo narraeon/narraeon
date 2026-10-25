@@ -4,6 +4,7 @@ import { listWorldDocuments as listQueryableWorldDocuments } from "../prompt/Wor
 import type { AppLocale } from "../../protocol/appPreferences.ts";
 import { defaultAppLocale } from "../../protocol/appPreferences.ts";
 import {
+  fictionGameplay,
   gameplayLabel,
   gameplayPath,
   readGameplay,
@@ -14,6 +15,10 @@ import { tabletopSchemeReceipt } from "../play/TabletopRules.ts";
 import type { ContentTreeFile } from "../content/ContentTreeFile.ts";
 import { inspectContentPackageCurrentTree } from "../content/FileNativeContentTree.ts";
 import type { ModelHostToolCall } from "../model/ModelHost.ts";
+import {
+  coerceToolArguments,
+  renderCoercionNote,
+} from "../model/ToolArgumentCoercion.ts";
 import { worldMaterialCoverage } from "../prompt/WorldMaterialCoverage.ts";
 import type {
   PromptCompilation,
@@ -693,7 +698,9 @@ export class SettingAuthoringTransaction {
   }
 
   execute(calls: readonly ModelHostToolCall[]): SettingAuthoringToolResult[] {
-    const normalized = calls.map((call) => normalizeCall(call, this.#surface));
+    const normalized = calls.map((call) =>
+      normalizeCall(call, this.#surface, this.#locale),
+    );
     const results: SettingAuthoringToolResult[] = [];
     const responseBase = this.files();
     let lastSuccessfulWrite = -1;
@@ -742,6 +749,14 @@ export class SettingAuthoringTransaction {
         this.#locale,
       )}`;
     }
+    normalized.forEach((call, index) => {
+      if (call.coerced.length === 0) return;
+      const result = results[index]!;
+      result.markdown = `${result.markdown}\n\n${renderCoercionNote(
+        call.coerced,
+        this.#locale,
+      )}`;
+    });
     return results;
   }
 
@@ -1190,6 +1205,8 @@ interface NormalizedCall {
   /** The surface operation this tool name names, or null for an unknown tool. */
   operation: SettingAuthoringOperation | null;
   arguments: Record<string, unknown>;
+  /** Argument paths the model sent as JSON strings and Runtime parsed. */
+  coerced: string[];
 }
 
 class SettingAuthoringError extends Error {
@@ -1202,12 +1219,26 @@ class SettingAuthoringError extends Error {
 function normalizeCall(
   call: ModelHostToolCall,
   surface: SettingAuthoringSurface,
+  locale: AppLocale,
 ): NormalizedCall {
+  const cloned = isRecord(call.arguments)
+    ? structuredClone(call.arguments)
+    : {};
+  const schema = authoringToolDefinitions(
+    surface,
+    locale,
+    fictionGameplay,
+  ).find(({ name }) => name === call.name)?.inputSchema;
+  const repaired =
+    schema === undefined
+      ? { arguments: cloned, coerced: [] }
+      : coerceToolArguments(schema, cloned);
   return {
     id: call.id,
     name: call.name,
     operation: authoringOperation(surface, call.name),
-    arguments: isRecord(call.arguments) ? structuredClone(call.arguments) : {},
+    arguments: repaired.arguments as Record<string, unknown>,
+    coerced: repaired.coerced,
   };
 }
 
@@ -2369,6 +2400,10 @@ function requiredSettingRef(value: unknown, locale: AppLocale): string {
 }
 
 function requiredAliases(value: unknown): string[] {
+  if (typeof value === "string")
+    throw new SettingAuthoringError(
+      "aliases must be a JSON array of at most 16 strings, not a string",
+    );
   if (
     !Array.isArray(value) ||
     value.length > 16 ||
@@ -2423,6 +2458,10 @@ function requiredYamlLocatorPath(
   value: unknown,
   name: string,
 ): (string | number)[] {
+  if (typeof value === "string")
+    throw new SettingAuthoringError(
+      `${name} must be a JSON array of map keys or zero-based array indexes, not a string`,
+    );
   if (
     !Array.isArray(value) ||
     value.length === 0 ||

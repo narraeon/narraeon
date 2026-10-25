@@ -122,6 +122,19 @@ export function runtimeToolsForNames(
 }
 
 /**
+ * The original Runtime input schema of a registered tool. Argument repair reads
+ * this, not the portable wire projection, so every array or object position is
+ * exactly what Runtime validates.
+ */
+export function runtimeToolInputSchema(
+  name: string,
+  locale: AppLocale = defaultAppLocale,
+): object | null {
+  if (!isRegisteredRuntimeToolName(name)) return null;
+  return createToolDefinitions(locale)[name].inputSchema;
+}
+
+/**
  * Return a Provider-portable root-object schema for a Runtime-owned tool.
  *
  * Released call-chain contexts keep their exact logical tool definitions. The

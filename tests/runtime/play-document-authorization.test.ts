@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { stringify } from "yaml";
+import { parse, stringify } from "yaml";
 import { minimalFileNativeContentScaffold } from "../../src/runtime/content/ContentWorkspace.ts";
 import { FileNativePlayDocuments } from "../../src/runtime/play/PlayDocumentTools.ts";
 import {
@@ -280,4 +280,108 @@ test("a batch cannot use a removed array scope to overwrite its unread successor
     documents.snapshot.files.find(({ path }) => path.endsWith("qin.yaml"))!
       .contents,
   ).toContain("[Clinic visit, Private delivery]");
+});
+
+function patchCall(edits: unknown) {
+  return {
+    id: "patch-string-edits",
+    name: "world_patch",
+    arguments: { target: "@qin", edits },
+  };
+}
+
+function storedQin(documents: FileNativePlayDocuments) {
+  documents.acceptCommittedState();
+  const file = documents.snapshot.files.find(
+    ({ path }) => path === "state/characters/qin.yaml",
+  );
+  return parse(file!.contents) as Record<string, unknown>;
+}
+
+test("world_patch executes edits sent as a JSON string and notes the repair", () => {
+  const documents = new FileNativePlayDocuments(files());
+  documents.bindBootstrap(compile(documents));
+  expect(
+    documents.execute(
+      { id: "read", name: "context_read", arguments: { ref: "@qin" } },
+      [],
+    ).ok,
+  ).toBe(true);
+  const call = patchCall(
+    '[{"op":"replace","locator":{"yaml":["relationship"]},"value":"Lent an umbrella"}]',
+  );
+  const result = documents.execute(call, []);
+  expect(result.ok).toBe(true);
+  expect(result.markdown).toMatch(/Runtime note[^\n]*"edits"/u);
+  expect(call.arguments.edits).toBe(
+    '[{"op":"replace","locator":{"yaml":["relationship"]},"value":"Lent an umbrella"}]',
+  );
+  expect(storedQin(documents).relationship).toBe("Lent an umbrella");
+});
+
+test("a value that looks like JSON inside an edit stays a string", () => {
+  const documents = new FileNativePlayDocuments(files());
+  documents.bindBootstrap(compile(documents));
+  expect(
+    documents.execute(
+      { id: "read", name: "context_read", arguments: { ref: "@qin" } },
+      [],
+    ).ok,
+  ).toBe(true);
+  const result = documents.execute(
+    patchCall([
+      { op: "replace", locator: { yaml: ["relationship"] }, value: "[1,2]" },
+    ]),
+    [],
+  );
+  expect(result.ok).toBe(true);
+  expect(result.markdown ?? "").not.toContain("Runtime note");
+  expect(storedQin(documents).relationship).toBe("[1,2]");
+});
+
+test("world_patch names the JSON-array requirement when edits cannot be parsed", () => {
+  const documents = new FileNativePlayDocuments(files());
+  documents.bindBootstrap(compile(documents));
+  for (const edits of ["not json", '{"op":"replace"}']) {
+    const result = documents.execute(patchCall(edits), []);
+    expect(result.ok).toBe(false);
+    expect(result.markdown).toContain(
+      "world_patch.edits must be a JSON array of 1 to 32 edits, not a string.",
+    );
+  }
+});
+
+test("world_create names the JSON-array requirement for a non-parseable aliases string", () => {
+  const documents = new FileNativePlayDocuments(files());
+  documents.bindBootstrap(compile(documents));
+  const result = documents.execute(
+    {
+      id: "create-bad-aliases",
+      name: "world_create",
+      arguments: {
+        parent: "@dir-/items",
+        codec: "yaml",
+        refHint: "umbrella",
+        title: "Umbrella",
+        summary: "An umbrella",
+        aliases: "brolly",
+        body: "owner: player",
+      },
+    },
+    [],
+  );
+  expect(result.ok).toBe(false);
+  expect(result.markdown).toContain(
+    "world_create.aliases must be a JSON array of strings, not a string",
+  );
+});
+
+test("history tools are not repaired and never gain a Runtime note", () => {
+  const documents = new FileNativePlayDocuments(files());
+  documents.bindBootstrap(compile(documents));
+  const result = documents.execute(
+    { id: "history", name: "history_list", arguments: {} },
+    [],
+  );
+  expect(result.markdown ?? "").not.toContain("Runtime note");
 });

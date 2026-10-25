@@ -13,6 +13,11 @@ import { renderDocumentWritePosition } from "../prompt/WorldMaintenanceReport.ts
 
 import { stringify } from "yaml";
 import { renderPlayerViewBindings } from "../world/PlayerViewBindings.ts";
+import {
+  coerceToolArguments,
+  renderCoercionNote,
+} from "../model/ToolArgumentCoercion.ts";
+import { runtimeToolInputSchema } from "../prompt/FileNativeToolRegistry.ts";
 
 import type { ModelHostToolCall } from "../model/ModelHost.ts";
 
@@ -152,6 +157,38 @@ export class FileNativePlayDocuments {
       locale?: AppLocale;
       legacyHistoryTools?: boolean;
     } = {},
+  ): PlayDocumentToolResult {
+    const schema = runtimeToolInputSchema(call.name);
+    if (schema === null) return this.#dispatch(call, history, options);
+    const repaired = coerceToolArguments(schema, call.arguments);
+    const result = this.#dispatch(
+      { ...call, arguments: repaired.arguments },
+      history,
+      options,
+    );
+    if (repaired.coerced.length === 0 || result.markdown === undefined)
+      return result;
+    return {
+      ...result,
+      markdown: `${result.markdown}\n\n${renderCoercionNote(
+        repaired.coerced,
+        options.locale ?? "en",
+      )}`,
+    };
+  }
+
+  #dispatch(
+    call: ModelHostToolCall,
+    history: {
+      path: string;
+      contents: string;
+      background?: HistoryBackground;
+    }[],
+    options: {
+      historyScope?: string;
+      locale?: AppLocale;
+      legacyHistoryTools?: boolean;
+    },
   ): PlayDocumentToolResult {
     let historyQuery: HistoryQuery | undefined;
     const query = () =>
@@ -417,6 +454,10 @@ function applyPlayCandidatePatch(
   reads: WriteAuthorizations,
   args: unknown,
 ): PlayDocumentToolResult {
+  if (record(args) && typeof args.edits === "string")
+    return toolFailure(
+      "world_patch.edits must be a JSON array of 1 to 32 edits, not a string.",
+    );
   if (
     !record(args) ||
     typeof args.target !== "string" ||
@@ -683,6 +724,10 @@ function applyPlayCandidateCreate(
       record(args) && typeof args.parent === "string"
         ? parseStateDirectoryHandle(args.parent)
         : null;
+    if (record(args) && typeof args.aliases === "string")
+      throw new PlayDocumentToolFailure(
+        "world_create.aliases must be a JSON array of strings, not a string",
+      );
     if (
       !record(args) ||
       typeof args.parent !== "string" ||
