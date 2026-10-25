@@ -1,4 +1,5 @@
 import { RuntimeRequestError } from "./runtimeClient.ts";
+import { turnGuideLineSoftLimit } from "../shared/ordered-play-prompts.ts";
 import { playFailureDescription } from "./PlayFailureText.ts";
 import {
   PlayFailureNotice,
@@ -241,6 +242,8 @@ export function WorldPage({
   const [readingPreferencesSaving, setReadingPreferencesSaving] =
     useState(false);
   const [playerText, setPlayerText] = useState("");
+  // One-turn request: cleared once a dispatch settles ready, kept on interrupt or cancel.
+  const [turnNote, setTurnNote] = useState("");
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [playObservationFailure, setPlayObservationFailure] = useState<
@@ -824,6 +827,7 @@ export function WorldPage({
             chainId,
             exchangeId,
             playerText: submittedText,
+            ...turnNoteField(turnNote),
           } satisfies Extract<V1Request, { type: "play.chain.start" }>)
         : ({
             type: "play.chain.append",
@@ -831,9 +835,11 @@ export function WorldPage({
             chainId,
             exchangeId,
             playerText: submittedText,
+            ...turnNoteField(turnNote),
           } satisfies Extract<V1Request, { type: "play.chain.append" }>);
       const next = await requestRuntime<V1PlayCallChainView>(client, request);
       applyPlayCallChain(next);
+      if (next.status === "ready") setTurnNote("");
       if (fresh) setForceFreshContext(false);
       if (hasSubmittedText) setPlayerText("");
       await refreshWorld();
@@ -1153,6 +1159,7 @@ export function WorldPage({
         eventId,
         replacementExchangeId,
         replacementText: editedText,
+        ...turnNoteField(turnNote),
         continuation,
       });
       revisionAccepted = true;
@@ -1200,7 +1207,9 @@ export function WorldPage({
         chainId: revised.playCallChain.chainId,
         exchangeId: createClientId("play-exchange"),
         playerText: "",
+        ...turnNoteField(turnNote),
       });
+      if (continued.status === "ready") setTurnNote("");
       if (
         regenerate &&
         continuation === "continue_context" &&
@@ -1922,6 +1931,30 @@ export function WorldPage({
                       : "Enter 发送，Shift + Enter 换行",
                   )}
                 />
+              </label>
+              <label className="world-turn-note">
+                <span>{uiText("本轮临时要求")}</span>
+                <input
+                  type="text"
+                  value={turnNote}
+                  placeholder={uiText("只对这一轮生效，不进入故事")}
+                  disabled={
+                    pending !== null ||
+                    !modelConfigured ||
+                    activeStatus === "running" ||
+                    worldRevisionLocked
+                  }
+                  onChange={(event) =>
+                    setTurnNote(
+                      event.currentTarget.value.replace(/[\r\n]/gu, ""),
+                    )
+                  }
+                />
+                {turnNote.length > turnGuideLineSoftLimit ? (
+                  <span className="field-note" role="status">
+                    {uiText("超过 120 字；仍会发送，但请尽量简短。")}
+                  </span>
+                ) : null}
               </label>
               <button
                 type="button"
@@ -3196,6 +3229,12 @@ function selectedStateDocument(
   return state.some(({ path }) => path === current)
     ? current
     : (state[0]?.path ?? "");
+}
+
+/** The one-turn request as a request field; a blank box sends none. */
+function turnNoteField(turnNote: string): { turnNote?: string } {
+  const trimmed = turnNote.trim();
+  return trimmed === "" ? {} : { turnNote: trimmed };
 }
 
 function errorMessage(reason: unknown): string {

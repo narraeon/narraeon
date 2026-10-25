@@ -31,6 +31,9 @@ import {
  * the world_checkpoint description was shortened, and the per-send turn guide
  * joined the ordered bootstrap. All 76 digests moved: the tool descriptions
  * reach every request, including the 24 preset-free bootstraps.
+ * Later, the turn-guide header and the author-side turn-guide block were
+ * reworded to name only the suffix's sources (preset, world, player's request
+ * for this turn); the digests that carry them moved again and were regenerated.
  * Gameplay wording (control/gameplay.json mentions, bag guidance) reaches the
  * model only for tabletop worlds and packages.
  */
@@ -225,17 +228,17 @@ const expectedDigests: Record<string, string> = {
   "chain/en/legacy-v1/openai_responses/bootstrap":
     "bc8eb35dfa8a54558953af39970dcdd2374c49716b83adcec449160e912796d4",
   "chain/en/ordered-default/anthropic_messages/append":
-    "09cd0fe58e3fe1b25cb72499f5116872dc3b67c8fd9f2a21568faa8a88a50324",
+    "c8a5f51d16506758e746b2b13d4a1724730f24d2fe27262f5d0721d350158832",
   "chain/en/ordered-default/anthropic_messages/bootstrap":
-    "e1ffc0cba2ca457741d636068ce8a56539d5b7be117afcc11269a1cea97eb5c9",
+    "dd9505490c17e0bf666745151fc021c91a6a324a25fd12f6deac8306d01fff7f",
   "chain/en/ordered-default/chat_completions/append":
-    "348ecd36e9922e4c88141b1fa40da068b9c21a0c1b965faf7b7fec2d90edcd09",
+    "1d3ab8c69322ed836acd1552a60e17c95cfa7cb29e4d738241831aff0a8f8b5c",
   "chain/en/ordered-default/chat_completions/bootstrap":
-    "4b4ef5233b0efef0c0f58a9b209e138ac9aad315d2e7ee00d9e1e5a89ddfda0e",
+    "53d933dcd7ac564847f2d66fee44831c6233fda30e5f92cbcaa2615523a8665a",
   "chain/en/ordered-default/openai_responses/append":
-    "d30ef61fea21136e8c980c9de29faa0c47f1da97ae92a0f1b3f3314fd5cee835",
+    "4d7d44785da2049172aeeeec6d0be15db3f945ed04a7cb9646ed2ff2b35f43ca",
   "chain/en/ordered-default/openai_responses/bootstrap":
-    "cdded2ceb151340730d1cea46857bd312251e2e4a40a789109dcebeb14ae52a5",
+    "ceb304cc5cf9102fb2d8b7be854afe34a7b91e0286da36f9aa7e4660aa2b936e",
   "chain/zh-CN/legacy-v1/anthropic_messages/append":
     "85d3f3b7a2747aef02831bde0ead8dfce37ea81cb057e7340397db5b5d2b886d",
   "chain/zh-CN/legacy-v1/anthropic_messages/bootstrap":
@@ -249,17 +252,17 @@ const expectedDigests: Record<string, string> = {
   "chain/zh-CN/legacy-v1/openai_responses/bootstrap":
     "dad8b71b61c6cffc89f4d15cd17665c52088c77ab078f01b0b0672cfa0687c90",
   "chain/zh-CN/ordered-default/anthropic_messages/append":
-    "048f8d69d9ded86c0deb272c1a6599da18b0e44fcc798484f191fb33e7246866",
+    "d5abd4446fde6c051cd3d4bb6cda2a5ec35dd73f472ea2cf0d62775e781db34f",
   "chain/zh-CN/ordered-default/anthropic_messages/bootstrap":
-    "494cae384c7d8072369e443fc30a8fbcc59fa5ea80d54a5b7666fa3040351aa7",
+    "6bf9c44e66ed7e87abba7247609e9cda266dde230d79fd87717d2187ab5858fc",
   "chain/zh-CN/ordered-default/chat_completions/append":
-    "ec13071de41c119a01957a6b1bd0f3e9a058bef07ceb4f924b01f79c13a408e2",
+    "90a416372b0900b0c1763d8dc429e25595d9240b899a14fe2778dbd49ff63267",
   "chain/zh-CN/ordered-default/chat_completions/bootstrap":
-    "abd25d41de2297a6d74bf0918595cf6bd6f7fd7f735e1c12f93106d3fd884eda",
+    "6a6756598cb0fd508debb7f1bcb5df4817c0bfc5c2c718af076d82d64c3ca310",
   "chain/zh-CN/ordered-default/openai_responses/append":
-    "280ba84751b05dedeba52c9e11b15239a8ab92403e5a34f6b99cd5e5ac9fae35",
+    "35edddf33e35c6ce7dde06dce5e23b698032be80f7b6a41dd10399459b37aef6",
   "chain/zh-CN/ordered-default/openai_responses/bootstrap":
-    "a70199028aa3eeca49db371e65b4596d555ea7b80146f77c1425a1418994772e",
+    "3e94393b0507b067b5cb10357fea16132a1aeaf025d1412d829b341712c45c81",
   "preview/en/legacy-v1/anthropic_messages/append":
     "03e04ddfa8590d5ba0253c585f6d50ddb1259916c5d7558b992e607397865ea9",
   "preview/en/legacy-v1/anthropic_messages/bootstrap":
@@ -273,17 +276,17 @@ const expectedDigests: Record<string, string> = {
   "preview/en/legacy-v1/openai_responses/bootstrap":
     "d0ed73e0a35f666f345267adb3cc80770a9b306933dcb6a345efca4b015e843d",
   "preview/en/ordered-default/anthropic_messages/append":
-    "ace5d8a82e6ed220fcc6013116189f122e4a3b81fb88f5aec59207f3ae7a85c4",
+    "ea61ce17e986835d8299190899c92f4ef9ad71a501e42ecd754ca56a610439eb",
   "preview/en/ordered-default/anthropic_messages/bootstrap":
-    "cdb2b58bd34faf17aa674ce14416cb9db6cfa69cfd2bd161d5d94909e259722f",
+    "205b4f9a6ee112b67ba97a0c7dd4f20a27d0f4c40e5408d0bb0a57400e2f787b",
   "preview/en/ordered-default/chat_completions/append":
-    "ebe3fb2394fe89e7e96dba40e42dc32944f90a55757695b22857a579c470e096",
+    "2dfba454d9c4af89b2431d8febd38de03d51b444670fee81fbf37fc3f1934a22",
   "preview/en/ordered-default/chat_completions/bootstrap":
-    "8c94b4eb5d22570ba4f824d5a64f92b9c0111888ff168b7a2d5452cf2c82d800",
+    "5e71a46571feb9c91de1a27f5745a42f3ea159d03be7922f6ab2f379b7156eb1",
   "preview/en/ordered-default/openai_responses/append":
-    "0442ae4484bcaefb589f354fd9c40dbff15ad63b67dd55e499b891780cb03303",
+    "47a514e111a8f537f5f3c6dcd8e0db3435f108d10fd09e6c9821f333da430ae7",
   "preview/en/ordered-default/openai_responses/bootstrap":
-    "2f9e51711d77efdc710eb67c5fee230edf0ddc8f5cba7759910f6edeb991c22f",
+    "50613e0d0b85c9e803bae8d4aab0bc48926ced46778105bbebbfe07d89e3a48a",
   "preview/zh-CN/legacy-v1/anthropic_messages/append":
     "2e088f6ea2196c84860896481d89710a5d7e25a1f075711dda7e51ecd05ad011",
   "preview/zh-CN/legacy-v1/anthropic_messages/bootstrap":
@@ -297,23 +300,23 @@ const expectedDigests: Record<string, string> = {
   "preview/zh-CN/legacy-v1/openai_responses/bootstrap":
     "ab79fe2680bd462834b72819f9c65be872657d217336cf6d1a29142f77098d2b",
   "preview/zh-CN/ordered-default/anthropic_messages/append":
-    "ddc5809dd12faa982ce06d671b9c4a8a0943705280f0ed3f7b1ffebdac38815d",
+    "1f745e72b2c35f267f65768a2f00b701ba94033a1e9e161654847433c4b2cf74",
   "preview/zh-CN/ordered-default/anthropic_messages/bootstrap":
-    "7d4f4bf1a3b661d7b31d2d799667541f548ff3081da262ea386539720e9e16d4",
+    "29c98c520228f46f0f29685143ee6e9cadae6f809dbf94bcebb186099e0d3647",
   "preview/zh-CN/ordered-default/chat_completions/append":
-    "60ce512bdb24de7dee2e66865eacbffca3c426eb5814a72e5de12bbcbfc9299c",
+    "aa28f24218da190682befc805c7b95654d758af7c72d8760864f016b40752904",
   "preview/zh-CN/ordered-default/chat_completions/bootstrap":
-    "98e38b033d8391c80b1454941cd3b93230180e0ec6207c42e790a0cfee9fddb7",
+    "9e5c40192981f703c4071fe5d229f92cf7deb3b336e3df39672d2cc2ddf295d3",
   "preview/zh-CN/ordered-default/openai_responses/append":
-    "c9a10ca595a11d8a4679aee0c927344779d93f7f7bde57237d11f526a89fbf52",
+    "7da194943973143ce2cf02c2fda7681bf5f4ad2ef9dcf34e6134f550613b1c88",
   "preview/zh-CN/ordered-default/openai_responses/bootstrap":
-    "65f5f864fa767be903f5389b726c218ff56a0f5acc3477ef08ebe8ab578d0df5",
+    "642623a808736c0636bfbcafffb17a1167c8cca6b89ec2e0fa99597693be915e",
   "revision/en":
-    "707c67a407b2999fe1e09235fb326c37c666769d2aeefb12a35cf7bad6b1a112",
+    "049142cbdef6c330a731d413d3a216cd44c7d3a817ae20c4bae3dd7e470d15fc",
   "revision/zh-CN":
-    "5677518f1ccbc124bff6fc0f0fab50af9cf4c30b3b0884ef9734c95846715ef2",
+    "2a7ead2eb2d58a8736627624e4290f9cd266253d8e5af789cdf8259abc02b25b",
   "setting/en":
-    "36b41eeb498f165c1110b32cf5099b89e3d91c19e7ab1e0ea8cc31a76eda844d",
+    "e17787e81f9108096859c167f9c3cd180d242d4c34ff28e4d8b4a3ea70b1aba8",
   "setting/zh-CN":
-    "bedc66dc815cdc80c8ad5b3c4939a44f9dbd9dec47987a8dab391d06a09fbdf3",
+    "1884c5fe8499a69bf3fd38e9e8c4077afe336c34fec415ada3529dffa362b20c",
 };

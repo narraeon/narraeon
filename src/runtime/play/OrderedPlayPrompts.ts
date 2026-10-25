@@ -3,14 +3,13 @@ import { isMap, isSeq, parseDocument, type YAMLSeq } from "yaml";
 import {
   builtinPlayPrompts,
   isPromptMessageRole,
+  isTurnGuideLine,
   promptGroups,
   type OrderedPlayPrompt,
   type BuiltinPlayPrompt,
   type PromptGroup,
 } from "../../shared/ordered-play-prompts.ts";
 
-/** One turn-guide line: no line breaks, bounded length; empty clears a builtin default. */
-const turnGuideLine = /^[^\r\n\0]{0,1000}$/u;
 const promptName = /^[^\r\n\0]{1,160}$/u;
 
 /** The same strict permission gate is used by portable imports and structured saves. */
@@ -57,8 +56,7 @@ export function parseOrderedPlayPrompts(
       ) && keys.every((key) => Object.hasOwn(item, key));
     const validTurnGuide =
       item.turnGuide === undefined ||
-      (typeof item.turnGuide === "string" &&
-        turnGuideLine.test(item.turnGuide));
+      (typeof item.turnGuide === "string" && isTurnGuideLine(item.turnGuide));
     const turnGuide =
       typeof item.turnGuide === "string" ? { turnGuide: item.turnGuide } : {};
     if (item.kind === "world" && exact(["id", "kind"])) {
@@ -73,7 +71,7 @@ export function parseOrderedPlayPrompts(
       item.name.trim().length > 0 &&
       promptName.test(item.name) &&
       typeof item.body === "string" &&
-      turnGuideLine.test(item.body) &&
+      isTurnGuideLine(item.body) &&
       typeof item.enabled === "boolean"
     )
       return [

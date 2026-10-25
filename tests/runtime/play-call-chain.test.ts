@@ -73,6 +73,7 @@ import { FileNativeWorldRevisionStore } from "../../src/runtime/world-revision/F
 import { WorldRevisionWorkspace } from "../../src/runtime/world-revision/WorldRevisionWorkspace.ts";
 import { revisePlayerTimeline } from "./support/player-timeline-edit.ts";
 import { turnGuideHeader } from "../../src/shared/turn-guide.ts";
+import { PlayCallChainError } from "../../src/runtime/play/PlayCallChainError.ts";
 
 const roots: string[] = [];
 
@@ -8825,6 +8826,162 @@ test("本轮提示只作为每次发送的尾部出现，不进入 transcript，
   expect(legacyHost.requests[0]!.appended).toEqual([
     { kind: "player", text: "I nod to Alex." },
   ]);
+});
+
+test("玩家本轮要求只进入本轮派发的尾部：工具步骤与空输入续写沿用，下一轮不带，转录与历史不含", async () => {
+  const { worlds, worldId } = await createWorld("turn-note-flow");
+  const modelHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [{ id: "list", name: "state_list", arguments: {} }],
+      },
+      { outcome: "response", text: "Alex looks up from the jersey." },
+      { outcome: "response", text: "He waits." },
+      { outcome: "response", text: "The door creaks." },
+    ],
+  });
+  const chains = new PlayCallChain(worlds);
+  const note = "Keep the fight in short beats.";
+  const noteLine = `- Player's request for this turn: ${note}`;
+  const isGuide = (item: ModelHostExchange["appended"][number]) =>
+    item.kind === "runtime_notice" && item.notice === "turn_guide";
+  await chains.start({
+    worldId,
+    chainId: "turn-note",
+    exchangeId: "first",
+    playerText: "I nod to Alex.",
+    turnNote: `  ${note}  `,
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+  // The tool-step dispatch of the same send carries the request too.
+  await chains.append({
+    worldId,
+    chainId: "turn-note",
+    exchangeId: "continue",
+    playerText: "",
+    modelHost,
+  });
+  expect(modelHost.requests).toHaveLength(3);
+  for (const request of modelHost.requests.slice(0, 3)) {
+    expect(request.appended.filter(isGuide)).toHaveLength(1);
+    const suffix = request.appended.at(-1);
+    expect(suffix).toMatchObject({
+      kind: "runtime_notice",
+      notice: "turn_guide",
+    });
+    expect((suffix as { text: string }).text.endsWith(`\n${noteLine}`)).toBe(
+      true,
+    );
+  }
+  // The bootstrap snapshot is never the carrier of the request.
+  expect(modelHost.requests[0]!.bootstrap.turnGuide!.text).not.toContain(
+    "Player's request for this turn",
+  );
+
+  // A new player message without a request is a new turn: no trace of it.
+  await chains.append({
+    worldId,
+    chainId: "turn-note",
+    exchangeId: "next",
+    playerText: "I open the door.",
+    modelHost,
+  });
+  const next = modelHost.requests.at(-1)!;
+  expect(JSON.stringify(next.appended)).not.toContain(note);
+  expect(next.appended.at(-1)).toEqual({
+    kind: "runtime_notice",
+    notice: "turn_guide",
+    text: next.bootstrap.turnGuide!.text,
+  });
+
+  // Never stored in the transcript, which later requests and exports read.
+  const stored = (await worlds.playTimeline.readCurrent(worldId))!.value;
+  expect(JSON.stringify(stored.transcript)).not.toContain(note);
+  expect(JSON.stringify(stored.events)).not.toContain(note);
+});
+
+test("原样重试使用冻结请求中的玩家本轮要求，不读取当前输入框", async () => {
+  const { worlds, worldId } = await createWorld("turn-note-retry");
+  const modelHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      { outcome: "failure", message: "Rejected before generation." },
+      { outcome: "response", text: "Recovered story." },
+    ],
+  });
+  const chains = new PlayCallChain(worlds);
+  const interrupted = await chains.start({
+    worldId,
+    chainId: "turn-note-retry",
+    exchangeId: "first",
+    playerText: "Start.",
+    turnNote: "Original request.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+  expect(interrupted).toMatchObject({ status: "interrupted", canRetry: true });
+  await chains.append({
+    worldId,
+    chainId: "turn-note-retry",
+    exchangeId: "first",
+    playerText: "",
+    turnNote: "Edited in the box.",
+    modelHost,
+  });
+  expect(modelHost.requests).toHaveLength(2);
+  expect(modelHost.requests[1]!.appended).toEqual(
+    modelHost.requests[0]!.appended,
+  );
+  expect(JSON.stringify(modelHost.requests[1]!.appended)).toContain(
+    "Original request.",
+  );
+  expect(JSON.stringify(modelHost.requests[1]!.appended)).not.toContain(
+    "Edited in the box.",
+  );
+});
+
+test("玩家本轮要求含换行、控制字符或超过 1000 字时被拒绝，恰好 1000 字时接受", async () => {
+  const { worlds, worldId } = await createWorld("turn-note-validation");
+  const modelHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [{ outcome: "response", text: "Quiet." }],
+  });
+  const start = (chainId: string, turnNote: string) =>
+    new PlayCallChain(worlds).start({
+      worldId,
+      chainId,
+      exchangeId: "first",
+      playerText: "I nod to Alex.",
+      turnNote,
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: modelBinding(),
+      modelHost,
+    });
+  await expect(start("note-newline", "one\ntwo")).rejects.toThrow(
+    PlayCallChainError,
+  );
+  await expect(start("note-nul", "one\0two")).rejects.toThrow(
+    PlayCallChainError,
+  );
+  await expect(start("note-long", "x".repeat(1001))).rejects.toThrow(
+    PlayCallChainError,
+  );
+  expect(modelHost.requests).toHaveLength(0);
+  await expect(start("note-limit", "x".repeat(1000))).resolves.toMatchObject({
+    status: "ready",
+  });
+  expect(modelHost.requests).toHaveLength(1);
+  expect(JSON.stringify(modelHost.requests[0]!.appended)).toContain(
+    "x".repeat(1000),
+  );
 });
 
 /**

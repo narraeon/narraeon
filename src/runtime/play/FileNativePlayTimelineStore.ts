@@ -109,6 +109,8 @@ export interface PersistedPlayCallChainContext {
   lastRequestAttempt: number;
   lastFailure: string | null;
   lastFailureKind?: PlayFailureKind;
+  /** The player's one-turn request line for the current turn; a request-level suffix, never transcript. */
+  turnNote?: string;
   updatedAt: number;
 }
 

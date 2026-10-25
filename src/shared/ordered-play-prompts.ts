@@ -81,6 +81,13 @@ export interface BuiltinPlayPrompt {
 export const turnGuideLineSoftLimit = 120;
 export const turnGuideLinesSoftLimit = 10;
 
+/** One turn-guide line: no line breaks, bounded length; empty clears a builtin default. */
+const turnGuideLinePattern = /^[^\r\n\0]{0,1000}$/u;
+
+export function isTurnGuideLine(value: string): boolean {
+  return turnGuideLinePattern.test(value);
+}
+
 /**
  * Unscoped prompts always apply. A scoped prompt applies only when the compiled
  * world or package is tabletop, so fiction requests never see it.
