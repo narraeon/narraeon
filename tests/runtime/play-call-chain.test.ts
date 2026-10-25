@@ -8839,6 +8839,7 @@ test("玩家本轮要求只进入本轮派发的尾部：工具步骤与空输�
       },
       { outcome: "response", text: "Alex looks up from the jersey." },
       { outcome: "response", text: "He waits." },
+      { outcome: "response", text: "He still waits." },
       { outcome: "response", text: "The door creaks." },
     ],
   });
@@ -8858,12 +8859,14 @@ test("玩家本轮要求只进入本轮派发的尾部：工具步骤与空输�
     modelBinding: modelBinding(),
     modelHost,
   });
-  // The tool-step dispatch of the same send carries the request too.
+  // The tool-step dispatch of the same send carries the request too, and an
+  // empty-input continuation carries whatever the box still holds.
   await chains.append({
     worldId,
     chainId: "turn-note",
     exchangeId: "continue",
     playerText: "",
+    turnNote: note,
     modelHost,
   });
   expect(modelHost.requests).toHaveLength(3);
@@ -8881,6 +8884,19 @@ test("玩家本轮要求只进入本轮派发的尾部：工具步骤与空输�
   // The bootstrap snapshot is never the carrier of the request.
   expect(modelHost.requests[0]!.bootstrap.turnGuide!.text).not.toContain(
     "Player's request for this turn",
+  );
+
+  // An empty-input continuation without a request does not inherit the
+  // previous turn's line: the box was cleared once that turn settled.
+  await chains.append({
+    worldId,
+    chainId: "turn-note",
+    exchangeId: "continue-bare",
+    playerText: "",
+    modelHost,
+  });
+  expect(JSON.stringify(modelHost.requests.at(-1)!.appended)).not.toContain(
+    note,
   );
 
   // A new player message without a request is a new turn: no trace of it.

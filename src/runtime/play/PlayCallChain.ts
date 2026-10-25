@@ -560,8 +560,9 @@ export class PlayCallChain {
         );
       }
       await this.#refreshPrompt(session, input);
-      if (input.turnNote !== undefined)
-        setTurnNote(session, validTurnNote(input.turnNote));
+      // Each dispatch carries exactly the request the client sent with it; a
+      // continuation without one must not inherit the previous turn's line.
+      setTurnNote(session, validTurnNote(input.turnNote));
       session.exchange += 1;
       const last = session.transcript.at(-1);
       if (
