@@ -1502,7 +1502,8 @@ function assertPlayEvent(
     if (
       typeof value.callId !== "string" ||
       typeof value.name !== "string" ||
-      typeof value.replayed !== "boolean"
+      typeof value.replayed !== "boolean" ||
+      !validOptionalString(value.executedName)
     )
       throw new Error("Tool-call timeline event has an invalid shape");
     return;
@@ -1518,7 +1519,8 @@ function assertPlayEvent(
       typeof value.name !== "string" ||
       typeof value.ok !== "boolean" ||
       typeof value.markdown !== "string" ||
-      typeof value.replayed !== "boolean"
+      typeof value.replayed !== "boolean" ||
+      !validOptionalString(value.executedName)
     )
       throw new Error("Tool-result timeline event has an invalid shape");
     return;
@@ -1587,6 +1589,7 @@ function assertTimelineEventSummary(
       typeof value.callId !== "string" ||
       typeof value.name !== "string" ||
       typeof value.replayed !== "boolean" ||
+      !validOptionalString(value.executedName) ||
       value.detailsAvailable !== true
     )
       throw new Error("Tool-call timeline summary has an invalid shape");
@@ -1603,6 +1606,7 @@ function assertTimelineEventSummary(
       typeof value.name !== "string" ||
       typeof value.ok !== "boolean" ||
       typeof value.replayed !== "boolean" ||
+      !validOptionalString(value.executedName) ||
       value.detailsAvailable !== true
     )
       throw new Error("Tool-result timeline summary has an invalid shape");

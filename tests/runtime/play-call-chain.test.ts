@@ -9283,3 +9283,232 @@ test("缓存复用模拟：工具循环中的每次再次派发同样复用已�
   expect(percents).toHaveLength(4);
   expect(percents.filter((percent) => percent < 99)).toEqual([]);
 });
+
+/** Restored tool names (#112): the model's spelling is kept, the declared tool runs. */
+test("a mangled tool name runs its declared tool, notes the restoration, and keeps the model's name on the timeline", async () => {
+  const run = async (label: string, name: string) => {
+    const { worlds, worldId } = await createWorld(label);
+    const modelHost = new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [
+        {
+          outcome: "response",
+          toolCalls: [{ id: "list", name, arguments: {} }],
+        },
+        { outcome: "response", text: "The state is listed." },
+      ],
+    });
+    const view = await new PlayCallChain(worlds).start({
+      worldId,
+      chainId: label,
+      exchangeId: `${label}-player`,
+      playerText: "List the state.",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: modelBinding(),
+      modelHost,
+    });
+    return { view, toolMessage: sent(modelHost.requests[1]!).at(-1) };
+  };
+  const plain = await run("play-chain-alias-direct", "state_list");
+  const mangled = await run(
+    "play-chain-alias-restored",
+    "mcp__paddle_steel__margin_state_list",
+  );
+
+  expect(
+    mangled.view.events.find(
+      (event) => event.kind === "tool_call" && event.callId === "list",
+    ),
+  ).toMatchObject({
+    name: "mcp__paddle_steel__margin_state_list",
+    executedName: "state_list",
+  });
+  expect(
+    mangled.view.events.find(
+      (event) => event.kind === "tool_result" && event.callId === "list",
+    ),
+  ).toMatchObject({
+    kind: "tool_result",
+    name: "mcp__paddle_steel__margin_state_list",
+    executedName: "state_list",
+    ok: plain.toolMessage?.kind === "tool" && !plain.toolMessage.isError,
+  });
+  expect(
+    plain.view.events.find(
+      (event) => event.kind === "tool_result" && event.callId === "list",
+    ),
+  ).not.toHaveProperty("executedName");
+  // Same effect: the restored result is the direct result plus the Runtime note.
+  expect(mangled.toolMessage).toMatchObject({
+    kind: "tool",
+    toolCallId: "list",
+    markdown: `${(plain.toolMessage as { markdown: string }).markdown}\n\nRuntime note: "mcp__paddle_steel__margin_state_list" is not a declared tool; it was executed as "state_list". Call tools by their declared names.`,
+  });
+});
+
+test("a replayed alias call is identified by its executed name, not the model's spelling", async () => {
+  const label = "play-chain-alias-replay";
+  const { worlds, worldId } = await createWorld(label);
+  const modelHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          { id: "dup", name: "margin_state_list", arguments: {} },
+          // The same ID again under another spelling of the same tool: a
+          // replay, so it reuses the first result instead of being rejected.
+          {
+            id: "dup",
+            name: "mcp__paddle_steel__margin_state_list",
+            arguments: {},
+          },
+          // The same ID under a different executed tool is still a conflict.
+          { id: "other", name: "margin_state_list", arguments: {} },
+          {
+            id: "other",
+            name: "mcp__paddle_steel__want_context_search",
+            arguments: {},
+          },
+        ],
+      },
+      { outcome: "response", text: "The state is listed." },
+    ],
+  });
+  const view = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: label,
+    exchangeId: `${label}-player`,
+    playerText: "List the state.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+  const results = (callId: string) =>
+    view.events.filter(
+      (event) => event.kind === "tool_result" && event.callId === callId,
+    );
+  expect(results("dup")[0]).toMatchObject({
+    name: "margin_state_list",
+    executedName: "state_list",
+    replayed: false,
+  });
+  expect(results("dup")[1]).toMatchObject({
+    name: "mcp__paddle_steel__margin_state_list",
+    executedName: "state_list",
+    replayed: true,
+    ok: (results("dup")[0] as { ok: boolean }).ok,
+  });
+  expect(results("other")[1]).toMatchObject({ ok: false, replayed: true });
+  const toolMessages = sent(modelHost.requests[1]!).filter(
+    (item) => item.kind === "tool",
+  ) as { toolCallId: string; markdown: string; isError?: boolean }[];
+  const dup = toolMessages.filter((item) => item.toolCallId === "dup");
+  expect(dup).toHaveLength(2);
+  expect(dup[1]!.markdown).toBe(dup[0]!.markdown);
+  const other = toolMessages.filter((item) => item.toolCallId === "other");
+  expect(other[1]!.markdown).toContain("already bound to another tool name");
+});
+
+test("a name that matches no provided tool is refused with the tools this request provides", async () => {
+  const label = "play-chain-alias-refused";
+  const { worlds, worldId } = await createWorld(label);
+  const modelHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "fiction-check",
+            name: "x_d20_check",
+            arguments: { goal: "推开石门", modifier: 0, difficulty: 10 },
+          },
+        ],
+      },
+      { outcome: "response", text: "The door stays shut." },
+    ],
+  });
+  const view = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: label,
+    exchangeId: `${label}-player`,
+    playerText: "I push the door.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+
+  // Fiction worlds do not provide the check, so the suffix must not be restored.
+  const provided = modelHost.requests[0]!.tools.map(({ name }) => name);
+  expect(provided).not.toContain("d20_check");
+  expect(
+    view.events.find(
+      (event) =>
+        event.kind === "tool_result" && event.callId === "fiction-check",
+    ),
+  ).toMatchObject({ ok: false, name: "x_d20_check" });
+  expect(
+    view.events.find(
+      (event) =>
+        event.kind === "tool_result" && event.callId === "fiction-check",
+    ),
+  ).not.toHaveProperty("executedName");
+  expect(sent(modelHost.requests[1]!).at(-1)).toMatchObject({
+    kind: "tool",
+    toolCallId: "fiction-check",
+    isError: true,
+    markdown: `# Runtime tool rejected\n\nThe current call chain does not provide x_d20_check. Available tools: ${provided.join(", ")}.`,
+  });
+});
+
+test("a mangled tabletop check resolves to the declared check with a receipt the model can read", async () => {
+  const label = "play-chain-alias-resolution";
+  const { worlds, worldId } = await createWorld(label, tabletopWorldFiles());
+  const modelHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "roll-alias",
+            name: "mcp__paddle_steel__margin_d20_check",
+            arguments: { goal: "推开石门", modifier: 3, difficulty: 15 },
+          },
+        ],
+      },
+      { outcome: "response", text: "石门缓缓开启。" },
+    ],
+  });
+  const view = await new PlayCallChain(worlds, resolutionCompiler()).start({
+    worldId,
+    chainId: label,
+    exchangeId: `${label}-player`,
+    playerText: "我推开石门。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+
+  const result = view.events.find(
+    (event) => event.kind === "tool_result" && event.callId === "roll-alias",
+  );
+  expect(result).toMatchObject({
+    kind: "tool_result",
+    name: "mcp__paddle_steel__margin_d20_check",
+    executedName: "d20_check",
+    ok: true,
+    resolution: { kind: "d20", goal: "推开石门", modifier: 3, difficulty: 15 },
+  });
+  const receipt = (result as { resolution: ResolutionReceipt }).resolution;
+  const toolMessage = sent(modelHost.requests[1]!).at(-1);
+  expect(toolMessage).toMatchObject({ kind: "tool", toolCallId: "roll-alias" });
+  expect((toolMessage as { markdown: string }).markdown).toBe(
+    `${resolutionMarkdown(receipt, "en")}\n\nRuntime note: "mcp__paddle_steel__margin_d20_check" is not a declared tool; it was executed as "d20_check". Call tools by their declared names.`,
+  );
+});

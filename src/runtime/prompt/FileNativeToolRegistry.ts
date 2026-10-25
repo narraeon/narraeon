@@ -23,6 +23,11 @@ import {
  * Tools that every current play and authoring surface may expose. Resolution
  * tools are registered below but never enter a surface until a per-world
  * selection (Phase 2) includes them.
+ *
+ * No declared name may end in `_<another declared name>`: a provider-mangled
+ * `mcp__<server>__<word>_<name>` is restored by that suffix (see
+ * ToolNameAlias.ts), so such a pair would make the restoration ambiguous.
+ * tests/runtime/tool-name-alias.test.ts enforces this across all surfaces.
  */
 export const baseRuntimeToolNames = [
   "state_list",
