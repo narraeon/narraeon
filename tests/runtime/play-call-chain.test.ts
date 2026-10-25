@@ -9347,6 +9347,71 @@ test("a mangled tool name runs its declared tool, notes the restoration, and kee
   });
 });
 
+test("a replayed alias call is identified by its executed name, not the model's spelling", async () => {
+  const label = "play-chain-alias-replay";
+  const { worlds, worldId } = await createWorld(label);
+  const modelHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          { id: "dup", name: "margin_state_list", arguments: {} },
+          // The same ID again under another spelling of the same tool: a
+          // replay, so it reuses the first result instead of being rejected.
+          {
+            id: "dup",
+            name: "mcp__paddle_steel__margin_state_list",
+            arguments: {},
+          },
+          // The same ID under a different executed tool is still a conflict.
+          { id: "other", name: "margin_state_list", arguments: {} },
+          {
+            id: "other",
+            name: "mcp__paddle_steel__want_context_search",
+            arguments: {},
+          },
+        ],
+      },
+      { outcome: "response", text: "The state is listed." },
+    ],
+  });
+  const view = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: label,
+    exchangeId: `${label}-player`,
+    playerText: "List the state.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+  const results = (callId: string) =>
+    view.events.filter(
+      (event) => event.kind === "tool_result" && event.callId === callId,
+    );
+  expect(results("dup")[0]).toMatchObject({
+    name: "margin_state_list",
+    executedName: "state_list",
+    replayed: false,
+  });
+  expect(results("dup")[1]).toMatchObject({
+    name: "mcp__paddle_steel__margin_state_list",
+    executedName: "state_list",
+    replayed: true,
+    ok: (results("dup")[0] as { ok: boolean }).ok,
+  });
+  expect(results("other")[1]).toMatchObject({ ok: false, replayed: true });
+  const toolMessages = sent(modelHost.requests[1]!).filter(
+    (item) => item.kind === "tool",
+  ) as { toolCallId: string; markdown: string; isError?: boolean }[];
+  const dup = toolMessages.filter((item) => item.toolCallId === "dup");
+  expect(dup).toHaveLength(2);
+  expect(dup[1]!.markdown).toBe(dup[0]!.markdown);
+  const other = toolMessages.filter((item) => item.toolCallId === "other");
+  expect(other[1]!.markdown).toContain("already bound to another tool name");
+});
+
 test("a name that matches no provided tool is refused with the tools this request provides", async () => {
   const label = "play-chain-alias-refused";
   const { worlds, worldId } = await createWorld(label);
