@@ -19,6 +19,10 @@ import {
   coerceToolArguments,
   renderCoercionNote,
 } from "../model/ToolArgumentCoercion.ts";
+import {
+  renderToolAliasNote,
+  resolveToolName,
+} from "../prompt/ToolNameAlias.ts";
 import { worldMaterialCoverage } from "../prompt/WorldMaterialCoverage.ts";
 import type {
   PromptCompilation,
@@ -706,6 +710,15 @@ export class SettingAuthoringTransaction {
     let lastSuccessfulWrite = -1;
 
     for (const call of normalized) {
+      if (call.rejection !== undefined) {
+        results.push({
+          toolCallId: call.id,
+          markdown: `# Runtime tool rejected\n\n${call.rejection}`,
+          isError: true,
+          changes: [],
+        });
+        continue;
+      }
       const before = this.files();
       const unavailable = unavailableArgument(
         this.#surface,
@@ -750,12 +763,17 @@ export class SettingAuthoringTransaction {
       )}`;
     }
     normalized.forEach((call, index) => {
-      if (call.coerced.length === 0) return;
+      const notes = [
+        ...(call.coerced.length === 0
+          ? []
+          : [renderCoercionNote(call.coerced, this.#locale)]),
+        ...(call.alias === undefined
+          ? []
+          : [renderToolAliasNote(call.alias, call.name, this.#locale)]),
+      ];
+      if (notes.length === 0) return;
       const result = results[index]!;
-      result.markdown = `${result.markdown}\n\n${renderCoercionNote(
-        call.coerced,
-        this.#locale,
-      )}`;
+      result.markdown = `${result.markdown}\n\n${notes.join("\n\n")}`;
     });
     return results;
   }
@@ -1207,6 +1225,10 @@ interface NormalizedCall {
   arguments: Record<string, unknown>;
   /** Argument paths the model sent as JSON strings and Runtime parsed. */
   coerced: string[];
+  /** The name the model sent when Runtime restored it to `name` by alias. */
+  alias?: string;
+  /** Set when the name matches no tool of this surface; the call is refused. */
+  rejection?: string;
 }
 
 class SettingAuthoringError extends Error {
@@ -1224,22 +1246,48 @@ function normalizeCall(
   const cloned = isRecord(call.arguments)
     ? structuredClone(call.arguments)
     : {};
-  const schema = authoringToolDefinitions(
+  const definitions = authoringToolDefinitions(
     surface,
     locale,
     fictionGameplay,
-  ).find(({ name }) => name === call.name)?.inputSchema;
+  );
+  const provided = definitions.map(({ name }) => name);
+  const resolved = resolveToolName(call.name, provided);
+  if (resolved.kind === "rejected")
+    return {
+      id: call.id,
+      name: call.name,
+      operation: null,
+      arguments: cloned,
+      coerced: [],
+      rejection: unknownToolMessage(call.name, provided, locale),
+    };
+  const name = resolved.name;
+  const schema = definitions.find(
+    (definition) => definition.name === name,
+  )?.inputSchema;
   const repaired =
     schema === undefined
       ? { arguments: cloned, coerced: [] }
       : coerceToolArguments(schema, cloned);
   return {
     id: call.id,
-    name: call.name,
-    operation: authoringOperation(surface, call.name),
+    name,
+    operation: authoringOperation(surface, name),
     arguments: repaired.arguments as Record<string, unknown>,
     coerced: repaired.coerced,
+    ...(resolved.kind === "alias" ? { alias: resolved.declared } : {}),
   };
+}
+
+function unknownToolMessage(
+  name: string,
+  provided: readonly string[],
+  locale: AppLocale,
+): string {
+  return locale === "zh-CN"
+    ? `${name} 不是本界面提供的工具。可用工具：${provided.join(", ")}。`
+    : `${name} is not a tool on this surface. Available tools: ${provided.join(", ")}.`;
 }
 
 function isReadOperation(operation: SettingAuthoringOperation): boolean {

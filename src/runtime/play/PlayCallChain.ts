@@ -23,6 +23,10 @@ import {
 } from "../history/HistoryBackground.ts";
 import { isDeepStrictEqual } from "node:util";
 import { hasLegacyHistoryTools } from "../prompt/FileNativeToolRegistry.ts";
+import {
+  renderToolAliasNote,
+  resolveToolName,
+} from "../prompt/ToolNameAlias.ts";
 import { PlayCallChainError } from "./PlayCallChainError.ts";
 import {
   preparePlayerRevisionTrace,
@@ -2037,7 +2041,13 @@ export class PlayCallChain {
     let nextEventId = advance.eventId + 1;
     // Fresh in-memory seed per settlement. It is never persisted: a crashed
     // exchange is retried by the player and re-rolls (ADR-0044).
-    const resolutionSeed = calls.some(({ name }) => isResolutionTool(name))
+    const providedToolNames = currentPlayPrompt(session).tools.map(
+      ({ name }) => name,
+    );
+    const resolutionSeed = calls.some(({ name }) => {
+      const resolved = resolveToolName(name, providedToolNames);
+      return resolved.kind !== "rejected" && isResolutionTool(resolved.name);
+    })
       ? randomBytes(32).toString("hex")
       : undefined;
     for (const call of calls) {
@@ -2055,6 +2065,9 @@ export class PlayCallChain {
         kind: "tool_call",
         callId: call.id,
         name: call.name,
+        ...(item.event.executedName === undefined
+          ? {}
+          : { executedName: item.event.executedName }),
         arguments: structuredClone(call.arguments),
         replayed: item.replayed,
       });
@@ -2139,7 +2152,7 @@ export class PlayCallChain {
           event.id >
             Math.max(previousNarrative?.id ?? 0, previousPlayer?.id ?? 0) &&
           event.kind === "tool_result" &&
-          event.name === "world_checkpoint" &&
+          (event.executedName ?? event.name) === "world_checkpoint" &&
           event.ok,
       );
     const narrativeCheckpoint = checkpointRequested
@@ -3086,13 +3099,17 @@ function prepareTool(
 ): PreparedToolResult {
   const key = `${exchange}:${call.id}`;
   const signature = JSON.stringify(call.arguments);
+  const provided = currentPlayPrompt(session).tools.map(({ name }) => name);
+  const resolved = resolveToolName(call.name, provided);
+  // The executed name, not the model's spelling, decides replay identity.
+  const executedName = resolved.kind === "rejected" ? call.name : resolved.name;
   const completed = working.get(key);
   let result: PlayDocumentToolResult;
   let replayed = false;
   if (completed !== undefined) {
     replayed = true;
     result =
-      completed.name === call.name && completed.signature === signature
+      completed.name === executedName && completed.signature === signature
         ? structuredClone(completed.result)
         : {
             ok: false,
@@ -3101,25 +3118,25 @@ function prepareTool(
               "# Runtime tool rejected\n\nThe same tool-call ID is already bound to another tool name or argument set.",
           };
   } else if (
-    !callChainToolNames.has(call.name) ||
-    !currentPlayPrompt(session).tools.some(({ name }) => name === call.name)
+    resolved.kind === "rejected" ||
+    !callChainToolNames.has(executedName)
   ) {
     result = {
       ok: false,
       failureKind: "protocol",
-      markdown: `# Runtime tool rejected\n\nThe current call chain does not provide ${call.name}.`,
+      markdown: `# Runtime tool rejected\n\nThe current call chain does not provide ${call.name}. Available tools: ${provided.join(", ")}.`,
     };
   } else {
     try {
-      result = isResolutionTool(call.name)
+      result = isResolutionTool(executedName)
         ? resolutionToolResult(
-            call.name,
+            executedName,
             call.arguments,
             resolutionSeed,
             key,
             locale,
           )
-        : call.name === "world_checkpoint"
+        : executedName === "world_checkpoint"
           ? typeof call.arguments === "object" &&
             call.arguments !== null &&
             !Array.isArray(call.arguments) &&
@@ -3136,13 +3153,17 @@ function prepareTool(
                 failureKind: "protocol",
                 markdown: "world_checkpoint requires an empty argument object.",
               }
-          : session.documents.execute(call, session.history, {
-              historyScope: session.worldId,
-              locale,
-              legacyHistoryTools: hasLegacyHistoryTools(
-                currentPlayPrompt(session).tools,
-              ),
-            });
+          : session.documents.execute(
+              { ...call, name: executedName },
+              session.history,
+              {
+                historyScope: session.worldId,
+                locale,
+                legacyHistoryTools: hasLegacyHistoryTools(
+                  currentPlayPrompt(session).tools,
+                ),
+              },
+            );
     } catch (error: unknown) {
       result = {
         ok: false,
@@ -3150,9 +3171,18 @@ function prepareTool(
         markdown: `# Runtime tool failed\n\n${error instanceof Error ? error.message : "Tool execution failed."}`,
       };
     }
+    if (resolved.kind === "alias")
+      result = {
+        ...result,
+        markdown: `${result.markdown}\n\n${renderToolAliasNote(
+          call.name,
+          executedName,
+          locale,
+        )}`,
+      };
     working.set(key, {
       key,
-      name: call.name,
+      name: executedName,
       signature,
       result: structuredClone(result),
     });
@@ -3162,6 +3192,7 @@ function prepareTool(
     kind: "tool_result",
     callId: call.id,
     name: call.name,
+    ...(executedName === call.name ? {} : { executedName }),
     ok: result.ok,
     markdown: result.markdown,
     ...(result.resolution === undefined
@@ -3327,7 +3358,10 @@ function projectContextReads(
       exchange = event.exchange;
       continue;
     }
-    if (event.kind === "tool_call" && event.name === "context_read") {
+    if (
+      event.kind === "tool_call" &&
+      (event.executedName ?? event.name) === "context_read"
+    ) {
       const ref =
         isRecord(event.arguments) && typeof event.arguments.ref === "string"
           ? event.arguments.ref
@@ -3338,7 +3372,11 @@ function projectContextReads(
       });
       continue;
     }
-    if (event.kind !== "tool_result" || event.name !== "context_read") continue;
+    if (
+      event.kind !== "tool_result" ||
+      (event.executedName ?? event.name) !== "context_read"
+    )
+      continue;
     const call = calls.get(event.callId);
     if (call === undefined) continue;
     const result = completed.get(call.key);

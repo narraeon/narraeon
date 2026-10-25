@@ -720,7 +720,10 @@ export type V1PlayCallChainEvent =
       id: number;
       kind: "tool_call";
       callId: string;
+      /** The name the model sent. */
       name: string;
+      /** Present only when Runtime restored the call to another declared tool. */
+      executedName?: string;
       arguments: unknown;
       replayed: boolean;
     }
@@ -730,7 +733,10 @@ export type V1PlayCallChainEvent =
       /** Present only for tabletop resolution tools; never a preformatted string. */
       resolution?: ResolutionReceipt;
       callId: string;
+      /** The name the model sent. */
       name: string;
+      /** Present only when Runtime restored the call to another declared tool. */
+      executedName?: string;
       ok: boolean;
       markdown: string;
       replayed: boolean;
