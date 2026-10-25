@@ -318,6 +318,77 @@ context:
     expect(sources).toContain("world:control/blocks/world-style.md");
   });
 
+  test("the player's one-turn request is the last preview line from source player:turn, and only the preview carries it", () => {
+    const binding = bindingFrom(filesWith("en", (items) => items));
+    const input = createMinimalFileNativePreviewInput({
+      provider: "chat_completions",
+      modelId: "turn-guide-model",
+      contextWindowTokens: 200_000,
+      maxOutputTokens: 4096,
+      playerInput: "I nod to Alex.",
+      playerInputPlacement: "append",
+      locale: "en",
+    });
+    const compiler = new FileNativePromptCompiler({ locale: "en" });
+    const plain = compiler.compilePlayCallChain(input, binding).bootstrap;
+    const withNote = compiler.compilePlayCallChain(
+      { ...input, turnNote: "Write the fight in short beats." },
+      binding,
+    ).bootstrap;
+    expect(withNote.turnGuide?.lines.at(-1)).toEqual({
+      source: "player:turn",
+      text: "Player's request for this turn: Write the fight in short beats.",
+    });
+    expect(withNote.turnGuide?.text).toBe(
+      turnGuideText("en", withNote.turnGuide!.lines),
+    );
+    expect(withNote.turnGuide?.lines.slice(0, -1)).toEqual(
+      plain.turnGuide?.lines,
+    );
+    // The request line counts toward the soft limits like any other line.
+    expect(turnGuideWarnings(withNote.turnGuide!.lines)).toEqual([]);
+
+    // Preview shows the same suffix as the request it would send.
+    const preview = compiler.preview(
+      { ...input, turnNote: "Write the fight in short beats." },
+      binding,
+    );
+    expect(preview.initialAppend?.afterPlayer?.logical).toEqual({
+      kind: "runtime_notice",
+      notice: "turn_guide",
+      text: withNote.turnGuide!.text,
+    });
+
+    // With no preset or world line, the request alone still forms a suffix.
+    const quiet = bindingFrom(
+      filesWith("en", (items) =>
+        items.map((entry) =>
+          entry.kind === "builtin" ? { ...entry, turnGuide: "" } : entry,
+        ),
+      ),
+    );
+    const alone = compiler.compilePlayCallChain(
+      { ...input, turnNote: "Keep it brief." },
+      quiet,
+    ).bootstrap;
+    expect(alone.turnGuide?.lines).toEqual([
+      {
+        source: "player:turn",
+        text: "Player's request for this turn: Keep it brief.",
+      },
+    ]);
+    expect(alone.turnGuide?.text.startsWith(turnGuideHeader("en"))).toBe(true);
+  });
+
+  test("the Runtime header names only the source of the suffix, in both locales", () => {
+    expect(turnGuideHeader("zh-CN")).toBe(
+      "[Runtime 本轮提示]\n以下是对这一轮正文的提示，来自预设、世界设定和玩家的临时要求。不要回应本提示，直接写正文。",
+    );
+    expect(turnGuideHeader("en")).toBe(
+      "[Runtime turn guide]\nThese are notes for this turn's prose, from the preset, the world, and the player's requests for this turn. Do not reply to this notice; write the prose.",
+    );
+  });
+
   test("a preset without any line sends no suffix", () => {
     const binding = bindingFrom(
       filesWith("en", (items) =>

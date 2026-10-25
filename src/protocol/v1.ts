@@ -177,6 +177,7 @@ export type V1Request =
       type: "prompt.preview";
       packageId: string;
       playerInput: string;
+      turnNote?: string;
       model: ModelBinding;
       playPresetId?: string;
       playPresetRevision?: string;
@@ -271,6 +272,7 @@ export type V1Request =
       eventId: number;
       replacementExchangeId: string;
       replacementText: string;
+      turnNote?: string;
       continuation: "continue_context" | "fresh_context";
     }
   | {
@@ -279,6 +281,7 @@ export type V1Request =
       chainId: string;
       exchangeId: string;
       playerText: string;
+      turnNote?: string;
     }
   | {
       type: "play.chain.append";
@@ -286,6 +289,7 @@ export type V1Request =
       chainId: string;
       exchangeId: string;
       playerText: string;
+      turnNote?: string;
     }
   | {
       type: "play.chain.cancel";
@@ -1423,6 +1427,12 @@ function validateRequestFields(request: Record<string, unknown>): void {
       "invalid_request",
       "play.timeline.detail.eventId is invalid",
     );
+  if (
+    "turnNote" in request &&
+    request.turnNote !== undefined &&
+    typeof request.turnNote !== "string"
+  )
+    throw new V1ProtocolError("invalid_request", "turnNote is invalid");
   if (
     request.type === "play.chain.revise-player" &&
     request.continuation !== "continue_context" &&

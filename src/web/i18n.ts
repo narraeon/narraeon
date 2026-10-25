@@ -1838,6 +1838,11 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
   按需读取: "On-demand reads",
   排版密度: "Layout density",
   "接下来，你要做什么？": "What do you do next?",
+  本轮临时要求: "One-turn request",
+  "只对这一轮生效，不进入故事":
+    "Applies to this turn only; it does not enter the story",
+  "超过 120 字；仍会发送，但请尽量简短。":
+    "Over 120 characters; it will still be sent, but keep it short.",
   "控制草稿必须经过真实 Prompt Preview 后整批应用。":
     "The control draft must pass a real Prompt Preview before being applied as a whole.",
   收起世界栏: "Close world panel",

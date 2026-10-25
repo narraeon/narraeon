@@ -231,6 +231,7 @@ export function PromptPreviewScreen({
     packages[0];
   const [packageId, setPackageId] = useState(initialPackage?.localId ?? "");
   const [playerInput, setPlayerInput] = useState(uiText("我观察当前场景。"));
+  const [turnNote, setTurnNote] = useState("");
   const [preview, setPreview] = useState<PromptPreviewData | null>(null);
   const [pending, setPending] = useState(false);
   const [feedback, setFeedback] = useState<{
@@ -275,6 +276,7 @@ export function PromptPreviewScreen({
         type: "prompt.preview",
         packageId,
         playerInput: playerInput.trim(),
+        ...(turnNote.trim() === "" ? {} : { turnNote: turnNote.trim() }),
         model: modelBinding(activeConnection),
         ...(playPresets === undefined
           ? {}
@@ -394,6 +396,21 @@ export function PromptPreviewScreen({
                     "这段原文只进入本次预览，不会写入历史，也不会成为真实玩家行动。",
                   )}
                 </span>
+              </label>
+
+              <label className="prompt-preview-player-field">
+                {uiText("本轮临时要求")}
+                <input
+                  type="text"
+                  value={turnNote}
+                  placeholder={uiText("只对这一轮生效，不进入故事")}
+                  onChange={(event) => {
+                    setTurnNote(
+                      event.currentTarget.value.replace(/[\r\n]/gu, ""),
+                    );
+                    invalidatePreview();
+                  }}
+                />
               </label>
 
               {selectedPackage?.status === "needs_repair" ? (

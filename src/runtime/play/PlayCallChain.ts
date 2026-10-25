@@ -41,6 +41,8 @@ import {
 import { comparePromptPrefixes } from "../prompt/WorldPromptDiagnostics.ts";
 import { createHash, randomBytes } from "node:crypto";
 import type { AppLocale } from "../../protocol/appPreferences.ts";
+import { isTurnGuideLine } from "../../shared/ordered-play-prompts.ts";
+import { turnGuideWithTurnNote } from "../../shared/turn-guide.ts";
 import {
   completedPlayerRounds,
   continuationNotice,
@@ -162,6 +164,8 @@ interface PlayCallChainStartInput {
   chainId: string;
   exchangeId: string;
   playerText: string;
+  /** The player's one-turn request line; never part of the bootstrap or transcript. */
+  turnNote?: string;
   hostBinding: FileNativePromptInput["hostBinding"];
   playPreset: PlayPresetBinding;
   modelBinding: ModelHostBinding;
@@ -177,6 +181,7 @@ interface PlayCallChainAppendInput {
   chainId: string;
   exchangeId: string;
   playerText: string;
+  turnNote?: string;
   modelHost: ModelHost;
   observer?: PlayCallChainObserver;
 }
@@ -188,6 +193,7 @@ interface PlayCallChainRevisionBaseInput {
   eventId: number;
   replacementExchangeId: string;
   replacementText: string;
+  turnNote?: string;
 }
 
 type PlayCallChainRevisionInput = PlayCallChainRevisionBaseInput &
@@ -235,6 +241,7 @@ interface PlayerRevisionIntent {
   eventId: number;
   replacementExchangeId: string;
   replacementText: string;
+  turnNote?: string;
   continuation: PlayCallChainRevisionInput["continuation"];
   restoresHead: string;
   /** Contexts from the edited one onward; a rewind discards them from disk. */
@@ -347,6 +354,7 @@ export class PlayCallChain {
     validateIdentity(input.chainId, "call-chain ID");
     validateIdentity(input.exchangeId, "exchange ID");
     validatePlayerText(input.playerText);
+    validTurnNote(input.turnNote);
     assertModelHostBinding(input.modelBinding, input.modelHost);
 
     // Only a resubmission to the current context needs that context loaded.
@@ -409,6 +417,7 @@ export class PlayCallChain {
       canRetry: false,
       bootstrap: fresh.bootstrap,
       tools: fresh.tools,
+      ...turnNoteField(validTurnNote(input.turnNote)),
       transcript: [],
       events: [],
       completedTools: [],
@@ -551,6 +560,9 @@ export class PlayCallChain {
         );
       }
       await this.#refreshPrompt(session, input);
+      // Each dispatch carries exactly the request the client sent with it; a
+      // continuation without one must not inherit the previous turn's line.
+      setTurnNote(session, validTurnNote(input.turnNote));
       session.exchange += 1;
       const last = session.transcript.at(-1);
       if (
@@ -564,7 +576,12 @@ export class PlayCallChain {
       return this.#dispatch(
         session,
         input.modelHost,
-        createRequest(session, input.modelHost, session.exchange),
+        createRequest(
+          session,
+          input.modelHost,
+          session.exchange,
+          this.#compiler.locale,
+        ),
         1,
         signal,
         input.observer,
@@ -586,6 +603,7 @@ export class PlayCallChain {
           : "The call chain was interrupted; use a fresh context.",
       );
     await this.#refreshPrompt(session, input);
+    setTurnNote(session, validTurnNote(input.turnNote));
     return this.#submitPlayer(
       session,
       input.exchangeId,
@@ -1281,6 +1299,7 @@ export class PlayCallChain {
       eventId: input.eventId,
       replacementExchangeId: input.replacementExchangeId,
       replacementText: input.replacementText,
+      ...turnNoteField(validTurnNote(input.turnNote)),
       continuation: input.continuation,
       restoresHead: playerRevisionRestoresHead(sourceContext, eventIndex),
       discardChainIds: contexts
@@ -1441,6 +1460,7 @@ export class PlayCallChain {
         previousContexts: [],
         previousChainId,
         timelineGeneration,
+        ...turnNoteField(intent.turnNote),
         parentHead: head,
         updatedAt: Date.now(),
       };
@@ -1607,6 +1627,7 @@ export class PlayCallChain {
         revision: input.freshContext.playPreset.revision,
       },
       followups: structuredClone(fresh.followups),
+      ...turnNoteField(input.intent.turnNote),
       playPresetScriptsEnabled: input.freshContext.playPreset.scriptsEnabled,
       presetFiles: structuredClone(input.freshContext.playPreset.files),
       modelBinding: structuredClone(input.freshContext.modelBinding),
@@ -1846,10 +1867,13 @@ export class PlayCallChain {
 
     session.narrativeOrigin = await this.#captureOrigin(session);
     const exchange = session.exchange + 1;
-    const nextRequest = createRequest(session, modelHost, exchange, [
-      ...session.transcript,
-      ...playerInputAppend(playerText),
-    ]);
+    const nextRequest = createRequest(
+      session,
+      modelHost,
+      exchange,
+      this.#compiler.locale,
+      [...session.transcript, ...playerInputAppend(playerText)],
+    );
     const operationKey = `player:${exchangeId}`;
     const playerOperationId = operationId(session.chainId, operationKey);
     const advance = {
@@ -2264,6 +2288,7 @@ export class PlayCallChain {
         session,
         session.lastRequest?.maxOutputTokens ?? 1,
         session.exchange,
+        this.#compiler.locale,
       );
       if (session.lastRequest?.modelConfig !== undefined)
         nextRequest.modelConfig = structuredClone(
@@ -2895,12 +2920,14 @@ function createRequest(
   session: PlayCallChainSession,
   modelHost: ModelHost,
   exchange: number,
+  locale: AppLocale,
   appended: readonly ModelHostAppendItem[] = session.transcript,
 ): ModelHostExchange {
   const request = createRequestWithMaxOutputTokens(
     session,
     modelHost.binding().maxOutputTokens,
     exchange,
+    locale,
     appended,
   );
   return modelHost.freezeRequest?.(request) ?? request;
@@ -2917,14 +2944,22 @@ function createRequestWithMaxOutputTokens(
     | "playPreset"
     | "followups"
     | "playPresetScriptsEnabled"
+    | "turnNote"
   >,
   maxOutputTokens: number,
   exchange: number,
+  locale: AppLocale,
   appended: readonly ModelHostAppendItem[] = session.transcript,
 ): ModelHostExchange {
   // The turn guide is a request-level suffix: it follows whatever this
-  // dispatch appends and is never part of the transcript it is built on.
-  const turnGuide = currentPlayPrompt(session).bootstrap.turnGuide;
+  // dispatch appends and is never part of the transcript it is built on. The
+  // player's one-turn request joins the suffix here, not in the bootstrap, so
+  // the bootstrap snapshot stays shared by every dispatch of the turn.
+  const turnGuide = turnGuideWithTurnNote(
+    locale,
+    currentPlayPrompt(session).bootstrap.turnGuide,
+    session.turnNote,
+  );
   return {
     bootstrap: structuredClone(currentPlayPrompt(session).bootstrap),
     tools: structuredClone(currentPlayPrompt(session).tools),
@@ -3470,6 +3505,33 @@ function validateIdentity(value: string, label: string): void {
 function validatePlayerText(value: string): void {
   if (value.trim().length === 0)
     throw new PlayCallChainError("Player text must not be empty.");
+}
+
+/**
+ * The player's one-turn request: one line, bounded like a turn-guide line.
+ * Blank input means no request. Length beyond the soft limit is only warned
+ * about by the client and Prompt Preview, never rejected here.
+ */
+function validTurnNote(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  if (!isTurnGuideLine(value))
+    throw new PlayCallChainError(
+      "The turn request must be a single line of at most 1000 characters.",
+    );
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? undefined : trimmed;
+}
+
+function setTurnNote(
+  session: { turnNote?: string },
+  turnNote: string | undefined,
+): void {
+  if (turnNote === undefined) delete session.turnNote;
+  else session.turnNote = turnNote;
+}
+
+function turnNoteField(turnNote: string | undefined): { turnNote?: string } {
+  return turnNote === undefined ? {} : { turnNote };
 }
 
 function touch(session: Pick<PersistedPlayCallChain, "updatedAt">): void {

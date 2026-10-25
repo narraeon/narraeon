@@ -30,6 +30,7 @@ import {
 import {
   turnGuideHeader,
   turnGuideText,
+  turnGuideWithTurnNote,
   type TurnGuideLine,
 } from "../../shared/turn-guide.ts";
 import { parseOrderedPlayPrompts } from "../play/OrderedPlayPrompts.ts";
@@ -135,6 +136,8 @@ export interface FileNativePromptInput {
   };
   playerInputPlacement: "bootstrap" | "append";
   playerInput: string;
+  /** The player's one-turn request; appended to the turn guide as `player:turn`. */
+  turnNote?: string;
   modelBinding: {
     provider: ProviderKind;
     modelId: string;
@@ -1076,13 +1079,16 @@ export class FileNativePromptCompiler {
       append("player_input", [
         { source: "player:input", markdown: effective.playerInput },
       ]);
-    const turnGuide =
+    const turnGuide = turnGuideWithTurnNote(
+      this.#locale,
       turnGuideLines.length === 0
         ? undefined
         : {
             text: turnGuideText(this.#locale, turnGuideLines),
             lines: turnGuideLines,
-          };
+          },
+      effective.turnNote,
+    );
     scanRuntimeLeakage([
       ...logicalMessages,
       ...(turnGuide === undefined

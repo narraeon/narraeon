@@ -665,6 +665,9 @@ export class V1Runtime {
             ),
             playerInputPlacement: "append",
             playerInput: request.playerInput,
+            ...(request.turnNote === undefined
+              ? {}
+              : { turnNote: request.turnNote }),
             modelBinding: modelHost.binding(),
           },
           playPreset,
@@ -955,6 +958,9 @@ export class V1Runtime {
           eventId: request.eventId,
           replacementExchangeId: request.replacementExchangeId,
           replacementText: request.replacementText,
+          ...(request.turnNote === undefined
+            ? {}
+            : { turnNote: request.turnNote }),
         };
         const result = await playCall(async () => {
           await this.#worlds.assertWorldRevisionUnlocked(request.worldId);
@@ -984,6 +990,9 @@ export class V1Runtime {
             chainId: request.chainId,
             exchangeId: request.exchangeId,
             playerText: request.playerText,
+            ...(request.turnNote === undefined
+              ? {}
+              : { turnNote: request.turnNote }),
             hostBinding,
             playPreset,
             modelBinding,
@@ -1002,6 +1011,9 @@ export class V1Runtime {
             chainId: request.chainId,
             exchangeId: request.exchangeId,
             playerText: request.playerText,
+            ...(request.turnNote === undefined
+              ? {}
+              : { turnNote: request.turnNote }),
             modelHost: await this.#modelHost(),
             resolvePrompt: () => this.#continuousBinding(),
             ...(playCallChainObserver === undefined
