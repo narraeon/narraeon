@@ -53,7 +53,7 @@ export interface PlayDocumentToolResult extends ContextToolResult {
   candidateWrite?: {
     shortRef: string;
     changed: boolean;
-    freshContextCoverage?: string;
+    sizeAdvice?: string;
   };
 }
 

@@ -2770,8 +2770,7 @@ test("工具中间步文本不进入叙事，状态与终态叙事分别推进�
   );
   expect(patchDetail).toMatchObject({
     kind: "tool_result",
-    markdown:
-      "@current-situation write succeeded\nIf a fresh context started now: full body",
+    markdown: "@current-situation write succeeded",
   });
   if (patchDetail.kind !== "tool_result")
     throw new Error("Expected a tool-result timeline detail");
@@ -3262,11 +3261,7 @@ test("已提交写入回执报告下次真实目录覆盖并回显更新后的�
   expect(receipt).toMatchObject({ kind: "tool", toolCallId: "write" });
   if (receipt?.kind !== "tool")
     throw new Error("Missing committed write receipt");
-  expect(receipt.markdown).toContain("@ledger write succeeded");
-  expect(receipt.markdown).toContain(
-    "If a fresh context started now: catalog summary only",
-  );
-  expect(receipt.markdown).toContain("Summary: 当前金币与未结清借款");
+  expect(receipt.markdown).toBe("@ledger write succeeded");
   expect(receipt.markdown).not.toContain("金币: 8");
   const event = first.events.find(
     (item) => item.kind === "tool_result" && item.callId === "write",
@@ -3277,6 +3272,56 @@ test("已提交写入回执报告下次真实目录覆盖并回显更新后的�
     event!.id,
   );
   expect(persisted).toMatchObject({ markdown: receipt.markdown });
+});
+
+test("超过建议体积的写入回执保留整理提示，且不附覆盖说明", async () => {
+  const files = worldFiles();
+  files.find(({ path }) => path === "world/current-situation.yaml")!.contents +=
+    "时间: 黄昏\n";
+  files.find(({ path }) => path === "control/frame.yaml")!.contents +=
+    "maintenance:\n  documents:\n    '@current-situation': 10\n  clock:\n    document: '@current-situation'\n    locator: { yaml: [时间] }\n";
+  const { worlds, worldId } = await createWorld("oversized-receipt", files);
+  const host = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "time",
+            name: "world_patch",
+            arguments: {
+              target: "@current-situation",
+              edits: [
+                { op: "replace", locator: { yaml: ["时间"] }, value: "午夜" },
+              ],
+            },
+          },
+        ],
+      },
+      { outcome: "response", text: "你一直等到午夜。" },
+    ],
+  });
+  await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "oversized-receipt",
+    exchangeId: "first",
+    playerText: "等到午夜。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: host,
+  });
+  const receipt = sent(host.requests[1]!).at(-1);
+  expect(receipt).toMatchObject({ kind: "tool", toolCallId: "time" });
+  if (receipt?.kind !== "tool")
+    throw new Error("Missing committed write receipt");
+  expect(receipt.markdown).toMatch(
+    /^@current-situation write succeeded\nMaintenance advice: body \d+ UTF-8 bytes, advisory limit 10; change [+-]?\d+\.$/u,
+  );
+  expect(receipt.markdown).not.toMatch(
+    /fresh context|Node scopes|Summary:|catalog summary|Fresh-context coverage|暂时无法判定/u,
+  );
 });
 
 test("维护诊断失败不阻断已提交写入、终态叙事或冷恢复", async () => {
@@ -3336,6 +3381,11 @@ test("维护诊断失败不阻断已提交写入、终态叙事或冷恢复", as
   expect(completed.status).toBe("ready");
   expect(completed.parentHead).toBe("commit:3");
   expect(host.requests).toHaveLength(3);
+  const writeReceipt = sent(host.requests[1]!).at(-1);
+  expect(writeReceipt).toMatchObject({ kind: "tool", toolCallId: "write" });
+  expect(writeReceipt?.kind === "tool" ? writeReceipt.markdown : "").toBe(
+    "@current-situation write succeeded",
+  );
   expect(JSON.stringify(sent(host.requests.at(-1)!).at(-1))).toContain(
     "maintenance unavailable",
   );
@@ -3892,8 +3942,7 @@ test("world_patch no-op 保留匹配的紧凑工具结果且不推进世界", as
   );
   expect(patchDetail).toMatchObject({
     kind: "tool_result",
-    markdown:
-      "@current-situation unchanged\nIf a fresh context started now: full body",
+    markdown: "@current-situation unchanged",
   });
   if (patchDetail.kind !== "tool_result")
     throw new Error("Expected a tool-result timeline detail");
@@ -4086,8 +4135,7 @@ test("游玩调用链可在 frame 声明的空 catalog 中创建首份文档", a
   expect(sent(firstHost.requests[2]!).at(-1)).toEqual({
     kind: "tool",
     toolCallId: "create-first-item",
-    markdown:
-      "@lantern write succeeded\nIf a fresh context started now: catalog summary only\nSummary: 一盏可持续追踪的提灯。",
+    markdown: "@lantern write succeeded",
   });
   expect(
     (await worlds.recoverEndpoint(worldId)).state.find(
