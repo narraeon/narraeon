@@ -296,7 +296,6 @@ export function WorldPage({
   const revisionOverview =
     dialog === "revision" ? (authoring.target?.revision ?? null) : null;
   const revisionFiles = authoring.files;
-  const savedRevisionFiles = authoring.baseline;
   const revisionDirty = authoring.dirty;
   const [aiReading, setAiReading] = useState<V1PlayContextReadingView | null>(
     null,
@@ -1398,17 +1397,6 @@ export function WorldPage({
           status:
             (epoch?.diagnostics.length ?? 0) === 0 ? "usable" : "needs_repair",
           issues: epoch?.diagnostics ?? [],
-          immutablePaths:
-            (epoch?.files ?? savedRevisionFiles)
-              .filter(
-                ({ path }) =>
-                  path.startsWith("state/") &&
-                  !epoch?.diff.some(
-                    (change) =>
-                      change.path === path && change.kind === "create",
-                  ),
-              )
-              .map(({ path }) => path) ?? [],
           dirty: revisionDirty,
           onFilesChange: (files) => revisionWorkspace.editFiles(files),
           onSave: () => void revisionWorkspace.saveFiles(),

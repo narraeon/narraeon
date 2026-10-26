@@ -12,6 +12,8 @@ status: accepted
 
 只有玩家执行 Apply 或 Discard 才结束 epoch。Apply 用一个稳定 operation ID 将 state 作为单笔 correction 提交，再以确定的 staging／previous 路径幂等发布 control；prepared、state committed 和 control published 阶段都持久保存，锁在 applied 已可恢复之前不会释放。Discard 不改变世界。封存后的历史只读，不再提供回滚。继续原 AI 对话会建立新的 epoch、追加高优先级边界并清空旧读取授权，要求模型重新读取。
 
+修订工作树中的既有状态文档沿用 [ADR-0037](0037-setting-improvement-is-one-model-directed-conversation.md) 的物理删除与移动规则：删除要求目标已完整读取，且 currentSituation、frame slot、player-view selector 与其他文档 `$ref` 均未指向它，否则列出全部阻挡位置；移动保留文档身份与内容，且不覆盖已有路径。检查层以文档身份而非路径判断既有文档是否被改写。Apply 把删除作为同一轮 `revision_apply` 的前像变化提交（[ADR-0045](0045-world-history-is-current-files-plus-a-turn-ledger.md)），回退到应用前的端点即可恢复被删文件。
+
 这项决定刻意不引入运行时 diff／merge／rebase：锁会暂时牺牲一边游玩一边改世界的能力，却使工作树始终只有一个基线，让回滚、崩溃恢复、Authority 幂等和控制发布都保持可证明。若未来需要多人或并行创作，应另行设计冲突模型，不能让活动世界在本契约下静默漂移。
 
 世界修订复用预设独立作者编排，每次主动发送重编译，按目标解析世界修订机械说明与 epoch 数据；工具循环内固定请求快照。旧 schema 1 会话可精确读取，下一次新发送原子升级到 schema 2 并追加请求快照，原 bootstrap 和 Provider 历史不变。编排变化不会创建或结束 epoch、放宽读取授权或自动应用世界。

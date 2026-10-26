@@ -37,7 +37,6 @@ interface WorldRevisionWorkspace {
   dirty: boolean;
   pending: boolean;
   issues: readonly DocumentWorkbenchIssue[];
-  immutablePaths: readonly string[];
   onFilesChange: (files: ContentTreeFile[]) => void;
   onSave: () => void;
 }
@@ -91,9 +90,6 @@ export function DocumentWorkbench({
     ? requested
     : preferredPath;
   const selectedFile = files.find(({ path }) => path === selectedPath);
-  const selectedPathLocked =
-    workspace.kind === "world-revision" &&
-    workspace.immutablePaths.includes(selectedPath);
   const pathDraft =
     pathEdit.sourcePath === selectedPath ? pathEdit.value : selectedPath;
   const issues = workspace.kind === "world-correction" ? [] : workspace.issues;
@@ -131,12 +127,7 @@ export function DocumentWorkbench({
   }
 
   function renameSelected(): void {
-    if (
-      !managesTree ||
-      selectedFile === undefined ||
-      selectedPathLocked ||
-      pathError.length > 0
-    )
+    if (!managesTree || selectedFile === undefined || pathError.length > 0)
       return;
     const nextPath = pathDraft.trim();
     if (nextPath === selectedFile.path) return;
@@ -166,8 +157,7 @@ export function DocumentWorkbench({
   }
 
   function removeSelected(): void {
-    if (!managesTree || selectedFile === undefined || selectedPathLocked)
-      return;
+    if (!managesTree || selectedFile === undefined) return;
     const remaining = files
       .filter(({ path }) => path !== selectedFile.path)
       .map((file) => ({ ...file }));
@@ -401,10 +391,9 @@ export function DocumentWorkbench({
                 <button
                   type="button"
                   className="danger-button content-remove-file"
-                  disabled={selectedPathLocked}
                   onClick={removeSelected}
                 >
-                  {uiText("从草稿移除")}
+                  {uiText("删除文件")}
                 </button>
               ) : (
                 <span
@@ -428,7 +417,6 @@ export function DocumentWorkbench({
                     {uiText("文件路径")}
                     <input
                       value={pathDraft}
-                      disabled={selectedPathLocked}
                       onChange={(event) =>
                         setPathEdit({
                           sourcePath: selectedFile.path,
@@ -441,7 +429,6 @@ export function DocumentWorkbench({
                     type="button"
                     className="secondary-button"
                     disabled={
-                      selectedPathLocked ||
                       pathError.length > 0 ||
                       pathDraft.trim() === selectedFile.path
                     }
@@ -450,11 +437,7 @@ export function DocumentWorkbench({
                     {uiText("应用新路径")}
                   </button>
                 </div>
-                {pathError.length > 0 ? (
-                  <p role="alert">{pathError}</p>
-                ) : selectedPathLocked ? (
-                  <p>{uiText("既有状态文档的路径和身份在修订中保持不变。")}</p>
-                ) : null}
+                {pathError.length > 0 ? <p role="alert">{pathError}</p> : null}
               </details>
             ) : null}
             {selectedFile.encoding === "base64" ? (

@@ -1631,7 +1631,7 @@ function revisionTarget(
   return selector;
 }
 
-interface SettingDocumentDeletionBlocker {
+export interface SettingDocumentDeletionBlocker {
   path: string;
   locator: string;
 }
@@ -1712,7 +1712,7 @@ function deleteWorldDocument(
   };
 }
 
-function settingDocumentDeletionBlockers(
+export function settingDocumentDeletionBlockers(
   snapshot: WorldDocumentStore,
   target: WorldDocumentDescriptor,
 ): SettingDocumentDeletionBlocker[] {

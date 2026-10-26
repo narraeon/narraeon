@@ -38,17 +38,18 @@ export interface WorldHistoryMessage {
 }
 
 export interface WorldStateChangeStored {
-  kind: "create" | "replace";
+  /** `delete` 只由世界修订应用产生：前像必须存在，且没有下一份内容。 */
+  kind: "create" | "replace" | "delete";
   documentId: string;
   stableShortRef: string;
   relativePath: string;
   codec: "yaml" | "markdown";
   expectedPreviousHash: string | null;
-  nextHash: string;
+  nextHash: string | null;
 }
 
 export interface WorldStateChangeInput extends WorldStateChangeStored {
-  canonicalNextBytes: string;
+  canonicalNextBytes: string | null;
 }
 
 /** 提交轮的模式；`genesis` 与 `rewind` 不是提交，没有提交元数据。 */
@@ -348,13 +349,25 @@ export class WorldLedgerAuthority {
   async readStateChangeContents(
     commit: WorldTurnCommit,
     change: WorldStateChangeStored,
-  ): Promise<string> {
+  ): Promise<string | null> {
     const contents = await readFileAt(
       this.#root,
       commit.sequence,
       `state/${change.relativePath}`,
     );
-    if (contents === null || sha256Hex(contents) !== change.nextHash)
+    if (change.kind === "delete") {
+      if (contents !== null)
+        throw new WorldAuthorityError(
+          "corrupt",
+          `Deleted state document still exists in its commit: ${change.relativePath}`,
+        );
+      return null;
+    }
+    if (
+      change.nextHash === null ||
+      contents === null ||
+      sha256Hex(contents) !== change.nextHash
+    )
       throw new WorldAuthorityError(
         "corrupt",
         `State change content conflicts with its commit: ${change.relativePath}`,
@@ -495,7 +508,23 @@ export class WorldLedgerAuthority {
           "conflict",
           `State-change previous hash conflicts: ${change.relativePath}`,
         );
-      if (sha256Hex(change.canonicalNextBytes) !== change.nextHash)
+      if (change.kind === "delete") {
+        if (
+          previous === undefined ||
+          change.nextHash !== null ||
+          change.canonicalNextBytes !== null
+        )
+          throw new WorldAuthorityError(
+            "conflict",
+            `State-change delete conflicts: ${change.relativePath}`,
+          );
+        changes.push({ path: `state/${change.relativePath}`, content: null });
+        continue;
+      }
+      if (
+        change.canonicalNextBytes === null ||
+        sha256Hex(change.canonicalNextBytes) !== change.nextHash
+      )
         throw new WorldAuthorityError(
           "conflict",
           `State-change next hash conflicts: ${change.relativePath}`,

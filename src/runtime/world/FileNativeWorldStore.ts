@@ -192,14 +192,14 @@ export interface FileNativePlayBinding {
 }
 
 export interface FileNativeStateChange {
-  kind: "create" | "replace";
+  kind: "create" | "replace" | "delete";
   documentId: string;
   stableShortRef: string;
   relativePath: string;
   codec: "yaml" | "markdown";
   expectedPreviousHash: string | null;
-  nextHash: string;
-  canonicalNextBytes: string;
+  nextHash: string | null;
+  canonicalNextBytes: string | null;
 }
 
 export type FileNativePlayCommit = WorldTurnCommit;
@@ -1873,15 +1873,22 @@ export class FileNativeWorldStore {
             const previous = candidateState.get(change.relativePath);
             const previousHash =
               previous === undefined ? null : sha256(previous);
-            if (
-              previousHash !== change.expectedPreviousHash ||
-              sha256(change.canonicalNextBytes) !== change.nextHash
-            )
+            const nextBytes = change.canonicalNextBytes;
+            const consistent =
+              change.kind === "delete"
+                ? previous !== undefined &&
+                  nextBytes === null &&
+                  change.nextHash === null
+                : nextBytes !== null &&
+                  change.nextHash !== null &&
+                  sha256(nextBytes) === change.nextHash;
+            if (previousHash !== change.expectedPreviousHash || !consistent)
               throw new FileNativeWorldCreationError(
                 "operation_conflict",
                 `State-change hash conflicts: ${change.relativePath}`,
               );
-            candidateState.set(change.relativePath, change.canonicalNextBytes);
+            if (nextBytes === null) candidateState.delete(change.relativePath);
+            else candidateState.set(change.relativePath, nextBytes);
           }
           const inspection = inspectContentPackageCurrentTree(
             [

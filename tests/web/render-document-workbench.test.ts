@@ -84,7 +84,6 @@ describe("文档工作区与玩法文件", () => {
           dirty: false,
           pending: false,
           issues: [],
-          immutablePaths: [],
           onFilesChange: vi.fn(),
           onSave: vi.fn(),
         },

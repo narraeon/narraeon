@@ -437,7 +437,7 @@ const englishMessages: Record<string, string> = {
   当前草稿没有文件: "The current draft has no files",
   "从左侧新建第一份文件，或返回工作区导入已有内容包。":
     "Create the first file from the left, or return to the workspace and import an existing content package.",
-  从草稿移除: "Remove from draft",
+  删除文件: "Delete file",
   文件路径: "File path",
   应用新路径: "Apply new path",
   二进制资源不在文本编辑器展开:
@@ -1946,8 +1946,6 @@ const worldRevisionEnglishMessages: Record<string, string> = {
   没有未保存修改: "No unsaved changes",
   "世界修订只接受 state 下的 YAML／Markdown，以及受支持的 control 文件。":
     "World revision accepts YAML or Markdown under state, plus the supported control files.",
-  "既有状态文档的路径和身份在修订中保持不变。":
-    "An existing state document keeps its path and identity during revision.",
   世界状态: "World state",
   修订工作树: "Revision worktree",
   "手动编辑和 AI 共用一份修订": "Manual edits and the model share one revision",

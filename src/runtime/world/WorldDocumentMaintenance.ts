@@ -119,11 +119,15 @@ export async function readDocumentMaintenanceFacts(
     const changed = await Promise.all(
       commit.stateChanges.map(async (change) => ({
         change,
-        contents: await authority.readStateChangeContents(commit, change),
+        contents:
+          change.kind === "delete"
+            ? null
+            : await authority.readStateChangeContents(commit, change),
       })),
     );
     for (const { change, contents } of changed)
-      files.set(change.relativePath, contents);
+      if (contents === null) files.delete(change.relativePath);
+      else files.set(change.relativePath, contents);
     const next = snapshot();
     const position: WorldWritePosition = {
       kind: isCorrectionCommit(commit.mode)
@@ -136,6 +140,7 @@ export async function readDocumentMaintenanceFacts(
       worldTime: commit.worldClock ?? null,
     };
     for (const { change } of changed) {
+      if (change.kind === "delete") continue;
       const ref = change.stableShortRef;
       const before = previous.query({
         kind: "read_document",

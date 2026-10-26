@@ -31,7 +31,6 @@ export interface ContentTreeEditorProps {
   selectedPath?: string;
   onSelectedPathChange?: (path: string) => void;
   embedded?: boolean;
-  immutablePaths?: readonly string[];
 }
 
 export function ContentTreeEditor({
@@ -54,7 +53,6 @@ export function ContentTreeEditor({
   onSelectedPathChange,
   embedded = false,
   mode = "content-package",
-  immutablePaths = [],
 }: ContentTreeEditorProps): React.JSX.Element {
   const [titleDraft, setTitleDraft] = useState(title);
   const [lastTitle, setLastTitle] = useState(title);
@@ -135,7 +133,6 @@ export function ContentTreeEditor({
                 dirty,
                 pending: false,
                 issues,
-                immutablePaths,
                 onFilesChange,
                 onSave,
               }
