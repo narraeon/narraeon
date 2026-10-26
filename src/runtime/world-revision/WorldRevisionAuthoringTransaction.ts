@@ -107,7 +107,7 @@ export function worldRevisionRuntimeContract(
 - state/* 与 control/* 共同组成唯一的修订工作树；手动编辑和 AI 工具写入落到同一棵树，也进入同一份可回滚改动历史。opening.md 已经作为创世叙事提交，不能读取或修改。
 - 工具调用修改的是尚未应用的工作树。只有玩家点击“应用修订”才会把当前整棵树提交为新的世界状态和控制并解除锁；“放弃修订”会丢弃工作树并解除锁。你不得宣称自己已经应用或放弃修订。
 - 每个完整工具响应按调用顺序结算。成功调用留下逐文件 before-image，可以由玩家单独回滚；失败调用不会撤销同一响应内其他成功调用。
-- 修改既有文件前必须完整读取。list/search cursor 和 read 授权只属于产生它们的工作树 revision；工作树发生任何手动、AI 或回滚写入后，继续修改前必须重新读取。
+- 修改既有文件前必须完整读取。list/search cursor 和 read 授权只属于产生它们的工作树 revision；工作树发生任何手动、AI 或回滚写入后，继续修改前必须重新读取。bootstrap 中 Runtime 预载的完整文档视为已在该 revision 完整读取，可直接修改；目录不算读取。
 - state/* 只接受 .yaml 或 .md 世界文档；control/* 接受 frame.yaml、player-views.yaml、blocks/*.md，以及 followups.yaml 与后置请求引用的 prompts/*.md、renderers/*.html、scripts/*.js、regex/*.yaml、assets/* 文本资源。${tabletop ? "control/gameplay.json 记录世界的玩法模式与判定方案，修订中只能保持不变。" : ""}可以创建新状态文档；既有状态文档不能删除或移动，因为 Authority 保留其稳定身份。
 - 对话跨越“应用”或“放弃”继续时，Runtime 会明确宣布一个新修订 epoch。此前读取授权全部失效；先重新读取新世界，再继续修改。`
     : `# Runtime world-revision conversation contract
@@ -116,7 +116,7 @@ export function worldRevisionRuntimeContract(
 - state/* and control/* form one revision worktree. Manual edits and AI tool writes share that tree and one rollback history. opening.md was already committed as genesis narrative and cannot be read or changed.
 - Tools change the unapplied worktree. Only the player can Apply the complete tree to world state/control and unlock it, or Discard the tree and unlock it. Never claim that you applied or discarded the revision yourself.
 - Calls in each complete tool response settle in order. Every successful call retains per-file before-images for selective rollback; a failed sibling does not undo successful calls.
-- Completely read an existing file before changing it. List/search cursors and read authorization belong only to the worktree revision that produced them. Re-read after any manual, AI, or rollback write.
+- Completely read an existing file before changing it. List/search cursors and read authorization belong only to the worktree revision that produced them. Re-read after any manual, AI, or rollback write. Runtime-preloaded complete documents in the bootstrap count as completely read at that revision and may be changed directly; the directory does not count as a read.
 - state/* accepts only YAML or Markdown world documents. control/* accepts frame.yaml, player-views.yaml, blocks/*.md, plus followups.yaml and its referenced prompts/*.md, renderers/*.html, scripts/*.js, regex/*.yaml and assets/* text resources. ${tabletop ? "control/gameplay.json records the world's gameplay mode and resolution scheme; a revision must leave both unchanged. " : ""}New state documents are allowed; existing state documents cannot be deleted or moved because Authority retains their stable identity.
 - When a conversation continues after Apply or Discard, Runtime announces a new revision epoch and invalidates every prior read authorization. Re-read the new world before editing.`;
 }

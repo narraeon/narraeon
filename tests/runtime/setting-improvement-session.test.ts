@@ -1864,6 +1864,54 @@ test("恢复写入使用 CAS，过期副本不能覆盖更新后的对话", asyn
   });
 });
 
+test("新内容包会话预载控制文档，未读即可修改预载文档，只列出的 opening.md 仍需先读", async () => {
+  const fixture = await createFixture([
+    {
+      outcome: "response",
+      toolCalls: [
+        {
+          id: "write-preloaded-control",
+          name: "setting_write_file",
+          arguments: {
+            path: "control/blocks/world.md",
+            contents: "# 本世界\n\n预载后直接修改。",
+          },
+        },
+        {
+          id: "write-listed-opening",
+          name: "setting_write_file",
+          arguments: { path: "opening.md", contents: "未读不能写入。" },
+        },
+      ],
+    },
+    { outcome: "response", text: "Preloaded write accepted.", toolCalls: [] },
+  ]);
+
+  const view = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "request-preload",
+    "Refine the world notes.",
+  );
+
+  expect(JSON.stringify(fixture.host.requests[0])).toContain(
+    "Runtime preload note",
+  );
+  expect(view.turns[0]?.exchanges[0]?.toolCalls).toMatchObject([
+    { callId: "write-preloaded-control", result: { isError: false } },
+    { callId: "write-listed-opening", result: { isError: true } },
+  ]);
+  const stored = await new FileNativeSettingImprovementStore(fixture.root).read(
+    view.sessionId,
+  );
+  expect(stored.requests?.[0]?.preload?.opaquePaths).toContain(
+    "control/blocks/world.md",
+  );
+  expect(stored.requests?.[0]?.preload?.opaquePaths).not.toContain(
+    "opening.md",
+  );
+});
+
 async function createFixture(steps: ScriptedModelHostStep[]) {
   const root = await temporaryRoot("narraeon-setting-conversation-");
   const content = new ContentWorkspace(root, { locale: () => "en" });

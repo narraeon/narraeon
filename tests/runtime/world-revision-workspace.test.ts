@@ -1186,6 +1186,79 @@ roles:
   };
 }
 
+test("世界修订 bootstrap 预载 frame 注入的当前情境，模型可直接修改而无需先读", async () => {
+  const { root, worldId, worlds, workspace } = await createdWorld();
+  const source = worldRevisionFiles().find(
+    ({ path }) => path === "state/current-situation.yaml",
+  )?.contents;
+  if (source === undefined)
+    throw new Error("Missing current situation fixture");
+  const injectedPreview = {
+    compilation: {
+      logicalMessages: [],
+      coverage: [
+        {
+          slot: "current_situation",
+          source: "state/current-situation.yaml",
+          status: "resolved",
+          complete: true,
+          continuation: null,
+          readAuthorization: { shortRef: "current-situation", locator: null },
+        },
+      ],
+    },
+    leakage: { status: "clean", checkedFields: [] },
+  } as unknown as PromptPreview;
+  const host = new ScriptedModelHost({
+    binding: modelBinding,
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "write-preloaded-situation",
+            name: "world_revision_write_file",
+            arguments: {
+              path: "state/current-situation.yaml",
+              contents: source.replace("地点: 未设定", "地点: 预载直写"),
+            },
+          },
+        ],
+      },
+      { outcome: "response", text: "直接修改完成。", toolCalls: [] },
+    ],
+  });
+  const service = new WorldRevisionSession({
+    store: new FileNativeWorldRevisionStore(root),
+    workspace,
+    worlds,
+    compiler: new FileNativePromptCompiler({ locale: "zh-CN" }),
+    locale: () => "zh-CN",
+    bindModelHost: () => Promise.resolve(host),
+    bindExistingModelHost: () => Promise.resolve(host),
+    bindPlayPreset: () =>
+      Promise.resolve(builtinDefaultPlayPresetBinding("zh-CN")),
+    preview: () => injectedPreview,
+  });
+
+  const view = await service.send({
+    worldId,
+    requestId: "preload-world-revision",
+    message: "把当前情境直接改到预载位置。",
+    continuation: { kind: "fresh_context" },
+  });
+
+  expect(JSON.stringify(host.requests[0])).toContain("Runtime 预载说明");
+  expect(view.turns[0]?.exchanges[0]?.toolCalls).toMatchObject([
+    { callId: "write-preloaded-situation", result: { isError: false } },
+  ]);
+  const epoch = await workspace.active(worldId);
+  expect(
+    epoch?.files.find(({ path }) => path === "state/current-situation.yaml")
+      ?.contents,
+  ).toContain("地点: 预载直写");
+});
+
 const preview = {
   compilation: { coverage: [], logicalMessages: [] },
   leakage: { status: "clean", checkedFields: [] },

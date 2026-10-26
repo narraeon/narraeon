@@ -30,7 +30,7 @@ import type {
   FileNativePromptCompiler,
   PromptPreview,
 } from "../prompt/FileNativePromptCompiler.ts";
-import type { WorldDocumentStore } from "../world/WorldDocumentStore.ts";
+import { WorldDocumentStore } from "../world/WorldDocumentStore.ts";
 import {
   appendAuthoringUserMessage,
   ModelToolConversation,
@@ -48,6 +48,10 @@ import {
   SettingAuthoringTransaction,
   settingImprovementRuntimeContract,
   settingImprovementToolDefinitions,
+  authoringPreloadAuthorization,
+  buildAuthoringPreload,
+  contentPackageAuthoringSurface,
+  type AuthoringPreload,
 } from "./SettingAuthoringTransaction.ts";
 
 export type SettingImprovementView = V1SettingImprovementView;
@@ -315,7 +319,7 @@ export class SettingImprovementSession {
         assertPackage(session, input.packageId);
       }
       return this.#startRequest(session, requestId, async (next) => {
-        const { playPreset, bootstrap } = await this.#compileCurrent(
+        const { playPreset, bootstrap, preload } = await this.#compileCurrent(
           input.packageId,
           next.modelBinding,
         );
@@ -326,7 +330,12 @@ export class SettingImprovementSession {
           modelItemStart: next.modelItems.length,
           bootstrap,
           playPreset: structuredClone(playPreset),
+          preload: structuredClone(preload.record),
         });
+        next.authorization = authoringPreloadAuthorization(
+          next.authorization,
+          preload.record,
+        );
         appendAuthoringUserMessage(next, message, requestId);
       });
     });
@@ -403,6 +412,12 @@ export class SettingImprovementSession {
     const locale = this.#locale();
     const package_ =
       await this.#content.readCurrentTreeContentPackage(packageId);
+    const preload = this.#preload(
+      package_.files,
+      modelBinding,
+      playPreset,
+      locale,
+    );
     const bootstrap = this.#compiler.compileSettingImprovement({
       contentPackageTitle: package_.title,
       gameplay: package_.gameplay,
@@ -414,9 +429,50 @@ export class SettingImprovementSession {
       playPreset,
       modelBinding: modelBinding,
       tools: settingImprovementToolDefinitions(locale, package_.gameplay),
+      preload: preload.blocks,
     });
 
-    return { bootstrap, playPreset };
+    return { bootstrap, playPreset, preload };
+  }
+
+  /**
+   * Preloads the control documents and the documents the package frame injects.
+   * A preview that cannot be built degrades to the directory and control files.
+   */
+  #preload(
+    files: readonly ContentTreeFile[],
+    modelBinding: ModelHostBinding,
+    playPreset: PlayPresetBinding,
+    locale: AppLocale,
+  ): AuthoringPreload {
+    const revision = contentTreeFingerprint(files);
+    const snapshot = WorldDocumentStore.open({
+      layout: "content_package",
+      files: [...files],
+    });
+    let injected: { shortRef: string; slot: string }[] = [];
+    let injectedUnavailable: string | undefined;
+    try {
+      const preview = this.#preview(snapshot, modelBinding, playPreset);
+      injected = preview.compilation.coverage.flatMap(
+        ({ slot, status, readAuthorization }) =>
+          status === "resolved" && readAuthorization !== undefined
+            ? [{ shortRef: readAuthorization.shortRef, slot }]
+            : [],
+      );
+    } catch (error: unknown) {
+      injectedUnavailable =
+        error instanceof Error ? error.message : "unknown preview failure";
+    }
+    return buildAuthoringPreload({
+      snapshot,
+      surface: contentPackageAuthoringSurface,
+      locale,
+      revision,
+      sourcePrefix: "content-package:preload",
+      injected,
+      ...(injectedUnavailable === undefined ? {} : { injectedUnavailable }),
+    });
   }
 
   async cancel(sessionId: string): Promise<SettingImprovementView> {
