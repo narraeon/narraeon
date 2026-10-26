@@ -560,7 +560,7 @@
         },
         {
           "toolCallId": "write-control-block",
-          "markdown": "# Current-tree write accepted\n\nCreated control/blocks/extra.md in the content package's current tree. This file is already fully read; do not read it again unless a later decision needs Runtime's exact serialization.",
+          "markdown": "# Current-tree write accepted\n\nCreated control/blocks/extra.md in the content package's current tree.",
           "isError": false,
           "changes": [
             {
@@ -1253,7 +1253,7 @@
         },
         {
           "toolCallId": "write-control-block",
-          "markdown": "# 当前树写入已接受\n\n已在内容包当前树中创建 control/blocks/extra.md。该文件已视为完整读取；除非后续判断依赖 Runtime 的精确序列化结果，否则不要再次读取。",
+          "markdown": "# 当前树写入已接受\n\n已在内容包当前树中创建 control/blocks/extra.md。",
           "isError": false,
           "changes": [
             {

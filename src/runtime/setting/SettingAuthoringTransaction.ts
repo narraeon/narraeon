@@ -1940,8 +1940,8 @@ function writeOpaque(
     markdown: [
       localized(
         locale,
-        `# Current-tree write accepted\n\n${existing === undefined ? "Created" : "Updated"} ${path} in ${surface.phrases.en.tree}. This file is already fully read; do not read it again unless a later decision needs Runtime's exact serialization.`,
-        `# 当前树写入已接受\n\n已在${surface.phrases["zh-CN"].tree}中${existing === undefined ? "创建" : "更新"} ${path}。该文件已视为完整读取；除非后续判断依赖 Runtime 的精确序列化结果，否则不要再次读取。`,
+        `# Current-tree write accepted\n\n${existing === undefined ? "Created" : "Updated"} ${path} in ${surface.phrases.en.tree}.`,
+        `# 当前树写入已接受\n\n已在${surface.phrases["zh-CN"].tree}中${existing === undefined ? "创建" : "更新"} ${path}。`,
       ),
       ...(gameplay === null
         ? []
