@@ -256,9 +256,12 @@ test("src 中不再有控制目录的 staged／previous 交换与对应阶段记
   const sourceRoot = fileURLToPath(new URL("../../src/", import.meta.url));
   const forbidden =
     /replaceWorldRevisionControl|\.revision-control-|\.control-old-|\.control-apply-|state_committed|control_published/u;
+  // The one-time v0.7.4 epoch upgrade is the only place that names the legacy phases (ADR-0034).
+  const legacyUpgrade =
+    "runtime/world-revision/LegacyWorldRevisionEpochUpgrade.ts";
   const offenders: string[] = [];
   for (const entry of await readdir(sourceRoot, { recursive: true })) {
-    if (!/\.(?:ts|tsx)$/u.test(entry)) continue;
+    if (!/\.(?:ts|tsx)$/u.test(entry) || entry === legacyUpgrade) continue;
     const text = await readFile(join(sourceRoot, entry), "utf8");
     if (forbidden.test(text)) offenders.push(entry);
   }

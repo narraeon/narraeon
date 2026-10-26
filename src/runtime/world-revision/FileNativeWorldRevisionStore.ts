@@ -1,4 +1,5 @@
 import { validLogicalMessages } from "../prompt/PromptCompilationCodec.ts";
+import { upgradeLegacyEpochs } from "./LegacyWorldRevisionEpochUpgrade.ts";
 import { isPackageFollowupControlPath } from "../content/PackageFollowups.ts";
 import {
   validAuthoringRequests,
@@ -133,11 +134,29 @@ const treeRevisionPattern = /^[0-9a-f]{64}$/u;
 const epochName = new RegExp(`^revision-${uuidV4Pattern}\\.json$`, "u");
 const sessionName = new RegExp(`^world-session-${uuidV4Pattern}\\.json$`, "u");
 
+/**
+ * A world holds an apply that v0.7.4 interrupted after its state commit but
+ * before control was published. Current code cannot finish it without replaying
+ * the operation, so the world must be opened once with v0.7.4.
+ */
+export class UnsupportedLegacyWorldRevisionError extends Error {
+  readonly code = "unsupported_legacy_world_revision";
+
+  constructor(worldId: string) {
+    super(
+      `World ${worldId} has a world-revision apply interrupted by v0.7.4; open it once with v0.7.4 to finish the apply`,
+    );
+    this.name = "UnsupportedLegacyWorldRevisionError";
+  }
+}
+
 /** File-native persistence for revision worktrees and their conversations. */
 export class FileNativeWorldRevisionStore {
   readonly #epochsRoot: string;
   readonly #sessionsRoot: string;
   #mutationTail: Promise<void> = Promise.resolve();
+  /** Epoch ID → world ID for v0.7.4 epochs that cannot be upgraded here. */
+  #legacyUpgrade: Promise<Map<string, string>> | null = null;
 
   constructor(dataRoot: string) {
     const root = join(resolve(dataRoot), "world-revisions");
@@ -158,7 +177,12 @@ export class FileNativeWorldRevisionStore {
   }
 
   readEpoch(epochId: string): Promise<StoredWorldRevisionEpoch> {
-    return this.#afterMutations(() => this.#readEpoch(epochId));
+    return this.#afterMutations(async () => {
+      const blocked = (await this.#upgradeLegacyEpochs()).get(epochId);
+      if (blocked !== undefined)
+        throw new UnsupportedLegacyWorldRevisionError(blocked);
+      return this.#readEpoch(epochId);
+    });
   }
 
   async readEpochIfPresent(
@@ -181,17 +205,16 @@ export class FileNativeWorldRevisionStore {
 
   async listEpochs(worldId: string): Promise<StoredWorldRevisionEpoch[]> {
     return this.#afterMutations(async () => {
-      const entries = await readdir(this.#epochsRoot, {
-        withFileTypes: true,
-      }).catch((error: unknown) => {
-        if (isNodeError(error) && error.code === "ENOENT") return [];
-        throw error;
-      });
+      if ([...(await this.#upgradeLegacyEpochs()).values()].includes(worldId))
+        throw new UnsupportedLegacyWorldRevisionError(worldId);
       const epochs: StoredWorldRevisionEpoch[] = [];
-      for (const entry of entries) {
-        if (!entry.isFile() || !epochName.test(entry.name)) continue;
-        const epoch = await this.#readEpoch(entry.name.slice(0, -5));
-        if (epoch.worldId === worldId) epochs.push(epoch);
+      for (const epochId of await epochIds(this.#epochsRoot)) {
+        // Only this world's epochs are validated, so a damaged epoch elsewhere does not fail it.
+        const value = JSON.parse(
+          await readFile(this.#epochPath(epochId), "utf8"),
+        ) as unknown;
+        if (!isRecord(value) || value.worldId !== worldId) continue;
+        epochs.push(epochFromValue(epochId, value));
       }
       return epochs.sort(compareUpdated);
     });
@@ -251,10 +274,26 @@ export class FileNativeWorldRevisionStore {
     const value = JSON.parse(
       await readFile(this.#epochPath(epochId), "utf8"),
     ) as unknown;
-    const epoch = validateEpoch(value);
-    if (epoch.epochId !== epochId)
-      throw new Error("World-revision epoch identity does not match its file");
-    return epoch;
+    return epochFromValue(epochId, value);
+  }
+
+  /**
+   * Runs once per store before its first epoch read or list, and is shared
+   * after that. Every v0.7.4 epoch is upgraded in place; others are untouched.
+   */
+  #upgradeLegacyEpochs(): Promise<Map<string, string>> {
+    this.#legacyUpgrade ??= this.#mutate(async () =>
+      upgradeLegacyEpochs({
+        epochsRoot: this.#epochsRoot,
+        epochIds: await epochIds(this.#epochsRoot),
+        validate: validateEpoch,
+        publish: publishJson,
+      }),
+    ).catch((error: unknown) => {
+      this.#legacyUpgrade = null;
+      throw error;
+    });
+    return this.#legacyUpgrade;
   }
 
   async #readSession(sessionId: string): Promise<StoredWorldRevisionSession> {
@@ -298,6 +337,28 @@ export class FileNativeWorldRevisionStore {
     assertSessionId(sessionId);
     return join(this.#sessionsRoot, `${sessionId}.json`);
   }
+}
+
+async function epochIds(epochsRoot: string): Promise<string[]> {
+  const entries = await readdir(epochsRoot, { withFileTypes: true }).catch(
+    (error: unknown) => {
+      if (isNodeError(error) && error.code === "ENOENT") return [];
+      throw error;
+    },
+  );
+  return entries
+    .filter((entry) => entry.isFile() && epochName.test(entry.name))
+    .map((entry) => entry.name.slice(0, -5));
+}
+
+function epochFromValue(
+  epochId: string,
+  value: unknown,
+): StoredWorldRevisionEpoch {
+  const epoch = validateEpoch(value);
+  if (epoch.epochId !== epochId)
+    throw new Error("World-revision epoch identity does not match its file");
+  return epoch;
 }
 
 function validateEpoch(value: unknown): StoredWorldRevisionEpoch {
