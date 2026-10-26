@@ -533,7 +533,8 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   expect(JSON.stringify(planningRequest)).toContain(
     "Dormitory Content Package",
   );
-  expect(JSON.stringify(planningRequest)).not.toContain(
+  expect(JSON.stringify(planningRequest)).toContain("Runtime 预载说明");
+  expect(JSON.stringify(planningRequest)).toContain(
     "Alex is organizing a jersey",
   );
   expect(toolNames(planningRequest)).toEqual([
