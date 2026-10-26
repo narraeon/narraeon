@@ -1,6 +1,8 @@
 import type { FileNativeStateChange } from "./FileNativeWorldStore.ts";
 import {
   WorldDocumentStore,
+  formatWorldDocumentLocator,
+  type WorldDocumentLocator,
   type WorldDocumentRevisionChange,
   type WorldDocumentRevisionRequest,
   type WorldDocumentRevisionResult,
@@ -102,11 +104,19 @@ export function fileNativeStateChanges(
 }
 
 export function worldDocumentRevisionFailureMessage(
-  diagnostics: readonly { readonly message: string }[],
+  diagnostics: readonly {
+    readonly message: string;
+    readonly locator?: WorldDocumentLocator;
+  }[],
 ): string {
   return (
-    diagnostics.map(({ message }) => message).join("; ") ||
-    "The revision is invalid"
+    diagnostics
+      .map(({ message, locator }) =>
+        locator === undefined
+          ? message
+          : `${message} (${formatWorldDocumentLocator(locator)})`,
+      )
+      .join("; ") || "The revision is invalid"
   );
 }
 

@@ -597,9 +597,16 @@
         },
         {
           "toolCallId": "patch-missing-node",
-          "markdown": "# Runtime tool rejected\n\nlocator_not_found · world/current-situation.yaml · YAML replace target must exist",
-          "isError": true,
-          "changes": []
+          "markdown": "# Current-tree revision accepted\n\n- Updated @current-situation · world/current-situation.yaml\n\nThis call was accepted independently. Every created or changed document above is already fully read; do not read it again unless a later decision needs Runtime's exact serialization.",
+          "isError": false,
+          "changes": [
+            {
+              "path": "world/current-situation.yaml",
+              "kind": "modify",
+              "before": "$document:\n  id: situation.current\n  ref: current-situation\n  title: Current situation\n  summary: The short-term situation happening now that must not be forgotten next.\n  aliases: []\nlocation: Not set\npresent: []\nin_progress: Not set\nshort_term_continuity: []\n",
+              "after": "$document:\n  id: situation.current\n  ref: current-situation\n  title: Current situation\n  summary: The short-term situation happening now that must not be forgotten next.\n  aliases: []\nlocation: Not set\npresent: []\nin_progress: Not set\nshort_term_continuity: []\nmissing: x\n"
+            }
+          ]
         },
         {
           "toolCallId": "move-current-situation",
@@ -609,14 +616,14 @@
             {
               "path": "world/current-situation.yaml",
               "kind": "delete",
-              "before": "$document:\n  id: situation.current\n  ref: current-situation\n  title: Current situation\n  summary: The short-term situation happening now that must not be forgotten next.\n  aliases: []\nlocation: Not set\npresent: []\nin_progress: Not set\nshort_term_continuity: []\n",
+              "before": "$document:\n  id: situation.current\n  ref: current-situation\n  title: Current situation\n  summary: The short-term situation happening now that must not be forgotten next.\n  aliases: []\nlocation: Not set\npresent: []\nin_progress: Not set\nshort_term_continuity: []\nmissing: x\n",
               "after": null
             },
             {
               "path": "world/moved.yaml",
               "kind": "create",
               "before": null,
-              "after": "$document:\n  id: situation.current\n  ref: current-situation\n  title: Current situation\n  summary: The short-term situation happening now that must not be forgotten next.\n  aliases: []\nlocation: Not set\npresent: []\nin_progress: Not set\nshort_term_continuity: []\n"
+              "after": "$document:\n  id: situation.current\n  ref: current-situation\n  title: Current situation\n  summary: The short-term situation happening now that must not be forgotten next.\n  aliases: []\nlocation: Not set\npresent: []\nin_progress: Not set\nshort_term_continuity: []\nmissing: x\n"
             }
           ]
         }
@@ -640,7 +647,7 @@
             "path": "world/moved.yaml",
             "kind": "create",
             "before": null,
-            "after": "$document:\n  id: situation.current\n  ref: current-situation\n  title: Current situation\n  summary: The short-term situation happening now that must not be forgotten next.\n  aliases: []\nlocation: Not set\npresent: []\nin_progress: Not set\nshort_term_continuity: []\n"
+            "after": "$document:\n  id: situation.current\n  ref: current-situation\n  title: Current situation\n  summary: The short-term situation happening now that must not be forgotten next.\n  aliases: []\nlocation: Not set\npresent: []\nin_progress: Not set\nshort_term_continuity: []\nmissing: x\n"
           }
         ],
         "diagnostics": [],
@@ -1300,9 +1307,16 @@
         },
         {
           "toolCallId": "patch-missing-node",
-          "markdown": "# Runtime 工具拒绝\n\nlocator_not_found · world/current-situation.yaml · YAML replace target must exist",
-          "isError": true,
-          "changes": []
+          "markdown": "# 当前树 revision 已接受\n\n- 更新 @current-situation · world/current-situation.yaml\n\n本调用已独立接受。上方新建或修改的文档均视为已经完整读取；除非后续判断依赖 Runtime 的精确序列化结果，否则不要再次读取。",
+          "isError": false,
+          "changes": [
+            {
+              "path": "world/current-situation.yaml",
+              "kind": "modify",
+              "before": "$document:\n  id: situation.current\n  ref: current-situation\n  title: 当前情境\n  summary: 当前正在发生且接下来不能忘记的短期局面。\n  aliases: []\n地点: 未设定\n在场: []\n正在发生: 未设定\n短期连续性: []\n",
+              "after": "$document:\n  id: situation.current\n  ref: current-situation\n  title: 当前情境\n  summary: 当前正在发生且接下来不能忘记的短期局面。\n  aliases: []\n地点: 未设定\n在场: []\n正在发生: 未设定\n短期连续性: []\nmissing: x\n"
+            }
+          ]
         },
         {
           "toolCallId": "move-current-situation",
@@ -1312,14 +1326,14 @@
             {
               "path": "world/current-situation.yaml",
               "kind": "delete",
-              "before": "$document:\n  id: situation.current\n  ref: current-situation\n  title: 当前情境\n  summary: 当前正在发生且接下来不能忘记的短期局面。\n  aliases: []\n地点: 未设定\n在场: []\n正在发生: 未设定\n短期连续性: []\n",
+              "before": "$document:\n  id: situation.current\n  ref: current-situation\n  title: 当前情境\n  summary: 当前正在发生且接下来不能忘记的短期局面。\n  aliases: []\n地点: 未设定\n在场: []\n正在发生: 未设定\n短期连续性: []\nmissing: x\n",
               "after": null
             },
             {
               "path": "world/moved.yaml",
               "kind": "create",
               "before": null,
-              "after": "$document:\n  id: situation.current\n  ref: current-situation\n  title: 当前情境\n  summary: 当前正在发生且接下来不能忘记的短期局面。\n  aliases: []\n地点: 未设定\n在场: []\n正在发生: 未设定\n短期连续性: []\n"
+              "after": "$document:\n  id: situation.current\n  ref: current-situation\n  title: 当前情境\n  summary: 当前正在发生且接下来不能忘记的短期局面。\n  aliases: []\n地点: 未设定\n在场: []\n正在发生: 未设定\n短期连续性: []\nmissing: x\n"
             }
           ]
         }
@@ -1343,7 +1357,7 @@
             "path": "world/moved.yaml",
             "kind": "create",
             "before": null,
-            "after": "$document:\n  id: situation.current\n  ref: current-situation\n  title: 当前情境\n  summary: 当前正在发生且接下来不能忘记的短期局面。\n  aliases: []\n地点: 未设定\n在场: []\n正在发生: 未设定\n短期连续性: []\n"
+            "after": "$document:\n  id: situation.current\n  ref: current-situation\n  title: 当前情境\n  summary: 当前正在发生且接下来不能忘记的短期局面。\n  aliases: []\n地点: 未设定\n在场: []\n正在发生: 未设定\n短期连续性: []\nmissing: x\n"
           }
         ],
         "diagnostics": [],

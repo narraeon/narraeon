@@ -981,8 +981,8 @@ $document:
           document: { shortRef: "gate" },
           edits: [
             {
-              op: "replace",
-              locator: { yaml: ["不存在"] },
+              op: "append",
+              locator: { yaml: ["状态"] },
               value: "不会发布",
             },
           ],
@@ -997,11 +997,11 @@ $document:
         sourceSnapshotId: source.id,
         diagnostics: [
           expect.objectContaining({
-            code: "locator_not_found",
+            code: "locator_invalid",
             commandIndex: 1,
             logicalPath: "world/places/gate.yaml",
             documentId: "place.gate",
-            locator: { yaml: ["不存在"] },
+            locator: { yaml: ["状态"] },
           }),
         ],
       }),

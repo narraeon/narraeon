@@ -28,6 +28,8 @@ import {
 } from "../prompt/FileNativePromptCompiler.ts";
 import type { FileNativeStateChange } from "../world/FileNativeWorldStore.ts";
 import {
+  formatWorldDocumentLocator,
+  type WorldDocumentEditOutcome,
   type WorldDocumentStore,
   type WorldDocumentDescriptor,
   type WorldDocumentLocator,
@@ -491,13 +493,22 @@ function applyPlayCandidatePatch(
         },
       ],
     });
+    if (!revised.ok && revised.editOutcomes.length > 0)
+      throw new PlayDocumentToolFailure(
+        `world_patch applied none of its edits to @${ref}. ${formatEditNotes(revised.editOutcomes)}`,
+        "candidate",
+      );
     if (!revised.ok || revised.snapshotStatus !== "usable")
       throw new PlayDocumentToolFailure(
         worldDocumentRevisionFailureMessage(revised.diagnostics),
         "candidate",
       );
     const changed = revised.changes.length > 0;
-    const receipt = formatToolRevisionReceipt(target.shortRef, revised.changes);
+    const receipt = formatToolRevisionReceipt(
+      target.shortRef,
+      revised.changes,
+      revised.editOutcomes,
+    );
     const previousSnapshot = candidate.snapshot;
     acceptWorldStateRevision(candidate, revised);
     carryWriteAuthorizations(
@@ -601,14 +612,46 @@ function authorizationsAfterEdits(
 function formatToolRevisionReceipt(
   shortRef: string,
   changes: readonly WorldDocumentRevisionChange[],
+  outcomes: readonly WorldDocumentEditOutcome[],
 ): string {
   if (changes.length > 1)
     throw new Error(
       "A world_patch revision must affect only its target document",
     );
-  return changes.length === 1
-    ? `@${shortRef} pending write`
-    : `@${shortRef} unchanged`;
+  const failed = outcomes.filter(({ status }) => status === "failed").length;
+  const parts = [
+    changes.length === 1
+      ? `@${shortRef} pending write`
+      : `@${shortRef} unchanged`,
+  ];
+  if (failed > 0)
+    parts.push(`${outcomes.length - failed}/${outcomes.length} edits applied`);
+  else if (outcomes.some(({ status }) => status === "no_op"))
+    parts.push(`${outcomes.length} edits applied`);
+  const notes = formatEditNotes(outcomes);
+  if (notes !== "") parts.push(notes);
+  if (failed > 0)
+    parts.push(
+      "applied edits are not resent; send again only the edits listed above",
+    );
+  return parts.join(" · ");
+}
+
+/** Lists only the edits that did not apply cleanly: failed ones and no-ops. */
+function formatEditNotes(
+  outcomes: readonly WorldDocumentEditOutcome[],
+): string {
+  return outcomes
+    .flatMap(({ editIndex, status, diagnostic }) => {
+      if (status === "applied" || diagnostic === undefined) return [];
+      const label = `edit #${editIndex + 1}`;
+      if (status === "no_op") return [`${label} no-op: ${diagnostic.message}`];
+      const location = diagnostic.locator
+        ? ` (${formatWorldDocumentLocator(diagnostic.locator)})`
+        : "";
+      return [`${label}${location}: ${diagnostic.message}`];
+    })
+    .join(" · ");
 }
 
 function applyPlayCandidateRetirement(

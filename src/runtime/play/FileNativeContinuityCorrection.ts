@@ -31,7 +31,7 @@ import type {
 import {
   beginWorldStateRevision,
   fileNativeStateChanges,
-  reviseWorldState,
+  acceptWorldStateRevision,
   worldDocumentRevisionFailureMessage,
   worldStateRevisionChanges,
   type WorldStateRevision,
@@ -438,9 +438,21 @@ export class FileNativeContinuityCorrection {
     candidate: Candidate,
     command: WorldDocumentRevisionCommand,
   ): void {
-    const revised = reviseWorldState(candidate, { commands: [command] });
-    if (!revised.ok || revised.snapshotStatus !== "usable")
-      throw new Error(worldDocumentRevisionFailureMessage(revised.diagnostics));
+    // A correction applies all of its edits or none of them, so a skipped edit
+    // is a failure here even though the revision itself settled.
+    const revised = candidate.snapshot.revise({ commands: [command] });
+    const failures = revised.ok
+      ? revised.editOutcomes.flatMap(({ status, diagnostic }) =>
+          status === "failed" && diagnostic !== undefined ? [diagnostic] : [],
+        )
+      : revised.diagnostics;
+    if (
+      !revised.ok ||
+      revised.snapshotStatus !== "usable" ||
+      failures.length > 0
+    )
+      throw new Error(worldDocumentRevisionFailureMessage(failures));
+    acceptWorldStateRevision(candidate, revised);
     candidate.reads.clear();
   }
 
