@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "epochId": "revision-c58e9520-40e7-48b5-a219-e6a7cb801d35",
+  "worldId": "world-applied",
+  "lifecycle": "applied",
+  "baseHead": "head-genesis",
+  "baseControlFingerprint": "sha256:2ae52b8a2a52637fefa77a58710c29577a811f123db2df6c0d51e7e8579ad349",
+  "baseFiles": [
+    {
+      "path": "state/world.yaml",
+      "contents": "title: Harbor\n"
+    },
+    {
+      "path": "control/frame.yaml",
+      "contents": "tone: calm\n"
+    }
+  ],
+  "files": [
+    {
+      "path": "state/world.yaml",
+      "contents": "title: Harbor at dusk\n"
+    },
+    {
+      "path": "control/frame.yaml",
+      "contents": "tone: calm\n"
+    }
+  ],
+  "revision": "f3f570027b7545b3baef9f6dc0c142d043a35c1583ab196bf019724dbd2fd580",
+  "changes": [],
+  "apply": {
+    "operationId": "world-revision-revision-c58e9520-40e7-48b5-a219-e6a7cb801d35",
+    "expectedRevision": "f3f570027b7545b3baef9f6dc0c142d043a35c1583ab196bf019724dbd2fd580",
+    "phase": "control_published",
+    "committedHead": "head-1"
+  },
+  "createdAt": 1790000000000,
+  "updatedAt": 1790000100000,
+  "finishedAt": 1790000200000
+}
