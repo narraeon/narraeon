@@ -83,6 +83,12 @@ test("世界修订工具只暴露 state/control，共用读取授权并拒绝 op
   expect(worldRevisionRuntimeContract("zh-CN", fictionGameplay)).toContain(
     "此前读取授权全部失效",
   );
+  expect(worldRevisionRuntimeContract("en", fictionGameplay)).toContain(
+    "existing state documents may be deleted or moved",
+  );
+  expect(worldRevisionRuntimeContract("zh-CN", fictionGameplay)).not.toContain(
+    "不能删除或移动",
+  );
 
   const opening = transaction.execute([
     {
@@ -287,6 +293,148 @@ test("世界修订工具只暴露 state/control，共用读取授权并拒绝 op
   });
 });
 
+test("世界修订可以删除与移动无引用的既有状态文档，检查层保持 usable", () => {
+  const base = seededRevisionBase();
+  const transaction = new WorldRevisionAuthoringTransaction({
+    baseFiles: base,
+    immutableBaseFiles: base,
+    locale: "zh-CN",
+    preview: () => preview,
+  });
+  const [readOld, deleteOld, readPlace, movePlace] = transaction.execute([
+    {
+      id: "read-old",
+      name: "world_revision_read",
+      arguments: { path: "@oldnpc" },
+    },
+    {
+      id: "delete-old",
+      name: "world_revision_delete",
+      arguments: { document: "@oldnpc" },
+    },
+    {
+      id: "read-place",
+      name: "world_revision_read",
+      arguments: { path: "@place" },
+    },
+    {
+      id: "move-place",
+      name: "world_revision_move",
+      arguments: { from: "@place", to: "state/places/dock.yaml" },
+    },
+  ]);
+  expect(readOld).toMatchObject({ isError: false });
+  expect(deleteOld).toMatchObject({ isError: false });
+  expect(readPlace).toMatchObject({ isError: false });
+  expect(movePlace).toMatchObject({ isError: false });
+  const files = transaction.files();
+  expect(files.some(({ path }) => path === "state/npc/old.yaml")).toBe(false);
+  expect(files.some(({ path }) => path === "state/place.yaml")).toBe(false);
+  expect(files.some(({ path }) => path === "state/places/dock.yaml")).toBe(
+    true,
+  );
+  expect(inspectWorldRevisionFiles(files, base)).toMatchObject({
+    status: "usable",
+    diagnostics: [],
+  });
+});
+
+test("世界修订删除仍被引用的文档时逐条列出全部阻挡位置，手动删除同样给出诊断", () => {
+  const base = seededRevisionBase();
+  const transaction = new WorldRevisionAuthoringTransaction({
+    baseFiles: base,
+    immutableBaseFiles: base,
+    locale: "zh-CN",
+    preview: () => preview,
+  });
+  const [read, deleted] = transaction.execute([
+    {
+      id: "read-situation",
+      name: "world_revision_read",
+      arguments: { path: "@current-situation" },
+    },
+    {
+      id: "delete-situation",
+      name: "world_revision_delete",
+      arguments: { document: "@current-situation" },
+    },
+  ]);
+  expect(read).toMatchObject({ isError: false });
+  expect(deleted).toMatchObject({ isError: true });
+  expect(deleted?.markdown).toContain(
+    "control/frame.yaml · bindings.currentSituation",
+  );
+
+  const manual = base.filter(
+    ({ path }) => path !== "state/current-situation.yaml",
+  );
+  const manualInspection = inspectWorldRevisionFiles(manual, base);
+  expect(manualInspection.status).toBe("needs_repair");
+  const blocked = manualInspection.diagnostics.find(
+    ({ code }) => code === "existing_state_delete_blocked",
+  );
+  expect(blocked).toMatchObject({ path: "state/current-situation.yaml" });
+  expect(blocked?.message).toContain(
+    "control/frame.yaml · bindings.currentSituation",
+  );
+});
+
+test("其他文档的 $ref 同样阻挡删除，手动删除也逐条列出阻挡位置", () => {
+  const base = seededRevisionBase();
+  const seed = new WorldRevisionAuthoringTransaction({
+    baseFiles: base,
+    immutableBaseFiles: base,
+    locale: "zh-CN",
+    preview: () => preview,
+  });
+  const [created] = seed.execute([
+    {
+      id: "create-holder",
+      name: "world_revision_create",
+      arguments: {
+        path: "state/holder.yaml",
+        ref: "holder",
+        title: "持有者",
+        summary: "引用旧商人的文档。",
+        aliases: [],
+        body: "merchant:\n  $ref: '@oldnpc'\n",
+      },
+    },
+  ]);
+  expect(created).toMatchObject({ isError: false });
+  const withHolder = seed.files();
+  const transaction = new WorldRevisionAuthoringTransaction({
+    baseFiles: withHolder,
+    immutableBaseFiles: withHolder,
+    locale: "zh-CN",
+    preview: () => preview,
+  });
+  const [read, deleted] = transaction.execute([
+    {
+      id: "read-old",
+      name: "world_revision_read",
+      arguments: { path: "@oldnpc" },
+    },
+    {
+      id: "delete-old",
+      name: "world_revision_delete",
+      arguments: { document: "@oldnpc" },
+    },
+  ]);
+  expect(read).toMatchObject({ isError: false });
+  expect(deleted).toMatchObject({ isError: true });
+  expect(deleted?.markdown).toContain("state/holder.yaml");
+
+  const manual = withHolder.filter(({ path }) => path !== "state/npc/old.yaml");
+  const manualInspection = inspectWorldRevisionFiles(manual, withHolder);
+  expect(manualInspection.status).toBe("needs_repair");
+  const blocked = manualInspection.diagnostics.find(
+    ({ code }) => code === "existing_state_delete_blocked",
+  );
+  expect(blocked).toMatchObject({ path: "state/npc/old.yaml" });
+  expect(blocked?.message).toContain("state/holder.yaml");
+});
+
 test("持久修订锁阻止游玩与其他写入，重启后仍由同一 epoch 恢复", async () => {
   const { root, worldId, worlds, workspace } = await createdWorld();
   const opened = await workspace.open(worldId);
@@ -489,6 +637,87 @@ test("手动与 AI 可共用工作树，逐文件回滚最后一次修改后整�
       (file) => file.path === "blocks/world.md",
     )?.contents,
   ).toContain("只使用简短段落。");
+});
+
+test("应用含删除与移动的修订后世界文件随之变化，回退到应用前端点可恢复被删文件", async () => {
+  const { worldId, worlds, workspace } = await createdWorld();
+  let epoch = await workspace.open(worldId);
+  const seeded = seededRevisionBase();
+  epoch = await workspace.replace({
+    worldId,
+    epochId: epoch.epochId,
+    expectedRevision: epoch.revision,
+    files: seeded,
+  });
+  epoch = await workspace.apply({
+    worldId,
+    epochId: epoch.epochId,
+    expectedRevision: epoch.revision,
+  });
+  expect(epoch).toMatchObject({ lifecycle: "applied" });
+  const beforeDeletion = await worlds.currentHead(worldId);
+  expect(
+    (await worlds.readSurface(worldId, "state")).some(
+      (file) => file.path === "npc/old.yaml",
+    ),
+  ).toBe(true);
+
+  const transaction = new WorldRevisionAuthoringTransaction({
+    baseFiles: seeded,
+    immutableBaseFiles: seeded,
+    locale: "zh-CN",
+    preview: () => preview,
+  });
+  const edited = transaction.execute([
+    {
+      id: "read-old",
+      name: "world_revision_read",
+      arguments: { path: "@oldnpc" },
+    },
+    {
+      id: "delete-old",
+      name: "world_revision_delete",
+      arguments: { document: "@oldnpc" },
+    },
+    {
+      id: "read-place",
+      name: "world_revision_read",
+      arguments: { path: "@place" },
+    },
+    {
+      id: "move-place",
+      name: "world_revision_move",
+      arguments: { from: "@place", to: "state/places/dock.yaml" },
+    },
+  ]);
+  expect(edited.every(({ isError }) => !isError)).toBe(true);
+  epoch = await workspace.open(worldId);
+  epoch = await workspace.replace({
+    worldId,
+    epochId: epoch.epochId,
+    expectedRevision: epoch.revision,
+    files: transaction.files(),
+  });
+  epoch = await workspace.apply({
+    worldId,
+    epochId: epoch.epochId,
+    expectedRevision: epoch.revision,
+  });
+  expect(epoch).toMatchObject({ lifecycle: "applied" });
+  const afterDeletion = await worlds.currentHead(worldId);
+  expect(afterDeletion).not.toBe(beforeDeletion);
+  const appliedState = await worlds.readSurface(worldId, "state");
+  expect(appliedState.some(({ path }) => path === "npc/old.yaml")).toBe(false);
+  expect(appliedState.some(({ path }) => path === "place.yaml")).toBe(false);
+  expect(
+    appliedState.find(({ path }) => path === "places/dock.yaml")?.contents,
+  ).toContain("id: place.dock");
+
+  await worlds.rewindPlayerRevision(worldId, beforeDeletion);
+  const restored = (await worlds.readSurface(worldId, "state")).find(
+    (file) => file.path === "npc/old.yaml",
+  );
+  expect(restored?.contents).toContain("旧商人");
 });
 
 test("玩法身份在世界修订中只能保持不变，持久化的修订往返后仍原样应用", async () => {
@@ -1146,6 +1375,46 @@ function worldRevisionFiles() {
         ? `state/${file.path.slice("world/".length)}`
         : file.path,
     }));
+}
+
+/** Scaffold state plus two unreferenced existing documents, created through the revision tools. */
+function seededRevisionBase() {
+  const scaffold = worldRevisionFiles();
+  const seed = new WorldRevisionAuthoringTransaction({
+    baseFiles: scaffold,
+    immutableBaseFiles: scaffold,
+    locale: "zh-CN",
+    preview: () => preview,
+  });
+  const results = seed.execute([
+    {
+      id: "create-old",
+      name: "world_revision_create",
+      arguments: {
+        path: "state/npc/old.yaml",
+        ref: "oldnpc",
+        title: "旧商人",
+        summary: "只在旧档案中出现的商人。",
+        aliases: [],
+        body: "id: npc.old\nname: 旧商人\n",
+      },
+    },
+    {
+      id: "create-place",
+      name: "world_revision_create",
+      arguments: {
+        path: "state/place.yaml",
+        ref: "place",
+        title: "码头",
+        summary: "河岸边的码头。",
+        aliases: [],
+        body: "id: place.dock\nname: 码头\n",
+      },
+    },
+  ]);
+  for (const result of results)
+    if (result.isError) throw new Error(result.markdown);
+  return seed.files();
 }
 
 function replaceContents(

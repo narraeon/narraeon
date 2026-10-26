@@ -39,6 +39,9 @@ import {
  * again and were regenerated.
  * Gameplay wording (control/gameplay.json mentions, bag guidance) reaches the
  * model only for tabletop worlds and packages.
+ * Later, the world-revision author summary (#116) states that existing state
+ * documents may be deleted or moved under the reference-blocker rule; only the
+ * two revision digests moved and were regenerated.
  */
 function digest(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -315,9 +318,9 @@ const expectedDigests: Record<string, string> = {
   "preview/zh-CN/ordered-default/openai_responses/bootstrap":
     "a312344bfdcebdb4ca3b96767e8964de75e79f52690596ad9a073145f03b4cc2",
   "revision/en":
-    "049142cbdef6c330a731d413d3a216cd44c7d3a817ae20c4bae3dd7e470d15fc",
+    "76b89993c2356f998abec884d266b680f6980622f7b3614b2de7702b004e3cbb",
   "revision/zh-CN":
-    "2a7ead2eb2d58a8736627624e4290f9cd266253d8e5af789cdf8259abc02b25b",
+    "7e703fc5e5b133e82a067e1e36603ad7d6aaae0045352faf4e9c940068fa9fc1",
   "setting/en":
     "e17787e81f9108096859c167f9c3cd180d242d4c34ff28e4d8b4a3ea70b1aba8",
   "setting/zh-CN":

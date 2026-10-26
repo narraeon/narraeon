@@ -1650,11 +1650,11 @@ describe("世界游玩页面", () => {
     await screen.findByRole("heading", { name: /宿舍世界.*世界修订/u });
     fireEvent.click(screen.getByRole("button", { name: "编辑" }));
     expect(
-      screen.getByRole<HTMLButtonElement>("button", { name: "从草稿移除" })
+      screen.getByRole<HTMLButtonElement>("button", { name: "删除文件" })
         .disabled,
-    ).toBe(true);
+    ).toBe(false);
     expect(screen.getByLabelText<HTMLInputElement>("文件路径").disabled).toBe(
-      true,
+      false,
     );
     fireEvent.change(
       screen.getByLabelText("编辑 state/current-situation.yaml"),

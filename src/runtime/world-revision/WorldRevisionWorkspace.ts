@@ -516,22 +516,30 @@ function stateChanges(
   baseFiles: readonly ContentTreeFile[],
   files: readonly ContentTreeFile[],
 ): FileNativeStateChange[] {
+  const baseStateFiles = baseFiles.filter(({ path }) =>
+    path.startsWith("state/"),
+  );
   const base = new Map(
-    baseFiles
-      .filter(({ path }) => path.startsWith("state/"))
-      .map((file) => [file.path, file] as const),
+    baseStateFiles.map((file) => [file.path, file] as const),
+  );
+  const candidateStateFiles = files.filter(({ path }) =>
+    path.startsWith("state/"),
   );
   const snapshot = WorldDocumentStore.open({
     layout: "world_state",
-    files: files.filter(({ path }) => path.startsWith("state/")),
+    files: candidateStateFiles,
   });
   if (snapshot.status !== "usable")
     throw new WorldRevisionWorkspaceError(
       "Only a usable world-state snapshot can be applied",
     );
-  return files
-    .filter(({ path }) => path.startsWith("state/"))
-    .flatMap((file): FileNativeStateChange[] => {
+  const baseSnapshot = WorldDocumentStore.open({
+    layout: "world_state",
+    files: baseStateFiles,
+  });
+  const candidatePaths = new Set(candidateStateFiles.map(({ path }) => path));
+  const changes = candidateStateFiles.flatMap(
+    (file): FileNativeStateChange[] => {
       const previous = base.get(file.path);
       if (previous?.contents === file.contents) return [];
       const result = snapshot.query({
@@ -543,10 +551,6 @@ function stateChanges(
           `Cannot resolve changed world document: ${file.path}`,
         );
       if (previous !== undefined) {
-        const baseSnapshot = WorldDocumentStore.open({
-          layout: "world_state",
-          files: baseFiles.filter(({ path }) => path.startsWith("state/")),
-        });
         const before = baseSnapshot.query({
           kind: "read_document",
           document: { logicalPath: file.path },
@@ -573,7 +577,32 @@ function stateChanges(
           canonicalNextBytes: file.contents,
         },
       ];
+    },
+  );
+  // A base document whose path is gone was deleted or moved away; a move's new path is a create above.
+  const removals = baseStateFiles
+    .filter(({ path }) => !candidatePaths.has(path))
+    .map((file): FileNativeStateChange => {
+      const before = baseSnapshot.query({
+        kind: "read_document",
+        document: { logicalPath: file.path },
+      });
+      if (before.kind !== "read_document" || !before.ok)
+        throw new WorldRevisionWorkspaceError(
+          `Cannot resolve removed world document: ${file.path}`,
+        );
+      return {
+        kind: "delete",
+        documentId: before.document.documentId,
+        stableShortRef: before.document.shortRef,
+        relativePath: file.path.slice("state/".length),
+        codec: before.document.codec,
+        expectedPreviousHash: sha256(file.contents),
+        nextHash: null,
+        canonicalNextBytes: null,
+      };
     });
+  return [...changes, ...removals];
 }
 
 function controlFiles(files: readonly ContentTreeFile[]): ContentTreeFile[] {

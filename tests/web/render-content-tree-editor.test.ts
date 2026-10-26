@@ -85,7 +85,7 @@ describe("内容包手动编辑界面", () => {
     expect(
       screen.getByLabelText("编辑 world/characters/alex.yaml"),
     ).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "从草稿移除" }));
+    fireEvent.click(screen.getByRole("button", { name: "删除文件" }));
     expect(
       screen.queryByRole("button", {
         name: "打开 world/characters/alex.yaml",

@@ -17,6 +17,7 @@ import {
 } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
 import { firstPartyActionChoicesPresetFiles } from "../../src/shared/first-party-action-choices.ts";
 import { defaultNarrationPrompt } from "../../src/shared/default-play-prompts.ts";
+import { authoringMechanics } from "../../src/shared/ordered-author-prompts.ts";
 import {
   defaultSettingImprovementPrompt,
   defaultSettingImprovementPromptEn,
@@ -80,6 +81,16 @@ describe("旧格式默认提示词职责", () => {
     expect(
       firstPartyGenericPanelsPresetFiles["prompts/panels.md"],
     ).not.toContain("artifact_emit");
+  });
+
+  test("世界修订机械说明允许删除与移动既有状态文档，但仍要求无引用阻挡", () => {
+    for (const locale of ["zh-CN", "en"] as const) {
+      const mechanics = authoringMechanics(locale, "world-revision");
+      expect(mechanics).not.toMatch(
+        /不可删除或移动|cannot be deleted or moved/u,
+      );
+      expect(mechanics).toMatch(/可以删除或移动|can be deleted or moved/u);
+    }
   });
 
   test("创作建议提供两个目标分支而不再将运行中世界限制为创建时状态", () => {

@@ -3227,6 +3227,8 @@ function mergeChangedDocuments(
   changes: readonly FileNativeStateChange[],
 ): void {
   for (const change of changes) {
+    // Play and continuity writes never remove a document; only world-revision apply does.
+    if (change.kind === "delete") continue;
     const projected = {
       kind: change.kind,
       ref: `@${change.stableShortRef}`,
