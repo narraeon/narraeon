@@ -28,8 +28,10 @@ import type {
   PromptCompilation,
   PromptPreview,
 } from "../prompt/FileNativePromptCompiler.ts";
+import type { AuthoringPreloadRecord } from "../authoring/AuthoringRequestSnapshot.ts";
 import {
   WorldDocumentStore,
+  type WorldDocumentCatalogResult,
   type WorldDocumentDescriptor,
   type WorldDocumentLocator,
   type WorldDocumentQueryFailure,
@@ -2035,12 +2037,7 @@ function listDocuments(
   if (result.kind === "error")
     return renderQueryFailure(result, surface, locale);
   if (result.kind !== "catalog") throw new Error("Unexpected catalog result");
-  const entries = result.entries.map((entry) => {
-    if (entry.kind === "directory") return `- [dir] ${entry.logicalPath}/`;
-    if (entry.document === undefined)
-      return `- [damaged] ${entry.logicalPath} · ${entry.diagnostics.map(({ code }) => code).join(", ")}`;
-    return `- @${entry.document.shortRef} · ${entry.document.title} · ${entry.logicalPath}`;
-  });
+  const entries = result.entries.map(catalogEntryLine);
   if (relative === "" && result.page.start === 0)
     entries.unshift(
       ...snapshot.files
@@ -2052,6 +2049,15 @@ function listDocuments(
   return success(
     `# ${localized(locale, surface.phrases.en.directoryHeading, surface.phrases["zh-CN"].directoryHeading)}\n\n${entries.join("\n") || localized(locale, "(empty)", "（空）")}\n\n${pageFooter(result.page, locale)}`,
   );
+}
+
+function catalogEntryLine(
+  entry: WorldDocumentCatalogResult["entries"][number],
+): string {
+  if (entry.kind === "directory") return `- [dir] ${entry.logicalPath}/`;
+  if (entry.document === undefined)
+    return `- [damaged] ${entry.logicalPath} · ${entry.diagnostics.map(({ code }) => code).join(", ")}`;
+  return `- @${entry.document.shortRef} · ${entry.document.title} · ${entry.logicalPath}`;
 }
 
 function searchDocuments(
@@ -2557,4 +2563,190 @@ function localized(
   chinese: string,
 ): string {
   return locale === "zh-CN" ? chinese : english;
+}
+
+/** A bootstrap section derived from the current tree; the sources name each part. */
+export interface AuthoringPreloadBlock {
+  source: string;
+  markdown: string;
+}
+
+export interface AuthoringPreloadInput {
+  snapshot: WorldDocumentStore;
+  surface: SettingAuthoringSurface;
+  locale: AppLocale;
+  /** Fingerprint of the tree the preload was taken from. */
+  revision: string;
+  /** Source prefix, e.g. `world-revision:preload`. */
+  sourcePrefix: string;
+  /** Documents the play preview injects whole or by node, with the slot that selected them. */
+  injected: readonly { shortRef: string; slot: string }[];
+  /** Why the injected set is unknown, when the play preview could not be built. */
+  injectedUnavailable?: string;
+}
+
+export interface AuthoringPreload {
+  blocks: AuthoringPreloadBlock[];
+  record: AuthoringPreloadRecord;
+}
+
+/**
+ * Builds the complete-read preload for one bootstrap. Every document body goes
+ * through the same read path the model's read tool uses, so the text matches it
+ * byte for byte and the read authority is exactly what that path would grant.
+ */
+export function buildAuthoringPreload(
+  input: AuthoringPreloadInput,
+): AuthoringPreload {
+  const { snapshot, surface, locale, sourcePrefix } = input;
+  const reads: ReadAuthorizations = {
+    snapshotId: snapshot.id,
+    worldDocumentIds: new Set(),
+    damagedWorldPaths: new Set(),
+    opaquePaths: new Set(),
+  };
+  const blocks: AuthoringPreloadBlock[] = [
+    {
+      source: `${sourcePrefix}/directory`,
+      markdown: preloadDirectory(snapshot, surface, locale),
+    },
+  ];
+  const controlPaths = snapshot.files
+    .map(({ path }) => path)
+    .filter(isPreloadControlPath)
+    .sort(
+      (left, right) =>
+        controlRank(left) - controlRank(right) || left.localeCompare(right),
+    );
+  for (const path of controlPaths) {
+    const result = readDocument(snapshot, { path }, reads, surface, locale);
+    if (result.ok)
+      blocks.push({
+        source: `${sourcePrefix}/${path}`,
+        markdown: result.markdown,
+      });
+  }
+  const seen = new Set<string>();
+  for (const { shortRef, slot } of input.injected) {
+    if (seen.has(shortRef)) continue;
+    seen.add(shortRef);
+    const document = snapshot.query({
+      kind: "read_document",
+      document: { shortRef },
+      referenceProjection: "short_ref",
+    });
+    if (document.kind !== "read_document") continue;
+    const result = readDocument(
+      snapshot,
+      { path: `@${shortRef}` },
+      reads,
+      surface,
+      locale,
+    );
+    if (!result.ok) continue;
+    blocks.push({
+      source: `${sourcePrefix}/${document.document.logicalPath}`,
+      markdown: `${localized(locale, `Injected by slot ${slot}`, `由槽位 ${slot} 注入`)}\n\n${result.markdown}`,
+    });
+  }
+  if (input.injectedUnavailable !== undefined)
+    blocks.push({
+      source: `${sourcePrefix}/injected-unavailable`,
+      markdown: localized(
+        locale,
+        `# Injected documents unavailable\n\nThe play preview could not be built (${input.injectedUnavailable}), so documents injected by the world frame are not preloaded. Read them before writing.`,
+        `# 注入文档不可用\n\n游玩预览无法生成（${input.injectedUnavailable}），因此未预载世界框架注入的文档。写入前请先读取它们。`,
+      ),
+    });
+  blocks.push({
+    source: `${sourcePrefix}/runtime`,
+    markdown: localized(
+      locale,
+      `# Runtime preload note\n\nThe documents above are a snapshot of the worktree at revision ${input.revision}, taken when this request was sent. Preloaded documents count as completely read at this revision and may be changed directly. The directory only helps discovery and grants no read authority. Read any other document with a tool before changing it. After any write, re-read as the existing rules require.`,
+      `# Runtime 预载说明\n\n以上内容是本次请求发出时工作树 revision ${input.revision} 的快照。其中的预载文档视为已在该 revision 完整读取，可直接修改。目录只用于发现，不授予读取资格。其余文档修改前仍需用工具读取；任何写入后按既有规则重新读取。`,
+    ),
+  });
+  return {
+    blocks,
+    record: {
+      revision: input.revision,
+      worldDocumentIds: [...reads.worldDocumentIds].sort(),
+      opaquePaths: [...reads.opaquePaths].sort(),
+    },
+  };
+}
+
+/** Merges a preload's read authority into the authorization of the same revision. */
+export function authoringPreloadAuthorization(
+  current: SettingAuthoringAuthorization | null,
+  preload: AuthoringPreloadRecord,
+): SettingAuthoringAuthorization {
+  const same = current?.revision === preload.revision;
+  return {
+    revision: preload.revision,
+    readWorldDocumentIds: sortedUnion(
+      same ? current.readWorldDocumentIds : [],
+      preload.worldDocumentIds,
+    ),
+    readableDamagedWorldPaths: same
+      ? [...current.readableDamagedWorldPaths]
+      : [],
+    readOpaquePaths: sortedUnion(
+      same ? current.readOpaquePaths : [],
+      preload.opaquePaths,
+    ),
+  };
+}
+
+function sortedUnion(
+  left: readonly string[],
+  right: readonly string[],
+): string[] {
+  return [...new Set([...left, ...right])].sort();
+}
+
+const preloadControlFiles = [
+  "control/frame.yaml",
+  "control/player-views.yaml",
+  "control/gameplay.json",
+  "control/followups.yaml",
+];
+
+function isPreloadControlPath(path: string): boolean {
+  return (
+    preloadControlFiles.includes(path) ||
+    /^control\/blocks\/[^/]+\.md$/u.test(path)
+  );
+}
+
+function controlRank(path: string): number {
+  const index = preloadControlFiles.indexOf(path);
+  return index === -1 ? preloadControlFiles.length : index;
+}
+
+function preloadDirectory(
+  snapshot: WorldDocumentStore,
+  surface: SettingAuthoringSurface,
+  locale: AppLocale,
+): string {
+  const entries = snapshot.files
+    .filter(({ path }) => !path.startsWith(`${surface.root}/`))
+    .map(({ path, encoding }) =>
+      encoding === undefined ? `- [special] ${path}` : `- [binary] ${path}`,
+    );
+  let cursor: string | null = null;
+  do {
+    const result = snapshot.query({
+      kind: "catalog",
+      directory: "",
+      limit: 100,
+      ...(cursor === null ? {} : { cursor }),
+    });
+    if (result.kind === "error")
+      throw new Error("The authoring directory could not be listed");
+    if (result.kind !== "catalog") throw new Error("Unexpected catalog result");
+    entries.push(...result.entries.map(catalogEntryLine));
+    cursor = result.page.nextCursor;
+  } while (cursor !== null);
+  return `# ${localized(locale, surface.phrases.en.directoryHeading, surface.phrases["zh-CN"].directoryHeading)}\n\n${entries.join("\n") || localized(locale, "(empty)", "（空）")}\n\nComplete: yes`;
 }

@@ -36,6 +36,12 @@ import type {
   FileNativePlayBinding,
   FileNativeWorldStore,
 } from "../world/FileNativeWorldStore.ts";
+import {
+  authoringPreloadAuthorization,
+  buildAuthoringPreload,
+  worldRevisionAuthoringSurface,
+  type AuthoringPreload,
+} from "../setting/SettingAuthoringTransaction.ts";
 import { WorldDocumentStore } from "../world/WorldDocumentStore.ts";
 import type {
   FileNativeWorldRevisionStore,
@@ -340,7 +346,7 @@ export class WorldRevisionSession {
         throw new Error(
           "No saved model connection matches this world-revision conversation",
         );
-      const { playPreset, bootstrap } = await this.#compileCurrent(
+      const { playPreset, bootstrap, preload } = await this.#compileCurrent(
         input.worldId,
         session.modelBinding,
       );
@@ -351,7 +357,15 @@ export class WorldRevisionSession {
         modelItemStart: session.modelItems.length,
         bootstrap,
         playPreset: structuredClone(playPreset),
+        ...(preload === null
+          ? {}
+          : { preload: structuredClone(preload.record) }),
       });
+      if (preload !== null)
+        session.authorization = authoringPreloadAuthorization(
+          session.authorization,
+          preload.record,
+        );
       appendAuthoringUserMessage(session, message, requestId);
       await this.#store.saveSession(session);
       return {
@@ -426,6 +440,10 @@ export class WorldRevisionSession {
     const playPreset = await this.#bindPlayPreset();
     const locale = this.#locale();
     const gameplay = await this.#worlds.gameplay(worldId);
+    const preload =
+      epoch === null
+        ? null
+        : await this.#preload(epoch, modelBinding, playPreset, locale);
     const bootstrap = this.#compiler.compileWorldRevision({
       ...(epoch === null
         ? {}
@@ -438,9 +456,63 @@ export class WorldRevisionSession {
       playPreset,
       modelBinding: modelBinding,
       tools: worldRevisionToolDefinitions(locale, gameplay),
+      ...(preload === null ? {} : { preload: preload.blocks }),
     });
 
-    return { bootstrap, playPreset };
+    return { bootstrap, playPreset, preload };
+  }
+
+  /**
+   * Preloads the control documents and the documents the world frame injects.
+   * A preview that cannot be built degrades to the directory and control files.
+   */
+  async #preload(
+    epoch: StoredWorldRevisionEpoch,
+    modelBinding: ModelHostBinding,
+    playPreset: PlayPresetBinding,
+    locale: AppLocale,
+  ): Promise<AuthoringPreload> {
+    const [binding, maintenance] = await Promise.all([
+      this.#worlds.bindWorldRevision({
+        worldId: epoch.worldId,
+        epochId: epoch.epochId,
+      }),
+      this.#worlds.inspectDocumentMaintenance(epoch.worldId, epoch.baseHead),
+    ]);
+    const snapshot = WorldDocumentStore.open({
+      layout: "world_state",
+      files: epoch.files,
+    });
+    let injected: { shortRef: string; slot: string }[] = [];
+    let injectedUnavailable: string | undefined;
+    try {
+      const preview = this.#preview({
+        snapshot,
+        modelBinding,
+        playPreset,
+        binding,
+        epoch,
+        maintenance,
+      });
+      injected = preview.compilation.coverage.flatMap(
+        ({ slot, status, readAuthorization }) =>
+          status === "resolved" && readAuthorization !== undefined
+            ? [{ shortRef: readAuthorization.shortRef, slot }]
+            : [],
+      );
+    } catch (error: unknown) {
+      injectedUnavailable =
+        error instanceof Error ? error.message : "unknown preview failure";
+    }
+    return buildAuthoringPreload({
+      snapshot,
+      surface: worldRevisionAuthoringSurface,
+      locale,
+      revision: epoch.revision,
+      sourcePrefix: "world-revision:preload",
+      injected,
+      ...(injectedUnavailable === undefined ? {} : { injectedUnavailable }),
+    });
   }
 
   async cancel(sessionId: string): Promise<V1WorldRevisionView> {

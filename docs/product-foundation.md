@@ -328,7 +328,7 @@ Runtime 是唯一业务提交者。每笔提交绑定稳定 operation ID 和父�
 
 “应用”先验证整棵工作树及生产等价 Prompt Preview，再把全部 state 与 control 变化作为同一轮 `revision_apply` 推进 Authority（[ADR-0045](adr/0045-world-history-is-current-files-plus-a-turn-ledger.md)），epoch 标记 applied 后才释放锁。进程在推进途中退出时，打开世界的账本恢复使这一轮要么完整成立、要么完全不存在，不会留下半份 state 或 control；未成立时 epoch 仍是活动状态，可以再次应用。“放弃”只把 epoch 标记 discarded 并释放锁，不改变 Authority、state 或 control。两种结果都封存此前回滚能力。
 
-世界修订 AI 会话复用设定完善的 Provider／工具循环，但世界工作树、锁、应用和恢复由独立目标模块拥有。会话可以在应用或放弃后继续；下一条新消息会从届时最新世界创建新的 epoch，在 Runtime-system 层追加明确的 epoch 边界，并清空此前 list／search cursor 和完整读取授权。旧 Provider 续传和工具历史原样保留，AI 必须重新读取现有文件后才能写入。浏览器通过独立只读 SSE 订阅轻量运行状态；durable revision 变化后才重新取得完整工作树和 transcript。纯流式增量从内存观察投影，不重复读取完整历史。首次连接及重连先取得当前快照，后续增量只属于这次连接；断线、关闭页面和重连均不取消生成，也不重新发送消息。手动修改、回滚和应用／放弃同样通知观察者，刷新不得覆盖尚未保存的文件草稿。世界修订对话还可用 `history_list`、`history_search`、`history_read` 只读导航当前 epoch 固定的已提交历史（与游玩共用 HistoryQuery 与渲染），这些调用不改变工作树、逐文件改动历史或读取授权，历史也不能被修订改写。
+世界修订 AI 会话复用设定完善的 Provider／工具循环，但世界工作树、锁、应用和恢复由独立目标模块拥有。每次发送的 bootstrap 在全部作者提示之后预载工作树目录、控制文档全文与世界框架注入的文档全文，这些预载文档在该 revision 内视为已完整读取，不必再读即可修改。会话可以在应用或放弃后继续；下一条新消息会从届时最新世界创建新的 epoch，在 Runtime-system 层追加明确的 epoch 边界，并清空此前 list／search cursor 和完整读取授权。旧 Provider 续传和工具历史原样保留，AI 必须重新读取现有文件后才能写入。浏览器通过独立只读 SSE 订阅轻量运行状态；durable revision 变化后才重新取得完整工作树和 transcript。纯流式增量从内存观察投影，不重复读取完整历史。首次连接及重连先取得当前快照，后续增量只属于这次连接；断线、关闭页面和重连均不取消生成，也不重新发送消息。手动修改、回滚和应用／放弃同样通知观察者，刷新不得覆盖尚未保存的文件草稿。世界修订对话还可用 `history_list`、`history_search`、`history_read` 只读导航当前 epoch 固定的已提交历史（与游玩共用 HistoryQuery 与渲染），这些调用不改变工作树、逐文件改动历史或读取授权，历史也不能被修订改写。
 
 ## 设定完善
 

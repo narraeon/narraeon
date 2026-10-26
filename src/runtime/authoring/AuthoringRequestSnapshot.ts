@@ -4,12 +4,39 @@ import {
 } from "../play/FileNativePlayPresetStore.ts";
 import type { PromptCompilation } from "../prompt/FileNativePromptCompiler.ts";
 
+/**
+ * Documents the Runtime preloaded into one send's bootstrap. They count as
+ * completely read only at this exact tree revision.
+ */
+export interface AuthoringPreloadRecord {
+  revision: string;
+  worldDocumentIds: string[];
+  opaquePaths: string[];
+}
+
 /** One immutable configuration per user send, retained alongside original bootstrap evidence. */
 export interface AuthoringRequestSnapshot {
   requestId: string;
   modelItemStart: number;
   bootstrap: PromptCompilation;
   playPreset: PlayPresetBinding;
+  preload?: AuthoringPreloadRecord;
+}
+
+export function isAuthoringPreloadRecord(
+  value: unknown,
+): value is AuthoringPreloadRecord {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return false;
+  const record = value as Record<string, unknown>;
+  return (
+    Object.keys(record).length === 3 &&
+    typeof record.revision === "string" &&
+    Array.isArray(record.worldDocumentIds) &&
+    record.worldDocumentIds.every((id) => typeof id === "string") &&
+    Array.isArray(record.opaquePaths) &&
+    record.opaquePaths.every((path) => typeof path === "string")
+  );
 }
 
 export function validAuthoringRequests(
@@ -37,8 +64,10 @@ export function validAuthoringRequests(
     if (typeof raw !== "object" || raw === null || Array.isArray(raw))
       return false;
     const item = raw as Record<string, unknown>;
+    const keys = Object.keys(item).length;
     if (
-      Object.keys(item).length !== 4 ||
+      (keys !== 4 && !(keys === 5 && "preload" in item)) ||
+      (item.preload !== undefined && !isAuthoringPreloadRecord(item.preload)) ||
       typeof item.requestId !== "string" ||
       !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(item.requestId) ||
       ids.has(item.requestId) ||

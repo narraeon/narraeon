@@ -223,6 +223,8 @@ export interface SettingImprovementPromptInput {
   playPreset: PlayPresetBinding;
   modelBinding: FileNativePromptInput["modelBinding"];
   tools: PromptCompilation["tools"];
+  /** Runtime-derived material read in full at this send, after every author prompt. */
+  preload?: readonly { source: string; markdown: string }[];
 }
 
 export interface WorldRevisionPromptInput {
@@ -235,6 +237,8 @@ export interface WorldRevisionPromptInput {
   playPreset: PlayPresetBinding;
   modelBinding: FileNativePromptInput["modelBinding"];
   tools: PromptCompilation["tools"];
+  /** Runtime-derived material read in full at this send, after every author prompt. */
+  preload?: readonly { source: string; markdown: string }[];
 }
 
 interface AuthoringConversationPromptInput {
@@ -248,6 +252,8 @@ interface AuthoringConversationPromptInput {
   playPreset: PlayPresetBinding;
   modelBinding: FileNativePromptInput["modelBinding"];
   tools: PromptCompilation["tools"];
+  /** Runtime-derived material read in full at this send, after every author prompt. */
+  preload?: readonly { source: string; markdown: string }[];
 }
 
 export interface PromptPreview {
@@ -479,6 +485,7 @@ export class FileNativePromptCompiler {
       playPreset: input.playPreset,
       modelBinding: input.modelBinding,
       tools: input.tools,
+      ...(input.preload === undefined ? {} : { preload: input.preload }),
     });
   }
 
@@ -512,6 +519,7 @@ export class FileNativePromptCompiler {
       playPreset: input.playPreset,
       modelBinding: input.modelBinding,
       tools: input.tools,
+      ...(input.preload === undefined ? {} : { preload: input.preload }),
     });
   }
 
@@ -587,6 +595,20 @@ export class FileNativePromptCompiler {
             : "author_instruction",
         markdown: joinBlocks(blocks),
         blocks,
+      });
+    }
+    // Preloaded material follows every author prompt so the stable prefix stays byte-identical.
+    if (input.preload !== undefined && input.preload.length > 0) {
+      const preloadBlocks = input.preload.map(({ source, markdown }) => ({
+        source,
+        markdown,
+      }));
+      logicalMessages.push({
+        messageRole: "system",
+        promptId: "runtime.preload",
+        role: "world_context",
+        markdown: joinBlocks(preloadBlocks),
+        blocks: preloadBlocks,
       });
     }
     const tools = structuredClone(input.tools);
