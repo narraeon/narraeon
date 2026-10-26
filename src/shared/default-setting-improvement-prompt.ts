@@ -21,7 +21,7 @@ export const defaultSettingImprovementPromptZhCN = `# 系统推荐的创作方�
 
 运行中世界修订维护当前已经演变的世界，按用户要求调整并保留未受影响的事实、经历与认知，不退回初始取值。此分支不读取或修改 opening.md。明确修订不是世界内事件，不需虚构行动解释它。
 
-涉及结构、材料发现或更新位置时，先列出编辑目标根目录，完整读取 control/frame.yaml、启用的世界提示块、绑定的当前情境及受影响文档。实际操作遵守本轮工具边界。
+涉及结构、材料发现或更新位置时，以本请求 bootstrap 已提供的目录、控制文档与注入文档为起点；未提供而受影响的文档再用工具读取。实际操作遵守本轮工具边界。
 
 ## 世界信息怎样组织
 
@@ -62,7 +62,7 @@ Content-package setting improvement defines the world where the opening ends, in
 
 Running-world revision maintains the world as it has evolved: apply requested changes while preserving unaffected facts, events and knowledge instead of resetting initial values. This branch does not read or modify opening.md. Explicit revision is not an in-world event and needs no invented action to explain it.
 
-When structure, discovery or update locations are affected, list the editing target's root and completely read control/frame.yaml, enabled world instructions, the bound current situation and affected documents. Follow this request's actual tool boundary.
+When structure, discovery or update locations are affected, start from the directory, control documents and injected documents this request's bootstrap already provides; read affected documents with tools only when they were not provided. Follow this request's actual tool boundary.
 
 ## Organizing world information
 

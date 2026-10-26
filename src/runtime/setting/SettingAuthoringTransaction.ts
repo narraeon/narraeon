@@ -137,6 +137,7 @@ export type SettingAuthoringPlayAccess =
   | "play_control"
   | "unused_control"
   | "player_view"
+  | "moved"
   | "removed";
 
 export interface SettingAuthoringPlayCoverage {
@@ -151,6 +152,8 @@ export interface SettingAuthoringPlayCoverage {
     path: string;
     access: SettingAuthoringPlayAccess;
     detail: string;
+    /** The new logical path of a document moved away from `path`. */
+    movedTo?: string;
   }[];
 }
 
@@ -649,6 +652,7 @@ export class SettingAuthoringTransaction {
   readonly #surface: SettingAuthoringSurface;
   readonly #preview: (snapshot: WorldDocumentStore) => PromptPreview;
   readonly #validateFiles: (files: readonly ContentTreeFile[]) => void;
+  readonly #additionalToolNames: readonly string[];
   #snapshot: WorldDocumentStore;
   #reads: ReadAuthorizations;
   #review: SettingAuthoringReview;
@@ -659,6 +663,8 @@ export class SettingAuthoringTransaction {
     surface?: SettingAuthoringSurface;
     preview: (snapshot: WorldDocumentStore) => PromptPreview;
     validateFiles?: (files: readonly ContentTreeFile[]) => void;
+    /** Tools the same interface also provides; named in unknown-tool rejections only. */
+    additionalToolNames?: readonly string[];
     authorization?: SettingAuthoringAuthorization | null;
     revision?: string;
   }) {
@@ -667,6 +673,7 @@ export class SettingAuthoringTransaction {
     this.#surface = input.surface ?? contentPackageAuthoringSurface;
     this.#preview = input.preview;
     this.#validateFiles = input.validateFiles ?? (() => undefined);
+    this.#additionalToolNames = input.additionalToolNames ?? [];
     this.#snapshot = WorldDocumentStore.open({
       layout: this.#surface.layout,
       files: cloneFiles(input.baseFiles),
@@ -705,7 +712,12 @@ export class SettingAuthoringTransaction {
 
   execute(calls: readonly ModelHostToolCall[]): SettingAuthoringToolResult[] {
     const normalized = calls.map((call) =>
-      normalizeCall(call, this.#surface, this.#locale),
+      normalizeCall(
+        call,
+        this.#surface,
+        this.#locale,
+        this.#additionalToolNames,
+      ),
     );
     const results: SettingAuthoringToolResult[] = [];
     const responseBase = this.files();
@@ -1065,20 +1077,59 @@ function buildSettingAuthoringPlayCoverage(
 
   return {
     totals,
-    changed: diff.map(({ path, after }) => {
-      const access = changedPathPlayAccess(
-        path,
-        after,
-        accessByPath,
-        enabledWorldInstructionPaths,
-      );
+    changed: diff.map(({ path, before, after }) => {
+      const movedTo =
+        after === null
+          ? movedDocumentPath(before, path, snapshot, surface)
+          : null;
+      const access =
+        movedTo !== null
+          ? "moved"
+          : changedPathPlayAccess(
+              path,
+              after,
+              accessByPath,
+              enabledWorldInstructionPaths,
+            );
       return {
         path,
         access,
         detail: playAccessDetail(access, surface),
+        ...(movedTo === null ? {} : { movedTo }),
       };
     }),
   };
+}
+
+/**
+ * A deleted-looking world document whose identity survives at another path
+ * was moved, not removed: the old path is reported with its new location.
+ */
+function movedDocumentPath(
+  before: string | null,
+  path: string,
+  snapshot: WorldDocumentStore,
+  surface: SettingAuthoringSurface,
+): string | null {
+  if (before === null) return null;
+  const previous = WorldDocumentStore.open({
+    layout: surface.layout,
+    files: [{ path, contents: before }],
+  });
+  if (previous.status !== "usable") return null;
+  const identity = previous.query({
+    kind: "read_document",
+    document: { logicalPath: path },
+  });
+  if (identity.kind !== "read_document" || !identity.ok) return null;
+  const current = snapshot.query({
+    kind: "read_document",
+    document: { documentId: identity.scope.document.documentId },
+  });
+  if (current.kind !== "read_document" || !current.ok) return null;
+  return current.scope.document.logicalPath === path
+    ? null
+    : current.scope.document.logicalPath;
 }
 
 function changedPathPlayAccess(
@@ -1128,6 +1179,7 @@ function playAccessDetail(
     unused_control:
       "not enabled by control/frame.yaml and unavailable to ordinary play AI",
     player_view: "projected through exact player-view selectors",
+    moved: "its document identity continues at the new path",
     removed: `removed from ${surface.phrases.en.bareTree}`,
   };
   return details[access];
@@ -1150,6 +1202,7 @@ function renderPlayCoverage(
           play_control: "游玩控制",
           unused_control: "未被 control/frame.yaml 启用",
           player_view: "玩家视图精确投影",
+          moved: "文档身份已延续到新路径",
           removed: `已从${surface.phrases["zh-CN"].tree}删除`,
         }
       : {
@@ -1162,13 +1215,20 @@ function renderPlayCoverage(
           play_control: "play-author control",
           unused_control: "not enabled by control/frame.yaml",
           player_view: "exact player-view projection",
+          moved: "identity continues at the new path",
           removed: `removed from ${surface.phrases.en.bareTree}`,
         };
   const maximumReportedChanges = 64;
   const reportedChanges = coverage.changed.slice(0, maximumReportedChanges);
-  const changed = reportedChanges.map(
-    ({ path, access }) => `- ${path} — ${labels[access]}`,
-  );
+  const changed = reportedChanges.map(({ path, access, movedTo }) => {
+    if (access === "moved" && movedTo !== undefined)
+      return localized(
+        locale,
+        `- ${path} — moved to ${movedTo}`,
+        `- ${path} — 已移动到 ${movedTo}`,
+      );
+    return `- ${path} — ${labels[access]}`;
+  });
   const onDemand = coverage.changed.filter(
     ({ access }) => access === "on_demand",
   );
@@ -1244,6 +1304,7 @@ function normalizeCall(
   call: ModelHostToolCall,
   surface: SettingAuthoringSurface,
   locale: AppLocale,
+  additionalToolNames: readonly string[],
 ): NormalizedCall {
   const cloned = isRecord(call.arguments)
     ? structuredClone(call.arguments)
@@ -1262,7 +1323,11 @@ function normalizeCall(
       operation: null,
       arguments: cloned,
       coerced: [],
-      rejection: unknownToolMessage(call.name, provided, locale),
+      rejection: unknownToolMessage(
+        call.name,
+        [...provided, ...additionalToolNames],
+        locale,
+      ),
     };
   const name = resolved.name;
   const schema = definitions.find(

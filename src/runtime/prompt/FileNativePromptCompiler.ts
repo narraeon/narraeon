@@ -1515,8 +1515,11 @@ function settingImprovementPresetReference(
             return [
               {
                 ...worldInstructionPlaceholder,
-                markdown:
-                  locale === "zh-CN"
+                markdown: revision
+                  ? locale === "zh-CN"
+                    ? "世界指令在此展开；启用块原文见本请求的 Runtime 预载。"
+                    : "World instructions expand here; enabled block text appears in this request's Runtime preload."
+                  : locale === "zh-CN"
                     ? "世界指令在此展开；frame 选定材料仅在全新游玩上下文中作为初始工具结果提供。请通过本轮创作工具检查实际内容。"
                     : "World instructions expand here; frame-selected material is supplied as an initial tool result only for a fresh play context. Inspect actual content through the current authoring tools.",
               },
