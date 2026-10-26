@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "epochId": "revision-b8237417-d572-40f4-83b8-a50423ff27ae",
+  "worldId": "world-prepared",
+  "lifecycle": "applying",
+  "baseHead": "head-genesis",
+  "baseControlFingerprint": "sha256:2ae52b8a2a52637fefa77a58710c29577a811f123db2df6c0d51e7e8579ad349",
+  "baseFiles": [
+    {
+      "path": "state/world.yaml",
+      "contents": "title: Harbor\n"
+    },
+    {
+      "path": "control/frame.yaml",
+      "contents": "tone: calm\n"
+    }
+  ],
+  "files": [
+    {
+      "path": "state/world.yaml",
+      "contents": "title: Harbor at dusk\n"
+    },
+    {
+      "path": "control/frame.yaml",
+      "contents": "tone: calm\n"
+    }
+  ],
+  "revision": "f3f570027b7545b3baef9f6dc0c142d043a35c1583ab196bf019724dbd2fd580",
+  "changes": [],
+  "apply": {
+    "operationId": "world-revision-revision-b8237417-d572-40f4-83b8-a50423ff27ae",
+    "expectedRevision": "f3f570027b7545b3baef9f6dc0c142d043a35c1583ab196bf019724dbd2fd580",
+    "phase": "prepared",
+    "committedHead": null
+  },
+  "createdAt": 1790000000000,
+  "updatedAt": 1790000100000,
+  "finishedAt": null
+}

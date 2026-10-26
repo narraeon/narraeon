@@ -1,0 +1,90 @@
+// Writes the pre-#106 world-revision epoch fixtures with the v0.7.4 store.
+//
+// Usage (from a scratch copy of the v0.7.4 tree, with its dependencies installed):
+//   node generator.mts <v0.7.4-tree> <output-directory>
+//
+// The epochs are produced by the historical FileNativeWorldRevisionStore: its
+// saveEpoch validates each epoch with the v0.7.4 schema and writes it with its
+// own publishJson, and its listEpochs reads them back. Only the lifecycle and
+// apply phase of each epoch are chosen here; no current-format object is edited.
+import { createHash, randomUUID } from "node:crypto";
+import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+
+const [historicalTree, outputDirectory] = process.argv.slice(2).map((path) => resolve(path));
+const storeModule = join(historicalTree, "src/runtime/world-revision/FileNativeWorldRevisionStore.ts");
+const fingerprintModule = join(historicalTree, "src/runtime/content/ContentTreeFingerprint.ts");
+const { FileNativeWorldRevisionStore } = await import(pathToFileURL(storeModule).href);
+const { contentTreeFingerprint } = await import(pathToFileURL(fingerprintModule).href);
+
+// Same control-file digest that v0.7.4 uses for baseControlFingerprint.
+function controlFingerprint(files) {
+  const hash = createHash("sha256");
+  for (const file of files
+    .filter(({ path }) => path.startsWith("control/"))
+    .map((file) => ({ ...file, path: file.path.slice("control/".length) }))
+    .sort((left, right) => left.path.localeCompare(right.path)))
+    hash.update(file.path).update("\0").update(file.contents).update("\0");
+  return `sha256:${hash.digest("hex")}`;
+}
+
+const baseFiles = [
+  { path: "state/world.yaml", contents: "title: Harbor\n" },
+  { path: "control/frame.yaml", contents: "tone: calm\n" },
+];
+const editedFiles = [
+  { path: "state/world.yaml", contents: "title: Harbor at dusk\n" },
+  { path: "control/frame.yaml", contents: "tone: calm\n" },
+];
+
+function epoch({ worldId, lifecycle, phase, committedHead, finished }) {
+  const epochId = `revision-${randomUUID()}`;
+  const revision = contentTreeFingerprint(editedFiles);
+  const operationId = `world-revision-${epochId}`;
+  return {
+    schemaVersion: 1,
+    epochId,
+    worldId,
+    lifecycle,
+    baseHead: "head-genesis",
+    baseControlFingerprint: controlFingerprint(baseFiles),
+    baseFiles,
+    files: editedFiles,
+    revision,
+    changes: [],
+    apply: phase === null ? null : { operationId, expectedRevision: revision, phase, committedHead },
+    createdAt: 1_790_000_000_000,
+    updatedAt: 1_790_000_100_000,
+    finishedAt: finished ? 1_790_000_200_000 : null,
+  };
+}
+
+const cases = [
+  // v0.7.4 applied epoch: the control publication finished before the lifecycle changed.
+  { worldId: "world-applied", lifecycle: "applied", phase: "control_published", committedHead: "head-1", finished: true },
+  // v0.7.4 interrupted applies, one per apply phase.
+  { worldId: "world-prepared", lifecycle: "applying", phase: "prepared", committedHead: null, finished: false },
+  { worldId: "world-control", lifecycle: "applying", phase: "control_published", committedHead: "head-1", finished: false },
+  { worldId: "world-state", lifecycle: "applying", phase: "state_committed", committedHead: "head-1", finished: false },
+];
+
+const dataRoot = await mkdtemp(join(tmpdir(), "world-revision-v0.7.4-"));
+try {
+  const store = new FileNativeWorldRevisionStore(dataRoot);
+  for (const testCase of cases) await store.saveEpoch(epoch(testCase));
+  // Read back with the historical code before copying anything out.
+  for (const { worldId } of cases) await store.listEpochs(worldId);
+
+  const source = join(dataRoot, "world-revisions", "epochs");
+  const target = join(outputDirectory, "epochs");
+  await mkdir(target, { recursive: true });
+  for (const name of (await readdir(source)).sort()) {
+    await writeFile(join(target, name), await readFile(join(source, name)));
+    const digest = createHash("sha256").update(await readFile(join(source, name))).digest("hex");
+    console.log(`${digest}  ${name}`);
+  }
+} finally {
+  await rm(dataRoot, { recursive: true, force: true });
+}
