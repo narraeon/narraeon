@@ -920,6 +920,54 @@ test("旧 setting_read 分页参数被忽略并改为完整读取授权", () => 
   ).toMatchObject([{ isError: false }]);
 });
 
+test("设定目录 list 整份返回超过 20 份文档的目录，并忽略旧 cursor／limit 参数", () => {
+  const transaction = new SettingAuthoringTransaction({
+    baseFiles: minimalFileNativeContentScaffold("en"),
+    locale: "en",
+    preview: () => preview,
+  });
+  for (let index = 1; index <= 25; index += 1)
+    expect(
+      transaction.execute([
+        {
+          id: `create-${index}`,
+          name: "setting_create",
+          arguments: {
+            path: `world/bulk/record-${index}.yaml`,
+            ref: `bulk-record-${index}`,
+            title: `Bulk record ${index}`,
+            summary: `Bulk directory entry ${index}.`,
+            aliases: [],
+            body: `index: ${index}\n`,
+          },
+        },
+      ]),
+    ).toMatchObject([{ isError: false }]);
+
+  const [full] = transaction.execute([
+    {
+      id: "list-bulk",
+      name: "setting_list",
+      arguments: { directory: "world/bulk" },
+    },
+  ]);
+  expect(full).toMatchObject({ isError: false });
+  expect(full?.markdown.match(/^- @bulk-record-/gmu)).toHaveLength(25);
+  expect(full?.markdown).toContain("Complete: yes");
+  expect(full?.markdown).not.toContain("Next cursor");
+  expect(full?.markdown).not.toContain("This page");
+
+  const [legacy] = transaction.execute([
+    {
+      id: "legacy-list-bulk",
+      name: "setting_list",
+      arguments: { directory: "world/bulk", limit: 1, cursor: "obsolete" },
+    },
+  ]);
+  expect(legacy).toMatchObject({ isError: false });
+  expect(legacy?.markdown).toBe(full?.markdown);
+});
+
 function productionPreview(snapshot: WorldDocumentStore): PromptPreview {
   const playPreset = builtinDefaultPlayPresetBinding("en");
   const compiler = new FileNativePromptCompiler({ locale: "en" });

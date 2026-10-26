@@ -1103,7 +1103,7 @@ context:
     );
   });
 
-  test("list 工具保留集合分页，context_read 只暴露完整精确读取", () => {
+  test("state_list 整份列出目录，history_list 保留分页，context_read 只暴露完整精确读取", () => {
     const compiled = new FileNativePromptCompiler().compileBootstrap(input());
     const stateList = compiled.tools.find(({ name }) => name === "state_list");
     const historyList = compiled.tools.find(
@@ -1119,8 +1119,6 @@ context:
       required: ["parent"],
       properties: {
         parent: { type: "string", minLength: 1 },
-        cursor: { type: ["string", "null"] },
-        limit: { type: "integer", minimum: 1, maximum: 100 },
       },
     });
     expect(historyList?.inputSchema).toEqual({
@@ -1476,6 +1474,54 @@ ${"original material\n".repeat(1_000)}${originalTail}
         .compileBootstrap(source)
         .logicalMessages.find(({ role }) => role === "world_context")?.markdown,
     ).toContain("Flood rescue [ref: @flood-rescue]");
+  });
+
+  test("state_list 一次返回超过 20 份文档的完整目录，并忽略旧 cursor／limit 参数", () => {
+    const source = input();
+    const files = snapshotRecord(source);
+    const documents = new FileNativePlayDocuments(files);
+    source.world.documentSnapshot = documents.snapshot;
+    documents.bindBootstrap(
+      new FileNativePromptCompiler().compileBootstrap(source),
+    );
+    const call = (arguments_: Record<string, unknown>) =>
+      documents.execute(
+        { id: "list", name: "state_list", arguments: arguments_ },
+        [],
+      );
+    for (let index = 1; index <= 25; index += 1)
+      expect(
+        documents.execute(
+          {
+            id: `create-${index}`,
+            name: "world_create",
+            arguments: {
+              parent: "@dir-/",
+              codec: "yaml",
+              refHint: `bulk-record-${index}`,
+              title: `Bulk record ${index}`,
+              summary: `Bulk directory entry ${index}.`,
+              aliases: [],
+              body: `index: ${index}`,
+            },
+          },
+          [],
+        ),
+      ).toMatchObject({ ok: true });
+
+    const full = call({ parent: "@dir-/" });
+    expect(full).toMatchObject({ ok: true });
+    expect(full.markdown.match(/^- Document @bulk-record-/gmu)).toHaveLength(
+      25,
+    );
+    expect(full.markdown).toContain("Coverage: complete");
+    expect(full.markdown).toContain("Complete: yes");
+    expect(full.markdown).not.toContain("This page");
+    expect(full.markdown).not.toContain("Next-page cursor");
+
+    const legacy = call({ parent: "@dir-/", limit: 1, cursor: "obsolete" });
+    expect(legacy).toMatchObject({ ok: true });
+    expect(legacy.markdown).toBe(full.markdown);
   });
 
   test("frame 声明的空 catalog 目录可发现、可创建，未声明目录不可伪造", () => {

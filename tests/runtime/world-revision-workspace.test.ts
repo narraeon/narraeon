@@ -1187,7 +1187,7 @@ test("AI 对话写入同一工作树，应用后继续原对话会收到新 epoc
     promptDelta?.kind === "prompt_delta"
       ? promptDelta.logicalMessages[0]?.markdown
       : "",
-  ).toContain("此前全部 list/search cursor");
+  ).toContain("此前全部 search cursor");
   expect(second.turns[1]?.exchanges[0]?.toolCalls[0]).toMatchObject({
     callId: "stale-write-after-apply",
     result: { isError: true, changes: [] },

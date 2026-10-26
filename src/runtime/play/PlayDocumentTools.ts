@@ -1070,18 +1070,18 @@ function executeStateList(
   args: unknown,
   declaredDirectories: readonly string[],
 ): ContextToolResult {
+  // Frozen sessions may still send obsolete cursor/limit; directories are
+  // listed in full, so those keys are accepted and ignored.
   if (
     !record(args) ||
     !hasOnlyToolKeys(args, ["parent", "cursor", "limit"]) ||
     typeof args.parent !== "string" ||
-    parseStateDirectoryHandle(args.parent) === null ||
-    (args.limit !== undefined && typeof args.limit !== "number") ||
-    !validOptionalCursor(args.cursor)
+    parseStateDirectoryHandle(args.parent) === null
   )
     return {
       ok: false,
       markdown:
-        "# Runtime argument error\n\nstate_list requires an @dir-* parent returned by Runtime and accepts only cursor and limit in addition; use history_list for committed history.",
+        "# Runtime argument error\n\nstate_list requires an @dir-* parent returned by Runtime; use history_list for committed history.",
     };
   return executeContextList(
     snapshot,
@@ -1114,20 +1114,12 @@ function executeContextList(
   if (
     !hasOnlyToolKeys(args, allowedKeys) ||
     invalidStateShape ||
-    invalidHistoryShape ||
-    (args.limit !== undefined && typeof args.limit !== "number") ||
-    !validOptionalCursor(args.cursor)
+    invalidHistoryShape
   )
     return {
       ok: false,
       markdown:
         "# Runtime argument error\n\nstate must use an @dir-* parent returned by the Runtime and omit order; history must use newest_first or oldest_first order and omit parent.",
-    };
-  const limit = typeof args.limit === "number" ? args.limit : 20;
-  if (!Number.isInteger(limit) || limit < 1 || limit > 100)
-    return {
-      ok: false,
-      markdown: "# Runtime argument error\n\nlimit must be between 1 and 100.",
     };
   if (args.source === "state") {
     const parent = args.parent as string;
@@ -1139,32 +1131,39 @@ function executeContextList(
         markdown:
           "# Runtime argument error\n\nThe parent is not a Runtime-known state directory; call state_list and descend only through its returned directory handles.",
       };
-    const result = snapshot.query({
-      kind: "catalog",
-      directory,
-      includeRetired: true,
-      declaredDirectories,
-      limit,
-      ...(typeof args.cursor === "string" || args.cursor === null
-        ? { cursor: args.cursor }
-        : {}),
-    });
-    if (result.kind === "error") return renderStateQueryFailure(result);
-    if (result.kind !== "catalog") return unexpectedStateQueryResult();
-    const entries = result.entries.map((entry) => {
-      if (entry.kind === "directory") {
-        const relative = entry.logicalPath.slice(
-          `${snapshot.logicalRoot}/`.length,
-        );
-        return `- Directory ${stateDirectoryHandle(relative)}`;
-      }
-      if (entry.document === undefined)
-        return "- Damaged document (currently not addressable)";
-      return `- Document @${entry.document.shortRef} · ${entry.document.title} · ${entry.document.codec.toUpperCase()} · ${entry.document.summary}${entry.document.retired ? " · retired" : ""}${entry.status === "damaged" ? " · needs repair" : ""}`;
-    });
+    const entries: string[] = [];
+    let complete = true;
+    let cursor: string | null = null;
+    do {
+      const result = snapshot.query({
+        kind: "catalog",
+        directory,
+        includeRetired: true,
+        declaredDirectories,
+        limit: 100,
+        ...(cursor === null ? {} : { cursor }),
+      });
+      if (result.kind === "error") return renderStateQueryFailure(result);
+      if (result.kind !== "catalog") return unexpectedStateQueryResult();
+      if (result.coverage.status !== "complete") complete = false;
+      entries.push(
+        ...result.entries.map((entry) => {
+          if (entry.kind === "directory") {
+            const relative = entry.logicalPath.slice(
+              `${snapshot.logicalRoot}/`.length,
+            );
+            return `- Directory ${stateDirectoryHandle(relative)}`;
+          }
+          if (entry.document === undefined)
+            return "- Damaged document (currently not addressable)";
+          return `- Document @${entry.document.shortRef} · ${entry.document.title} · ${entry.document.codec.toUpperCase()} · ${entry.document.summary}${entry.document.retired ? " · retired" : ""}${entry.status === "damaged" ? " · needs repair" : ""}`;
+        }),
+      );
+      cursor = result.page.nextCursor;
+    } while (cursor !== null);
     return {
       ok: true,
-      markdown: `# Directory listing\n\nScope: state · ${parent}\nCoverage: ${result.coverage.status === "complete" ? "complete" : "partial"}\n${entries.join("\n") || "(empty)"}\n\n---\nThis page: ${result.page.start}..${result.page.end} / ${result.page.total} items\nComplete: ${result.page.complete ? "yes" : "no"}${result.page.nextCursor === null ? "" : `\nNext-page cursor: ${result.page.nextCursor}`}`,
+      markdown: `# Directory listing\n\nScope: state · ${parent}\nCoverage: ${complete ? "complete" : "partial"}\n${entries.join("\n") || "(empty)"}\n\n---\nComplete: yes`,
     };
   }
 
