@@ -903,8 +903,8 @@ function retargetSession(
 ): void {
   const markdown =
     locale === "zh-CN"
-      ? `# 新的世界修订 epoch\n\n上一轮修订已经应用或放弃。当前工作树是 ${epoch.epochId}，从世界端点 ${epoch.baseHead} 重新建立。此前全部 list/search cursor 和 read 写授权已失效；修改前必须重新读取。`
-      : `# New world-revision epoch\n\nThe previous revision was applied or discarded. Worktree ${epoch.epochId} was rebuilt from world endpoint ${epoch.baseHead}. Every prior list/search cursor and read authorization is invalid; re-read before writing.`;
+      ? `# 新的世界修订 epoch\n\n上一轮修订已经应用或放弃。当前工作树是 ${epoch.epochId}，从世界端点 ${epoch.baseHead} 重新建立。此前全部 search cursor 和 read 写授权已失效；修改前必须重新读取。`
+      : `# New world-revision epoch\n\nThe previous revision was applied or discarded. Worktree ${epoch.epochId} was rebuilt from world endpoint ${epoch.baseHead}. Every prior search cursor and read authorization is invalid; re-read before writing.`;
   session.modelItems.push({
     kind: "prompt_delta",
     logicalMessages: [

@@ -339,7 +339,7 @@ test("AI 用 ref 和正文新建文档，Runtime 隐藏 id，后续调用可直�
   expect(results[0]?.markdown).toContain(
     "Created @alex · world/characters/alex.yaml",
   );
-  expect(results[0]?.markdown).toContain("already fully read");
+  expect(results[0]?.markdown).not.toContain("already fully read");
   expect(results[0]?.markdown).not.toMatch(/\$document\.id|doc\.[a-f0-9]+/u);
   expect(results[1]?.markdown).toContain(
     "Updated @alex · world/characters/alex.yaml",
@@ -836,7 +836,7 @@ test("设定模型只能用 @ref 或逻辑路径，既有正文与控制文件�
   expect(results[5]?.markdown).toContain('document: "@current-situation"');
   expect(results[5]?.markdown).not.toContain("situation.current");
   expect(results[6]).toMatchObject({ isError: false });
-  expect(results[6]?.markdown).toContain("@current-situation");
+  expect(results[6]?.markdown).toMatch(/^- @\S+ · \d+:\d+/mu);
   expect(results[6]?.markdown).not.toContain("situation.current");
   expect(results[7]).toMatchObject({ isError: false });
   expect(
@@ -918,6 +918,203 @@ test("旧 setting_read 分页参数被忽略并改为完整读取授权", () => 
       },
     ]),
   ).toMatchObject([{ isError: false }]);
+});
+
+test("设定目录 list 整份返回超过 20 份文档的目录，并忽略旧 cursor／limit 参数", () => {
+  const transaction = new SettingAuthoringTransaction({
+    baseFiles: minimalFileNativeContentScaffold("en"),
+    locale: "en",
+    preview: () => preview,
+  });
+  for (let index = 1; index <= 25; index += 1)
+    expect(
+      transaction.execute([
+        {
+          id: `create-${index}`,
+          name: "setting_create",
+          arguments: {
+            path: `world/bulk/record-${index}.yaml`,
+            ref: `bulk-record-${index}`,
+            title: `Bulk record ${index}`,
+            summary: `Bulk directory entry ${index}.`,
+            aliases: [],
+            body: `index: ${index}\n`,
+          },
+        },
+      ]),
+    ).toMatchObject([{ isError: false }]);
+
+  const [full] = transaction.execute([
+    {
+      id: "list-bulk",
+      name: "setting_list",
+      arguments: { directory: "world/bulk" },
+    },
+  ]);
+  expect(full).toMatchObject({ isError: false });
+  expect(full?.markdown.match(/^- @bulk-record-/gmu)).toHaveLength(25);
+  expect(full?.markdown).toContain("Complete: yes");
+  expect(full?.markdown).not.toContain("Next cursor");
+  expect(full?.markdown).not.toContain("This page");
+
+  const [legacy] = transaction.execute([
+    {
+      id: "legacy-list-bulk",
+      name: "setting_list",
+      arguments: { directory: "world/bulk", limit: 1, cursor: "obsolete" },
+    },
+  ]);
+  expect(legacy).toMatchObject({ isError: false });
+  expect(legacy?.markdown).toBe(full?.markdown);
+});
+
+test("设定字面搜索每行一条并列出该行全部列号与原文摘录，不重复完整路径", () => {
+  const transaction = new SettingAuthoringTransaction({
+    baseFiles: minimalFileNativeContentScaffold("zh-CN"),
+    locale: "zh-CN",
+    preview: () => preview,
+  });
+  transaction.execute([
+    {
+      id: "create-letters",
+      name: "setting_create",
+      arguments: {
+        path: "world/letters/letters.yaml",
+        ref: "letters",
+        title: "来信",
+        summary: "一组往来信件。",
+        aliases: [],
+        body: "letters: |\n  第一封信：信使说的信\n  普通一行\n  第三封信\n",
+      },
+    },
+  ]);
+  const [search] = transaction.execute([
+    { id: "search-xin", name: "setting_search", arguments: { query: "信" } },
+  ]);
+  const markdown = search?.markdown ?? "";
+  const body = markdown.split("\n");
+  const entryIndexes = body
+    .map((line, index) => (line.startsWith("- @letters ·") ? index : -1))
+    .filter((index) => index >= 0);
+  const lines = entryIndexes.map(
+    (index) => body[index]!.split(" · ")[1]?.split(":")[0],
+  );
+  expect(entryIndexes.length).toBeGreaterThan(1);
+  expect(new Set(lines).size).toBe(entryIndexes.length);
+  expect(
+    entryIndexes.some((index) => /· \d+:\d+(?:,\d+)+$/u.test(body[index]!)),
+  ).toBe(true);
+  for (const index of entryIndexes)
+    expect(body[index + 1]).toMatch(/^ {2}".*信.*"$/u);
+  expect(markdown).not.toContain("world/letters/letters.yaml");
+});
+
+test("设定字面搜索按行分页，同一行的命中不被拆到两页", () => {
+  const transaction = new SettingAuthoringTransaction({
+    baseFiles: minimalFileNativeContentScaffold("zh-CN"),
+    locale: "zh-CN",
+    preview: () => preview,
+  });
+  const body = Array.from(
+    { length: 30 },
+    (_, index) => `  第${index + 1}封信：信里写着信使说的话。`,
+  ).join("\n");
+  transaction.execute([
+    {
+      id: "create-bulk-letters",
+      name: "setting_create",
+      arguments: {
+        path: "world/letters/bulk.yaml",
+        ref: "bulk-letters",
+        title: "整批来信",
+        summary: "三十行往来信件。",
+        aliases: [],
+        body: `letters: |\n${body}\n`,
+      },
+    },
+  ]);
+  const lineNumbers = (markdown: string) =>
+    markdown
+      .split("\n")
+      .filter((line) => line.startsWith("- @bulk-letters ·"))
+      .map((line) => line.split(" · ")[1]?.split(":")[0]);
+  const [first] = transaction.execute([
+    {
+      id: "page-1",
+      name: "setting_search",
+      arguments: { query: "信", limit: 10 },
+    },
+  ]);
+  const firstLines = lineNumbers(first?.markdown ?? "");
+  expect(firstLines).toHaveLength(10);
+  expect(first?.markdown).toMatch(/^Next cursor: /mu);
+  const cursor = /^Next cursor: (\S+)$/mu.exec(first?.markdown ?? "")?.[1];
+  const [second] = transaction.execute([
+    {
+      id: "page-2",
+      name: "setting_search",
+      arguments: { query: "信", limit: 10, cursor },
+    },
+  ]);
+  const secondLines = lineNumbers(second?.markdown ?? "");
+  expect(secondLines).toHaveLength(10);
+  expect(new Set([...firstLines, ...secondLines]).size).toBe(20);
+});
+
+test("写入回执不再重复独立接受的样板，读取回执不再标注 Complete: yes", () => {
+  const transaction = new SettingAuthoringTransaction({
+    baseFiles: minimalFileNativeContentScaffold("en"),
+    locale: "en",
+    preview: () => preview,
+  });
+  const [created] = transaction.execute([
+    {
+      id: "create-receipt",
+      name: "setting_create",
+      arguments: {
+        path: "world/receipt.yaml",
+        ref: "receipt",
+        title: "Receipt",
+        summary: "A receipt document.",
+        aliases: [],
+        body: "status: ready\n",
+      },
+    },
+  ]);
+  expect(created?.markdown).not.toContain("accepted independently");
+  const [read] = transaction.execute([
+    {
+      id: "read-receipt",
+      name: "setting_read",
+      arguments: { path: "world/receipt.yaml" },
+    },
+  ]);
+  expect(read?.markdown).toContain("status: ready");
+  expect(read?.markdown).not.toContain("Complete: yes");
+});
+
+test("setting_patch 拒绝非法 op 时说明文档、收到的 op 与合法 op 列表", () => {
+  const transaction = new SettingAuthoringTransaction({
+    baseFiles: minimalFileNativeContentScaffold("en"),
+    locale: "en",
+    preview: () => preview,
+  });
+  const [rejected] = transaction.execute([
+    {
+      id: "bad-op",
+      name: "setting_patch",
+      arguments: {
+        document: "@current-situation",
+        op: "bogus",
+        locator: ["status"],
+        value: "ready",
+      },
+    },
+  ]);
+  expect(rejected).toMatchObject({ isError: true, changes: [] });
+  expect(rejected?.markdown).toContain("@current-situation");
+  expect(rejected?.markdown).toContain('"bogus"');
+  expect(rejected?.markdown).toContain("add, replace, append, remove");
 });
 
 function productionPreview(snapshot: WorldDocumentStore): PromptPreview {

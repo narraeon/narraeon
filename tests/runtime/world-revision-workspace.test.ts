@@ -276,9 +276,7 @@ test("世界修订工具只暴露 state/control，共用读取授权并拒绝 op
       arguments: { path: "control/blocks/world.md" },
     },
   ]);
-  expect(literalSearch?.markdown).toContain(
-    "content package world/example 必须保持原样",
-  );
+  expect(literalSearch?.markdown).toMatch(/^- @current-situation · \d+:\d+/mu);
   expect(literalControl?.markdown).toContain(
     "content package world/control 也必须保持原样",
   );
@@ -1187,7 +1185,7 @@ test("AI 对话写入同一工作树，应用后继续原对话会收到新 epoc
     promptDelta?.kind === "prompt_delta"
       ? promptDelta.logicalMessages[0]?.markdown
       : "",
-  ).toContain("此前全部 list/search cursor");
+  ).toContain("此前全部 search cursor");
   expect(second.turns[1]?.exchanges[0]?.toolCalls[0]).toMatchObject({
     callId: "stale-write-after-apply",
     result: { isError: true, changes: [] },

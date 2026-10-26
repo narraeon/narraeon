@@ -214,14 +214,7 @@ function createToolDefinitions(
     ...resolutionDefinitions(locale),
     state_list: {
       description: descriptions.state_list,
-      inputSchema: object(
-        {
-          parent: string,
-          cursor: { type: ["string", "null"] },
-          limit: { type: "integer", minimum: 1, maximum: 100 },
-        },
-        ["parent"],
-      ),
+      inputSchema: object({ parent: string }, ["parent"]),
     },
     history_list: {
       description: descriptions.history_list,
@@ -439,9 +432,9 @@ const toolDescriptions: Record<
     world_checkpoint:
       "Register a gap between events and suggest that the player start a fresh context here. Arguments must be an empty object. The effect and replay scope are defined by the tools-and-settlement rules; when to register is defined by the checkpoint policy. Consolidation and maintenance do not require this tool; do not advance the story to register a checkpoint.",
     state_list:
-      "List document and state directory handles known to Runtime. parent must be @dir-/ for the state root or an @dir-* handle from the initial directory index or an earlier state_list result; no preliminary listing is needed for an already supplied handle. Catalog directories declared by the frozen world frame remain listed and usable when empty. A cursor is valid only for the same state snapshot, parent, and limit. Pass returned document handles to context_read. This tool never lists committed history.",
+      "List document and state directory handles known to Runtime. parent must be @dir-/ for the state root or an @dir-* handle from the initial directory index or an earlier state_list result; no preliminary listing is needed for an already supplied handle. Catalog directories declared by the frozen world frame remain listed and usable when empty. Each call returns the whole directory with Complete: yes. Pass returned document handles to context_read. This tool never lists committed history.",
     history_list:
-      "Browse committed history on the current timeline. Omit anchors for the latest page; use only before or after with a Runtime ref (including refs in injected history) for the immediately adjacent page, excluding the anchor. Every page is oldest to newest. limit defaults to 20 (1–100 messages). Previews are only the first 120 Unicode code points. Use independent earlierCursor/laterCursor with {cursor} alone; no first-query parameters on continuation. Cursors bind world, tool, query and immutable ordered history. After history_changed rerun the query. Opening messages are queryable. Read full originals with history_read; positions are snapshot locations, not identities or turns.",
+      "Browse committed history on the current timeline. Omit anchors for the latest page; use only before or after with a Runtime ref (including refs in injected history) for the immediately adjacent page, excluding the anchor. Every page is oldest to newest in Authority acceptance order, not story dates. limit defaults to 20 (1–100 messages). Previews are only the first 120 Unicode code points. Historical background describes the captured state, not current world state; interpret memories, dreams and local times with the original text, and it does not certify facts or grant character knowledge. Use independent earlierCursor/laterCursor with {cursor} alone; no first-query parameters on continuation. Cursors bind world, tool, query and immutable ordered history. After history_changed rerun the query. Opening messages are queryable. Read full originals with history_read; positions are snapshot locations, not identities or turns.",
     history_search:
       "Search committed originals on the current timeline with queries: 1–5 nonempty literal strings (max 256 code points each); no query alias or semantic filters. match defaults to any, or all within one message. NFKC normalization always applies; caseSensitive defaults to false (locale-und case folding), normalized duplicate queries collapse. order defaults to newest_first, or oldest_first. limit defaults to 10 (1–50 matching messages). Optional after/before refs exclude timeline boundaries independently of order; after must precede before. Each result has at most 3 partial original fragments, query occurrence counts and complete-original length. Read a hit and nearby context with history_read. Continue with {cursor} alone; history_changed requires a new query.",
     history_read:
@@ -465,9 +458,9 @@ const toolDescriptions: Record<
     world_checkpoint:
       "登记事件间隙，向玩家建议从这里开始全新上下文。参数为空对象。生效条件与补入范围见“工具与响应结算”；何时登记见检查点政策。整理与归并不需要调用本工具；不要为了登记而推进剧情。",
     state_list:
-      "列出 Runtime 已知的文档与状态目录句柄。状态根目录的 parent 使用 @dir-/；继续下级时使用初始目录索引或 state_list 返回的 @dir-*；已有句柄无需再次列目录确认。冻结世界 frame 声明的 catalog 目录即使为空，也会继续列出并可用。cursor 只对同一状态快照、parent 和 limit 有效。返回的文档句柄交给 context_read；本工具不列出已提交历史。",
+      "列出 Runtime 已知的文档与状态目录句柄。状态根目录的 parent 使用 @dir-/；继续下级时使用初始目录索引或 state_list 返回的 @dir-*；已有句柄无需再次列目录确认。冻结世界 frame 声明的 catalog 目录即使为空，也会继续列出并可用。每次调用整份返回该目录，末尾 Complete: yes。返回的文档句柄交给 context_read；本工具不列出已提交历史。",
     history_list:
-      "浏览当前时间线已提交历史。无锚点时取最新一页；before 或 after 只能选一个，取锚点紧邻前／后的一页且不含锚点。页内始终由旧到新。limit 默认20，整数1–100。预览仅含前120个Unicode码点；完整原文用history_read。earlierCursor／laterCursor独立翻页，续页只传{cursor}，不可混用首次参数。游标绑定世界、工具、查询和有序历史快照；history_changed须重新查询。开场白可查询。提示词注入中的ref可直接使用，无需再次列举；位置不是身份或回合数。",
+      "浏览当前时间线已提交历史。无锚点时取最新一页；before 或 after 只能选一个，取锚点紧邻前／后的一页且不含锚点。页内始终由旧到新。limit 默认20，整数1–100。排序依据是 Authority 接受顺序，不代表故事内日期。历史背景仅说明采集位置的状态，不是当前世界状态；回忆、梦境或段内局部时间结合原文解释，不认证事实或授予角色知识。预览仅含前120个Unicode码点；完整原文用history_read。earlierCursor／laterCursor独立翻页，续页只传{cursor}，不可混用首次参数。游标绑定世界、工具、查询和有序历史快照；history_changed须重新查询。开场白可查询。提示词注入中的ref可直接使用，无需再次列举；位置不是身份或回合数。",
     history_search:
       "搜索当前时间线已提交原文。queries必填：1–5个非空字面词，每词最多256个Unicode码点，不接受query别名或语义筛选。match默认any，all限于同一消息。始终NFKC规范化，caseSensitive默认false（locale-und大小写折叠），规范化重复词合并。order默认newest_first，可选oldest_first；limit默认10，整数1–50条命中消息。after／before始终按时间线先后排除边界，after必须早于before，与结果排序无关。每项最多3个部分原文片段、逐词命中次数及完整原文长度；可用history_read读取前后文。续页只传{cursor}；history_changed须重新查询。",
     history_read:

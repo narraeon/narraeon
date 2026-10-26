@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { isPackageFollowupControlPath } from "../content/PackageFollowups.ts";
 import { renderWorldMaintenanceReport } from "../prompt/WorldMaintenanceReport.ts";
 import { listWorldDocuments as listQueryableWorldDocuments } from "../prompt/WorldMaintenanceReport.ts";
@@ -257,7 +258,7 @@ export function settingImprovementRuntimeContract(
 - 当前请求随附八个读写工具。不调用工具的完整响应会作为普通助手消息显示，并结束本次用户调用。含有工具调用的响应是内部工具步骤；收到全部工具结果后继续处理，最终用一个不调用工具的完整响应答复用户。
 - 工具写入直接修改内容包当前树。每个完整 Provider 工具响应中的调用按顺序执行，成功改动在该响应结算时原子发布，发布后立即成为内容包权威，无需另一步确认。
 - 每个写工具调用独立结算，并按本响应中的调用顺序读取之前已接受的结果。某个调用失败只在对应工具结果中返回精确原因，不回滚同一响应内其他成功调用，也不阻止后续调用。Runtime 在写调用结算后自动运行内容树检查和真实 Prompt Preview，并把检查结果附在最后一个成功写调用的结果中。
-- 修改既有文件前必须完整读取它。setting_list／setting_search 的 cursor，以及 setting_read 的读取授权，只属于产生它们的当前树 revision；任何其他对话或手动编辑改变当前树后，必须重新读取再写。setting_read 总是完整返回精确文件，不截断、不分页。工具只暴露逻辑路径，不暴露宿主路径。
+- 修改既有文件前必须完整读取它。setting_search 的 cursor，以及 setting_read 的读取授权，只属于产生它们的当前树 revision；任何其他对话或手动编辑改变当前树后，必须重新读取再写。setting_read 总是完整返回精确文件，不截断、不分页。工具只暴露逻辑路径，不暴露宿主路径。
 - world/ 下只写 .yaml 或 .md 世界文档；专用文件只允许 opening.md、control/frame.yaml、control/player-views.yaml${gameplayFileZh(tabletop)}，以及 control/followups.yaml 和其中引用的 prompts/*.md、renderers/*.html、scripts/*.js、regex/*.yaml、assets/* 文本资源。人物、地点、规则与当前情境放在 world/，本世界特有的主持要求放在 control/。
 - opening.md 是玩家看见的第一页，不得替玩家决定行动、台词或内心。会继续约束首次行动的事实也必须写入自然承载它的世界文档。
 - 新建 world 文档使用 setting_create：ref 由你提供，并同时提供路径、标题、摘要、别名与不含技术头的正文。ref 必须是唯一的 2～32 位小写 ASCII 短句柄；Runtime 自行完成技术存储。既有文档选择值会在读取时自动投影为对应的 @ref；跨文档引用和 control 中的文档选择只使用 @ref。
@@ -293,7 +294,7 @@ export function settingImprovementRuntimeContract(
 - The current request includes eight read/write tools. A complete response with no tool calls is shown as an ordinary assistant message and settles this user invocation. A response containing tool calls is an internal tool step; continue after all results and eventually answer with a complete tool-free response.
 - Tool writes directly modify the content package's current tree. Calls in one complete Provider tool response execute in order; its successful changes publish atomically when that response settles, immediately become authoritative, and require no second confirmation.
 - Every write tool call settles independently and sees earlier accepted calls in response order. A failure returns its precise cause only in that call's result, does not roll back successful siblings, and does not stop later calls. Runtime automatically runs content-tree checks and a real Prompt Preview after writes and appends that review to the last successful write result.
-- Read an existing file completely before changing it. Cursors from setting_list and setting_search, and read authorization from setting_read, belong only to the current-tree revision that produced them. setting_read always returns the complete exact file without truncation or pagination. Re-read after another conversation or a manual edit changes the current tree. Tools expose logical paths, never host paths.
+- Read an existing file completely before changing it. Cursors from setting_search, and read authorization from setting_read, belong only to the current-tree revision that produced them. setting_read always returns the complete exact file without truncation or pagination. Re-read after another conversation or a manual edit changes the current tree. Tools expose logical paths, never host paths.
 - World documents are .yaml or .md files under world/. Special writes are limited to opening.md, control/frame.yaml, control/player-views.yaml${gameplayFileEn(tabletop)}, plus control/followups.yaml and its referenced prompts/*.md, renderers/*.html, scripts/*.js, regex/*.yaml and assets/* text resources. Put characters, places, rules, and the current situation under world/, and world-specific hosting guidance under control/.
 - opening.md is the first page shown to the player. Never decide the player's action, dialogue, or inner thoughts. Facts that constrain the first action must also live in the world document that naturally owns them.
 - Create a world document with setting_create. You provide its unique 2-to-32-character lowercase ASCII ref, path, title, summary, aliases, and body without a technical header; Runtime completes the technical storage. Existing document selectors are automatically projected to their @refs when read. Cross-document references and control selectors use only @refs.
@@ -365,8 +366,6 @@ export function authoringToolDefinitions(
             type: "string",
             pattern: `^${surface.root}(?:/[^\\\\]+)?$`,
           },
-          limit,
-          cursor,
         },
         [],
       ),
@@ -474,7 +473,7 @@ export function authoringToolDefinitions(
 const toolDescriptionsEn = (
   tabletop: boolean,
 ): Record<SettingAuthoringOperation, string> => ({
-  list: "List the world root or a world/ subdirectory from the content package's current tree. The root also lists opening and control files. A cursor is valid only for the same query and current-tree revision.",
+  list: "List the world root or a world/ subdirectory from the content package's current tree. The root also lists opening and control files. Each call returns the whole directory.",
   search:
     "Search literal source text in world documents in the content package's current tree. within may be world, a world/ directory or path, or @ref.",
   read: "Read a complete world document by world/ path or @ref, or read a complete opening/control file by exact path. Existing document selectors are projected to @refs. The result is never truncated or paginated.",
@@ -491,7 +490,7 @@ const toolDescriptionsEn = (
 const toolDescriptionsZhCN = (
   tabletop: boolean,
 ): Record<SettingAuthoringOperation, string> => ({
-  list: "列出内容包当前树的 world 根目录或 world/ 子目录；根目录同时列出 opening 和 control 专用文件。cursor 只对同一查询和当前树 revision 有效。",
+  list: "列出内容包当前树的 world 根目录或 world/ 子目录；根目录同时列出 opening 和 control 专用文件，每次整份返回。",
   search:
     "在内容包当前树的 world 文档中按原文字面搜索；within 可为 world、world/ 目录或路径或 @ref。",
   read: "按 world/ 路径或 @ref 完整读取世界文档，或按精确路径完整读取 opening/control；既有文档选择值自动投影为 @ref。结果不会截断或分页。",
@@ -508,7 +507,7 @@ const toolDescriptionsZhCN = (
 const worldRevisionDescriptionsEn = (
   tabletop: boolean,
 ): Record<SettingAuthoringOperation, string> => ({
-  list: "List the state root or a state/ subdirectory from the world revision worktree. The root also lists control files. A cursor is valid only for the same query and worktree revision.",
+  list: "List the state root or a state/ subdirectory from the world revision worktree. The root also lists control files. Each call returns the whole directory.",
   search:
     "Search literal source text in world documents in the world revision worktree. within may be state, a state/ directory or path, or @ref.",
   read: "Read a complete world document by state/ path or @ref, or read a complete control file by exact path. Existing document selectors are projected to @refs. The result is never truncated or paginated.",
@@ -525,7 +524,7 @@ const worldRevisionDescriptionsEn = (
 const worldRevisionDescriptionsZhCN = (
   tabletop: boolean,
 ): Record<SettingAuthoringOperation, string> => ({
-  list: "列出世界修订工作树的 state 根目录或 state/ 子目录；根目录同时列出 control 文件。cursor 只对同一查询和工作树 revision 有效。",
+  list: "列出世界修订工作树的 state 根目录或 state/ 子目录；根目录同时列出 control 文件，每次整份返回。",
   search:
     "在世界修订工作树的 state 文档中按原文字面搜索；within 可为 state、state/ 目录或路径或 @ref。",
   read: "按 state/ 路径或 @ref 完整读取世界文档，或按精确路径完整读取 control 文件；既有文档选择值自动投影为 @ref。结果不会截断或分页。",
@@ -1481,7 +1480,7 @@ function worldRevisionCommand(
     };
   }
   if (call.operation === "patch") {
-    const op = requiredString(call.arguments.op, "op");
+    const op = requiredPatchOp(call.arguments, surface);
     if (op === "set_metadata") {
       const title = requiredString(call.arguments.title, "title");
       const summary = requiredString(call.arguments.summary, "summary");
@@ -1496,10 +1495,6 @@ function worldRevisionCommand(
         edits: [{ op: "set_metadata", title, summary, aliases }],
       };
     }
-    if (op !== "add" && op !== "replace" && op !== "append" && op !== "remove")
-      throw new SettingAuthoringError(
-        `${authoringToolName(surface, "patch")}.op must be add, replace, append, remove, or set_metadata`,
-      );
     const locator = requiredYamlLocatorPath(call.arguments.locator, "locator");
     if (op === "remove") {
       if (!hasOnly(call.arguments, ["document", "op", "locator"]))
@@ -2044,12 +2039,6 @@ function renderWorldWriteSuccess(
             return `- ${localized(locale, "Updated", "更新")} @${change.shortRef} · ${change.after.logicalPath}`;
           return `- ${localized(locale, "Moved", "移动")} @${change.shortRef} · ${change.before.logicalPath} → ${change.after.logicalPath}`;
         })),
-    "",
-    localized(
-      locale,
-      "This call was accepted independently. Every created or changed document above is already fully read; do not read it again unless a later decision needs Runtime's exact serialization.",
-      "本调用已独立接受。上方新建或修改的文档均视为已经完整读取；除非后续判断依赖 Runtime 的精确序列化结果，否则不要再次读取。",
-    ),
   ].join("\n");
 }
 
@@ -2078,32 +2067,33 @@ function listDocuments(
 ): QueryResult {
   const tool = authoringToolName(surface, "list");
   const root = surface.root;
+  // Frozen sessions may still send obsolete limit/cursor; directories are
+  // always listed in full, so those keys are accepted and ignored.
   if (!hasOnly(args, ["directory", "limit", "cursor"]))
-    return failure(`${tool} accepts only directory, limit, and cursor`, locale);
+    return failure(`${tool} accepts only directory`, locale);
   const directory = args.directory ?? root;
-  const limit = args.limit ?? 100;
   if (
     typeof directory !== "string" ||
-    (directory !== root && !directory.startsWith(`${root}/`)) ||
-    typeof limit !== "number" ||
-    !Number.isInteger(limit) ||
-    limit < 1 ||
-    limit > 100 ||
-    !validCursor(args.cursor)
+    (directory !== root && !directory.startsWith(`${root}/`))
   )
-    return failure(`Invalid ${tool} directory, limit, or cursor`, locale);
+    return failure(`Invalid ${tool} directory`, locale);
   const relative = directory === root ? "" : directory.slice(root.length + 1);
-  const result = snapshot.query({
-    kind: "catalog",
-    directory: relative,
-    limit,
-    ...(args.cursor === undefined ? {} : { cursor: args.cursor }),
-  });
-  if (result.kind === "error")
-    return renderQueryFailure(result, surface, locale);
-  if (result.kind !== "catalog") throw new Error("Unexpected catalog result");
-  const entries = result.entries.map(catalogEntryLine);
-  if (relative === "" && result.page.start === 0)
+  const entries: string[] = [];
+  let cursor: string | null = null;
+  do {
+    const result = snapshot.query({
+      kind: "catalog",
+      directory: relative,
+      limit: 100,
+      ...(cursor === null ? {} : { cursor }),
+    });
+    if (result.kind === "error")
+      return renderQueryFailure(result, surface, locale);
+    if (result.kind !== "catalog") throw new Error("Unexpected catalog result");
+    entries.push(...result.entries.map(catalogEntryLine));
+    cursor = result.page.nextCursor;
+  } while (cursor !== null);
+  if (relative === "")
     entries.unshift(
       ...snapshot.files
         .filter(({ path }) => !path.startsWith(`${root}/`))
@@ -2112,7 +2102,7 @@ function listDocuments(
         ),
     );
   return success(
-    `# ${localized(locale, surface.phrases.en.directoryHeading, surface.phrases["zh-CN"].directoryHeading)}\n\n${entries.join("\n") || localized(locale, "(empty)", "（空）")}\n\n${pageFooter(result.page, locale)}`,
+    `# ${localized(locale, surface.phrases.en.directoryHeading, surface.phrases["zh-CN"].directoryHeading)}\n\n${entries.join("\n") || localized(locale, "(empty)", "（空）")}\n\nComplete: yes`,
   );
 }
 
@@ -2151,25 +2141,123 @@ function searchDocuments(
   const within = searchScope(args.within, surface);
   if (within === invalidScope)
     return failure(`Invalid ${tool} within scope`, locale);
-  const result = snapshot.query({
-    kind: "literal_search",
-    query,
-    caseSensitive: args.caseSensitive === true,
-    ...(within === undefined ? {} : { within }),
-    limit,
-    ...(args.cursor === undefined ? {} : { cursor: args.cursor }),
-  });
-  if (result.kind === "error")
-    return renderQueryFailure(result, surface, locale);
-  if (result.kind !== "literal_search")
-    throw new Error("Unexpected literal search result");
-  const lines = result.matches.map(
-    ({ document, referenceProjection, range }) =>
-      `- @${document.shortRef} · ${document.logicalPath} · ${range.start.line}:${range.start.column}\n  ${JSON.stringify(referenceProjection.excerpt)}`,
+  const matches: LiteralSearchMatch[] = [];
+  let storeCursor: string | null = null;
+  let snapshotId: string;
+  do {
+    const result = snapshot.query({
+      kind: "literal_search",
+      query,
+      caseSensitive: args.caseSensitive === true,
+      ...(within === undefined ? {} : { within }),
+      limit: 100,
+      ...(storeCursor === null ? {} : { cursor: storeCursor }),
+    });
+    if (result.kind === "error")
+      return renderQueryFailure(result, surface, locale);
+    if (result.kind !== "literal_search")
+      throw new Error("Unexpected literal search result");
+    matches.push(...result.matches);
+    snapshotId = result.snapshotId;
+    storeCursor = result.page.nextCursor;
+  } while (storeCursor !== null);
+  // Pages count whole document lines so one line never spans two pages.
+  const groups = groupMatchesByLine(matches);
+  const scope = createHash("sha256")
+    .update(
+      JSON.stringify({
+        query,
+        caseSensitive: args.caseSensitive === true,
+        within: within ?? null,
+        limit,
+        snapshotId,
+      }),
+    )
+    .digest("base64url")
+    .slice(0, 22);
+  const offset =
+    args.cursor === undefined ? 0 : decodeLineCursor(args.cursor, scope);
+  if (offset === null || offset > groups.length)
+    return failure(`Invalid ${tool} cursor`, locale);
+  const page = groups.slice(offset, offset + limit);
+  const end = offset + page.length;
+  const complete = end >= groups.length;
+  const lines = page.map(
+    ({ shortRef, line, columns, excerpt }) =>
+      `- @${shortRef} · ${line}:${columns.join(",")}\n  ${JSON.stringify(excerpt)}`,
   );
   return success(
-    `# ${localized(locale, "Literal setting search", "设定字面搜索")}\n\n${lines.join("\n") || localized(locale, "Zero literal matches do not prove the fact is absent.", "0 个字面命中不证明设定中不存在该事实。")}\n\n${pageFooter(result.page, locale)}`,
+    `# ${localized(locale, "Literal setting search", "设定字面搜索")}\n\n${lines.join("\n") || localized(locale, "Zero literal matches do not prove the fact is absent.", "0 个字面命中不证明设定中不存在该事实。")}\n\n${pageFooter(
+      {
+        start: offset,
+        end,
+        total: groups.length,
+        complete,
+        nextCursor: complete ? null : encodeLineCursor(scope, end),
+      },
+      locale,
+    )}`,
   );
+}
+
+interface LiteralSearchMatch {
+  document: { shortRef: string };
+  range: { start: { line: number; column: number } };
+  referenceProjection: { excerpt: string };
+}
+
+function encodeLineCursor(scope: string, offset: number): string {
+  return Buffer.from(JSON.stringify({ scope, offset })).toString("base64url");
+}
+
+/** Returns the grouped-line offset, or null when the cursor is not for this scope. */
+function decodeLineCursor(cursor: unknown, scope: string): number | null {
+  if (typeof cursor !== "string") return null;
+  try {
+    const decoded: unknown = JSON.parse(
+      Buffer.from(cursor, "base64url").toString("utf8"),
+    );
+    if (!isRecord(decoded) || decoded.scope !== scope) return null;
+    return typeof decoded.offset === "number" &&
+      Number.isInteger(decoded.offset) &&
+      decoded.offset >= 0
+      ? decoded.offset
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Hits on one line share a single entry; document order is preserved. */
+function groupMatchesByLine(matches: readonly LiteralSearchMatch[]): {
+  shortRef: string;
+  line: number;
+  columns: number[];
+  excerpt: string;
+}[] {
+  const groups: {
+    shortRef: string;
+    line: number;
+    columns: number[];
+    excerpt: string;
+  }[] = [];
+  for (const {
+    document: { shortRef },
+    range: { start },
+    referenceProjection: { excerpt },
+  } of matches) {
+    const group = groups.at(-1);
+    if (group?.shortRef === shortRef && group.line === start.line)
+      group.columns.push(start.column);
+    else
+      groups.push({
+        shortRef,
+        line: start.line,
+        columns: [start.column],
+        excerpt,
+      });
+  }
+  return groups;
 }
 
 const invalidScope = Symbol("invalid-scope");
@@ -2224,7 +2312,7 @@ function readDocument(
     reads.opaquePaths.add(path);
     const projected = projectOpaqueDocumentIds(snapshot, path, opaque.contents);
     return success(
-      `# ${localized(locale, "Special-file source", "专用文件原文")} ${path}\n\n${projected}\n\n---\nComplete: yes`,
+      `# ${localized(locale, "Special-file source", "专用文件原文")} ${path}\n\n${projected}`,
     );
   }
   const selector = documentSelector(path, surface);
@@ -2249,7 +2337,7 @@ function readDocument(
     throw new Error("Unexpected read result");
   reads.worldDocumentIds.add(result.document.documentId);
   return success(
-    `# ${localized(locale, "Exact read", "精确读取")} @${result.document.shortRef}\n\ntitle: ${result.document.title}\nsummary: ${result.document.summary}\ncodec: ${result.document.codec}\nlogicalPath: ${result.document.logicalPath}\n[body]\n${result.body.trimEnd()}\n[/body]\n\n---\nComplete: yes`,
+    `# ${localized(locale, "Exact read", "精确读取")} @${result.document.shortRef}\n\ntitle: ${result.document.title}\nsummary: ${result.document.summary}\ncodec: ${result.document.codec}\nlogicalPath: ${result.document.logicalPath}\n[body]\n${result.body.trimEnd()}\n[/body]`,
   );
 }
 
@@ -2493,6 +2581,30 @@ function safePath(path: string, surface: SettingAuthoringSurface): string {
       `Unsafe ${surface.phrases.en.slug} path: ${path}`,
     );
   return path;
+}
+
+const patchOps = [
+  "add",
+  "replace",
+  "append",
+  "remove",
+  "set_metadata",
+] as const;
+type PatchOp = (typeof patchOps)[number];
+
+function isPatchOp(value: unknown): value is PatchOp {
+  return (patchOps as readonly unknown[]).includes(value);
+}
+
+function requiredPatchOp(
+  args: Record<string, unknown>,
+  surface: SettingAuthoringSurface,
+): PatchOp {
+  const op = args.op;
+  if (isPatchOp(op)) return op;
+  throw new SettingAuthoringError(
+    `${authoringToolName(surface, "patch")} document ${JSON.stringify(args.document)} received op ${JSON.stringify(op)}; valid ops: ${patchOps.join(", ")}`,
+  );
 }
 
 function requiredString(value: unknown, name: string): string {

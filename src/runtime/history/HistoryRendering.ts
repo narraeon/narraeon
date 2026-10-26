@@ -18,6 +18,21 @@ export type HistoryResult =
   | HistorySearch
   | HistoryLegacyList;
 
+/** Scope and total only; ordering and continuation rules live in tool descriptions. */
+function compactHeader(total: number, locale: AppLocale): string {
+  const zh = locale === "zh-CN";
+  return `Scope: ${zh ? "当前时间线" : "current timeline"}\n${zh ? "本次读取快照消息总数" : "Snapshot total messages"}: ${total}`;
+}
+
+/** Position, role and ref only; role=x would repeat the localized role label. */
+function compactMessageLabel(
+  message: HistoryMessage,
+  locale: AppLocale,
+): string {
+  const zh = locale === "zh-CN";
+  return `${zh ? "位置" : "position"} ${message.position} · ${historyRoleLabel(message, locale)}${message.isOpening ? " · isOpening=true" : ""} · ${message.ref} · ${message.length} Unicode code points`;
+}
+
 /** Shared metadata keeps injected refs and tool results directly navigable. */
 export function historyMessageLabel(
   message: HistoryMessage,
@@ -101,19 +116,28 @@ export function renderHistoryResult(
   if (result.kind === "list")
     return {
       ok: true,
-      markdown: `# ${zh ? "已提交历史列表" : "Committed history listing"}\n\n${header}\nOrder: oldest_first (${zh ? "页内始终由旧到新" : "every page oldest to newest"})\n${
+      markdown: `# ${zh ? "已提交历史列表" : "Committed history listing"}\n\n${compactHeader(result.total, locale)}\n${
         result.messages
           .map((message) => {
             const preview = Array.from(message.text).slice(0, 120).join("");
-            return `### ${historyMessageLabel(message, locale)}\n${message.length} Unicode code points\n${renderHistoryBackground(message.background, locale)}[${zh ? "部分原文预览" : "Partial original preview"}]\n${preview}\n[${message.length > 120 ? (zh ? "预览有省略" : "preview omitted remaining text") : zh ? "预览结束" : "preview ends"}]`;
+            const omitted =
+              message.length > 120
+                ? `\n${zh ? "…（预览省略）" : "…(preview omitted)"}`
+                : "";
+            return `### ${compactMessageLabel(message, locale)}${renderHistoryBackground(message.background, locale, false)}\n${preview}${omitted}`;
           })
           .join("\n\n") || (zh ? "（空页）" : "(empty page)")
-      }\n\n---\n${zh ? "本页位置／条数" : "Page positions / count"}: ${range(result.messages)} / ${result.messages.length}\n${cursorLine("earlierCursor", result.earlierCursor)}\n${cursorLine("laterCursor", result.laterCursor)}\n${zh ? "续页只传 {cursor}。" : "Continue with only {cursor}."}${result.messages.length === 0 && result.anchor !== null ? `\n${zh ? "可从锚点转向浏览" : "Browse from the anchor in the other direction"}: {before:"${result.anchor}"} / {after:"${result.anchor}"}` : ""}`,
+      }\n\n---\n${zh ? "本页位置／条数" : "Page positions / count"}: ${range(result.messages)} / ${result.messages.length}\n${cursorLine("earlierCursor", result.earlierCursor)}\n${cursorLine("laterCursor", result.laterCursor)}${result.messages.length === 0 && result.anchor !== null ? `\n${zh ? "可从锚点转向浏览" : "Browse from the anchor in the other direction"}: {before:"${result.anchor}"} / {after:"${result.anchor}"}` : ""}`,
     };
   if (result.kind === "read")
     return {
       ok: true,
       markdown: `# ${zh ? "完整历史原文" : "Complete history originals"}\n\n${header}\nMode: ${result.mode}${result.center === null ? "" : `\nCenter: ${result.center}`}\nOrder: oldest_first\n${zh ? "实际位置" : "Actual positions"}: ${range(result.messages)}\n${zh ? "每条正文完整，无摘要、无截断" : "Each body is complete, without summary or truncation"}\n\n${result.messages.map((message) => renderHistoryMessage(message, locale)).join("\n\n") || (zh ? "（历史为空）" : "(empty history)")}\n\n---\n${cursorLine("earlier", result.earlier)}\n${cursorLine("later", result.later)}\n${result.earlier === null ? (zh ? "已到历史开头。" : "At the history beginning.") : legacyRead ? `context_read {ref:"${result.earlier}"}` : zh ? "向前不重复读取：history_read {ref:earlier,before:N}。" : "Read earlier without repeating this window: history_read {ref:earlier,before:N}."}\n${result.later === null ? (zh ? "已到历史结尾。" : "At the history end.") : legacyRead ? `context_read {ref:"${result.later}"}` : zh ? "向后不重复读取：history_read {ref:later,after:N}。" : "Read later without repeating this window: history_read {ref:later,after:N}."}\n${legacyRead ? (zh ? "按需逐条读取相邻原文。" : "Read adjacent originals one at a time as needed.") : zh ? "按需小步扩展；21 条消息不代表固定输出体积。" : "Expand in small windows as needed; 21 messages do not imply a fixed output size."}`,
+    };
+  if (!result.legacy)
+    return {
+      ok: true,
+      markdown: `# ${zh ? "历史字面搜索" : "History literal search"}\n\n${compactHeader(result.total, locale)}\n${zh ? "搜索位置范围（排除边界）" : "Search position range (boundaries excluded)"}: ${result.range.start === null ? "empty" : `${result.range.start}..${result.range.end}`}\n${zh ? "查询词" : "Queries"}: ${JSON.stringify(result.queries)}\n${zh ? "命中消息总数" : "Total matching messages"}: ${result.matches}\n\n${result.messages.map(({ message, hits, fragments, omittedMatches }) => `### ${compactMessageLabel(message, locale)}${renderHistoryBackground(message.background, locale, false)}${zh ? "逐词命中次数" : "Matches per query"}: ${hits.map(({ query, count }) => `${JSON.stringify(query)}: ${count}`).join("; ")}\n${fragments.map((fragment) => `[${zh ? "部分原文片段" : "Partial original fragment"}: ${fragment.start}..${fragment.end}${fragment.omittedBefore ? "; prefix omitted" : ""}${fragment.omittedAfter ? "; suffix omitted" : ""}]\n${fragment.text}`).join("\n")}${omittedMatches ? `\n${zh ? "另有命中未展示；可完整读取核实。" : "Additional matches omitted; read the complete original to verify."}` : ""}`).join("\n\n") || (zh ? "零字面命中不证明事件没有发生；可改词、从 all 放宽为 any 或读取相邻上下文。" : "Zero literal matches do not prove an event never happened. Try other words, relax all to any, or read nearby context.")}\n\n---\n${cursorLine("nextCursor", result.nextCursor)}`,
     };
   return {
     ok: true,
@@ -136,6 +160,7 @@ function localizedRecovery(result: HistoryFailure, zh: boolean): string {
 export function renderHistoryBackground(
   background: HistoryBackground | undefined,
   locale: AppLocale,
+  withNotice = true,
 ): string {
   if (background === undefined) return "";
   const zh = locale === "zh-CN";
@@ -148,12 +173,13 @@ export function renderHistoryBackground(
   const notice = zh
     ? "历史背景仅说明采集位置的状态，不是当前世界状态；回忆、梦境或段内局部时间结合原文解释，不认证事实或授予角色知识。"
     : "Historical background describes the captured state, not current world state; interpret memories, dreams and local times with the original text. It does not certify facts or grant character knowledge.";
+  const suffix = withNotice ? `\n${notice}` : "";
   if (
     background.kind === "snapshot" ||
     equalBackground(background.before, background.after)
   )
-    return `\n${zh ? "历史背景" : "Historical background"}:${node(background.kind === "snapshot" ? background.value : background.before)}\n${notice}\n`;
-  return `\n${zh ? "推进前背景" : "Background before advancement"}:${node(background.before)}\n${zh ? "推进后背景" : "Background after advancement"}:${node(background.after)}\n${notice}\n`;
+    return `\n${zh ? "历史背景" : "Historical background"}:${node(background.kind === "snapshot" ? background.value : background.before)}${suffix}\n`;
+  return `\n${zh ? "推进前背景" : "Background before advancement"}:${node(background.before)}\n${zh ? "推进后背景" : "Background after advancement"}:${node(background.after)}${suffix}\n`;
 }
 
 function equalBackground(before: string | null, after: string | null): boolean {
