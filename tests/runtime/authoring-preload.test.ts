@@ -26,6 +26,7 @@ import {
 } from "../../src/runtime/setting/SettingAuthoringTransaction.ts";
 import { WorldRevisionAuthoringTransaction } from "../../src/runtime/world-revision/WorldRevisionAuthoringTransaction.ts";
 import { WorldDocumentStore } from "../../src/runtime/world/WorldDocumentStore.ts";
+import { rainyInnChinese } from "../../src/shared/sample-packages/rainy-inn-zh.ts";
 
 const preview = {
   compilation: { coverage: [], logicalMessages: [] },
@@ -77,6 +78,41 @@ describe("authoring preload", () => {
     ]);
     expect(record.worldDocumentIds).toEqual([expect.stringMatching(/./u)]);
     expect(record.revision).toBe(contentRevision);
+  });
+
+  test("directory preload lists documents inside every subdirectory, nested ones included", () => {
+    const letter = rainyInnChinese.files.find(
+      ({ path }) => path === "world/events/letter-entrusted.yaml",
+    )!;
+    const snapshot = WorldDocumentStore.open({
+      layout: "content_package",
+      files: [
+        ...rainyInnChinese.files,
+        {
+          path: "world/events/chapter/night-note.yaml",
+          contents: letter.contents
+            .replace("event.letter-entrusted", "event.night-note")
+            .replace("ref: letter-entrusted", "ref: night-note"),
+        },
+      ],
+    });
+    const { blocks } = buildAuthoringPreload({
+      snapshot,
+      surface: contentPackageAuthoringSurface,
+      locale: "zh-CN",
+      revision: "rev-rainy",
+      sourcePrefix: "content-package:preload",
+      injected: [],
+    });
+    const directory = blocks[0]!.markdown;
+    expect(directory).toContain(
+      "- @letter-entrusted · 柜台上的托付 · world/events/letter-entrusted.yaml",
+    );
+    expect(directory).toContain(
+      "- @night-note · 柜台上的托付 · world/events/chapter/night-note.yaml",
+    );
+    // Non-empty subdirectories expand in place rather than appearing as [dir].
+    expect(directory).not.toContain("[dir]");
   });
 
   test("injected document text matches the model's exact read byte for byte", () => {
