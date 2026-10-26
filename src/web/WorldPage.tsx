@@ -308,7 +308,12 @@ export function WorldPage({
   const historyEndRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLElement>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const turnNoteInputRef = useRef<HTMLInputElement>(null);
+  const [turnNoteOpen, setTurnNoteOpen] = useState(false);
   const [composerHeight, setComposerHeight] = useState(72);
+  useEffect(() => {
+    if (turnNoteOpen) turnNoteInputRef.current?.focus();
+  }, [turnNoteOpen]);
   const worldHead = world?.head;
   const openedWorldId = world?.worldId;
   useEffect(() => {
@@ -839,7 +844,10 @@ export function WorldPage({
           } satisfies Extract<V1Request, { type: "play.chain.append" }>);
       const next = await requestRuntime<V1PlayCallChainView>(client, request);
       applyPlayCallChain(next);
-      if (next.status === "ready") setTurnNote("");
+      if (next.status === "ready") {
+        setTurnNote("");
+        setTurnNoteOpen(false);
+      }
       if (fresh) setForceFreshContext(false);
       if (hasSubmittedText) setPlayerText("");
       await refreshWorld();
@@ -1209,7 +1217,10 @@ export function WorldPage({
         playerText: "",
         ...turnNoteField(turnNote),
       });
-      if (continued.status === "ready") setTurnNote("");
+      if (continued.status === "ready") {
+        setTurnNote("");
+        setTurnNoteOpen(false);
+      }
       if (
         regenerate &&
         continuation === "continue_context" &&
@@ -1872,6 +1883,64 @@ export function WorldPage({
                 composerTextareaRef.current?.focus();
               }}
             />
+            {turnNoteOpen ? (
+              <div className="world-turn-note">
+                <div className="world-turn-note-field">
+                  <span>{uiText("本轮")}</span>
+                  <input
+                    ref={turnNoteInputRef}
+                    type="text"
+                    aria-label={uiText("本轮临时要求内容")}
+                    value={turnNote}
+                    placeholder={uiText("只对这一轮生效，不进入故事")}
+                    disabled={
+                      pending !== null ||
+                      !modelConfigured ||
+                      activeStatus === "running" ||
+                      worldRevisionLocked
+                    }
+                    onChange={(event) =>
+                      setTurnNote(
+                        event.currentTarget.value.replace(/[\r\n]/gu, ""),
+                      )
+                    }
+                    onKeyDown={(event) => {
+                      if (event.nativeEvent.isComposing) return;
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        composerTextareaRef.current?.focus();
+                      } else if (event.key === "Escape") {
+                        event.preventDefault();
+                        setTurnNoteOpen(false);
+                        composerTextareaRef.current?.focus();
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="world-turn-note-clear"
+                    aria-label={uiText("清空并收起本轮临时要求")}
+                    disabled={
+                      pending !== null ||
+                      !modelConfigured ||
+                      activeStatus === "running" ||
+                      worldRevisionLocked
+                    }
+                    onClick={() => {
+                      setTurnNote("");
+                      setTurnNoteOpen(false);
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+                {turnNote.length > turnGuideLineSoftLimit ? (
+                  <span className="field-note" role="status">
+                    {uiText("超过 120 字；仍会发送，但请尽量简短。")}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
             <div className="world-composer-row">
               <details className="world-composer-mode">
                 <summary aria-label={uiText("选择提交方式")}>＋</summary>
@@ -1908,6 +1977,26 @@ export function WorldPage({
                   </button>
                 </div>
               </details>
+              <button
+                type="button"
+                className={
+                  turnNote === ""
+                    ? "world-turn-note-toggle"
+                    : "world-turn-note-toggle has-text"
+                }
+                aria-label={uiText("本轮临时要求")}
+                aria-pressed={turnNoteOpen}
+                title={uiText("只对这一轮生效，不进入故事")}
+                disabled={
+                  pending !== null ||
+                  !modelConfigured ||
+                  activeStatus === "running" ||
+                  worldRevisionLocked
+                }
+                onClick={() => setTurnNoteOpen((open) => !open)}
+              >
+                ✎
+              </button>
               <label>
                 <span className="visually-hidden">{uiText("你的行动")}</span>
                 <textarea
@@ -1931,30 +2020,6 @@ export function WorldPage({
                       : "Enter 发送，Shift + Enter 换行",
                   )}
                 />
-              </label>
-              <label className="world-turn-note">
-                <span>{uiText("本轮临时要求")}</span>
-                <input
-                  type="text"
-                  value={turnNote}
-                  placeholder={uiText("只对这一轮生效，不进入故事")}
-                  disabled={
-                    pending !== null ||
-                    !modelConfigured ||
-                    activeStatus === "running" ||
-                    worldRevisionLocked
-                  }
-                  onChange={(event) =>
-                    setTurnNote(
-                      event.currentTarget.value.replace(/[\r\n]/gu, ""),
-                    )
-                  }
-                />
-                {turnNote.length > turnGuideLineSoftLimit ? (
-                  <span className="field-note" role="status">
-                    {uiText("超过 120 字；仍会发送，但请尽量简短。")}
-                  </span>
-                ) : null}
               </label>
               <button
                 type="button"

@@ -1839,6 +1839,9 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
   排版密度: "Layout density",
   "接下来，你要做什么？": "What do you do next?",
   本轮临时要求: "One-turn request",
+  本轮: "This turn",
+  本轮临时要求内容: "One-turn request text",
+  清空并收起本轮临时要求: "Clear and close the one-turn request",
   "只对这一轮生效，不进入故事":
     "Applies to this turn only; it does not enter the story",
   "超过 120 字；仍会发送，但请尽量简短。":
