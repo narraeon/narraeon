@@ -8588,7 +8588,9 @@ summary:focus-visible {
   line-height: 1.55;
 }
 
-.world-turn-note-toggle,
+/* Scoped under .world-composer-row so these beat the generic
+   `.world-composer-row > button` rule in workspace-layout.css. */
+.world-composer-row > .world-turn-note-toggle,
 .world-turn-note-clear {
   display: grid;
   width: 2rem;
@@ -8610,16 +8612,16 @@ summary:focus-visible {
   background: transparent;
 }
 
-.world-turn-note-toggle[aria-pressed="true"] {
+.world-composer-row > .world-turn-note-toggle[aria-pressed="true"] {
   color: var(--text);
 }
 
-.world-turn-note-toggle.has-text {
+.world-composer-row > .world-turn-note-toggle.has-text {
   border-color: var(--accent);
   color: var(--text);
 }
 
-.world-turn-note-toggle:disabled,
+.world-composer-row > .world-turn-note-toggle:disabled,
 .world-turn-note-clear:disabled {
   cursor: not-allowed;
   opacity: 0.5;
