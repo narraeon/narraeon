@@ -244,7 +244,8 @@ export interface WorldRevisionPromptInput {
 interface AuthoringConversationPromptInput {
   target: "setting" | "world-revision";
   identity: { source: string; markdown: string };
-  boundary: { source: string; markdown: string };
+  /** Null when the target's mechanics already state the boundary. */
+  boundary: { source: string; markdown: string } | null;
   runtimeSource: string;
   gameplay: Gameplay;
   runtimeContract: string;
@@ -494,10 +495,6 @@ export class FileNativePromptCompiler {
       this.#locale === "zh-CN"
         ? `# 当前修订世界\n\n${input.worldTitle}`
         : `# World being revised\n\n${input.worldTitle}`;
-    const boundary =
-      this.#locale === "zh-CN"
-        ? "# 世界修订工作树边界\n\n随附工具只读写当前锁定 epoch 的 state/* 与 control/* 工作树。成功工具调用尚未进入世界 Authority；只有玩家点击应用才会整体提交并解锁。"
-        : "# World-revision worktree boundary\n\nThe attached tools read and write only state/* and control/* in the current locked epoch. Successful tool calls do not enter world Authority until the player applies the complete revision and unlocks it.";
     return this.#compileAuthoringConversation({
       identity: {
         source: "world-revision:title",
@@ -507,10 +504,7 @@ export class FileNativePromptCompiler {
             ? `\n\nEpoch: ${input.epoch.id}\nBase: ${input.epoch.baseHead}`
             : ""),
       },
-      boundary: {
-        source: "runtime:world-revision-worktree-boundary",
-        markdown: boundary,
-      },
+      boundary: null,
       runtimeSource: "runtime:builtin/world-revision",
       target: "world-revision",
       gameplay: input.gameplay,
@@ -538,7 +532,7 @@ export class FileNativePromptCompiler {
       input.playPreset.definition.authorPrompts ??
       legacyAuthorPrompts(input.playPreset.definition);
 
-    const catalog = builtinAuthorPrompts(this.#locale);
+    const catalog = builtinAuthorPrompts(this.#locale, input.target);
 
     for (const entry of ordered) {
       if (entry.kind === "world" || !entry.enabled) continue;
@@ -566,7 +560,7 @@ export class FileNativePromptCompiler {
       if (builtin?.id === "author.target")
         blocks = [
           input.identity,
-          input.boundary,
+          ...(input.boundary === null ? [] : [input.boundary]),
           ...(input.gameplay.mode === "tabletop"
             ? [
                 tabletopAuthoringRulesBlock(
@@ -1625,15 +1619,17 @@ function settingImprovementPresetReference(
         : "These blocks apply only when future play produces player-visible story. Do not use them as prose models for YAML or Markdown setting documents in this conversation.",
       narrativeBlocks,
     ),
-    settingImprovementReferenceGroup(
-      locale === "zh-CN"
-        ? "本轮提示（每次发送的尾部）"
-        : "Turn guide (per-send suffix)",
-      locale === "zh-CN"
-        ? "这些行在每次游玩发送时追加在玩家输入之后，由已启用块的尾部行按同一顺序拼成；它们是提醒，不是世界事实。"
-        : "These lines are appended after the player input on every play send, assembled from the enabled blocks' turn-guide lines in the same order. They are reminders, not world facts.",
-      turnGuideBlocks,
-    ),
+    revision
+      ? null
+      : settingImprovementReferenceGroup(
+          locale === "zh-CN"
+            ? "本轮提示（每次发送的尾部）"
+            : "Turn guide (per-send suffix)",
+          locale === "zh-CN"
+            ? "这些行在每次游玩发送时追加在玩家输入之后，由已启用块的尾部行按同一顺序拼成；它们是提醒，不是世界事实。"
+            : "These lines are appended after the player input on every play send, assembled from the enabled blocks' turn-guide lines in the same order. They are reminders, not world facts.",
+          turnGuideBlocks,
+        ),
   ].filter((group) => group !== null);
   return [
     heading,

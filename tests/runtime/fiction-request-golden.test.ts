@@ -45,6 +45,12 @@ import {
  * Later, the world-revision author summary (#116) states that existing state
  * documents may be deleted or moved under the reference-blocker rule; only the
  * two revision digests moved and were regenerated.
+ * Later, the bootstrap duplicates were removed (#121, #123): the revision
+ * bootstrap drops the per-send turn-guide section, its worktree boundary block
+ * and the content-package-only guidance paragraphs, and its preload note keeps
+ * only the revision fingerprint. The setting digests moved only with the
+ * opening.md sentence shared by both branches; the preview and fiction digests
+ * are unchanged.
  */
 function digest(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -321,11 +327,11 @@ const expectedDigests: Record<string, string> = {
   "preview/zh-CN/ordered-default/openai_responses/bootstrap":
     "a312344bfdcebdb4ca3b96767e8964de75e79f52690596ad9a073145f03b4cc2",
   "revision/en":
-    "9884eb7fbdc6fc71ebd02c4450d373a4986e3fcae06697758e485232b9531086",
+    "587424248576ffbce1746120cf335d90cb027cb5751b26eee56cc1fe55a742e1",
   "revision/zh-CN":
-    "5f509874d097467db0c6e4395c2de609295579481f29c6c0659524e6d547111f",
+    "ab1c9986a3ab423d4c8e02bf25345c003e3ff4405845cfe841f385c2dcfaa048",
   "setting/en":
-    "267d427c6e8507eb0b820c4858c542c7bd18eae762f7ea9f9141d3d6d013aa11",
+    "7b345ce08dcdefe0862aeeea15fc07ef95359efaf17a9a65fdde2f7673fc64df",
   "setting/zh-CN":
-    "a9666bb8f315ae6ee9f489a929b9d2767fe68ce83b479facd5c32c581909d1d4",
+    "8a3611f6fafcd6183b6bd2d1e4309542e73433152cc63b90983f30631492151a",
 };

@@ -2727,8 +2727,8 @@ export function buildAuthoringPreload(
     source: `${sourcePrefix}/runtime`,
     markdown: localized(
       locale,
-      `# Runtime preload note\n\nThe documents above are a snapshot of the worktree at revision ${input.revision}, taken when this request was sent. Preloaded documents count as completely read at this revision and may be changed directly. The directory only helps discovery and grants no read authority. Read any other document with a tool before changing it. After any write, re-read as the existing rules require.`,
-      `# Runtime 预载说明\n\n以上内容是本次请求发出时工作树 revision ${input.revision} 的快照。其中的预载文档视为已在该 revision 完整读取，可直接修改。目录只用于发现，不授予读取资格。其余文档修改前仍需用工具读取；任何写入后按既有规则重新读取。`,
+      `# Runtime preload note\n\nThe documents above are a snapshot of the worktree at revision ${input.revision}, taken when this request was sent.`,
+      `# Runtime 预载说明\n\n以上内容是本次请求发出时工作树 revision ${input.revision} 的快照。`,
     ),
   });
   return {
