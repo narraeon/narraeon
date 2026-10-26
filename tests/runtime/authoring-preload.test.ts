@@ -220,6 +220,7 @@ describe("authoring preload", () => {
       "control/player-views.yaml",
     ]);
     const transaction = new WorldRevisionAuthoringTransaction({
+      history: { scope: "world", entries: [] },
       baseFiles: files,
       immutableBaseFiles: files,
       locale: "zh-CN",

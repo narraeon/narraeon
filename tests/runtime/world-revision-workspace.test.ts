@@ -308,6 +308,7 @@ test("世界修订工具只暴露 state/control，共用读取授权并拒绝 op
 test("世界修订可以删除与移动无引用的既有状态文档，检查层保持 usable", () => {
   const base = seededRevisionBase();
   const transaction = new WorldRevisionAuthoringTransaction({
+    history: { scope: "world", entries: [] },
     baseFiles: base,
     immutableBaseFiles: base,
     locale: "zh-CN",
@@ -354,6 +355,7 @@ test("世界修订可以删除与移动无引用的既有状态文档，检查�
 test("世界修订删除仍被引用的文档时逐条列出全部阻挡位置，手动删除同样给出诊断", () => {
   const base = seededRevisionBase();
   const transaction = new WorldRevisionAuthoringTransaction({
+    history: { scope: "world", entries: [] },
     baseFiles: base,
     immutableBaseFiles: base,
     locale: "zh-CN",
@@ -394,6 +396,7 @@ test("世界修订删除仍被引用的文档时逐条列出全部阻挡位置�
 test("其他文档的 $ref 同样阻挡删除，手动删除也逐条列出阻挡位置", () => {
   const base = seededRevisionBase();
   const seed = new WorldRevisionAuthoringTransaction({
+    history: { scope: "world", entries: [] },
     baseFiles: base,
     immutableBaseFiles: base,
     locale: "zh-CN",
@@ -416,6 +419,7 @@ test("其他文档的 $ref 同样阻挡删除，手动删除也逐条列出阻�
   expect(created).toMatchObject({ isError: false });
   const withHolder = seed.files();
   const transaction = new WorldRevisionAuthoringTransaction({
+    history: { scope: "world", entries: [] },
     baseFiles: withHolder,
     immutableBaseFiles: withHolder,
     locale: "zh-CN",
@@ -675,6 +679,7 @@ test("应用含删除与移动的修订后世界文件随之变化，回退到�
   ).toBe(true);
 
   const transaction = new WorldRevisionAuthoringTransaction({
+    history: { scope: "world", entries: [] },
     baseFiles: seeded,
     immutableBaseFiles: seeded,
     locale: "zh-CN",
@@ -1549,6 +1554,7 @@ function worldRevisionFiles() {
 function seededRevisionBase() {
   const scaffold = worldRevisionFiles();
   const seed = new WorldRevisionAuthoringTransaction({
+    history: { scope: "world", entries: [] },
     baseFiles: scaffold,
     immutableBaseFiles: scaffold,
     locale: "zh-CN",
