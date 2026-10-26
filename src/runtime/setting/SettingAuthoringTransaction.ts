@@ -35,12 +35,14 @@ import {
   type WorldDocumentCatalogResult,
   type WorldDocumentDescriptor,
   type WorldDocumentLocator,
+  type WorldDocumentMetadataRevisionEdit,
   type WorldDocumentQueryFailure,
   type WorldDocumentRevisionChange,
   type WorldDocumentRevisionCommand,
   type WorldDocumentRevisionTarget,
   type WorldDocumentRevisionYamlValue,
   type WorldDocumentSelector,
+  type WorldDocumentWriteRevisionCommand,
 } from "../world/WorldDocumentStore.ts";
 
 export const settingImprovementToolNames = [
@@ -479,9 +481,9 @@ const toolDescriptionsEn = (
   read: "Read a complete world document by world/ path or @ref, or read a complete opening/control file by exact path. Existing document selectors are projected to @refs. The result is never truncated or paginated.",
   create:
     "Create one world/ .yaml or .md document. Supply a unique lowercase ASCII ref, title, summary, aliases, and body without a technical header; Runtime completes the storage envelope. The created document is already fully read.",
-  write_file: `Replace a completely read world/ .yaml or .md document body while preserving its identity and metadata, or create/replace opening.md, control/frame.yaml, control/player-views.yaml, ${tabletop ? "control/blocks/*.md, or control/gameplay.json (only a tabletop resolution scheme may change)" : "or control/blocks/*.md"}, plus control/followups.yaml and its referenced prompts/*.md, renderers/*.html, scripts/*.js, regex/*.yaml and assets/* text resources. To repair a damaged world document, also provide ref, title, summary, and aliases; Runtime preserves any recoverable storage identity. Create new world documents with setting_create.`,
+  write_file: `Replace a completely read world/ .yaml or .md document body while preserving its identity and metadata, or create/replace opening.md, control/frame.yaml, control/player-views.yaml, ${tabletop ? "control/blocks/*.md, or control/gameplay.json (only a tabletop resolution scheme may change)" : "or control/blocks/*.md"}, plus control/followups.yaml and its referenced prompts/*.md, renderers/*.html, scripts/*.js, regex/*.yaml and assets/* text resources. path may also be an @ref. On a valid document, title, summary, and aliases may be given in the same write to update metadata (any subset; omitted fields are kept), but ref never changes. To repair a damaged world document, provide ref, title, summary, and aliases together; Runtime preserves any recoverable storage identity. Create new world documents with setting_create.`,
   patch:
-    'Update a completely read YAML world document without rewriting unrelated content. locator is a non-empty path whose segments are map keys or zero-based array indexes. Use add for a missing map key or array index, replace for an existing node, append for the end of an existing array, and remove for an existing map key or array item. When title, summary, or aliases are stale, update all three together with op "set_metadata". Rewrite Markdown bodies with setting_write_file.',
+    'Update a completely read YAML world document without rewriting unrelated content. locator is a non-empty path whose segments are map keys or zero-based array indexes. Use add for a missing map key or array index, replace for an existing node, append for the end of an existing array, and remove for an existing map key or array item. To update title, summary, or aliases, use op "set_metadata" with only the fields that change; omitted fields are kept. Rewrite Markdown bodies with setting_write_file.',
   move: "Move a completely read world document to a new world/ .yaml or .md logical path while preserving its identity and contents.",
   delete:
     "Permanently delete a completely read world document from the content-package current tree. Runtime rejects deletion while currentSituation, a frame slot, a player-view selector, or another document's $ref still points to it, and reports every blocking location. Delete or redirect those references first.",
@@ -496,9 +498,9 @@ const toolDescriptionsZhCN = (
   read: "按 world/ 路径或 @ref 完整读取世界文档，或按精确路径完整读取 opening/control；既有文档选择值自动投影为 @ref。结果不会截断或分页。",
   create:
     "创建一份 world/ 下的 .yaml 或 .md 文档；提供唯一的小写 ASCII ref、标题、摘要、别名和不含技术头的正文，Runtime 自行完成存储封装。创建成功的文档视为已经完整读取。",
-  write_file: `整份替换已完整读取的 world/ .yaml 或 .md 正文并保留身份和元信息，或创建／替换 opening.md、control/frame.yaml、control/player-views.yaml、control/blocks/*.md${tabletop ? "、control/gameplay.json（只能修改跑团判定方案，玩法模式不可改）" : ""}，以及 control/followups.yaml 和其中引用的 prompts/*.md、renderers/*.html、scripts/*.js、regex/*.yaml、assets/* 文本资源。修复损坏世界文档时同时提供 ref、title、summary、aliases，Runtime 会保留仍可恢复的存储身份。新建世界文档使用 setting_create。`,
+  write_file: `整份替换已完整读取的 world/ .yaml 或 .md 正文并保留身份和元信息，或创建／替换 opening.md、control/frame.yaml、control/player-views.yaml、control/blocks/*.md${tabletop ? "、control/gameplay.json（只能修改跑团判定方案，玩法模式不可改）" : ""}，以及 control/followups.yaml 和其中引用的 prompts/*.md、renderers/*.html、scripts/*.js、regex/*.yaml、assets/* 文本资源。path 也可以是 @ref。有效文档可在同一次写入中提供 title、summary、aliases 的任意子集更新元信息，未提供的保持不变，但 ref 不能改。修复损坏世界文档时同时提供 ref、title、summary、aliases，Runtime 会保留仍可恢复的存储身份。新建世界文档使用 setting_create。`,
   patch:
-    '细粒度更新已完整读取的 YAML 世界文档，不重写无关内容。locator 是非空路径，每段可以是 map key 或从 0 开始的数组下标；add 新建 map key 或数组位置，replace 更新既有节点，append 追加既有数组，remove 删除既有 map key 或数组项。title、summary 或 aliases 过时时用 op "set_metadata" 整组更新三项。Markdown 正文用 setting_write_file 整份重写。',
+    '细粒度更新已完整读取的 YAML 世界文档，不重写无关内容。locator 是非空路径，每段可以是 map key 或从 0 开始的数组下标；add 新建 map key 或数组位置，replace 更新既有节点，append 追加既有数组，remove 删除既有 map key 或数组项。需要更新 title、summary 或 aliases 时用 op "set_metadata"，只提供要改变的字段，未提供的保持不变。Markdown 正文用 setting_write_file 整份重写。',
   move: "把已完整读取的世界文档移动到新的 world/ .yaml 或 .md 逻辑路径，并保留身份与内容。",
   delete:
     "从内容包当前树永久删除一份已完整读取的 world 文档。若 currentSituation、frame slot、player-view selector 或其他文档的 $ref 仍指向它，Runtime 会拒绝并返回全部精确阻挡位置；请先删除或改向这些引用。",
@@ -513,9 +515,9 @@ const worldRevisionDescriptionsEn = (
   read: "Read a complete world document by state/ path or @ref, or read a complete control file by exact path. Existing document selectors are projected to @refs. The result is never truncated or paginated.",
   create:
     "Create one state/ .yaml or .md document. Supply a unique lowercase ASCII ref, title, summary, aliases, and body without a technical header; Runtime completes the storage envelope. The created document is already fully read.",
-  write_file: `Replace a completely read state/ .yaml or .md document body while preserving its identity and metadata, or create/replace control/frame.yaml, control/player-views.yaml, ${tabletop ? "control/blocks/*.md, or control/gameplay.json (only a tabletop resolution scheme may change)" : "or control/blocks/*.md"}, plus control/followups.yaml and its referenced prompts/*.md, renderers/*.html, scripts/*.js, regex/*.yaml and assets/* text resources. To repair a damaged world document, also provide ref, title, summary, and aliases; Runtime preserves any recoverable storage identity. Create new world documents with world_revision_create.`,
+  write_file: `Replace a completely read state/ .yaml or .md document body while preserving its identity and metadata, or create/replace control/frame.yaml, control/player-views.yaml, ${tabletop ? "control/blocks/*.md, or control/gameplay.json (only a tabletop resolution scheme may change)" : "or control/blocks/*.md"}, plus control/followups.yaml and its referenced prompts/*.md, renderers/*.html, scripts/*.js, regex/*.yaml and assets/* text resources. path may also be an @ref. On a valid document, title, summary, and aliases may be given in the same write to update metadata (any subset; omitted fields are kept), but ref never changes. To repair a damaged world document, provide ref, title, summary, and aliases together; Runtime preserves any recoverable storage identity. Create new world documents with world_revision_create.`,
   patch:
-    'Update a completely read YAML world document without rewriting unrelated content. locator is a non-empty path whose segments are map keys or zero-based array indexes. Use add for a missing map key or array index, replace for an existing node, append for the end of an existing array, and remove for an existing map key or array item. When title, summary, or aliases are stale, update all three together with op "set_metadata". Rewrite Markdown bodies with world_revision_write_file.',
+    'Update a completely read YAML world document without rewriting unrelated content. locator is a non-empty path whose segments are map keys or zero-based array indexes. Use add for a missing map key or array index, replace for an existing node, append for the end of an existing array, and remove for an existing map key or array item. To update title, summary, or aliases, use op "set_metadata" with only the fields that change; omitted fields are kept. Rewrite Markdown bodies with world_revision_write_file.',
   move: "Move a completely read world document to a new state/ .yaml or .md logical path while preserving its identity and contents.",
   delete:
     "Permanently delete a completely read world document from the world revision worktree. Runtime rejects deletion while currentSituation, a frame slot, a player-view selector, or another document's $ref still points to it, and reports every blocking location. Delete or redirect those references first.",
@@ -530,9 +532,9 @@ const worldRevisionDescriptionsZhCN = (
   read: "按 state/ 路径或 @ref 完整读取世界文档，或按精确路径完整读取 control 文件；既有文档选择值自动投影为 @ref。结果不会截断或分页。",
   create:
     "创建一份 state/ 下的 .yaml 或 .md 文档；提供唯一的小写 ASCII ref、标题、摘要、别名和不含技术头的正文，Runtime 自行完成存储封装。创建成功的文档视为已经完整读取。",
-  write_file: `整份替换已完整读取的 state/ .yaml 或 .md 正文并保留身份和元信息，或创建／替换 control/frame.yaml、control/player-views.yaml、control/blocks/*.md${tabletop ? "、control/gameplay.json（只能修改跑团判定方案，玩法模式不可改）" : ""}，以及 control/followups.yaml 和其中引用的 prompts/*.md、renderers/*.html、scripts/*.js、regex/*.yaml、assets/* 文本资源。修复损坏世界文档时同时提供 ref、title、summary、aliases，Runtime 会保留仍可恢复的存储身份。新建世界文档使用 world_revision_create。`,
+  write_file: `整份替换已完整读取的 state/ .yaml 或 .md 正文并保留身份和元信息，或创建／替换 control/frame.yaml、control/player-views.yaml、control/blocks/*.md${tabletop ? "、control/gameplay.json（只能修改跑团判定方案，玩法模式不可改）" : ""}，以及 control/followups.yaml 和其中引用的 prompts/*.md、renderers/*.html、scripts/*.js、regex/*.yaml、assets/* 文本资源。path 也可以是 @ref。有效文档可在同一次写入中提供 title、summary、aliases 的任意子集更新元信息，未提供的保持不变，但 ref 不能改。修复损坏世界文档时同时提供 ref、title、summary、aliases，Runtime 会保留仍可恢复的存储身份。新建世界文档使用 world_revision_create。`,
   patch:
-    '细粒度更新已完整读取的 YAML 世界文档，不重写无关内容。locator 是非空路径，每段可以是 map key 或从 0 开始的数组下标；add 新建 map key 或数组位置，replace 更新既有节点，append 追加既有数组，remove 删除既有 map key 或数组项。title、summary 或 aliases 过时时用 op "set_metadata" 整组更新三项。Markdown 正文用 world_revision_write_file 整份重写。',
+    '细粒度更新已完整读取的 YAML 世界文档，不重写无关内容。locator 是非空路径，每段可以是 map key 或从 0 开始的数组下标；add 新建 map key 或数组位置，replace 更新既有节点，append 追加既有数组，remove 删除既有 map key 或数组项。需要更新 title、summary 或 aliases 时用 op "set_metadata"，只提供要改变的字段，未提供的保持不变。Markdown 正文用 world_revision_write_file 整份重写。',
   move: "把已完整读取的世界文档移动到新的 state/ .yaml 或 .md 逻辑路径，并保留身份与内容。",
   delete:
     "从世界修订工作树永久删除一份已完整读取的 world 文档。若 currentSituation、frame slot、player-view selector 或其他文档的 $ref 仍指向它，Runtime 会拒绝并返回全部精确阻挡位置；请先删除或改向这些引用。",
@@ -840,9 +842,12 @@ export class SettingAuthoringTransaction {
             ? requiredSettingRef(call.arguments.ref, this.#locale)
             : null;
         const revised = snapshot.revise({
-          commands: [
-            worldRevisionCommand(snapshot, call, this.#surface, this.#locale),
-          ],
+          commands: worldRevisionCommands(
+            snapshot,
+            call,
+            this.#surface,
+            this.#locale,
+          ),
         });
         if (!revised.ok)
           throw new SettingAuthoringError(
@@ -1391,8 +1396,82 @@ function isWorldWriteCall(
   return (
     call.operation === "write_file" &&
     typeof call.arguments.path === "string" &&
-    call.arguments.path.startsWith(`${surface.root}/`)
+    (call.arguments.path.startsWith(`${surface.root}/`) ||
+      call.arguments.path.startsWith("@"))
   );
+}
+
+/**
+ * A world write may need two revision commands: the body write, then a
+ * metadata patch for any title, summary or aliases given on a valid document.
+ * Both target the same logical path, so they apply in one revision.
+ */
+function worldRevisionCommands(
+  snapshot: WorldDocumentStore,
+  call: NormalizedCall,
+  surface: SettingAuthoringSurface,
+  locale: AppLocale,
+): WorldDocumentRevisionCommand[] {
+  if (call.operation !== "write_file")
+    return [worldRevisionCommand(snapshot, call, surface, locale)];
+  const logicalPath = writeFileLogicalPath(
+    snapshot,
+    requiredString(call.arguments.path, "path"),
+    surface,
+    locale,
+  );
+  const request = worldWriteRequest(
+    snapshot,
+    logicalPath,
+    call.arguments,
+    surface,
+    locale,
+  );
+  const write: WorldDocumentWriteRevisionCommand = {
+    kind: "write",
+    logicalPath,
+    contents: request.contents,
+  };
+  if (request.metadata === null) return [write];
+  return [
+    write,
+    {
+      kind: "patch",
+      document: { logicalPath },
+      edits: [{ op: "set_metadata", ...request.metadata }],
+    },
+  ];
+}
+
+/** Resolves `@ref` write targets to their logical path; paths are checked as before. */
+function writeFileLogicalPath(
+  snapshot: WorldDocumentStore,
+  path: string,
+  surface: SettingAuthoringSurface,
+  locale: AppLocale,
+): string {
+  if (!path.startsWith("@"))
+    return safeWorldDocumentPath(path, surface, locale);
+  const selector = documentSelector(path, surface);
+  if (selector === null)
+    throw new SettingAuthoringError(
+      localized(
+        locale,
+        `${authoringToolName(surface, "write_file")}.path must be an @ref or ${surface.root}/ document path`,
+        `${authoringToolName(surface, "write_file")}.path 必须是 @ref 或 ${surface.root}/ 文档路径`,
+      ),
+    );
+  const resolved = snapshot.query({
+    kind: "read_document",
+    document: selector,
+  });
+  if (resolved.kind === "error")
+    throw new SettingAuthoringError(
+      localized(locale, `Unknown document ${path}`, `未知文档 ${path}`),
+    );
+  if (resolved.kind !== "read_document")
+    throw new Error("Unexpected world-document write lookup result");
+  return resolved.document.logicalPath;
 }
 
 function worldRevisionCommand(
@@ -1441,26 +1520,6 @@ function worldRevisionCommand(
       body,
     };
   }
-  if (call.operation === "write_file") {
-    const logicalPath = safeWorldDocumentPath(
-      requiredString(call.arguments.path, "path"),
-      surface,
-      locale,
-    );
-    const contents = worldWriteContents(
-      snapshot,
-      logicalPath,
-      call.arguments,
-      surface,
-      locale,
-    );
-    assertNoLiteralUnicodeEscapes(contents, locale);
-    return {
-      kind: "write",
-      logicalPath,
-      contents,
-    };
-  }
   if (call.operation === "move") {
     const toLogicalPath = safePath(
       requiredString(call.arguments.to, "to"),
@@ -1482,17 +1541,14 @@ function worldRevisionCommand(
   if (call.operation === "patch") {
     const op = requiredPatchOp(call.arguments, surface);
     if (op === "set_metadata") {
-      const title = requiredString(call.arguments.title, "title");
-      const summary = requiredString(call.arguments.summary, "summary");
-      const aliases = requiredAliases(call.arguments.aliases);
-      assertNoLiteralUnicodeEscapes({ title, summary, aliases }, locale);
+      const metadata = metadataFields(call.arguments, surface, locale);
       return {
         kind: "patch",
         document: revisionTarget(
           requiredString(call.arguments.document, "document"),
           surface,
         ),
-        edits: [{ op: "set_metadata", title, summary, aliases }],
+        edits: [{ op: "set_metadata", ...metadata }],
       };
     }
     const locator = requiredYamlLocatorPath(call.arguments.locator, "locator");
@@ -1564,13 +1620,50 @@ function safeWorldDocumentPath(
   return logicalPath;
 }
 
-function worldWriteContents(
+/** The metadata a valid-document write sets alongside its body; omitted fields keep their stored value. */
+type WorldMetadataFields = Omit<WorldDocumentMetadataRevisionEdit, "op">;
+
+interface WorldWriteRequest {
+  contents: string;
+  /** Null when the write sets no metadata, or when it repairs a damaged document. */
+  metadata: WorldMetadataFields | null;
+}
+
+/**
+ * Title, summary and aliases are public index metadata that AI may update on a
+ * valid document. Only the ones given are read, and at least one must be given.
+ */
+function metadataFields(
+  args: Record<string, unknown>,
+  surface: SettingAuthoringSurface,
+  locale: AppLocale,
+): WorldMetadataFields {
+  const fields: { title?: string; summary?: string; aliases?: string[] } = {};
+  if (args.title !== undefined)
+    fields.title = requiredString(args.title, "title");
+  if (args.summary !== undefined)
+    fields.summary = requiredString(args.summary, "summary");
+  if (args.aliases !== undefined)
+    fields.aliases = requiredAliases(args.aliases);
+  if (Object.keys(fields).length === 0)
+    throw new SettingAuthoringError(
+      localized(
+        locale,
+        `${authoringToolName(surface, "patch")} set_metadata needs at least one of title, summary, or aliases`,
+        `${authoringToolName(surface, "patch")} set_metadata 至少需要 title、summary 或 aliases 之一`,
+      ),
+    );
+  assertNoLiteralUnicodeEscapes(fields, locale);
+  return fields;
+}
+
+function worldWriteRequest(
   snapshot: WorldDocumentStore,
   logicalPath: string,
   args: Record<string, unknown>,
   surface: SettingAuthoringSurface,
   locale: AppLocale,
-): string {
+): WorldWriteRequest {
   if (
     !hasOnly(args, ["path", "contents", "ref", "title", "summary", "aliases"])
   )
@@ -1578,26 +1671,64 @@ function worldWriteContents(
       `${authoringToolName(surface, "write_file")} accepts only its declared arguments`,
     );
   const body = requiredString(args.contents, "contents");
-  const metadataKeys = ["ref", "title", "summary", "aliases"] as const;
-  const provided = metadataKeys.filter((key) => args[key] !== undefined);
   const existingFile = snapshot.files.some(({ path }) => path === logicalPath);
   const existingDocument = listQueryableWorldDocuments(snapshot).some(
     ({ logicalPath: existingPath }) => existingPath === logicalPath,
   );
-  if (provided.length === 0) {
-    if (!existingFile && !containsTechnicalDocumentHeader(logicalPath, body))
+  const metadataGiven = ["title", "summary", "aliases"].some(
+    (key) => args[key] !== undefined,
+  );
+  if (existingDocument) {
+    if (args.ref !== undefined)
       throw new SettingAuthoringError(
         localized(
           locale,
-          `Create a new world document with ${authoringToolName(surface, "create")}`,
-          `新建世界文档请使用 ${authoringToolName(surface, "create")}`,
+          `ref is the stable identity of a valid document and cannot change; omit ref, and use title, summary, or aliases to update its metadata`,
+          `有效文档的 ref 是稳定身份，写入不能改变；请省略 ref，需要更新时只用 title、summary 或 aliases`,
         ),
       );
-    if (
-      existingFile &&
-      !existingDocument &&
-      !containsTechnicalDocumentHeader(logicalPath, body)
-    )
+    return {
+      contents: body,
+      metadata: metadataGiven ? metadataFields(args, surface, locale) : null,
+    };
+  }
+  if (!existingFile) {
+    if (!metadataGiven && containsTechnicalDocumentHeader(logicalPath, body))
+      return { contents: body, metadata: null };
+    throw new SettingAuthoringError(
+      localized(
+        locale,
+        `Create a new world document with ${authoringToolName(surface, "create")}`,
+        `新建世界文档请使用 ${authoringToolName(surface, "create")}`,
+      ),
+    );
+  }
+  return {
+    contents: worldRepairContents(
+      snapshot,
+      logicalPath,
+      args,
+      body,
+      surface,
+      locale,
+    ),
+    metadata: null,
+  };
+}
+
+/** Damaged documents keep their body only with a complete ref, title, summary and aliases set. */
+function worldRepairContents(
+  snapshot: WorldDocumentStore,
+  logicalPath: string,
+  args: Record<string, unknown>,
+  body: string,
+  surface: SettingAuthoringSurface,
+  locale: AppLocale,
+): string {
+  const metadataKeys = ["ref", "title", "summary", "aliases"] as const;
+  const provided = metadataKeys.filter((key) => args[key] !== undefined);
+  if (provided.length === 0) {
+    if (!containsTechnicalDocumentHeader(logicalPath, body))
       throw new SettingAuthoringError(
         localized(
           locale,
@@ -1613,22 +1744,6 @@ function worldWriteContents(
         locale,
         "Repair metadata must provide ref, title, summary, and aliases together",
         "修复元信息时必须同时提供 ref、title、summary 和 aliases",
-      ),
-    );
-  if (!existingFile)
-    throw new SettingAuthoringError(
-      localized(
-        locale,
-        `Create a new world document with ${authoringToolName(surface, "create")}`,
-        `新建世界文档请使用 ${authoringToolName(surface, "create")}`,
-      ),
-    );
-  if (existingDocument)
-    throw new SettingAuthoringError(
-      localized(
-        locale,
-        `Repair metadata is only for a damaged document; update valid metadata with ${authoringToolName(surface, "patch")} set_metadata`,
-        `修复元信息只用于损坏文档；有效文档请用 ${authoringToolName(surface, "patch")} set_metadata 更新元信息`,
       ),
     );
   const ref = requiredSettingRef(args.ref, locale);
@@ -1888,10 +2003,6 @@ function writeOpaque(
   surface: SettingAuthoringSurface,
   locale: AppLocale,
 ): { snapshot: WorldDocumentStore; markdown: string } {
-  if (!hasOnly(call.arguments, ["path", "contents"]))
-    throw new SettingAuthoringError(
-      "Special-file writes accept only path and contents",
-    );
   const path = safePath(requiredString(call.arguments.path, "path"), surface);
   if (!writableOpaquePath(path, surface))
     throw new SettingAuthoringError(
@@ -1906,6 +2017,10 @@ function writeOpaque(
             "Special-file writes accept only control/frame.yaml, control/player-views.yaml, control/blocks/*.md, or control/gameplay.json",
             "专用文件只允许写入 control/frame.yaml、control/player-views.yaml、control/blocks/*.md 或 control/gameplay.json",
           ),
+    );
+  if (!hasOnly(call.arguments, ["path", "contents"]))
+    throw new SettingAuthoringError(
+      "Special-file writes accept only path and contents",
     );
   const authoredContents = requiredString(call.arguments.contents, "contents");
   assertNoLiteralUnicodeEscapes(authoredContents, locale);

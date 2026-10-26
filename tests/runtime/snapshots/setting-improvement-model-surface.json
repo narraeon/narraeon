@@ -120,7 +120,7 @@
           },
           {
             "name": "setting_write_file",
-            "description": "Replace a completely read world/ .yaml or .md document body while preserving its identity and metadata, or create/replace opening.md, control/frame.yaml, control/player-views.yaml, or control/blocks/*.md, plus control/followups.yaml and its referenced prompts/*.md, renderers/*.html, scripts/*.js, regex/*.yaml and assets/* text resources. To repair a damaged world document, also provide ref, title, summary, and aliases; Runtime preserves any recoverable storage identity. Create new world documents with setting_create.",
+            "description": "Replace a completely read world/ .yaml or .md document body while preserving its identity and metadata, or create/replace opening.md, control/frame.yaml, control/player-views.yaml, or control/blocks/*.md, plus control/followups.yaml and its referenced prompts/*.md, renderers/*.html, scripts/*.js, regex/*.yaml and assets/* text resources. path may also be an @ref. On a valid document, title, summary, and aliases may be given in the same write to update metadata (any subset; omitted fields are kept), but ref never changes. To repair a damaged world document, provide ref, title, summary, and aliases together; Runtime preserves any recoverable storage identity. Create new world documents with setting_create.",
             "inputSchema": {
               "type": "object",
               "additionalProperties": false,
@@ -165,7 +165,7 @@
           },
           {
             "name": "setting_patch",
-            "description": "Update a completely read YAML world document without rewriting unrelated content. locator is a non-empty path whose segments are map keys or zero-based array indexes. Use add for a missing map key or array index, replace for an existing node, append for the end of an existing array, and remove for an existing map key or array item. When title, summary, or aliases are stale, update all three together with op \"set_metadata\". Rewrite Markdown bodies with setting_write_file.",
+            "description": "Update a completely read YAML world document without rewriting unrelated content. locator is a non-empty path whose segments are map keys or zero-based array indexes. Use add for a missing map key or array index, replace for an existing node, append for the end of an existing array, and remove for an existing map key or array item. To update title, summary, or aliases, use op \"set_metadata\" with only the fields that change; omitted fields are kept. Rewrite Markdown bodies with setting_write_file.",
             "inputSchema": {
               "type": "object",
               "additionalProperties": false,
@@ -382,7 +382,7 @@
           },
           {
             "name": "setting_write_file",
-            "description": "Replace a completely read world/ .yaml or .md document body while preserving its identity and metadata, or create/replace opening.md, control/frame.yaml, control/player-views.yaml, control/blocks/*.md, or control/gameplay.json (only a tabletop resolution scheme may change), plus control/followups.yaml and its referenced prompts/*.md, renderers/*.html, scripts/*.js, regex/*.yaml and assets/* text resources. To repair a damaged world document, also provide ref, title, summary, and aliases; Runtime preserves any recoverable storage identity. Create new world documents with setting_create.",
+            "description": "Replace a completely read world/ .yaml or .md document body while preserving its identity and metadata, or create/replace opening.md, control/frame.yaml, control/player-views.yaml, control/blocks/*.md, or control/gameplay.json (only a tabletop resolution scheme may change), plus control/followups.yaml and its referenced prompts/*.md, renderers/*.html, scripts/*.js, regex/*.yaml and assets/* text resources. path may also be an @ref. On a valid document, title, summary, and aliases may be given in the same write to update metadata (any subset; omitted fields are kept), but ref never changes. To repair a damaged world document, provide ref, title, summary, and aliases together; Runtime preserves any recoverable storage identity. Create new world documents with setting_create.",
             "inputSchema": {
               "type": "object",
               "additionalProperties": false,
@@ -427,7 +427,7 @@
           },
           {
             "name": "setting_patch",
-            "description": "Update a completely read YAML world document without rewriting unrelated content. locator is a non-empty path whose segments are map keys or zero-based array indexes. Use add for a missing map key or array index, replace for an existing node, append for the end of an existing array, and remove for an existing map key or array item. When title, summary, or aliases are stale, update all three together with op \"set_metadata\". Rewrite Markdown bodies with setting_write_file.",
+            "description": "Update a completely read YAML world document without rewriting unrelated content. locator is a non-empty path whose segments are map keys or zero-based array indexes. Use add for a missing map key or array index, replace for an existing node, append for the end of an existing array, and remove for an existing map key or array item. To update title, summary, or aliases, use op \"set_metadata\" with only the fields that change; omitted fields are kept. Rewrite Markdown bodies with setting_write_file.",
             "inputSchema": {
               "type": "object",
               "additionalProperties": false,
@@ -813,7 +813,7 @@
           },
           {
             "name": "setting_write_file",
-            "description": "整份替换已完整读取的 world/ .yaml 或 .md 正文并保留身份和元信息，或创建／替换 opening.md、control/frame.yaml、control/player-views.yaml、control/blocks/*.md，以及 control/followups.yaml 和其中引用的 prompts/*.md、renderers/*.html、scripts/*.js、regex/*.yaml、assets/* 文本资源。修复损坏世界文档时同时提供 ref、title、summary、aliases，Runtime 会保留仍可恢复的存储身份。新建世界文档使用 setting_create。",
+            "description": "整份替换已完整读取的 world/ .yaml 或 .md 正文并保留身份和元信息，或创建／替换 opening.md、control/frame.yaml、control/player-views.yaml、control/blocks/*.md，以及 control/followups.yaml 和其中引用的 prompts/*.md、renderers/*.html、scripts/*.js、regex/*.yaml、assets/* 文本资源。path 也可以是 @ref。有效文档可在同一次写入中提供 title、summary、aliases 的任意子集更新元信息，未提供的保持不变，但 ref 不能改。修复损坏世界文档时同时提供 ref、title、summary、aliases，Runtime 会保留仍可恢复的存储身份。新建世界文档使用 setting_create。",
             "inputSchema": {
               "type": "object",
               "additionalProperties": false,
@@ -858,7 +858,7 @@
           },
           {
             "name": "setting_patch",
-            "description": "细粒度更新已完整读取的 YAML 世界文档，不重写无关内容。locator 是非空路径，每段可以是 map key 或从 0 开始的数组下标；add 新建 map key 或数组位置，replace 更新既有节点，append 追加既有数组，remove 删除既有 map key 或数组项。title、summary 或 aliases 过时时用 op \"set_metadata\" 整组更新三项。Markdown 正文用 setting_write_file 整份重写。",
+            "description": "细粒度更新已完整读取的 YAML 世界文档，不重写无关内容。locator 是非空路径，每段可以是 map key 或从 0 开始的数组下标；add 新建 map key 或数组位置，replace 更新既有节点，append 追加既有数组，remove 删除既有 map key 或数组项。需要更新 title、summary 或 aliases 时用 op \"set_metadata\"，只提供要改变的字段，未提供的保持不变。Markdown 正文用 setting_write_file 整份重写。",
             "inputSchema": {
               "type": "object",
               "additionalProperties": false,
@@ -1075,7 +1075,7 @@
           },
           {
             "name": "setting_write_file",
-            "description": "整份替换已完整读取的 world/ .yaml 或 .md 正文并保留身份和元信息，或创建／替换 opening.md、control/frame.yaml、control/player-views.yaml、control/blocks/*.md、control/gameplay.json（只能修改跑团判定方案，玩法模式不可改），以及 control/followups.yaml 和其中引用的 prompts/*.md、renderers/*.html、scripts/*.js、regex/*.yaml、assets/* 文本资源。修复损坏世界文档时同时提供 ref、title、summary、aliases，Runtime 会保留仍可恢复的存储身份。新建世界文档使用 setting_create。",
+            "description": "整份替换已完整读取的 world/ .yaml 或 .md 正文并保留身份和元信息，或创建／替换 opening.md、control/frame.yaml、control/player-views.yaml、control/blocks/*.md、control/gameplay.json（只能修改跑团判定方案，玩法模式不可改），以及 control/followups.yaml 和其中引用的 prompts/*.md、renderers/*.html、scripts/*.js、regex/*.yaml、assets/* 文本资源。path 也可以是 @ref。有效文档可在同一次写入中提供 title、summary、aliases 的任意子集更新元信息，未提供的保持不变，但 ref 不能改。修复损坏世界文档时同时提供 ref、title、summary、aliases，Runtime 会保留仍可恢复的存储身份。新建世界文档使用 setting_create。",
             "inputSchema": {
               "type": "object",
               "additionalProperties": false,
@@ -1120,7 +1120,7 @@
           },
           {
             "name": "setting_patch",
-            "description": "细粒度更新已完整读取的 YAML 世界文档，不重写无关内容。locator 是非空路径，每段可以是 map key 或从 0 开始的数组下标；add 新建 map key 或数组位置，replace 更新既有节点，append 追加既有数组，remove 删除既有 map key 或数组项。title、summary 或 aliases 过时时用 op \"set_metadata\" 整组更新三项。Markdown 正文用 setting_write_file 整份重写。",
+            "description": "细粒度更新已完整读取的 YAML 世界文档，不重写无关内容。locator 是非空路径，每段可以是 map key 或从 0 开始的数组下标；add 新建 map key 或数组位置，replace 更新既有节点，append 追加既有数组，remove 删除既有 map key 或数组项。需要更新 title、summary 或 aliases 时用 op \"set_metadata\"，只提供要改变的字段，未提供的保持不变。Markdown 正文用 setting_write_file 整份重写。",
             "inputSchema": {
               "type": "object",
               "additionalProperties": false,

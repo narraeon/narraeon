@@ -1222,3 +1222,204 @@ test("未知工具的拒绝回执列出额外提供的历史工具", () => {
     "history_list, history_search, history_read",
   );
 });
+
+function createdAlexTransaction(locale: "en" | "zh-CN" = "en") {
+  const transaction = new SettingAuthoringTransaction({
+    baseFiles: minimalFileNativeContentScaffold("en"),
+    locale,
+    preview: () => preview,
+  });
+  const created = transaction.execute([
+    {
+      id: "create-alex",
+      name: "setting_create",
+      arguments: {
+        path: "world/characters/alex.yaml",
+        ref: "alex",
+        title: "Alex",
+        summary: "A courier waiting at the city gate.",
+        aliases: ["The courier"],
+        body: "status: waiting\n",
+      },
+    },
+  ]);
+  expect(created).toMatchObject([{ isError: false }]);
+  return transaction;
+}
+
+function storedId(source: string): string | undefined {
+  return /id: doc\.[a-f0-9]{32}/u.exec(source)?.[0];
+}
+
+function alexSource(transaction: SettingAuthoringTransaction): string {
+  return (
+    transaction
+      .files()
+      .find(({ path }) => path === "world/characters/alex.yaml")?.contents ?? ""
+  );
+}
+
+test("write_file 用 @ref 更新已读取的有效文档正文与部分元信息，id 与 ref 不变", () => {
+  const transaction = createdAlexTransaction();
+  const before = alexSource(transaction);
+  const [read] = transaction.execute([
+    { id: "read-alex", name: "setting_read", arguments: { path: "@alex" } },
+  ]);
+  expect(read?.isError).toBe(false);
+
+  const [result] = transaction.execute([
+    {
+      id: "write-alex",
+      name: "setting_write_file",
+      arguments: {
+        path: "@alex",
+        contents: "status: ready\n",
+        title: "Alex at the gate",
+        summary: "A courier who is ready to leave the city gate.",
+      },
+    },
+  ]);
+
+  expect(result).toMatchObject({ isError: false });
+  expect(result?.markdown).toContain(
+    "Updated @alex · world/characters/alex.yaml",
+  );
+  const after = alexSource(transaction);
+  expect(after).toContain("status: ready");
+  expect(after).not.toContain("status: waiting");
+  expect(after).toContain("title: Alex at the gate");
+  expect(after).toContain(
+    "summary: A courier who is ready to leave the city gate.",
+  );
+  expect(after).toContain("The courier");
+  expect(storedId(after)).toBe(storedId(before));
+  expect(after).toContain("ref: alex");
+});
+
+test("write_file 按路径写有效文档时只传 aliases 即只改 aliases", () => {
+  const transaction = createdAlexTransaction();
+  transaction.execute([
+    { id: "read-alex", name: "setting_read", arguments: { path: "@alex" } },
+  ]);
+
+  const [result] = transaction.execute([
+    {
+      id: "write-aliases",
+      name: "setting_write_file",
+      arguments: {
+        path: "world/characters/alex.yaml",
+        contents: "status: waiting\n",
+        aliases: ["Runner"],
+      },
+    },
+  ]);
+
+  expect(result).toMatchObject({ isError: false });
+  const after = alexSource(transaction);
+  expect(after).toContain("Runner");
+  expect(after).not.toContain("The courier");
+  expect(after).toContain("title: Alex");
+  expect(after).toContain("summary: A courier waiting at the city gate.");
+});
+
+test("有效文档的 write_file 拒绝 ref，且错误说明 ref 是稳定身份而非修复", () => {
+  const transaction = createdAlexTransaction("zh-CN");
+  transaction.execute([
+    { id: "read-alex", name: "setting_read", arguments: { path: "@alex" } },
+  ]);
+  const before = alexSource(transaction);
+
+  const [result] = transaction.execute([
+    {
+      id: "rename-alex",
+      name: "setting_write_file",
+      arguments: {
+        path: "@alex",
+        contents: "status: waiting\n",
+        ref: "courier",
+      },
+    },
+  ]);
+
+  expect(result).toMatchObject({ isError: true });
+  expect(result?.markdown).toContain("ref");
+  expect(result?.markdown).not.toContain("修复");
+  expect(alexSource(transaction)).toBe(before);
+});
+
+test("write_file 的未知 @ref 报错直接指出该 @ref，而不是专用文件形状错误", () => {
+  const transaction = createdAlexTransaction();
+
+  const [result] = transaction.execute([
+    {
+      id: "write-missing",
+      name: "setting_write_file",
+      arguments: { path: "@nonexistent", contents: "status: ready\n" },
+    },
+  ]);
+
+  expect(result).toMatchObject({ isError: true });
+  expect(result?.markdown).toContain("@nonexistent");
+  expect(result?.markdown).not.toContain("Special-file");
+});
+
+test("write_file 对非专用的非世界路径先报专用文件路径错误，再报参数形状", () => {
+  const transaction = new SettingAuthoringTransaction({
+    baseFiles: minimalFileNativeContentScaffold("en"),
+    locale: "en",
+    preview: () => preview,
+  });
+
+  const [result] = transaction.execute([
+    {
+      id: "write-random",
+      name: "setting_write_file",
+      arguments: {
+        path: "notes/random.txt",
+        contents: "x",
+        title: "Not allowed",
+      },
+    },
+  ]);
+
+  expect(result).toMatchObject({ isError: true });
+  expect(result?.markdown).toContain("Special-file writes accept only");
+  expect(result?.markdown).not.toContain("accept only path and contents");
+});
+
+test("set_metadata 只传一项时保留未提供的 title 与 aliases", () => {
+  const transaction = createdAlexTransaction();
+
+  const [result] = transaction.execute([
+    {
+      id: "summary-only",
+      name: "setting_patch",
+      arguments: {
+        document: "@alex",
+        op: "set_metadata",
+        summary: "A courier who is ready to leave.",
+      },
+    },
+  ]);
+
+  expect(result).toMatchObject({ isError: false });
+  const after = alexSource(transaction);
+  expect(after).toContain("title: Alex");
+  expect(after).toContain("The courier");
+  expect(after).toContain("summary: A courier who is ready to leave.");
+});
+
+test("set_metadata 一项也不给时拒绝并说明至少需要一项", () => {
+  const transaction = createdAlexTransaction();
+
+  const [result] = transaction.execute([
+    {
+      id: "empty-metadata",
+      name: "setting_patch",
+      arguments: { document: "@alex", op: "set_metadata" },
+    },
+  ]);
+
+  expect(result).toMatchObject({ isError: true });
+  expect(result?.markdown).toContain("title, summary, or aliases");
+});

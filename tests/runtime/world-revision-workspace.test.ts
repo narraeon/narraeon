@@ -1537,6 +1537,54 @@ async function createdWorld(
   };
 }
 
+test("世界修订 write_file 用 @ref 一次更新已读取的有效文档正文与部分元信息，id 与 ref 不变", () => {
+  const files = seededRevisionBase();
+  const transaction = new WorldRevisionAuthoringTransaction({
+    history: { scope: "world", entries: [] },
+    baseFiles: files,
+    immutableBaseFiles: files,
+    locale: "zh-CN",
+    preview: () => preview,
+  });
+  const before =
+    files.find(({ path }) => path === "state/npc/old.yaml")?.contents ?? "";
+
+  const [read, write] = transaction.execute([
+    {
+      id: "read-old",
+      name: "world_revision_read",
+      arguments: { path: "@oldnpc" },
+    },
+    {
+      id: "write-old",
+      name: "world_revision_write_file",
+      arguments: {
+        path: "@oldnpc",
+        contents: "id: npc.old\nname: 旧商人\nstatus: 已离开\n",
+        title: "离开的商人",
+        summary: "已经离开码头的商人。",
+      },
+    },
+  ]);
+
+  expect(read).toMatchObject({ isError: false });
+  expect(write).toMatchObject({ isError: false });
+  expect(write?.markdown).toContain("@oldnpc · state/npc/old.yaml");
+  const after =
+    transaction.files().find(({ path }) => path === "state/npc/old.yaml")
+      ?.contents ?? "";
+  expect(after).toContain("status: 已离开");
+  expect(after).toContain("title: 离开的商人");
+  expect(after).toContain("summary: 已经离开码头的商人。");
+  expect(after).toContain("aliases: []");
+  expect(after).toContain("ref: oldnpc");
+  expect(storedId(after)).toBe(storedId(before));
+});
+
+function storedId(source: string): string | undefined {
+  return /id: doc\.[a-f0-9]{32}/u.exec(source)?.[0];
+}
+
 function worldRevisionFiles() {
   return minimalFileNativeContentScaffold("zh-CN")
     .filter(({ path }) => path !== "opening.md")
