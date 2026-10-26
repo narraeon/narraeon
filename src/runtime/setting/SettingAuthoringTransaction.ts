@@ -2734,19 +2734,44 @@ function preloadDirectory(
     .map(({ path, encoding }) =>
       encoding === undefined ? `- [special] ${path}` : `- [binary] ${path}`,
     );
+  entries.push(...preloadCatalogLines(snapshot, surface.root, ""));
+  return `# ${localized(locale, surface.phrases.en.directoryHeading, surface.phrases["zh-CN"].directoryHeading)}\n\n${entries.join("\n") || localized(locale, "(empty)", "（空）")}\n\nComplete: yes`;
+}
+
+/**
+ * Depth-first walk of one directory: documents are listed in place, and each
+ * subdirectory is expanded. A subdirectory yields a `[dir]` line only when it
+ * holds nothing, since every non-empty listing produces at least one line.
+ */
+function preloadCatalogLines(
+  snapshot: WorldDocumentStore,
+  root: string,
+  directory: string,
+): string[] {
+  const lines: string[] = [];
   let cursor: string | null = null;
   do {
     const result = snapshot.query({
       kind: "catalog",
-      directory: "",
+      directory,
       limit: 100,
       ...(cursor === null ? {} : { cursor }),
     });
     if (result.kind === "error")
       throw new Error("The authoring directory could not be listed");
     if (result.kind !== "catalog") throw new Error("Unexpected catalog result");
-    entries.push(...result.entries.map(catalogEntryLine));
+    for (const entry of result.entries) {
+      if (entry.kind === "document") {
+        lines.push(catalogEntryLine(entry));
+        continue;
+      }
+      const child = entry.logicalPath.slice(`${root}/`.length);
+      const childLines = preloadCatalogLines(snapshot, root, child);
+      lines.push(
+        ...(childLines.length === 0 ? [catalogEntryLine(entry)] : childLines),
+      );
+    }
     cursor = result.page.nextCursor;
   } while (cursor !== null);
-  return `# ${localized(locale, surface.phrases.en.directoryHeading, surface.phrases["zh-CN"].directoryHeading)}\n\n${entries.join("\n") || localized(locale, "(empty)", "（空）")}\n\nComplete: yes`;
+  return lines;
 }
