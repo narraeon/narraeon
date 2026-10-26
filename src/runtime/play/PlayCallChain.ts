@@ -55,7 +55,6 @@ import {
   turnGuideNotice,
   type NarrativeCheckpoint,
 } from "./PlayContinuity.ts";
-import { renderFreshContextCoverage } from "../prompt/WorldMaterialCoverage.ts";
 import {
   renderWriteSizeAdvice,
   readDeclaredWorldClock,
@@ -2098,7 +2097,7 @@ export class PlayCallChain {
           ],
         });
         worldClock = readDeclaredWorldClock(snapshot);
-        const { coverage, maintenance } = this.#compiler.inspectWorldMaterials({
+        const { maintenance } = this.#compiler.inspectWorldMaterials({
           controlFingerprint: "receipt",
           documentSnapshot: snapshot,
           history: Object.fromEntries(
@@ -2108,17 +2107,11 @@ export class PlayCallChain {
         });
         for (const { result } of writes) {
           const write = result.candidateWrite!;
-          write.freshContextCoverage = renderFreshContextCoverage(
-            snapshot,
-            coverage,
-            write.shortRef,
-            this.#compiler.locale,
-          );
           const previous = session.documents.committedSnapshot.query({
             kind: "read_document",
             document: { shortRef: write.shortRef },
           });
-          const advice = renderWriteSizeAdvice(
+          write.sizeAdvice = renderWriteSizeAdvice(
             maintenance,
             write.shortRef,
             previous.kind === "read_document"
@@ -2126,14 +2119,10 @@ export class PlayCallChain {
               : null,
             this.#compiler.locale,
           );
-          if (advice.length > 0) write.freshContextCoverage += `\n${advice}`;
         }
-      } catch (error: unknown) {
-        // A coverage prediction must never reject an otherwise valid write.
-        const reason =
-          error instanceof Error ? error.message : "Material selection failed";
-        for (const { result } of writes)
-          result.candidateWrite!.freshContextCoverage = `${this.#compiler.locale === "zh-CN" ? "暂时无法判定下次注入；写入结果不受影响。原因" : "Fresh-context coverage unavailable; the write result is unaffected. Reason"}: ${reason}`;
+      } catch {
+        // Maintenance advice is diagnostic: a failure omits it and never
+        // rejects or undoes an accepted write.
       }
     }
     const previousNarrative = session.events.findLast(
@@ -3036,7 +3025,7 @@ function finalizeWriteReceipts(settlement: {
       candidateWrite.changed && committedWriteRefs.has(candidateWrite.shortRef)
         ? `@${candidateWrite.shortRef} write succeeded`
         : `@${candidateWrite.shortRef} unchanged`;
-    const markdown = [status, candidateWrite.freshContextCoverage]
+    const markdown = [status, candidateWrite.sizeAdvice]
       .filter(Boolean)
       .join("\n");
     completed.result.markdown = markdown;
