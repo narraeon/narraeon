@@ -45,6 +45,7 @@ test("世界修订工具只暴露 state/control，共用读取授权并拒绝 op
   const files = worldRevisionFiles();
   let previewPaths: string[] = [];
   const transaction = new WorldRevisionAuthoringTransaction({
+    history: { scope: "world", entries: [] },
     baseFiles: files,
     immutableBaseFiles: files,
     locale: "zh-CN",
@@ -67,6 +68,9 @@ test("世界修订工具只暴露 state/control，共用读取授权并拒绝 op
     "world_revision_patch",
     "world_revision_move",
     "world_revision_delete",
+    "history_list",
+    "history_search",
+    "history_read",
   ]);
   expect(
     [
@@ -74,7 +78,7 @@ test("世界修订工具只暴露 state/control，共用读取授权并拒绝 op
       ...worldRevisionToolDefinitions("en", fictionGameplay),
     ].every(
       ({ description }) =>
-        description.length > 0 && !/opening(?:\.md)?/iu.test(description),
+        description.length > 0 && !/opening\.md/iu.test(description),
     ),
   ).toBe(true);
   expect(worldRevisionRuntimeContract("zh-CN", fictionGameplay)).toContain(
@@ -82,6 +86,12 @@ test("世界修订工具只暴露 state/control，共用读取授权并拒绝 op
   );
   expect(worldRevisionRuntimeContract("zh-CN", fictionGameplay)).toContain(
     "此前读取授权全部失效",
+  );
+  expect(worldRevisionRuntimeContract("zh-CN", fictionGameplay)).toContain(
+    "history_list、history_search、history_read 只读导航",
+  );
+  expect(worldRevisionRuntimeContract("en", fictionGameplay)).toContain(
+    "history_list, history_search and history_read only navigate",
   );
 
   const opening = transaction.execute([
@@ -219,6 +229,7 @@ test("世界修订工具只暴露 state/control，共用读取授权并拒绝 op
       : file,
   );
   const literalRead = new WorldRevisionAuthoringTransaction({
+    history: { scope: "world", entries: [] },
     baseFiles: literalFiles,
     immutableBaseFiles: literalFiles,
     locale: "zh-CN",
@@ -234,6 +245,7 @@ test("世界修订工具只暴露 state/control，共用读取授权并拒绝 op
     '说明: "content package world/example 必须保持原样"',
   );
   const literalTransaction = new WorldRevisionAuthoringTransaction({
+    history: { scope: "world", entries: [] },
     baseFiles: literalFiles.map((file) =>
       file.path === "control/blocks/world.md"
         ? {
@@ -559,6 +571,7 @@ test("世界修订工具写入玩法文件时只接受模式与方案都不变�
     gameplayFile({ mode: "tabletop", scheme: "d20" }),
   ];
   const transaction = new WorldRevisionAuthoringTransaction({
+    history: { scope: "world", entries: [] },
     baseFiles: files,
     immutableBaseFiles: files,
     locale: "en",
@@ -1111,6 +1124,161 @@ test("世界修订预览保留检查点与增长基准，应用记录显式世�
     exchange.mockRestore();
     previews.mockRestore();
   }
+});
+
+test("世界修订对话可只读导航已提交历史，历史调用不改变工作树、改动历史或读取授权", async () => {
+  const { root, worldId, worlds, workspace } = await createdWorld();
+  const source = worldRevisionFiles().find(
+    ({ path }) => path === "state/current-situation.yaml",
+  )?.contents;
+  if (source === undefined)
+    throw new Error("Missing current situation fixture");
+  const committed = await worlds.commitPlayStep({
+    operationId: "history-turn-1",
+    worldId,
+    parentHead: "genesis",
+    historyAppend: [
+      { role: "player", exactText: "我踹开码头的门。" },
+      { role: "narrator", exactText: "门后那封信藏着码头的密码。" },
+    ],
+    nextMaterials: [],
+    stateChanges: [],
+  });
+  await worlds.commitPlayStep({
+    operationId: "history-turn-2",
+    worldId,
+    parentHead: committed.head,
+    historyAppend: [
+      { role: "player", exactText: "我读完信，记下密码。" },
+      { role: "narrator", exactText: "密码与码头的潮汐表吻合。" },
+    ],
+    nextMaterials: [],
+    stateChanges: [],
+  });
+  const host = new ScriptedModelHost({
+    binding: modelBinding,
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          { id: "history-list", name: "history_list", arguments: {} },
+          {
+            id: "history-search",
+            name: "history_search",
+            arguments: { queries: ["密码"] },
+          },
+          {
+            id: "history-read",
+            name: "history_read",
+            arguments: { latest: 2 },
+          },
+          {
+            id: "read-situation",
+            name: "world_revision_read",
+            arguments: { path: "state/current-situation.yaml" },
+          },
+        ],
+      },
+      { outcome: "response", text: "已核对历史。", toolCalls: [] },
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "history-read-mixed",
+            name: "history_read",
+            arguments: { latest: 1 },
+          },
+          {
+            id: "write-situation",
+            name: "world_revision_write_file",
+            arguments: {
+              path: "state/current-situation.yaml",
+              contents: source.replace("地点: 未设定", "地点: 码头"),
+            },
+          },
+        ],
+      },
+      { outcome: "response", text: "修订完成。", toolCalls: [] },
+    ],
+  });
+  const service = new WorldRevisionSession({
+    store: new FileNativeWorldRevisionStore(root),
+    workspace,
+    worlds,
+    compiler: new FileNativePromptCompiler({ locale: "zh-CN" }),
+    locale: () => "zh-CN",
+    bindModelHost: () => Promise.resolve(host),
+    bindExistingModelHost: () => Promise.resolve(host),
+    bindPlayPreset: () =>
+      Promise.resolve(builtinDefaultPlayPresetBinding("zh-CN")),
+    preview: () => preview,
+  });
+
+  const opened = await workspace.open(worldId);
+  const first = await service.send({
+    worldId,
+    requestId: "history-world-revision-message",
+    message: "核对码头的密码后再修改地点。",
+    continuation: { kind: "fresh_context" },
+  });
+  const [list, search, read, reread] =
+    first.turns[0]?.exchanges[0]?.toolCalls ?? [];
+  expect(list).toMatchObject({
+    callId: "history-list",
+    result: { isError: false, changes: [], changeSetId: null },
+  });
+  expect(list?.result?.markdown).toContain("@history-message-");
+  expect(search).toMatchObject({
+    callId: "history-search",
+    result: { isError: false, changes: [], changeSetId: null },
+  });
+  expect(search?.result?.markdown).toContain("密码");
+  expect(read).toMatchObject({
+    callId: "history-read",
+    result: { isError: false, changes: [], changeSetId: null },
+  });
+  expect(read?.result?.markdown).toContain("密码与码头的潮汐表吻合。");
+  expect(reread).toMatchObject({
+    callId: "read-situation",
+    result: { isError: false, changeSetId: null },
+  });
+  const afterHistory = await workspace.active(worldId);
+  expect(afterHistory).toMatchObject({
+    epochId: opened.epochId,
+    revision: opened.revision,
+    changes: [],
+  });
+
+  const mixed = await service.send({
+    worldId,
+    requestId: "mixed-world-revision-message",
+    message: "把地点改到码头。",
+    continuation: { kind: "continue_context", sessionId: first.sessionId },
+  });
+  const [historyRead, write] = mixed.turns[1]?.exchanges[0]?.toolCalls ?? [];
+  expect(historyRead).toMatchObject({
+    callId: "history-read-mixed",
+    result: { isError: false, changes: [], changeSetId: null },
+  });
+  expect(historyRead?.result?.markdown).toContain("密码与码头的潮汐表吻合。");
+  expect(write).toMatchObject({
+    callId: "write-situation",
+    result: {
+      isError: false,
+      changes: [{ path: "state/current-situation.yaml" }],
+    },
+  });
+  expect(write?.result?.changeSetId).not.toBeNull();
+  const epoch = await workspace.active(worldId);
+  expect(epoch?.revision).not.toBe(opened.revision);
+  expect(epoch?.changes).toHaveLength(1);
+  expect(epoch?.changes[0]?.changes.map(({ path }) => path)).toEqual([
+    "state/current-situation.yaml",
+  ]);
+  expect(
+    epoch?.files.find(({ path }) => path === "state/current-situation.yaml")
+      ?.contents,
+  ).toContain("地点: 码头");
 });
 
 async function createdWorld(

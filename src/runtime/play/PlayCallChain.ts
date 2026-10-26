@@ -21,6 +21,7 @@ import {
   narrativeBackground,
   type HistoryBackground,
 } from "../history/HistoryBackground.ts";
+import { historyEntries } from "../history/HistoryTools.ts";
 import { isDeepStrictEqual } from "node:util";
 import { hasLegacyHistoryTools } from "../prompt/FileNativeToolRegistry.ts";
 import {
@@ -3478,19 +3479,6 @@ function revisionTimelineGeneration(
     )
     .digest("hex")
     .slice(0, 40)}`;
-}
-
-function historyEntries(
-  history: Readonly<Record<string, string>>,
-  backgrounds: Readonly<Record<string, HistoryBackground>> = {},
-): { path: string; contents: string; background?: HistoryBackground }[] {
-  return Object.entries(history).map(([path, contents]) => ({
-    path,
-    contents,
-    ...(backgrounds[path] === undefined
-      ? {}
-      : { background: structuredClone(backgrounds[path]) }),
-  }));
 }
 
 function operationId(chainId: string, key: string): string {

@@ -52,6 +52,7 @@ function worldRevisionFiles(locale: AppLocale): ContentTreeFile[] {
 function worldRevisionTranscript(locale: AppLocale, gameplay: Gameplay) {
   const files = worldRevisionFiles(locale);
   const transaction = new WorldRevisionAuthoringTransaction({
+    history: { scope: "world", entries: [] },
     baseFiles: files,
     immutableBaseFiles: files,
     locale,
@@ -144,6 +145,9 @@ test("world-revision tool definitions never name the content package or setting 
         "world_revision_patch",
         "world_revision_move",
         "world_revision_delete",
+        "history_list",
+        "history_search",
+        "history_read",
       ]);
       for (const tool of tools) {
         const text = JSON.stringify(tool);

@@ -51,6 +51,7 @@ import {
 } from "./WorldRevisionAuthoringTransaction.ts";
 import type { WorldRevisionWorkspace } from "./WorldRevisionWorkspace.ts";
 import { WorldRevisionWorkspaceError } from "./WorldRevisionWorkspace.ts";
+import { historyEntries } from "../history/HistoryTools.ts";
 
 export type WorldRevisionContinuation =
   { kind: "fresh_context" } | { kind: "continue_context"; sessionId: string };
@@ -615,6 +616,10 @@ export class WorldRevisionSession {
     return new WorldRevisionAuthoringTransaction({
       baseFiles: epoch.files,
       immutableBaseFiles: epoch.baseFiles,
+      history: {
+        scope: epoch.worldId,
+        entries: historyEntries(binding.history, binding.historyBackgrounds),
+      },
       locale: session.locale,
       revision: epoch.revision,
       authorization: session.authorization,

@@ -37,6 +37,9 @@ import {
  * Later, the world_patch descriptions and prompt sentences were rewritten for
  * upsert and per-edit settlement (#113); the digests that carry them moved
  * again and were regenerated.
+ * Later, the world-revision summary in ordered-author-prompts named the
+ * read-only history tools (#118); only the two revision digests moved and were
+ * regenerated. Fiction and preview digests are unchanged.
  * Gameplay wording (control/gameplay.json mentions, bag guidance) reaches the
  * model only for tabletop worlds and packages.
  */
@@ -315,9 +318,9 @@ const expectedDigests: Record<string, string> = {
   "preview/zh-CN/ordered-default/openai_responses/bootstrap":
     "a312344bfdcebdb4ca3b96767e8964de75e79f52690596ad9a073145f03b4cc2",
   "revision/en":
-    "049142cbdef6c330a731d413d3a216cd44c7d3a817ae20c4bae3dd7e470d15fc",
+    "2981e2356fc78a1cf1664fa4e1544c2af6ad920673e38aaec27daf015c5ec632",
   "revision/zh-CN":
-    "2a7ead2eb2d58a8736627624e4290f9cd266253d8e5af789cdf8259abc02b25b",
+    "ca6fc1153b8bb17272e8c0997c3184f247fc5a7d0e87029e6dfa68ae2e73b535",
   "setting/en":
     "e17787e81f9108096859c167f9c3cd180d242d4c34ff28e4d8b4a3ea70b1aba8",
   "setting/zh-CN":
