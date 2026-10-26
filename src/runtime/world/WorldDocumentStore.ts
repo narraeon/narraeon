@@ -358,25 +358,13 @@ export interface WorldDocumentYamlRemoveRevisionEdit {
   readonly locator: { readonly yaml: readonly (string | number)[] };
 }
 
-export type WorldDocumentMetadataRevisionEdit = {
+/** Sets any non-empty subset of title, summary and aliases; omitted fields keep their stored value. */
+export interface WorldDocumentMetadataRevisionEdit {
   readonly op: "set_metadata";
-} & (
-  | {
-      readonly title: string;
-      readonly summary?: string;
-      readonly aliases?: readonly string[];
-    }
-  | {
-      readonly title?: string;
-      readonly summary: string;
-      readonly aliases?: readonly string[];
-    }
-  | {
-      readonly title?: string;
-      readonly summary?: string;
-      readonly aliases: readonly string[];
-    }
-);
+  readonly title?: string;
+  readonly summary?: string;
+  readonly aliases?: readonly string[];
+}
 
 export interface WorldDocumentMarkdownSectionRevisionEdit {
   readonly op: "replace_section" | "add_section";
