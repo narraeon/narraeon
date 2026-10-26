@@ -276,9 +276,7 @@ test("世界修订工具只暴露 state/control，共用读取授权并拒绝 op
       arguments: { path: "control/blocks/world.md" },
     },
   ]);
-  expect(literalSearch?.markdown).toContain(
-    "content package world/example 必须保持原样",
-  );
+  expect(literalSearch?.markdown).toMatch(/^- @current-situation · \d+:\d+/mu);
   expect(literalControl?.markdown).toContain(
     "content package world/control 也必须保持原样",
   );

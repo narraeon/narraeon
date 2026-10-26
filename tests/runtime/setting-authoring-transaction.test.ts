@@ -339,7 +339,7 @@ test("AI 用 ref 和正文新建文档，Runtime 隐藏 id，后续调用可直�
   expect(results[0]?.markdown).toContain(
     "Created @alex · world/characters/alex.yaml",
   );
-  expect(results[0]?.markdown).toContain("already fully read");
+  expect(results[0]?.markdown).not.toContain("already fully read");
   expect(results[0]?.markdown).not.toMatch(/\$document\.id|doc\.[a-f0-9]+/u);
   expect(results[1]?.markdown).toContain(
     "Updated @alex · world/characters/alex.yaml",
@@ -836,7 +836,7 @@ test("设定模型只能用 @ref 或逻辑路径，既有正文与控制文件�
   expect(results[5]?.markdown).toContain('document: "@current-situation"');
   expect(results[5]?.markdown).not.toContain("situation.current");
   expect(results[6]).toMatchObject({ isError: false });
-  expect(results[6]?.markdown).toContain("@current-situation");
+  expect(results[6]?.markdown).toMatch(/^- @\S+ · \d+:\d+/mu);
   expect(results[6]?.markdown).not.toContain("situation.current");
   expect(results[7]).toMatchObject({ isError: false });
   expect(
@@ -966,6 +966,97 @@ test("设定目录 list 整份返回超过 20 份文档的目录，并忽略旧 
   ]);
   expect(legacy).toMatchObject({ isError: false });
   expect(legacy?.markdown).toBe(full?.markdown);
+});
+
+test("设定字面搜索每行一条并列出该行全部列号，不重复完整路径与摘录", () => {
+  const transaction = new SettingAuthoringTransaction({
+    baseFiles: minimalFileNativeContentScaffold("zh-CN"),
+    locale: "zh-CN",
+    preview: () => preview,
+  });
+  transaction.execute([
+    {
+      id: "create-letters",
+      name: "setting_create",
+      arguments: {
+        path: "world/letters/letters.yaml",
+        ref: "letters",
+        title: "来信",
+        summary: "一组往来信件。",
+        aliases: [],
+        body: "letters: |\n  第一封信：信使说的信\n  普通一行\n  第三封信\n",
+      },
+    },
+  ]);
+  const [search] = transaction.execute([
+    { id: "search-xin", name: "setting_search", arguments: { query: "信" } },
+  ]);
+  const markdown = search?.markdown ?? "";
+  const entries = markdown
+    .split("\n")
+    .filter((line) => line.startsWith("- @letters ·"));
+  const lines = entries.map((line) => line.split(" · ")[1]?.split(":")[0]);
+  expect(entries.length).toBeGreaterThan(1);
+  expect(new Set(lines).size).toBe(entries.length);
+  expect(entries.some((line) => /· \d+:\d+,\d+/u.test(line))).toBe(true);
+  expect(markdown).not.toContain("world/letters/letters.yaml");
+  expect(markdown).not.toMatch(/^ {2}"/mu);
+});
+
+test("写入回执不再重复独立接受的样板，读取回执不再标注 Complete: yes", () => {
+  const transaction = new SettingAuthoringTransaction({
+    baseFiles: minimalFileNativeContentScaffold("en"),
+    locale: "en",
+    preview: () => preview,
+  });
+  const [created] = transaction.execute([
+    {
+      id: "create-receipt",
+      name: "setting_create",
+      arguments: {
+        path: "world/receipt.yaml",
+        ref: "receipt",
+        title: "Receipt",
+        summary: "A receipt document.",
+        aliases: [],
+        body: "status: ready\n",
+      },
+    },
+  ]);
+  expect(created?.markdown).not.toContain("accepted independently");
+  const [read] = transaction.execute([
+    {
+      id: "read-receipt",
+      name: "setting_read",
+      arguments: { path: "world/receipt.yaml" },
+    },
+  ]);
+  expect(read?.markdown).toContain("status: ready");
+  expect(read?.markdown).not.toContain("Complete: yes");
+});
+
+test("setting_patch 拒绝非法 op 时说明文档、收到的 op 与合法 op 列表", () => {
+  const transaction = new SettingAuthoringTransaction({
+    baseFiles: minimalFileNativeContentScaffold("en"),
+    locale: "en",
+    preview: () => preview,
+  });
+  const [rejected] = transaction.execute([
+    {
+      id: "bad-op",
+      name: "setting_patch",
+      arguments: {
+        document: "@current-situation",
+        op: "bogus",
+        locator: ["status"],
+        value: "ready",
+      },
+    },
+  ]);
+  expect(rejected).toMatchObject({ isError: true, changes: [] });
+  expect(rejected?.markdown).toContain("@current-situation");
+  expect(rejected?.markdown).toContain('"bogus"');
+  expect(rejected?.markdown).toContain("add, replace, append, remove");
 });
 
 function productionPreview(snapshot: WorldDocumentStore): PromptPreview {

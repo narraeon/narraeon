@@ -1132,6 +1132,12 @@ context:
         limit: { type: "integer", minimum: 1, maximum: 100 },
       },
     });
+    expect(historyList?.description).toContain(
+      "Historical background describes the captured state, not current world state",
+    );
+    expect(
+      historyList?.description?.match(/does not certify facts/gu),
+    ).toHaveLength(1);
     expect(contextRead?.inputSchema).toEqual({
       type: "object",
       additionalProperties: false,

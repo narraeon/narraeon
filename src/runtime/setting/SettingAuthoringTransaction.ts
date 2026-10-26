@@ -1414,7 +1414,7 @@ function worldRevisionCommand(
     };
   }
   if (call.operation === "patch") {
-    const op = requiredString(call.arguments.op, "op");
+    const op = requiredPatchOp(call.arguments, surface);
     if (op === "set_metadata") {
       const title = requiredString(call.arguments.title, "title");
       const summary = requiredString(call.arguments.summary, "summary");
@@ -1429,10 +1429,6 @@ function worldRevisionCommand(
         edits: [{ op: "set_metadata", title, summary, aliases }],
       };
     }
-    if (op !== "add" && op !== "replace" && op !== "append" && op !== "remove")
-      throw new SettingAuthoringError(
-        `${authoringToolName(surface, "patch")}.op must be add, replace, append, remove, or set_metadata`,
-      );
     const locator = requiredYamlLocatorPath(call.arguments.locator, "locator");
     if (op === "remove") {
       if (!hasOnly(call.arguments, ["document", "op", "locator"]))
@@ -1977,12 +1973,6 @@ function renderWorldWriteSuccess(
             return `- ${localized(locale, "Updated", "更新")} @${change.shortRef} · ${change.after.logicalPath}`;
           return `- ${localized(locale, "Moved", "移动")} @${change.shortRef} · ${change.before.logicalPath} → ${change.after.logicalPath}`;
         })),
-    "",
-    localized(
-      locale,
-      "This call was accepted independently. Every created or changed document above is already fully read; do not read it again unless a later decision needs Runtime's exact serialization.",
-      "本调用已独立接受。上方新建或修改的文档均视为已经完整读取；除非后续判断依赖 Runtime 的精确序列化结果，否则不要再次读取。",
-    ),
   ].join("\n");
 }
 
@@ -2097,13 +2087,33 @@ function searchDocuments(
     return renderQueryFailure(result, surface, locale);
   if (result.kind !== "literal_search")
     throw new Error("Unexpected literal search result");
-  const lines = result.matches.map(
-    ({ document, referenceProjection, range }) =>
-      `- @${document.shortRef} · ${document.logicalPath} · ${range.start.line}:${range.start.column}\n  ${JSON.stringify(referenceProjection.excerpt)}`,
+  const lines = groupMatchesByLine(result.matches).map(
+    ({ shortRef, line, columns }) =>
+      `- @${shortRef} · ${line}:${columns.join(",")}`,
   );
   return success(
     `# ${localized(locale, "Literal setting search", "设定字面搜索")}\n\n${lines.join("\n") || localized(locale, "Zero literal matches do not prove the fact is absent.", "0 个字面命中不证明设定中不存在该事实。")}\n\n${pageFooter(result.page, locale)}`,
   );
+}
+
+/** Hits on one line share a single entry; document order is preserved. */
+function groupMatchesByLine(
+  matches: readonly {
+    document: { shortRef: string };
+    range: { start: { line: number; column: number } };
+  }[],
+): { shortRef: string; line: number; columns: number[] }[] {
+  const groups: { shortRef: string; line: number; columns: number[] }[] = [];
+  for (const {
+    document: { shortRef },
+    range: { start },
+  } of matches) {
+    const group = groups.at(-1);
+    if (group?.shortRef === shortRef && group.line === start.line)
+      group.columns.push(start.column);
+    else groups.push({ shortRef, line: start.line, columns: [start.column] });
+  }
+  return groups;
 }
 
 const invalidScope = Symbol("invalid-scope");
@@ -2158,7 +2168,7 @@ function readDocument(
     reads.opaquePaths.add(path);
     const projected = projectOpaqueDocumentIds(snapshot, path, opaque.contents);
     return success(
-      `# ${localized(locale, "Special-file source", "专用文件原文")} ${path}\n\n${projected}\n\n---\nComplete: yes`,
+      `# ${localized(locale, "Special-file source", "专用文件原文")} ${path}\n\n${projected}`,
     );
   }
   const selector = documentSelector(path, surface);
@@ -2183,7 +2193,7 @@ function readDocument(
     throw new Error("Unexpected read result");
   reads.worldDocumentIds.add(result.document.documentId);
   return success(
-    `# ${localized(locale, "Exact read", "精确读取")} @${result.document.shortRef}\n\ntitle: ${result.document.title}\nsummary: ${result.document.summary}\ncodec: ${result.document.codec}\nlogicalPath: ${result.document.logicalPath}\n[body]\n${result.body.trimEnd()}\n[/body]\n\n---\nComplete: yes`,
+    `# ${localized(locale, "Exact read", "精确读取")} @${result.document.shortRef}\n\ntitle: ${result.document.title}\nsummary: ${result.document.summary}\ncodec: ${result.document.codec}\nlogicalPath: ${result.document.logicalPath}\n[body]\n${result.body.trimEnd()}\n[/body]`,
   );
 }
 
@@ -2427,6 +2437,30 @@ function safePath(path: string, surface: SettingAuthoringSurface): string {
       `Unsafe ${surface.phrases.en.slug} path: ${path}`,
     );
   return path;
+}
+
+const patchOps = [
+  "add",
+  "replace",
+  "append",
+  "remove",
+  "set_metadata",
+] as const;
+type PatchOp = (typeof patchOps)[number];
+
+function isPatchOp(value: unknown): value is PatchOp {
+  return (patchOps as readonly unknown[]).includes(value);
+}
+
+function requiredPatchOp(
+  args: Record<string, unknown>,
+  surface: SettingAuthoringSurface,
+): PatchOp {
+  const op = args.op;
+  if (isPatchOp(op)) return op;
+  throw new SettingAuthoringError(
+    `${authoringToolName(surface, "patch")} document ${JSON.stringify(args.document)} received op ${JSON.stringify(op)}; valid ops: ${patchOps.join(", ")}`,
+  );
 }
 
 function requiredString(value: unknown, name: string): string {

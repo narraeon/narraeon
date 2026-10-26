@@ -536,19 +536,19 @@
         },
         {
           "toolCallId": "search-situation",
-          "markdown": "# Literal setting search\n\n- @current-situation · world/current-situation.yaml · 4:18\n  \"  title: Current situation\"\n- @current-situation · world/current-situation.yaml · 5:27\n  \"  summary: The short-term situation happening now that must not be forgotten next.\"\n\nPage 0..2 / 2\nComplete: yes",
+          "markdown": "# Literal setting search\n\n- @current-situation · 4:18\n- @current-situation · 5:27\n\nPage 0..2 / 2\nComplete: yes",
           "isError": false,
           "changes": []
         },
         {
           "toolCallId": "read-opening",
-          "markdown": "# Special-file source opening.md\n\nYou stand at the threshold of a world still waiting to be written. Its places, people, and immediate circumstances remain for the author to define. Wind blows from a direction without a name. A faceless figure approaches, each footstep clearer than the last, then stops before you.\n\n\n---\nComplete: yes",
+          "markdown": "# Special-file source opening.md\n\nYou stand at the threshold of a world still waiting to be written. Its places, people, and immediate circumstances remain for the author to define. Wind blows from a direction without a name. A faceless figure approaches, each footstep clearer than the last, then stops before you.\n",
           "isError": false,
           "changes": []
         },
         {
           "toolCallId": "read-situation",
-          "markdown": "# Exact read @current-situation\n\ntitle: Current situation\nsummary: The short-term situation happening now that must not be forgotten next.\ncodec: yaml\nlogicalPath: world/current-situation.yaml\n[body]\nlocation: Not set\npresent: []\nin_progress: Not set\nshort_term_continuity: []\n[/body]\n\n---\nComplete: yes",
+          "markdown": "# Exact read @current-situation\n\ntitle: Current situation\nsummary: The short-term situation happening now that must not be forgotten next.\ncodec: yaml\nlogicalPath: world/current-situation.yaml\n[body]\nlocation: Not set\npresent: []\nin_progress: Not set\nshort_term_continuity: []\n[/body]",
           "isError": false,
           "changes": []
         },
@@ -579,7 +579,7 @@
         },
         {
           "toolCallId": "patch-missing-node",
-          "markdown": "# Current-tree revision accepted\n\n- Updated @current-situation · world/current-situation.yaml\n\nThis call was accepted independently. Every created or changed document above is already fully read; do not read it again unless a later decision needs Runtime's exact serialization.",
+          "markdown": "# Current-tree revision accepted\n\n- Updated @current-situation · world/current-situation.yaml",
           "isError": false,
           "changes": [
             {
@@ -592,7 +592,7 @@
         },
         {
           "toolCallId": "move-current-situation",
-          "markdown": "# Current-tree revision accepted\n\n- Moved @current-situation · world/current-situation.yaml → world/moved.yaml\n\nThis call was accepted independently. Every created or changed document above is already fully read; do not read it again unless a later decision needs Runtime's exact serialization.\n\n# Current-tree review passed\n\nContent-tree validation and the real Prompt Preview both passed. This tool response changed 3 file(s) in the content package. Use this review and the coverage below to decide whether the current user request is satisfied or further edits are needed.\n\n# Play-consumption coverage\n\nWorld documents: 0 full text injected; 0 node-only; 0 catalog-summary-only; 0 directly referenced; 1 on-demand-only.\n\n- control/blocks/extra.md — not enabled by control/frame.yaml\n- world/current-situation.yaml — removed from the content package current tree\n- world/moved.yaml — on-demand only\n\nChanged world documents marked on-demand only are not present in a fresh play prompt. If play should discover them reliably, consider adding a catalog, injected reference, or world instruction.\n\nChanged control blocks not enabled by control/frame.yaml never reach ordinary play AI. Add each intended block to frame.instructions or remove the unused file.\n\n",
+          "markdown": "# Current-tree revision accepted\n\n- Moved @current-situation · world/current-situation.yaml → world/moved.yaml\n\n# Current-tree review passed\n\nContent-tree validation and the real Prompt Preview both passed. This tool response changed 3 file(s) in the content package. Use this review and the coverage below to decide whether the current user request is satisfied or further edits are needed.\n\n# Play-consumption coverage\n\nWorld documents: 0 full text injected; 0 node-only; 0 catalog-summary-only; 0 directly referenced; 1 on-demand-only.\n\n- control/blocks/extra.md — not enabled by control/frame.yaml\n- world/current-situation.yaml — removed from the content package current tree\n- world/moved.yaml — on-demand only\n\nChanged world documents marked on-demand only are not present in a fresh play prompt. If play should discover them reliably, consider adding a catalog, injected reference, or world instruction.\n\nChanged control blocks not enabled by control/frame.yaml never reach ordinary play AI. Add each intended block to frame.instructions or remove the unused file.\n\n",
           "isError": false,
           "changes": [
             {
@@ -1234,13 +1234,13 @@
         },
         {
           "toolCallId": "read-opening",
-          "markdown": "# 专用文件原文 opening.md\n\n你站在一个尚待创作的世界入口，眼前的地点、人物与局面仍等待作者补全。风从没有名字的方向吹过来，一个还没有面孔的人正朝你走近，脚步声一下比一下清楚，最后停在你面前。\n\n\n---\nComplete: yes",
+          "markdown": "# 专用文件原文 opening.md\n\n你站在一个尚待创作的世界入口，眼前的地点、人物与局面仍等待作者补全。风从没有名字的方向吹过来，一个还没有面孔的人正朝你走近，脚步声一下比一下清楚，最后停在你面前。\n",
           "isError": false,
           "changes": []
         },
         {
           "toolCallId": "read-situation",
-          "markdown": "# 精确读取 @current-situation\n\ntitle: 当前情境\nsummary: 当前正在发生且接下来不能忘记的短期局面。\ncodec: yaml\nlogicalPath: world/current-situation.yaml\n[body]\n地点: 未设定\n在场: []\n正在发生: 未设定\n短期连续性: []\n[/body]\n\n---\nComplete: yes",
+          "markdown": "# 精确读取 @current-situation\n\ntitle: 当前情境\nsummary: 当前正在发生且接下来不能忘记的短期局面。\ncodec: yaml\nlogicalPath: world/current-situation.yaml\n[body]\n地点: 未设定\n在场: []\n正在发生: 未设定\n短期连续性: []\n[/body]",
           "isError": false,
           "changes": []
         },
@@ -1271,7 +1271,7 @@
         },
         {
           "toolCallId": "patch-missing-node",
-          "markdown": "# 当前树 revision 已接受\n\n- 更新 @current-situation · world/current-situation.yaml\n\n本调用已独立接受。上方新建或修改的文档均视为已经完整读取；除非后续判断依赖 Runtime 的精确序列化结果，否则不要再次读取。",
+          "markdown": "# 当前树 revision 已接受\n\n- 更新 @current-situation · world/current-situation.yaml",
           "isError": false,
           "changes": [
             {
@@ -1284,7 +1284,7 @@
         },
         {
           "toolCallId": "move-current-situation",
-          "markdown": "# 当前树 revision 已接受\n\n- 移动 @current-situation · world/current-situation.yaml → world/moved.yaml\n\n本调用已独立接受。上方新建或修改的文档均视为已经完整读取；除非后续判断依赖 Runtime 的精确序列化结果，否则不要再次读取。\n\n# 当前树自动检查通过\n\n内容树校验和真实 Prompt Preview 均已通过；本次工具响应修改内容包中的 3 个文件。请根据本次检查与下方覆盖报告判断当前用户要求是否已经满足，或是否还需修改。\n\n# 游玩读取覆盖\n\n世界文档：0 份全文注入；0 份仅节点注入；0 份仅目录摘要；0 份由已注入内容直接引用；1 份仅按需发现。\n\n- control/blocks/extra.md — 未被 control/frame.yaml 启用\n- world/current-situation.yaml — 已从内容包当前树删除\n- world/moved.yaml — 仅按需发现\n\n标为仅按需发现的改动世界文档不会出现在全新游玩提示中；如果游玩应可靠发现它们，请考虑增加目录、由已注入内容建立引用，或加入世界指令。\n\n未被 control/frame.yaml 启用的改动控制块不会进入普通游玩 AI；请把确实需要的块加入 frame.instructions，或删除无用文件。\n\n",
+          "markdown": "# 当前树 revision 已接受\n\n- 移动 @current-situation · world/current-situation.yaml → world/moved.yaml\n\n# 当前树自动检查通过\n\n内容树校验和真实 Prompt Preview 均已通过；本次工具响应修改内容包中的 3 个文件。请根据本次检查与下方覆盖报告判断当前用户要求是否已经满足，或是否还需修改。\n\n# 游玩读取覆盖\n\n世界文档：0 份全文注入；0 份仅节点注入；0 份仅目录摘要；0 份由已注入内容直接引用；1 份仅按需发现。\n\n- control/blocks/extra.md — 未被 control/frame.yaml 启用\n- world/current-situation.yaml — 已从内容包当前树删除\n- world/moved.yaml — 仅按需发现\n\n标为仅按需发现的改动世界文档不会出现在全新游玩提示中；如果游玩应可靠发现它们，请考虑增加目录、由已注入内容建立引用，或加入世界指令。\n\n未被 control/frame.yaml 启用的改动控制块不会进入普通游玩 AI；请把确实需要的块加入 frame.instructions，或删除无用文件。\n\n",
           "isError": false,
           "changes": [
             {

@@ -17,7 +17,7 @@ const call = (name: string, args: unknown) =>
 test("生产历史搜索命中可直接读取完整前后文及相邻导航", () => {
   const found = call("history_search", { queries: ["那封信"], limit: 1 });
   expect(found.ok).toBe(true);
-  expect(found.markdown).toContain("Order: newest_first");
+  expect(found.markdown).not.toContain("Order: newest_first");
   expect(found.markdown).toContain("position 4");
   const ref = /@history-message-[^\s]+/u.exec(found.markdown)?.[0];
   const read = call("history_read", { ref, before: 2 });
