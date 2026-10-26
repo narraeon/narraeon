@@ -3203,6 +3203,93 @@ describe("世界游玩页面", () => {
     expect(append?.exchangeId).toMatch(/^play-exchange-/u);
   });
 
+  test("本轮临时要求默认收起，展开即聚焦，结算后清空并收起", async () => {
+    let chain = playChainView(
+      "play-chain-existing",
+      "exchange-first",
+      "I signal Alex to open the door.",
+    );
+    const client = {
+      request: vi.fn(<T>(request: V1Request) => {
+        if (request.type === "world.read")
+          return Promise.resolve(worldView(chain) as T);
+        if (request.type === "artifacts.debug") return Promise.resolve([] as T);
+        if (request.type === "play.chain.inspect")
+          return Promise.resolve(chain as T);
+        if (request.type === "play.chain.append") {
+          chain = { ...chain, parentHead: "commit:5", updatedAt: 2 };
+          return Promise.resolve(chain as T);
+        }
+        return Promise.reject(new Error(`Unexpected request: ${request.type}`));
+      }),
+    };
+
+    renderWorld(client);
+    await screen.findByText("Alex opens the door and lets you go first.");
+    const toggle = screen.getByRole("button", { name: "本轮临时要求" });
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(screen.queryByLabelText("本轮临时要求内容")).toBeNull();
+
+    fireEvent.click(toggle);
+    const note = screen.getByLabelText<HTMLInputElement>("本轮临时要求内容");
+    expect(note).toBe(document.activeElement);
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+
+    fireEvent.change(note, { target: { value: "写得更细一些" } });
+    fireEvent.change(screen.getByLabelText("你的行动"), {
+      target: { value: "I walk into the corridor." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "追加上下文" }));
+
+    await waitFor(() =>
+      expect(screen.queryByLabelText("本轮临时要求内容")).toBeNull(),
+    );
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    const append = client.request.mock.calls
+      .map(([request]) => request)
+      .find(
+        (
+          request,
+        ): request is Extract<V1Request, { type: "play.chain.append" }> =>
+          request.type === "play.chain.append",
+      );
+    expect(append).toMatchObject({ turnNote: "写得更细一些" });
+  });
+
+  test("本轮临时要求 Escape 收起但保留文字，并以强调态提示仍带着要求", async () => {
+    const chain = playChainView(
+      "play-chain-existing",
+      "exchange-first",
+      "I signal Alex to open the door.",
+    );
+    const client = {
+      request: vi.fn(<T>(request: V1Request) => {
+        if (request.type === "world.read")
+          return Promise.resolve(worldView(chain) as T);
+        if (request.type === "artifacts.debug") return Promise.resolve([] as T);
+        if (request.type === "play.chain.inspect")
+          return Promise.resolve(chain as T);
+        return Promise.reject(new Error(`Unexpected request: ${request.type}`));
+      }),
+    };
+
+    renderWorld(client);
+    await screen.findByText("Alex opens the door and lets you go first.");
+    const toggle = screen.getByRole("button", { name: "本轮临时要求" });
+    fireEvent.click(toggle);
+    const note = screen.getByLabelText<HTMLInputElement>("本轮临时要求内容");
+    fireEvent.change(note, { target: { value: "多写些环境描写" } });
+    fireEvent.keyDown(note, { key: "Escape" });
+
+    expect(screen.queryByLabelText("本轮临时要求内容")).toBeNull();
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(toggle.classList.contains("has-text")).toBe(true);
+    fireEvent.click(toggle);
+    expect(
+      screen.getByLabelText<HTMLInputElement>("本轮临时要求内容").value,
+    ).toBe("多写些环境描写");
+  });
+
   test("中断后留空点击追加只发送原上下文，不产生另一条玩家指令或重试事件", async () => {
     let chain = interruptedChainView();
     const client = {

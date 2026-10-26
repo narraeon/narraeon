@@ -8558,6 +8558,75 @@ summary:focus-visible {
   font-weight: 500;
 }
 
+.world-turn-note {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.world-turn-note-field {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0 0.4rem;
+}
+
+.world-turn-note-field > span {
+  flex: none;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.world-turn-note-field input {
+  min-width: 0;
+  flex: 1;
+  padding: 0.32rem 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: 1.55;
+}
+
+/* Scoped under .world-composer-row so these beat the generic
+   `.world-composer-row > button` rule in workspace-layout.css. */
+.world-composer-row > .world-turn-note-toggle,
+.world-turn-note-clear {
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  min-width: 2rem;
+  min-height: 2rem;
+  padding: 0;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--muted);
+  background: var(--surface);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.world-turn-note-clear {
+  border-color: transparent;
+  background: transparent;
+}
+
+.world-composer-row > .world-turn-note-toggle[aria-pressed="true"] {
+  color: var(--text);
+}
+
+.world-composer-row > .world-turn-note-toggle.has-text {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.world-composer-row > .world-turn-note-toggle:disabled,
+.world-turn-note-clear:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .world-composer-dock .model-required-callout,
 .world-composer-dock .play-call-failure,
 .world-composer-dock .play-retry-note {
