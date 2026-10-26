@@ -11,17 +11,27 @@ import type { AppLocale } from "../protocol/appPreferences.ts";
 export const defaultSettingImprovementPromptPath =
   "prompts/setting-improvement.md";
 
+/** Content-package-only paragraphs; a running-world revision omits them. */
+const contentPackageWorldStartZhCN =
+  "内容包设定完善定义开场结束处的世界起点，可以包含已有历史、当前状态、持续过程和各人的认知。简单起点足以开玩，普通未定义内容可在游玩中生长；不预写未来必然发生的经历或强制剧情阶段。";
+const contentPackageOpeningZhCN =
+  "仅在内容包分支检查 opening.md：写玩家当时可感知的具体局面，保留尚待回答的请求与必要原话，不替玩家决定行动、台词或内心。独处、安静和等待也可形成开场。开场与文档停在同一时点，将约束首次行动的结果写给自然所有者，无需复制整篇叙事。";
+const contentPackageWorldStartEn =
+  "Content-package setting improvement defines the world where the opening ends, including established history, current state, ongoing processes and individual knowledge. A simple starting point can be playable and ordinary undefined content can grow during play. Do not prewrite inevitable future experiences or mandatory plot stages.";
+const contentPackageOpeningEn =
+  "Inspect opening.md only in the content-package branch. Show a concrete situation the player can perceive, retaining unanswered requests and consequential wording without choosing player action, speech or inner thoughts. Solitude, quiet and waiting can also open a story. Documents and opening stop at the same moment; give outcomes constraining the first action to natural owners without copying the whole narrative.";
+
 export const defaultSettingImprovementPromptZhCN = `# 系统推荐的创作方法
 
 以当前编辑目标、已有内容和用户目标为起点。讨论时说明必要判断，落实时定向修改；用户要求审查或重组时，相关结构与重复表达也在范围内。不为填满结构制造内容，无需修改也是合法结果。
 
 ## 编辑目标与世界起点
 
-内容包设定完善定义开场结束处的世界起点，可以包含已有历史、当前状态、持续过程和各人的认知。简单起点足以开玩，普通未定义内容可在游玩中生长；不预写未来必然发生的经历或强制剧情阶段。
+${contentPackageWorldStartZhCN}
 
-运行中世界修订维护当前已经演变的世界，按用户要求调整并保留未受影响的事实、经历与认知，不退回初始取值。此分支不读取或修改 opening.md。明确修订不是世界内事件，不需虚构行动解释它。
+运行中世界修订维护当前已经演变的世界，按用户要求调整并保留未受影响的事实、经历与认知，不退回初始取值。明确修订不是世界内事件，不需虚构行动解释它。
 
-涉及结构、材料发现或更新位置时，先列出编辑目标根目录，完整读取 control/frame.yaml、启用的世界提示块、绑定的当前情境及受影响文档。实际操作遵守本轮工具边界。
+涉及结构、材料发现或更新位置时，以本请求 bootstrap 已提供的目录、控制文档与注入文档为起点；未提供而受影响的文档再用工具读取。实际操作遵守本轮工具边界。
 
 ## 世界信息怎样组织
 
@@ -45,7 +55,7 @@ world/ 或 state/ 承载虚构事实，control/ 安排本世界的取材、规�
 
 ## 开场与整理
 
-仅在内容包分支检查 opening.md：写玩家当时可感知的具体局面，保留尚待回答的请求与必要原话，不替玩家决定行动、台词或内心。独处、安静和等待也可形成开场。开场与文档停在同一时点，将约束首次行动的结果写给自然所有者，无需复制整篇叙事。
+${contentPackageOpeningZhCN}
 
 整理结束已完成或失效的进程、约定和限制，保留仍有意义的成果、后遗影响、经历与引用。补录、去重和归档不让事情再发生。长材料按需发现，软体积提示不授权截断；暂时离场不等于退役，退役也不会移除显式全文槽。
 
@@ -58,11 +68,11 @@ Start with the editing target, existing content and the user's goal. Discuss nec
 
 ## Editing target and world starting point
 
-Content-package setting improvement defines the world where the opening ends, including established history, current state, ongoing processes and individual knowledge. A simple starting point can be playable and ordinary undefined content can grow during play. Do not prewrite inevitable future experiences or mandatory plot stages.
+${contentPackageWorldStartEn}
 
-Running-world revision maintains the world as it has evolved: apply requested changes while preserving unaffected facts, events and knowledge instead of resetting initial values. This branch does not read or modify opening.md. Explicit revision is not an in-world event and needs no invented action to explain it.
+Running-world revision maintains the world as it has evolved: apply requested changes while preserving unaffected facts, events and knowledge instead of resetting initial values. Explicit revision is not an in-world event and needs no invented action to explain it.
 
-When structure, discovery or update locations are affected, list the editing target's root and completely read control/frame.yaml, enabled world instructions, the bound current situation and affected documents. Follow this request's actual tool boundary.
+When structure, discovery or update locations are affected, start from the directory, control documents and injected documents this request's bootstrap already provides; read affected documents with tools only when they were not provided. Follow this request's actual tool boundary.
 
 ## Organizing world information
 
@@ -86,7 +96,7 @@ world/ or state/ carries fictional facts. control/ arranges world-specific mater
 
 ## Opening and consolidation
 
-Inspect opening.md only in the content-package branch. Show a concrete situation the player can perceive, retaining unanswered requests and consequential wording without choosing player action, speech or inner thoughts. Solitude, quiet and waiting can also open a story. Documents and opening stop at the same moment; give outcomes constraining the first action to natural owners without copying the whole narrative.
+${contentPackageOpeningEn}
 
 Consolidation closes completed or expired processes, commitments and restrictions while retaining meaningful results, lasting effects, events and references. Recording, deduplication and archiving do not perform events again. Keep long material discoverable on demand; advisory size limits do not authorize truncation. Temporary absence is not retirement, and retirement does not remove explicit full-document slots.
 
@@ -102,4 +112,21 @@ export function defaultSettingImprovementPromptForLocale(
   return locale === "zh-CN"
     ? defaultSettingImprovementPromptZhCN
     : defaultSettingImprovementPromptEn;
+}
+
+/**
+ * The same guidance for a running-world revision: the content-package-only
+ * paragraphs are omitted, and everything else stays byte-identical.
+ */
+export function revisionSettingImprovementPromptForLocale(
+  locale: AppLocale,
+): string {
+  const paragraphs =
+    locale === "zh-CN"
+      ? [contentPackageWorldStartZhCN, contentPackageOpeningZhCN]
+      : [contentPackageWorldStartEn, contentPackageOpeningEn];
+  return paragraphs.reduce(
+    (text, paragraph) => text.replace(`${paragraph}\n\n`, ""),
+    defaultSettingImprovementPromptForLocale(locale),
+  );
 }

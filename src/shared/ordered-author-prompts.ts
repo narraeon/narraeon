@@ -1,5 +1,8 @@
 import type { AppLocale } from "../protocol/appPreferences.ts";
-import { defaultSettingImprovementPromptForLocale } from "./default-setting-improvement-prompt.ts";
+import {
+  defaultSettingImprovementPromptForLocale,
+  revisionSettingImprovementPromptForLocale,
+} from "./default-setting-improvement-prompt.ts";
 import { tabletopAuthorBody } from "./tabletop-guidance.ts";
 import type {
   BuiltinPlayPrompt,
@@ -7,7 +10,10 @@ import type {
 } from "./ordered-play-prompts.ts";
 
 /** Authoring uses the same permissions as play, with target-specific dynamic references. */
-export function builtinAuthorPrompts(locale: AppLocale): BuiltinPlayPrompt[] {
+export function builtinAuthorPrompts(
+  locale: AppLocale,
+  target: "setting" | "world-revision" = "setting",
+): BuiltinPlayPrompt[] {
   const zh = locale === "zh-CN";
   return [
     {
@@ -24,7 +30,10 @@ export function builtinAuthorPrompts(locale: AppLocale): BuiltinPlayPrompt[] {
       name: zh ? "创作建议" : "Authoring guidance",
       required: false,
       category: "policy",
-      body: defaultSettingImprovementPromptForLocale(locale),
+      body:
+        target === "world-revision"
+          ? revisionSettingImprovementPromptForLocale(locale)
+          : defaultSettingImprovementPromptForLocale(locale),
     },
     {
       id: "author.tabletop",

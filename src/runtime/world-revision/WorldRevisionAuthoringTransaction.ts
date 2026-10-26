@@ -70,6 +70,7 @@ export class WorldRevisionAuthoringTransaction {
     this.#inner = new SettingAuthoringTransaction({
       baseFiles: input.baseFiles,
       surface: worldRevisionAuthoringSurface,
+      additionalToolNames: historyToolNames,
       ...(input.locale === undefined ? {} : { locale: input.locale }),
       ...(input.revision === undefined ? {} : { revision: input.revision }),
       ...(input.authorization === undefined

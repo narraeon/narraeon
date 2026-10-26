@@ -21,8 +21,10 @@ import { authoringMechanics } from "../../src/shared/ordered-author-prompts.ts";
 import {
   defaultSettingImprovementPrompt,
   defaultSettingImprovementPromptEn,
+  defaultSettingImprovementPromptForLocale,
   defaultSettingImprovementPromptPath,
   defaultSettingImprovementPromptZhCN,
+  revisionSettingImprovementPromptForLocale,
 } from "../../src/shared/default-setting-improvement-prompt.ts";
 import { firstPartyGenericPanelsPresetFiles } from "../../src/shared/first-party-generic-panels.ts";
 import { firstPartyStatusPanelPresetFiles } from "../../src/shared/first-party-player-view.ts";
@@ -104,6 +106,26 @@ describe("旧格式默认提示词职责", () => {
     expect(defaultSettingImprovementPromptEn).not.toContain(
       "World documents contain only facts and stable rules that already hold when the world is created",
     );
+  });
+
+  test("运行中世界修订指导省略内容包专属段落，内容包指导保留它们", () => {
+    const contentPackageOnly = {
+      "zh-CN": "仅在内容包分支检查 opening.md",
+      en: "Inspect opening.md only in the content-package branch",
+    } as const;
+    const worldStart = {
+      "zh-CN": "内容包设定完善定义开场结束处的世界起点",
+      en: "Content-package setting improvement defines the world where the opening ends",
+    } as const;
+    for (const locale of ["zh-CN", "en"] as const) {
+      const contentPackage = defaultSettingImprovementPromptForLocale(locale);
+      const revision = revisionSettingImprovementPromptForLocale(locale);
+      expect(contentPackage).toContain(contentPackageOnly[locale]);
+      expect(contentPackage).toContain(worldStart[locale]);
+      expect(revision).not.toContain(contentPackageOnly[locale]);
+      expect(revision).not.toContain(worldStart[locale]);
+      expect(revision).not.toContain("opening.md");
+    }
   });
 
   test("默认 frame 保留职责顺序，世界 scaffold 不复制通用状态流程", () => {

@@ -949,3 +949,79 @@ function productionPreview(snapshot: WorldDocumentStore): PromptPreview {
     playPreset,
   );
 }
+
+test("移动文档的覆盖报告把旧路径标为已移动，删除仍标为已删除", () => {
+  const transaction = new SettingAuthoringTransaction({
+    baseFiles: minimalFileNativeContentScaffold("en"),
+    locale: "en",
+    preview: productionPreview,
+  });
+  const created = transaction.execute([
+    {
+      id: "create-lore",
+      name: "setting_create",
+      arguments: {
+        path: "world/lore/old-oath.md",
+        ref: "old-oath",
+        title: "The old oath",
+        summary: "Explains the promise that still constrains the two houses.",
+        aliases: [],
+        body: "# The old oath\n\nThe two houses may not draw steel inside the gate.\n",
+      },
+    },
+  ]);
+  expect(created.at(-1)?.isError).toBe(false);
+
+  const moved = transaction.execute([
+    {
+      id: "read-lore",
+      name: "setting_read",
+      arguments: { path: "world/lore/old-oath.md" },
+    },
+    {
+      id: "move-lore",
+      name: "setting_move",
+      arguments: {
+        from: "world/lore/old-oath.md",
+        to: "world/lore/oath.md",
+      },
+    },
+  ]);
+  const movedMarkdown = moved.at(-1)?.markdown ?? "";
+  expect(movedMarkdown).toContain(
+    "world/lore/old-oath.md — moved to world/lore/oath.md",
+  );
+  expect(movedMarkdown).not.toContain("old-oath.md — removed");
+
+  const deleted = transaction.execute([
+    {
+      id: "read-oath",
+      name: "setting_read",
+      arguments: { path: "world/lore/oath.md" },
+    },
+    {
+      id: "delete-oath",
+      name: "setting_delete",
+      arguments: { document: "world/lore/oath.md" },
+    },
+  ]);
+  expect(deleted.at(-1)?.markdown).toContain(
+    "world/lore/oath.md — removed from",
+  );
+});
+
+test("未知工具的拒绝回执列出额外提供的历史工具", () => {
+  const transaction = new SettingAuthoringTransaction({
+    baseFiles: minimalFileNativeContentScaffold("en"),
+    locale: "en",
+    preview: productionPreview,
+    additionalToolNames: ["history_list", "history_search", "history_read"],
+  });
+  const [result] = transaction.execute([
+    { id: "unknown", name: "history_write", arguments: {} },
+  ]);
+  expect(result?.isError).toBe(true);
+  expect(result?.markdown).toContain(
+    "history_list, history_search, history_read",
+  );
+});

@@ -610,7 +610,7 @@
         },
         {
           "toolCallId": "move-current-situation",
-          "markdown": "# Current-tree revision accepted\n\n- Moved @current-situation · world/current-situation.yaml → world/moved.yaml\n\nThis call was accepted independently. Every created or changed document above is already fully read; do not read it again unless a later decision needs Runtime's exact serialization.\n\n# Current-tree review passed\n\nContent-tree validation and the real Prompt Preview both passed. This tool response changed 3 file(s) in the content package. Use this review and the coverage below to decide whether the current user request is satisfied or further edits are needed.\n\n# Play-consumption coverage\n\nWorld documents: 0 full text injected; 0 node-only; 0 catalog-summary-only; 0 directly referenced; 1 on-demand-only.\n\n- control/blocks/extra.md — not enabled by control/frame.yaml\n- world/current-situation.yaml — removed from the content package current tree\n- world/moved.yaml — on-demand only\n\nChanged world documents marked on-demand only are not present in a fresh play prompt. If play should discover them reliably, consider adding a catalog, injected reference, or world instruction.\n\nChanged control blocks not enabled by control/frame.yaml never reach ordinary play AI. Add each intended block to frame.instructions or remove the unused file.\n\n",
+          "markdown": "# Current-tree revision accepted\n\n- Moved @current-situation · world/current-situation.yaml → world/moved.yaml\n\nThis call was accepted independently. Every created or changed document above is already fully read; do not read it again unless a later decision needs Runtime's exact serialization.\n\n# Current-tree review passed\n\nContent-tree validation and the real Prompt Preview both passed. This tool response changed 3 file(s) in the content package. Use this review and the coverage below to decide whether the current user request is satisfied or further edits are needed.\n\n# Play-consumption coverage\n\nWorld documents: 0 full text injected; 0 node-only; 0 catalog-summary-only; 0 directly referenced; 1 on-demand-only.\n\n- control/blocks/extra.md — not enabled by control/frame.yaml\n- world/current-situation.yaml — moved to world/moved.yaml\n- world/moved.yaml — on-demand only\n\nChanged world documents marked on-demand only are not present in a fresh play prompt. If play should discover them reliably, consider adding a catalog, injected reference, or world instruction.\n\nChanged control blocks not enabled by control/frame.yaml never reach ordinary play AI. Add each intended block to frame.instructions or remove the unused file.\n\n",
           "isError": false,
           "changes": [
             {
@@ -677,8 +677,9 @@
             },
             {
               "path": "world/current-situation.yaml",
-              "access": "removed",
-              "detail": "removed from the content package current tree"
+              "access": "moved",
+              "detail": "its document identity continues at the new path",
+              "movedTo": "world/moved.yaml"
             },
             {
               "path": "world/moved.yaml",
@@ -1320,7 +1321,7 @@
         },
         {
           "toolCallId": "move-current-situation",
-          "markdown": "# 当前树 revision 已接受\n\n- 移动 @current-situation · world/current-situation.yaml → world/moved.yaml\n\n本调用已独立接受。上方新建或修改的文档均视为已经完整读取；除非后续判断依赖 Runtime 的精确序列化结果，否则不要再次读取。\n\n# 当前树自动检查通过\n\n内容树校验和真实 Prompt Preview 均已通过；本次工具响应修改内容包中的 3 个文件。请根据本次检查与下方覆盖报告判断当前用户要求是否已经满足，或是否还需修改。\n\n# 游玩读取覆盖\n\n世界文档：0 份全文注入；0 份仅节点注入；0 份仅目录摘要；0 份由已注入内容直接引用；1 份仅按需发现。\n\n- control/blocks/extra.md — 未被 control/frame.yaml 启用\n- world/current-situation.yaml — 已从内容包当前树删除\n- world/moved.yaml — 仅按需发现\n\n标为仅按需发现的改动世界文档不会出现在全新游玩提示中；如果游玩应可靠发现它们，请考虑增加目录、由已注入内容建立引用，或加入世界指令。\n\n未被 control/frame.yaml 启用的改动控制块不会进入普通游玩 AI；请把确实需要的块加入 frame.instructions，或删除无用文件。\n\n",
+          "markdown": "# 当前树 revision 已接受\n\n- 移动 @current-situation · world/current-situation.yaml → world/moved.yaml\n\n本调用已独立接受。上方新建或修改的文档均视为已经完整读取；除非后续判断依赖 Runtime 的精确序列化结果，否则不要再次读取。\n\n# 当前树自动检查通过\n\n内容树校验和真实 Prompt Preview 均已通过；本次工具响应修改内容包中的 3 个文件。请根据本次检查与下方覆盖报告判断当前用户要求是否已经满足，或是否还需修改。\n\n# 游玩读取覆盖\n\n世界文档：0 份全文注入；0 份仅节点注入；0 份仅目录摘要；0 份由已注入内容直接引用；1 份仅按需发现。\n\n- control/blocks/extra.md — 未被 control/frame.yaml 启用\n- world/current-situation.yaml — 已移动到 world/moved.yaml\n- world/moved.yaml — 仅按需发现\n\n标为仅按需发现的改动世界文档不会出现在全新游玩提示中；如果游玩应可靠发现它们，请考虑增加目录、由已注入内容建立引用，或加入世界指令。\n\n未被 control/frame.yaml 启用的改动控制块不会进入普通游玩 AI；请把确实需要的块加入 frame.instructions，或删除无用文件。\n\n",
           "isError": false,
           "changes": [
             {
@@ -1387,8 +1388,9 @@
             },
             {
               "path": "world/current-situation.yaml",
-              "access": "removed",
-              "detail": "removed from the content package current tree"
+              "access": "moved",
+              "detail": "its document identity continues at the new path",
+              "movedTo": "world/moved.yaml"
             },
             {
               "path": "world/moved.yaml",
