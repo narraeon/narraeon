@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { isPackageFollowupControlPath } from "../content/PackageFollowups.ts";
 import { renderWorldMaintenanceReport } from "../prompt/WorldMaintenanceReport.ts";
 import { listWorldDocuments as listQueryableWorldDocuments } from "../prompt/WorldMaintenanceReport.ts";
@@ -2075,43 +2076,121 @@ function searchDocuments(
   const within = searchScope(args.within, surface);
   if (within === invalidScope)
     return failure(`Invalid ${tool} within scope`, locale);
-  const result = snapshot.query({
-    kind: "literal_search",
-    query,
-    caseSensitive: args.caseSensitive === true,
-    ...(within === undefined ? {} : { within }),
-    limit,
-    ...(args.cursor === undefined ? {} : { cursor: args.cursor }),
-  });
-  if (result.kind === "error")
-    return renderQueryFailure(result, surface, locale);
-  if (result.kind !== "literal_search")
-    throw new Error("Unexpected literal search result");
-  const lines = groupMatchesByLine(result.matches).map(
-    ({ shortRef, line, columns }) =>
-      `- @${shortRef} · ${line}:${columns.join(",")}`,
+  const matches: LiteralSearchMatch[] = [];
+  let storeCursor: string | null = null;
+  let snapshotId: string;
+  do {
+    const result = snapshot.query({
+      kind: "literal_search",
+      query,
+      caseSensitive: args.caseSensitive === true,
+      ...(within === undefined ? {} : { within }),
+      limit: 100,
+      ...(storeCursor === null ? {} : { cursor: storeCursor }),
+    });
+    if (result.kind === "error")
+      return renderQueryFailure(result, surface, locale);
+    if (result.kind !== "literal_search")
+      throw new Error("Unexpected literal search result");
+    matches.push(...result.matches);
+    snapshotId = result.snapshotId;
+    storeCursor = result.page.nextCursor;
+  } while (storeCursor !== null);
+  // Pages count whole document lines so one line never spans two pages.
+  const groups = groupMatchesByLine(matches);
+  const scope = createHash("sha256")
+    .update(
+      JSON.stringify({
+        query,
+        caseSensitive: args.caseSensitive === true,
+        within: within ?? null,
+        limit,
+        snapshotId,
+      }),
+    )
+    .digest("base64url")
+    .slice(0, 22);
+  const offset =
+    args.cursor === undefined ? 0 : decodeLineCursor(args.cursor, scope);
+  if (offset === null || offset > groups.length)
+    return failure(`Invalid ${tool} cursor`, locale);
+  const page = groups.slice(offset, offset + limit);
+  const end = offset + page.length;
+  const complete = end >= groups.length;
+  const lines = page.map(
+    ({ shortRef, line, columns, excerpt }) =>
+      `- @${shortRef} · ${line}:${columns.join(",")}\n  ${JSON.stringify(excerpt)}`,
   );
   return success(
-    `# ${localized(locale, "Literal setting search", "设定字面搜索")}\n\n${lines.join("\n") || localized(locale, "Zero literal matches do not prove the fact is absent.", "0 个字面命中不证明设定中不存在该事实。")}\n\n${pageFooter(result.page, locale)}`,
+    `# ${localized(locale, "Literal setting search", "设定字面搜索")}\n\n${lines.join("\n") || localized(locale, "Zero literal matches do not prove the fact is absent.", "0 个字面命中不证明设定中不存在该事实。")}\n\n${pageFooter(
+      {
+        start: offset,
+        end,
+        total: groups.length,
+        complete,
+        nextCursor: complete ? null : encodeLineCursor(scope, end),
+      },
+      locale,
+    )}`,
   );
 }
 
+interface LiteralSearchMatch {
+  document: { shortRef: string };
+  range: { start: { line: number; column: number } };
+  referenceProjection: { excerpt: string };
+}
+
+function encodeLineCursor(scope: string, offset: number): string {
+  return Buffer.from(JSON.stringify({ scope, offset })).toString("base64url");
+}
+
+/** Returns the grouped-line offset, or null when the cursor is not for this scope. */
+function decodeLineCursor(cursor: unknown, scope: string): number | null {
+  if (typeof cursor !== "string") return null;
+  try {
+    const decoded: unknown = JSON.parse(
+      Buffer.from(cursor, "base64url").toString("utf8"),
+    );
+    if (!isRecord(decoded) || decoded.scope !== scope) return null;
+    return typeof decoded.offset === "number" &&
+      Number.isInteger(decoded.offset) &&
+      decoded.offset >= 0
+      ? decoded.offset
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Hits on one line share a single entry; document order is preserved. */
-function groupMatchesByLine(
-  matches: readonly {
-    document: { shortRef: string };
-    range: { start: { line: number; column: number } };
-  }[],
-): { shortRef: string; line: number; columns: number[] }[] {
-  const groups: { shortRef: string; line: number; columns: number[] }[] = [];
+function groupMatchesByLine(matches: readonly LiteralSearchMatch[]): {
+  shortRef: string;
+  line: number;
+  columns: number[];
+  excerpt: string;
+}[] {
+  const groups: {
+    shortRef: string;
+    line: number;
+    columns: number[];
+    excerpt: string;
+  }[] = [];
   for (const {
     document: { shortRef },
     range: { start },
+    referenceProjection: { excerpt },
   } of matches) {
     const group = groups.at(-1);
     if (group?.shortRef === shortRef && group.line === start.line)
       group.columns.push(start.column);
-    else groups.push({ shortRef, line: start.line, columns: [start.column] });
+    else
+      groups.push({
+        shortRef,
+        line: start.line,
+        columns: [start.column],
+        excerpt,
+      });
   }
   return groups;
 }

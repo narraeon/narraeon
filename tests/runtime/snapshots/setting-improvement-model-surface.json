@@ -536,7 +536,7 @@
         },
         {
           "toolCallId": "search-situation",
-          "markdown": "# Literal setting search\n\n- @current-situation · 4:18\n- @current-situation · 5:27\n\nPage 0..2 / 2\nComplete: yes",
+          "markdown": "# Literal setting search\n\n- @current-situation · 4:18\n  \"  title: Current situation\"\n- @current-situation · 5:27\n  \"  summary: The short-term situation happening now that must not be forgotten next.\"\n\nPage 0..2 / 2\nComplete: yes",
           "isError": false,
           "changes": []
         },

@@ -968,7 +968,7 @@ test("设定目录 list 整份返回超过 20 份文档的目录，并忽略旧 
   expect(legacy?.markdown).toBe(full?.markdown);
 });
 
-test("设定字面搜索每行一条并列出该行全部列号，不重复完整路径与摘录", () => {
+test("设定字面搜索每行一条并列出该行全部列号与原文摘录，不重复完整路径", () => {
   const transaction = new SettingAuthoringTransaction({
     baseFiles: minimalFileNativeContentScaffold("zh-CN"),
     locale: "zh-CN",
@@ -992,15 +992,73 @@ test("设定字面搜索每行一条并列出该行全部列号，不重复完�
     { id: "search-xin", name: "setting_search", arguments: { query: "信" } },
   ]);
   const markdown = search?.markdown ?? "";
-  const entries = markdown
-    .split("\n")
-    .filter((line) => line.startsWith("- @letters ·"));
-  const lines = entries.map((line) => line.split(" · ")[1]?.split(":")[0]);
-  expect(entries.length).toBeGreaterThan(1);
-  expect(new Set(lines).size).toBe(entries.length);
-  expect(entries.some((line) => /· \d+:\d+,\d+/u.test(line))).toBe(true);
+  const body = markdown.split("\n");
+  const entryIndexes = body
+    .map((line, index) => (line.startsWith("- @letters ·") ? index : -1))
+    .filter((index) => index >= 0);
+  const lines = entryIndexes.map(
+    (index) => body[index]!.split(" · ")[1]?.split(":")[0],
+  );
+  expect(entryIndexes.length).toBeGreaterThan(1);
+  expect(new Set(lines).size).toBe(entryIndexes.length);
+  expect(
+    entryIndexes.some((index) => /· \d+:\d+(?:,\d+)+$/u.test(body[index]!)),
+  ).toBe(true);
+  for (const index of entryIndexes)
+    expect(body[index + 1]).toMatch(/^ {2}".*信.*"$/u);
   expect(markdown).not.toContain("world/letters/letters.yaml");
-  expect(markdown).not.toMatch(/^ {2}"/mu);
+});
+
+test("设定字面搜索按行分页，同一行的命中不被拆到两页", () => {
+  const transaction = new SettingAuthoringTransaction({
+    baseFiles: minimalFileNativeContentScaffold("zh-CN"),
+    locale: "zh-CN",
+    preview: () => preview,
+  });
+  const body = Array.from(
+    { length: 30 },
+    (_, index) => `  第${index + 1}封信：信里写着信使说的话。`,
+  ).join("\n");
+  transaction.execute([
+    {
+      id: "create-bulk-letters",
+      name: "setting_create",
+      arguments: {
+        path: "world/letters/bulk.yaml",
+        ref: "bulk-letters",
+        title: "整批来信",
+        summary: "三十行往来信件。",
+        aliases: [],
+        body: `letters: |\n${body}\n`,
+      },
+    },
+  ]);
+  const lineNumbers = (markdown: string) =>
+    markdown
+      .split("\n")
+      .filter((line) => line.startsWith("- @bulk-letters ·"))
+      .map((line) => line.split(" · ")[1]?.split(":")[0]);
+  const [first] = transaction.execute([
+    {
+      id: "page-1",
+      name: "setting_search",
+      arguments: { query: "信", limit: 10 },
+    },
+  ]);
+  const firstLines = lineNumbers(first?.markdown ?? "");
+  expect(firstLines).toHaveLength(10);
+  expect(first?.markdown).toMatch(/^Next cursor: /mu);
+  const cursor = /^Next cursor: (\S+)$/mu.exec(first?.markdown ?? "")?.[1];
+  const [second] = transaction.execute([
+    {
+      id: "page-2",
+      name: "setting_search",
+      arguments: { query: "信", limit: 10, cursor },
+    },
+  ]);
+  const secondLines = lineNumbers(second?.markdown ?? "");
+  expect(secondLines).toHaveLength(10);
+  expect(new Set([...firstLines, ...secondLines]).size).toBe(20);
 });
 
 test("写入回执不再重复独立接受的样板，读取回执不再标注 Complete: yes", () => {
