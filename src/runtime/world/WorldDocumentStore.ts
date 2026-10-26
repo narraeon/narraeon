@@ -12,6 +12,7 @@ import {
   isSeq,
   parseDocument,
   stringify,
+  type Document,
   type Node,
   type Pair,
   type YAMLMap,
@@ -487,6 +488,18 @@ export interface WorldDocumentRevisionChange {
   readonly commandIndex: number | null;
 }
 
+/**
+ * How one edit of a patch command settled. Edits settle one by one: an edit
+ * that cannot apply is skipped and the edits around it still apply.
+ */
+export interface WorldDocumentEditOutcome {
+  readonly commandIndex: number;
+  readonly editIndex: number;
+  readonly status: "applied" | "no_op" | "failed";
+  /** Present for no_op (the target was absent) and failed edits. */
+  readonly diagnostic?: WorldDocumentDiagnostic;
+}
+
 export interface WorldDocumentRevisionSuccess {
   readonly kind: "revision";
   readonly ok: true;
@@ -496,6 +509,7 @@ export interface WorldDocumentRevisionSuccess {
   readonly files: readonly WorldDocumentFile[];
   readonly diagnostics: readonly WorldDocumentRevisionDiagnostic[];
   readonly changes: readonly WorldDocumentRevisionChange[];
+  readonly editOutcomes: readonly WorldDocumentEditOutcome[];
 }
 
 export interface WorldDocumentRevisionFailure {
@@ -504,6 +518,8 @@ export interface WorldDocumentRevisionFailure {
   readonly sourceSnapshotId: string;
   readonly snapshotStatus: WorldDocumentSnapshotStatus;
   readonly diagnostics: readonly WorldDocumentRevisionDiagnostic[];
+  /** Set when a patch command failed because none of its edits applied. */
+  readonly editOutcomes: readonly WorldDocumentEditOutcome[];
 }
 
 export type WorldDocumentRevisionResult =
@@ -641,6 +657,7 @@ export class WorldDocumentStore {
         original: file,
         lastCommandIndex: null,
       }));
+      const editOutcomes: WorldDocumentEditOutcome[] = [];
       for (const [commandIndex, command] of request.commands.entries()) {
         activeCommandIndex = commandIndex;
         if (!isRecord(command) || typeof command.kind !== "string")
@@ -1039,250 +1056,75 @@ export class WorldDocumentStore {
           );
           if ("diagnostics" in target)
             return this.#revisionFailure(commandIndex, target.diagnostics);
-          if (target.entry.codec === "markdown") {
-            const patched = patchRevisionMarkdown(
-              target.working.file.contents,
-              command.edits,
-              target.entry.descriptor,
+          const logicalPath = target.working.file.path;
+          const probe = (contents: string) =>
+            this.#localRevisionDiagnostics(
+              WorldDocumentStore.open({
+                layout: this.layout,
+                files: working.map(({ file }) =>
+                  file.path === logicalPath
+                    ? { path: logicalPath, contents }
+                    : file,
+                ),
+              }),
+              logicalPath,
             );
-            if ("diagnostics" in patched)
-              return this.#revisionFailure(
-                commandIndex,
-                patched.diagnostics.map((problem) => ({
-                  ...problem,
-                  logicalPath: target.entry.file.path,
-                  documentId: target.entry.descriptor.documentId,
-                })),
-              );
-            target.working.file.contents = patched.contents;
-          } else {
-            let document = parseDocument(target.working.file.contents, {
-              schema: "core",
-              uniqueKeys: true,
-              strict: true,
-            });
-            let metadata: WorldDocumentMetadataInput = {
-              title: target.entry.descriptor.title,
-              summary: target.entry.descriptor.summary,
-              aliases: [...target.entry.descriptor.aliases],
-            };
-            for (const edit of command.edits) {
-              if (!isRecord(edit) || typeof edit.op !== "string")
-                return this.#revisionFailure(commandIndex, {
-                  code: "query_invalid",
-                  logicalPath: target.entry.file.path,
-                  documentId: target.entry.descriptor.documentId,
-                  message: "A patch edit must be a closed object with op",
-                });
-              if (edit.op === "set_metadata") {
-                if (!hasOnlyKeys(edit, ["op", "title", "summary", "aliases"]))
-                  return this.#revisionFailure(commandIndex, {
-                    code: "document_header_invalid",
-                    logicalPath: target.entry.file.path,
-                    documentId: target.entry.descriptor.documentId,
-                    message:
-                      "set_metadata accepts only op, title, summary, and aliases",
-                  });
-                const resolved = resolveDocumentMetadataRevision(
-                  metadata,
-                  edit,
-                );
-                if ("problems" in resolved)
-                  return this.#revisionFailure(commandIndex, {
-                    code: "document_header_invalid",
-                    logicalPath: target.entry.file.path,
-                    documentId: target.entry.descriptor.documentId,
-                    message: `set_metadata arguments are invalid: ${resolved.problems.join("; ")}`,
-                  });
-                metadata = resolved.metadata;
-                document.setIn(["$document", "title"], metadata.title);
-                document.setIn(["$document", "summary"], metadata.summary);
-                document.setIn(["$document", "aliases"], [...metadata.aliases]);
-                continue;
-              }
-              if (
-                !["add", "replace", "append", "remove"].includes(edit.op) ||
-                !validYamlLocator(edit.locator) ||
-                edit.locator.yaml[0] === "$document"
-              )
-                return this.#revisionFailure(commandIndex, {
-                  code: "locator_invalid",
-                  logicalPath: target.entry.file.path,
-                  documentId: target.entry.descriptor?.documentId,
-                  ...(isRecord(edit) && isRecord(edit.locator)
-                    ? {
-                        locator: copyLocator(
-                          edit.locator as unknown as WorldDocumentLocator,
-                        ),
-                      }
-                    : {}),
-                  message:
-                    "A YAML edit requires an exact locator outside the technical header",
-                });
-              const locator = [...edit.locator.yaml];
-              if (locator.length === 0) {
-                if (
-                  (edit.op !== "add" && edit.op !== "replace") ||
-                  !hasOnlyKeys(edit, ["op", "locator", "value"])
-                )
-                  return this.#revisionFailure(commandIndex, {
-                    code: "locator_invalid",
-                    logicalPath: target.entry.file.path,
-                    documentId: target.entry.descriptor.documentId,
-                    locator: { yaml: [] },
-                    message: "A whole YAML body supports only add or replace",
-                  });
-                const value = this.#resolveRevisionYamlValue(
-                  edit.value,
-                  current,
-                  working,
-                  { referenceInput: "persistent_or_explicit" },
-                  [],
-                );
-                if ("diagnostics" in value)
-                  return this.#revisionFailure(
-                    commandIndex,
-                    value.diagnostics.map((problem) => ({
-                      ...problem,
-                      logicalPath: target.entry.file.path,
-                      documentId: target.entry.descriptor.documentId,
-                    })),
-                  );
-                if (
-                  !isRecord(value.value) ||
-                  Object.hasOwn(value.value, "$document")
-                )
-                  return this.#revisionFailure(commandIndex, {
-                    code: "yaml_invalid",
-                    logicalPath: target.entry.file.path,
-                    documentId: target.entry.descriptor.documentId,
-                    locator: { yaml: [] },
-                    message:
-                      "A whole YAML body must be a map without $document",
-                  });
-                const currentValue: unknown = document.toJS({
-                  maxAliasCount: 0,
-                });
-                if (
-                  !isRecord(currentValue) ||
-                  !isRecord(currentValue.$document)
-                )
-                  return this.#revisionFailure(commandIndex, {
-                    code: "document_header_invalid",
-                    logicalPath: target.entry.file.path,
-                    documentId: target.entry.descriptor.documentId,
-                    message: "YAML technical header could not be preserved",
-                  });
-                if (
-                  edit.op === "add" &&
-                  Object.keys(currentValue).some((key) => key !== "$document")
-                )
-                  return this.#revisionFailure(commandIndex, {
-                    code: "locator_invalid",
-                    logicalPath: target.entry.file.path,
-                    documentId: target.entry.descriptor.documentId,
-                    locator: { yaml: [] },
-                    message:
-                      "Adding a whole YAML body requires the current body to be empty",
-                  });
-                document = parseDocument(
-                  stringify(
-                    { $document: currentValue.$document, ...value.value },
-                    { indent: 2, lineWidth: 0 },
-                  ),
-                  { schema: "core", uniqueKeys: true, strict: true },
-                );
-                continue;
-              }
-              const exists = document.hasIn(locator);
-              if (edit.op === "remove") {
-                if (!hasOnlyKeys(edit, ["op", "locator"]) || !exists)
-                  return this.#revisionFailure(commandIndex, {
-                    code: "locator_not_found",
-                    logicalPath: target.entry.file.path,
-                    documentId: target.entry.descriptor.documentId,
-                    locator: { yaml: locator },
-                    message: "YAML remove target must exist",
-                  });
-                document.deleteIn(locator);
-                continue;
-              }
-              if (!hasOnlyKeys(edit, ["op", "locator", "value"]))
-                return this.#revisionFailure(commandIndex, {
-                  code: "query_invalid",
-                  logicalPath: target.entry.file.path,
-                  documentId: target.entry.descriptor.documentId,
-                  locator: { yaml: locator },
-                  message: "YAML value-edit arguments are invalid",
-                });
-              let valueLocator = locator;
-              if (edit.op === "append") {
-                const sequence = document.getIn(locator, true);
-                if (!isSeq(sequence))
-                  return this.#revisionFailure(commandIndex, {
-                    code: "locator_invalid",
-                    logicalPath: target.entry.file.path,
-                    documentId: target.entry.descriptor.documentId,
-                    locator: { yaml: locator },
-                    message: "YAML append target must be a sequence",
-                  });
-                valueLocator = [...locator, sequence.items.length];
-              }
-              const value = this.#resolveRevisionYamlValue(
-                edit.value,
-                current,
-                working,
-                { referenceInput: "persistent_or_explicit" },
-                valueLocator,
-              );
-              if ("diagnostics" in value)
-                return this.#revisionFailure(
-                  commandIndex,
-                  value.diagnostics.map((problem) => ({
-                    ...problem,
-                    logicalPath: target.entry.file.path,
-                    documentId: target.entry.descriptor?.documentId,
-                  })),
-                );
-              if (edit.op === "add") {
-                const parent =
-                  locator.length === 1
-                    ? document.contents
-                    : document.getIn(locator.slice(0, -1), true);
-                const last = locator.at(-1);
-                const parentAcceptsLocator =
-                  (isMap(parent) && typeof last === "string") ||
-                  (isSeq(parent) && typeof last === "number");
-                if (exists || !parentAcceptsLocator)
-                  return this.#revisionFailure(commandIndex, {
-                    code: "locator_invalid",
-                    logicalPath: target.entry.file.path,
-                    documentId: target.entry.descriptor.documentId,
-                    locator: { yaml: locator },
-                    message:
-                      "YAML add target must not exist, and its parent map or sequence must exist",
-                  });
-                document.setIn(locator, value.value);
-              } else if (edit.op === "replace") {
-                if (!exists)
-                  return this.#revisionFailure(commandIndex, {
-                    code: "locator_not_found",
-                    logicalPath: target.entry.file.path,
-                    documentId: target.entry.descriptor.documentId,
-                    locator: { yaml: locator },
-                    message: "YAML replace target must exist",
-                  });
-                document.setIn(locator, value.value);
-              } else document.addIn(locator, value.value);
+          const resolveValue: WorldDocumentYamlValueResolver = (
+            value,
+            locator,
+          ) =>
+            this.#resolveRevisionYamlValue(
+              value,
+              current,
+              working,
+              { referenceInput: "persistent_or_explicit" },
+              locator,
+            );
+          // Each edit settles on its own: it is applied to the text left by the
+          // edits before it, validated alone, and skipped if it cannot apply.
+          let contents = target.working.file.contents;
+          let metadata: WorldDocumentMetadataInput = {
+            title: target.entry.descriptor.title,
+            summary: target.entry.descriptor.summary,
+            aliases: [...target.entry.descriptor.aliases],
+          };
+          const outcomes: WorldDocumentEditOutcome[] = [];
+          for (const [editIndex, edit] of command.edits.entries()) {
+            let settled: RevisionEditResult =
+              target.entry.codec === "markdown"
+                ? applyMarkdownRevisionEdit(contents, metadata, edit)
+                : applyYamlRevisionEdit(contents, metadata, edit, resolveValue);
+            if (settled.kind === "applied") {
+              const problems = probe(settled.contents);
+              if (problems.length > 0)
+                settled = { kind: "failed", diagnostic: problems[0]! };
             }
-            target.working.file.contents = document.toString({
-              indent: 2,
-              lineWidth: 0,
-            });
+            if (settled.kind === "applied") {
+              contents = settled.contents;
+              metadata = settled.metadata;
+            }
+            outcomes.push(
+              revisionEditOutcome(commandIndex, editIndex, settled, {
+                logicalPath,
+                documentId: target.entry.descriptor.documentId,
+              }),
+            );
           }
-          delete target.working.file.encoding;
+          if (outcomes.some(({ status }) => status === "applied")) {
+            target.working.file.contents = contents;
+            delete target.working.file.encoding;
+          }
           target.working.lastCommandIndex = commandIndex;
-          touchedPath = target.working.file.path;
+          touchedPath = logicalPath;
+          editOutcomes.push(...outcomes);
+          if (outcomes.every(({ status }) => status === "failed"))
+            return this.#revisionFailure(
+              commandIndex,
+              outcomes.flatMap(({ diagnostic }) =>
+                diagnostic === undefined ? [] : [diagnostic],
+              ),
+              outcomes,
+            );
         } else
           return this.#revisionFailure(commandIndex, {
             code: "query_invalid",
@@ -1320,6 +1162,7 @@ export class WorldDocumentStore {
               return revisionDiagnostic(commandIndex ?? null, problem);
             }),
           ),
+          editOutcomes: freeze([...editOutcomes]),
         });
       const changes = working
         .filter(
@@ -1368,6 +1211,7 @@ export class WorldDocumentStore {
         files: snapshot.files,
         diagnostics: freeze([]),
         changes: freeze(changes),
+        editOutcomes: freeze(editOutcomes),
       });
     } catch {
       return this.#revisionFailure(activeCommandIndex, {
@@ -1380,6 +1224,7 @@ export class WorldDocumentStore {
   #revisionFailure(
     commandIndex: number | null,
     problem: WorldDocumentDiagnostic | readonly WorldDocumentDiagnostic[],
+    editOutcomes: readonly WorldDocumentEditOutcome[] = [],
   ): WorldDocumentRevisionFailure {
     const diagnostics: readonly WorldDocumentDiagnostic[] = Array.isArray(
       problem,
@@ -1396,6 +1241,7 @@ export class WorldDocumentStore {
           revisionDiagnostic(commandIndex, candidate),
         ),
       ),
+      editOutcomes: freeze([...editOutcomes]),
     });
   }
 
@@ -3583,231 +3429,518 @@ function scanMarkdownHeadings(
   return { headings, hasUnclosedFence: fence !== null };
 }
 
-function patchRevisionMarkdown(
-  source: string,
-  edits: readonly unknown[],
-  initialMetadata: WorldDocumentMetadataInput,
-):
-  | { readonly contents: string }
-  | { readonly diagnostics: readonly WorldDocumentDiagnostic[] } {
-  let contents = source;
-  let metadata: WorldDocumentMetadataInput = {
-    title: initialMetadata.title,
-    summary: initialMetadata.summary,
-    aliases: [...initialMetadata.aliases],
+type WorldDocumentYamlValueResolver = (
+  value: unknown,
+  locator: readonly (string | number)[],
+) =>
+  | { readonly value: unknown }
+  | { readonly diagnostics: readonly WorldDocumentDiagnostic[] };
+
+/** Result of applying one edit to the text it is given; never partially applied. */
+type RevisionEditResult =
+  | {
+      readonly kind: "applied";
+      readonly contents: string;
+      readonly metadata: WorldDocumentMetadataInput;
+    }
+  | { readonly kind: "no_op"; readonly diagnostic: WorldDocumentDiagnostic }
+  | { readonly kind: "failed"; readonly diagnostic: WorldDocumentDiagnostic };
+
+function revisionEditOutcome(
+  commandIndex: number,
+  editIndex: number,
+  result: RevisionEditResult,
+  document: { readonly logicalPath: string; readonly documentId: string },
+): WorldDocumentEditOutcome {
+  return freeze(
+    result.kind === "applied"
+      ? { commandIndex, editIndex, status: "applied" as const }
+      : {
+          commandIndex,
+          editIndex,
+          status: result.kind,
+          diagnostic: freeze({ ...result.diagnostic, ...document }),
+        },
+  );
+}
+
+function editFailed(problem: WorldDocumentDiagnostic): RevisionEditResult {
+  return { kind: "failed", diagnostic: problem };
+}
+
+function editTargetAbsent(locator: WorldDocumentLocator): RevisionEditResult {
+  return {
+    kind: "no_op",
+    diagnostic: diagnostic({
+      code: "locator_not_found",
+      locator,
+      message: "target absent",
+    }),
   };
-  for (const edit of edits) {
-    if (!isRecord(edit) || typeof edit.op !== "string")
-      return {
-        diagnostics: [
-          diagnostic({
-            code: "query_invalid",
-            message: "A Markdown patch edit must be a closed object with op",
-          }),
-        ],
-      };
-    if (edit.op === "set_metadata") {
-      if (!hasOnlyKeys(edit, ["op", "title", "summary", "aliases"]))
-        return {
-          diagnostics: [
-            diagnostic({
-              code: "document_header_invalid",
-              message:
-                "set_metadata accepts only op, title, summary, and aliases",
-            }),
-          ],
-        };
-      const resolved = resolveDocumentMetadataRevision(metadata, edit);
-      if ("problems" in resolved)
-        return {
-          diagnostics: [
-            diagnostic({
-              code: "document_header_invalid",
-              message: `set_metadata arguments are invalid: ${resolved.problems.join("; ")}`,
-            }),
-          ],
-        };
-      metadata = resolved.metadata;
-      const envelope = markdownEnvelope(contents);
-      if ("diagnostics" in envelope) return envelope;
-      envelope.header.setIn(["$document", "title"], metadata.title);
-      envelope.header.setIn(["$document", "summary"], metadata.summary);
-      envelope.header.setIn(["$document", "aliases"], [...metadata.aliases]);
-      const body = contents.slice(envelope.bodyStart);
-      const firstHeading = scanMarkdownHeadings(body, 0).headings[0];
-      if (firstHeading?.level !== 1)
-        return {
-          diagnostics: [
-            diagnostic({
-              code: "markdown_invalid",
-              message: "Markdown body is missing an updateable h1",
-            }),
-          ],
-        };
-      const nextBody = `${body.slice(0, firstHeading.range.start.offset)}# ${metadata.title}${body.slice(firstHeading.range.end.offset)}`;
-      contents = `---\n${envelope.header.toString({ indent: 2, lineWidth: 0 }).trimEnd()}\n---\n${nextBody}`;
-      continue;
-    }
-    if (edit.op === "replace_body" || edit.op === "replace_preamble") {
-      if (
-        !hasOnlyKeys(edit, ["op", "markdown"]) ||
-        typeof edit.markdown !== "string"
-      )
-        return {
-          diagnostics: [
-            diagnostic({
-              code: "query_invalid",
-              message: "A Markdown body edit requires markdown source",
-            }),
-          ],
-        };
-      const envelope = markdownEnvelope(contents);
-      if ("diagnostics" in envelope) return envelope;
-      if (edit.op === "replace_body") {
-        contents = `${contents.slice(0, envelope.bodyStart)}${edit.markdown.trimEnd()}\n`;
-        continue;
-      }
-      const headings = scanMarkdownHeadings(
-        contents,
-        envelope.bodyStart,
-      ).headings;
-      const h1 = headings.find(({ level }) => level === 1);
-      if (h1 === undefined)
-        return {
-          diagnostics: [
-            diagnostic({
-              code: "markdown_invalid",
-              message: "Markdown body is missing an updateable h1",
-            }),
-          ],
-        };
-      const nextH2 = headings.find(
-        ({ level, range }) =>
-          level === 2 && range.start.offset > h1.range.start.offset,
+}
+
+function applyYamlRevisionEdit(
+  contents: string,
+  metadata: WorldDocumentMetadataInput,
+  edit: unknown,
+  resolveValue: WorldDocumentYamlValueResolver,
+): RevisionEditResult {
+  if (!isRecord(edit) || typeof edit.op !== "string")
+    return editFailed(
+      diagnostic({
+        code: "query_invalid",
+        message: "A patch edit must be a closed object with op",
+      }),
+    );
+  const document = parseDocument(contents, {
+    schema: "core",
+    uniqueKeys: true,
+    strict: true,
+  });
+  const serialized = (nextMetadata: WorldDocumentMetadataInput) => ({
+    kind: "applied" as const,
+    contents: document.toString({ indent: 2, lineWidth: 0 }),
+    metadata: nextMetadata,
+  });
+  if (edit.op === "set_metadata") {
+    if (!hasOnlyKeys(edit, ["op", "title", "summary", "aliases"]))
+      return editFailed(
+        diagnostic({
+          code: "document_header_invalid",
+          message: "set_metadata accepts only op, title, summary, and aliases",
+        }),
       );
-      const end = nextH2?.range.start.offset ?? contents.length;
-      contents = `${contents.slice(0, h1.range.end.offset)}\n\n${edit.markdown.trim()}\n\n${contents.slice(end)}`;
-      continue;
-    }
+    const resolved = resolveDocumentMetadataRevision(metadata, edit);
+    if ("problems" in resolved)
+      return editFailed(
+        diagnostic({
+          code: "document_header_invalid",
+          message: `set_metadata arguments are invalid: ${resolved.problems.join("; ")}`,
+        }),
+      );
+    document.setIn(["$document", "title"], resolved.metadata.title);
+    document.setIn(["$document", "summary"], resolved.metadata.summary);
+    document.setIn(["$document", "aliases"], [...resolved.metadata.aliases]);
+    return serialized(resolved.metadata);
+  }
+  if (
+    !["add", "replace", "append", "remove"].includes(edit.op) ||
+    !validYamlLocator(edit.locator) ||
+    edit.locator.yaml[0] === "$document"
+  )
+    return editFailed(
+      diagnostic({
+        code: "locator_invalid",
+        ...(isRecord(edit.locator)
+          ? {
+              locator: copyLocator(
+                edit.locator as unknown as WorldDocumentLocator,
+              ),
+            }
+          : {}),
+        message:
+          "A YAML edit requires an exact locator outside the technical header",
+      }),
+    );
+  const locator = [...edit.locator.yaml];
+  if (locator.length === 0) {
     if (
-      ![
-        "replace_section",
-        "add_section",
-        "rename_section",
-        "remove_section",
-      ].includes(edit.op) ||
-      !validMarkdownLocator(edit.locator)
+      (edit.op !== "add" && edit.op !== "replace") ||
+      !hasOnlyKeys(edit, ["op", "locator", "value"])
     )
-      return {
-        diagnostics: [
-          diagnostic({
-            code: "locator_invalid",
-            ...(isRecord(edit.locator)
-              ? {
-                  locator: copyLocator(
-                    edit.locator as unknown as WorldDocumentLocator,
-                  ),
-                }
-              : {}),
-            message: "A Markdown patch requires an exact heading locator",
-          }),
-        ],
-      };
-    const locator = { markdown: [...edit.locator.markdown] } as const;
-    const section = markdownRevisionSection(contents, locator.markdown);
-    if ("diagnostics" in section) return section;
-    if (edit.op === "remove_section") {
-      if (!hasOnlyKeys(edit, ["op", "locator"]))
-        return {
-          diagnostics: [
-            diagnostic({
-              code: "query_invalid",
-              locator,
-              message: "remove_section contains undeclared arguments",
-            }),
-          ],
-        };
-      contents = `${contents.slice(0, section.start)}${contents.slice(section.rawEnd)}`;
-      continue;
-    }
-    if (edit.op === "rename_section") {
-      if (
-        !hasOnlyKeys(edit, ["op", "locator", "title"]) ||
-        !validMarkdownHeadingTitle(edit.title)
-      )
-        return {
-          diagnostics: [
-            diagnostic({
-              code: "query_invalid",
-              locator,
-              message: "rename_section requires a valid new heading",
-            }),
-          ],
-        };
-      contents = `${contents.slice(0, section.start)}${"#".repeat(section.level)} ${edit.title}${contents.slice(section.headingEnd)}`;
-      continue;
-    }
+      return editFailed(
+        diagnostic({
+          code: "locator_invalid",
+          locator: { yaml: [] },
+          message: "A whole YAML body supports only add or replace",
+        }),
+      );
+    const value = resolveValue(edit.value, []);
+    if ("diagnostics" in value) return editFailed(value.diagnostics[0]!);
+    if (!isRecord(value.value) || Object.hasOwn(value.value, "$document"))
+      return editFailed(
+        diagnostic({
+          code: "yaml_invalid",
+          locator: { yaml: [] },
+          message: "A whole YAML body must be a map without $document",
+        }),
+      );
+    const currentValue: unknown = document.toJS({ maxAliasCount: 0 });
+    if (!isRecord(currentValue) || !isRecord(currentValue.$document))
+      return editFailed(
+        diagnostic({
+          code: "document_header_invalid",
+          message: "YAML technical header could not be preserved",
+        }),
+      );
+    const body = parseDocument(
+      stringify(
+        { $document: currentValue.$document, ...value.value },
+        { indent: 2, lineWidth: 0 },
+      ),
+      { schema: "core", uniqueKeys: true, strict: true },
+    );
+    return {
+      kind: "applied",
+      contents: body.toString({ indent: 2, lineWidth: 0 }),
+      metadata,
+    };
+  }
+  if (edit.op === "remove") {
+    if (!hasOnlyKeys(edit, ["op", "locator"]))
+      return editFailed(
+        diagnostic({
+          code: "query_invalid",
+          locator: { yaml: locator },
+          message: "YAML remove accepts only op and locator",
+        }),
+      );
+    if (!document.hasIn(locator)) return editTargetAbsent({ yaml: locator });
+    document.deleteIn(locator);
+    return serialized(metadata);
+  }
+  if (!hasOnlyKeys(edit, ["op", "locator", "value"]))
+    return editFailed(
+      diagnostic({
+        code: "query_invalid",
+        locator: { yaml: locator },
+        message: "YAML value-edit arguments are invalid",
+      }),
+    );
+  if (edit.op === "append") {
+    const sequence = document.getIn(locator, true);
+    if (!isSeq(sequence))
+      return editFailed(
+        diagnostic({
+          code: "locator_invalid",
+          locator: { yaml: locator },
+          message: "YAML append target must be a sequence",
+        }),
+      );
+    const value = resolveValue(edit.value, [...locator, sequence.items.length]);
+    if ("diagnostics" in value) return editFailed(value.diagnostics[0]!);
+    sequence.add(document.createNode(value.value));
+    return serialized(metadata);
+  }
+  const value = resolveValue(edit.value, locator);
+  if ("diagnostics" in value) return editFailed(value.diagnostics[0]!);
+  if (!upsertYamlValue(document, locator, value.value))
+    return editFailed(
+      diagnostic({
+        code: "locator_invalid",
+        locator: { yaml: locator },
+        message: "YAML add or replace parent must be a map or sequence",
+      }),
+    );
+  return serialized(metadata);
+}
+
+/**
+ * Writes value at locator, creating what is missing: absent map keys and
+ * parent maps are created, and a sequence index at or past the end appends.
+ * Returns false when an existing parent is neither a map nor a sequence.
+ */
+function upsertYamlValue(
+  document: Document,
+  locator: readonly (string | number)[],
+  value: unknown,
+): boolean {
+  let node: unknown = document.contents;
+  for (const [depth, segment] of locator.entries()) {
+    const rest = locator.slice(depth + 1);
+    if (isMap(node) && typeof segment === "string") {
+      if (rest.length === 0) {
+        node.set(segment, document.createNode(value));
+        return true;
+      }
+      const child: unknown = node.get(segment, true);
+      if (child === undefined) {
+        node.set(segment, document.createNode(yamlTailValue(rest, value)));
+        return true;
+      }
+      if (!isMap(child) && !isSeq(child)) return false;
+      node = child;
+    } else if (isSeq(node) && typeof segment === "number") {
+      if (segment >= node.items.length) {
+        node.items.push(document.createNode(yamlTailValue(rest, value)));
+        return true;
+      }
+      if (rest.length === 0) {
+        node.items[segment] = document.createNode(value);
+        return true;
+      }
+      const child: unknown = node.items[segment];
+      if (!isMap(child) && !isSeq(child)) return false;
+      node = child;
+    } else return false;
+  }
+  return false;
+}
+
+/** The value a missing path creates: maps for keys, a one-item list for indexes. */
+function yamlTailValue(
+  path: readonly (string | number)[],
+  value: unknown,
+): unknown {
+  return path.reduceRight<unknown>(
+    (child, segment) =>
+      typeof segment === "number" ? [child] : { [segment]: child },
+    value,
+  );
+}
+
+function applyMarkdownRevisionEdit(
+  source: string,
+  metadata: WorldDocumentMetadataInput,
+  edit: unknown,
+): RevisionEditResult {
+  if (!isRecord(edit) || typeof edit.op !== "string")
+    return editFailed(
+      diagnostic({
+        code: "query_invalid",
+        message: "A Markdown patch edit must be a closed object with op",
+      }),
+    );
+  // Every applied Markdown edit keeps a single trailing newline.
+  const applied = (
+    contents: string,
+    nextMetadata: WorldDocumentMetadataInput,
+  ): RevisionEditResult => ({
+    kind: "applied",
+    contents: `${contents.trimEnd()}\n`,
+    metadata: nextMetadata,
+  });
+  if (edit.op === "set_metadata") {
+    if (!hasOnlyKeys(edit, ["op", "title", "summary", "aliases"]))
+      return editFailed(
+        diagnostic({
+          code: "document_header_invalid",
+          message: "set_metadata accepts only op, title, summary, and aliases",
+        }),
+      );
+    const resolved = resolveDocumentMetadataRevision(metadata, edit);
+    if ("problems" in resolved)
+      return editFailed(
+        diagnostic({
+          code: "document_header_invalid",
+          message: `set_metadata arguments are invalid: ${resolved.problems.join("; ")}`,
+        }),
+      );
+    const envelope = markdownEnvelope(source);
+    if ("diagnostics" in envelope) return editFailed(envelope.diagnostics[0]!);
+    envelope.header.setIn(["$document", "title"], resolved.metadata.title);
+    envelope.header.setIn(["$document", "summary"], resolved.metadata.summary);
+    envelope.header.setIn(
+      ["$document", "aliases"],
+      [...resolved.metadata.aliases],
+    );
+    const body = source.slice(envelope.bodyStart);
+    const firstHeading = scanMarkdownHeadings(body, 0).headings[0];
+    if (firstHeading?.level !== 1)
+      return editFailed(
+        diagnostic({
+          code: "markdown_invalid",
+          message: "Markdown body is missing an updateable h1",
+        }),
+      );
+    const nextBody = `${body.slice(0, firstHeading.range.start.offset)}# ${resolved.metadata.title}${body.slice(firstHeading.range.end.offset)}`;
+    return applied(
+      `---\n${envelope.header.toString({ indent: 2, lineWidth: 0 }).trimEnd()}\n---\n${nextBody}`,
+      resolved.metadata,
+    );
+  }
+  if (edit.op === "replace_body" || edit.op === "replace_preamble") {
     if (
-      !hasOnlyKeys(edit, ["op", "locator", "markdown"]) ||
+      !hasOnlyKeys(edit, ["op", "markdown"]) ||
       typeof edit.markdown !== "string"
     )
-      return {
-        diagnostics: [
+      return editFailed(
+        diagnostic({
+          code: "query_invalid",
+          message: "A Markdown body edit requires markdown source",
+        }),
+      );
+    const envelope = markdownEnvelope(source);
+    if ("diagnostics" in envelope) return editFailed(envelope.diagnostics[0]!);
+    if (edit.op === "replace_body")
+      return applied(
+        `${source.slice(0, envelope.bodyStart)}${edit.markdown.trimEnd()}\n`,
+        metadata,
+      );
+    const headings = scanMarkdownHeadings(source, envelope.bodyStart).headings;
+    const h1 = headings.find(({ level }) => level === 1);
+    if (h1 === undefined)
+      return editFailed(
+        diagnostic({
+          code: "markdown_invalid",
+          message: "Markdown body is missing an updateable h1",
+        }),
+      );
+    const nextH2 = headings.find(
+      ({ level, range }) =>
+        level === 2 && range.start.offset > h1.range.start.offset,
+    );
+    const end = nextH2?.range.start.offset ?? source.length;
+    return applied(
+      `${source.slice(0, h1.range.end.offset)}\n\n${edit.markdown.trim()}\n\n${source.slice(end)}`,
+      metadata,
+    );
+  }
+  if (
+    ![
+      "replace_section",
+      "add_section",
+      "rename_section",
+      "remove_section",
+    ].includes(edit.op) ||
+    !validMarkdownLocator(edit.locator, edit.op === "add_section")
+  )
+    return editFailed(
+      diagnostic({
+        code: "locator_invalid",
+        ...(isRecord(edit.locator)
+          ? {
+              locator: copyLocator(
+                edit.locator as unknown as WorldDocumentLocator,
+              ),
+            }
+          : {}),
+        message: "A Markdown patch requires an exact heading locator",
+      }),
+    );
+  const locator = { markdown: [...edit.locator.markdown] } as const;
+  if (edit.op === "remove_section") {
+    if (!hasOnlyKeys(edit, ["op", "locator"]))
+      return editFailed(
+        diagnostic({
+          code: "query_invalid",
+          locator,
+          message: "remove_section contains undeclared arguments",
+        }),
+      );
+    const section = markdownRevisionSection(source, locator.markdown);
+    if ("diagnostics" in section) {
+      const [problem] = section.diagnostics;
+      return problem?.code === "locator_not_found"
+        ? editTargetAbsent(locator)
+        : editFailed(problem!);
+    }
+    return applied(
+      `${source.slice(0, section.start)}${source.slice(section.rawEnd)}`,
+      metadata,
+    );
+  }
+  if (edit.op === "rename_section") {
+    if (
+      !hasOnlyKeys(edit, ["op", "locator", "title"]) ||
+      !validMarkdownHeadingTitle(edit.title)
+    )
+      return editFailed(
+        diagnostic({
+          code: "query_invalid",
+          locator,
+          message: "rename_section requires a valid new heading",
+        }),
+      );
+    const section = markdownRevisionSection(source, locator.markdown);
+    if ("diagnostics" in section) return editFailed(section.diagnostics[0]!);
+    return applied(
+      `${source.slice(0, section.start)}${"#".repeat(section.level)} ${edit.title}${source.slice(section.headingEnd)}`,
+      metadata,
+    );
+  }
+  if (
+    !hasOnlyKeys(edit, ["op", "locator", "markdown"]) ||
+    typeof edit.markdown !== "string"
+  )
+    return editFailed(
+      diagnostic({
+        code: "query_invalid",
+        locator,
+        message: "A Markdown section edit requires a complete Markdown block",
+      }),
+    );
+  const block = edit.markdown.trim();
+  const { headings, hasUnclosedFence } = scanMarkdownHeadings(block, 0);
+  const first = headings[0];
+  const escapesSectionSubtree = headings
+    .slice(1)
+    .some(({ level }) => first !== undefined && level <= first.level);
+  const blockIsSubtree =
+    first?.range.start.offset === 0 &&
+    !escapesSectionSubtree &&
+    !hasUnclosedFence;
+  const requestedTitle = locator.markdown.at(-1)?.normalize("NFKC");
+  if (edit.op === "replace_section") {
+    const section = markdownRevisionSection(source, locator.markdown);
+    if ("diagnostics" in section) {
+      if (section.diagnostics[0]?.code !== "locator_not_found")
+        return editFailed(section.diagnostics[0]!);
+      // A heading that does not exist yet is added at the end of its parent.
+      const parent = markdownRevisionSection(
+        source,
+        locator.markdown.slice(0, -1),
+      );
+      if ("diagnostics" in parent) return editFailed(parent.diagnostics[0]!);
+      if (
+        !blockIsSubtree ||
+        first.level !== parent.level + 1 ||
+        first.title.normalize("NFKC") !== requestedTitle
+      )
+        return editFailed(
           diagnostic({
-            code: "query_invalid",
+            code: "locator_invalid",
             locator,
             message:
-              "A Markdown section edit requires a complete Markdown block",
+              "replace_section new heading must keep the requested title and sit one level below its parent",
           }),
-        ],
-      };
-    const block = edit.markdown.trim();
-    const { headings, hasUnclosedFence } = scanMarkdownHeadings(block, 0);
-    const first = headings[0];
-    const escapesSectionSubtree = headings
-      .slice(1)
-      .some(({ level }) => first !== undefined && level <= first.level);
-    if (edit.op === "replace_section") {
-      if (
-        first?.range.start.offset !== 0 ||
-        first.level !== section.level ||
-        first.title.normalize("NFKC") !==
-          locator.markdown.at(-1)!.normalize("NFKC") ||
-        escapesSectionSubtree ||
-        hasUnclosedFence
-      )
-        return {
-          diagnostics: [
-            diagnostic({
-              code: "locator_invalid",
-              locator,
-              message:
-                "replace_section first heading must preserve the exact original heading path",
-            }),
-          ],
-        };
-      contents = `${contents.slice(0, section.start)}${block}${contents.slice(section.trimmedEnd)}`;
-    } else {
-      if (
-        first?.range.start.offset !== 0 ||
-        first.level !== section.level + 1 ||
-        escapesSectionSubtree ||
-        hasUnclosedFence
-      )
-        return {
-          diagnostics: [
-            diagnostic({
-              code: "locator_invalid",
-              locator,
-              message:
-                "add_section must add a complete block with a heading one level lower",
-            }),
-          ],
-        };
-      contents = `${contents.slice(0, section.trimmedEnd)}\n\n${block}${contents.slice(section.trimmedEnd)}`;
+        );
+      return applied(
+        insertMarkdownBlock(source, parent.trimmedEnd, block),
+        metadata,
+      );
     }
+    if (
+      !blockIsSubtree ||
+      first.level !== section.level ||
+      first.title.normalize("NFKC") !== requestedTitle
+    )
+      return editFailed(
+        diagnostic({
+          code: "locator_invalid",
+          locator,
+          message:
+            "replace_section first heading must preserve the exact original heading path",
+        }),
+      );
+    return applied(
+      `${source.slice(0, section.start)}${block}${source.slice(section.trimmedEnd)}`,
+      metadata,
+    );
   }
-  return { contents: contents.trimEnd().concat("\n") };
+  const parent = markdownRevisionSection(source, locator.markdown);
+  if ("diagnostics" in parent) return editFailed(parent.diagnostics[0]!);
+  if (!blockIsSubtree || first.level !== parent.level + 1)
+    return editFailed(
+      diagnostic({
+        code: "locator_invalid",
+        locator,
+        message:
+          "add_section must add a complete block with a heading one level lower",
+      }),
+    );
+  return applied(
+    insertMarkdownBlock(source, parent.trimmedEnd, block),
+    metadata,
+  );
+}
+
+function insertMarkdownBlock(
+  source: string,
+  offset: number,
+  block: string,
+): string {
+  return `${source.slice(0, offset)}\n\n${block}${source.slice(offset)}`;
 }
 
 function markdownEnvelope(source: string):
@@ -3894,6 +4027,30 @@ function markdownRevisionSection(
   const envelope = markdownEnvelope(source);
   if ("diagnostics" in envelope) return envelope;
   const headings = scanMarkdownHeadings(source, envelope.bodyStart).headings;
+  if (locator.length === 0) {
+    // The empty locator names the document body, whose sections are the h2s.
+    const h1 = headings.find(({ level }) => level === 1);
+    if (h1 === undefined)
+      return {
+        diagnostics: [
+          diagnostic({
+            code: "markdown_invalid",
+            message: "Markdown body is missing an updateable h1",
+          }),
+        ],
+      };
+    return {
+      start: h1.range.start.offset,
+      headingEnd: h1.range.end.offset,
+      trimmedEnd: trimTrailingWhitespaceOffset(
+        source,
+        h1.range.start.offset,
+        source.length,
+      ),
+      rawEnd: source.length,
+      level: 1,
+    };
+  }
   const stack: string[] = [];
   const matches: { readonly index: number; readonly level: number }[] = [];
   for (const [index, heading] of headings.entries()) {
@@ -3912,14 +4069,23 @@ function markdownRevisionSection(
       matches.push({ index, level: heading.level });
   }
   const publicLocator = { markdown: [...locator] } as const;
-  if (matches.length !== 1)
+  if (matches.length === 0)
     return {
       diagnostics: [
         diagnostic({
-          code:
-            matches.length === 0 ? "locator_not_found" : "locator_ambiguous",
+          code: "locator_not_found",
           locator: publicLocator,
-          message: "Markdown heading path cannot be located uniquely",
+          message: "Markdown heading path was not found",
+        }),
+      ],
+    };
+  if (matches.length > 1)
+    return {
+      diagnostics: [
+        diagnostic({
+          code: "locator_ambiguous",
+          locator: publicLocator,
+          message: "Markdown heading path matches more than one section",
         }),
       ],
     };
@@ -4079,6 +4245,27 @@ function sourcePoint(source: string, offset: number): WorldDocumentSourcePoint {
 
 function diagnostic(value: WorldDocumentDiagnostic): WorldDocumentDiagnostic {
   return freeze(value);
+}
+
+/** Human-readable locator for receipts and failure text; the structured locator stays the source of truth. */
+export function formatWorldDocumentLocator(
+  locator: WorldDocumentLocator,
+): string {
+  if ("markdown" in locator)
+    return locator.markdown.length === 0
+      ? "document body"
+      : locator.markdown.join(" > ");
+  return (
+    locator.yaml.reduce<string>(
+      (text, segment) =>
+        typeof segment === "number"
+          ? `${text}[${segment}]`
+          : text === ""
+            ? segment
+            : `${text}.${segment}`,
+      "",
+    ) || "whole body"
+  );
 }
 
 function revisionDiagnostic(
@@ -4310,12 +4497,13 @@ function validYamlLocator(
 
 function validMarkdownLocator(
   value: unknown,
+  allowBodyRoot = false,
 ): value is { readonly markdown: readonly string[] } {
   return (
     isRecord(value) &&
     Object.keys(value).length === 1 &&
     Array.isArray(value.markdown) &&
-    value.markdown.length > 0 &&
+    (allowBodyRoot || value.markdown.length > 0) &&
     value.markdown.every(
       (segment) => typeof segment === "string" && segment.length > 0,
     )

@@ -1176,7 +1176,7 @@ context:
     expect(patch?.description).toContain("remove");
     expect(patch?.description).toContain("zero-based array index");
     expect(patch?.description).toContain(
-      "Success reports only whether the document changed",
+      "Success reports whether the document changed",
     );
     expect(patch?.description).toContain("does not echo the body");
     expect(patch?.description).toContain("Call context_read again only when");

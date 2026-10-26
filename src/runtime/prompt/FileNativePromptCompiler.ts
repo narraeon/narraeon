@@ -355,7 +355,7 @@ const runtimeContracts: Record<
 
 - Use only tools attached to the current request. Read results state their scope, cursor, and completeness. Directories must use @dir-* handles returned by Runtime; documents and history must use @handles returned by Runtime. Never substitute a world/ path or natural-language name for a handle.
 - A document marked \`full body injected\` in the material-coverage report already has its complete writable body in the request and carries write authorization. Do not read it again merely to confirm body structure, check body fields, or “be safe.” context_read additionally exposes the current title, summary, and aliases. world_patch preserves metadata fields omitted from set_metadata, so do not read merely to copy unchanged metadata. Read only when a decision depends on unseen metadata or material the report says is not covered.
-- A YAML world_patch locator may mix map keys and zero-based array indexes; remove deletes exactly one existing key or array item. Retire an entity that should leave future frame catalogs with world_retire instead of destroying its document; retired documents remain listed, readable, referenceable, and restorable.
+- A YAML world_patch locator may mix map keys and zero-based array indexes. add and replace upsert: they write whether or not the target exists, and an index past the end appends. remove deletes one existing key or array item; a missing target is a no-op the receipt reports. Each edit settles on its own: a failed edit is skipped and the others still apply, so when a receipt lists failed edits, send again only those. Retire an entity that should leave future frame catalogs with world_retire instead of destroying its document; retired documents remain listed, readable, referenceable, and restorable.
 - Zero literal-search matches do not prove that a fact does not exist. Tools, directories, documents, archives, searches, matches, handles, Runtime, and failure processes are private adjudication details. Player-visible narrative must not mention internal phrases such as “nothing was found.” When information is insufficient, preserve uncertainty inside the world instead of inventing an internal process.
 - World-write tools change only an uncommitted working copy. Their changes are not official world facts until Runtime accepts and completes the commit.
 
@@ -386,7 +386,7 @@ ${historyUseGuidance("en")}`,
 
 - 只使用请求随附的工具；读取结果会明确范围、cursor 与完整性。目录只能使用 Runtime 返回的 @dir-*，文档和历史只能使用 Runtime 返回的 @句柄，不要把 world/路径或自然语言名称冒充句柄。
 - 材料覆盖报告标为 \`已注入完整正文\` 的文档，其完整可写正文已经在本次请求里，写入资格同样已经具备。不要为确认正文结构、核对正文字段或“保险起见”重读它。context_read 会额外显示当前 title、summary 和 aliases；world_patch 会保留 set_metadata 中未提供的元数据字段，因此不要只为照抄未改变的元数据而读取。只有后续决策确实依赖尚未显示的元数据，或材料覆盖报告未覆盖的内容时才读。
-- YAML world_patch 的 locator 可混合 map key 与从 0 开始的数组下标；remove 只删除一个精确的已有键或数组项。对象需要退出后续 frame catalog 时用 world_retire 退役，不要销毁文档；退役文档仍可列出、读取、引用和恢复。
+- YAML world_patch 的 locator 可混合 map key 与从 0 开始的数组下标。add 与 replace 是 upsert：无论目标是否存在都写入，数组下标达到或超过长度时追加。remove 只删除一个精确的已有键或数组项；目标不存在时为无操作，回执会注明。每条 edit 独立结算：失败的 edit 被跳过，其余照常生效；回执列出失败项时，只补发列出的 edit。对象需要退出后续 frame catalog 时用 world_retire 退役，不要销毁文档；退役文档仍可列出、读取、引用和恢复。
 - 字面搜索 0 命中不证明事实不存在。工具、目录、文档、档案、检索、命中、句柄、Runtime 及失败过程只供私下裁决；玩家可见叙事不得出现“没搜到／没找到资料”等内部措辞。信息不足时保持世界内的不确定性，不编造内部过程。
 - 世界写入工具只修改尚未提交的工作副本；Runtime 接受并完成提交前，这些修改都不是正式世界事实。
 

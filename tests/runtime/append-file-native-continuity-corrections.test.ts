@@ -342,13 +342,13 @@ test("修正 revision 机械失败不推进版本也不留下部分候选", asyn
       expectedHash: read.hash,
       edits: [
         {
-          op: "replace",
+          op: "append",
           locator: { yaml: ["不存在"] },
           value: "不会写入",
         },
       ],
     }),
-  ).toThrow(/YAML replace target must exist/u);
+  ).toThrow(/YAML append target must be a sequence/u);
   expect(
     corrections.preview({
       candidateId: started.candidateId,
