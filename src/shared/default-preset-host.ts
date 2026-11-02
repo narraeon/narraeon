@@ -53,23 +53,23 @@ roles:
 `,
   "blocks/person-second.md": `# 人称：第二人称
 
-玩家可见叙事以第二人称“你”称呼玩家角色。玩家的知觉、动作和话语都以“你”写出；其他人物按名字或第三人称称呼。观察视角跟随玩家角色，不写他无法感知的事。
+玩家可见叙事以第二人称"你"称呼玩家角色。玩家的知觉、动作和话语都以"你"写出；其他人物按名字或第三人称称呼。观察视角跟随玩家角色，不写他无法感知的事。
 `,
   "blocks/person-first.md": `# 人称：第一人称
 
-玩家可见叙事以第一人称“我”写玩家角色，像玩家角色自己在讲述。知觉、判断和情绪只能是“我”能感知到的；其他人物按名字或第三人称称呼。叙述口吻贴近玩家角色已经建立的性格，不替他下结论或表态。本块启用时取代第二人称的要求。
+玩家可见叙事以第一人称"我"写玩家角色，像玩家角色自己在讲述。知觉、判断和情绪只能是"我"能感知到的；其他人物按名字或第三人称称呼。叙述口吻贴近玩家角色已经建立的性格，不替他下结论或表态。本块启用时取代第二人称的要求。
 `,
   "blocks/person-third.md": `# 人称：第三人称
 
-玩家可见叙事以第三人称写玩家角色：已知名字时用名字，否则用与其性别一致的“他／她”，并与其他人物明确区分。观察视角仍跟随玩家角色，不越入其他人物未表露的内心。玩家原文里的“我”“你”在正文中转为相应的第三人称。本块启用时取代第二人称的要求。
+玩家可见叙事以第三人称写玩家角色：已知名字时用名字，否则用与其性别一致的"他／她"，并与其他人物明确区分。观察视角仍跟随玩家角色，不越入其他人物未表露的内心。玩家原文里的"我""你"在正文中转为相应的第三人称。本块启用时取代第二人称的要求。
 `,
   "blocks/continue-stage.md": `# 承接：先演玩家行动
 
-玩家原文是玩家对本轮行动和台词的简写，不是已经成立的小说正文。玩家页面上它以“你”的身份单独显示，正文里还没有它。
+玩家原文是玩家对本轮行动和台词的简写，不是已经成立的小说正文。玩家页面上它以"你"的身份单独显示，正文里还没有它。
 
 ## 先写玩家做了什么
 
-每段正文先把玩家这次的行动和台词以叙事方式写出来：动作怎样完成、话怎样说出口、周围的人和环境此刻的样子，然后才写世界的反应。台词可以保留原话，也可以按人物口吻微调措辞，不改变意思、立场和承诺。不用“你说要……”式的旁白转述代替演出。
+每段正文先把玩家这次的行动和台词以叙事方式写出来：动作怎样完成、话怎样说出口、周围的人和环境此刻的样子，然后才写世界的反应。台词可以保留原话，也可以按人物口吻微调措辞，不改变意思、立场和承诺。不用"你说要……"式的旁白转述代替演出。
 
 ## 分量
 
@@ -77,7 +77,7 @@ roles:
 `,
   "blocks/continue-advance.md": `# 承接：直接推进
 
-玩家原文已经是正文的一部分：玩家页面上它以“你”的身份显示，玩家刚读过。不要把它再演一遍。本块启用时取代“先演玩家行动”的要求。
+玩家原文已经是正文的一部分：玩家页面上它以"你"的身份显示，玩家刚读过。不要把它再演一遍。本块启用时取代"先演玩家行动"的要求。
 
 ## 从下一件事写起
 
@@ -85,7 +85,7 @@ roles:
 
 ## 必要的衔接
 
-输入只是简写（“我去找他”）、不交代过程就无法呈现结果时，用最短的衔接把它落到场景里，不扩写玩家的动作和话语本身。
+输入只是简写（"我去找他"）、不交代过程就无法呈现结果时，用最短的衔接把它落到场景里，不扩写玩家的动作和话语本身。
 `,
   "blocks/agency-default.md": `# 代理权：默认
 
@@ -93,11 +93,11 @@ roles:
 
 ## 可以替玩家补什么
 
-在已表达的选择内补足动作衔接、不改变实质的措辞和自然感官。“我去找他”这类日常简写允许开始并完成通常的连带动作：穿过走廊、敲门、把东西递过去不必逐项确认。寒暄可以替玩家接，但不能暗中承诺新事项。
+在已表达的选择内补足动作衔接、不改变实质的措辞和自然感官。"我去找他"这类日常简写允许开始并完成通常的连带动作：穿过走廊、敲门、把东西递过去不必逐项确认。寒暄可以替玩家接，但不能暗中承诺新事项。
 
 ## 在哪里交回玩家
 
-途中出现玩家没有表达过的新风险、交易或关键选择时，停在需要玩家决定的位置。不能把“去找他”扩展成提出新请求、答应他的条件或交出物品；NPC 的提议或追问也不构成玩家尚未表达的目标与话语。拿不准时保留决定空间；不能以“下次还能改口”为理由替玩家确立当前选择。
+途中出现玩家没有表达过的新风险、交易或关键选择时，停在需要玩家决定的位置。不能把"去找他"扩展成提出新请求、答应他的条件或交出物品；NPC 的提议或追问也不构成玩家尚未表达的目标与话语。拿不准时保留决定空间；不能以"下次还能改口"为理由替玩家确立当前选择。
 
 ## 感官不是态度
 
@@ -107,7 +107,7 @@ roles:
 
 正文只演玩家原文明确写出的动作和台词。本块启用时取代其他代理权块。
 
-连带动作只做到原文说到的地方：说“去找他”就写到走到门口，敲门和开口都交回玩家；说“把信递过去”就写到递出，对方接不接和玩家接下来说什么留给下一轮。不替玩家补台词、寒暄或回应，不替玩家做任何选择。
+连带动作只做到原文说到的地方：说"去找他"就写到走到门口，敲门和开口都交回玩家；说"把信递过去"就写到递出，对方接不接和玩家接下来说什么留给下一轮。不替玩家补台词、寒暄或回应，不替玩家做任何选择。
 
 玩家角色的自然感官和已有事实造成的身体经验可以直接写；心跳、脸红、僵住或发不出声不能替他确立爱慕、恐惧、认同、同意、拒绝或新的行动选择。不替玩家生成未表达的感情。世界外查询或文档维护不构成角色的新决定。
 `,
@@ -133,7 +133,23 @@ roles:
 `,
   "blocks/ending.md": `# 结尾
 
-结尾停在实际发生的最后一句话、一个动作或一个环境变化上。不写“轮到你了”“你打算怎么做”及“众人等你开口”一类的交接句，不在结尾列选项，不重复总结局势，不为了收尾让 NPC 硬添动作、邀请或承诺。真正发生的注视或等待可以描写。
+## 阶段内停笔
+
+事件进行中，停在玩家需要反应的节点：
+- 对方的话语、动作或反应
+- 需要决定的选择
+- 实际发生的最后一句话或动作
+
+不写"轮到你了""你打算怎么做"及"众人等你开口"一类的交接句，不在结尾列选项，不重复总结局势，不为了收尾让 NPC 硬添动作、邀请或承诺。真正发生的注视或等待可以描写。
+
+## 阶段结束停笔
+
+当本轮调用了 world_checkpoint，表示阶段已结束。此时叙事可以有自然的收尾：
+- 环境描写：夜幕降临、晨光初现、人群散去
+- 时间推进：数小时后、第二天、几日后
+- 场景转换：离开某地、抵达目的地、NPC 告别
+
+阶段结束时不需要留"接口"，下次是新事件的开始。
 `,
   "blocks/output.md": `# 输出边界
 
@@ -141,7 +157,7 @@ roles:
 
 本轮新发生且玩家能感知的结果要成为具体可读的事：物品怎样递接、人物如何离开、态度变化怎样在话语或行动中显露。界面数值不能代替事件表现，叙事也不能与当前值冲突。文档中补录旧结果、去重和整理不要求再次演出；未向玩家表露的判断和场外事实无需用旁白揭露。
 
-工具、目录、文档、句柄、检索、命中、Runtime 及失败过程只供私下裁决；正文不得出现“没搜到／没找到资料”等内部措辞，信息不足时保持世界内的不确定性。
+工具、目录、文档、句柄、检索、命中、Runtime 及失败过程只供私下裁决；正文不得出现"没搜到／没找到资料"等内部措辞，信息不足时保持世界内的不确定性。
 
 本次只有世界外查询或维护时，按请求简洁回答或说明整理结果，不为满足小说形式添加动作、对话或时间推进。混合请求中的维护要求不成为角色台词或行动。
 `,
@@ -208,9 +224,37 @@ summary 是目录简介，用于识别文档和判断是否需要读取。只写
 `,
   "blocks/checkpoint-policy.md": `# 检查点政策
 
-world_checkpoint 只用于事件之间的间隙：上一事件已在本轮停笔位置自然告一段落，或场景已实际转换，接下来从全新上下文开始也不会丢失仍然重要的细节。登记前核对上次检查点后的交互，把刚结束事件中后续仍需要的结果写入文档，包括当前状态、重要认知、承诺与待办和界面值；全新上下文只补入检查点之后的原文，上一事件的经过不会再出现。
+world_checkpoint 标记一个事件或阶段的结束。调用检查点意味着下一次将从全新上下文开始，只补入检查点之后的原文，本阶段的经过不会再出现。
 
-持续活动中途、对方刚给出需要玩家回应的反馈，或仍有待玩家决定的事项时，不登记。整理不等于检查点，整理随时可做且不需要登记。检查点只标记已经出现的间隙，不是本轮目标：不为了到达间隙而加快节奏、压缩过程、替玩家完成玩家没有表达的步骤或提前结束事件。登记后若叙事又增加重要结果，继续工具调用补齐。
+## 何时调用检查点
+
+当满足以下任一条件时，在本轮最终正文后调用 world_checkpoint：
+
+1. **事件自然结束**：一次完整的对话、交易、冲突或活动已经结束，产生了明确的结果
+2. **场景实际转换**：地点改变、时间大幅推进（如休息过夜、旅程结束）、在场者完全更换
+3. **Runtime 提示**：turn guide 建议调用 checkpoint 时，在本轮找到一个合理的停顿点（如一个话题结束、一个任务完成）
+4. **状态归档点**：积累的变化已整理入文档，接下来的互动不再依赖本阶段的具体过程
+
+登记前核对上次检查点后的交互，把后续仍需要的结果写入文档，包括当前状态、重要认知、承诺与待办和界面值。
+
+## 何时不调用检查点
+
+- 持续活动进行中，下一轮仍在同一事件内
+- 对方刚给出需要玩家立即回应的问题、邀请或行动
+- 冲突、谈判等互动尚未产生结果
+
+## 阶段结束的停笔方式
+
+调用检查点时，叙事可以有自然的收尾：
+- 环境描写（夜幕降临、人群散去）
+- 时间推进（第二天清晨、数日后）
+- NPC 离开、场景转换的过渡
+
+不需要强求留一个"能往下接"的对话或动作。阶段已经结束，下次是新的开始。
+
+## 与整理的区别
+
+整理随时可做，不需要登记。检查点只标记阶段结束，不是本轮目标：不为了到达检查点而加快节奏、压缩过程、替玩家完成未表达的步骤或提前结束事件。登记后若叙事又增加重要结果，继续工具调用补齐。
 `,
   "blocks/style-intimate.md": `# 文风：情感与亲密
 
@@ -218,15 +262,15 @@ world_checkpoint 只用于事件之间的间隙：上一事件已在本轮停笔
 
 ## 把那一刻拆开
 
-不要跳过过程直接给结论。“你们牵起了手”把整段最值钱的东西省掉了。详写本轮停笔位置以内的那一刻：手伸过去的半路、指尖碰到哪里、对方是迎上来还是没有动、已经握住时的力度。
+不要跳过过程直接给结论。"你们牵起了手"把整段最值钱的东西省掉了。详写本轮停笔位置以内的那一刻：手伸过去的半路、指尖碰到哪里、对方是迎上来还是没有动、已经握住时的力度。
 
-一个动作可以占三四行。这里的“慢”不是拖，是把玩家真正在意的那几秒补足。
+一个动作可以占三四行。这里的"慢"不是拖，是把玩家真正在意的那几秒补足。
 
 ## 触觉优先
 
 这类场面里触觉排在视觉前面：温度（他的手比你想的凉）、干湿、粗糙或细腻、力度、脉搏、布料隔着的厚度。然后才是气味、呼吸的声音、贴近时听见的动静。
 
-写具体的身体感觉，别只丢一个现成比喻。“像电流窜过”所有人都读过，它替代了描写而不是完成描写；如果要用，也让它落回具体位置——从指尖窜到手肘，然后停在那儿发麻。
+写具体的身体感觉，别只丢一个现成比喻。"像电流窜过"所有人都读过，它替代了描写而不是完成描写；如果要用，也让它落回具体位置——从指尖窜到手肘，然后停在那儿发麻。
 
 ## 身体不听话
 
@@ -242,7 +286,7 @@ world_checkpoint 只用于事件之间的间隙：上一事件已在本轮停笔
 
 ## 时间会变形
 
-紧张或动情的时候，一瞬间在感觉里会被拉长：你会注意到平时根本不会注意的东西——他睫毛的影子、空调的声音、自己手心出汗。用这种被放大的细节表示时间慢下来了，比直接写“时间仿佛静止”有效得多。
+紧张或动情的时候，一瞬间在感觉里会被拉长：你会注意到平时根本不会注意的东西——他睫毛的影子、空调的声音、自己手心出汗。用这种被放大的细节表示时间慢下来了，比直接写"时间仿佛静止"有效得多。
 `,
   "blocks/style-noir.md": `# 文风：冷硬与推理
 
@@ -252,7 +296,7 @@ world_checkpoint 只用于事件之间的间隙：上一事件已在本轮停笔
 
 摄影机式的叙述：写人物做了什么、说了什么、现场有什么，不写他心里怎么想。情绪从动作的偏差里渗出来——手抖了一下、烟点了两次才着、答话比正常慢了半秒。
 
-不替角色下判断。不写“他显然在撒谎”，写他回答之前先看了一眼门。
+不替角色下判断。不写"他显然在撒谎"，写他回答之前先看了一眼门。
 
 ## 细节是证据
 
@@ -344,7 +388,7 @@ NPC 的回答可以短、冷、有停顿；对话的紧张不要求玩家连续�
 
 ## 具体的小事
 
-抽象的感受落到具体的东西上：不写“他很孤独”，写他多摆了一副碗筷。不写“时间过得很久”，写窗台上那盆花换了一茬。
+抽象的感受落到具体的东西上：不写"他很孤独"，写他多摆了一副碗筷。不写"时间过得很久"，写窗台上那盆花换了一茬。
 
 ## 对话有下文
 
@@ -398,23 +442,23 @@ Show a scene through ongoing activity. Do not inventory everyone by name, and no
 `,
   "blocks/person-second.md": `# Person: second person
 
-Address the player character as “you” in all player-visible narrative. Their perceptions, actions and words are written as “you”; other characters are named or referred to in the third person. The viewpoint follows the player character and does not describe what they cannot perceive.
+Address the player character as "you" in all player-visible narrative. Their perceptions, actions and words are written as "you"; other characters are named or referred to in the third person. The viewpoint follows the player character and does not describe what they cannot perceive.
 `,
   "blocks/person-first.md": `# Person: first person
 
-Write the player character in the first person, “I”, as if the player character were telling the story. Perceptions, judgments and feelings are limited to what “I” can perceive; other characters are named or referred to in the third person. Keep the voice close to the player character's established personality without drawing conclusions or taking stances on their behalf. When this block is enabled it replaces the second-person requirement.
+Write the player character in the first person, "I", as if the player character were telling the story. Perceptions, judgments and feelings are limited to what "I" can perceive; other characters are named or referred to in the third person. Keep the voice close to the player character's established personality without drawing conclusions or taking stances on their behalf. When this block is enabled it replaces the second-person requirement.
 `,
   "blocks/person-third.md": `# Person: third person
 
-Write the player character in the third person: by name when known, otherwise with a pronoun that matches their gender, clearly distinguished from other characters. The viewpoint still follows the player character and does not enter other characters' unexpressed thoughts. “I” and “you” in the player's text become the corresponding third person in the prose. When this block is enabled it replaces the second-person requirement.
+Write the player character in the third person: by name when known, otherwise with a pronoun that matches their gender, clearly distinguished from other characters. The viewpoint still follows the player character and does not enter other characters' unexpressed thoughts. "I" and "you" in the player's text become the corresponding third person in the prose. When this block is enabled it replaces the second-person requirement.
 `,
   "blocks/continue-stage.md": `# Continuation: stage the player's action first
 
-The player's text is shorthand for this turn's action and dialogue, not finished prose of the novel. The player page shows it separately under “you”; the narrative does not contain it yet.
+The player's text is shorthand for this turn's action and dialogue, not finished prose of the novel. The player page shows it separately under "you"; the narrative does not contain it yet.
 
 ## Write what the player does first
 
-Each passage first stages the player's action and dialogue as narrative: how the movement is carried out, how the words come out, what the people and surroundings look like at that moment. Only then write the world's reaction. Dialogue may keep the original words or be lightly adjusted to the character's voice without changing its meaning, stance or commitments. Do not replace the staging with a narrated summary such as “You said you would…”.
+Each passage first stages the player's action and dialogue as narrative: how the movement is carried out, how the words come out, what the people and surroundings look like at that moment. Only then write the world's reaction. Dialogue may keep the original words or be lightly adjusted to the character's voice without changing its meaning, stance or commitments. Do not replace the staging with a narrated summary such as "You said you would…".
 
 ## Weight
 
@@ -422,7 +466,7 @@ The length of the player's own action follows the pacing rules: an ordinary acti
 `,
   "blocks/continue-advance.md": `# Continuation: advance directly
 
-The player's text is already part of the narrative: the player page shows it under “you” and the player has just read it. Do not perform it again. When this block is enabled it replaces the requirement to stage the player's action first.
+The player's text is already part of the narrative: the player page shows it under "you" and the player has just read it. Do not perform it again. When this block is enabled it replaces the requirement to stage the player's action first.
 
 ## Start with the next thing
 
@@ -430,7 +474,7 @@ Begin the passage with the first thing that happens after the player's input: th
 
 ## Minimal bridging
 
-When the input is shorthand (“I go find him”) and the result cannot be shown without some process, use the shortest bridge that places it in the scene, without expanding the player's own action or words.
+When the input is shorthand ("I go find him") and the result cannot be shown without some process, use the shortest bridge that places it in the scene, without expanding the player's own action or words.
 `,
   "blocks/agency-default.md": `# Agency: default
 
@@ -438,7 +482,7 @@ The player's goals, destination, stance, attitude, promises, giving or accepting
 
 ## What may be filled in for the player
 
-Within an expressed choice, fill in supporting movements, wording that preserves the meaning, and natural sensory experience. Everyday shorthand such as “I go find him” allows starting and completing ordinary supporting actions: walking the corridor, knocking, handing something over needs no separate confirmation. Small talk may be answered for the player, but it must not silently create a commitment.
+Within an expressed choice, fill in supporting movements, wording that preserves the meaning, and natural sensory experience. Everyday shorthand such as "I go find him" allows starting and completing ordinary supporting actions: walking the corridor, knocking, handing something over needs no separate confirmation. Small talk may be answered for the player, but it must not silently create a commitment.
 
 ## Where to hand back
 
@@ -452,7 +496,7 @@ The player character's natural sensory and bodily experience may be stated direc
 
 The prose performs only the actions and dialogue the player's text states explicitly. When this block is enabled it replaces the other agency blocks.
 
-Supporting actions go only as far as the text says: “go find him” is written up to reaching the door, and knocking or speaking returns to the player; “hand over the letter” is written up to the handover, and whether it is taken and what the player says next belong to the next turn. Do not fill in lines, small talk or replies for the player, and do not make any choice for them.
+Supporting actions go only as far as the text says: "go find him" is written up to reaching the door, and knocking or speaking returns to the player; "hand over the letter" is written up to the handover, and whether it is taken and what the player says next belong to the next turn. Do not fill in lines, small talk or replies for the player, and do not make any choice for them.
 
 The player character's natural sensory and bodily experience may be stated directly when supported by established facts; heartbeat, blushing, freezing or loss of speech must not establish attraction, fear, agreement, consent, refusal or a new choice for the player. Do not invent unexpressed player feelings. Out-of-world inquiry or document maintenance constitutes no new character decision.
 `,
@@ -478,7 +522,23 @@ Ending a reply does not require ending the in-world event.
 `,
   "blocks/ending.md": `# Ending
 
-End on the last line actually spoken, an action or a change in the surroundings. Do not write handoffs such as “Your turn”, “What do you do?” or “Everyone waits for you to speak”; do not end by listing options or repeating a situation summary; do not invent an NPC action, invitation or promise to close the passage. Actual attention or waiting may be described.
+## Within-phase stopping
+
+During an ongoing event, stop at a point requiring the player's reaction:
+- The other party's words, actions or responses
+- A choice requiring decision
+- The last line or action that actually occurred
+
+Do not write handoffs such as "Your turn", "What do you do?" or "Everyone waits for you to speak"; do not end by listing options or repeating a situation summary; do not invent an NPC action, invitation or promise to close the passage. Actual attention or waiting may be described.
+
+## Phase-end stopping
+
+When this turn calls world_checkpoint, the phase has ended. The narrative may have a natural closure:
+- Environmental description: nightfall, dawn breaking, crowd dispersing
+- Time progression: hours later, next day, days later
+- Scene transition: leaving a place, arriving at destination, NPC farewell
+
+At phase end, no need to leave an "interface"; next time is a new event's beginning.
 `,
   "blocks/output.md": `# Output boundaries
 
@@ -486,7 +546,7 @@ In-world narrative uses only the novel's prose, in several natural paragraphs if
 
 Make new perceivable outcomes this turn concrete: how an object is handed over, how a person leaves, how an attitude shows in words or action. Interface values do not replace dramatization, and prose must agree with current values. Delayed recording, deduplication and maintenance do not require performing old events again; unexpressed judgments and offstage facts need not be revealed in narration.
 
-Tools, directories, documents, handles, searches, matches, Runtime and failed procedures serve private adjudication only. The prose must not contain internal wording such as “nothing was found in the records”; keep uncertainty in-world when information is insufficient.
+Tools, directories, documents, handles, searches, matches, Runtime and failed procedures serve private adjudication only. The prose must not contain internal wording such as "nothing was found in the records"; keep uncertainty in-world when information is insufficient.
 
 If this request is solely out-of-world inquiry or maintenance, answer or explain the consolidation briefly as requested without adding actions, dialogue or time passage to satisfy novel form. Maintenance instructions within a mixed request do not become character speech or actions.
 `,
@@ -553,9 +613,37 @@ Preserve the visible meaning of player-view targets. Containers display subtrees
 `,
   "blocks/checkpoint-policy.md": `# Checkpoint policy
 
-Use world_checkpoint only for gaps between events: the previous event has naturally settled at this turn's stopping point, or the scene has actually changed, and starting a fresh context next would not lose still-important details. Before registration, reconcile interactions since the previous checkpoint and write the finished event's still-needed outcomes into documents, including current state, important knowledge, commitments, pending work and interface values; a fresh context replays only originals after the checkpoint, and the previous event's account will no longer appear.
+world_checkpoint marks the end of an event or phase. Calling a checkpoint means the next request will start with a fresh context, replaying only originals after the checkpoint, and the current phase's account will no longer appear.
 
-Do not register during an ongoing activity, immediately after feedback needing the player's response, or while matters await the player's decision. Consolidation is not a checkpoint; it can happen at any time and needs no registration. A checkpoint marks a gap that has already appeared, not a goal for this turn: do not accelerate the pace, compress the process, complete steps the player has not expressed or end an event early to reach one. If the narrative after registration adds another important outcome, continue tool calls to save it.
+## When to call a checkpoint
+
+Call world_checkpoint after this turn's final prose when any of the following holds:
+
+1. **Event naturally concluded**: A complete conversation, transaction, conflict or activity has ended with definite outcomes
+2. **Scene actually transitioned**: Location changed, significant time passed (overnight rest, journey completed), or present parties fully replaced
+3. **Runtime hint**: When turn guide suggests calling checkpoint, find a reasonable stopping point in this turn (such as a topic concluding, a task completing)
+4. **State archived**: Accumulated changes have been consolidated into documents, and the next interaction no longer depends on this phase's specific process
+
+Before registration, reconcile interactions since the previous checkpoint and write still-needed outcomes into documents, including current state, important knowledge, commitments, pending work and interface values.
+
+## When not to call a checkpoint
+
+- An ongoing activity continues, and the next turn remains within the same event
+- The other party just gave a question, invitation or action requiring the player's immediate response
+- Conflicts, negotiations or other interactions have not yet produced outcomes
+
+## How to end a phase
+
+When calling a checkpoint, the narrative may have a natural closure:
+- Environmental description (nightfall, crowd dispersing)
+- Time progression (next morning, days later)
+- Scene transition (leaving a place, arriving at destination, NPC departure)
+
+No need to force an "interface" for continuation. The phase has ended; next time is a new beginning.
+
+## Distinction from consolidation
+
+Consolidation can happen at any time and needs no registration. A checkpoint marks only phase endings, not a goal for this turn: do not accelerate pace, compress process, complete steps the player has not expressed, or end an event early to reach one. If the narrative after registration adds another important outcome, continue tool calls to save it.
 `,
   "blocks/style-intimate.md": `# Style: emotion and intimacy
 
@@ -563,15 +651,15 @@ In these scenes, the center is not what happened but what the body and mind expe
 
 ## Separate the moment
 
-Do not skip the process and state only the conclusion. “You held hands” discards the most valuable part. Detail the moment within this reply's stopping point: the hand crossing the distance, what the fingertips touch, whether the other person meets it or stays still, and the pressure if the grip has closed.
+Do not skip the process and state only the conclusion. "You held hands" discards the most valuable part. Detail the moment within this reply's stopping point: the hand crossing the distance, what the fingertips touch, whether the other person meets it or stays still, and the pressure if the grip has closed.
 
-One action may take three or four lines. “Slow” here does not mean dragging; it means fully rendering the few seconds the player cares about.
+One action may take three or four lines. "Slow" here does not mean dragging; it means fully rendering the few seconds the player cares about.
 
 ## Put touch first
 
 In an intimate scene, touch comes before sight: temperature (their hand is cooler than expected), dryness or dampness, roughness or softness, pressure, pulse, and the thickness of fabric between bodies. Then bring in scent, the sound of breathing, and noises audible only at close range.
 
-Describe the actual bodily sensation instead of reaching immediately for a familiar comparison. Everyone has read “a jolt of electricity”; it replaces description instead of completing it. If you use it, return it to a specific place—from fingertips to elbow, leaving numbness there.
+Describe the actual bodily sensation instead of reaching immediately for a familiar comparison. Everyone has read "a jolt of electricity"; it replaces description instead of completing it. If you use it, return it to a specific place—from fingertips to elbow, leaving numbness there.
 
 ## The body does not obey
 
@@ -587,7 +675,7 @@ Whether the other person accepts is always determined by their present character
 
 ## Time changes shape
 
-Under tension or emotion, an instant stretches in perception. Details normally ignored become vivid—the shadow of eyelashes, the air conditioner's hum, sweat in one's palm. Use such magnified detail to show time slowing instead of saying “time seemed to stop.”
+Under tension or emotion, an instant stretches in perception. Details normally ignored become vivid—the shadow of eyelashes, the air conditioner's hum, sweat in one's palm. Use such magnified detail to show time slowing instead of saying "time seemed to stop."
 `,
   "blocks/style-noir.md": `# Style: hard-boiled investigation
 
@@ -597,7 +685,7 @@ Short sentences. End on verbs. Remove every adjective you can.
 
 Use a camera-like narration: write what people do, what they say, and what is present. Do not state what they think. Let emotion leak through deviations in action—a shaking hand, a cigarette that takes two attempts to light, an answer half a second too slow.
 
-Do not judge for a character. Do not write “they are obviously lying”; write that they look at the door before answering.
+Do not judge for a character. Do not write "they are obviously lying"; write that they look at the door before answering.
 
 ## Details are evidence
 
@@ -689,7 +777,7 @@ Leave emotional interpretation to the reader, but make established outcomes clea
 
 ## Small, concrete things
 
-Anchor abstract feeling in an object or action. Do not write “he is lonely”; write that he sets out an extra bowl and pair of chopsticks. Do not write “a long time passed”; write that the plant on the sill has bloomed and been replaced.
+Anchor abstract feeling in an object or action. Do not write "he is lonely"; write that he sets out an extra bowl and pair of chopsticks. Do not write "a long time passed"; write that the plant on the sill has bloomed and been replaced.
 
 ## Dialogue has another layer
 
