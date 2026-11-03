@@ -38,6 +38,10 @@ import {
 } from "../prompt/FileNativePromptCompiler.ts";
 import type { ProviderExchangeState } from "./ProviderExchangeState.ts";
 import {
+  aggregateGoogleInteractions,
+  projectGoogleInteractions,
+} from "./GoogleInteractionsStream.ts";
+import {
   aggregateAnthropicModelStream,
   aggregateChatModelStream,
   aggregateResponsesModelStream,
@@ -172,6 +176,13 @@ export class FileNativeModelHost implements ModelHost {
               provider === "openai_responses" ? "included" : "not_requested",
             anthropicVersion:
               provider === "anthropic_messages" ? "2023-06-01" : null,
+            ...(provider === "google_interactions"
+              ? {
+                  interactionsEndpoint: providerUrl(this.#connection).pathname,
+                  apiRevision: null,
+                  store: false,
+                }
+              : {}),
             dialect: this.#connection.dialect,
             reasoningEffort: this.#connection.reasoningEffort,
             reasoningSummary: this.#connection.reasoningSummary,
@@ -240,6 +251,8 @@ export class FileNativeModelHost implements ModelHost {
         return await this.#chat(request, observer?.onDelta, signal);
       if (this.#connection.provider === "openai_responses")
         return await this.#responses(request, observer?.onDelta, signal);
+      if (this.#connection.provider === "google_interactions")
+        return await this.#google(request, observer?.onDelta, signal);
       return await this.#anthropic(request, observer?.onDelta, signal);
     } catch (error: unknown) {
       if (
@@ -266,7 +279,9 @@ export class FileNativeModelHost implements ModelHost {
           ? responsesRequestBody(
               responsesRequestInput(this.#connection, request),
             )
-          : anthropicRequestBody(this.#connection, request);
+          : provider === "google_interactions"
+            ? googleRequestBody(this.#connection, request)
+            : anthropicRequestBody(this.#connection, request);
     return {
       provider,
       method: "POST",
@@ -274,7 +289,9 @@ export class FileNativeModelHost implements ModelHost {
       headerNames:
         provider === "anthropic_messages"
           ? ["Accept", "anthropic-version", "x-api-key", "Content-Type"]
-          : ["Accept", "Authorization", "Content-Type"],
+          : provider === "google_interactions"
+            ? ["Accept", "x-goog-api-key", "Content-Type"]
+            : ["Accept", "Authorization", "Content-Type"],
       body: cloneProviderValue(body),
     };
   }
@@ -295,6 +312,77 @@ export class FileNativeModelHost implements ModelHost {
       ...(onDelta === undefined ? {} : { onDelta }),
       ...(signal === undefined ? {} : { signal }),
     });
+  }
+
+  async #google(
+    request: ModelHostExchange,
+    onDelta?: ModelHostDeltaSink,
+    signal?: AbortSignal,
+  ): Promise<ModelHostResponse> {
+    const bodyJson = JSON.stringify(
+      googleRequestBody(this.#connection, request),
+    );
+    const url = providerUrl(this.#connection);
+    const capture = providerCapture(
+      this.#failureLog,
+      this.#connection.provider,
+      url,
+      modelDiagnosticContext(request),
+      bodyJson,
+    );
+    return capturedProviderOperation(
+      this.#failureLog,
+      capture,
+      async (observe) => {
+        const response = observe(
+          await dispatchProviderRequest(
+            this.#fetch,
+            url,
+            {
+              method: "POST",
+              headers: {
+                Accept: "text/event-stream",
+                "x-goog-api-key": this.#connection.apiKey,
+                "Content-Type": "application/json",
+              },
+              body: bodyJson,
+              ...(signal === undefined ? {} : { signal }),
+            },
+            "Google Interactions",
+          ),
+        );
+        if (!response.ok) throw await providerError(response);
+        if (!isProviderEventStream(response))
+          throw unknownProviderResponse("Google Interactions");
+        const payload = await providerStreamResult(
+          response,
+          "Google Interactions",
+          (body) =>
+            aggregateGoogleInteractions(body, captureDelta(capture, onDelta)),
+          signal,
+        );
+        const projection = projectGoogleInteractions(payload);
+        capture?.setReasoning(projection.reasoningContent);
+        const usage = isRecord(payload.usage) ? payload.usage : {};
+        return {
+          ...projection,
+          usage: {
+            ...usageRecord({
+              inputTokens: providerNumber(usage.total_input_tokens),
+              uncachedInputTokens: null,
+              cacheReadTokens: providerNumber(usage.total_cached_tokens),
+              cacheWriteTokens: null,
+              reasoningTokens: providerNumber(usage.total_thought_tokens),
+              outputTokens: providerNumber(usage.total_output_tokens),
+              totalTokens: providerNumber(usage.total_tokens),
+            }),
+            ...(isRecord(payload.usage)
+              ? { providerRaw: structuredClone(payload.usage) }
+              : {}),
+          },
+        };
+      },
+    );
   }
 
   async #chat(
@@ -742,6 +830,160 @@ async function trace(kind: string, value: unknown): Promise<void> {
 }
 
 type ProviderRequest = ModelHostExchange;
+
+function googleRequestBody(
+  connection: ResolvedFileNativeModelConnection,
+  request: ModelHostExchange,
+): Record<string, unknown> {
+  const messages = request.bootstrap.provider.messages;
+  const system: string[] = [];
+  const input: unknown[] = [];
+  let conversationStarted = false;
+  const text = (value: string) => [{ type: "text", text: value }];
+  const contentText = (value: unknown): string => {
+    if (typeof value === "string") return value;
+    if (
+      Array.isArray(value) &&
+      value.every(
+        (part) =>
+          isRecord(part) &&
+          part.type === "text" &&
+          typeof part.text === "string",
+      )
+    )
+      return value.map((part: { text: string }) => part.text).join("\n\n");
+    throw new Error(
+      "Google Interactions cannot encode non-text bootstrap content",
+    );
+  };
+  const preload = request.bootstrap.provider.preload;
+  for (const [index, message] of messages.entries()) {
+    if (index === bootstrapPrefixEnd(request) && preload !== undefined) {
+      input.push(
+        {
+          type: "user_input",
+          content: text(
+            "Runtime preload: initial world materials, not a player action or model response.",
+          ),
+        },
+        {
+          type: "function_call",
+          id: preload.callId,
+          name: "runtime_load_context",
+          arguments: {},
+        },
+        {
+          type: "function_result",
+          call_id: preload.callId,
+          name: "runtime_load_context",
+          result: text(preload.markdown),
+        },
+      );
+    }
+    if (message.role === "system") {
+      if (conversationStarted)
+        throw new Error(
+          `Google Interactions cannot encode System message ${index + 1} after User/Assistant`,
+        );
+      system.push(contentText(message.content));
+    } else {
+      conversationStarted = true;
+      input.push({
+        type: message.role === "user" ? "user_input" : "model_output",
+        content: text(contentText(message.content)),
+      });
+    }
+  }
+  if (
+    bootstrapPrefixEnd(request) === messages.length &&
+    preload !== undefined
+  ) {
+    input.push(
+      {
+        type: "user_input",
+        content: text(
+          "Runtime preload: initial world materials, not a player action or model response.",
+        ),
+      },
+      {
+        type: "function_call",
+        id: preload.callId,
+        name: "runtime_load_context",
+        arguments: {},
+      },
+      {
+        type: "function_result",
+        call_id: preload.callId,
+        name: "runtime_load_context",
+        result: text(preload.markdown),
+      },
+    );
+  }
+  const calls = new Map<string, string>();
+  for (const item of request.appended) {
+    if (item.kind === "assistant") {
+      if (
+        item.providerState?.protocol !== "google_interactions" ||
+        !Array.isArray(item.providerState.steps)
+      )
+        throw continuationError("Google Interactions");
+      for (const step of item.providerState.steps) {
+        if (
+          isRecord(step) &&
+          step.type === "function_call" &&
+          typeof step.id === "string" &&
+          typeof step.name === "string"
+        )
+          calls.set(step.id, step.name);
+      }
+      input.push(...cloneProviderValue(item.providerState.steps));
+    } else if (item.kind === "tool") {
+      const name = calls.get(item.toolCallId);
+      if (name === undefined)
+        throw continuationError("Google Interactions tool result");
+      input.push({
+        type: "function_result",
+        name,
+        call_id: item.toolCallId,
+        result: text(item.markdown),
+        ...(item.isError === true ? { is_error: true } : {}),
+      });
+    } else if (item.kind === "prompt_delta") {
+      for (const message of item.logicalMessages)
+        input.push({
+          type: "user_input",
+          content: text(
+            renderPromptDeltaMessage(message.role, message.markdown),
+          ),
+        });
+    } else input.push({ type: "user_input", content: text(item.text) });
+  }
+  const tools = providerToolDefinitions(request);
+  return {
+    model: connection.modelId,
+    store: false,
+    stream: true,
+    ...(system.length === 0 ? {} : { system_instruction: system.join("\n\n") }),
+    input,
+    ...(tools.length === 0
+      ? {}
+      : {
+          tools: tools.map((tool) => ({
+            type: "function",
+            name: tool.name,
+            description: tool.description,
+            parameters: tool.inputSchema,
+          })),
+        }),
+    generation_config: {
+      max_output_tokens: request.maxOutputTokens,
+      ...(hasFrozenToolPolicy(request) &&
+      providerAllowedTools(request).length === 0
+        ? { tool_choice: "none" }
+        : {}),
+    },
+  };
+}
 
 type FrozenModelHostExchange = ModelHostExchange & {
   toolUniverse: NonNullable<ModelHostExchange["toolUniverse"]>;
@@ -1488,7 +1730,9 @@ function providerUrl(connection: FileNativeModelConnection): URL {
       ? "/chat/completions"
       : connection.provider === "openai_responses"
         ? "/responses"
-        : "/messages";
+        : connection.provider === "google_interactions"
+          ? "/interactions"
+          : "/messages";
   const path = url.pathname.replace(/\/+$/u, "");
   url.pathname = path.endsWith(suffix) ? path : `${path}${suffix}`;
   return url;

@@ -3,6 +3,8 @@ export type ModelUsageField =
 
 /** Provider-reported usage only; Runtime does not estimate token usage. */
 export interface ModelUsage {
+  /** Original Provider-reported accounting for an individual exchange. */
+  providerRaw?: Record<string, unknown>;
   inputTokens: number | null;
   uncachedInputTokens: number | null;
   cacheReadTokens: number | null;

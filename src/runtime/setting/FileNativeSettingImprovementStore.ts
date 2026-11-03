@@ -1271,6 +1271,14 @@ function validModelToolCall(value: unknown): boolean {
 
 function validProviderState(value: unknown): boolean {
   if (!isRecord(value)) return false;
+  if (value.protocol === "google_interactions")
+    return (
+      hasExactKeys(value, ["protocol", "steps"]) &&
+      Array.isArray(value.steps) &&
+      value.steps.every(
+        (step) => isRecord(step) && typeof step.type === "string",
+      )
+    );
   if (value.protocol === "chat_completions")
     return (
       hasExactKeys(value, ["protocol", "assistantMessage"]) &&
@@ -1310,7 +1318,8 @@ function validModelUsage(value: unknown): value is ModelUsage {
   ];
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, [...fields, "provenance"]) ||
+    !hasExactKeys(value, [...fields, "provenance"], ["providerRaw"]) ||
+    (value.providerRaw !== undefined && !isRecord(value.providerRaw)) ||
     !fields.every((field) => validNullableCount(value[field])) ||
     !isRecord(value.provenance) ||
     !hasExactKeys(value.provenance, fields)

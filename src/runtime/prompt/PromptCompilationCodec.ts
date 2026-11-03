@@ -410,7 +410,8 @@ export function validProviderKind(value: unknown): boolean {
   return (
     value === "chat_completions" ||
     value === "openai_responses" ||
-    value === "anthropic_messages"
+    value === "anthropic_messages" ||
+    value === "google_interactions"
   );
 }
 

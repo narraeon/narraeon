@@ -77,6 +77,133 @@ import { PlayCallChainError } from "../../src/runtime/play/PlayCallChainError.ts
 
 const roots: string[] = [];
 
+test("Google 合成传输完成游玩工具循环并冷重载原生上下文", async () => {
+  const sent: unknown[] = [];
+  const host = new FileNativeModelHost(
+    {
+      provider: "google_interactions",
+      baseUrl: "https://provider.invalid/v1beta",
+      apiKey: "synthetic-secret",
+      modelId: "manual-model",
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_000,
+    },
+    (_url, options) => {
+      if (typeof options?.body !== "string")
+        throw new Error("Missing request body");
+      sent.push(JSON.parse(options.body) as unknown);
+      const events =
+        sent.length === 1
+          ? [
+              {
+                event_type: "step.start",
+                index: 0,
+                step: { type: "thought", opaque: "keep" },
+              },
+              {
+                event_type: "step.delta",
+                index: 0,
+                delta: { type: "thought_signature", signature: "synthetic" },
+              },
+              { event_type: "step.stop", index: 0 },
+              {
+                event_type: "step.start",
+                index: 1,
+                step: {
+                  type: "function_call",
+                  id: "read-1",
+                  name: "context_read",
+                  arguments: {},
+                },
+              },
+              {
+                event_type: "step.delta",
+                index: 1,
+                delta: {
+                  type: "arguments_delta",
+                  arguments: '{"ref":"@current-situation"}',
+                },
+              },
+              { event_type: "step.stop", index: 1 },
+              {
+                event_type: "interaction.completed",
+                interaction: { status: "requires_action" },
+              },
+            ]
+          : [
+              {
+                event_type: "step.start",
+                index: 0,
+                step: { type: "model_output" },
+              },
+              {
+                event_type: "step.delta",
+                index: 0,
+                delta: { type: "text", text: "门缓缓打开。" },
+              },
+              { event_type: "step.stop", index: 0 },
+              {
+                event_type: "interaction.completed",
+                interaction: { status: "completed" },
+              },
+            ];
+      return Promise.resolve(
+        new Response(
+          events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      );
+    },
+  );
+  const { worlds, worldId, root } = await createWorld(
+    "google-synthetic",
+    undefined,
+    host.binding(),
+  );
+  const result = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "google",
+    exchangeId: "first",
+    playerText: "推开门。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: host.binding(),
+    modelHost: host,
+  });
+  expect(result.status).toBe("ready");
+  expect(result.events).toContainEqual(
+    expect.objectContaining({
+      kind: "tool_result",
+      callId: "read-1",
+      ok: true,
+    }),
+  );
+  expect(sent).toHaveLength(2);
+  expect(
+    (await worlds.playTimeline.readInitialEncoding(worldId, "google"))?.body,
+  ).toEqual(sent[0]);
+  expect(JSON.stringify(sent[1])).toContain('"signature":"synthetic"');
+  expect(JSON.stringify(sent[1])).toContain('"call_id":"read-1"');
+  expect(
+    (await worlds.recoverEndpoint(worldId)).history.map(
+      ({ exactText }) => exactText,
+    ),
+  ).toContain("门缓缓打开。");
+  const restarted = new PlayCallChain(new FileNativeWorldStore(root));
+  expect(await restarted.inspectWorld(worldId)).toMatchObject({
+    status: "ready",
+  });
+  const next = await restarted.append({
+    worldId,
+    chainId: "google",
+    exchangeId: "next",
+    playerText: "继续。",
+    modelHost: host,
+  });
+  expect(next.status).toBe("ready");
+  expect(JSON.stringify(sent[2])).toContain('"signature":"synthetic"');
+});
+
 test.each([
   [
     "outcome_unknown",

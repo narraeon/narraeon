@@ -19,5 +19,14 @@ export interface AnthropicMessagesState {
   stopReason?: string | null;
 }
 
+export interface GoogleInteractionsState {
+  protocol: "google_interactions";
+  /** Complete native steps, including opaque signatures and extensions. */
+  steps: unknown[];
+}
+
 export type ProviderExchangeState =
-  OpenAIResponsesState | ChatCompletionsState | AnthropicMessagesState;
+  | OpenAIResponsesState
+  | ChatCompletionsState
+  | AnthropicMessagesState
+  | GoogleInteractionsState;

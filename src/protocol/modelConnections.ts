@@ -1,5 +1,8 @@
 export type ModelProviderKind =
-  "chat_completions" | "openai_responses" | "anthropic_messages";
+  | "chat_completions"
+  | "openai_responses"
+  | "anthropic_messages"
+  | "google_interactions";
 
 /**
  * The wire dialect is explicit because an OpenAI-shaped proxy can expose
@@ -53,6 +56,17 @@ export function modelReasoningPolicyIssue(input: {
 }): string | null {
   const thinking = input.thinking ?? "provider_default";
   const thinkingBudgetTokens = input.thinkingBudgetTokens ?? null;
+  if (input.provider === "google_interactions") {
+    if (input.dialect !== "standard")
+      return "Google Interactions requires the standard dialect";
+    if (
+      input.effort !== "provider_default" ||
+      input.summary !== "provider_default" ||
+      thinking !== "provider_default" ||
+      thinkingBudgetTokens !== null
+    )
+      return "Google Interactions model capabilities are unverified; use provider defaults";
+  }
   const thinkingControlledByCLIProxySuffix =
     input.provider === "anthropic_messages" &&
     input.dialect === "cliproxyapi" &&
@@ -124,6 +138,12 @@ export const modelProviderPresets = [
     name: "Custom endpoint",
     provider: "chat_completions",
     baseUrl: "",
+  },
+  {
+    id: "google-interactions",
+    name: "Google Gemini · Interactions",
+    provider: "google_interactions",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta",
   },
   {
     id: "openai",

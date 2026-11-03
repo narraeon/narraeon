@@ -10,6 +10,50 @@ import { V1Runtime } from "../../src/runtime/V1Runtime.ts";
 
 const roots: string[] = [];
 
+test("Google Interactions 保存手动模型 ID 并在重载后保留 Provider 默认配置", async () => {
+  const root = await temporaryRoot();
+  const store = new ModelConnectionStore(root);
+  const saved = await store.save({
+    name: "Gemini",
+    presetId: "google-interactions",
+    provider: "google_interactions",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+    apiKey: "synthetic-secret",
+    modelId: "manual-model-id",
+    contextWindowTokens: 128_000,
+    maxOutputTokens: 4_096,
+  });
+  expect(saved.connections[0]).toMatchObject({
+    provider: "google_interactions",
+    modelId: "manual-model-id",
+    reasoningEffort: "provider_default",
+    reasoningSummary: "provider_default",
+  });
+  expect(saved.connections[0]).not.toHaveProperty("apiKey");
+  await expect(new ModelConnectionStore(root).bind()).resolves.toMatchObject({
+    provider: "google_interactions",
+    modelId: "manual-model-id",
+    apiKey: "synthetic-secret",
+  });
+});
+
+test("Google 未验证模型的显式推理配置不能伪称受支持", async () => {
+  const store = new ModelConnectionStore(await temporaryRoot());
+  await expect(
+    store.save({
+      name: "Gemini",
+      presetId: "google-interactions",
+      provider: "google_interactions",
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+      apiKey: "synthetic-secret",
+      modelId: "unknown-model",
+      reasoningEffort: "high",
+      contextWindowTokens: 128_000,
+      maxOutputTokens: 4_096,
+    }),
+  ).rejects.toThrow("Google Interactions model capabilities are unverified");
+});
+
 afterEach(async () => {
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { force: true, recursive: true })),

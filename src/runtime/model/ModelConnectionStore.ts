@@ -200,6 +200,10 @@ export class ModelConnectionStore {
   ): Promise<{ models: string[] }> {
     await this.#mutationTail;
     const provider = validateProvider(input.provider);
+    if (provider === "google_interactions")
+      throw new Error(
+        "Google Interactions model discovery is unverified; enter a model ID manually",
+      );
     const baseUrl = normalizeBaseUrl(
       requiredTrimmed(input.baseUrl, "Base URL", 4096),
     );
@@ -515,7 +519,8 @@ function validateProvider(value: unknown): ModelProviderKind {
   if (
     value !== "chat_completions" &&
     value !== "openai_responses" &&
-    value !== "anthropic_messages"
+    value !== "anthropic_messages" &&
+    value !== "google_interactions"
   )
     throw new Error("Model-connection protocol is invalid");
   return value;

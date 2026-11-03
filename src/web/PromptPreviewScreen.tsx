@@ -190,6 +190,7 @@ const providerLabels: Record<ModelProviderKind, string> = {
   chat_completions: "Chat Completions",
   openai_responses: "OpenAI Responses",
   anthropic_messages: "Anthropic Messages",
+  google_interactions: "Google Gemini · Interactions",
 };
 
 const coverageLabels = {

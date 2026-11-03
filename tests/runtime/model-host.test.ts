@@ -25,6 +25,295 @@ const binding: ModelHostBinding = {
   protocolConfigFingerprint: "sha256:protocol",
 };
 
+test("Google 预览使用无状态 Interactions 与原序 System 前缀", () => {
+  const host = new FileNativeModelHost({
+    provider: "google_interactions",
+    baseUrl: "https://provider.invalid/v1beta",
+    apiKey: "synthetic-secret",
+    modelId: "manual-model",
+    contextWindowTokens: 64_000,
+    maxOutputTokens: 2_048,
+  });
+  const request = exchangeFor(
+    "google_interactions",
+    "manual-model",
+    "provider_managed",
+  );
+  request.bootstrap.provider.messages = [
+    { role: "system", content: "first" },
+    { role: "system", content: "second" },
+    { role: "user", content: "question" },
+  ];
+  const preview = host.previewRequest(request);
+  expect(preview).toMatchObject({
+    provider: "google_interactions",
+    endpointPath: "/v1beta/interactions",
+    headerNames: ["Accept", "x-goog-api-key", "Content-Type"],
+    body: {
+      model: "manual-model",
+      store: false,
+      stream: true,
+      system_instruction: "first\n\nsecond",
+    },
+  });
+  expect(JSON.stringify(preview)).not.toContain("synthetic-secret");
+  request.bootstrap.provider.messages.push({ role: "system", content: "late" });
+  expect(() => host.previewRequest(request)).toThrow(/System.*4/);
+});
+
+test("Google 流完整聚合工具参数与签名并在下次请求重放原生 steps", async () => {
+  const events = [
+    {
+      event_type: "step.start",
+      index: 0,
+      step: { type: "thought", extension: "opaque" },
+    },
+    {
+      event_type: "step.delta",
+      index: 0,
+      delta: { type: "thought_signature", signature: "synthetic-signature" },
+    },
+    { event_type: "step.stop", index: 0 },
+    {
+      event_type: "step.start",
+      index: 1,
+      step: {
+        type: "function_call",
+        id: "c1",
+        name: "read_document",
+        arguments: {},
+        extra: "opaque",
+      },
+    },
+    {
+      event_type: "step.delta",
+      index: 1,
+      delta: { type: "arguments_delta", arguments: '{"ref":' },
+    },
+    {
+      event_type: "step.delta",
+      index: 1,
+      delta: { type: "arguments_delta", arguments: '"@scene"}' },
+    },
+    { event_type: "step.stop", index: 1 },
+    {
+      event_type: "interaction.completed",
+      interaction: {
+        status: "requires_action",
+        usage: { total_input_tokens: 7, total_tokens: 12 },
+      },
+    },
+  ];
+  const bodies: unknown[] = [];
+  const host = new FileNativeModelHost(
+    {
+      provider: "google_interactions",
+      baseUrl: "https://provider.invalid/v1beta",
+      apiKey: "secret",
+      modelId: "manual-model",
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_048,
+    },
+    (_url, init) => {
+      expect(new Headers(init?.headers).get("x-goog-api-key")).toBe("secret");
+      if (typeof init?.body !== "string")
+        throw new Error("Missing request body");
+      bodies.push(JSON.parse(init.body) as unknown);
+      return Promise.resolve(
+        new Response(
+          events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      );
+    },
+  );
+  const request = exchangeFor(
+    "google_interactions",
+    "manual-model",
+    "provider_managed",
+  );
+  const response = await host.exchange(request);
+  expect(response.toolCalls).toEqual([
+    { id: "c1", name: "read_document", arguments: { ref: "@scene" } },
+  ]);
+  expect(response.providerState).toEqual({
+    protocol: "google_interactions",
+    steps: [
+      {
+        type: "thought",
+        signature: "synthetic-signature",
+        extension: "opaque",
+      },
+      {
+        type: "function_call",
+        id: "c1",
+        name: "read_document",
+        arguments: { ref: "@scene" },
+        extra: "opaque",
+      },
+    ],
+  });
+  expect(response.usage).toMatchObject({
+    inputTokens: 7,
+    totalTokens: 12,
+    outputTokens: null,
+    providerRaw: { total_input_tokens: 7, total_tokens: 12 },
+  });
+  request.appended.push(
+    {
+      kind: "assistant",
+      text: "",
+      toolCalls: response.toolCalls!,
+      providerState: response.providerState!,
+    },
+    { kind: "tool", toolCallId: "c1", markdown: "result" },
+  );
+  await host.exchange(request);
+  expect(bodies[1]).toMatchObject({
+    input: expect.arrayContaining([
+      {
+        type: "thought",
+        signature: "synthetic-signature",
+        extension: "opaque",
+      },
+      {
+        type: "function_result",
+        name: "read_document",
+        call_id: "c1",
+        result: [{ type: "text", text: "result" }],
+      },
+    ]) as unknown,
+  });
+});
+
+test.each([
+  [
+    {
+      event_type: "step.start",
+      index: 0,
+      step: { type: "function_call", id: "c", name: "read", arguments: {} },
+    },
+    {
+      event_type: "interaction.completed",
+      interaction: { status: "requires_action" },
+    },
+  ],
+  [
+    {
+      event_type: "step.start",
+      index: 0,
+      step: { type: "function_call", id: "c", name: "read", arguments: {} },
+    },
+    {
+      event_type: "step.delta",
+      index: 0,
+      delta: { type: "arguments_delta", arguments: '{"x":' },
+    },
+    { event_type: "step.stop", index: 0 },
+    {
+      event_type: "interaction.completed",
+      interaction: { status: "requires_action" },
+    },
+  ],
+  [
+    { event_type: "step.start", index: 0, step: { type: "thought" } },
+    {
+      event_type: "step.delta",
+      index: 0,
+      delta: { type: "unknown_extension", data: "do not drop" },
+    },
+    { event_type: "step.stop", index: 0 },
+    {
+      event_type: "interaction.completed",
+      interaction: { status: "completed" },
+    },
+  ],
+  [
+    {
+      event_type: "step.start",
+      index: 0,
+      step: { type: "function_call", id: "c", name: "read", arguments: {} },
+    },
+    {
+      event_type: "step.delta",
+      index: 0,
+      delta: { type: "arguments_delta", arguments: '{"x":9007199254740993}' },
+    },
+    { event_type: "step.stop", index: 0 },
+    {
+      event_type: "interaction.completed",
+      interaction: { status: "requires_action" },
+    },
+  ],
+])("Google 不结算不完整或无法无损回放的流 %#", async (...events) => {
+  const host = new FileNativeModelHost(
+    {
+      provider: "google_interactions",
+      baseUrl: "https://provider.invalid/v1beta",
+      apiKey: "secret",
+      modelId: "manual-model",
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_048,
+    },
+    () =>
+      Promise.resolve(
+        new Response(
+          events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      ),
+  );
+  await expect(
+    host.exchange(
+      exchangeFor("google_interactions", "manual-model", "provider_managed"),
+    ),
+  ).rejects.toBeInstanceOf(ModelHostOutcomeUnknownError);
+});
+
+test.each(["requires_continuation", "incomplete", "failed", "cancelled"])(
+  "Google 终态 %s 不结算工具",
+  async (status) => {
+    const events = [
+      {
+        event_type: "step.start",
+        index: 0,
+        step: {
+          type: "function_call",
+          id: "c",
+          name: "read_document",
+          arguments: {},
+        },
+      },
+      { event_type: "step.stop", index: 0 },
+      { event_type: "interaction.completed", interaction: { status } },
+    ];
+    const host = new FileNativeModelHost(
+      {
+        provider: "google_interactions",
+        baseUrl: "https://provider.invalid/v1beta",
+        apiKey: "secret",
+        modelId: "manual-model",
+        contextWindowTokens: 64_000,
+        maxOutputTokens: 2_048,
+      },
+      () =>
+        Promise.resolve(
+          new Response(
+            events
+              .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+              .join(""),
+            { headers: { "content-type": "text/event-stream" } },
+          ),
+        ),
+    );
+    await expect(
+      host.exchange(
+        exchangeFor("google_interactions", "manual-model", "provider_managed"),
+      ),
+    ).rejects.toBeInstanceOf(ModelHostOutcomeUnknownError);
+  },
+);
+
 test("ModelHost binding 比较覆盖端点、模型、预算与协议配置", () => {
   expect(equalModelHostBinding(binding, structuredClone(binding))).toBe(true);
   expect(

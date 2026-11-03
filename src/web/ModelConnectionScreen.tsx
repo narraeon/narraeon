@@ -355,6 +355,9 @@ export function ModelConnectionScreen({
                 {
                   presetId: "custom",
                   provider: event.target.value as ModelProviderKind,
+                  ...(event.target.value === "google_interactions"
+                    ? { dialect: "standard" as const }
+                    : {}),
                   ...reasoningForProvider(
                     form,
                     event.target.value as ModelProviderKind,
@@ -370,11 +373,15 @@ export function ModelConnectionScreen({
             </option>
             <option value="openai_responses">OpenAI Responses API</option>
             <option value="anthropic_messages">Anthropic Messages</option>
+            <option value="google_interactions">
+              Google Gemini · Interactions
+            </option>
           </select>
 
           <label htmlFor="model-dialect">{uiText("端点方言")}</label>
           <select
             id="model-dialect"
+            disabled={form.provider === "google_interactions"}
             value={form.dialect}
             onChange={(event) => {
               const dialect = event.target.value as ModelProviderDialect;
@@ -401,6 +408,7 @@ export function ModelConnectionScreen({
               {uiText("Effort（推理强度）")}
               <select
                 id="model-reasoning-effort"
+                disabled={form.provider === "google_interactions"}
                 value={form.reasoningEffort}
                 onChange={(event) =>
                   change({
@@ -466,6 +474,7 @@ export function ModelConnectionScreen({
               <select
                 id="model-reasoning-summary"
                 disabled={
+                  form.provider === "google_interactions" ||
                   (form.provider === "chat_completions" &&
                     form.dialect === "standard") ||
                   (form.provider === "anthropic_messages" &&
@@ -578,6 +587,7 @@ export function ModelConnectionScreen({
               className="secondary-button"
               disabled={
                 pending !== null ||
+                form.provider === "google_interactions" ||
                 form.baseUrl.length === 0 ||
                 (credentialsMustBeEntered && form.apiKey.length === 0)
               }
@@ -589,6 +599,12 @@ export function ModelConnectionScreen({
                 : uiText("从端点拉取模型")}
             </button>
           </div>
+          {form.provider === "google_interactions" && (
+            <p className="field-note">
+              Google Interactions
+              的模型枚举与服务行为尚未经真实服务验证，请手动输入模型 ID。
+            </p>
+          )}
           {models.length > 0 && (
             <div>
               <label htmlFor="fetched-model-id">{uiText("已拉取的模型")}</label>
@@ -818,6 +834,8 @@ function providerLabel(provider: ModelProviderKind): string {
       return "OpenAI Responses";
     case "anthropic_messages":
       return "Anthropic Messages";
+    case "google_interactions":
+      return "Google Gemini · Interactions";
   }
 }
 
@@ -879,8 +897,9 @@ function reasoningForProvider(
   | "thinkingBudgetTokens"
 > {
   const reasoningEffort =
-    provider === "anthropic_messages" &&
-    (form.reasoningEffort === "none" || form.reasoningEffort === "minimal")
+    provider === "google_interactions" ||
+    (provider === "anthropic_messages" &&
+      (form.reasoningEffort === "none" || form.reasoningEffort === "minimal"))
       ? "provider_default"
       : form.reasoningEffort;
   const thinkingMode =
@@ -894,6 +913,7 @@ function reasoningForProvider(
     thinkingMode,
   });
   const reasoningSummary =
+    provider === "google_interactions" ||
     (provider !== "openai_responses" &&
       (form.reasoningSummary === "concise" ||
         form.reasoningSummary === "detailed")) ||

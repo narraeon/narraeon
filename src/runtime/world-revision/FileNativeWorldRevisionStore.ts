@@ -677,6 +677,14 @@ function validModelToolCall(value: unknown): boolean {
 
 function validProviderState(value: unknown): boolean {
   if (!isRecord(value)) return false;
+  if (value.protocol === "google_interactions")
+    return (
+      hasExactKeys(value, ["protocol", "steps"]) &&
+      Array.isArray(value.steps) &&
+      value.steps.every(
+        (step) => isRecord(step) && typeof step.type === "string",
+      )
+    );
   if (value.protocol === "chat_completions")
     return hasExactKeys(value, ["protocol", "assistantMessage"]);
   if (value.protocol === "openai_responses")
@@ -757,7 +765,8 @@ function validModelBinding(value: unknown): boolean {
     ) &&
     (value.provider === "chat_completions" ||
       value.provider === "openai_responses" ||
-      value.provider === "anthropic_messages") &&
+      value.provider === "anthropic_messages" ||
+      value.provider === "google_interactions") &&
     typeof value.endpointFingerprint === "string" &&
     typeof value.modelId === "string" &&
     count(value.contextWindowTokens) &&
@@ -782,7 +791,8 @@ function validModelUsage(value: unknown): boolean {
   ];
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, [...fields, "provenance"]) ||
+    !hasExactKeys(value, [...fields, "provenance"], ["providerRaw"]) ||
+    (value.providerRaw !== undefined && !isRecord(value.providerRaw)) ||
     !fields.every((field) => value[field] === null || count(value[field])) ||
     !isRecord(value.provenance) ||
     !hasExactKeys(value.provenance, fields)

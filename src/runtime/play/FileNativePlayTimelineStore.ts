@@ -728,9 +728,12 @@ export class FileNativePlayTimelineStore {
     if (
       !isRecord(value) ||
       value.method !== "POST" ||
-      !["chat_completions", "openai_responses", "anthropic_messages"].includes(
-        String(value.provider),
-      ) ||
+      ![
+        "chat_completions",
+        "openai_responses",
+        "anthropic_messages",
+        "google_interactions",
+      ].includes(String(value.provider)) ||
       !isRecord(value.body) ||
       typeof value.endpointPath !== "string" ||
       !Array.isArray(value.headerNames) ||
@@ -1443,7 +1446,8 @@ function validModelHostBinding(value: unknown): value is ModelHostBinding {
     isRecord(value) &&
     (value.provider === "chat_completions" ||
       value.provider === "openai_responses" ||
-      value.provider === "anthropic_messages") &&
+      value.provider === "anthropic_messages" ||
+      value.provider === "google_interactions") &&
     typeof value.endpointFingerprint === "string" &&
     value.endpointFingerprint.length > 0 &&
     typeof value.modelId === "string" &&
@@ -1661,6 +1665,8 @@ function validOptionalUsage(value: unknown): boolean {
 
 function validFullUsage(value: unknown): value is ModelUsage {
   if (!isRecord(value) || !isRecord(value.provenance)) return false;
+  if (value.providerRaw !== undefined && !isRecord(value.providerRaw))
+    return false;
   const provenance = value.provenance;
   const fields = [
     "inputTokens",
