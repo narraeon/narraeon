@@ -68,10 +68,10 @@ describe("narrative-person blocks", () => {
         locale === "zh-CN" ? "第二人称" : "as “you”",
       );
       expect(host["blocks/person-second.md"]).toContain(
-        locale === "zh-CN" ? "“你”" : "“you”",
+        locale === "zh-CN" ? '"你"' : '"you"',
       );
       expect(host["blocks/person-first.md"]).toContain(
-        locale === "zh-CN" ? "“我”" : "“I”",
+        locale === "zh-CN" ? '"我"' : '"I"',
       );
       expect(host["blocks/person-third.md"]).toContain(
         locale === "zh-CN" ? "第三人称" : "third person",
