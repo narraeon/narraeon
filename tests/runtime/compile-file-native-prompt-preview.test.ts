@@ -12,6 +12,85 @@ import {
 } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
 import { WorldDocumentStore } from "../../src/runtime/world/WorldDocumentStore.ts";
 
+test.each([
+  {
+    locale: "zh-CN" as const,
+    policy: [
+      "事件结束不意味着无话可接",
+      "对话、交易、冲突或活动自然结束",
+      "地点改变、时间推进、在场者更换",
+      "不必依赖前一阶段的全部过程",
+      "给出关键回应",
+      "不要为了登记而加快节奏",
+      "再提交最终正文",
+    ],
+    ending: "不必再添一句话或一个动作来等玩家接续",
+    mechanics: ["玩家可以取消预选", "替代 frame 的 recent", "为空时"],
+    obsolete: [
+      "最终正文后调用 world_checkpoint",
+      "调用检查点意味着下一次将从全新上下文开始",
+      "当本轮调用了 world_checkpoint，表示阶段已结束",
+      "Runtime 提示：turn guide",
+    ],
+  },
+  {
+    locale: "en" as const,
+    policy: [
+      "An event can end while leaving room to reply",
+      "conversation, transaction, conflict or activity naturally ends",
+      "a change of location, passage of time or change of participants",
+      "without depending on the previous phase's entire process",
+      "give a key response",
+      "Do not accelerate pace",
+      "then submit the final prose",
+    ],
+    ending: "without adding another line or action to invite continuation",
+    mechanics: [
+      "the player can cancel the preselection",
+      "replaces the frame's recent",
+      "When it is empty",
+    ],
+    obsolete: [
+      "Call world_checkpoint after this turn's final prose",
+      "Calling a checkpoint means the next request will start with a fresh context",
+      "When this turn calls world_checkpoint, the phase has ended",
+      "**Runtime hint**",
+    ],
+  },
+])("$locale: 当前内置检查点政策和结尾进入真实编译与预览", (scenario) => {
+  const request = input({
+    playerInputPlacement: "append",
+  });
+  const preset = builtinDefaultPlayPresetBinding(scenario.locale);
+  const compiler = new FileNativePromptCompiler({ locale: scenario.locale });
+  const compiled = compiler.compilePlayCallChain(request, preset).bootstrap;
+  const blocks = compiled.logicalMessages.flatMap(({ blocks }) => blocks);
+  const policy = blocks.find(
+    ({ source }) => source === "runtime:ordered/play.checkpoint-policy",
+  )!.markdown;
+  const ending = blocks.find(
+    ({ source }) => source === "runtime:ordered/play.ending",
+  )!.markdown;
+  const mechanics = blocks.find(
+    ({ source }) => source === "runtime:ordered/play.mechanics",
+  )!.markdown;
+  for (const phrase of scenario.policy) expect(policy).toContain(phrase);
+  expect(ending).toContain(scenario.ending);
+  expect(ending).not.toContain("world_checkpoint");
+  for (const phrase of scenario.mechanics) expect(mechanics).toContain(phrase);
+  for (const phrase of scenario.obsolete)
+    expect(
+      compiled.logicalMessages.map(({ markdown }) => markdown).join("\n"),
+    ).not.toContain(phrase);
+  const preview = JSON.stringify(compiler.preview(request, preset));
+  for (const phrase of [
+    ...scenario.policy,
+    scenario.ending,
+    ...scenario.mechanics,
+  ])
+    expect(preview).toContain(phrase);
+});
+
 test("预加载目录索引覆盖分页、嵌套和空目录，句柄可直接用于工具", () => {
   const request = input({ playerInputPlacement: "append" });
   const files = request.world.documentSnapshot.files.map((file) => ({
@@ -194,8 +273,8 @@ test.each([
     )!;
     expect(authorPrompt).toContain(
       locale === "zh-CN"
-        ? "整理不等于检查点"
-        : "Consolidation is not a checkpoint",
+        ? "整理随时可做，不等于检查点"
+        : "Consolidation can happen at any time; it is not a checkpoint",
     );
     // The gap policy is an author block; the Runtime contract only defers to it.
     const gapPolicy =
@@ -313,7 +392,7 @@ test("主持块分别约束玩家代理权、事实裁决与默认叙事视角",
   // The person lives in its own block; the prose block no longer fixes it.
   expect(defaultPresetHostFiles["blocks/prose.md"]).not.toContain("“you”");
   expect(defaultPresetHostFiles["blocks/person-second.md"]).toContain(
-    "Address the player character as “you”",
+    'Address the player character as "you"',
   );
 });
 

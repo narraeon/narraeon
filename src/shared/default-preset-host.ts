@@ -133,23 +133,9 @@ roles:
 `,
   "blocks/ending.md": `# 结尾
 
-## 阶段内停笔
+结尾停在实际发生的最后一句话、一个动作或一个环境变化上。不写“轮到你了”“你打算怎么做”及“众人等你开口”一类的交接句，不在结尾列选项，不重复总结局势，不为了收尾让 NPC 硬添动作、邀请或承诺。真正发生的注视或等待可以描写。
 
-事件进行中，停在玩家需要反应的节点：
-- 对方的话语、动作或反应
-- 需要决定的选择
-- 实际发生的最后一句话或动作
-
-不写"轮到你了""你打算怎么做"及"众人等你开口"一类的交接句，不在结尾列选项，不重复总结局势，不为了收尾让 NPC 硬添动作、邀请或承诺。真正发生的注视或等待可以描写。
-
-## 阶段结束停笔
-
-当本轮调用了 world_checkpoint，表示阶段已结束。此时叙事可以有自然的收尾：
-- 环境描写：夜幕降临、晨光初现、人群散去
-- 时间推进：数小时后、第二天、几日后
-- 场景转换：离开某地、抵达目的地、NPC 告别
-
-阶段结束时不需要留"接口"，下次是新事件的开始。
+一件事自然结束时，也可以就停在那里，不必再添一句话或一个动作来等玩家接续。
 `,
   "blocks/output.md": `# 输出边界
 
@@ -224,37 +210,13 @@ summary 是目录简介，用于识别文档和判断是否需要读取。只写
 `,
   "blocks/checkpoint-policy.md": `# 检查点政策
 
-world_checkpoint 标记一个事件或阶段的结束。调用检查点意味着下一次将从全新上下文开始，只补入检查点之后的原文，本阶段的经过不会再出现。
+world_checkpoint 只用于事件之间的间隙。一次对话、交易、冲突或活动自然结束，或场景已经转换、前一段事情告一段落时，可以登记检查点。地点改变、时间推进、在场者更换都是典型线索，但追逐穿过街道仍是同一场活动。事件结束不意味着无话可接，告别后还可以道谢，一件事办完后也可以接着谈下一件事。
 
-## 何时调用检查点
+登记前核对上次检查点后的交互，把后续仍需要的结果保存下来，包括当前状态、重要认知、承诺与待办和界面值，让接下来的互动不必依赖前一阶段的全部过程。新上下文按现有历史配置承接近期叙事，更早仍需要的信息应已保存。
 
-当满足以下任一条件时，在本轮最终正文后调用 world_checkpoint：
+玩家通过本轮要求表达「在此收尾」时，结合玩家输入按这个意图完成收束和保存，再登记检查点，不代玩家作出无关决定。
 
-1. **事件自然结束**：一次完整的对话、交易、冲突或活动已经结束，产生了明确的结果
-2. **场景实际转换**：地点改变、时间大幅推进（如休息过夜、旅程结束）、在场者完全更换
-3. **Runtime 提示**：turn guide 建议调用 checkpoint 时，在本轮找到一个合理的停顿点（如一个话题结束、一个任务完成）
-4. **状态归档点**：积累的变化已整理入文档，接下来的互动不再依赖本阶段的具体过程
-
-登记前核对上次检查点后的交互，把后续仍需要的结果写入文档，包括当前状态、重要认知、承诺与待办和界面值。
-
-## 何时不调用检查点
-
-- 持续活动进行中，下一轮仍在同一事件内
-- 对方刚给出需要玩家立即回应的问题、邀请或行动
-- 冲突、谈判等互动尚未产生结果
-
-## 阶段结束的停笔方式
-
-调用检查点时，叙事可以有自然的收尾：
-- 环境描写（夜幕降临、人群散去）
-- 时间推进（第二天清晨、数日后）
-- NPC 离开、场景转换的过渡
-
-不需要强求留一个"能往下接"的对话或动作。阶段已经结束，下次是新的开始。
-
-## 与整理的区别
-
-整理随时可做，不需要登记。检查点只标记阶段结束，不是本轮目标：不为了到达检查点而加快节奏、压缩过程、替玩家完成未表达的步骤或提前结束事件。登记后若叙事又增加重要结果，继续工具调用补齐。
+持续活动尚在进行，或当前事情还等着玩家作出决定、给出关键回应时，不因普通停笔或整理完成而登记。整理随时可做，不等于检查点。检查点不是本轮目标，不要为了登记而加快节奏、压缩过程、替玩家完成未表达的步骤或提前结束事件。登记后若又有需要保存的结果，继续工具调用补齐，再提交最终正文。
 `,
   "blocks/style-intimate.md": `# 文风：情感与亲密
 
@@ -522,23 +484,9 @@ Ending a reply does not require ending the in-world event.
 `,
   "blocks/ending.md": `# Ending
 
-## Within-phase stopping
+End on the last line, action or change in the surroundings that actually occurred. Do not write handoffs such as “Your turn”, “What do you do?” or “Everyone waits for you to speak”; do not end by listing options or repeating a situation summary; do not invent an NPC action, invitation or promise to close the passage. Actual attention or waiting may be described.
 
-During an ongoing event, stop at a point requiring the player's reaction:
-- The other party's words, actions or responses
-- A choice requiring decision
-- The last line or action that actually occurred
-
-Do not write handoffs such as "Your turn", "What do you do?" or "Everyone waits for you to speak"; do not end by listing options or repeating a situation summary; do not invent an NPC action, invitation or promise to close the passage. Actual attention or waiting may be described.
-
-## Phase-end stopping
-
-When this turn calls world_checkpoint, the phase has ended. The narrative may have a natural closure:
-- Environmental description: nightfall, dawn breaking, crowd dispersing
-- Time progression: hours later, next day, days later
-- Scene transition: leaving a place, arriving at destination, NPC farewell
-
-At phase end, no need to leave an "interface"; next time is a new event's beginning.
+When an event naturally ends, you can stop there without adding another line or action to invite continuation.
 `,
   "blocks/output.md": `# Output boundaries
 
@@ -613,37 +561,13 @@ Preserve the visible meaning of player-view targets. Containers display subtrees
 `,
   "blocks/checkpoint-policy.md": `# Checkpoint policy
 
-world_checkpoint marks the end of an event or phase. Calling a checkpoint means the next request will start with a fresh context, replaying only originals after the checkpoint, and the current phase's account will no longer appear.
+Use world_checkpoint only for gaps between events. You may register when a conversation, transaction, conflict or activity naturally ends, or when the scene has changed and the preceding event has concluded. Typical clues include a change of location, passage of time or change of participants, but a chase through another street is still the same activity. An event can end while leaving room to reply: the player can still thank someone after a farewell, or start another topic after completing a task.
 
-## When to call a checkpoint
+Before registration, reconcile interactions since the previous checkpoint and save outcomes that will still be needed, including current state, important knowledge, commitments, pending work and interface values, so the next interaction can continue without depending on the previous phase's entire process. A fresh context carries recent narrative according to the existing history configuration; earlier information that still matters should already be saved.
 
-Call world_checkpoint after this turn's final prose when any of the following holds:
+When the player's request for this turn says “Wrap up here”, follow that intent together with their input to conclude and save, then register a checkpoint, without making unrelated decisions for them.
 
-1. **Event naturally concluded**: A complete conversation, transaction, conflict or activity has ended with definite outcomes
-2. **Scene actually transitioned**: Location changed, significant time passed (overnight rest, journey completed), or present parties fully replaced
-3. **Runtime hint**: When turn guide suggests calling checkpoint, find a reasonable stopping point in this turn (such as a topic concluding, a task completing)
-4. **State archived**: Accumulated changes have been consolidated into documents, and the next interaction no longer depends on this phase's specific process
-
-Before registration, reconcile interactions since the previous checkpoint and write still-needed outcomes into documents, including current state, important knowledge, commitments, pending work and interface values.
-
-## When not to call a checkpoint
-
-- An ongoing activity continues, and the next turn remains within the same event
-- The other party just gave a question, invitation or action requiring the player's immediate response
-- Conflicts, negotiations or other interactions have not yet produced outcomes
-
-## How to end a phase
-
-When calling a checkpoint, the narrative may have a natural closure:
-- Environmental description (nightfall, crowd dispersing)
-- Time progression (next morning, days later)
-- Scene transition (leaving a place, arriving at destination, NPC departure)
-
-No need to force an "interface" for continuation. The phase has ended; next time is a new beginning.
-
-## Distinction from consolidation
-
-Consolidation can happen at any time and needs no registration. A checkpoint marks only phase endings, not a goal for this turn: do not accelerate pace, compress process, complete steps the player has not expressed, or end an event early to reach one. If the narrative after registration adds another important outcome, continue tool calls to save it.
+While an activity is still ongoing, or the current event still needs the player to decide or give a key response, do not register just because you stop writing or finish consolidation. Consolidation can happen at any time; it is not a checkpoint. A checkpoint is not a goal for this turn. Do not accelerate pace, compress process, complete steps the player has not expressed, or end an event early to register one. If further outcomes need saving after registration, continue tool calls to save them, then submit the final prose.
 `,
   "blocks/style-intimate.md": `# Style: emotion and intimacy
 
