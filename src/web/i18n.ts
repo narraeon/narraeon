@@ -1839,6 +1839,9 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
   排版密度: "Layout density",
   "接下来，你要做什么？": "What do you do next?",
   本轮临时要求: "One-turn request",
+  在此收尾: "Wrap up here",
+  "这段就在这里收尾，保存后续需要的信息，并登记检查点。":
+    "Wrap up this part here, save what is needed for later, and register a checkpoint.",
   本轮: "This turn",
   本轮临时要求内容: "One-turn request text",
   清空并收起本轮临时要求: "Clear and close the one-turn request",

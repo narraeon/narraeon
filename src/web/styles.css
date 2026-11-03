@@ -8607,6 +8607,18 @@ summary:focus-visible {
   cursor: pointer;
 }
 
+.world-composer-row > .world-turn-note-shortcut {
+  flex: none;
+  min-height: 2rem;
+  padding: 0.3rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--muted);
+  background: var(--surface);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
 .world-turn-note-clear {
   border-color: transparent;
   background: transparent;
