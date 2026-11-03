@@ -1985,6 +1985,27 @@ export function WorldPage({
               >
                 ✎
               </button>
+              <button
+                type="button"
+                className="world-turn-note-shortcut"
+                disabled={!playIdle || !modelConfigured}
+                onClick={() => {
+                  const note = uiText(
+                    "这段就在这里收尾，保存后续需要的信息，并登记检查点。",
+                  );
+                  setTurnNote((current) =>
+                    current.includes(note)
+                      ? current
+                      : current.trim() === ""
+                        ? note
+                        : `${current} ${note}`,
+                  );
+                  setTurnNoteOpen(true);
+                  turnNoteInputRef.current?.focus();
+                }}
+              >
+                {uiText("在此收尾")}
+              </button>
               <label>
                 <span className="visually-hidden">{uiText("你的行动")}</span>
                 <textarea

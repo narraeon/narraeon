@@ -3256,6 +3256,78 @@ describe("世界游玩页面", () => {
     expect(append).toMatchObject({ turnNote: "写得更细一些" });
   });
 
+  test("在此收尾只填写可编辑要求，保留手写内容且重复点击不重复追加", async () => {
+    const client = {
+      request: vi.fn(() => Promise.resolve(worldView(null))),
+    };
+    renderWorld(client);
+    await screen.findByRole("heading", { name: "宿舍世界" });
+    const shortcut = screen.getByRole("button", { name: "在此收尾" });
+    fireEvent.click(shortcut);
+    const note = screen.getByLabelText<HTMLInputElement>("本轮临时要求内容");
+    expect(note).toBe(document.activeElement);
+    expect(note.value).toBe(
+      "这段就在这里收尾，保存后续需要的信息，并登记检查点。",
+    );
+    expect(client.request.mock.calls.flat()).not.toContainEqual(
+      expect.objectContaining({ type: "play.chain.start" }),
+    );
+    fireEvent.change(note, { target: { value: "保留夜晚的氛围。" } });
+    fireEvent.keyDown(note, { key: "Escape" });
+    fireEvent.click(shortcut);
+    fireEvent.click(shortcut);
+    expect(
+      screen.getByLabelText<HTMLInputElement>("本轮临时要求内容").value,
+    ).toBe(
+      "保留夜晚的氛围。 这段就在这里收尾，保存后续需要的信息，并登记检查点。",
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "清空并收起本轮临时要求" }),
+    );
+    expect(screen.queryByLabelText("本轮临时要求内容")).toBeNull();
+    fireEvent.click(shortcut);
+    expect(
+      screen.getByLabelText<HTMLInputElement>("本轮临时要求内容").value,
+    ).toBe("这段就在这里收尾，保存后续需要的信息，并登记检查点。");
+  });
+
+  test.each(["model", "running", "revision"] as const)(
+    "在此收尾与输入区一同禁用：%s",
+    async (blockedBy) => {
+      const chain = playChainView("existing", "first", "I wait.");
+      const client = {
+        request: vi.fn(() =>
+          Promise.resolve({
+            ...worldView(
+              blockedBy === "running" ? { ...chain, status: "running" } : null,
+            ),
+            ...(blockedBy === "revision"
+              ? { worldRevision: worldRevisionEpoch([]) }
+              : {}),
+          }),
+        ),
+      };
+      renderWorld(client, undefined, {
+        modelConfigured: blockedBy !== "model",
+      });
+      await screen.findByRole("heading", { name: "宿舍世界" });
+      await waitFor(() => {
+        expect(
+          screen.getByRole<HTMLButtonElement>("button", { name: "在此收尾" })
+            .disabled,
+        ).toBe(true);
+        expect(
+          screen.getByRole<HTMLButtonElement>("button", {
+            name: "本轮临时要求",
+          }).disabled,
+        ).toBe(true);
+        expect(
+          screen.getByLabelText<HTMLTextAreaElement>("你的行动").disabled,
+        ).toBe(true);
+      });
+    },
+  );
+
   test("本轮临时要求 Escape 收起但保留文字，并以强调态提示仍带着要求", async () => {
     const chain = playChainView(
       "play-chain-existing",
@@ -4166,6 +4238,7 @@ function renderWorld(
   options: {
     onRenameWorld?: (name: string) => Promise<void>;
     initialReadingPreferences?: AppReadingPreferences;
+    modelConfigured?: boolean;
   } = {},
 ) {
   let receive: Parameters<ObserveConversation>[1] | undefined;

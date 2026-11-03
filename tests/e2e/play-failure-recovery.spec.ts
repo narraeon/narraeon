@@ -67,12 +67,13 @@ test.afterAll(async () => {
 });
 
 for (const locale of ["zh-CN", "en"] as const)
-  test(`${locale}: retryable resends the frozen request and outcome_unknown prepares fresh context without sending`, async ({
+  test(`${locale}: wrap-up shortcut fills a one-turn request, frozen retry preserves it, and unknown outcome prepares fresh context`, async ({
     page,
   }) => {
     steps.length = 0;
     providerRequests.length = 0;
     const english = locale === "en";
+    await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto("/");
     await page.locator(".workspace-locale-picker select").selectOption(locale);
     await runtime(page, {
@@ -133,8 +134,65 @@ for (const locale of ["zh-CN", "en"] as const)
     const input = page.getByLabel(english ? "Your action" : "你的行动", {
       exact: true,
     });
+    const shortcut = page.getByRole("button", {
+      name: english ? "Wrap up here" : "在此收尾",
+      exact: true,
+    });
+    const note = page.getByLabel(
+      english ? "One-turn request text" : "本轮临时要求内容",
+      { exact: true },
+    );
+    const wrapUp = english
+      ? "Wrap up this part here, save what is needed for later, and register a checkpoint."
+      : "这段就在这里收尾，保存后续需要的信息，并登记检查点。";
+    await expect(note).toHaveCount(0);
+    await shortcut.focus();
+    await page.keyboard.press("Enter");
+    await expect(note).toBeFocused();
+    await expect(note).toHaveValue(wrapUp);
+    expect(providerRequests).toHaveLength(0);
+    await note.fill(english ? "Keep the quiet mood." : "保留安静的氛围。");
+    await note.press("Escape");
+    await shortcut.click();
+    await shortcut.click();
+    const combined = `${english ? "Keep the quiet mood." : "保留安静的氛围。"} ${wrapUp}`;
+    await expect(note).toHaveValue(combined);
+    await expect(note).toBeFocused();
+    await page.screenshot({
+      path: test.info().outputPath(`wrap-up-${locale}-desktop.png`),
+    });
+    await page.setViewportSize({ width: 375, height: 812 });
+    await shortcut.focus();
+    await page.keyboard.press("Space");
+    await expect(note).toHaveValue(combined);
+    const dock = page.locator(".world-composer-dock");
+    const dockBounds = await dock.boundingBox();
+    expect(dockBounds).not.toBeNull();
+    expect(dockBounds!.x).toBeGreaterThanOrEqual(0);
+    expect(dockBounds!.x + dockBounds!.width).toBeLessThanOrEqual(375);
+    const inputBounds = await input.boundingBox();
+    const shortcutBounds = await shortcut.boundingBox();
+    expect(inputBounds!.width).toBeGreaterThan(80);
+    expect(shortcutBounds!.x + shortcutBounds!.width).toBeLessThanOrEqual(
+      inputBounds!.x,
+    );
+    await page.screenshot({
+      path: test.info().outputPath(`wrap-up-${locale}-mobile.png`),
+    });
+    await page
+      .getByRole("button", {
+        name: english
+          ? "Clear and close the one-turn request"
+          : "清空并收起本轮临时要求",
+      })
+      .click();
+    await expect(note).toHaveCount(0);
+    await shortcut.click();
+    await note.fill(`${wrapUp} ${english ? "End quietly." : "安静收尾。"}`);
+    const sentNote = await note.inputValue();
+    expect(providerRequests).toHaveLength(0);
     steps.push({ kind: "reject" });
-    await input.fill("I ask Alex to open the door.");
+    await input.fill("我闭上眼睛睡着了");
     await page
       .getByRole("button", {
         name: english
@@ -157,12 +215,36 @@ for (const locale of ["zh-CN", "en"] as const)
     );
     await recoveryExpect(rejectionCard.locator("pre")).toBeHidden();
     expect(providerRequests).toHaveLength(1);
+    await expect(note).toHaveValue(sentNote);
+    const wire = JSON.parse(providerRequests[0]!) as {
+      messages: { role: string; content: string | null }[];
+    };
+    const playerMessage = wire.messages.find(
+      (message) => message.content === "我闭上眼睛睡着了",
+    );
+    expect(playerMessage).toMatchObject({
+      role: "user",
+      content: "我闭上眼睛睡着了",
+    });
+    expect(wire.messages.at(-1)!.content).toContain(
+      `${english ? "Player's request for this turn: " : "玩家本轮要求："}${sentNote}`,
+    );
+    expect(
+      wire.messages.filter((message) => message.content?.includes(wrapUp)),
+    ).toHaveLength(1);
+    await reopenWorld();
+    await page
+      .getByRole("button", {
+        name: english ? "One-turn request" : "本轮临时要求",
+        exact: true,
+      })
+      .click();
+    await note.fill("This edited draft must not replace the frozen request.");
     const chainBefore = await runtime<V1PlayCallChainView>(page, {
       type: "play.chain.inspect",
       worldId: created.world.worldId,
     });
     expect(chainBefore.lastFailureKind).toBe("retryable");
-    await reopenWorld();
     await recoveryExpect(resend).toBeEnabled();
     await input.fill("Keep this draft for later.");
     steps.push({ kind: "text", text: "Alex opens the door after the retry." });
@@ -173,8 +255,17 @@ for (const locale of ["zh-CN", "en"] as const)
     await recoveryExpect(input).toHaveValue("Keep this draft for later.");
     expect(providerRequests).toHaveLength(2);
     expect(providerRequests[1]).toBe(providerRequests[0]);
+    await expect(note).toHaveCount(0);
+    await page
+      .getByRole("button", {
+        name: english ? "One-turn request" : "本轮临时要求",
+        exact: true,
+      })
+      .click();
+    await expect(note).toHaveValue("");
+    await note.press("Escape");
     await recoveryExpect(
-      page.getByText("I ask Alex to open the door.", { exact: true }),
+      page.getByText("我闭上眼睛睡着了", { exact: true }),
     ).toHaveCount(1);
     await recoveryExpect(resend).toHaveCount(0);
 
@@ -218,6 +309,7 @@ for (const locale of ["zh-CN", "en"] as const)
       ),
     ).toBeVisible();
     expect(providerRequests).toHaveLength(3);
+    expect(providerRequests[2]).not.toContain(wrapUp);
     await input.fill("I continue from the current world.");
     steps.push({ kind: "text", text: "Alex leads you into the corridor." });
     await page
