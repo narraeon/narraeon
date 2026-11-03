@@ -1,0 +1,17 @@
+{
+  "provenance": "synthetic; not a Gemini response or an acceptance fixture",
+  "steps": [
+    {
+      "type": "thought",
+      "signature": "SYNTHETIC-NOT-A-VALID-SIGNATURE",
+      "summary": [],
+      "future_field": { "nested": [1, "unknown", { "keep": true }] }
+    },
+    {
+      "type": "function_call",
+      "id": "synthetic-call",
+      "name": "read_document",
+      "arguments": { "ref": "@scene" }
+    }
+  ]
+}
