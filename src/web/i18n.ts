@@ -2221,6 +2221,12 @@ const dynamicEnglishMessages: Record<string, string> = {
   缓存写入: "Cache write",
   推理: "Reasoning",
   "推理（输出内）": "Reasoning (inside output)",
+  "Google 的输入、输出、思考、缓存及合计采用 Provider 实报字段；各项关系不作推断。":
+    "Google input, output, thought, cache, and total counts come from Provider-reported fields; their relationships are not inferred.",
+  "Google Interactions 的模型枚举与服务行为尚未经真实服务验证，请手动输入模型 ID。":
+    "Google Interactions model discovery and service behavior have not been verified against the live service. Enter a model ID manually.",
+  "按顺序合并到 system_instruction 的来源":
+    "Sources merged into system_instruction in order",
   输出: "Output",
   "输出（含推理）": "Output (includes reasoning)",
   合计: "Total",

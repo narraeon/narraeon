@@ -116,6 +116,7 @@ export interface PromptPreviewData {
     endpointPath: string;
     headerNames: string[];
     body: unknown;
+    systemInstructionSources?: { promptId?: string; sources: string[] }[];
   };
   playPreset?: {
     id: string;
@@ -1217,6 +1218,20 @@ function ProviderMapping({
           </ol>
         </div>
       )}
+
+      {wireRequest?.provider === "google_interactions" &&
+      wireRequest.systemInstructionSources !== undefined ? (
+        <div className="provider-system-blocks">
+          <h4>{uiText("按顺序合并到 system_instruction 的来源")}</h4>
+          <ol>
+            {wireRequest.systemInstructionSources.map((entry, index) => (
+              <li key={index}>
+                {[entry.promptId, ...entry.sources].filter(Boolean).join(" · ")}
+              </li>
+            ))}
+          </ol>
+        </div>
+      ) : null}
 
       <div className="provider-message-list">
         <div className="prompt-preview-subsection-heading">

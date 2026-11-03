@@ -17,8 +17,43 @@ import {
 import type { V1Request } from "../../src/protocol/v1.ts";
 import { ModelConnectionScreen } from "../../src/web/ModelConnectionScreen.tsx";
 import type { RuntimeClient } from "../../src/web/runtimeClient.ts";
+import { setWebLocale } from "../../src/web/i18n.ts";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  setWebLocale("zh-CN");
+});
+
+test("Google 连接在英文界面说明手动模型与未验证状态", () => {
+  setWebLocale("en");
+  const library = modelLibrary();
+  library.connections[0] = {
+    ...library.connections[0]!,
+    provider: "google_interactions",
+    dialect: "standard",
+    reasoningEffort: "provider_default",
+    reasoningSummary: "provider_default",
+  };
+  render(
+    createElement(ModelConnectionScreen, {
+      client: { request: vi.fn() } as unknown as RuntimeClient,
+      library,
+      onLibraryChange: vi.fn(),
+      onNotice: vi.fn(),
+      onDirtyChange: vi.fn(),
+    }),
+  );
+  expect(
+    screen.getByText(
+      /model discovery and service behavior have not been verified/,
+    ),
+  ).toBeTruthy();
+  expect(
+    screen.getByRole<HTMLButtonElement>("button", {
+      name: "Fetch models from endpoint",
+    }).disabled,
+  ).toBe(true);
+});
 
 test("模型设置分别保存 Anthropic effort、thinking 模式、预算和返回内容", async () => {
   const library = modelLibrary();

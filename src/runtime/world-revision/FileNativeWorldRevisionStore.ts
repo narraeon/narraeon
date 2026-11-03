@@ -12,6 +12,7 @@ import { dirname, join, resolve } from "node:path";
 import type { AppLocale } from "../../protocol/appPreferences.ts";
 import { gameplayPath } from "../../protocol/gameplay.ts";
 import type { ModelUsage } from "../../protocol/modelUsage.ts";
+import { validGoogleInteractionsSteps } from "../model/ProviderExchangeState.ts";
 import type { ContentTreeFile } from "../content/ContentTreeFile.ts";
 import { contentTreeFingerprint } from "../content/ContentTreeFingerprint.ts";
 import type {
@@ -680,10 +681,7 @@ function validProviderState(value: unknown): boolean {
   if (value.protocol === "google_interactions")
     return (
       hasExactKeys(value, ["protocol", "steps"]) &&
-      Array.isArray(value.steps) &&
-      value.steps.every(
-        (step) => isRecord(step) && typeof step.type === "string",
-      )
+      validGoogleInteractionsSteps(value.steps)
     );
   if (value.protocol === "chat_completions")
     return hasExactKeys(value, ["protocol", "assistantMessage"]);
@@ -791,8 +789,14 @@ function validModelUsage(value: unknown): boolean {
   ];
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, [...fields, "provenance"], ["providerRaw"]) ||
+    !hasExactKeys(
+      value,
+      [...fields, "provenance"],
+      ["providerRaw", "accounting"],
+    ) ||
     (value.providerRaw !== undefined && !isRecord(value.providerRaw)) ||
+    (value.accounting !== undefined &&
+      value.accounting !== "google_interactions") ||
     !fields.every((field) => value[field] === null || count(value[field])) ||
     !isRecord(value.provenance) ||
     !hasExactKeys(value.provenance, fields)

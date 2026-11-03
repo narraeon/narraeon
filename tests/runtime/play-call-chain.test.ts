@@ -126,6 +126,36 @@ test("Google 合成传输完成游玩工具循环并冷重载原生上下文", a
               },
               { event_type: "step.stop", index: 1 },
               {
+                event_type: "step.start",
+                index: 2,
+                step: {
+                  type: "function_call",
+                  id: "read-2",
+                  name: "context_read",
+                  arguments: {},
+                },
+              },
+              {
+                event_type: "step.delta",
+                index: 2,
+                delta: {
+                  type: "arguments_delta",
+                  arguments: '{"ref":"@current-situation"}',
+                },
+              },
+              { event_type: "step.stop", index: 2 },
+              {
+                event_type: "step.start",
+                index: 3,
+                step: { type: "model_output" },
+              },
+              {
+                event_type: "step.delta",
+                index: 3,
+                delta: { type: "text", text: "中间诊断文字" },
+              },
+              { event_type: "step.stop", index: 3 },
+              {
                 event_type: "interaction.completed",
                 interaction: { status: "requires_action" },
               },
@@ -179,11 +209,24 @@ test("Google 合成传输完成游玩工具循环并冷重载原生上下文", a
     }),
   );
   expect(sent).toHaveLength(2);
+  expect(result.events).toContainEqual(
+    expect.objectContaining({
+      kind: "tool_result",
+      callId: "read-2",
+      ok: true,
+    }),
+  );
   expect(
     (await worlds.playTimeline.readInitialEncoding(worldId, "google"))?.body,
   ).toEqual(sent[0]);
   expect(JSON.stringify(sent[1])).toContain('"signature":"synthetic"');
   expect(JSON.stringify(sent[1])).toContain('"call_id":"read-1"');
+  expect(JSON.stringify(sent[1])).toContain('"call_id":"read-2"');
+  expect(
+    (await worlds.recoverEndpoint(worldId)).history.map(
+      ({ exactText }) => exactText,
+    ),
+  ).not.toContain("中间诊断文字");
   expect(
     (await worlds.recoverEndpoint(worldId)).history.map(
       ({ exactText }) => exactText,

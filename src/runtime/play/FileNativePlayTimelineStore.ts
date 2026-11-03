@@ -1667,6 +1667,11 @@ function validFullUsage(value: unknown): value is ModelUsage {
   if (!isRecord(value) || !isRecord(value.provenance)) return false;
   if (value.providerRaw !== undefined && !isRecord(value.providerRaw))
     return false;
+  if (
+    value.accounting !== undefined &&
+    value.accounting !== "google_interactions"
+  )
+    return false;
   const provenance = value.provenance;
   const fields = [
     "inputTokens",

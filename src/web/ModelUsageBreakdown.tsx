@@ -29,7 +29,17 @@ export function ModelUsageBreakdown({
       <dl>
         {usageFields.map(([field, label]) => (
           <div key={field}>
-            <dt>{uiText(label)}</dt>
+            <dt>
+              {uiText(
+                usage.accounting === "google_interactions" &&
+                  field === "reasoningTokens"
+                  ? "推理"
+                  : usage.accounting === "google_interactions" &&
+                      field === "outputTokens"
+                    ? "输出"
+                    : label,
+              )}
+            </dt>
             <dd>
               <strong>{formatUsageTokens(usage[field])}</strong>
               {usage[field] === null ? null : <span> tokens</span>}
@@ -42,9 +52,13 @@ export function ModelUsageBreakdown({
       </dl>
       {showProvenance ? (
         <p>
-          {uiText(
-            "缓存读取和缓存写入属于输入构成；推理 tokens 已包含在输出 tokens 中，不应重复相加。",
-          )}
+          {usage.accounting === "google_interactions"
+            ? uiText(
+                "Google 的输入、输出、思考、缓存及合计采用 Provider 实报字段；各项关系不作推断。",
+              )
+            : uiText(
+                "缓存读取和缓存写入属于输入构成；推理 tokens 已包含在输出 tokens 中，不应重复相加。",
+              )}
         </p>
       ) : null}
     </section>

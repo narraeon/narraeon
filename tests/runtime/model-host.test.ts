@@ -5,6 +5,7 @@ import {
   assertModelOutputComplete,
   equalModelHostBinding,
   ModelHostFailureError,
+  ModelHostCancelledError,
   ModelHostOutcomeUnknownError,
   modelHostFailureRequiresFreshContext,
   ScriptedModelHost,
@@ -44,6 +45,29 @@ test("Google 预览使用无状态 Interactions 与原序 System 前缀", () => 
     { role: "system", content: "second" },
     { role: "user", content: "question" },
   ];
+  request.bootstrap.logicalMessages = [
+    {
+      role: "author_instruction",
+      messageRole: "system",
+      promptId: "p-first",
+      markdown: "first",
+      blocks: [{ source: "preset:first", markdown: "first" }],
+    },
+    {
+      role: "author_instruction",
+      messageRole: "system",
+      promptId: "p-second",
+      markdown: "second",
+      blocks: [{ source: "preset:second", markdown: "second" }],
+    },
+    {
+      role: "author_instruction",
+      messageRole: "user",
+      promptId: "p-user",
+      markdown: "question",
+      blocks: [{ source: "preset:user", markdown: "question" }],
+    },
+  ];
   const preview = host.previewRequest(request);
   expect(preview).toMatchObject({
     provider: "google_interactions",
@@ -55,10 +79,23 @@ test("Google 预览使用无状态 Interactions 与原序 System 前缀", () => 
       stream: true,
       system_instruction: "first\n\nsecond",
     },
+    systemInstructionSources: [
+      { promptId: "p-first", sources: ["preset:first"] },
+      { promptId: "p-second", sources: ["preset:second"] },
+    ],
   });
   expect(JSON.stringify(preview)).not.toContain("synthetic-secret");
   request.bootstrap.provider.messages.push({ role: "system", content: "late" });
-  expect(() => host.previewRequest(request)).toThrow(/System.*4/);
+  request.bootstrap.logicalMessages.push({
+    role: "author_instruction",
+    messageRole: "system",
+    promptId: "p-late",
+    markdown: "late",
+    blocks: [{ source: "preset:late", markdown: "late" }],
+  });
+  expect(() => host.previewRequest(request)).toThrow(
+    /System.*4.*p-late.*preset:late/,
+  );
 });
 
 test("Google 流完整聚合工具参数与签名并在下次请求重放原生 steps", async () => {
@@ -66,7 +103,12 @@ test("Google 流完整聚合工具参数与签名并在下次请求重放原生 
     {
       event_type: "step.start",
       index: 0,
-      step: { type: "thought", extension: "opaque" },
+      step: {
+        type: "thought",
+        signature: "",
+        summary: [{ type: "text", text: "initial" }],
+        extension: "opaque",
+      },
     },
     {
       event_type: "step.delta",
@@ -142,6 +184,7 @@ test("Google 流完整聚合工具参数与签名并在下次请求重放原生 
       {
         type: "thought",
         signature: "synthetic-signature",
+        summary: [{ type: "text", text: "initial" }],
         extension: "opaque",
       },
       {
@@ -174,6 +217,7 @@ test("Google 流完整聚合工具参数与签名并在下次请求重放原生 
       {
         type: "thought",
         signature: "synthetic-signature",
+        summary: [{ type: "text", text: "initial" }],
         extension: "opaque",
       },
       {
@@ -187,6 +231,28 @@ test("Google 流完整聚合工具参数与签名并在下次请求重放原生 
 });
 
 test.each([
+  [
+    {
+      event_type: "step.start",
+      index: 0,
+      step: {
+        type: "function_call",
+        id: "c",
+        name: "read",
+        arguments: "unreconciled",
+      },
+    },
+    {
+      event_type: "step.delta",
+      index: 0,
+      delta: { type: "arguments_delta", arguments: "{}" },
+    },
+    { event_type: "step.stop", index: 0 },
+    {
+      event_type: "interaction.completed",
+      interaction: { status: "requires_action" },
+    },
+  ],
   [
     {
       event_type: "step.start",
@@ -268,6 +334,74 @@ test.each([
       exchangeFor("google_interactions", "manual-model", "provider_managed"),
     ),
   ).rejects.toBeInstanceOf(ModelHostOutcomeUnknownError);
+});
+
+test("Google 派发前拒绝损坏的原生续传", () => {
+  const host = new FileNativeModelHost({
+    provider: "google_interactions",
+    baseUrl: "https://provider.invalid/v1beta",
+    apiKey: "secret",
+    modelId: "manual-model",
+    contextWindowTokens: 64_000,
+    maxOutputTokens: 2_048,
+  });
+  const request = exchangeFor(
+    "google_interactions",
+    "manual-model",
+    "provider_managed",
+  );
+  request.appended.push({
+    kind: "assistant",
+    text: "",
+    toolCalls: [],
+    providerState: {
+      protocol: "google_interactions",
+      steps: [
+        { type: "function_call", id: "x", name: "read", arguments: "broken" },
+      ],
+    },
+  });
+  expect(() => host.previewRequest(request)).toThrow(/continuation/i);
+});
+
+test("Google 流中取消即使紧接终态也不返回可结算结果", async () => {
+  const controller = new AbortController();
+  const events = [
+    { event_type: "step.start", index: 0, step: { type: "model_output" } },
+    {
+      event_type: "step.delta",
+      index: 0,
+      delta: { type: "text", text: "partial" },
+    },
+    { event_type: "step.stop", index: 0 },
+    {
+      event_type: "interaction.completed",
+      interaction: { status: "completed" },
+    },
+  ];
+  const host = new FileNativeModelHost(
+    {
+      provider: "google_interactions",
+      baseUrl: "https://provider.invalid/v1beta",
+      apiKey: "secret",
+      modelId: "manual-model",
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_048,
+    },
+    () =>
+      Promise.resolve(
+        new Response(
+          events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      ),
+  );
+  await expect(
+    host.exchange(
+      exchangeFor("google_interactions", "manual-model", "provider_managed"),
+      { signal: controller.signal, onDelta: () => controller.abort() },
+    ),
+  ).rejects.toBeInstanceOf(ModelHostCancelledError);
 });
 
 test.each(["requires_continuation", "incomplete", "failed", "cancelled"])(

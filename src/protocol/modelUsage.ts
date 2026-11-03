@@ -5,6 +5,8 @@ export type ModelUsageField =
 export interface ModelUsage {
   /** Original Provider-reported accounting for an individual exchange. */
   providerRaw?: Record<string, unknown>;
+  /** Identifies accounting whose thought/output fields have different semantics. */
+  accounting?: "google_interactions";
   inputTokens: number | null;
   uncachedInputTokens: number | null;
   cacheReadTokens: number | null;
@@ -54,6 +56,10 @@ export function aggregateModelUsage(
   }
   return {
     ...result,
+    ...(next?.accounting === "google_interactions" ||
+    current.accounting === "google_interactions"
+      ? { accounting: "google_interactions" as const }
+      : {}),
     provenance: Object.fromEntries(
       modelUsageKeys.map((key) => [
         key,

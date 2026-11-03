@@ -164,6 +164,8 @@ export interface ModelHostWireRequest {
   endpointPath: string;
   headerNames: string[];
   body: unknown;
+  /** Diagnostic sources merged into a single Google system_instruction. */
+  systemInstructionSources?: { promptId?: string; sources: string[] }[];
 }
 
 export interface ModelHost {

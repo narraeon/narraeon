@@ -4,6 +4,7 @@ import {
   type ModelHostResponse,
 } from "./ModelHost.ts";
 import { providerStreamEvents } from "./ProviderStream.ts";
+import { validGoogleInteractionsSteps } from "./ProviderExchangeState.ts";
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -105,7 +106,8 @@ export async function aggregateGoogleInteractions(
       current.step.type === "thought" &&
       typeof delta.signature === "string" &&
       Object.keys(delta).length === 2 &&
-      current.step.signature === undefined
+      (current.step.signature === undefined || current.step.signature === "") &&
+      delta.signature.length > 0
     ) {
       current.step.signature = delta.signature;
     } else if (
@@ -120,8 +122,9 @@ export async function aggregateGoogleInteractions(
         invalid();
       if (
         current.args === null &&
-        record(current.step.arguments) &&
-        Object.keys(current.step.arguments).length !== 0
+        current.step.arguments !== undefined &&
+        (!record(current.step.arguments) ||
+          Object.keys(current.step.arguments).length !== 0)
       )
         invalid();
       current.args = (current.args ?? "") + fragment;
@@ -190,6 +193,7 @@ export function projectGoogleInteractions(payload: {
     throw new ModelHostOutcomeUnknownError(
       `Google Interactions returned unsupported terminal status: ${payload.status}`,
     );
+  if (!validGoogleInteractionsSteps(payload.steps)) invalid();
   const calls: NonNullable<ModelHostResponse["toolCalls"]> = [];
   let text = "";
   let reasoning = "";

@@ -36,7 +36,10 @@ import {
   type FileNativePromptInput,
   type PromptCompilation,
 } from "../prompt/FileNativePromptCompiler.ts";
-import type { ProviderExchangeState } from "./ProviderExchangeState.ts";
+import {
+  validGoogleInteractionsSteps,
+  type ProviderExchangeState,
+} from "./ProviderExchangeState.ts";
 import {
   aggregateGoogleInteractions,
   projectGoogleInteractions,
@@ -293,6 +296,9 @@ export class FileNativeModelHost implements ModelHost {
             ? ["Accept", "x-goog-api-key", "Content-Type"]
             : ["Accept", "Authorization", "Content-Type"],
       body: cloneProviderValue(body),
+      ...(provider === "google_interactions"
+        ? { systemInstructionSources: googleSystemSources(request) }
+        : {}),
     };
   }
 
@@ -361,6 +367,7 @@ export class FileNativeModelHost implements ModelHost {
             aggregateGoogleInteractions(body, captureDelta(capture, onDelta)),
           signal,
         );
+        if (signalWasAborted(signal)) throw cancelledModelRequest();
         const projection = projectGoogleInteractions(payload);
         capture?.setReasoning(projection.reasoningContent);
         const usage = isRecord(payload.usage) ? payload.usage : {};
@@ -376,6 +383,7 @@ export class FileNativeModelHost implements ModelHost {
               outputTokens: providerNumber(usage.total_output_tokens),
               totalTokens: providerNumber(usage.total_tokens),
             }),
+            accounting: "google_interactions" as const,
             ...(isRecord(payload.usage)
               ? { providerRaw: structuredClone(payload.usage) }
               : {}),
@@ -831,6 +839,53 @@ async function trace(kind: string, value: unknown): Promise<void> {
 
 type ProviderRequest = ModelHostExchange;
 
+function googleSystemSources(
+  request: ModelHostExchange,
+): { promptId?: string; sources: string[] }[] {
+  const logical = request.bootstrap.logicalMessages.filter(
+    (message) =>
+      message.role !== "player_input" &&
+      (request.bootstrap.provider.preload === undefined ||
+        message.role !== "world_context"),
+  );
+  const ordered = logical.some((message) => message.messageRole !== undefined);
+  const firstConversation = logical.findIndex(
+    (message) => (message.messageRole ?? "system") !== "system",
+  );
+  const leading = ordered
+    ? logical.slice(
+        0,
+        firstConversation < 0 ? logical.length : firstConversation,
+      )
+    : logical.filter(
+        (message) =>
+          message.role === "runtime_system" ||
+          message.role === "author_instruction",
+      );
+  return leading.map((message) => ({
+    ...(message.promptId === undefined ? {} : { promptId: message.promptId }),
+    sources: message.blocks.map(({ source }) => source),
+  }));
+}
+
+function googleLateSystemSource(request: ModelHostExchange): string {
+  let conversation = false;
+  for (const message of request.bootstrap.logicalMessages) {
+    if (
+      message.role === "player_input" ||
+      (request.bootstrap.provider.preload !== undefined &&
+        message.role === "world_context")
+    )
+      continue;
+    if ((message.messageRole ?? "system") !== "system") conversation = true;
+    else if (conversation)
+      return [message.promptId, ...message.blocks.map(({ source }) => source)]
+        .filter((item) => item !== undefined)
+        .join(", ");
+  }
+  return "";
+}
+
 function googleRequestBody(
   connection: ResolvedFileNativeModelConnection,
   request: ModelHostExchange,
@@ -857,8 +912,8 @@ function googleRequestBody(
     );
   };
   const preload = request.bootstrap.provider.preload;
-  for (const [index, message] of messages.entries()) {
-    if (index === bootstrapPrefixEnd(request) && preload !== undefined) {
+  const appendPreload = () => {
+    if (preload !== undefined)
       input.push(
         {
           type: "user_input",
@@ -879,11 +934,13 @@ function googleRequestBody(
           result: text(preload.markdown),
         },
       );
-    }
+  };
+  for (const [index, message] of messages.entries()) {
+    if (index === bootstrapPrefixEnd(request)) appendPreload();
     if (message.role === "system") {
       if (conversationStarted)
         throw new Error(
-          `Google Interactions cannot encode System message ${index + 1} after User/Assistant`,
+          `Google Interactions cannot encode System message ${index + 1} after User/Assistant${googleLateSystemSource(request) ? `: ${googleLateSystemSource(request)}` : ""}`,
         );
       system.push(contentText(message.content));
     } else {
@@ -894,37 +951,13 @@ function googleRequestBody(
       });
     }
   }
-  if (
-    bootstrapPrefixEnd(request) === messages.length &&
-    preload !== undefined
-  ) {
-    input.push(
-      {
-        type: "user_input",
-        content: text(
-          "Runtime preload: initial world materials, not a player action or model response.",
-        ),
-      },
-      {
-        type: "function_call",
-        id: preload.callId,
-        name: "runtime_load_context",
-        arguments: {},
-      },
-      {
-        type: "function_result",
-        call_id: preload.callId,
-        name: "runtime_load_context",
-        result: text(preload.markdown),
-      },
-    );
-  }
+  if (bootstrapPrefixEnd(request) === messages.length) appendPreload();
   const calls = new Map<string, string>();
   for (const item of request.appended) {
     if (item.kind === "assistant") {
       if (
         item.providerState?.protocol !== "google_interactions" ||
-        !Array.isArray(item.providerState.steps)
+        !validGoogleInteractionsSteps(item.providerState.steps)
       )
         throw continuationError("Google Interactions");
       for (const step of item.providerState.steps) {

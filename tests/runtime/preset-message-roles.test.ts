@@ -111,6 +111,46 @@ function wire(
   }).body;
 }
 
+test.each([false, true])(
+  "Google 合并前导 System 来源并定位后续 System（merge=%s）",
+  async (merge) => {
+    const { binding } = await fixture();
+    binding.definition.mergeConsecutiveMessages = merge;
+    const bootstrap = compile(binding, "google_interactions");
+    const host = new FileNativeModelHost({
+      provider: "google_interactions",
+      modelId: "test",
+      baseUrl: "https://provider.invalid/v1beta",
+      apiKey: "test",
+      contextWindowTokens: 32000,
+      maxOutputTokens: 2000,
+    });
+    const request = {
+      bootstrap,
+      tools: bootstrap.tools,
+      appended: [{ kind: "player" as const, text: "ACTUAL_PLAYER" }],
+      maxOutputTokens: 2000,
+    };
+    const preview = host.previewRequest(request);
+    expect(
+      preview.systemInstructionSources?.map(({ promptId }) => promptId),
+    ).toEqual(
+      bootstrap.logicalMessages
+        .filter(
+          (item) =>
+            item.messageRole === "system" && item.role !== "world_context",
+        )
+        .map(({ promptId }) => promptId),
+    );
+    expect(JSON.stringify(preview.body)).toContain("EXAMPLE_ASSISTANT");
+    binding.definition.playPrompts!.push(
+      prompt("LATE_SYSTEM_SOURCE", "system"),
+    );
+    request.bootstrap = compile(binding, "google_interactions");
+    expect(() => host.previewRequest(request)).toThrow(/LATE_SYSTEM_SOURCE/);
+  },
+);
+
 test.each([
   "chat_completions",
   "openai_responses",

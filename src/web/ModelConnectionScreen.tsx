@@ -601,8 +601,9 @@ export function ModelConnectionScreen({
           </div>
           {form.provider === "google_interactions" && (
             <p className="field-note">
-              Google Interactions
-              的模型枚举与服务行为尚未经真实服务验证，请手动输入模型 ID。
+              {uiText(
+                "Google Interactions 的模型枚举与服务行为尚未经真实服务验证，请手动输入模型 ID。",
+              )}
             </p>
           )}
           {models.length > 0 && (
