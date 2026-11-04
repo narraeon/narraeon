@@ -1,3 +1,4 @@
+import type { AiFailureRecorder } from "../../../src/runtime/model/AiFailureLog.ts";
 import { FileNativeModelHost } from "../../../src/runtime/model/FileNativeModelAdapters.ts";
 
 interface Call {
@@ -108,7 +109,10 @@ export function interruptedGoogleWrite(name: string, path: string): unknown[] {
   ];
 }
 
-export function googleAuthoringHost(responses: unknown[][]) {
+export function googleAuthoringHost(
+  responses: unknown[][],
+  failureLog?: AiFailureRecorder,
+) {
   const sent: Record<string, unknown>[] = [];
   const host = new FileNativeModelHost(
     {
@@ -132,6 +136,7 @@ export function googleAuthoringHost(responses: unknown[][]) {
         ),
       );
     },
+    failureLog,
   );
   return { host, sent };
 }

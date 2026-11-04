@@ -6,7 +6,9 @@ status: accepted
 
 Provider 响应同时承担两种职责：Runtime 需要解析可见正文、返回推理、工具调用与 usage，下一次模型请求又需要重放协议规定的原生 assistant 片段。把前者重新序列化成后者会丢失签名、加密推理、redacted block、未知扩展字段和 Provider 要求的顺序；保存整个 HTTP response 又会把 ID、usage 与传输外壳误当成可追加消息。Claude thinking 尤其不是应从正文切割出的文本，而是带协议身份与签名约束的结构化块。
 
-因此 Runtime 将二者分离：模型调用投影只供工具执行、诊断、界面呈现和 Authority 结算分类；Provider 续传载荷是不透明但可校验的协议原生 append fragment。Chat Completions 保存完整 assistant message，OpenAI Responses 保存完整 `output` items，Anthropic Messages 保存完整 assistant `content` blocks。下一次请求直接追加该载荷，不从 `text`、`reasoningContent` 或 `toolCalls` 重建，也不追加完整 HTTP response。流式解码器在完成事件上形成同一种载荷，并保留解析器不认识的协议字段。
+因此 Runtime 将二者分离：模型调用投影只供工具执行、诊断、界面呈现和 Authority 结算分类；Provider 续传载荷是不透明但可校验的协议原生 append fragment。Chat Completions 保存完整 assistant message，OpenAI Responses 保存完整 `output` items，Anthropic Messages 保存完整 assistant `content` blocks，Google Interactions 保存完整有序 `steps`，包括签名和未知扩展字段。下一次请求直接追加该载荷，不从 `text`、`reasoningContent` 或 `toolCalls` 重建，也不追加完整 HTTP response。流式解码器在完成事件上形成同一种载荷，并保留解析器不认识的协议字段。
+
+Google Interactions 的 bootstrap 仅接受文本；前置 System 合并成一个 `system_instruction`，普通编排中 User／Assistant 之后出现 System 会明确拒绝。后置请求提示作为带来源标记的追加用户输入编码。世界修订唯一例外是经过同一世界持久 epoch 和来源校验的 Runtime 边界：当前边界进入 System，历史原位置保留 Runtime 通知，见 [ADR-0038](0038-world-revision-uses-one-locked-worktree.md)。`requires_continuation` 等非完成终态安全停止，尚不支持正向 token 续接。
 
 新上下文的 Runtime 初始材料预加载属于 bootstrap，独立于上述 Provider 续传。encoder 可以为真实读取的初始材料生成一组调用／结果消息，但必须标明 Runtime 来源，不伪造模型推理或签名，不把它保存成模型响应、实际工具执行或 Authority 事实。追加上下文复用这份初始材料，后续真实 Provider 返回仍严格原样续传。
 

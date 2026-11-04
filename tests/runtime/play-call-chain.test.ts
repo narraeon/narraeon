@@ -75,7 +75,438 @@ import { revisePlayerTimeline } from "./support/player-timeline-edit.ts";
 import { turnGuideHeader } from "../../src/shared/turn-guide.ts";
 import { PlayCallChainError } from "../../src/runtime/play/PlayCallChainError.ts";
 
+import {
+  googleAuthoringHost,
+  googleSignedText,
+  googleText,
+  googleTools,
+} from "./support/google-authoring.ts";
+
 const roots: string[] = [];
+
+test("Google 后置请求使用冻结主链并恢复多个产物", async () => {
+  const logRoot = await mkdtemp(join(tmpdir(), "google-followup-log-"));
+  roots.push(logRoot);
+  const failureLog = new FileNativeAiFailureLog(logRoot);
+  const firstResponse = googleTools([
+    {
+      id: "panel",
+      name: "artifact_emit",
+      arguments: { output: "status_bar", payload: { hp: 9 } },
+    },
+    {
+      id: "second",
+      name: "artifact_emit",
+      arguments: { output: "other", payload: { hp: 8 } },
+    },
+    {
+      id: "forbidden",
+      name: "context_read",
+      arguments: { ref: "@current-situation" },
+    },
+  ]);
+  Object.assign(
+    (firstResponse.at(-1)! as { interaction: object }).interaction,
+    {
+      usage: {
+        total_input_tokens: 12,
+        total_output_tokens: 3,
+        vendor_extra: 99,
+      },
+    },
+  );
+  const { host, sent } = googleAuthoringHost(
+    [
+      googleSignedText("The door opens."),
+      firstResponse,
+      googleTools([
+        {
+          id: "options",
+          name: "artifact_emit",
+          arguments: { output: "options", payload: { first: "Follow" } },
+        },
+      ]),
+    ],
+    failureLog,
+  );
+  const { worlds, root, worldId } = await createWorld(
+    "google-followups",
+    undefined,
+    host.binding(),
+  );
+  const preset = followupPlayPreset(true);
+  const artifacts = new FileNativeArtifactStore(root);
+  const chains = new PlayCallChain(
+    worlds,
+    new FileNativePromptCompiler(),
+    artifacts,
+    failureLog,
+  );
+  const previews: unknown[] = [];
+  const observingHost: ModelHost = {
+    binding: () => host.binding(),
+    exchange: (request, options) => {
+      previews.push(host.previewRequest(request).body);
+      return host.exchange(request, options);
+    },
+  };
+  const view = await chains.start({
+    worldId,
+    chainId: "google-followups",
+    exchangeId: "first",
+    playerText: "Open.",
+    hostBinding: hostBinding(),
+    playPreset: preset,
+    modelBinding: host.binding(),
+    modelHost: observingHost,
+  });
+  expect(sent).toHaveLength(3);
+  expect(previews).toEqual(sent);
+  expect((sent[1]!.input as unknown[]).slice(0, -1)).toEqual(
+    (sent[2]!.input as unknown[]).slice(0, -1),
+  );
+  expect(sent[1]!.system_instruction).toEqual(sent[2]!.system_instruction);
+  expect(view.status).toBe("ready");
+  expect(
+    view.events.filter((event) => event.kind === "followup"),
+  ).toMatchObject([
+    {
+      followupId: "status",
+      toolCalls: [
+        { callId: "panel", ok: true },
+        { callId: "second", ok: true },
+        { callId: "forbidden", ok: false },
+      ],
+    },
+    {
+      followupId: "options",
+      toolCalls: [{ callId: "options", ok: true }],
+    },
+  ]);
+  expect(JSON.stringify(sent[1])).toContain(
+    '"signature":"synthetic-signature-secret"',
+  );
+  expect(JSON.stringify(sent[2])).toContain(
+    '"signature":"synthetic-signature-secret"',
+  );
+  expect(JSON.stringify(sent[2])).not.toContain('"panel"');
+  expect(
+    (sent[1]!.tools as { name: string }[]).map((tool) => tool.name),
+  ).toEqual(["artifact_emit", "artifact_clear"]);
+  expect(
+    (sent[2]!.tools as { name: string }[]).map((tool) => tool.name),
+  ).toEqual(["artifact_emit", "artifact_clear"]);
+  const projection = await artifacts.readActiveProjection(worldId);
+  expect(projection.map(({ output }) => output).sort()).toEqual([
+    "options",
+    "other",
+    "status_bar",
+  ]);
+  const head = await worlds.currentHead(worldId);
+  const runtime = new V1Runtime({
+    dataRoot: root,
+    configRoot: join(root, "config"),
+  });
+  await runtime.initialize();
+  expect(
+    await runtime.handle({ type: "world.play-decorations.read", worldId }),
+  ).toMatchObject({
+    result: {
+      head,
+      artifacts: [
+        expect.objectContaining({
+          payload: { hp: 9 },
+          frontend: expect.objectContaining({
+            status: "ready",
+            renderer: expect.objectContaining({
+              document: expect.stringContaining("Frozen Google panel"),
+            }),
+          }),
+        }),
+        expect.objectContaining({
+          payload: { hp: 8 },
+          frontend: expect.objectContaining({ status: "ready" }),
+        }),
+        expect.objectContaining({
+          payload: { first: "Follow" },
+          frontend: expect.objectContaining({ status: "ready" }),
+        }),
+      ],
+    },
+  });
+  const events = view.events.filter((event) => event.kind === "followup");
+  const details = await Promise.all(
+    events.map((event) =>
+      runtime.handle({
+        type: "play.timeline.detail",
+        worldId,
+        chainId: "google-followups",
+        eventId: event.id,
+      }),
+    ),
+  );
+  expect(details[0]).toMatchObject({
+    result: {
+      usage: {
+        inputTokens: 12,
+        outputTokens: 3,
+        totalTokens: null,
+        providerRaw: {
+          total_input_tokens: 12,
+          total_output_tokens: 3,
+          vendor_extra: 99,
+        },
+      },
+    },
+  });
+  expect(details[1]).toMatchObject({
+    result: {
+      usage: { inputTokens: null, outputTokens: null, totalTokens: null },
+    },
+  });
+  const logFiles = (await readdir(logRoot)).filter((name) =>
+    name.endsWith(".jsonl"),
+  );
+  expect(logFiles).toHaveLength(1);
+  const log = await readFile(join(logRoot, logFiles[0]!), "utf8");
+  expect(log).toContain("play_followup");
+  expect(log).toContain("tool_execution");
+  expect(log).toContain("context_read");
+  expect(log).not.toContain("synthetic-secret");
+  expect(await worlds.currentHead(worldId)).toBe(head);
+  const cold = await new PlayCallChain(
+    new FileNativeWorldStore(root),
+  ).inspectWorld(worldId);
+  expect(cold?.events.filter((event) => event.kind === "followup")).toEqual(
+    view.events.filter((event) => event.kind === "followup"),
+  );
+  expect(sent).toHaveLength(3);
+});
+
+test("Google 后置失败保留剧情并继续派发后续请求", async () => {
+  const { host, sent } = googleAuthoringHost([
+    googleText("Story committed."),
+    [
+      {
+        event_type: "interaction.completed",
+        interaction: { status: "failed" },
+      },
+    ],
+    googleTools([
+      {
+        id: "options",
+        name: "artifact_emit",
+        arguments: { output: "options", payload: { first: "Continue" } },
+      },
+    ]),
+  ]);
+  const { worlds, root, worldId } = await createWorld(
+    "google-followup-failure",
+    undefined,
+    host.binding(),
+  );
+  const artifacts = new FileNativeArtifactStore(root);
+  const view = await new PlayCallChain(
+    worlds,
+    new FileNativePromptCompiler(),
+    artifacts,
+  ).start({
+    worldId,
+    chainId: "failure",
+    exchangeId: "first",
+    playerText: "Go.",
+    hostBinding: hostBinding(),
+    playPreset: followupPlayPreset(),
+    modelBinding: host.binding(),
+    modelHost: host,
+  });
+  expect(view.status).toBe("ready");
+  expect(sent).toHaveLength(3);
+  expect(
+    view.events.filter((event) => event.kind === "followup"),
+  ).toMatchObject([
+    { followupId: "status", failure: expect.stringContaining("failed") },
+    { followupId: "options", toolCalls: [{ callId: "options", ok: true }] },
+  ]);
+  expect(
+    (await artifacts.readActiveProjection(worldId)).map(({ output }) => output),
+  ).toEqual(["options"]);
+  expect(
+    (await worlds.recoverEndpoint(worldId)).history.map(
+      ({ exactText }) => exactText,
+    ),
+  ).toContain("Story committed.");
+});
+
+test("Google 后置取消中止当前传输且不派发剩余请求", async () => {
+  const started = Promise.withResolvers<void>();
+  let count = 0;
+  let signal: AbortSignal | null | undefined;
+  const host = new FileNativeModelHost(
+    {
+      provider: "google_interactions",
+      baseUrl: "https://provider.invalid/v1beta",
+      apiKey: "synthetic",
+      modelId: "manual-model",
+      contextWindowTokens: 64000,
+      maxOutputTokens: 2000,
+    },
+    (_url, options) => {
+      count++;
+      if (count === 1)
+        return Promise.resolve(
+          new Response(
+            googleText("Story committed.")
+              .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+              .join(""),
+            { headers: { "content-type": "text/event-stream" } },
+          ),
+        );
+      signal = options?.signal;
+      started.resolve();
+      return new Promise((_resolve, reject) =>
+        signal?.addEventListener(
+          "abort",
+          () => reject(new DOMException("Aborted", "AbortError")),
+          { once: true },
+        ),
+      );
+    },
+  );
+  const { worlds, root, worldId } = await createWorld(
+    "google-followup-cancel",
+    undefined,
+    host.binding(),
+  );
+  const artifacts = new FileNativeArtifactStore(root);
+  const chains = new PlayCallChain(
+    worlds,
+    new FileNativePromptCompiler(),
+    artifacts,
+  );
+  const running = chains.start({
+    worldId,
+    chainId: "cancel",
+    exchangeId: "first",
+    playerText: "Go.",
+    hostBinding: hostBinding(),
+    playPreset: followupPlayPreset(),
+    modelBinding: host.binding(),
+    modelHost: host,
+  });
+  await Promise.race([
+    started.promise,
+    running.then(() => {
+      throw new Error("Follow-up was not dispatched");
+    }),
+  ]);
+  const head = await worlds.currentHead(worldId);
+  expect(
+    chains.cancel({ worldId, chainId: "cancel", exchangeId: "first" }),
+  ).toEqual({ outcome: "cancellation_requested" });
+  expect(signal?.aborted).toBe(true);
+  const view = await running;
+  expect(view.status).toBe("ready");
+  expect(count).toBe(2);
+  expect(await worlds.currentHead(worldId)).toBe(head);
+  expect(
+    (await worlds.recoverEndpoint(worldId)).history.map(
+      ({ exactText }) => exactText,
+    ),
+  ).toContain("Story committed.");
+  expect(await artifacts.readActiveProjection(worldId)).toEqual([]);
+});
+
+test("Google 世界扩展关闭中止在途请求并跳过关闭的后续请求", async () => {
+  const started = Promise.withResolvers<void>();
+  let count = 0;
+  let signal: AbortSignal | null | undefined;
+  const host = new FileNativeModelHost(
+    {
+      provider: "google_interactions",
+      baseUrl: "https://provider.invalid/v1beta",
+      apiKey: "synthetic",
+      modelId: "manual-model",
+      contextWindowTokens: 64000,
+      maxOutputTokens: 2000,
+    },
+    (_url, options) => {
+      count++;
+      if (count === 1)
+        return Promise.resolve(
+          new Response(
+            googleText("Story committed.")
+              .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+              .join(""),
+            { headers: { "content-type": "text/event-stream" } },
+          ),
+        );
+      signal = options?.signal;
+      started.resolve();
+      return new Promise((_resolve, reject) =>
+        signal?.addEventListener(
+          "abort",
+          () => reject(new DOMException("Aborted", "AbortError")),
+          { once: true },
+        ),
+      );
+    },
+  );
+  const { worlds, root, worldId } = await createWorld(
+    "google-extension-close",
+    undefined,
+    host.binding(),
+  );
+  const artifacts = new FileNativeArtifactStore(root);
+  const preset = followupPlayPreset();
+  const chains = new PlayCallChain(
+    worlds,
+    new FileNativePromptCompiler(),
+    artifacts,
+  );
+  const running = chains.start({
+    worldId,
+    chainId: "extension",
+    exchangeId: "first",
+    playerText: "Go.",
+    hostBinding: hostBinding(),
+    playPreset: preset,
+    modelBinding: host.binding(),
+    modelHost: host,
+  });
+  await Promise.race([
+    started.promise,
+    running.then(() => {
+      throw new Error("Follow-up was not dispatched");
+    }),
+  ]);
+  const head = await worlds.currentHead(worldId);
+  const firstKey = `preset:${preset.id}:request:status`;
+  const secondKey = `preset:${preset.id}:request:options`;
+  await worlds.extensionControls(worldId, preset, "en", {
+    key: secondKey,
+    value: "off",
+  });
+  await worlds.extensionControls(worldId, preset, "en", {
+    key: firstKey,
+    value: "off",
+  });
+  expect(signal?.aborted).toBe(true);
+  expect((await running).status).toBe("ready");
+  expect(count).toBe(2);
+  expect(await artifacts.readActiveProjection(worldId)).toEqual([]);
+  await worlds.extensionControls(worldId, preset, "en", {
+    key: firstKey,
+    value: "on",
+  });
+  await worlds.extensionControls(worldId, preset, "en", {
+    key: secondKey,
+    value: "on",
+  });
+  expect(await artifacts.readActiveProjection(worldId)).toEqual([]);
+  expect(count).toBe(2);
+  expect(await worlds.currentHead(worldId)).toBe(head);
+});
 
 test("Google 合成传输完成游玩工具循环并冷重载原生上下文", async () => {
   const sent: unknown[] = [];
@@ -8115,13 +8546,14 @@ test("后置结算通知可读取同端点产物，失败和冷 Runtime 恢复�
 });
 
 /** Two follow-ups on top of the shipped default call chain. */
-function followupPlayPreset(): PlayPresetBinding {
+function followupPlayPreset(multipleOutputs = false): PlayPresetBinding {
   const files = structuredClone(defaultPlayPresetFiles);
   files["preset.yaml"] = `format: narraeon.play-preset/v1
 name: followup-test
 callChain: call-chain.yaml
 mounts:
   panel.status: sidebar
+  panel.other: story
   player.options: composer_below
 extensions: []
 `;
@@ -8135,6 +8567,29 @@ ${followupEntry("status", "状态栏", "status_bar", "panel.status")}${followupE
     "options",
     "player.options",
   )}`;
+  if (multipleOutputs) {
+    files["preset.yaml"] = files["preset.yaml"]!.replace(
+      "extensions: []",
+      "extensions:\n  - renderers/status.html",
+    );
+    files["renderers/status.html"] = "<main>Frozen Google panel</main>";
+    files["call-chain.yaml"] = files["call-chain.yaml"]!.replace(
+      "channel: panel.status\n        strategy: replace",
+      "channel: panel.status\n        renderer: renderers/status.html\n        rendererRevision: v1\n        strategy: replace",
+    );
+    files["call-chain.yaml"] = files["call-chain.yaml"]!.replace(
+      "  - id: options",
+      `      - name: other
+        channel: panel.other
+        strategy: replace
+        contentType: application/json
+        save: commit
+        invalidation: new_operation
+        required: true
+        maxEmits: 1
+  - id: options`,
+    );
+  }
   files["prompts/status.md"] = "# Status panel\n\nOutput the current status.\n";
   files["prompts/options.md"] =
     "# Action options\n\nSuggest possible next actions.\n";
