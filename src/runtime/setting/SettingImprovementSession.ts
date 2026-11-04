@@ -33,6 +33,7 @@ import type {
 import { WorldDocumentStore } from "../world/WorldDocumentStore.ts";
 import {
   appendAuthoringUserMessage,
+  authoringExchange,
   ModelToolConversation,
   rememberAuthoringRequest,
   resumePausedAuthoringConversation,
@@ -146,7 +147,9 @@ export class SettingImprovementSession {
   async overview(packageId: string): Promise<V1SettingImprovementOverview> {
     return this.#mutate(async () => {
       let summaries = await this.#store.listSummariesByPackage(packageId);
-      const latestSummary = summaries[0];
+      const latestSummary = summaries.find(
+        (summary) => !summary.damagedContinuation,
+      );
       const latest =
         latestSummary === undefined
           ? null
@@ -384,6 +387,14 @@ export class SettingImprovementSession {
         "No saved model connection matches this setting-improvement conversation",
       );
     await prepare(session);
+    if (
+      session.modelBinding.provider === "google_interactions" &&
+      host.previewRequest !== undefined &&
+      session.requests?.at(-1)?.requestId === requestId
+    )
+      session.requests.at(-1)!.wireRequest = host.previewRequest(
+        authoringExchange(session, requestId),
+      );
     await this.#store.save(session);
     return { session, run: this.#startRun(session, host, requestId) };
   }
@@ -1077,6 +1088,12 @@ function settingImprovementHistoryItem(
 ): V1SettingImprovementHistoryItem {
   return {
     sessionId: summary.sessionId,
+    ...(summary.damagedContinuation
+      ? {
+          unavailableReason:
+            "Google continuation is damaged; start a fresh model context.",
+        }
+      : {}),
     runStatus: summary.runStatus,
     createdAt: summary.createdAt,
     updatedAt: summary.updatedAt,

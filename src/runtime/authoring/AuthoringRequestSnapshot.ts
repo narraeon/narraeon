@@ -3,6 +3,7 @@ import {
   type PlayPresetBinding,
 } from "../play/FileNativePlayPresetStore.ts";
 import type { PromptCompilation } from "../prompt/FileNativePromptCompiler.ts";
+import type { ModelHostWireRequest } from "../model/ModelHost.ts";
 
 /**
  * Documents the Runtime preloaded into one send's bootstrap. They count as
@@ -21,6 +22,51 @@ export interface AuthoringRequestSnapshot {
   bootstrap: PromptCompilation;
   playPreset: PlayPresetBinding;
   preload?: AuthoringPreloadRecord;
+  wireRequest?: ModelHostWireRequest;
+}
+
+function validWireRequest(value: unknown): value is ModelHostWireRequest {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return false;
+  const record = value as Record<string, unknown>;
+  return (
+    Object.keys(record).every((key) =>
+      [
+        "provider",
+        "method",
+        "endpointPath",
+        "headerNames",
+        "body",
+        "systemInstructionSources",
+      ].includes(key),
+    ) &&
+    [
+      "chat_completions",
+      "openai_responses",
+      "anthropic_messages",
+      "google_interactions",
+    ].includes(String(record.provider)) &&
+    record.method === "POST" &&
+    typeof record.endpointPath === "string" &&
+    Array.isArray(record.headerNames) &&
+    record.headerNames.every((name) => typeof name === "string") &&
+    "body" in record &&
+    (record.systemInstructionSources === undefined ||
+      (Array.isArray(record.systemInstructionSources) &&
+        record.systemInstructionSources.every(
+          (source: unknown) =>
+            typeof source === "object" &&
+            source !== null &&
+            !Array.isArray(source) &&
+            Object.keys(source).every(
+              (key) => key === "promptId" || key === "sources",
+            ) &&
+            (!("promptId" in source) || typeof source.promptId === "string") &&
+            "sources" in source &&
+            Array.isArray(source.sources) &&
+            source.sources.every((item: unknown) => typeof item === "string"),
+        )))
+  );
 }
 
 export function isAuthoringPreloadRecord(
@@ -64,10 +110,19 @@ export function validAuthoringRequests(
     if (typeof raw !== "object" || raw === null || Array.isArray(raw))
       return false;
     const item = raw as Record<string, unknown>;
-    const keys = Object.keys(item).length;
     if (
-      (keys !== 4 && !(keys === 5 && "preload" in item)) ||
+      !Object.keys(item).every((key) =>
+        [
+          "requestId",
+          "modelItemStart",
+          "bootstrap",
+          "playPreset",
+          "preload",
+          "wireRequest",
+        ].includes(key),
+      ) ||
       (item.preload !== undefined && !isAuthoringPreloadRecord(item.preload)) ||
+      (item.wireRequest !== undefined && !validWireRequest(item.wireRequest)) ||
       typeof item.requestId !== "string" ||
       !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(item.requestId) ||
       ids.has(item.requestId) ||
@@ -120,9 +175,12 @@ export function authoringRequestPreviews(session: {
           },
         ]
       : []),
-    ...requests.map(({ requestId, bootstrap }) => ({
+    ...requests.map(({ requestId, bootstrap, wireRequest }) => ({
       requestId,
       compilation: structuredClone(bootstrap),
+      ...(wireRequest === undefined
+        ? {}
+        : { wireRequest: structuredClone(wireRequest) }),
       legacyBootstrap: false,
     })),
   ];

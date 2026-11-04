@@ -401,6 +401,7 @@ export interface V1SettingConversationTurn {
 
 export interface V1SettingImprovementHistoryItem {
   sessionId: string;
+  unavailableReason?: string;
   runStatus: "ready" | "running" | "paused" | "interrupted";
   createdAt: number;
   updatedAt: number;
@@ -551,6 +552,14 @@ export interface V1AuthoringRequestPreview {
   legacyBootstrap?: boolean;
   requestId: string;
   compilation: V1SettingPromptPreview["compilation"];
+  wireRequest?: {
+    provider: string;
+    method: string;
+    endpointPath: string;
+    headerNames: string[];
+    body: unknown;
+    systemInstructionSources?: { promptId?: string; sources: string[] }[];
+  };
 }
 
 export interface V1SettingImprovementView {

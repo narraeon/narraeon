@@ -862,10 +862,21 @@ function googleSystemSources(
           message.role === "runtime_system" ||
           message.role === "author_instruction",
       );
-  return leading.map((message) => ({
+  const sources = leading.map((message) => ({
     ...(message.promptId === undefined ? {} : { promptId: message.promptId }),
     sources: message.blocks.map(({ source }) => source),
   }));
+  const current = request.worldRevisionBoundaries?.entries.findLast(
+    ({ epochId }) =>
+      epochId === request.worldRevisionBoundaries?.currentEpochId,
+  );
+  if (current !== undefined)
+    sources.push({
+      sources: [
+        `runtime:world-revision-epoch:${current.epochId}:system-boundary`,
+      ],
+    });
+  return sources;
 }
 
 function googleLateSystemSource(request: ModelHostExchange): string {
@@ -953,7 +964,15 @@ function googleRequestBody(
   }
   if (bootstrapPrefixEnd(request) === messages.length) appendPreload();
   const calls = new Map<string, string>();
-  for (const item of request.appended) {
+  const boundaries = request.worldRevisionBoundaries;
+  const currentBoundary = boundaries?.entries.findLast(
+    ({ epochId }) => epochId === boundaries.currentEpochId,
+  );
+  if (currentBoundary !== undefined)
+    system.push(
+      `# Runtime world-revision epoch boundary\n\nThe current epoch is ${currentBoundary.epochId}, based on ${currentBoundary.baseHead}. All prior search cursors and read authorizations are invalid. Re-read before writing, except for materials legitimately preloaded in the current revision.`,
+    );
+  for (const [itemIndex, item] of request.appended.entries()) {
     if (item.kind === "assistant") {
       if (
         item.providerState?.protocol !== "google_interactions" ||
@@ -982,6 +1001,29 @@ function googleRequestBody(
         ...(item.isError === true ? { is_error: true } : {}),
       });
     } else if (item.kind === "prompt_delta") {
+      const boundary = boundaries?.entries.find(
+        (entry) => entry.itemIndex === itemIndex,
+      );
+      if (boundary !== undefined) {
+        const message = item.logicalMessages[0];
+        if (
+          item.logicalMessages.length !== 1 ||
+          message?.role !== "runtime_system" ||
+          message.markdown !== boundary.markdown ||
+          message.blocks.length !== 1 ||
+          message.blocks[0]?.source !==
+            `runtime:world-revision-epoch:${boundary.epochId}` ||
+          message.blocks[0]?.markdown !== boundary.markdown
+        )
+          throw new Error("Invalid Runtime world-revision epoch boundary");
+        input.push({
+          type: "user_input",
+          content: text(
+            `# Runtime notice: world-revision epoch transition\n\n${boundary.markdown}`,
+          ),
+        });
+        continue;
+      }
       for (const message of item.logicalMessages)
         input.push({
           type: "user_input",

@@ -926,6 +926,14 @@ function SettingConversationHistory({
                             : uiText("可继续")}
                   </span>
                   <small className="setting-history-counts">
+                    {item.unavailableReason && (
+                      <span>
+                        {getWebLocale() === "zh-CN"
+                          ? "此对话的模型续传已损坏，请开启全新上下文。"
+                          : item.unavailableReason}
+                        <br />
+                      </span>
+                    )}
                     {uiText(
                       "{turns} 轮对话 · {tools} 次工具 · {files} 个文件",
                       {

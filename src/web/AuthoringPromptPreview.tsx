@@ -84,6 +84,21 @@ export function AuthoringPromptPreview({
                     : `Sent request ${index + 1}`}
               </summary>
               <CompiledPrompt compilation={request.compilation} />
+              {request.wireRequest && (
+                <details>
+                  <summary>
+                    {zh
+                      ? "实际派发编码及 Runtime 来源"
+                      : "Sent encoding and Runtime sources"}
+                  </summary>
+                  <p>
+                    {zh
+                      ? "System 边界约束当前 epoch；历史中的 Runtime 通知标记切换位置。"
+                      : "The System boundary governs the current epoch; Runtime notices locate transitions in history."}
+                  </p>
+                  <pre>{JSON.stringify(request.wireRequest, null, 2)}</pre>
+                </details>
+              )}
             </details>
           ))}
         </details>

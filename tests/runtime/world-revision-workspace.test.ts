@@ -4,6 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, expect, test, vi } from "vitest";
+import {
+  googleAuthoringHost,
+  googleInterruptedHost,
+  googleText,
+  googleTools,
+  interruptedGoogleWrite,
+} from "./support/google-authoring.ts";
 
 import { gameplayFile, gameplayPath } from "../../src/protocol/gameplay.ts";
 import { minimalFileNativeContentScaffold } from "../../src/runtime/content/ContentWorkspace.ts";
@@ -16,7 +23,9 @@ import {
   FileNativePlayPresetStore,
   toPlayPresetStructuredEditor,
   builtinDefaultPlayPresetBinding,
+  presetHostBinding,
 } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
+import { fingerprintControl } from "../../src/runtime/play/PlayDocumentTools.ts";
 import type { PromptPreview } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
 import { FileNativePromptCompiler } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
 import { FileNativeWorldRevisionStore } from "../../src/runtime/world-revision/FileNativeWorldRevisionStore.ts";
@@ -34,6 +43,532 @@ import { V1Runtime } from "../../src/runtime/V1Runtime.ts";
 import { revisePlayerTimeline } from "./support/player-timeline-edit.ts";
 
 const roots: string[] = [];
+
+test("Google world revision keeps changes in its epoch and requires rereading after apply", async () => {
+  const seeded = seededRevisionBase();
+  const files = [
+    ...seeded.map((file) => ({
+      ...file,
+      path: file.path.startsWith("state/")
+        ? `world/${file.path.slice(6)}`
+        : file.path,
+    })),
+    minimalFileNativeContentScaffold("zh-CN").find(
+      ({ path }) => path === "opening.md",
+    )!,
+  ];
+  const { root, worldId, worlds, workspace } = await createdWorld(files);
+  const path = "state/npc/old.yaml";
+  const source = seeded.find((file) => file.path === path)!.contents;
+  const { host, sent } = googleAuthoringHost([
+    googleTools([
+      { id: "read", name: "world_revision_read", arguments: { path } },
+      {
+        id: "write",
+        name: "world_revision_write_file",
+        arguments: {
+          path,
+          contents: source.replace("name: 旧商人", "name: 第一位商人"),
+        },
+      },
+    ]),
+    googleText("First revision ready."),
+    googleTools([
+      {
+        id: "stale",
+        name: "world_revision_write_file",
+        arguments: {
+          path,
+          contents: source.replace("name: 旧商人", "name: 越权"),
+        },
+      },
+    ]),
+    googleTools([
+      { id: "reread", name: "world_revision_read", arguments: { path } },
+      {
+        id: "second",
+        name: "world_revision_write_file",
+        arguments: {
+          path,
+          contents: source.replace("name: 旧商人", "name: 第二位商人"),
+        },
+      },
+    ]),
+    googleText("Second revision ready."),
+    googleText("Third epoch ready."),
+  ]);
+  const service = (boundHost = host) =>
+    new WorldRevisionSession({
+      store: new FileNativeWorldRevisionStore(root),
+      workspace,
+      worlds,
+      compiler: new FileNativePromptCompiler({ locale: "zh-CN" }),
+      locale: () => "zh-CN",
+      bindModelHost: () => Promise.resolve(boundHost),
+      bindExistingModelHost: () => Promise.resolve(boundHost),
+      bindPlayPreset: () =>
+        Promise.resolve(builtinDefaultPlayPresetBinding("zh-CN")),
+      preview: ({
+        snapshot,
+        modelBinding,
+        playPreset,
+        binding,
+        epoch,
+        maintenance,
+      }) =>
+        new FileNativePromptCompiler({ locale: "zh-CN" }).preview(
+          {
+            endpoint: {
+              id: `${epoch.worldId}:${epoch.baseHead}:revision`,
+              commit: `worktree:${contentTreeFingerprint(snapshot.files)}`,
+              operationId: epoch.epochId,
+            },
+            hostBinding: presetHostBinding(playPreset),
+            world: {
+              controlFingerprint: fingerprintControl(
+                Object.fromEntries(
+                  snapshot.files.map(({ path, contents }) => [path, contents]),
+                ),
+              ),
+              documentSnapshot: snapshot,
+              history: structuredClone(binding.history),
+              historyBackgrounds: structuredClone(
+                binding.historyBackgrounds ?? {},
+              ),
+              narrativeCheckpoint: binding.narrativeCheckpoint,
+              ...maintenance,
+              additionalMaterials: structuredClone(binding.additionalMaterials),
+            },
+            playerInputPlacement: "append",
+            playerInput: "检查世界修订工作树。",
+            modelBinding,
+          },
+          playPreset,
+        ),
+    });
+  const candidate = await service().preview(worldId);
+  const first = await service().send({
+    worldId,
+    requestId: "google-first",
+    message: "修订地点",
+    continuation: { kind: "fresh_context" },
+  });
+  expect(first.runStatus).toBe("ready");
+  const stored = await new FileNativeWorldRevisionStore(root).readSession(
+    first.sessionId,
+  );
+  const compilation = stored.requests![0]!.bootstrap;
+  expect(first.requestPreviews![0]!.compilation).toEqual(compilation);
+  expect(
+    host.previewRequest({
+      bootstrap: compilation,
+      toolUniverse: compilation.toolUniverse,
+      allowedTools: compilation.toolUniverse.map(({ name }) => name),
+      toolStrategy: compilation.toolStrategy,
+      tools: compilation.tools,
+      appended: stored.modelItems.slice(0, 1),
+      requestId: "google-first",
+      operationId: first.sessionId,
+      exchange: 1,
+      maxOutputTokens: host.binding().maxOutputTokens,
+    }).body,
+  ).toEqual(sent[0]);
+  expect(first.turns[0]?.exchanges[0]?.toolCalls).toMatchObject([
+    { result: { isError: false } },
+    { result: { isError: false } },
+  ]);
+  expect(JSON.stringify(candidate)).toContain("世界修订");
+  const epoch = await workspace.active(worldId);
+  if (epoch === null) throw new Error("Missing epoch");
+  expect(await worlds.readWorldRevisionLock(worldId)).toEqual({
+    worldId,
+    epochId: epoch.epochId,
+  });
+  expect(await worlds.currentHead(worldId)).toBe("genesis");
+  expect(
+    (await worlds.readSurface(worldId, "state")).find(
+      ({ path }) => path === "npc/old.yaml",
+    )?.contents,
+  ).toContain("name: 旧商人");
+  await service().apply({
+    worldId,
+    epochId: epoch.epochId,
+    expectedRevision: epoch.revision,
+  });
+  const next = await service().send({
+    worldId,
+    requestId: "google-next",
+    message: "继续修订",
+    continuation: { kind: "continue_context", sessionId: first.sessionId },
+  });
+  expect({ status: next.runStatus, failure: next.lastFailure }).toEqual({
+    status: "ready",
+    failure: null,
+  });
+  expect(next.turns[1]?.exchanges[0]?.toolCalls[0]).toMatchObject({
+    callId: "stale",
+    result: { isError: true },
+  });
+  expect(next.turns[1]?.exchanges[1]?.toolCalls).toMatchObject([
+    { result: { isError: false } },
+    { result: { isError: false } },
+  ]);
+  expect(next.requestPreviews?.[1]?.wireRequest?.body).toEqual(sent[2]);
+  expect(
+    next.requestPreviews?.[1]?.wireRequest?.systemInstructionSources,
+  ).toContainEqual({
+    sources: [
+      `runtime:world-revision-epoch:${(await workspace.active(worldId))!.epochId}:system-boundary`,
+    ],
+  });
+  expect(JSON.stringify(sent[2])).toContain("此前全部 search cursor");
+  expect((await workspace.active(worldId))?.epochId).not.toBe(epoch.epochId);
+  expect(
+    (await worlds.readSurface(worldId, "state")).find(
+      ({ path }) => path === "npc/old.yaml",
+    )?.contents,
+  ).toContain("name: 第一位商人");
+  const incompatible = new FileNativeModelHost({
+    provider: "google_interactions",
+    baseUrl: "https://other.invalid/v1beta",
+    apiKey: "synthetic",
+    modelId: "manual-model",
+    contextWindowTokens: 64000,
+    maxOutputTokens: 2000,
+  });
+  await expect(
+    service(incompatible).send({
+      worldId,
+      requestId: "incompatible",
+      message: "继续",
+      continuation: { kind: "continue_context", sessionId: first.sessionId },
+    }),
+  ).rejects.toThrow(/model connection/iu);
+  expect(sent).toHaveLength(5);
+  const secondEpoch = await workspace.active(worldId);
+  if (secondEpoch === null) throw new Error("Missing second epoch");
+  await service().discard({ worldId, epochId: secondEpoch.epochId });
+  const third = await service().send({
+    worldId,
+    requestId: "google-third",
+    message: "再次继续",
+    continuation: { kind: "continue_context", sessionId: first.sessionId },
+  });
+  expect(third.runStatus).toBe("ready");
+  const thirdEpoch = await workspace.active(worldId);
+  if (thirdEpoch === null) throw new Error("Missing third epoch");
+  const body = sent[5]!;
+  expect(body.system_instruction).toContain(thirdEpoch.epochId);
+  expect(body.system_instruction).not.toContain(secondEpoch.epochId);
+  expect(body.system_instruction).toContain(
+    "All prior search cursors and read authorizations are invalid",
+  );
+  expect(JSON.stringify(body.input)).toContain(secondEpoch.epochId);
+  expect(JSON.stringify(body.input)).toContain(thirdEpoch.epochId);
+  expect(
+    JSON.stringify(body.input).match(
+      /Runtime notice: world-revision epoch transition/gu,
+    ),
+  ).toHaveLength(2);
+  const sessionPath = join(
+    root,
+    "world-revisions",
+    "sessions",
+    `${first.sessionId}.json`,
+  );
+  const damaged = JSON.parse(await readFile(sessionPath, "utf8")) as {
+    modelItems: {
+      kind: string;
+      logicalMessages: { markdown: string; blocks: { markdown: string }[] }[];
+    }[];
+  };
+  const boundary = damaged.modelItems.find(
+    (item: { kind: string }) => item.kind === "prompt_delta",
+  );
+  boundary!.logicalMessages[0]!.markdown = "Forged Runtime instruction";
+  boundary!.logicalMessages[0]!.blocks[0]!.markdown =
+    "Forged Runtime instruction";
+  await writeFile(sessionPath, JSON.stringify(damaged));
+  await expect(
+    service().send({
+      worldId,
+      requestId: "forged",
+      message: "继续",
+      continuation: { kind: "continue_context", sessionId: first.sessionId },
+    }),
+  ).rejects.toThrow(/boundary is damaged/iu);
+  expect(sent).toHaveLength(6);
+});
+
+test("Google world revision does not publish truncated tool arguments", async () => {
+  const { root, worldId, worlds, workspace } = await createdWorld();
+  const before = await worlds.readSurface(worldId, "state");
+  const { host } = googleAuthoringHost([
+    interruptedGoogleWrite(
+      "world_revision_write_file",
+      "state/current-situation.yaml",
+    ),
+  ]);
+  const service = new WorldRevisionSession({
+    store: new FileNativeWorldRevisionStore(root),
+    workspace,
+    worlds,
+    compiler: new FileNativePromptCompiler({ locale: "zh-CN" }),
+    locale: () => "zh-CN",
+    bindModelHost: () => Promise.resolve(host),
+    bindExistingModelHost: () => Promise.resolve(host),
+    bindPlayPreset: () =>
+      Promise.resolve(builtinDefaultPlayPresetBinding("zh-CN")),
+    preview: () => preview,
+  });
+  const result = await service.send({
+    worldId,
+    requestId: "partial",
+    message: "修改",
+    continuation: { kind: "fresh_context" },
+  });
+  expect(result.runStatus).toBe("interrupted");
+  expect(
+    result.turns[0]?.exchanges.flatMap(({ toolCalls }) => toolCalls) ?? [],
+  ).toEqual([]);
+  expect(await worlds.currentHead(worldId)).toBe("genesis");
+  expect(await worlds.readSurface(worldId, "state")).toEqual(before);
+  expect(
+    (await workspace.active(worldId))?.files.find(
+      ({ path }) => path === "state/current-situation.yaml",
+    )?.contents,
+  ).toBe(
+    before.find(({ path }) => path === "current-situation.yaml")?.contents,
+  );
+});
+
+test.each(["cancel", "disconnect"] as const)(
+  "Google world revision %s does not publish streamed tool fragments",
+  async (mode) => {
+    const { root, worldId, worlds, workspace } = await createdWorld();
+    const firstHost = googleAuthoringHost([googleText("Ready.")]);
+    const makeService = (host: FileNativeModelHost) =>
+      new WorldRevisionSession({
+        store: new FileNativeWorldRevisionStore(root),
+        workspace,
+        worlds,
+        compiler: new FileNativePromptCompiler({ locale: "zh-CN" }),
+        locale: () => "zh-CN",
+        bindModelHost: () => Promise.resolve(host),
+        bindExistingModelHost: () => Promise.resolve(host),
+        bindPlayPreset: () =>
+          Promise.resolve(builtinDefaultPlayPresetBinding("zh-CN")),
+        preview: () => preview,
+      });
+    const first = await makeService(firstHost.host).send({
+      worldId,
+      requestId: "first",
+      message: "讨论",
+      continuation: { kind: "fresh_context" },
+    });
+    const before = await workspace.active(worldId);
+    const interrupted = googleInterruptedHost(
+      "world_revision_write_file",
+      "state/current-situation.yaml",
+      mode,
+    );
+    const service = makeService(interrupted.host);
+    const running = service.send({
+      worldId,
+      requestId: "partial",
+      message: "修改",
+      continuation: { kind: "continue_context", sessionId: first.sessionId },
+    });
+    await interrupted.started;
+    if (mode === "cancel") await service.cancel(first.sessionId);
+    const result = await running;
+    expect(result.runStatus).toBe("interrupted");
+    expect(
+      result.turns[1]?.exchanges.flatMap(({ toolCalls }) => toolCalls) ?? [],
+    ).toEqual([]);
+    expect((await workspace.active(worldId))?.files).toEqual(before?.files);
+    expect(await worlds.currentHead(worldId)).toBe("genesis");
+  },
+);
+
+test("Google world revision refuses an empty persisted continuation after restart", async () => {
+  const { root, worldId, worlds, workspace } = await createdWorld();
+  const { host, sent } = googleAuthoringHost([googleText("Original answer.")]);
+  const service = () =>
+    new WorldRevisionSession({
+      store: new FileNativeWorldRevisionStore(root),
+      workspace,
+      worlds,
+      compiler: new FileNativePromptCompiler({ locale: "zh-CN" }),
+      locale: () => "zh-CN",
+      bindModelHost: () => Promise.resolve(host),
+      bindExistingModelHost: () => Promise.resolve(host),
+      bindPlayPreset: () =>
+        Promise.resolve(builtinDefaultPlayPresetBinding("zh-CN")),
+      preview: () => preview,
+    });
+  const first = await service().send({
+    worldId,
+    requestId: "first",
+    message: "讨论",
+    continuation: { kind: "fresh_context" },
+  });
+  const path = join(
+    root,
+    "world-revisions",
+    "sessions",
+    `${first.sessionId}.json`,
+  );
+  const stored = JSON.parse(await readFile(path, "utf8")) as {
+    modelItems: { kind: string; providerState: { steps: unknown } }[];
+  };
+  stored.modelItems.find(
+    (item: { kind: string }) => item.kind === "assistant",
+  )!.providerState.steps = [];
+  await writeFile(path, JSON.stringify(stored));
+  const before = await workspace.active(worldId);
+  await expect(
+    service().send({
+      worldId,
+      requestId: "next",
+      message: "继续",
+      continuation: { kind: "continue_context", sessionId: first.sessionId },
+    }),
+  ).rejects.toThrow(/fresh model context/iu);
+  expect(JSON.parse(await readFile(path, "utf8"))).toEqual(stored);
+  expect(sent).toHaveLength(1);
+  expect((await workspace.active(worldId))?.files).toEqual(before?.files);
+  expect(await worlds.currentHead(worldId)).toBe("genesis");
+});
+
+test("Google world revision can start fresh beside a damaged continuation", async () => {
+  const { root, worldId, worlds, workspace } = await createdWorld();
+  const { host, sent } = googleAuthoringHost([
+    googleText("Original."),
+    googleText("Fresh."),
+  ]);
+  const service = () =>
+    new WorldRevisionSession({
+      store: new FileNativeWorldRevisionStore(root),
+      workspace,
+      worlds,
+      compiler: new FileNativePromptCompiler({ locale: "zh-CN" }),
+      locale: () => "zh-CN",
+      bindModelHost: () => Promise.resolve(host),
+      bindExistingModelHost: () => Promise.resolve(host),
+      bindPlayPreset: () =>
+        Promise.resolve(builtinDefaultPlayPresetBinding("zh-CN")),
+      preview: () => preview,
+    });
+  const first = await service().send({
+    worldId,
+    requestId: "first",
+    message: "讨论",
+    continuation: { kind: "fresh_context" },
+  });
+  const path = join(
+    root,
+    "world-revisions",
+    "sessions",
+    `${first.sessionId}.json`,
+  );
+  const damaged = JSON.parse(await readFile(path, "utf8")) as {
+    modelItems: { kind: string; providerState: { steps: unknown } }[];
+  };
+  damaged.modelItems.find(
+    (item: { kind: string }) => item.kind === "assistant",
+  )!.providerState.steps = [{ type: "function_call", id: 4 }];
+  const bytes = JSON.stringify(damaged);
+  await writeFile(path, bytes);
+  await expect(
+    service().send({
+      worldId,
+      requestId: "next",
+      message: "继续",
+      continuation: { kind: "continue_context", sessionId: first.sessionId },
+    }),
+  ).rejects.toThrow(/fresh model context/iu);
+  const damagedHistory = (await service().overview(worldId)).history[0];
+  expect(damagedHistory?.sessionId).toBe(first.sessionId);
+  expect(damagedHistory?.unavailableReason).toContain("damaged");
+  const fresh = await service().send({
+    worldId,
+    requestId: "fresh",
+    message: "重新开始",
+    continuation: { kind: "fresh_context" },
+  });
+  expect(fresh.runStatus).toBe("ready");
+  await expect(
+    service().send({
+      worldId,
+      requestId: "first",
+      message: "讨论",
+      continuation: { kind: "fresh_context" },
+    }),
+  ).rejects.toThrow(/new request ID/iu);
+  expect(
+    (await service().readSession(worldId, fresh.sessionId)).runStatus,
+  ).toBe("ready");
+  expect((await service().overview(worldId)).history).toHaveLength(2);
+  expect(sent).toHaveLength(2);
+  expect(await readFile(path, "utf8")).toBe(bytes);
+});
+
+test.each(["identity", "pending"] as const)(
+  "Google damaged world revision with ambiguous %s fails closed",
+  async (fault) => {
+    const { root, worldId, worlds, workspace } = await createdWorld();
+    const { host, sent } = googleAuthoringHost([googleText("Original.")]);
+    const service = () =>
+      new WorldRevisionSession({
+        store: new FileNativeWorldRevisionStore(root),
+        workspace,
+        worlds,
+        compiler: new FileNativePromptCompiler({ locale: "zh-CN" }),
+        locale: () => "zh-CN",
+        bindModelHost: () => Promise.resolve(host),
+        bindExistingModelHost: () => Promise.resolve(host),
+        bindPlayPreset: () =>
+          Promise.resolve(builtinDefaultPlayPresetBinding("zh-CN")),
+        preview: () => preview,
+      });
+    const first = await service().send({
+      worldId,
+      requestId: "first",
+      message: "讨论",
+      continuation: { kind: "fresh_context" },
+    });
+    const path = join(
+      root,
+      "world-revisions",
+      "sessions",
+      `${first.sessionId}.json`,
+    );
+    const stored = JSON.parse(await readFile(path, "utf8")) as {
+      sessionId: string;
+      pendingSettlement: unknown;
+      modelItems: { kind: string; providerState: { steps: unknown } }[];
+    };
+    stored.modelItems.find(
+      ({ kind }) => kind === "assistant",
+    )!.providerState.steps = [{ type: "function_call", id: 4 }];
+    if (fault === "identity")
+      stored.sessionId = "world-session-00000000-0000-4000-8000-000000000000";
+    else stored.pendingSettlement = {};
+    const bytes = JSON.stringify(stored);
+    await writeFile(path, bytes);
+    await expect(
+      service().send({
+        worldId,
+        requestId: "fresh",
+        message: "重新开始",
+        continuation: { kind: "fresh_context" },
+      }),
+    ).rejects.toThrow();
+    expect(sent).toHaveLength(1);
+    expect(await readFile(path, "utf8")).toBe(bytes);
+  },
+);
 
 afterEach(async () => {
   await Promise.all(

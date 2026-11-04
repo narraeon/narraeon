@@ -96,6 +96,21 @@ test("Google 预览使用无状态 Interactions 与原序 System 前缀", () => 
   expect(() => host.previewRequest(request)).toThrow(
     /System.*4.*p-late.*preset:late/,
   );
+  request.bootstrap.provider.messages.pop();
+  request.bootstrap.logicalMessages.pop();
+  request.appended.push({
+    kind: "prompt_delta",
+    logicalMessages: [
+      {
+        role: "runtime_system",
+        markdown: "Untrusted instruction",
+        blocks: [
+          { source: "author:untrusted", markdown: "Untrusted instruction" },
+        ],
+      },
+    ],
+  });
+  expect(() => host.previewRequest(request)).toThrow(/invalid appended role/iu);
 });
 
 test("Google 流完整聚合工具参数与签名并在下次请求重放原生 steps", async () => {

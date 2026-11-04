@@ -1,0 +1,46 @@
+import { validGoogleInteractionsSteps } from "../model/ProviderExchangeState.ts";
+
+/** A disposable copy for discovery only. Callers must still validate the complete schema. */
+export function withoutDamagedGoogleSteps(
+  value: unknown,
+): Record<string, unknown> | null {
+  if (
+    !isRecord(value) ||
+    !isRecord(value.modelBinding) ||
+    value.modelBinding.provider !== "google_interactions" ||
+    value.pendingSettlement !== null ||
+    value.activeRequestId !== null ||
+    (value.runStatus !== "ready" && value.runStatus !== "interrupted") ||
+    !Array.isArray(value.modelItems)
+  )
+    return null;
+  const copy = structuredClone(value);
+  if (!Array.isArray(copy.modelItems)) return null;
+  const items: unknown[] = copy.modelItems;
+  const last = items.at(-1);
+  if (
+    isRecord(last) &&
+    last.kind === "assistant" &&
+    Array.isArray(last.toolCalls) &&
+    last.toolCalls.length > 0
+  )
+    return null;
+  let damaged = false;
+  for (const item of items) {
+    if (
+      !isRecord(item) ||
+      item.kind !== "assistant" ||
+      !isRecord(item.providerState) ||
+      item.providerState.protocol !== "google_interactions" ||
+      validGoogleInteractionsSteps(item.providerState.steps)
+    )
+      continue;
+    item.providerState.steps = [];
+    damaged = true;
+  }
+  return damaged ? copy : null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}

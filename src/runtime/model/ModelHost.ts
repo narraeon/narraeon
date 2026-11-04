@@ -121,6 +121,16 @@ export interface ModelHostExchange {
   toolStrategy?: RuntimeToolDefinitionStrategy;
   tools: PromptCompilation["tools"];
   appended: ModelHostAppendItem[];
+  /** Runtime-validated revision boundaries, indexed into the immutable transcript. */
+  worldRevisionBoundaries?: {
+    currentEpochId: string;
+    entries: {
+      itemIndex: number;
+      epochId: string;
+      baseHead: string;
+      markdown: string;
+    }[];
+  };
   /** Stable request identity for traces and scripted hosts. */
   requestId?: string;
   operationId?: string;

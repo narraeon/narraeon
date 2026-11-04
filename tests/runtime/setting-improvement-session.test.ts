@@ -8,6 +8,7 @@ import { afterEach, expect, test } from "vitest";
 
 import { ContentWorkspace } from "../../src/runtime/content/ContentWorkspace.ts";
 import { contentTreeFingerprint } from "../../src/runtime/content/ContentTreeFingerprint.ts";
+import { FileNativeModelHost } from "../../src/runtime/model/FileNativeModelAdapters.ts";
 import {
   ScriptedModelHost,
   type ModelHost,
@@ -25,6 +26,13 @@ import { FileNativePromptCompiler } from "../../src/runtime/prompt/FileNativePro
 import { FileNativeSettingImprovementStore } from "../../src/runtime/setting/FileNativeSettingImprovementStore.ts";
 import { SettingAuthoringTransaction } from "../../src/runtime/setting/SettingAuthoringTransaction.ts";
 import { SettingImprovementSession } from "../../src/runtime/setting/SettingImprovementSession.ts";
+import {
+  googleAuthoringHost,
+  googleInterruptedHost,
+  googleText,
+  googleTools,
+  interruptedGoogleWrite,
+} from "./support/google-authoring.ts";
 
 const roots: string[] = [];
 
@@ -43,6 +51,318 @@ const binding: ModelHostBinding = {
   protocolConfigFingerprint: "protocol:test",
   cacheStrategy: "provider_managed",
 };
+
+test("Google setting conversation settles ordered mixed calls and continues after restart", async () => {
+  const root = await temporaryRoot("google-setting-");
+  const content = new ContentWorkspace(root, { locale: () => "en" });
+  const { localId } = await content.createCurrentTreeContentPackage();
+  const { host, sent } = googleAuthoringHost([
+    googleTools([
+      { id: "read", name: "setting_read", arguments: { path: "opening.md" } },
+      {
+        id: "write",
+        name: "setting_write_file",
+        arguments: { path: "opening.md", contents: "First change.\n" },
+      },
+      {
+        id: "fail",
+        name: "setting_write_file",
+        arguments: { path: "missing.md", contents: "No.\n" },
+      },
+      {
+        id: "read-again",
+        name: "setting_read",
+        arguments: { path: "opening.md" },
+      },
+      {
+        id: "write-again",
+        name: "setting_write_file",
+        arguments: { path: "opening.md", contents: "Final change.\n" },
+      },
+    ]),
+    googleText("The changes are live."),
+    googleText("Continued after restart."),
+  ]);
+  const service = serviceFor(root, content, host);
+  const candidate = await service.preview(localId);
+  const first = await sendFresh(
+    service,
+    localId,
+    "google-first",
+    "Edit the opening.",
+  );
+  expect(first.runStatus).toBe("ready");
+  expect(first.requestPreviews?.[0]?.compilation).toEqual(candidate);
+  expect(first.requestPreviews?.[0]?.wireRequest?.body).toEqual(sent[0]);
+  const stored = await new FileNativeSettingImprovementStore(root).read(
+    first.sessionId,
+  );
+  expect(
+    host.previewRequest({
+      bootstrap: candidate,
+      toolUniverse: candidate.toolUniverse,
+      allowedTools: candidate.toolUniverse.map(({ name }) => name),
+      toolStrategy: candidate.toolStrategy,
+      tools: candidate.tools,
+      appended: stored.modelItems.slice(0, 1),
+      requestId: "google-first",
+      operationId: first.sessionId,
+      exchange: 1,
+      maxOutputTokens: host.binding().maxOutputTokens,
+    }).body,
+  ).toEqual(sent[0]);
+  expect(first.turns[0]?.exchanges[0]?.toolCalls).toMatchObject([
+    { callId: "read", result: { isError: false } },
+    {
+      callId: "write",
+      result: { isError: false, changes: [{ after: "First change.\n" }] },
+    },
+    { callId: "fail", result: { isError: true, changes: [] } },
+    {
+      callId: "read-again",
+      result: {
+        isError: false,
+      },
+    },
+    {
+      callId: "write-again",
+      result: {
+        isError: false,
+        changes: [{ before: "First change.\n", after: "Final change.\n" }],
+      },
+    },
+  ]);
+  expect(
+    first.turns[0]?.exchanges[0]?.toolCalls[3]?.result?.markdown,
+  ).toContain("First change.");
+  expect(
+    (await content.readCurrentTreeContentPackage(localId)).files.find(
+      ({ path }) => path === "opening.md",
+    )?.contents,
+  ).toBe("Final change.\n");
+  expect(JSON.stringify(sent[1])).toContain('"call_id":"fail"');
+  const resumed = await serviceFor(
+    root,
+    new ContentWorkspace(root, { locale: () => "en" }),
+    host,
+  ).send({
+    packageId: localId,
+    requestId: "google-next",
+    message: "Continue.",
+    continuation: { kind: "continue_context", sessionId: first.sessionId },
+  });
+  expect(resumed.runStatus).toBe("ready");
+  expect(resumed.messages.at(-1)?.text).toBe("Continued after restart.");
+  expect(JSON.stringify(sent[2])).toContain("The changes are live.");
+  const incompatible = new FileNativeModelHost({
+    provider: "google_interactions",
+    baseUrl: "https://other.invalid/v1beta",
+    apiKey: "synthetic",
+    modelId: "manual-model",
+    contextWindowTokens: 64000,
+    maxOutputTokens: 2000,
+  });
+  await expect(
+    serviceFor(root, content, incompatible).send({
+      packageId: localId,
+      requestId: "incompatible",
+      message: "Continue.",
+      continuation: { kind: "continue_context", sessionId: first.sessionId },
+    }),
+  ).rejects.toThrow(/binding|connection/iu);
+  expect(sent).toHaveLength(3);
+});
+
+test.each(["empty", "malformed"])(
+  "Google setting rejects %s persisted continuation after restart",
+  async (corruption) => {
+    const root = await temporaryRoot("google-setting-corrupt-");
+    const content = new ContentWorkspace(root, { locale: () => "en" });
+    const { localId } = await content.createCurrentTreeContentPackage();
+    const { host, sent } = googleAuthoringHost([
+      googleText("Original answer."),
+      googleText("Fresh context."),
+    ]);
+    const first = await sendFresh(
+      serviceFor(root, content, host),
+      localId,
+      "first",
+      "Discuss.",
+    );
+    const path = join(
+      root,
+      "setting-improvements",
+      "sessions",
+      `${first.sessionId}.json`,
+    );
+    const stored = JSON.parse(await readFile(path, "utf8")) as {
+      modelItems: { kind: string; providerState: { steps: unknown } }[];
+    };
+    stored.modelItems.find(
+      (item: { kind: string }) => item.kind === "assistant",
+    )!.providerState.steps =
+      corruption === "empty" ? [] : [{ type: "function_call", id: 4 }];
+    const damagedBytes = JSON.stringify(stored);
+    await writeFile(path, damagedBytes);
+    const before = await content.readCurrentTreeContentPackage(localId);
+    const send = () =>
+      serviceFor(root, content, host).send({
+        packageId: localId,
+        requestId: "next",
+        message: "Continue.",
+        continuation: { kind: "continue_context", sessionId: first.sessionId },
+      });
+    if (corruption === "empty") {
+      await expect(send()).rejects.toThrow(/fresh model context/iu);
+      expect(JSON.parse(await readFile(path, "utf8"))).toEqual(stored);
+    } else await expect(send()).rejects.toThrow(/fresh model context/iu);
+    expect(sent).toHaveLength(1);
+    expect(
+      (await content.readCurrentTreeContentPackage(localId)).files,
+    ).toEqual(before.files);
+    if (corruption === "malformed") {
+      const overview = await serviceFor(root, content, host).overview(localId);
+      expect(overview.history[0]).toMatchObject({
+        sessionId: first.sessionId,
+      });
+      expect(overview.history[0]?.unavailableReason).toContain("damaged");
+      const fresh = await sendFresh(
+        serviceFor(root, content, host),
+        localId,
+        "fresh",
+        "Start again.",
+      );
+      expect(fresh.runStatus).toBe("ready");
+      await expect(
+        sendFresh(
+          serviceFor(root, content, host),
+          localId,
+          "first",
+          "Discuss.",
+        ),
+      ).rejects.toThrow(/new request ID/iu);
+      const reloaded = serviceFor(root, content, host);
+      expect((await reloaded.overview(localId)).history).toHaveLength(2);
+      expect((await reloaded.read(localId))?.sessionId).toBe(fresh.sessionId);
+      expect(await readFile(path, "utf8")).toBe(damagedBytes);
+      expect(sent).toHaveLength(2);
+    }
+  },
+);
+
+test.each(["identity", "pending"] as const)(
+  "Google damaged setting history with ambiguous %s fails closed",
+  async (fault) => {
+    const root = await temporaryRoot("google-setting-ambiguous-");
+    const content = new ContentWorkspace(root, { locale: () => "en" });
+    const { localId } = await content.createCurrentTreeContentPackage();
+    const { host, sent } = googleAuthoringHost([googleText("Original.")]);
+    const first = await sendFresh(
+      serviceFor(root, content, host),
+      localId,
+      "first",
+      "Discuss.",
+    );
+    const path = join(
+      root,
+      "setting-improvements",
+      "sessions",
+      `${first.sessionId}.json`,
+    );
+    const stored = JSON.parse(await readFile(path, "utf8")) as {
+      sessionId: string;
+      pendingSettlement: unknown;
+      modelItems: { kind: string; providerState: { steps: unknown } }[];
+    };
+    stored.modelItems.find(
+      ({ kind }) => kind === "assistant",
+    )!.providerState.steps = [{ type: "function_call", id: 4 }];
+    if (fault === "identity")
+      stored.sessionId = "setting-00000000-0000-4000-8000-000000000000";
+    else stored.pendingSettlement = {};
+    const bytes = JSON.stringify(stored);
+    await writeFile(path, bytes);
+    await expect(
+      sendFresh(
+        serviceFor(root, content, host),
+        localId,
+        "fresh",
+        "Start again.",
+      ),
+    ).rejects.toThrow();
+    expect(sent).toHaveLength(1);
+    expect(await readFile(path, "utf8")).toBe(bytes);
+  },
+);
+
+test.each(["truncated", "incomplete"])(
+  "Google setting does not publish %s streamed tool arguments",
+  async (ending) => {
+    const root = await temporaryRoot("google-setting-partial-");
+    const content = new ContentWorkspace(root, { locale: () => "en" });
+    const { localId } = await content.createCurrentTreeContentPackage();
+    const before = await content.readCurrentTreeContentPackage(localId);
+    const events = interruptedGoogleWrite("setting_write_file", "opening.md");
+    if (ending === "incomplete")
+      events.push({
+        event_type: "interaction.completed",
+        interaction: { status: "incomplete" },
+      });
+    const { host } = googleAuthoringHost([events]);
+    const result = await sendFresh(
+      serviceFor(root, content, host),
+      localId,
+      "partial",
+      "Edit.",
+    );
+    expect(result.runStatus).toBe("interrupted");
+    expect(
+      result.turns[0]?.exchanges.flatMap(({ toolCalls }) => toolCalls) ?? [],
+    ).toEqual([]);
+    expect(
+      (await content.readCurrentTreeContentPackage(localId)).files,
+    ).toEqual(before.files);
+  },
+);
+
+test.each(["cancel", "disconnect"] as const)(
+  "Google setting %s cannot publish streamed tool fragments",
+  async (mode) => {
+    const root = await temporaryRoot("google-setting-interrupt-");
+    const content = new ContentWorkspace(root, { locale: () => "en" });
+    const { localId } = await content.createCurrentTreeContentPackage();
+    const initial = googleAuthoringHost([googleText("Ready.")]);
+    const first = await sendFresh(
+      serviceFor(root, content, initial.host),
+      localId,
+      "first",
+      "Discuss.",
+    );
+    const before = await content.readCurrentTreeContentPackage(localId);
+    const interrupted = googleInterruptedHost(
+      "setting_write_file",
+      "opening.md",
+      mode,
+    );
+    const session = serviceFor(root, content, interrupted.host);
+    const running = session.send({
+      packageId: localId,
+      requestId: "interrupted",
+      message: "Edit.",
+      continuation: { kind: "continue_context", sessionId: first.sessionId },
+    });
+    await interrupted.started;
+    if (mode === "cancel") await session.cancel(first.sessionId);
+    const result = await running;
+    expect(result.runStatus).toBe("interrupted");
+    expect(
+      result.turns[1]?.exchanges.flatMap(({ toolCalls }) => toolCalls) ?? [],
+    ).toEqual([]);
+    expect(
+      (await content.readCurrentTreeContentPackage(localId)).files,
+    ).toEqual(before.files);
+  },
+);
 
 test("重整前真实 schema-v2 作者会话保留原生工具历史，下一次发送保存当前编排", async () => {
   const fixture = JSON.parse(

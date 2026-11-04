@@ -65,3 +65,40 @@ test("author candidate preview stays separate from retained legacy request evide
   expect(screen.getByText("旧会话原始提示")).toBeDefined();
   expect(screen.getByText("下一次发送候选（未发送）")).toBeDefined();
 });
+
+test("author preview shows the sent Google epoch mapping and its Runtime source", () => {
+  render(
+    createElement(AuthoringPromptPreview, {
+      requests: [
+        {
+          requestId: "sent",
+          compilation,
+          wireRequest: {
+            provider: "google_interactions",
+            method: "POST",
+            endpointPath: "/v1beta/interactions",
+            headerNames: ["x-goog-api-key"],
+            body: {
+              system_instruction: "current epoch boundary",
+              input: [
+                { type: "user_input", content: "Runtime notice: transition" },
+              ],
+            },
+            systemInstructionSources: [
+              {
+                sources: [
+                  "runtime:world-revision-epoch:current:system-boundary",
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    }),
+  );
+  expect(screen.getByText("实际派发编码及 Runtime 来源")).toBeDefined();
+  expect(
+    screen.getByText(/runtime:world-revision-epoch:current:system-boundary/),
+  ).toBeDefined();
+  expect(screen.getByText(/Runtime notice: transition/)).toBeDefined();
+});

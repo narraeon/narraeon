@@ -1,5 +1,6 @@
 import { authoringRequestPreviews } from "../authoring/AuthoringRequestSnapshot.ts";
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 
 import type { AppLocale } from "../../protocol/appPreferences.ts";
 import { emptyAggregatedModelUsage } from "../../protocol/modelUsage.ts";
@@ -13,6 +14,7 @@ import type {
 } from "../../protocol/v1.ts";
 import {
   appendAuthoringUserMessage,
+  authoringExchange,
   ModelToolConversation,
   rememberAuthoringRequest,
   resumePausedAuthoringConversation,
@@ -21,6 +23,7 @@ import { contentTreeFingerprint } from "../content/ContentTreeFingerprint.ts";
 import type {
   ModelHost,
   ModelHostBinding,
+  ModelHostExchange,
   ModelHostToolCall,
 } from "../model/ModelHost.ts";
 import { equalModelHostBinding } from "../model/ModelHost.ts";
@@ -148,7 +151,8 @@ export class WorldRevisionSession {
         this.#recoverWorldSessions(worldId),
         this.#workspace.sealed(worldId),
       ]);
-      const latest = sessions[0] ?? null;
+      const latest =
+        sessions.find((session) => !session.damagedContinuation) ?? null;
       const shownEpoch = activeEpoch ?? (await this.#workspace.latest(worldId));
       return {
         epoch:
@@ -367,10 +371,18 @@ export class WorldRevisionSession {
           preload.record,
         );
       appendAuthoringUserMessage(session, message, requestId);
+      const boundaries =
+        host.binding().provider === "google_interactions"
+          ? await this.#validatedEpochBoundaries(session)
+          : undefined;
+      if (boundaries !== undefined && host.previewRequest !== undefined)
+        session.requests.at(-1)!.wireRequest = host.previewRequest(
+          authoringExchange(session, requestId, boundaries),
+        );
       await this.#store.saveSession(session);
       return {
         session,
-        run: this.#startRun(session, host, requestId),
+        run: this.#startRun(session, host, requestId, boundaries),
       };
     });
     return prepared.run ?? this.#view(prepared.session);
@@ -409,8 +421,15 @@ export class WorldRevisionSession {
           "No saved model connection matches this world-revision conversation",
         );
       resumePausedAuthoringConversation(session);
+      const boundaries =
+        host.binding().provider === "google_interactions"
+          ? await this.#validatedEpochBoundaries(session)
+          : undefined;
       await this.#store.saveSession(session);
-      return { session, run: this.#startRun(session, host, requestId) };
+      return {
+        session,
+        run: this.#startRun(session, host, requestId, boundaries),
+      };
     });
     return prepared.run ?? this.#view(prepared.session);
   }
@@ -585,6 +604,7 @@ export class WorldRevisionSession {
     session: StoredWorldRevisionSession,
     host: ModelHost,
     requestId: string,
+    worldRevisionBoundaries?: ModelHostExchange["worldRevisionBoundaries"],
   ): Promise<V1WorldRevisionView> {
     let activeTransaction: ActiveTransaction | null = null;
     return this.#conversation.run({
@@ -592,6 +612,9 @@ export class WorldRevisionSession {
       session,
       host,
       requestId,
+      ...(worldRevisionBoundaries === undefined
+        ? {}
+        : { worldRevisionBoundaries }),
       save: (next) => this.#store.saveSession(next),
       settleToolResponse: async (next, assistantItemIndex, calls) => {
         activeTransaction = await this.#settleToolResponse(
@@ -608,6 +631,42 @@ export class WorldRevisionSession {
         interrupted: "The world-revision response was interrupted",
       },
     });
+  }
+
+  async #validatedEpochBoundaries(session: StoredWorldRevisionSession) {
+    const entries: {
+      itemIndex: number;
+      epochId: string;
+      baseHead: string;
+      markdown: string;
+    }[] = [];
+    for (const [itemIndex, item] of session.modelItems.entries()) {
+      if (item.kind !== "prompt_delta") continue;
+      const source = item.logicalMessages[0]?.blocks[0]?.source;
+      if (source?.startsWith("runtime:world-revision-epoch:") !== true)
+        continue;
+      const epochId = source.slice("runtime:world-revision-epoch:".length);
+      const epoch = await this.#store.readEpoch(epochId);
+      if (epoch.worldId !== session.worldId)
+        throw new Error(
+          "World-revision epoch boundary belongs to another world",
+        );
+      const valid = (["en", "zh-CN"] as const).some((locale) =>
+        isDeepStrictEqual(item, epochBoundaryItem(epoch, locale)),
+      );
+      if (!valid) throw new Error("World-revision epoch boundary is damaged");
+      entries.push({
+        itemIndex,
+        epochId,
+        baseHead: epoch.baseHead,
+        markdown: item.logicalMessages[0]!.markdown,
+      });
+    }
+    if (entries.length > 0 && entries.at(-1)?.epochId !== session.epochId)
+      throw new Error(
+        "World-revision epoch boundary does not match the current epoch",
+      );
+    return { currentEpochId: session.epochId, entries };
   }
 
   async #settleToolResponse(
@@ -748,6 +807,7 @@ export class WorldRevisionSession {
   async #recoverIfNeeded(
     session: StoredWorldRevisionSession,
   ): Promise<StoredWorldRevisionSession> {
+    if (session.damagedContinuation) return session;
     if (this.#conversation.isRunning(session.sessionId)) return session;
     if (session.pendingSettlement !== null) {
       const pending = session.pendingSettlement;
@@ -901,11 +961,26 @@ function retargetSession(
   epoch: StoredWorldRevisionEpoch,
   locale: AppLocale,
 ): void {
+  session.modelItems.push(epochBoundaryItem(epoch, locale));
+  session.epochId = epoch.epochId;
+  session.authorization = null;
+  session.pendingSettlement = null;
+  session.lastFailure = null;
+  session.updatedAt = Date.now();
+}
+
+function epochBoundaryItem(
+  epoch: StoredWorldRevisionEpoch,
+  locale: AppLocale,
+): Extract<
+  StoredWorldRevisionSession["modelItems"][number],
+  { kind: "prompt_delta" }
+> {
   const markdown =
     locale === "zh-CN"
       ? `# 新的世界修订 epoch\n\n上一轮修订已经应用或放弃。当前工作树是 ${epoch.epochId}，从世界端点 ${epoch.baseHead} 重新建立。此前全部 search cursor 和 read 写授权已失效；修改前必须重新读取。`
       : `# New world-revision epoch\n\nThe previous revision was applied or discarded. Worktree ${epoch.epochId} was rebuilt from world endpoint ${epoch.baseHead}. Every prior search cursor and read authorization is invalid; re-read before writing.`;
-  session.modelItems.push({
+  return {
     kind: "prompt_delta",
     logicalMessages: [
       {
@@ -919,12 +994,7 @@ function retargetSession(
         ],
       },
     ],
-  });
-  session.epochId = epoch.epochId;
-  session.authorization = null;
-  session.pendingSettlement = null;
-  session.lastFailure = null;
-  session.updatedAt = Date.now();
+  };
 }
 
 function finalizeSettlement(
@@ -1056,6 +1126,12 @@ function historyItem(
   );
   return {
     sessionId: session.sessionId,
+    ...(session.damagedContinuation
+      ? {
+          unavailableReason:
+            "Google continuation is damaged; start a fresh model context.",
+        }
+      : {}),
     epochId: session.epochId,
     runStatus: session.runStatus,
     createdAt: session.createdAt,

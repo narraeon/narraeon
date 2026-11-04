@@ -10,6 +10,7 @@ import type {
   ModelHostAppendItem,
   ModelHostBinding,
   ModelHostDelta,
+  ModelHostExchange,
   ModelHostResponse,
   ModelHostToolCall,
 } from "../model/ModelHost.ts";
@@ -79,6 +80,7 @@ export interface ModelToolConversationRun<
   session: Session;
   host: ModelHost;
   requestId: string;
+  worldRevisionBoundaries?: ModelHostExchange["worldRevisionBoundaries"];
   save: (session: Session) => Promise<void>;
   settleToolResponse: (
     session: Session,
@@ -91,6 +93,30 @@ export interface ModelToolConversationRun<
     emptyResponse?: string;
     cancelled?: string;
     interrupted?: string;
+  };
+}
+
+export function authoringExchange(
+  session: ModelToolConversationState,
+  requestId: string,
+  boundaries?: ModelHostExchange["worldRevisionBoundaries"],
+): ModelHostExchange {
+  const bootstrap = session.requests?.at(-1)?.bootstrap ?? session.bootstrap;
+  return {
+    bootstrap,
+    toolUniverse: bootstrap.toolUniverse,
+    allowedTools: bootstrap.toolUniverse.map(({ name }) => name),
+    toolStrategy: bootstrap.toolStrategy,
+    tools: bootstrap.tools,
+    appended: session.modelItems,
+    ...(boundaries === undefined
+      ? {}
+      : { worldRevisionBoundaries: boundaries }),
+    requestId,
+    operationId: session.sessionId,
+    requestAttempt: 1,
+    exchange: session.exchange + 1,
+    maxOutputTokens: session.modelBinding.maxOutputTokens,
   };
 }
 
@@ -163,36 +189,25 @@ export class ModelToolConversation<
     live: LiveRun<View>,
   ): Promise<View> {
     const { session } = input;
-    const bootstrap = session.requests?.at(-1)?.bootstrap ?? session.bootstrap;
     try {
       for (let round = 0; round < maximumExchangesPerMessage; round += 1) {
+        const request = authoringExchange(
+          session,
+          live.requestId,
+          input.worldRevisionBoundaries,
+        );
         session.exchange += 1;
         live.streaming = emptyStreaming();
         session.updatedAt = Date.now();
         await input.save(session);
         input.changed?.(true);
-        const response = await input.host.exchange(
-          {
-            bootstrap,
-            toolUniverse: bootstrap.toolUniverse,
-            allowedTools: bootstrap.toolUniverse.map(({ name }) => name),
-            toolStrategy: bootstrap.toolStrategy,
-            tools: bootstrap.tools,
-            appended: session.modelItems,
-            requestId: live.requestId,
-            operationId: session.sessionId,
-            requestAttempt: 1,
-            exchange: session.exchange,
-            maxOutputTokens: session.modelBinding.maxOutputTokens,
+        const response = await input.host.exchange(request, {
+          signal: live.controller.signal,
+          onDelta: (delta) => {
+            recordDelta(live, delta);
+            input.changed?.(false);
           },
-          {
-            signal: live.controller.signal,
-            onDelta: (delta) => {
-              recordDelta(live, delta);
-              input.changed?.(false);
-            },
-          },
-        );
+        });
         assertCompleteResponse(response);
         const toolCalls = response.toolCalls ?? [];
         assertUniqueToolCallIds(toolCalls);

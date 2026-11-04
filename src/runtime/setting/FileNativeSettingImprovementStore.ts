@@ -29,6 +29,7 @@ import type { AppLocale } from "../../protocol/appPreferences.ts";
 import { fictionGameplay } from "../../protocol/gameplay.ts";
 import type { ModelUsage } from "../../protocol/modelUsage.ts";
 import { validGoogleInteractionsSteps } from "../model/ProviderExchangeState.ts";
+import { withoutDamagedGoogleSteps } from "../authoring/DamagedGoogleContinuation.ts";
 import { ContentWorkspace } from "../content/ContentWorkspace.ts";
 import type { ContentTreeFile } from "../content/ContentTreeFile.ts";
 import { contentTreeFingerprint } from "../content/ContentTreeFingerprint.ts";
@@ -169,6 +170,7 @@ export interface StoredSettingImprovementSession {
 }
 
 export interface StoredSettingImprovementSummary {
+  damagedContinuation?: true;
   sessionId: string;
   packageId: string;
   runStatus: StoredSettingImprovementSession["runStatus"];
@@ -222,16 +224,24 @@ export class FileNativeSettingImprovementStore {
 
   async read(sessionId: string): Promise<StoredSettingImprovementSession> {
     await this.#mutationTail;
-    return this.#read(sessionId);
+    try {
+      return await this.#read(sessionId);
+    } catch (error) {
+      if (await this.#damagedSummary(sessionId))
+        throw new Error(
+          "The historical conversation has damaged Google continuation; start a fresh model context",
+          { cause: error },
+        );
+      throw error;
+    }
   }
 
   async findLatestByPackage(
     packageId: string,
   ): Promise<StoredSettingImprovementSession | null> {
     const summaries = await this.listSummariesByPackage(packageId);
-    return summaries[0] === undefined
-      ? null
-      : this.read(summaries[0].sessionId);
+    const latest = summaries.find((summary) => !summary.damagedContinuation);
+    return latest === undefined ? null : this.read(latest.sessionId);
   }
 
   async findByCreationRequest(
@@ -242,6 +252,10 @@ export class FileNativeSettingImprovementStore {
     const match = summaries.find(
       ({ creationRequestId }) => creationRequestId === requestId,
     );
+    if (match?.damagedContinuation)
+      throw new Error(
+        "The historical conversation has damaged Google continuation; start a fresh model context with a new request ID",
+      );
     return match === undefined ? null : this.read(match.sessionId);
   }
 
@@ -338,16 +352,54 @@ export class FileNativeSettingImprovementStore {
       const summaries = new Map<string, StoredSettingImprovementSummary>();
       for (const entry of entries) {
         if (!entry.isFile() || !sessionFilePattern.test(entry.name)) continue;
-        const session = await this.#read(entry.name.slice(0, -5));
-        summaries.set(
-          session.sessionId,
-          summarizeStoredSettingImprovementSession(session),
-        );
+        const sessionId = entry.name.slice(0, -5);
+        try {
+          const session = await this.#read(sessionId);
+          summaries.set(
+            session.sessionId,
+            summarizeStoredSettingImprovementSession(session),
+          );
+        } catch (error) {
+          const summary = await this.#damagedSummary(sessionId);
+          if (summary === null) throw error;
+          summaries.set(sessionId, summary);
+        }
       }
       const completedRevision = await directoryRevision(this.#sessionsRoot);
       if (completedRevision !== revision) continue;
       this.#replaceSummaryIndex(summaries, completedRevision);
       return;
+    }
+  }
+
+  async #damagedSummary(
+    sessionId: string,
+  ): Promise<StoredSettingImprovementSummary | null> {
+    try {
+      const raw: unknown = JSON.parse(
+        await readFile(this.#path(sessionId), "utf8"),
+      );
+      const copy = withoutDamagedGoogleSteps(raw);
+      if (copy === null) return null;
+      const session = validateStoredSession(copy);
+      if (
+        session.sessionId !== sessionId ||
+        !/^package-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(
+          session.packageId,
+        ) ||
+        !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(
+          session.creationRequestId,
+        ) ||
+        hasPendingToolCalls(session)
+      )
+        return null;
+      return {
+        ...summarizeStoredSettingImprovementSession(session),
+        runStatus: "interrupted",
+        damagedContinuation: true,
+      };
+    } catch {
+      return null;
     }
   }
 

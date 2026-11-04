@@ -13,6 +13,7 @@ import type { AppLocale } from "../../protocol/appPreferences.ts";
 import { gameplayPath } from "../../protocol/gameplay.ts";
 import type { ModelUsage } from "../../protocol/modelUsage.ts";
 import { validGoogleInteractionsSteps } from "../model/ProviderExchangeState.ts";
+import { withoutDamagedGoogleSteps } from "../authoring/DamagedGoogleContinuation.ts";
 import type { ContentTreeFile } from "../content/ContentTreeFile.ts";
 import { contentTreeFingerprint } from "../content/ContentTreeFingerprint.ts";
 import type {
@@ -94,6 +95,8 @@ export type StoredWorldRevisionPendingSettlement =
     };
 
 export interface StoredWorldRevisionSession {
+  /** Discovery-only marker; never saved or sent to a provider. */
+  damagedContinuation?: true;
   schemaVersion: 1 | 2;
   requests?: AuthoringRequestSnapshot[];
   sessionId: string;
@@ -222,7 +225,18 @@ export class FileNativeWorldRevisionStore {
   }
 
   readSession(sessionId: string): Promise<StoredWorldRevisionSession> {
-    return this.#afterMutations(() => this.#readSession(sessionId));
+    return this.#afterMutations(async () => {
+      try {
+        return await this.#readSession(sessionId);
+      } catch (error) {
+        if (await this.#damagedSession(sessionId))
+          throw new Error(
+            "The historical conversation has damaged Google continuation; start a fresh model context",
+            { cause: error },
+          );
+        throw error;
+      }
+    });
   }
 
   saveSession(session: StoredWorldRevisionSession): Promise<void> {
@@ -243,7 +257,15 @@ export class FileNativeWorldRevisionStore {
       const sessions: StoredWorldRevisionSession[] = [];
       for (const entry of entries) {
         if (!entry.isFile() || !sessionName.test(entry.name)) continue;
-        const session = await this.#readSession(entry.name.slice(0, -5));
+        const sessionId = entry.name.slice(0, -5);
+        let session: StoredWorldRevisionSession;
+        try {
+          session = await this.#readSession(sessionId);
+        } catch (error) {
+          const damaged = await this.#damagedSession(sessionId);
+          if (damaged === null) throw error;
+          session = damaged;
+        }
         if (session.worldId === worldId) sessions.push(session);
       }
       return sessions.sort(compareUpdated);
@@ -254,11 +276,14 @@ export class FileNativeWorldRevisionStore {
     worldId: string,
     requestId: string,
   ): Promise<StoredWorldRevisionSession | null> {
-    return (
-      (await this.listSessions(worldId)).find(
-        ({ creationRequestId }) => creationRequestId === requestId,
-      ) ?? null
+    const match = (await this.listSessions(worldId)).find(
+      ({ creationRequestId }) => creationRequestId === requestId,
     );
+    if (match?.damagedContinuation)
+      throw new Error(
+        "The historical conversation has damaged Google continuation; start a fresh model context with a new request ID",
+      );
+    return match ?? null;
   }
 
   deleteSession(worldId: string, sessionId: string): Promise<void> {
@@ -308,6 +333,31 @@ export class FileNativeWorldRevisionStore {
         "World-revision conversation identity does not match its file",
       );
     return session;
+  }
+
+  async #damagedSession(
+    sessionId: string,
+  ): Promise<StoredWorldRevisionSession | null> {
+    const raw: unknown = JSON.parse(
+      await readFile(this.#sessionPath(sessionId), "utf8"),
+    );
+    const copy = withoutDamagedGoogleSteps(raw);
+    if (copy === null) return null;
+    const session = validateSession(copy);
+    if (
+      session.sessionId !== sessionId ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(session.creationRequestId)
+    )
+      return null;
+    const epoch = await this.#readEpoch(session.epochId);
+    if (epoch.worldId !== session.worldId) return null;
+    return {
+      ...session,
+      damagedContinuation: true,
+      runStatus: "interrupted",
+      lastFailure:
+        "Google continuation is damaged; start a fresh model context.",
+    };
   }
 
   async #afterMutations<T>(read: () => Promise<T>): Promise<T> {
