@@ -493,6 +493,74 @@ test("Google world revision cold restart can resume a request proven not dispatc
   ).toHaveLength(1);
 });
 
+test("Google world revision records failures when a complete tool response lacks a settlement intent", async () => {
+  const { root, worldId, worlds, workspace } = await createdWorld();
+  const transport = googleAuthoringHost([
+    googleTools([
+      {
+        id: "read-one",
+        name: "world_revision_read",
+        arguments: { path: "state/current-situation.yaml" },
+      },
+      {
+        id: "read-two",
+        name: "world_revision_read",
+        arguments: { path: "state/current-situation.yaml" },
+      },
+    ]),
+    googleText("Continued after failed settlement."),
+  ]);
+  const failingHost = {
+    binding: () => transport.host.binding(),
+    previewAuthoringRequest: (
+      request: Parameters<typeof transport.host.previewAuthoringRequest>[0],
+    ) => transport.host.previewAuthoringRequest(request),
+    exchange: async (...args: Parameters<typeof transport.host.exchange>) => {
+      const result = await transport.host.exchange(...args);
+      vi.spyOn(workspace, "active").mockRejectedValueOnce(
+        new Error("synthetic settlement failure"),
+      );
+      return result;
+    },
+  };
+  const makeService = (host: typeof failingHost) =>
+    new WorldRevisionSession({
+      store: new FileNativeWorldRevisionStore(root),
+      workspace,
+      worlds,
+      compiler: new FileNativePromptCompiler({ locale: "zh-CN" }),
+      locale: () => "zh-CN",
+      bindModelHost: () => Promise.resolve(host),
+      bindExistingModelHost: () => Promise.resolve(host),
+      bindPlayPreset: () =>
+        Promise.resolve(builtinDefaultPlayPresetBinding("zh-CN")),
+      preview: () => preview,
+    });
+  const first = await makeService(failingHost).send({
+    worldId,
+    requestId: "first",
+    message: "检查",
+    continuation: { kind: "fresh_context" },
+  });
+  expect(first.runStatus).toBe("interrupted");
+  expect(await worlds.currentHead(worldId)).toBe("genesis");
+  const restarted = makeService(transport.host);
+  const next = await restarted.send({
+    worldId,
+    requestId: "next",
+    message: "继续",
+    continuation: { kind: "continue_context", sessionId: first.sessionId },
+  });
+  expect(next.runStatus).toBe("ready");
+  expect(next.turns[0]?.exchanges[0]?.toolCalls).toMatchObject([
+    { result: { isError: true } },
+    { result: { isError: true } },
+  ]);
+  expect(JSON.stringify(transport.sent[1])).toContain('"call_id":"read-one"');
+  expect(JSON.stringify(transport.sent[1])).toContain('"call_id":"read-two"');
+  expect(await worlds.currentHead(worldId)).toBe("genesis");
+});
+
 test("Google world revision refuses an empty persisted continuation after restart", async () => {
   const { root, worldId, worlds, workspace } = await createdWorld();
   const { host, sent } = googleAuthoringHost([

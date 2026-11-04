@@ -830,6 +830,35 @@ export class WorldRevisionSession {
   ): Promise<StoredWorldRevisionSession> {
     if (session.damagedContinuation) return session;
     if (this.#conversation.isRunning(session.sessionId)) return session;
+    const lastItem = session.modelItems.at(-1);
+    if (
+      session.pendingSettlement === null &&
+      lastItem?.kind === "assistant" &&
+      lastItem.toolCalls.length > 0
+    ) {
+      finalizeUnconfirmed(
+        session,
+        session.modelItems.length - 1,
+        new Error(
+          "Runtime found a complete tool response without a persisted worktree settlement intent",
+        ),
+      );
+      if (session.modelBinding.provider === "google_interactions")
+        session.googleOutcomeUnknown = false;
+      const requestId = session.activeRequestId;
+      session.runStatus = "interrupted";
+      session.activeRequestId = null;
+      if (requestId !== null)
+        session.completedRequestIds = rememberAuthoringRequest(
+          session.completedRequestIds,
+          requestId,
+        );
+      session.lastFailure =
+        "The complete tool response could not be settled; its calls received failure receipts. Re-read the worktree before editing.";
+      session.updatedAt = Date.now();
+      await this.#store.saveSession(session);
+      return session;
+    }
     if (
       session.runStatus === "running" &&
       session.pendingSettlement === null &&

@@ -8,27 +8,39 @@ interface Call {
 
 export function googleTools(calls: Call[]) {
   return [
-    ...calls.flatMap((call, index) => [
-      {
-        event_type: "step.start",
-        index,
-        step: {
-          type: "function_call",
-          id: call.id,
-          name: call.name,
-          arguments: {},
+    ...calls.flatMap((call, index) => {
+      const argumentsJson = JSON.stringify(call.arguments);
+      const midpoint = Math.floor(argumentsJson.length / 2);
+      return [
+        {
+          event_type: "step.start",
+          index,
+          step: {
+            type: "function_call",
+            id: call.id,
+            name: call.name,
+            arguments: {},
+          },
         },
-      },
-      {
-        event_type: "step.delta",
-        index,
-        delta: {
-          type: "arguments_delta",
-          arguments: JSON.stringify(call.arguments),
+        {
+          event_type: "step.delta",
+          index,
+          delta: {
+            type: "arguments_delta",
+            arguments: argumentsJson.slice(0, midpoint),
+          },
         },
-      },
-      { event_type: "step.stop", index },
-    ]),
+        {
+          event_type: "step.delta",
+          index,
+          delta: {
+            type: "arguments_delta",
+            arguments: argumentsJson.slice(midpoint),
+          },
+        },
+        { event_type: "step.stop", index },
+      ];
+    }),
     {
       event_type: "interaction.completed",
       interaction: { status: "requires_action" },
