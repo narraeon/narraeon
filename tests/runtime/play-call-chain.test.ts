@@ -98,7 +98,11 @@ test("Google 合成传输完成游玩工具循环并冷重载原生上下文", a
               {
                 event_type: "step.start",
                 index: 0,
-                step: { type: "thought", opaque: "keep" },
+                step: {
+                  type: "thought",
+                  summary: [],
+                  opaque: { nested: ["keep", 7] },
+                },
               },
               {
                 event_type: "step.delta",
@@ -114,6 +118,7 @@ test("Google 合成传输完成游玩工具循环并冷重载原生上下文", a
                   id: "read-1",
                   name: "context_read",
                   arguments: {},
+                  extension: { marker: "first call" },
                 },
               },
               {
@@ -236,15 +241,536 @@ test("Google 合成传输完成游玩工具循环并冷重载原生上下文", a
   expect(await restarted.inspectWorld(worldId)).toMatchObject({
     status: "ready",
   });
+  const updatedPreset = playPreset();
+  updatedPreset.revision = "google-updated";
+  updatedPreset.definition.playPrompts!.unshift({
+    kind: "user",
+    id: "new-rule",
+    name: "New rule",
+    enabled: true,
+    body: "下一轮新预设",
+  });
   const next = await restarted.append({
     worldId,
     chainId: "google",
     exchangeId: "next",
     playerText: "继续。",
     modelHost: host,
+    resolvePrompt: () =>
+      Promise.resolve({
+        hostBinding: hostBinding(),
+        playPreset: updatedPreset,
+      }),
   });
   expect(next.status).toBe("ready");
+  expect(JSON.stringify(sent[1])).not.toContain("下一轮新预设");
+  expect(JSON.stringify(sent[2])).toContain("下一轮新预设");
   expect(JSON.stringify(sent[2])).toContain('"signature":"synthetic"');
+  const input = (sent[2] as { input: unknown[] }).input;
+  const thoughtIndex = input.findIndex((item) =>
+    JSON.stringify(item).includes('"signature":"synthetic"'),
+  );
+  expect(input.slice(thoughtIndex, thoughtIndex + 6)).toEqual([
+    {
+      type: "thought",
+      summary: [],
+      opaque: { nested: ["keep", 7] },
+      signature: "synthetic",
+    },
+    {
+      type: "function_call",
+      id: "read-1",
+      name: "context_read",
+      arguments: { ref: "@current-situation" },
+      extension: { marker: "first call" },
+    },
+    {
+      type: "function_call",
+      id: "read-2",
+      name: "context_read",
+      arguments: { ref: "@current-situation" },
+    },
+    { type: "model_output", content: [{ type: "text", text: "中间诊断文字" }] },
+    expect.objectContaining({ type: "function_result", call_id: "read-1" }),
+    expect.objectContaining({ type: "function_result", call_id: "read-2" }),
+  ]);
+});
+
+test.each([
+  "failed",
+  "cancelled",
+  "incomplete",
+  "blocked",
+  "requires_continuation",
+  "missing",
+  "duplicate",
+])("Google %s 终态不执行工具或提交部分叙事", async (status) => {
+  let dispatches = 0;
+  const host = new FileNativeModelHost(
+    {
+      provider: "google_interactions",
+      baseUrl: "https://provider.invalid/v1beta",
+      apiKey: "synthetic-secret",
+      modelId: "manual-model",
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_000,
+    },
+    () => {
+      dispatches++;
+      const events = [
+        { event_type: "step.start", index: 0, step: { type: "model_output" } },
+        {
+          event_type: "step.delta",
+          index: 0,
+          delta: { type: "text", text: "不完整的故事" },
+        },
+        { event_type: "step.stop", index: 0 },
+        {
+          event_type: "step.start",
+          index: 1,
+          step: {
+            type: "function_call",
+            id: "bad-write",
+            name: "world_patch",
+            arguments: {
+              target: "@current-situation",
+              edits: [
+                {
+                  op: "replace",
+                  locator: { yaml: ["情况"] },
+                  value: "不得提交",
+                },
+              ],
+            },
+          },
+        },
+        { event_type: "step.stop", index: 1 },
+        ...(status === "missing"
+          ? []
+          : [
+              {
+                event_type: "interaction.completed",
+                interaction: {
+                  status: status === "duplicate" ? "requires_action" : status,
+                },
+              },
+            ]),
+        ...(status === "duplicate"
+          ? [
+              {
+                event_type: "interaction.completed",
+                interaction: { status: "requires_action" },
+              },
+            ]
+          : []),
+      ];
+      return Promise.resolve(
+        new Response(
+          `${events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")}data: [DONE]\n\n`,
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      );
+    },
+  );
+  const { worlds, worldId, root } = await createWorld(
+    `google-terminal-${status}`,
+    undefined,
+    host.binding(),
+  );
+  const before = await worlds.recoverEndpoint(worldId);
+  const result = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: `google-${status}`,
+    exchangeId: "first",
+    playerText: "继续。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: host.binding(),
+    modelHost: host,
+  });
+  expect(result).toMatchObject({
+    status: "interrupted",
+    canRetry: false,
+    lastFailureKind: "outcome_unknown",
+  });
+  expect(result.events.some((event) => event.kind === "tool_result")).toBe(
+    false,
+  );
+  const coldWorlds = new FileNativeWorldStore(root);
+  const after = await coldWorlds.recoverEndpoint(worldId);
+  expect(after.state).toEqual(before.state);
+  expect(JSON.stringify(after.history)).not.toContain("不完整的故事");
+  expect(
+    await new PlayCallChain(coldWorlds).inspectWorld(worldId),
+  ).toMatchObject({ status: "interrupted", canRetry: false });
+  expect(dispatches).toBe(1);
+});
+
+test("Google 工具顺序结算后遇到未完成续接不重放或提交半响应", async () => {
+  const calls = [
+    {
+      id: "read",
+      name: "context_read",
+      arguments: { ref: "@current-situation" },
+    },
+    {
+      id: "write",
+      name: "world_patch",
+      arguments: {
+        target: "@current-situation",
+        edits: [
+          { op: "replace", locator: { yaml: ["情况"] }, value: "已提交的变化" },
+        ],
+      },
+    },
+    {
+      id: "bad",
+      name: "world_patch",
+      arguments: { target: "@missing", edits: [] },
+    },
+  ];
+  const requestBodies: unknown[] = [];
+  const host = new FileNativeModelHost(
+    {
+      provider: "google_interactions",
+      baseUrl: "https://provider.invalid/v1beta",
+      apiKey: "synthetic-secret",
+      modelId: "manual-model",
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_000,
+    },
+    (_url, options) => {
+      if (typeof options?.body !== "string")
+        throw new Error("Missing request body");
+      requestBodies.push(JSON.parse(options.body) as unknown);
+      const events =
+        requestBodies.length === 1
+          ? [
+              {
+                event_type: "step.start",
+                index: 0,
+                step: { type: "model_output", extension: { order: [3, 1] } },
+              },
+              {
+                event_type: "step.delta",
+                index: 0,
+                delta: { type: "text", text: "诊断文字" },
+              },
+              { event_type: "step.stop", index: 0 },
+              ...calls.flatMap((call, index) => [
+                {
+                  event_type: "step.start",
+                  index: index + 1,
+                  step: {
+                    type: "function_call",
+                    ...call,
+                    extension: { original: index },
+                  },
+                },
+                { event_type: "step.stop", index: index + 1 },
+              ]),
+              {
+                event_type: "interaction.completed",
+                interaction: { status: "requires_action" },
+              },
+            ]
+          : [
+              {
+                event_type: "step.start",
+                index: 0,
+                step: { type: "model_output" },
+              },
+              {
+                event_type: "step.delta",
+                index: 0,
+                delta: { type: "text", text: "不得提交的部分故事" },
+              },
+              { event_type: "step.stop", index: 0 },
+              {
+                event_type: "interaction.completed",
+                interaction: {
+                  status: "requires_continuation",
+                  continuation_token: "synthetic",
+                },
+              },
+            ];
+      return Promise.resolve(
+        new Response(
+          events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      );
+    },
+  );
+  const { worlds, worldId, root } = await createWorld(
+    "google-tool-incomplete",
+    undefined,
+    host.binding(),
+  );
+  const result = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "google-tool-incomplete",
+    exchangeId: "first",
+    playerText: "推开门。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: host.binding(),
+    modelHost: host,
+  });
+  expect(result).toMatchObject({
+    status: "interrupted",
+    canRetry: false,
+    lastFailureKind: "outcome_unknown",
+  });
+  expect(
+    result.events
+      .filter((event) => event.kind === "tool_result")
+      .map((event) => event.kind === "tool_result" && [event.callId, event.ok]),
+  ).toEqual([
+    ["read", true],
+    ["write", true],
+    ["bad", false],
+  ]);
+  const coldWorlds = new FileNativeWorldStore(root);
+  const endpoint = await coldWorlds.recoverEndpoint(worldId);
+  expect(JSON.stringify(endpoint.state)).toContain("已提交的变化");
+  expect(JSON.stringify(endpoint.history)).not.toContain("不得提交的部分故事");
+  expect(JSON.stringify(endpoint.history)).not.toContain("诊断文字");
+  const restarted = new PlayCallChain(coldWorlds);
+  expect(await restarted.inspectWorld(worldId)).toMatchObject({
+    status: "interrupted",
+    canRetry: false,
+  });
+  await expect(
+    restarted.append({
+      worldId,
+      chainId: "google-tool-incomplete",
+      exchangeId: "retry",
+      playerText: "",
+      modelHost: host,
+    }),
+  ).rejects.toThrow();
+  expect(requestBodies).toHaveLength(2);
+});
+
+test("Google 冷重启仅允许语义绑定不变的凭据更新", async () => {
+  const config = {
+    provider: "google_interactions" as const,
+    baseUrl: "https://provider.invalid/v1beta",
+    apiKey: "old-secret",
+    modelId: "manual-model",
+    contextWindowTokens: 64_000,
+    maxOutputTokens: 2_000,
+  };
+  const credentials: (string | null)[] = [];
+  const transport: typeof fetch = (_url, options) => {
+    credentials.push(new Headers(options?.headers).get("x-goog-api-key"));
+    const events = [
+      { event_type: "step.start", index: 0, step: { type: "model_output" } },
+      {
+        event_type: "step.delta",
+        index: 0,
+        delta: { type: "text", text: "完成。" },
+      },
+      { event_type: "step.stop", index: 0 },
+      {
+        event_type: "interaction.completed",
+        interaction: { status: "completed" },
+      },
+    ];
+    return Promise.resolve(
+      new Response(
+        events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+        { headers: { "content-type": "text/event-stream" } },
+      ),
+    );
+  };
+  const host = new FileNativeModelHost(config, transport);
+  const { worlds, worldId, root } = await createWorld(
+    "google-binding",
+    undefined,
+    host.binding(),
+  );
+  await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "google-binding",
+    exchangeId: "first",
+    playerText: "开始。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: host.binding(),
+    modelHost: host,
+  });
+  const restarted = new PlayCallChain(new FileNativeWorldStore(root));
+  for (const changed of [
+    { baseUrl: "https://other.invalid/v1beta" },
+    { modelId: "other-model" },
+    { maxOutputTokens: 3000 },
+  ]) {
+    await expect(
+      restarted.append({
+        worldId,
+        chainId: "google-binding",
+        exchangeId: "changed",
+        playerText: "继续。",
+        modelHost: new FileNativeModelHost(
+          { ...config, ...changed },
+          transport,
+        ),
+      }),
+    ).rejects.toThrow(/binding|context/i);
+  }
+  expect(credentials).toEqual(["old-secret"]);
+  expect(
+    (
+      await restarted.append({
+        worldId,
+        chainId: "google-binding",
+        exchangeId: "rotated",
+        playerText: "继续。",
+        modelHost: new FileNativeModelHost(
+          { ...config, apiKey: "new-secret" },
+          transport,
+        ),
+      })
+    ).status,
+  ).toBe("ready");
+  expect(credentials).toEqual(["old-secret", "new-secret"]);
+});
+
+test("Google 进程在派发标记写入前退出可继续冻结请求", async () => {
+  const bodies: unknown[] = [];
+  const host = new FileNativeModelHost(
+    {
+      provider: "google_interactions",
+      baseUrl: "https://provider.invalid/v1beta",
+      apiKey: "synthetic-secret",
+      modelId: "manual-model",
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_000,
+    },
+    (_url, options) => {
+      if (typeof options?.body !== "string")
+        throw new Error("Missing request body");
+      bodies.push(JSON.parse(options.body) as unknown);
+      const events = [
+        { event_type: "step.start", index: 0, step: { type: "model_output" } },
+        {
+          event_type: "step.delta",
+          index: 0,
+          delta: { type: "text", text: "恢复完成。" },
+        },
+        { event_type: "step.stop", index: 0 },
+        {
+          event_type: "interaction.completed",
+          interaction: { status: "completed" },
+        },
+      ];
+      return Promise.resolve(
+        new Response(
+          events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      );
+    },
+  );
+  const { worlds, worldId, root } = await createWorld(
+    "google-before-marker",
+    undefined,
+    host.binding(),
+  );
+  let markerAttempts = 0;
+  const originalBegin = worlds.playAdvances.begin.bind(worlds.playAdvances);
+  vi.spyOn(worlds.playAdvances, "begin").mockImplementation((advance) => {
+    if (advance.advanceKind === "player") return originalBegin(advance);
+    markerAttempts++;
+    return new Promise<void>(() => undefined);
+  });
+  void new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "google-before-marker",
+    exchangeId: "first",
+    playerText: "推开门。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: host.binding(),
+    modelHost: host,
+  });
+  await vi.waitFor(() => expect(markerAttempts).toBe(1));
+  expect(bodies).toHaveLength(0);
+  const restarted = new PlayCallChain(new FileNativeWorldStore(root));
+  expect(await restarted.inspectWorld(worldId)).toMatchObject({
+    status: "interrupted",
+    canRetry: true,
+  });
+  const result = await restarted.append({
+    worldId,
+    chainId: "google-before-marker",
+    exchangeId: "resume",
+    playerText: "",
+    modelHost: host,
+    resolvePrompt: () => {
+      throw new Error("Frozen request must not be recompiled");
+    },
+  });
+  expect(result.status).toBe("ready");
+  expect(bodies).toHaveLength(1);
+});
+
+test("Google 已派发请求在进程退出后不允许重放", async () => {
+  let dispatches = 0;
+  const host = new FileNativeModelHost(
+    {
+      provider: "google_interactions",
+      baseUrl: "https://provider.invalid/v1beta",
+      apiKey: "synthetic-secret",
+      modelId: "manual-model",
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_000,
+    },
+    () => {
+      dispatches += 1;
+      return new Promise<Response>(() => undefined);
+    },
+  );
+  const { worlds, worldId, root } = await createWorld(
+    "google-abandoned-dispatch",
+    undefined,
+    host.binding(),
+  );
+  void new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "google-abandoned",
+    exchangeId: "first",
+    playerText: "推开门。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: host.binding(),
+    modelHost: host,
+  });
+  await vi.waitFor(() => expect(dispatches).toBe(1));
+  const restartedWorlds = new FileNativeWorldStore(root);
+  const restarted = new PlayCallChain(restartedWorlds);
+  expect(await restarted.inspectWorld(worldId)).toMatchObject({
+    status: "interrupted",
+    canRetry: false,
+    lastFailureKind: "outcome_unknown",
+  });
+  await expect(
+    restarted.append({
+      worldId,
+      chainId: "google-abandoned",
+      exchangeId: "retry",
+      playerText: "",
+      modelHost: host,
+    }),
+  ).rejects.toThrow();
+  expect(dispatches).toBe(1);
+  expect(
+    (await restartedWorlds.recoverEndpoint(worldId)).history.map(
+      ({ exactText }) => exactText,
+    ),
+  ).not.toContain("门缓缓打开。");
 });
 
 test.each([

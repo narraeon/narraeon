@@ -3512,6 +3512,13 @@ function assertSessionModelHostBinding(
       "The selected model protocol differs from this context. Switch back to its original protocol to continue, or start a fresh context.",
       "model_protocol_mismatch",
     );
+  if (
+    session.modelBinding.provider === "google_interactions" &&
+    !equalModelHostBinding(session.modelBinding, modelHost.binding())
+  )
+    throw new PlayCallChainError(
+      "The selected model connection does not match the frozen Google binding; start a fresh context.",
+    );
 }
 
 function validateIdentity(value: string, label: string): void {

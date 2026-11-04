@@ -10,6 +10,7 @@ import {
   ModelHostFailureError,
   ModelHostOutcomeUnknownError,
   modelHostFailureRequiresFreshContext,
+  type ModelHostBinding,
   type ModelHostExchange,
 } from "../model/ModelHost.ts";
 import type { PlayAdvanceBase } from "./FileNativePlayAdvanceStore.ts";
@@ -23,6 +24,7 @@ export interface PlayAdvanceLedger {
   status: V1PlayCallChainStatus;
   canRetry: boolean;
   lastRequest: ModelHostExchange | null;
+  modelBinding?: ModelHostBinding | undefined;
   lastRequestAttempt: number;
   lastFailure: string | null;
   lastFailureKind?: PlayFailureKind;
@@ -92,6 +94,8 @@ const messages = {
     "The service stopped while saving the player message; use a fresh context.",
   serviceStoppedRetryable:
     "The service stopped while the model request was in progress; retry to call the model again.",
+  serviceStoppedUnknown:
+    "The service stopped after the model request may have been dispatched; its outcome is unknown. Use a fresh context.",
   serviceStoppedNoRequest:
     "The service stopped before preparing a model request; use a fresh context.",
   dispatchInterrupted: "The model request was interrupted.",
@@ -153,20 +157,35 @@ export class PlayAdvanceLifecycle<Session extends PlayAdvanceLedger> {
             event.status === "streaming" &&
             (advance === null || event.id === advance.eventId),
         );
-    const canRetry = !headMoved && !playerPhase && session.lastRequest !== null;
+    const unknownGoogleDispatch =
+      advance?.advanceKind === "response" &&
+      session.status === "running" &&
+      (session.lastRequest?.modelConfig?.provider ??
+        session.modelBinding?.provider) === "google_interactions";
+    const canRetry =
+      !headMoved &&
+      !playerPhase &&
+      !unknownGoogleDispatch &&
+      session.lastRequest !== null;
     const message = headMoved
       ? messages.serviceStoppedAfterHead
       : playerPhase
         ? messages.serviceStoppedSavingPlayer
-        : canRetry
-          ? messages.serviceStoppedRetryable
-          : messages.serviceStoppedNoRequest;
+        : unknownGoogleDispatch
+          ? messages.serviceStoppedUnknown
+          : canRetry
+            ? messages.serviceStoppedRetryable
+            : messages.serviceStoppedNoRequest;
     await this.end(
       session,
       {
         kind: "failed",
         message,
-        failureKind: canRetry ? "retryable" : "other",
+        failureKind: unknownGoogleDispatch
+          ? "outcome_unknown"
+          : canRetry
+            ? "retryable"
+            : "other",
         canRetry,
         streamingEventId: streaming?.id,
       },
