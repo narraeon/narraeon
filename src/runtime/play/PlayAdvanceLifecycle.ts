@@ -139,15 +139,27 @@ export class PlayAdvanceLifecycle<Session extends PlayAdvanceLedger> {
   }
 
   /**
-   * Ends an advance that a process exit cut off (ADR-0044). Nothing is
-   * replayed: the exchange is interrupted, and only the chain's own frozen
-   * request can be retried, and only while the world has not moved on.
+   * Recovers an advance cut off by a process exit. A persisted ending wins;
+   * otherwise Google requests that may have been dispatched cannot be replayed
+   * (ADR-0035), while other recovery follows ADR-0044.
    */
   async recoverAbandoned(
     session: Session,
     advance: PlayAdvanceBase | null,
     headMoved: boolean,
   ): Promise<void> {
+    // Endings are persisted before their marker is cleared. If the process
+    // stopped in that gap, keep the durable ending rather than inventing a
+    // new retry decision for an advance that already settled.
+    if (
+      advance !== null &&
+      session.status !== "running" &&
+      !(advance.advanceKind === "player" && session.status === "ready") &&
+      !headMoved
+    ) {
+      await this.#ports.clearMarker(advance);
+      return;
+    }
     const playerPhase = advance?.advanceKind === "player";
     const streaming = playerPhase
       ? undefined

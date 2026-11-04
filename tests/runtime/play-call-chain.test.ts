@@ -638,6 +638,142 @@ test("Google 冷重启仅允许语义绑定不变的凭据更新", async () => {
   expect(credentials).toEqual(["old-secret", "new-secret"]);
 });
 
+test.each(["player", "tool", "completed", "incomplete"])(
+  "Google %s 已持久化结算但清理标记前退出时保留结算状态",
+  async (phase) => {
+    let dispatches = 0;
+    const host = new FileNativeModelHost(
+      {
+        provider: "google_interactions",
+        baseUrl: "https://provider.invalid/v1beta",
+        apiKey: "synthetic-secret",
+        modelId: "manual-model",
+        contextWindowTokens: 64_000,
+        maxOutputTokens: 2_000,
+      },
+      () => {
+        dispatches++;
+        const toolStep = phase === "tool" && dispatches === 1;
+        const events = toolStep
+          ? [
+              {
+                event_type: "step.start",
+                index: 0,
+                step: {
+                  type: "function_call",
+                  id: "read-once",
+                  name: "context_read",
+                  arguments: { ref: "@current-situation" },
+                },
+              },
+              { event_type: "step.stop", index: 0 },
+              {
+                event_type: "interaction.completed",
+                interaction: { status: "requires_action" },
+              },
+            ]
+          : [
+              {
+                event_type: "step.start",
+                index: 0,
+                step: { type: "model_output" },
+              },
+              {
+                event_type: "step.delta",
+                index: 0,
+                delta: { type: "text", text: "唯一正文" },
+              },
+              { event_type: "step.stop", index: 0 },
+              {
+                event_type: "interaction.completed",
+                interaction: {
+                  status:
+                    phase === "incomplete"
+                      ? "requires_continuation"
+                      : "completed",
+                },
+              },
+            ];
+        return Promise.resolve(
+          new Response(
+            events
+              .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+              .join(""),
+            { headers: { "content-type": "text/event-stream" } },
+          ),
+        );
+      },
+    );
+    const { worlds, worldId, root } = await createWorld(
+      `google-marker-${phase}`,
+      undefined,
+      host.binding(),
+    );
+    let clearing = 0;
+    const original = worlds.playAdvances.markSettled.bind(worlds.playAdvances);
+    vi.spyOn(worlds.playAdvances, "markSettled").mockImplementation(
+      (advance) => {
+        if (
+          advance.advanceKind !== (phase === "player" ? "player" : "response")
+        )
+          return original(advance);
+        clearing++;
+        return new Promise<void>(() => undefined);
+      },
+    );
+    void new PlayCallChain(worlds).start({
+      worldId,
+      chainId: `google-marker-${phase}`,
+      exchangeId: "first",
+      playerText: "继续。",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: host.binding(),
+      modelHost: host,
+    });
+    await vi.waitFor(() => expect(clearing).toBe(1));
+    const restartedWorlds = new FileNativeWorldStore(root);
+    const restarted = new PlayCallChain(restartedWorlds);
+    const recovered = await restarted.inspectWorld(worldId);
+    if (phase === "completed")
+      expect(recovered).toMatchObject({ status: "ready", canRetry: false });
+    else
+      expect(recovered).toMatchObject({
+        status: "interrupted",
+        canRetry: phase !== "incomplete",
+      });
+    if (phase === "incomplete")
+      expect(recovered).toMatchObject({ lastFailureKind: "outcome_unknown" });
+    const coldAgain = new PlayCallChain(new FileNativeWorldStore(root));
+    expect(await coldAgain.inspectWorld(worldId)).toMatchObject({
+      status: recovered!.status,
+      canRetry: recovered!.canRetry,
+    });
+    if (phase === "player" || phase === "tool") {
+      const resumed = await coldAgain.append({
+        worldId,
+        chainId: `google-marker-${phase}`,
+        exchangeId: "resume",
+        playerText: "",
+        modelHost: host,
+      });
+      expect(resumed.status).toBe("ready");
+      if (phase === "tool")
+        expect(
+          resumed.events.filter(
+            (event) =>
+              event.kind === "tool_result" && event.callId === "read-once",
+          ),
+        ).toHaveLength(1);
+    }
+    const history = (await restartedWorlds.recoverEndpoint(worldId)).history;
+    expect(
+      history.filter(({ exactText }) => exactText === "唯一正文"),
+    ).toHaveLength(phase === "incomplete" ? 0 : 1);
+    expect(dispatches).toBe(phase === "tool" ? 2 : 1);
+  },
+);
+
 test("Google 进程在派发标记写入前退出可继续冻结请求", async () => {
   const bodies: unknown[] = [];
   const host = new FileNativeModelHost(

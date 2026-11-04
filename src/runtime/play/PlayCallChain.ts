@@ -2767,8 +2767,9 @@ export class PlayCallChain {
 
   /**
    * An in-progress advance, or a session still marked running, means a model
-   * dispatch or settlement was cut off by a process exit. Nothing is replayed:
-   * the exchange is interrupted and the player retries (ADR-0044).
+   * dispatch or settlement was cut off by a process exit. Recovery preserves
+   * persisted endings and applies the protocol's retry boundary (ADR-0035,
+   * ADR-0044).
    */
   async #reconcileSessionAdvance(
     session: PlayCallChainSession,
