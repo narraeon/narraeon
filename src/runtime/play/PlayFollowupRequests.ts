@@ -10,6 +10,7 @@ import type {
   ModelHostAppendItem,
   ModelHostDelta,
   ModelHostToolCall,
+  ModelHostExchange,
 } from "../model/ModelHost.ts";
 import { ModelHostCancelledError } from "../model/ModelHost.ts";
 import type { ModelUsage } from "../../protocol/modelUsage.ts";
@@ -38,6 +39,7 @@ export interface PlayFollowupOutcome {
     markdown: string;
   }[];
   failure?: string;
+  requestPreviewStatus?: "attempted" | "completed" | "cancelled";
 }
 
 export interface PlayFollowupRun {
@@ -46,6 +48,7 @@ export interface PlayFollowupRun {
 }
 
 export interface PlayFollowupObserver {
+  onRequest?: (id: string, request: ModelHostExchange) => Promise<void>;
   onProviderDispatch?: () => void;
   onProviderDelta?: (delta: ModelHostDelta) => void;
   onProviderSettled?: () => void;
@@ -136,6 +139,8 @@ export async function runPlayFollowupRequests(
     }
     if (signalWasAborted(input.signal)) {
       failure ??= "The follow-up request was cancelled.";
+      outcomes.push(outcome);
+      input.observer?.onOutcome?.(outcome);
       break;
     }
     outcomes.push(outcome);
@@ -194,36 +199,44 @@ async function runOne(
   try {
     await input.artifacts.beginRequestAttempt(requestContext);
     requestSignal?.throwIfAborted();
-    input.observer?.onProviderDispatch?.();
     let response: Awaited<ReturnType<ModelHost["exchange"]>>;
     try {
-      response = await input.modelHost.exchange(
-        {
-          bootstrap: structuredClone(input.bootstrap),
-          tools: structuredClone(followup.tools),
-          toolUniverse: structuredClone(followup.tools),
-          allowedTools: [...followup.allowedTools],
-          toolStrategy: input.toolStrategy,
-          // The prompt replaces the previous followup's prompt instead of being
-          // appended after it: every request sees exactly the main-chain prefix.
-          appended: [
-            ...structuredClone(prefix),
-            {
-              kind: "prompt_delta",
-              logicalMessages: structuredClone(followup.logicalMessages),
-            },
-          ],
-          requestId: followup.id,
-          operationId: input.context.operationId,
-          requestAttempt: 1,
-          exchange: 1,
-          maxOutputTokens: input.maxOutputTokens,
-        },
-        {
-          ...(requestSignal === undefined ? {} : { signal: requestSignal }),
-          onDelta: (delta) => input.observer?.onProviderDelta?.(delta),
-        },
-      );
+      const request: ModelHostExchange = {
+        bootstrap: structuredClone(input.bootstrap),
+        tools: structuredClone(followup.tools),
+        toolUniverse: structuredClone(followup.tools),
+        allowedTools: [...followup.allowedTools],
+        toolStrategy: input.toolStrategy,
+        // The prompt replaces the previous followup's prompt instead of being
+        // appended after it: every request sees exactly the main-chain prefix.
+        appended: [
+          ...structuredClone(prefix),
+          {
+            kind: "prompt_delta",
+            logicalMessages: structuredClone(followup.logicalMessages),
+          },
+        ],
+        requestId: followup.id,
+        operationId: input.context.operationId,
+        requestAttempt: 1,
+        exchange: 1,
+        maxOutputTokens: input.maxOutputTokens,
+      };
+      try {
+        await input.observer?.onRequest?.(followup.id, request);
+      } catch {
+        // Diagnostic recording must not change the provider request.
+      }
+      requestSignal?.throwIfAborted();
+      outcome.requestPreviewStatus = "attempted";
+      input.observer?.onProviderDispatch?.();
+      response = await input.modelHost.exchange(request, {
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+        ...(input.controls !== undefined
+          ? { retainLateExtensionResponse: true }
+          : {}),
+        onDelta: (delta) => input.observer?.onProviderDelta?.(delta),
+      });
       if (input.signal?.aborted === true)
         throw new ModelHostCancelledError(
           "The player cancelled the follow-up model request; its response was not committed.",
@@ -231,6 +244,7 @@ async function runOne(
     } finally {
       input.observer?.onProviderSettled?.();
     }
+    outcome.requestPreviewStatus = "completed";
     responseDiagnostics = response.diagnostics;
     if (response.diagnostics !== undefined)
       await input.failureLog?.recordExchangeIfActive(response.diagnostics);
@@ -294,6 +308,11 @@ async function runOne(
         message: `Follow-up request ${followup.id} recovered during a later model exchange.`,
       });
   } catch (error: unknown) {
+    if (
+      outcome.requestPreviewStatus !== undefined &&
+      error instanceof ModelHostCancelledError
+    )
+      outcome.requestPreviewStatus = "cancelled";
     outcome.failure =
       error instanceof Error
         ? error.message

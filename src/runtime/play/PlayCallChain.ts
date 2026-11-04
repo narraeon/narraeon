@@ -2614,6 +2614,14 @@ export class PlayCallChain {
     );
     if (reply === undefined)
       throw new PlayCallChainError("Follow-up reply is not committed");
+    const run = session.promptRuns?.at(-1);
+    const runPlayers = session.events.filter(
+      (event) =>
+        event.kind === "player" && event.id >= (run?.firstEventId ?? 1),
+    );
+    // Without a new prompt run there is no distinct bounded encoding slot.
+    const previewExchange =
+      runPlayers.length === 1 ? (run?.exchange ?? 1) : undefined;
     const observeFollowupDelta = (
       delta: Parameters<
         NonNullable<PlayFollowupObserver["onProviderDelta"]>
@@ -2642,6 +2650,13 @@ export class PlayCallChain {
           ? {}
           : { reasoning: outcome.reasoning }),
         ...(outcome.usage === undefined ? {} : { usage: outcome.usage }),
+        ...(outcome.requestPreviewStatus === undefined ||
+        previewExchange === undefined
+          ? {}
+          : {
+              requestPreviewExchange: previewExchange,
+              requestPreviewStatus: outcome.requestPreviewStatus,
+            }),
         toolCalls: structuredClone(outcome.toolCalls),
         ...(outcome.failure === undefined ? {} : { failure: outcome.failure }),
       });
@@ -2685,6 +2700,22 @@ export class PlayCallChain {
           ? {}
           : { failureLog: this.#failureLog }),
         observer: {
+          onRequest: async (id, request) => {
+            if (previewExchange === undefined) return;
+            const preview =
+              modelHost.previewAuthoringRequest?.(request) ??
+              (modelHost.binding().provider === "google_interactions"
+                ? undefined
+                : modelHost.previewRequest?.(request));
+            if (preview !== undefined)
+              await this.#worlds.playTimeline.recordFollowupEncoding(
+                session.worldId,
+                session.chainId,
+                previewExchange,
+                id,
+                preview,
+              );
+          },
           onProviderDispatch: () => {
             this.#setInvocationAbortable(session.chainId, true);
             this.#observeInvocation(session.chainId, "followup", {

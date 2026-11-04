@@ -764,6 +764,15 @@ export type V1PlayCallChainEvent =
       text: string;
       reasoning?: string;
       usage?: ModelUsage;
+      /** Small locator; the encoding itself follows the bounded diagnostic window. */
+      requestPreviewExchange?: number;
+      requestPreviewStatus?: "attempted" | "completed" | "cancelled";
+      requestPreview?:
+        | { status: "unavailable" }
+        | {
+            status: "attempted" | "completed" | "cancelled";
+            wireRequest: NonNullable<V1AuthoringRequestPreview["wireRequest"]>;
+          };
       toolCalls: {
         callId: string;
         name: string;

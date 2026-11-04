@@ -306,6 +306,11 @@ export class FileNativePlayTimelineStore {
           join(targetRoot, encodingFileName(exchange)),
           encoding,
         );
+      for (const name of await followupEncodingNames(sourceRoot, exchange)) {
+        const value = await readOptionalJson<unknown>(join(sourceRoot, name));
+        if (value !== null)
+          await publishImmutableJson(join(targetRoot, name), value);
+      }
     }
     await Promise.all([
       cloneNumberedPrefix({
@@ -743,6 +748,54 @@ export class FileNativePlayTimelineStore {
     return value as unknown as ModelHostWireRequest;
   }
 
+  async recordFollowupEncoding(
+    worldId: string,
+    chainId: string,
+    exchange: number,
+    requestId: string,
+    encoding: ModelHostWireRequest,
+  ): Promise<void> {
+    const root = this.#contextRoot(worldId, chainId);
+    // The main encoding owns the bounded run slot; never create an orphan slot.
+    if (
+      (await readOptionalJson<unknown>(
+        join(root, encodingFileName(exchange)),
+      )) === null
+    )
+      return;
+    await publishImmutableJson(
+      join(root, followupEncodingFileName(exchange, requestId)),
+      encoding,
+    );
+    await pruneEncodings(root);
+  }
+
+  async readFollowupEncoding(
+    worldId: string,
+    chainId: string,
+    exchange: number,
+    requestId: string,
+  ): Promise<ModelHostWireRequest | null> {
+    const value = await readOptionalJson<unknown>(
+      join(
+        this.#contextRoot(worldId, chainId),
+        followupEncodingFileName(exchange, requestId),
+      ),
+    );
+    if (value === null) return null;
+    if (
+      !isRecord(value) ||
+      value.method !== "POST" ||
+      typeof value.provider !== "string" ||
+      !isRecord(value.body) ||
+      typeof value.endpointPath !== "string" ||
+      !Array.isArray(value.headerNames) ||
+      !value.headerNames.every((name: unknown) => typeof name === "string")
+    )
+      throw new Error("Follow-up request encoding has an invalid shape");
+    return value as unknown as ModelHostWireRequest;
+  }
+
   async readAllContexts(
     worldId: string,
   ): Promise<PersistedPlayCallChainContext[]> {
@@ -984,6 +1037,25 @@ export class FileNativePlayTimelineStore {
     assertPlayEvent(event);
     if (event.id !== eventId)
       throw new Error("Play timeline event identity is inconsistent");
+    if (event.kind === "followup") {
+      const wireRequest =
+        event.requestPreviewExchange === undefined ||
+        event.requestPreviewStatus === undefined
+          ? null
+          : await this.readFollowupEncoding(
+              worldId,
+              chainId,
+              event.requestPreviewExchange,
+              event.followupId,
+            ).catch(() => null);
+      return {
+        ...event,
+        requestPreview:
+          wireRequest === null || event.requestPreviewStatus === undefined
+            ? { status: "unavailable" }
+            : { status: event.requestPreviewStatus, wireRequest },
+      };
+    }
     return projectLegacyModelBindingFailure(event);
   }
 
@@ -1536,6 +1608,13 @@ function assertPlayEvent(
       typeof value.text !== "string" ||
       !validOptionalString(value.reasoning) ||
       !validOptionalUsage(value.usage) ||
+      (value.requestPreviewExchange !== undefined &&
+        (!Number.isSafeInteger(value.requestPreviewExchange) ||
+          Number(value.requestPreviewExchange) < 1)) ||
+      (value.requestPreviewStatus !== undefined &&
+        value.requestPreviewStatus !== "attempted" &&
+        value.requestPreviewStatus !== "completed" &&
+        value.requestPreviewStatus !== "cancelled") ||
       !Array.isArray(value.toolCalls) ||
       !value.toolCalls.every(validFollowupToolCall) ||
       !validOptionalString(value.failure)
@@ -1850,6 +1929,22 @@ function encodingFileName(exchange: number): string {
     : `request-encoding-${exchange}.json`;
 }
 
+function followupEncodingFileName(exchange: number, requestId: string): string {
+  return `followup-encoding-${exchange}-${createHash("sha256").update(requestId).digest("hex")}.json`;
+}
+
+async function followupEncodingNames(
+  root: string,
+  exchange: number,
+): Promise<string[]> {
+  const prefix = `followup-encoding-${exchange}-`;
+  return (await readDirectoryNames(root)).filter(
+    (name) =>
+      name.startsWith(prefix) &&
+      /^[a-f0-9]{64}\.json$/u.test(name.slice(prefix.length)),
+  );
+}
+
 /** The exchanges with a recorded encoding in a context, latest first. */
 async function recordedEncodingExchanges(
   contextRoot: string,
@@ -1871,8 +1966,11 @@ async function recordedEncodingExchanges(
 async function pruneEncodings(contextRoot: string): Promise<void> {
   for (const exchange of (await recordedEncodingExchanges(contextRoot)).slice(
     2,
-  ))
+  )) {
     await rm(join(contextRoot, encodingFileName(exchange)), { force: true });
+    for (const name of await followupEncodingNames(contextRoot, exchange))
+      await rm(join(contextRoot, name), { force: true });
+  }
 }
 
 /**

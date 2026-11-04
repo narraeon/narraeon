@@ -3156,7 +3156,20 @@ function TimelineEvent({
           </summary>
           {detailPending ? <p>{uiText("正在加载…")}</p> : null}
           {detailError === null ? null : <p role="alert">{detailError}</p>}
-          {full === null ? null : <pre>{safeJson(full)}</pre>}
+          {full === null ? null : (
+            <>
+              <p>
+                {full.requestPreview?.status === "completed"
+                  ? uiText("请求编码：已收到完整响应")
+                  : full.requestPreview?.status === "cancelled"
+                    ? uiText("请求编码：派发后取消")
+                    : full.requestPreview?.status === "attempted"
+                      ? uiText("请求编码：已尝试派发，响应未确认")
+                      : uiText("请求编码不可用（旧记录或已超出保留窗口）")}
+              </p>
+              <pre>{safeJson(full)}</pre>
+            </>
+          )}
         </details>
         {!showTechnicalInfo || event.usage === undefined ? null : (
           <ModelUsageBreakdown usage={event.usage} compact />

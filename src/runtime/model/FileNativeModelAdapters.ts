@@ -255,7 +255,12 @@ export class FileNativeModelHost implements ModelHost {
       if (this.#connection.provider === "openai_responses")
         return await this.#responses(request, observer?.onDelta, signal);
       if (this.#connection.provider === "google_interactions")
-        return await this.#google(request, observer?.onDelta, signal);
+        return await this.#google(
+          request,
+          observer?.onDelta,
+          signal,
+          observer?.retainLateExtensionResponse === true,
+        );
       return await this.#anthropic(request, observer?.onDelta, signal);
     } catch (error: unknown) {
       if (
@@ -334,6 +339,7 @@ export class FileNativeModelHost implements ModelHost {
     request: ModelHostExchange,
     onDelta?: ModelHostDeltaSink,
     signal?: AbortSignal,
+    retainLateExtensionResponse = false,
   ): Promise<ModelHostResponse> {
     const bodyJson = JSON.stringify(
       googleRequestBody(this.#connection, request),
@@ -377,7 +383,8 @@ export class FileNativeModelHost implements ModelHost {
             aggregateGoogleInteractions(body, captureDelta(capture, onDelta)),
           signal,
         );
-        if (signalWasAborted(signal)) throw cancelledModelRequest();
+        if (signalWasAborted(signal) && !retainLateExtensionResponse)
+          throw cancelledModelRequest();
         const projection = projectGoogleInteractions(payload);
         capture?.setReasoning(projection.reasoningContent);
         const usage = isRecord(payload.usage) ? payload.usage : {};

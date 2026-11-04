@@ -165,6 +165,8 @@ export interface ModelHostExchangeObserver {
   onDelta?: (delta: ModelHostDelta) => void;
   /** Explicit user cancellation for this logical dispatch. */
   signal?: AbortSignal;
+  /** A closed extension may retain a complete late response as diagnostics only. */
+  retainLateExtensionResponse?: boolean;
 }
 
 /** Credential-free projection of the exact request body a host will send. */

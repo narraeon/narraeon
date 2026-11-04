@@ -310,6 +310,18 @@ test("普通作者编辑包后置请求后创建世界，经真实 Runtime 派�
     await assertPermissions(worldId, false);
     expect(requests).toBe(2);
     expect(requestBodies[1]).toContain("PACKAGE BROWSER PROMPT");
+    await page.getByRole("button", { name: "阅读设置" }).click();
+    await page.getByRole("checkbox", { name: "显示技术信息" }).check();
+    await page
+      .getByLabel("阅读设置")
+      .getByRole("button", { name: "关闭" })
+      .click();
+    await page.getByText("本段调用详情", { exact: true }).click();
+    await page.locator(".call-chain-followup summary").click();
+    await expect(page.getByText("请求编码：已收到完整响应")).toBeVisible();
+    await expect(page.locator(".call-chain-followup pre")).toContainText(
+      "PACKAGE BROWSER PROMPT",
+    );
     const before = await runtime<{ head: string }>(page, {
       type: "world.read",
       worldId,
