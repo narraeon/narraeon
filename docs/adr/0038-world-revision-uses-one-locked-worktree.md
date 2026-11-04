@@ -12,7 +12,7 @@ status: accepted
 
 只有玩家执行 Apply 或 Discard 才结束 epoch。Apply 用一个稳定 operation ID 将 state 作为单笔 correction 提交，再以确定的 staging／previous 路径幂等发布 control；prepared、state committed 和 control published 阶段都持久保存，锁在 applied 已可恢复之前不会释放。Discard 不改变世界。封存后的历史只读，不再提供回滚。继续原 AI 对话会建立新的 epoch、追加高优先级边界并清空旧读取授权，要求模型重新读取。
 
-Google Interactions 只有前置 `system_instruction`，无法在原生历史中途追加 System。继续对话时，Runtime 从同一世界的持久 epoch 验证边界来源和基线，把当前 epoch 的边界加入本次 System，并在历史原位置以明确标为 Runtime 来源的通知标记每次切换。只有最新且属于当前目标的边界进入 System；旧边界保留历史位置，不提升用户内容或其他中途 System。提示词不授予写入权限，当前 revision 的合法预载与实际读取才决定授权。生产编码及其来源同时保存在该次请求预览中，旧请求快照不改写。此映射尚待真实 Gemini 服务验收。
+Google Interactions 只有前置 `system_instruction`，无法在原生历史中途追加 System。继续对话时，Runtime 从同一世界的持久 epoch 验证边界来源和基线，把当前 epoch 的边界加入本次 System，并在历史原位置以明确标为 Runtime 来源的通知标记每次切换。只有最新且属于当前目标的边界进入 System；旧边界保留历史位置，不提升用户内容或其他中途 System。提示词不授予写入权限，当前 revision 的合法预载与实际读取才决定授权。该次请求预览保留生产编码与来源的展示投影，其中 Provider 原生续传被遮蔽；旧请求快照不改写。此映射尚待真实 Gemini 服务验收。
 
 修订工作树中的既有状态文档沿用 [ADR-0037](0037-setting-improvement-is-one-model-directed-conversation.md) 的物理删除与移动规则：删除要求目标已完整读取，且 currentSituation、frame slot、player-view selector 与其他文档 `$ref` 均未指向它，否则列出全部阻挡位置；移动保留文档身份与内容，且不覆盖已有路径。检查层以文档身份而非路径判断既有文档是否被改写。Apply 把删除作为同一轮 `revision_apply` 的前像变化提交（[ADR-0045](0045-world-history-is-current-files-plus-a-turn-ledger.md)），回退到应用前的端点即可恢复被删文件。
 

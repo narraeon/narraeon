@@ -322,6 +322,10 @@ export class SettingImprovementSession {
         assertPackage(session, input.packageId);
       }
       return this.#startRequest(session, requestId, async (next) => {
+        if (next.runStatus === "paused")
+          throw new Error(
+            "Resume the paused authoring request before sending another message",
+          );
         const { playPreset, bootstrap, preload } = await this.#compileCurrent(
           input.packageId,
           next.modelBinding,
@@ -340,6 +344,8 @@ export class SettingImprovementSession {
           preload.record,
         );
         appendAuthoringUserMessage(next, message, requestId);
+        if (next.modelBinding.provider === "google_interactions")
+          next.googleOutcomeUnknown = false;
       });
     });
     return prepared.run ?? this.#view(prepared.session);
@@ -381,6 +387,10 @@ export class SettingImprovementSession {
         );
       return { session, run: running.promise };
     }
+    if (session.googleOutcomeUnknown)
+      throw new Error(
+        "The Google request outcome is unknown; start a fresh model context.",
+      );
     const host = await this.#bindExistingModelHost(session.modelBinding);
     if (!equalModelHostBinding(session.modelBinding, host.binding()))
       throw new Error(
@@ -389,10 +399,10 @@ export class SettingImprovementSession {
     await prepare(session);
     if (
       session.modelBinding.provider === "google_interactions" &&
-      host.previewRequest !== undefined &&
+      host.previewAuthoringRequest !== undefined &&
       session.requests?.at(-1)?.requestId === requestId
     )
-      session.requests.at(-1)!.wireRequest = host.previewRequest(
+      session.requests.at(-1)!.wireRequest = host.previewAuthoringRequest(
         authoringExchange(session, requestId),
       );
     await this.#store.save(session);
@@ -521,9 +531,10 @@ export class SettingImprovementSession {
       tools,
     });
     const now = Date.now();
+    const sessionId = this.#store.createId();
     const session: StoredSettingImprovementSession = {
       schemaVersion: 2,
-      sessionId: this.#store.createId(),
+      sessionId,
       packageId,
       contentPackageTitle: package_.title,
       locale,
@@ -531,6 +542,9 @@ export class SettingImprovementSession {
       createdAt: now,
       updatedAt: now,
       creationRequestId,
+      ...(modelBinding.provider === "google_interactions"
+        ? { googleIdentity: { sessionId, packageId, creationRequestId } }
+        : {}),
       bootstrap,
       modelBinding,
       playPreset: structuredClone(playPreset),
@@ -701,6 +715,8 @@ export class SettingImprovementSession {
     }
 
     if (session.pendingSettlement !== null) {
+      if (session.modelBinding.provider === "google_interactions")
+        session.googleOutcomeUnknown = false;
       const lease = await this.#content.beginCurrentTreeContentPackageOperation(
         session.packageId,
       );
@@ -772,6 +788,11 @@ export class SettingImprovementSession {
     }
 
     if (session.runStatus === "running") {
+      if (
+        session.modelBinding.provider === "google_interactions" &&
+        session.googleOutcomeUnknown !== false
+      )
+        session.googleOutcomeUnknown = true;
       markInterruptedAfterRestart(session);
       session.updatedAt = Date.now();
     } else {
@@ -895,15 +916,20 @@ function markInterruptedAfterRestart(
   session: StoredSettingImprovementSession,
 ): void {
   const requestId = session.activeRequestId;
-  session.runStatus = "interrupted";
+  session.runStatus =
+    session.modelBinding.provider === "google_interactions" &&
+    session.googleOutcomeUnknown === false
+      ? "paused"
+      : "interrupted";
   session.activeRequestId = null;
   if (requestId !== null)
     session.completedRequestIds = rememberAuthoringRequest(
       session.completedRequestIds,
       requestId,
     );
-  session.lastFailure =
-    "The previous model request stopped before its next complete response. Every settled current-tree change and complete tool result was retained; continue this conversation when ready.";
+  session.lastFailure = session.googleOutcomeUnknown
+    ? "The Google request outcome is unknown; start a fresh model context."
+    : "The previous model request stopped before its next complete response. Every settled current-tree change and complete tool result was retained; continue this conversation when ready.";
 }
 
 function requiredMessage(message: string): string {

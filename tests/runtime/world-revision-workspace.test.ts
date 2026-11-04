@@ -7,6 +7,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import {
   googleAuthoringHost,
   googleInterruptedHost,
+  googleSignedText,
   googleText,
   googleTools,
   interruptedGoogleWrite,
@@ -72,7 +73,7 @@ test("Google world revision keeps changes in its epoch and requires rereading af
         },
       },
     ]),
-    googleText("First revision ready."),
+    googleSignedText("First revision ready."),
     googleTools([
       {
         id: "stale",
@@ -195,6 +196,24 @@ test("Google world revision keeps changes in its epoch and requires rereading af
     epochId: epoch.epochId,
     expectedRevision: epoch.revision,
   });
+  const incompatibleBeforeEpoch = new FileNativeModelHost({
+    provider: "google_interactions",
+    baseUrl: "https://other.invalid/v1beta",
+    apiKey: "synthetic",
+    modelId: "manual-model",
+    contextWindowTokens: 64000,
+    maxOutputTokens: 2000,
+  });
+  await expect(
+    service(incompatibleBeforeEpoch).send({
+      worldId,
+      requestId: "mismatch-before-epoch",
+      message: "继续",
+      continuation: { kind: "continue_context", sessionId: first.sessionId },
+    }),
+  ).rejects.toThrow(/model connection/iu);
+  expect(await workspace.active(worldId)).toBeNull();
+  expect(await worlds.readWorldRevisionLock(worldId)).toBeNull();
   const next = await service().send({
     worldId,
     requestId: "google-next",
@@ -213,7 +232,16 @@ test("Google world revision keeps changes in its epoch and requires rereading af
     { result: { isError: false } },
     { result: { isError: false } },
   ]);
-  expect(next.requestPreviews?.[1]?.wireRequest?.body).toEqual(sent[2]);
+  expect(JSON.stringify(sent[2])).toContain("synthetic-signature-secret");
+  expect(JSON.stringify(next.requestPreviews)).not.toContain(
+    "synthetic-signature-secret",
+  );
+  expect(JSON.stringify(next.requestPreviews)).not.toContain(
+    "synthetic-opaque-secret",
+  );
+  expect(next.requestPreviews?.[1]?.wireRequest?.body).toMatchObject({
+    system_instruction: sent[2]?.system_instruction,
+  });
   expect(
     next.requestPreviews?.[1]?.wireRequest?.systemInstructionSources,
   ).toContainEqual({
@@ -380,7 +408,22 @@ test.each(["cancel", "disconnect"] as const)(
       continuation: { kind: "continue_context", sessionId: first.sessionId },
     });
     await interrupted.started;
-    if (mode === "cancel") await service.cancel(first.sessionId);
+    if (mode === "cancel") {
+      const cold = googleAuthoringHost([]);
+      await expect(
+        makeService(cold.host).send({
+          worldId,
+          requestId: "cold-retry",
+          message: "继续",
+          continuation: {
+            kind: "continue_context",
+            sessionId: first.sessionId,
+          },
+        }),
+      ).rejects.toThrow(/fresh model context/iu);
+      expect(cold.sent).toHaveLength(0);
+      await service.cancel(first.sessionId);
+    }
     const result = await running;
     expect(result.runStatus).toBe("interrupted");
     expect(
@@ -388,12 +431,74 @@ test.each(["cancel", "disconnect"] as const)(
     ).toEqual([]);
     expect((await workspace.active(worldId))?.files).toEqual(before?.files);
     expect(await worlds.currentHead(worldId)).toBe("genesis");
+    const afterRestart = googleAuthoringHost([]);
+    await expect(
+      makeService(afterRestart.host).send({
+        worldId,
+        requestId: "retry",
+        message: "继续",
+        continuation: { kind: "continue_context", sessionId: first.sessionId },
+      }),
+    ).rejects.toThrow(/fresh model context/iu);
+    expect(afterRestart.sent).toHaveLength(0);
   },
 );
 
+test("Google world revision cold restart can resume a request proven not dispatched", async () => {
+  const { root, worldId, worlds, workspace } = await createdWorld();
+  const makeService = (host: FileNativeModelHost) =>
+    new WorldRevisionSession({
+      store: new FileNativeWorldRevisionStore(root),
+      workspace,
+      worlds,
+      compiler: new FileNativePromptCompiler({ locale: "zh-CN" }),
+      locale: () => "zh-CN",
+      bindModelHost: () => Promise.resolve(host),
+      bindExistingModelHost: () => Promise.resolve(host),
+      bindPlayPreset: () =>
+        Promise.resolve(builtinDefaultPlayPresetBinding("zh-CN")),
+      preview: () => preview,
+    });
+  const initial = googleAuthoringHost([googleText("Original.")]);
+  const first = await makeService(initial.host).send({
+    worldId,
+    requestId: "first",
+    message: "Frozen message.",
+    continuation: { kind: "fresh_context" },
+  });
+  const store = new FileNativeWorldRevisionStore(root);
+  const saved = await store.readSession(first.sessionId);
+  saved.modelItems = saved.modelItems.filter(
+    ({ kind }) => kind !== "assistant",
+  );
+  saved.messages = saved.messages.filter(({ role }) => role !== "assistant");
+  saved.runStatus = "running";
+  saved.activeRequestId = "first";
+  saved.completedRequestIds = [];
+  saved.googleOutcomeUnknown = false;
+  await store.saveSession(saved);
+  const restarted = googleAuthoringHost([googleText("Resumed.")]);
+  const resumed = await makeService(restarted.host).resume({
+    worldId,
+    sessionId: first.sessionId,
+    requestId: "resume",
+  });
+  expect(resumed.runStatus).toBe("ready");
+  expect(resumed.messages.map(({ role }) => role)).toEqual([
+    "user",
+    "assistant",
+  ]);
+  expect(
+    JSON.stringify(restarted.sent[0]).match(/Frozen message\./gu),
+  ).toHaveLength(1);
+});
+
 test("Google world revision refuses an empty persisted continuation after restart", async () => {
   const { root, worldId, worlds, workspace } = await createdWorld();
-  const { host, sent } = googleAuthoringHost([googleText("Original answer.")]);
+  const { host, sent } = googleAuthoringHost([
+    googleText("Original answer."),
+    googleText("Fresh."),
+  ]);
   const service = () =>
     new WorldRevisionSession({
       store: new FileNativeWorldRevisionStore(root),
@@ -439,6 +544,17 @@ test("Google world revision refuses an empty persisted continuation after restar
   expect(sent).toHaveLength(1);
   expect((await workspace.active(worldId))?.files).toEqual(before?.files);
   expect(await worlds.currentHead(worldId)).toBe("genesis");
+  expect(
+    (await service().overview(worldId)).history[0]?.unavailableReason,
+  ).toContain("damaged");
+  const fresh = await service().send({
+    worldId,
+    requestId: "fresh",
+    message: "重新开始",
+    continuation: { kind: "fresh_context" },
+  });
+  expect(fresh.runStatus).toBe("ready");
+  expect(sent).toHaveLength(2);
 });
 
 test("Google world revision can start fresh beside a damaged continuation", async () => {

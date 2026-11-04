@@ -96,6 +96,13 @@ export function AuthoringPromptPreview({
                       ? "System 边界约束当前 epoch；历史中的 Runtime 通知标记切换位置。"
                       : "The System boundary governs the current epoch; Runtime notices locate transitions in history."}
                   </p>
+                  {request.wireRequest.redactedProviderContinuation && (
+                    <p>
+                      {zh
+                        ? "Provider 原生续传内容已隐藏。"
+                        : "Provider-native continuation is hidden."}
+                    </p>
+                  )}
                   <pre>{JSON.stringify(request.wireRequest, null, 2)}</pre>
                 </details>
               )}

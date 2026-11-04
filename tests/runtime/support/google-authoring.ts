@@ -36,7 +36,7 @@ export function googleTools(calls: Call[]) {
   ];
 }
 
-export function googleText(text: string) {
+export function googleText(text: string): unknown[] {
   return [
     { event_type: "step.start", index: 0, step: { type: "model_output" } },
     { event_type: "step.delta", index: 0, delta: { type: "text", text } },
@@ -46,6 +46,33 @@ export function googleText(text: string) {
       interaction: { status: "completed" },
     },
   ];
+}
+
+export function googleSignedText(text: string) {
+  const events = googleText(text);
+  events.splice(
+    events.length - 1,
+    0,
+    {
+      event_type: "step.start",
+      index: 1,
+      step: {
+        type: "thought",
+        summary: [],
+        opaque: { encrypted: "synthetic-opaque-secret" },
+      },
+    },
+    {
+      event_type: "step.delta",
+      index: 1,
+      delta: {
+        type: "thought_signature",
+        signature: "synthetic-signature-secret",
+      },
+    },
+    { event_type: "step.stop", index: 1 },
+  );
+  return events;
 }
 
 export function interruptedGoogleWrite(name: string, path: string): unknown[] {

@@ -1,4 +1,21 @@
-import { validGoogleInteractionsSteps } from "../model/ProviderExchangeState.ts";
+import { validGoogleInteractionsContinuation } from "../model/ProviderExchangeState.ts";
+
+export function hasDamagedGoogleSteps(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    isRecord(value.modelBinding) &&
+    value.modelBinding.provider === "google_interactions" &&
+    Array.isArray(value.modelItems) &&
+    value.modelItems.some(
+      (item: unknown) =>
+        isRecord(item) &&
+        item.kind === "assistant" &&
+        isRecord(item.providerState) &&
+        item.providerState.protocol === "google_interactions" &&
+        !validGoogleInteractionsContinuation(item.providerState.steps),
+    )
+  );
+}
 
 /** A disposable copy for discovery only. Callers must still validate the complete schema. */
 export function withoutDamagedGoogleSteps(
@@ -9,6 +26,7 @@ export function withoutDamagedGoogleSteps(
     !isRecord(value.modelBinding) ||
     value.modelBinding.provider !== "google_interactions" ||
     value.pendingSettlement !== null ||
+    value.googleOutcomeUnknown === true ||
     value.activeRequestId !== null ||
     (value.runStatus !== "ready" && value.runStatus !== "interrupted") ||
     !Array.isArray(value.modelItems)
@@ -17,14 +35,25 @@ export function withoutDamagedGoogleSteps(
   const copy = structuredClone(value);
   if (!Array.isArray(copy.modelItems)) return null;
   const items: unknown[] = copy.modelItems;
-  const last = items.at(-1);
-  if (
-    isRecord(last) &&
-    last.kind === "assistant" &&
-    Array.isArray(last.toolCalls) &&
-    last.toolCalls.length > 0
-  )
-    return null;
+  for (const [index, item] of items.entries()) {
+    if (
+      !isRecord(item) ||
+      item.kind !== "assistant" ||
+      !Array.isArray(item.toolCalls)
+    )
+      continue;
+    for (const [offset, call] of item.toolCalls.entries()) {
+      const result = items[index + offset + 1];
+      if (
+        !isRecord(call) ||
+        typeof call.id !== "string" ||
+        !isRecord(result) ||
+        result.kind !== "tool" ||
+        result.toolCallId !== call.id
+      )
+        return null;
+    }
+  }
   let damaged = false;
   for (const item of items) {
     if (
@@ -32,7 +61,7 @@ export function withoutDamagedGoogleSteps(
       item.kind !== "assistant" ||
       !isRecord(item.providerState) ||
       item.providerState.protocol !== "google_interactions" ||
-      validGoogleInteractionsSteps(item.providerState.steps)
+      validGoogleInteractionsContinuation(item.providerState.steps)
     )
       continue;
     item.providerState.steps = [];

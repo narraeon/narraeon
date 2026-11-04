@@ -29,7 +29,10 @@ import type { AppLocale } from "../../protocol/appPreferences.ts";
 import { fictionGameplay } from "../../protocol/gameplay.ts";
 import type { ModelUsage } from "../../protocol/modelUsage.ts";
 import { validGoogleInteractionsSteps } from "../model/ProviderExchangeState.ts";
-import { withoutDamagedGoogleSteps } from "../authoring/DamagedGoogleContinuation.ts";
+import {
+  hasDamagedGoogleSteps,
+  withoutDamagedGoogleSteps,
+} from "../authoring/DamagedGoogleContinuation.ts";
 import { ContentWorkspace } from "../content/ContentWorkspace.ts";
 import type { ContentTreeFile } from "../content/ContentTreeFile.ts";
 import { contentTreeFingerprint } from "../content/ContentTreeFingerprint.ts";
@@ -161,6 +164,12 @@ export interface StoredSettingImprovementSession {
   activeRequestId: string | null;
   completedRequestIds: string[];
   lastFailure: string | null;
+  googleOutcomeUnknown?: boolean;
+  googleIdentity?: {
+    sessionId: string;
+    packageId: string;
+    creationRequestId: string;
+  };
   /** Full-read capability, valid only for the exact current-tree revision. */
   authorization: SettingAuthoringAuthorization | null;
   /** Crash boundary between a complete Provider tool step and its publication. */
@@ -225,7 +234,15 @@ export class FileNativeSettingImprovementStore {
   async read(sessionId: string): Promise<StoredSettingImprovementSession> {
     await this.#mutationTail;
     try {
-      return await this.#read(sessionId);
+      const session = await this.#read(sessionId);
+      if (
+        hasDamagedGoogleSteps(session) &&
+        (await this.#damagedSummary(sessionId))
+      )
+        throw new Error(
+          "The historical conversation has damaged Google continuation; start a fresh model context",
+        );
+      return session;
     } catch (error) {
       if (await this.#damagedSummary(sessionId))
         throw new Error(
@@ -357,7 +374,10 @@ export class FileNativeSettingImprovementStore {
           const session = await this.#read(sessionId);
           summaries.set(
             session.sessionId,
-            summarizeStoredSettingImprovementSession(session),
+            (!hasDamagedGoogleSteps(session)
+              ? null
+              : await this.#damagedSummary(sessionId)) ??
+              summarizeStoredSettingImprovementSession(session),
           );
         } catch (error) {
           const summary = await this.#damagedSummary(sessionId);
@@ -375,32 +395,48 @@ export class FileNativeSettingImprovementStore {
   async #damagedSummary(
     sessionId: string,
   ): Promise<StoredSettingImprovementSummary | null> {
+    let session: StoredSettingImprovementSession;
     try {
       const raw: unknown = JSON.parse(
         await readFile(this.#path(sessionId), "utf8"),
       );
       const copy = withoutDamagedGoogleSteps(raw);
-      if (copy === null) return null;
-      const session = validateStoredSession(copy);
-      if (
-        session.sessionId !== sessionId ||
-        !/^package-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(
-          session.packageId,
-        ) ||
-        !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(
-          session.creationRequestId,
-        ) ||
-        hasPendingToolCalls(session)
-      )
+      if (copy === null) {
+        if (hasDamagedGoogleSteps(raw))
+          throw new Error(
+            "Cannot safely identify the damaged historical conversation; settlement or identity is unverified",
+          );
         return null;
-      return {
-        ...summarizeStoredSettingImprovementSession(session),
-        runStatus: "interrupted",
-        damagedContinuation: true,
-      };
-    } catch {
+      }
+      session = validateStoredSession(copy);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message.startsWith("Cannot safely identify")
+      )
+        throw error;
       return null;
     }
+    if (
+      session.sessionId !== sessionId ||
+      session.googleIdentity?.sessionId !== sessionId ||
+      session.googleIdentity.packageId !== session.packageId ||
+      session.googleIdentity.creationRequestId !== session.creationRequestId ||
+      session.requests?.[0]?.requestId !== session.creationRequestId ||
+      !/^package-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(
+        session.packageId,
+      ) ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(session.creationRequestId) ||
+      hasPendingToolCalls(session)
+    )
+      throw new Error(
+        "Cannot safely identify the damaged historical conversation; its owner or creation identity is unverified",
+      );
+    return {
+      ...summarizeStoredSettingImprovementSession(session),
+      runStatus: "interrupted",
+      damagedContinuation: true,
+    };
   }
 
   async #recordSavedSession(
@@ -734,7 +770,13 @@ function validateStoredSession(
         "pendingSettlement",
         "legacyDraft",
       ],
-      ["contentPackageTitle", "playPreset", "requests"],
+      [
+        "contentPackageTitle",
+        "playPreset",
+        "requests",
+        "googleOutcomeUnknown",
+        "googleIdentity",
+      ],
     ) ||
     (value.schemaVersion !== 2 && value.schemaVersion !== 3) ||
     (value.schemaVersion === 2
@@ -765,6 +807,22 @@ function validateStoredSession(
       typeof value.activeRequestId !== "string") ||
     !Array.isArray(value.completedRequestIds) ||
     (value.lastFailure !== null && typeof value.lastFailure !== "string") ||
+    (value.googleOutcomeUnknown !== undefined &&
+      (typeof value.googleOutcomeUnknown !== "boolean" ||
+        !isRecord(value.modelBinding) ||
+        value.modelBinding.provider !== "google_interactions")) ||
+    (value.googleIdentity !== undefined &&
+      (!isRecord(value.googleIdentity) ||
+        !hasExactKeys(value.googleIdentity, [
+          "sessionId",
+          "packageId",
+          "creationRequestId",
+        ]) ||
+        typeof value.googleIdentity.sessionId !== "string" ||
+        typeof value.googleIdentity.packageId !== "string" ||
+        typeof value.googleIdentity.creationRequestId !== "string" ||
+        !isRecord(value.modelBinding) ||
+        value.modelBinding.provider !== "google_interactions")) ||
     !validAuthorization(value.authorization) ||
     !validPendingSettlement(value.pendingSettlement) ||
     !validPendingSettlementForTranscript(
@@ -778,6 +836,15 @@ function validateStoredSession(
       "Setting-improvement conversation does not match its durable schema",
     );
   assertSessionId(value.sessionId);
+  if (
+    isRecord(value.googleIdentity) &&
+    (value.googleIdentity.sessionId !== value.sessionId ||
+      value.googleIdentity.packageId !== value.packageId ||
+      value.googleIdentity.creationRequestId !== value.creationRequestId)
+  )
+    throw new Error(
+      "Cannot safely identify the historical conversation; its owner or creation identity is inconsistent",
+    );
   if (
     !value.completedRequestIds.every((id) => typeof id === "string") ||
     !value.messages.every(validMessage) ||

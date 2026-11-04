@@ -29,6 +29,7 @@ import { SettingImprovementSession } from "../../src/runtime/setting/SettingImpr
 import {
   googleAuthoringHost,
   googleInterruptedHost,
+  googleSignedText,
   googleText,
   googleTools,
   interruptedGoogleWrite,
@@ -80,7 +81,7 @@ test("Google setting conversation settles ordered mixed calls and continues afte
         arguments: { path: "opening.md", contents: "Final change.\n" },
       },
     ]),
-    googleText("The changes are live."),
+    googleSignedText("The changes are live."),
     googleText("Continued after restart."),
   ]);
   const service = serviceFor(root, content, host);
@@ -97,6 +98,11 @@ test("Google setting conversation settles ordered mixed calls and continues afte
   const stored = await new FileNativeSettingImprovementStore(root).read(
     first.sessionId,
   );
+  const corruptPreview = structuredClone(stored);
+  corruptPreview.requests![0]!.wireRequest!.body = null;
+  await expect(
+    new FileNativeSettingImprovementStore(root).save(corruptPreview),
+  ).rejects.toThrow(/durable schema/iu);
   expect(
     host.previewRequest({
       bootstrap: candidate,
@@ -154,6 +160,14 @@ test("Google setting conversation settles ordered mixed calls and continues afte
   expect(resumed.runStatus).toBe("ready");
   expect(resumed.messages.at(-1)?.text).toBe("Continued after restart.");
   expect(JSON.stringify(sent[2])).toContain("The changes are live.");
+  expect(JSON.stringify(sent[2])).toContain("synthetic-signature-secret");
+  expect(JSON.stringify(sent[2])).toContain("synthetic-opaque-secret");
+  expect(JSON.stringify(resumed.requestPreviews)).not.toContain(
+    "synthetic-signature-secret",
+  );
+  expect(JSON.stringify(resumed.requestPreviews)).not.toContain(
+    "synthetic-opaque-secret",
+  );
   const incompatible = new FileNativeModelHost({
     provider: "google_interactions",
     baseUrl: "https://other.invalid/v1beta",
@@ -220,37 +234,36 @@ test.each(["empty", "malformed"])(
     expect(
       (await content.readCurrentTreeContentPackage(localId)).files,
     ).toEqual(before.files);
-    if (corruption === "malformed") {
-      const overview = await serviceFor(root, content, host).overview(localId);
-      expect(overview.history[0]).toMatchObject({
-        sessionId: first.sessionId,
-      });
-      expect(overview.history[0]?.unavailableReason).toContain("damaged");
-      const fresh = await sendFresh(
-        serviceFor(root, content, host),
-        localId,
-        "fresh",
-        "Start again.",
-      );
-      expect(fresh.runStatus).toBe("ready");
-      await expect(
-        sendFresh(
-          serviceFor(root, content, host),
-          localId,
-          "first",
-          "Discuss.",
-        ),
-      ).rejects.toThrow(/new request ID/iu);
-      const reloaded = serviceFor(root, content, host);
-      expect((await reloaded.overview(localId)).history).toHaveLength(2);
-      expect((await reloaded.read(localId))?.sessionId).toBe(fresh.sessionId);
-      expect(await readFile(path, "utf8")).toBe(damagedBytes);
-      expect(sent).toHaveLength(2);
-    }
+    const overview = await serviceFor(root, content, host).overview(localId);
+    expect(overview.history[0]).toMatchObject({
+      sessionId: first.sessionId,
+    });
+    expect(overview.history[0]?.unavailableReason).toContain("damaged");
+    const fresh = await sendFresh(
+      serviceFor(root, content, host),
+      localId,
+      "fresh",
+      "Start again.",
+    );
+    expect(fresh.runStatus).toBe("ready");
+    await expect(
+      sendFresh(serviceFor(root, content, host), localId, "first", "Discuss."),
+    ).rejects.toThrow(/new request ID/iu);
+    const reloaded = serviceFor(root, content, host);
+    expect((await reloaded.overview(localId)).history).toHaveLength(2);
+    expect((await reloaded.read(localId))?.sessionId).toBe(fresh.sessionId);
+    expect(await readFile(path, "utf8")).toBe(damagedBytes);
+    expect(sent).toHaveLength(2);
   },
 );
 
-test.each(["identity", "pending"] as const)(
+test.each([
+  "identity",
+  "pending",
+  "owner",
+  "request",
+  "missing-proof",
+] as const)(
   "Google damaged setting history with ambiguous %s fails closed",
   async (fault) => {
     const root = await temporaryRoot("google-setting-ambiguous-");
@@ -271,6 +284,9 @@ test.each(["identity", "pending"] as const)(
     );
     const stored = JSON.parse(await readFile(path, "utf8")) as {
       sessionId: string;
+      packageId: string;
+      creationRequestId: string;
+      googleIdentity?: unknown;
       pendingSettlement: unknown;
       modelItems: { kind: string; providerState: { steps: unknown } }[];
     };
@@ -279,21 +295,118 @@ test.each(["identity", "pending"] as const)(
     )!.providerState.steps = [{ type: "function_call", id: 4 }];
     if (fault === "identity")
       stored.sessionId = "setting-00000000-0000-4000-8000-000000000000";
+    else if (fault === "owner")
+      stored.packageId = "package-00000000-0000-4000-8000-000000000000";
+    else if (fault === "request")
+      stored.creationRequestId = "different-valid-request";
+    else if (fault === "missing-proof") delete stored.googleIdentity;
     else stored.pendingSettlement = {};
     const bytes = JSON.stringify(stored);
     await writeFile(path, bytes);
-    await expect(
+    const rejected = expect(
       sendFresh(
         serviceFor(root, content, host),
         localId,
         "fresh",
         "Start again.",
       ),
-    ).rejects.toThrow();
+    ).rejects;
+    if (fault === "owner" || fault === "request" || fault === "missing-proof")
+      await rejected.toThrow(/cannot safely identify/iu);
+    else await rejected.toThrow();
     expect(sent).toHaveLength(1);
     expect(await readFile(path, "utf8")).toBe(bytes);
   },
 );
+
+test("Google damaged history with an incomplete tool receipt batch cannot be isolated", async () => {
+  const root = await temporaryRoot("google-setting-missing-receipt-");
+  const content = new ContentWorkspace(root, { locale: () => "en" });
+  const { localId } = await content.createCurrentTreeContentPackage();
+  const { host, sent } = googleAuthoringHost([googleText("Original.")]);
+  const first = await sendFresh(
+    serviceFor(root, content, host),
+    localId,
+    "first",
+    "Discuss.",
+  );
+  const path = join(
+    root,
+    "setting-improvements",
+    "sessions",
+    `${first.sessionId}.json`,
+  );
+  const stored = JSON.parse(await readFile(path, "utf8")) as {
+    modelItems: {
+      kind: string;
+      providerState?: { steps: unknown };
+      toolCalls?: { id: string; name: string; arguments: unknown }[];
+      toolCallId?: string;
+      markdown?: string;
+      changes?: unknown[];
+    }[];
+  };
+  const assistant = stored.modelItems.find(({ kind }) => kind === "assistant")!;
+  assistant.providerState!.steps = [];
+  assistant.toolCalls = [
+    { id: "one", name: "setting_read", arguments: {} },
+    { id: "two", name: "setting_read", arguments: {} },
+  ];
+  stored.modelItems.push({
+    kind: "tool",
+    toolCallId: "one",
+    markdown: "First receipt",
+    changes: [],
+  });
+  const bytes = JSON.stringify(stored);
+  await writeFile(path, bytes);
+  await expect(
+    sendFresh(
+      serviceFor(root, content, host),
+      localId,
+      "fresh",
+      "Start again.",
+    ),
+  ).rejects.toThrow();
+  expect(sent).toHaveLength(1);
+  expect(await readFile(path, "utf8")).toBe(bytes);
+});
+
+test("healthy older Google setting conversation without an identity proof remains continuable", async () => {
+  const root = await temporaryRoot("google-setting-legacy-");
+  const content = new ContentWorkspace(root, { locale: () => "en" });
+  const { localId } = await content.createCurrentTreeContentPackage();
+  const { host, sent } = googleAuthoringHost([
+    googleText("First."),
+    googleText("Continued."),
+  ]);
+  const first = await sendFresh(
+    serviceFor(root, content, host),
+    localId,
+    "first",
+    "Discuss.",
+  );
+  const path = join(
+    root,
+    "setting-improvements",
+    "sessions",
+    `${first.sessionId}.json`,
+  );
+  const stored = JSON.parse(await readFile(path, "utf8")) as {
+    googleIdentity?: unknown;
+  };
+  delete stored.googleIdentity;
+  await writeFile(path, JSON.stringify(stored));
+  const resumed = await serviceFor(root, content, host).send({
+    packageId: localId,
+    requestId: "next",
+    message: "Continue.",
+    continuation: { kind: "continue_context", sessionId: first.sessionId },
+  });
+  expect(resumed.runStatus).toBe("ready");
+  expect(resumed.messages.at(-1)?.text).toBe("Continued.");
+  expect(sent).toHaveLength(2);
+});
 
 test.each(["truncated", "incomplete"])(
   "Google setting does not publish %s streamed tool arguments",
@@ -352,7 +465,22 @@ test.each(["cancel", "disconnect"] as const)(
       continuation: { kind: "continue_context", sessionId: first.sessionId },
     });
     await interrupted.started;
-    if (mode === "cancel") await session.cancel(first.sessionId);
+    if (mode === "cancel") {
+      const cold = googleAuthoringHost([]);
+      await expect(
+        serviceFor(root, content, cold.host).send({
+          packageId: localId,
+          requestId: "cold-retry",
+          message: "Continue.",
+          continuation: {
+            kind: "continue_context",
+            sessionId: first.sessionId,
+          },
+        }),
+      ).rejects.toThrow(/fresh model context/iu);
+      expect(cold.sent).toHaveLength(0);
+      await session.cancel(first.sessionId);
+    }
     const result = await running;
     expect(result.runStatus).toBe("interrupted");
     expect(
@@ -361,8 +489,57 @@ test.each(["cancel", "disconnect"] as const)(
     expect(
       (await content.readCurrentTreeContentPackage(localId)).files,
     ).toEqual(before.files);
+    const afterRestart = googleAuthoringHost([]);
+    await expect(
+      serviceFor(root, content, afterRestart.host).send({
+        packageId: localId,
+        requestId: "retry",
+        message: "Continue.",
+        continuation: { kind: "continue_context", sessionId: first.sessionId },
+      }),
+    ).rejects.toThrow(/fresh model context/iu);
+    expect(afterRestart.sent).toHaveLength(0);
   },
 );
+
+test("Google setting cold restart can resume a request proven not dispatched", async () => {
+  const root = await temporaryRoot("google-setting-before-dispatch-");
+  const content = new ContentWorkspace(root, { locale: () => "en" });
+  const { localId } = await content.createCurrentTreeContentPackage();
+  const initial = googleAuthoringHost([googleText("Original.")]);
+  const first = await sendFresh(
+    serviceFor(root, content, initial.host),
+    localId,
+    "first",
+    "Frozen message.",
+  );
+  const store = new FileNativeSettingImprovementStore(root);
+  const saved = await store.read(first.sessionId);
+  saved.modelItems = saved.modelItems.filter(
+    ({ kind }) => kind !== "assistant",
+  );
+  saved.messages = saved.messages.filter(({ role }) => role !== "assistant");
+  saved.runStatus = "running";
+  saved.activeRequestId = "first";
+  saved.completedRequestIds = [];
+  saved.googleOutcomeUnknown = false;
+  await store.save(saved);
+  const restarted = googleAuthoringHost([googleText("Resumed.")]);
+  const service = serviceFor(root, content, restarted.host);
+  const resumed = await service.resume({
+    packageId: localId,
+    sessionId: first.sessionId,
+    requestId: "resume",
+  });
+  expect(resumed.runStatus).toBe("ready");
+  expect(resumed.messages.map(({ role }) => role)).toEqual([
+    "user",
+    "assistant",
+  ]);
+  expect(
+    JSON.stringify(restarted.sent[0]).match(/Frozen message\./gu),
+  ).toHaveLength(1);
+});
 
 test("重整前真实 schema-v2 作者会话保留原生工具历史，下一次发送保存当前编排", async () => {
   const fixture = JSON.parse(

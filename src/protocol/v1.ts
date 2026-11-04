@@ -559,6 +559,7 @@ export interface V1AuthoringRequestPreview {
     headerNames: string[];
     body: unknown;
     systemInstructionSources?: { promptId?: string; sources: string[] }[];
+    redactedProviderContinuation?: true;
   };
 }
 

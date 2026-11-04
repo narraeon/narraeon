@@ -334,18 +334,34 @@ export class WorldRevisionSession {
             );
           return { session, run: running.promise };
         }
+        if (session.googleOutcomeUnknown)
+          throw new Error(
+            "The Google request outcome is unknown; start a fresh model context.",
+          );
+        if (session.runStatus === "paused")
+          throw new Error(
+            "Resume the paused authoring request before sending another message",
+          );
       }
       await this.#assertNoRunningConversation(
         input.worldId,
         session?.sessionId,
       );
+      let host: ModelHost | undefined;
+      if (session !== null) {
+        host = await this.#bindExistingModelHost(session.modelBinding);
+        if (!equalModelHostBinding(session.modelBinding, host.binding()))
+          throw new Error(
+            "No saved model connection matches this world-revision conversation",
+          );
+      }
       const epoch = await this.#workspace.open(input.worldId);
       session ??= await this.#create(input.worldId, epoch, requestId);
       if (session.epochId !== epoch.epochId) {
         retargetSession(session, epoch, this.#locale());
         await this.#store.saveSession(session);
       }
-      const host = await this.#bindExistingModelHost(session.modelBinding);
+      host ??= await this.#bindExistingModelHost(session.modelBinding);
       if (!equalModelHostBinding(session.modelBinding, host.binding()))
         throw new Error(
           "No saved model connection matches this world-revision conversation",
@@ -371,12 +387,17 @@ export class WorldRevisionSession {
           preload.record,
         );
       appendAuthoringUserMessage(session, message, requestId);
+      if (session.modelBinding.provider === "google_interactions")
+        session.googleOutcomeUnknown = false;
       const boundaries =
         host.binding().provider === "google_interactions"
           ? await this.#validatedEpochBoundaries(session)
           : undefined;
-      if (boundaries !== undefined && host.previewRequest !== undefined)
-        session.requests.at(-1)!.wireRequest = host.previewRequest(
+      if (
+        boundaries !== undefined &&
+        host.previewAuthoringRequest !== undefined
+      )
+        session.requests.at(-1)!.wireRequest = host.previewAuthoringRequest(
           authoringExchange(session, requestId, boundaries),
         );
       await this.#store.saveSession(session);
@@ -809,7 +830,16 @@ export class WorldRevisionSession {
   ): Promise<StoredWorldRevisionSession> {
     if (session.damagedContinuation) return session;
     if (this.#conversation.isRunning(session.sessionId)) return session;
+    if (
+      session.runStatus === "running" &&
+      session.pendingSettlement === null &&
+      session.modelBinding.provider === "google_interactions" &&
+      session.googleOutcomeUnknown !== false
+    )
+      session.googleOutcomeUnknown = true;
     if (session.pendingSettlement !== null) {
+      if (session.modelBinding.provider === "google_interactions")
+        session.googleOutcomeUnknown = false;
       const pending = session.pendingSettlement;
       if (pending.phase === "publication_prepared") {
         const active = await this.#workspace.active(session.worldId);
@@ -847,15 +877,20 @@ export class WorldRevisionSession {
     if (session.runStatus !== "running" && session.pendingSettlement === null)
       return session;
     const requestId = session.activeRequestId;
-    session.runStatus = "interrupted";
+    session.runStatus =
+      session.modelBinding.provider === "google_interactions" &&
+      session.googleOutcomeUnknown === false
+        ? "paused"
+        : "interrupted";
     session.activeRequestId = null;
     if (requestId !== null)
       session.completedRequestIds = rememberAuthoringRequest(
         session.completedRequestIds,
         requestId,
       );
-    session.lastFailure =
-      "The previous model request stopped after its last settled worktree change. Continue this conversation when ready.";
+    session.lastFailure = session.googleOutcomeUnknown
+      ? "The Google request outcome is unknown; start a fresh model context."
+      : "The previous model request stopped after its last settled worktree change. Continue this conversation when ready.";
     session.updatedAt = Date.now();
     await this.#store.saveSession(session);
     return session;

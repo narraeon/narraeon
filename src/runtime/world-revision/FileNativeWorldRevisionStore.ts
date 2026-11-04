@@ -13,7 +13,10 @@ import type { AppLocale } from "../../protocol/appPreferences.ts";
 import { gameplayPath } from "../../protocol/gameplay.ts";
 import type { ModelUsage } from "../../protocol/modelUsage.ts";
 import { validGoogleInteractionsSteps } from "../model/ProviderExchangeState.ts";
-import { withoutDamagedGoogleSteps } from "../authoring/DamagedGoogleContinuation.ts";
+import {
+  hasDamagedGoogleSteps,
+  withoutDamagedGoogleSteps,
+} from "../authoring/DamagedGoogleContinuation.ts";
 import type { ContentTreeFile } from "../content/ContentTreeFile.ts";
 import { contentTreeFingerprint } from "../content/ContentTreeFingerprint.ts";
 import type {
@@ -124,6 +127,7 @@ export interface StoredWorldRevisionSession {
   activeRequestId: string | null;
   completedRequestIds: string[];
   lastFailure: string | null;
+  googleOutcomeUnknown?: boolean;
   authorization: SettingAuthoringAuthorization | null;
   pendingSettlement: StoredWorldRevisionPendingSettlement | null;
 }
@@ -227,7 +231,15 @@ export class FileNativeWorldRevisionStore {
   readSession(sessionId: string): Promise<StoredWorldRevisionSession> {
     return this.#afterMutations(async () => {
       try {
-        return await this.#readSession(sessionId);
+        const session = await this.#readSession(sessionId);
+        if (
+          hasDamagedGoogleSteps(session) &&
+          (await this.#damagedSession(sessionId))
+        )
+          throw new Error(
+            "The historical conversation has damaged Google continuation; start a fresh model context",
+          );
+        return session;
       } catch (error) {
         if (await this.#damagedSession(sessionId))
           throw new Error(
@@ -261,6 +273,8 @@ export class FileNativeWorldRevisionStore {
         let session: StoredWorldRevisionSession;
         try {
           session = await this.#readSession(sessionId);
+          if (hasDamagedGoogleSteps(session))
+            session = (await this.#damagedSession(sessionId)) ?? session;
         } catch (error) {
           const damaged = await this.#damagedSession(sessionId);
           if (damaged === null) throw error;
@@ -342,15 +356,27 @@ export class FileNativeWorldRevisionStore {
       await readFile(this.#sessionPath(sessionId), "utf8"),
     );
     const copy = withoutDamagedGoogleSteps(raw);
-    if (copy === null) return null;
+    if (copy === null) {
+      if (hasDamagedGoogleSteps(raw))
+        throw new Error(
+          "Cannot safely identify the damaged historical conversation; settlement or identity is unverified",
+        );
+      return null;
+    }
     const session = validateSession(copy);
     if (
       session.sessionId !== sessionId ||
+      session.requests?.[0]?.requestId !== session.creationRequestId ||
       !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(session.creationRequestId)
     )
-      return null;
+      throw new Error(
+        "Cannot safely identify the damaged historical conversation; its creation identity is unverified",
+      );
     const epoch = await this.#readEpoch(session.epochId);
-    if (epoch.worldId !== session.worldId) return null;
+    if (epoch.worldId !== session.worldId)
+      throw new Error(
+        "Cannot safely identify the damaged historical conversation; its world is inconsistent",
+      );
     return {
       ...session,
       damagedContinuation: true,
@@ -499,7 +525,7 @@ function validateSession(value: unknown): StoredWorldRevisionSession {
         "authorization",
         "pendingSettlement",
       ],
-      ["requests"],
+      ["requests", "googleOutcomeUnknown"],
     ) ||
     (value.schemaVersion !== 1 && value.schemaVersion !== 2) ||
     (value.schemaVersion === 1
@@ -539,6 +565,10 @@ function validateSession(value: unknown): StoredWorldRevisionSession {
     !Array.isArray(value.completedRequestIds) ||
     !value.completedRequestIds.every((item) => typeof item === "string") ||
     (value.lastFailure !== null && typeof value.lastFailure !== "string") ||
+    (value.googleOutcomeUnknown !== undefined &&
+      (typeof value.googleOutcomeUnknown !== "boolean" ||
+        !isRecord(value.modelBinding) ||
+        value.modelBinding.provider !== "google_interactions")) ||
     !validAuthorization(value.authorization) ||
     !validPendingSettlement(value.pendingSettlement) ||
     !validPendingForSession(

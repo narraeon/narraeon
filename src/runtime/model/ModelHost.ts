@@ -176,12 +176,14 @@ export interface ModelHostWireRequest {
   body: unknown;
   /** Diagnostic sources merged into a single Google system_instruction. */
   systemInstructionSources?: { promptId?: string; sources: string[] }[];
+  redactedProviderContinuation?: true;
 }
 
 export interface ModelHost {
   freezeRequest?(request: ModelHostExchange): ModelHostExchange;
   /** Optional credential-free production encoding, used only for request diagnostics. */
   previewRequest?(request: ModelHostExchange): ModelHostWireRequest;
+  previewAuthoringRequest?(request: ModelHostExchange): ModelHostWireRequest;
   binding(): ModelHostBinding;
   exchange(
     request: ModelHostExchange,

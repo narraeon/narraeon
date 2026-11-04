@@ -272,7 +272,14 @@ export class FileNativeModelHost implements ModelHost {
     return this.#requestHost(request).#previewRequest(request);
   }
 
-  #previewRequest(request: ModelHostExchange): ModelHostWireRequest {
+  previewAuthoringRequest(request: ModelHostExchange): ModelHostWireRequest {
+    return this.#requestHost(request).#previewRequest(request, true);
+  }
+
+  #previewRequest(
+    request: ModelHostExchange,
+    redactContinuation = false,
+  ): ModelHostWireRequest {
     assertExchangeCompatibility(this.#connection, request);
     const provider = this.#connection.provider;
     const body =
@@ -283,7 +290,7 @@ export class FileNativeModelHost implements ModelHost {
               responsesRequestInput(this.#connection, request),
             )
           : provider === "google_interactions"
-            ? googleRequestBody(this.#connection, request)
+            ? googleRequestBody(this.#connection, request, redactContinuation)
             : anthropicRequestBody(this.#connection, request);
     return {
       provider,
@@ -296,6 +303,9 @@ export class FileNativeModelHost implements ModelHost {
             ? ["Accept", "x-goog-api-key", "Content-Type"]
             : ["Accept", "Authorization", "Content-Type"],
       body: cloneProviderValue(body),
+      ...(provider === "google_interactions" && redactContinuation
+        ? { redactedProviderContinuation: true as const }
+        : {}),
       ...(provider === "google_interactions"
         ? { systemInstructionSources: googleSystemSources(request) }
         : {}),
@@ -900,6 +910,7 @@ function googleLateSystemSource(request: ModelHostExchange): string {
 function googleRequestBody(
   connection: ResolvedFileNativeModelConnection,
   request: ModelHostExchange,
+  redactContinuation = false,
 ): Record<string, unknown> {
   const messages = request.bootstrap.provider.messages;
   const system: string[] = [];
@@ -988,7 +999,13 @@ function googleRequestBody(
         )
           calls.set(step.id, step.name);
       }
-      input.push(...cloneProviderValue(item.providerState.steps));
+      input.push(
+        ...(redactContinuation
+          ? item.providerState.steps.map(() => ({
+              type: "runtime_redacted_provider_step",
+            }))
+          : cloneProviderValue(item.providerState.steps)),
+      );
     } else if (item.kind === "tool") {
       const name = calls.get(item.toolCallId);
       if (name === undefined)

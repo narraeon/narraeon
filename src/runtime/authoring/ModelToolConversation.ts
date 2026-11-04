@@ -53,6 +53,7 @@ export interface ModelToolConversationState {
   activeRequestId: string | null;
   completedRequestIds: string[];
   lastFailure: string | null;
+  googleOutcomeUnknown?: boolean;
 }
 
 export interface ModelToolConversationStreaming {
@@ -197,6 +198,8 @@ export class ModelToolConversation<
           input.worldRevisionBoundaries,
         );
         session.exchange += 1;
+        if (session.modelBinding.provider === "google_interactions")
+          session.googleOutcomeUnknown = true;
         live.streaming = emptyStreaming();
         session.updatedAt = Date.now();
         await input.save(session);
@@ -227,6 +230,8 @@ export class ModelToolConversation<
           providerState: response.providerState!,
           toolCalls: structuredClone(toolCalls),
         });
+        if (session.modelBinding.provider === "google_interactions")
+          session.googleOutcomeUnknown = false;
         session.updatedAt = Date.now();
         if (toolCalls.length === 0) {
           session.messages.push({
@@ -273,13 +278,15 @@ export class ModelToolConversation<
         live.requestId,
       );
       session.lastFailure =
-        error instanceof ModelHostCancelledError
-          ? (input.failure?.cancelled ??
-            "The authoring response was cancelled. Complete tool responses already settled were retained.")
-          : error instanceof Error
-            ? error.message
-            : (input.failure?.interrupted ??
-              "The authoring response was interrupted");
+        session.googleOutcomeUnknown === true
+          ? "The Google request outcome is unknown; start a fresh model context before sending again."
+          : error instanceof ModelHostCancelledError
+            ? (input.failure?.cancelled ??
+              "The authoring response was cancelled. Complete tool responses already settled were retained.")
+            : error instanceof Error
+              ? error.message
+              : (input.failure?.interrupted ??
+                "The authoring response was interrupted");
       session.updatedAt = Date.now();
       await input.save(session);
       return input.view(session);
@@ -317,7 +324,15 @@ export function resumePausedAuthoringConversation(
 ): void {
   if (session.runStatus !== "paused")
     throw new Error("Only a paused authoring conversation can be continued");
-  if (session.modelItems.at(-1)?.kind !== "tool")
+  const last = session.modelItems.at(-1);
+  if (
+    last?.kind !== "tool" &&
+    !(
+      session.modelBinding.provider === "google_interactions" &&
+      session.googleOutcomeUnknown === false &&
+      last?.kind === "user"
+    )
+  )
     throw new Error(
       "The paused authoring conversation does not end with settled tool results",
     );
