@@ -336,6 +336,44 @@ test.each([
   ).rejects.toBeInstanceOf(ModelHostOutcomeUnknownError);
 });
 
+test("Google 空终态有效，但空 steps 不能回放为 assistant 历史", async () => {
+  const host = new FileNativeModelHost(
+    {
+      provider: "google_interactions",
+      baseUrl: "https://provider.invalid/v1beta",
+      apiKey: "synthetic-secret",
+      modelId: "manual-model",
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_048,
+    },
+    () =>
+      Promise.resolve(
+        new Response(
+          'data: {"event_type":"interaction.completed","interaction":{"status":"completed"}}\n\n',
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      ),
+  );
+  const request = exchangeFor(
+    "google_interactions",
+    "manual-model",
+    "provider_managed",
+  );
+  const response = await host.exchange(request);
+  expect(response).toMatchObject({
+    stopReason: "completed",
+    toolCalls: [],
+    providerState: { protocol: "google_interactions", steps: [] },
+  });
+  request.appended.push({
+    kind: "assistant",
+    text: "already committed",
+    toolCalls: [],
+    providerState: { protocol: "google_interactions", steps: [] },
+  });
+  expect(() => host.previewRequest(request)).toThrow(/continuation/i);
+});
+
 test("Google 派发前拒绝损坏的原生续传", () => {
   const host = new FileNativeModelHost({
     provider: "google_interactions",

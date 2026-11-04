@@ -864,6 +864,101 @@ test("Google 工具顺序结算后遇到未完成续接不重放或提交半响�
   expect(requestBodies).toHaveLength(2);
 });
 
+test("Google 冷重启遇到已提交回复的空 steps 时在写入和派发前要求新上下文", async () => {
+  let fetches = 0;
+  const host = new FileNativeModelHost(
+    {
+      provider: "google_interactions",
+      baseUrl: "https://provider.invalid/v1beta",
+      apiKey: "synthetic-secret",
+      modelId: "manual-model",
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_000,
+    },
+    () => {
+      fetches++;
+      const events = [
+        { event_type: "step.start", index: 0, step: { type: "model_output" } },
+        {
+          event_type: "step.delta",
+          index: 0,
+          delta: { type: "text", text: "已经提交。" },
+        },
+        { event_type: "step.stop", index: 0 },
+        {
+          event_type: "interaction.completed",
+          interaction: { status: "completed" },
+        },
+      ];
+      return Promise.resolve(
+        new Response(
+          events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      );
+    },
+  );
+  const { worlds, worldId, root } = await createWorld(
+    "google-empty-history",
+    undefined,
+    host.binding(),
+  );
+  const first = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "google-empty-history",
+    exchangeId: "first",
+    playerText: "推开门。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: host.binding(),
+    modelHost: host,
+  });
+  expect(first.status).toBe("ready");
+  expect(fetches).toBe(1);
+  const before = await worlds.recoverEndpoint(worldId);
+  const contextsRoot = join(
+    root,
+    "worlds-file-native",
+    worldId,
+    "runtime",
+    "play-contexts",
+  );
+  const [context] = await readdir(contextsRoot);
+  const transcriptRoot = join(contextsRoot, context!, "transcript");
+  let corrupted = 0;
+  for (const name of await readdir(transcriptRoot)) {
+    const path = join(transcriptRoot, name);
+    const item = JSON.parse(await readFile(path, "utf8")) as {
+      kind: string;
+      providerState?: { protocol: string; steps: unknown[] };
+    };
+    if (
+      item.kind === "assistant" &&
+      item.providerState?.protocol === "google_interactions"
+    ) {
+      item.providerState.steps = [];
+      await writeFile(path, JSON.stringify(item));
+      corrupted++;
+    }
+  }
+  expect(corrupted).toBe(1);
+  const coldWorlds = new FileNativeWorldStore(root);
+  const restarted = new PlayCallChain(coldWorlds);
+  await expect(
+    restarted.append({
+      worldId,
+      chainId: "google-empty-history",
+      exchangeId: "next",
+      playerText: "再走一步。",
+      modelHost: host,
+    }),
+  ).rejects.toThrow(/fresh context/i);
+  expect(fetches).toBe(1);
+  const after = await coldWorlds.recoverEndpoint(worldId);
+  expect(after.history).toEqual(before.history);
+  expect(after.state).toEqual(before.state);
+});
+
 test("Google 冷重启仅允许语义绑定不变的凭据更新", async () => {
   const config = {
     provider: "google_interactions" as const,

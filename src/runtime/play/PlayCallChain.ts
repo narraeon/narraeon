@@ -82,6 +82,7 @@ import {
   ModelHostCancelledError,
   ModelHostOutcomeUnknownError,
 } from "../model/ModelHost.ts";
+import { validGoogleInteractionsContinuation } from "../model/ProviderExchangeState.ts";
 import {
   FileNativePromptCompiler,
   type FileNativePromptInput,
@@ -535,6 +536,19 @@ export class PlayCallChain {
     const session = await this.#requireChain(input.worldId, input.chainId);
     await this.#assertCurrentHead(session);
     assertSessionModelHostBinding(session, input.modelHost);
+    if (
+      session.status === "ready" &&
+      session.modelBinding?.provider === "google_interactions" &&
+      session.transcript.some(
+        (item) =>
+          item.kind === "assistant" &&
+          (item.providerState?.protocol !== "google_interactions" ||
+            !validGoogleInteractionsContinuation(item.providerState.steps)),
+      )
+    )
+      throw new PlayCallChainError(
+        "The Google Interactions continuation is missing or corrupted; start a fresh context.",
+      );
     if (input.playerText.trim().length === 0) {
       if (session.status === "running")
         throw new PlayCallChainError("A model request is still running.");

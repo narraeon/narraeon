@@ -37,7 +37,7 @@ import {
   type PromptCompilation,
 } from "../prompt/FileNativePromptCompiler.ts";
 import {
-  validGoogleInteractionsSteps,
+  validGoogleInteractionsContinuation,
   type ProviderExchangeState,
 } from "./ProviderExchangeState.ts";
 import {
@@ -957,7 +957,7 @@ function googleRequestBody(
     if (item.kind === "assistant") {
       if (
         item.providerState?.protocol !== "google_interactions" ||
-        !validGoogleInteractionsSteps(item.providerState.steps)
+        !validGoogleInteractionsContinuation(item.providerState.steps)
       )
         throw continuationError("Google Interactions");
       for (const step of item.providerState.steps) {

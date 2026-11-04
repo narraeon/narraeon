@@ -63,6 +63,13 @@ export function validGoogleInteractionsSteps(
   });
 }
 
+/** Empty terminal results are valid, but an assistant history item must replay steps. */
+export function validGoogleInteractionsContinuation(
+  value: unknown,
+): value is Record<string, unknown>[] {
+  return validGoogleInteractionsSteps(value) && value.length > 0;
+}
+
 function validContent(value: unknown): boolean {
   return (
     Array.isArray(value) &&
