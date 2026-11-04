@@ -35,6 +35,7 @@ function parseLossless(source: string): unknown {
 export async function aggregateGoogleInteractions(
   body: ReadableStream<Uint8Array>,
   onDelta?: (delta: ModelHostDelta) => void,
+  onUsage?: (usage: unknown) => void,
 ): Promise<{
   steps: Record<string, unknown>[];
   status: string;
@@ -76,13 +77,19 @@ export async function aggregateGoogleInteractions(
     }
     if (value.event_type === "interaction.status_update") {
       if (terminal !== undefined) invalid();
-      if (value.usage !== undefined) latestUsage = value.usage;
+      if (value.usage !== undefined) {
+        latestUsage = value.usage;
+        onUsage?.(value.usage);
+      }
       continue;
     }
     if (value.event_type === "interaction.completed") {
       if (terminal !== undefined || !record(value.interaction)) invalid();
       terminal = value.interaction;
-      if (terminal.usage !== undefined) latestUsage = terminal.usage;
+      if (terminal.usage !== undefined) {
+        latestUsage = terminal.usage;
+        onUsage?.(terminal.usage);
+      }
       continue;
     }
     if (

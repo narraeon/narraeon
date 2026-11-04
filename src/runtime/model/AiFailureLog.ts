@@ -10,6 +10,7 @@ import {
 import { basename, join } from "node:path";
 
 import type { ModelProviderKind } from "../../protocol/modelConnections.ts";
+import type { GoogleHopEvidence } from "./ModelHost.ts";
 
 export const aiFailureLogFormat = "narraeon.ai-failure-log/v1" as const;
 
@@ -63,6 +64,7 @@ export interface AiExchangeDiagnostics {
   };
   /** Only reasoning/thinking text the Provider actually returned. */
   reasoning?: string;
+  googleHops?: GoogleHopEvidence[];
 }
 
 export interface AiFailureRecorder {
@@ -291,7 +293,11 @@ export class FileNativeAiFailureLog implements AiFailureRecorder {
 
 /** Mutable capture used only for the lifetime of one Provider request. */
 export class AiExchangeCapture {
-  readonly #base: Omit<AiExchangeDiagnostics, "response" | "reasoning">;
+  readonly #base: Omit<
+    AiExchangeDiagnostics,
+    "response" | "reasoning" | "googleHops"
+  >;
+  #googleHops: GoogleHopEvidence[] = [];
   readonly #responseChunks: Buffer[] = [];
   #response:
     Omit<NonNullable<AiExchangeDiagnostics["response"]>, "body"> | undefined;
@@ -322,6 +328,10 @@ export class AiExchangeCapture {
 
   setReasoning(text: string | undefined): void {
     if (text !== undefined) this.#reasoning = text;
+  }
+
+  setGoogleHops(hops: GoogleHopEvidence[]): void {
+    this.#googleHops = structuredClone(hops);
   }
 
   captureResponse(response: Response): Response {
@@ -376,6 +386,9 @@ export class AiExchangeCapture {
             },
           }),
       ...(this.#reasoning === "" ? {} : { reasoning: this.#reasoning }),
+      ...(this.#googleHops.length === 0
+        ? {}
+        : { googleHops: structuredClone(this.#googleHops) }),
     };
   }
 }

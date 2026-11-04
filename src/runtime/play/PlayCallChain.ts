@@ -2450,6 +2450,13 @@ export class PlayCallChain {
         }
         response = await modelHost.exchange(request, {
           signal,
+          onGoogleHop: (hop) =>
+            this.#worlds.playTimeline.recordGoogleHop(
+              session.worldId,
+              session.chainId,
+              session.promptRuns?.at(-1)?.exchange ?? 1,
+              hop,
+            ),
           onDelta: (delta) => {
             this.#observeInvocation(session.chainId, delta.kind, {
               ...(delta.kind === "reasoning"
@@ -2711,6 +2718,16 @@ export class PlayCallChain {
           ? {}
           : { failureLog: this.#failureLog }),
         observer: {
+          onGoogleHop: async (id, hop) => {
+            if (previewExchange !== undefined)
+              await this.#worlds.playTimeline.recordGoogleHop(
+                session.worldId,
+                session.chainId,
+                previewExchange,
+                hop,
+                id,
+              );
+          },
           onRequest: async (id, request) => {
             if (previewExchange === undefined) return false;
             // Only Google currently has a continuation-redacting encoder.

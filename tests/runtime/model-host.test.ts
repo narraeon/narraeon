@@ -11,6 +11,7 @@ import {
   ScriptedModelHost,
   type ModelHostBinding,
   type ModelHostExchange,
+  type GoogleHopEvidence,
 } from "../../src/runtime/model/ModelHost.ts";
 import {
   createMinimalFileNativePreviewInput,
@@ -115,6 +116,7 @@ test("Google 预览使用无状态 Interactions 与原序 System 前缀", () => 
 
 test("Google 无状态续接保留各跳正文和原生步骤", async () => {
   const bodies: Record<string, unknown>[] = [];
+  const hops: GoogleHopEvidence[] = [];
   const hop = (text: string, status: string, token?: string) =>
     [
       { event_type: "interaction.created", interaction: { id: "synthetic" } },
@@ -156,6 +158,11 @@ test("Google 无状态续接保留各跳正文和原生步骤", async () => {
   );
   const response = await host.exchange(
     exchangeFor("google_interactions", "manual-model", "provider_managed"),
+    {
+      onGoogleHop: (hop) => {
+        hops.push(hop);
+      },
+    },
   );
   expect(response.text).toBe("first second");
   expect(response.providerState).toEqual({
@@ -167,6 +174,19 @@ test("Google 无状态续接保留各跳正文和原生步骤", async () => {
   });
   expect(bodies).toHaveLength(2);
   expect(bodies[1]).toEqual({ ...bodies[0], continuation_token: "token-one" });
+  expect(hops).toMatchObject([
+    { hop: 1, tokenSupplied: false, status: "attempted" },
+    {
+      hop: 1,
+      tokenSupplied: false,
+      status: "requires_continuation",
+      httpStatus: 200,
+    },
+    { hop: 2, tokenSupplied: true, status: "attempted" },
+    { hop: 2, tokenSupplied: true, status: "completed", httpStatus: 200 },
+  ]);
+  expect(JSON.stringify(hops)).not.toContain("token-one");
+  expect(JSON.stringify(hops)).not.toContain("secret");
 });
 
 test("Google 后置请求取消后可保留迟到的完整单跳，但不发下一跳", async () => {
@@ -273,6 +293,94 @@ test("Google 续接 usage 对每跳最终值求和且保留缺失", async () => 
       ],
     },
   });
+});
+
+test("Google 后续 HTTP 拒绝只记录脱敏逐跳证据", async () => {
+  const captured: unknown[] = [];
+  const hops: GoogleHopEvidence[] = [];
+  let count = 0;
+  const host = new FileNativeModelHost(
+    {
+      provider: "google_interactions",
+      baseUrl: "https://provider.invalid/v1beta",
+      apiKey: "key-sentinel",
+      modelId: "manual-model",
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_048,
+    },
+    () => {
+      count++;
+      if (count === 2)
+        return Promise.resolve(
+          new Response(
+            "error echo token-sentinel key-sentinel signature-sentinel",
+            { status: 400 },
+          ),
+        );
+      return Promise.resolve(
+        new Response(
+          [
+            { event_type: "interaction.created" },
+            {
+              event_type: "interaction.completed",
+              interaction: {
+                status: "requires_continuation",
+                continuation_token: "token-sentinel",
+                usage: {
+                  total_input_tokens: 4,
+                  extension: "signature-sentinel",
+                },
+              },
+            },
+          ]
+            .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+            .join(""),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      );
+    },
+    {
+      recordFailure: (value) => {
+        captured.push(value);
+        return Promise.resolve();
+      },
+      recordExchangeIfActive: () => Promise.resolve(),
+      resolve: () => Promise.resolve(),
+    },
+  );
+  await expect(
+    host.exchange(
+      exchangeFor("google_interactions", "manual-model", "provider_managed"),
+      {
+        onGoogleHop: (hop) => {
+          hops.push(hop);
+        },
+      },
+    ),
+  ).rejects.toBeInstanceOf(ModelHostOutcomeUnknownError);
+  expect(hops.at(-1)).toMatchObject({
+    hop: 2,
+    tokenSupplied: true,
+    status: "rejected",
+    httpStatus: 400,
+  });
+  expect(captured).toHaveLength(1);
+  expect(captured[0]).toMatchObject({
+    exchange: {
+      googleHops: [
+        { usage: { total_input_tokens: 4 } },
+        { status: "rejected", httpStatus: 400 },
+      ],
+    },
+  });
+  const diagnostics = JSON.stringify({ hops, captured });
+  for (const sentinel of [
+    "key-sentinel",
+    "token-sentinel",
+    "signature-sentinel",
+    "error echo",
+  ])
+    expect(diagnostics).not.toContain(sentinel);
 });
 
 test("Google 重复旧续接 token 时停止，不能返回部分结果", async () => {

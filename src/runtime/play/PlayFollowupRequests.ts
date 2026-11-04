@@ -11,6 +11,7 @@ import type {
   ModelHostDelta,
   ModelHostToolCall,
   ModelHostExchange,
+  GoogleHopEvidence,
 } from "../model/ModelHost.ts";
 import { ModelHostCancelledError } from "../model/ModelHost.ts";
 import type { ModelUsage } from "../../protocol/modelUsage.ts";
@@ -50,6 +51,7 @@ export interface PlayFollowupRun {
 
 export interface PlayFollowupObserver {
   onRequest?: (id: string, request: ModelHostExchange) => Promise<boolean>;
+  onGoogleHop?: (id: string, evidence: GoogleHopEvidence) => Promise<void>;
   onProviderDispatch?: () => void;
   onProviderDelta?: (delta: ModelHostDelta) => void;
   onProviderSettled?: () => void;
@@ -234,6 +236,8 @@ async function runOne(
       input.observer?.onProviderDispatch?.();
       response = await input.modelHost.exchange(request, {
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+        onGoogleHop: (evidence) =>
+          input.observer?.onGoogleHop?.(followup.id, evidence),
         ...(input.controls !== undefined
           ? { retainLateExtensionResponse: true }
           : {}),

@@ -163,10 +163,29 @@ export interface ModelHostDelta {
 
 export interface ModelHostExchangeObserver {
   onDelta?: (delta: ModelHostDelta) => void;
+  /** Sanitized evidence for one Google dispatch, updated as it progresses. */
+  onGoogleHop?: (evidence: GoogleHopEvidence) => Promise<void> | void;
   /** Explicit user cancellation for this logical dispatch. */
   signal?: AbortSignal;
   /** A closed extension may retain a complete late response as diagnostics only. */
   retainLateExtensionResponse?: boolean;
+}
+
+export interface GoogleHopEvidence {
+  exchange: number;
+  attempt: number;
+  hop: number;
+  tokenSupplied: boolean;
+  status:
+    | "attempted"
+    | "completed"
+    | "requires_action"
+    | "requires_continuation"
+    | "interrupted"
+    | "rejected";
+  httpStatus?: number;
+  usage?: Record<string, number>;
+  request?: ModelHostWireRequest;
 }
 
 /** Credential-free projection of the exact request body a host will send. */
@@ -179,6 +198,7 @@ export interface ModelHostWireRequest {
   /** Diagnostic sources merged into a single Google system_instruction. */
   systemInstructionSources?: { promptId?: string; sources: string[] }[];
   redactedProviderContinuation?: true;
+  googleHops?: GoogleHopEvidence[];
 }
 
 export interface ModelHost {

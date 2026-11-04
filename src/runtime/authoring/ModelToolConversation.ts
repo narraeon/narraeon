@@ -15,6 +15,7 @@ import type {
   ModelHostToolCall,
 } from "../model/ModelHost.ts";
 import { ModelHostCancelledError } from "../model/ModelHost.ts";
+import { withGoogleHop } from "../model/GoogleRequestPreview.ts";
 import type { PromptCompilation } from "../prompt/FileNativePromptCompiler.ts";
 
 const maximumExchangesPerMessage = 64;
@@ -206,6 +207,14 @@ export class ModelToolConversation<
         input.changed?.(true);
         const response = await input.host.exchange(request, {
           signal: live.controller.signal,
+          onGoogleHop: async (hop) => {
+            const snapshot = session.requests?.findLast(
+              (entry) => entry.requestId === live.requestId,
+            );
+            if (snapshot?.wireRequest === undefined) return;
+            snapshot.wireRequest = withGoogleHop(snapshot.wireRequest, hop);
+            await input.save(session);
+          },
           onDelta: (delta) => {
             recordDelta(live, delta);
             input.changed?.(false);

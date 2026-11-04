@@ -22,6 +22,7 @@ import type {
   ModelHostUsage,
   ModelHostWireRequest,
   ModelHostResponse,
+  GoogleHopEvidence,
 } from "./ModelHost.ts";
 import {
   assertModelOutputComplete,
@@ -260,6 +261,7 @@ export class FileNativeModelHost implements ModelHost {
           observer?.onDelta,
           signal,
           observer?.retainLateExtensionResponse === true,
+          observer?.onGoogleHop,
         );
       return await this.#anthropic(request, observer?.onDelta, signal);
     } catch (error: unknown) {
@@ -274,7 +276,10 @@ export class FileNativeModelHost implements ModelHost {
 
   /** Uses the production encoders and deliberately omits credentials. */
   previewRequest(request: ModelHostExchange): ModelHostWireRequest {
-    return this.#requestHost(request).#previewRequest(request);
+    return this.#requestHost(request).#previewRequest(
+      request,
+      this.#connection.provider === "google_interactions",
+    );
   }
 
   previewAuthoringRequest(request: ModelHostExchange): ModelHostWireRequest {
@@ -340,6 +345,7 @@ export class FileNativeModelHost implements ModelHost {
     onDelta?: ModelHostDeltaSink,
     signal?: AbortSignal,
     retainLateExtensionResponse = false,
+    onGoogleHop?: ModelHostExchangeObserver["onGoogleHop"],
   ): Promise<ModelHostResponse> {
     const controller = new AbortController();
     let abort: (() => void) | undefined;
@@ -353,6 +359,7 @@ export class FileNativeModelHost implements ModelHost {
           },
           controller.signal,
           retainLateExtensionResponse,
+          onGoogleHop,
         ),
         new Promise<never>((_, reject) => {
           timer = setTimeout(
@@ -388,6 +395,7 @@ export class FileNativeModelHost implements ModelHost {
     onDelta: ModelHostDeltaSink | undefined,
     signal: AbortSignal,
     retainLateExtensionResponse: boolean,
+    onGoogleHop?: ModelHostExchangeObserver["onGoogleHop"],
   ): Promise<ModelHostResponse> {
     const bodyJson = JSON.stringify(
       googleRequestBody(this.#connection, request),
@@ -401,6 +409,32 @@ export class FileNativeModelHost implements ModelHost {
       modelDiagnosticContext(request),
       JSON.stringify(googleRequestBody(this.#connection, request, true)),
     );
+    const preview = this.#previewRequest(request, true);
+    const evidence: GoogleHopEvidence[] = [];
+    let reporting = Promise.resolve();
+    const report = (hop: GoogleHopEvidence) => {
+      capture?.setGoogleHops(evidence);
+      const snapshot = structuredClone(hop);
+      reporting = reporting.then(async () => {
+        try {
+          await onGoogleHop?.(snapshot);
+        } catch {
+          // Optional diagnostics cannot affect the model request.
+        }
+      });
+      return reporting;
+    };
+    signal.addEventListener(
+      "abort",
+      () => {
+        const hop = evidence.at(-1);
+        if (hop?.status === "attempted") {
+          hop.status = "interrupted";
+          void report(hop);
+        }
+      },
+      { once: true },
+    );
     return capturedProviderOperation(
       this.#failureLog,
       capture,
@@ -412,70 +446,111 @@ export class FileNativeModelHost implements ModelHost {
         let payload: Awaited<ReturnType<typeof aggregateGoogleInteractions>>;
         do {
           if (signal.aborted) throw cancelledModelRequest();
-          const response = await dispatchProviderRequest(
-            this.#fetch,
-            url,
-            {
-              method: "POST",
-              headers: {
-                Accept: "text/event-stream",
-                "x-goog-api-key": this.#connection.apiKey,
-                "Content-Type": "application/json",
+          const hop: GoogleHopEvidence = {
+            exchange: request.exchange ?? 1,
+            attempt: request.requestAttempt ?? 1,
+            hop: evidence.length + 1,
+            tokenSupplied: token !== undefined,
+            status: "attempted",
+            ...(token === undefined ? { request: preview } : {}),
+          };
+          evidence.push(hop);
+          try {
+            const dispatched = dispatchProviderRequest(
+              this.#fetch,
+              url,
+              {
+                method: "POST",
+                headers: {
+                  Accept: "text/event-stream",
+                  "x-goog-api-key": this.#connection.apiKey,
+                  "Content-Type": "application/json",
+                },
+                body:
+                  token === undefined
+                    ? bodyJson
+                    : JSON.stringify({
+                        ...frozenBody,
+                        continuation_token: token,
+                      }),
+                ...(signal === undefined ? {} : { signal }),
               },
-              body:
-                token === undefined
-                  ? bodyJson
-                  : JSON.stringify({
-                      ...frozenBody,
-                      continuation_token: token,
-                    }),
-              ...(signal === undefined ? {} : { signal }),
-            },
-            "Google Interactions",
-          );
-          observe(new Response(null, { status: response.status }));
-          if (signal.aborted && !retainLateExtensionResponse)
-            throw cancelledModelRequest();
-          if (!response.ok) {
-            if (token !== undefined)
-              throw new ModelHostOutcomeUnknownError(
-                "A later Google Interactions continuation request failed after earlier progress",
+              "Google Interactions",
+            );
+            void dispatched.catch(() => {
+              // The same rejection is classified after the diagnostic write.
+            });
+            await report(hop);
+            const response = await dispatched;
+            hop.httpStatus = response.status;
+            observe(new Response(null, { status: response.status }));
+            if (signal.aborted && !retainLateExtensionResponse)
+              throw cancelledModelRequest();
+            if (!response.ok) {
+              hop.status = "rejected";
+              await report(hop);
+              if (token !== undefined)
+                throw new ModelHostOutcomeUnknownError(
+                  "A later Google Interactions continuation request failed after earlier progress",
+                );
+              throw new ModelHostFailureError(
+                `Google Interactions request failed: HTTP ${response.status}`,
               );
-            throw new ModelHostFailureError(
-              `Google Interactions request failed: HTTP ${response.status}`,
+            }
+            if (!isProviderEventStream(response))
+              throw unknownProviderResponse("Google Interactions");
+            payload = await providerStreamResult(
+              response,
+              "Google Interactions",
+              (body) =>
+                aggregateGoogleInteractions(body, onDelta, (raw) => {
+                  const usage = safeGoogleUsage(raw);
+                  if (usage !== null) {
+                    hop.usage = usage;
+                    void report(hop);
+                  }
+                }),
+              signal,
             );
-          }
-          if (!isProviderEventStream(response))
-            throw unknownProviderResponse("Google Interactions");
-          payload = await providerStreamResult(
-            response,
-            "Google Interactions",
-            (body) => aggregateGoogleInteractions(body, onDelta),
-            signal,
-          );
-          if (
-            (token !== undefined ||
-              payload.status === "requires_continuation") &&
-            !payload.completeLifecycle
-          )
-            throw new ModelHostOutcomeUnknownError(
-              "Google Interactions continuation stream lifecycle is incomplete",
-            );
-          steps.push(...payload.steps);
-          usages.push(safeGoogleUsage(payload.usage));
-          if (payload.status === "requires_continuation") {
-            if (signal.aborted) throw cancelledModelRequest();
+            const safeUsage = safeGoogleUsage(payload.usage);
+            if (safeUsage !== null) hop.usage = safeUsage;
             if (
-              typeof payload.continuationToken !== "string" ||
-              !payload.continuationToken ||
-              seenTokens.has(payload.continuationToken) ||
-              usages.length >= 16
+              (token !== undefined ||
+                payload.status === "requires_continuation") &&
+              !payload.completeLifecycle
             )
               throw new ModelHostOutcomeUnknownError(
-                "Google Interactions continuation cannot proceed safely",
+                "Google Interactions continuation stream lifecycle is incomplete",
               );
-            token = payload.continuationToken;
-            seenTokens.add(token);
+            steps.push(...payload.steps);
+            usages.push(safeUsage);
+            hop.status =
+              payload.status === "completed" ||
+              payload.status === "requires_action" ||
+              payload.status === "requires_continuation"
+                ? payload.status
+                : "interrupted";
+            await report(hop);
+            if (payload.status === "requires_continuation") {
+              if (signal.aborted) throw cancelledModelRequest();
+              if (
+                typeof payload.continuationToken !== "string" ||
+                !payload.continuationToken ||
+                seenTokens.has(payload.continuationToken) ||
+                usages.length >= 16
+              )
+                throw new ModelHostOutcomeUnknownError(
+                  "Google Interactions continuation cannot proceed safely",
+                );
+              token = payload.continuationToken;
+              seenTokens.add(token);
+            }
+          } catch (error: unknown) {
+            if (hop.status === "attempted") {
+              hop.status = "interrupted";
+              await report(hop);
+            }
+            throw error;
           }
         } while (payload.status === "requires_continuation");
         payload.steps = steps;

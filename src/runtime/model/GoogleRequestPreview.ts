@@ -1,8 +1,31 @@
-import type { ModelHostWireRequest } from "./ModelHost.ts";
+import type { GoogleHopEvidence, ModelHostWireRequest } from "./ModelHost.ts";
+
+export function withGoogleHop(
+  wire: ModelHostWireRequest,
+  hop: GoogleHopEvidence,
+): ModelHostWireRequest {
+  const hops = [...(wire.googleHops ?? [])];
+  const index = hops.findIndex(
+    (old) =>
+      old.exchange === hop.exchange &&
+      old.attempt === hop.attempt &&
+      old.hop === hop.hop,
+  );
+  if (index < 0) hops.push(structuredClone(hop));
+  else hops[index] = structuredClone(hop);
+  const updated = { ...wire, googleHops: hops };
+  if (!isSafeGoogleWireRequest(updated))
+    throw new Error("Unsafe Google hop evidence");
+  return updated;
+}
 
 export function isSafeGoogleWireRequest(
   value: unknown,
 ): value is ModelHostWireRequest {
+  return validWireRequest(value, true);
+}
+
+function validWireRequest(value: unknown, allowHops: boolean): boolean {
   if (typeof value !== "object" || value === null || Array.isArray(value))
     return false;
   const record = value as Record<string, unknown>;
@@ -16,6 +39,7 @@ export function isSafeGoogleWireRequest(
         "body",
         "systemInstructionSources",
         "redactedProviderContinuation",
+        ...(allowHops ? ["googleHops"] : []),
       ].includes(key),
     ) &&
     record.provider === "google_interactions" &&
@@ -25,6 +49,10 @@ export function isSafeGoogleWireRequest(
     Array.isArray(record.headerNames) &&
     record.headerNames.every((name) => typeof name === "string") &&
     validGooglePreviewBody(record.body) &&
+    (record.googleHops === undefined ||
+      (allowHops &&
+        Array.isArray(record.googleHops) &&
+        record.googleHops.every(validHop))) &&
     (record.systemInstructionSources === undefined ||
       (Array.isArray(record.systemInstructionSources) &&
         record.systemInstructionSources.every(
@@ -40,6 +68,63 @@ export function isSafeGoogleWireRequest(
             Array.isArray(source.sources) &&
             source.sources.every((item: unknown) => typeof item === "string"),
         )))
+  );
+}
+
+function validHop(value: unknown): boolean {
+  if (
+    !isRecord(value) ||
+    !Object.keys(value).every((key) =>
+      [
+        "exchange",
+        "attempt",
+        "hop",
+        "tokenSupplied",
+        "status",
+        "httpStatus",
+        "usage",
+        "request",
+      ].includes(key),
+    )
+  )
+    return false;
+  return (
+    Number.isSafeInteger(value.exchange) &&
+    Number(value.exchange) > 0 &&
+    Number.isSafeInteger(value.attempt) &&
+    Number(value.attempt) > 0 &&
+    Number.isSafeInteger(value.hop) &&
+    Number(value.hop) > 0 &&
+    typeof value.tokenSupplied === "boolean" &&
+    [
+      "attempted",
+      "completed",
+      "requires_action",
+      "requires_continuation",
+      "interrupted",
+      "rejected",
+    ].includes(String(value.status)) &&
+    (value.httpStatus === undefined ||
+      (Number.isSafeInteger(value.httpStatus) &&
+        Number(value.httpStatus) >= 100 &&
+        Number(value.httpStatus) <= 599)) &&
+    (value.usage === undefined ||
+      (isRecord(value.usage) &&
+        Object.entries(value.usage).every(
+          ([key, count]) =>
+            [
+              "total_input_tokens",
+              "total_cached_tokens",
+              "total_thought_tokens",
+              "total_output_tokens",
+              "total_tokens",
+            ].includes(key) &&
+            Number.isSafeInteger(count) &&
+            Number(count) >= 0,
+        ))) &&
+    (value.request === undefined
+      ? Number(value.hop) > 1
+      : validWireRequest(value.request, false))
   );
 }
 
@@ -110,8 +195,9 @@ function validGooglePreviewItem(value: unknown): boolean {
         ["type", "id", "name", "arguments"].includes(key),
       ) &&
       typeof value.id === "string" &&
-      typeof value.name === "string" &&
-      isRecord(value.arguments)
+      value.name === "runtime_load_context" &&
+      isRecord(value.arguments) &&
+      Object.keys(value.arguments).length === 0
     );
   if (value.type === "function_result")
     return (

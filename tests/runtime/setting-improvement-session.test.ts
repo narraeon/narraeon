@@ -187,6 +187,45 @@ test("Google setting conversation settles ordered mixed calls and continues afte
   expect(sent).toHaveLength(3);
 });
 
+test("Google setting 多跳证据随作者请求冷读取并遮蔽 token 和签名", async () => {
+  const root = await temporaryRoot("google-setting-hops-");
+  const content = new ContentWorkspace(root, { locale: () => "en" });
+  const { localId } = await content.createCurrentTreeContentPackage();
+  const firstHop = googleSignedText("Beginning. ");
+  firstHop.unshift({ event_type: "interaction.created" });
+  firstHop[firstHop.length - 1] = {
+    event_type: "interaction.completed",
+    interaction: {
+      status: "requires_continuation",
+      continuation_token: "author-token",
+    },
+  };
+  const secondHop = [
+    { event_type: "interaction.created" },
+    ...googleText("Finished."),
+  ];
+  const { host, sent } = googleAuthoringHost([firstHop, secondHop]);
+  const first = await sendFresh(
+    serviceFor(root, content, host),
+    localId,
+    "multi-hop",
+    "Continue.",
+  );
+  expect(first.runStatus).toBe("ready");
+  expect(first.messages.at(-1)?.text).toBe("Beginning. Finished.");
+  expect(sent[1]).toEqual({ ...sent[0], continuation_token: "author-token" });
+  const saved = await new FileNativeSettingImprovementStore(root).read(
+    first.sessionId,
+  );
+  expect(saved.requests?.[0]?.wireRequest?.googleHops).toMatchObject([
+    { hop: 1, status: "requires_continuation", tokenSupplied: false },
+    { hop: 2, status: "completed", tokenSupplied: true },
+  ]);
+  const preview = JSON.stringify(saved.requests?.[0]?.wireRequest);
+  expect(preview).not.toContain("author-token");
+  expect(preview).not.toContain("synthetic-signature-secret");
+});
+
 test.each(["empty", "malformed", "missing", "null"])(
   "Google setting rejects %s persisted continuation after restart",
   async (corruption) => {

@@ -1,5 +1,8 @@
 import { isResolutionReceipt } from "../../protocol/resolution.ts";
-import { isSafeGoogleWireRequest } from "../model/GoogleRequestPreview.ts";
+import {
+  isSafeGoogleWireRequest,
+  withGoogleHop,
+} from "../model/GoogleRequestPreview.ts";
 import {
   legacyModelBindingFailure,
   projectLegacyModelBindingFailure,
@@ -57,6 +60,7 @@ import type {
   ModelHostBinding,
   ModelHostExchange,
   ModelHostWireRequest,
+  GoogleHopEvidence,
 } from "../model/ModelHost.ts";
 import type {
   MaterialSelection,
@@ -721,6 +725,12 @@ export class FileNativePlayTimelineStore {
     );
     if (value === null) return null;
     if (
+      isRecord(value) &&
+      value.provider === "google_interactions" &&
+      !isSafeGoogleWireRequest(value)
+    )
+      return null;
+    if (
       !isRecord(value) ||
       value.method !== "POST" ||
       ![
@@ -736,6 +746,26 @@ export class FileNativePlayTimelineStore {
     )
       throw new Error("Initial request encoding has an invalid shape");
     return value as unknown as ModelHostWireRequest;
+  }
+
+  async recordGoogleHop(
+    worldId: string,
+    chainId: string,
+    runExchange: number,
+    hop: GoogleHopEvidence,
+    followupId?: string,
+  ): Promise<void> {
+    const root = this.#contextRoot(worldId, chainId);
+    if (!(await retainedEncodingExchanges(root)).includes(runExchange)) return;
+    const path = join(
+      root,
+      followupId === undefined
+        ? encodingFileName(runExchange)
+        : followupEncodingFileName(runExchange, followupId),
+    );
+    const wire = await readOptionalJson<unknown>(path);
+    if (!isSafeGoogleWireRequest(wire)) return;
+    await publishJson(path, withGoogleHop(wire, hop));
   }
 
   async copyRetainedEncodings(

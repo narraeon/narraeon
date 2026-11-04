@@ -168,7 +168,11 @@ test("Google 后置请求使用冻结主链并恢复多个产物", async () => {
     modelHost: observingHost,
   });
   expect(sent).toHaveLength(3);
-  expect(previews).toEqual(sent);
+  expect(previews[0]).toEqual(sent[0]);
+  expect(previews.slice(1)).toEqual(
+    safePreviews.slice(1).map((preview) => (preview as { body: unknown }).body),
+  );
+  expect(JSON.stringify(previews)).not.toContain("synthetic-signature-secret");
   expect(
     (await worlds.playTimeline.readInitialEncoding(worldId, "google-followups"))
       ?.body,
@@ -273,11 +277,11 @@ test("Google 后置请求使用冻结主链并恢复多个产物", async () => {
   expect(
     (details[0]!.result as { requestPreview: { wireRequest: unknown } })
       .requestPreview.wireRequest,
-  ).toEqual(safePreviews[1]);
+  ).toMatchObject(safePreviews[1] as object);
   expect(
     (details[1]!.result as { requestPreview: { wireRequest: unknown } })
       .requestPreview.wireRequest,
-  ).toEqual(safePreviews[2]);
+  ).toMatchObject(safePreviews[2] as object);
   expect(JSON.stringify(details)).not.toContain("synthetic-signature-secret");
   expect(details[0]).toMatchObject({
     result: {
@@ -288,7 +292,6 @@ test("Google 后置请求使用冻结主链并恢复多个产物", async () => {
         providerRaw: {
           total_input_tokens: 12,
           total_output_tokens: 3,
-          vendor_extra: 99,
         },
       },
     },
@@ -315,6 +318,79 @@ test("Google 后置请求使用冻结主链并恢复多个产物", async () => {
     view.events.filter((event) => event.kind === "followup"),
   );
   expect(sent).toHaveLength(3);
+});
+
+test("Google 多跳签名和工具在完整响应后结算并可冷读逐跳证据", async () => {
+  const first = googleSignedText("暂定文字");
+  first.unshift({ event_type: "interaction.created" });
+  first[first.length - 1] = {
+    event_type: "interaction.completed",
+    interaction: {
+      status: "requires_continuation",
+      continuation_token: "private-token",
+    },
+  };
+  const second = [
+    { event_type: "interaction.created" },
+    ...googleTools([
+      {
+        id: "write-once",
+        name: "world_patch",
+        arguments: {
+          target: "@current-situation",
+          edits: [
+            { op: "replace", locator: { yaml: ["情况"] }, value: "续接后结算" },
+          ],
+        },
+      },
+    ]),
+  ];
+  const { host, sent } = googleAuthoringHost([
+    first,
+    second,
+    googleText("最终叙事"),
+  ]);
+  const { worlds, worldId, root } = await createWorld(
+    "google-hop-tool",
+    undefined,
+    host.binding(),
+  );
+  const view = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "hop-tool",
+    exchangeId: "first",
+    playerText: "Go.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: host.binding(),
+    modelHost: host,
+  });
+  expect(view.status).toBe("ready");
+  expect(sent).toHaveLength(3);
+  expect(sent[1]).toEqual({ ...sent[0], continuation_token: "private-token" });
+  expect(JSON.stringify(sent[2])).toContain("synthetic-signature-secret");
+  expect(
+    view.events.filter(
+      (event) => event.kind === "tool_call" && event.callId === "write-once",
+    ),
+  ).toHaveLength(1);
+  const history = (await worlds.recoverEndpoint(worldId)).history.map(
+    ({ exactText }) => exactText,
+  );
+  expect(history).toContain("最终叙事");
+  expect(history).not.toContain("暂定文字");
+  const reopened = new FileNativeWorldStore(root);
+  const wire = await reopened.playTimeline.readInitialEncoding(
+    worldId,
+    "hop-tool",
+  );
+  expect(wire?.googleHops).toMatchObject([
+    { hop: 1, status: "requires_continuation", tokenSupplied: false },
+    { hop: 2, status: "requires_action", tokenSupplied: true },
+    { hop: 1, status: "completed", tokenSupplied: false },
+  ]);
+  expect(JSON.stringify(wire)).not.toContain("private-token");
+  expect(JSON.stringify(wire)).not.toContain("synthetic-signature-secret");
 });
 
 test("Google 后置编码只保留两个运行并随分叉和归档恢复", async () => {
@@ -1008,8 +1084,7 @@ test("Google 后置失败保留剧情并继续派发后续请求", async () => {
   ).toMatchObject([
     {
       followupId: "status",
-      failure:
-        "Google Interactions returned unsupported terminal status: failed",
+      failure: "Google Interactions request outcome could not be confirmed",
     },
     { followupId: "options", toolCalls: [{ callId: "options", ok: true }] },
   ]);
