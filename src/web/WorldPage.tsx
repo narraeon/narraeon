@@ -3165,7 +3165,7 @@ function TimelineEvent({
                     ? uiText("请求编码：派发后取消")
                     : full.requestPreview?.status === "attempted"
                       ? uiText("请求编码：已尝试派发，响应未确认")
-                      : uiText("请求编码不可用（旧记录或已超出保留窗口）")}
+                      : uiText("请求编码不可用（未提供或已超出保留窗口）")}
               </p>
               <pre>{safeJson(full)}</pre>
             </>

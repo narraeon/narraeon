@@ -292,10 +292,21 @@ export class FileNativePlayTimelineStore {
       input.source.completedTools,
       input.target.completedTools,
     );
-    for (const exchange of (await recordedEncodingExchanges(sourceRoot)).slice(
-      0,
-      2,
-    )) {
+    const targetFollowups = new Set(
+      input.target.events.flatMap((event) =>
+        event.kind === "followup" && event.requestPreviewExchange !== undefined
+          ? [
+              followupEncodingFileName(
+                event.requestPreviewExchange,
+                event.followupId,
+              ),
+            ]
+          : [],
+      ),
+    );
+    for (const exchange of (await recordedEncodingExchanges(sourceRoot))
+      .filter((value) => value <= input.target.exchange)
+      .slice(0, 2)) {
       const encoding = await this.readInitialEncoding(
         input.sourceWorldId,
         input.source.chainId,
@@ -307,6 +318,7 @@ export class FileNativePlayTimelineStore {
           encoding,
         );
       for (const name of await followupEncodingNames(sourceRoot, exchange)) {
+        if (!targetFollowups.has(name)) continue;
         const value = await readOptionalJson<unknown>(join(sourceRoot, name));
         if (value !== null)
           await publishImmutableJson(join(targetRoot, name), value);
@@ -754,7 +766,7 @@ export class FileNativePlayTimelineStore {
     exchange: number,
     requestId: string,
     encoding: ModelHostWireRequest,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const root = this.#contextRoot(worldId, chainId);
     // The main encoding owns the bounded run slot; never create an orphan slot.
     if (
@@ -762,12 +774,13 @@ export class FileNativePlayTimelineStore {
         join(root, encodingFileName(exchange)),
       )) === null
     )
-      return;
+      return false;
     await publishImmutableJson(
       join(root, followupEncodingFileName(exchange, requestId)),
       encoding,
     );
     await pruneEncodings(root);
+    return true;
   }
 
   async readFollowupEncoding(

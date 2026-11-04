@@ -318,10 +318,9 @@ test("普通作者编辑包后置请求后创建世界，经真实 Runtime 派�
       .click();
     await page.getByText("本段调用详情", { exact: true }).click();
     await page.locator(".call-chain-followup summary").click();
-    await expect(page.getByText("请求编码：已收到完整响应")).toBeVisible();
-    await expect(page.locator(".call-chain-followup pre")).toContainText(
-      "PACKAGE BROWSER PROMPT",
-    );
+    await expect(
+      page.getByText("请求编码不可用（未提供或已超出保留窗口）"),
+    ).toBeVisible();
     const before = await runtime<{ head: string }>(page, {
       type: "world.read",
       worldId,

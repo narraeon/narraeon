@@ -40,6 +40,7 @@ export interface PlayFollowupOutcome {
   }[];
   failure?: string;
   requestPreviewStatus?: "attempted" | "completed" | "cancelled";
+  requestPreviewRecorded?: boolean;
 }
 
 export interface PlayFollowupRun {
@@ -48,7 +49,7 @@ export interface PlayFollowupRun {
 }
 
 export interface PlayFollowupObserver {
-  onRequest?: (id: string, request: ModelHostExchange) => Promise<void>;
+  onRequest?: (id: string, request: ModelHostExchange) => Promise<boolean>;
   onProviderDispatch?: () => void;
   onProviderDelta?: (delta: ModelHostDelta) => void;
   onProviderSettled?: () => void;
@@ -223,7 +224,8 @@ async function runOne(
         maxOutputTokens: input.maxOutputTokens,
       };
       try {
-        await input.observer?.onRequest?.(followup.id, request);
+        outcome.requestPreviewRecorded =
+          (await input.observer?.onRequest?.(followup.id, request)) ?? false;
       } catch {
         // Diagnostic recording must not change the provider request.
       }

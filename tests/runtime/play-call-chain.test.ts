@@ -357,7 +357,8 @@ test("Google 后置编码只保留两个运行并随分叉和归档恢复", asyn
     modelBinding: host.binding(),
     modelHost: host,
   });
-  for (const n of [2, 3])
+  let secondHead = "";
+  for (const n of [2, 3]) {
     view = await chains.append({
       worldId,
       chainId: "window",
@@ -367,6 +368,8 @@ test("Google 后置编码只保留两个运行并随分叉和归档恢复", asyn
       resolvePrompt: () =>
         Promise.resolve({ hostBinding: hostBinding(), playPreset: preset }),
     });
+    if (n === 2) secondHead = view.parentHead;
+  }
   const events = view.events.filter((event) => event.kind === "followup");
   expect(events).toHaveLength(6);
   const head = await worlds.currentHead(worldId);
@@ -417,6 +420,52 @@ test("Google 后置编码只保留两个运行并随分叉和归档恢复", asyn
       eventId: forkEvent.id,
     }),
   ).toMatchObject({ result: { requestPreview: { status: "completed" } } });
+  const oldFork = await chains.deriveWorld({
+    operationId: "window-old-fork",
+    sourceWorldId: worldId,
+    sourceHead: secondHead,
+    hostPresetId: "host-main",
+  });
+  const oldForkId = oldFork.world.worldId;
+  const oldView = (await chains.inspectWorld(oldForkId))!;
+  const forkTransport = googleAuthoringHost([
+    googleText("Fork story"),
+    googleTools([
+      {
+        id: "fork-status",
+        name: "artifact_emit",
+        arguments: { output: "status_bar", payload: { hp: 4 } },
+      },
+    ]),
+    googleTools([
+      {
+        id: "fork-options",
+        name: "artifact_emit",
+        arguments: { output: "options", payload: { first: "Fork" } },
+      },
+    ]),
+  ]);
+  const newForkView = await chains.append({
+    worldId: oldForkId,
+    chainId: oldView.chainId,
+    exchangeId: "fork-new",
+    playerText: "FORK INPUT",
+    modelHost: forkTransport.host,
+    resolvePrompt: () =>
+      Promise.resolve({ hostBinding: hostBinding(), playPreset: preset }),
+  });
+  const newEvent = newForkView.events
+    .filter((event) => event.kind === "followup")
+    .at(-1)!;
+  const newDetail = await worlds.playTimeline.readDetail(
+    oldForkId,
+    oldView.chainId,
+    newEvent.id,
+  );
+  expect(newDetail).toMatchObject({ requestPreview: { status: "completed" } });
+  expect(JSON.stringify(newDetail)).toContain("FORK INPUT");
+  expect(JSON.stringify(newDetail)).not.toContain("Turn 3");
+  expect(forkTransport.sent).toHaveLength(3);
   const source = archiveStores(root);
   await source.archives.initialize();
   await source.archives.exportWorld({ worldId, operationId: "window-export" });
@@ -453,6 +502,78 @@ test("Google 后置编码只保留两个运行并随分叉和归档恢复", asyn
   ).toMatchObject({ requestPreview: { status: "completed" } });
   expect(await worlds.currentHead(worldId)).toBe(head);
   expect(sent).toHaveLength(9);
+});
+
+test("Google 空输入续写的后置编码按新运行保存", async () => {
+  const { host, sent } = googleAuthoringHost([
+    googleText("First story."),
+    googleTools([
+      {
+        id: "first-status",
+        name: "artifact_emit",
+        arguments: { output: "status_bar", payload: { hp: 9 } },
+      },
+    ]),
+    googleTools([
+      {
+        id: "first-options",
+        name: "artifact_emit",
+        arguments: { output: "options", payload: { first: "Go" } },
+      },
+    ]),
+    googleText("Continued story."),
+    googleTools([
+      {
+        id: "next-status",
+        name: "artifact_emit",
+        arguments: { output: "status_bar", payload: { hp: 8 } },
+      },
+    ]),
+    googleTools([
+      {
+        id: "next-options",
+        name: "artifact_emit",
+        arguments: { output: "options", payload: { first: "Return" } },
+      },
+    ]),
+  ]);
+  const { worlds, root, worldId } = await createWorld(
+    "google-empty-preview",
+    undefined,
+    host.binding(),
+  );
+  const chains = new PlayCallChain(
+    worlds,
+    new FileNativePromptCompiler(),
+    new FileNativeArtifactStore(root),
+  );
+  const preset = followupPlayPreset();
+  await chains.start({
+    worldId,
+    chainId: "empty-preview",
+    exchangeId: "one",
+    playerText: "Go",
+    hostBinding: hostBinding(),
+    playPreset: preset,
+    modelBinding: host.binding(),
+    modelHost: host,
+  });
+  const view = await chains.append({
+    worldId,
+    chainId: "empty-preview",
+    exchangeId: "two",
+    playerText: "",
+    modelHost: host,
+    resolvePrompt: () =>
+      Promise.resolve({ hostBinding: hostBinding(), playPreset: preset }),
+  });
+  const events = view.events.filter((event) => event.kind === "followup");
+  expect(events).toHaveLength(4);
+  for (const event of events)
+    expect(
+      await worlds.playTimeline.readDetail(worldId, "empty-preview", event.id),
+    ).toMatchObject({ requestPreview: { status: "completed" } });
+  expect(sent).toHaveLength(6);
 });
 
 test("Google 后置失败保留剧情并继续派发后续请求", async () => {
@@ -589,6 +710,10 @@ test("Google 后置取消中止当前传输且不派发剩余请求", async () =
   expect(transport.signal()?.aborted).toBe(true);
   const view = await running;
   expect(view.status).toBe("ready");
+  const cancelled = view.events.find((event) => event.kind === "followup")!;
+  expect(
+    await worlds.playTimeline.readDetail(worldId, "cancel", cancelled.id),
+  ).toMatchObject({ requestPreview: { status: "cancelled" } });
   expect(transport.count()).toBe(2);
   expect(await worlds.currentHead(worldId)).toBe(head);
   expect(
@@ -746,6 +871,84 @@ test("Google 扩展关闭后迟到响应仅留诊断", async () => {
   );
   expect(await worlds.currentHead(worldId)).toBe(head);
   expect(calls).toBe(2);
+});
+
+test.each([
+  "chat_completions",
+  "openai_responses",
+  "anthropic_messages",
+] as const)("%s 后置预览在无法遮蔽原生续传时不展示", async (provider) => {
+  const binding = { ...modelBinding(), provider };
+  const scripted = new ScriptedModelHost({
+    binding,
+    steps: [
+      {
+        outcome: "response",
+        text: "Story",
+        reasoningContent: "opaque-continuation-secret",
+      },
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "panel",
+            name: "artifact_emit",
+            arguments: { output: "status_bar", payload: { hp: 9 } },
+          },
+        ],
+      },
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "options",
+            name: "artifact_emit",
+            arguments: { output: "options", payload: { first: "Go" } },
+          },
+        ],
+      },
+    ],
+  });
+  const previewAuthoringRequest = vi.fn(() => {
+    throw new Error("unsafe preview must not be called");
+  });
+  const host: ModelHost = {
+    binding: () => binding,
+    exchange: (request, observer) => scripted.exchange(request, observer),
+    previewAuthoringRequest,
+  };
+  const { worlds, root, worldId } = await createWorld(
+    `old-preview-${provider}`,
+    undefined,
+    binding,
+  );
+  const view = await new PlayCallChain(
+    worlds,
+    new FileNativePromptCompiler(),
+    new FileNativeArtifactStore(root),
+  ).start({
+    worldId,
+    chainId: "old-preview",
+    exchangeId: "first",
+    playerText: "Go",
+    hostBinding: hostBinding(),
+    playPreset: followupPlayPreset(),
+    modelBinding: binding,
+    modelHost: host,
+  });
+  expect(scripted.requests).toHaveLength(3);
+  expect(JSON.stringify(scripted.requests[1])).toContain(
+    "opaque-continuation-secret",
+  );
+  expect(previewAuthoringRequest).not.toHaveBeenCalled();
+  const event = view.events.find((entry) => entry.kind === "followup")!;
+  const detail = await worlds.playTimeline.readDetail(
+    worldId,
+    "old-preview",
+    event.id,
+  );
+  expect(detail).toMatchObject({ requestPreview: { status: "unavailable" } });
+  expect(JSON.stringify(detail)).not.toContain("opaque-continuation-secret");
 });
 
 test("Google 合成传输完成游玩工具循环并冷重载原生上下文", async () => {

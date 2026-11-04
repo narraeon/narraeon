@@ -1741,8 +1741,8 @@ const worldPageEnglishMessages: Record<string, string> = {
   "请求编码：派发后取消": "Request encoding: cancelled after dispatch",
   "请求编码：已尝试派发，响应未确认":
     "Request encoding: dispatch attempted; response unconfirmed",
-  "请求编码不可用（旧记录或已超出保留窗口）":
-    "Request encoding unavailable (older record or retention window expired)",
+  "请求编码不可用（未提供或已超出保留窗口）":
+    "Request encoding unavailable (not provided or retention window expired)",
   未完成: "Incomplete",
   调用链中断: "Call chain interrupted",
   等待玩家追加: "Waiting for player append",

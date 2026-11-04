@@ -2615,13 +2615,16 @@ export class PlayCallChain {
     if (reply === undefined)
       throw new PlayCallChainError("Follow-up reply is not committed");
     const run = session.promptRuns?.at(-1);
-    const runPlayers = session.events.filter(
+    const runReplies = session.events.filter(
       (event) =>
-        event.kind === "player" && event.id >= (run?.firstEventId ?? 1),
+        event.kind === "assistant" &&
+        event.responseKind === "narrative" &&
+        event.committedHead !== undefined &&
+        event.id >= (run?.firstEventId ?? 1),
     );
     // Without a new prompt run there is no distinct bounded encoding slot.
     const previewExchange =
-      runPlayers.length === 1 ? (run?.exchange ?? 1) : undefined;
+      runReplies.length === 1 ? (run?.exchange ?? 1) : undefined;
     const observeFollowupDelta = (
       delta: Parameters<
         NonNullable<PlayFollowupObserver["onProviderDelta"]>
@@ -2650,7 +2653,8 @@ export class PlayCallChain {
           ? {}
           : { reasoning: outcome.reasoning }),
         ...(outcome.usage === undefined ? {} : { usage: outcome.usage }),
-        ...(outcome.requestPreviewStatus === undefined ||
+        ...(outcome.requestPreviewRecorded !== true ||
+        outcome.requestPreviewStatus === undefined ||
         previewExchange === undefined
           ? {}
           : {
@@ -2701,20 +2705,20 @@ export class PlayCallChain {
           : { failureLog: this.#failureLog }),
         observer: {
           onRequest: async (id, request) => {
-            if (previewExchange === undefined) return;
+            if (previewExchange === undefined) return false;
+            // Only Google currently has a continuation-redacting encoder.
             const preview =
-              modelHost.previewAuthoringRequest?.(request) ??
-              (modelHost.binding().provider === "google_interactions"
-                ? undefined
-                : modelHost.previewRequest?.(request));
-            if (preview !== undefined)
-              await this.#worlds.playTimeline.recordFollowupEncoding(
-                session.worldId,
-                session.chainId,
-                previewExchange,
-                id,
-                preview,
-              );
+              modelHost.binding().provider === "google_interactions"
+                ? modelHost.previewAuthoringRequest?.(request)
+                : undefined;
+            if (preview === undefined) return false;
+            return this.#worlds.playTimeline.recordFollowupEncoding(
+              session.worldId,
+              session.chainId,
+              previewExchange,
+              id,
+              preview,
+            );
           },
           onProviderDispatch: () => {
             this.#setInvocationAbortable(session.chainId, true);
