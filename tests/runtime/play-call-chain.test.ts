@@ -576,6 +576,113 @@ test("Google 空输入续写的后置编码按新运行保存", async () => {
   expect(sent).toHaveLength(6);
 });
 
+test.each([
+  ["continue_context", false],
+  ["fresh_context", false],
+  ["continue_context", true],
+  ["fresh_context", true],
+] as const)(
+  "Google 修改玩家消息保留旧请求编码且不保留未来：%s，复制故障：%s",
+  async (continuation, copyFails) => {
+    const responses = [1, 2].flatMap((n) => [
+      googleText(`Story ${n}`),
+      googleTools([
+        {
+          id: `status-${n}`,
+          name: "artifact_emit",
+          arguments: { output: "status_bar", payload: { hp: n } },
+        },
+      ]),
+      googleTools([
+        {
+          id: `options-${n}`,
+          name: "artifact_emit",
+          arguments: { output: "options", payload: { first: `Choice ${n}` } },
+        },
+      ]),
+    ]);
+    const { host } = googleAuthoringHost(responses);
+    const { worlds, root, worldId } = await createWorld(
+      `google-revise-${continuation}`,
+      undefined,
+      host.binding(),
+    );
+    const chains = new PlayCallChain(
+      worlds,
+      new FileNativePromptCompiler(),
+      new FileNativeArtifactStore(root),
+    );
+    const preset = followupPlayPreset();
+    await chains.start({
+      worldId,
+      chainId: "revision",
+      exchangeId: "one",
+      playerText: "First",
+      hostBinding: hostBinding(),
+      playPreset: preset,
+      modelBinding: host.binding(),
+      modelHost: host,
+    });
+    const view = await chains.append({
+      worldId,
+      chainId: "revision",
+      exchangeId: "two",
+      playerText: "Discard this",
+      modelHost: host,
+      resolvePrompt: () =>
+        Promise.resolve({ hostBinding: hostBinding(), playPreset: preset }),
+    });
+    const player = view.events.findLast((event) => event.kind === "player")!;
+    const copySpy = copyFails
+      ? vi
+          .spyOn(worlds.playTimeline, "copyRetainedEncodings")
+          .mockRejectedValueOnce(new Error("diagnostic storage unavailable"))
+      : undefined;
+    await chains.revisePlayer({
+      worldId,
+      chainId: "revision",
+      eventId: player.id,
+      operationId: `revision-${continuation}`,
+      replacementExchangeId: "replacement",
+      replacementText: "Changed",
+      ...(continuation === "fresh_context"
+        ? {
+            continuation,
+            freshContext: {
+              hostBinding: hostBinding(),
+              playPreset: preset,
+              modelBinding: host.binding(),
+            },
+          }
+        : { continuation }),
+    });
+    copySpy?.mockRestore();
+    const cold = new FileNativeWorldStore(root);
+    expect(
+      (await cold.recoverEndpoint(worldId)).history.map(
+        ({ exactText }) => exactText,
+      ),
+    ).toContain("Changed");
+    const page = await cold.playTimeline.readPage(worldId, 100);
+    const retained = page.items.filter(
+      (item) => item.kind === "event" && item.event.kind === "followup",
+    );
+    expect(retained).toHaveLength(2);
+    for (const item of retained)
+      if (item.kind === "event") {
+        const detail = await cold.playTimeline.readDetail(
+          worldId,
+          item.chainId,
+          item.event.id,
+        );
+        expect(detail).toMatchObject({
+          requestPreview: { status: copyFails ? "unavailable" : "completed" },
+        });
+        expect(JSON.stringify(detail)).not.toContain("Discard this");
+      }
+  },
+);
+
 test("Google 后置失败保留剧情并继续派发后续请求", async () => {
   const { host, sent } = googleAuthoringHost([
     googleText("Story committed."),

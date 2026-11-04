@@ -292,38 +292,12 @@ export class FileNativePlayTimelineStore {
       input.source.completedTools,
       input.target.completedTools,
     );
-    const targetFollowups = new Set(
-      input.target.events.flatMap((event) =>
-        event.kind === "followup" && event.requestPreviewExchange !== undefined
-          ? [
-              followupEncodingFileName(
-                event.requestPreviewExchange,
-                event.followupId,
-              ),
-            ]
-          : [],
-      ),
+    await this.#copyRetainedEncodings(
+      input.sourceWorldId,
+      input.source.chainId,
+      targetRoot,
+      input.target,
     );
-    for (const exchange of (await recordedEncodingExchanges(sourceRoot))
-      .filter((value) => value <= input.target.exchange)
-      .slice(0, 2)) {
-      const encoding = await this.readInitialEncoding(
-        input.sourceWorldId,
-        input.source.chainId,
-        exchange,
-      ).catch(() => null);
-      if (encoding !== null)
-        await publishImmutableJson(
-          join(targetRoot, encodingFileName(exchange)),
-          encoding,
-        );
-      for (const name of await followupEncodingNames(sourceRoot, exchange)) {
-        if (!targetFollowups.has(name)) continue;
-        const value = await readOptionalJson<unknown>(join(sourceRoot, name));
-        if (value !== null)
-          await publishImmutableJson(join(targetRoot, name), value);
-      }
-    }
     await Promise.all([
       cloneNumberedPrefix({
         sourceRoot,
@@ -758,6 +732,60 @@ export class FileNativePlayTimelineStore {
     )
       throw new Error("Initial request encoding has an invalid shape");
     return value as unknown as ModelHostWireRequest;
+  }
+
+  async copyRetainedEncodings(
+    worldId: string,
+    sourceChainId: string,
+    target: PersistedPlayCallChain,
+  ): Promise<void> {
+    await this.#copyRetainedEncodings(
+      worldId,
+      sourceChainId,
+      this.#contextRoot(worldId, target.chainId),
+      target,
+    );
+  }
+
+  async #copyRetainedEncodings(
+    worldId: string,
+    sourceChainId: string,
+    targetRoot: string,
+    target: PersistedPlayCallChain,
+  ): Promise<void> {
+    const sourceRoot = this.#contextRoot(worldId, sourceChainId);
+    const targetFollowups = new Set(
+      target.events.flatMap((event) =>
+        event.kind === "followup" && event.requestPreviewExchange !== undefined
+          ? [
+              followupEncodingFileName(
+                event.requestPreviewExchange,
+                event.followupId,
+              ),
+            ]
+          : [],
+      ),
+    );
+    for (const exchange of (await recordedEncodingExchanges(sourceRoot))
+      .filter((value) => value <= target.exchange)
+      .slice(0, 2)) {
+      const encoding = await this.readInitialEncoding(
+        worldId,
+        sourceChainId,
+        exchange,
+      ).catch(() => null);
+      if (encoding === null) continue;
+      await publishImmutableJson(
+        join(targetRoot, encodingFileName(exchange)),
+        encoding,
+      );
+      for (const name of await followupEncodingNames(sourceRoot, exchange)) {
+        if (!targetFollowups.has(name)) continue;
+        const value = await readOptionalJson<unknown>(join(sourceRoot, name));
+        if (value !== null)
+          await publishImmutableJson(join(targetRoot, name), value);
+      }
+    }
   }
 
   async recordFollowupEncoding(

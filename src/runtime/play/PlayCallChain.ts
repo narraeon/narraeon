@@ -1485,6 +1485,10 @@ export class PlayCallChain {
       };
     }
 
+    if (intent.continuation === "continue_context")
+      await this.#worlds.playTimeline
+        .copyRetainedEncodings(worldId, sourceContext.chainId, revised)
+        .catch(() => forgetFollowupPreviews(revised));
     await this.#worlds.playTimeline.persist(revised);
     if (intent.continuation === "fresh_context")
       await this.#worlds.completeArchiveFreshContext(worldId);
@@ -1625,6 +1629,9 @@ export class PlayCallChain {
         parentHead: intent.restoresHead,
         updatedAt: Date.now(),
       };
+      await this.#worlds.playTimeline
+        .copyRetainedEncodings(intent.worldId, sourceContext.chainId, prefix)
+        .catch(() => forgetFollowupPreviews(prefix));
       await this.#worlds.playTimeline.persistDetached(structuredClone(prefix));
       previousChainId = prefix.chainId;
     }
@@ -3639,6 +3646,15 @@ function turnNoteField(turnNote: string | undefined): { turnNote?: string } {
 
 function touch(session: Pick<PersistedPlayCallChain, "updatedAt">): void {
   session.updatedAt = Date.now();
+}
+
+/** Failed diagnostic copies cannot attach unrelated encodings to retained events. */
+function forgetFollowupPreviews(session: PersistedPlayCallChain): void {
+  for (const event of session.events) {
+    if (event.kind !== "followup") continue;
+    delete event.requestPreviewExchange;
+    delete event.requestPreviewStatus;
+  }
 }
 
 function notifyAssistantDelta(
