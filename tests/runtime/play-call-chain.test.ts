@@ -412,6 +412,104 @@ test.each([
   expect(dispatches).toBe(1);
 });
 
+test.each(["cancel", "disconnect"])(
+  "Google 派发后%s不允许重放或提交片段",
+  async (failure) => {
+    let dispatches = 0;
+    let fetchSignal: AbortSignal | null | undefined;
+    const host = new FileNativeModelHost(
+      {
+        provider: "google_interactions",
+        baseUrl: "https://provider.invalid/v1beta",
+        apiKey: "synthetic-secret",
+        modelId: "manual-model",
+        contextWindowTokens: 64_000,
+        maxOutputTokens: 2_000,
+      },
+      (_url, options) => {
+        dispatches++;
+        fetchSignal = options?.signal;
+        if (failure === "cancel")
+          return new Promise<Response>((_resolve, reject) => {
+            options?.signal?.addEventListener(
+              "abort",
+              () => reject(new DOMException("cancelled", "AbortError")),
+              { once: true },
+            );
+          });
+        const fragment = new TextEncoder().encode(
+          [
+            {
+              event_type: "step.start",
+              index: 0,
+              step: { type: "model_output" },
+            },
+            {
+              event_type: "step.delta",
+              index: 0,
+              delta: { type: "text", text: "断流片段" },
+            },
+          ]
+            .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+            .join(""),
+        );
+        return Promise.resolve(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(fragment);
+              },
+              pull(controller) {
+                controller.error(new Error("synthetic disconnect"));
+              },
+            }),
+            { headers: { "content-type": "text/event-stream" } },
+          ),
+        );
+      },
+    );
+    const { worlds, worldId, root } = await createWorld(
+      `google-${failure}`,
+      undefined,
+      host.binding(),
+    );
+    const chains = new PlayCallChain(worlds);
+    const running = chains.start({
+      worldId,
+      chainId: `google-${failure}`,
+      exchangeId: "first",
+      playerText: "继续。",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: host.binding(),
+      modelHost: host,
+    });
+    if (failure === "cancel") {
+      await vi.waitFor(() => expect(dispatches).toBe(1));
+      expect(
+        chains.cancel({
+          worldId,
+          chainId: `google-${failure}`,
+          exchangeId: "first",
+        }),
+      ).toEqual({ outcome: "cancellation_requested" });
+      expect(fetchSignal?.aborted).toBe(true);
+    }
+    const result = await running;
+    expect(result).toMatchObject({ status: "interrupted", canRetry: false });
+    if (failure === "disconnect")
+      expect(result.lastFailureKind).toBe("outcome_unknown");
+    const coldWorlds = new FileNativeWorldStore(root);
+    expect(
+      await new PlayCallChain(coldWorlds).inspectWorld(worldId),
+    ).toMatchObject({ status: "interrupted", canRetry: false });
+    expect(
+      JSON.stringify((await coldWorlds.recoverEndpoint(worldId)).history),
+    ).not.toContain("断流片段");
+    expect(dispatches).toBe(1);
+  },
+);
+
 test("Google 同一发送重复工具响应不会再次修改世界", async () => {
   let dispatches = 0;
   const host = new FileNativeModelHost(
@@ -428,9 +526,24 @@ test("Google 同一发送重复工具响应不会再次修改世界", async () =
       const events =
         dispatches < 3
           ? [
+              ...(dispatches === 2
+                ? [
+                    {
+                      event_type: "step.start",
+                      index: 0,
+                      step: { type: "model_output" },
+                    },
+                    {
+                      event_type: "step.delta",
+                      index: 0,
+                      delta: { type: "text", text: "重复响应片段" },
+                    },
+                    { event_type: "step.stop", index: 0 },
+                  ]
+                : []),
               {
                 event_type: "step.start",
-                index: 0,
+                index: dispatches === 2 ? 1 : 0,
                 step: {
                   type: "function_call",
                   id: "append-once",
@@ -447,7 +560,7 @@ test("Google 同一发送重复工具响应不会再次修改世界", async () =
                   },
                 },
               },
-              { event_type: "step.stop", index: 0 },
+              { event_type: "step.stop", index: dispatches === 2 ? 1 : 0 },
               {
                 event_type: "interaction.completed",
                 interaction: { status: "requires_action" },
@@ -508,11 +621,21 @@ test("Google 同一发送重复工具响应不会再次修改世界", async () =
       (event) => event.kind === "tool_result" && event.callId === "append-once",
     ),
   ).toHaveLength(1);
+  expect(
+    result.events.findLast((event) => event.kind === "assistant"),
+  ).toMatchObject({ status: "interrupted", text: "重复响应片段" });
+  const cold = await new PlayCallChain(
+    new FileNativeWorldStore(root),
+  ).inspectWorld(worldId);
+  expect(
+    cold?.events.findLast((event) => event.kind === "assistant"),
+  ).toMatchObject({ status: "interrupted", text: "重复响应片段" });
   const endpoint = await new FileNativeWorldStore(root).recoverEndpoint(
     worldId,
   );
   expect(JSON.stringify(endpoint.state).match(/only-once/g)).toHaveLength(1);
   expect(JSON.stringify(endpoint.history)).not.toContain("不应提交");
+  expect(JSON.stringify(endpoint.history)).not.toContain("重复响应片段");
   expect(dispatches).toBe(2);
 });
 

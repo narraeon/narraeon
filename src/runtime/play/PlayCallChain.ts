@@ -2545,8 +2545,11 @@ export class PlayCallChain {
               },
             ],
           });
-        await this.#advances.end(session, ending, advance, () =>
-          this.#notifySnapshot(observer, session),
+        await this.#advances.end(
+          session,
+          { ...ending, streamingEventId: event.id },
+          advance,
+          () => this.#notifySnapshot(observer, session),
         );
         return projectView(session);
       }
