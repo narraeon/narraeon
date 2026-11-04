@@ -73,10 +73,10 @@ const LAYOUT_MARKER = "play-advance-layout.json";
  * The single in-progress play advance of a call chain, if any.
  *
  * It exists only between `begin` and `markSettled`. A marker that survives a
- * restart means the advance was interrupted; the runtime marks the chain
- * interrupted and the player retries. Released records from earlier layouts
- * never block a world from opening, and the storage upgrade removes them
- * (see `migrateLayout`).
+ * restart means the advance needs recovery: a persisted ending is retained,
+ * and an unfinished request follows its protocol's retry boundary. Released
+ * records from earlier layouts never block a world from opening; the storage
+ * upgrade removes them (see `migrateLayout`).
  */
 export class FileNativePlayAdvanceStore {
   readonly #worldsRoot: string;

@@ -80,6 +80,7 @@ import type {
 import {
   equalModelHostBinding,
   ModelHostCancelledError,
+  ModelHostOutcomeUnknownError,
 } from "../model/ModelHost.ts";
 import {
   FileNativePromptCompiler,
@@ -2007,6 +2008,31 @@ export class PlayCallChain {
         "The durable Provider result no longer matches its assistant event.",
       );
     const calls = durable.toolCalls ?? [];
+    if (
+      (session.lastRequest?.modelConfig?.provider ??
+        session.modelBinding?.provider) === "google_interactions" &&
+      calls.length > 0
+    ) {
+      const boundary = session.events.findLastIndex(
+        (event) =>
+          event.kind === "player" ||
+          (event.kind === "assistant" &&
+            event.status === "completed" &&
+            event.responseKind === "narrative"),
+      );
+      if (
+        session.events
+          .slice(boundary + 1)
+          .some(
+            (event) =>
+              event.kind === "tool_call" &&
+              calls.some((call) => call.id === event.callId),
+          )
+      )
+        throw new ModelHostOutcomeUnknownError(
+          "Google Interactions repeated a tool-call ID during the same send; its outcome cannot be safely settled. Use a fresh context.",
+        );
+    }
     const text = durable.text ?? existing.text;
     const hasText = text.trim().length > 0;
     const responseKind =

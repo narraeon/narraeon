@@ -93,7 +93,7 @@ test("Google 合成传输完成游玩工具循环并冷重载原生上下文", a
         throw new Error("Missing request body");
       sent.push(JSON.parse(options.body) as unknown);
       const events =
-        sent.length === 1
+        sent.length === 1 || sent.length === 3
           ? [
               {
                 event_type: "step.start",
@@ -263,6 +263,12 @@ test("Google 合成传输完成游玩工具循环并冷重载原生上下文", a
       }),
   });
   expect(next.status).toBe("ready");
+  expect(sent).toHaveLength(4);
+  expect(
+    next.events.filter(
+      (event) => event.kind === "tool_result" && event.callId === "read-1",
+    ),
+  ).toHaveLength(2);
   expect(JSON.stringify(sent[1])).not.toContain("下一轮新预设");
   expect(JSON.stringify(sent[2])).toContain("下一轮新预设");
   expect(JSON.stringify(sent[2])).toContain('"signature":"synthetic"');
@@ -404,6 +410,110 @@ test.each([
     await new PlayCallChain(coldWorlds).inspectWorld(worldId),
   ).toMatchObject({ status: "interrupted", canRetry: false });
   expect(dispatches).toBe(1);
+});
+
+test("Google 同一发送重复工具响应不会再次修改世界", async () => {
+  let dispatches = 0;
+  const host = new FileNativeModelHost(
+    {
+      provider: "google_interactions",
+      baseUrl: "https://provider.invalid/v1beta",
+      apiKey: "synthetic-secret",
+      modelId: "manual-model",
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_000,
+    },
+    () => {
+      dispatches++;
+      const events =
+        dispatches < 3
+          ? [
+              {
+                event_type: "step.start",
+                index: 0,
+                step: {
+                  type: "function_call",
+                  id: "append-once",
+                  name: "world_patch",
+                  arguments: {
+                    target: "@current-situation",
+                    edits: [
+                      {
+                        op: "append",
+                        locator: { yaml: ["markers"] },
+                        value: "only-once",
+                      },
+                    ],
+                  },
+                },
+              },
+              { event_type: "step.stop", index: 0 },
+              {
+                event_type: "interaction.completed",
+                interaction: { status: "requires_action" },
+              },
+            ]
+          : [
+              {
+                event_type: "step.start",
+                index: 0,
+                step: { type: "model_output" },
+              },
+              {
+                event_type: "step.delta",
+                index: 0,
+                delta: { type: "text", text: "不应提交" },
+              },
+              { event_type: "step.stop", index: 0 },
+              {
+                event_type: "interaction.completed",
+                interaction: { status: "completed" },
+              },
+            ];
+      return Promise.resolve(
+        new Response(
+          events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      );
+    },
+  );
+  const files = worldFiles().map((file) =>
+    file.path === "world/current-situation.yaml"
+      ? { ...file, contents: `${file.contents}markers: []\n` }
+      : file,
+  );
+  const { worlds, worldId, root } = await createWorld(
+    "google-duplicate-tool",
+    files,
+    host.binding(),
+  );
+  const result = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "google-duplicate-tool",
+    exchangeId: "first",
+    playerText: "继续。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: host.binding(),
+    modelHost: host,
+  });
+  expect(result).toMatchObject({
+    status: "interrupted",
+    canRetry: false,
+    lastFailureKind: "outcome_unknown",
+  });
+  expect(
+    result.events.filter(
+      (event) => event.kind === "tool_result" && event.callId === "append-once",
+    ),
+  ).toHaveLength(1);
+  const endpoint = await new FileNativeWorldStore(root).recoverEndpoint(
+    worldId,
+  );
+  expect(JSON.stringify(endpoint.state).match(/only-once/g)).toHaveLength(1);
+  expect(JSON.stringify(endpoint.history)).not.toContain("不应提交");
+  expect(dispatches).toBe(2);
 });
 
 test("Google 工具顺序结算后遇到未完成续接不重放或提交半响应", async () => {
