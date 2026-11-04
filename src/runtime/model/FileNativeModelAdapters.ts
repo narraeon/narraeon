@@ -30,6 +30,7 @@ import {
   ModelHostCancelledError,
   ModelHostContinuationError,
   ModelHostFailureError,
+  modelHostFailureRequiresFreshContext,
   ModelHostOutcomeUnknownError,
 } from "./ModelHost.ts";
 import {
@@ -495,6 +496,7 @@ export class FileNativeModelHost implements ModelHost {
                   "x-goog-api-key": this.#connection.apiKey,
                   "Content-Type": "application/json",
                 },
+                redirect: "error",
                 body:
                   token === undefined
                     ? bodyJson
@@ -522,9 +524,7 @@ export class FileNativeModelHost implements ModelHost {
                 throw new ModelHostOutcomeUnknownError(
                   "A later Google Interactions continuation request failed after earlier progress",
                 );
-              throw new ModelHostFailureError(
-                `Google Interactions request failed: HTTP ${response.status}`,
-              );
+              throw await googleInitialRejection(response);
             }
             if (!isProviderEventStream(response))
               throw unknownProviderResponse("Google Interactions");
@@ -1051,7 +1051,14 @@ async function capturedProviderOperation<Value extends object>(
     if (error instanceof ModelHostCancelledError) throw error;
     const reportedError = sanitizeGoogleErrors
       ? error instanceof ModelHostFailureError
-        ? new ModelHostFailureError("Google Interactions request was rejected")
+        ? modelHostFailureRequiresFreshContext(error)
+          ? new ModelHostFailureError(
+              "Google Interactions context limit exceeded; start a fresh context",
+              { details: { code: "context_length_exceeded" } },
+            )
+          : new ModelHostFailureError(
+              "Google Interactions request was rejected",
+            )
         : new ModelHostOutcomeUnknownError(
             "Google Interactions request outcome could not be confirmed",
           )
@@ -2118,6 +2125,55 @@ function containsGoogleCredential(value: string, key: string): boolean {
   return false;
 }
 
+/** Classify a first-hop rejection in memory; never retain the provider's echo. */
+async function googleInitialRejection(response: Response): Promise<Error> {
+  if (
+    response.status < 400 ||
+    response.status >= 500 ||
+    response.status === 408
+  )
+    return new ModelHostOutcomeUnknownError(
+      "Google Interactions request outcome could not be confirmed",
+    );
+  let body = "";
+  if (response.body !== null) {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let complete = false;
+    let bytes = 0;
+    try {
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) {
+          complete = true;
+          body += decoder.decode();
+          break;
+        }
+        bytes += chunk.value.byteLength;
+        if (bytes > 64 * 1024) break;
+        body += decoder.decode(chunk.value, { stream: true });
+      }
+    } catch {
+      return new ModelHostOutcomeUnknownError(
+        "Google Interactions request outcome could not be confirmed",
+      );
+    } finally {
+      if (!complete) void reader.cancel().catch(() => undefined);
+      reader.releaseLock();
+    }
+    if (!complete)
+      return new ModelHostOutcomeUnknownError(
+        "Google Interactions request outcome could not be confirmed",
+      );
+  }
+  return modelHostFailureRequiresFreshContext(new ModelHostFailureError(body))
+    ? new ModelHostFailureError(
+        "Google Interactions context limit exceeded; start a fresh context",
+        { details: { code: "context_length_exceeded" } },
+      )
+    : new ModelHostFailureError("Google Interactions request was rejected");
+}
+
 function parseArguments(value: string): unknown {
   try {
     return JSON.parse(value) as unknown;
@@ -2564,6 +2620,7 @@ function safeGoogleUsage(value: unknown): Record<string, number> | null {
     "total_cached_tokens",
     "total_thought_tokens",
     "total_output_tokens",
+    "total_tool_use_tokens",
     "total_tokens",
   ]) {
     const count = value[field];

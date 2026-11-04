@@ -1,7 +1,12 @@
 import { expect, test, vi } from "vitest";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 
 import { FileNativeModelHost } from "../../src/runtime/model/FileNativeModelAdapters.ts";
-import { isSafeGoogleWireRequest } from "../../src/runtime/model/GoogleRequestPreview.ts";
+import {
+  isSafeGoogleWireRequest,
+  withGoogleHop,
+} from "../../src/runtime/model/GoogleRequestPreview.ts";
 import {
   assertModelOutputComplete,
   equalModelHostBinding,
@@ -284,6 +289,7 @@ test("Google 后置请求取消后可保留迟到的完整单跳，但不发下�
 
 test("Google 续接 usage 对每跳最终值求和且保留缺失", async () => {
   let count = 0;
+  const hops: GoogleHopEvidence[] = [];
   const host = new FileNativeModelHost(
     {
       provider: "google_interactions",
@@ -308,7 +314,12 @@ test("Google 续接 usage 对每跳最终值求和且保留缺失", async () => 
               ? {
                   status: "requires_continuation",
                   continuation_token: "token",
-                  usage: { total_input_tokens: 7, total_output_tokens: 2 },
+                  usage: {
+                    total_input_tokens: 7,
+                    total_output_tokens: 2,
+                    total_tool_use_tokens: 3,
+                    unsafe_extension: "usage-secret",
+                  },
                 }
               : {
                   status: "completed",
@@ -326,6 +337,11 @@ test("Google 续接 usage 对每跳最终值求和且保留缺失", async () => 
   );
   const response = await host.exchange(
     exchangeFor("google_interactions", "manual-model", "provider_managed"),
+    {
+      onGoogleHop: (hop) => {
+        hops.push(hop);
+      },
+    },
   );
   expect(response.usage).toMatchObject({
     inputTokens: 16,
@@ -333,12 +349,315 @@ test("Google 续接 usage 对每跳最终值求和且保留缺失", async () => 
     totalTokens: null,
     providerRaw: {
       hops: [
-        { total_input_tokens: 7, total_output_tokens: 2 },
+        {
+          total_input_tokens: 7,
+          total_output_tokens: 2,
+          total_tool_use_tokens: 3,
+        },
         { total_input_tokens: 9, total_tokens: 12 },
       ],
     },
   });
+  expect(
+    hops.find((hop) => hop.hop === 1 && hop.status === "requires_continuation")
+      ?.usage,
+  ).toEqual({
+    total_input_tokens: 7,
+    total_output_tokens: 2,
+    total_tool_use_tokens: 3,
+  });
+  expect(
+    hops.find((hop) => hop.hop === 2 && hop.status === "completed")?.usage,
+  ).toEqual({ total_input_tokens: 9, total_tokens: 12 });
+  const recorded = hops.find(
+    (hop) => hop.hop === 1 && hop.status === "requires_continuation",
+  )!;
+  expect(
+    isSafeGoogleWireRequest(
+      withGoogleHop(
+        host.previewRequest(
+          exchangeFor(
+            "google_interactions",
+            "manual-model",
+            "provider_managed",
+          ),
+        ),
+        recorded,
+      ),
+    ),
+  ).toBe(true);
+  expect(JSON.stringify(response.usage)).not.toContain("usage-secret");
 });
+
+test.each([-1, 2.5, "4"])(
+  "Google 忽略无效 tool usage 数值 %s",
+  async (value) => {
+    const host = new FileNativeModelHost(
+      {
+        provider: "google_interactions",
+        baseUrl: "https://provider.invalid/v1beta",
+        apiKey: "secret",
+        modelId: "manual-model",
+        contextWindowTokens: 64_000,
+        maxOutputTokens: 2_048,
+      },
+      () =>
+        Promise.resolve(
+          new Response(
+            `data: ${JSON.stringify({ event_type: "interaction.completed", interaction: { status: "completed", usage: { total_tool_use_tokens: value } } })}\n\n`,
+            { headers: { "content-type": "text/event-stream" } },
+          ),
+        ),
+    );
+    const result = await host.exchange(
+      exchangeFor("google_interactions", "manual-model", "provider_managed"),
+    );
+    expect(result.usage?.providerRaw).toEqual({});
+  },
+);
+
+test("Google 单跳保留安全 tool usage 并丢弃不安全的数值与扩展", async () => {
+  const hops: GoogleHopEvidence[] = [];
+  const host = new FileNativeModelHost(
+    {
+      provider: "google_interactions",
+      baseUrl: "https://provider.invalid/v1beta",
+      apiKey: "secret",
+      modelId: "manual-model",
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_048,
+    },
+    () =>
+      Promise.resolve(
+        new Response(
+          `data: ${JSON.stringify({ event_type: "interaction.completed", interaction: { status: "completed", usage: { total_tool_use_tokens: 4, total_tokens: 8, unsafe_extension: "usage-secret" } } })}\n\n`,
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      ),
+  );
+  const response = await host.exchange(
+    exchangeFor("google_interactions", "manual-model", "provider_managed"),
+    {
+      onGoogleHop: (hop) => {
+        hops.push(hop);
+      },
+    },
+  );
+  expect(response.usage?.providerRaw).toEqual({
+    total_tool_use_tokens: 4,
+    total_tokens: 8,
+  });
+  expect(response.usage?.totalTokens).toBe(8);
+  expect(hops.at(-1)?.usage).toEqual({
+    total_tool_use_tokens: 4,
+    total_tokens: 8,
+  });
+  expect(
+    isSafeGoogleWireRequest(
+      withGoogleHop(
+        host.previewRequest(
+          exchangeFor(
+            "google_interactions",
+            "manual-model",
+            "provider_managed",
+          ),
+        ),
+        hops.at(-1)!,
+      ),
+    ),
+  ).toBe(true);
+  expect(JSON.stringify({ response: response.usage, hops })).not.toContain(
+    "usage-secret",
+  );
+});
+
+test("Google 首跳上下文超限经完整适配器后要求新上下文且不回显秘密", async () => {
+  const captured: unknown[] = [];
+  const host = new FileNativeModelHost(
+    {
+      provider: "google_interactions",
+      baseUrl: "https://provider.invalid/v1beta",
+      apiKey: "key-sentinel",
+      modelId: "manual-model",
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_048,
+    },
+    () =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            error: {
+              message:
+                "maximum context length exceeded; key-sentinel token-sentinel signature-sentinel",
+            },
+          }),
+          { status: 400 },
+        ),
+      ),
+    {
+      recordFailure: (value) => {
+        captured.push(value);
+        return Promise.resolve();
+      },
+      recordExchangeIfActive: () => Promise.resolve(),
+      resolve: () => Promise.resolve(),
+    },
+  );
+  const error: unknown = await host
+    .exchange(
+      exchangeFor("google_interactions", "manual-model", "provider_managed"),
+    )
+    .catch((failure: unknown) => failure);
+  expect(error).toBeInstanceOf(ModelHostFailureError);
+  expect(modelHostFailureRequiresFreshContext(error)).toBe(true);
+  expect(
+    JSON.stringify({
+      error: {
+        message: (error as Error).message,
+        details: (error as ModelHostFailureError).details,
+      },
+      captured,
+    }),
+  ).not.toMatch(/key-sentinel|token-sentinel|signature-sentinel/u);
+});
+
+test.each([
+  {
+    name: "ordinary rejection",
+    status: 400,
+    body: "invalid request",
+    unknown: false,
+  },
+  { name: "timeout", status: 408, body: "request timed out", unknown: true },
+  {
+    name: "server failure",
+    status: 503,
+    body: "backend failure",
+    unknown: true,
+  },
+  {
+    name: "oversized error",
+    status: 400,
+    body: "x".repeat(65537),
+    unknown: true,
+  },
+])(
+  "Google 首跳 $name 保持拒绝与未知结果边界",
+  async ({ status, body, unknown }) => {
+    const host = new FileNativeModelHost(
+      {
+        provider: "google_interactions",
+        baseUrl: "https://provider.invalid/v1beta",
+        apiKey: "secret",
+        modelId: "manual-model",
+        contextWindowTokens: 64_000,
+        maxOutputTokens: 2_048,
+      },
+      () => Promise.resolve(new Response(body, { status })),
+    );
+    const error: unknown = await host
+      .exchange(
+        exchangeFor("google_interactions", "manual-model", "provider_managed"),
+      )
+      .catch((failure: unknown) => failure);
+    expect(error).toBeInstanceOf(
+      unknown ? ModelHostOutcomeUnknownError : ModelHostFailureError,
+    );
+    expect(modelHostFailureRequiresFreshContext(error)).toBe(false);
+  },
+);
+
+test.each([307, 308])(
+  "Google 在首跳和续跳均拒绝 HTTP %s 跨源重定向",
+  async (status) => {
+    let leakedRequests = 0;
+    const target = createServer((request, response) => {
+      leakedRequests++;
+      request.resume();
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.end(
+        'data: {"event_type":"interaction.completed","interaction":{"status":"completed"}}\n\n',
+      );
+    });
+    await new Promise<void>((resolve, reject) =>
+      target.listen(0, "127.0.0.1", resolve).once("error", reject),
+    );
+    const targetPort = (target.address() as AddressInfo).port;
+    let mode: "first" | "continuation" = "first";
+    let sourceRequests = 0;
+    const source = createServer((request, response) => {
+      request.resume();
+      sourceRequests++;
+      if (mode === "continuation" && sourceRequests === 1) {
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.end(
+          [
+            { event_type: "interaction.created" },
+            {
+              event_type: "interaction.completed",
+              interaction: {
+                status: "requires_continuation",
+                continuation_token: "loopback-token-sentinel",
+              },
+            },
+          ]
+            .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+            .join(""),
+        );
+      } else {
+        response.writeHead(status, {
+          location: `http://127.0.0.1:${targetPort}/capture`,
+        });
+        response.end();
+      }
+    });
+    await new Promise<void>((resolve, reject) =>
+      source.listen(0, "127.0.0.1", resolve).once("error", reject),
+    );
+    try {
+      const sourcePort = (source.address() as AddressInfo).port;
+      const host = new FileNativeModelHost({
+        provider: "google_interactions",
+        baseUrl: `http://127.0.0.1:${sourcePort}/v1beta`,
+        apiKey: "loopback-key-sentinel",
+        modelId: "manual-model",
+        contextWindowTokens: 64_000,
+        maxOutputTokens: 2_048,
+      });
+      await expect(
+        host.exchange(
+          exchangeFor(
+            "google_interactions",
+            "manual-model",
+            "provider_managed",
+          ),
+        ),
+      ).rejects.toBeInstanceOf(ModelHostOutcomeUnknownError);
+      expect(sourceRequests).toBe(1);
+      expect(leakedRequests).toBe(0);
+      mode = "continuation";
+      sourceRequests = 0;
+      await expect(
+        host.exchange(
+          exchangeFor(
+            "google_interactions",
+            "manual-model",
+            "provider_managed",
+          ),
+        ),
+      ).rejects.toBeInstanceOf(ModelHostOutcomeUnknownError);
+      expect(sourceRequests).toBe(2);
+      expect(leakedRequests).toBe(0);
+    } finally {
+      source.closeAllConnections();
+      target.closeAllConnections();
+      await Promise.all([
+        new Promise<void>((resolve) => source.close(() => resolve())),
+        new Promise<void>((resolve) => target.close(() => resolve())),
+      ]);
+    }
+  },
+);
 
 test("Google 后续 HTTP 拒绝只记录脱敏逐跳证据", async () => {
   const captured: unknown[] = [];

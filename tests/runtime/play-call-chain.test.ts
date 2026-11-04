@@ -408,6 +408,130 @@ test("Google 多跳签名和工具在完整响应后结算并可冷读逐跳证�
   expect(copied?.googleHops?.every((hop) => hop.exchange === 1)).toBe(true);
 });
 
+test.each([
+  {
+    name: "context",
+    status: 400,
+    body: "maximum context length exceeded; key-sentinel token-sentinel signature-sentinel",
+    firstHop: false,
+    kind: "context_limit",
+    canRetry: false,
+  },
+  {
+    name: "rejected",
+    status: 400,
+    body: "ordinary pre-generation rejection; key-sentinel",
+    firstHop: false,
+    kind: "retryable",
+    canRetry: true,
+  },
+  {
+    name: "server",
+    status: 503,
+    body: "server error; key-sentinel",
+    firstHop: false,
+    kind: "outcome_unknown",
+    canRetry: false,
+  },
+  {
+    name: "later",
+    status: 400,
+    body: "maximum context length exceeded; token-sentinel",
+    firstHop: true,
+    kind: "outcome_unknown",
+    canRetry: false,
+  },
+] as const)(
+  "Google $name 拒绝在游玩入口保留正确的恢复资格并遮蔽回显",
+  async ({ name, status, body, firstHop, kind, canRetry }) => {
+    const records: unknown[] = [];
+    let calls = 0;
+    const log = {
+      recordFailure: (value: unknown) => {
+        records.push(value);
+        return Promise.resolve();
+      },
+      recordExchangeIfActive: () => Promise.resolve(),
+      resolve: () => Promise.resolve(),
+    };
+    const host = new FileNativeModelHost(
+      {
+        provider: "google_interactions",
+        baseUrl: "https://provider.invalid/v1beta",
+        apiKey: "key-sentinel",
+        modelId: "manual-model",
+        contextWindowTokens: 64_000,
+        maxOutputTokens: 2000,
+      },
+      () => {
+        calls++;
+        if (firstHop && calls === 1)
+          return Promise.resolve(
+            new Response(
+              [
+                { event_type: "interaction.created" },
+                {
+                  event_type: "interaction.completed",
+                  interaction: {
+                    status: "requires_continuation",
+                    continuation_token: "token-sentinel",
+                  },
+                },
+              ]
+                .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+                .join(""),
+              { headers: { "content-type": "text/event-stream" } },
+            ),
+          );
+        return Promise.resolve(new Response(body, { status }));
+      },
+      log,
+    );
+    const { worlds, worldId, root } = await createWorld(
+      `google-failure-${name}`,
+      undefined,
+      host.binding(),
+    );
+    const chains = new PlayCallChain(worlds);
+    const result = await chains.start({
+      worldId,
+      chainId: `google-failure-${name}`,
+      exchangeId: "first",
+      playerText: "Go.",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: host.binding(),
+      modelHost: host,
+    });
+    expect(result).toMatchObject({
+      status: "interrupted",
+      lastFailureKind: kind,
+      canRetry,
+    });
+    expect(
+      await new PlayCallChain(new FileNativeWorldStore(root)).inspectWorld(
+        worldId,
+      ),
+    ).toMatchObject({ lastFailureKind: kind, canRetry });
+    expect(JSON.stringify({ result, records })).not.toMatch(
+      /key-sentinel|token-sentinel|signature-sentinel/u,
+    );
+    expect(calls).toBe(firstHop ? 2 : 1);
+    if (!canRetry) {
+      await expect(
+        chains.append({
+          worldId,
+          chainId: result.chainId,
+          exchangeId: "retry",
+          playerText: "",
+          modelHost: host,
+        }),
+      ).rejects.toThrow(/fresh context/iu);
+      expect(calls).toBe(firstHop ? 2 : 1);
+    }
+  },
+);
+
 test("Google 确定拒绝后的合法重试保留两次独立派发证据", async () => {
   const bodies: unknown[] = [];
   const host = new FileNativeModelHost(

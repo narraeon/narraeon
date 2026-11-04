@@ -133,6 +133,7 @@ function validHop(value: unknown, endpointPath?: string): boolean {
               "total_cached_tokens",
               "total_thought_tokens",
               "total_output_tokens",
+              "total_tool_use_tokens",
               "total_tokens",
             ].includes(key) &&
             Number.isSafeInteger(count) &&
