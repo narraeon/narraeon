@@ -504,6 +504,287 @@ test("Google 后置编码只保留两个运行并随分叉和归档恢复", asyn
   expect(sent).toHaveLength(9);
 });
 
+test.each([
+  "orphan",
+  "three-main",
+  "corrupt",
+  "unsafe-thought",
+  "unsafe-signature",
+  "unsafe-call",
+  "wrong-provider",
+] as const)(
+  "Google 后置编码清理中断及损坏不影响恢复与分叉归档：%s",
+  async (fault) => {
+    const responses = [1, 2, 3, 4].flatMap((n) => [
+      googleText(`Story ${n}`),
+      googleTools([
+        {
+          id: `status-${n}`,
+          name: "artifact_emit",
+          arguments: { output: "status_bar", payload: { hp: n } },
+        },
+      ]),
+      googleTools([
+        {
+          id: `options-${n}`,
+          name: "artifact_emit",
+          arguments: { output: "options", payload: { first: `Choice ${n}` } },
+        },
+      ]),
+    ]);
+    const { host, sent } = googleAuthoringHost(responses);
+    const { worlds, root, worldId } = await createWorld(
+      `google-retention-${fault}`,
+      undefined,
+      host.binding(),
+    );
+    const preset = followupPlayPreset();
+    const chains = new PlayCallChain(
+      worlds,
+      new FileNativePromptCompiler(),
+      new FileNativeArtifactStore(root),
+    );
+    let view = await chains.start({
+      worldId,
+      chainId: "retention",
+      exchangeId: "one",
+      playerText: "One",
+      hostBinding: hostBinding(),
+      playPreset: preset,
+      modelBinding: host.binding(),
+      modelHost: host,
+    });
+    const contextRoot = join(
+      root,
+      "worlds-file-native",
+      worldId,
+      "runtime",
+      "play-contexts",
+      createHash("sha256").update("retention").digest("hex"),
+    );
+    const oldNames = (await readdir(contextRoot)).filter((name) =>
+      name.startsWith("followup-encoding-1-"),
+    );
+    expect(oldNames).toHaveLength(2);
+    const oldSidecars = await Promise.all(
+      oldNames.map((name) => readFile(join(contextRoot, name))),
+    );
+    const oldMain = await readFile(
+      join(contextRoot, "initial-request-encoding.json"),
+    );
+    let secondHead = "";
+    for (const n of [2, 3]) {
+      view = await chains.append({
+        worldId,
+        chainId: "retention",
+        exchangeId: `send-${n}`,
+        playerText: `Turn ${n}`,
+        modelHost: host,
+        resolvePrompt: () =>
+          Promise.resolve({ hostBinding: hostBinding(), playPreset: preset }),
+      });
+      if (n === 2) secondHead = view.parentHead;
+    }
+    const events = view.events.filter((event) => event.kind === "followup");
+    expect(events).toHaveLength(6);
+    if (fault === "orphan" || fault === "three-main") {
+      await Promise.all(
+        oldNames.map((name, index) =>
+          writeFile(join(contextRoot, name), oldSidecars[index]!),
+        ),
+      );
+      if (fault === "three-main")
+        await writeFile(
+          join(contextRoot, "initial-request-encoding.json"),
+          oldMain,
+        );
+    } else {
+      const name = `followup-encoding-2-${createHash("sha256").update("status").digest("hex")}.json`;
+      const path = join(contextRoot, name);
+      if (fault === "corrupt") await writeFile(path, "{broken json");
+      else {
+        const unsafe = JSON.parse(await readFile(path, "utf8")) as {
+          provider: string;
+          body: { input: unknown[] };
+        };
+        if (fault === "wrong-provider") unsafe.provider = "anthropic_messages";
+        else if (fault === "unsafe-thought")
+          unsafe.body.input.push({
+            type: "thought",
+            signature: "synthetic-private-signature",
+          });
+        else if (fault === "unsafe-call")
+          unsafe.body.input.push({
+            type: "function_call",
+            id: "unredacted",
+            name: "artifact_emit",
+            arguments: { output: "private" },
+          });
+        else
+          unsafe.body.input.push({
+            type: "model_output",
+            content: [{ type: "text", text: "unredacted" }],
+            signature: "synthetic-private-signature",
+          });
+        await writeFile(path, JSON.stringify(unsafe));
+      }
+    }
+    const head = await worlds.currentHead(worldId);
+    const cold = new FileNativeWorldStore(root);
+    const detail = (id: number) =>
+      cold.playTimeline.readDetail(worldId, "retention", id);
+    expect(
+      await cold.playTimeline.readInitialEncoding(worldId, "retention", 1),
+    ).toBeNull();
+    expect(await detail(events[0]!.id)).toMatchObject({
+      requestPreview: { status: "unavailable" },
+    });
+    expect(await detail(events[2]!.id)).toMatchObject({
+      requestPreview: {
+        status:
+          fault === "orphan" || fault === "three-main"
+            ? "completed"
+            : "unavailable",
+      },
+    });
+    expect(await detail(events[4]!.id)).toMatchObject({
+      requestPreview: { status: "completed" },
+    });
+    expect(await detail(events[5]!.id)).toMatchObject({
+      requestPreview: { status: "completed" },
+    });
+    expect(await cold.currentHead(worldId)).toBe(head);
+    const branch = await chains.deriveWorld({
+      operationId: `fork-${fault}`,
+      sourceWorldId: worldId,
+      sourceHead: head,
+      hostPresetId: "host-main",
+    });
+    const forkView = (await new PlayCallChain(
+      new FileNativeWorldStore(root),
+    ).inspectWorld(branch.world.worldId))!;
+    const forkEvents = forkView.events.filter(
+      (event) => event.kind === "followup",
+    );
+    expect(forkEvents).toHaveLength(4);
+    expect(
+      await cold.playTimeline.readDetail(
+        branch.world.worldId,
+        forkView.chainId,
+        forkEvents[0]!.id,
+      ),
+    ).toMatchObject({ requestPreview: { status: "unavailable" } });
+    expect(
+      await cold.playTimeline.readDetail(
+        branch.world.worldId,
+        forkView.chainId,
+        forkEvents[3]!.id,
+      ),
+    ).toMatchObject({ requestPreview: { status: "completed" } });
+    if (fault !== "orphan" && fault !== "three-main")
+      expect(
+        await cold.playTimeline.readDetail(
+          branch.world.worldId,
+          forkView.chainId,
+          forkEvents[2]!.id,
+        ),
+      ).toMatchObject({ requestPreview: { status: "unavailable" } });
+    if (fault === "orphan" || fault === "three-main") {
+      const earlier = await chains.deriveWorld({
+        operationId: `earlier-${fault}`,
+        sourceWorldId: worldId,
+        sourceHead: secondHead,
+        hostPresetId: "host-main",
+      });
+      const earlierView = (await new PlayCallChain(
+        new FileNativeWorldStore(root),
+      ).inspectWorld(earlier.world.worldId))!;
+      const earlierEvent = earlierView.events.find(
+        (event) => event.kind === "followup",
+      )!;
+      expect(
+        await cold.playTimeline.readDetail(
+          earlier.world.worldId,
+          earlierView.chainId,
+          earlierEvent.id,
+        ),
+      ).toMatchObject({ requestPreview: { status: "unavailable" } });
+    }
+    const source = archiveStores(root);
+    await source.archives.initialize();
+    await source.archives.exportWorld({
+      worldId,
+      operationId: `export-${fault}`,
+    });
+    const targetRoot = await mkdtemp(
+      join(tmpdir(), "google-retention-import-"),
+    );
+    roots.push(targetRoot);
+    const target = archiveStores(targetRoot);
+    await target.archives.initialize();
+    const imported = await target.archives.importWorld({
+      operationId: `import-${fault}`,
+      ...(await target.archives.upload(
+        createReadStream(
+          join(root, `world-archives/exports/export-${fault}/archive.zip`),
+        ),
+      )),
+    });
+    const importedView = (await target.chains.inspectWorld(
+      imported.world.worldId,
+    ))!;
+    const importedEvents = importedView.events.filter(
+      (event) => event.kind === "followup",
+    );
+    expect(
+      await target.worlds.playTimeline.readDetail(
+        imported.world.worldId,
+        importedView.chainId,
+        importedEvents[0]!.id,
+      ),
+    ).toMatchObject({ requestPreview: { status: "unavailable" } });
+    expect(
+      await target.worlds.playTimeline.readDetail(
+        imported.world.worldId,
+        importedView.chainId,
+        importedEvents[3]!.id,
+      ),
+    ).toMatchObject({ requestPreview: { status: "completed" } });
+    if (fault !== "orphan" && fault !== "three-main")
+      expect(
+        await target.worlds.playTimeline.readDetail(
+          imported.world.worldId,
+          importedView.chainId,
+          importedEvents[2]!.id,
+        ),
+      ).toMatchObject({ requestPreview: { status: "unavailable" } });
+    expect(sent).toHaveLength(9);
+    await new PlayCallChain(
+      cold,
+      new FileNativePromptCompiler(),
+      new FileNativeArtifactStore(root),
+    ).append({
+      worldId,
+      chainId: "retention",
+      exchangeId: "send-4",
+      playerText: "Turn 4",
+      modelHost: host,
+      resolvePrompt: () =>
+        Promise.resolve({ hostBinding: hostBinding(), playPreset: preset }),
+    });
+    const names = await readdir(contextRoot);
+    for (const name of oldNames) expect(names).not.toContain(name);
+    expect(names).not.toContain("initial-request-encoding.json");
+    expect(await detail(events[2]!.id)).toMatchObject({
+      requestPreview: { status: "unavailable" },
+    });
+    expect(await detail(events[5]!.id)).toMatchObject({
+      requestPreview: { status: "completed" },
+    });
+    expect(sent).toHaveLength(12);
+  },
+);
+
 test("Google 空输入续写的后置编码按新运行保存", async () => {
   const { host, sent } = googleAuthoringHost([
     googleText("First story."),

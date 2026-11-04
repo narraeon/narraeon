@@ -1,4 +1,5 @@
 import { isResolutionReceipt } from "../../protocol/resolution.ts";
+import { isSafeGoogleWireRequest } from "../model/GoogleRequestPreview.ts";
 import {
   legacyModelBindingFailure,
   projectLegacyModelBindingFailure,
@@ -712,8 +713,11 @@ export class FileNativePlayTimelineStore {
     chainId: string,
     exchange = 1,
   ): Promise<ModelHostWireRequest | null> {
+    const root = this.#contextRoot(worldId, chainId);
+    if (!(await retainedEncodingExchanges(root)).includes(exchange))
+      return null;
     const value = await readOptionalJson<unknown>(
-      join(this.#contextRoot(worldId, chainId), encodingFileName(exchange)),
+      join(root, encodingFileName(exchange)),
     );
     if (value === null) return null;
     if (
@@ -766,9 +770,9 @@ export class FileNativePlayTimelineStore {
           : [],
       ),
     );
-    for (const exchange of (await recordedEncodingExchanges(sourceRoot))
-      .filter((value) => value <= target.exchange)
-      .slice(0, 2)) {
+    for (const exchange of (await retainedEncodingExchanges(sourceRoot)).filter(
+      (value) => value <= target.exchange,
+    )) {
       const encoding = await this.readInitialEncoding(
         worldId,
         sourceChainId,
@@ -781,9 +785,13 @@ export class FileNativePlayTimelineStore {
       );
       for (const name of await followupEncodingNames(sourceRoot, exchange)) {
         if (!targetFollowups.has(name)) continue;
-        const value = await readOptionalJson<unknown>(join(sourceRoot, name));
-        if (value !== null)
-          await publishImmutableJson(join(targetRoot, name), value);
+        try {
+          const value = await readOptionalJson<unknown>(join(sourceRoot, name));
+          if (safeFollowupEncoding(value))
+            await publishImmutableJson(join(targetRoot, name), value);
+        } catch {
+          // A single optional diagnostic must not prevent other evidence or a fork.
+        }
       }
     }
   }
@@ -798,9 +806,8 @@ export class FileNativePlayTimelineStore {
     const root = this.#contextRoot(worldId, chainId);
     // The main encoding owns the bounded run slot; never create an orphan slot.
     if (
-      (await readOptionalJson<unknown>(
-        join(root, encodingFileName(exchange)),
-      )) === null
+      !(await retainedEncodingExchanges(root)).includes(exchange) ||
+      !safeFollowupEncoding(encoding)
     )
       return false;
     await publishImmutableJson(
@@ -817,24 +824,16 @@ export class FileNativePlayTimelineStore {
     exchange: number,
     requestId: string,
   ): Promise<ModelHostWireRequest | null> {
+    const root = this.#contextRoot(worldId, chainId);
+    if (!(await retainedEncodingExchanges(root)).includes(exchange))
+      return null;
     const value = await readOptionalJson<unknown>(
-      join(
-        this.#contextRoot(worldId, chainId),
-        followupEncodingFileName(exchange, requestId),
-      ),
+      join(root, followupEncodingFileName(exchange, requestId)),
     );
     if (value === null) return null;
-    if (
-      !isRecord(value) ||
-      value.method !== "POST" ||
-      typeof value.provider !== "string" ||
-      !isRecord(value.body) ||
-      typeof value.endpointPath !== "string" ||
-      !Array.isArray(value.headerNames) ||
-      !value.headerNames.every((name: unknown) => typeof name === "string")
-    )
+    if (!safeFollowupEncoding(value))
       throw new Error("Follow-up request encoding has an invalid shape");
-    return value as unknown as ModelHostWireRequest;
+    return value;
   }
 
   async readAllContexts(
@@ -1974,6 +1973,29 @@ function followupEncodingFileName(exchange: number, requestId: string): string {
   return `followup-encoding-${exchange}-${createHash("sha256").update(requestId).digest("hex")}.json`;
 }
 
+function safeFollowupEncoding(value: unknown): value is ModelHostWireRequest {
+  if (
+    !isSafeGoogleWireRequest(value) ||
+    value.headerNames.length !== 3 ||
+    value.headerNames[0] !== "Accept" ||
+    value.headerNames[1] !== "x-goog-api-key" ||
+    value.headerNames[2] !== "Content-Type" ||
+    !isRecord(value.body) ||
+    !Array.isArray(value.body.input)
+  )
+    return false;
+  // Provider function calls must have been redacted; only the Runtime's
+  // explicitly marked bootstrap call can remain in the projected input.
+  return value.body.input.every(
+    (item: unknown) =>
+      !isRecord(item) ||
+      item.type !== "function_call" ||
+      (item.name === "runtime_load_context" &&
+        isRecord(item.arguments) &&
+        Object.keys(item.arguments).length === 0),
+  );
+}
+
 async function followupEncodingNames(
   root: string,
   exchange: number,
@@ -2000,18 +2022,28 @@ async function recordedEncodingExchanges(
     .sort((left, right) => right - left);
 }
 
+async function retainedEncodingExchanges(
+  contextRoot: string,
+): Promise<number[]> {
+  return (await recordedEncodingExchanges(contextRoot)).slice(0, 2);
+}
+
 /**
  * Keep the encodings of the two latest exchanges, the pair the AI-reading
  * diagnostics compare. A context without runs is read at exchange 1.
  */
 async function pruneEncodings(contextRoot: string): Promise<void> {
-  for (const exchange of (await recordedEncodingExchanges(contextRoot)).slice(
-    2,
-  )) {
-    await rm(join(contextRoot, encodingFileName(exchange)), { force: true });
-    for (const name of await followupEncodingNames(contextRoot, exchange))
+  const exchanges = await recordedEncodingExchanges(contextRoot);
+  const retained = new Set(exchanges.slice(0, 2));
+  for (const name of await readDirectoryNames(contextRoot)) {
+    const match = /^followup-encoding-([1-9][0-9]*)-[a-f0-9]{64}\.json$/u.exec(
+      name,
+    );
+    if (match !== null && !retained.has(Number(match[1])))
       await rm(join(contextRoot, name), { force: true });
   }
+  for (const exchange of exchanges.slice(2))
+    await rm(join(contextRoot, encodingFileName(exchange)), { force: true });
 }
 
 /**
