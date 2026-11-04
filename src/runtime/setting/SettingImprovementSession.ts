@@ -787,7 +787,18 @@ export class SettingImprovementSession {
       return session;
     }
 
-    if (session.runStatus === "running") {
+    const lastItem = session.modelItems.at(-1);
+    const legacyUnknown =
+      session.modelBinding.provider === "google_interactions" &&
+      session.runStatus === "interrupted" &&
+      session.googleOutcomeUnknown === undefined &&
+      (lastItem?.kind === "user" || lastItem?.kind === "tool");
+    if (legacyUnknown) {
+      session.googleOutcomeUnknown = true;
+      session.lastFailure =
+        "The Google request outcome is unknown; start a fresh model context.";
+      session.updatedAt = Date.now();
+    } else if (session.runStatus === "running") {
       if (
         session.modelBinding.provider === "google_interactions" &&
         session.googleOutcomeUnknown !== false

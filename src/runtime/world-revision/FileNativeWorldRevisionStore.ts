@@ -957,7 +957,7 @@ function validPendingForSession(
   return (
     pending === null ||
     (isRecord(pending) &&
-      runStatus === "running" &&
+      (runStatus === "running" || runStatus === "interrupted") &&
       pending.epochId === epochId)
   );
 }

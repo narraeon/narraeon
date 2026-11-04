@@ -833,6 +833,20 @@ export class WorldRevisionSession {
     const lastItem = session.modelItems.at(-1);
     if (
       session.pendingSettlement === null &&
+      session.modelBinding.provider === "google_interactions" &&
+      session.runStatus === "interrupted" &&
+      session.googleOutcomeUnknown === undefined &&
+      (lastItem?.kind === "user" || lastItem?.kind === "tool")
+    ) {
+      session.googleOutcomeUnknown = true;
+      session.lastFailure =
+        "The Google request outcome is unknown; start a fresh model context.";
+      session.updatedAt = Date.now();
+      await this.#store.saveSession(session);
+      return session;
+    }
+    if (
+      session.pendingSettlement === null &&
       lastItem?.kind === "assistant" &&
       lastItem.toolCalls.length > 0
     ) {
@@ -866,6 +880,7 @@ export class WorldRevisionSession {
       session.googleOutcomeUnknown !== false
     )
       session.googleOutcomeUnknown = true;
+    const recoveringSettlement = session.pendingSettlement !== null;
     if (session.pendingSettlement !== null) {
       if (session.modelBinding.provider === "google_interactions")
         session.googleOutcomeUnknown = false;
@@ -903,7 +918,7 @@ export class WorldRevisionSession {
           ),
         );
     }
-    if (session.runStatus !== "running" && session.pendingSettlement === null)
+    if (session.runStatus !== "running" && !recoveringSettlement)
       return session;
     const requestId = session.activeRequestId;
     session.runStatus =

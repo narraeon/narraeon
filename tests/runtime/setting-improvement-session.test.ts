@@ -499,6 +499,27 @@ test.each(["cancel", "disconnect"] as const)(
       }),
     ).rejects.toThrow(/fresh model context/iu);
     expect(afterRestart.sent).toHaveLength(0);
+    const sessionPath = join(
+      root,
+      "setting-improvements",
+      "sessions",
+      `${first.sessionId}.json`,
+    );
+    const legacy = JSON.parse(await readFile(sessionPath, "utf8")) as {
+      googleOutcomeUnknown?: boolean;
+    };
+    delete legacy.googleOutcomeUnknown;
+    await writeFile(sessionPath, JSON.stringify(legacy));
+    const oldRestart = googleAuthoringHost([]);
+    await expect(
+      serviceFor(root, content, oldRestart.host).send({
+        packageId: localId,
+        requestId: "old-retry",
+        message: "Continue.",
+        continuation: { kind: "continue_context", sessionId: first.sessionId },
+      }),
+    ).rejects.toThrow(/fresh model context/iu);
+    expect(oldRestart.sent).toHaveLength(0);
   },
 );
 

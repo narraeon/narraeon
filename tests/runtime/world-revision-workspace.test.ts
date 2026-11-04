@@ -441,6 +441,27 @@ test.each(["cancel", "disconnect"] as const)(
       }),
     ).rejects.toThrow(/fresh model context/iu);
     expect(afterRestart.sent).toHaveLength(0);
+    const sessionPath = join(
+      root,
+      "world-revisions",
+      "sessions",
+      `${first.sessionId}.json`,
+    );
+    const legacy = JSON.parse(await readFile(sessionPath, "utf8")) as {
+      googleOutcomeUnknown?: boolean;
+    };
+    delete legacy.googleOutcomeUnknown;
+    await writeFile(sessionPath, JSON.stringify(legacy));
+    const oldRestart = googleAuthoringHost([]);
+    await expect(
+      makeService(oldRestart.host).send({
+        worldId,
+        requestId: "old-retry",
+        message: "继续",
+        continuation: { kind: "continue_context", sessionId: first.sessionId },
+      }),
+    ).rejects.toThrow(/fresh model context/iu);
+    expect(oldRestart.sent).toHaveLength(0);
   },
 );
 
@@ -559,6 +580,74 @@ test("Google world revision records failures when a complete tool response lacks
   expect(JSON.stringify(transport.sent[1])).toContain('"call_id":"read-one"');
   expect(JSON.stringify(transport.sent[1])).toContain('"call_id":"read-two"');
   expect(await worlds.currentHead(worldId)).toBe("genesis");
+});
+
+test("Google revision recovers a published response receipt durably after settlement interruption", async () => {
+  const { root, worldId, worlds, workspace } = await createdWorld();
+  const source = worldRevisionFiles().find(
+    ({ path }) => path === "state/current-situation.yaml",
+  )!.contents;
+  const transport = googleAuthoringHost([
+    googleTools([
+      {
+        id: "read",
+        name: "world_revision_read",
+        arguments: { path: "state/current-situation.yaml" },
+      },
+      {
+        id: "write",
+        name: "world_revision_write_file",
+        arguments: {
+          path: "state/current-situation.yaml",
+          contents: source.replace("地点: 未设定", "地点: 已发布"),
+        },
+      },
+    ]),
+  ]);
+  const originalPublish = workspace.publishAi.bind(workspace);
+  vi.spyOn(workspace, "publishAi").mockImplementationOnce(async (input) => {
+    await originalPublish(input);
+    throw new Error("synthetic exit after publication");
+  });
+  const service = () =>
+    new WorldRevisionSession({
+      store: new FileNativeWorldRevisionStore(root),
+      workspace,
+      worlds,
+      compiler: new FileNativePromptCompiler({ locale: "zh-CN" }),
+      locale: () => "zh-CN",
+      bindModelHost: () => Promise.resolve(transport.host),
+      bindExistingModelHost: () => Promise.resolve(transport.host),
+      bindPlayPreset: () =>
+        Promise.resolve(builtinDefaultPlayPresetBinding("zh-CN")),
+      preview: () => preview,
+    });
+  const first = await service().send({
+    worldId,
+    requestId: "first",
+    message: "修改",
+    continuation: { kind: "fresh_context" },
+  });
+  expect(first.runStatus).toBe("interrupted");
+  const recovered = await service().readSession(worldId, first.sessionId);
+  expect(recovered.turns[0]?.exchanges[0]?.toolCalls[1]?.result).toMatchObject({
+    isError: false,
+  });
+  const stored = await new FileNativeWorldRevisionStore(root).readSession(
+    first.sessionId,
+  );
+  expect(stored.pendingSettlement).toBeNull();
+  const epoch = await workspace.active(worldId);
+  if (epoch === null) throw new Error("Missing epoch");
+  await service().apply({
+    worldId,
+    epochId: epoch.epochId,
+    expectedRevision: epoch.revision,
+  });
+  const restarted = await service().readSession(worldId, first.sessionId);
+  expect(restarted.turns[0]?.exchanges[0]?.toolCalls[1]?.result).toMatchObject({
+    isError: false,
+  });
 });
 
 test("Google world revision refuses an empty persisted continuation after restart", async () => {
