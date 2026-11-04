@@ -576,6 +576,8 @@ export class SettingImprovementSession {
       host,
       requestId,
       save: (next) => this.#store.save(next),
+      recordGoogleHop: (id, hop) =>
+        this.#store.recordGoogleHop(session.sessionId, id, hop),
       settleToolResponse: async (next, assistantItemIndex, toolCalls) => {
         activeTransaction = await this.#settleToolResponse(
           next,

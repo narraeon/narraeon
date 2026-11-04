@@ -2450,6 +2450,7 @@ export class PlayCallChain {
         }
         response = await modelHost.exchange(request, {
           signal,
+          diagnosticAttempt: attempt,
           onGoogleHop: (hop) =>
             this.#worlds.playTimeline.recordGoogleHop(
               session.worldId,

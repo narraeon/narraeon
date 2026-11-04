@@ -306,13 +306,14 @@ export class AiExchangeCapture {
   constructor(input: {
     provider: ModelProviderKind;
     endpoint: URL;
+    endpointLabel?: string;
     context: AiExchangeDiagnostics["context"];
     requestBody: string;
   }) {
     this.#base = {
       captureId: randomUUID(),
       provider: input.provider,
-      endpoint: safeEndpoint(input.endpoint),
+      endpoint: input.endpointLabel ?? safeEndpoint(input.endpoint),
       context: cloneJson(input.context),
       request: {
         method: "POST",

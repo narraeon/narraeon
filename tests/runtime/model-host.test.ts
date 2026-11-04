@@ -1,6 +1,7 @@
 import { expect, test, vi } from "vitest";
 
 import { FileNativeModelHost } from "../../src/runtime/model/FileNativeModelAdapters.ts";
+import { isSafeGoogleWireRequest } from "../../src/runtime/model/GoogleRequestPreview.ts";
 import {
   assertModelOutputComplete,
   equalModelHostBinding,
@@ -26,6 +27,50 @@ const binding: ModelHostBinding = {
   maxOutputTokens: 4_096,
   protocolConfigFingerprint: "sha256:protocol",
 };
+
+test("Google 诊断接受根端点并遮蔽 URL 路径中的凭据", () => {
+  const request = exchangeFor(
+    "google_interactions",
+    "manual-model",
+    "provider_managed",
+  );
+  const makeHost = (baseUrl: string) =>
+    new FileNativeModelHost({
+      provider: "google_interactions",
+      baseUrl,
+      apiKey: "key-sentinel",
+      modelId: "manual-model",
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_048,
+    });
+  const root = makeHost("https://provider.invalid").previewRequest(request);
+  expect(root.endpointPath).toBe("/interactions");
+  expect(isSafeGoogleWireRequest(root)).toBe(true);
+  const secretPath = makeHost(
+    "https://provider.invalid/key-sentinel",
+  ).previewRequest(request);
+  expect(secretPath.endpointPath).toBe("");
+  expect(isSafeGoogleWireRequest(secretPath)).toBe(true);
+  const encoded = new FileNativeModelHost({
+    provider: "google_interactions",
+    baseUrl: "https://provider.invalid/A%2fb",
+    apiKey: "A/b",
+    modelId: "manual-model",
+    contextWindowTokens: 64_000,
+    maxOutputTokens: 2_048,
+  }).previewRequest(request);
+  expect(encoded.endpointPath).toBe("");
+  const suffixKey = new FileNativeModelHost({
+    provider: "google_interactions",
+    baseUrl: "https://provider.invalid/v1beta",
+    apiKey: "interactions",
+    modelId: "manual-model",
+    contextWindowTokens: 64_000,
+    maxOutputTokens: 2_048,
+  }).previewRequest(request);
+  expect(suffixKey.endpointPath).toBe("");
+  expect(isSafeGoogleWireRequest(suffixKey)).toBe(true);
+});
 
 test("Google 预览使用无状态 Interactions 与原序 System 前缀", () => {
   const host = new FileNativeModelHost({
@@ -302,7 +347,7 @@ test("Google 后续 HTTP 拒绝只记录脱敏逐跳证据", async () => {
   const host = new FileNativeModelHost(
     {
       provider: "google_interactions",
-      baseUrl: "https://provider.invalid/v1beta",
+      baseUrl: "https://key-sentinel.example.invalid/v1beta",
       apiKey: "key-sentinel",
       modelId: "manual-model",
       contextWindowTokens: 64_000,
@@ -381,6 +426,87 @@ test("Google 后续 HTTP 拒绝只记录脱敏逐跳证据", async () => {
     "error echo",
   ])
     expect(diagnostics).not.toContain(sentinel);
+});
+
+test("Google 诊断观察器挂起不会阻断模型响应或续接", async () => {
+  let calls = 0;
+  const host = new FileNativeModelHost(
+    {
+      provider: "google_interactions",
+      baseUrl: "https://provider.invalid/v1beta",
+      apiKey: "secret",
+      modelId: "manual-model",
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_048,
+    },
+    () => {
+      calls++;
+      const events = [
+        { event_type: "interaction.created" },
+        {
+          event_type: "interaction.completed",
+          interaction:
+            calls === 1
+              ? { status: "requires_continuation", continuation_token: "next" }
+              : { status: "completed" },
+        },
+      ];
+      return Promise.resolve(
+        new Response(
+          events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      );
+    },
+  );
+  const result = await host.exchange(
+    exchangeFor("google_interactions", "manual-model", "provider_managed"),
+    {
+      onGoogleHop: () =>
+        new Promise<void>(() => {
+          /* intentionally hangs */
+        }),
+    },
+  );
+  expect(result.stopReason).toBe("completed");
+  expect(calls).toBe(2);
+});
+
+test("Google 非法 UTF-8 不能伪装成完整原生签名并触发续接", async () => {
+  let calls = 0;
+  const host = new FileNativeModelHost(
+    {
+      provider: "google_interactions",
+      baseUrl: "https://provider.invalid/v1beta",
+      apiKey: "secret",
+      modelId: "manual-model",
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_048,
+    },
+    () => {
+      calls++;
+      const before =
+        'data: {"event_type":"interaction.created"}\n\ndata: {"event_type":"step.start","index":0,"step":{"type":"thought","summary":[],"signature":"';
+      const after =
+        '"}}\n\ndata: {"event_type":"step.stop","index":0}\n\ndata: {"event_type":"interaction.completed","interaction":{"status":"requires_continuation","continuation_token":"token"}}\n\n';
+      return Promise.resolve(
+        new Response(
+          Buffer.concat([
+            Buffer.from(before),
+            Buffer.from([0xff]),
+            Buffer.from(after),
+          ]),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      );
+    },
+  );
+  await expect(
+    host.exchange(
+      exchangeFor("google_interactions", "manual-model", "provider_managed"),
+    ),
+  ).rejects.toBeInstanceOf(ModelHostOutcomeUnknownError);
+  expect(calls).toBe(1);
 });
 
 test("Google 重复旧续接 token 时停止，不能返回部分结果", async () => {
@@ -506,6 +632,7 @@ test("Google 最终续接跳缺 created 时不结算", async () => {
 test("Google 总时限终止挂起的 fetch", async () => {
   vi.useFakeTimers();
   try {
+    const failures: unknown[] = [];
     const host = new FileNativeModelHost(
       {
         provider: "google_interactions",
@@ -519,6 +646,14 @@ test("Google 总时限终止挂起的 fetch", async () => {
         new Promise<Response>(() => {
           /* intentionally hangs */
         }),
+      {
+        recordFailure: (failure) => {
+          failures.push(failure);
+          return Promise.resolve();
+        },
+        recordExchangeIfActive: () => Promise.resolve(),
+        resolve: () => Promise.resolve(),
+      },
     );
     const result = host.exchange(
       exchangeFor("google_interactions", "manual-model", "provider_managed"),
@@ -528,6 +663,12 @@ test("Google 总时限终止挂起的 fetch", async () => {
     );
     await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
     await assertion;
+    expect(failures).toMatchObject([
+      {
+        exchange: { googleHops: [{ hop: 1, status: "interrupted" }] },
+        failures: [{ kind: "provider_transport" }],
+      },
+    ]);
   } finally {
     vi.useRealTimers();
   }

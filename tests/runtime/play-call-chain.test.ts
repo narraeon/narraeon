@@ -391,6 +391,102 @@ test("Google 多跳签名和工具在完整响应后结算并可冷读逐跳证�
   ]);
   expect(JSON.stringify(wire)).not.toContain("private-token");
   expect(JSON.stringify(wire)).not.toContain("synthetic-signature-secret");
+  const prefix = structuredClone(
+    (await worlds.playTimeline.readCurrent(worldId))!.value,
+  );
+  prefix.chainId = "hop-tool-prefix";
+  prefix.exchange = 1;
+  prefix.events = prefix.events.filter(
+    (event) => event.kind !== "assistant" || event.exchange <= 1,
+  );
+  await worlds.playTimeline.copyRetainedEncodings(worldId, "hop-tool", prefix);
+  const copied = await reopened.playTimeline.readInitialEncoding(
+    worldId,
+    "hop-tool-prefix",
+  );
+  expect(copied?.googleHops).toHaveLength(2);
+  expect(copied?.googleHops?.every((hop) => hop.exchange === 1)).toBe(true);
+});
+
+test("Google 确定拒绝后的合法重试保留两次独立派发证据", async () => {
+  const bodies: unknown[] = [];
+  const host = new FileNativeModelHost(
+    {
+      provider: "google_interactions",
+      baseUrl: "https://provider.invalid/v1beta",
+      apiKey: "secret",
+      modelId: "manual-model",
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2000,
+    },
+    (_url, init) => {
+      if (typeof init?.body !== "string")
+        throw new Error("Missing request body");
+      bodies.push(JSON.parse(init.body));
+      if (bodies.length === 1)
+        return Promise.resolve(new Response("rejected", { status: 400 }));
+      return Promise.resolve(
+        new Response(
+          googleText("Recovered.")
+            .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+            .join(""),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      );
+    },
+  );
+  const { worlds, worldId } = await createWorld(
+    "google-hop-retry",
+    undefined,
+    host.binding(),
+  );
+  const chains = new PlayCallChain(worlds);
+  const first = await chains.start({
+    worldId,
+    chainId: "hop-retry",
+    exchangeId: "first",
+    playerText: "Go.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: host.binding(),
+    modelHost: host,
+  });
+  expect(first).toMatchObject({ status: "interrupted", canRetry: true });
+  const second = await chains.append({
+    worldId,
+    chainId: "hop-retry",
+    exchangeId: "retry",
+    playerText: "",
+    modelHost: host,
+    resolvePrompt: () => {
+      throw new Error("Retry must use its frozen request");
+    },
+  });
+  expect(second.status).toBe("ready");
+  expect(bodies[1]).toEqual(bodies[0]);
+  const wire = await worlds.playTimeline.readInitialEncoding(
+    worldId,
+    "hop-retry",
+  );
+  expect(wire?.googleHops).toMatchObject([
+    { exchange: 1, attempt: 1, hop: 1, status: "rejected", httpStatus: 400 },
+    { exchange: 1, attempt: 2, hop: 1, status: "completed", httpStatus: 200 },
+  ]);
+  const prefix = structuredClone(
+    (await worlds.playTimeline.readCurrent(worldId))!.value,
+  );
+  prefix.chainId = "hop-retry-prefix";
+  prefix.events = prefix.events.filter(
+    (event) => event.kind !== "assistant" || event.attempt === 1,
+  );
+  await worlds.playTimeline.copyRetainedEncodings(worldId, "hop-retry", prefix);
+  const copied = await worlds.playTimeline.readInitialEncoding(
+    worldId,
+    "hop-retry-prefix",
+  );
+  expect(copied?.googleHops).toMatchObject([
+    { attempt: 1, status: "rejected" },
+  ]);
 });
 
 test("Google 后置编码只保留两个运行并随分叉和归档恢复", async () => {
@@ -587,6 +683,7 @@ test.each([
   "unsafe-thought",
   "unsafe-signature",
   "unsafe-call",
+  "unsafe-hop-header",
   "wrong-provider",
 ] as const)(
   "Google 后置编码清理中断及损坏不影响恢复与分叉归档：%s",
@@ -684,7 +781,22 @@ test.each([
           body: { input: unknown[] };
         };
         if (fault === "wrong-provider") unsafe.provider = "anthropic_messages";
-        else if (fault === "unsafe-thought")
+        else if (fault === "unsafe-hop-header") {
+          const nested = unsafe as typeof unsafe & { googleHops: unknown[] };
+          nested.googleHops = [
+            {
+              exchange: 1,
+              attempt: 1,
+              hop: 1,
+              tokenSupplied: false,
+              status: "completed",
+              request: {
+                ...structuredClone(unsafe),
+                headerNames: ["synthetic-private-signature"],
+              },
+            },
+          ];
+        } else if (fault === "unsafe-thought")
           unsafe.body.input.push({
             type: "thought",
             signature: "synthetic-private-signature",

@@ -13,6 +13,7 @@ import type {
   ModelHostExchange,
   ModelHostResponse,
   ModelHostToolCall,
+  GoogleHopEvidence,
 } from "../model/ModelHost.ts";
 import { ModelHostCancelledError } from "../model/ModelHost.ts";
 import { withGoogleHop } from "../model/GoogleRequestPreview.ts";
@@ -84,6 +85,10 @@ export interface ModelToolConversationRun<
   requestId: string;
   worldRevisionBoundaries?: ModelHostExchange["worldRevisionBoundaries"];
   save: (session: Session) => Promise<void>;
+  recordGoogleHop?: (
+    requestId: string,
+    hop: GoogleHopEvidence,
+  ) => Promise<void>;
   settleToolResponse: (
     session: Session,
     assistantItemIndex: number,
@@ -207,13 +212,13 @@ export class ModelToolConversation<
         input.changed?.(true);
         const response = await input.host.exchange(request, {
           signal: live.controller.signal,
-          onGoogleHop: async (hop) => {
+          onGoogleHop: (hop) => {
             const snapshot = session.requests?.findLast(
               (entry) => entry.requestId === live.requestId,
             );
             if (snapshot?.wireRequest === undefined) return;
             snapshot.wireRequest = withGoogleHop(snapshot.wireRequest, hop);
-            await input.save(session);
+            return input.recordGoogleHop?.(live.requestId, hop);
           },
           onDelta: (delta) => {
             recordDelta(live, delta);

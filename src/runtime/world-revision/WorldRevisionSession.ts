@@ -637,6 +637,8 @@ export class WorldRevisionSession {
         ? {}
         : { worldRevisionBoundaries }),
       save: (next) => this.#store.saveSession(next),
+      recordGoogleHop: (id, hop) =>
+        this.#store.recordGoogleHop(session.sessionId, id, hop),
       settleToolResponse: async (next, assistantItemIndex, calls) => {
         activeTransaction = await this.#settleToolResponse(
           next,

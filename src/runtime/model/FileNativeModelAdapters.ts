@@ -262,6 +262,7 @@ export class FileNativeModelHost implements ModelHost {
           signal,
           observer?.retainLateExtensionResponse === true,
           observer?.onGoogleHop,
+          observer?.diagnosticAttempt,
         );
       return await this.#anthropic(request, observer?.onDelta, signal);
     } catch (error: unknown) {
@@ -305,7 +306,10 @@ export class FileNativeModelHost implements ModelHost {
     return {
       provider,
       method: "POST",
-      endpointPath: providerUrl(this.#connection).pathname,
+      endpointPath:
+        provider === "google_interactions"
+          ? googleDiagnosticPath(this.#connection)
+          : providerUrl(this.#connection).pathname,
       headerNames:
         provider === "anthropic_messages"
           ? ["Accept", "anthropic-version", "x-api-key", "Content-Type"]
@@ -346,8 +350,22 @@ export class FileNativeModelHost implements ModelHost {
     signal?: AbortSignal,
     retainLateExtensionResponse = false,
     onGoogleHop?: ModelHostExchangeObserver["onGoogleHop"],
+    diagnosticAttempt?: number,
   ): Promise<ModelHostResponse> {
     const controller = new AbortController();
+    const capture = providerCapture(
+      this.#failureLog,
+      this.#connection.provider,
+      providerUrl(this.#connection),
+      {
+        ...modelDiagnosticContext(request),
+        ...(diagnosticAttempt === undefined
+          ? {}
+          : { requestAttempt: diagnosticAttempt }),
+      },
+      JSON.stringify(googleRequestBody(this.#connection, request, true)),
+      googleDiagnosticEndpoint(this.#connection),
+    );
     let abort: (() => void) | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -360,11 +378,29 @@ export class FileNativeModelHost implements ModelHost {
           controller.signal,
           retainLateExtensionResponse,
           onGoogleHop,
+          diagnosticAttempt,
+          capture,
         ),
         new Promise<never>((_, reject) => {
           timer = setTimeout(
             () => {
               controller.abort();
+              if (capture !== undefined && this.#failureLog !== undefined) {
+                void this.#failureLog
+                  .recordFailure({
+                    exchange: capture.snapshot(),
+                    failures: [
+                      {
+                        kind: "provider_transport",
+                        message:
+                          "Google Interactions exceeded its total time limit",
+                      },
+                    ],
+                  })
+                  .catch(() => {
+                    // Failure logging is best effort and cannot delay the timeout.
+                  });
+              }
               reject(
                 new ModelHostOutcomeUnknownError(
                   "Google Interactions exceeded its total time limit",
@@ -396,33 +432,26 @@ export class FileNativeModelHost implements ModelHost {
     signal: AbortSignal,
     retainLateExtensionResponse: boolean,
     onGoogleHop?: ModelHostExchangeObserver["onGoogleHop"],
+    diagnosticAttempt?: number,
+    capture?: AiExchangeCapture,
   ): Promise<ModelHostResponse> {
     const bodyJson = JSON.stringify(
       googleRequestBody(this.#connection, request),
     );
     const frozenBody = JSON.parse(bodyJson) as Record<string, unknown>;
     const url = providerUrl(this.#connection);
-    const capture = providerCapture(
-      this.#failureLog,
-      this.#connection.provider,
-      url,
-      modelDiagnosticContext(request),
-      JSON.stringify(googleRequestBody(this.#connection, request, true)),
-    );
     const preview = this.#previewRequest(request, true);
     const evidence: GoogleHopEvidence[] = [];
-    let reporting = Promise.resolve();
     const report = (hop: GoogleHopEvidence) => {
       capture?.setGoogleHops(evidence);
       const snapshot = structuredClone(hop);
-      reporting = reporting.then(async () => {
-        try {
-          await onGoogleHop?.(snapshot);
-        } catch {
+      try {
+        void Promise.resolve(onGoogleHop?.(snapshot)).catch(() => {
           // Optional diagnostics cannot affect the model request.
-        }
-      });
-      return reporting;
+        });
+      } catch {
+        // Synchronous observers are optional diagnostics too.
+      }
     };
     signal.addEventListener(
       "abort",
@@ -448,7 +477,7 @@ export class FileNativeModelHost implements ModelHost {
           if (signal.aborted) throw cancelledModelRequest();
           const hop: GoogleHopEvidence = {
             exchange: request.exchange ?? 1,
-            attempt: request.requestAttempt ?? 1,
+            attempt: diagnosticAttempt ?? request.requestAttempt ?? 1,
             hop: evidence.length + 1,
             tokenSupplied: token !== undefined,
             status: "attempted",
@@ -480,7 +509,7 @@ export class FileNativeModelHost implements ModelHost {
             void dispatched.catch(() => {
               // The same rejection is classified after the diagnostic write.
             });
-            await report(hop);
+            void report(hop);
             const response = await dispatched;
             hop.httpStatus = response.status;
             observe(new Response(null, { status: response.status }));
@@ -488,7 +517,7 @@ export class FileNativeModelHost implements ModelHost {
               throw cancelledModelRequest();
             if (!response.ok) {
               hop.status = "rejected";
-              await report(hop);
+              void report(hop);
               if (token !== undefined)
                 throw new ModelHostOutcomeUnknownError(
                   "A later Google Interactions continuation request failed after earlier progress",
@@ -527,10 +556,13 @@ export class FileNativeModelHost implements ModelHost {
             hop.status =
               payload.status === "completed" ||
               payload.status === "requires_action" ||
-              payload.status === "requires_continuation"
+              payload.status === "requires_continuation" ||
+              payload.status === "failed" ||
+              payload.status === "cancelled" ||
+              payload.status === "incomplete"
                 ? payload.status
                 : "interrupted";
-            await report(hop);
+            void report(hop);
             if (payload.status === "requires_continuation") {
               if (signal.aborted) throw cancelledModelRequest();
               if (
@@ -548,7 +580,7 @@ export class FileNativeModelHost implements ModelHost {
           } catch (error: unknown) {
             if (hop.status === "attempted") {
               hop.status = "interrupted";
-              await report(hop);
+              void report(hop);
             }
             throw error;
           }
@@ -977,10 +1009,17 @@ function providerCapture(
   endpoint: URL,
   context: AiExchangeDiagnostics["context"],
   requestBody: string,
+  endpointLabel?: string,
 ): AiExchangeCapture | undefined {
   return failureLog === undefined
     ? undefined
-    : new AiExchangeCapture({ provider, endpoint, context, requestBody });
+    : new AiExchangeCapture({
+        provider,
+        endpoint,
+        context,
+        requestBody,
+        ...(endpointLabel === undefined ? {} : { endpointLabel }),
+      });
 }
 
 function captureDelta(
@@ -2041,6 +2080,42 @@ function providerUrl(connection: FileNativeModelConnection): URL {
   const path = url.pathname.replace(/\/+$/u, "");
   url.pathname = path.endsWith(suffix) ? path : `${path}${suffix}`;
   return url;
+}
+
+function googleDiagnosticPath(connection: FileNativeModelConnection): string {
+  const url = providerUrl(connection);
+  return containsGoogleCredential(url.pathname, connection.apiKey)
+    ? ""
+    : url.pathname;
+}
+
+function googleDiagnosticEndpoint(
+  connection: FileNativeModelConnection,
+): string {
+  const url = providerUrl(connection);
+  const endpoint = `${url.protocol}//${url.host}${googleDiagnosticPath(connection)}`;
+  return containsGoogleCredential(endpoint, connection.apiKey) ? "" : endpoint;
+}
+
+function containsGoogleCredential(value: string, key: string): boolean {
+  if (key === "") return false;
+  const needle = key.toLowerCase();
+  let current = value;
+  for (let depth = 0; depth < 3; depth++) {
+    if (
+      current.toLowerCase().includes(needle) ||
+      current.toLowerCase().includes(encodeURIComponent(key).toLowerCase())
+    )
+      return true;
+    try {
+      const decoded = decodeURIComponent(current);
+      if (decoded === current) break;
+      current = decoded;
+    } catch {
+      return true;
+    }
+  }
+  return false;
 }
 
 function parseArguments(value: string): unknown {

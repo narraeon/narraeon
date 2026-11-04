@@ -6,7 +6,17 @@ import {
   type AuthoringRequestSnapshot,
 } from "../authoring/AuthoringRequestSnapshot.ts";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises";
+import { readGoogleHops, writeGoogleHop } from "../model/GoogleHopJournal.ts";
+import type { GoogleHopEvidence } from "../model/ModelHost.ts";
+import {
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+} from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 import type { AppLocale } from "../../protocol/appPreferences.ts";
@@ -180,6 +190,24 @@ export class FileNativeWorldRevisionStore {
     return `world-session-${randomUUID()}`;
   }
 
+  recordGoogleHop(
+    sessionId: string,
+    requestId: string,
+    hop: GoogleHopEvidence,
+  ): Promise<void> {
+    assertSessionId(sessionId);
+    return writeGoogleHop(
+      join(this.#sessionsRoot, ".google-hops", sessionId),
+      requestId,
+      hop,
+      () =>
+        stat(this.#sessionPath(sessionId)).then(
+          () => true,
+          () => false,
+        ),
+    );
+  }
+
   createChangeSetId(): string {
     return `change-set:${randomUUID()}`;
   }
@@ -306,6 +334,10 @@ export class FileNativeWorldRevisionStore {
       if (session.worldId !== worldId)
         throw new Error("World-revision conversation belongs to another world");
       await rm(this.#sessionPath(sessionId));
+      await rm(join(this.#sessionsRoot, ".google-hops", sessionId), {
+        recursive: true,
+        force: true,
+      });
     });
   }
 
@@ -346,6 +378,13 @@ export class FileNativeWorldRevisionStore {
       throw new Error(
         "World-revision conversation identity does not match its file",
       );
+    for (const request of session.requests ?? [])
+      if (request.wireRequest !== undefined)
+        request.wireRequest = await readGoogleHops(
+          join(this.#sessionsRoot, ".google-hops", sessionId),
+          request.requestId,
+          request.wireRequest,
+        );
     return session;
   }
 

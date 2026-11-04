@@ -3,8 +3,9 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { gunzipSync } from "node:zlib";
+import { createHash } from "node:crypto";
 
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 
 import { ContentWorkspace } from "../../src/runtime/content/ContentWorkspace.ts";
 import { contentTreeFingerprint } from "../../src/runtime/content/ContentTreeFingerprint.ts";
@@ -224,6 +225,87 @@ test("Google setting 多跳证据随作者请求冷读取并遮蔽 token 和签�
   const preview = JSON.stringify(saved.requests?.[0]?.wireRequest);
   expect(preview).not.toContain("author-token");
   expect(preview).not.toContain("synthetic-signature-secret");
+});
+
+test("Google 作者续接第二跳挂起时冷读取已派发证据", async () => {
+  const root = await temporaryRoot("google-setting-inflight-hops-");
+  const content = new ContentWorkspace(root, { locale: () => "en" });
+  const { localId } = await content.createCurrentTreeContentPackage();
+  let count = 0;
+  let finish!: (response: Response) => void;
+  const host = new FileNativeModelHost(
+    {
+      provider: "google_interactions",
+      baseUrl: "https://provider.invalid/v1beta",
+      apiKey: "secret",
+      modelId: "manual-model",
+      contextWindowTokens: 64000,
+      maxOutputTokens: 2000,
+    },
+    () => {
+      count++;
+      if (count === 2)
+        return new Promise<Response>((resolve) => {
+          finish = resolve;
+        });
+      const events = [
+        { event_type: "interaction.created" },
+        {
+          event_type: "interaction.completed",
+          interaction: {
+            status: "requires_continuation",
+            continuation_token: "private-token",
+          },
+        },
+      ];
+      return Promise.resolve(
+        new Response(
+          events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      );
+    },
+  );
+  const running = sendFresh(
+    serviceFor(root, content, host),
+    localId,
+    "inflight",
+    "Continue.",
+  );
+  await vi.waitFor(() => expect(count).toBe(2));
+  const store = new FileNativeSettingImprovementStore(root);
+  await vi.waitFor(async () => {
+    const saved = await store.findByCreationRequest(localId, "inflight");
+    expect(saved?.requests?.[0]?.wireRequest?.googleHops).toMatchObject([
+      { hop: 1, status: "requires_continuation" },
+      { hop: 2, status: "attempted", tokenSupplied: true },
+    ]);
+    const journal = join(
+      root,
+      "setting-improvements",
+      "sessions",
+      ".google-hops",
+      saved!.sessionId,
+      createHash("sha256").update("inflight").digest("hex"),
+    );
+    const firstHop = JSON.parse(
+      await readFile(join(journal, "1-1-1.json"), "utf8"),
+    ) as { status: string };
+    const secondHop = JSON.parse(
+      await readFile(join(journal, "1-1-2.json"), "utf8"),
+    ) as { status: string };
+    expect(firstHop.status).toBe("requires_continuation");
+    expect(secondHop.status).toBe("attempted");
+  });
+  finish(
+    new Response(
+      [{ event_type: "interaction.created" }, ...googleText("Finished.")]
+        .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+        .join(""),
+      { headers: { "content-type": "text/event-stream" } },
+    ),
+  );
+  expect((await running).runStatus).toBe("ready");
 });
 
 test.each(["empty", "malformed", "missing", "null"])(

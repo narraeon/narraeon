@@ -53,7 +53,7 @@ export async function aggregateGoogleInteractions(
   let lifecycleValid = true;
   let sawStep = false;
   let done = false;
-  for await (const event of providerStreamEvents(body)) {
+  for await (const event of providerStreamEvents(body, { fatalUtf8: true })) {
     if (event.data === "[DONE]") {
       if (terminal === undefined || done) lifecycleValid = false;
       done = true;

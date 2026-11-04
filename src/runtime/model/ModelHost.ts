@@ -165,6 +165,8 @@ export interface ModelHostExchangeObserver {
   onDelta?: (delta: ModelHostDelta) => void;
   /** Sanitized evidence for one Google dispatch, updated as it progresses. */
   onGoogleHop?: (evidence: GoogleHopEvidence) => Promise<void> | void;
+  /** Dispatch attempt identity; does not alter the frozen provider request. */
+  diagnosticAttempt?: number;
   /** Explicit user cancellation for this logical dispatch. */
   signal?: AbortSignal;
   /** A closed extension may retain a complete late response as diagnostics only. */
@@ -181,6 +183,9 @@ export interface GoogleHopEvidence {
     | "completed"
     | "requires_action"
     | "requires_continuation"
+    | "failed"
+    | "cancelled"
+    | "incomplete"
     | "interrupted"
     | "rejected";
   httpStatus?: number;

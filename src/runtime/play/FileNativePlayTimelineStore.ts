@@ -1,8 +1,6 @@
 import { isResolutionReceipt } from "../../protocol/resolution.ts";
-import {
-  isSafeGoogleWireRequest,
-  withGoogleHop,
-} from "../model/GoogleRequestPreview.ts";
+import { isSafeGoogleWireRequest } from "../model/GoogleRequestPreview.ts";
+import { readGoogleHops, writeGoogleHop } from "../model/GoogleHopJournal.ts";
 import {
   legacyModelBindingFailure,
   projectLegacyModelBindingFailure,
@@ -745,7 +743,14 @@ export class FileNativePlayTimelineStore {
       !value.headerNames.every((name: unknown) => typeof name === "string")
     )
       throw new Error("Initial request encoding has an invalid shape");
-    return value as unknown as ModelHostWireRequest;
+    const wire = value as unknown as ModelHostWireRequest;
+    return wire.provider === "google_interactions"
+      ? readGoogleHops(
+          join(root, "google-hops", String(exchange)),
+          "main",
+          wire,
+        )
+      : wire;
   }
 
   async recordGoogleHop(
@@ -756,16 +761,12 @@ export class FileNativePlayTimelineStore {
     followupId?: string,
   ): Promise<void> {
     const root = this.#contextRoot(worldId, chainId);
-    if (!(await retainedEncodingExchanges(root)).includes(runExchange)) return;
-    const path = join(
-      root,
-      followupId === undefined
-        ? encodingFileName(runExchange)
-        : followupEncodingFileName(runExchange, followupId),
+    await writeGoogleHop(
+      join(root, "google-hops", String(runExchange)),
+      followupId === undefined ? "main" : `followup:${followupId}`,
+      hop,
+      async () => (await retainedEncodingExchanges(root)).includes(runExchange),
     );
-    const wire = await readOptionalJson<unknown>(path);
-    if (!isSafeGoogleWireRequest(wire)) return;
-    await publishJson(path, withGoogleHop(wire, hop));
   }
 
   async copyRetainedEncodings(
@@ -788,14 +789,24 @@ export class FileNativePlayTimelineStore {
     target: PersistedPlayCallChain,
   ): Promise<void> {
     const sourceRoot = this.#contextRoot(worldId, sourceChainId);
-    const targetFollowups = new Set(
+    const retainedResponses = new Set(
+      target.events.flatMap((event) =>
+        event.kind === "assistant"
+          ? [`${event.exchange}:${event.attempt}`]
+          : [],
+      ),
+    );
+    const targetFollowups = new Map(
       target.events.flatMap((event) =>
         event.kind === "followup" && event.requestPreviewExchange !== undefined
           ? [
-              followupEncodingFileName(
-                event.requestPreviewExchange,
+              [
+                followupEncodingFileName(
+                  event.requestPreviewExchange,
+                  event.followupId,
+                ),
                 event.followupId,
-              ),
+              ] as const,
             ]
           : [],
       ),
@@ -809,14 +820,24 @@ export class FileNativePlayTimelineStore {
         exchange,
       ).catch(() => null);
       if (encoding === null) continue;
+      if (encoding.googleHops !== undefined)
+        encoding.googleHops = encoding.googleHops.filter((hop) =>
+          retainedResponses.has(`${hop.exchange}:${hop.attempt}`),
+        );
       await publishImmutableJson(
         join(targetRoot, encodingFileName(exchange)),
         encoding,
       );
       for (const name of await followupEncodingNames(sourceRoot, exchange)) {
-        if (!targetFollowups.has(name)) continue;
+        const followupId = targetFollowups.get(name);
+        if (followupId === undefined) continue;
         try {
-          const value = await readOptionalJson<unknown>(join(sourceRoot, name));
+          const value = await this.readFollowupEncoding(
+            worldId,
+            sourceChainId,
+            exchange,
+            followupId,
+          );
           if (safeFollowupEncoding(value))
             await publishImmutableJson(join(targetRoot, name), value);
         } catch {
@@ -863,7 +884,11 @@ export class FileNativePlayTimelineStore {
     if (value === null) return null;
     if (!safeFollowupEncoding(value))
       throw new Error("Follow-up request encoding has an invalid shape");
-    return value;
+    return readGoogleHops(
+      join(root, "google-hops", String(exchange)),
+      `followup:${requestId}`,
+      value,
+    );
   }
 
   async readAllContexts(
@@ -2065,6 +2090,10 @@ async function retainedEncodingExchanges(
 async function pruneEncodings(contextRoot: string): Promise<void> {
   const exchanges = await recordedEncodingExchanges(contextRoot);
   const retained = new Set(exchanges.slice(0, 2));
+  const hopRoot = join(contextRoot, "google-hops");
+  for (const name of await readDirectoryNames(hopRoot))
+    if (/^[1-9]\d*$/u.test(name) && !retained.has(Number(name)))
+      await rm(join(hopRoot, name), { recursive: true, force: true });
   for (const name of await readDirectoryNames(contextRoot)) {
     const match = /^followup-encoding-([1-9][0-9]*)-[a-f0-9]{64}\.json$/u.exec(
       name,

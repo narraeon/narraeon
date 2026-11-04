@@ -12,6 +12,8 @@ import {
   type AuthoringRequestSnapshot,
 } from "../authoring/AuthoringRequestSnapshot.ts";
 import { randomUUID } from "node:crypto";
+import { readGoogleHops, writeGoogleHop } from "../model/GoogleHopJournal.ts";
+import type { GoogleHopEvidence } from "../model/ModelHost.ts";
 import {
   mkdir,
   open,
@@ -231,6 +233,24 @@ export class FileNativeSettingImprovementStore {
     return `setting-${randomUUID()}`;
   }
 
+  recordGoogleHop(
+    sessionId: string,
+    requestId: string,
+    hop: GoogleHopEvidence,
+  ): Promise<void> {
+    assertSessionId(sessionId);
+    return writeGoogleHop(
+      join(this.#sessionsRoot, ".google-hops", sessionId),
+      requestId,
+      hop,
+      () =>
+        stat(this.#path(sessionId)).then(
+          () => true,
+          () => false,
+        ),
+    );
+  }
+
   async read(sessionId: string): Promise<StoredSettingImprovementSession> {
     await this.#mutationTail;
     try {
@@ -340,6 +360,10 @@ export class FileNativeSettingImprovementStore {
           "The setting-improvement conversation does not belong to this content package",
         );
       await rm(this.#path(sessionId));
+      await rm(join(this.#sessionsRoot, ".google-hops", sessionId), {
+        recursive: true,
+        force: true,
+      });
       await rm(join(this.#sessionsRoot, `${sessionId}.schema-v1.json`), {
         force: true,
       });
@@ -558,6 +582,13 @@ export class FileNativeSettingImprovementStore {
       throw new Error(
         "Setting-improvement conversation identity does not match its file",
       );
+    for (const request of session.requests ?? [])
+      if (request.wireRequest !== undefined)
+        request.wireRequest = await readGoogleHops(
+          join(this.#sessionsRoot, ".google-hops", sessionId),
+          request.requestId,
+          request.wireRequest,
+        );
     return session;
   }
 

@@ -46,13 +46,22 @@ function validWireRequest(value: unknown, allowHops: boolean): boolean {
     record.redactedProviderContinuation === true &&
     record.method === "POST" &&
     typeof record.endpointPath === "string" &&
+    (record.endpointPath === "" ||
+      /^\/(?:[A-Za-z0-9._~!$&'()*+,;=:@%/-]*\/)?interactions$/u.test(
+        record.endpointPath,
+      )) &&
     Array.isArray(record.headerNames) &&
-    record.headerNames.every((name) => typeof name === "string") &&
+    record.headerNames.length === 3 &&
+    record.headerNames[0] === "Accept" &&
+    record.headerNames[1] === "x-goog-api-key" &&
+    record.headerNames[2] === "Content-Type" &&
     validGooglePreviewBody(record.body) &&
     (record.googleHops === undefined ||
       (allowHops &&
         Array.isArray(record.googleHops) &&
-        record.googleHops.every(validHop))) &&
+        record.googleHops.every((hop: unknown) =>
+          validHop(hop, record.endpointPath as string),
+        ))) &&
     (record.systemInstructionSources === undefined ||
       (Array.isArray(record.systemInstructionSources) &&
         record.systemInstructionSources.every(
@@ -71,7 +80,11 @@ function validWireRequest(value: unknown, allowHops: boolean): boolean {
   );
 }
 
-function validHop(value: unknown): boolean {
+export function isSafeGoogleHop(value: unknown): value is GoogleHopEvidence {
+  return validHop(value);
+}
+
+function validHop(value: unknown, endpointPath?: string): boolean {
   if (
     !isRecord(value) ||
     !Object.keys(value).every((key) =>
@@ -101,6 +114,9 @@ function validHop(value: unknown): boolean {
       "completed",
       "requires_action",
       "requires_continuation",
+      "failed",
+      "cancelled",
+      "incomplete",
       "interrupted",
       "rejected",
     ].includes(String(value.status)) &&
@@ -124,7 +140,10 @@ function validHop(value: unknown): boolean {
         ))) &&
     (value.request === undefined
       ? Number(value.hop) > 1
-      : validWireRequest(value.request, false))
+      : validWireRequest(value.request, false) &&
+        isRecord(value.request) &&
+        (endpointPath === undefined ||
+          value.request.endpointPath === endpointPath))
   );
 }
 

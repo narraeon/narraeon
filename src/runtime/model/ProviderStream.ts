@@ -13,9 +13,12 @@ export interface ProviderStreamEvent {
 
 export async function* providerStreamEvents(
   body: ReadableStream<Uint8Array>,
+  options?: { fatalUtf8?: boolean },
 ): AsyncGenerator<ProviderStreamEvent> {
   const reader = body.getReader();
-  const decoder = new TextDecoder();
+  const decoder = new TextDecoder("utf-8", {
+    fatal: options?.fatalUtf8 === true,
+  });
   let pending = "";
   let event: string | null = null;
   let data: string[] = [];
