@@ -12,13 +12,54 @@ import { createElement } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 
 import { emptyAggregatedModelUsage } from "../../src/protocol/modelUsage.ts";
-import type { V1SettingImprovementRollbackResult } from "../../src/protocol/v1.ts";
+import type {
+  V1SettingImprovementHistoryItem,
+  V1SettingImprovementRollbackResult,
+} from "../../src/protocol/v1.ts";
 import { SettingImprovementPanel } from "../../src/web/SettingImprovementPanel.tsx";
 
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
+
+test.each(["content-package", "world-revision"] as const)(
+  "%s 损坏历史不可选择并说明原因",
+  (target) => {
+    const onSelectSession = vi.fn(() => Promise.resolve());
+    renderPanel(undefined, {
+      target,
+      onSelectSession,
+      history: [
+        {
+          sessionId: "setting-test",
+          runStatus: "ready",
+          createdAt: 1,
+          updatedAt: 2,
+          excerpt: "损坏对话",
+          turnCount: 1,
+          exchangeCount: 1,
+          toolCallCount: 0,
+          changedFileCount: 0,
+          unavailableReason:
+            "Google continuation is damaged; start a fresh model context.",
+        },
+      ],
+    });
+    fireEvent.click(screen.getByRole("button", { name: "历史" }));
+    const button = screen.getByText("损坏对话").closest("button")!;
+    expect(button.hasAttribute("disabled")).toBe(true);
+    expect(button.querySelector(".setting-history-status")?.textContent).toBe(
+      "不可继续",
+    );
+    expect(button.textContent).toContain(
+      "此对话的模型续传已损坏，请开启全新上下文。",
+    );
+    expect(button.textContent).not.toContain("当前所选");
+    fireEvent.click(button);
+    expect(onSelectSession).not.toHaveBeenCalled();
+  },
+);
 
 test("每轮调用先折叠成窄条，再逐层展开，并可一次全部收起", () => {
   renderPanel();
@@ -135,6 +176,8 @@ function renderPanel(
     target?: "content-package" | "world-revision";
     onSend?: (text: string) => Promise<void>;
     onCreateWorld?: () => void;
+    history?: V1SettingImprovementHistoryItem[];
+    onSelectSession?: (sessionId: string) => Promise<void>;
     onRollbackFile?: (
       sessionId: string,
       changeSetId: string,
@@ -203,7 +246,7 @@ function renderPanel(
         },
         lastFailure: null,
       },
-      history: [
+      history: options.history ?? [
         {
           sessionId: "setting-test",
           runStatus: "ready",
@@ -246,7 +289,7 @@ function renderPanel(
       onCancel: () => Promise.resolve(),
       onResume: () => Promise.resolve(),
       onFreshContext: () => undefined,
-      onSelectSession: () => Promise.resolve(),
+      onSelectSession: options.onSelectSession ?? (() => Promise.resolve()),
       onDeleteSession,
       onRollbackFile:
         options.onRollbackFile ??

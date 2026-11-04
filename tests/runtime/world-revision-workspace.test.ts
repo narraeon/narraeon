@@ -714,82 +714,93 @@ test("Google world revision refuses an empty persisted continuation after restar
   expect(sent).toHaveLength(2);
 });
 
-test("Google world revision can start fresh beside a damaged continuation", async () => {
-  const { root, worldId, worlds, workspace } = await createdWorld();
-  const { host, sent } = googleAuthoringHost([
-    googleText("Original."),
-    googleText("Fresh."),
-  ]);
-  const service = () =>
-    new WorldRevisionSession({
-      store: new FileNativeWorldRevisionStore(root),
-      workspace,
-      worlds,
-      compiler: new FileNativePromptCompiler({ locale: "zh-CN" }),
-      locale: () => "zh-CN",
-      bindModelHost: () => Promise.resolve(host),
-      bindExistingModelHost: () => Promise.resolve(host),
-      bindPlayPreset: () =>
-        Promise.resolve(builtinDefaultPlayPresetBinding("zh-CN")),
-      preview: () => preview,
-    });
-  const first = await service().send({
-    worldId,
-    requestId: "first",
-    message: "讨论",
-    continuation: { kind: "fresh_context" },
-  });
-  const path = join(
-    root,
-    "world-revisions",
-    "sessions",
-    `${first.sessionId}.json`,
-  );
-  const damaged = JSON.parse(await readFile(path, "utf8")) as {
-    modelItems: { kind: string; providerState: { steps: unknown } }[];
-  };
-  damaged.modelItems.find(
-    (item: { kind: string }) => item.kind === "assistant",
-  )!.providerState.steps = [{ type: "function_call", id: 4 }];
-  const bytes = JSON.stringify(damaged);
-  await writeFile(path, bytes);
-  await expect(
-    service().send({
-      worldId,
-      requestId: "next",
-      message: "继续",
-      continuation: { kind: "continue_context", sessionId: first.sessionId },
-    }),
-  ).rejects.toThrow(/fresh model context/iu);
-  const damagedHistory = (await service().overview(worldId)).history[0];
-  expect(damagedHistory?.sessionId).toBe(first.sessionId);
-  expect(damagedHistory?.unavailableReason).toContain("damaged");
-  const fresh = await service().send({
-    worldId,
-    requestId: "fresh",
-    message: "重新开始",
-    continuation: { kind: "fresh_context" },
-  });
-  expect(fresh.runStatus).toBe("ready");
-  await expect(
-    service().send({
+test.each(["malformed", "missing", "null"])(
+  "Google world revision can start fresh beside a %s continuation",
+  async (corruption) => {
+    const { root, worldId, worlds, workspace } = await createdWorld();
+    const { host, sent } = googleAuthoringHost([
+      googleText("Original."),
+      googleText("Fresh."),
+    ]);
+    const service = () =>
+      new WorldRevisionSession({
+        store: new FileNativeWorldRevisionStore(root),
+        workspace,
+        worlds,
+        compiler: new FileNativePromptCompiler({ locale: "zh-CN" }),
+        locale: () => "zh-CN",
+        bindModelHost: () => Promise.resolve(host),
+        bindExistingModelHost: () => Promise.resolve(host),
+        bindPlayPreset: () =>
+          Promise.resolve(builtinDefaultPlayPresetBinding("zh-CN")),
+        preview: () => preview,
+      });
+    const first = await service().send({
       worldId,
       requestId: "first",
       message: "讨论",
       continuation: { kind: "fresh_context" },
-    }),
-  ).rejects.toThrow(/new request ID/iu);
-  expect(
-    (await service().readSession(worldId, fresh.sessionId)).runStatus,
-  ).toBe("ready");
-  expect((await service().overview(worldId)).history).toHaveLength(2);
-  expect(sent).toHaveLength(2);
-  expect(await readFile(path, "utf8")).toBe(bytes);
-});
+    });
+    const path = join(
+      root,
+      "world-revisions",
+      "sessions",
+      `${first.sessionId}.json`,
+    );
+    const damaged = JSON.parse(await readFile(path, "utf8")) as {
+      modelItems: { kind: string; providerState?: { steps: unknown } | null }[];
+    };
+    const assistant = damaged.modelItems.find(
+      (item: { kind: string }) => item.kind === "assistant",
+    )!;
+    if (corruption === "missing") delete assistant.providerState;
+    else if (corruption === "null") assistant.providerState = null;
+    else assistant.providerState!.steps = [{ type: "function_call", id: 4 }];
+    const bytes = JSON.stringify(damaged);
+    await writeFile(path, bytes);
+    await expect(
+      service().send({
+        worldId,
+        requestId: "next",
+        message: "继续",
+        continuation: { kind: "continue_context", sessionId: first.sessionId },
+      }),
+    ).rejects.toThrow(/fresh model context/iu);
+    const damagedHistory = (await service().overview(worldId)).history[0];
+    expect(damagedHistory?.sessionId).toBe(first.sessionId);
+    expect(damagedHistory?.unavailableReason).toContain("damaged");
+    const fresh = await service().send({
+      worldId,
+      requestId: "fresh",
+      message: "重新开始",
+      continuation: { kind: "fresh_context" },
+    });
+    expect(fresh.runStatus).toBe("ready");
+    await expect(
+      service().send({
+        worldId,
+        requestId: "first",
+        message: "讨论",
+        continuation: { kind: "fresh_context" },
+      }),
+    ).rejects.toThrow(/new request ID/iu);
+    expect(
+      (await service().readSession(worldId, fresh.sessionId)).runStatus,
+    ).toBe("ready");
+    expect((await service().overview(worldId)).history).toHaveLength(2);
+    expect(sent).toHaveLength(2);
+    expect(await readFile(path, "utf8")).toBe(bytes);
+  },
+);
 
-test.each(["identity", "pending"] as const)(
-  "Google damaged world revision with ambiguous %s fails closed",
-  async (fault) => {
+test.each([
+  ["identity", "malformed"],
+  ["pending", "malformed"],
+  ["identity", "null"],
+  ["pending", "missing"],
+] as const)(
+  "Google damaged world revision with ambiguous %s and %s continuation fails closed",
+  async (fault, corruption) => {
     const { root, worldId, worlds, workspace } = await createdWorld();
     const { host, sent } = googleAuthoringHost([googleText("Original.")]);
     const service = () =>
@@ -820,11 +831,14 @@ test.each(["identity", "pending"] as const)(
     const stored = JSON.parse(await readFile(path, "utf8")) as {
       sessionId: string;
       pendingSettlement: unknown;
-      modelItems: { kind: string; providerState: { steps: unknown } }[];
+      modelItems: { kind: string; providerState?: { steps: unknown } | null }[];
     };
-    stored.modelItems.find(
+    const assistant = stored.modelItems.find(
       ({ kind }) => kind === "assistant",
-    )!.providerState.steps = [{ type: "function_call", id: 4 }];
+    )!;
+    if (corruption === "missing") delete assistant.providerState;
+    else if (corruption === "null") assistant.providerState = null;
+    else assistant.providerState!.steps = [{ type: "function_call", id: 4 }];
     if (fault === "identity")
       stored.sessionId = "world-session-00000000-0000-4000-8000-000000000000";
     else stored.pendingSettlement = {};
@@ -842,6 +856,68 @@ test.each(["identity", "pending"] as const)(
     expect(await readFile(path, "utf8")).toBe(bytes);
   },
 );
+
+test("Google world revision does not quarantine a different protocol as a missing continuation", async () => {
+  const { root, worldId, worlds, workspace } = await createdWorld();
+  const { host, sent } = googleAuthoringHost([
+    googleText("First."),
+    googleText("Second."),
+  ]);
+  const service = () =>
+    new WorldRevisionSession({
+      store: new FileNativeWorldRevisionStore(root),
+      workspace,
+      worlds,
+      compiler: new FileNativePromptCompiler({ locale: "zh-CN" }),
+      locale: () => "zh-CN",
+      bindModelHost: () => Promise.resolve(host),
+      bindExistingModelHost: () => Promise.resolve(host),
+      bindPlayPreset: () =>
+        Promise.resolve(builtinDefaultPlayPresetBinding("zh-CN")),
+      preview: () => preview,
+    });
+  const first = await service().send({
+    worldId,
+    requestId: "first",
+    message: "讨论",
+    continuation: { kind: "fresh_context" },
+  });
+  await service().send({
+    worldId,
+    requestId: "second",
+    message: "继续",
+    continuation: { kind: "continue_context", sessionId: first.sessionId },
+  });
+  const path = join(
+    root,
+    "world-revisions",
+    "sessions",
+    `${first.sessionId}.json`,
+  );
+  const stored = JSON.parse(await readFile(path, "utf8")) as {
+    modelItems: { kind: string; providerState?: unknown }[];
+  };
+  const assistants = stored.modelItems.filter(
+    ({ kind }) => kind === "assistant",
+  );
+  assistants[0]!.providerState = {
+    protocol: "chat_completions",
+    assistantMessage: { role: "assistant", content: "First." },
+  };
+  delete assistants[1]!.providerState;
+  const bytes = JSON.stringify(stored);
+  await writeFile(path, bytes);
+  await expect(
+    service().send({
+      worldId,
+      requestId: "fresh",
+      message: "重新开始",
+      continuation: { kind: "fresh_context" },
+    }),
+  ).rejects.toThrow(/cannot safely identify/iu);
+  expect(sent).toHaveLength(2);
+  expect(await readFile(path, "utf8")).toBe(bytes);
+});
 
 afterEach(async () => {
   await Promise.all(

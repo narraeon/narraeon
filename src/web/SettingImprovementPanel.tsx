@@ -905,7 +905,9 @@ function SettingConversationHistory({
                       : "setting-history-select"
                   }
                   aria-pressed={selected}
-                  disabled={loading || deleting}
+                  disabled={
+                    loading || deleting || item.unavailableReason !== undefined
+                  }
                   onClick={() => void onSelectSession(item.sessionId)}
                 >
                   <span className="setting-history-item-main">
@@ -915,15 +917,17 @@ function SettingConversationHistory({
                   <span
                     className={`setting-history-status is-${item.runStatus}`}
                   >
-                    {item.runStatus === "running"
-                      ? uiText("回复中")
-                      : item.runStatus === "paused"
-                        ? uiText("已暂停")
-                        : item.sessionId === selectedSessionId
-                          ? uiText("当前所选")
-                          : item.sessionId === latestSessionId
-                            ? uiText("最近")
-                            : uiText("可继续")}
+                    {item.unavailableReason !== undefined
+                      ? uiText("不可继续")
+                      : item.runStatus === "running"
+                        ? uiText("回复中")
+                        : item.runStatus === "paused"
+                          ? uiText("已暂停")
+                          : item.sessionId === selectedSessionId
+                            ? uiText("当前所选")
+                            : item.sessionId === latestSessionId
+                              ? uiText("最近")
+                              : uiText("可继续")}
                   </span>
                   <small className="setting-history-counts">
                     {item.unavailableReason && (

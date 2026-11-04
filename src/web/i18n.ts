@@ -747,6 +747,7 @@ const playPresetEnglishMessages: Record<string, string> = {
   "正在生成真实编译/产物预览…":
     "Generating real compilation and artifact previews…",
   工作台静态错误: "Workbench static error",
+  不可继续: "Cannot continue",
   当前预设的真实提示词预览: "Real prompt preview for the current preset",
   真实调用链预览: "Real call-chain preview",
   "请先保存当前修改；真实预览只编译已冻结的有效 revision。":

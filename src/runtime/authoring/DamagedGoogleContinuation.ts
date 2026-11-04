@@ -10,9 +10,7 @@ export function hasDamagedGoogleSteps(value: unknown): boolean {
       (item: unknown) =>
         isRecord(item) &&
         item.kind === "assistant" &&
-        isRecord(item.providerState) &&
-        item.providerState.protocol === "google_interactions" &&
-        !validGoogleInteractionsContinuation(item.providerState.steps),
+        damagedGoogleState(item.providerState),
     )
   );
 }
@@ -37,6 +35,13 @@ export function withoutDamagedGoogleSteps(
   const items: unknown[] = copy.modelItems;
   for (const [index, item] of items.entries()) {
     if (
+      isRecord(item) &&
+      item.kind === "assistant" &&
+      isRecord(item.providerState) &&
+      item.providerState.protocol !== "google_interactions"
+    )
+      return null;
+    if (
       !isRecord(item) ||
       item.kind !== "assistant" ||
       !Array.isArray(item.toolCalls)
@@ -59,15 +64,23 @@ export function withoutDamagedGoogleSteps(
     if (
       !isRecord(item) ||
       item.kind !== "assistant" ||
-      !isRecord(item.providerState) ||
-      item.providerState.protocol !== "google_interactions" ||
-      validGoogleInteractionsContinuation(item.providerState.steps)
+      !damagedGoogleState(item.providerState)
     )
       continue;
-    item.providerState.steps = [];
+    if (isRecord(item.providerState)) item.providerState.steps = [];
+    else item.providerState = { protocol: "google_interactions", steps: [] };
     damaged = true;
   }
   return damaged ? copy : null;
+}
+
+function damagedGoogleState(value: unknown): boolean {
+  return (
+    value == null ||
+    (isRecord(value) &&
+      value.protocol === "google_interactions" &&
+      !validGoogleInteractionsContinuation(value.steps))
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

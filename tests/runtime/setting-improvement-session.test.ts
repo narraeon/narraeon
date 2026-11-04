@@ -187,7 +187,7 @@ test("Google setting conversation settles ordered mixed calls and continues afte
   expect(sent).toHaveLength(3);
 });
 
-test.each(["empty", "malformed"])(
+test.each(["empty", "malformed", "missing", "null"])(
   "Google setting rejects %s persisted continuation after restart",
   async (corruption) => {
     const root = await temporaryRoot("google-setting-corrupt-");
@@ -210,12 +210,16 @@ test.each(["empty", "malformed"])(
       `${first.sessionId}.json`,
     );
     const stored = JSON.parse(await readFile(path, "utf8")) as {
-      modelItems: { kind: string; providerState: { steps: unknown } }[];
+      modelItems: { kind: string; providerState?: { steps: unknown } | null }[];
     };
-    stored.modelItems.find(
+    const assistant = stored.modelItems.find(
       (item: { kind: string }) => item.kind === "assistant",
-    )!.providerState.steps =
-      corruption === "empty" ? [] : [{ type: "function_call", id: 4 }];
+    )!;
+    if (corruption === "missing") delete assistant.providerState;
+    else if (corruption === "null") assistant.providerState = null;
+    else
+      assistant.providerState!.steps =
+        corruption === "empty" ? [] : [{ type: "function_call", id: 4 }];
     const damagedBytes = JSON.stringify(stored);
     await writeFile(path, damagedBytes);
     const before = await content.readCurrentTreeContentPackage(localId);
@@ -258,14 +262,17 @@ test.each(["empty", "malformed"])(
 );
 
 test.each([
-  "identity",
-  "pending",
-  "owner",
-  "request",
-  "missing-proof",
+  ["identity", "malformed"],
+  ["pending", "malformed"],
+  ["owner", "malformed"],
+  ["request", "malformed"],
+  ["missing-proof", "malformed"],
+  ["owner", "missing"],
+  ["missing-proof", "null"],
+  ["pending", "missing"],
 ] as const)(
-  "Google damaged setting history with ambiguous %s fails closed",
-  async (fault) => {
+  "Google damaged setting history with ambiguous %s and %s continuation fails closed",
+  async (fault, corruption) => {
     const root = await temporaryRoot("google-setting-ambiguous-");
     const content = new ContentWorkspace(root, { locale: () => "en" });
     const { localId } = await content.createCurrentTreeContentPackage();
@@ -288,11 +295,14 @@ test.each([
       creationRequestId: string;
       googleIdentity?: unknown;
       pendingSettlement: unknown;
-      modelItems: { kind: string; providerState: { steps: unknown } }[];
+      modelItems: { kind: string; providerState?: { steps: unknown } | null }[];
     };
-    stored.modelItems.find(
+    const assistant = stored.modelItems.find(
       ({ kind }) => kind === "assistant",
-    )!.providerState.steps = [{ type: "function_call", id: 4 }];
+    )!;
+    if (corruption === "missing") delete assistant.providerState;
+    else if (corruption === "null") assistant.providerState = null;
+    else assistant.providerState!.steps = [{ type: "function_call", id: 4 }];
     if (fault === "identity")
       stored.sessionId = "setting-00000000-0000-4000-8000-000000000000";
     else if (fault === "owner")
@@ -369,6 +379,57 @@ test("Google damaged history with an incomplete tool receipt batch cannot be iso
     ),
   ).rejects.toThrow();
   expect(sent).toHaveLength(1);
+  expect(await readFile(path, "utf8")).toBe(bytes);
+});
+
+test("Google setting does not quarantine a different protocol as a missing continuation", async () => {
+  const root = await temporaryRoot("google-setting-wrong-protocol-");
+  const content = new ContentWorkspace(root, { locale: () => "en" });
+  const { localId } = await content.createCurrentTreeContentPackage();
+  const { host, sent } = googleAuthoringHost([
+    googleText("First."),
+    googleText("Second."),
+  ]);
+  const first = await sendFresh(
+    serviceFor(root, content, host),
+    localId,
+    "first",
+    "Discuss.",
+  );
+  await serviceFor(root, content, host).send({
+    packageId: localId,
+    requestId: "second",
+    message: "Continue.",
+    continuation: { kind: "continue_context", sessionId: first.sessionId },
+  });
+  const path = join(
+    root,
+    "setting-improvements",
+    "sessions",
+    `${first.sessionId}.json`,
+  );
+  const stored = JSON.parse(await readFile(path, "utf8")) as {
+    modelItems: { kind: string; providerState?: unknown }[];
+  };
+  const assistants = stored.modelItems.filter(
+    ({ kind }) => kind === "assistant",
+  );
+  assistants[0]!.providerState = {
+    protocol: "chat_completions",
+    assistantMessage: { role: "assistant", content: "First." },
+  };
+  delete assistants[1]!.providerState;
+  const bytes = JSON.stringify(stored);
+  await writeFile(path, bytes);
+  await expect(
+    sendFresh(
+      serviceFor(root, content, host),
+      localId,
+      "fresh",
+      "Start again.",
+    ),
+  ).rejects.toThrow(/cannot safely identify/iu);
+  expect(sent).toHaveLength(2);
   expect(await readFile(path, "utf8")).toBe(bytes);
 });
 
