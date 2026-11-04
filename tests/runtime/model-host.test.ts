@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 
 import { FileNativeModelHost } from "../../src/runtime/model/FileNativeModelAdapters.ts";
 import {
@@ -111,6 +111,398 @@ test("Google 预览使用无状态 Interactions 与原序 System 前缀", () => 
     ],
   });
   expect(() => host.previewRequest(request)).toThrow(/invalid appended role/iu);
+});
+
+test("Google 无状态续接保留各跳正文和原生步骤", async () => {
+  const bodies: Record<string, unknown>[] = [];
+  const hop = (text: string, status: string, token?: string) =>
+    [
+      { event_type: "interaction.created", interaction: { id: "synthetic" } },
+      { event_type: "step.start", index: 0, step: { type: "model_output" } },
+      { event_type: "step.delta", index: 0, delta: { type: "text", text } },
+      { event_type: "step.stop", index: 0 },
+      {
+        event_type: "interaction.completed",
+        interaction: {
+          status,
+          ...(token === undefined ? {} : { continuation_token: token }),
+        },
+      },
+    ]
+      .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+      .join("");
+  const host = new FileNativeModelHost(
+    {
+      provider: "google_interactions",
+      baseUrl: "https://provider.invalid/v1beta",
+      apiKey: "secret",
+      modelId: "manual-model",
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_048,
+    },
+    (_url, init) => {
+      if (typeof init?.body !== "string")
+        throw new Error("Missing request body");
+      bodies.push(JSON.parse(init.body) as Record<string, unknown>);
+      return Promise.resolve(
+        new Response(
+          bodies.length === 1
+            ? hop("first", "requires_continuation", "token-one")
+            : hop(" second", "completed"),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      );
+    },
+  );
+  const response = await host.exchange(
+    exchangeFor("google_interactions", "manual-model", "provider_managed"),
+  );
+  expect(response.text).toBe("first second");
+  expect(response.providerState).toEqual({
+    protocol: "google_interactions",
+    steps: [
+      { type: "model_output", content: [{ type: "text", text: "first" }] },
+      { type: "model_output", content: [{ type: "text", text: " second" }] },
+    ],
+  });
+  expect(bodies).toHaveLength(2);
+  expect(bodies[1]).toEqual({ ...bodies[0], continuation_token: "token-one" });
+});
+
+test("Google 后置请求取消后可保留迟到的完整单跳，但不发下一跳", async () => {
+  for (const status of ["completed", "requires_continuation"]) {
+    const abort = new AbortController();
+    let resolveFetch!: (response: Response) => void;
+    let count = 0;
+    const host = new FileNativeModelHost(
+      {
+        provider: "google_interactions",
+        baseUrl: "https://provider.invalid/v1beta",
+        apiKey: "secret",
+        modelId: "manual-model",
+        contextWindowTokens: 64_000,
+        maxOutputTokens: 2_048,
+      },
+      () => {
+        count++;
+        return new Promise<Response>((resolve) => {
+          resolveFetch = resolve;
+        });
+      },
+    );
+    const pending = host.exchange(
+      exchangeFor("google_interactions", "manual-model", "provider_managed"),
+      { signal: abort.signal, retainLateExtensionResponse: true },
+    );
+    await vi.waitFor(() => expect(count).toBe(1));
+    abort.abort();
+    resolveFetch(
+      new Response(
+        [
+          { event_type: "interaction.created" },
+          {
+            event_type: "interaction.completed",
+            interaction: { status, continuation_token: "private" },
+          },
+        ]
+          .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+          .join(""),
+        { headers: { "content-type": "text/event-stream" } },
+      ),
+    );
+    if (status === "completed")
+      await expect(pending).resolves.toMatchObject({ stopReason: "completed" });
+    else await expect(pending).rejects.toBeInstanceOf(ModelHostCancelledError);
+    expect(count).toBe(1);
+  }
+});
+
+test("Google 续接 usage 对每跳最终值求和且保留缺失", async () => {
+  let count = 0;
+  const host = new FileNativeModelHost(
+    {
+      provider: "google_interactions",
+      baseUrl: "https://provider.invalid/v1beta",
+      apiKey: "secret",
+      modelId: "manual-model",
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_048,
+    },
+    () => {
+      count++;
+      const events = [
+        { event_type: "interaction.created", interaction: { id: "synthetic" } },
+        {
+          event_type: "interaction.status_update",
+          usage: { total_input_tokens: 1 },
+        },
+        {
+          event_type: "interaction.completed",
+          interaction:
+            count === 1
+              ? {
+                  status: "requires_continuation",
+                  continuation_token: "token",
+                  usage: { total_input_tokens: 7, total_output_tokens: 2 },
+                }
+              : {
+                  status: "completed",
+                  usage: { total_input_tokens: 9, total_tokens: 12 },
+                },
+        },
+      ];
+      return Promise.resolve(
+        new Response(
+          events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      );
+    },
+  );
+  const response = await host.exchange(
+    exchangeFor("google_interactions", "manual-model", "provider_managed"),
+  );
+  expect(response.usage).toMatchObject({
+    inputTokens: 16,
+    outputTokens: null,
+    totalTokens: null,
+    providerRaw: {
+      hops: [
+        { total_input_tokens: 7, total_output_tokens: 2 },
+        { total_input_tokens: 9, total_tokens: 12 },
+      ],
+    },
+  });
+});
+
+test("Google 重复旧续接 token 时停止，不能返回部分结果", async () => {
+  let count = 0;
+  const tokens = ["one", "two", "one"];
+  const host = new FileNativeModelHost(
+    {
+      provider: "google_interactions",
+      baseUrl: "https://provider.invalid/v1beta",
+      apiKey: "secret",
+      modelId: "manual-model",
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_048,
+    },
+    () => {
+      const token = tokens[count++];
+      return Promise.resolve(
+        new Response(
+          [
+            {
+              event_type: "interaction.created",
+              interaction: { id: "synthetic" },
+            },
+            {
+              event_type: "interaction.completed",
+              interaction: {
+                status: "requires_continuation",
+                continuation_token: token,
+              },
+            },
+          ]
+            .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+            .join(""),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      );
+    },
+  );
+  await expect(
+    host.exchange(
+      exchangeFor("google_interactions", "manual-model", "provider_managed"),
+    ),
+  ).rejects.toBeInstanceOf(ModelHostOutcomeUnknownError);
+  expect(count).toBe(3);
+});
+
+test("Google 续接首跳缺 created 时不发下一跳", async () => {
+  let count = 0;
+  const host = new FileNativeModelHost(
+    {
+      provider: "google_interactions",
+      baseUrl: "https://provider.invalid/v1beta",
+      apiKey: "secret",
+      modelId: "manual-model",
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_048,
+    },
+    () => {
+      count++;
+      return Promise.resolve(
+        new Response(
+          `data: ${JSON.stringify({ event_type: "interaction.completed", interaction: { status: "requires_continuation", continuation_token: "token" } })}\n\n`,
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      );
+    },
+  );
+  await expect(
+    host.exchange(
+      exchangeFor("google_interactions", "manual-model", "provider_managed"),
+    ),
+  ).rejects.toBeInstanceOf(ModelHostOutcomeUnknownError);
+  expect(count).toBe(1);
+});
+
+test("Google 最终续接跳缺 created 时不结算", async () => {
+  let count = 0;
+  const host = new FileNativeModelHost(
+    {
+      provider: "google_interactions",
+      baseUrl: "https://provider.invalid/v1beta",
+      apiKey: "secret",
+      modelId: "manual-model",
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_048,
+    },
+    () => {
+      count++;
+      const events =
+        count === 1
+          ? [
+              { event_type: "interaction.created" },
+              {
+                event_type: "interaction.completed",
+                interaction: {
+                  status: "requires_continuation",
+                  continuation_token: "token",
+                },
+              },
+            ]
+          : [
+              {
+                event_type: "interaction.completed",
+                interaction: { status: "completed" },
+              },
+            ];
+      return Promise.resolve(
+        new Response(
+          events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      );
+    },
+  );
+  await expect(
+    host.exchange(
+      exchangeFor("google_interactions", "manual-model", "provider_managed"),
+    ),
+  ).rejects.toBeInstanceOf(ModelHostOutcomeUnknownError);
+  expect(count).toBe(2);
+});
+
+test("Google 总时限终止挂起的 fetch", async () => {
+  vi.useFakeTimers();
+  try {
+    const host = new FileNativeModelHost(
+      {
+        provider: "google_interactions",
+        baseUrl: "https://provider.invalid/v1beta",
+        apiKey: "secret",
+        modelId: "manual-model",
+        contextWindowTokens: 64_000,
+        maxOutputTokens: 2_048,
+      },
+      () =>
+        new Promise<Response>(() => {
+          /* intentionally hangs */
+        }),
+    );
+    const result = host.exchange(
+      exchangeFor("google_interactions", "manual-model", "provider_managed"),
+    );
+    const assertion = expect(result).rejects.toBeInstanceOf(
+      ModelHostOutcomeUnknownError,
+    );
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+    await assertion;
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("Google 总时限终止挂起的流读取", async () => {
+  vi.useFakeTimers();
+  try {
+    const host = new FileNativeModelHost(
+      {
+        provider: "google_interactions",
+        baseUrl: "https://provider.invalid/v1beta",
+        apiKey: "secret",
+        modelId: "manual-model",
+        contextWindowTokens: 64_000,
+        maxOutputTokens: 2_048,
+      },
+      () =>
+        Promise.resolve(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              pull() {
+                /* intentionally hangs */
+              },
+            }),
+            {
+              headers: { "content-type": "text/event-stream" },
+            },
+          ),
+        ),
+    );
+    const result = host.exchange(
+      exchangeFor("google_interactions", "manual-model", "provider_managed"),
+    );
+    const assertion = expect(result).rejects.toBeInstanceOf(
+      ModelHostOutcomeUnknownError,
+    );
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+    await assertion;
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("Google 后续 hop 明确拒绝也不能重放原始请求", async () => {
+  let count = 0;
+  const host = new FileNativeModelHost(
+    {
+      provider: "google_interactions",
+      baseUrl: "https://provider.invalid/v1beta",
+      apiKey: "secret",
+      modelId: "manual-model",
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_048,
+    },
+    () => {
+      count++;
+      if (count > 1)
+        return Promise.resolve(new Response("denied", { status: 400 }));
+      const events = [
+        { event_type: "interaction.created", interaction: { id: "one" } },
+        {
+          event_type: "interaction.completed",
+          interaction: {
+            status: "requires_continuation",
+            continuation_token: "opaque",
+          },
+        },
+      ];
+      return Promise.resolve(
+        new Response(
+          events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      );
+    },
+  );
+  await expect(
+    host.exchange(
+      exchangeFor("google_interactions", "manual-model", "provider_managed"),
+    ),
+  ).rejects.toBeInstanceOf(ModelHostOutcomeUnknownError);
+  expect(count).toBe(2);
 });
 
 test("Google 流完整聚合工具参数与签名并在下次请求重放原生 steps", async () => {

@@ -341,23 +341,78 @@ export class FileNativeModelHost implements ModelHost {
     signal?: AbortSignal,
     retainLateExtensionResponse = false,
   ): Promise<ModelHostResponse> {
+    const controller = new AbortController();
+    let abort: (() => void) | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        this.#googleWithinDeadline(
+          request,
+          (delta) => {
+            if (!controller.signal.aborted) onDelta?.(delta);
+          },
+          controller.signal,
+          retainLateExtensionResponse,
+        ),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => {
+              controller.abort();
+              reject(
+                new ModelHostOutcomeUnknownError(
+                  "Google Interactions exceeded its total time limit",
+                ),
+              );
+            },
+            60 * 60 * 1000,
+          );
+        }),
+        new Promise<never>((_, reject) => {
+          abort = () => {
+            controller.abort();
+            if (!retainLateExtensionResponse) reject(cancelledModelRequest());
+          };
+          if (signal?.aborted === true) abort();
+          else signal?.addEventListener("abort", abort, { once: true });
+        }),
+      ]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      if (abort !== undefined) signal?.removeEventListener("abort", abort);
+      controller.abort();
+    }
+  }
+
+  async #googleWithinDeadline(
+    request: ModelHostExchange,
+    onDelta: ModelHostDeltaSink | undefined,
+    signal: AbortSignal,
+    retainLateExtensionResponse: boolean,
+  ): Promise<ModelHostResponse> {
     const bodyJson = JSON.stringify(
       googleRequestBody(this.#connection, request),
     );
+    const frozenBody = JSON.parse(bodyJson) as Record<string, unknown>;
     const url = providerUrl(this.#connection);
     const capture = providerCapture(
       this.#failureLog,
       this.#connection.provider,
       url,
       modelDiagnosticContext(request),
-      bodyJson,
+      JSON.stringify(googleRequestBody(this.#connection, request, true)),
     );
     return capturedProviderOperation(
       this.#failureLog,
       capture,
       async (observe) => {
-        const response = observe(
-          await dispatchProviderRequest(
+        const steps: Record<string, unknown>[] = [];
+        const usages: unknown[] = [];
+        const seenTokens = new Set<string>();
+        let token: string | undefined;
+        let payload: Awaited<ReturnType<typeof aggregateGoogleInteractions>>;
+        do {
+          if (signal.aborted) throw cancelledModelRequest();
+          const response = await dispatchProviderRequest(
             this.#fetch,
             url,
             {
@@ -367,46 +422,114 @@ export class FileNativeModelHost implements ModelHost {
                 "x-goog-api-key": this.#connection.apiKey,
                 "Content-Type": "application/json",
               },
-              body: bodyJson,
+              body:
+                token === undefined
+                  ? bodyJson
+                  : JSON.stringify({
+                      ...frozenBody,
+                      continuation_token: token,
+                    }),
               ...(signal === undefined ? {} : { signal }),
             },
             "Google Interactions",
-          ),
-        );
-        if (!response.ok) throw await providerError(response);
-        if (!isProviderEventStream(response))
-          throw unknownProviderResponse("Google Interactions");
-        const payload = await providerStreamResult(
-          response,
-          "Google Interactions",
-          (body) =>
-            aggregateGoogleInteractions(body, captureDelta(capture, onDelta)),
-          signal,
-        );
+          );
+          observe(new Response(null, { status: response.status }));
+          if (signal.aborted && !retainLateExtensionResponse)
+            throw cancelledModelRequest();
+          if (!response.ok) {
+            if (token !== undefined)
+              throw new ModelHostOutcomeUnknownError(
+                "A later Google Interactions continuation request failed after earlier progress",
+              );
+            throw new ModelHostFailureError(
+              `Google Interactions request failed: HTTP ${response.status}`,
+            );
+          }
+          if (!isProviderEventStream(response))
+            throw unknownProviderResponse("Google Interactions");
+          payload = await providerStreamResult(
+            response,
+            "Google Interactions",
+            (body) => aggregateGoogleInteractions(body, onDelta),
+            signal,
+          );
+          if (
+            (token !== undefined ||
+              payload.status === "requires_continuation") &&
+            !payload.completeLifecycle
+          )
+            throw new ModelHostOutcomeUnknownError(
+              "Google Interactions continuation stream lifecycle is incomplete",
+            );
+          steps.push(...payload.steps);
+          usages.push(safeGoogleUsage(payload.usage));
+          if (payload.status === "requires_continuation") {
+            if (signal.aborted) throw cancelledModelRequest();
+            if (
+              typeof payload.continuationToken !== "string" ||
+              !payload.continuationToken ||
+              seenTokens.has(payload.continuationToken) ||
+              usages.length >= 16
+            )
+              throw new ModelHostOutcomeUnknownError(
+                "Google Interactions continuation cannot proceed safely",
+              );
+            token = payload.continuationToken;
+            seenTokens.add(token);
+          }
+        } while (payload.status === "requires_continuation");
+        payload.steps = steps;
         if (signalWasAborted(signal) && !retainLateExtensionResponse)
           throw cancelledModelRequest();
         const projection = projectGoogleInteractions(payload);
-        capture?.setReasoning(projection.reasoningContent);
-        const usage = isRecord(payload.usage) ? payload.usage : {};
+        const total = (field: string): number | null => {
+          let sum = 0;
+          for (const raw of usages) {
+            const value = isRecord(raw) ? providerNumber(raw[field]) : null;
+            if (value === null) return null;
+            sum += value;
+          }
+          return Number.isSafeInteger(sum) ? sum : null;
+        };
         return {
           ...projection,
           usage: {
-            ...usageRecord({
-              inputTokens: providerNumber(usage.total_input_tokens),
-              uncachedInputTokens: null,
-              cacheReadTokens: providerNumber(usage.total_cached_tokens),
-              cacheWriteTokens: null,
-              reasoningTokens: providerNumber(usage.total_thought_tokens),
-              outputTokens: providerNumber(usage.total_output_tokens),
-              totalTokens: providerNumber(usage.total_tokens),
-            }),
+            ...usageRecord(
+              {
+                inputTokens: total("total_input_tokens"),
+                uncachedInputTokens: null,
+                cacheReadTokens: total("total_cached_tokens"),
+                cacheWriteTokens: null,
+                reasoningTokens: total("total_thought_tokens"),
+                outputTokens: total("total_output_tokens"),
+                totalTokens: total("total_tokens"),
+              },
+              usages.length > 1
+                ? [
+                    "inputTokens",
+                    "cacheReadTokens",
+                    "reasoningTokens",
+                    "outputTokens",
+                    "totalTokens",
+                  ]
+                : [],
+            ),
             accounting: "google_interactions" as const,
-            ...(isRecord(payload.usage)
-              ? { providerRaw: structuredClone(payload.usage) }
-              : {}),
+            ...(usages.length > 1
+              ? {
+                  providerRaw: {
+                    hops: usages.map((usage) =>
+                      isRecord(usage) ? structuredClone(usage) : null,
+                    ),
+                  },
+                }
+              : isRecord(usages[0])
+                ? { providerRaw: structuredClone(usages[0]) }
+                : {}),
           },
         };
       },
+      true,
     );
   }
 
@@ -802,6 +925,7 @@ async function capturedProviderOperation<Value extends object>(
   operation: (
     observeResponse: (response: Response) => Response,
   ) => Promise<Value>,
+  sanitizeGoogleErrors = false,
 ): Promise<Value & { diagnostics?: AiExchangeDiagnostics }> {
   const observeResponse = (response: Response): Response =>
     capture?.captureResponse(response) ?? response;
@@ -811,28 +935,35 @@ async function capturedProviderOperation<Value extends object>(
     return { ...value, diagnostics: capture.snapshot() };
   } catch (error: unknown) {
     if (error instanceof ModelHostCancelledError) throw error;
+    const reportedError = sanitizeGoogleErrors
+      ? error instanceof ModelHostFailureError
+        ? new ModelHostFailureError("Google Interactions request was rejected")
+        : new ModelHostOutcomeUnknownError(
+            "Google Interactions request outcome could not be confirmed",
+          )
+      : error;
     if (capture !== undefined && failureLog !== undefined) {
       const exchange = capture.snapshot();
       const failure: AiFailureDescription = {
         kind:
           exchange.response === undefined
             ? "provider_transport"
-            : error instanceof ModelHostFailureError
+            : reportedError instanceof ModelHostFailureError
               ? "provider_rejection"
               : "provider_response_format",
         message:
-          error instanceof Error
-            ? error.message
+          reportedError instanceof Error
+            ? reportedError.message
             : "Provider request processing failed.",
-        ...(error instanceof ModelHostFailureError &&
-        error.details !== undefined
-          ? { details: error.details }
+        ...(reportedError instanceof ModelHostFailureError &&
+        reportedError.details !== undefined
+          ? { details: reportedError.details }
           : {}),
-        error: errorDescription(error),
+        error: errorDescription(reportedError),
       };
       await failureLog.recordFailure({ exchange, failures: [failure] });
     }
-    throw error;
+    throw reportedError;
   }
 }
 
@@ -2273,6 +2404,23 @@ function normalizeResponsesUsage(value: unknown): ModelHostUsage {
     },
     ["uncachedInputTokens"],
   );
+}
+
+function safeGoogleUsage(value: unknown): Record<string, number> | null {
+  if (!isRecord(value)) return null;
+  const result: Record<string, number> = {};
+  for (const field of [
+    "total_input_tokens",
+    "total_cached_tokens",
+    "total_thought_tokens",
+    "total_output_tokens",
+    "total_tokens",
+  ]) {
+    const count = value[field];
+    if (typeof count === "number" && Number.isSafeInteger(count) && count >= 0)
+      result[field] = count;
+  }
+  return result;
 }
 
 function providerNumber(value: unknown): number | null {

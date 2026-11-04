@@ -39,14 +39,26 @@ export async function aggregateGoogleInteractions(
   steps: Record<string, unknown>[];
   status: string;
   usage: unknown;
+  continuationToken: unknown;
+  completeLifecycle: boolean;
 }> {
   const steps = new Map<
     number,
     { step: Record<string, unknown>; stopped: boolean; args: string | null }
   >();
   let terminal: Record<string, unknown> | undefined;
+  let latestUsage: unknown;
+  let created = false;
+  let lifecycleValid = true;
+  let sawStep = false;
+  let done = false;
   for await (const event of providerStreamEvents(body)) {
-    if (event.data === "[DONE]") continue;
+    if (event.data === "[DONE]") {
+      if (terminal === undefined || done) lifecycleValid = false;
+      done = true;
+      continue;
+    }
+    if (done || terminal !== undefined) lifecycleValid = false;
     let value: unknown;
     try {
       value = parseLossless(event.data);
@@ -54,14 +66,23 @@ export async function aggregateGoogleInteractions(
       invalid();
     }
     if (!record(value) || typeof value.event_type !== "string") invalid();
-    if (
-      value.event_type === "interaction.created" ||
-      value.event_type === "interaction.status_update"
-    )
+    if (!created && value.event_type !== "interaction.created")
+      lifecycleValid = false;
+    if (value.event_type === "interaction.created") {
+      if (created || sawStep || terminal !== undefined || done)
+        lifecycleValid = false;
+      created = true;
       continue;
+    }
+    if (value.event_type === "interaction.status_update") {
+      if (terminal !== undefined) invalid();
+      if (value.usage !== undefined) latestUsage = value.usage;
+      continue;
+    }
     if (value.event_type === "interaction.completed") {
       if (terminal !== undefined || !record(value.interaction)) invalid();
       terminal = value.interaction;
+      if (terminal.usage !== undefined) latestUsage = terminal.usage;
       continue;
     }
     if (
@@ -72,6 +93,7 @@ export async function aggregateGoogleInteractions(
     )
       invalid();
     const index = value.index;
+    sawStep = true;
     if (value.event_type === "step.start") {
       if (
         steps.has(index) ||
@@ -180,7 +202,9 @@ export async function aggregateGoogleInteractions(
   return {
     steps: ordered.map(([, entry]) => entry.step),
     status: terminal.status,
-    usage: terminal.usage,
+    usage: latestUsage,
+    continuationToken: terminal.continuation_token,
+    completeLifecycle: created && lifecycleValid,
   };
 }
 
