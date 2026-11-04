@@ -520,14 +520,18 @@ export class FileNativeModelHost implements ModelHost {
             if (!response.ok) {
               hop.status = "rejected";
               void report(hop);
-              if (token !== undefined)
+              if (token !== undefined) {
+                discardGoogleErrorBody(response);
                 throw new ModelHostOutcomeUnknownError(
                   "A later Google Interactions continuation request failed after earlier progress",
                 );
+              }
               throw await googleInitialRejection(response);
             }
-            if (!isProviderEventStream(response))
+            if (!isProviderEventStream(response)) {
+              discardGoogleErrorBody(response);
               throw unknownProviderResponse("Google Interactions");
+            }
             payload = await providerStreamResult(
               response,
               "Google Interactions",
@@ -2128,17 +2132,17 @@ function containsGoogleCredential(value: string, key: string): boolean {
 /** Classify a first-hop rejection in memory; never retain the provider's echo. */
 async function googleInitialRejection(response: Response): Promise<Error> {
   if (
-    response.status < 400 ||
-    response.status >= 500 ||
-    response.status === 408
-  )
+    ![400, 401, 403, 404, 405, 413, 415, 422, 429].includes(response.status)
+  ) {
+    discardGoogleErrorBody(response);
     return new ModelHostOutcomeUnknownError(
       "Google Interactions request outcome could not be confirmed",
     );
+  }
   let body = "";
   if (response.body !== null) {
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
+    const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+    const decoder = new TextDecoder("utf-8", { fatal: true });
     let complete = false;
     let bytes = 0;
     try {
@@ -2166,12 +2170,67 @@ async function googleInitialRejection(response: Response): Promise<Error> {
         "Google Interactions request outcome could not be confirmed",
       );
   }
-  return modelHostFailureRequiresFreshContext(new ModelHostFailureError(body))
+  const contentType = response.headers
+    .get("content-type")
+    ?.split(";", 1)[0]
+    ?.trim()
+    .toLowerCase();
+  const evidence = googleRejectionEvidence(
+    body,
+    contentType === "application/json" ||
+      contentType?.endsWith("+json") === true,
+  );
+  if (evidence === null)
+    return new ModelHostOutcomeUnknownError(
+      "Google Interactions request outcome could not be confirmed",
+    );
+  return modelHostFailureRequiresFreshContext(
+    new ModelHostFailureError(evidence),
+  )
     ? new ModelHostFailureError(
         "Google Interactions context limit exceeded; start a fresh context",
         { details: { code: "context_length_exceeded" } },
       )
     : new ModelHostFailureError("Google Interactions request was rejected");
+}
+
+function discardGoogleErrorBody(response: Response): void {
+  try {
+    void response.body?.cancel().catch(() => undefined);
+  } catch {
+    // Discarding an optional error body must not alter the request outcome.
+  }
+}
+
+function googleRejectionEvidence(
+  body: string,
+  requireJson: boolean,
+): string | null {
+  if (body.trim() === "") return null;
+  try {
+    const payload: unknown = JSON.parse(body);
+    if (typeof payload === "string")
+      return payload.trim() === "" ? null : payload;
+    if (!isRecord(payload)) return null;
+    const error = isRecord(payload.error) ? payload.error : {};
+    const evidence = [
+      error.message,
+      error.code,
+      error.reason,
+      payload.message,
+      payload.code,
+      payload.error,
+    ]
+      .filter((value): value is string => typeof value === "string")
+      .join("\n");
+    return evidence.trim() === "" ? null : evidence;
+  } catch {
+    // An unstructured error may itself be the Provider's rejection message.
+    const trimmed = body.trimStart();
+    return requireJson || trimmed.startsWith("{") || trimmed.startsWith("[")
+      ? null
+      : body;
+  }
 }
 
 function parseArguments(value: string): unknown {

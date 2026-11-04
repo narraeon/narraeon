@@ -528,7 +528,45 @@ test.each([
     body: "invalid request",
     unknown: false,
   },
+  {
+    name: "context phrase only in echoed input",
+    status: 400,
+    body: JSON.stringify({
+      error: {
+        message: "Invalid argument",
+        details: { echoed_input: "maximum context length" },
+      },
+    }),
+    unknown: false,
+  },
+  {
+    name: "context reason only in echoed details",
+    status: 400,
+    body: JSON.stringify({
+      error: {
+        message: "Invalid argument",
+        details: [{ reason: "CONTEXT_LENGTH_EXCEEDED" }],
+      },
+    }),
+    unknown: false,
+  },
+  { name: "empty body", status: 400, body: "", unknown: true },
+  { name: "empty object", status: 400, body: "{}", unknown: true },
+  { name: "null error body", status: 400, body: "null", unknown: true },
+  { name: "array error body", status: 400, body: "[]", unknown: true },
   { name: "timeout", status: 408, body: "request timed out", unknown: true },
+  {
+    name: "in progress",
+    status: 409,
+    body: "request is still being processed",
+    unknown: true,
+  },
+  {
+    name: "connection closed",
+    status: 499,
+    body: "client closed request",
+    unknown: true,
+  },
   {
     name: "server failure",
     status: 503,
@@ -566,6 +604,59 @@ test.each([
     expect(modelHostFailureRequiresFreshContext(error)).toBe(false);
   },
 );
+
+test.each(['"unterminated', "nullX"])(
+  "Google 损坏的 JSON 拒绝体不授予重试：%s",
+  async (body) => {
+    const host = new FileNativeModelHost(
+      {
+        provider: "google_interactions",
+        baseUrl: "https://provider.invalid/v1beta",
+        apiKey: "secret",
+        modelId: "manual-model",
+        contextWindowTokens: 64_000,
+        maxOutputTokens: 2_048,
+      },
+      () =>
+        Promise.resolve(
+          new Response(body, {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          }),
+        ),
+    );
+    await expect(
+      host.exchange(
+        exchangeFor("google_interactions", "manual-model", "provider_managed"),
+      ),
+    ).rejects.toBeInstanceOf(ModelHostOutcomeUnknownError);
+  },
+);
+
+test("Google 拒绝体包含无效 UTF-8 时不授予重试", async () => {
+  const host = new FileNativeModelHost(
+    {
+      provider: "google_interactions",
+      baseUrl: "https://provider.invalid/v1beta",
+      apiKey: "secret",
+      modelId: "manual-model",
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_048,
+    },
+    () =>
+      Promise.resolve(
+        new Response(
+          Buffer.concat([Buffer.from("invalid request"), Buffer.from([0xff])]),
+          { status: 400 },
+        ),
+      ),
+  );
+  await expect(
+    host.exchange(
+      exchangeFor("google_interactions", "manual-model", "provider_managed"),
+    ),
+  ).rejects.toBeInstanceOf(ModelHostOutcomeUnknownError);
+});
 
 test.each([307, 308])(
   "Google 在首跳和续跳均拒绝 HTTP %s 跨源重定向",
@@ -656,6 +747,67 @@ test.each([307, 308])(
         new Promise<void>((resolve) => target.close(() => resolve())),
       ]);
     }
+  },
+);
+
+test.each(["first", "continuation", "nonstream"] as const)(
+  "Google %s 跳未知 HTTP 错误会非阻塞丢弃响应体",
+  async (stage) => {
+    let calls = 0;
+    let cancelled = 0;
+    const host = new FileNativeModelHost(
+      {
+        provider: "google_interactions",
+        baseUrl: "https://provider.invalid/v1beta",
+        apiKey: "secret",
+        modelId: "manual-model",
+        contextWindowTokens: 64_000,
+        maxOutputTokens: 2_048,
+      },
+      () => {
+        calls++;
+        if (stage === "continuation" && calls === 1)
+          return Promise.resolve(
+            new Response(
+              [
+                { event_type: "interaction.created" },
+                {
+                  event_type: "interaction.completed",
+                  interaction: {
+                    status: "requires_continuation",
+                    continuation_token: "token",
+                  },
+                },
+              ]
+                .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+                .join(""),
+              { headers: { "content-type": "text/event-stream" } },
+            ),
+          );
+        return Promise.resolve(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              cancel() {
+                cancelled++;
+                return new Promise<void>(() => {
+                  /* intentionally hangs */
+                });
+              },
+            }),
+            {
+              status:
+                stage === "first" ? 503 : stage === "nonstream" ? 200 : 400,
+            },
+          ),
+        );
+      },
+    );
+    await expect(
+      host.exchange(
+        exchangeFor("google_interactions", "manual-model", "provider_managed"),
+      ),
+    ).rejects.toBeInstanceOf(ModelHostOutcomeUnknownError);
+    expect(cancelled).toBe(1);
   },
 );
 

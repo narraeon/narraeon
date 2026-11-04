@@ -113,6 +113,7 @@ test("Google 后置请求使用冻结主链并恢复多个产物", async () => {
       usage: {
         total_input_tokens: 12,
         total_output_tokens: 3,
+        total_tool_use_tokens: 5,
         vendor_extra: 99,
       },
     },
@@ -259,6 +260,7 @@ test("Google 后置请求使用冻结主链并恢复多个产物", async () => {
         wireRequest: {
           provider: "google_interactions",
           redactedProviderContinuation: true,
+          googleHops: [{ usage: { total_tool_use_tokens: 5 } }],
         },
       },
     },
@@ -283,6 +285,13 @@ test("Google 后置请求使用冻结主链并恢复多个产物", async () => {
       .requestPreview.wireRequest,
   ).toMatchObject(safePreviews[2] as object);
   expect(JSON.stringify(details)).not.toContain("synthetic-signature-secret");
+  expect(
+    (
+      details[1]!.result as {
+        requestPreview: { wireRequest: { googleHops: { usage?: unknown }[] } };
+      }
+    ).requestPreview.wireRequest.googleHops[0]?.usage,
+  ).toBeUndefined();
   expect(details[0]).toMatchObject({
     result: {
       usage: {
@@ -292,6 +301,7 @@ test("Google 后置请求使用冻结主链并恢复多个产物", async () => {
         providerRaw: {
           total_input_tokens: 12,
           total_output_tokens: 3,
+          total_tool_use_tokens: 5,
         },
       },
     },
@@ -429,6 +439,14 @@ test.each([
     name: "server",
     status: 503,
     body: "server error; key-sentinel",
+    firstHop: false,
+    kind: "outcome_unknown",
+    canRetry: false,
+  },
+  {
+    name: "in-progress",
+    status: 409,
+    body: "request is still being processed",
     firstHop: false,
     kind: "outcome_unknown",
     canRetry: false,
