@@ -497,8 +497,12 @@ test.each(["cancel", "disconnect"])(
     }
     const result = await running;
     expect(result).toMatchObject({ status: "interrupted", canRetry: false });
-    if (failure === "disconnect")
+    if (failure === "disconnect") {
       expect(result.lastFailureKind).toBe("outcome_unknown");
+      expect(
+        result.events.findLast((event) => event.kind === "assistant"),
+      ).toMatchObject({ status: "interrupted", text: "断流片段" });
+    }
     const coldWorlds = new FileNativeWorldStore(root);
     expect(
       await new PlayCallChain(coldWorlds).inspectWorld(worldId),
@@ -509,6 +513,80 @@ test.each(["cancel", "disconnect"])(
     expect(dispatches).toBe(1);
   },
 );
+
+test("Google 已提交正文在后续结算故障后仍是完成状态", async () => {
+  const host = new FileNativeModelHost(
+    {
+      provider: "google_interactions",
+      baseUrl: "https://provider.invalid/v1beta",
+      apiKey: "synthetic-secret",
+      modelId: "manual-model",
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_000,
+    },
+    () => {
+      const events = [
+        { event_type: "step.start", index: 0, step: { type: "model_output" } },
+        {
+          event_type: "step.delta",
+          index: 0,
+          delta: { type: "text", text: "已提交正文" },
+        },
+        { event_type: "step.stop", index: 0 },
+        {
+          event_type: "interaction.completed",
+          interaction: { status: "completed" },
+        },
+      ];
+      return Promise.resolve(
+        new Response(
+          events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      );
+    },
+  );
+  const { worlds, worldId, root } = await createWorld(
+    "google-after-settlement",
+    undefined,
+    host.binding(),
+  );
+  const original = worlds.playAdvances.markSettled.bind(worlds.playAdvances);
+  let failed = false;
+  vi.spyOn(worlds.playAdvances, "markSettled").mockImplementation(
+    async (advance) => {
+      await original(advance);
+      if (advance.advanceKind === "response" && !failed) {
+        failed = true;
+        throw new Error("synthetic post-settlement failure");
+      }
+    },
+  );
+  const result = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "google-after-settlement",
+    exchangeId: "first",
+    playerText: "继续。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: host.binding(),
+    modelHost: host,
+  });
+  expect(result).toMatchObject({ status: "interrupted", canRetry: false });
+  expect(
+    result.events.findLast((event) => event.kind === "assistant"),
+  ).toMatchObject({ status: "completed", text: "已提交正文" });
+  const coldWorlds = new FileNativeWorldStore(root);
+  const cold = await new PlayCallChain(coldWorlds).inspectWorld(worldId);
+  expect(
+    cold?.events.findLast((event) => event.kind === "assistant"),
+  ).toMatchObject({ status: "completed", text: "已提交正文" });
+  expect(
+    (await coldWorlds.recoverEndpoint(worldId)).history.filter(
+      ({ exactText }) => exactText === "已提交正文",
+    ),
+  ).toHaveLength(1);
+});
 
 test("Google 同一发送重复工具响应不会再次修改世界", async () => {
   let dispatches = 0;

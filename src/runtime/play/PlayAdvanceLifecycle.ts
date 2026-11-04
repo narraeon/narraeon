@@ -362,7 +362,8 @@ function interruptStreamingEvent(
 ): void {
   if (eventId === undefined) return;
   const event = session.events.find(({ id }) => id === eventId);
-  if (event?.kind === "assistant") event.status = "interrupted";
+  if (event?.kind === "assistant" && event.status === "streaming")
+    event.status = "interrupted";
 }
 
 function errorMessage(error: unknown, fallback: string): string {
