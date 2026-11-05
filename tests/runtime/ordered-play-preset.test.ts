@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { stringify, parseDocument } from "yaml";
+import { upgradeOrderedPromptFormat } from "../../src/runtime/play/OrderedPlayPrompts.ts";
 import {
   FileNativePlayPresetStore,
   defaultPlayPresetFiles,
@@ -13,6 +14,49 @@ afterEach(async () => {
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
   );
+});
+test("invalid convertible ordered presets retain their original bytes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ordered-play-invalid-"));
+  roots.push(root);
+  const store = new FileNativePlayPresetStore(root);
+  await store.initialize();
+  const files = {
+    "preset.yaml": stringify({
+      format: "narraeon.play-preset/v2",
+      name: "Incomplete",
+      callChain: "missing.yaml",
+      mounts: [],
+      extensions: [],
+      playPrompts: [
+        { id: "world", kind: "world" },
+        {
+          id: "mechanics",
+          kind: "builtin",
+          builtin: "play.mechanics",
+          enabled: true,
+        },
+      ],
+    }),
+  };
+  expect(upgradeOrderedPromptFormat(files)).not.toEqual(files);
+  const created = await store.create("Incomplete", files);
+  expect(created.preset.files).toEqual(files);
+  expect(created.preset.validation.status).toBe("invalid");
+  const savedFiles = { ...files, "prompts/notes.md": "Keep this draft" };
+  const saved = await store.save({
+    presetId: created.preset.id,
+    name: "Incomplete",
+    files: savedFiles,
+  });
+  expect(saved.preset.draft?.files).toEqual(savedFiles);
+  const cold = new FileNativePlayPresetStore(root);
+  await cold.initialize();
+  expect(cold.recovery).toBeNull();
+  const reopened = (await cold.list()).presets.find(
+    ({ id }) => id === created.preset.id,
+  )!;
+  expect(reopened.files).toEqual(files);
+  expect(reopened.draft?.files).toEqual(savedFiles);
 });
 test("portable ordered play preserves identities, disabled text, and protects required entries", async () => {
   const root = await mkdtemp(join(tmpdir(), "ordered-play-"));

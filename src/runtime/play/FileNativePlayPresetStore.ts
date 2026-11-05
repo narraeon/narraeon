@@ -764,7 +764,7 @@ export class FileNativePlayPresetStore {
           entries,
         );
       }
-      files = upgradeOrderedPromptFormat(files);
+      files = upgradeValidOrderedPromptFormat(files, this.#limits);
       const revision = revisionForFiles(files, this.#limits);
       stored.name = normalizeName(input.name);
       stored.revisions[revision] = cloneFiles(files);
@@ -969,10 +969,12 @@ export class FileNativePlayPresetStore {
 
   /** Portable export deliberately contains no id, revision, world, operation or provider state. */
   async exportPortable(id: string): Promise<ContentTreeFile[]> {
-    const binding = await this.bindRevision(id);
-    return Object.keys(binding.files)
+    await this.#tail;
+    const stored = findStored(await this.#read(), id);
+    const files = stored.revisions[stored.currentRevision]!;
+    return Object.keys(files)
       .sort()
-      .map((path) => ({ path, contents: binding.files[path]! }));
+      .map((path) => ({ path, contents: files[path]! }));
   }
 
   async importPortable(input: {
@@ -1039,7 +1041,7 @@ export class FileNativePlayPresetStore {
       return document;
     }
     try {
-      // Validation hashes and parses every stored revision, so a library
+      // Validation checks the structure and hash of every stored revision, so a library
       // whose bytes were already validated is served from that result. Each
       // caller gets its own copy because callers edit what they read.
       if (this.#validated !== undefined && raw === this.#validated.raw)
@@ -1123,7 +1125,7 @@ export class FileNativePlayPresetStore {
     for (const stored of document.presets) {
       const current = stored.revisions[stored.currentRevision];
       if (current !== undefined) {
-        const migrated = upgradeOrderedPromptFormat(current);
+        const migrated = upgradeValidOrderedPromptFormat(current, this.#limits);
         if (migrated !== current) {
           const revision = revisionForFiles(migrated, this.#limits);
           stored.revisions[revision] = cloneFiles(migrated);
@@ -1136,7 +1138,7 @@ export class FileNativePlayPresetStore {
           ? undefined
           : stored.revisions[stored.draftRevision];
       if (draft !== undefined) {
-        const migrated = upgradeOrderedPromptFormat(draft);
+        const migrated = upgradeValidOrderedPromptFormat(draft, this.#limits);
         if (migrated !== draft) {
           const revision = revisionForFiles(migrated, this.#limits);
           stored.revisions[revision] = cloneFiles(migrated);
@@ -1173,7 +1175,9 @@ export class FileNativePlayPresetStore {
     rawFiles: Record<string, string>,
   ): StoredPreset {
     const name = normalizeName(rawName);
-    const files = cloneFiles(upgradeOrderedPromptFormat(rawFiles));
+    const files = cloneFiles(
+      upgradeValidOrderedPromptFormat(rawFiles, this.#limits),
+    );
     const revision = revisionForFiles(files, this.#limits);
     return {
       id,
@@ -3274,6 +3278,17 @@ function toFileMap(
   return files;
 }
 
+function upgradeValidOrderedPromptFormat(
+  files: Record<string, string>,
+  limits: PortableContentTreeLimits,
+): Record<string, string> {
+  const upgraded = upgradeOrderedPromptFormat(files);
+  return upgraded !== files &&
+    validatePlayPresetFiles(upgraded, limits).status === "valid"
+    ? upgraded
+    : files;
+}
+
 function parseStoredDocument(
   value: unknown,
   limits: PortableContentTreeLimits = defaultLimits,
@@ -3362,19 +3377,6 @@ function parseStoredDocument(
         throw new FileNativePlayPresetError(
           "store_invalid",
           "Play-preset revision content hash does not match",
-        );
-      // A revision saved by an earlier release may still name builtins that
-      // the catalog has since replaced; it counts as current-format when the
-      // load-time migration makes it so, and its bytes stay as written.
-      if (
-        revision !== raw.draftRevision &&
-        validatePlayPresetFiles(clone, limits).status !== "valid" &&
-        validatePlayPresetFiles(upgradeOrderedPromptFormat(clone), limits)
-          .status !== "valid"
-      )
-        throw new FileNativePlayPresetError(
-          "store_invalid",
-          "Play-preset revision does not match the current format",
         );
       revisions[revision] = clone;
     }

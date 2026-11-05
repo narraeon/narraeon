@@ -1887,10 +1887,96 @@ followups:
 });
 
 describe("无法解析的预设库不阻断启动", () => {
+  test("semantic invalidity preserves the library across reads and restart", async () => {
+    const root = await mkdtemp(
+      join(tmpdir(), "narraeon-play-invalid-current-"),
+    );
+    roots.push(root);
+    const store = new FileNativePlayPresetStore(root);
+    await store.initialize();
+    const valid = await store.create("valid", defaultPlayPresetFiles);
+    await store.select(valid.preset.id);
+    const invalidFiles = { "preset.yaml": "format: invalid\n" };
+    const invalid = await store.create("invalid", invalidFiles);
+    const revision = invalid.preset.revision;
+    expect(invalid.preset.validation.status).toBe("invalid");
+
+    for (const instance of [store, new FileNativePlayPresetStore(root)]) {
+      await instance.initialize();
+      const library = await instance.list();
+      expect(instance.recovery).toBeNull();
+      expect(library.currentPresetId).toBe(valid.preset.id);
+      expect(library.presets).toHaveLength(3);
+      expect(
+        library.presets.find((preset) => preset.id === invalid.preset.id),
+      ).toMatchObject({
+        revision,
+        files: invalidFiles,
+        validation: { status: "invalid" },
+      });
+      await expect(instance.select(invalid.preset.id)).rejects.toMatchObject({
+        code: "invalid_play_preset",
+      });
+      expect(await instance.exportPortable(invalid.preset.id)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: "preset.yaml",
+            contents: invalidFiles["preset.yaml"],
+          }),
+        ]),
+      );
+    }
+    await store.delete(invalid.preset.id);
+    expect((await store.list()).presets).toHaveLength(2);
+  });
+
+  test("a selected semantic-invalid revision remains diagnosable after restart", async () => {
+    const root = await mkdtemp(
+      join(tmpdir(), "narraeon-play-invalid-selected-"),
+    );
+    roots.push(root);
+    const store = new FileNativePlayPresetStore(root);
+    await store.initialize();
+    const selected = await store.create("selected", defaultPlayPresetFiles);
+    await store.select(selected.preset.id);
+    const path = join(root, "file-native-play-presets.json");
+    const document = JSON.parse(await readFile(path, "utf8")) as {
+      presets: {
+        id: string;
+        revisions: Record<string, Record<string, string>>;
+        currentRevision: string;
+      }[];
+    };
+    const stored = document.presets.find(
+      (preset) => preset.id === selected.preset.id,
+    )!;
+    const files = { "preset.yaml": "format: invalid\n" };
+    const revision = revisionForPlayPresetFiles(files);
+    stored.revisions[revision] = files;
+    stored.currentRevision = revision;
+    await writeFile(path, JSON.stringify(document));
+
+    const cold = new FileNativePlayPresetStore(root);
+    await cold.initialize();
+    const library = await cold.list();
+    expect(cold.recovery).toBeNull();
+    expect(library.currentPresetId).toBe(selected.preset.id);
+    expect(
+      library.presets.find((preset) => preset.id === selected.preset.id),
+    ).toMatchObject({
+      revision,
+      files,
+      validation: { status: "invalid" },
+    });
+    await expect(cold.bindCurrent()).rejects.toMatchObject({
+      code: "call_chain_missing",
+    });
+  });
+
   test("彻底损坏的库被移到一旁并重建，原文件保留且可诊断", async () => {
-    for (const [label, body] of [
-      ["坏 JSON", "{ not json"],
-      ["缺字段", JSON.stringify({ schemaVersion: 1 })],
+    for (const [label, body, reason] of [
+      ["坏 JSON", "{ not json", /JSON/u],
+      ["缺字段", JSON.stringify({ schemaVersion: 1 }), /library is invalid/u],
       [
         "hash 不匹配",
         JSON.stringify({
@@ -1907,6 +1993,7 @@ describe("无法解析的预设库不阻断启动", () => {
             },
           ],
         }),
+        /content hash does not match/u,
       ],
     ] as const) {
       const root = await mkdtemp(join(tmpdir(), "narraeon-play-broken-"));
@@ -1924,6 +2011,7 @@ describe("无法解析的预设库不阻断启动", () => {
 
       // Original bytes are quarantined rather than overwritten and remain reportable.
       expect(store.recovery, label).not.toBeNull();
+      expect(store.recovery!.message, label).toMatch(reason);
       expect(await readFile(store.recovery!.quarantinedPath, "utf8")).toBe(
         body,
       );

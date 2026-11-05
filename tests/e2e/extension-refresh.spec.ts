@@ -545,6 +545,7 @@ ${
     "renderers/actions.html": `<button id="suggest">敲门询问</button><script>document.getElementById("suggest").onclick=()=>parent.postMessage({namespace:"narraeon.extension.v1",command:"composer.set_draft",instanceId:document.documentElement.dataset.narraeonInstance,nonce:document.documentElement.dataset.narraeonNonce,requestId:"suggestion",payload:{text:"I knock and ask."}},"*");</script>`,
     "prompts/first.md": "Write the panel.\n",
     "prompts/second.md": "Write the second panel.\n",
+    "prompts/narrate.md": "Continue the story.\n",
   };
 }
 
