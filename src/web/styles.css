@@ -10395,3 +10395,136 @@ summary:focus-visible {
 .sillytavern-content-import fieldset {
   min-width: 0;
 }
+
+/* Preset import fills the dialog while keeping actions reachable. */
+.sillytavern-import[open] {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  gap: 0.7rem;
+}
+.sillytavern-import > * + * {
+  margin-top: 0;
+}
+.sillytavern-import > p {
+  margin: 0;
+}
+.st-import-fields {
+  display: flex;
+  align-items: end;
+  gap: 1rem;
+}
+.st-import-fields label:first-child {
+  flex: 1;
+  min-width: 0;
+}
+.st-import-fields label {
+  display: grid;
+  gap: 0.25rem;
+}
+.sillytavern-import .import-browser {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}
+.sillytavern-import .import-result {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+}
+.st-import-footer {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.st-import-footer p {
+  margin: 0 auto 0 0;
+}
+.st-metadata,
+.st-variables {
+  margin-top: 1rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  background: var(--surface-inset);
+}
+.st-variables ul {
+  padding-left: 1.3rem;
+}
+.st-variables li {
+  margin-top: 0.5rem;
+}
+.st-variable-reference {
+  position: relative;
+  background: #a9773440;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.st-variable-popover {
+  position: absolute;
+  z-index: 3;
+  left: 0;
+  top: 100%;
+  width: min(24rem, 70vw);
+  padding: 0.65rem;
+  white-space: normal;
+  color: var(--text);
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+  box-shadow: 0 0.3rem 1rem #0006;
+}
+@media (max-width: 650px) {
+  .sillytavern-import .import-browser {
+    flex-direction: column;
+  }
+  .sillytavern-import .import-browser-list {
+    flex: 0 0 32%;
+  }
+  .st-import-fields {
+    gap: 0.5rem;
+  }
+  .st-import-fields label:last-child {
+    max-width: 40%;
+  }
+  .st-import-fields select {
+    max-width: 100%;
+  }
+}
+.sillytavern-import .import-browser {
+  grid-template-columns: minmax(12rem, 20rem) minmax(0, 1fr) minmax(
+      14rem,
+      22rem
+    );
+}
+.sillytavern-import .st-variables {
+  overflow: auto;
+  margin: 0;
+  border-width: 0 0 0 1px;
+}
+.st-variable-anchor {
+  position: relative;
+}
+.st-variable-reference {
+  display: inline;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  font: inherit;
+}
+@media (max-width: 850px) {
+  .sillytavern-import .import-browser {
+    display: flex;
+    flex-direction: column;
+  }
+  .sillytavern-import .st-variables {
+    flex: 0 1 auto;
+    max-height: 25%;
+    border-width: 1px 0 0;
+  }
+}
+.st-script-list > button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  overflow-wrap: anywhere;
+}

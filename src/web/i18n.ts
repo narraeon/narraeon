@@ -308,8 +308,43 @@ const englishMessages: Record<string, string> = {
     "History-depth insertion cannot be migrated equivalently; the original text is retained disabled.",
   "生成触发条件不能等价迁移，保留原文并停用。":
     "Generation triggers cannot be migrated equivalently; the original text is retained disabled.",
-  "角色覆盖行为不能等价迁移，保留原文并停用。":
-    "Character override behavior cannot be migrated equivalently; the original text is retained disabled.",
+  "main/jailbreak 未禁止覆盖时，角色卡的 system_prompt/post_history_instructions 可替换正文；这与发送角色或变量重复赋值无关。保留原文并停用。":
+    "When overrides are allowed, a character card's system_prompt or post_history_instructions can replace main or jailbreak. This is unrelated to the sender role or repeated variable assignments. The original is retained disabled.",
+  "未找到选中的声明；运行时值未知。":
+    "No selected declaration found; the runtime value is unknown.",
+  "候选不确定：可能受重复、控制流、动态宏或外部变量影响。":
+    "Uncertain candidates: duplicates, control flow, dynamic macros or external variables may affect the value.",
+  "静态候选（运行时值可能不同）：":
+    "Static candidate (the runtime value may differ):",
+  源停用: "Source disabled",
+  空值: "Empty value",
+  正文: "Content",
+  来源字段详情: "Source field details",
+  选中提示中的变量声明: "Variable declarations in selected prompts",
+  "仅静态阅读：按来源顺序列出，不代表运行顺序或运行时值；外部聊天变量不可知。":
+    "Static reading only: source order is not execution order, and external chat variables are unknown.",
+  尚无选中的声明: "No selected declarations",
+  "扫描不完整或包含无法解析的宏。":
+    "The scan is incomplete or contains macros it cannot parse.",
+  "声明开头（待解析）": "Declaration opening (not parsed)",
+  显示更多声明: "Show more declarations",
+  "仅识别酒馆助手脚本和正则规则，不加载外部文件；其他结构未解析。":
+    "Only Tavern Helper scripts and regex rules are recognized; external files are not loaded. Other structures are not parsed.",
+  显示更多脚本: "Show more scripts",
+  动态名称: "Dynamic name",
+  声明原文: "Original declaration",
+  待解析: "Not parsed",
+  候选不确定: "Uncertain candidate",
+  静态候选: "Static candidate",
+  "脚本（仅查看）": "Scripts (view only)",
+  "仅显示已识别的嵌入脚本与正则规则，不加载外部文件。":
+    "Only recognized embedded scripts and regex rules are shown; external files are not loaded.",
+  正则规则: "Regex rule",
+  脚本: "Script",
+  未携带源码: "Source not included",
+  未携带内容: "Content not included",
+  源码: "Source",
+  规则: "Rules",
   "包含不支持的字段，保留原文并停用。":
     "Contains unsupported fields; the original text is retained disabled.",
   设置未迁移: "Setting not migrated",

@@ -119,6 +119,10 @@ for (const locale of ["zh-CN", "en"] as const)
       await choose();
       const wizard = page.getByRole("dialog", { name: text.wizard });
       await expect(wizard.getByText("Plain original")).toBeVisible();
+      await mkdir("/tmp/narraeon-141-evidence", { recursive: true });
+      await page.screenshot({
+        path: `/tmp/narraeon-141-evidence/${locale}-${mobile ? "mobile" : "desktop"}.png`,
+      });
       const bounds = await wizard.boundingBox();
       expect(bounds).not.toBeNull();
       expect(bounds!.width).toBeGreaterThan(mobile ? 340 : 800);
@@ -128,7 +132,7 @@ for (const locale of ["zh-CN", "en"] as const)
       await expect(wizard.getByText("Hello {{char}}")).toBeVisible();
       await expect(wizard.getByText("Plain original")).toHaveCount(0);
       await expect(
-        wizard.getByLabel("Plain", { exact: true }),
+        wizard.getByRole("checkbox", { name: "Plain", exact: true }),
       ).not.toBeChecked();
       await expect(
         wizard.getByText(text.unordered, { exact: true }),
@@ -154,15 +158,27 @@ for (const locale of ["zh-CN", "en"] as const)
         "secret-password-should-not-appear",
       );
       await expect(wizard).not.toContainText("secret-url-should-not-appear");
-      await wizard.getByLabel("Plain", { exact: true }).check();
+      await wizard
+        .getByRole("checkbox", { name: "Plain", exact: true })
+        .check();
       await wizard.getByRole("button", { name: "Macro", exact: true }).click();
       await wizard.getByRole("button", { name: "Plain", exact: true }).click();
-      await expect(wizard.getByLabel("Plain", { exact: true })).toBeChecked();
-      await wizard.getByLabel("Plain", { exact: true }).uncheck();
+      await expect(
+        wizard.getByRole("checkbox", { name: "Plain", exact: true }),
+      ).toBeChecked();
+      await wizard
+        .getByRole("checkbox", { name: "Plain", exact: true })
+        .uncheck();
       await expect(wizard.getByText("Plain original")).toBeVisible();
-      await wizard.getByLabel("Plain", { exact: true }).check();
-      await wizard.getByLabel("Macro", { exact: true }).check();
-      await wizard.getByLabel("Orphan", { exact: true }).check();
+      await wizard
+        .getByRole("checkbox", { name: "Plain", exact: true })
+        .check();
+      await wizard
+        .getByRole("checkbox", { name: "Macro", exact: true })
+        .check();
+      await wizard
+        .getByRole("checkbox", { name: "Orphan", exact: true })
+        .check();
       await mkdir("/tmp/narraeon-140-evidence", { recursive: true });
       await page.screenshot({
         path: `/tmp/narraeon-140-evidence/preset-${locale}-${mobile ? "mobile" : "desktop"}-detail.png`,
@@ -181,11 +197,15 @@ for (const locale of ["zh-CN", "en"] as const)
           name: locale === "en" ? "Back to source" : "返回来源",
         })
         .click();
-      await wizard.getByLabel("Plain", { exact: true }).uncheck();
+      await wizard
+        .getByRole("checkbox", { name: "Plain", exact: true })
+        .uncheck();
       await expect(
         wizard.getByRole("button", { name: text.import }),
       ).toHaveCount(0);
-      await wizard.getByLabel("Plain", { exact: true }).check();
+      await wizard
+        .getByRole("checkbox", { name: "Plain", exact: true })
+        .check();
       await wizard
         .getByRole("button", { name: text.preview, exact: true })
         .click();
@@ -208,9 +228,15 @@ for (const locale of ["zh-CN", "en"] as const)
       });
       expect(afterCancel.presets).toHaveLength(before.presets.length);
       await choose();
-      await wizard.getByLabel("Plain", { exact: true }).check();
-      await wizard.getByLabel("Macro", { exact: true }).check();
-      await wizard.getByLabel("Orphan", { exact: true }).check();
+      await wizard
+        .getByRole("checkbox", { name: "Plain", exact: true })
+        .check();
+      await wizard
+        .getByRole("checkbox", { name: "Macro", exact: true })
+        .check();
+      await wizard
+        .getByRole("checkbox", { name: "Orphan", exact: true })
+        .check();
       await wizard
         .getByRole("button", { name: text.preview, exact: true })
         .click();
@@ -237,3 +263,127 @@ for (const locale of ["zh-CN", "en"] as const)
       );
     });
   }
+
+for (const mobile of [false, true]) {
+  test(`static variable inspection ${mobile ? "mobile" : "desktop"}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(
+      mobile ? { width: 390, height: 844 } : { width: 1440, height: 900 },
+    );
+    await page.goto("/");
+    await page.locator(".workspace-locale-picker select").selectOption("zh-CN");
+    if (mobile) await page.getByRole("button", { name: "切换页面" }).click();
+    await page.getByRole("button", { name: "预设", exact: true }).click();
+    await page.getByText("预设管理", { exact: true }).click();
+    const macroSource = {
+      prompts: [
+        {
+          identifier: "a",
+          name: "Declaration",
+          role: "system",
+          content: "{{setvar::mood::quiet}}",
+        },
+        {
+          identifier: "b",
+          name: "Reference",
+          role: "user",
+          content: "Mood: {{getvar::mood}}",
+        },
+      ],
+      extensions: {
+        tavern_helper: {
+          scripts: [
+            {
+              type: "folder",
+              name: "Folder",
+              scripts: [
+                {
+                  type: "script",
+                  name: "Embedded",
+                  content: "<script>window.bad = true</script>",
+                  enabled: true,
+                },
+                {
+                  type: "script",
+                  name: "Remote",
+                  url: "https://example.test/a.js",
+                },
+              ],
+            },
+          ],
+        },
+        regex_scripts: [
+          {
+            scriptName: "Rule",
+            findRegex: "/x/g",
+            replaceString: "<b>y</b>",
+            disabled: false,
+          },
+        ],
+      },
+      prompt_order: [
+        {
+          character_id: 100001,
+          order: [
+            { identifier: "a", enabled: false },
+            { identifier: "b", enabled: true },
+          ],
+        },
+      ],
+    };
+    await page.getByLabel("选择 SillyTavern JSON 文件").setInputFiles({
+      name: "macros.json",
+      mimeType: "application/json",
+      buffer: Buffer.from(JSON.stringify(macroSource)),
+    });
+    const wizard = page.getByRole("dialog", { name: "SillyTavern 导入向导" });
+    await wizard
+      .getByRole("button", { name: "Reference", exact: true })
+      .click();
+    const ref = wizard.getByRole("button", { name: "{{getvar::mood}}" });
+    await ref.click();
+    await expect(wizard.getByRole("tooltip")).toContainText("运行时值未知");
+    await wizard.getByRole("button", { name: "Folder / Embedded" }).click();
+    await expect(
+      wizard.getByText("<script>window.bad = true</script>"),
+    ).toBeVisible();
+    await expect(
+      wizard.getByRole("button", { name: "{{getvar::mood}}" }),
+    ).toHaveCount(0);
+    expect(await page.evaluate(() => "bad" in window)).toBe(false);
+    await page.screenshot({
+      path: `/tmp/narraeon-141-evidence/script-${mobile ? "mobile" : "desktop"}.png`,
+    });
+    await wizard.getByRole("button", { name: "Folder / Remote" }).click();
+    await expect(wizard.getByText(/未携带源码/)).toContainText(
+      "https://example.test/a.js",
+    );
+    await wizard.getByRole("button", { name: "Rule", exact: true }).click();
+    await expect(wizard.getByText("<b>y</b>")).toBeVisible();
+    await wizard
+      .getByRole("button", { name: "Reference", exact: true })
+      .click();
+    await wizard.getByRole("checkbox", { name: "Declaration" }).check();
+    await ref.click();
+    await expect(wizard.getByRole("tooltip")).toContainText("quiet");
+    await expect(wizard.getByRole("tooltip")).toContainText("源停用");
+    await page.screenshot({
+      path: `/tmp/narraeon-141-evidence/variables-${mobile ? "mobile" : "desktop"}.png`,
+    });
+    const conversion = await runtime<unknown>(page, {
+      type: "play.sillytavern.preview",
+      source: JSON.stringify(macroSource),
+      selected: ["a", "b"],
+      groupId: "100001",
+      name: "Macro preview",
+    });
+    expect(JSON.stringify(conversion)).not.toContain("window.bad");
+    expect(JSON.stringify(conversion)).not.toContain("<b>y</b>");
+    await wizard.getByRole("checkbox", { name: "Declaration" }).uncheck();
+    await ref.focus();
+    await expect(wizard.getByRole("tooltip")).toContainText("运行时值未知");
+    await page.keyboard.press("Escape");
+    await expect(wizard.getByRole("tooltip")).toHaveCount(0);
+  });
+}
