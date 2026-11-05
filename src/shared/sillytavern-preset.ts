@@ -7,6 +7,24 @@ import {
 } from "./ordered-play-prompts.ts";
 import { customizePromptArrangement } from "./prompt-arrangement.ts";
 
+export type SillyTavernReason =
+  | "missing_builtin"
+  | "marker"
+  | "unsupported_macro"
+  | "depth_injection"
+  | "trigger"
+  | "overrides"
+  | "unsupported_fields"
+  | "unplaced";
+export type SillyTavernDiagnosticCode =
+  | SillyTavernReason
+  | "ignored_setting"
+  | "prompt_selection"
+  | "unsupported_field";
+export type SillyTavernDiagnosticResult =
+  "ignored" | "enabled" | "disabled" | "not_selected" | "not_imported";
+export type SillyTavernSettingCategory =
+  "connection" | "sampling" | "model" | "extension" | "generation";
 export interface SillyTavernPrompt {
   id: string;
   path: string;
@@ -23,7 +41,7 @@ export interface SillyTavernPrompt {
   triggers?: string[] | undefined;
   macros: string[];
   forbidOverrides?: boolean | undefined;
-  reasons: string[];
+  reasons: SillyTavernReason[];
   unsupportedPaths: string[];
   systemPrompt?: boolean | undefined;
   extension?: boolean | undefined;
@@ -33,18 +51,22 @@ export interface SillyTavernInspection {
   groups: { id: string; label: string }[];
   selectedGroupId?: string | undefined;
   prompts: SillyTavernPrompt[];
-  settings: { path: string; category: string; value?: number }[];
+  settings: {
+    path: string;
+    category: SillyTavernSettingCategory;
+    value?: number;
+  }[];
 }
 export interface SillyTavernDiagnostic {
-  code: string;
+  code: SillyTavernDiagnosticCode;
   path: string;
   name?: string;
-  result: string;
+  result: SillyTavernDiagnosticResult;
 }
 export interface SillyTavernConversion {
   files: Record<string, string>;
   report: SillyTavernDiagnostic[];
-  target: { name: string; kind: string; enabled: boolean }[];
+  target: { name: string; kind: OrderedPlayPrompt["kind"]; enabled: boolean }[];
 }
 type ObjectValue = Record<string, unknown>;
 const builtins = new Set([
@@ -77,8 +99,34 @@ const fields = new Set([
   "position",
   "enabled",
 ]);
-function fail(path: string, message: string): never {
-  throw new Error(`${path}: ${message}`);
+const structuralErrorCodes = {
+  "expected object": "st_expected_object",
+  "expected array": "st_expected_array",
+  "expected string": "st_expected_string",
+  "expected boolean": "st_expected_boolean",
+  "expected number": "st_expected_number",
+  "invalid JSON": "st_invalid_json",
+  "legacy prompt format is unsupported":
+    "st_legacy_prompt_format_is_unsupported",
+  "unsupported preset format": "st_unsupported_preset_format",
+  "expected nonempty string": "st_expected_nonempty_string",
+  "duplicate identifier": "st_duplicate_identifier",
+  "expected string or number": "st_expected_string_or_number",
+  "expected string array": "st_expected_string_array",
+  "expected prompt content": "st_expected_prompt_content",
+  "unsupported role": "st_unsupported_role",
+  "unknown order field": "st_unknown_order_field",
+  "duplicate order identifier": "st_duplicate_order_identifier",
+  "unknown prompt reference": "st_unknown_prompt_reference",
+  "unknown group field": "st_unknown_group_field",
+  "expected character identifier": "st_expected_character_identifier",
+  "duplicate character group": "st_duplicate_character_group",
+  "unknown group": "st_unknown_group",
+  "choose a character group": "st_choose_a_character_group",
+  "invalid selection": "st_invalid_selection",
+} as const;
+function fail(path: string, message: keyof typeof structuralErrorCodes): never {
+  throw new Error(`${path}: ${message} [${structuralErrorCodes[message]}]`);
 }
 function object(value: unknown, path: string): ObjectValue {
   if (typeof value !== "object" || value === null || Array.isArray(value))
@@ -181,6 +229,12 @@ function parse(
     return array(value, path).map((entry, index) => {
       const itemPath = `${path}[${index}]`;
       const item = object(entry, itemPath);
+      if (
+        Object.keys(item).some(
+          (key) => !["identifier", "enabled"].includes(key),
+        )
+      )
+        fail(itemPath, "unknown order field");
       if (typeof item.identifier !== "string" || !item.identifier)
         fail(`${itemPath}.identifier`, "expected nonempty string");
       if (typeof item.enabled !== "boolean")
@@ -201,6 +255,12 @@ function parse(
     array(data.prompt_order, "$.prompt_order").forEach((entry, index) => {
       const path = `$.prompt_order[${index}]`;
       const value = object(entry, path);
+      if (
+        Object.keys(value).some(
+          (key) => !["character_id", "order"].includes(key),
+        )
+      )
+        fail(path, "unknown group field");
       if (
         (typeof value.character_id !== "string" &&
           typeof value.character_id !== "number") ||
@@ -253,9 +313,13 @@ function parse(
     const { value, path } = found;
     const content = value.content as string | undefined;
     const macros = [
-      ...new Set(content?.match(/\{\{[^{}]*\}\}|<(?:USER|BOT|CHAR)>/giu) ?? []),
+      ...new Set(
+        content?.match(
+          /\{\{[^{}]*\}\}|<(?:USER|BOT|CHAR|CHARIFNOTGROUP|GROUP)>/giu,
+        ) ?? [],
+      ),
     ];
-    const reasons: string[] = [];
+    const reasons: SillyTavernReason[] = [];
     const unsupportedPaths = Object.keys(value)
       .filter((key) => !fields.has(key))
       .map((key) => `${path}.${key}`);
@@ -307,7 +371,7 @@ function parse(
   );
   if (selectedOrder)
     for (const id of byId.keys()) if (!seen.has(id)) add(id, false, undefined);
-  function settingsCategory(key: string): string {
+  function settingsCategory(key: string): SillyTavernSettingCategory {
     if (
       /password|key|token|proxy|url|endpoint|header|auth/iu.test(key) &&
       !/max_tokens/iu.test(key)

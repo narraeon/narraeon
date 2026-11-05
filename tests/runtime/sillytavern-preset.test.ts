@@ -338,3 +338,51 @@ it("preserves depth, triggers and unknown prompt semantics as disabled originals
     "future_option",
   );
 });
+
+it.each(["<GROUP>", "<CHARIFNOTGROUP>"])(
+  "disables legacy macro %s",
+  (macro) => {
+    const input = JSON.stringify({
+      version: 1,
+      type: "full",
+      data: {
+        prompts: [
+          {
+            identifier: "a",
+            name: "A",
+            content: `Hello ${macro}`,
+            role: "system",
+          },
+        ],
+        prompt_order: [{ identifier: "a", enabled: true }],
+      },
+    });
+    const converted = convertSillyTavernPreset(input, {
+      name: "Import",
+      locale: "en",
+      selected: ["a"],
+    });
+    expect(converted.target).toContainEqual({
+      name: "A",
+      kind: "user",
+      enabled: false,
+    });
+    expect(converted.report.map((item) => item.code)).toContain(
+      "unsupported_macro",
+    );
+  },
+);
+
+it("rejects unknown order fields rather than changing their semantics", () => {
+  const input = JSON.stringify({
+    version: 1,
+    type: "full",
+    data: {
+      prompts: [{ identifier: "a", content: "hello" }],
+      prompt_order: [
+        { identifier: "a", enabled: true, injection_trigger: ["continue"] },
+      ],
+    },
+  });
+  expect(() => inspectSillyTavernPreset(input)).toThrow("unknown order field");
+});

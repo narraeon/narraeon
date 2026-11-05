@@ -256,6 +256,8 @@ const englishMessages: Record<string, string> = {
   需要提示正文: "Prompt body is required",
   不支持此角色: "Unsupported role",
   顺序中身份重复: "Duplicate identifier in order",
+  顺序中包含未知字段: "The order contains an unknown field",
+  顺序组包含未知字段: "The order group contains an unknown field",
   顺序引用了未知提示: "Order references an unknown prompt",
   需要角色组身份: "Character group identifier is required",
   角色组身份重复: "Duplicate character group",

@@ -6,10 +6,18 @@ import { uiText } from "./i18n.ts";
 import type {
   SillyTavernInspection,
   SillyTavernConversion,
+  SillyTavernDiagnosticCode,
+  SillyTavernDiagnosticResult,
+  SillyTavernSettingCategory,
 } from "../shared/sillytavern-preset.ts";
 
-function explanation(code: string): string {
-  const messages: Record<string, string> = {
+type ExplanationCode =
+  | SillyTavernDiagnosticCode
+  | SillyTavernDiagnosticResult
+  | SillyTavernSettingCategory
+  | SillyTavernConversion["target"][number]["kind"];
+function explanation(code: ExplanationCode): string {
+  const messages: Record<ExplanationCode, string> = {
     missing_builtin: uiText("源文件未携带此内建定义。"),
     marker: uiText("动态材料占位，无静态正文。"),
     unsupported_macro: uiText("包含不支持的宏，保留原文并停用。"),
@@ -28,45 +36,48 @@ function explanation(code: string): string {
     connection: uiText("连接或凭据（未迁移）"),
     sampling: uiText("采样与生成（未迁移）"),
     extension: uiText("扩展（未迁移）"),
-    other: uiText("其他设置（未迁移）"),
     ignored: uiText("已忽略"),
     disabled: uiText("已保留并停用"),
     not_imported: uiText("未导入"),
     user: uiText("导入的用户提示"),
     builtin: uiText("Narraeon 系统提示"),
     world: uiText("Narraeon 世界占位"),
+    tail: uiText("尾部提示"),
   };
-  return messages[code] ?? code;
+  return messages[code];
 }
 
 function errorMessage(message: string): string {
   const translations: Record<string, string> = {
-    "invalid JSON": uiText("JSON 格式无效"),
-    "legacy prompt format is unsupported": uiText("不支持旧版提示格式"),
-    "unsupported preset format": uiText("不支持此预设格式"),
-    "expected object": uiText("需要对象"),
-    "expected array": uiText("需要数组"),
-    "expected string": uiText("需要字符串"),
-    "expected boolean": uiText("需要布尔值"),
-    "expected number": uiText("需要数字"),
-    "expected nonempty string": uiText("需要非空字符串"),
-    "duplicate identifier": uiText("提示身份重复"),
-    "expected string or number": uiText("需要字符串或数字"),
-    "expected string array": uiText("需要字符串数组"),
-    "expected prompt content": uiText("需要提示正文"),
-    "unsupported role": uiText("不支持此角色"),
-    "duplicate order identifier": uiText("顺序中身份重复"),
-    "unknown prompt reference": uiText("顺序引用了未知提示"),
-    "expected character identifier": uiText("需要角色组身份"),
-    "duplicate character group": uiText("角色组身份重复"),
-    "unknown group": uiText("未知顺序组"),
-    "choose a character group": uiText("请选择顺序组"),
-    "invalid selection": uiText("选择无效"),
+    st_invalid_json: uiText("JSON 格式无效"),
+    st_legacy_prompt_format_is_unsupported: uiText("不支持旧版提示格式"),
+    st_unsupported_preset_format: uiText("不支持此预设格式"),
+    st_expected_object: uiText("需要对象"),
+    st_expected_array: uiText("需要数组"),
+    st_expected_string: uiText("需要字符串"),
+    st_expected_boolean: uiText("需要布尔值"),
+    st_expected_number: uiText("需要数字"),
+    st_expected_nonempty_string: uiText("需要非空字符串"),
+    st_duplicate_identifier: uiText("提示身份重复"),
+    st_expected_string_or_number: uiText("需要字符串或数字"),
+    st_expected_string_array: uiText("需要字符串数组"),
+    st_expected_prompt_content: uiText("需要提示正文"),
+    st_unsupported_role: uiText("不支持此角色"),
+    st_duplicate_order_identifier: uiText("顺序中身份重复"),
+    st_unknown_prompt_reference: uiText("顺序引用了未知提示"),
+    st_unknown_order_field: uiText("顺序中包含未知字段"),
+    st_unknown_group_field: uiText("顺序组包含未知字段"),
+    st_expected_character_identifier: uiText("需要角色组身份"),
+    st_duplicate_character_group: uiText("角色组身份重复"),
+    st_unknown_group: uiText("未知顺序组"),
+    st_choose_a_character_group: uiText("请选择顺序组"),
+    st_invalid_selection: uiText("选择无效"),
     "SillyTavern source exceeds the size limit": uiText("源文件超过大小限制"),
   };
-  const parts = message.split(": ");
-  const tail = parts.pop() ?? message;
-  return [...parts, translations[tail] ?? tail].join(": ");
+  const match = /^(.*): (.+) \[(st_[a-z_]+)\]$/u.exec(message);
+  if (match)
+    return `${match[1]}: ${translations[match[3]!] ?? match[2]} [${match[3]}]`;
+  return translations[message] ?? message;
 }
 
 function settingPurpose(path: string): string {
