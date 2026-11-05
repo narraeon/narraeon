@@ -402,6 +402,11 @@ const englishMessages: Record<string, string> = {
   "动态材料占位，无静态正文。": "Dynamic material placeholder; no static body.",
   "源文件未携带此内建定义。":
     "This built-in definition is not included in the source file.",
+  "深度提示（仅资料）": "Depth prompt (reference only)",
+  来源目录: "Source directory",
+  返回来源: "Back to source",
+  动态占位: "Dynamic placeholder",
+  缺失定义: "Missing definition",
   未迁移的设置: "Settings not migrated",
   "模型、端点、采样与扩展设置不会应用；凭据值不会显示或保存。":
     "Model, endpoint, sampling and extension settings are not applied; credential values are neither shown nor saved.",

@@ -10298,3 +10298,112 @@ summary:focus-visible {
   width: auto;
   flex: 0 0 auto;
 }
+
+/* The import source browser keeps its directory and reading pane independent. */
+.sillytavern-import,
+.sillytavern-content-import {
+  width: min(90rem, calc(100vw - 2rem));
+  height: calc(100dvh - 2rem);
+  max-height: none;
+  overflow: auto;
+}
+.import-browser {
+  display: grid;
+  grid-template-columns: minmax(14rem, 22rem) minmax(0, 1fr);
+  height: min(56vh, 42rem);
+  min-height: 18rem;
+  border: 1px solid var(--border);
+}
+.import-browser-list,
+.import-browser-detail,
+.import-result {
+  min-width: 0;
+  overflow: auto;
+  padding: 0.75rem;
+}
+.import-browser-list {
+  border-right: 1px solid var(--border);
+}
+.import-browser-list h3 {
+  font-size: 0.9rem;
+  margin: 0.75rem 0 0.3rem;
+}
+.import-browser-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.import-browser-row.active {
+  background: var(--surface-inset);
+  outline: 1px solid var(--border);
+}
+.import-browser-row > button {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.import-browser-row input {
+  flex: 0 0 auto;
+  width: auto;
+}
+.import-browser-row small {
+  display: block;
+  opacity: 0.7;
+}
+.import-entry-row {
+  flex-wrap: wrap;
+}
+.import-entry-row select {
+  max-width: 100%;
+}
+.import-browser-detail pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: none;
+}
+.import-browser-detail .sillytavern-prompt {
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+.import-result {
+  max-height: 56vh;
+}
+@media (max-width: 650px) {
+  .import-browser {
+    display: flex;
+    flex-direction: column;
+    height: 55dvh;
+  }
+  .import-browser-list {
+    flex: 0 0 35%;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .import-browser-detail {
+    flex: 1;
+  }
+  .sillytavern-import,
+  .sillytavern-content-import {
+    inset: 0.5rem;
+    width: calc(100vw - 1rem);
+    height: calc(100dvh - 1rem);
+    padding: 0.75rem;
+  }
+}
+.sillytavern-content-import {
+  inset: 1rem auto auto 50%;
+  transform: translateX(-50%);
+}
+@media (max-width: 650px) {
+  .sillytavern-content-import {
+    inset: 0.5rem auto auto 50%;
+  }
+}
+.sillytavern-content-import {
+  box-sizing: border-box;
+}
+.sillytavern-content-import fieldset {
+  min-width: 0;
+}

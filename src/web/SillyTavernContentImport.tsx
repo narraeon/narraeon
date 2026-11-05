@@ -98,6 +98,28 @@ function errorText(message: string): string {
   const code = /(?:^|: )([a-z][a-z_]+)(?:$|\s)/u.exec(message)?.[1];
   return code ? `${diagnosticText(code)} (${message})` : message;
 }
+function sourceText(value: unknown): string {
+  return typeof value === "string"
+    ? value
+    : JSON.stringify(value ?? "", null, 2);
+}
+function fieldLabel(key: string): string {
+  const labels: Record<string, string> = {
+    description: "角色描述",
+    scenario: "初始情境候选",
+    mes_example: "虚构对话示例",
+    system_prompt: "角色专属提示",
+    creator_notes: "作者说明（仅资料）",
+    creator: "作者",
+    character_version: "角色版本",
+    tags: "标签",
+    post_history_instructions: "历史后指令（仅资料）",
+    depth_prompt: "深度提示（仅资料）",
+    name: "来源名称",
+    personality: "角色性格",
+  };
+  return uiText(labels[key] ?? key);
+}
 export function SillyTavernContentImport({
   client,
   onImported,
@@ -108,6 +130,8 @@ export function SillyTavernContentImport({
   const [source, setSource] = useState("");
   const [name, setName] = useState("SillyTavern");
   const [view, setView] = useState<ContentInspection>();
+  const [active, setActive] = useState<string>();
+  const [showResult, setShowResult] = useState(false);
   const [selection, setSelection] = useState<ContentSelection>({ entries: {} });
   const [preview, setPreview] = useState<{
     files: ContentTreeFile[];
@@ -131,6 +155,8 @@ export function SillyTavernContentImport({
     }
   }
   function close() {
+    setActive(undefined);
+    setShowResult(false);
     setSource("");
     setView(undefined);
     setPreview(undefined);
@@ -140,6 +166,7 @@ export function SillyTavernContentImport({
   function choose(patch: Partial<ContentSelection>) {
     setSelection((current) => ({ ...current, ...patch }));
     setPreview(undefined);
+    setShowResult(false);
   }
   return (
     <section className="home-import-disclosure">
@@ -165,11 +192,17 @@ export function SillyTavernContentImport({
               setName(
                 file.name.replace(/\.(json|png)$/iu, "") || "SillyTavern",
               );
-              setView(
-                await client.request<ContentInspection>({
-                  type: "content.sillytavern.inspect",
-                  source: encoded,
-                }),
+              const inspected = await client.request<ContentInspection>({
+                type: "content.sillytavern.inspect",
+                source: encoded,
+              });
+              setView(inspected);
+              setActive(
+                inspected.kind === "character"
+                  ? "field:description"
+                  : inspected.entries[0]
+                    ? `entry:${inspected.entries[0].id}`
+                    : "fields",
               );
             });
           }}
@@ -178,6 +211,13 @@ export function SillyTavernContentImport({
       {(source || error) && (
         <div
           role="dialog"
+          aria-modal="true"
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && !busy) {
+              event.stopPropagation();
+              close();
+            }
+          }}
           aria-label={uiText("SillyTavern 内容导入向导")}
           className="sillytavern-content-import"
         >
@@ -198,6 +238,7 @@ export function SillyTavernContentImport({
                     onChange={(e) => {
                       setName(e.target.value);
                       setPreview(undefined);
+                      setShowResult(false);
                     }}
                   />
                 </label>
@@ -207,283 +248,386 @@ export function SillyTavernContentImport({
                     : uiText("世界书")}{" "}
                   · {view.version}
                 </p>
-                {view.kind === "character" && (
-                  <div>
-                    {(
-                      [
-                        ["name", "来源名称"],
-                        ["description", "角色描述"],
-                        ["personality", "角色性格"],
-                        ["scenario", "初始情境候选"],
-                        ["first_mes", "默认开场"],
-                        ["mes_example", "虚构对话示例"],
-                        ["system_prompt", "角色专属提示"],
-                        ["post_history_instructions", "历史后指令（仅资料）"],
-                        ["creator_notes", "作者说明（仅资料）"],
-                        ["creator", "作者"],
-                        ["character_version", "角色版本"],
-                        ["tags", "标签"],
-                      ] as const
-                    ).map(
-                      ([key, label]) =>
-                        view.fields[key] !== undefined && (
-                          <section key={key}>
-                            <h4>{uiText(label)}</h4>
-                            <pre>
-                              {typeof view.fields[key] === "string"
-                                ? view.fields[key]
-                                : JSON.stringify(view.fields[key], null, 2)}
-                            </pre>
-                          </section>
-                        ),
-                    )}
-                    {Array.isArray(view.fields.alternate_greetings) &&
-                      (view.fields.alternate_greetings as unknown[]).map(
-                        (greeting, index) => (
-                          <section key={index}>
-                            <h4>
-                              {uiText("替代开场")} {index + 1}
-                            </h4>
-                            <pre>
-                              {typeof greeting === "string" ? greeting : ""}
-                            </pre>
-                          </section>
-                        ),
+                {!showResult && (
+                  <div className="import-browser">
+                    <nav
+                      className="import-browser-list"
+                      aria-label={uiText("来源目录")}
+                    >
+                      {view.kind === "character" && (
+                        <>
+                          <h3>{uiText("角色卡目标用途")}</h3>
+                          {(
+                            [
+                              ["character", "角色文档", "description"],
+                              ["scenario", "当前情境", "scenario"],
+                              ["example", "虚构对话控制参考", "mes_example"],
+                              ["systemPrompt", "世界控制提示", "system_prompt"],
+                            ] as const
+                          ).map(([key, label, field]) => (
+                            <div
+                              key={key}
+                              className={`import-browser-row ${active === `field:${field}` ? "active" : ""}`}
+                            >
+                              <input
+                                type="checkbox"
+                                aria-label={uiText(label)}
+                                checked={selection[key] === true}
+                                onChange={(event) =>
+                                  choose({ [key]: event.currentTarget.checked })
+                                }
+                              />
+                              <button
+                                type="button"
+                                aria-pressed={active === `field:${field}`}
+                                onClick={() => setActive(`field:${field}`)}
+                              >
+                                {uiText(label)}
+                              </button>
+                            </div>
+                          ))}
+                          <h3>{uiText("选择一个开场白")}</h3>
+                          {[
+                            view.fields.first_mes,
+                            ...(Array.isArray(view.fields.alternate_greetings)
+                              ? (view.fields.alternate_greetings as unknown[])
+                              : []),
+                          ].map((greeting, index) =>
+                            typeof greeting === "string" && greeting ? (
+                              <div
+                                key={index}
+                                className={`import-browser-row ${active === `opening:${index}` ? "active" : ""}`}
+                              >
+                                <input
+                                  type="radio"
+                                  name="import-opening"
+                                  aria-label={`${uiText("选择一个开场白")} ${index + 1}`}
+                                  checked={selection.opening === String(index)}
+                                  onClick={() => {
+                                    if (selection.opening === String(index))
+                                      choose({ opening: undefined });
+                                  }}
+                                  onChange={() =>
+                                    choose({ opening: String(index) })
+                                  }
+                                />
+                                <button
+                                  type="button"
+                                  aria-pressed={active === `opening:${index}`}
+                                  onClick={() => setActive(`opening:${index}`)}
+                                >
+                                  {index === 0
+                                    ? uiText("默认开场")
+                                    : `${uiText("替代开场")} ${index}`}
+                                </button>
+                              </div>
+                            ) : null,
+                          )}
+                          <h3>{uiText("仅保存来源资料")}</h3>
+                          {[
+                            "creator_notes",
+                            "creator",
+                            "character_version",
+                            "tags",
+                            "post_history_instructions",
+                            "depth_prompt",
+                          ].map((key) => (
+                            <div
+                              key={key}
+                              className={`import-browser-row ${active === `field:${key}` ? "active" : ""}`}
+                            >
+                              <input
+                                type="checkbox"
+                                aria-label={key}
+                                checked={
+                                  selection.attachments?.includes(key) === true
+                                }
+                                onChange={(event) => {
+                                  const previous = selection.attachments ?? [];
+                                  choose({
+                                    attachments: event.currentTarget.checked
+                                      ? [...previous, key]
+                                      : previous.filter((item) => item !== key),
+                                  });
+                                }}
+                              />
+                              <button
+                                type="button"
+                                aria-pressed={active === `field:${key}`}
+                                onClick={() => setActive(`field:${key}`)}
+                              >
+                                {fieldLabel(key)}
+                              </button>
+                            </div>
+                          ))}
+                          {["name", "personality"].map((key) => (
+                            <button
+                              type="button"
+                              key={key}
+                              aria-pressed={active === `field:${key}`}
+                              onClick={() => setActive(`field:${key}`)}
+                            >
+                              {key === "name"
+                                ? uiText("来源名称")
+                                : uiText("角色性格")}
+                            </button>
+                          ))}
+                        </>
                       )}
-                  </div>
-                )}
-                {Object.keys(view.legacyFields).length > 0 && (
-                  <details open>
-                    <summary>{uiText("旧版顶层字段")}</summary>
-                    <pre>{JSON.stringify(view.legacyFields, null, 2)}</pre>
-                  </details>
-                )}
-                <details>
-                  <summary>{uiText("完整来源字段")}</summary>
-                  <pre>{JSON.stringify(view.fields, null, 2)}</pre>
-                </details>
-                {view.kind === "character" && (
-                  <fieldset>
-                    <legend>{uiText("角色卡目标用途")}</legend>
-                    {(
-                      [
-                        ["character", "角色文档"],
-                        ["scenario", "当前情境"],
-                        ["example", "虚构对话控制参考"],
-                        ["systemPrompt", "世界控制提示"],
-                      ] as const
-                    ).map(([key, label]) => (
-                      <label key={key}>
-                        <input
-                          type="checkbox"
-                          checked={selection[key] === true}
-                          onChange={(e) => choose({ [key]: e.target.checked })}
-                        />
-                        {uiText(label)}
-                      </label>
-                    ))}
-                    <label>
-                      {uiText("选择一个开场白")}{" "}
-                      <select
-                        value={selection.opening ?? ""}
-                        onChange={(e) =>
-                          choose({ opening: e.target.value || undefined })
-                        }
-                      >
-                        <option value="">{uiText("不选择")}</option>
-                        {[
-                          view.fields.first_mes,
-                          ...(Array.isArray(view.fields.alternate_greetings)
-                            ? (view.fields.alternate_greetings as unknown[])
-                            : []),
-                        ].map((greeting, index) =>
-                          typeof greeting === "string" && greeting ? (
-                            <option key={index} value={String(index)}>
-                              {index === 0
-                                ? uiText("默认开场")
-                                : `${uiText("替代开场")} ${index}`}
+                      <h3>{uiText("世界书条目")}</h3>
+                      {view.entries.map((entry) => (
+                        <div
+                          key={entry.id}
+                          className={`import-browser-row import-entry-row ${active === `entry:${entry.id}` ? "active" : ""}`}
+                        >
+                          <button
+                            type="button"
+                            aria-pressed={active === `entry:${entry.id}`}
+                            onClick={() => setActive(`entry:${entry.id}`)}
+                          >
+                            {entry.name}
+                            <small>
+                              {entry.enabled
+                                ? uiText("来源启用")
+                                : uiText("来源禁用")}
+                            </small>
+                          </button>
+                          <select
+                            aria-label={`${entry.name} ${uiText("目标用途")}`}
+                            value={selection.entries[entry.id] ?? ""}
+                            onChange={(event) => {
+                              const entries = { ...selection.entries };
+                              if (event.currentTarget.value)
+                                entries[entry.id] = event.currentTarget
+                                  .value as "world" | "attachment";
+                              else delete entries[entry.id];
+                              choose({ entries });
+                            }}
+                          >
+                            <option value="">{uiText("不选择")}</option>
+                            <option value="attachment">
+                              {uiText("仅迁移附件")}
                             </option>
-                          ) : null,
-                        )}
-                      </select>
-                    </label>
-                  </fieldset>
-                )}
-                {view.kind === "character" && (
-                  <fieldset>
-                    <legend>{uiText("仅保存来源资料")}</legend>
-                    {[
-                      "creator_notes",
-                      "creator",
-                      "character_version",
-                      "tags",
-                      "post_history_instructions",
-                      "depth_prompt",
-                    ].map((key) => (
-                      <label key={key}>
-                        <input
-                          type="checkbox"
-                          checked={
-                            selection.attachments?.includes(key) === true
-                          }
-                          onChange={(event) => {
-                            const previous = selection.attachments ?? [];
-                            choose({
-                              attachments: event.target.checked
-                                ? [...previous, key]
-                                : previous.filter((item) => item !== key),
-                            });
-                          }}
-                        />
-                        {key}
-                      </label>
-                    ))}
-                  </fieldset>
-                )}
-                <h3>{uiText("世界书条目")}</h3>
-                <p>
-                  {uiText(
-                    "编辑顺序、优先级和插入位置是不同的来源规则；实际注入还取决于聊天与全局设置。",
-                  )}
-                </p>
-                {view.entries.map((entry) => (
-                  <article key={entry.id}>
-                    <h4>{entry.name}</h4>
-                    <p>
-                      {entry.path} ·{" "}
-                      {entry.enabled ? uiText("来源启用") : uiText("来源禁用")}
-                    </p>
-                    <pre>{entry.content}</pre>
-                    <dl>
-                      {(
-                        [
-                          ["关键词", ruleValue(entry.rules, "key", "keys")],
-                          [
-                            "次关键词",
-                            ruleValue(
-                              entry.rules,
-                              "keysecondary",
-                              "secondary_keys",
-                            ),
-                          ],
-                          ["启用次关键词", ruleValue(entry.rules, "selective")],
-                          [
-                            "次关键词逻辑（0 任一，1 非全部，2 全不，3 全部）",
-                            ruleValue(entry.rules, "selectiveLogic"),
-                          ],
-                          [
-                            "常驻（仍受其他过滤限制）",
-                            ruleValue(entry.rules, "constant"),
-                          ],
-                          [
-                            "编辑顺序",
-                            ruleValue(
-                              entry.rules,
-                              "displayIndex",
-                              "display_index",
-                            ),
-                          ],
-                          [
-                            "激活优先级",
-                            ruleValue(entry.rules, "order", "insertion_order"),
-                          ],
-                          [
-                            "插入位置（来源枚举）",
-                            ruleValue(entry.rules, "position"),
-                          ],
-                          ["历史深度", ruleValue(entry.rules, "depth")],
-                          ["插入角色", ruleValue(entry.rules, "role")],
-                          ["激活概率", ruleValue(entry.rules, "probability")],
-                          [
-                            "启用概率",
-                            ruleValue(entry.rules, "useProbability"),
-                          ],
-                          ["分组", ruleValue(entry.rules, "group")],
-                          [
-                            "分组权重",
-                            ruleValue(
-                              entry.rules,
-                              "groupWeight",
-                              "group_weight",
-                            ),
-                          ],
-                          [
-                            "排除递归",
-                            ruleValue(
-                              entry.rules,
-                              "excludeRecursion",
-                              "exclude_recursion",
-                            ),
-                          ],
-                          [
-                            "阻止递归",
-                            ruleValue(
-                              entry.rules,
-                              "preventRecursion",
-                              "prevent_recursion",
-                            ),
-                          ],
-                          [
-                            "延迟至递归",
-                            ruleValue(
-                              entry.rules,
-                              "delayUntilRecursion",
-                              "delay_until_recursion",
-                            ),
-                          ],
-                          ["持续轮数", ruleValue(entry.rules, "sticky")],
-                          ["冷却轮数", ruleValue(entry.rules, "cooldown")],
-                          ["延迟轮数", ruleValue(entry.rules, "delay")],
-                          [
-                            "角色过滤",
-                            ruleValue(entry.rules, "characterFilter"),
-                          ],
-                          ["生成类型限制", ruleValue(entry.rules, "triggers")],
-                          [
-                            "扫描深度",
-                            ruleValue(entry.rules, "scanDepth", "scan_depth"),
-                          ],
-                        ] as const
-                      ).map(([label, value]) => (
-                        <div key={label}>
-                          <dt>{uiText(label)}</dt>
-                          <dd>{displayRule(value, label)}</dd>
+                            <option value="world" disabled={!entry.enabled}>
+                              {uiText("纳入世界资料")}
+                            </option>
+                          </select>
                         </div>
                       ))}
-                    </dl>
-                    <details>
-                      <summary>{uiText("来源规则")}</summary>
-                      <pre>{JSON.stringify(entry.rules, null, 2)}</pre>
-                    </details>
-                    <label>
-                      {uiText("目标用途")}{" "}
-                      <select
-                        value={selection.entries[entry.id] ?? ""}
-                        onChange={(e) => {
-                          const entries = { ...selection.entries };
-                          if (e.target.value)
-                            entries[entry.id] = e.target.value as
-                              "world" | "attachment";
-                          else delete entries[entry.id];
-                          choose({ entries });
-                        }}
+                      <button
+                        type="button"
+                        aria-pressed={active === "fields"}
+                        onClick={() => setActive("fields")}
                       >
-                        <option value="">{uiText("不选择")}</option>
-                        <option value="attachment">
-                          {uiText("仅迁移附件")}
-                        </option>
-                        <option value="world" disabled={!entry.enabled}>
-                          {uiText("纳入世界资料")}
-                        </option>
-                      </select>
-                    </label>
-                  </article>
-                ))}
+                        {uiText("完整来源字段")}
+                      </button>
+                    </nav>
+                    <div className="import-browser-detail">
+                      {active?.startsWith("field:") && (
+                        <article>
+                          <h3>{fieldLabel(active.slice(6))}</h3>
+                          <pre>
+                            {typeof view.fields[active.slice(6)] === "string"
+                              ? String(view.fields[active.slice(6)])
+                              : JSON.stringify(
+                                  view.fields[active.slice(6)] ?? "",
+                                  null,
+                                  2,
+                                )}
+                          </pre>
+                          {active === "field:description" && (
+                            <details>
+                              <summary>{uiText("角色性格")}</summary>
+                              <pre>
+                                {typeof view.fields.personality === "string"
+                                  ? view.fields.personality
+                                  : ""}
+                              </pre>
+                            </details>
+                          )}
+                        </article>
+                      )}
+                      {active?.startsWith("opening:") && (
+                        <article>
+                          <h3>{uiText("开场白")}</h3>
+                          <pre>
+                            {sourceText(
+                              [
+                                view.fields.first_mes,
+                                ...(Array.isArray(
+                                  view.fields.alternate_greetings,
+                                )
+                                  ? (view.fields
+                                      .alternate_greetings as unknown[])
+                                  : []),
+                              ][Number(active.slice(8))] ?? "",
+                            )}
+                          </pre>
+                        </article>
+                      )}
+                      {active === "fields" && (
+                        <>
+                          <details open>
+                            <summary>{uiText("完整来源字段")}</summary>
+                            <pre>{JSON.stringify(view.fields, null, 2)}</pre>
+                          </details>
+                          <details>
+                            <summary>{uiText("旧版顶层字段")}</summary>
+                            <pre>
+                              {JSON.stringify(view.legacyFields, null, 2)}
+                            </pre>
+                          </details>
+                        </>
+                      )}
+                      {view.entries
+                        .filter((entry) => active === `entry:${entry.id}`)
+                        .map((entry) => (
+                          <article key={entry.id}>
+                            <h3>{entry.name}</h3>
+                            <pre>{entry.content}</pre>
+                            <p>
+                              {entry.path} ·{" "}
+                              {entry.enabled
+                                ? uiText("来源启用")
+                                : uiText("来源禁用")}
+                            </p>
+                            <dl>
+                              {(
+                                [
+                                  [
+                                    "关键词",
+                                    ruleValue(entry.rules, "key", "keys"),
+                                  ],
+                                  [
+                                    "次关键词",
+                                    ruleValue(
+                                      entry.rules,
+                                      "keysecondary",
+                                      "secondary_keys",
+                                    ),
+                                  ],
+                                  [
+                                    "启用次关键词",
+                                    ruleValue(entry.rules, "selective"),
+                                  ],
+                                  [
+                                    "次关键词逻辑（0 任一，1 非全部，2 全不，3 全部）",
+                                    ruleValue(entry.rules, "selectiveLogic"),
+                                  ],
+                                  [
+                                    "常驻（仍受其他过滤限制）",
+                                    ruleValue(entry.rules, "constant"),
+                                  ],
+                                  [
+                                    "编辑顺序",
+                                    ruleValue(
+                                      entry.rules,
+                                      "displayIndex",
+                                      "display_index",
+                                    ),
+                                  ],
+                                  [
+                                    "激活优先级",
+                                    ruleValue(
+                                      entry.rules,
+                                      "order",
+                                      "insertion_order",
+                                    ),
+                                  ],
+                                  [
+                                    "插入位置（来源枚举）",
+                                    ruleValue(entry.rules, "position"),
+                                  ],
+                                  ["历史深度", ruleValue(entry.rules, "depth")],
+                                  ["插入角色", ruleValue(entry.rules, "role")],
+                                  [
+                                    "激活概率",
+                                    ruleValue(entry.rules, "probability"),
+                                  ],
+                                  [
+                                    "启用概率",
+                                    ruleValue(entry.rules, "useProbability"),
+                                  ],
+                                  ["分组", ruleValue(entry.rules, "group")],
+                                  [
+                                    "分组权重",
+                                    ruleValue(
+                                      entry.rules,
+                                      "groupWeight",
+                                      "group_weight",
+                                    ),
+                                  ],
+                                  [
+                                    "排除递归",
+                                    ruleValue(
+                                      entry.rules,
+                                      "excludeRecursion",
+                                      "exclude_recursion",
+                                    ),
+                                  ],
+                                  [
+                                    "阻止递归",
+                                    ruleValue(
+                                      entry.rules,
+                                      "preventRecursion",
+                                      "prevent_recursion",
+                                    ),
+                                  ],
+                                  [
+                                    "延迟至递归",
+                                    ruleValue(
+                                      entry.rules,
+                                      "delayUntilRecursion",
+                                      "delay_until_recursion",
+                                    ),
+                                  ],
+                                  [
+                                    "持续轮数",
+                                    ruleValue(entry.rules, "sticky"),
+                                  ],
+                                  [
+                                    "冷却轮数",
+                                    ruleValue(entry.rules, "cooldown"),
+                                  ],
+                                  ["延迟轮数", ruleValue(entry.rules, "delay")],
+                                  [
+                                    "角色过滤",
+                                    ruleValue(entry.rules, "characterFilter"),
+                                  ],
+                                  [
+                                    "生成类型限制",
+                                    ruleValue(entry.rules, "triggers"),
+                                  ],
+                                  [
+                                    "扫描深度",
+                                    ruleValue(
+                                      entry.rules,
+                                      "scanDepth",
+                                      "scan_depth",
+                                    ),
+                                  ],
+                                ] as const
+                              ).map(([label, value]) => (
+                                <div key={label}>
+                                  <dt>{uiText(label)}</dt>
+                                  <dd>{displayRule(value, label)}</dd>
+                                </div>
+                              ))}
+                            </dl>
+                            <details>
+                              <summary>{uiText("来源规则")}</summary>
+                              <pre>{JSON.stringify(entry.rules, null, 2)}</pre>
+                            </details>
+                          </article>
+                        ))}
+                    </div>
+                  </div>
+                )}
               </fieldset>
               <button
                 disabled={busy || !name.trim()}
                 onClick={() =>
-                  void run(async () =>
+                  void run(async () => {
                     setPreview(
                       await client.request({
                         type: "content.sillytavern.preview",
@@ -491,14 +635,18 @@ export function SillyTavernContentImport({
                         name,
                         selection,
                       }),
-                    ),
-                  )
+                    );
+                    setShowResult(true);
+                  })
                 }
               >
                 {uiText("预览目标文件")}
               </button>
-              {preview && (
-                <>
+              {showResult && preview && (
+                <div className="import-result">
+                  <button type="button" onClick={() => setShowResult(false)}>
+                    {uiText("返回来源")}
+                  </button>
                   <h3>{uiText("目标文件与兼容报告")}</h3>
                   <ul>
                     {preview.files.map((file) => (
@@ -556,7 +704,7 @@ export function SillyTavernContentImport({
                   >
                     {uiText("创建独立内容包")}
                   </button>
-                </>
+                </div>
               )}
             </>
           )}

@@ -123,6 +123,9 @@ export function SillyTavernImport({
   const [name, setName] = useState("");
   const [inspection, setInspection] = useState<SillyTavernInspection>();
   const [selected, setSelected] = useState<string[]>([]);
+  const [active, setActive] = useState<string>();
+  const [showSettings, setShowSettings] = useState(false);
+  const [showResult, setShowResult] = useState(false);
   const [preview, setPreview] = useState<SillyTavernConversion>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -155,10 +158,15 @@ export function SillyTavernImport({
       ...(groupId === undefined ? {} : { groupId }),
     });
     setInspection(result);
+    setActive(result.prompts[0]?.id);
+    setShowSettings(false);
+    setShowResult(false);
     setSelected([]);
     setPreview(undefined);
   }
   function cancel(): void {
+    setActive(undefined);
+    setShowResult(false);
     setSource(undefined);
     setInspection(undefined);
     setPreview(undefined);
@@ -257,139 +265,197 @@ export function SillyTavernImport({
                     onChange={(event) => {
                       setName(event.currentTarget.value);
                       setPreview(undefined);
+                      setShowResult(false);
                     }}
                   />
                 </label>
-                {[true, false].map((ordered) => (
-                  <section key={String(ordered)}>
-                    <h3>{ordered ? uiText("源顺序") : uiText("未编排提示")}</h3>
-                    {!ordered && (
-                      <p>{uiText("未编排提示选中后会保留为停用项。")}</p>
-                    )}
-                    {inspection.prompts
-                      .filter((prompt) => prompt.ordered === ordered)
-                      .map((prompt) => (
-                        <article key={prompt.id} className="sillytavern-prompt">
-                          <label>
-                            <input
-                              type="checkbox"
-                              checked={selected.includes(prompt.id)}
-                              disabled={busy}
-                              onChange={(event) => {
-                                const checked = event.currentTarget.checked;
-                                setSelected((current) =>
-                                  checked
-                                    ? [...current, prompt.id]
-                                    : current.filter((id) => id !== prompt.id),
-                                );
-                                setPreview(undefined);
-                              }}
-                            />{" "}
-                            {prompt.name}
-                          </label>
-                          <p>
-                            {prompt.path} · ID: {prompt.id} ·{" "}
-                            {uiText("发送角色")}: {prompt.role ?? "—"} ·{" "}
-                            {uiText("源启用状态")}:{" "}
-                            {prompt.enabled === undefined
-                              ? "—"
-                              : prompt.enabled
-                                ? uiText("启用")
-                                : uiText("停用")}
-                          </p>
-                          <p>
-                            {uiText("插入位置")}:{" "}
-                            {prompt.injectionPosition === undefined ||
-                            prompt.injectionPosition === 0
-                              ? uiText("提示顺序")
-                              : prompt.injectionPosition === 1
-                                ? uiText("历史深度")
-                                : prompt.injectionPosition}{" "}
-                            · {uiText("深度")}: {prompt.injectionDepth ?? "—"} ·{" "}
-                            {uiText("优先级")}: {prompt.injectionOrder ?? "—"}
-                          </p>
-                          <p>
-                            {uiText("触发条件")}:{" "}
-                            {prompt.triggers?.length
-                              ? prompt.triggers.join(", ")
-                              : uiText("全部生成类型")}{" "}
-                            · {uiText("宏")}:{" "}
-                            {prompt.macros.length
-                              ? prompt.macros.join(", ")
-                              : "—"}{" "}
-                            · {uiText("禁止覆盖")}:{" "}
-                            {prompt.forbidOverrides === undefined
-                              ? "—"
-                              : prompt.forbidOverrides
-                                ? uiText("是")
-                                : uiText("否")}
-                          </p>
-                          <p>
-                            {uiText("系统管理提示")}:{" "}
-                            {prompt.systemPrompt === undefined
-                              ? "—"
-                              : prompt.systemPrompt
-                                ? uiText("是")
-                                : uiText("否")}{" "}
-                            · {uiText("扩展提示")}:{" "}
-                            {prompt.extension === undefined
-                              ? "—"
-                              : prompt.extension
-                                ? uiText("是")
-                                : uiText("否")}{" "}
-                            · {uiText("源 position 字段")}:{" "}
-                            {prompt.position ?? "—"}
-                          </p>
-                          {prompt.unsupportedPaths.length > 0 && (
-                            <p>
-                              {uiText("不支持的字段路径")}:{" "}
-                              {prompt.unsupportedPaths.join(", ")}
-                            </p>
-                          )}
-                          {prompt.marker && (
-                            <p>
-                              {uiText("动态材料占位，无静态正文。")}{" "}
-                              {markerMeaning(prompt.id)}
-                            </p>
-                          )}
-                          {prompt.missing && (
-                            <p>
-                              {uiText("源文件未携带此内建定义。")}{" "}
-                              {markerMeaning(prompt.id)} ·{" "}
-                              {uiText("无法迁移动态或缺失的内建内容。")}
-                            </p>
-                          )}
-                          {prompt.content !== undefined && (
-                            <pre>{prompt.content}</pre>
-                          )}
-                          {prompt.reasons.map((reason) => (
-                            <p key={reason}>{explanation(reason)}</p>
-                          ))}
-                        </article>
+                {!showResult && (
+                  <div className="import-browser">
+                    <nav
+                      className="import-browser-list"
+                      aria-label={uiText("来源目录")}
+                    >
+                      {[true, false].map((ordered) => (
+                        <section key={String(ordered)}>
+                          <h3>
+                            {ordered ? uiText("源顺序") : uiText("未编排提示")}
+                          </h3>
+                          {inspection.prompts
+                            .filter((prompt) => prompt.ordered === ordered)
+                            .map((prompt) => (
+                              <div
+                                className={`import-browser-row ${!showSettings && active === prompt.id ? "active" : ""}`}
+                                key={prompt.id}
+                              >
+                                <input
+                                  type="checkbox"
+                                  aria-label={prompt.name}
+                                  checked={selected.includes(prompt.id)}
+                                  disabled={busy}
+                                  onChange={(event) => {
+                                    const checked = event.currentTarget.checked;
+                                    setSelected((current) =>
+                                      checked
+                                        ? [...current, prompt.id]
+                                        : current.filter(
+                                            (id) => id !== prompt.id,
+                                          ),
+                                    );
+                                    setPreview(undefined);
+                                  }}
+                                />
+                                <button
+                                  type="button"
+                                  aria-pressed={
+                                    !showSettings && active === prompt.id
+                                  }
+                                  onClick={() => {
+                                    setActive(prompt.id);
+                                    setShowSettings(false);
+                                  }}
+                                >
+                                  {prompt.name}
+                                  <small>
+                                    {prompt.marker
+                                      ? uiText("动态占位")
+                                      : prompt.missing
+                                        ? uiText("缺失定义")
+                                        : prompt.enabled === false
+                                          ? uiText("停用")
+                                          : ""}
+                                  </small>
+                                </button>
+                              </div>
+                            ))}
+                        </section>
                       ))}
-                  </section>
-                ))}
-                <section>
-                  <h3>{uiText("未迁移的设置")}</h3>
-                  <p>
-                    {uiText(
-                      "模型、端点、采样与扩展设置不会应用；凭据值不会显示或保存。",
-                    )}
-                  </p>
-                  <ul>
-                    {inspection.settings.map((setting) => (
-                      <li key={setting.path}>
-                        {setting.path} — {explanation(setting.category)}
-                        {setting.value !== undefined && (
-                          <>
-                            {" "}
-                            — {setting.value} {settingPurpose(setting.path)}
-                          </>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                </section>
+                      <button
+                        type="button"
+                        aria-pressed={showSettings}
+                        onClick={() => setShowSettings(true)}
+                      >
+                        {uiText("未迁移的设置")}
+                      </button>
+                    </nav>
+                    <div className="import-browser-detail">
+                      {inspection.prompts
+                        .filter(
+                          (prompt) => !showSettings && prompt.id === active,
+                        )
+                        .map((prompt) => (
+                          <article
+                            key={prompt.id}
+                            className="sillytavern-prompt"
+                          >
+                            <h3>{prompt.name}</h3>
+                            {prompt.content !== undefined && (
+                              <pre>{prompt.content}</pre>
+                            )}
+                            <p>
+                              {prompt.path} · ID: {prompt.id} ·{" "}
+                              {uiText("发送角色")}: {prompt.role ?? "—"} ·{" "}
+                              {uiText("源启用状态")}:{" "}
+                              {prompt.enabled === undefined
+                                ? "—"
+                                : prompt.enabled
+                                  ? uiText("启用")
+                                  : uiText("停用")}
+                            </p>
+                            <p>
+                              {uiText("插入位置")}:{" "}
+                              {prompt.injectionPosition === undefined ||
+                              prompt.injectionPosition === 0
+                                ? uiText("提示顺序")
+                                : prompt.injectionPosition === 1
+                                  ? uiText("历史深度")
+                                  : prompt.injectionPosition}{" "}
+                              · {uiText("深度")}: {prompt.injectionDepth ?? "—"}{" "}
+                              · {uiText("优先级")}:{" "}
+                              {prompt.injectionOrder ?? "—"}
+                            </p>
+                            <p>
+                              {uiText("触发条件")}:{" "}
+                              {prompt.triggers?.length
+                                ? prompt.triggers.join(", ")
+                                : uiText("全部生成类型")}{" "}
+                              · {uiText("宏")}:{" "}
+                              {prompt.macros.length
+                                ? prompt.macros.join(", ")
+                                : "—"}{" "}
+                              · {uiText("禁止覆盖")}:{" "}
+                              {prompt.forbidOverrides === undefined
+                                ? "—"
+                                : prompt.forbidOverrides
+                                  ? uiText("是")
+                                  : uiText("否")}
+                            </p>
+                            <p>
+                              {uiText("系统管理提示")}:{" "}
+                              {prompt.systemPrompt === undefined
+                                ? "—"
+                                : prompt.systemPrompt
+                                  ? uiText("是")
+                                  : uiText("否")}{" "}
+                              · {uiText("扩展提示")}:{" "}
+                              {prompt.extension === undefined
+                                ? "—"
+                                : prompt.extension
+                                  ? uiText("是")
+                                  : uiText("否")}{" "}
+                              · {uiText("源 position 字段")}:{" "}
+                              {prompt.position ?? "—"}
+                            </p>
+                            {prompt.unsupportedPaths.length > 0 && (
+                              <p>
+                                {uiText("不支持的字段路径")}:{" "}
+                                {prompt.unsupportedPaths.join(", ")}
+                              </p>
+                            )}
+                            {prompt.marker && (
+                              <p>
+                                {uiText("动态材料占位，无静态正文。")}{" "}
+                                {markerMeaning(prompt.id)}
+                              </p>
+                            )}
+                            {prompt.missing && (
+                              <p>
+                                {uiText("源文件未携带此内建定义。")}{" "}
+                                {markerMeaning(prompt.id)} ·{" "}
+                                {uiText("无法迁移动态或缺失的内建内容。")}
+                              </p>
+                            )}
+                            {prompt.reasons.map((reason) => (
+                              <p key={reason}>{explanation(reason)}</p>
+                            ))}
+                          </article>
+                        ))}
+                      {showSettings && (
+                        <div>
+                          <h3>{uiText("未迁移的设置")}</h3>
+                          <p>
+                            {uiText(
+                              "模型、端点、采样与扩展设置不会应用；凭据值不会显示或保存。",
+                            )}
+                          </p>
+                          <ul>
+                            {inspection.settings.map((setting) => (
+                              <li key={setting.path}>
+                                {setting.path} — {explanation(setting.category)}
+                                {setting.value !== undefined && (
+                                  <>
+                                    {" "}
+                                    — {setting.value}{" "}
+                                    {settingPurpose(setting.path)}
+                                  </>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
                 <button
                   type="button"
                   disabled={
@@ -400,6 +466,7 @@ export function SillyTavernImport({
                   }
                   onClick={() =>
                     void run(async () => {
+                      setShowResult(true);
                       setPreview(
                         await client.request<SillyTavernConversion>({
                           type: "play.sillytavern.preview",
@@ -411,8 +478,14 @@ export function SillyTavernImport({
                 >
                   {uiText("转换预览")}
                 </button>
-                {preview && (
-                  <section aria-label={uiText("转换预览")}>
+                {showResult && preview && (
+                  <section
+                    className="import-result"
+                    aria-label={uiText("转换预览")}
+                  >
+                    <button type="button" onClick={() => setShowResult(false)}>
+                      {uiText("返回来源")}
+                    </button>
                     <h3>{uiText("目标预设")}</h3>
                     <ul>
                       {preview.target.map((item, index) => (

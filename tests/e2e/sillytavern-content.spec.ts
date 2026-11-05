@@ -55,6 +55,7 @@ for (const locale of ["zh-CN", "en"] as const)
           personality: "Patient",
           scenario: "At the harbor",
           first_mes: "The boat arrives.",
+          alternate_greetings: ["A second greeting."],
           mes_example: "A dialogue",
           character_book: {
             entries: [
@@ -91,7 +92,33 @@ for (const locale of ["zh-CN", "en"] as const)
       await expect(
         dialog.getByText("A navigator", { exact: true }),
       ).toBeVisible();
-      const evidence = "/tmp/narraeon-139-evidence";
+      await dialog
+        .getByRole("button", {
+          name: locale === "en" ? "Current situation" : "当前情境",
+          exact: true,
+        })
+        .click();
+      await expect(
+        dialog.getByText("At the harbor", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        dialog.getByText("A navigator", { exact: true }),
+      ).toHaveCount(0);
+      await dialog
+        .getByRole("button", {
+          name: locale === "en" ? "Character document" : "角色文档",
+          exact: true,
+        })
+        .click();
+      const rect = await dialog.boundingBox();
+      expect(rect!.x).toBeGreaterThanOrEqual(0);
+      expect(rect!.x + rect!.width).toBeLessThanOrEqual(mobile ? 390 : 1440);
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBe(true);
+      const evidence = "/tmp/narraeon-140-evidence";
       await mkdir(evidence, { recursive: true });
       await page.screenshot({
         path: `${evidence}/${locale}-${mobile ? "mobile" : "desktop"}-top.png`,
@@ -100,15 +127,32 @@ for (const locale of ["zh-CN", "en"] as const)
         .getByLabel(locale === "en" ? "Character document" : "角色文档")
         .check();
       await dialog
+        .getByRole("button", {
+          name: locale === "en" ? "Current situation" : "当前情境",
+          exact: true,
+        })
+        .click();
+      await dialog
+        .getByRole("button", {
+          name: locale === "en" ? "Character document" : "角色文档",
+          exact: true,
+        })
+        .click();
+      await expect(
+        dialog.getByLabel(locale === "en" ? "Character document" : "角色文档"),
+      ).toBeChecked();
+      await dialog
         .getByLabel(locale === "en" ? "Current situation" : "当前情境", {
           exact: true,
         })
         .check();
       await dialog
-        .getByLabel(locale === "en" ? "Choose one opening" : "选择一个开场白")
-        .selectOption("0");
+        .getByLabel(
+          locale === "en" ? "Choose one opening 1" : "选择一个开场白 1",
+        )
+        .check();
       await dialog
-        .getByLabel(locale === "en" ? "Destination" : "目标用途")
+        .getByLabel(locale === "en" ? "Harbor Destination" : "Harbor 目标用途")
         .selectOption("world");
       await dialog
         .getByRole("button", {
