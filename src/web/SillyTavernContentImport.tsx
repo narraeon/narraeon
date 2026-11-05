@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   ContentInspection,
   ContentSelection,
@@ -143,6 +143,11 @@ export function SillyTavernContentImport({
   }>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const dialog = useRef<HTMLDivElement>(null);
+  const isOpen = Boolean(source || error);
+  useEffect(() => {
+    if (isOpen) dialog.current?.focus();
+  }, [isOpen]);
   async function run(work: () => Promise<void>) {
     setBusy(true);
     setError("");
@@ -163,11 +168,42 @@ export function SillyTavernContentImport({
     setSelection({ entries: {} });
     setError("");
   }
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !busy) {
+        event.preventDefault();
+        setActive(undefined);
+        setShowResult(false);
+        setSource("");
+        setView(undefined);
+        setPreview(undefined);
+        setSelection({ entries: {} });
+        setError("");
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [isOpen, busy]);
   function choose(patch: Partial<ContentSelection>) {
     setSelection((current) => ({ ...current, ...patch }));
     setPreview(undefined);
     setShowResult(false);
   }
+  const openings: unknown[] = view
+    ? [
+        view.fields.first_mes,
+        ...(Array.isArray(view.fields.alternate_greetings)
+          ? (view.fields.alternate_greetings as unknown[])
+          : []),
+      ]
+    : [];
+  const fieldValue = (key: string): unknown =>
+    key === "depth_prompt" &&
+    view?.fields.extensions &&
+    typeof view.fields.extensions === "object"
+      ? (view.fields.extensions as Record<string, unknown>).depth_prompt
+      : view?.fields[key];
   return (
     <section className="home-import-disclosure">
       <label>
@@ -199,7 +235,7 @@ export function SillyTavernContentImport({
               setView(inspected);
               setActive(
                 inspected.kind === "character"
-                  ? "field:description"
+                  ? `field:${["description", "scenario", "mes_example", "system_prompt", "name", "personality"].find((key) => inspected.fields[key] !== undefined) ?? "name"}`
                   : inspected.entries[0]
                     ? `entry:${inspected.entries[0].id}`
                     : "fields",
@@ -210,14 +246,10 @@ export function SillyTavernContentImport({
       </label>
       {(source || error) && (
         <div
+          ref={dialog}
+          tabIndex={-1}
           role="dialog"
           aria-modal="true"
-          onKeyDown={(event) => {
-            if (event.key === "Escape" && !busy) {
-              event.stopPropagation();
-              close();
-            }
-          }}
           aria-label={uiText("SillyTavern 内容导入向导")}
           className="sillytavern-content-import"
         >
@@ -287,12 +319,7 @@ export function SillyTavernContentImport({
                             </div>
                           ))}
                           <h3>{uiText("选择一个开场白")}</h3>
-                          {[
-                            view.fields.first_mes,
-                            ...(Array.isArray(view.fields.alternate_greetings)
-                              ? (view.fields.alternate_greetings as unknown[])
-                              : []),
-                          ].map((greeting, index) =>
+                          {openings.map((greeting, index) =>
                             typeof greeting === "string" && greeting ? (
                               <div
                                 key={index}
@@ -408,7 +435,7 @@ export function SillyTavernContentImport({
                             <option value="attachment">
                               {uiText("仅迁移附件")}
                             </option>
-                            <option value="world" disabled={!entry.enabled}>
+                            <option value="world">
                               {uiText("纳入世界资料")}
                             </option>
                           </select>
@@ -426,15 +453,7 @@ export function SillyTavernContentImport({
                       {active?.startsWith("field:") && (
                         <article>
                           <h3>{fieldLabel(active.slice(6))}</h3>
-                          <pre>
-                            {typeof view.fields[active.slice(6)] === "string"
-                              ? String(view.fields[active.slice(6)])
-                              : JSON.stringify(
-                                  view.fields[active.slice(6)] ?? "",
-                                  null,
-                                  2,
-                                )}
-                          </pre>
+                          <pre>{sourceText(fieldValue(active.slice(6)))}</pre>
                           {active === "field:description" && (
                             <details>
                               <summary>{uiText("角色性格")}</summary>
@@ -451,17 +470,7 @@ export function SillyTavernContentImport({
                         <article>
                           <h3>{uiText("开场白")}</h3>
                           <pre>
-                            {sourceText(
-                              [
-                                view.fields.first_mes,
-                                ...(Array.isArray(
-                                  view.fields.alternate_greetings,
-                                )
-                                  ? (view.fields
-                                      .alternate_greetings as unknown[])
-                                  : []),
-                              ][Number(active.slice(8))] ?? "",
-                            )}
+                            {sourceText(openings[Number(active.slice(8))])}
                           </pre>
                         </article>
                       )}
@@ -624,6 +633,16 @@ export function SillyTavernContentImport({
                   </div>
                 )}
               </fieldset>
+              <p>
+                {uiText("已选择")}:{" "}
+                {Number(selection.character === true) +
+                  Number(selection.scenario === true) +
+                  Number(selection.example === true) +
+                  Number(selection.systemPrompt === true) +
+                  Number(selection.opening !== undefined) +
+                  (selection.attachments?.length ?? 0) +
+                  Object.keys(selection.entries).length}
+              </p>
               <button
                 disabled={busy || !name.trim()}
                 onClick={() =>

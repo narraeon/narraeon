@@ -456,6 +456,9 @@ export function SillyTavernImport({
                     </div>
                   </div>
                 )}
+                <p>
+                  {uiText("已选择")}: {selected.length}
+                </p>
                 <button
                   type="button"
                   disabled={
@@ -466,13 +469,13 @@ export function SillyTavernImport({
                   }
                   onClick={() =>
                     void run(async () => {
-                      setShowResult(true);
                       setPreview(
                         await client.request<SillyTavernConversion>({
                           type: "play.sillytavern.preview",
                           ...request(),
                         }),
                       );
+                      setShowResult(true);
                     })
                   }
                 >

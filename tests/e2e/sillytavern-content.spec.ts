@@ -146,11 +146,18 @@ for (const locale of ["zh-CN", "en"] as const)
           exact: true,
         })
         .check();
-      await dialog
-        .getByLabel(
-          locale === "en" ? "Choose one opening 1" : "选择一个开场白 1",
-        )
-        .check();
+      const opening1 = dialog.getByLabel(
+        locale === "en" ? "Choose one opening 1" : "选择一个开场白 1",
+      );
+      const opening2 = dialog.getByLabel(
+        locale === "en" ? "Choose one opening 2" : "选择一个开场白 2",
+      );
+      await opening1.check();
+      await opening2.check();
+      await expect(opening1).not.toBeChecked();
+      await opening2.click();
+      await expect(opening2).not.toBeChecked();
+      await opening1.check();
       await dialog
         .getByLabel(locale === "en" ? "Harbor Destination" : "Harbor 目标用途")
         .selectOption("world");
@@ -165,9 +172,7 @@ for (const locale of ["zh-CN", "en"] as const)
       await page.screenshot({
         path: `${evidence}/${locale}-${mobile ? "mobile" : "desktop"}.png`,
       });
-      await dialog
-        .getByRole("button", { name: locale === "en" ? "Cancel" : "取消" })
-        .click();
+      await page.keyboard.press("Escape");
       await expect(dialog).toHaveCount(0);
       await picker.setInputFiles({
         name: "card.json",

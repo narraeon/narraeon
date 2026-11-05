@@ -403,6 +403,7 @@ const englishMessages: Record<string, string> = {
   "源文件未携带此内建定义。":
     "This built-in definition is not included in the source file.",
   "深度提示（仅资料）": "Depth prompt (reference only)",
+  已选择: "Selected",
   来源目录: "Source directory",
   返回来源: "Back to source",
   动态占位: "Dynamic placeholder",

@@ -40,6 +40,12 @@ const source = {
       content: "Unordered original",
     },
     { identifier: "chatHistory", name: "History", marker: true },
+    {
+      identifier: "__settings",
+      name: "Collision prompt",
+      role: "user",
+      content: "Collision text",
+    },
   ],
   prompt_order: [
     { character_id: 100000, order: [{ identifier: "orphan", enabled: true }] },
@@ -49,6 +55,7 @@ const source = {
         { identifier: "plain", enabled: true },
         { identifier: "macro", enabled: true },
         { identifier: "chatHistory", enabled: true },
+        { identifier: "__settings", enabled: true },
       ],
     },
   ],
@@ -90,8 +97,12 @@ for (const locale of ["zh-CN", "en"] as const)
       await page
         .locator(".workspace-locale-picker select")
         .selectOption(locale);
-      if (locale === "en")
-        await page.getByRole("button", { name: "Switch page" }).click();
+      if (mobile)
+        await page
+          .getByRole("button", {
+            name: locale === "en" ? "Switch page" : "切换页面",
+          })
+          .click();
       await page
         .getByRole("button", { name: text.preset, exact: true })
         .click();
@@ -112,7 +123,8 @@ for (const locale of ["zh-CN", "en"] as const)
       expect(bounds).not.toBeNull();
       expect(bounds!.width).toBeGreaterThan(mobile ? 340 : 800);
       await expect(wizard.getByText("Hello {{char}}")).toHaveCount(0);
-      await wizard.getByRole("button", { name: "Macro", exact: true }).click();
+      await wizard.getByRole("button", { name: "Macro", exact: true }).focus();
+      await page.keyboard.press("Enter");
       await expect(wizard.getByText("Hello {{char}}")).toBeVisible();
       await expect(wizard.getByText("Plain original")).toHaveCount(0);
       await expect(
@@ -127,6 +139,16 @@ for (const locale of ["zh-CN", "en"] as const)
         })
         .click();
       await expect(wizard).toContainText("$.temperature");
+      await wizard
+        .getByRole("button", { name: "Collision prompt", exact: true })
+        .click();
+      await expect(wizard.getByText("Collision text")).toBeVisible();
+      await expect(wizard.getByText("$.temperature")).toHaveCount(0);
+      await wizard
+        .getByRole("button", {
+          name: locale === "en" ? "Settings not migrated" : "未迁移的设置",
+        })
+        .click();
       await expect(wizard).toContainText("0.7");
       await expect(wizard).not.toContainText(
         "secret-password-should-not-appear",
@@ -154,6 +176,30 @@ for (const locale of ["zh-CN", "en"] as const)
       await expect(
         wizard.getByText("unsupported_macro", { exact: false }),
       ).toBeVisible();
+      await wizard
+        .getByRole("button", {
+          name: locale === "en" ? "Back to source" : "返回来源",
+        })
+        .click();
+      await wizard.getByLabel("Plain", { exact: true }).uncheck();
+      await expect(
+        wizard.getByRole("button", { name: text.import }),
+      ).toHaveCount(0);
+      await wizard.getByLabel("Plain", { exact: true }).check();
+      await wizard
+        .getByRole("button", { name: text.preview, exact: true })
+        .click();
+      await wizard
+        .getByRole("button", {
+          name: locale === "en" ? "Back to source" : "返回来源",
+        })
+        .click();
+      await wizard
+        .getByLabel(locale === "en" ? "New preset name" : "新预设名称")
+        .fill("changed");
+      await expect(
+        wizard.getByRole("button", { name: text.import }),
+      ).toHaveCount(0);
       await wizard
         .getByRole("button", { name: text.cancel, exact: true })
         .click();

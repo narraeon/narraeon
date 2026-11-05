@@ -1435,7 +1435,13 @@
 
 .sillytavern-content-import {
   position: fixed;
-  inset: 3vh max(2vw, calc((100vw - 70rem) / 2));
+  inset: 1rem;
+  width: auto;
+  height: auto;
+  max-width: 90rem;
+  margin: auto;
+  box-sizing: border-box;
+  transform: none;
   z-index: 100;
   overflow: auto;
   background: var(--surface, white);

@@ -10310,7 +10310,7 @@ summary:focus-visible {
 .import-browser {
   display: grid;
   grid-template-columns: minmax(14rem, 22rem) minmax(0, 1fr);
-  height: min(56vh, 42rem);
+  height: min(49vh, 38rem);
   min-height: 18rem;
   border: 1px solid var(--border);
 }
@@ -10374,7 +10374,7 @@ summary:focus-visible {
   .import-browser {
     display: flex;
     flex-direction: column;
-    height: 55dvh;
+    height: 46dvh;
   }
   .import-browser-list {
     flex: 0 0 35%;
@@ -10391,18 +10391,6 @@ summary:focus-visible {
     height: calc(100dvh - 1rem);
     padding: 0.75rem;
   }
-}
-.sillytavern-content-import {
-  inset: 1rem auto auto 50%;
-  transform: translateX(-50%);
-}
-@media (max-width: 650px) {
-  .sillytavern-content-import {
-    inset: 0.5rem auto auto 50%;
-  }
-}
-.sillytavern-content-import {
-  box-sizing: border-box;
 }
 .sillytavern-content-import fieldset {
   min-width: 0;
