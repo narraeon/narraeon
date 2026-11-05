@@ -4,9 +4,10 @@ import {
   revisionSettingImprovementPromptForLocale,
 } from "./default-setting-improvement-prompt.ts";
 import { tabletopAuthorBody } from "./tabletop-guidance.ts";
-import type {
-  BuiltinPlayPrompt,
-  OrderedPlayPrompt,
+import {
+  defaultEnabledBuiltin,
+  type BuiltinPlayPrompt,
+  type OrderedPlayPrompt,
 } from "./ordered-play-prompts.ts";
 
 /** Authoring uses the same permissions as play, with target-specific dynamic references. */
@@ -89,10 +90,11 @@ export function authoringMechanics(
 }
 
 export function defaultOrderedAuthorPrompts(): OrderedPlayPrompt[] {
-  return builtinAuthorPrompts("en").map(({ id }) => ({
-    id,
+  const catalog = builtinAuthorPrompts("en");
+  return catalog.map((item) => ({
+    id: item.id,
     kind: "builtin",
-    builtin: id,
-    enabled: true,
+    builtin: item.id,
+    enabled: defaultEnabledBuiltin(item, catalog),
   }));
 }

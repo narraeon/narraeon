@@ -3,14 +3,14 @@ import { describe, expect, test } from "vitest";
 import { type ArtifactProjectionItem } from "../../src/runtime/artifact/FileNativeArtifactStore.ts";
 import { projectArtifactForFrontend } from "../../src/runtime/extension/FrontendExtensionBundle.ts";
 import {
-  defaultPlayPresetFiles,
+  legacyDefaultPlayPresetFilesForLocale,
   parsePlayPresetFiles,
   type PlayPresetBinding,
 } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
 
 function binding(): PlayPresetBinding {
   const files = {
-    ...defaultPlayPresetFiles,
+    ...legacyDefaultPlayPresetFilesForLocale("en"),
     "call-chain.yaml": `format: narraeon.play-call-chain/v1
 narrative:
   - markdown: prompts/narrate.md

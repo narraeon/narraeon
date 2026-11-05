@@ -1,3 +1,4 @@
+import { applicationPresetFilesForLocale } from "../../shared/application-preset-files.ts";
 import {
   parseDisplayRegex,
   DisplayRegexError,
@@ -22,19 +23,24 @@ import {
 } from "../../shared/ordered-author-prompts.ts";
 import {
   parseOrderedPlayPrompts,
+  parsePromptArrangement,
   migrateLegacyPlayPrompts,
-  withCurrentPromptBuiltins,
+  upgradeOrderedPromptFormat,
 } from "./OrderedPlayPrompts.ts";
 import {
-  defaultOrderedPlayPrompts,
+  builtinPlayPrompts,
   type OrderedPlayPrompt,
 } from "../../shared/ordered-play-prompts.ts";
+import {
+  customizePromptArrangement,
+  retiredBuiltinReplacements,
+} from "../../shared/prompt-arrangement.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
-import { parseDocument, stringify, visit, isAlias } from "yaml";
+import { parseDocument, visit, isAlias } from "yaml";
 
 import {
   defaultPortableContentTreeLimits,
@@ -222,7 +228,10 @@ export interface PlayPresetPlayerViewPanel {
 
 export interface PlayPresetDefinition {
   followupItems?: FollowupItem[];
-  format: "narraeon.play-preset/v1" | "narraeon.play-preset/v2";
+  format:
+    | "narraeon.play-preset/v1"
+    | "narraeon.play-preset/v2"
+    | "narraeon.play-preset/v3";
   playPrompts?: OrderedPlayPrompt[];
   authorPrompts?: OrderedPlayPrompt[];
   mergeConsecutiveMessages?: boolean;
@@ -326,19 +335,76 @@ export function isPlayPresetBinding(
     value.id === "builtin-default" &&
     value.name === "default" &&
     value.revision === "builtin-default-v1" &&
-    value.scriptsEnabled === true &&
-    (isDeepStrictEqual(files, defaultPlayPresetFilesForLocale("en")) ||
-      isDeepStrictEqual(files, defaultPlayPresetFilesForLocale("zh-CN")) ||
-      isDeepStrictEqual(files, legacyDefaultPlayPresetFilesForLocale("en")) ||
-      isDeepStrictEqual(files, legacyDefaultPlayPresetFilesForLocale("zh-CN")));
+    value.scriptsEnabled === true;
+  // This internal sentinel predates content-hash revisions. Its original
+  // snapshot must validate on its own, never against today's seed template.
   return (
     parsed.kind === "valid" &&
-    isDeepStrictEqual(
-      normalizedFrozenDefinition(value.definition),
-      parsed.definition,
-    ) &&
+    frozenDefinitionMatches(value.definition, parsed.definition, files) &&
     (builtInDefault || value.revision === revisionForPlayPresetFiles(files))
   );
+}
+
+/** A frozen v3 binding validates against the catalog identities it captured.
+ * Newly shipped defaults belong to new sends, never to a saved request. */
+function frozenDefinitionMatches(
+  snapshot: Record<string, unknown>,
+  current: PlayPresetDefinition,
+  files: Record<string, string>,
+): boolean {
+  if (current.format !== "narraeon.play-preset/v3")
+    return isDeepStrictEqual(normalizedFrozenDefinition(snapshot), current);
+  try {
+    const source = readYaml(files, "preset.yaml", "preset.yaml");
+    const expected = { ...current };
+    const normalizedSnapshot = { ...snapshot };
+    for (const key of ["playPrompts", "authorPrompts"] as const) {
+      if (source[key] === undefined && snapshot[key] === undefined) continue;
+      const author = key === "authorPrompts";
+      const catalog = author
+        ? builtinAuthorPrompts("en")
+        : builtinPlayPrompts("en");
+      const raw = snapshot[key];
+      if (!Array.isArray(raw)) return false;
+      const identities = new Set(
+        raw.flatMap((e) =>
+          isRecord(e) && e.kind === "builtin" && typeof e.builtin === "string"
+            ? (retiredBuiltinReplacements[e.builtin]?.map((r) => r.builtin) ?? [
+                e.builtin,
+              ])
+            : [],
+        ),
+      );
+      // v3's original mandatory identities are part of its validation contract.
+      // Later required additions are mandatory only for newly compiled requests.
+      const requiredAtRelease = author
+        ? ["author.mechanics", "author.target"]
+        : ["play.mechanics"];
+      const capturedCatalog = catalog.filter(
+        (c) => identities.has(c.id) || requiredAtRelease.includes(c.id),
+      );
+      const captured = parseOrderedPlayPrompts(raw, capturedCatalog, !author);
+      const frozenCatalog = captured.flatMap((entry) => {
+        if (entry.kind !== "builtin") return [];
+        const item = capturedCatalog.find((item) => item.id === entry.builtin);
+        return item === undefined
+          ? []
+          : [{ ...item, defaultEnabled: entry.enabled }];
+      });
+      if (
+        !isDeepStrictEqual(
+          captured,
+          parsePromptArrangement(source[key], frozenCatalog, !author),
+        )
+      )
+        return false;
+      expected[key] = captured;
+      normalizedSnapshot[key] = captured;
+    }
+    return isDeepStrictEqual(normalizedSnapshot, expected);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -422,14 +488,7 @@ followups: []
 export function defaultPlayPresetFilesForLocale(
   locale: AppLocale,
 ): Record<string, string> {
-  const files = legacyDefaultPlayPresetFilesForLocale(locale);
-  const preset = parseDocument(files["preset.yaml"]!);
-  preset.set("format", "narraeon.play-preset/v2");
-  preset.set("playPrompts", defaultOrderedPlayPrompts());
-  preset.set("authorPrompts", defaultOrderedAuthorPrompts());
-  preset.set("mergeConsecutiveMessages", false);
-  files["preset.yaml"] = stringify(preset.toJS());
-  return files;
+  return applicationPresetFilesForLocale(locale);
 }
 
 export const defaultPlayPresetFiles =
@@ -541,8 +600,9 @@ export class FileNativePlayPresetStore {
       const document = await this.#read();
       const migrated = this.#markLegacyBuiltinDefault(document);
       const synchronized = this.#synchronizeBuiltinDefault(document);
-      const tabletop = this.#migrateTabletopPromptBuiltins(document);
-      if (migrated || synchronized || tabletop) await this.#write(document);
+      const customizations = this.#migratePromptCustomizations(document);
+      if (migrated || synchronized || customizations)
+        await this.#write(document);
     });
   }
 
@@ -623,15 +683,33 @@ export class FileNativePlayPresetStore {
       const stored = findStored(document, input.presetId);
       delete stored.builtinDefault;
       let files = cloneFiles(input.files);
-      if (input.structure !== undefined) {
-        files = applyPlayPresetStructuredEditor(
-          input.files,
-          parsePlayPresetStructuredEditor(input.structure),
-        );
-      }
       const previous = parsePlayPresetFiles(
         stored.revisions[stored.currentRevision]!,
       );
+      if (input.structure !== undefined) {
+        const structure = parsePlayPresetStructuredEditor(input.structure);
+        if (previous.kind === "valid") {
+          for (const key of ["playPrompts", "authorPrompts"] as const) {
+            for (const entry of previous.definition[key] ?? []) {
+              if (entry.kind !== "builtin" && entry.kind !== "world") continue;
+              const retained = structure[key]?.find(
+                (candidate) => candidate.id === entry.id,
+              );
+              if (
+                retained?.kind !== entry.kind ||
+                (entry.kind === "builtin" &&
+                  retained.kind === "builtin" &&
+                  retained.builtin !== entry.builtin)
+              )
+                throw new FileNativePlayPresetError(
+                  "readonly_prompt_removed",
+                  "System prompts and the world placeholder cannot be deleted or replaced; disable optional prompts or clone them instead",
+                );
+            }
+          }
+        }
+        files = applyPlayPresetStructuredEditor(input.files, structure);
+      }
       if (
         previous.kind === "valid" &&
         previous.definition.followupItems !== undefined
@@ -652,12 +730,18 @@ export class FileNativePlayPresetStore {
         previous.definition.playPrompts !== undefined
       ) {
         const candidate = readYaml(files, "preset.yaml", "preset.yaml");
-        if (candidate.format !== "narraeon.play-preset/v2")
+        if (
+          candidate.format !== "narraeon.play-preset/v2" &&
+          candidate.format !== "narraeon.play-preset/v3"
+        )
           throw new FileNativePlayPresetError(
             "readonly_prompt_removed",
             "Ordered presets cannot downgrade to v1",
           );
-        const candidates = parseOrderedPlayPrompts(candidate.playPrompts);
+        const candidates =
+          candidate.format === "narraeon.play-preset/v3"
+            ? parsePromptArrangement(candidate.playPrompts)
+            : parseOrderedPlayPrompts(candidate.playPrompts);
         for (const entry of previous.definition.playPrompts.filter(
           (entry) => entry.kind === "builtin" || entry.kind === "world",
         )) {
@@ -679,7 +763,14 @@ export class FileNativePlayPresetStore {
         previous.definition.authorPrompts !== undefined
       ) {
         const candidate = readYaml(files, "preset.yaml", "preset.yaml");
-        const entries = parseOrderedAuthorPrompts(candidate.authorPrompts);
+        const entries =
+          candidate.format === "narraeon.play-preset/v3"
+            ? parsePromptArrangement(
+                candidate.authorPrompts,
+                builtinAuthorPrompts("en"),
+                false,
+              )
+            : parseOrderedAuthorPrompts(candidate.authorPrompts);
         for (const entry of previous.definition.authorPrompts) {
           if (entry.kind !== "builtin") continue;
           const retained = entries.find((item) => item.id === entry.id);
@@ -693,6 +784,7 @@ export class FileNativePlayPresetStore {
             );
         }
       }
+      files = upgradeOrderedPromptFormat(files);
       const revision = revisionForFiles(files, this.#limits);
       stored.name = normalizeName(input.name);
       stored.revisions[revision] = cloneFiles(files);
@@ -908,7 +1000,7 @@ export class FileNativePlayPresetStore {
     files: readonly ContentTreeFile[] | Record<string, string>;
   }): Promise<{ currentPresetId: string; preset: FileNativePlayPresetView }> {
     // A released preset gains the current builtins at import, as at upgrade.
-    const files = withCurrentPromptBuiltins(
+    const files = upgradeOrderedPromptFormat(
       toFileMap(input.files, this.#limits),
     );
     const parsed = parsePlayPresetFiles(files, this.#limits);
@@ -1041,19 +1133,17 @@ export class FileNativePlayPresetStore {
   }
 
   /**
-   * One-time upgrade for ordered presets saved before the tabletop or
-   * continuation builtins existed. An affected revision is replaced by a new revision that inserts
-   * them; the old revision stays for frozen requests. A pending draft gets the
-   * same insertion, because a draft that kept the old list would fail the
-   * builtin-retention rule on save. The library is one atomically written file,
-   * so an interrupted upgrade leaves the released bytes and reruns cleanly.
+   * Convert released ordered lists to sparse customizations exactly once.
+   * Original revisions remain immutable. Current and valid draft endpoints
+   * advance together in one atomic library replacement; invalid drafts retain
+   * their original bytes for repair. Catalog evolution never changes v3 files.
    */
-  #migrateTabletopPromptBuiltins(document: StoredDocument): boolean {
+  #migratePromptCustomizations(document: StoredDocument): boolean {
     let changed = false;
     for (const stored of document.presets) {
       const current = stored.revisions[stored.currentRevision];
       if (current !== undefined) {
-        const migrated = withCurrentPromptBuiltins(current);
+        const migrated = upgradeOrderedPromptFormat(current);
         if (migrated !== current) {
           const revision = revisionForFiles(migrated, this.#limits);
           stored.revisions[revision] = cloneFiles(migrated);
@@ -1066,7 +1156,7 @@ export class FileNativePlayPresetStore {
           ? undefined
           : stored.revisions[stored.draftRevision];
       if (draft !== undefined) {
-        const migrated = withCurrentPromptBuiltins(draft);
+        const migrated = upgradeOrderedPromptFormat(draft);
         if (migrated !== draft) {
           const revision = revisionForFiles(migrated, this.#limits);
           stored.revisions[revision] = cloneFiles(migrated);
@@ -1103,7 +1193,7 @@ export class FileNativePlayPresetStore {
     rawFiles: Record<string, string>,
   ): StoredPreset {
     const name = normalizeName(rawName);
-    const files = cloneFiles(rawFiles);
+    const files = cloneFiles(upgradeOrderedPromptFormat(rawFiles));
     const revision = revisionForFiles(files, this.#limits);
     return {
       id,
@@ -1267,7 +1357,7 @@ export function applyPlayPresetStructuredEditor(
   files: Record<string, string>,
   input: PlayPresetStructuredEditor,
 ): Record<string, string> {
-  const next = cloneFiles(files);
+  const next = cloneFiles(upgradeOrderedPromptFormat(files));
   const presetSource = next["preset.yaml"];
   const callChainSource = next[input.callChainPath];
   if (presetSource === undefined || callChainSource === undefined)
@@ -1297,10 +1387,23 @@ export function applyPlayPresetStructuredEditor(
       parseMessageMerging(input.mergeConsecutiveMessages),
     );
   if (input.authorPrompts !== undefined)
-    preset.set("authorPrompts", parseOrderedAuthorPrompts(input.authorPrompts));
+    preset.set(
+      "authorPrompts",
+      customizePromptArrangement(
+        parseOrderedAuthorPrompts(input.authorPrompts),
+        builtinAuthorPrompts("en"),
+        false,
+      ),
+    );
   if (input.playPrompts !== undefined) {
-    preset.set("format", "narraeon.play-preset/v2");
-    preset.set("playPrompts", parseOrderedPlayPrompts(input.playPrompts));
+    preset.set("format", "narraeon.play-preset/v3");
+    preset.set(
+      "playPrompts",
+      customizePromptArrangement(
+        parseOrderedPlayPrompts(input.playPrompts),
+        builtinPlayPrompts("en"),
+      ),
+    );
   }
   preset.set("callChain", input.callChainPath);
   if (input.settingImprovementPrompt === undefined)
@@ -1537,7 +1640,8 @@ export function parsePlayPresetFiles(
       );
     if (
       preset.format !== "narraeon.play-preset/v1" &&
-      preset.format !== "narraeon.play-preset/v2"
+      preset.format !== "narraeon.play-preset/v2" &&
+      preset.format !== "narraeon.play-preset/v3"
     )
       invalid(
         "preset_format_invalid",
@@ -1628,12 +1732,27 @@ export function parsePlayPresetFiles(
                 preset.mergeConsecutiveMessages,
               ),
             }),
-        ...(preset.format === "narraeon.play-preset/v2"
-          ? { playPrompts: parseOrderedPlayPrompts(preset.playPrompts) }
+        ...(preset.format === "narraeon.play-preset/v2" ||
+        preset.format === "narraeon.play-preset/v3"
+          ? {
+              playPrompts:
+                preset.format === "narraeon.play-preset/v3"
+                  ? parsePromptArrangement(preset.playPrompts)
+                  : parseOrderedPlayPrompts(preset.playPrompts),
+            }
           : {}),
         ...(preset.authorPrompts === undefined
           ? {}
-          : { authorPrompts: parseOrderedAuthorPrompts(preset.authorPrompts) }),
+          : {
+              authorPrompts:
+                preset.format === "narraeon.play-preset/v3"
+                  ? parsePromptArrangement(
+                      preset.authorPrompts,
+                      builtinAuthorPrompts("en"),
+                      false,
+                    )
+                  : parseOrderedAuthorPrompts(preset.authorPrompts),
+            }),
         name: name.trim(),
         callChainPath,
         ...(settingImprovementPrompt === undefined
@@ -3266,7 +3385,7 @@ function parseStoredDocument(
       if (
         revision !== raw.draftRevision &&
         validatePlayPresetFiles(clone, limits).status !== "valid" &&
-        validatePlayPresetFiles(withCurrentPromptBuiltins(clone), limits)
+        validatePlayPresetFiles(upgradeOrderedPromptFormat(clone), limits)
           .status !== "valid"
       )
         throw new FileNativePlayPresetError(
@@ -3393,13 +3512,23 @@ export function legacyAuthorPrompts(
   const entries = defaultOrderedAuthorPrompts();
   const path = definition.settingImprovementPrompt?.path;
   if (path !== undefined)
-    entries[1] = {
-      id: "legacy-author",
-      kind: "user",
-      name: "Authoring",
-      body: definition.files[path]!,
-      enabled: true,
-    };
+    entries.splice(
+      1,
+      1,
+      {
+        id: "author.guidance",
+        kind: "builtin",
+        builtin: "author.guidance",
+        enabled: false,
+      },
+      {
+        id: "legacy-author",
+        kind: "user",
+        name: "Authoring",
+        body: definition.files[path]!,
+        enabled: true,
+      },
+    );
   return entries;
 }
 

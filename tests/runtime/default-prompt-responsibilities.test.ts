@@ -54,35 +54,23 @@ afterEach(async () => {
 });
 
 describe("旧格式默认提示词职责", () => {
-  test("默认与第一方玩法模板逐字共用调用链叙事语义", () => {
-    const presets = [
-      defaultPlayPresetFiles,
+  test("旧默认正文保持已发布语义，第一方模板引用当前应用目录", () => {
+    expect(defaultPlayPresetFiles["prompts/narrate.md"]).toBe(
+      defaultNarrationPrompt,
+    );
+    expect(defaultPlayPresetFiles[defaultSettingImprovementPromptPath]).toBe(
+      defaultSettingImprovementPrompt,
+    );
+    for (const files of [
       firstPartyActionChoicesPresetFiles,
-      firstPartyStatusPanelPresetFiles,
       firstPartyGenericPanelsPresetFiles,
-    ];
-
-    for (const files of presets) {
-      expect(files["prompts/narrate.md"]).toBe(defaultNarrationPrompt);
-      expect(files[defaultSettingImprovementPromptPath]).toBe(
-        defaultSettingImprovementPrompt,
-      );
-      expect(files["preset.yaml"]).toContain(
-        `markdown: ${defaultSettingImprovementPromptPath}`,
-      );
-      expect(files).not.toHaveProperty("prompts/policy.md");
-      expect(files["call-chain.yaml"]).not.toContain("prompts/policy.md");
+      firstPartyStatusPanelPresetFiles,
+    ]) {
+      const parsed = parsePlayPresetFiles(files);
+      if (parsed.kind !== "valid") throw parsed.error;
+      expect(parsed.definition.format).toBe("narraeon.play-preset/v3");
+      expect(parsed.definition.narrativePrompts).toEqual([]);
     }
-
-    // Shared defaults must not acquire tool authority through editable prose.
-    expect(defaultNarrationPrompt).not.toContain("artifact_emit");
-    expect(defaultSettingImprovementPrompt).not.toContain("setting_write_file");
-    expect(
-      firstPartyActionChoicesPresetFiles["prompts/options.md"],
-    ).not.toContain("artifact_emit");
-    expect(
-      firstPartyGenericPanelsPresetFiles["prompts/panels.md"],
-    ).not.toContain("artifact_emit");
   });
 
   test("世界修订机械说明允许删除与移动既有状态文档，但仍要求无引用阻挡", () => {
@@ -524,4 +512,25 @@ describe("旧格式文风块库", () => {
       "play:prompts/narrate.md",
     ]);
   });
+});
+
+test("new shipped templates persist app references instead of editable copies of app prompt bodies", () => {
+  for (const files of [
+    firstPartyActionChoicesPresetFiles,
+    firstPartyGenericPanelsPresetFiles,
+    firstPartyStatusPanelPresetFiles,
+  ]) {
+    const parsed = parsePlayPresetFiles(files);
+    if (parsed.kind !== "valid") throw parsed.error;
+    expect(parsed.definition.format).toBe("narraeon.play-preset/v3");
+    expect(parsed.definition.narrativePrompts).toEqual([]);
+    expect(
+      parsed.definition.playPrompts!.find((e) => e.id === "play.prose"),
+    ).toMatchObject({ kind: "builtin", enabled: true });
+    expect(Object.keys(files).some((path) => path.startsWith("blocks/"))).toBe(
+      false,
+    );
+    expect(files["prompts/narrate.md"]).toBeUndefined();
+    expect(files["prompts/setting-improvement.md"]).toBeUndefined();
+  }
 });

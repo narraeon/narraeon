@@ -1,3 +1,5 @@
+import { parsePlayPresetFiles as parseEffectivePreset } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
+import { orderedListPresetFilesForLocale as defaultPlayPresetFilesForLocale } from "../support/presetFixtures.ts";
 import { mkdtemp, readFile, rm, writeFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,7 +14,6 @@ import {
 } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
 import {
   FileNativePlayPresetStore,
-  defaultPlayPresetFilesForLocale,
   revisionForPlayPresetFiles,
   type PlayPresetBinding,
 } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
@@ -29,7 +30,7 @@ afterEach(async () => {
   );
 });
 
-/** A v2 preset as the release before tabletop builtins saved it. */
+/** Synthetic v2 behavior fixture without tabletop builtins; not release evidence. */
 function releasedFiles(): Record<string, string> {
   const files = { ...defaultPlayPresetFilesForLocale("en") };
   const preset = parseDocument(files["preset.yaml"]!);
@@ -58,7 +59,13 @@ function presetRecord(files: Record<string, string>): {
   playPrompts: PromptEntry[];
   authorPrompts: PromptEntry[];
 } {
-  return parseDocument(files["preset.yaml"]!).toJS() as never;
+  const parsed = parseEffectivePreset(files);
+  if (parsed.kind !== "valid") throw parsed.error;
+  return {
+    name: parsed.definition.name,
+    playPrompts: parsed.definition.playPrompts!,
+    authorPrompts: parsed.definition.authorPrompts!,
+  };
 }
 
 function currentPlayList(files: Record<string, string>): PromptEntry[] {
@@ -227,7 +234,9 @@ describe("tabletop builtin migration for ordered presets", () => {
 
   test("a preset that already carries the builtins is left untouched", async () => {
     const root = await temporaryRoot();
-    const current = defaultPlayPresetFilesForLocale("en");
+    const current = (
+      await import("../../src/runtime/play/FileNativePlayPresetStore.ts")
+    ).defaultPlayPresetFilesForLocale("en");
     await writeLibrary(root, [{ id: "fresh", name: "Fresh", files: current }]);
     const bytes = await readFile(join(root, libraryName), "utf8");
     const store = new FileNativePlayPresetStore(root);
@@ -310,29 +319,26 @@ describe("tabletop builtin migration for ordered presets", () => {
     const presetId = current.currentPresetId;
     const files = (await store.bindCurrent()).files;
 
-    const withoutTabletop = { ...files };
-    const doc = parseDocument(files["preset.yaml"]!);
-    const playPrompts = doc.get("playPrompts") as { items: unknown[] };
-    playPrompts.items = playPrompts.items.filter(
-      (item) =>
-        (item as { get(k: string): unknown }).get("id") !== "play.tabletop",
-    );
-    withoutTabletop["preset.yaml"] = doc.toString();
-    await expect(
-      store.save({ presetId, name: "default", files: withoutTabletop }),
-    ).rejects.toMatchObject({ code: "readonly_prompt_removed" });
-
-    const disabled = parseDocument(files["preset.yaml"]!);
-    const entries = disabled.get("playPrompts") as {
-      items: { get(k: string): unknown; set(k: string, v: unknown): void }[];
+    const structure = (await store.list()).presets[0]!.structure!;
+    const withoutTabletop = {
+      ...structure,
+      playPrompts: structure.playPrompts!.filter(
+        (e) => e.id !== "play.tabletop",
+      ),
     };
-    for (const item of entries.items)
-      if (item.get("id") === "play.tabletop") item.set("enabled", false);
-    await store.save({
-      presetId,
-      name: "default",
-      files: { ...files, "preset.yaml": disabled.toString() },
-    });
+    await expect(
+      store.save({
+        presetId,
+        name: "default",
+        files,
+        structure: withoutTabletop,
+      }),
+    ).rejects.toMatchObject({ code: "readonly_prompt_removed" });
+    const tabletop = structure.playPrompts!.find(
+      (e) => e.id === "play.tabletop",
+    )!;
+    if (tabletop.kind === "builtin") tabletop.enabled = false;
+    await store.save({ presetId, name: "default", files, structure });
     const draftView = (await store.list()).presets[0]!;
     const saved = draftView.draft ?? draftView;
     expect(

@@ -42,7 +42,7 @@ import {
 } from "../../src/runtime/model/ModelHost.ts";
 import { FileNativeAiFailureLog } from "../../src/runtime/model/AiFailureLog.ts";
 import {
-  defaultPlayPresetFiles,
+  defaultPlayPresetFiles as appDefaultPlayPresetFiles,
   builtinDefaultPlayPresetBinding,
   legacyDefaultPlayPresetFilesForLocale,
   parsePlayPresetFiles,
@@ -12413,3 +12413,8 @@ test("a mangled tabletop check resolves to the declared check with a receipt the
     `${resolutionMarkdown(receipt, "en")}\n\nRuntime note: "mcp__paddle_steel__margin_d20_check" is not a declared tool; it was executed as "d20_check". Call tools by their declared names.`,
   );
 });
+
+const defaultPlayPresetFiles: Record<string, string> = {
+  ...appDefaultPlayPresetFiles,
+  "prompts/narrate.md": "# Narrative fixture\n\nContinue the story.",
+};

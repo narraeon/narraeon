@@ -1,10 +1,5 @@
 import type { AppLocale } from "../protocol/appPreferences.ts";
-import { defaultNarrationPromptForLocale } from "./default-play-prompts.ts";
-import { defaultPresetHostFilesForLocale } from "./default-preset-host.ts";
-import {
-  defaultSettingImprovementPromptForLocale,
-  defaultSettingImprovementPromptPath,
-} from "./default-setting-improvement-prompt.ts";
+import { applicationPresetFilesForLocale } from "./application-preset-files.ts";
 
 /**
  * Ordinary copyable examples for the generic artifact seam. Runtime does not
@@ -18,11 +13,13 @@ export function firstPartyGenericPanelsPresetFilesForLocale(
   const panelTitle =
     locale === "zh-CN" ? "通用 HTML 面板" : "Generic HTML panel";
   return {
-    "preset.yaml": `format: narraeon.play-preset/v1
+    ...applicationPresetFilesForLocale(locale),
+    "preset.yaml": `format: narraeon.play-preset/v3
 name: generic-panels-recommended
 callChain: call-chain.yaml
-settingImprovement:
-  markdown: prompts/setting-improvement.md
+playPrompts: {}
+authorPrompts: {}
+mergeConsecutiveMessages: false
 mounts:
   generic.markdown: story
   generic.html: sidebar
@@ -33,8 +30,7 @@ extensions:
   - assets/generic-html.css
 `,
     "call-chain.yaml": `format: narraeon.play-call-chain/v1
-narrative:
-  - markdown: prompts/narrate.md
+narrative: []
 followups:
   - id: publish_panels
     displayName: ${displayName}
@@ -75,10 +71,7 @@ followups:
         required: false
         maxEmits: 8
 `,
-    ...defaultPresetHostFilesForLocale(locale),
-    "prompts/narrate.md": defaultNarrationPromptForLocale(locale),
-    [defaultSettingImprovementPromptPath]:
-      defaultSettingImprovementPromptForLocale(locale),
+
     "prompts/panels.md":
       locale === "zh-CN"
         ? `# 通用面板

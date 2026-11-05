@@ -69,6 +69,8 @@ export interface BuiltinPlayPrompt {
   name: string;
   body: string;
   required: boolean;
+  /** Explicit app default; omitted catalogs use their category/group convention. */
+  defaultEnabled?: boolean;
   category: PromptCategory;
   group?: PromptGroup;
   /** The default line this block contributes to the per-send turn guide. */
@@ -336,6 +338,7 @@ export function defaultEnabledBuiltin(
   item: BuiltinPlayPrompt,
   catalog: readonly BuiltinPlayPrompt[],
 ): boolean {
+  if (item.defaultEnabled !== undefined) return item.defaultEnabled;
   if (item.category === "style") return false;
   if (item.group === undefined) return true;
   return catalog.find((other) => other.group === item.group)?.id === item.id;

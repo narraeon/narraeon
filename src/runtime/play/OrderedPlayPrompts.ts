@@ -1,5 +1,12 @@
+import { builtinAuthorPrompts } from "../../shared/ordered-author-prompts.ts";
+import {
+  expandRetiredPrompts,
+  customizePromptArrangement,
+  resolvePromptArrangement,
+  retiredBuiltinReplacements,
+} from "../../shared/prompt-arrangement.ts";
 import { createHash } from "node:crypto";
-import { isMap, isSeq, parseDocument, type YAMLSeq } from "yaml";
+import { isMap, parseDocument } from "yaml";
 import {
   builtinPlayPrompts,
   isPromptMessageRole,
@@ -121,24 +128,22 @@ export function parseOrderedPlayPrompts(
         : undefined;
     if (
       retired !== undefined &&
-      exact(["id", "kind", "builtin", "enabled"]) &&
+      exact(["id", "kind", "builtin", "enabled"], ["turnGuide"]) &&
+      validTurnGuide &&
       typeof item.enabled === "boolean"
     ) {
-      const enabled = item.enabled;
-      return retired.flatMap(({ builtin, selected }) => {
-        if (builtins.has(builtin) || ids.has(builtin)) return [];
-        builtins.add(builtin);
-        ids.add(builtin);
-        return [
-          {
-            id: builtin,
-            kind: "builtin" as const,
-            builtin,
-            enabled: selected === false ? false : enabled,
-            ...messageRole,
-          },
-        ];
-      });
+      if (builtins.has(item.builtin as string)) return fail();
+      builtins.add(item.builtin as string);
+      return [
+        {
+          id: item.id,
+          kind: "builtin",
+          builtin: item.builtin as string,
+          enabled: item.enabled,
+          ...messageRole,
+          ...turnGuide,
+        },
+      ];
     }
     const builtin = catalog.find((entry) => entry.id === item.builtin);
     if (
@@ -165,12 +170,23 @@ export function parseOrderedPlayPrompts(
       },
     ];
   });
+  const expanded = expandRetiredPrompts(entries);
   if (
     worlds !== (worldRequired ? 1 : 0) ||
-    catalog.some((item) => item.required && !builtins.has(item.id))
+    catalog.some((item) => {
+      if (!item.required) return false;
+      const entry = expanded.find(
+        (entry) => entry.kind === "builtin" && entry.builtin === item.id,
+      );
+      return (
+        entry?.kind !== "builtin" ||
+        !entry.enabled ||
+        (entry.messageRole !== undefined && entry.messageRole !== "system")
+      );
+    })
   )
     return fail();
-  return entries;
+  return expanded;
 }
 
 function orderedPresetDocument(files: Record<string, string>) {
@@ -187,219 +203,169 @@ function orderedPresetDocument(files: Record<string, string>) {
   return document;
 }
 
-/**
- * Insert the tabletop builtins that an ordered preset does not list yet.
- * play.tabletop goes just before the world placeholder and author.tabletop just
- * after author.guidance. Files that are not ordered v2 or do not parse come back
- * unchanged, and nothing else in them is rewritten. The same object is returned
- * when nothing needs inserting, so callers can detect a change by identity.
- */
-export function withTabletopPromptBuiltins(
-  files: Record<string, string>,
-): Record<string, string> {
-  const document = orderedPresetDocument(files);
-  if (document === undefined) return files;
-  let changed = false;
-  const playPrompts = document.get("playPrompts", true);
-  if (isSeq(playPrompts) && !hasEntry(playPrompts, "play.tabletop")) {
-    const world = playPrompts.items.findIndex(
-      (item) => entryField(item, "kind") === "world",
-    );
-    playPrompts.items.splice(
-      world < 0 ? playPrompts.items.length : world,
-      0,
-      document.createNode({
-        id: "play.tabletop",
-        kind: "builtin",
-        builtin: "play.tabletop",
-        enabled: true,
-      }),
-    );
-    changed = true;
-  }
-  const authorPrompts = document.get("authorPrompts", true);
-  if (isSeq(authorPrompts) && !hasEntry(authorPrompts, "author.tabletop")) {
-    const guidance = authorPrompts.items.findIndex(
-      (item) => entryField(item, "id") === "author.guidance",
-    );
-    authorPrompts.items.splice(
-      guidance < 0 ? authorPrompts.items.length : guidance + 1,
-      0,
-      document.createNode({
-        id: "author.tabletop",
-        kind: "builtin",
-        builtin: "author.tabletop",
-        enabled: true,
-      }),
-    );
-    changed = true;
-  }
-  return changed ? { ...files, "preset.yaml": document.toString() } : files;
-}
-
-/**
- * The retired composite builtins and the blocks that replaced each of them.
- * A stored entry for a retired builtin is replaced in place by its successors,
- * which inherit its enabled state and message role; the unselected members of
- * a choice group arrive disabled. User copies of the old text are not touched.
- */
-const retiredBuiltinReplacements: Record<
-  string,
-  { builtin: string; selected?: boolean }[]
-> = {
-  "play.style": [{ builtin: "play.prose" }, { builtin: "play.scene" }],
-  "play.adjudication": [
-    { builtin: "play.agency-default" },
-    { builtin: "play.agency-strict", selected: false },
-    { builtin: "play.agency-open", selected: false },
-    { builtin: "play.facts" },
-    { builtin: "play.npc" },
-  ],
-  "play.narrative": [
-    { builtin: "play.stop-beat" },
-    { builtin: "play.stop-scene", selected: false },
-    { builtin: "play.ending" },
-    { builtin: "play.output" },
-  ],
-  "play.state": [
-    { builtin: "play.save-timing" },
-    { builtin: "play.ownership" },
-    { builtin: "play.situation" },
-    { builtin: "play.checkpoint-policy" },
-  ],
-};
-
 export const retiredPlayBuiltins = Object.keys(retiredBuiltinReplacements);
 
-/**
- * Replace the retired composite builtins (style, adjudication, narrative and
- * state) with the single-rule blocks that succeeded them, each at the old
- * entry's position. Same identity contract as the other insertions.
- */
-export function withRestructuredPromptBuiltins(
+/** One-time released v2 -> v3 encoding conversion, never a catalog migration. */
+export function upgradeOrderedPromptFormat(
   files: Record<string, string>,
 ): Record<string, string> {
   const document = orderedPresetDocument(files);
-  if (document === undefined) return files;
-  const playPrompts = document.get("playPrompts", true);
-  if (!isSeq(playPrompts)) return files;
-  let changed = false;
-  for (const [retired, replacements] of Object.entries(
-    retiredBuiltinReplacements,
-  )) {
-    const at = playPrompts.items.findIndex(
-      (item) =>
-        entryField(item, "kind") === "builtin" &&
-        entryField(item, "builtin") === retired,
+  if (!document) return files;
+  try {
+    const source = document.toJS() as {
+      playPrompts: unknown;
+      authorPrompts?: unknown;
+    };
+    document.set(
+      "playPrompts",
+      customizePromptArrangement(
+        parseOrderedPlayPrompts(source.playPrompts),
+        builtinPlayPrompts("en"),
+      ),
     );
-    if (at < 0) continue;
-    const old = playPrompts.items[at];
-    const enabled = entryField(old, "enabled") === true;
-    const messageRole = entryField(old, "messageRole");
-    const successors = replacements
-      .filter(({ builtin }) => !hasEntry(playPrompts, builtin))
-      .map(({ builtin, selected }) =>
-        document.createNode({
-          id: builtin,
-          kind: "builtin",
-          builtin,
-          enabled: selected === false ? false : enabled,
-          ...(typeof messageRole === "string" ? { messageRole } : {}),
-        }),
+    const author = document.get("authorPrompts");
+    if (author !== undefined)
+      document.set(
+        "authorPrompts",
+        customizePromptArrangement(
+          parseOrderedPlayPrompts(
+            source.authorPrompts,
+            builtinAuthorPrompts("en"),
+            false,
+          ),
+          builtinAuthorPrompts("en"),
+          false,
+        ),
       );
-    playPrompts.items.splice(at, 1, ...successors);
-    changed = true;
+    document.set("format", "narraeon.play-preset/v3");
+    return { ...files, "preset.yaml": document.toString() };
+  } catch {
+    // Invalid drafts stay repairable, without dropping their original bytes.
+    return files;
   }
-  return changed ? { ...files, "preset.yaml": document.toString() } : files;
 }
 
-/**
- * A group of alternative builtins (one enabled, the rest disabled) that a
- * stored preset may still lack. It is inserted right after the first of
- * `after` that the list contains, or before the first of `before` (or the
- * world placeholder) when none is present. A preset that already lists any
- * member is left alone, so a player who swapped them keeps that choice.
- */
-interface AlternativeBuiltinGroup {
-  after: string[];
-  before: string[];
-  entries: OrderedPlayPrompt[];
-}
-
-const alternativeGroups = (): AlternativeBuiltinGroup[] => {
-  const members = (group: PromptGroup) =>
-    builtinPlayPrompts("en")
-      .filter((item) => item.group === group)
-      .map(({ id }) => id);
-  const order = promptGroups.map((group) => members(group));
-  // The default list runs mechanics, then the choice groups in `promptGroups`
-  // order, then the policy blocks: a missing group lands after the previous
-  // group (or mechanics), else ahead of the first later group or policy block.
-  return promptGroups.map((group, index) => ({
-    after: [...order.slice(0, index).flat().reverse(), "play.mechanics"],
-    before: [
-      ...order.slice(index + 1).flat(),
-      "play.prose",
-      "play.scene",
-      "play.ending",
-      "play.output",
-      "play.facts",
-      "play.tabletop",
-    ],
-    entries: groupPromptEntries(group),
-  }));
-};
-
-/**
- * Insert the choice-group builtins (person, continuation, agency, stopping)
- * that an ordered preset does not list yet. Same identity contract as the
- * tabletop insertion.
- */
-export function withAlternativePromptBuiltins(
-  files: Record<string, string>,
-): Record<string, string> {
-  const document = orderedPresetDocument(files);
-  if (document === undefined) return files;
-  const playPrompts = document.get("playPrompts", true);
-  if (!isSeq(playPrompts)) return files;
-  let changed = false;
-  for (const group of alternativeGroups()) {
-    if (group.entries.some((entry) => hasEntry(playPrompts, entry.id)))
-      continue;
-    const anchor = group.after
-      .map((id) =>
-        playPrompts.items.findIndex((item) => entryField(item, "id") === id),
+/** Decode portable customizations through the same resolver used by every caller. */
+export function parsePromptArrangement(
+  value: unknown,
+  catalog = builtinPlayPrompts("en"),
+  worldRequired = true,
+): OrderedPlayPrompt[] {
+  const record = (v: unknown): v is Record<string, unknown> =>
+    typeof v === "object" && v !== null && !Array.isArray(v);
+  const fail = (): never => {
+    throw new Error("Invalid prompt customizations");
+  };
+  if (
+    !record(value) ||
+    Object.keys(value).some(
+      (k) => !["entries", "overrides", "order", "groups"].includes(k),
+    )
+  )
+    return fail();
+  if (
+    value.entries !== undefined &&
+    (!Array.isArray(value.entries) ||
+      value.entries.length > 256 ||
+      value.entries.some((e) => !record(e) || e.kind === "builtin"))
+  )
+    return fail();
+  const entries = (value.entries ?? []) as OrderedPlayPrompt[];
+  const entryIds = new Set(entries.map((e) => e.id));
+  if (
+    entryIds.size !== entries.length ||
+    entries.filter((e) => e.kind === "world").length > (worldRequired ? 1 : 0)
+  )
+    return fail();
+  if (value.overrides !== undefined) {
+    if (!Array.isArray(value.overrides) || value.overrides.length > 256)
+      return fail();
+    const seen = new Set<string>();
+    const overrideIds = new Set<string>();
+    for (const o of value.overrides) {
+      if (
+        !record(o) ||
+        typeof o.builtin !== "string" ||
+        seen.has(o.builtin) ||
+        (!catalog.some((c) => c.id === o.builtin) &&
+          !retiredBuiltinReplacements[o.builtin]) ||
+        Object.keys(o).some(
+          (k) =>
+            !["builtin", "id", "enabled", "messageRole", "turnGuide"].includes(
+              k,
+            ),
+        ) ||
+        (o.enabled !== undefined && typeof o.enabled !== "boolean") ||
+        (o.messageRole !== undefined && !isPromptMessageRole(o.messageRole)) ||
+        (o.turnGuide !== undefined &&
+          (typeof o.turnGuide !== "string" || !isTurnGuideLine(o.turnGuide))) ||
+        (o.id !== undefined && typeof o.id !== "string")
       )
-      .find((index) => index >= 0);
-    const fallback = playPrompts.items.findIndex((item) => {
-      const id = entryField(item, "id");
-      return (
-        (typeof id === "string" && group.before.includes(id)) ||
-        entryField(item, "kind") === "world"
-      );
-    });
-    const at =
-      anchor !== undefined
-        ? anchor + 1
-        : fallback >= 0
-          ? fallback
-          : playPrompts.items.length;
-    playPrompts.items.splice(
-      at,
-      0,
-      ...group.entries.map((entry) => document.createNode(entry)),
-    );
-    changed = true;
+        return fail();
+      if (typeof o.id === "string") {
+        if (
+          entryIds.has(o.id) ||
+          overrideIds.has(o.id) ||
+          catalog.some((c) => c.id === o.id && c.id !== o.builtin)
+        )
+          return fail();
+        overrideIds.add(o.id);
+      }
+      seen.add(o.builtin);
+    }
   }
-  return changed ? { ...files, "preset.yaml": document.toString() } : files;
-}
-
-/** Every builtin upgrade a stored or imported ordered preset must receive. */
-export function withCurrentPromptBuiltins(
-  files: Record<string, string>,
-): Record<string, string> {
-  return withAlternativePromptBuiltins(
-    withRestructuredPromptBuiltins(withTabletopPromptBuiltins(files)),
+  if (
+    value.order !== undefined &&
+    (!Array.isArray(value.order) ||
+      value.order.length > 512 ||
+      value.order.some((k) => typeof k !== "string") ||
+      new Set(value.order).size !== value.order.length)
+  )
+    return fail();
+  if (
+    Array.isArray(value.order) &&
+    value.order.some((key) => {
+      if (typeof key !== "string") return true;
+      if (key.startsWith("entry:"))
+        return (
+          !entryIds.has(key.slice(6)) &&
+          !(worldRequired && key === "entry:world")
+        );
+      return (
+        !key.startsWith("builtin:") ||
+        (!catalog.some((c) => c.id === key.slice(8)) &&
+          !retiredBuiltinReplacements[key.slice(8)])
+      );
+    })
+  )
+    return fail();
+  if (value.groups !== undefined) {
+    if (!record(value.groups)) return fail();
+    for (const [group, ids] of Object.entries(value.groups)) {
+      if (
+        !promptGroups.some((item) => item === group) ||
+        !Array.isArray(ids) ||
+        ids.some(
+          (id) =>
+            typeof id !== "string" ||
+            !catalog.some(
+              (c) =>
+                (c.id === id ||
+                  retiredBuiltinReplacements[id]?.some(
+                    (r) => r.builtin === c.id,
+                  )) &&
+                c.group === group,
+            ),
+        ) ||
+        new Set(ids).size !== ids.length
+      )
+        return fail();
+    }
+  }
+  return parseOrderedPlayPrompts(
+    resolvePromptArrangement(value, catalog, worldRequired),
+    catalog,
+    worldRequired,
   );
 }
 
@@ -413,14 +379,6 @@ function groupPromptEntries(group: PromptGroup): OrderedPlayPrompt[] {
       builtin: id,
       enabled: index === 0,
     }));
-}
-
-function hasEntry(sequence: YAMLSeq, id: string): boolean {
-  return sequence.items.some((item) => entryField(item, "id") === id);
-}
-
-function entryField(item: unknown, key: string): unknown {
-  return isMap(item) ? item.get(key) : undefined;
 }
 
 /** Recognized v1 content becomes user text, never a locked builtin inferred from a path. */
@@ -564,6 +522,25 @@ export function migrateLegacyPlayPrompts(
       builtin: "play.tabletop",
       enabled: true,
     },
+  );
+  const listed = new Set(
+    entries.flatMap((entry) =>
+      entry.kind === "builtin" ? [entry.builtin] : [],
+    ),
+  );
+  entries.splice(
+    entries.findIndex(
+      (entry) => entry.kind === "builtin" && entry.builtin === "play.tabletop",
+    ),
+    0,
+    ...builtinPlayPrompts("en")
+      .filter((item) => !listed.has(item.id))
+      .map((item) => ({
+        id: item.id,
+        kind: "builtin" as const,
+        builtin: item.id,
+        enabled: false,
+      })),
   );
   return entries;
 }

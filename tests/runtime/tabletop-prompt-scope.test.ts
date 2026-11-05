@@ -1,3 +1,4 @@
+import { orderedListPresetFilesForLocale as defaultPlayPresetFilesForLocale } from "../support/presetFixtures.ts";
 import { parseDocument, stringify } from "yaml";
 import { describe, expect, test } from "vitest";
 
@@ -18,7 +19,6 @@ import {
 import { parseOrderedPlayPrompts } from "../../src/runtime/play/OrderedPlayPrompts.ts";
 import {
   builtinDefaultPlayPresetBinding,
-  defaultPlayPresetFilesForLocale,
   legacyDefaultPlayPresetFilesForLocale,
   parseOrderedAuthorPrompts,
   parsePlayPresetFiles,

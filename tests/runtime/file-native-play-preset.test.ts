@@ -10,7 +10,7 @@ import { V1Runtime } from "../../src/runtime/V1Runtime.ts";
 import type { AppLocale } from "../../src/protocol/appPreferences.ts";
 import { parseV1Envelope } from "../../src/protocol/v1.ts";
 import {
-  defaultPlayPresetFiles,
+  defaultPlayPresetFiles as currentDefaultPlayPresetFiles,
   legacyDefaultPlayPresetFilesForLocale,
   defaultPlayPresetFilesForLocale,
   FileNativePlayPresetStore,
@@ -42,6 +42,8 @@ import {
   scanRuntimeLeakage,
 } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
 
+// These legacy codec cases exercise editable file references, not app-owned defaults.
+const defaultPlayPresetFiles = legacyDefaultPlayPresetFilesForLocale("en");
 const roots: string[] = [];
 
 afterEach(async () => {
@@ -335,9 +337,7 @@ describe("文件原生玩法预设", () => {
     const binding = await store.bindCurrent();
     const structure = toPlayPresetStructuredEditor(binding.definition);
     expect(structure.followups.map(({ id }) => id)).toEqual(["player_options"]);
-    expect(structure.narrativePrompts.map(({ path }) => path)).toEqual([
-      "prompts/narrate.md",
-    ]);
+    expect(structure.narrativePrompts).toEqual([]);
 
     // A valid display-name edit remains valid after a round trip.
     structure.followups[0]!.displayName = "结构化修改";
@@ -611,7 +611,7 @@ extensions:
     });
   });
 
-  test("默认预设同时包含主持块库与玩法叙事块", async () => {
+  test("默认预设只保存声明，由应用目录提供主持与作者编排", async () => {
     const root = await mkdtemp(join(tmpdir(), "narraeon-play-preset-"));
     roots.push(root);
     const store = new FileNativePlayPresetStore(root);
@@ -622,51 +622,19 @@ extensions:
     const preset = library.presets[0]!;
     expect(preset.validation).toEqual({ status: "valid" });
     expect(preset.revision).toMatch(/^rev-[0-9a-f]{64}$/u);
-    // One preset carries host, play, and setting-improvement author prompts.
-    // Style blocks ship with it, while frame.yaml decides whether they are enabled.
     expect(Object.keys(preset.files).sort()).toEqual([
-      "blocks/agency-default.md",
-      "blocks/agency-open.md",
-      "blocks/agency-strict.md",
-      "blocks/checkpoint-policy.md",
-      "blocks/continue-advance.md",
-      "blocks/continue-stage.md",
-      "blocks/ending.md",
-      "blocks/facts.md",
-      "blocks/npc.md",
-      "blocks/output.md",
-      "blocks/ownership.md",
-      "blocks/person-first.md",
-      "blocks/person-second.md",
-      "blocks/person-third.md",
-      "blocks/prose.md",
-      "blocks/save-timing.md",
-      "blocks/scene.md",
-      "blocks/situation.md",
-      "blocks/stop-beat.md",
-      "blocks/stop-scene.md",
-      "blocks/style-action.md",
-      "blocks/style-horror.md",
-      "blocks/style-intimate.md",
-      "blocks/style-literary.md",
-      "blocks/style-noir.md",
-      "blocks/style-wuxia.md",
       "call-chain.yaml",
       "frame.yaml",
       "preset.yaml",
-      "prompts/narrate.md",
-      "prompts/setting-improvement.md",
     ]);
+    expect(preset.files).toEqual(currentDefaultPlayPresetFiles);
 
     const binding = await store.bindCurrent();
     expect(binding.revision).toBe(preset.revision);
     expect(binding.definition.narrativePrompts.map(({ path }) => path)).toEqual(
-      ["prompts/narrate.md"],
+      [],
     );
-    expect(binding.definition.settingImprovementPrompt).toEqual({
-      role: "author_instruction",
-      path: defaultSettingImprovementPromptPath,
-    });
+    expect(binding.definition.settingImprovementPrompt).toBeUndefined();
     expect(settingImprovementPromptForBinding(binding)).toBe(
       defaultSettingImprovementPrompt,
     );
@@ -1230,10 +1198,8 @@ extensions:
       name: current.name,
       files: {
         ...current.files,
-        "call-chain.yaml": current.files["call-chain.yaml"]!.replace(
-          "prompts/narrate.md",
-          "prompts/missing.md",
-        ),
+        "call-chain.yaml":
+          "format: narraeon.play-call-chain/v1\nnarrative: [{markdown: prompts/missing.md}]\nfollowups: []\n",
       },
     });
     const listed = (await store.list()).presets[0]!;

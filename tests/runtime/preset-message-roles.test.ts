@@ -279,6 +279,8 @@ test("merges only adjacent prefix messages, persists on save/import, and changes
 test("old v2 presets retain the combined System prefix when optional fields are absent", async () => {
   const { binding } = await fixture();
   const raw = parseDocument(binding.files["preset.yaml"]!);
+  raw.set("format", "narraeon.play-preset/v2");
+  raw.set("authorPrompts", binding.definition.authorPrompts);
   raw.delete("mergeConsecutiveMessages");
   raw.set(
     "playPrompts",

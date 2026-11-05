@@ -1,3 +1,5 @@
+import { parsePlayPresetFiles as parseEffectivePreset } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
+import { orderedListPresetFilesForLocale as defaultPlayPresetFilesForLocale } from "../support/presetFixtures.ts";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,7 +10,6 @@ import { afterEach, describe, expect, test } from "vitest";
 import type { AppLocale } from "../../src/protocol/appPreferences.ts";
 import {
   FileNativePlayPresetStore,
-  defaultPlayPresetFilesForLocale,
   isPlayPresetBinding,
   parsePlayPresetFiles,
   revisionForPlayPresetFiles,
@@ -16,8 +17,7 @@ import {
 } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
 import {
   retiredPlayBuiltins,
-  withCurrentPromptBuiltins,
-  withRestructuredPromptBuiltins,
+  upgradeOrderedPromptFormat,
 } from "../../src/runtime/play/OrderedPlayPrompts.ts";
 import {
   FileNativePromptCompiler,
@@ -62,6 +62,14 @@ function members(group: PromptGroup): string[] {
 }
 
 function playList(files: Record<string, string>): Entry[] {
+  if (
+    parseDocument(files["preset.yaml"]!).get("format") ===
+    "narraeon.play-preset/v3"
+  ) {
+    const parsed = parseEffectivePreset(files);
+    if (parsed.kind !== "valid") throw parsed.error;
+    return parsed.definition.playPrompts!;
+  }
   return (
     parseDocument(files["preset.yaml"]!).toJS() as { playPrompts: Entry[] }
   ).playPrompts;
@@ -467,7 +475,7 @@ context:
 });
 
 describe("restructure migration", () => {
-  /** A v2 preset as the release before the one-rule blocks saved it. */
+  /** Synthetic v2 behavior fixture without the one-rule blocks saved it. */
   function composedFiles(extra: Entry[] = []): Record<string, string> {
     return filesWith("en", () => [
       {
@@ -544,7 +552,7 @@ describe("restructure migration", () => {
 
   test("retired composite blocks are replaced in place, inheriting enabled state and message role", () => {
     const files = composedFiles();
-    const migrated = withRestructuredPromptBuiltins(files);
+    const migrated = upgradeOrderedPromptFormat(files);
     const list = playList(migrated);
     expect(list.map(({ id }) => id)).toEqual([
       "play.mechanics",
@@ -568,6 +576,9 @@ describe("restructure migration", () => {
       "play.ownership",
       "play.situation",
       "play.checkpoint-policy",
+      ...builtinPlayPrompts("en")
+        .filter((item) => item.category === "style")
+        .map((item) => item.id),
       "play.tabletop",
       "world",
     ]);
@@ -600,7 +611,7 @@ describe("restructure migration", () => {
     for (const retired of retiredPlayBuiltins)
       expect(byId[retired]).toBeUndefined();
     // Idempotent, and a successor already listed is not duplicated.
-    expect(withRestructuredPromptBuiltins(migrated)).toBe(migrated);
+    expect(upgradeOrderedPromptFormat(migrated)).toBe(migrated);
     const withProse = composedFiles([
       {
         id: "play.prose",
@@ -609,7 +620,7 @@ describe("restructure migration", () => {
         enabled: false,
       },
     ]);
-    const ids = playList(withRestructuredPromptBuiltins(withProse)).map(
+    const ids = playList(upgradeOrderedPromptFormat(withProse)).map(
       ({ id }) => id,
     );
     expect(ids.filter((entry) => entry === "play.prose")).toHaveLength(1);
@@ -621,7 +632,7 @@ describe("restructure migration", () => {
 
     // The combined migration yields a valid preset that compiles without
     // any retired source.
-    const current = withCurrentPromptBuiltins(files);
+    const current = upgradeOrderedPromptFormat(files);
     const binding = bindingFrom(current);
     const sources = compile("en", binding).logicalMessages.flatMap(
       ({ blocks }) => blocks.map(({ source }) => source),
@@ -704,7 +715,7 @@ describe("restructure migration", () => {
       "play.prose",
       "play.scene",
     ]);
-    expect(bound.files).toEqual(withCurrentPromptBuiltins(files));
+    expect(bound.files).toEqual(upgradeOrderedPromptFormat(files));
     // The old revision stays readable for frozen requests: its bytes are kept
     // as written and its retired entries parse as their successors.
     const old = await store.bindRevision("mine", currentRevision);

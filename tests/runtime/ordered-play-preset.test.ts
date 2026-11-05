@@ -47,85 +47,32 @@ test("portable ordered play preserves identities, disabled text, and protects re
   };
   const imported = await store.importPortable({ name: "Ordered", files });
   expect(imported.preset.validation).toEqual({ status: "valid" });
-  expect(imported.preset.structure).toMatchObject({
-    playPrompts: [
-      {
-        id: "custom",
-        name: "My text",
-        enabled: false,
-        body: "Retain this text",
-      },
-      // A released ordered preset gains the choice groups and the tabletop builtin on import.
-      {
-        id: "play.person-second",
-        kind: "builtin",
-        builtin: "play.person-second",
-        enabled: true,
-      },
-      {
-        id: "play.person-first",
-        kind: "builtin",
-        builtin: "play.person-first",
-        enabled: false,
-      },
-      {
-        id: "play.person-third",
-        kind: "builtin",
-        builtin: "play.person-third",
-        enabled: false,
-      },
-      {
-        id: "play.continue-stage",
-        kind: "builtin",
-        builtin: "play.continue-stage",
-        enabled: true,
-      },
-      {
-        id: "play.continue-advance",
-        kind: "builtin",
-        builtin: "play.continue-advance",
-        enabled: false,
-      },
-      {
-        id: "play.agency-default",
-        kind: "builtin",
-        builtin: "play.agency-default",
-        enabled: true,
-      },
-      {
-        id: "play.agency-strict",
-        kind: "builtin",
-        builtin: "play.agency-strict",
-        enabled: false,
-      },
-      {
-        id: "play.agency-open",
-        kind: "builtin",
-        builtin: "play.agency-open",
-        enabled: false,
-      },
-      {
-        id: "play.stop-beat",
-        kind: "builtin",
-        builtin: "play.stop-beat",
-        enabled: true,
-      },
-      {
-        id: "play.stop-scene",
-        kind: "builtin",
-        builtin: "play.stop-scene",
-        enabled: false,
-      },
-      {
-        id: "play.tabletop",
-        kind: "builtin",
-        builtin: "play.tabletop",
-        enabled: true,
-      },
-      { id: "world", kind: "world" },
-      { id: "mechanics", builtin: "play.mechanics", enabled: true },
-    ],
-  });
+  const effective = imported.preset.structure!.playPrompts!;
+  expect(
+    effective.filter((entry) =>
+      ["custom", "world", "mechanics"].includes(entry.id),
+    ),
+  ).toEqual([
+    {
+      id: "custom",
+      kind: "user",
+      name: "My text",
+      enabled: false,
+      body: "Retain this text",
+    },
+    { id: "world", kind: "world" },
+    {
+      id: "mechanics",
+      kind: "builtin",
+      builtin: "play.mechanics",
+      enabled: true,
+    },
+  ]);
+  expect(
+    effective
+      .filter((entry) => entry.kind === "builtin")
+      .map((entry) => entry.builtin),
+  ).toEqual(builtinPlayPrompts("en").map((entry) => entry.id));
   await expect(
     store.importPortable({
       name: "Tampered",
@@ -357,82 +304,18 @@ test("legacy migration retains disabled copies and resources while frozen reques
   });
   // Converted v1 presets gain the choice-group builtins and the tabletop
   // builtin, which compiles only for tabletop worlds.
+  const builtinEntries = structure.playPrompts!.filter(
+    (entry) => entry.kind === "builtin",
+  );
+  expect(builtinEntries.map((entry) => entry.builtin).sort()).toEqual(
+    builtinPlayPrompts("en")
+      .map((item) => item.id)
+      .sort(),
+  );
   expect(
-    structure.playPrompts?.filter((entry) => entry.kind === "builtin"),
-  ).toEqual([
-    {
-      id: "play.mechanics",
-      kind: "builtin",
-      builtin: "play.mechanics",
-      enabled: true,
-    },
-    {
-      id: "play.person-second",
-      kind: "builtin",
-      builtin: "play.person-second",
-      enabled: true,
-    },
-    {
-      id: "play.person-first",
-      kind: "builtin",
-      builtin: "play.person-first",
-      enabled: false,
-    },
-    {
-      id: "play.person-third",
-      kind: "builtin",
-      builtin: "play.person-third",
-      enabled: false,
-    },
-    {
-      id: "play.continue-stage",
-      kind: "builtin",
-      builtin: "play.continue-stage",
-      enabled: true,
-    },
-    {
-      id: "play.continue-advance",
-      kind: "builtin",
-      builtin: "play.continue-advance",
-      enabled: false,
-    },
-    {
-      id: "play.agency-default",
-      kind: "builtin",
-      builtin: "play.agency-default",
-      enabled: true,
-    },
-    {
-      id: "play.agency-strict",
-      kind: "builtin",
-      builtin: "play.agency-strict",
-      enabled: false,
-    },
-    {
-      id: "play.agency-open",
-      kind: "builtin",
-      builtin: "play.agency-open",
-      enabled: false,
-    },
-    {
-      id: "play.stop-beat",
-      kind: "builtin",
-      builtin: "play.stop-beat",
-      enabled: true,
-    },
-    {
-      id: "play.stop-scene",
-      kind: "builtin",
-      builtin: "play.stop-scene",
-      enabled: false,
-    },
-    {
-      id: "play.tabletop",
-      kind: "builtin",
-      builtin: "play.tabletop",
-      enabled: true,
-    },
-  ]);
+    builtinEntries.find((entry) => entry.builtin === "play.prose"),
+  ).toMatchObject({ enabled: false });
+
   const saved = await store.save({
     presetId: imported.preset.id,
     name: "Legacy",
@@ -689,11 +572,14 @@ test.each(["escaped-v2", "unknown"] as const)(
     await store.initialize();
     const files = structuredClone(defaultPlayPresetFiles);
     files["preset.yaml"] = files["preset.yaml"]!.replace(
-      "format: narraeon.play-preset/v2",
+      "format: narraeon.play-preset/v3",
       mode === "unknown"
         ? "format: narraeon.play-preset/v99"
-        : 'format: "narraeon.play-preset/v\\x32"',
-    ).replace("enabled: true", "enabled: false");
+        : 'format: "narraeon.play-preset/v\\x33"',
+    ).replace(
+      "playPrompts: {}",
+      "playPrompts: {overrides: [{builtin: play.mechanics, enabled: false}]}",
+    );
     await expect(
       store.importPortable({ name: "Invalid", files }),
     ).rejects.toThrow();

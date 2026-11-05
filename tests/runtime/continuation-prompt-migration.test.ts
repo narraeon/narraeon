@@ -1,3 +1,5 @@
+import { parsePlayPresetFiles as parseEffectivePreset } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
+import { orderedListPresetFilesForLocale as defaultPlayPresetFilesForLocale } from "../support/presetFixtures.ts";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,10 +13,9 @@ import {
 } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
 import {
   FileNativePlayPresetStore,
-  defaultPlayPresetFilesForLocale,
   revisionForPlayPresetFiles,
 } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
-import { withAlternativePromptBuiltins } from "../../src/runtime/play/OrderedPlayPrompts.ts";
+import { upgradeOrderedPromptFormat } from "../../src/runtime/play/OrderedPlayPrompts.ts";
 import {
   builtinPlayPrompts,
   defaultOrderedPlayPrompts,
@@ -38,6 +39,14 @@ interface PromptEntry {
 }
 
 function playList(files: Record<string, string>): PromptEntry[] {
+  if (
+    parseDocument(files["preset.yaml"]!).get("format") ===
+    "narraeon.play-preset/v3"
+  ) {
+    const parsed = parseEffectivePreset(files);
+    if (parsed.kind !== "valid") throw parsed.error;
+    return parsed.definition.playPrompts!;
+  }
   return (
     parseDocument(files["preset.yaml"]!).toJS() as {
       playPrompts: PromptEntry[];
@@ -45,7 +54,7 @@ function playList(files: Record<string, string>): PromptEntry[] {
   ).playPrompts;
 }
 
-/** A v2 preset as the release before the continuation builtins saved it. */
+/** Synthetic v2 behavior fixture without the continuation builtins; not release evidence. */
 function releasedFiles(
   edit: (items: PromptEntry[]) => PromptEntry[] = (items) => items,
 ): Record<string, string> {
@@ -171,27 +180,18 @@ describe("continuation blocks", () => {
       });
       return items;
     });
-    expect(withAlternativePromptBuiltins(swapped)).toBe(swapped);
+    const resolved = playList(upgradeOrderedPromptFormat(swapped));
+    expect(
+      resolved.find((item) => item.id === "play.continue-advance"),
+    ).toMatchObject({ enabled: true });
+    expect(new Set(resolved.map((item) => item.id)).size).toBe(resolved.length);
 
     const noAnchors = releasedFiles((items) =>
       items.filter(
         ({ id }) => id !== "play.mechanics" && !id.startsWith("play.person-"),
       ),
     );
-    const migrated = playList(withAlternativePromptBuiltins(noAnchors));
-    // Without the mechanics block or an earlier group, the missing groups land
-    // ahead of the agency group, still in catalog order.
-    const agency = migrated.findIndex(({ id }) => id === "play.agency-default");
-    expect(migrated.slice(agency - 5, agency).map(({ id }) => id)).toEqual([
-      "play.person-second",
-      "play.person-first",
-      "play.person-third",
-      "play.continue-stage",
-      "play.continue-advance",
-    ]);
-    expect(
-      migrated.filter(({ id }) => id.startsWith("play.continue-")),
-    ).toHaveLength(2);
+    expect(parseEffectivePreset(noAnchors).kind).toBe("invalid");
   });
 
   test("only the enabled continuation block reaches a fiction request, and swapping them swaps the prose rule", async () => {

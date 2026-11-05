@@ -1,10 +1,5 @@
 import type { AppLocale } from "../protocol/appPreferences.ts";
-import { defaultNarrationPromptForLocale } from "./default-play-prompts.ts";
-import { defaultPresetHostFilesForLocale } from "./default-preset-host.ts";
-import {
-  defaultSettingImprovementPromptForLocale,
-  defaultSettingImprovementPromptPath,
-} from "./default-setting-improvement-prompt.ts";
+import { applicationPresetFilesForLocale } from "./application-preset-files.ts";
 
 /**
  * Ordinary, copyable player-view panel assets. Runtime understands only the
@@ -21,11 +16,13 @@ export function firstPartyStatusPanelPresetFilesForLocale(
   const diagnosticsSuffix =
     locale === "zh-CN" ? " 项视图诊断" : " player-view diagnostics";
   return {
-    "preset.yaml": `format: narraeon.play-preset/v1
+    ...applicationPresetFilesForLocale(locale),
+    "preset.yaml": `format: narraeon.play-preset/v3
 name: status-panel-recommended
 callChain: call-chain.yaml
-settingImprovement:
-  markdown: prompts/setting-improvement.md
+playPrompts: {}
+authorPrompts: {}
+mergeConsecutiveMessages: false
 mounts: []
 playerViewPanels:
   - id: current_view
@@ -55,14 +52,10 @@ extensions:
   - assets/player-view-status.css
 `,
     "call-chain.yaml": `format: narraeon.play-call-chain/v1
-narrative:
-  - markdown: prompts/narrate.md
+narrative: []
 followups: []
 `,
-    ...defaultPresetHostFilesForLocale(locale),
-    "prompts/narrate.md": defaultNarrationPromptForLocale(locale),
-    [defaultSettingImprovementPromptPath]:
-      defaultSettingImprovementPromptForLocale(locale),
+
     "renderers/player-view-status.html": `<!doctype html>
 <html><head><meta charset="utf-8"><title>${currentStatus}</title></head><body>
 <main id="player-view-panel-root" aria-label="${currentStatus}"></main>

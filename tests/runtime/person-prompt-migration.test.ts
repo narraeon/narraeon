@@ -1,8 +1,9 @@
+import { parsePlayPresetFiles as parseEffectivePreset } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
+import { orderedListPresetFilesForLocale as defaultPlayPresetFilesForLocale } from "../support/presetFixtures.ts";
 import { parseDocument, stringify } from "yaml";
 import { describe, expect, test } from "vitest";
 
-import { defaultPlayPresetFilesForLocale } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
-import { withAlternativePromptBuiltins } from "../../src/runtime/play/OrderedPlayPrompts.ts";
+import { upgradeOrderedPromptFormat } from "../../src/runtime/play/OrderedPlayPrompts.ts";
 import {
   builtinPlayPrompts,
   defaultOrderedPlayPrompts,
@@ -17,6 +18,14 @@ interface PromptEntry {
 }
 
 function playList(files: Record<string, string>): PromptEntry[] {
+  if (
+    parseDocument(files["preset.yaml"]!).get("format") ===
+    "narraeon.play-preset/v3"
+  ) {
+    const parsed = parseEffectivePreset(files);
+    if (parsed.kind !== "valid") throw parsed.error;
+    return parsed.definition.playPrompts!;
+  }
   return (
     parseDocument(files["preset.yaml"]!).toJS() as {
       playPrompts: PromptEntry[];
@@ -24,7 +33,7 @@ function playList(files: Record<string, string>): PromptEntry[] {
   ).playPrompts;
 }
 
-/** A v2 preset as the release before the person builtins saved it. */
+/** Synthetic v2 behavior fixture without the person builtins; not release evidence. */
 function releasedFiles(
   edit: (items: PromptEntry[]) => PromptEntry[] = (items) => items,
 ): Record<string, string> {
@@ -97,7 +106,7 @@ describe("narrative-person blocks", () => {
 
   test("a stored preset without the blocks gains all three right after the mechanics block", () => {
     const files = releasedFiles();
-    const migrated = playList(withAlternativePromptBuiltins(files));
+    const migrated = playList(upgradeOrderedPromptFormat(files));
     const before = playList(files);
     expect(
       migrated.filter(({ id }) => before.some((old) => old.id === id)),
@@ -117,20 +126,19 @@ describe("narrative-person blocks", () => {
       });
       return items;
     });
-    expect(withAlternativePromptBuiltins(swapped)).toBe(swapped);
+    const resolved = playList(upgradeOrderedPromptFormat(swapped));
+    expect(
+      resolved.find(
+        (item) =>
+          item.id === "play.person-first" ||
+          item.id === "play.continue-advance",
+      ),
+    ).toMatchObject({ enabled: true });
+    expect(new Set(resolved.map((item) => item.id)).size).toBe(resolved.length);
 
     const noMechanics = releasedFiles((items) =>
-      items.filter(({ id }) => id !== "play.mechanics"),
+      items.filter((item) => item.id !== "play.mechanics"),
     );
-    const migrated = playList(withAlternativePromptBuiltins(noMechanics));
-    const stage = migrated.findIndex(({ id }) => id === "play.continue-stage");
-    expect(migrated.slice(stage - 3, stage).map(({ id }) => id)).toEqual([
-      "play.person-second",
-      "play.person-first",
-      "play.person-third",
-    ]);
-    expect(
-      migrated.filter(({ id }) => id.startsWith("play.person-")),
-    ).toHaveLength(3);
+    expect(parseEffectivePreset(noMechanics).kind).toBe("invalid");
   });
 });
