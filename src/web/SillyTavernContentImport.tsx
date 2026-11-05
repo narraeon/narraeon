@@ -13,6 +13,20 @@ function ruleValue(rules: Record<string, unknown>, ...keys: string[]): unknown {
     !Array.isArray(rules.extensions)
       ? (rules.extensions as Record<string, unknown>)
       : {};
+  const topLevelFirst = [
+    "key",
+    "keys",
+    "keysecondary",
+    "secondary_keys",
+    "constant",
+    "selective",
+    "order",
+    "insertion_order",
+    "characterFilter",
+  ];
+  if (keys.some((key) => topLevelFirst.includes(key))) {
+    for (const key of keys) if (rules[key] !== undefined) return rules[key];
+  }
   for (const key of keys)
     if (extensions[key] !== undefined) return extensions[key];
   for (const key of keys) if (rules[key] !== undefined) return rules[key];
@@ -38,7 +52,7 @@ function displayRule(value: unknown, label: string): string {
       "命名出口",
     ];
     if (typeof value === "number" && positions[value])
-      return uiText(positions[value]!);
+      return uiText(positions[value]);
     if (value === "before_char") return uiText("角色之前");
     if (value === "after_char") return uiText("角色之后");
   }
@@ -46,7 +60,43 @@ function displayRule(value: unknown, label: string): string {
   if (typeof value === "boolean") return value ? uiText("是") : uiText("否");
   if (Array.isArray(value))
     return value.map((item) => String(item)).join(", ") || "—";
-  return String(value);
+  return typeof value === "string" || typeof value === "number"
+    ? String(value)
+    : JSON.stringify(value);
+}
+function diagnosticText(code: string): string {
+  const labels: Record<string, string> = {
+    unbound_macro: "来源包含未绑定的宏，已保留资料并需要完善。",
+    disabled_entry: "来源禁用的条目只作为资料保存。",
+    missing_opening: "缺少开场白，需要在创建世界前补全。",
+    invalid_opening: "开场白无效，需要在创建世界前修复。",
+    invalid_world_frame: "世界框架需要补全或修复。",
+    missing_current_situation: "缺少当前情境，需要在创建世界前补全。",
+    unsupported_field: "此来源字段不支持自动迁移。",
+    legacy_field_conflict: "旧版顶层字段与 data 不一致，采用 data。",
+    external_worldbook_reference: "外部世界书名称仅作来源引用，未自动追踪。",
+    external_worldbook_unavailable: "外部世界书未随卡提供，未自动下载。",
+    image_not_migrated: "头像图片未迁移。",
+    invalid_json_or_utf8: "JSON 或 UTF-8 无效。",
+    invalid_png: "PNG 文件无效或损坏。",
+    invalid_png_image: "PNG 图像数据无效或损坏。",
+    invalid_png_crc: "PNG 校验失败。",
+    invalid_png_dimensions: "PNG 尺寸超过安全限制或无效。",
+    missing_card_metadata: "图片不含角色卡元数据。",
+    invalid_base64: "角色卡元数据编码无效。",
+    unknown_version: "角色卡版本不受支持。",
+    unsupported_format: "文件不是受支持的角色卡或世界书。",
+    source_too_large: "源文件超过大小限制。",
+    ambiguous_json: "JSON 包含重复或歧义字段。",
+    invalid_selection: "导入选择无效，请重新选择。",
+    missing_character_name: "角色卡缺少名称。",
+    invalid_rule_type: "来源规则的字段类型无效。",
+  };
+  return labels[code] ? uiText(labels[code]) : code;
+}
+function errorText(message: string): string {
+  const code = /(?:^|: )([a-z][a-z_]+)(?:$|\s)/u.exec(message)?.[1];
+  return code ? `${diagnosticText(code)} (${message})` : message;
 }
 export function SillyTavernContentImport({
   client,
@@ -62,7 +112,10 @@ export function SillyTavernContentImport({
   const [preview, setPreview] = useState<{
     files: ContentTreeFile[];
     diagnostics: { code: string; path: string }[];
-    inspection: { issues: { code: string; path: string; message: string }[] };
+    inspection: {
+      status: "usable" | "needs_repair";
+      issues: { code: string; path: string; message: string }[];
+    };
   }>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -134,7 +187,7 @@ export function SillyTavernContentImport({
               "选择目标用途。来源规则不会作为 SillyTavern 触发机制执行；未绑定的宏需要手动完善。",
             )}
           </p>
-          {error && <p role="alert">{error}</p>}
+          {error && <p role="alert">{errorText(error)}</p>}
           {view && (
             <>
               <fieldset disabled={busy}>
@@ -149,7 +202,10 @@ export function SillyTavernContentImport({
                   />
                 </label>
                 <p>
-                  {view.kind} · {view.version}
+                  {view.kind === "character"
+                    ? uiText("角色卡")
+                    : uiText("世界书")}{" "}
+                  · {view.version}
                 </p>
                 {view.kind === "character" && (
                   <div>
@@ -195,6 +251,12 @@ export function SillyTavernContentImport({
                         ),
                       )}
                   </div>
+                )}
+                {Object.keys(view.legacyFields).length > 0 && (
+                  <details open>
+                    <summary>{uiText("旧版顶层字段")}</summary>
+                    <pre>{JSON.stringify(view.legacyFields, null, 2)}</pre>
+                  </details>
                 )}
                 <details>
                   <summary>{uiText("完整来源字段")}</summary>
@@ -372,6 +434,10 @@ export function SillyTavernContentImport({
                           ["持续轮数", ruleValue(entry.rules, "sticky")],
                           ["冷却轮数", ruleValue(entry.rules, "cooldown")],
                           ["延迟轮数", ruleValue(entry.rules, "delay")],
+                          [
+                            "角色过滤",
+                            ruleValue(entry.rules, "characterFilter"),
+                          ],
                           ["生成类型限制", ruleValue(entry.rules, "triggers")],
                           [
                             "扫描深度",
@@ -444,16 +510,33 @@ export function SillyTavernContentImport({
                       </li>
                     ))}
                   </ul>
-                  <pre>
-                    {JSON.stringify(
-                      {
-                        diagnostics: preview.diagnostics,
-                        issues: preview.inspection.issues,
-                      },
-                      null,
-                      2,
+                  <p role="status">
+                    {preview.inspection.status === "usable"
+                      ? uiText("可创建世界")
+                      : uiText("需要完善；仍可导入并编辑")}
+                  </p>
+                  <ul>
+                    {[...preview.diagnostics, ...preview.inspection.issues].map(
+                      (item, index) => (
+                        <li key={`${item.path}:${item.code}:${index}`}>
+                          {diagnosticText(item.code)} <code>{item.path}</code>
+                        </li>
+                      ),
                     )}
-                  </pre>
+                  </ul>
+                  <details>
+                    <summary>{uiText("原始诊断详情")}</summary>
+                    <pre>
+                      {JSON.stringify(
+                        {
+                          diagnostics: preview.diagnostics,
+                          issues: preview.inspection.issues,
+                        },
+                        null,
+                        2,
+                      )}
+                    </pre>
+                  </details>
                   <button
                     disabled={busy}
                     onClick={() =>

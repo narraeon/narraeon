@@ -560,6 +560,7 @@ export class V1Runtime {
           const converted = convertSillyTavernContent(
             source,
             request.selection,
+            this.#locale,
           );
           this.#content.validateCurrentTreeContentPackage(converted.files);
           if (request.type === "content.sillytavern.preview")

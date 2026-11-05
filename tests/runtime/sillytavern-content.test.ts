@@ -1,3 +1,4 @@
+import { deflateSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import {
   inspectSillyTavernContent,
@@ -169,7 +170,7 @@ function png(metadata: [string, string][], width = 1): Buffer {
     ...metadata.map(([key, value]) =>
       chunk("tEXt", Buffer.from(`${key}\0${value}`)),
     ),
-    chunk("IDAT", Buffer.from([1])),
+    chunk("IDAT", deflateSync(Buffer.from([0, 0, 0, 0, 0]))),
     chunk("IEND", Buffer.alloc(0)),
   ]);
 }
@@ -341,6 +342,25 @@ it("Runtime revalidates and atomically publishes independent packages that round
       })
     ).result as { localId: string; status: string };
     expect(incomplete.status).toBe("needs_repair");
+    await runtime.handle({
+      type: "model.save",
+      connection: {
+        name: "Dummy",
+        presetId: "custom",
+        provider: "chat_completions",
+        baseUrl: "http://127.0.0.1:1/v1",
+        apiKey: "dummy",
+        modelId: "test",
+        contextWindowTokens: 32000,
+        maxOutputTokens: 2000,
+        reasoningEffort: "provider_default",
+      },
+    });
+    const worldsBefore = (
+      (await runtime.handle({ type: "workspace.read" })).result as {
+        worlds: unknown[];
+      }
+    ).worlds;
     await expect(
       runtime.handle({
         type: "world.create",
@@ -353,7 +373,14 @@ it("Runtime revalidates and atomically publishes independent packages that round
           maxOutputTokens: 2000,
         },
       }),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: "content_package_needs_repair" });
+    expect(
+      (
+        (await runtime.handle({ type: "workspace.read" })).result as {
+          worlds: unknown[];
+        }
+      ).worlds,
+    ).toEqual(worldsBefore);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -470,8 +497,97 @@ it("rejects malformed known source field types and duplicate JSON keys", () => {
     Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
     chunk("IHDR", header),
     chunk("tEXt", Buffer.concat([Buffer.from("chara\0"), poisoned])),
-    chunk("IDAT", Buffer.from([1])),
+    chunk("IDAT", deflateSync(Buffer.from([0, 0, 0, 0, 0]))),
     chunk("IEND", Buffer.alloc(0)),
   ]);
   expect(() => inspectSillyTavernContent(image)).toThrow("invalid_base64");
+});
+
+it("reports conflicting legacy values and rejects missing names and invalid rule types", () => {
+  const inspected = inspectSillyTavernContent(
+    bytes({
+      spec: "chara_card_v2",
+      spec_version: "2.0",
+      name: "Legacy",
+      data: { ...v1, name: "Current" },
+    }),
+  );
+  expect(inspected.legacyFields.name).toBe("Legacy");
+  expect(inspected.fields.name).toBe("Current");
+  expect(inspected.diagnostics).toContainEqual({
+    code: "legacy_field_conflict",
+    path: "$.name",
+  });
+  expect(() =>
+    inspectSillyTavernContent(
+      bytes({ spec: "chara_card_v2", spec_version: "2.0", data: {} }),
+    ),
+  ).toThrow("missing_character_name");
+  for (const entry of [{ constant: null }, { order: null }, { triggers: [1] }])
+    expect(() =>
+      inspectSillyTavernContent(
+        bytes({ entries: { a: { content: "lore", ...entry } } }),
+      ),
+    ).toThrow("invalid_rule_type");
+});
+it("retains unchosen greetings and character filtering as inert source metadata", () => {
+  const source = bytes({
+    spec: "chara_card_v3",
+    spec_version: "3.0",
+    data: {
+      ...v1,
+      alternate_greetings: ["other greeting"],
+      character_book: {
+        entries: [
+          {
+            id: 1,
+            content: "lore",
+            enabled: true,
+            extensions: { depth: 4, role: 0, triggers: ["normal"] },
+          },
+        ],
+      },
+    },
+  });
+  const result = convertSillyTavernContent(
+    source,
+    { scenario: true, opening: "0", entries: { "entry-0": "attachment" } },
+    "zh-CN",
+  );
+  expect(
+    result.files.find((file) => file.path.startsWith("assets/"))?.contents,
+  ).toContain("other greeting");
+  expect(
+    result.files.find((file) => file.path === "world/current-situation.yaml")
+      ?.contents,
+  ).toContain("当前情境");
+  const filtered = convertSillyTavernContent(
+    bytes({
+      entries: {
+        a: {
+          content: "lore",
+          characterFilter: { names: ["A"], tags: ["B"], isExclude: true },
+        },
+      },
+    }),
+    { entries: { "entry-0": "attachment" } },
+  );
+  expect(
+    filtered.files.find((file) => file.path.startsWith("assets/"))?.contents,
+  ).toContain("isExclude: true");
+});
+it("rejects invalid PNG image data even with correct chunk checksums", () => {
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(1);
+  header.writeUInt32BE(1, 4);
+  header[8] = 8;
+  header[9] = 6;
+  const image = Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    chunk("IHDR", header),
+    chunk("tEXt", Buffer.from(`chara\0${bytes(v1).toString("base64")}`)),
+    chunk("IDAT", Buffer.from([1])),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+  expect(() => inspectSillyTavernContent(image)).toThrow("invalid_png_image");
 });

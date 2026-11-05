@@ -1,3 +1,4 @@
+import { inflateSync } from "node:zlib";
 import type { AppLocale } from "../../protocol/appPreferences.ts";
 import { parseDocument, stringify } from "yaml";
 import type { ContentTreeFile } from "./ContentTreeFile.ts";
@@ -25,7 +26,15 @@ function pngJson(bytes: Buffer): Buffer {
   let offset = 8,
     ended = false,
     sawHeader = false,
-    sawImage = false;
+    sawImage = false,
+    imageEnded = false;
+  let width = 0,
+    height = 0,
+    depth = 0,
+    color = 0,
+    interlace = 0;
+  const imageChunks: Buffer[] = [];
+  let sawPalette = false;
   const chunks = new Map<string, Buffer>();
   while (offset < bytes.length) {
     if (offset + 12 > bytes.length) fail("invalid_png_chunk", "$ ");
@@ -35,11 +44,33 @@ function pngJson(bytes: Buffer): Buffer {
     const body = bytes.subarray(offset + 4, offset + 8 + length);
     if (crc32(body) !== bytes.readUInt32BE(offset + 8 + length))
       fail("invalid_png_crc", "$ ");
-    const type = bytes.toString("ascii", offset + 4, offset + 8);
+    const type = bytes.toString("latin1", offset + 4, offset + 8);
+    if (
+      !/^[A-Za-z]{4}$/u.test(type) ||
+      (/^[A-Z]/u.test(type) && !["IHDR", "PLTE", "IDAT", "IEND"].includes(type))
+    )
+      fail("invalid_png_chunk", "$");
     if (!sawHeader) {
       if (type !== "IHDR" || length !== 13) fail("invalid_png_header", "$");
-      const width = bytes.readUInt32BE(offset + 8),
-        height = bytes.readUInt32BE(offset + 12);
+      width = bytes.readUInt32BE(offset + 8);
+      height = bytes.readUInt32BE(offset + 12);
+      depth = bytes[offset + 16]!;
+      color = bytes[offset + 17]!;
+      interlace = bytes[offset + 20]!;
+      const allowedDepths: Record<number, number[]> = {
+        0: [1, 2, 4, 8, 16],
+        2: [8, 16],
+        3: [1, 2, 4, 8],
+        4: [8, 16],
+        6: [8, 16],
+      };
+      if (
+        !allowedDepths[color]?.includes(depth) ||
+        bytes[offset + 18] !== 0 ||
+        bytes[offset + 19] !== 0 ||
+        ![0, 1].includes(interlace)
+      )
+        fail("invalid_png_header", "$");
       if (
         !width ||
         !height ||
@@ -50,7 +81,25 @@ function pngJson(bytes: Buffer): Buffer {
         fail("invalid_png_dimensions", "$");
       sawHeader = true;
     } else if (type === "IHDR") fail("invalid_png_header", "$");
-    if (type === "IDAT") sawImage = true;
+    if (type === "PLTE") {
+      if (
+        sawPalette ||
+        sawImage ||
+        length === 0 ||
+        length > 768 ||
+        length % 3 !== 0 ||
+        color === 0 ||
+        color === 4
+      )
+        fail("invalid_png_chunk", "$");
+      sawPalette = true;
+    }
+    if (type === "IDAT") {
+      if (color === 3 && !sawPalette) fail("invalid_png_chunk", "$");
+      if (imageEnded) fail("invalid_png_chunk", "$");
+      sawImage = true;
+      imageChunks.push(bytes.subarray(offset + 8, offset + 8 + length));
+    } else if (sawImage) imageEnded = true;
     if (type === "IEND" && (length !== 0 || !sawImage))
       fail("invalid_png", "$");
     if (type === "tEXt") {
@@ -69,6 +118,48 @@ function pngJson(bytes: Buffer): Buffer {
     }
   }
   if (!ended || offset !== bytes.length) fail("invalid_png", "$ ");
+  const channels: Record<number, number> = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 };
+  const passes =
+    interlace === 0
+      ? [[0, 0, 1, 1]]
+      : [
+          [0, 0, 8, 8],
+          [4, 0, 8, 8],
+          [0, 4, 4, 8],
+          [2, 0, 4, 4],
+          [0, 2, 2, 4],
+          [1, 0, 2, 2],
+          [0, 1, 1, 2],
+        ];
+  const rows: number[] = [];
+  for (const [x, y, dx, dy] of passes) {
+    const w = Math.max(0, Math.ceil((width - x!) / dx!)),
+      h = Math.max(0, Math.ceil((height - y!) / dy!));
+    if (w && h)
+      for (let row = 0; row < h; row++)
+        rows.push(1 + Math.ceil((w * depth * channels[color]!) / 8));
+  }
+  const expected = rows.reduce((sum, size) => sum + size, 0);
+  if (expected > 64 * 1024 * 1024) fail("invalid_png_dimensions", "$");
+  let pixels: Buffer;
+  try {
+    const compressed = Buffer.concat(imageChunks);
+    const result = inflateSync(compressed, {
+      maxOutputLength: expected + 1,
+      info: true,
+    });
+    if (result.engine.bytesWritten !== compressed.length)
+      fail("invalid_png_image", "$");
+    pixels = result.buffer;
+  } catch {
+    return fail("invalid_png_image", "$");
+  }
+  if (pixels.length !== expected) fail("invalid_png_image", "$");
+  let cursor = 0;
+  for (const size of rows) {
+    if (pixels[cursor]! > 4) fail("invalid_png_image", "$");
+    cursor += size;
+  }
   const encoded = chunks.get("ccv3") ?? chunks.get("chara");
   if (!encoded) fail("missing_card_metadata", "$ ");
   const text = encoded.toString("latin1");
@@ -240,6 +331,23 @@ function safeRules(
         target.extensions = safe;
         continue;
       }
+      if (key === "characterFilter" && prefix === path) {
+        const filter = record(value, `${prefix}.characterFilter`),
+          safe: Record<string, unknown> = {};
+        for (const [field, item] of Object.entries(filter)) {
+          if (
+            ["names", "tags"].includes(field) &&
+            Array.isArray(item) &&
+            item.every((x) => typeof x === "string")
+          )
+            safe[field] = item;
+          else if (field === "isExclude" && typeof item === "boolean")
+            safe[field] = item;
+          else fail("invalid_rule_type", `${prefix}.characterFilter.${field}`);
+        }
+        target.characterFilter = safe;
+        continue;
+      }
       if (!ruleKeys.has(key)) {
         diagnostics.push({
           code: "unsupported_field",
@@ -247,6 +355,27 @@ function safeRules(
         });
         continue;
       }
+      const nullable = new Set([
+        "scanDepth",
+        "scan_depth",
+        "caseSensitive",
+        "case_sensitive",
+        "matchWholeWords",
+        "match_whole_words",
+        "useGroupScoring",
+        "use_group_scoring",
+        "sticky",
+        "cooldown",
+        "delay",
+        "group_weight",
+        "probability",
+      ]);
+      if (
+        value === null &&
+        (numericRules.has(key) || booleanRules.has(key)) &&
+        !nullable.has(key)
+      )
+        fail("invalid_rule_type", `${prefix}.${key}`);
       if (
         value !== null &&
         numericRules.has(key) &&
@@ -353,6 +482,11 @@ export function inspectSillyTavernContent(source: Buffer): ContentInspection {
     ])
       if (root[key] !== undefined && root[key] !== data[key])
         diagnostics.push({ code: "legacy_field_conflict", path: `$.${key}` });
+  if (
+    kind === "character" &&
+    (typeof data.name !== "string" || !data.name.trim())
+  )
+    fail("missing_character_name", "$.data.name");
   for (const key of [
     "name",
     "description",
@@ -382,6 +516,8 @@ export function inspectSillyTavernContent(source: Buffer): ContentInspection {
     fail("expected_string_array", "$.data.tags");
   if (data.extensions !== undefined) {
     const extensions = record(data.extensions, "$.data.extensions");
+    if (extensions.world !== undefined && typeof extensions.world !== "string")
+      fail("expected_string", "$.data.extensions.world");
     if (extensions.depth_prompt !== undefined) {
       const depth = record(
         extensions.depth_prompt,
@@ -490,7 +626,22 @@ export function inspectSillyTavernContent(source: Buffer): ContentInspection {
     });
   if (source[0] === 137)
     diagnostics.push({ code: "image_not_migrated", path: "$" });
-  return { kind, version, fields: data, entries, diagnostics };
+  const legacyFields =
+    data === root
+      ? {}
+      : Object.fromEntries(
+          [
+            "name",
+            "description",
+            "personality",
+            "scenario",
+            "first_mes",
+            "mes_example",
+          ]
+            .filter((key) => root[key] !== undefined)
+            .map((key) => [key, root[key]]),
+        );
+  return { kind, version, fields: data, legacyFields, entries, diagnostics };
 }
 function recordOrEmpty(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -639,6 +790,10 @@ export function convertSillyTavernContent(
       !openings[Number(selection.opening)]
     )
       fail("invalid_opening_selection", "$.selection.opening");
+    const remaining = openings
+      .map((text, index) => ({ index, text }))
+      .filter((item) => item.index !== Number(selection.opening) && item.text);
+    if (remaining.length) preservedFields.other_openings = remaining;
     const opening = openings[Number(selection.opening)]!;
     if (hasMacro(opening)) {
       diagnostics.push({ code: "unbound_macro", path: "$.data.first_mes" });

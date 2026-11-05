@@ -1,3 +1,4 @@
+import type { ContentSelection } from "./sillyTavernContent.ts";
 import {
   parseGameplay,
   resolutionSchemes,
@@ -168,15 +169,7 @@ export type V1Request =
       type: "content.sillytavern.preview" | "content.sillytavern.import";
       source: string;
       name: string;
-      selection: {
-        character?: boolean;
-        scenario?: boolean;
-        opening?: string | undefined;
-        example?: boolean;
-        systemPrompt?: boolean;
-        attachments?: string[];
-        entries: Record<string, "world" | "attachment">;
-      };
+      selection: ContentSelection;
     }
   | { type: "play.sillytavern.inspect"; source: string; groupId?: string }
   | {

@@ -10,6 +10,7 @@ export interface ContentInspection {
   kind: "character" | "worldbook";
   version: string;
   fields: Record<string, unknown>;
+  legacyFields: Record<string, unknown>;
   entries: ContentSourceEntry[];
   diagnostics: { code: string; path: string }[];
 }

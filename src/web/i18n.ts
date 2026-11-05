@@ -213,6 +213,50 @@ const englishMessages: Record<string, string> = {
   历史深度与角色: "History depth and role",
   概率与分组: "Probability and group",
   递归与定时: "Recursion and timing",
+  角色卡: "Character card",
+  世界书: "World book",
+  旧版顶层字段: "Legacy top-level fields",
+  角色过滤: "Character filter",
+  可创建世界: "Ready to create a world",
+  "需要完善；仍可导入并编辑": "Needs completion; you can still import and edit",
+  原始诊断详情: "Raw diagnostics",
+  "来源包含未绑定的宏，已保留资料并需要完善。":
+    "The source has unbound macros; material is retained and needs completion.",
+  "来源禁用的条目只作为资料保存。":
+    "A disabled source entry is retained only as material.",
+  "缺少开场白，需要在创建世界前补全。":
+    "Add an opening before creating a world.",
+  "开场白无效，需要在创建世界前修复。":
+    "Fix the invalid opening before creating a world.",
+  "世界框架需要补全或修复。": "Complete or repair the world frame.",
+  "缺少当前情境，需要在创建世界前补全。":
+    "Add a current situation before creating a world.",
+  "此来源字段不支持自动迁移。":
+    "This source field cannot be migrated automatically.",
+  "旧版顶层字段与 data 不一致，采用 data。":
+    "Legacy top-level fields conflict with data; data takes precedence.",
+  "外部世界书名称仅作来源引用，未自动追踪。":
+    "The external world book name is a reference and was not followed.",
+  "外部世界书未随卡提供，未自动下载。":
+    "The external world book was not included or downloaded.",
+  "头像图片未迁移。": "The avatar image was not migrated.",
+  "JSON 或 UTF-8 无效。": "Invalid JSON or UTF-8.",
+  "PNG 文件无效或损坏。": "The PNG is invalid or damaged.",
+  "PNG 图像数据无效或损坏。": "The PNG image data is invalid or damaged.",
+  "PNG 校验失败。": "PNG checksum failed.",
+  "PNG 尺寸超过安全限制或无效。":
+    "PNG dimensions are invalid or exceed the safe limit.",
+  "图片不含角色卡元数据。": "The image has no character card metadata.",
+  "角色卡元数据编码无效。": "Character card metadata encoding is invalid.",
+  "角色卡版本不受支持。": "The character card version is unsupported.",
+  "文件不是受支持的角色卡或世界书。":
+    "The file is not a supported character card or world book.",
+  "源文件超过大小限制。": "The source file exceeds the size limit.",
+  "JSON 包含重复或歧义字段。": "JSON contains duplicate or ambiguous fields.",
+  "导入选择无效，请重新选择。":
+    "The import selection is invalid; choose again.",
+  "角色卡缺少名称。": "The character card has no name.",
+  "来源规则的字段类型无效。": "A source rule has an invalid field type.",
   未指定或跟随来源全局: "Not specified or follows source globals",
   角色之前: "Before character",
   角色之后: "After character",
