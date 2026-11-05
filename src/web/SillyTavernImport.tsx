@@ -441,23 +441,20 @@ export function SillyTavernImport({
                                 >
                                   {prompt.name}
                                   <small>
-                                    {uiText("发送角色")}: {prompt.role ?? "—"} ·{" "}
-                                    {uiText("源启用状态")}:{" "}
+                                    {prompt.role ?? "—"} ·{" "}
                                     {prompt.enabled === undefined
                                       ? "—"
                                       : prompt.enabled
                                         ? uiText("启用")
                                         : uiText("停用")}
                                   </small>
-                                  <small>
-                                    {prompt.marker
-                                      ? uiText("动态占位")
-                                      : prompt.missing
-                                        ? uiText("缺失定义")
-                                        : prompt.enabled === false
-                                          ? uiText("停用")
-                                          : ""}
-                                  </small>
+                                  {(prompt.marker || prompt.missing) && (
+                                    <small>
+                                      {prompt.marker
+                                        ? uiText("动态占位")
+                                        : uiText("缺失定义")}
+                                    </small>
+                                  )}
                                 </button>
                               </div>
                             ))}
