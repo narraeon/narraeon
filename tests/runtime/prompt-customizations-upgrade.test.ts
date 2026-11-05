@@ -348,3 +348,184 @@ test("the historical builtin-default sentinel validates released v2 bytes indepe
     }),
   ).toBe(true);
 });
+
+test.each(["playPrompts", "authorPrompts"] as const)(
+  "structured saves preserve an omitted %s list",
+  async (omitted) => {
+    const root = await mkdtemp(join(tmpdir(), "partial-structure-"));
+    roots.push(root);
+    const store = new FileNativePlayPresetStore(root);
+    await store.initialize();
+    const initial = (await store.list()).presets[0]!;
+    const structure = structuredClone(initial.structure!);
+    delete structure[omitted];
+    const edited = omitted === "playPrompts" ? "authorPrompts" : "playPrompts";
+    structure[edited]!.push({
+      id: "partial-edit",
+      kind: "user",
+      name: "Partial edit",
+      body: "Keep this edit",
+      enabled: true,
+    });
+    await store.save({
+      presetId: initial.id,
+      name: initial.name,
+      files: initial.files,
+      structure,
+    });
+    await store.select(initial.id);
+    const saved = (await store.list()).presets[0]!;
+    expect(saved.structure![omitted]).toEqual(initial.structure![omitted]);
+    expect(saved.structure![edited]).toEqual(structure[edited]);
+  },
+);
+
+test("a released v2 library upgrades when the current catalogs contain additional required blocks", async () => {
+  const { vi } = await import("vitest");
+  const play = await import("../../src/shared/ordered-play-prompts.ts");
+  const author = await import("../../src/shared/ordered-author-prompts.ts");
+  const { parsePlayPresetFiles, isPlayPresetBinding } =
+    await import("../../src/runtime/play/FileNativePlayPresetStore.ts");
+  const fixture = JSON.parse(
+    gunzipSync(
+      await readFile(
+        new URL("../fixtures/play-presets-v0710.json.gz", import.meta.url),
+      ),
+    ).toString(),
+  ) as { library: string; presetId: string; currentRevision: string };
+  const library = JSON.parse(fixture.library) as {
+    presets: {
+      id: string;
+      revisions: Record<string, Record<string, string>>;
+    }[];
+  };
+  const root = await mkdtemp(join(tmpdir(), "skipped-prompt-upgrade-"));
+  roots.push(root);
+  const path = join(root, "file-native-play-presets.json");
+  await writeFile(path, fixture.library);
+  const originalPlay = play.builtinPlayPrompts,
+    originalAuthor = author.builtinAuthorPrompts;
+  const playSpy = vi
+    .spyOn(play, "builtinPlayPrompts")
+    .mockImplementation((locale) => [
+      ...originalPlay(locale),
+      {
+        id: "play.new-required",
+        name: "New required",
+        body: "NEW PLAY MECHANICS",
+        required: true,
+        category: "mechanics",
+      },
+    ]);
+  const authorSpy = vi
+    .spyOn(author, "builtinAuthorPrompts")
+    .mockImplementation((locale, target) => [
+      ...originalAuthor(locale, target),
+      {
+        id: "author.new-required",
+        name: "New author required",
+        body: "NEW AUTHOR MECHANICS",
+        required: true,
+        category: "mechanics",
+      },
+    ]);
+  try {
+    const historicalFiles = library.presets.find(
+      (p) => p.id === fixture.presetId,
+    )!.revisions[fixture.currentRevision]!;
+    const historical = parsePlayPresetFiles(historicalFiles);
+    expect(historical.kind).toBe("valid");
+    if (historical.kind !== "valid") throw historical.error;
+    expect(
+      isPlayPresetBinding({
+        id: fixture.presetId,
+        name: "Historical",
+        revision: fixture.currentRevision,
+        definition: historical.definition,
+        files: historicalFiles,
+        scriptsEnabled: true,
+      }),
+    ).toBe(true);
+    const store = new FileNativePlayPresetStore(root);
+    await store.initialize();
+    expect(store.recovery).toBeNull();
+    const binding = await store.bindCurrent();
+    expect(binding.id).toBe(fixture.presetId);
+    expect(
+      binding.definition.playPrompts!.find((e) => e.id === "play.new-required"),
+    ).toMatchObject({ enabled: true });
+    expect(
+      binding.definition.authorPrompts!.find(
+        (e) => e.id === "author.new-required",
+      ),
+    ).toMatchObject({ enabled: true });
+    expect(
+      (await store.bindRevision(fixture.presetId, fixture.currentRevision))
+        .files,
+    ).toEqual(historicalFiles);
+    const bytes = await readFile(path, "utf8");
+    await new FileNativePlayPresetStore(root).initialize();
+    expect(await readFile(path, "utf8")).toBe(bytes);
+  } finally {
+    playSpy.mockRestore();
+    authorSpy.mockRestore();
+  }
+});
+
+test("a future catalog identity cannot quarantine a preset with an existing builtin alias", async () => {
+  const { vi } = await import("vitest");
+  const play = await import("../../src/shared/ordered-play-prompts.ts");
+  const { defaultPlayPresetFilesForLocale } =
+    await import("../../src/runtime/play/FileNativePlayPresetStore.ts");
+  const root = await mkdtemp(join(tmpdir(), "catalog-alias-"));
+  roots.push(root);
+  const store = new FileNativePlayPresetStore(root);
+  await store.initialize();
+  const files = defaultPlayPresetFilesForLocale("en");
+  const document = parseDocument(files["preset.yaml"]!);
+  document.set("playPrompts", {
+    overrides: [{ builtin: "play.prose", id: "play.future", enabled: false }],
+  });
+  files["preset.yaml"] = document.toString();
+  const imported = await store.importPortable({ name: "Aliased", files });
+  await store.select(imported.preset.id);
+  const bytes = await readFile(
+    join(root, "file-native-play-presets.json"),
+    "utf8",
+  );
+  const original = play.builtinPlayPrompts;
+  const spy = vi
+    .spyOn(play, "builtinPlayPrompts")
+    .mockImplementation((locale) => [
+      {
+        id: "play.future",
+        name: "Future",
+        body: "New body",
+        required: false,
+        category: "policy",
+      },
+      ...original(locale),
+    ]);
+  try {
+    const cold = new FileNativePlayPresetStore(root);
+    await cold.initialize();
+    expect(cold.recovery).toBeNull();
+    const binding = await cold.bindCurrent();
+    expect(binding.revision).toBe(imported.preset.revision);
+    expect(
+      binding.definition.playPrompts!.find(
+        (e) => e.kind === "builtin" && e.builtin === "play.prose",
+      ),
+    ).toMatchObject({ id: "play.future", enabled: false });
+    expect(
+      binding.definition.playPrompts!.find(
+        (e) => e.kind === "builtin" && e.builtin === "play.future",
+      ),
+    ).toMatchObject({ id: "builtin-play.future-1", enabled: true });
+    expect(
+      await readFile(join(root, "file-native-play-presets.json"), "utf8"),
+    ).toBe(bytes);
+  } finally {
+    spy.mockRestore();
+  }
+});

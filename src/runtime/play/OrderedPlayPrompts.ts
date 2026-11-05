@@ -189,6 +189,29 @@ export function parseOrderedPlayPrompts(
   return expanded;
 }
 
+/** The required identities are part of each released list-format contract.
+ * New catalog requirements apply after conversion, never while validating old bytes. */
+export function releasedPromptRequiredIdentities(
+  worldRequired: boolean,
+): readonly string[] {
+  return worldRequired
+    ? ["play.mechanics"]
+    : ["author.mechanics", "author.target"];
+}
+
+export function parseReleasedOrderedPrompts(
+  value: unknown,
+  catalog = builtinPlayPrompts("en"),
+  worldRequired = true,
+): OrderedPlayPrompt[] {
+  const required = releasedPromptRequiredIdentities(worldRequired);
+  return parseOrderedPlayPrompts(
+    value,
+    catalog.map((item) => ({ ...item, required: required.includes(item.id) })),
+    worldRequired,
+  );
+}
+
 function orderedPresetDocument(files: Record<string, string>) {
   const source = files["preset.yaml"];
   if (source === undefined) return undefined;
@@ -219,7 +242,7 @@ export function upgradeOrderedPromptFormat(
     document.set(
       "playPrompts",
       customizePromptArrangement(
-        parseOrderedPlayPrompts(source.playPrompts),
+        parseReleasedOrderedPrompts(source.playPrompts),
         builtinPlayPrompts("en"),
       ),
     );
@@ -228,7 +251,7 @@ export function upgradeOrderedPromptFormat(
       document.set(
         "authorPrompts",
         customizePromptArrangement(
-          parseOrderedPlayPrompts(
+          parseReleasedOrderedPrompts(
             source.authorPrompts,
             builtinAuthorPrompts("en"),
             false,
@@ -303,12 +326,7 @@ export function parsePromptArrangement(
       )
         return fail();
       if (typeof o.id === "string") {
-        if (
-          entryIds.has(o.id) ||
-          overrideIds.has(o.id) ||
-          catalog.some((c) => c.id === o.id && c.id !== o.builtin)
-        )
-          return fail();
+        if (entryIds.has(o.id) || overrideIds.has(o.id)) return fail();
         overrideIds.add(o.id);
       }
       seen.add(o.builtin);

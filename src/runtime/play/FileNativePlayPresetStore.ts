@@ -23,6 +23,8 @@ import {
 } from "../../shared/ordered-author-prompts.ts";
 import {
   parseOrderedPlayPrompts,
+  parseReleasedOrderedPrompts,
+  releasedPromptRequiredIdentities,
   parsePromptArrangement,
   migrateLegacyPlayPrompts,
   upgradeOrderedPromptFormat,
@@ -377,9 +379,7 @@ function frozenDefinitionMatches(
       );
       // v3's original mandatory identities are part of its validation contract.
       // Later required additions are mandatory only for newly compiled requests.
-      const requiredAtRelease = author
-        ? ["author.mechanics", "author.target"]
-        : ["play.mechanics"];
+      const requiredAtRelease = releasedPromptRequiredIdentities(!author);
       const capturedCatalog = catalog.filter(
         (c) => identities.has(c.id) || requiredAtRelease.includes(c.id),
       );
@@ -417,7 +417,7 @@ function normalizedFrozenDefinition(definition: Record<string, unknown>) {
   try {
     return {
       ...definition,
-      playPrompts: parseOrderedPlayPrompts(definition.playPrompts),
+      playPrompts: parseReleasedOrderedPrompts(definition.playPrompts),
     };
   } catch {
     return definition;
@@ -690,22 +690,11 @@ export class FileNativePlayPresetStore {
         const structure = parsePlayPresetStructuredEditor(input.structure);
         if (previous.kind === "valid") {
           for (const key of ["playPrompts", "authorPrompts"] as const) {
-            for (const entry of previous.definition[key] ?? []) {
-              if (entry.kind !== "builtin" && entry.kind !== "world") continue;
-              const retained = structure[key]?.find(
-                (candidate) => candidate.id === entry.id,
-              );
-              if (
-                retained?.kind !== entry.kind ||
-                (entry.kind === "builtin" &&
-                  retained.kind === "builtin" &&
-                  retained.builtin !== entry.builtin)
-              )
-                throw new FileNativePlayPresetError(
-                  "readonly_prompt_removed",
-                  "System prompts and the world placeholder cannot be deleted or replaced; disable optional prompts or clone them instead",
-                );
-            }
+            if (structure[key] === undefined) continue;
+            assertReadonlyPromptsRetained(
+              previous.definition[key] ?? [],
+              structure[key],
+            );
           }
         }
         files = applyPlayPresetStructuredEditor(input.files, structure);
@@ -742,21 +731,10 @@ export class FileNativePlayPresetStore {
           candidate.format === "narraeon.play-preset/v3"
             ? parsePromptArrangement(candidate.playPrompts)
             : parseOrderedPlayPrompts(candidate.playPrompts);
-        for (const entry of previous.definition.playPrompts.filter(
-          (entry) => entry.kind === "builtin" || entry.kind === "world",
-        )) {
-          const retained = candidates.find((item) => item.id === entry.id);
-          if (
-            retained?.kind !== entry.kind ||
-            (entry.kind === "builtin" &&
-              retained.kind === "builtin" &&
-              retained.builtin !== entry.builtin)
-          )
-            throw new FileNativePlayPresetError(
-              "readonly_prompt_removed",
-              "System prompts and the world placeholder cannot be deleted or replaced; disable optional prompts or clone them instead",
-            );
-        }
+        assertReadonlyPromptsRetained(
+          previous.definition.playPrompts,
+          candidates,
+        );
       }
       if (
         previous.kind === "valid" &&
@@ -771,18 +749,10 @@ export class FileNativePlayPresetStore {
                 false,
               )
             : parseOrderedAuthorPrompts(candidate.authorPrompts);
-        for (const entry of previous.definition.authorPrompts) {
-          if (entry.kind !== "builtin") continue;
-          const retained = entries.find((item) => item.id === entry.id);
-          if (
-            retained?.kind !== "builtin" ||
-            retained.builtin !== entry.builtin
-          )
-            throw new FileNativePlayPresetError(
-              "readonly_prompt_removed",
-              "Authoring system prompts cannot be deleted or replaced; disable or clone optional prompts",
-            );
-        }
+        assertReadonlyPromptsRetained(
+          previous.definition.authorPrompts,
+          entries,
+        );
       }
       files = upgradeOrderedPromptFormat(files);
       const revision = revisionForFiles(files, this.#limits);
@@ -1738,7 +1708,7 @@ export function parsePlayPresetFiles(
               playPrompts:
                 preset.format === "narraeon.play-preset/v3"
                   ? parsePromptArrangement(preset.playPrompts)
-                  : parseOrderedPlayPrompts(preset.playPrompts),
+                  : parseReleasedOrderedPrompts(preset.playPrompts),
             }
           : {}),
         ...(preset.authorPrompts === undefined
@@ -1751,7 +1721,11 @@ export function parsePlayPresetFiles(
                       builtinAuthorPrompts("en"),
                       false,
                     )
-                  : parseOrderedAuthorPrompts(preset.authorPrompts),
+                  : parseReleasedOrderedPrompts(
+                      preset.authorPrompts,
+                      builtinAuthorPrompts("en"),
+                      false,
+                    ),
             }),
         name: name.trim(),
         callChainPath,
@@ -3445,6 +3419,26 @@ function findStored(document: StoredDocument, id: string): StoredPreset {
       "Requested play preset was not found",
     );
   return preset;
+}
+
+function assertReadonlyPromptsRetained(
+  previous: readonly OrderedPlayPrompt[],
+  candidate: readonly OrderedPlayPrompt[],
+): void {
+  for (const entry of previous) {
+    if (entry.kind !== "builtin" && entry.kind !== "world") continue;
+    const retained = candidate.find((item) => item.id === entry.id);
+    if (
+      retained?.kind !== entry.kind ||
+      (entry.kind === "builtin" &&
+        retained.kind === "builtin" &&
+        retained.builtin !== entry.builtin)
+    )
+      throw new FileNativePlayPresetError(
+        "readonly_prompt_removed",
+        "System prompts and the world placeholder cannot be deleted or replaced; disable optional prompts or clone them instead",
+      );
+  }
 }
 
 function normalizeName(raw: string): string {

@@ -53,6 +53,18 @@ export function promptArrangementKey(entry: OrderedPlayPrompt): string {
     : `entry:${entry.id}`;
 }
 
+function reserveBuiltinPromptId(
+  preferred: string,
+  builtin: string,
+  used: Set<string>,
+): string {
+  let id = preferred;
+  let suffix = 0;
+  while (used.has(id)) id = `builtin-${builtin}-${++suffix}`;
+  used.add(id);
+  return id;
+}
+
 /** Expand retired identities in place; an explicit successor always wins. */
 export function expandRetiredPrompts(
   entries: readonly OrderedPlayPrompt[],
@@ -76,10 +88,7 @@ export function expandRetiredPrompts(
     return replacements
       .filter((r) => !explicit.has(r.builtin))
       .map(({ builtin, selected }) => {
-        let id = builtin;
-        let suffix = 0;
-        while (usedIds.has(id)) id = `builtin-${builtin}-${++suffix}`;
-        usedIds.add(id);
+        const id = reserveBuiltinPromptId(builtin, builtin, usedIds);
         return {
           ...entry,
           id,
@@ -153,21 +162,32 @@ export function resolvePromptArrangement(
     );
   values.push(...custom.filter((e) => e.kind !== "world"));
   // A newly shipped identity must not collide with an existing user's identity.
-  const usedIds = new Set(custom.map((e) => e.id));
+  const aliases = new Map(
+    (arrangement.overrides ?? []).flatMap((override) =>
+      override.id === undefined ||
+      !catalog.some((item) => item.id === override.builtin)
+        ? []
+        : [[override.builtin, override.id] as const],
+    ),
+  );
+  const usedIds = new Set([...custom.map((e) => e.id), ...aliases.values()]);
   for (const entry of values) {
     if (entry.kind !== "builtin") continue;
-    let id = entry.id;
-    let suffix = 0;
-    while (usedIds.has(id)) id = `builtin-${entry.builtin}-${++suffix}`;
-    entry.id = id;
-    usedIds.add(id);
+    entry.id =
+      aliases.get(entry.builtin) ??
+      reserveBuiltinPromptId(entry.id, entry.builtin, usedIds);
   }
   const byKey = new Map(values.map((e) => [promptArrangementKey(e), e]));
+  const explicitOrder = new Set(arrangement.order ?? []);
   const order = (arrangement.order ?? []).flatMap((key) => {
     const old = key.startsWith("builtin:")
       ? retiredBuiltinReplacements[key.slice(8)]
       : undefined;
-    return old ? old.map((r) => `builtin:${r.builtin}`) : [key];
+    return old
+      ? old
+          .filter((r) => !explicitOrder.has(`builtin:${r.builtin}`))
+          .map((r) => `builtin:${r.builtin}`)
+      : [key];
   });
   const result: OrderedPlayPrompt[] = [];
   for (const key of order) {
@@ -242,8 +262,12 @@ export function customizePromptArrangement(
     catalog,
     worldRequired,
   );
+  const existing = new Set(keys);
   if (
-    JSON.stringify(keys) !== JSON.stringify(effective.map(promptArrangementKey))
+    JSON.stringify(keys) !==
+    JSON.stringify(
+      effective.map(promptArrangementKey).filter((key) => existing.has(key)),
+    )
   )
     arrangement.order = keys;
   return arrangement;
