@@ -529,3 +529,77 @@ test("a future catalog identity cannot quarantine a preset with an existing buil
     spy.mockRestore();
   }
 });
+
+test("a frozen released v2 binding normalizes retired author identities as well as play identities", async () => {
+  const { vi } = await import("vitest");
+  const authors = await import("../../src/shared/ordered-author-prompts.ts");
+  const { retiredBuiltinReplacements } =
+    await import("../../src/shared/prompt-arrangement.ts");
+  const { parsePlayPresetFiles, isPlayPresetBinding } =
+    await import("../../src/runtime/play/FileNativePlayPresetStore.ts");
+  const fixture = JSON.parse(
+    gunzipSync(
+      await readFile(
+        new URL("../fixtures/play-presets-v0710.json.gz", import.meta.url),
+      ),
+    ).toString(),
+  ) as { library: string; presetId: string; currentRevision: string };
+  const library = JSON.parse(fixture.library) as {
+    presets: {
+      id: string;
+      revisions: Record<string, Record<string, string>>;
+    }[];
+  };
+  const files = library.presets.find((p) => p.id === fixture.presetId)!
+    .revisions[fixture.currentRevision]!;
+  const parsed = parsePlayPresetFiles(files);
+  if (parsed.kind !== "valid") throw parsed.error;
+  const frozen = {
+    id: fixture.presetId,
+    name: "Released frozen preset",
+    revision: fixture.currentRevision,
+    definition: parsed.definition,
+    files,
+    scriptsEnabled: true,
+  };
+  expect(isPlayPresetBinding(frozen)).toBe(true);
+  const before = JSON.stringify(frozen);
+  const original = authors.builtinAuthorPrompts;
+  retiredBuiltinReplacements["author.guidance"] = [
+    { builtin: "author.guidance-v2" },
+  ];
+  const spy = vi
+    .spyOn(authors, "builtinAuthorPrompts")
+    .mockImplementation((locale, target) =>
+      original(locale, target).map((item) =>
+        item.id === "author.guidance"
+          ? { ...item, id: "author.guidance-v2" }
+          : item,
+      ),
+    );
+  try {
+    expect(isPlayPresetBinding(frozen)).toBe(true);
+    expect(JSON.stringify(frozen)).toBe(before);
+    const root = await mkdtemp(join(tmpdir(), "author-retirement-"));
+    roots.push(root);
+    await writeFile(
+      join(root, "file-native-play-presets.json"),
+      fixture.library,
+    );
+    const store = new FileNativePlayPresetStore(root);
+    await store.initialize();
+    expect(store.recovery).toBeNull();
+    expect(
+      (await store.bindCurrent()).definition.authorPrompts!.find(
+        (e) => e.kind === "builtin" && e.builtin === "author.guidance-v2",
+      ),
+    ).toMatchObject({ enabled: false, messageRole: "user" });
+    expect(
+      (await store.bindRevision(fixture.presetId, fixture.currentRevision))
+        .files,
+    ).toEqual(files);
+  } finally {
+    spy.mockRestore();
+    delete retiredBuiltinReplacements["author.guidance"];
+  }
+});

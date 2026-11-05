@@ -409,15 +409,25 @@ function frozenDefinitionMatches(
 
 /**
  * A frozen definition captured before a builtin was retired still lists the
- * old entry; reading its ordered list through the parser yields the same
- * successors the files now parse to, so the binding stays consistent.
+ * old entry; reading both ordered lists through their respective parsers yields
+ * the same successors as the files, so the binding stays consistent.
  */
 function normalizedFrozenDefinition(definition: Record<string, unknown>) {
-  if (!Array.isArray(definition.playPrompts)) return definition;
   try {
     return {
       ...definition,
-      playPrompts: parseReleasedOrderedPrompts(definition.playPrompts),
+      ...(Array.isArray(definition.playPrompts)
+        ? { playPrompts: parseReleasedOrderedPrompts(definition.playPrompts) }
+        : {}),
+      ...(Array.isArray(definition.authorPrompts)
+        ? {
+            authorPrompts: parseReleasedOrderedPrompts(
+              definition.authorPrompts,
+              builtinAuthorPrompts("en"),
+              false,
+            ),
+          }
+        : {}),
     };
   } catch {
     return definition;
