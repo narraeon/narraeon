@@ -1432,3 +1432,33 @@
     max-height: 8rem;
   }
 }
+
+.sillytavern-content-import {
+  position: fixed;
+  inset: 3vh max(2vw, calc((100vw - 70rem) / 2));
+  z-index: 100;
+  overflow: auto;
+  background: var(--surface, white);
+  color: var(--text, black);
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding: 1rem;
+  border: 1px solid currentColor;
+  border-radius: 0.5rem;
+}
+.sillytavern-content-import pre {
+  max-width: 100%;
+  max-height: 24rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.sillytavern-content-import label {
+  display: block;
+  margin-block: 0.5rem;
+}
+.sillytavern-content-import article {
+  border-block-start: 1px solid currentColor;
+  padding-block: 0.75rem;
+}

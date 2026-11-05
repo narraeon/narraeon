@@ -206,6 +206,12 @@ export class ContentWorkspace {
     });
   }
 
+  importSillyTavernContent(title: string, files: readonly ContentTreeFile[]) {
+    return this.#mutate(() =>
+      this.#currentTreeLibrary.importPackage({ title, files }),
+    );
+  }
+
   copyCurrentTreeContentPackage(
     localId: string,
     options: ContentWorkspaceOperationOptions = {},

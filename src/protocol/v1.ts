@@ -163,6 +163,21 @@ export type V1Request =
       name: string;
       files: ContentTreeFile[];
     }
+  | { type: "content.sillytavern.inspect"; source: string }
+  | {
+      type: "content.sillytavern.preview" | "content.sillytavern.import";
+      source: string;
+      name: string;
+      selection: {
+        character?: boolean;
+        scenario?: boolean;
+        opening?: string | undefined;
+        example?: boolean;
+        systemPrompt?: boolean;
+        attachments?: string[];
+        entries: Record<string, "world" | "attachment">;
+      };
+    }
   | { type: "play.sillytavern.inspect"; source: string; groupId?: string }
   | {
       type: "play.sillytavern.preview" | "play.sillytavern.import";
@@ -1047,6 +1062,17 @@ const requiredFields: Record<
   "play.select": { presetId: "string" },
   "play.export": { presetId: "string" },
   "play.import": { name: "string", files: "array" },
+  "content.sillytavern.inspect": { source: "string" },
+  "content.sillytavern.preview": {
+    source: "string",
+    name: "string",
+    selection: "object",
+  },
+  "content.sillytavern.import": {
+    source: "string",
+    name: "string",
+    selection: "object",
+  },
   "play.sillytavern.inspect": { source: "string" },
   "play.sillytavern.preview": {
     source: "string",
@@ -1418,6 +1444,56 @@ function validateRequestFields(request: Record<string, unknown>): void {
   }
   if (
     typeof request.type === "string" &&
+    request.type.startsWith("content.sillytavern.")
+  ) {
+    const inspect = request.type === "content.sillytavern.inspect";
+    const allowed = inspect
+      ? ["type", "source"]
+      : ["type", "source", "name", "selection"];
+    if (Object.keys(request).some((key) => !allowed.includes(key)))
+      throw new V1ProtocolError(
+        "invalid_request",
+        "Invalid SillyTavern content fields",
+      );
+    if (!inspect) {
+      const selection = request.selection;
+      if (
+        !isRecord(selection) ||
+        Object.keys(selection).some(
+          (key) =>
+            ![
+              "character",
+              "scenario",
+              "opening",
+              "example",
+              "systemPrompt",
+              "attachments",
+              "entries",
+            ].includes(key),
+        ) ||
+        (!Array.isArray(selection.attachments) &&
+          selection.attachments !== undefined) ||
+        (Array.isArray(selection.attachments) &&
+          !selection.attachments.every((value) => typeof value === "string")) ||
+        !isRecord(selection.entries) ||
+        Object.values(selection.entries).some(
+          (value) => value !== "world" && value !== "attachment",
+        ) ||
+        ["character", "scenario", "example", "systemPrompt"].some(
+          (key) =>
+            selection[key] !== undefined && typeof selection[key] !== "boolean",
+        ) ||
+        (selection.opening !== undefined &&
+          typeof selection.opening !== "string")
+      )
+        throw new V1ProtocolError(
+          "invalid_request",
+          "Invalid SillyTavern content selection",
+        );
+    }
+  }
+  if (
+    typeof request.type === "string" &&
     request.type.startsWith("play.sillytavern.")
   ) {
     const inspect = request.type === "play.sillytavern.inspect";
@@ -1645,6 +1721,9 @@ const requestTypes = new Set([
   "play.select",
   "play.export",
   "play.import",
+  "content.sillytavern.inspect",
+  "content.sillytavern.preview",
+  "content.sillytavern.import",
   "play.sillytavern.inspect",
   "play.sillytavern.preview",
   "play.sillytavern.import",

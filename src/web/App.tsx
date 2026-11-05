@@ -1,3 +1,4 @@
+import { SillyTavernContentImport } from "./SillyTavernContentImport.tsx";
 import type { ProtagonistTemplate } from "../protocol/protagonistTemplates.ts";
 import {
   WorldBackupExportButton,
@@ -845,6 +846,15 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
           )}
         {screen === "home" && (
           <HomeScreen
+            sillyTavernContentImport={
+              <SillyTavernContentImport
+                client={client}
+                onImported={async (id) => {
+                  await refresh();
+                  await openPackage(id);
+                }}
+              />
+            }
             contentPackages={workspace.contentPackages}
             worlds={workspace.worlds}
             selectedPackageId={selected}

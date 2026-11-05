@@ -25,6 +25,7 @@ export function HomeScreen({
   contentPackages,
   worlds,
   worldBackupImport,
+  sillyTavernContentImport,
   renderWorldBackupExport,
   selectedPackageId,
   modelConfigured,
@@ -48,6 +49,7 @@ export function HomeScreen({
   onDeleteWorld,
 }: {
   worldBackupImport?: ReactNode;
+  sillyTavernContentImport?: ReactNode;
   renderWorldBackupExport?: (world: HomeWorld) => ReactNode;
   contentPackages: HomeContentPackage[];
   worlds: HomeWorld[];
@@ -437,6 +439,7 @@ export function HomeScreen({
               )}
             </div>
 
+            {sillyTavernContentImport}
             <details className="home-import-disclosure">
               <summary>{uiText("导入内容包 ZIP")}</summary>
               <form

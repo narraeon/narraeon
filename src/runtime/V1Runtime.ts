@@ -1,4 +1,8 @@
 import {
+  inspectSillyTavernContent,
+  convertSillyTavernContent,
+} from "./content/SillyTavernContent.ts";
+import {
   inspectSillyTavernPreset,
   convertSillyTavernPreset,
 } from "../shared/sillytavern-preset.ts";
@@ -535,6 +539,47 @@ export class V1Runtime {
               cause: error,
             });
           throw error;
+        }
+      }
+      case "content.sillytavern.inspect":
+      case "content.sillytavern.preview":
+      case "content.sillytavern.import": {
+        try {
+          if (
+            request.source.length > 12 * 1024 * 1024 ||
+            !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(
+              request.source,
+            )
+          )
+            throw new Error("Invalid source encoding");
+          const source = Buffer.from(request.source, "base64");
+          if (source.toString("base64") !== request.source)
+            throw new Error("Invalid source encoding");
+          if (request.type === "content.sillytavern.inspect")
+            return inspectSillyTavernContent(source);
+          const converted = convertSillyTavernContent(
+            source,
+            request.selection,
+          );
+          this.#content.validateCurrentTreeContentPackage(converted.files);
+          if (request.type === "content.sillytavern.preview")
+            return {
+              ...converted,
+              inspection: this.#content.inspectCurrentTreeContentPackage(
+                converted.files,
+              ),
+            };
+          return await this.#content.importSillyTavernContent(
+            request.name,
+            converted.files,
+          );
+        } catch (error) {
+          throw new V1ProtocolError(
+            "invalid_request",
+            error instanceof Error
+              ? error.message
+              : "Invalid SillyTavern content",
+          );
         }
       }
       case "content.export": {
