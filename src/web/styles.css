@@ -10238,3 +10238,63 @@ summary:focus-visible {
   margin: 0;
   padding-left: 1.25rem;
 }
+
+.sillytavern-import {
+  box-sizing: border-box;
+  width: min(64rem, calc(100vw - 2rem));
+  max-width: none;
+  max-height: calc(100dvh - 2rem);
+  padding: clamp(1rem, 3vw, 2rem);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  background: var(--surface-inset);
+  overflow-y: auto;
+}
+
+.sillytavern-import::backdrop {
+  background: rgb(0 0 0 / 65%);
+}
+
+.sillytavern-import > * + * {
+  margin-top: 1rem;
+}
+
+.sillytavern-import section,
+.sillytavern-prompt {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.sillytavern-prompt {
+  margin-block: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+}
+
+.sillytavern-prompt pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.sillytavern-import-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.sillytavern-import-header h2 {
+  margin: 0;
+}
+
+.sillytavern-prompt label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.sillytavern-prompt input[type="checkbox"] {
+  width: auto;
+  flex: 0 0 auto;
+}

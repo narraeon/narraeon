@@ -1,3 +1,7 @@
+import {
+  inspectSillyTavernPreset,
+  convertSillyTavernPreset,
+} from "../shared/sillytavern-preset.ts";
 import { WorldArchives } from "./archive/WorldArchives.ts";
 import { WorldArchiveError } from "./archive/WorldArchiveZip.ts";
 import { FileNativeWorldCreationError } from "./world/FileNativeWorldStore.ts";
@@ -47,6 +51,8 @@ import {
   FileNativePlayPresetError,
   FileNativePlayPresetStore,
   presetHostBinding,
+  parsePlayPresetFiles,
+  toPlayPresetStructuredEditor,
   type PlayPresetBinding,
 } from "./play/FileNativePlayPresetStore.ts";
 import { buildPlayPresetWorkbenchSnapshot } from "./play/PlayPresetWorkbench.ts";
@@ -607,6 +613,58 @@ export class V1Runtime {
         };
       case "play.import":
         return this.#playPresets.importPortable(request);
+      case "play.sillytavern.inspect":
+      case "play.sillytavern.preview":
+      case "play.sillytavern.import": {
+        // Do not trust the browser to enforce the import limit or supply
+        // already-converted files. Preview and import both parse from source.
+        if (Buffer.byteLength(request.source, "utf8") > 2 * 1024 * 1024)
+          throw new V1ProtocolError(
+            "invalid_request",
+            "SillyTavern source exceeds the size limit",
+          );
+        if (
+          request.type !== "play.sillytavern.inspect" &&
+          (request.selected.length > 4096 ||
+            request.selected.reduce(
+              (bytes, id) => bytes + Buffer.byteLength(id, "utf8"),
+              0,
+            ) >
+              2 * 1024 * 1024)
+        )
+          throw new V1ProtocolError(
+            "invalid_request",
+            "SillyTavern selection exceeds the size limit",
+          );
+        try {
+          if (request.type === "play.sillytavern.inspect")
+            return inspectSillyTavernPreset(request.source, request.groupId);
+          const converted = convertSillyTavernPreset(request.source, {
+            groupId: request.groupId,
+            selected: request.selected,
+            name: request.name,
+            locale: this.#locale,
+          });
+          if (request.type === "play.sillytavern.preview") {
+            const parsed = parsePlayPresetFiles(converted.files);
+            if (parsed.kind === "invalid") throw parsed.error;
+            toPlayPresetStructuredEditor(parsed.definition);
+            return converted;
+          }
+          return await this.#playPresets.importPortable({
+            name: request.name,
+            files: converted.files,
+          });
+        } catch (error) {
+          if (error instanceof V1ProtocolError) throw error;
+          throw new V1ProtocolError(
+            "invalid_request",
+            error instanceof Error
+              ? error.message
+              : "Invalid SillyTavern preset",
+          );
+        }
+      }
       case "play.workbench.read": {
         const binding =
           request.presetId === undefined

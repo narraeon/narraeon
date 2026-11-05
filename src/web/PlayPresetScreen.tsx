@@ -7,6 +7,7 @@ import { resourceTitle } from "./preset-resource-names.ts";
 import "./preset-workbench.css";
 import { PresetWorkbenchEditor } from "./PresetWorkbenchEditor.tsx";
 import { PresetDraftPreview } from "./PresetDraftPreview.tsx";
+import { SillyTavernImport } from "./SillyTavernImport.tsx";
 import { DismissibleNotice } from "./DismissibleNotice.tsx";
 import { type FollowupItem } from "../shared/ordered-followups.ts";
 import { type PlayPresetPlayerViewPanel } from "./PlayerViewPanelsEditor.tsx";
@@ -745,6 +746,19 @@ export function PlayPresetScreen({
                       {template.label}
                     </button>
                   ))}
+                  <SillyTavernImport
+                    client={client}
+                    disabled={pending || dirty}
+                    onImported={async (id) => {
+                      await refresh(id);
+                      setFeedback({
+                        kind: "status",
+                        text: uiText(
+                          "SillyTavern 预设已导入为独立副本，JavaScript 默认关闭。",
+                        ),
+                      });
+                    }}
+                  />
                   <label className="play-preset-import-control">
                     {uiText("导入预设")}
                     <input

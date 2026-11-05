@@ -163,6 +163,14 @@ export type V1Request =
       name: string;
       files: ContentTreeFile[];
     }
+  | { type: "play.sillytavern.inspect"; source: string; groupId?: string }
+  | {
+      type: "play.sillytavern.preview" | "play.sillytavern.import";
+      source: string;
+      groupId?: string;
+      selected: string[];
+      name: string;
+    }
   | {
       type: "play.workbench.read";
       presetId?: string;
@@ -1039,6 +1047,17 @@ const requiredFields: Record<
   "play.select": { presetId: "string" },
   "play.export": { presetId: "string" },
   "play.import": { name: "string", files: "array" },
+  "play.sillytavern.inspect": { source: "string" },
+  "play.sillytavern.preview": {
+    source: "string",
+    selected: "array",
+    name: "string",
+  },
+  "play.sillytavern.import": {
+    source: "string",
+    selected: "array",
+    name: "string",
+  },
   "play.workbench.read": {},
   "prompt.preview": {
     packageId: "string",
@@ -1397,6 +1416,30 @@ function validateRequestFields(request: Record<string, unknown>): void {
         "play.workbench.read.revision must be provided with presetId",
       );
   }
+  if (
+    typeof request.type === "string" &&
+    request.type.startsWith("play.sillytavern.")
+  ) {
+    const inspect = request.type === "play.sillytavern.inspect";
+    const allowed = inspect
+      ? ["type", "source", "groupId"]
+      : ["type", "source", "groupId", "selected", "name"];
+    if (
+      Object.keys(request).some((key) => !allowed.includes(key)) ||
+      (request.groupId !== undefined &&
+        (typeof request.groupId !== "string" ||
+          request.groupId.length === 0)) ||
+      (!inspect &&
+        (!Array.isArray(request.selected) ||
+          !request.selected.every(
+            (value) => typeof value === "string" && value.length > 0,
+          )))
+    )
+      throw new V1ProtocolError(
+        "invalid_request",
+        `${request.type} has invalid fields`,
+      );
+  }
   if (request.type === "play.import") {
     if (
       !(request.files as unknown[]).every(
@@ -1602,6 +1645,9 @@ const requestTypes = new Set([
   "play.select",
   "play.export",
   "play.import",
+  "play.sillytavern.inspect",
+  "play.sillytavern.preview",
+  "play.sillytavern.import",
   "play.workbench.read",
   "prompt.preview",
   "world.create",

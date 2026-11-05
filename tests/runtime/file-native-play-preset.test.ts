@@ -1,6 +1,6 @@
 import { validPlayFollowup } from "../../src/runtime/prompt/PromptCompilationCodec.ts";
 import { parsePlayPresetRegexAsset } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -1264,6 +1264,219 @@ followups:${Array.from({ length: count }, (_, index) => followup(index)).join(""
     expect(JSON.stringify(exported)).toBe(
       JSON.stringify(await store.exportPortable(original.id)),
     );
+  });
+
+  test("SillyTavern Runtime previews without writes and imports independent copies", async () => {
+    const root = await mkdtemp(join(tmpdir(), "narraeon-st-runtime-"));
+    roots.push(root);
+    const runtime = new V1Runtime({
+      dataRoot: join(root, "data"),
+      configRoot: join(root, "config"),
+    });
+    await runtime.initialize();
+    const source = JSON.stringify({
+      version: 1,
+      type: "full",
+      data: {
+        prompts: [
+          {
+            identifier: "custom",
+            name: "Custom",
+            role: "user",
+            content: "Hello",
+          },
+        ],
+        prompt_order: [{ identifier: "custom", enabled: true }],
+      },
+    });
+    const before = (await runtime.handle({ type: "play.read" })).result;
+    const request = { source, name: "Imported", selected: ["custom"] };
+    await runtime.handle({ type: "play.sillytavern.inspect", source });
+    await runtime.handle({ type: "play.sillytavern.preview", ...request });
+    expect((await runtime.handle({ type: "play.read" })).result).toEqual(
+      before,
+    );
+    const first = (
+      await runtime.handle({ type: "play.sillytavern.import", ...request })
+    ).result as {
+      currentPresetId: string;
+      preset: { id: string; scriptsEnabled: boolean };
+    };
+    const second = (
+      await runtime.handle({ type: "play.sillytavern.import", ...request })
+    ).result as typeof first;
+    expect(first.preset.id).not.toBe(second.preset.id);
+    expect(first.currentPresetId).toBe(second.currentPresetId);
+    expect(first.preset.scriptsEnabled).toBe(false);
+    const invalidTarget = JSON.stringify({
+      version: 1,
+      type: "full",
+      data: {
+        prompts: [
+          {
+            identifier: "custom",
+            name: "x".repeat(161),
+            role: "user",
+            content: "Hello",
+          },
+        ],
+        prompt_order: [{ identifier: "custom", enabled: true }],
+      },
+    });
+    await expect(
+      runtime.handle({
+        type: "play.sillytavern.preview",
+        ...request,
+        source: invalidTarget,
+      }),
+    ).rejects.toThrow();
+    const afterImports = (await runtime.handle({ type: "play.read" })).result;
+    await expect(
+      runtime.handle({
+        type: "play.sillytavern.import",
+        ...request,
+        source: "x".repeat(2 * 1024 * 1024 + 1),
+      }),
+    ).rejects.toThrow(/size|large|limit/iu);
+    await expect(
+      runtime.handle({
+        type: "play.sillytavern.import",
+        ...request,
+        selected: ["unknown"],
+      }),
+    ).rejects.toThrow();
+    await expect(
+      runtime.handle({
+        type: "play.sillytavern.preview",
+        ...request,
+        selected: Array.from({ length: 4097 }, (_, i) => String(i)),
+      }),
+    ).rejects.toThrow(/size|large|limit/iu);
+    expect((await runtime.handle({ type: "play.read" })).result).toEqual(
+      afterImports,
+    );
+  });
+
+  test("SillyTavern credentials never enter previews, exported presets or error logs", async () => {
+    const root = await mkdtemp(join(tmpdir(), "narraeon-st-secrets-"));
+    roots.push(root);
+    const runtime = new V1Runtime({
+      dataRoot: join(root, "data"),
+      configRoot: join(root, "config"),
+      logRoot: join(root, "logs"),
+    });
+    await runtime.initialize();
+    const secret = "silly-tavern-secret-for-test";
+    const source = JSON.stringify({
+      reverse_proxy: "https://proxy.invalid",
+      proxy_password: secret,
+      prompts: [
+        {
+          identifier: "custom",
+          name: "Custom",
+          role: "system",
+          content: "Prompt text",
+        },
+      ],
+      prompt_order: [
+        {
+          character_id: 100001,
+          order: [{ identifier: "custom", enabled: true }],
+        },
+      ],
+    });
+    const request = { source, name: "Imported", selected: ["custom"] };
+    const inspected = await runtime.handle({
+      type: "play.sillytavern.inspect",
+      source,
+    });
+    const preview = await runtime.handle({
+      type: "play.sillytavern.preview",
+      ...request,
+    });
+    const imported = (
+      await runtime.handle({ type: "play.sillytavern.import", ...request })
+    ).result as { preset: { id: string } };
+    const exported = await runtime.handle({
+      type: "play.export",
+      presetId: imported.preset.id,
+    });
+    expect(JSON.stringify([inspected, preview, exported])).not.toContain(
+      secret,
+    );
+    const portable = exported.result as {
+      files: { path: string; contents: string }[];
+    };
+    const migrationReport = portable.files.find(
+      (file) => file.path === "assets/sillytavern-import-report.json",
+    );
+    expect(migrationReport?.contents).toContain("proxy_password");
+    const reimported = (
+      await runtime.handle({
+        type: "play.import",
+        name: "Round trip",
+        files: portable.files,
+      })
+    ).result as { preset: { id: string } };
+    const roundTrip = (
+      await runtime.handle({
+        type: "play.export",
+        presetId: reimported.preset.id,
+      })
+    ).result as typeof portable;
+    expect(
+      roundTrip.files.find(
+        (file) => file.path === "assets/sillytavern-import-report.json",
+      ),
+    ).toEqual(migrationReport);
+    expect(JSON.stringify(roundTrip)).not.toContain(secret);
+    await expect(
+      runtime.handle({
+        type: "play.sillytavern.inspect",
+        source: `{ "password": "${secret}"`,
+      }),
+    ).rejects.toThrow(/invalid JSON/u);
+    const logDir = join(root, "logs", "runtime-errors");
+    const logFiles = await readdir(logDir);
+    const logs = await Promise.all(
+      logFiles.map((file) => readFile(join(logDir, file), "utf8")),
+    );
+    expect(logs.join("")).not.toContain(secret);
+  });
+
+  test("SillyTavern import protocol validates selections and rejects extra fields", () => {
+    for (const request of [
+      { type: "play.sillytavern.inspect", source: "{}", groupId: 1 },
+      {
+        type: "play.sillytavern.preview",
+        source: "{}",
+        selected: [1],
+        name: "x",
+      },
+      {
+        type: "play.sillytavern.import",
+        source: "{}",
+        selected: [],
+        name: "x",
+        files: [],
+      },
+    ]) {
+      expect(() =>
+        parseV1Envelope({ protocol: "narraeon.runtime/v1", request }),
+      ).toThrow(/play\.sillytavern/u);
+    }
+    expect(
+      parseV1Envelope({
+        protocol: "narraeon.runtime/v1",
+        request: {
+          type: "play.sillytavern.preview",
+          source: "{}",
+          selected: [],
+          name: "x",
+          groupId: "100001",
+        },
+      }).request.type,
+    ).toBe("play.sillytavern.preview");
   });
 
   test("play.import 协议在边界拒绝非 UTF-8 文本编码", () => {
