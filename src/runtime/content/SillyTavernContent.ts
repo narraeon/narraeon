@@ -18,7 +18,7 @@ function record(value: unknown, path: string): Record<string, unknown> {
     fail("expected_object", path);
   return value as Record<string, unknown>;
 }
-function pngJson(bytes: Buffer): Buffer {
+function pngJson(bytes: Buffer): { bytes: Buffer; key: string } {
   if (
     !bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
   )
@@ -147,7 +147,7 @@ function pngJson(bytes: Buffer): Buffer {
     const result = inflateSync(compressed, {
       maxOutputLength: expected + 1,
       info: true,
-    });
+    }) as unknown as { buffer: Buffer; engine: { bytesWritten: number } };
     if (result.engine.bytesWritten !== compressed.length)
       fail("invalid_png_image", "$");
     pixels = result.buffer;
@@ -171,7 +171,7 @@ function pngJson(bytes: Buffer): Buffer {
     fail("invalid_base64", "$ ");
   const decoded = Buffer.from(text, "base64");
   if (decoded.toString("base64") !== text) fail("invalid_base64", "$ ");
-  return decoded;
+  return { bytes: decoded, key: chunks.has("ccv3") ? "ccv3" : "chara" };
 }
 function crc32(bytes: Buffer): number {
   let crc = 0xffffffff;
@@ -332,6 +332,10 @@ function safeRules(
         continue;
       }
       if (key === "characterFilter" && prefix === path) {
+        if (value === null) {
+          target.characterFilter = null;
+          continue;
+        }
         const filter = record(value, `${prefix}.characterFilter`),
           safe: Record<string, unknown> = {};
         for (const [field, item] of Object.entries(filter)) {
@@ -391,8 +395,22 @@ function safeRules(
       )
         fail("invalid_rule_type", `${prefix}.${key}`);
       if (
-        ["selectiveLogic"].includes(key) &&
-        (typeof value !== "number" || !Number.isFinite(value))
+        [
+          "group",
+          "automationId",
+          "automation_id",
+          "outletName",
+          "outlet_name",
+        ].includes(key) &&
+        typeof value !== "string"
+      )
+        fail("invalid_rule_type", `${prefix}.${key}`);
+      if (
+        key === "selectiveLogic" &&
+        (typeof value !== "number" ||
+          !Number.isInteger(value) ||
+          value < 0 ||
+          value > 3)
       )
         fail("invalid_rule_type", `${prefix}.${key}`);
       if (
@@ -424,7 +442,8 @@ function safeRules(
 }
 export function inspectSillyTavernContent(source: Buffer): ContentInspection {
   if (source.length > limit) fail("source_too_large", "$");
-  const bytes = source[0] === 137 ? pngJson(source) : source;
+  const png = source[0] === 137 ? pngJson(source) : undefined;
+  const bytes = png?.bytes ?? source;
   let root: Record<string, unknown>;
   try {
     const text = decoder.decode(bytes);
@@ -440,6 +459,10 @@ export function inspectSillyTavernContent(source: Buffer): ContentInspection {
       throw error;
     return fail("invalid_json_or_utf8", "$");
   }
+  if (png?.key === "ccv3" && root.spec !== "chara_card_v3")
+    fail("invalid_png_metadata", "$.spec");
+  if (png && root.spec === undefined && root.entries !== undefined)
+    fail("invalid_png_metadata", "$");
   let kind: ContentInspection["kind"] = "character",
     version = "v1",
     data = root;
@@ -580,7 +603,9 @@ export function inspectSillyTavernContent(source: Buffer): ContentInspection {
     for (const [key, value] of items) {
       const path = `${embedded ? "$.data.character_book" : "$"}.entries.${key}`,
         entry = record(value, path);
-      const rawIdentity = embedded ? (entry.id ?? key) : (entry.uid ?? key);
+      const providedIdentity = embedded ? entry.id : entry.uid;
+      const rawIdentity =
+        providedIdentity === undefined ? key : providedIdentity;
       if (
         (typeof rawIdentity !== "string" && typeof rawIdentity !== "number") ||
         (typeof rawIdentity === "number" && !Number.isFinite(rawIdentity))

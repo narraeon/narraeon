@@ -591,3 +591,32 @@ it("rejects invalid PNG image data even with correct chunk checksums", () => {
   ]);
   expect(() => inspectSillyTavernContent(image)).toThrow("invalid_png_image");
 });
+
+it("rejects invalid PNG card containers and malformed rule scalars", () => {
+  const world = bytes({ entries: { a: { content: "lore" } } }).toString(
+    "base64",
+  );
+  expect(() => inspectSillyTavernContent(png([["chara", world]]))).toThrow(
+    "invalid_png_metadata",
+  );
+  expect(() =>
+    inspectSillyTavernContent(png([["ccv3", bytes(v1).toString("base64")]])),
+  ).toThrow("invalid_png_metadata");
+  for (const entry of [
+    { uid: null },
+    { group: false },
+    { automationId: 42 },
+    { outletName: true },
+    { selectiveLogic: 2.5 },
+  ])
+    expect(() =>
+      inspectSillyTavernContent(
+        bytes({ entries: { a: { content: "lore", ...entry } } }),
+      ),
+    ).toThrow();
+  expect(
+    inspectSillyTavernContent(
+      bytes({ entries: { a: { content: "lore", characterFilter: null } } }),
+    ).entries[0]?.rules.characterFilter,
+  ).toBeNull();
+});
