@@ -1813,8 +1813,8 @@ const worldPageEnglishMessages: Record<string, string> = {
     "Edit saved; continuing from the edited message…",
   "修改已保存，正在从全新上下文继续生成…":
     "Edit saved; continuing from a fresh context…",
-  "修改已保存，但模型请求中断；点击“追加上下文”即可原样重发。":
-    "The edit was saved, but the model request was interrupted. Append context to resend it unchanged.",
+  "修改已保存；模型请求中断，可以重新发送已保存的请求。":
+    "The edit was saved, but the model request was interrupted. You can resend the saved request.",
   "修改已保存，但模型请求失败；请使用全新上下文继续。":
     "The edit was saved, but the model request failed. Continue with a new context.",
   "修改已保存在当前世界，并已从修改稿继续。":

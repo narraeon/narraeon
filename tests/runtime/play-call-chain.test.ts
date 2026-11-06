@@ -4817,6 +4817,59 @@ test("玩家取消会终止当前 Provider 派发并保留已提交玩家原文"
     unknown
   >;
   await writeFile(statePath, JSON.stringify({ ...state, canRetry: false }));
+  if (typeof state.continuationDigest !== "string")
+    throw new Error("missing continuation digest");
+  const continuationPath = join(
+    contextRoot,
+    "continuations",
+    `${state.continuationDigest}.json`,
+  );
+  const continuation = JSON.parse(await readFile(continuationPath, "utf8")) as {
+    lastRequestDigest: string;
+  };
+  const request = JSON.parse(
+    await readFile(
+      join(contextRoot, "requests", `${continuation.lastRequestDigest}.json`),
+      "utf8",
+    ),
+  ) as ModelHostExchange;
+  request.appended.push({
+    kind: "assistant",
+    text: "",
+    toolCalls: [],
+    providerState: {
+      protocol: "chat_completions",
+      assistantMessage: { role: "user" },
+    },
+  });
+  const malformedRequest = JSON.stringify(request);
+  const requestDigest = createHash("sha256")
+    .update(malformedRequest)
+    .digest("hex");
+  await writeFile(
+    join(contextRoot, "requests", `${requestDigest}.json`),
+    malformedRequest,
+  );
+  const malformedContinuation = JSON.stringify({
+    ...continuation,
+    lastRequestDigest: requestDigest,
+  });
+  const continuationDigest = createHash("sha256")
+    .update(malformedContinuation)
+    .digest("hex");
+  await writeFile(
+    join(contextRoot, "continuations", `${continuationDigest}.json`),
+    malformedContinuation,
+  );
+  await writeFile(
+    statePath,
+    JSON.stringify({ ...state, canRetry: false, continuationDigest }),
+  );
+  expect(
+    (await new FileNativeWorldStore(root).playTimeline.readPage(worldId, 40))
+      .activeCanRetry,
+  ).toBe(false);
+  await writeFile(statePath, JSON.stringify({ ...state, canRetry: false }));
   const coldWorlds = new FileNativeWorldStore(root);
   expect(
     (await coldWorlds.playTimeline.readPage(worldId, 40)).activeCanRetry,
@@ -12600,4 +12653,235 @@ test("empty response after a settled tool step retries only its frozen continuat
   expect(
     history.filter((text) => text === "The scene continues."),
   ).toHaveLength(1);
+});
+
+test.each([
+  "chat_completions",
+  "openai_responses",
+  "anthropic_messages",
+] as const)(
+  "%s production stream interruption replays its frozen request after restart",
+  async (provider) => {
+    const data = (value: unknown) => `data: ${JSON.stringify(value)}\n\n`;
+    const named = (name: string, value: unknown) =>
+      `event: ${name}\n${data(value)}`;
+    const chatDelta = (text: string) =>
+      data({ id: "c1", choices: [{ index: 0, delta: { content: text } }] });
+    const responseDelta = (text: string) =>
+      named("response.output_text.delta", {
+        type: "response.output_text.delta",
+        delta: text,
+      });
+    const anthropicStart =
+      named("message_start", {
+        type: "message_start",
+        message: {
+          id: "m1",
+          role: "assistant",
+          model: "test",
+          content: [],
+          usage: { input_tokens: 1, output_tokens: 1 },
+        },
+      }) +
+      named("content_block_start", {
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "text", text: "" },
+      });
+    const anthropicDelta = (text: string) =>
+      named("content_block_delta", {
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "text_delta", text },
+      });
+    const partial =
+      provider === "chat_completions"
+        ? chatDelta("unfinished fragment")
+        : provider === "openai_responses"
+          ? responseDelta("unfinished fragment")
+          : anthropicStart + anthropicDelta("unfinished fragment");
+    const complete =
+      provider === "chat_completions"
+        ? chatDelta("The door opens.") +
+          data({
+            id: "c1",
+            choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+          }) +
+          "data: [DONE]\n\n"
+        : provider === "openai_responses"
+          ? responseDelta("The door opens.") +
+            named("response.completed", {
+              type: "response.completed",
+              response: {
+                id: "r1",
+                status: "completed",
+                output: [
+                  {
+                    type: "message",
+                    id: "m1",
+                    role: "assistant",
+                    status: "completed",
+                    content: [{ type: "output_text", text: "The door opens." }],
+                  },
+                ],
+              },
+            })
+          : anthropicStart +
+            anthropicDelta("The door opens.") +
+            named("content_block_stop", {
+              type: "content_block_stop",
+              index: 0,
+            }) +
+            named("message_delta", {
+              type: "message_delta",
+              delta: { stop_reason: "end_turn", stop_sequence: null },
+              usage: { output_tokens: 3 },
+            }) +
+            named("message_stop", { type: "message_stop" });
+    const bodies: string[] = [];
+    const host = new FileNativeModelHost(
+      {
+        provider,
+        baseUrl: "https://provider.invalid/v1",
+        apiKey: "synthetic-secret",
+        modelId: "test-model",
+        contextWindowTokens: 64000,
+        maxOutputTokens: 2000,
+      },
+      (_url, options) => {
+        if (typeof options?.body !== "string")
+          throw new Error("missing request body");
+        bodies.push(options.body);
+        return Promise.resolve(
+          new Response(bodies.length === 1 ? partial : complete, {
+            headers: { "content-type": "text/event-stream" },
+          }),
+        );
+      },
+    );
+    const { worlds, worldId, root } = await createWorld(
+      `stream-${provider}`,
+      undefined,
+      host.binding(),
+    );
+    const result = await new PlayCallChain(worlds).start({
+      worldId,
+      chainId: `stream-${provider}`,
+      exchangeId: "first",
+      playerText: "Open the door.",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: host.binding(),
+      modelHost: host,
+    });
+    expect(result).toMatchObject({
+      status: "interrupted",
+      canRetry: true,
+      lastFailureKind: "outcome_unknown",
+    });
+    const retry = await new PlayCallChain(
+      new FileNativeWorldStore(root),
+    ).append({
+      worldId,
+      chainId: result.chainId,
+      exchangeId: "retry",
+      playerText: "",
+      modelHost: host,
+    });
+    expect(retry.status).toBe("ready");
+    expect(bodies[1]).toBe(bodies[0]);
+    expect(bodies[1]).not.toContain("unfinished fragment");
+    const history = (await worlds.recoverEndpoint(worldId)).history.map(
+      ({ exactText }) => exactText,
+    );
+    expect(history.filter((text) => text === "Open the door.")).toHaveLength(1);
+    expect(history.filter((text) => text === "The door opens.")).toHaveLength(
+      1,
+    );
+    expect(history).not.toContain("unfinished fragment");
+  },
+);
+
+test("Responses completed without output does not promote tentative text and can retry", async () => {
+  const named = (name: string, value: unknown) =>
+    `event: ${name}\ndata: ${JSON.stringify(value)}\n\n`;
+  const delta = named("response.output_text.delta", {
+    type: "response.output_text.delta",
+    delta: "Tentative only",
+  });
+  const done = (output: unknown[]) =>
+    named("response.completed", {
+      type: "response.completed",
+      response: { id: "r1", status: "completed", output },
+    });
+  let calls = 0;
+  const host = new FileNativeModelHost(
+    {
+      provider: "openai_responses",
+      baseUrl: "https://provider.invalid/v1",
+      apiKey: "synthetic-secret",
+      modelId: "test-model",
+      contextWindowTokens: 64000,
+      maxOutputTokens: 2000,
+    },
+    () => {
+      calls++;
+      const body =
+        calls === 1
+          ? delta + done([])
+          : done([
+              {
+                type: "message",
+                id: "m1",
+                role: "assistant",
+                status: "completed",
+                content: [{ type: "output_text", text: "Final answer" }],
+              },
+            ]);
+      return Promise.resolve(
+        new Response(body, {
+          headers: { "content-type": "text/event-stream" },
+        }),
+      );
+    },
+  );
+  const { worlds, worldId, root } = await createWorld(
+    "empty-responses-stream",
+    undefined,
+    host.binding(),
+  );
+  const first = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "empty-responses",
+    exchangeId: "first",
+    playerText: "Look.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: host.binding(),
+    modelHost: host,
+  });
+  expect(first).toMatchObject({ status: "interrupted", canRetry: true });
+  expect(
+    JSON.stringify((await worlds.recoverEndpoint(worldId)).history),
+  ).not.toContain("Tentative only");
+  expect(
+    JSON.stringify(
+      (await worlds.playTimeline.readCurrent(worldId))?.value.transcript,
+    ),
+  ).not.toContain("Tentative only");
+  const second = await new PlayCallChain(new FileNativeWorldStore(root)).append(
+    {
+      worldId,
+      chainId: first.chainId,
+      exchangeId: "retry",
+      playerText: "",
+      modelHost: host,
+    },
+  );
+  expect(second.status).toBe("ready");
+  expect(
+    (await worlds.recoverEndpoint(worldId)).history.map(
+      ({ exactText }) => exactText,
+    ),
+  ).toContain("Final answer");
 });

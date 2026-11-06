@@ -2054,7 +2054,7 @@ export class PlayCallChain {
           "Google Interactions repeated a tool-call ID during the same send; its outcome cannot be safely settled. Use a fresh context.",
         );
     }
-    const text = durable.text ?? existing.text;
+    const text = durable.text ?? "";
     const hasText = text.trim().length > 0;
     const responseKind =
       calls.length > 0 ? "tool_step" : hasText ? "narrative" : "empty";
@@ -2063,7 +2063,7 @@ export class PlayCallChain {
       {
         id: advance.eventId,
         kind: "assistant",
-        text,
+        text: responseKind === "empty" ? existing.text : text,
         status: "completed",
         responseKind,
         exchange: advance.exchange,

@@ -3431,6 +3431,41 @@ describe("世界游玩页面", () => {
     expect(screen.queryByText(/原样重发第/u)).toBeNull();
   });
 
+  test("取消后的可恢复请求以状态提供重新发送", async () => {
+    const chain = interruptedChainView();
+    chain.events[chain.events.length - 1] = {
+      id: 3,
+      kind: "cancellation",
+      message: "Cancelled",
+    };
+    const request = vi.fn(<T>(input: V1Request) => {
+      if (input.type === "world.read")
+        return Promise.resolve(worldView(chain) as T);
+      if (input.type === "artifacts.debug") return Promise.resolve([] as T);
+      if (input.type === "play.chain.inspect")
+        return Promise.resolve(chain as T);
+      if (input.type === "play.chain.append")
+        return Promise.resolve({
+          ...chain,
+          status: "ready",
+          canRetry: false,
+        } as T);
+      return Promise.reject(new Error(`Unexpected request: ${input.type}`));
+    });
+    renderWorld({ request });
+    const button = await screen.findByRole("button", { name: "重新发送" });
+    expect(button.closest('[role="status"]')).not.toBeNull();
+    fireEvent.click(button);
+    await waitFor(() =>
+      expect(
+        request.mock.calls.some(
+          ([input]) =>
+            input.type === "play.chain.append" && input.playerText === "",
+        ),
+      ).toBe(true),
+    );
+  });
+
   test("派生到玩家节点后可以留空追加，让模型直接重新生成", async () => {
     let chain: V1PlayCallChainView = {
       ...playChainView(
@@ -3900,7 +3935,7 @@ describe("世界游玩页面", () => {
     {
       status: "interrupted" as const,
       canRetry: true,
-      feedback: "修改已保存，但模型请求中断；点击“追加上下文”即可原样重发。",
+      feedback: "修改已保存；模型请求中断，可以重新发送已保存的请求。",
     },
     {
       status: "interrupted" as const,
@@ -3943,6 +3978,15 @@ describe("世界游玩页面", () => {
           }
           if (request.type === "play.chain.append") {
             chain = { ...chain, status, canRetry, parentHead: "commit:5" };
+            if (status === "interrupted") {
+              chain.lastFailureKind = "outcome_unknown";
+              chain.events.push({
+                id: chain.events.length + 1,
+                kind: "failure",
+                failureKind: "outcome_unknown",
+                message: "stream interrupted",
+              });
+            }
             if (status === "ready")
               chain.events.push({
                 id: 2,
@@ -3996,6 +4040,26 @@ describe("世界游玩页面", () => {
       ]);
       if (status === "ready")
         expect(screen.getByText("重新生成的正文")).toBeTruthy();
+      if (status === "interrupted" && canRetry) {
+        fireEvent.click(screen.getByRole("button", { name: "重新发送" }));
+        await waitFor(() =>
+          expect(
+            client.request.mock.calls.filter(
+              ([request]) => request.type === "play.chain.append",
+            ),
+          ).toHaveLength(2),
+        );
+        expect(
+          client.request.mock.calls
+            .map(([request]) => request)
+            .filter((request) => request.type === "play.chain.append")
+            .at(-1),
+        ).toMatchObject({
+          type: "play.chain.append",
+          chainId: "regenerated-chain",
+          playerText: "",
+        });
+      }
     },
   );
 

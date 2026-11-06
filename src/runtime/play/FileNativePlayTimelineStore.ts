@@ -1384,11 +1384,9 @@ export class FileNativePlayTimelineStore {
               provider !== undefined &&
               provider !== "google_interactions" &&
               Array.isArray(request.appended) &&
-              request.appended.every(
-                (item) =>
-                  item.kind !== "assistant" ||
-                  item.providerState?.protocol === provider,
-              ) &&
+              // The legacy record carries no codec-validation receipt. Only
+              // requests without native assistant fragments can be proven safe.
+              request.appended.every((item) => item.kind !== "assistant") &&
               createHash("sha256")
                 .update(JSON.stringify(request))
                 .digest("hex") === continuation.lastRequestDigest

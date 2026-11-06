@@ -1232,9 +1232,7 @@ export function WorldPage({
         text:
           continued.status === "interrupted"
             ? continued.canRetry
-              ? uiText(
-                  "修改已保存，但模型请求中断；点击“追加上下文”即可原样重发。",
-                )
+              ? uiText("修改已保存；模型请求中断，可以重新发送已保存的请求。")
               : uiText("修改已保存，但模型请求失败；请使用全新上下文继续。")
             : regenerate
               ? uiText("已重新生成；原回复已离开当前时间线")
@@ -1776,7 +1774,7 @@ export function WorldPage({
               >
                 <PlayFailureNotice
                   failureKind={activeFailureKind}
-                  canRetry={activeCanRetry}
+                  canRetry={failureRecovery.canRetry}
                   message={
                     playCallChain?.lastFailure ??
                     playTimeline?.activeLastFailure ??
@@ -1789,8 +1787,7 @@ export function WorldPage({
             {!activeCanRetry ||
             activeFailureVisible ||
             playFailure !== null ? null : (
-              <div className="play-retry-note" role="alert">
-                <span aria-hidden="true">!</span>
+              <div className="play-retry-note" role="status">
                 <p>
                   {uiText(
                     "上次模型请求没有完整返回。保持输入为空并重试，会原样发送保存的请求。",
