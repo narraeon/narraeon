@@ -34,7 +34,6 @@ for (const locale of ["zh-CN", "en"] as const)
       render(
         createElement(PlayFailureNotice, {
           failureKind,
-          // A forbidden category must never expose resend even if a stale client says true.
           canRetry: true,
           message,
           recovery: {
@@ -59,7 +58,7 @@ for (const locale of ["zh-CN", "en"] as const)
       const retry = screen.queryByRole("button", {
         name: english ? "Resend request" : "重新发送",
       });
-      expect(retry !== null).toBe(failureKind === "retryable");
+      expect(retry).not.toBeNull();
       if (retry !== null) {
         fireEvent.click(retry);
         expect(onRetry).toHaveBeenCalledOnce();

@@ -1,6 +1,6 @@
 import type { PlayFailureKind } from "../protocol/playFailure.ts";
 import { uiText } from "./i18n.ts";
-import { failureText } from "./PlayFailureText.ts";
+import { failureText, playFailureDescription } from "./PlayFailureText.ts";
 
 export interface PlayFailureRecovery {
   canRetry: boolean;
@@ -27,10 +27,10 @@ export function PlayFailureNotice({
   return (
     <>
       <strong>{uiText(text.title)}</strong>
-      <p>{uiText(text.description)}</p>
+      <p>{playFailureDescription(kind, canRetry)}</p>
       {recovery === undefined ? null : (
         <div className="play-failure-actions">
-          {kind === "retryable" && recovery.canRetry ? (
+          {canRetry && recovery.canRetry ? (
             <button
               type="button"
               disabled={recovery.playDisabled}

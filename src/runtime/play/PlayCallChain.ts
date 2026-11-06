@@ -2082,6 +2082,23 @@ export class PlayCallChain {
         continuation:
           durable.providerState === undefined ? "unavailable" : "available",
       };
+    // No response has been settled or added to the transcript. Non-Google
+    // providers may explicitly replay the frozen request without duplicating work.
+    if (
+      responseKind === "empty" &&
+      (session.lastRequest?.modelConfig?.provider ??
+        session.modelBinding?.provider) !== "google_interactions"
+    ) {
+      session.events = session.events.map((event) =>
+        event.id === advance.eventId ? assistantEvent : event,
+      );
+      await this.#advances.end(
+        session,
+        emptyResponseEnding(true, advance.eventId),
+        advance,
+      );
+      return { kind: "terminal", status: "interrupted", narrative: false };
+    }
     const workingTools = new Map(session.completedToolMap);
     const prepared: PreparedToolResult[] = [];
     const trailingEvents: V1PlayCallChainEvent[] = [];
@@ -2483,7 +2500,7 @@ export class PlayCallChain {
         });
         if (signal.aborted)
           throw new ModelHostCancelledError(
-            "The player cancelled the dispatched model request; its response was not committed and cannot be replayed.",
+            "The player cancelled the dispatched model request; its response was not committed.",
           );
         this.#setInvocationAbortable(session.chainId, false);
         if ((response.toolCalls?.length ?? 0) > 0)
@@ -2495,7 +2512,16 @@ export class PlayCallChain {
       } catch (error: unknown) {
         await this.#advances.end(
           session,
-          dispatchFailureEnding(error, event.id),
+          dispatchFailureEnding(
+            signal.aborted && !(error instanceof ModelHostCancelledError)
+              ? new ModelHostCancelledError(
+                  "The player cancelled the dispatched model request; its response was not committed.",
+                )
+              : error,
+            event.id,
+            (request.modelConfig?.provider ??
+              session.modelBinding?.provider) === "google_interactions",
+          ),
           advance,
           () => this.#notifySnapshot(observer, session),
         );

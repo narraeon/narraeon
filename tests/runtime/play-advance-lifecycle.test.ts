@@ -262,6 +262,7 @@ describe("play advance endings", () => {
       session,
       {
         kind: "cancelled_after_dispatch",
+        canRetry: false,
         message: "The player cancelled the dispatched model request.",
         streamingEventId: 3,
       },
@@ -379,12 +380,12 @@ describe("error to ending mapping", () => {
       { kind: "cancelled_after_dispatch", message: "cancelled by player" },
     ],
     [
-      "an outcome-unknown dispatch needs a fresh context",
+      "a non-Google outcome-unknown dispatch may be retried",
       new ModelHostOutcomeUnknownError("stream ended early"),
       {
         kind: "failed",
         failureKind: "outcome_unknown",
-        canRetry: false,
+        canRetry: true,
         message: "stream ended early",
       },
     ],

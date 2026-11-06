@@ -687,9 +687,7 @@ export function WorldPage({
     lastActiveEvent.event.kind === "failure"
       ? lastActiveEvent.event.failureKind
       : undefined);
-  const activeCanRetry =
-    reportedCanRetry &&
-    (activeFailureKind === undefined || activeFailureKind === "retryable");
+  const activeCanRetry = reportedCanRetry;
   const activeFailureVisible =
     activeStatus === "interrupted" &&
     lastActiveEvent?.kind === "event" &&
@@ -1798,6 +1796,15 @@ export function WorldPage({
                     "上次模型请求没有完整返回。保持输入为空并重试，会原样发送保存的请求。",
                   )}
                 </p>
+                {failureRecovery.canRetry ? (
+                  <button
+                    type="button"
+                    disabled={failureRecovery.playDisabled}
+                    onClick={failureRecovery.onRetry}
+                  >
+                    {uiText("重新发送")}
+                  </button>
+                ) : null}
               </div>
             )}
             {activeChainStale && playIdle ? (

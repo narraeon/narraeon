@@ -2604,8 +2604,8 @@ Object.assign(englishMessages, {
   "当前上下文超过了模型的输入上限。旧请求不能重发，请从全新上下文继续。":
     "The current context exceeds the model input limit. The previous request cannot be resent. Continue with a fresh context.",
   模型输出已达上限: "Model output limit reached",
-  "模型回复达到输出上限，尚未完成。请在模型配置中调高最大输出 Token，保存后从全新上下文继续。推理也可能占用输出额度。":
-    "The model response reached the output limit before completion. Increase the maximum output tokens in the model configuration, save, then continue with a fresh context. Reasoning may also consume the output budget.",
+  "模型回复达到输出上限，尚未完成。请在模型配置中调高最大输出 Token，保存后从全新上下文继续；原样重发仍使用旧配置。推理也可能占用输出额度。":
+    "The model response reached the output limit before completion. Increase the maximum output tokens in the model configuration, save, then continue with a fresh context; resending the saved request still uses the old settings. Reasoning may also consume the output budget.",
   模型上下文无法继续: "Model context unavailable",
   "当前上下文的续传信息缺失或不可用。旧请求不能重发，请从全新上下文继续。":
     "Continuation data is missing or unavailable. The previous request cannot be resent. Continue with a fresh context.",
@@ -2617,6 +2617,8 @@ Object.assign(englishMessages, {
     "The model service could not complete the request. Check the model connection, or continue with a fresh context.",
   "处理这次请求时发生错误。旧请求不能重发；请查看技术详情，也可以从全新上下文继续。":
     "An error occurred while processing this request. The previous request cannot be resent. View the technical details, or continue with a fresh context.",
+  "可以重新发送已保存的请求，不会重复提交玩家原文；请求使用当时冻结的配置。":
+    "You can resend the saved request without submitting the player text again; it uses the original frozen settings.",
   重新发送: "Resend request",
   从全新上下文继续: "Continue with a fresh context",
   调整最大输出: "Adjust maximum output",

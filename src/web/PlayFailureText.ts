@@ -23,7 +23,7 @@ export const failureText: Record<
   output_limit: {
     title: "模型输出已达上限",
     description:
-      "模型回复达到输出上限，尚未完成。请在模型配置中调高最大输出 Token，保存后从全新上下文继续。推理也可能占用输出额度。",
+      "模型回复达到输出上限，尚未完成。请在模型配置中调高最大输出 Token，保存后从全新上下文继续；原样重发仍使用旧配置。推理也可能占用输出额度。",
   },
   context_unavailable: {
     title: "模型上下文无法继续",
@@ -52,6 +52,8 @@ export function playFailureDescription(
   canRetry: boolean,
 ): string {
   return uiText(
-    failureText[kind ?? (canRetry ? "retryable" : "other")].description,
+    canRetry
+      ? "可以重新发送已保存的请求，不会重复提交玩家原文；请求使用当时冻结的配置。"
+      : failureText[kind ?? "other"].description,
   );
 }

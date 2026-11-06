@@ -3364,6 +3364,9 @@ describe("世界游玩页面", () => {
 
   test("中断后留空点击追加只发送原上下文，不产生另一条玩家指令或重试事件", async () => {
     let chain = interruptedChainView();
+    chain.lastFailureKind = "outcome_unknown";
+    const failure = chain.events.at(-1);
+    if (failure?.kind === "failure") failure.failureKind = "outcome_unknown";
     const client = {
       request: vi.fn(<T>(request: V1Request) => {
         if (request.type === "world.read")
@@ -3408,7 +3411,7 @@ describe("世界游玩页面", () => {
       await screen.findByText("Alex has opened the door halfway"),
     ).toBeTruthy();
     expect(screen.getByText(/可以重新发送已保存的请求/u)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "追加上下文" }));
+    fireEvent.click(screen.getByRole("button", { name: "重新发送" }));
 
     expect(
       await screen.findByText("Alex pushes the door fully open."),

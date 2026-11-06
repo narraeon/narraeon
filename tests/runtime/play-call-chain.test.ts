@@ -2910,7 +2910,7 @@ test.each([
   [
     "outcome_unknown",
     new ModelHostOutcomeUnknownError("dispatched outcome unknown"),
-    false,
+    true,
   ],
   [
     "context_limit",
@@ -4705,7 +4705,9 @@ function playTrace(view: V1PlayCallChainView) {
 }
 
 test("玩家取消会终止当前 Provider 派发并保留已提交玩家原文", async () => {
-  const { worlds, worldId } = await createWorld("play-chain-player-cancel");
+  const { worlds, worldId, root } = await createWorld(
+    "play-chain-player-cancel",
+  );
   let signal: AbortSignal | undefined;
   let markExchangeStarted: (() => void) | undefined;
   const exchangeStarted = new Promise<void>((resolve) => {
@@ -4782,7 +4784,7 @@ test("玩家取消会终止当前 Provider 派发并保留已提交玩家原文"
   const interrupted = await running;
   expect(interrupted).toMatchObject({
     status: "interrupted",
-    canRetry: false,
+    canRetry: true,
   });
   expect(interrupted.activeInvocation).toBeUndefined();
   expect(
@@ -4800,6 +4802,49 @@ test("玩家取消会终止当前 Provider 派发并保留已提交玩家原文"
     "门外传来三声短促的铃响。\n",
     "I ask Alex to wait while I reconsider.",
   ]);
+  // Simulate the persisted disposition written by releases before #144.
+  const contextRoot = join(
+    root,
+    "worlds-file-native",
+    worldId,
+    "runtime",
+    "play-contexts",
+    createHash("sha256").update(interrupted.chainId).digest("hex"),
+  );
+  const statePath = join(contextRoot, "state.json");
+  const state = JSON.parse(await readFile(statePath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  await writeFile(statePath, JSON.stringify({ ...state, canRetry: false }));
+  const coldWorlds = new FileNativeWorldStore(root);
+  expect(
+    (await coldWorlds.playTimeline.readPage(worldId, 40)).activeCanRetry,
+  ).toBe(true);
+  const cold = new PlayCallChain(coldWorlds);
+  expect(await cold.inspectWorld(worldId)).toMatchObject({
+    status: "interrupted",
+    canRetry: true,
+  });
+  const retryHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [{ outcome: "response", text: "Alex waits." }],
+  });
+  const resumed = await cold.append({
+    worldId,
+    chainId: interrupted.chainId,
+    exchangeId: "retry-cancelled",
+    playerText: "",
+    modelHost: retryHost,
+  });
+  expect(resumed.status).toBe("ready");
+  const history = (await coldWorlds.recoverEndpoint(worldId)).history.map(
+    ({ exactText }) => exactText,
+  );
+  expect(
+    history.filter((text) => text === "I ask Alex to wait while I reconsider."),
+  ).toHaveLength(1);
+  expect(history).toContain("Alex waits.");
 });
 
 test("删除进行中生成的世界：先中止生成再删除，删除成功且生成以中断结束（#72）", async () => {
@@ -8093,7 +8138,7 @@ test("把上下文中较后的修改稿另存为全新上下文时保留页面�
   ]);
 });
 
-test("Provider 结果未知时禁止重放已派发请求，并要求全新上下文", async () => {
+test("Provider 结果未知时沿原请求显式重试", async () => {
   const { worlds, worldId } = await createWorld("play-chain-retry");
   const requests: ModelHostExchange[] = [];
   let attempt = 0;
@@ -8117,6 +8162,14 @@ test("Provider 结果未知时禁止重放已派发请求，并要求全新上�
       }
       return Promise.resolve({
         text: "Alex pushes the door fully open, and cold corridor air rushes in.",
+        providerState: {
+          protocol: "chat_completions",
+          assistantMessage: {
+            role: "assistant",
+            content:
+              "Alex pushes the door fully open, and cold corridor air rushes in.",
+          },
+        },
       });
     },
   };
@@ -8164,27 +8217,26 @@ test("Provider 结果未知时禁止重放已派发请求，并要求全新上�
   const recovered = await recoveredChains.inspectWorld(worldId);
   expect(recovered).toMatchObject({
     status: "interrupted",
-    canRetry: false,
+    canRetry: true,
   });
   expect(recovered?.events).toContainEqual(
     expect.objectContaining({ kind: "assistant", status: "interrupted" }),
   );
-  await expect(
-    recoveredChains.append({
-      worldId,
-      chainId: interrupted.chainId,
-      exchangeId: "continue-without-player-input",
-      playerText: "",
-      modelHost,
-    }),
-  ).rejects.toThrow(
-    "The current model context cannot continue; use a fresh context.",
-  );
-  expect(requests).toHaveLength(1);
+  const resumed = await recoveredChains.append({
+    worldId,
+    chainId: interrupted.chainId,
+    exchangeId: "continue-without-player-input",
+    playerText: "",
+    modelHost,
+  });
+  expect(resumed.status).toBe("ready");
+  expect(requests).toHaveLength(2);
+  expect(requests[1]).toEqual(requests[0]);
   const endpoint = await worlds.recoverEndpoint(worldId);
   expect(endpoint.history.map(({ exactText }) => exactText)).toEqual([
     "门外传来三声短促的铃响。\n",
     "I ask Alex to open the door.",
+    "Alex pushes the door fully open, and cold corridor air rushes in.",
   ]);
   expect(endpoint.history.map(({ exactText }) => exactText)).not.toContain(
     "Alex has pushed the door halfway open",
@@ -8745,7 +8797,7 @@ test("冷恢复重试沿用请求模型快照，下一次发送采用当前配�
   });
 });
 
-test("只有 reasoning 的响应仍持久化原生续传载荷，但不会进入叙事 Authority", async () => {
+test("只有 reasoning 的空响应可重试，且不进入原生续传或叙事", async () => {
   const { worlds, worldId } = await createWorld("play-reasoning-only-state");
   const host = new ScriptedModelHost({
     binding: modelBinding(),
@@ -8787,34 +8839,19 @@ test("只有 reasoning 的响应仍持久化原生续传载荷，但不会进入
     modelHost: host,
   });
 
-  expect(view).toMatchObject({ status: "interrupted", canRetry: false });
+  expect(view).toMatchObject({ status: "interrupted", canRetry: true });
   expect((await worlds.recoverEndpoint(worldId)).history).toHaveLength(2);
   const persisted = await worlds.playTimeline.readCurrent(worldId);
-  expect(persisted?.value.transcript.at(-1)).toMatchObject({
-    kind: "assistant",
-    text: "",
-    reasoningContent: "Private returned reasoning.",
-    providerState: {
-      protocol: "chat_completions",
-      assistantMessage: {
-        role: "assistant",
-        content: null,
-        reasoning_content: "Private returned reasoning.",
-      },
-    },
-  });
+  expect(persisted?.value.transcript.at(-1)).toMatchObject({ kind: "player" });
+  expect(JSON.stringify(persisted?.value.transcript)).not.toContain(
+    "Private returned reasoning.",
+  );
   expect(
-    persisted?.value.events.find(({ kind }) => kind === "assistant"),
+    persisted?.value.events.find((event) => event.kind === "assistant"),
   ).toMatchObject({
+    reasoning: "Private returned reasoning.",
     stopReason: "tool_calls",
-    continuation: "available",
-    usage: {
-      uncachedInputTokens: 60,
-      cacheReadTokens: 30,
-      cacheWriteTokens: 10,
-      reasoningTokens: 20,
-      provenance: { uncachedInputTokens: "derived_provider_fields" },
-    },
+    usage: { inputTokens: 100, outputTokens: 30 },
   });
 });
 
@@ -12418,3 +12455,149 @@ const defaultPlayPresetFiles: Record<string, string> = {
   ...appDefaultPlayPresetFiles,
   "prompts/narrate.md": "# Narrative fixture\n\nContinue the story.",
 };
+
+test("interrupted dispatch retries its frozen request after restart without committing partial output", async () => {
+  const { worlds, worldId, root } = await createWorld(
+    "retry-interrupted-dispatch",
+  );
+  const requests: ModelHostExchange[] = [];
+  const successful = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [{ outcome: "response", text: "The door opens." }],
+  });
+  const host: ModelHost = {
+    binding: modelBinding,
+    exchange: async (request, observer) => {
+      requests.push(structuredClone(request));
+      if (requests.length === 1) {
+        observer?.onDelta?.({ kind: "text", text: "Unfinished fragment" });
+        throw new ModelHostOutcomeUnknownError("stream interrupted");
+      }
+      return successful.exchange(request, observer);
+    },
+  };
+  const failed = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "retry-stream",
+    exchangeId: "first",
+    playerText: "Open the door.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: host,
+  });
+  expect(failed).toMatchObject({
+    status: "interrupted",
+    canRetry: true,
+    lastFailureKind: "outcome_unknown",
+  });
+  const restarted = new PlayCallChain(new FileNativeWorldStore(root));
+  const retried = await restarted.append({
+    worldId,
+    chainId: "retry-stream",
+    exchangeId: "retry",
+    playerText: "",
+    modelHost: host,
+  });
+  expect(retried.status).toBe("ready");
+  expect(requests[1]).toEqual(requests[0]);
+  expect(JSON.stringify(requests[1])).not.toContain("Unfinished fragment");
+  const history = (await worlds.recoverEndpoint(worldId)).history.map(
+    ({ exactText }) => exactText,
+  );
+  expect(history.filter((text) => text === "Open the door.")).toHaveLength(1);
+  expect(history.filter((text) => text === "The door opens.")).toHaveLength(1);
+  expect(history).not.toContain("Unfinished fragment");
+});
+
+test("empty response after a settled tool step retries only its frozen continuation", async () => {
+  const { worlds, worldId, root } = await createWorld("empty-after-tool");
+  const host = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "read-once",
+            name: "context_read",
+            arguments: { ref: "@current-situation" },
+          },
+          {
+            id: "write-once",
+            name: "world_patch",
+            arguments: {
+              target: "@current-situation",
+              edits: [
+                {
+                  op: "replace",
+                  locator: { yaml: ["情况"] },
+                  value: "变化已保存",
+                },
+              ],
+            },
+          },
+        ],
+      },
+      { outcome: "response", text: "" },
+      { outcome: "response", text: "The scene continues." },
+    ],
+  });
+  const failed = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "empty-after-tool",
+    exchangeId: "first",
+    playerText: "Look around.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: host,
+  });
+  expect(failed).toMatchObject({ status: "interrupted", canRetry: true });
+  expect(
+    failed.events.filter(
+      (event) => event.kind === "tool_result" && event.callId === "read-once",
+    ),
+  ).toHaveLength(1);
+  expect(
+    failed.events.filter(
+      (event) => event.kind === "tool_result" && event.callId === "write-once",
+    ),
+  ).toHaveLength(1);
+  const beforeRetry = await worlds.recoverEndpoint(worldId);
+  expect(JSON.stringify(beforeRetry.state)).toContain("变化已保存");
+  const persisted = await worlds.playTimeline.readCurrent(worldId);
+  expect(persisted?.value.transcript).toEqual(
+    host.requests[1]?.appended.filter(
+      (item) => item.kind !== "runtime_notice" || item.notice !== "turn_guide",
+    ),
+  );
+  const resumed = await new PlayCallChain(
+    new FileNativeWorldStore(root),
+  ).append({
+    worldId,
+    chainId: failed.chainId,
+    exchangeId: "retry",
+    playerText: "",
+    modelHost: host,
+  });
+  expect(resumed.status).toBe("ready");
+  expect(host.requests[2]).toEqual(host.requests[1]);
+  expect(
+    resumed.events.filter(
+      (event) => event.kind === "tool_result" && event.callId === "read-once",
+    ),
+  ).toHaveLength(1);
+  expect(
+    resumed.events.filter(
+      (event) => event.kind === "tool_result" && event.callId === "write-once",
+    ),
+  ).toHaveLength(1);
+  const afterRetry = await worlds.recoverEndpoint(worldId);
+  expect(afterRetry.state).toEqual(beforeRetry.state);
+  const history = afterRetry.history.map(({ exactText }) => exactText);
+  expect(history.filter((text) => text === "Look around.")).toHaveLength(1);
+  expect(
+    history.filter((text) => text === "The scene continues."),
+  ).toHaveLength(1);
+});

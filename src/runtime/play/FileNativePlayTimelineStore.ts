@@ -1329,6 +1329,77 @@ export class FileNativePlayTimelineStore {
       stateValue.chainId !== chainId
     )
       throw new Error("Play context durable identity is inconsistent");
+    // Older releases disallowed retry after a player cancellation. The tail
+    // cancellation and interrupted assistant prove this was a dispatch ending,
+    // not a settlement failure. Validate the frozen request before exposing it.
+    if (
+      !indexValue.importedFromArchive &&
+      stateValue.status === "interrupted" &&
+      !stateValue.canRetry &&
+      stateValue.eventCount >= 2
+    ) {
+      try {
+        const [tail, previous] = await Promise.all([
+          readJson<unknown>(
+            join(root, "events", numbered(stateValue.eventCount)),
+          ),
+          readJson<unknown>(
+            join(root, "events", numbered(stateValue.eventCount - 1)),
+          ),
+        ]);
+        assertPlayEvent(tail);
+        assertPlayEvent(previous);
+        if (
+          tail.kind === "cancellation" &&
+          previous.kind === "assistant" &&
+          previous.status === "interrupted"
+        ) {
+          const [base, continuation] = await Promise.all([
+            readJson<unknown>(join(root, "base.json")),
+            readJson<unknown>(
+              join(
+                root,
+                "continuations",
+                `${stateValue.continuationDigest}.json`,
+              ),
+            ),
+          ]);
+          assertContextBase(base);
+          assertContextContinuation(continuation);
+          if (
+            base.worldId === worldId &&
+            base.chainId === chainId &&
+            continuation.chainId === chainId &&
+            continuation.lastRequestDigest !== null &&
+            createHash("sha256")
+              .update(JSON.stringify(continuation))
+              .digest("hex") === stateValue.continuationDigest
+          ) {
+            const request = await readJson<ModelHostExchange>(
+              join(root, "requests", `${continuation.lastRequestDigest}.json`),
+            );
+            const provider =
+              request.modelConfig?.provider ?? base.modelBinding?.provider;
+            if (
+              provider !== undefined &&
+              provider !== "google_interactions" &&
+              Array.isArray(request.appended) &&
+              request.appended.every(
+                (item) =>
+                  item.kind !== "assistant" ||
+                  item.providerState?.protocol === provider,
+              ) &&
+              createHash("sha256")
+                .update(JSON.stringify(request))
+                .digest("hex") === continuation.lastRequestDigest
+            )
+              stateValue.canRetry = true;
+          }
+        }
+      } catch {
+        // Missing or damaged legacy evidence never grants retry or breaks metadata reads.
+      }
+    }
     // Old versions persisted a configuration preflight failure as a terminal
     // context failure. Recover only the disposition proven by its event prefix.
     // Archive contexts and genuine provider failures retain their restrictions.

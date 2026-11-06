@@ -16,11 +16,11 @@ Authority 结算只查看完整投影是否含工具调用，不改写续传载�
 
 每条模型会话同时冻结完整续传兼容绑定：endpoint、协议与方言、模型、续传 codec、推理／摘要配置、输出能力、工具策略和缓存策略。凭据与传输超时可以在语义绑定不变时更新；其余字段变化、载荷缺失、载荷损坏或 codec 不兼容都 fail closed，要求从当前 Authority 开始全新上下文，不能静默降级为投影重建。
 
-请求已派发但没有完整结果时同样 fail closed。传输中断、无法确认的响应或进程在“派发可能已经开始”之后退出，都不能用旧请求重试，因为模型可能已经产生工具调用或其他外部可见结果；只有 Provider 在生成前明确拒绝，或持久状态能证明派发尚未发生，才允许原样重试冻结请求。
+Google Interactions 请求已派发但没有完整结果时 fail closed。传输中断、无法确认的响应或进程在“派发可能已经开始”之后退出，都不能用旧请求重试，因为模型可能已经产生工具调用或其他外部可见结果；只有 Provider 在生成前明确拒绝，或持久状态能证明派发尚未发生，才允许原样重试冻结请求。
 
-本 ADR 的完整语义绑定和派发后进程退出禁止重放规则适用于 Google Interactions。其他协议的正常发送配置边界及进程退出恢复以产品基础和 [ADR-0044](0044-runtime-is-single-process-and-recovers-by-retry.md) 为准。
+本 ADR 的完整语义绑定和派发后禁止重放规则适用于 Google Interactions。其他协议未结算的流中断、取消和空响应可由玩家显式重试冻结请求，结算后可能推进的请求不可重放；正常发送配置边界及恢复以产品基础和 [ADR-0044](0044-runtime-is-single-process-and-recovers-by-retry.md) 为准。
 
-玩家显式取消已经派发的请求也是一种已知原因的 outcome unknown：adapter 可以把它与 Provider 故障分开呈现和记录，但不能因此获得重放权限，也不能用已收到的正文、reasoning 或工具片段重建续传载荷。取消若发生在下一次 Provider 派发之前，则 Runtime 可以保留那份已冻结请求的继续资格。取消作用于实际 fetch／流读取，不由浏览器展示流的连接状态推断。
+玩家显式取消已经派发的请求是独立的状态：Google 保持不可重放，其他协议可重试尚未结算的冻结请求；不能用已收到的正文、reasoning 或工具片段重建续传载荷。取消若发生在下一次 Provider 派发之前，则 Runtime 可以保留那份已冻结请求的继续资格。取消作用于实际 fetch／流读取，不由浏览器展示流的连接状态推断。
 
 返回推理只作为 Provider 明示的诊断投影保存，不被宣称为隐藏思维，也不进入玩家正文、已提交叙事或世界 Authority；签名、redacted 或加密推理可以为了续传留在不透明载荷中，但不向玩家投影。Chat Completions 代理若只暴露 `reasoning_content`，就不能保证 Claude 签名 thinking 的无损续传；需要该能力时选择 Anthropic Messages，或选择能返回 `reasoning.encrypted_content` 的 OpenAI Responses 兼容路径。
 

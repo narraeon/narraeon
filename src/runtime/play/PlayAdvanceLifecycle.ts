@@ -53,10 +53,11 @@ export type PlayAdvanceEnding =
       attempt: number;
       streamingEventId?: number | undefined;
     }
-  /** Cancelled after a dispatch: the result cannot be replayed (ADR-0030). */
+  /** Cancelled after a dispatch; replay depends on the provider boundary. */
   | {
       kind: "cancelled_after_dispatch";
       message: string;
+      canRetry: boolean;
       streamingEventId?: number | undefined;
     }
   /** Failed or abandoned. `canRetry` says whether the player may retry the frozen request. */
@@ -208,24 +209,30 @@ export class PlayAdvanceLifecycle<Session extends PlayAdvanceLedger> {
 
 /**
  * The ending of an exchange that raised an error before its response was
- * settled. Cancellation after dispatch is named explicitly here and is never
- * a retry, even though `ModelHostCancelledError` is also an outcome-unknown
- * error (ADR-0030).
+ * settled. Google dispatched outcomes remain unknown and cannot be replayed.
  */
 export function dispatchFailureEnding(
   error: unknown,
   streamingEventId: number,
+  googleDispatched = false,
 ): PlayAdvanceEnding {
   const message = errorMessage(error, messages.dispatchInterrupted);
   if (error instanceof ModelHostCancelledError)
-    return { kind: "cancelled_after_dispatch", message, streamingEventId };
+    return {
+      kind: "cancelled_after_dispatch",
+      message,
+      canRetry: !googleDispatched,
+      streamingEventId,
+    };
   const requiresFreshContext =
     error instanceof ModelHostBindingMismatchError ||
     error instanceof ModelHostContinuationError ||
-    error instanceof ModelHostOutcomeUnknownError ||
+    (googleDispatched && error instanceof ModelHostOutcomeUnknownError) ||
     modelHostFailureRequiresFreshContext(error);
   const canRetry =
-    !requiresFreshContext && error instanceof ModelHostFailureError;
+    !requiresFreshContext &&
+    (error instanceof ModelHostFailureError ||
+      error instanceof ModelHostOutcomeUnknownError);
   return {
     kind: "failed",
     message,
@@ -266,15 +273,16 @@ export function noContinuationEnding(): Extract<
 }
 
 /** A settled response with neither text nor a complete tool call. */
-export function emptyResponseEnding(): Extract<
-  PlayAdvanceEnding,
-  { kind: "failed" }
-> {
+export function emptyResponseEnding(
+  canRetry = false,
+  streamingEventId?: number,
+): Extract<PlayAdvanceEnding, { kind: "failed" }> {
   return {
     kind: "failed",
     message: messages.noOutput,
     failureKind: "other",
-    canRetry: false,
+    canRetry,
+    streamingEventId,
   };
 }
 
@@ -331,7 +339,7 @@ function applyEnding(session: PlayAdvanceLedger, ending: PlayAdvanceEnding) {
     case "cancelled_after_dispatch":
       interruptStreamingEvent(session, ending.streamingEventId);
       session.status = "interrupted";
-      session.canRetry = false;
+      session.canRetry = ending.canRetry;
       session.lastFailure = ending.message;
       delete session.lastFailureKind;
       session.events.push({
