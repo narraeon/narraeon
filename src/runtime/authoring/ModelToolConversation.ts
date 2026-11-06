@@ -110,6 +110,7 @@ export interface ModelToolConversationRun<
       request: ModelHostExchange,
     ) => ModelHostExchange;
     accepted: (session: Session) => void;
+    paused?: (session: Session) => void;
     failed: (session: Session, error: unknown, duringDispatch: boolean) => void;
   };
 }
@@ -301,6 +302,7 @@ export class ModelToolConversation<
       }
       // The exchange budget only bounds a runaway loop. Every tool response is
       // already settled, so the conversation pauses and can resume unchanged.
+      input.dispatch?.paused?.(session);
       session.runStatus = "paused";
       session.activeRequestId = null;
       session.completedRequestIds = rememberRequest(

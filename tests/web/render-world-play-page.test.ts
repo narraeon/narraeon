@@ -5560,3 +5560,110 @@ test("自动主角修订请求失败释放交互保护并恢复正文供明确�
   );
   expect(f.props.onNavigationLockChange).toHaveBeenLastCalledWith(false);
 });
+
+test.each(["keep", "revert"] as const)(
+  "世界修订页面可重发并以 %s 策略修改消息",
+  async (filePolicy) => {
+    const epoch = worldRevisionEpoch([]);
+    const user = {
+      id: "user-edit",
+      role: "user" as const,
+      text: "原消息",
+      createdAt: 1,
+    };
+    let latest: V1WorldRevisionView = {
+      sessionId: "revision-edit",
+      worldId: "world-one",
+      epochId: epoch.epochId,
+      runStatus: "interrupted",
+      canRetry: true,
+      messages: [user],
+      turns: [{ id: user.id, user, exchanges: [] }],
+      usage: emptyAggregatedModelUsage(),
+      progress: { exchange: 1, toolCalls: 0, streaming: null, updatedAt: 1 },
+      lastFailure: "Stream stopped",
+    };
+    const overview = (): V1WorldRevisionOverview => ({
+      ...worldRevisionOverview(epoch),
+      latest,
+      history: [],
+    });
+    const client = {
+      request: vi.fn(async (request: V1Request): Promise<unknown> => {
+        if (request.type === "world.read")
+          return await Promise.resolve(worldView(null));
+        if (request.type === "artifacts.debug") return [];
+        if (
+          request.type === "world.revision.overview" ||
+          request.type === "world.revision.open"
+        )
+          return overview();
+        if (request.type === "world.revision.session.read") return latest;
+        if (request.type === "world.revision.resume") {
+          latest = {
+            ...latest,
+            runStatus: "ready",
+            canRetry: false,
+            lastFailure: null,
+          };
+          return latest;
+        }
+        if (request.type === "world.revision.message.edit") {
+          const changed = { ...user, text: request.message };
+          latest = {
+            ...latest,
+            messages: [changed],
+            turns: [{ id: changed.id, user: changed, exchanges: [] }],
+          };
+          return latest;
+        }
+        throw new Error(`Unexpected request ${request.type}`);
+      }),
+    };
+    renderWorld(client);
+    await screen.findByRole("heading", { name: "宿舍世界" });
+    fireEvent.click(screen.getByRole("button", { name: "世界" }));
+    fireEvent.click(screen.getByRole("button", { name: "修订当前世界" }));
+    await screen.findByRole("button", { name: "重新发送" });
+    fireEvent.click(screen.getByRole("button", { name: "重新发送" }));
+    await waitFor(() =>
+      expect(client.request).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "world.revision.resume",
+          sessionId: "revision-edit",
+        }),
+      ),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "修改消息" }));
+    fireEvent.change(screen.getByLabelText("修改消息"), {
+      target: { value: "取消的草稿" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(
+      client.request.mock.calls.some(
+        ([request]) => request.type === "world.revision.message.edit",
+      ),
+    ).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "修改消息" }));
+    fireEvent.change(screen.getByLabelText("修改消息"), {
+      target: { value: "修改后的消息" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name:
+          filePolicy === "keep" ? "保留文件改动并继续" : "撤回文件改动并继续",
+      }),
+    );
+    await waitFor(() =>
+      expect(client.request).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "world.revision.message.edit",
+          messageId: "user-edit",
+          message: "修改后的消息",
+          filePolicy,
+        }),
+      ),
+    );
+    await screen.findByText("修改后的消息");
+  },
+);

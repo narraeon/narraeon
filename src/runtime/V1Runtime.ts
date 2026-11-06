@@ -85,7 +85,10 @@ import { FileNativeRuntimeErrorLog } from "./RuntimeErrorLog.ts";
 import { ProtagonistTemplateStore } from "./config/ProtagonistTemplateStore.ts";
 import { AppPreferencesStore } from "./config/AppPreferencesStore.ts";
 import { FileNativeWorldRevisionStore } from "./world-revision/FileNativeWorldRevisionStore.ts";
-import { WorldRevisionSession } from "./world-revision/WorldRevisionSession.ts";
+import {
+  WorldRevisionSession,
+  WorldRevisionMessageEditError,
+} from "./world-revision/WorldRevisionSession.ts";
 import {
   WorldRevisionWorkspace,
   WorldRevisionWorkspaceError,
@@ -1032,6 +1035,23 @@ export class V1Runtime {
         return this.#worldRevisionCall(() =>
           this.#worldRevisions.send(request),
         );
+      case "world.revision.message.edit":
+        try {
+          return await this.#worldRevisionCall(() =>
+            this.#worldRevisions.editMessage(request),
+          );
+        } catch (error: unknown) {
+          if (error instanceof WorldRevisionMessageEditError)
+            throw new V1ProtocolError("invalid_request", error.message, {
+              cause: error,
+              details: {
+                kind: "world_revision_message_edit",
+                reason: error.reason,
+                paths: error.paths,
+              },
+            });
+          throw error;
+        }
       case "world.revision.cancel":
         return this.#worldRevisionCall(() =>
           this.#worldRevisions.cancel(request.sessionId),

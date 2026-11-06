@@ -279,6 +279,7 @@ export function SettingImprovementPanel({
     item: V1SettingImprovementHistoryItem,
   ): Promise<void> => {
     if (
+      editing !== null ||
       (target === "content-package" &&
         (interactionLocked || hasUnsavedFileDraft || loading)) ||
       item.runStatus === "running" ||
@@ -677,10 +678,7 @@ export function SettingImprovementPanel({
                     editing={
                       editing?.messageId === turn.user.id ? editing : null
                     }
-                    editEnabled={
-                      target === "content-package" &&
-                      onEditMessage !== undefined
-                    }
+                    editEnabled={onEditMessage !== undefined}
                     editDisabled={disabled || draftsLocked}
                     editSaving={editBusy}
                     onEdit={() =>
@@ -866,8 +864,9 @@ export function SettingImprovementPanel({
                 loading ||
                 rollbackRunning ||
                 finishingRevision ||
+                editing !== null ||
                 (target === "content-package" &&
-                  (running || editing !== null || hasUnsavedFileDraft))
+                  (running || hasUnsavedFileDraft))
               }
               deletingSessionId={deletingSessionId}
               onSelectSession={async (sessionId) => {

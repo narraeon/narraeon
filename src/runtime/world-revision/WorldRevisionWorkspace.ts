@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 
 import type { V1SettingAuthoringDiff } from "../../protocol/v1.ts";
 import type { V1WorldRevisionSealedEpochView } from "../../protocol/v1.ts";
@@ -17,6 +18,7 @@ import type {
   FileNativeWorldRevisionStore,
   StoredWorldRevisionChangeSet,
   StoredWorldRevisionEpoch,
+  StoredWorldRevisionSession,
   StoredWorldRevisionToolResult,
 } from "./FileNativeWorldRevisionStore.ts";
 import {
@@ -201,6 +203,60 @@ export class WorldRevisionWorkspace {
     });
   }
 
+  async publishEdit(input: {
+    worldId: string;
+    epochId: string;
+    expectedRevision: string;
+    files: readonly ContentTreeFile[];
+    session: StoredWorldRevisionSession;
+  }): Promise<void> {
+    const handle = revisionHandle(input);
+    await this.#withMutableEpoch(handle, async (epoch) => {
+      assertExpectedRevision(epoch, input.expectedRevision);
+      const files = cloneFiles(input.files);
+      assertUsableWorldRevisionFiles(files, epoch.baseFiles);
+      const changes = fileDiff(epoch.files, files);
+      if (changes.length > 0)
+        epoch.changes.push({
+          changeSetId: this.#store.createChangeSetId(),
+          source: "rollback",
+          createdAt: Date.now(),
+          changes,
+        });
+      epoch.files = files;
+      epoch.revision = contentTreeFingerprint(files);
+      epoch.updatedAt = Date.now();
+      await this.#store.prepareEdit({
+        beforeRevision: input.expectedRevision,
+        epoch,
+        session: input.session,
+      });
+      await this.#finishEdit(handle);
+    });
+  }
+
+  async #finishEdit(handle: WorldRevisionLockHandle): Promise<void> {
+    const pending = await this.#store.readEdit(handle.epochId);
+    if (pending === null) return;
+    if (pending.epoch.worldId !== handle.worldId)
+      throw new WorldRevisionWorkspaceError(
+        "Pending edit belongs to another world",
+      );
+    const current = await this.#store.readEpoch(handle.epochId);
+    if (!isDeepStrictEqual(current, pending.epoch)) {
+      if (
+        current.lifecycle !== "active" ||
+        current.revision !== pending.beforeRevision
+      )
+        throw new WorldRevisionWorkspaceError(
+          "Pending world-revision edit conflicts with the worktree",
+        );
+      await this.#store.saveEpoch(pending.epoch);
+    }
+    await this.#store.saveSession(pending.session);
+    await this.#store.removeEdit(handle.epochId);
+  }
+
   async rollback(input: {
     worldId: string;
     epochId: string;
@@ -338,6 +394,7 @@ export class WorldRevisionWorkspace {
   async #resumeLocked(
     handle: WorldRevisionLockHandle,
   ): Promise<StoredWorldRevisionEpoch> {
+    await this.#withRevisionOwnership(handle, () => Promise.resolve());
     let epoch = await this.#store.readEpochIfPresent(handle.epochId);
     if (epoch === null) {
       const binding = await this.#worlds.bindWorldRevision(handle);
@@ -482,7 +539,10 @@ export class WorldRevisionWorkspace {
     try {
       return await this.#worlds.operations.withWorldRevisionLock(
         handle,
-        action,
+        async () => {
+          await this.#finishEdit(handle);
+          return action();
+        },
       );
     } catch (error: unknown) {
       if (error instanceof WorldOperationClaimLostError)

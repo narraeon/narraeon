@@ -1418,6 +1418,14 @@ export function WorldPage({
               },
             })}
         onSend={(message) => revisionWorkspace.send(message)}
+        onEditMessage={(messageId, message, filePolicy, requestId) =>
+          revisionWorkspace.editMessage(
+            messageId,
+            message,
+            filePolicy,
+            requestId,
+          )
+        }
         onCancel={() => revisionWorkspace.cancel()}
         onResume={() => revisionWorkspace.resume()}
         onFreshContext={() => revisionWorkspace.startFresh()}

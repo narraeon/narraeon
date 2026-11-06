@@ -18,6 +18,9 @@ import { minimalFileNativeContentScaffold } from "../../src/runtime/content/Cont
 import { contentTreeFingerprint } from "../../src/runtime/content/ContentTreeFingerprint.ts";
 import {
   ScriptedModelHost,
+  ModelHostFailureError,
+  ModelHostContinuationError,
+  type ModelHost,
   type ModelHostBinding,
 } from "../../src/runtime/model/ModelHost.ts";
 import {
@@ -420,7 +423,7 @@ test.each(["cancel", "disconnect"] as const)(
             sessionId: first.sessionId,
           },
         }),
-      ).rejects.toThrow(/fresh model context/iu);
+      ).rejects.toThrow(/still running/iu);
       expect(cold.sent).toHaveLength(0);
       await service.cancel(first.sessionId);
     }
@@ -1839,6 +1842,894 @@ test("应用前的真实预览失败会保留工作树和修订锁", async () =>
   expect(discarded.sealedEpochs[0]).toMatchObject({
     epochId: epoch.epochId,
     lifecycle: "discarded",
+  });
+});
+
+test("editing a world-revision message can revert its AI changes before continuing", async () => {
+  const { root, worldId, worlds, workspace } = await createdWorld();
+  const path = "state/current-situation.yaml";
+  const source = worldRevisionFiles().find(
+    (file) => file.path === path,
+  )!.contents;
+  const host = new ScriptedModelHost({
+    binding: modelBinding,
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          { id: "read-edit", name: "world_revision_read", arguments: { path } },
+          {
+            id: "write-edit",
+            name: "world_revision_write_file",
+            arguments: {
+              path,
+              contents: source.replace("地点: 未设定", "地点: 修订"),
+            },
+          },
+        ],
+      },
+      { outcome: "response", text: "Changed.", toolCalls: [] },
+      { outcome: "failure", message: "connection lost after edit" },
+      { outcome: "response", text: "Edited.", toolCalls: [] },
+    ],
+  });
+  const service = new WorldRevisionSession({
+    store: new FileNativeWorldRevisionStore(root),
+    workspace,
+    worlds,
+    compiler: new FileNativePromptCompiler({ locale: "zh-CN" }),
+    locale: () => "zh-CN",
+    bindModelHost: () => Promise.resolve(host),
+    bindExistingModelHost: () => Promise.resolve(host),
+    bindPlayPreset: () =>
+      Promise.resolve(builtinDefaultPlayPresetBinding("zh-CN")),
+    preview: () => preview,
+  });
+  const first = await service.send({
+    worldId,
+    requestId: "original-edit",
+    message: "Change it.",
+    continuation: { kind: "fresh_context" },
+  });
+  expect(
+    (await workspace.active(worldId))?.files.find((file) => file.path === path)
+      ?.contents,
+  ).toContain("地点: 修订");
+  const edited = await service.editMessage({
+    worldId,
+    sessionId: first.sessionId,
+    messageId: first.messages[0]!.id,
+    requestId: "edit",
+    message: "Discuss it.",
+    filePolicy: "revert",
+  });
+  expect(edited.runStatus).toBe("interrupted");
+  expect(edited.canRetry).toBe(true);
+  const beforeRetry = await workspace.active(worldId);
+  expect(beforeRetry?.files.find((file) => file.path === path)?.contents).toBe(
+    source,
+  );
+  const resumed = await service.resume({
+    worldId,
+    sessionId: first.sessionId,
+    requestId: "retry-edit",
+  });
+  expect(resumed.messages.map(({ text }) => text)).toEqual([
+    "Discuss it.",
+    "Edited.",
+  ]);
+  expect((await workspace.active(worldId))?.changes).toEqual(
+    beforeRetry?.changes,
+  );
+  const duplicate = await service.editMessage({
+    worldId,
+    sessionId: first.sessionId,
+    messageId: first.messages[0]!.id,
+    requestId: "edit",
+    message: "Discuss it.",
+    filePolicy: "revert",
+  });
+  expect(duplicate.messages).toEqual(resumed.messages);
+  expect(await worlds.currentHead(worldId)).toBe("genesis");
+});
+
+test.each(["manual", "applied", "discarded"] as const)(
+  "message revert protects %s changes",
+  async (mode) => {
+    const { root, worldId, worlds, workspace } = await createdWorld();
+    const path = "state/current-situation.yaml";
+    const source = worldRevisionFiles().find(
+      (file) => file.path === path,
+    )!.contents;
+    const host = new ScriptedModelHost({
+      binding: modelBinding,
+      steps: [
+        {
+          outcome: "response",
+          toolCalls: [
+            {
+              id: "read-protect",
+              name: "world_revision_read",
+              arguments: { path },
+            },
+            {
+              id: "write-protect",
+              name: "world_revision_write_file",
+              arguments: {
+                path,
+                contents: source.replace("地点: 未设定", "地点: AI"),
+              },
+            },
+          ],
+        },
+        { outcome: "response", text: "Changed.", toolCalls: [] },
+        { outcome: "response", text: "Kept.", toolCalls: [] },
+      ],
+    });
+    const service = new WorldRevisionSession({
+      store: new FileNativeWorldRevisionStore(root),
+      workspace,
+      worlds,
+      compiler: new FileNativePromptCompiler({ locale: "zh-CN" }),
+      locale: () => "zh-CN",
+      bindModelHost: () => Promise.resolve(host),
+      bindExistingModelHost: () => Promise.resolve(host),
+      bindPlayPreset: () =>
+        Promise.resolve(builtinDefaultPlayPresetBinding("zh-CN")),
+      preview: () => preview,
+    });
+    const first = await service.send({
+      worldId,
+      requestId: "protect",
+      message: "Change.",
+      continuation: { kind: "fresh_context" },
+    });
+    const epoch = (await workspace.active(worldId))!;
+    if (mode === "manual")
+      await service.replaceFiles({
+        worldId,
+        epochId: epoch.epochId,
+        expectedRevision: epoch.revision,
+        files: replaceContents(epoch.files, path, (contents) =>
+          contents.replace("地点: AI", "地点: manual"),
+        ),
+      });
+    else if (mode === "applied")
+      await service.apply({
+        worldId,
+        epochId: epoch.epochId,
+        expectedRevision: epoch.revision,
+      });
+    else await service.discard({ worldId, epochId: epoch.epochId });
+    const sealed = await workspace.sealed(worldId);
+    const before = await workspace.active(worldId);
+    const edit = {
+      worldId,
+      sessionId: first.sessionId,
+      messageId: first.messages[0]!.id,
+      requestId: "protect-edit",
+      message: "Discuss.",
+      filePolicy: "revert" as const,
+    };
+    await expect(service.editMessage(edit)).rejects.toThrow(
+      mode === "manual" ? /changed/iu : /sealed/iu,
+    );
+    expect(await workspace.active(worldId)).toEqual(before);
+    expect(
+      (await service.readSession(worldId, first.sessionId)).messages,
+    ).toEqual(first.messages);
+    const kept = await service.editMessage({ ...edit, filePolicy: "keep" });
+    expect(kept.messages.map(({ text }) => text)).toEqual([
+      "Discuss.",
+      "Kept.",
+    ]);
+    expect(await workspace.sealed(worldId)).toEqual(sealed);
+    expect(await worlds.currentHead(worldId)).toBe(
+      mode === "applied" ? "commit:1" : "genesis",
+    );
+    if (mode === "applied")
+      expect(
+        (await worlds.readSurface(worldId, "state")).find(
+          (file) => file.path === "current-situation.yaml",
+        )?.contents,
+      ).toContain("地点: AI");
+  },
+);
+
+test.each([
+  "prepare-before",
+  "prepare-after",
+  "epoch-before",
+  "epoch-after",
+  "session-before",
+  "session-after",
+  "remove-before",
+  "remove-after",
+] as const)("edit recovery at %s precedes apply and discard", async (cut) => {
+  for (const action of ["apply", "discard"] as const) {
+    const { root, worldId, worlds, workspace } = await createdWorld();
+    const store = new FileNativeWorldRevisionStore(root);
+    const path = "state/current-situation.yaml";
+    const source = worldRevisionFiles().find(
+      (file) => file.path === path,
+    )!.contents;
+    const host = new ScriptedModelHost({
+      binding: modelBinding,
+      steps: [
+        {
+          outcome: "response",
+          toolCalls: [
+            {
+              id: "read-cut",
+              name: "world_revision_read",
+              arguments: { path },
+            },
+            {
+              id: "write-cut",
+              name: "world_revision_write_file",
+              arguments: {
+                path,
+                contents: source.replace("地点: 未设定", "地点: AI"),
+              },
+            },
+          ],
+        },
+        { outcome: "response", text: "Changed.", toolCalls: [] },
+      ],
+    });
+    const service = new WorldRevisionSession({
+      store,
+      workspace,
+      worlds,
+      compiler: new FileNativePromptCompiler({ locale: "zh-CN" }),
+      locale: () => "zh-CN",
+      bindModelHost: () => Promise.resolve(host),
+      bindExistingModelHost: () => Promise.resolve(host),
+      bindPlayPreset: () =>
+        Promise.resolve(builtinDefaultPlayPresetBinding("zh-CN")),
+      preview: () => preview,
+    });
+    const first = await service.send({
+      worldId,
+      requestId: "cut-start",
+      message: "Change.",
+      continuation: { kind: "fresh_context" },
+    });
+    const epoch = (await workspace.active(worldId))!;
+    // The workspace has its own store instance. Inject against that instance by
+    // creating a workspace that shares this test store from the start below.
+    const controlledWorkspace = new WorldRevisionWorkspace({ store, worlds });
+    const controlled = new WorldRevisionSession({
+      store,
+      workspace: controlledWorkspace,
+      worlds,
+      compiler: new FileNativePromptCompiler({ locale: "zh-CN" }),
+      locale: () => "zh-CN",
+      bindModelHost: () => Promise.resolve(host),
+      bindExistingModelHost: () => Promise.resolve(host),
+      bindPlayPreset: () =>
+        Promise.resolve(builtinDefaultPlayPresetBinding("zh-CN")),
+      preview: () => preview,
+    });
+    const inject =
+      <Arg>(original: (arg: Arg) => Promise<void>) =>
+      async (arg: Arg): Promise<void> => {
+        if (cut.endsWith("before")) throw new Error("injected edit cut");
+        await original(arg);
+        throw new Error("injected edit cut");
+      };
+    const spy = cut.startsWith("prepare")
+      ? vi
+          .spyOn(store, "prepareEdit")
+          .mockImplementationOnce(inject(store.prepareEdit.bind(store)))
+      : cut.startsWith("epoch")
+        ? vi
+            .spyOn(store, "saveEpoch")
+            .mockImplementationOnce(inject(store.saveEpoch.bind(store)))
+        : cut.startsWith("session")
+          ? vi
+              .spyOn(store, "saveSession")
+              .mockImplementationOnce(inject(store.saveSession.bind(store)))
+          : vi
+              .spyOn(store, "removeEdit")
+              .mockImplementationOnce(inject(store.removeEdit.bind(store)));
+    await expect(
+      controlled.editMessage({
+        worldId,
+        sessionId: first.sessionId,
+        messageId: first.messages[0]!.id,
+        requestId: "cut-edit",
+        message: "Discuss.",
+        filePolicy: "revert",
+      }),
+    ).rejects.toThrow("injected edit cut");
+    spy.mockRestore();
+    const published = cut !== "prepare-before";
+    const expectedRevision = published
+      ? contentTreeFingerprint(epoch.baseFiles)
+      : epoch.revision;
+    if (action === "apply")
+      await controlled.apply({
+        worldId,
+        epochId: epoch.epochId,
+        expectedRevision,
+      });
+    else await controlled.discard({ worldId, epochId: epoch.epochId });
+    const recovered = await controlled.readSession(worldId, first.sessionId);
+    expect(recovered.messages[0]?.text).toBe(
+      published ? "Discuss." : "Change.",
+    );
+    expect(await worlds.currentHead(worldId)).toBe(
+      action === "apply" && !published ? "commit:1" : "genesis",
+    );
+    expect(
+      (await controlledWorkspace.sealed(worldId))[0]?.changes.filter(
+        ({ source }) => source === "rollback",
+      ),
+    ).toHaveLength(published ? 1 : 0);
+  }
+});
+
+test.each([
+  "chat_completions",
+  "openai_responses",
+  "anthropic_messages",
+] as const)(
+  "%s production world-revision stream retries the same frozen request",
+  async (provider) => {
+    const data = (value: unknown) => `data: ${JSON.stringify(value)}\n\n`;
+    const named = (name: string, value: unknown) =>
+      `event: ${name}\n${data(value)}`;
+    const chat = (text: string) =>
+      data({ id: "c1", choices: [{ index: 0, delta: { content: text } }] });
+    const response = (text: string) =>
+      named("response.output_text.delta", {
+        type: "response.output_text.delta",
+        delta: text,
+      });
+    const anthropicStart =
+      named("message_start", {
+        type: "message_start",
+        message: {
+          id: "m1",
+          role: "assistant",
+          model: "test",
+          content: [],
+          usage: { input_tokens: 1, output_tokens: 1 },
+        },
+      }) +
+      named("content_block_start", {
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "text", text: "" },
+      });
+    const anthropic = (text: string) =>
+      named("content_block_delta", {
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "text_delta", text },
+      });
+    const partial =
+      provider === "chat_completions"
+        ? chat("unfinished fragment")
+        : provider === "openai_responses"
+          ? response("unfinished fragment")
+          : anthropicStart + anthropic("unfinished fragment");
+    const complete =
+      provider === "chat_completions"
+        ? chat("Finished.") +
+          data({
+            id: "c1",
+            choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+          }) +
+          "data: [DONE]\n\n"
+        : provider === "openai_responses"
+          ? response("Finished.") +
+            named("response.completed", {
+              type: "response.completed",
+              response: {
+                id: "r1",
+                status: "completed",
+                output: [
+                  {
+                    type: "message",
+                    id: "m1",
+                    role: "assistant",
+                    status: "completed",
+                    content: [{ type: "output_text", text: "Finished." }],
+                  },
+                ],
+              },
+            })
+          : anthropicStart +
+            anthropic("Finished.") +
+            named("content_block_stop", {
+              type: "content_block_stop",
+              index: 0,
+            }) +
+            named("message_delta", {
+              type: "message_delta",
+              delta: { stop_reason: "end_turn", stop_sequence: null },
+              usage: { output_tokens: 3 },
+            }) +
+            named("message_stop", { type: "message_stop" });
+    const bodies: string[] = [];
+    const host = new FileNativeModelHost(
+      {
+        provider,
+        baseUrl: "https://provider.invalid/v1",
+        apiKey: "secret",
+        modelId: "test",
+        contextWindowTokens: 64000,
+        maxOutputTokens: 2000,
+      },
+      (_url, options) => {
+        if (typeof options?.body !== "string")
+          throw new Error("Missing request body");
+        bodies.push(options.body);
+        return Promise.resolve(
+          new Response(bodies.length === 1 ? partial : complete, {
+            headers: { "content-type": "text/event-stream" },
+          }),
+        );
+      },
+    );
+    const { root, worldId, worlds, workspace } = await createdWorld();
+    const service = () =>
+      new WorldRevisionSession({
+        store: new FileNativeWorldRevisionStore(root),
+        workspace,
+        worlds,
+        compiler: new FileNativePromptCompiler({ locale: "en" }),
+        locale: () => "en",
+        bindModelHost: () => Promise.resolve(host),
+        bindExistingModelHost: () => Promise.resolve(host),
+        bindPlayPreset: () =>
+          Promise.resolve(builtinDefaultPlayPresetBinding("en")),
+        preview: () => preview,
+      });
+    const failed = await service().send({
+      worldId,
+      requestId: "original",
+      message: "Inspect.",
+      continuation: { kind: "fresh_context" },
+    });
+    expect(failed).toMatchObject({ runStatus: "interrupted", canRetry: true });
+    const resumed = await service().resume({
+      worldId,
+      sessionId: failed.sessionId,
+      requestId: "retry",
+    });
+    expect(resumed.messages.map(({ text }) => text)).toEqual([
+      "Inspect.",
+      "Finished.",
+    ]);
+    expect(bodies[1]).toBe(bodies[0]);
+    expect(bodies[1]).not.toContain("unfinished fragment");
+  },
+);
+
+test("a crash after settled receipts resumes the next frozen exchange exactly once", async () => {
+  const { root, worldId, worlds, workspace } = await createdWorld();
+  const store = new FileNativeWorldRevisionStore(root);
+  const path = "state/current-situation.yaml";
+  const source = worldRevisionFiles().find(
+    (file) => file.path === path,
+  )!.contents;
+  const host = new ScriptedModelHost({
+    binding: modelBinding,
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "read-crash",
+            name: "world_revision_read",
+            arguments: { path },
+          },
+          {
+            id: "write-crash",
+            name: "world_revision_write_file",
+            arguments: {
+              path,
+              contents: source.replace("地点: 未设定", "地点: 保存"),
+            },
+          },
+        ],
+      },
+      { outcome: "failure", message: "stop after receipt" },
+    ],
+  });
+  const service = (bound: typeof host) =>
+    new WorldRevisionSession({
+      store,
+      workspace,
+      worlds,
+      compiler: new FileNativePromptCompiler({ locale: "zh-CN" }),
+      locale: () => "zh-CN",
+      bindModelHost: () => Promise.resolve(bound),
+      bindExistingModelHost: () => Promise.resolve(bound),
+      bindPlayPreset: () =>
+        Promise.resolve(builtinDefaultPlayPresetBinding("zh-CN")),
+      preview: () => preview,
+    });
+  const originalSave = store.saveSession.bind(store);
+  let checkpoint: Parameters<typeof store.saveSession>[0] | undefined;
+  vi.spyOn(store, "saveSession").mockImplementation(async (session) => {
+    await originalSave(session);
+    if (
+      checkpoint === undefined &&
+      session.runStatus === "running" &&
+      session.pendingSettlement === null &&
+      session.modelItems.at(-1)?.kind === "tool"
+    )
+      checkpoint = structuredClone(session);
+  });
+  const stopped = await service(host).send({
+    worldId,
+    requestId: "receipt",
+    message: "Change.",
+    continuation: { kind: "fresh_context" },
+  });
+  expect(checkpoint).toBeDefined();
+  await originalSave(checkpoint!);
+  const changes = (await workspace.active(worldId))!.changes;
+  const nextHost = new ScriptedModelHost({
+    binding: modelBinding,
+    steps: [{ outcome: "response", text: "Finished.", toolCalls: [] }],
+  });
+  const recoveredService = service(nextHost);
+  const recovered = await recoveredService.readSession(
+    worldId,
+    stopped.sessionId,
+  );
+  expect(recovered.canRetry).toBe(true);
+  const resumed = await recoveredService.resume({
+    worldId,
+    sessionId: stopped.sessionId,
+    requestId: "resume-receipt",
+  });
+  expect(resumed.messages.map(({ text }) => text)).toEqual([
+    "Change.",
+    "Finished.",
+  ]);
+  expect(nextHost.requests[0]).toMatchObject({
+    requestId: "receipt",
+    exchange: 2,
+  });
+  expect((await workspace.active(worldId))!.changes).toEqual(changes);
+});
+
+test.each([
+  "current-before",
+  "current-after",
+  "legacy-before",
+  "legacy-after",
+] as const)(
+  "recovery preserves a prepared settlement across %s failures",
+  async (mode) => {
+    const { root, worldId, worlds, workspace } = await createdWorld();
+    const path = "state/current-situation.yaml";
+    const source = worldRevisionFiles().find(
+      (file) => file.path === path,
+    )!.contents;
+    const host = new ScriptedModelHost({
+      binding: modelBinding,
+      steps: [
+        {
+          outcome: "response",
+          toolCalls: [
+            {
+              id: "read-overview",
+              name: "world_revision_read",
+              arguments: { path },
+            },
+            {
+              id: "write-overview",
+              name: "world_revision_write_file",
+              arguments: {
+                path,
+                contents: source.replace("地点: 未设定", "地点: recovered"),
+              },
+            },
+          ],
+        },
+      ],
+    });
+    const service = new WorldRevisionSession({
+      store: new FileNativeWorldRevisionStore(root),
+      workspace,
+      worlds,
+      compiler: new FileNativePromptCompiler({ locale: "zh-CN" }),
+      locale: () => "zh-CN",
+      bindModelHost: () => Promise.resolve(host),
+      bindExistingModelHost: () => Promise.resolve(host),
+      bindPlayPreset: () =>
+        Promise.resolve(builtinDefaultPlayPresetBinding("zh-CN")),
+      preview: () => preview,
+    });
+    const originalPublish = workspace.publishAi.bind(workspace);
+    const publish = vi
+      .spyOn(workspace, "publishAi")
+      .mockRejectedValueOnce(new Error("before publication"));
+    const interrupted = await service.send({
+      worldId,
+      requestId: "overview",
+      message: "Change.",
+      continuation: { kind: "fresh_context" },
+    });
+    expect(interrupted.runStatus).toBe("interrupted");
+    const sessionPath = join(
+      root,
+      "world-revisions",
+      "sessions",
+      `${interrupted.sessionId}.json`,
+    );
+    let originalLegacy: string | undefined;
+    if (mode.startsWith("legacy")) {
+      // Simulate the precise v2 pending-settlement shape to exercise recovery migration.
+      const stored = JSON.parse(await readFile(sessionPath, "utf8")) as Record<
+        string,
+        unknown
+      >;
+      stored.schemaVersion = 2;
+      delete stored.retryDispatch;
+      delete stored.editReceipts;
+      originalLegacy = JSON.stringify(stored);
+      await writeFile(sessionPath, originalLegacy);
+    }
+    publish.mockImplementationOnce(async (input) => {
+      if (mode.endsWith("after")) await originalPublish(input);
+      throw new Error("recovery I/O failure");
+    });
+    await expect(service.overview(worldId)).rejects.toThrow(
+      "recovery I/O failure",
+    );
+    expect(
+      (
+        JSON.parse(await readFile(sessionPath, "utf8")) as {
+          pendingSettlement: unknown;
+        }
+      ).pendingSettlement,
+    ).not.toBeNull();
+    const overview = await service.overview(worldId);
+    if (originalLegacy !== undefined)
+      expect(
+        await readFile(
+          join(
+            root,
+            "world-revisions",
+            "sessions",
+            ".legacy",
+            `${interrupted.sessionId}.json`,
+          ),
+          "utf8",
+        ),
+      ).toBe(originalLegacy);
+    expect(
+      overview.epoch?.files.find((file) => file.path === path)?.contents,
+    ).toContain("地点: recovered");
+    expect(
+      overview.latest?.turns[0]?.exchanges[0]?.toolCalls[1]?.result?.isError,
+    ).toBe(false);
+    expect(overview.latest?.canRetry).toBe(true);
+  },
+);
+
+test.each(["empty", "context-limit", "output-limit", "continuation"] as const)(
+  "world revision classifies %s before offering retry",
+  async (mode) => {
+    const { root, worldId, worlds, workspace } = await createdWorld();
+    const script = new ScriptedModelHost({
+      binding: modelBinding,
+      steps: [{ outcome: "response", text: "", toolCalls: [] }],
+    });
+    const failure =
+      mode === "context-limit"
+        ? new ModelHostFailureError("maximum context length")
+        : mode === "output-limit"
+          ? new ModelHostFailureError("output limit", {
+              details: { code: "model_output_limit" },
+            })
+          : new ModelHostContinuationError("damaged continuation");
+    const host: ModelHost =
+      mode === "empty"
+        ? script
+        : {
+            binding: () => modelBinding,
+            exchange: () => Promise.reject(failure),
+          };
+    const service = new WorldRevisionSession({
+      store: new FileNativeWorldRevisionStore(root),
+      workspace,
+      worlds,
+      compiler: new FileNativePromptCompiler({ locale: "zh-CN" }),
+      locale: () => "zh-CN",
+      bindModelHost: () => Promise.resolve(host),
+      bindExistingModelHost: () => Promise.resolve(host),
+      bindPlayPreset: () =>
+        Promise.resolve(builtinDefaultPlayPresetBinding("zh-CN")),
+      preview: () => preview,
+    });
+    const result = await service.send({
+      worldId,
+      requestId: mode,
+      message: "Inspect.",
+      continuation: { kind: "fresh_context" },
+    });
+    expect(result.canRetry).toBe(mode === "empty");
+    if (mode === "empty") {
+      const second = new ScriptedModelHost({
+        binding: modelBinding,
+        steps: [{ outcome: "response", text: "Finished.", toolCalls: [] }],
+      });
+      const resumed = await new WorldRevisionSession({
+        store: new FileNativeWorldRevisionStore(root),
+        workspace,
+        worlds,
+        compiler: new FileNativePromptCompiler({ locale: "zh-CN" }),
+        locale: () => "zh-CN",
+        bindModelHost: () => Promise.resolve(second),
+        bindExistingModelHost: () => Promise.resolve(second),
+        bindPlayPreset: () =>
+          Promise.resolve(builtinDefaultPlayPresetBinding("zh-CN")),
+        preview: () => preview,
+      }).resume({
+        worldId,
+        sessionId: result.sessionId,
+        requestId: "retry-empty",
+      });
+      expect(resumed.messages.map(({ text }) => text)).toEqual([
+        "Inspect.",
+        "Finished.",
+      ]);
+    }
+  },
+);
+
+test("cancelled world revision ignores a late response and can retry", async () => {
+  const { root, worldId, worlds, workspace } = await createdWorld();
+  const started = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const script = new ScriptedModelHost({
+    binding: modelBinding,
+    steps: [{ outcome: "response", text: "Late response.", toolCalls: [] }],
+  });
+  const host: ModelHost = {
+    binding: () => modelBinding,
+    exchange: async (request, observer) => {
+      started.resolve();
+      await release.promise;
+      return script.exchange(request, observer);
+    },
+  };
+  const make = (bound: ModelHost) =>
+    new WorldRevisionSession({
+      store: new FileNativeWorldRevisionStore(root),
+      workspace,
+      worlds,
+      compiler: new FileNativePromptCompiler({ locale: "zh-CN" }),
+      locale: () => "zh-CN",
+      bindModelHost: () => Promise.resolve(bound),
+      bindExistingModelHost: () => Promise.resolve(bound),
+      bindPlayPreset: () =>
+        Promise.resolve(builtinDefaultPlayPresetBinding("zh-CN")),
+      preview: () => preview,
+    });
+  const service = make(host);
+  const running = service.send({
+    worldId,
+    requestId: "cancel",
+    message: "Inspect.",
+    continuation: { kind: "fresh_context" },
+  });
+  await started.promise;
+  const sessionId = (await service.overview(worldId)).latest!.sessionId;
+  const cancelling = service.cancel(sessionId);
+  release.resolve();
+  const interrupted = await running;
+  await cancelling;
+  expect(interrupted.canRetry).toBe(true);
+  const retryHost = new ScriptedModelHost({
+    binding: modelBinding,
+    steps: [{ outcome: "response", text: "Finished.", toolCalls: [] }],
+  });
+  const resumed = await make(retryHost).resume({
+    worldId,
+    sessionId,
+    requestId: "retry-cancel",
+  });
+  expect(resumed.messages.map(({ text }) => text)).toEqual([
+    "Inspect.",
+    "Finished.",
+  ]);
+  expect(JSON.stringify(retryHost.requests)).not.toContain("Late response.");
+});
+
+test("duplicate retry response no longer offers retry after its epoch is sealed", async () => {
+  const { root, worldId, worlds, workspace } = await createdWorld();
+  const host = new ScriptedModelHost({
+    binding: modelBinding,
+    steps: [
+      { outcome: "failure", message: "first" },
+      { outcome: "failure", message: "retry" },
+    ],
+  });
+  const service = new WorldRevisionSession({
+    store: new FileNativeWorldRevisionStore(root),
+    workspace,
+    worlds,
+    compiler: new FileNativePromptCompiler({ locale: "zh-CN" }),
+    locale: () => "zh-CN",
+    bindModelHost: () => Promise.resolve(host),
+    bindExistingModelHost: () => Promise.resolve(host),
+    bindPlayPreset: () =>
+      Promise.resolve(builtinDefaultPlayPresetBinding("zh-CN")),
+    preview: () => preview,
+  });
+  const initial = await service.send({
+    worldId,
+    requestId: "first-sealed",
+    message: "Inspect.",
+    continuation: { kind: "fresh_context" },
+  });
+  const interrupted = await service.resume({
+    worldId,
+    sessionId: initial.sessionId,
+    requestId: "retry-sealed",
+  });
+  expect(interrupted.canRetry).toBe(true);
+  const epoch = (await workspace.active(worldId))!;
+  await service.discard({ worldId, epochId: epoch.epochId });
+  const duplicate = await service.resume({
+    worldId,
+    sessionId: initial.sessionId,
+    requestId: "retry-sealed",
+  });
+  expect(duplicate.canRetry).toBe(false);
+});
+
+test("interrupted world-revision request retries the frozen exchange without duplicating the message", async () => {
+  const { root, worldId, worlds, workspace } = await createdWorld();
+  const host = new ScriptedModelHost({
+    binding: modelBinding,
+    steps: [
+      { outcome: "failure", message: "connection lost" },
+      { outcome: "response", text: "Recovered.", toolCalls: [] },
+    ],
+  });
+  const service = new WorldRevisionSession({
+    store: new FileNativeWorldRevisionStore(root),
+    workspace,
+    worlds,
+    compiler: new FileNativePromptCompiler({ locale: "zh-CN" }),
+    locale: () => "zh-CN",
+    bindModelHost: () => Promise.resolve(host),
+    bindExistingModelHost: () => Promise.resolve(host),
+    bindPlayPreset: () =>
+      Promise.resolve(builtinDefaultPlayPresetBinding("zh-CN")),
+    preview: () => preview,
+  });
+  const interrupted = await service.send({
+    worldId,
+    requestId: "original",
+    message: "Revise this world.",
+    continuation: { kind: "fresh_context" },
+  });
+  expect(interrupted.runStatus).toBe("interrupted");
+  const resumed = await service.resume({
+    worldId,
+    sessionId: interrupted.sessionId,
+    requestId: "retry",
+  });
+  expect(resumed.runStatus).toBe("ready");
+  expect(resumed.messages.map(({ text }) => text)).toEqual([
+    "Revise this world.",
+    "Recovered.",
+  ]);
+  expect(host.requests[1]).toMatchObject({
+    requestId: "original",
+    exchange: 1,
   });
 });
 

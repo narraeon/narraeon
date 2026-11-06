@@ -76,45 +76,41 @@ test("editing retains its draft and idempotency key after a network failure", as
   );
 });
 
-test("world revision does not expose content-package message editing", () => {
-  renderPanel(undefined, {
-    target: "world-revision",
-    onEditMessage: () => Promise.resolve(),
-  });
-  expect(screen.queryByRole("button", { name: "修改消息" })).toBeNull();
-});
-
-test("history selection and deletion remain locked while editing a message", () => {
-  const select = vi.fn(() => Promise.resolve());
-  const remove = vi.fn(() => Promise.resolve());
-  renderPanel(remove, {
-    onEditMessage: () => Promise.resolve(),
-    onSelectSession: select,
-    history: [
-      {
-        sessionId: "old",
-        runStatus: "ready",
-        createdAt: 1,
-        updatedAt: 1,
-        excerpt: "旧会话",
-        turnCount: 1,
-        exchangeCount: 1,
-        toolCallCount: 0,
-        changedFileCount: 0,
-      },
-    ],
-  });
-  fireEvent.click(screen.getByRole("button", { name: "历史" }));
-  fireEvent.click(screen.getByRole("button", { name: "修改消息" }));
-  const selectButton = screen.getByText("旧会话").closest("button")!;
-  expect(selectButton.disabled).toBe(true);
-  fireEvent.click(selectButton);
-  expect(select).not.toHaveBeenCalled();
-  const deleteButton = screen.getByRole("button", { name: /删除对话/u });
-  expect((deleteButton as HTMLButtonElement).disabled).toBe(true);
-  fireEvent.click(deleteButton);
-  expect(remove).not.toHaveBeenCalled();
-});
+test.each(["content-package", "world-revision"] as const)(
+  "%s history selection and deletion remain locked while editing a message",
+  (target) => {
+    const select = vi.fn(() => Promise.resolve());
+    const remove = vi.fn(() => Promise.resolve());
+    renderPanel(remove, {
+      target,
+      onEditMessage: () => Promise.resolve(),
+      onSelectSession: select,
+      history: [
+        {
+          sessionId: "old",
+          runStatus: "ready",
+          createdAt: 1,
+          updatedAt: 1,
+          excerpt: "旧会话",
+          turnCount: 1,
+          exchangeCount: 1,
+          toolCallCount: 0,
+          changedFileCount: 0,
+        },
+      ],
+    });
+    fireEvent.click(screen.getByRole("button", { name: "历史" }));
+    fireEvent.click(screen.getByRole("button", { name: "修改消息" }));
+    const selectButton = screen.getByText("旧会话").closest("button")!;
+    expect(selectButton.disabled).toBe(true);
+    fireEvent.click(selectButton);
+    expect(select).not.toHaveBeenCalled();
+    const deleteButton = screen.getByRole("button", { name: /删除对话/u });
+    expect((deleteButton as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(deleteButton);
+    expect(remove).not.toHaveBeenCalled();
+  },
+);
 
 test("retry button resumes once and is disabled for unsaved file drafts", async () => {
   const onResume = vi.fn(() => Promise.resolve());

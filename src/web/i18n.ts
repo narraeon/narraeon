@@ -1511,6 +1511,10 @@ const settingImprovementEnglishMessages: Record<string, string> = {
     "Saving replaces this message and the later conversation. Choose how to handle file changes.",
   保留文件改动并继续: "Keep file changes and continue",
   撤回文件改动并继续: "Revert file changes and continue",
+  "已封存修订的文件改动无法撤回；可以保留当前文件继续。修改稿已保留。":
+    "Changes in a sealed revision cannot be reverted. Keep the current files to continue. Your draft was retained.",
+  "撤回会使世界修订无效：{paths}。文件和对话未改变，修改稿已保留。":
+    "Reverting would make the world revision invalid: {paths}. Files and conversation are unchanged, and your draft was retained.",
   "以下文件后来发生变化，无法撤回：{paths}。文件和对话未改变，修改稿已保留。":
     "These files changed later and cannot be reverted: {paths}. Files and conversation are unchanged, and your draft is preserved.",
   "撤回会使内容包无效：{paths}。文件和对话未改变，修改稿已保留。":

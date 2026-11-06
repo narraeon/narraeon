@@ -381,6 +381,65 @@ export function worldRevisionTarget(
           continuation: continuation(sessionId),
         }),
       ),
+    editMessage: async (
+      sessionId,
+      messageId,
+      message,
+      filePolicy,
+      requestId,
+    ) => {
+      try {
+        return normalizeView(
+          await request(client, {
+            type: "world.revision.message.edit",
+            worldId: id,
+            sessionId,
+            messageId,
+            message,
+            filePolicy,
+            requestId,
+          }),
+        );
+      } catch (error: unknown) {
+        if (
+          error instanceof RuntimeRequestError &&
+          typeof error.details === "object" &&
+          error.details !== null &&
+          "kind" in error.details &&
+          error.details.kind === "world_revision_message_edit" &&
+          "reason" in error.details &&
+          "paths" in error.details &&
+          Array.isArray(error.details.paths) &&
+          error.details.paths.every((path: unknown) => typeof path === "string")
+        ) {
+          const paths = error.details.paths.join(", ");
+          if (error.details.reason === "sealed")
+            throw new Error(
+              uiText(
+                "已封存修订的文件改动无法撤回；可以保留当前文件继续。修改稿已保留。",
+              ),
+              { cause: error },
+            );
+          if (error.details.reason === "conflict")
+            throw new Error(
+              uiText(
+                "以下文件后来发生变化，无法撤回：{paths}。文件和对话未改变，修改稿已保留。",
+                { paths },
+              ),
+              { cause: error },
+            );
+          if (error.details.reason === "invalid_tree")
+            throw new Error(
+              uiText(
+                "撤回会使世界修订无效：{paths}。文件和对话未改变，修改稿已保留。",
+                { paths },
+              ),
+              { cause: error },
+            );
+        }
+        throw error;
+      }
+    },
     cancel: async (sessionId) =>
       normalizeView(
         await request(client, { type: "world.revision.cancel", sessionId }),

@@ -9,6 +9,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { readGoogleHops, writeGoogleHop } from "../model/GoogleHopJournal.ts";
 import type { GoogleHopEvidence } from "../model/ModelHost.ts";
 import {
+  link,
   mkdir,
   open,
   readFile,
@@ -110,7 +111,19 @@ export type StoredWorldRevisionPendingSettlement =
 export interface StoredWorldRevisionSession {
   /** Discovery-only marker; never saved or sent to a provider. */
   damagedContinuation?: true;
-  schemaVersion: 1 | 2;
+  schemaVersion: 1 | 2 | 3;
+  editReceipts?: {
+    requestId: string;
+    messageId: string;
+    message: string;
+    filePolicy: "keep" | "revert";
+  }[];
+  retryDispatch?: {
+    requestId: string;
+    exchange: number;
+    modelItemCount: number;
+    state: "dispatching" | "retryable" | "blocked";
+  };
   requests?: AuthoringRequestSnapshot[];
   sessionId: string;
   worldId: string;
@@ -180,6 +193,10 @@ export class FileNativeWorldRevisionStore {
     const root = join(resolve(dataRoot), "world-revisions");
     this.#epochsRoot = join(root, "epochs");
     this.#sessionsRoot = join(root, "sessions");
+  }
+
+  get sessionScope(): string {
+    return this.#sessionsRoot;
   }
 
   createEpochId(): string {
@@ -282,8 +299,112 @@ export class FileNativeWorldRevisionStore {
   saveSession(session: StoredWorldRevisionSession): Promise<void> {
     return this.#mutate(async () => {
       validateSession(session);
-      await publishJson(this.#sessionPath(session.sessionId), session);
+      const path = this.#sessionPath(session.sessionId);
+      {
+        const source = await readFile(path).catch((error: unknown) => {
+          if (isNodeError(error) && error.code === "ENOENT") return null;
+          throw error;
+        });
+        if (source !== null) {
+          const old = validateSession(
+            JSON.parse(source.toString("utf8")) as unknown,
+          );
+          if (old.schemaVersion === 3 && session.schemaVersion !== 3)
+            throw new Error(
+              "Cannot downgrade a migrated world-revision session",
+            );
+          if (old.schemaVersion !== 3) {
+            const backup = join(
+              this.#sessionsRoot,
+              ".legacy",
+              `${session.sessionId}.json`,
+            );
+            await mkdir(dirname(backup), { recursive: true, mode: 0o700 });
+            const temporary = `${backup}.${randomUUID()}.tmp`;
+            try {
+              const handle = await open(temporary, "wx", 0o600);
+              try {
+                await handle.writeFile(source);
+              } finally {
+                await handle.close();
+              }
+              try {
+                await link(temporary, backup);
+              } catch (error) {
+                if (!isNodeError(error) || error.code !== "EEXIST") throw error;
+              }
+              if (!(await readFile(backup)).equals(source))
+                throw new Error(
+                  "World-revision legacy source backup does not match the original bytes",
+                );
+            } finally {
+              await rm(temporary, { force: true });
+            }
+            session.schemaVersion = 3;
+            validateSession(session);
+          }
+        }
+      }
+      await publishJson(path, session);
     });
+  }
+
+  async prepareEdit(input: {
+    beforeRevision: string;
+    epoch: StoredWorldRevisionEpoch;
+    session: StoredWorldRevisionSession;
+  }): Promise<void> {
+    validateEpoch(input.epoch);
+    validateSession(input.session);
+    if (
+      input.epoch.worldId !== input.session.worldId ||
+      input.epoch.epochId !== input.session.epochId ||
+      !treeRevisionPattern.test(input.beforeRevision)
+    )
+      throw new Error("Invalid world-revision edit intent");
+    await publishJson(this.#editPath(input.epoch.epochId), input);
+  }
+
+  async readEdit(epochId: string): Promise<{
+    beforeRevision: string;
+    epoch: StoredWorldRevisionEpoch;
+    session: StoredWorldRevisionSession;
+  } | null> {
+    let value: unknown;
+    try {
+      value = JSON.parse(
+        await readFile(this.#editPath(epochId), "utf8"),
+      ) as unknown;
+    } catch (error) {
+      if (isNodeError(error) && error.code === "ENOENT") return null;
+      throw error;
+    }
+    if (
+      !isRecord(value) ||
+      !hasExactKeys(value, ["beforeRevision", "epoch", "session"]) ||
+      typeof value.beforeRevision !== "string" ||
+      !treeRevisionPattern.test(value.beforeRevision)
+    )
+      throw new Error("Invalid world-revision edit intent");
+    const epoch = validateEpoch(value.epoch);
+    const session = validateSession(value.session);
+    if (
+      epoch.epochId !== epochId ||
+      epoch.worldId !== session.worldId ||
+      epoch.epochId !== session.epochId ||
+      epoch.lifecycle !== "active"
+    )
+      throw new Error("Invalid world-revision edit identity");
+    return { beforeRevision: value.beforeRevision, epoch, session };
+  }
+
+  async removeEdit(epochId: string): Promise<void> {
+    await rm(this.#editPath(epochId), { force: true });
+  }
+
+  #editPath(epochId: string): string {
+    assertEpochId(epochId);
+    return join(this.#epochsRoot, `.edit-${epochId}.json`);
   }
 
   async listSessions(worldId: string): Promise<StoredWorldRevisionSession[]> {
@@ -564,16 +685,54 @@ function validateSession(value: unknown): StoredWorldRevisionSession {
         "authorization",
         "pendingSettlement",
       ],
-      ["requests", "googleOutcomeUnknown"],
+      [
+        "requests",
+        "googleOutcomeUnknown",
+        ...(value.schemaVersion === 3 ? ["retryDispatch", "editReceipts"] : []),
+      ],
     ) ||
-    (value.schemaVersion !== 1 && value.schemaVersion !== 2) ||
+    (value.schemaVersion !== 1 &&
+      value.schemaVersion !== 2 &&
+      value.schemaVersion !== 3) ||
+    (value.editReceipts !== undefined &&
+      !validEditReceipts(value.editReceipts)) ||
+    (value.retryDispatch !== undefined &&
+      (!isRecord(value.retryDispatch) ||
+        !hasExactKeys(value.retryDispatch, [
+          "requestId",
+          "exchange",
+          "modelItemCount",
+          "state",
+        ]) ||
+        !nonEmptyString(value.retryDispatch.requestId) ||
+        !count(value.retryDispatch.exchange) ||
+        !count(value.retryDispatch.modelItemCount) ||
+        !Array.isArray(value.requests) ||
+        !isRecord(value.requests.at(-1)) ||
+        (value.requests.at(-1) as Record<string, unknown>).requestId !==
+          value.retryDispatch.requestId ||
+        (value.runStatus !== "running" && value.runStatus !== "interrupted") ||
+        (value.retryDispatch.state === "retryable" &&
+          (!isRecord(value.modelBinding) ||
+            value.modelBinding.provider === "google_interactions")) ||
+        value.pendingSettlement !== null ||
+        !count(value.exchange) ||
+        (value.retryDispatch.exchange !== value.exchange &&
+          value.retryDispatch.exchange !== value.exchange + 1) ||
+        value.retryDispatch.modelItemCount !==
+          (Array.isArray(value.modelItems) ? value.modelItems.length : -1) ||
+        !["dispatching", "retryable", "blocked"].includes(
+          String(value.retryDispatch.state),
+        ))) ||
     (value.schemaVersion === 1
       ? value.requests !== undefined
-      : !validAuthoringRequests(value.requests, validPromptCompilation, {
-          modelItems: value.modelItems,
-          activeRequestId: value.activeRequestId,
-          completedRequestIds: value.completedRequestIds,
-        })) ||
+      : value.schemaVersion === 3 && value.requests === undefined
+        ? value.retryDispatch !== undefined
+        : !validAuthoringRequests(value.requests, validPromptCompilation, {
+            modelItems: value.modelItems,
+            activeRequestId: value.activeRequestId,
+            completedRequestIds: value.completedRequestIds,
+          })) ||
     typeof value.sessionId !== "string" ||
     !nonEmptyString(value.worldId) ||
     typeof value.worldTitle !== "string" ||
@@ -623,6 +782,33 @@ function validateSession(value: unknown): StoredWorldRevisionSession {
   assertSessionId(value.sessionId);
   assertEpochId(value.epochId);
   return structuredClone(value) as unknown as StoredWorldRevisionSession;
+}
+
+function validEditReceipts(value: unknown): boolean {
+  if (!Array.isArray(value)) return false;
+  const ids = new Set<string>();
+  return value.every((entry: unknown) => {
+    if (
+      !isRecord(entry) ||
+      !hasExactKeys(entry, [
+        "requestId",
+        "messageId",
+        "message",
+        "filePolicy",
+      ]) ||
+      typeof entry.requestId !== "string" ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(entry.requestId) ||
+      ids.has(entry.requestId) ||
+      !nonEmptyString(entry.messageId) ||
+      typeof entry.message !== "string" ||
+      entry.message.trim().length === 0 ||
+      entry.message.length > 64 * 1024 ||
+      (entry.filePolicy !== "keep" && entry.filePolicy !== "revert")
+    )
+      return false;
+    ids.add(entry.requestId);
+    return true;
+  });
 }
 
 function validFiles(value: unknown): value is ContentTreeFile[] {

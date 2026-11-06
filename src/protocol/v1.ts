@@ -255,6 +255,15 @@ export type V1Request =
         | { kind: "fresh_context" }
         | { kind: "continue_context"; sessionId: string };
     }
+  | {
+      type: "world.revision.message.edit";
+      worldId: string;
+      sessionId: string;
+      requestId: string;
+      messageId: string;
+      message: string;
+      filePolicy: "keep" | "revert";
+    }
   | { type: "world.revision.cancel"; sessionId: string }
   | {
       type: "world.revision.resume";
@@ -665,6 +674,7 @@ export interface V1WorldRevisionSealedEpochView {
 }
 
 export interface V1WorldRevisionView {
+  canRetry?: boolean;
   requestPreviews?: V1AuthoringRequestPreview[];
   sessionId: string;
   worldId: string;
@@ -1135,6 +1145,14 @@ const requiredFields: Record<
     requestId: "string",
     message: "string",
     continuation: "object",
+  },
+  "world.revision.message.edit": {
+    worldId: "string",
+    sessionId: "string",
+    requestId: "string",
+    messageId: "string",
+    message: "string",
+    filePolicy: "string",
   },
   "world.revision.cancel": { sessionId: "string" },
   "world.revision.resume": {
@@ -1770,6 +1788,7 @@ const requestTypes = new Set([
   "world.revision.session.read",
   "world.revision.session.delete",
   "world.revision.message",
+  "world.revision.message.edit",
   "world.revision.cancel",
   "world.revision.resume",
   "world.revision.files.replace",
