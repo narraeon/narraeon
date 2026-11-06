@@ -1,15 +1,13 @@
+import { dispatchRequiresFreshContext } from "../model/DispatchFailure.ts";
 import type { PlayFailureKind } from "../../protocol/playFailure.ts";
 import type {
   V1PlayCallChainEvent,
   V1PlayCallChainStatus,
 } from "../../protocol/v1.ts";
 import {
-  ModelHostBindingMismatchError,
   ModelHostCancelledError,
-  ModelHostContinuationError,
   ModelHostFailureError,
   ModelHostOutcomeUnknownError,
-  modelHostFailureRequiresFreshContext,
   type ModelHostBinding,
   type ModelHostExchange,
 } from "../model/ModelHost.ts";
@@ -224,11 +222,10 @@ export function dispatchFailureEnding(
       canRetry: !googleDispatched,
       streamingEventId,
     };
-  const requiresFreshContext =
-    error instanceof ModelHostBindingMismatchError ||
-    error instanceof ModelHostContinuationError ||
-    (googleDispatched && error instanceof ModelHostOutcomeUnknownError) ||
-    modelHostFailureRequiresFreshContext(error);
+  const requiresFreshContext = dispatchRequiresFreshContext(
+    error,
+    googleDispatched,
+  );
   const canRetry =
     !requiresFreshContext &&
     (error instanceof ModelHostFailureError ||

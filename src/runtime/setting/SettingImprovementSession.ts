@@ -1,3 +1,13 @@
+import {
+  completedAuthoringEdit,
+  planAuthoringEdit,
+  revertAuthoringChanges,
+} from "../authoring/AuthoringEditPlan.ts";
+import {
+  canRetryAuthoringDispatch,
+  checkpointNextAuthoringDispatch,
+  recoverAuthoringDispatch,
+} from "../authoring/AuthoringRetry.ts";
 import { authoringRequestPreviews } from "../authoring/AuthoringRequestSnapshot.ts";
 import { readGameplay } from "../../protocol/gameplay.ts";
 import { isDeepStrictEqual } from "node:util";
@@ -19,18 +29,12 @@ import {
 import type { ContentTreeFile } from "../content/ContentTreeFile.ts";
 import type { CurrentTreeContentPackageOperationLease } from "../content/CurrentTreeContentLibrary.ts";
 import { contentTreeFingerprint } from "../content/ContentTreeFingerprint.ts";
-import { validAuthoringNativeContinuation } from "../model/FileNativeModelAdapters.ts";
 import type {
   ModelHost,
   ModelHostBinding,
   ModelHostToolCall,
 } from "../model/ModelHost.ts";
-import {
-  equalModelHostBinding,
-  ModelHostBindingMismatchError,
-  ModelHostContinuationError,
-  modelHostFailureRequiresFreshContext,
-} from "../model/ModelHost.ts";
+import { equalModelHostBinding } from "../model/ModelHost.ts";
 import {
   settingImprovementPromptForBinding,
   type PlayPresetBinding,
@@ -407,6 +411,7 @@ export class SettingImprovementSession {
         );
         delete next.retryDispatch;
         appendAuthoringUserMessage(next, message, requestId);
+        checkpointNextAuthoringDispatch(next, "dispatching");
         if (next.modelBinding.provider === "google_interactions")
           next.googleOutcomeUnknown = false;
       });
@@ -430,25 +435,13 @@ export class SettingImprovementSession {
       let session = await this.#store.read(input.sessionId);
       assertPackage(session, input.packageId);
       session = await this.#recoverIfNeeded(session);
-      const prior = session.editReceipts?.find(
-        (receipt) => receipt.requestId === requestId,
-      );
-      if (
-        prior !== undefined &&
-        (prior.messageId !== input.messageId ||
-          prior.message !== message ||
-          prior.filePolicy !== input.filePolicy)
-      )
-        throw new Error(
-          "This edit request ID was already used for different content",
-        );
-      if (session.completedRequestIds.includes(requestId)) {
-        if (prior === undefined)
-          throw new Error(
-            "This request ID was already used for another authoring operation",
-          );
-        return { session, run: null };
-      }
+      const edit = {
+        requestId,
+        messageId: input.messageId,
+        message,
+        filePolicy: input.filePolicy,
+      };
+      if (completedAuthoringEdit(session, edit)) return { session, run: null };
       const running = this.#conversation.running(session.sessionId);
       if (running !== null) {
         if (running.requestId !== requestId)
@@ -466,33 +459,7 @@ export class SettingImprovementSession {
         throw new Error(
           "No saved model connection matches this setting-improvement conversation",
         );
-      const messageIndex = session.messages.findIndex(
-        (entry) => entry.role === "user" && entry.id === input.messageId,
-      );
-      if (messageIndex < 0)
-        throw new Error("The selected authoring message no longer exists");
-      const userIndex = session.messages
-        .slice(0, messageIndex)
-        .filter((entry) => entry.role === "user").length;
-      const itemIndex = session.modelItems
-        .map((item, index) => (item.kind === "user" ? index : -1))
-        .filter((index) => index >= 0)[userIndex];
-      if (
-        itemIndex === undefined ||
-        session.modelItems[itemIndex]?.kind !== "user" ||
-        session.modelItems[itemIndex].text !==
-          session.messages[messageIndex]!.text
-      )
-        throw new Error(
-          "The selected authoring message cannot be matched to the native transcript",
-        );
-      const prefix = session.modelItems.slice(0, itemIndex);
-      if (
-        !validAuthoringNativeContinuation(prefix, session.modelBinding.provider)
-      )
-        throw new Error(
-          "The native continuation before this message is damaged; start a fresh context",
-        );
+      const { itemIndex, tail, next } = planAuthoringEdit(session, edit);
       const lease = await this.#content.beginCurrentTreeContentPackageOperation(
         input.packageId,
       );
@@ -518,13 +485,13 @@ export class SettingImprovementSession {
             ].sort(),
           );
         const beforeFiles = lease.package.files;
-        const afterFiles =
+        const reverted =
           input.filePolicy === "revert"
-            ? revertEditedChanges(
-                beforeFiles,
-                session.modelItems.slice(itemIndex),
-              )
-            : beforeFiles;
+            ? revertAuthoringChanges(beforeFiles, tail)
+            : { files: beforeFiles, conflicts: [] };
+        if (reverted.conflicts.length > 0)
+          throw new SettingMessageEditError("conflict", reverted.conflicts);
+        const afterFiles = reverted.files;
         this.#content.validateCurrentTreeContentPackage(afterFiles);
         if (input.filePolicy === "revert") {
           const existingIssues = new Set(
@@ -551,24 +518,8 @@ export class SettingImprovementSession {
           },
           session.modelBinding,
         );
-        const next = structuredClone(session);
         next.schemaVersion = 5;
-        next.editReceipts = [
-          ...(next.editReceipts ?? []),
-          {
-            requestId,
-            messageId: input.messageId,
-            message,
-            filePolicy: input.filePolicy,
-          },
-        ];
         delete next.pendingEdit;
-        delete next.retryDispatch;
-        next.modelItems = prefix;
-        next.messages = next.messages.slice(0, messageIndex);
-        next.requests = (next.requests ?? []).filter(
-          (entry) => entry.modelItemStart < itemIndex,
-        );
         next.requests.push({
           requestId,
           modelItemStart: itemIndex,
@@ -581,15 +532,9 @@ export class SettingImprovementSession {
           preload.record,
         );
         appendAuthoringUserMessage(next, message, requestId);
+        checkpointNextAuthoringDispatch(next, "dispatching");
         if (next.modelBinding.provider === "google_interactions")
           next.googleOutcomeUnknown = false;
-        else
-          next.retryDispatch = {
-            requestId,
-            exchange: next.exchange + 1,
-            modelItemCount: next.modelItems.length,
-            state: "dispatching",
-          };
         if (
           next.modelBinding.provider === "google_interactions" &&
           host.previewAuthoringRequest !== undefined
@@ -631,7 +576,7 @@ export class SettingImprovementSession {
       const session = await this.#store.read(input.sessionId);
       assertPackage(session, input.packageId);
       return this.#startRequest(session, requestId, (next) => {
-        if (canRetrySettingRequest(next)) {
+        if (canRetryAuthoringDispatch(next)) {
           next.runStatus = "running";
           next.activeRequestId = next.requests?.at(-1)?.requestId ?? null;
           next.lastFailure = null;
@@ -901,42 +846,8 @@ export class SettingImprovementSession {
           "The setting-improvement response was cancelled. Complete tool responses already published to the current tree were retained.",
         interrupted: "The setting-improvement response was interrupted",
       },
-      dispatch: {
-        request: (next, request) => {
-          if (next.schemaVersion !== 4 && next.schemaVersion !== 5)
-            return request;
-          const retry = next.retryDispatch;
-          if (retry?.state === "retryable") {
-            next.retryDispatch = { ...retry, state: "dispatching" };
-            return {
-              ...request,
-              requestId: retry.requestId,
-              exchange: retry.exchange,
-            };
-          }
-          next.retryDispatch = {
-            requestId: request.requestId!,
-            exchange: request.exchange!,
-            modelItemCount: next.modelItems.length,
-            state: "dispatching",
-          };
-          return request;
-        },
-        accepted: (next) => {
-          delete next.retryDispatch;
-        },
-        failed: (next, error, duringDispatch) => {
-          if (next.retryDispatch === undefined) return;
-          next.retryDispatch.state =
-            duringDispatch &&
-            next.modelBinding.provider !== "google_interactions" &&
-            !(error instanceof ModelHostBindingMismatchError) &&
-            !(error instanceof ModelHostContinuationError) &&
-            !modelHostFailureRequiresFreshContext(error)
-              ? "retryable"
-              : "blocked";
-        },
-      },
+      retrySupported:
+        session.schemaVersion === 4 || session.schemaVersion === 5,
     });
   }
 
@@ -994,6 +905,8 @@ export class SettingImprovementSession {
         }
       }
       this.#finalizeSettlement(session, prepared);
+      if (session.schemaVersion === 4 || session.schemaVersion === 5)
+        checkpointNextAuthoringDispatch(session, "dispatching");
       session.updatedAt = Date.now();
       await this.#store.save(session);
       return { revision: afterFingerprint, transaction };
@@ -1078,11 +991,7 @@ export class SettingImprovementSession {
           )
             session.googleOutcomeUnknown = true;
           markInterruptedAfterRestart(session);
-          if (session.retryDispatch?.state === "dispatching")
-            session.retryDispatch.state =
-              session.modelBinding.provider === "google_interactions"
-                ? "blocked"
-                : "retryable";
+          recoverAuthoringDispatch(session);
           session.updatedAt = Date.now();
           if (await this.#store.saveIfUnchanged(original, session))
             return session;
@@ -1172,12 +1081,7 @@ export class SettingImprovementSession {
             session.modelBinding.provider !== "google_interactions"
           ) {
             if (session.schemaVersion !== 5) session.schemaVersion = 4;
-            session.retryDispatch = {
-              requestId: request.requestId,
-              exchange: session.exchange + 1,
-              modelItemCount: session.modelItems.length,
-              state: "retryable",
-            };
+            checkpointNextAuthoringDispatch(session, "retryable");
           }
           session.updatedAt = Date.now();
           if (!(await this.#store.saveIfUnchanged(expected, session)))
@@ -1271,7 +1175,7 @@ export class SettingImprovementSession {
         updatedAt: session.updatedAt,
       },
       lastFailure: session.lastFailure,
-      canRetry: canRetrySettingRequest(session),
+      canRetry: canRetryAuthoringDispatch(session),
     };
   }
 
@@ -1288,20 +1192,6 @@ export class SettingImprovementSession {
       release();
     }
   }
-}
-
-function canRetrySettingRequest(
-  session: StoredSettingImprovementSession,
-): boolean {
-  return (
-    session.runStatus === "interrupted" &&
-    session.pendingSettlement === null &&
-    session.retryDispatch?.state === "retryable" &&
-    validAuthoringNativeContinuation(
-      session.modelItems,
-      session.modelBinding.provider,
-    )
-  );
 }
 
 function assertPackage(
@@ -1502,48 +1392,6 @@ function treeMatchesChangeBefore(
     current.encoding === undefined &&
     current.contents === expected
   );
-}
-
-function revertEditedChanges(
-  files: readonly ContentTreeFile[],
-  items: readonly StoredSettingImprovementSession["modelItems"][number][],
-): ContentTreeFile[] {
-  let result = structuredClone([...files]);
-  const conflicts = new Set<string>();
-  const changes = items.flatMap((item) =>
-    item.kind === "tool" && !item.isError ? item.changes : [],
-  );
-  for (const change of changes.reverse()) {
-    if (conflicts.has(change.path)) continue;
-    if (
-      (change.kind === "create" &&
-        (change.before !== null || change.after === null)) ||
-      (change.kind === "delete" &&
-        (change.before === null || change.after !== null)) ||
-      (change.kind === "modify" &&
-        (change.before === null ||
-          change.after === null ||
-          change.before === change.after))
-    ) {
-      conflicts.add(change.path);
-      continue;
-    }
-    const current = result.find((file) => file.path === change.path);
-    const matches =
-      change.after === null
-        ? current === undefined
-        : current !== undefined &&
-          current.encoding === undefined &&
-          current.contents === change.after;
-    if (!matches) {
-      conflicts.add(change.path);
-      continue;
-    }
-    result = restoreChangeBefore(result, change);
-  }
-  if (conflicts.size > 0)
-    throw new SettingMessageEditError("conflict", [...conflicts].sort());
-  return result;
 }
 
 function afterLegacyBoundary(

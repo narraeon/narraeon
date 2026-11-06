@@ -7,11 +7,18 @@ import type {
   V1SettingImprovementRollbackResult,
   V1SettingPromptPreview,
   V1WorldRevisionOverview,
-  V1WorldRevisionView,
 } from "../protocol/v1.ts";
 import { createClientId } from "./ClientId.ts";
 import { uiText } from "./i18n.ts";
 import { RuntimeRequestError } from "./runtimeClient.ts";
+
+/** Shared authoring display state; package-only legacy history is optional. */
+export type AuthoringConversationView = Omit<
+  V1SettingImprovementView,
+  "packageId" | "legacyDraft"
+> & {
+  legacyDraft?: V1SettingImprovementView["legacyDraft"];
+};
 
 export interface AuthoringClient {
   request(request: V1Request): Promise<unknown>;
@@ -40,7 +47,11 @@ export class AuthoringConflictError extends Error {
     this.latest = latest;
   }
 }
-export interface AuthoringTargetSnapshot extends V1SettingImprovementOverview {
+export interface AuthoringTargetSnapshot extends Omit<
+  V1SettingImprovementOverview,
+  "latest"
+> {
+  latest: AuthoringConversationView | null;
   files: ContentTreeFile[];
   packageDetail?: AuthoringPackageDetail;
   revision?: V1WorldRevisionOverview;
@@ -82,20 +93,20 @@ export interface AuthoringTarget {
   kind: "setting" | "revision";
   id: string;
   read(): Promise<AuthoringTargetSnapshot>;
-  readSession(sessionId: string): Promise<V1SettingImprovementView>;
+  readSession(sessionId: string): Promise<AuthoringConversationView>;
   send(
     message: string,
     sessionId: string | null,
-  ): Promise<V1SettingImprovementView>;
+  ): Promise<AuthoringConversationView>;
   editMessage?(
     sessionId: string,
     messageId: string,
     message: string,
     filePolicy: "keep" | "revert",
     requestId: string,
-  ): Promise<V1SettingImprovementView>;
-  cancel(sessionId: string): Promise<V1SettingImprovementView>;
-  resume(sessionId: string): Promise<V1SettingImprovementView>;
+  ): Promise<AuthoringConversationView>;
+  cancel(sessionId: string): Promise<AuthoringConversationView>;
+  resume(sessionId: string): Promise<AuthoringConversationView>;
   deleteSession(sessionId: string): Promise<AuthoringTargetSnapshot>;
   beginEdit(
     snapshot: AuthoringTargetSnapshot,
@@ -313,13 +324,6 @@ export function worldRevisionTarget(
   client: AuthoringClient,
   id: string,
 ): AuthoringTarget {
-  const normalizeView = (
-    view: V1WorldRevisionView,
-  ): V1SettingImprovementView => ({
-    ...view,
-    packageId: id,
-    legacyDraft: null,
-  });
   const snapshot = async (
     overview: V1WorldRevisionOverview,
   ): Promise<AuthoringTargetSnapshot> => {
@@ -344,7 +348,7 @@ export function worldRevisionTarget(
     }
     return {
       files,
-      latest: overview.latest === null ? null : normalizeView(overview.latest),
+      latest: overview.latest,
       history: overview.history,
       revision: overview,
     };
@@ -364,23 +368,19 @@ export function worldRevisionTarget(
         await request(client, { type: "world.revision.overview", worldId: id }),
       ),
     readSession: async (sessionId) =>
-      normalizeView(
-        await request(client, {
-          type: "world.revision.session.read",
-          worldId: id,
-          sessionId,
-        }),
-      ),
+      request(client, {
+        type: "world.revision.session.read",
+        worldId: id,
+        sessionId,
+      }),
     send: async (message, sessionId) =>
-      normalizeView(
-        await request(client, {
-          type: "world.revision.message",
-          worldId: id,
-          message,
-          requestId: createClientId("world-revision-message"),
-          continuation: continuation(sessionId),
-        }),
-      ),
+      request(client, {
+        type: "world.revision.message",
+        worldId: id,
+        message,
+        requestId: createClientId("world-revision-message"),
+        continuation: continuation(sessionId),
+      }),
     editMessage: async (
       sessionId,
       messageId,
@@ -389,17 +389,15 @@ export function worldRevisionTarget(
       requestId,
     ) => {
       try {
-        return normalizeView(
-          await request(client, {
-            type: "world.revision.message.edit",
-            worldId: id,
-            sessionId,
-            messageId,
-            message,
-            filePolicy,
-            requestId,
-          }),
-        );
+        return await request(client, {
+          type: "world.revision.message.edit",
+          worldId: id,
+          sessionId,
+          messageId,
+          message,
+          filePolicy,
+          requestId,
+        });
       } catch (error: unknown) {
         if (
           error instanceof RuntimeRequestError &&
@@ -441,18 +439,14 @@ export function worldRevisionTarget(
       }
     },
     cancel: async (sessionId) =>
-      normalizeView(
-        await request(client, { type: "world.revision.cancel", sessionId }),
-      ),
+      request(client, { type: "world.revision.cancel", sessionId }),
     resume: async (sessionId) =>
-      normalizeView(
-        await request(client, {
-          type: "world.revision.resume",
-          worldId: id,
-          sessionId,
-          requestId: createClientId("world-revision-resume"),
-        }),
-      ),
+      request(client, {
+        type: "world.revision.resume",
+        worldId: id,
+        sessionId,
+        requestId: createClientId("world-revision-resume"),
+      }),
     deleteSession: async (sessionId) =>
       snapshot(
         await request(client, {

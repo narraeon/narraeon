@@ -312,7 +312,6 @@ function renderPanel(
       loading: false,
       view: {
         sessionId: "setting-test",
-        packageId: "package-test",
         runStatus: options.retryable ? "interrupted" : "ready",
         canRetry: options.retryable ?? false,
         messages: [],

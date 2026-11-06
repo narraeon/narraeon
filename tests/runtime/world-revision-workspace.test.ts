@@ -1,3 +1,4 @@
+import { authoringTargetContract } from "./support/authoring-target-contract.ts";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { fictionGameplay } from "../../src/protocol/gameplay.ts";
 import { tmpdir } from "node:os";
@@ -22,6 +23,7 @@ import {
   ModelHostContinuationError,
   type ModelHost,
   type ModelHostBinding,
+  type ScriptedModelHostStep,
 } from "../../src/runtime/model/ModelHost.ts";
 import {
   FileNativePlayPresetStore,
@@ -2309,6 +2311,146 @@ test.each([
   },
 );
 
+test("world revision retries when the dispatch marker save fails before the host is called", async () => {
+  const { root, worldId, worlds, workspace } = await createdWorld();
+  const store = new FileNativeWorldRevisionStore(root);
+  const host = new ScriptedModelHost({
+    binding: modelBinding,
+    steps: [{ outcome: "response", text: "Finished." }],
+  });
+  const save = store.saveSession.bind(store);
+  let failed = false;
+  vi.spyOn(store, "saveSession").mockImplementation(async (session) => {
+    if (
+      !failed &&
+      session.runStatus === "running" &&
+      session.exchange === 1 &&
+      session.modelItems.at(-1)?.kind === "user"
+    ) {
+      failed = true;
+      throw new Error("dispatch marker save failed");
+    }
+    await save(session);
+  });
+  const service = new WorldRevisionSession({
+    store,
+    workspace,
+    worlds,
+    compiler: new FileNativePromptCompiler({ locale: "zh-CN" }),
+    locale: () => "zh-CN",
+    bindModelHost: () => Promise.resolve(host),
+    bindExistingModelHost: () => Promise.resolve(host),
+    bindPlayPreset: () =>
+      Promise.resolve(builtinDefaultPlayPresetBinding("zh-CN")),
+    preview: () => preview,
+  });
+  const stopped = await service.send({
+    worldId,
+    requestId: "original",
+    message: "Change.",
+    continuation: { kind: "fresh_context" },
+  });
+  expect(failed).toBe(true);
+  expect(host.requests).toHaveLength(0);
+  expect(stopped.canRetry).toBe(true);
+  const resumed = await service.resume({
+    worldId,
+    sessionId: stopped.sessionId,
+    requestId: "resume",
+  });
+  expect(resumed.messages.map(({ text }) => text)).toEqual([
+    "Change.",
+    "Finished.",
+  ]);
+  expect(host.requests[0]).toMatchObject({
+    requestId: "original",
+    exchange: 1,
+  });
+});
+
+test("world revision retries the next exchange after final settlement save fails once", async () => {
+  const { root, worldId, worlds, workspace } = await createdWorld();
+  const store = new FileNativeWorldRevisionStore(root);
+  const path = "state/current-situation.yaml";
+  const source = worldRevisionFiles().find(
+    (file) => file.path === path,
+  )!.contents;
+  const host = new ScriptedModelHost({
+    binding: modelBinding,
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "read",
+            name: "world_revision_read",
+            arguments: { path },
+          },
+          {
+            id: "write",
+            name: "world_revision_write_file",
+            arguments: {
+              path,
+              contents: source.replace("地点: 未设定", "地点: 保存"),
+            },
+          },
+        ],
+      },
+      { outcome: "response", text: "Finished." },
+    ],
+  });
+  const save = store.saveSession.bind(store);
+  let failed = false;
+  vi.spyOn(store, "saveSession").mockImplementation(async (session) => {
+    if (
+      !failed &&
+      session.runStatus === "running" &&
+      session.pendingSettlement === null &&
+      session.modelItems.at(-1)?.kind === "tool"
+    ) {
+      failed = true;
+      throw new Error("final settlement save failed");
+    }
+    await save(session);
+  });
+  const service = new WorldRevisionSession({
+    store,
+    workspace,
+    worlds,
+    compiler: new FileNativePromptCompiler({ locale: "zh-CN" }),
+    locale: () => "zh-CN",
+    bindModelHost: () => Promise.resolve(host),
+    bindExistingModelHost: () => Promise.resolve(host),
+    bindPlayPreset: () =>
+      Promise.resolve(builtinDefaultPlayPresetBinding("zh-CN")),
+    preview: () => preview,
+  });
+  const stopped = await service.send({
+    worldId,
+    requestId: "original",
+    message: "Change.",
+    continuation: { kind: "fresh_context" },
+  });
+  expect(failed).toBe(true);
+  expect(stopped.canRetry).toBe(true);
+  const changes = (await workspace.active(worldId))!.changes;
+  expect(changes).toHaveLength(1);
+  const resumed = await service.resume({
+    worldId,
+    sessionId: stopped.sessionId,
+    requestId: "resume",
+  });
+  expect(resumed.messages.map(({ text }) => text)).toEqual([
+    "Change.",
+    "Finished.",
+  ]);
+  expect(host.requests[1]).toMatchObject({
+    requestId: "original",
+    exchange: 2,
+  });
+  expect((await workspace.active(worldId))!.changes).toEqual(changes);
+});
+
 test("a crash after settled receipts resumes the next frozen exchange exactly once", async () => {
   const { root, worldId, worlds, workspace } = await createdWorld();
   const store = new FileNativeWorldRevisionStore(root);
@@ -3286,6 +3428,99 @@ test("世界修订对话可只读导航已提交历史，历史调用不改变�
     epoch?.files.find(({ path }) => path === "state/current-situation.yaml")
       ?.contents,
   ).toContain("地点: 码头");
+});
+
+authoringTargetContract("world revision", async (steps, delay = false) => {
+  const { root, worldId, worlds, workspace } = await createdWorld();
+  const path = "state/current-situation.yaml";
+  const source = worldRevisionFiles().find(
+    (file) => file.path === path,
+  )!.contents;
+  const write: ScriptedModelHostStep = {
+    outcome: "response",
+    toolCalls: [
+      { id: "read", name: "world_revision_read", arguments: { path } },
+      {
+        id: "write",
+        name: "world_revision_write_file",
+        arguments: {
+          path,
+          contents: source.replace("地点: 未设定", "地点: AI"),
+        },
+      },
+    ],
+  };
+  const script = new ScriptedModelHost({
+    binding: modelBinding,
+    steps: steps(write),
+  });
+  const started = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  let first = true;
+  const host: ModelHost = {
+    binding: () => modelBinding,
+    exchange: async (request, observer) => {
+      if (delay && first) {
+        first = false;
+        started.resolve();
+        await release.promise;
+      }
+      return script.exchange(request, observer);
+    },
+  };
+  const makeService = () =>
+    new WorldRevisionSession({
+      store: new FileNativeWorldRevisionStore(root),
+      workspace,
+      worlds,
+      compiler: new FileNativePromptCompiler({ locale: "zh-CN" }),
+      locale: () => "zh-CN",
+      bindModelHost: () => Promise.resolve(host),
+      bindExistingModelHost: () => Promise.resolve(host),
+      bindPlayPreset: () =>
+        Promise.resolve(builtinDefaultPlayPresetBinding("zh-CN")),
+      preview: () => preview,
+    });
+  const service = makeService();
+  await service.open(worldId);
+  return {
+    send: () =>
+      service.send({
+        worldId,
+        requestId: "original",
+        message: "Change.",
+        continuation: { kind: "fresh_context" },
+      }),
+    read: (id) => service.readSession(worldId, id),
+    resume: (id) =>
+      makeService().resume({ worldId, sessionId: id, requestId: "resume" }),
+    edit: (id, messageId) =>
+      service.editMessage({
+        worldId,
+        sessionId: id,
+        messageId,
+        requestId: "edit",
+        message: "Discuss.",
+        filePolicy: "revert",
+      }),
+    activeId: async () => (await service.overview(worldId)).latest!.sessionId,
+    cancel: (id) => service.cancel(id),
+    manualChange: async () => {
+      const epoch = (await workspace.active(worldId))!;
+      await service.replaceFiles({
+        worldId,
+        epochId: epoch.epochId,
+        expectedRevision: epoch.revision,
+        files: replaceContents(epoch.files, path, (contents) =>
+          contents.replace("地点: AI", "地点: manual"),
+        ),
+      });
+    },
+    files: async () => (await workspace.active(worldId))!.files,
+    requests: script.requests,
+    started: started.promise,
+    release: () => release.resolve(),
+  };
 });
 
 async function createdWorld(

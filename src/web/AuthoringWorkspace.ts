@@ -1,7 +1,7 @@
+import type { AuthoringConversationView } from "./AuthoringTarget.ts";
 import type {
   ContentTreeFile,
   V1SettingImprovementRollbackResult,
-  V1SettingImprovementView,
 } from "../protocol/v1.ts";
 import { uiText } from "./i18n.ts";
 import {
@@ -17,7 +17,7 @@ import {
 
 export interface AuthoringWorkspaceState {
   target: AuthoringTargetSnapshot | null;
-  view: V1SettingImprovementView | null;
+  view: AuthoringConversationView | null;
   files: ContentTreeFile[];
   baseline: ContentTreeFile[];
   /** The tree revision `baseline` was saved at; a save must say it is based on this. */
@@ -353,7 +353,7 @@ export class AuthoringWorkspace {
   }
   private async settleRequest(
     valid: () => boolean,
-    request: () => Promise<V1SettingImprovementView>,
+    request: () => Promise<AuthoringConversationView>,
     acceptedOnRefreshFailure = false,
   ): Promise<void> {
     this.update({ requestFailure: null, notice: "" });

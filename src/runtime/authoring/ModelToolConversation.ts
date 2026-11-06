@@ -1,3 +1,8 @@
+import {
+  prepareAuthoringDispatch,
+  failAuthoringDispatch,
+  type AuthoringDispatchPhase,
+} from "./AuthoringRetry.ts";
 import type { AuthoringRequestSnapshot } from "./AuthoringRequestSnapshot.ts";
 import { randomUUID } from "node:crypto";
 
@@ -56,6 +61,13 @@ export interface ModelToolConversationState {
   completedRequestIds: string[];
   lastFailure: string | null;
   googleOutcomeUnknown?: boolean;
+  retryDispatch?: {
+    requestId: string;
+    exchange: number;
+    modelItemCount: number;
+    state: "dispatching" | "retryable" | "blocked";
+  };
+  pendingSettlement: unknown;
 }
 
 export interface ModelToolConversationStreaming {
@@ -103,16 +115,8 @@ export interface ModelToolConversationRun<
     cancelled?: string;
     interrupted?: string;
   };
-  /** Optional target-owned durable dispatch and recovery policy. */
-  dispatch?: {
-    request: (
-      session: Session,
-      request: ModelHostExchange,
-    ) => ModelHostExchange;
-    accepted: (session: Session) => void;
-    paused?: (session: Session) => void;
-    failed: (session: Session, error: unknown, duringDispatch: boolean) => void;
-  };
+  /** Whether this persisted schema supports durable retry checkpoints. */
+  retrySupported: boolean;
 }
 
 export function authoringExchange(
@@ -208,7 +212,7 @@ export class ModelToolConversation<
     live: LiveRun<View>,
   ): Promise<View> {
     const { session } = input;
-    let duringDispatch = false;
+    let phase: AuthoringDispatchPhase = "settling";
     try {
       for (let round = 0; round < maximumExchangesPerMessage; round += 1) {
         let request = authoringExchange(
@@ -216,7 +220,8 @@ export class ModelToolConversation<
           input.exchangeRequestId ?? live.requestId,
           input.worldRevisionBoundaries,
         );
-        request = input.dispatch?.request(session, request) ?? request;
+        if (input.retrySupported)
+          request = prepareAuthoringDispatch(session, request);
         session.exchange = Math.max(
           session.exchange,
           request.exchange ?? session.exchange + 1,
@@ -225,9 +230,10 @@ export class ModelToolConversation<
           session.googleOutcomeUnknown = true;
         live.streaming = emptyStreaming();
         session.updatedAt = Date.now();
+        phase = "preparing";
         await input.save(session);
         input.changed?.(true);
-        duringDispatch = true;
+        phase = "dispatched";
         const response = await input.host.exchange(request, {
           signal: live.controller.signal,
           onGoogleHop: (hop) => {
@@ -248,21 +254,21 @@ export class ModelToolConversation<
           throw new ModelHostCancelledError(
             "The authoring request was cancelled",
           );
-        duringDispatch = false;
+        phase = "validating";
         assertCompleteResponse(response);
         const toolCalls = response.toolCalls ?? [];
         assertUniqueToolCallIds(toolCalls);
         const visibleText = response.text ?? "";
         session.usage = aggregateModelUsage(session.usage, response.usage);
         if (toolCalls.length === 0 && visibleText.trim().length === 0) {
-          duringDispatch = true;
+          phase = "dispatched";
           throw new Error(
             input.failure?.emptyResponse ??
               "The model returned an empty tool-free authoring response",
           );
         }
-        duringDispatch = false;
-        input.dispatch?.accepted(session);
+        delete session.retryDispatch;
+        phase = "settling";
         session.modelItems.push({
           kind: "assistant",
           text: visibleText,
@@ -302,7 +308,7 @@ export class ModelToolConversation<
       }
       // The exchange budget only bounds a runaway loop. Every tool response is
       // already settled, so the conversation pauses and can resume unchanged.
-      input.dispatch?.paused?.(session);
+      delete session.retryDispatch;
       session.runStatus = "paused";
       session.activeRequestId = null;
       session.completedRequestIds = rememberRequest(
@@ -314,7 +320,7 @@ export class ModelToolConversation<
       await input.save(session);
       return input.view(session);
     } catch (error: unknown) {
-      input.dispatch?.failed(session, error, duringDispatch);
+      failAuthoringDispatch(session, error, phase);
       session.runStatus = "interrupted";
       session.activeRequestId = null;
       session.completedRequestIds = rememberRequest(

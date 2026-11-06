@@ -16,6 +16,28 @@ import {
 import { RuntimeRequestError } from "../../src/web/runtimeClient.ts";
 import { setWebLocale } from "../../src/web/i18n.ts";
 
+test("world revision target keeps its native identity without package fields", async () => {
+  const view = {
+    sessionId: "revision-session",
+    worldId: "world",
+    epochId: "epoch",
+    runStatus: "ready" as const,
+    messages: [],
+    turns: [],
+    usage: emptyAggregatedModelUsage(),
+    progress: { exchange: 0, toolCalls: 0, streaming: null, updatedAt: 1 },
+    lastFailure: null,
+  };
+  const target = worldRevisionTarget(
+    { request: () => Promise.resolve(view) },
+    "world",
+  );
+  const result = await target.readSession("revision-session");
+  expect(result).toEqual(view);
+  expect(result).not.toHaveProperty("packageId");
+  expect(result).not.toHaveProperty("legacyDraft");
+});
+
 function fixture(kind: "setting" | "revision") {
   let files: ContentTreeFile[] = [
     { path: "control/frame.yaml", contents: "saved" },

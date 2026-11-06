@@ -1,3 +1,13 @@
+import {
+  completedAuthoringEdit,
+  planAuthoringEdit,
+  revertAuthoringChanges,
+} from "../authoring/AuthoringEditPlan.ts";
+import {
+  canRetryAuthoringDispatch,
+  checkpointNextAuthoringDispatch,
+  recoverAuthoringDispatch,
+} from "../authoring/AuthoringRetry.ts";
 import { authoringRequestPreviews } from "../authoring/AuthoringRequestSnapshot.ts";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
@@ -26,13 +36,7 @@ import type {
   ModelHostExchange,
   ModelHostToolCall,
 } from "../model/ModelHost.ts";
-import {
-  equalModelHostBinding,
-  ModelHostBindingMismatchError,
-  ModelHostContinuationError,
-  modelHostFailureRequiresFreshContext,
-} from "../model/ModelHost.ts";
-import { validAuthoringNativeContinuation } from "../model/FileNativeModelAdapters.ts";
+import { equalModelHostBinding } from "../model/ModelHost.ts";
 import {
   settingImprovementPromptForBinding,
   type PlayPresetBinding,
@@ -450,13 +454,7 @@ export class WorldRevisionSession {
           preload.record,
         );
       appendAuthoringUserMessage(session, message, requestId);
-      if (session.modelBinding.provider !== "google_interactions")
-        session.retryDispatch = {
-          requestId,
-          exchange: session.exchange + 1,
-          modelItemCount: session.modelItems.length,
-          state: "dispatching",
-        };
+      checkpointNextAuthoringDispatch(session, "dispatching");
       if (session.modelBinding.provider === "google_interactions")
         session.googleOutcomeUnknown = false;
       const boundaries =
@@ -503,25 +501,13 @@ export class WorldRevisionSession {
       let session = await this.#store.readSession(input.sessionId);
       assertWorld(session, input.worldId);
       session = await this.#recoverIfNeeded(session);
-      const prior = session.editReceipts?.find(
-        (receipt) => receipt.requestId === requestId,
-      );
-      if (
-        prior !== undefined &&
-        (prior.messageId !== input.messageId ||
-          prior.message !== message ||
-          prior.filePolicy !== input.filePolicy)
-      )
-        throw new Error(
-          "This edit request ID was already used for different content",
-        );
-      if (session.completedRequestIds.includes(requestId)) {
-        if (prior === undefined)
-          throw new Error(
-            "This request ID was already used for another authoring operation",
-          );
-        return { session, run: null };
-      }
+      const edit = {
+        requestId,
+        messageId: input.messageId,
+        message,
+        filePolicy: input.filePolicy,
+      };
+      if (completedAuthoringEdit(session, edit)) return { session, run: null };
       const running = this.#conversation.running(session.sessionId);
       if (running !== null) {
         if (running.requestId !== requestId)
@@ -540,34 +526,7 @@ export class WorldRevisionSession {
         throw new Error(
           "No saved model connection matches this world-revision conversation",
         );
-      const messageIndex = session.messages.findIndex(
-        (entry) => entry.role === "user" && entry.id === input.messageId,
-      );
-      if (messageIndex < 0)
-        throw new Error("The selected authoring message no longer exists");
-      const userIndex = session.messages
-        .slice(0, messageIndex)
-        .filter((entry) => entry.role === "user").length;
-      const itemIndex = session.modelItems
-        .map((item, index) => (item.kind === "user" ? index : -1))
-        .filter((index) => index >= 0)[userIndex];
-      if (
-        itemIndex === undefined ||
-        session.modelItems[itemIndex]?.kind !== "user" ||
-        session.modelItems[itemIndex].text !==
-          session.messages[messageIndex]!.text
-      )
-        throw new Error(
-          "The selected authoring message cannot be matched to the native transcript",
-        );
-      const prefix = session.modelItems.slice(0, itemIndex);
-      if (
-        !validAuthoringNativeContinuation(prefix, session.modelBinding.provider)
-      )
-        throw new Error(
-          "The native continuation before this message is damaged; start a fresh context",
-        );
-      const tail = session.modelItems.slice(itemIndex);
+      const { tail, next } = planAuthoringEdit(session, edit);
       if (input.filePolicy === "revert") {
         const activeChangeIds = new Set(
           epoch?.changes.map(({ changeSetId }) => changeSetId) ?? [],
@@ -585,10 +544,13 @@ export class WorldRevisionSession {
           throw new WorldRevisionMessageEditError("sealed");
       }
       epoch ??= await this.#workspace.open(input.worldId);
-      const afterFiles =
+      const reverted =
         input.filePolicy === "revert"
-          ? revertWorldRevisionChanges(epoch.files, tail)
-          : epoch.files;
+          ? revertAuthoringChanges(epoch.files, tail)
+          : { files: epoch.files, conflicts: [] };
+      if (reverted.conflicts.length > 0)
+        throw new WorldRevisionMessageEditError("conflict", reverted.conflicts);
+      const afterFiles = reverted.files;
       if (input.filePolicy === "revert") {
         const inspection = inspectWorldRevisionFiles(
           afterFiles,
@@ -610,23 +572,7 @@ export class WorldRevisionSession {
         session.modelBinding,
         candidate,
       );
-      const next = structuredClone(session);
       next.schemaVersion = 3;
-      next.editReceipts = [
-        ...(next.editReceipts ?? []),
-        {
-          requestId,
-          messageId: input.messageId,
-          message,
-          filePolicy: input.filePolicy,
-        },
-      ];
-      delete next.retryDispatch;
-      next.modelItems = prefix;
-      next.messages = next.messages.slice(0, messageIndex);
-      next.requests = (next.requests ?? []).filter(
-        (entry) => entry.modelItemStart < itemIndex,
-      );
       if (
         session.epochId !== epoch.epochId ||
         tail.some(
@@ -655,15 +601,9 @@ export class WorldRevisionSession {
           ? null
           : authoringPreloadAuthorization(null, preload.record);
       appendAuthoringUserMessage(next, message, requestId);
+      checkpointNextAuthoringDispatch(next, "dispatching");
       if (next.modelBinding.provider === "google_interactions")
         next.googleOutcomeUnknown = false;
-      else
-        next.retryDispatch = {
-          requestId,
-          exchange: next.exchange + 1,
-          modelItemCount: next.modelItems.length,
-          state: "dispatching",
-        };
       const boundaries =
         host.binding().provider === "google_interactions"
           ? await this.#validatedEpochBoundaries(next)
@@ -729,7 +669,7 @@ export class WorldRevisionSession {
         throw new Error(
           "No saved model connection matches this world-revision conversation",
         );
-      if (canRetryWorldRevisionRequest(session)) {
+      if (canRetryAuthoringDispatch(session)) {
         session.runStatus = "running";
         session.activeRequestId = session.requests?.at(-1)?.requestId ?? null;
         session.lastFailure = null;
@@ -952,44 +892,7 @@ export class WorldRevisionSession {
         );
       },
       view: (next) => this.#view(next),
-      dispatch: {
-        request: (next, request) => {
-          if (next.schemaVersion !== 3) return request;
-          const retry = next.retryDispatch;
-          if (retry?.state === "retryable") {
-            next.retryDispatch = { ...retry, state: "dispatching" };
-            return {
-              ...request,
-              requestId: retry.requestId,
-              exchange: retry.exchange,
-            };
-          }
-          next.retryDispatch = {
-            requestId: request.requestId!,
-            exchange: request.exchange!,
-            modelItemCount: next.modelItems.length,
-            state: "dispatching",
-          };
-          return request;
-        },
-        accepted: (next) => {
-          delete next.retryDispatch;
-        },
-        paused: (next) => {
-          delete next.retryDispatch;
-        },
-        failed: (next, error, duringDispatch) => {
-          if (next.retryDispatch === undefined) return;
-          next.retryDispatch.state =
-            duringDispatch &&
-            next.modelBinding.provider !== "google_interactions" &&
-            !(error instanceof ModelHostBindingMismatchError) &&
-            !(error instanceof ModelHostContinuationError) &&
-            !modelHostFailureRequiresFreshContext(error)
-              ? "retryable"
-              : "blocked";
-        },
-      },
+      retrySupported: session.schemaVersion === 3,
       failure: {
         cancelled:
           "The world-revision response was cancelled. Settled worktree changes were retained.",
@@ -1095,18 +998,8 @@ export class WorldRevisionSession {
       toolResults,
     });
     finalizeSettlement(session, prepared);
-    const frozenRequest = session.requests?.at(-1);
-    if (
-      session.schemaVersion === 3 &&
-      session.modelBinding.provider !== "google_interactions" &&
-      frozenRequest !== undefined
-    )
-      session.retryDispatch = {
-        requestId: frozenRequest.requestId,
-        exchange: session.exchange + 1,
-        modelItemCount: session.modelItems.length,
-        state: "dispatching",
-      };
+    if (session.schemaVersion === 3)
+      checkpointNextAuthoringDispatch(session, "dispatching");
     session.updatedAt = Date.now();
     await this.#store.saveSession(session);
     return { revision: afterRevision, transaction };
@@ -1283,18 +1176,9 @@ export class WorldRevisionSession {
       session.requests?.at(-1) !== undefined
     ) {
       session.schemaVersion = 3;
-      session.retryDispatch = {
-        requestId: session.requests.at(-1)!.requestId,
-        exchange: session.exchange + 1,
-        modelItemCount: session.modelItems.length,
-        state: "retryable",
-      };
+      checkpointNextAuthoringDispatch(session, "retryable");
     }
-    if (session.retryDispatch?.state === "dispatching")
-      session.retryDispatch.state =
-        session.modelBinding.provider === "google_interactions"
-          ? "blocked"
-          : "retryable";
+    recoverAuthoringDispatch(session);
     session.runStatus =
       session.modelBinding.provider === "google_interactions" &&
       session.googleOutcomeUnknown === false
@@ -1376,8 +1260,7 @@ export class WorldRevisionSession {
       },
       lastFailure: session.lastFailure,
       canRetry:
-        activeEpochId === session.epochId &&
-        canRetryWorldRevisionRequest(session),
+        activeEpochId === session.epochId && canRetryAuthoringDispatch(session),
     };
   }
 
@@ -1667,53 +1550,4 @@ function requiredRequestId(requestId: string): string {
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(requestId))
     throw new WorldRevisionWorkspaceError("Invalid world-revision request ID");
   return requestId;
-}
-
-function canRetryWorldRevisionRequest(
-  session: StoredWorldRevisionSession,
-): boolean {
-  return (
-    session.runStatus === "interrupted" &&
-    session.modelBinding.provider !== "google_interactions" &&
-    session.googleOutcomeUnknown !== true &&
-    session.pendingSettlement === null &&
-    session.retryDispatch?.state === "retryable" &&
-    validAuthoringNativeContinuation(
-      session.modelItems,
-      session.modelBinding.provider,
-    )
-  );
-}
-
-function revertWorldRevisionChanges(
-  files: StoredWorldRevisionEpoch["files"],
-  items: StoredWorldRevisionSession["modelItems"],
-): StoredWorldRevisionEpoch["files"] {
-  const result = new Map(
-    files.map((file) => [file.path, structuredClone(file)]),
-  );
-  const conflicts = new Set<string>();
-  const changes = items
-    .flatMap((item) =>
-      item.kind === "tool" && !item.isError ? item.changes : [],
-    )
-    .reverse();
-  for (const change of changes) {
-    if (conflicts.has(change.path)) continue;
-    const current = result.get(change.path);
-    if (
-      change.after === null
-        ? current !== undefined
-        : current?.contents !== change.after || current.encoding !== undefined
-    ) {
-      conflicts.add(change.path);
-      continue;
-    }
-    if (change.before === null) result.delete(change.path);
-    else
-      result.set(change.path, { path: change.path, contents: change.before });
-  }
-  if (conflicts.size > 0)
-    throw new WorldRevisionMessageEditError("conflict", [...conflicts].sort());
-  return [...result.values()].sort((a, b) => a.path.localeCompare(b.path));
 }

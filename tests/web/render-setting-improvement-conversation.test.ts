@@ -222,7 +222,6 @@ function view(
 ): SettingImprovementView {
   return {
     sessionId: "setting-test",
-    packageId: "package-test",
     runStatus: "ready",
     messages: [
       { id: "user-1", role: "user", text: "先讨论", createdAt: 1 },

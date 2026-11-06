@@ -1,3 +1,5 @@
+import { canRetryAuthoringDispatch } from "../../src/runtime/authoring/AuthoringRetry.ts";
+import { authoringTargetContract } from "./support/authoring-target-contract.ts";
 import { parseDocument } from "yaml";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -4150,6 +4152,347 @@ test("新内容包会话预载控制文档，未读即可修改预载文档，�
   expect(stored.requests?.[0]?.preload?.opaquePaths).not.toContain(
     "opening.md",
   );
+});
+
+test("a crash after settled receipts resumes the next frozen exchange exactly once", async () => {
+  const fixture = await createFixture([]);
+  const store = new FileNativeSettingImprovementStore(fixture.root);
+  const host = new ScriptedModelHost({
+    binding,
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "read",
+            name: "setting_read",
+            arguments: { path: "opening.md" },
+          },
+          {
+            id: "write",
+            name: "setting_write_file",
+            arguments: { path: "opening.md", contents: "Saved.\n" },
+          },
+        ],
+      },
+      { outcome: "failure", message: "stop after receipt" },
+    ],
+  });
+  const originalSave = store.save.bind(store);
+  let checkpoint: Parameters<typeof store.save>[0] | undefined;
+  vi.spyOn(store, "save").mockImplementation(async (session) => {
+    await originalSave(session);
+    if (
+      checkpoint === undefined &&
+      session.runStatus === "running" &&
+      session.pendingSettlement === null &&
+      session.modelItems.at(-1)?.kind === "tool"
+    )
+      checkpoint = structuredClone(session);
+  });
+  const stopped = await sendFresh(
+    serviceFor(fixture.root, fixture.content, host, undefined, store),
+    fixture.packageId,
+    "receipt",
+    "Change.",
+  );
+  expect(checkpoint).toBeDefined();
+  await originalSave(checkpoint!);
+  const files = (
+    await fixture.content.readCurrentTreeContentPackage(fixture.packageId)
+  ).files;
+  const nextHost = new ScriptedModelHost({
+    binding,
+    steps: [{ outcome: "response", text: "Finished." }],
+  });
+  const recoveredService = serviceFor(fixture.root, fixture.content, nextHost);
+  const recovered = await recoveredService.readSession(
+    fixture.packageId,
+    stopped.sessionId,
+  );
+  expect(recovered.canRetry).toBe(true);
+  const resumed = await recoveredService.resume({
+    packageId: fixture.packageId,
+    sessionId: stopped.sessionId,
+    requestId: "resume-receipt",
+  });
+  expect(resumed.messages.map(({ text }) => text)).toEqual([
+    "Change.",
+    "Finished.",
+  ]);
+  expect(nextHost.requests[0]).toMatchObject({
+    requestId: "receipt",
+    exchange: 2,
+  });
+  expect(
+    (await fixture.content.readCurrentTreeContentPackage(fixture.packageId))
+      .files,
+  ).toEqual(files);
+});
+
+test("setting recovers the frozen request if the initial running save precedes dispatch", async () => {
+  const fixture = await createFixture([
+    { outcome: "response", text: "First." },
+  ]);
+  const store = new FileNativeSettingImprovementStore(fixture.root);
+  const save = store.save.bind(store);
+  let checkpoint: Parameters<typeof store.save>[0] | undefined;
+  vi.spyOn(store, "save").mockImplementation(async (session) => {
+    if (
+      checkpoint === undefined &&
+      session.runStatus === "running" &&
+      session.modelItems.at(-1)?.kind === "user"
+    )
+      checkpoint = structuredClone(session);
+    await save(session);
+  });
+  const stopped = await sendFresh(
+    serviceFor(fixture.root, fixture.content, fixture.host, undefined, store),
+    fixture.packageId,
+    "original",
+    "Change.",
+  );
+  expect(checkpoint).toBeDefined();
+  await save(checkpoint!);
+  const host = new ScriptedModelHost({
+    binding,
+    steps: [{ outcome: "response", text: "Finished." }],
+  });
+  const service = serviceFor(fixture.root, fixture.content, host);
+  expect(
+    (await service.readSession(fixture.packageId, stopped.sessionId)).canRetry,
+  ).toBe(true);
+  const resumed = await service.resume({
+    packageId: fixture.packageId,
+    sessionId: stopped.sessionId,
+    requestId: "resume",
+  });
+  expect(resumed.messages.map(({ text }) => text)).toEqual([
+    "Change.",
+    "Finished.",
+  ]);
+  expect(host.requests[0]).toMatchObject({
+    requestId: "original",
+    exchange: 1,
+  });
+});
+
+test("setting retries when the dispatch marker save fails before the host is called", async () => {
+  const fixture = await createFixture([
+    { outcome: "response", text: "Finished." },
+  ]);
+  const store = new FileNativeSettingImprovementStore(fixture.root);
+  const save = store.save.bind(store);
+  let failed = false;
+  vi.spyOn(store, "save").mockImplementation(async (session) => {
+    if (
+      !failed &&
+      session.runStatus === "running" &&
+      session.exchange === 1 &&
+      session.modelItems.at(-1)?.kind === "user"
+    ) {
+      failed = true;
+      throw new Error("dispatch marker save failed");
+    }
+    await save(session);
+  });
+  const service = serviceFor(
+    fixture.root,
+    fixture.content,
+    fixture.host,
+    undefined,
+    store,
+  );
+  const stopped = await sendFresh(
+    service,
+    fixture.packageId,
+    "original",
+    "Change.",
+  );
+  expect(failed).toBe(true);
+  expect(fixture.host.requests).toHaveLength(0);
+  expect(stopped.canRetry).toBe(true);
+  const resumed = await service.resume({
+    packageId: fixture.packageId,
+    sessionId: stopped.sessionId,
+    requestId: "resume",
+  });
+  expect(resumed.messages.map(({ text }) => text)).toEqual([
+    "Change.",
+    "Finished.",
+  ]);
+  expect(fixture.host.requests[0]).toMatchObject({
+    requestId: "original",
+    exchange: 1,
+  });
+});
+
+test("setting retries the next exchange after final settlement save fails once", async () => {
+  const fixture = await createFixture([
+    {
+      outcome: "response",
+      toolCalls: [
+        { id: "read", name: "setting_read", arguments: { path: "opening.md" } },
+        {
+          id: "write",
+          name: "setting_write_file",
+          arguments: { path: "opening.md", contents: "Saved.\n" },
+        },
+      ],
+    },
+    { outcome: "response", text: "Finished." },
+  ]);
+  const store = new FileNativeSettingImprovementStore(fixture.root);
+  const save = store.save.bind(store);
+  let failed = false;
+  vi.spyOn(store, "save").mockImplementation(async (session) => {
+    if (
+      !failed &&
+      session.runStatus === "running" &&
+      session.pendingSettlement === null &&
+      session.modelItems.at(-1)?.kind === "tool"
+    ) {
+      failed = true;
+      throw new Error("final settlement save failed");
+    }
+    await save(session);
+  });
+  const service = serviceFor(
+    fixture.root,
+    fixture.content,
+    fixture.host,
+    undefined,
+    store,
+  );
+  const stopped = await sendFresh(
+    service,
+    fixture.packageId,
+    "original",
+    "Change.",
+  );
+  expect(failed).toBe(true);
+  expect(stopped.canRetry).toBe(true);
+  const files = (
+    await fixture.content.readCurrentTreeContentPackage(fixture.packageId)
+  ).files;
+  const resumed = await service.resume({
+    packageId: fixture.packageId,
+    sessionId: stopped.sessionId,
+    requestId: "resume",
+  });
+  expect(resumed.messages.map(({ text }) => text)).toEqual([
+    "Change.",
+    "Finished.",
+  ]);
+  expect(fixture.host.requests[1]).toMatchObject({
+    requestId: "original",
+    exchange: 2,
+  });
+  expect(
+    (await fixture.content.readCurrentTreeContentPackage(fixture.packageId))
+      .files,
+  ).toEqual(files);
+});
+
+test("inconsistent Google or unknown-outcome checkpoints never grant authoring replay", async () => {
+  const fixture = await createFixture([
+    { outcome: "failure", message: "disconnected" },
+  ]);
+  const view = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "request",
+    "Change.",
+  );
+  const saved = await new FileNativeSettingImprovementStore(fixture.root).read(
+    view.sessionId,
+  );
+  expect(canRetryAuthoringDispatch(saved)).toBe(true);
+  expect(
+    canRetryAuthoringDispatch({
+      ...saved,
+      modelBinding: { ...saved.modelBinding, provider: "google_interactions" },
+    }),
+  ).toBe(false);
+  expect(
+    canRetryAuthoringDispatch({ ...saved, googleOutcomeUnknown: true }),
+  ).toBe(false);
+});
+
+authoringTargetContract("content package", async (steps, delay = false) => {
+  const fixture = await createFixture([]);
+  const store = new FileNativeSettingImprovementStore(fixture.root);
+  const write: ScriptedModelHostStep = {
+    outcome: "response",
+    toolCalls: [
+      { id: "read", name: "setting_read", arguments: { path: "opening.md" } },
+      {
+        id: "write",
+        name: "setting_write_file",
+        arguments: { path: "opening.md", contents: "AI version.\n" },
+      },
+    ],
+  };
+  const script = new ScriptedModelHost({ binding, steps: steps(write) });
+  const started = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  let first = true;
+  const host: ModelHost = {
+    binding: () => binding,
+    exchange: async (request, observer) => {
+      if (delay && first) {
+        first = false;
+        started.resolve();
+        await release.promise;
+      }
+      return script.exchange(request, observer);
+    },
+  };
+  const makeService = () =>
+    serviceFor(fixture.root, fixture.content, host, undefined, store);
+  const service = makeService();
+  return {
+    send: () => sendFresh(service, fixture.packageId, "original", "Change."),
+    read: (id) => service.readSession(fixture.packageId, id),
+    resume: (id) =>
+      makeService().resume({
+        packageId: fixture.packageId,
+        sessionId: id,
+        requestId: "resume",
+      }),
+    edit: (id, messageId) =>
+      service.editMessage({
+        packageId: fixture.packageId,
+        sessionId: id,
+        messageId,
+        requestId: "edit",
+        message: "Discuss.",
+        filePolicy: "revert",
+      }),
+    activeId: async () =>
+      (await service.overview(fixture.packageId)).latest!.sessionId,
+    cancel: (id) => service.cancel(id),
+    manualChange: async () => {
+      const current = await fixture.content.readCurrentTreeContentPackage(
+        fixture.packageId,
+      );
+      await fixture.content.replaceCurrentTreeContentPackage(
+        fixture.packageId,
+        current.files.map((file) =>
+          file.path === "opening.md"
+            ? { ...file, contents: "Manual version.\n" }
+            : file,
+        ),
+        { baseTreeRevision: current.treeRevision },
+      );
+    },
+    files: async () =>
+      (await fixture.content.readCurrentTreeContentPackage(fixture.packageId))
+        .files,
+    requests: script.requests,
+    started: started.promise,
+    release: () => release.resolve(),
+  };
 });
 
 async function createFixture(steps: ScriptedModelHostStep[]) {

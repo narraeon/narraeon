@@ -1,3 +1,4 @@
+import type { AuthoringConversationView } from "./AuthoringTarget.ts";
 import { AuthoringPromptPreview } from "./AuthoringPromptPreview.tsx";
 import { createClientId } from "./ClientId.ts";
 import { useConversationComposer } from "./useConversationComposer.ts";
@@ -26,7 +27,7 @@ import { useAndroidBack } from "./androidBridge.ts";
 import { getWebLocale, uiText } from "./i18n.ts";
 import { UnifiedTextDiff } from "./UnifiedTextDiff.tsx";
 
-export type SettingImprovementView = V1SettingImprovementView;
+export type SettingImprovementView = AuthoringConversationView;
 
 interface SettingImprovementPanelProps {
   target?: "content-package" | "world-revision";
