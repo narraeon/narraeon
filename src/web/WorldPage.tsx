@@ -1228,7 +1228,10 @@ export function WorldPage({
       applyPlayCallChain(continued);
       await refreshWorld();
       setFeedback({
-        kind: continued.status === "interrupted" ? "error" : "status",
+        kind:
+          continued.status === "interrupted" && !continued.canRetry
+            ? "error"
+            : "status",
         text:
           continued.status === "interrupted"
             ? continued.canRetry

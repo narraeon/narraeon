@@ -4011,7 +4011,9 @@ describe("世界游玩页面", () => {
         target: { value: "尚未发送的草稿" },
       });
       fireEvent.click(screen.getByRole("button", { name: "重新生成" }));
-      await screen.findByText(feedback);
+      const feedbackNode = await screen.findByText(feedback);
+      if (status === "interrupted" && canRetry)
+        expect(feedbackNode.closest('[role="status"]')).not.toBeNull();
       expect(confirm).not.toHaveBeenCalled();
       expect(onOpenWorld).not.toHaveBeenCalled();
       expect(
