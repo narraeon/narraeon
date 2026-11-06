@@ -23,6 +23,26 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+test("retry button resumes once and is disabled for unsaved file drafts", async () => {
+  const onResume = vi.fn(() => Promise.resolve());
+  renderPanel(undefined, { retryable: true, onResume });
+  expect(
+    screen
+      .getByRole("status")
+      .classList.contains("setting-conversation-paused"),
+  ).toBe(true);
+  expect(screen.getByText("Stream stopped").closest("details")?.open).toBe(
+    false,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "重新发送" }));
+  await waitFor(() => expect(onResume).toHaveBeenCalledTimes(1));
+  cleanup();
+  renderPanel(undefined, { retryable: true, onResume, unsaved: true });
+  expect(
+    screen.getByRole("button", { name: "重新发送" }).hasAttribute("disabled"),
+  ).toBe(true);
+});
+
 test.each(["content-package", "world-revision"] as const)(
   "%s 损坏历史不可选择并说明原因",
   (target) => {
@@ -178,6 +198,9 @@ function renderPanel(
     onCreateWorld?: () => void;
     history?: V1SettingImprovementHistoryItem[];
     onSelectSession?: (sessionId: string) => Promise<void>;
+    retryable?: boolean;
+    unsaved?: boolean;
+    onResume?: () => Promise<void>;
     onRollbackFile?: (
       sessionId: string,
       changeSetId: string,
@@ -190,12 +213,13 @@ function renderPanel(
       packageName: "Test package",
       ...(options.target === undefined ? {} : { target: options.target }),
       modelConfigured: true,
-      hasUnsavedFileDraft: false,
+      hasUnsavedFileDraft: options.unsaved ?? false,
       loading: false,
       view: {
         sessionId: "setting-test",
         packageId: "package-test",
-        runStatus: "ready",
+        runStatus: options.retryable ? "interrupted" : "ready",
+        canRetry: options.retryable ?? false,
         messages: [],
         turns: [
           {
@@ -244,7 +268,7 @@ function renderPanel(
           streaming: null,
           updatedAt: 2,
         },
-        lastFailure: null,
+        lastFailure: options.retryable ? "Stream stopped" : null,
       },
       history: options.history ?? [
         {
@@ -287,7 +311,7 @@ function renderPanel(
         : { onCreateWorld: options.onCreateWorld }),
       onSend: options.onSend ?? (() => Promise.resolve()),
       onCancel: () => Promise.resolve(),
-      onResume: () => Promise.resolve(),
+      onResume: options.onResume ?? (() => Promise.resolve()),
       onFreshContext: () => undefined,
       onSelectSession: options.onSelectSession ?? (() => Promise.resolve()),
       onDeleteSession,

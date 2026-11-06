@@ -83,6 +83,8 @@ export interface ModelToolConversationRun<
   session: Session;
   host: ModelHost;
   requestId: string;
+  /** A continuation may use a distinct idempotency key for the run. */
+  exchangeRequestId?: string;
   worldRevisionBoundaries?: ModelHostExchange["worldRevisionBoundaries"];
   save: (session: Session) => Promise<void>;
   recordGoogleHop?: (
@@ -100,6 +102,15 @@ export interface ModelToolConversationRun<
     emptyResponse?: string;
     cancelled?: string;
     interrupted?: string;
+  };
+  /** Optional target-owned durable dispatch and recovery policy. */
+  dispatch?: {
+    request: (
+      session: Session,
+      request: ModelHostExchange,
+    ) => ModelHostExchange;
+    accepted: (session: Session) => void;
+    failed: (session: Session, error: unknown, duringDispatch: boolean) => void;
   };
 }
 
@@ -196,45 +207,61 @@ export class ModelToolConversation<
     live: LiveRun<View>,
   ): Promise<View> {
     const { session } = input;
+    let duringDispatch = false;
     try {
       for (let round = 0; round < maximumExchangesPerMessage; round += 1) {
-        const request = authoringExchange(
+        let request = authoringExchange(
           session,
-          live.requestId,
+          input.exchangeRequestId ?? live.requestId,
           input.worldRevisionBoundaries,
         );
-        session.exchange += 1;
+        request = input.dispatch?.request(session, request) ?? request;
+        session.exchange = Math.max(
+          session.exchange,
+          request.exchange ?? session.exchange + 1,
+        );
         if (session.modelBinding.provider === "google_interactions")
           session.googleOutcomeUnknown = true;
         live.streaming = emptyStreaming();
         session.updatedAt = Date.now();
         await input.save(session);
         input.changed?.(true);
+        duringDispatch = true;
         const response = await input.host.exchange(request, {
           signal: live.controller.signal,
           onGoogleHop: (hop) => {
+            const requestId = input.exchangeRequestId ?? live.requestId;
             const snapshot = session.requests?.findLast(
-              (entry) => entry.requestId === live.requestId,
+              (entry) => entry.requestId === requestId,
             );
             if (snapshot?.wireRequest === undefined) return;
             snapshot.wireRequest = withGoogleHop(snapshot.wireRequest, hop);
-            return input.recordGoogleHop?.(live.requestId, hop);
+            return input.recordGoogleHop?.(requestId, hop);
           },
           onDelta: (delta) => {
             recordDelta(live, delta);
             input.changed?.(false);
           },
         });
+        if (live.controller.signal.aborted)
+          throw new ModelHostCancelledError(
+            "The authoring request was cancelled",
+          );
+        duringDispatch = false;
         assertCompleteResponse(response);
         const toolCalls = response.toolCalls ?? [];
         assertUniqueToolCallIds(toolCalls);
         const visibleText = response.text ?? "";
-        if (toolCalls.length === 0 && visibleText.trim().length === 0)
+        session.usage = aggregateModelUsage(session.usage, response.usage);
+        if (toolCalls.length === 0 && visibleText.trim().length === 0) {
+          duringDispatch = true;
           throw new Error(
             input.failure?.emptyResponse ??
               "The model returned an empty tool-free authoring response",
           );
-        session.usage = aggregateModelUsage(session.usage, response.usage);
+        }
+        duringDispatch = false;
+        input.dispatch?.accepted(session);
         session.modelItems.push({
           kind: "assistant",
           text: visibleText,
@@ -285,6 +312,7 @@ export class ModelToolConversation<
       await input.save(session);
       return input.view(session);
     } catch (error: unknown) {
+      input.dispatch?.failed(session, error, duringDispatch);
       session.runStatus = "interrupted";
       session.activeRequestId = null;
       session.completedRequestIds = rememberRequest(

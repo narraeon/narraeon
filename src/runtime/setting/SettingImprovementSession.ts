@@ -16,12 +16,18 @@ import {
 } from "../content/ContentWorkspace.ts";
 import type { ContentTreeFile } from "../content/ContentTreeFile.ts";
 import { contentTreeFingerprint } from "../content/ContentTreeFingerprint.ts";
+import { validAuthoringNativeContinuation } from "../model/FileNativeModelAdapters.ts";
 import type {
   ModelHost,
   ModelHostBinding,
   ModelHostToolCall,
 } from "../model/ModelHost.ts";
-import { equalModelHostBinding } from "../model/ModelHost.ts";
+import {
+  equalModelHostBinding,
+  ModelHostBindingMismatchError,
+  ModelHostContinuationError,
+  modelHostFailureRequiresFreshContext,
+} from "../model/ModelHost.ts";
 import {
   settingImprovementPromptForBinding,
   type PlayPresetBinding,
@@ -330,7 +336,7 @@ export class SettingImprovementSession {
           input.packageId,
           next.modelBinding,
         );
-        next.schemaVersion = 3;
+        next.schemaVersion = 4;
         next.requests ??= [];
         next.requests.push({
           requestId,
@@ -343,6 +349,7 @@ export class SettingImprovementSession {
           next.authorization,
           preload.record,
         );
+        delete next.retryDispatch;
         appendAuthoringUserMessage(next, message, requestId);
         if (next.modelBinding.provider === "google_interactions")
           next.googleOutcomeUnknown = false;
@@ -361,9 +368,14 @@ export class SettingImprovementSession {
     const prepared = await this.#mutate(async () => {
       const session = await this.#store.read(input.sessionId);
       assertPackage(session, input.packageId);
-      return this.#startRequest(session, requestId, (next) =>
-        resumePausedAuthoringConversation(next),
-      );
+      return this.#startRequest(session, requestId, (next) => {
+        if (canRetrySettingRequest(next)) {
+          next.runStatus = "running";
+          next.activeRequestId = next.requests?.at(-1)?.requestId ?? null;
+          next.lastFailure = null;
+          next.updatedAt = Date.now();
+        } else resumePausedAuthoringConversation(next);
+      });
     });
     return prepared.run ?? this.#view(prepared.session);
   }
@@ -396,6 +408,7 @@ export class SettingImprovementSession {
       throw new Error(
         "No saved model connection matches this setting-improvement conversation",
       );
+    if (session.schemaVersion === 3) session.schemaVersion = 4;
     await prepare(session);
     if (
       session.modelBinding.provider === "google_interactions" &&
@@ -533,7 +546,8 @@ export class SettingImprovementSession {
     const now = Date.now();
     const sessionId = this.#store.createId();
     const session: StoredSettingImprovementSession = {
-      schemaVersion: 2,
+      schemaVersion: 4,
+      requests: [],
       sessionId,
       packageId,
       contentPackageTitle: package_.title,
@@ -575,6 +589,7 @@ export class SettingImprovementSession {
       session,
       host,
       requestId,
+      exchangeRequestId: session.activeRequestId ?? requestId,
       save: (next) => this.#store.save(next),
       recordGoogleHop: (id, hop) =>
         this.#store.recordGoogleHop(session.sessionId, id, hop),
@@ -593,6 +608,41 @@ export class SettingImprovementSession {
         cancelled:
           "The setting-improvement response was cancelled. Complete tool responses already published to the current tree were retained.",
         interrupted: "The setting-improvement response was interrupted",
+      },
+      dispatch: {
+        request: (next, request) => {
+          if (next.schemaVersion !== 4) return request;
+          const retry = next.retryDispatch;
+          if (retry?.state === "retryable") {
+            next.retryDispatch = { ...retry, state: "dispatching" };
+            return {
+              ...request,
+              requestId: retry.requestId,
+              exchange: retry.exchange,
+            };
+          }
+          next.retryDispatch = {
+            requestId: request.requestId!,
+            exchange: request.exchange!,
+            modelItemCount: next.modelItems.length,
+            state: "dispatching",
+          };
+          return request;
+        },
+        accepted: (next) => {
+          delete next.retryDispatch;
+        },
+        failed: (next, error, duringDispatch) => {
+          if (next.retryDispatch === undefined) return;
+          next.retryDispatch.state =
+            duringDispatch &&
+            next.modelBinding.provider !== "google_interactions" &&
+            !(error instanceof ModelHostBindingMismatchError) &&
+            !(error instanceof ModelHostContinuationError) &&
+            !modelHostFailureRequiresFreshContext(error)
+              ? "retryable"
+              : "blocked";
+        },
       },
     });
   }
@@ -729,6 +779,7 @@ export class SettingImprovementSession {
           const pending = session.pendingSettlement;
           let prepared: StoredSettingPreparedPublication | null =
             pending.phase === "publication_prepared" ? pending : null;
+          let settled = false;
           if (fingerprint === pending.beforeFingerprint) {
             const assistant = assistantAt(session, pending.assistantItemIndex);
             const transaction = this.#openTransaction(
@@ -766,6 +817,7 @@ export class SettingImprovementSession {
             );
           } else if (fingerprint === prepared.afterFingerprint) {
             this.#finalizeSettlement(session, prepared);
+            settled = true;
           } else {
             this.#finalizeUnconfirmedToolResponse(
               session,
@@ -774,6 +826,20 @@ export class SettingImprovementSession {
             );
           }
           markInterruptedAfterRestart(session);
+          const request = session.requests?.at(-1);
+          if (
+            settled &&
+            request !== undefined &&
+            session.modelBinding.provider !== "google_interactions"
+          ) {
+            session.schemaVersion = 4;
+            session.retryDispatch = {
+              requestId: request.requestId,
+              exchange: session.exchange + 1,
+              modelItemCount: session.modelItems.length,
+              state: "retryable",
+            };
+          }
           session.updatedAt = Date.now();
           if (!(await this.#store.saveIfUnchanged(expected, session)))
             throw new RecoveryWriteConflictError();
@@ -807,6 +873,11 @@ export class SettingImprovementSession {
       )
         session.googleOutcomeUnknown = true;
       markInterruptedAfterRestart(session);
+      if (session.retryDispatch?.state === "dispatching")
+        session.retryDispatch.state =
+          session.modelBinding.provider === "google_interactions"
+            ? "blocked"
+            : "retryable";
       session.updatedAt = Date.now();
     } else {
       return session;
@@ -874,6 +945,7 @@ export class SettingImprovementSession {
         updatedAt: session.updatedAt,
       },
       lastFailure: session.lastFailure,
+      canRetry: canRetrySettingRequest(session),
     };
   }
 
@@ -890,6 +962,20 @@ export class SettingImprovementSession {
       release();
     }
   }
+}
+
+function canRetrySettingRequest(
+  session: StoredSettingImprovementSession,
+): boolean {
+  return (
+    session.runStatus === "interrupted" &&
+    session.pendingSettlement === null &&
+    session.retryDispatch?.state === "retryable" &&
+    validAuthoringNativeContinuation(
+      session.modelItems,
+      session.modelBinding.provider,
+    )
+  );
 }
 
 function assertPackage(

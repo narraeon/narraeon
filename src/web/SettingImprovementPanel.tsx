@@ -623,14 +623,29 @@ export function SettingImprovementPanel({
                 <LegacyDraftHistory legacy={view.legacyDraft} />
               ) : null}
               {view?.lastFailure !== null && view?.lastFailure !== undefined ? (
-                <div className="setting-conversation-failure" role="alert">
+                <div
+                  className={
+                    view.canRetry
+                      ? "setting-conversation-paused"
+                      : "setting-conversation-failure"
+                  }
+                  role={view.canRetry ? "status" : "alert"}
+                >
                   <strong>{uiText("上一次操作未完成")}</strong>
-                  <p>{view.lastFailure}</p>
-                  <p>
-                    {uiText(
-                      "完整对话和已经结算的当前树改动都已保留，可以直接继续说。",
-                    )}
-                  </p>
+                  <details>
+                    <summary>{uiText("查看详情")}</summary>
+                    <p>{view.lastFailure}</p>
+                  </details>
+                  <p>{uiText("完整对话和已经结算的当前树改动都已保留。")}</p>
+                  {view.canRetry && !running ? (
+                    <button
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => void resume()}
+                    >
+                      {uiText("重新发送")}
+                    </button>
+                  ) : null}
                 </div>
               ) : null}
               {view?.runStatus === "paused" && !running ? (

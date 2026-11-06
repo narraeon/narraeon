@@ -12,6 +12,10 @@ import { contentTreeFingerprint } from "../../src/runtime/content/ContentTreeFin
 import { FileNativeModelHost } from "../../src/runtime/model/FileNativeModelAdapters.ts";
 import {
   ScriptedModelHost,
+  ModelHostBindingMismatchError,
+  ModelHostContinuationError,
+  ModelHostFailureError,
+  ModelHostOutcomeUnknownError,
   type ModelHost,
   type ModelHostBinding,
   type ScriptedModelHostStep,
@@ -611,6 +615,7 @@ test.each(["truncated", "incomplete"])(
       "Edit.",
     );
     expect(result.runStatus).toBe("interrupted");
+    expect(result.canRetry).toBe(false);
     expect(
       result.turns[0]?.exchanges.flatMap(({ toolCalls }) => toolCalls) ?? [],
     ).toEqual([]);
@@ -665,6 +670,7 @@ test.each(["cancel", "disconnect"] as const)(
     }
     const result = await running;
     expect(result.runStatus).toBe("interrupted");
+    expect(result.canRetry).toBe(false);
     expect(
       result.turns[1]?.exchanges.flatMap(({ toolCalls }) => toolCalls) ?? [],
     ).toEqual([]);
@@ -742,6 +748,10 @@ test("Google setting cold restart can resume a request proven not dispatched", a
   expect(
     JSON.stringify(restarted.sent[0]).match(/Frozen message\./gu),
   ).toHaveLength(1);
+  expect(
+    (await store.read(first.sessionId)).requests?.[0]?.wireRequest?.googleHops
+      ?.length,
+  ).toBeGreaterThanOrEqual(2);
 });
 
 test("重整前真实 schema-v2 作者会话保留原生工具历史，下一次发送保存当前编排", async () => {
@@ -784,7 +794,7 @@ test("重整前真实 schema-v2 作者会话保留原生工具历史，下一次
   ).toEqual(fixture.stored.modelItems);
   expect(host.requests[0]!.bootstrap).toEqual(candidate);
   const upgraded = await store.read(fixture.sessionId);
-  expect(upgraded.schemaVersion).toBe(3);
+  expect(upgraded.schemaVersion).toBe(4);
   expect(upgraded.bootstrap).toEqual(fixture.stored.bootstrap);
   expect(upgraded.messages.slice(0, fixture.stored.messages.length)).toEqual(
     fixture.stored.messages,
@@ -851,7 +861,7 @@ test("全新上下文创建持久对话，普通回复不产生候选或快照",
 
   const store = new FileNativeSettingImprovementStore(fixture.root);
   const stored = await store.read(view.sessionId);
-  expect(stored.schemaVersion).toBe(3);
+  expect(stored.schemaVersion).toBe(4);
   expect(stored).not.toHaveProperty("draft");
   expect(stored).not.toHaveProperty("baseFiles");
   expect(stored).not.toHaveProperty("review");
@@ -880,6 +890,503 @@ test("全新上下文创建持久对话，普通回复不产生候选或快照",
   expect(resumed.bootstrap).toEqual(frozenBootstrap);
   expect(resumed.contentPackageTitle).toBe("Harbor Letters");
 });
+
+test("interrupted authoring retries its frozen request after restart without appending the message or stream fragments", async () => {
+  const fixture = await createFixture([
+    {
+      outcome: "unknown",
+      message: "Connection interrupted",
+    },
+  ]);
+  const interrupted = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "original",
+    "Edit the opening.",
+  );
+  expect(interrupted).toMatchObject({
+    runStatus: "interrupted",
+    canRetry: true,
+  });
+  const originalRequest = fixture.host.requests[0]!;
+  await fixture.content.renameCurrentTreeContentPackage(
+    fixture.packageId,
+    "Changed title",
+  );
+  const retryHost = new ScriptedModelHost({
+    binding,
+    steps: [{ outcome: "response", text: "Finished." }],
+  });
+  const changedPreset = builtinDefaultPlayPresetBinding("en");
+  changedPreset.definition.files["blocks/changed.md"] = "Changed preset";
+  const restarted = serviceFor(
+    fixture.root,
+    fixture.content,
+    retryHost,
+    changedPreset,
+  );
+  const resumed = await restarted.resume({
+    packageId: fixture.packageId,
+    sessionId: interrupted.sessionId,
+    requestId: "retry",
+  });
+  expect(resumed).toMatchObject({ runStatus: "ready", canRetry: false });
+  expect(resumed.messages.map(({ text }) => text)).toEqual([
+    "Edit the opening.",
+    "Finished.",
+  ]);
+  expect(retryHost.requests[0]).toEqual(originalRequest);
+  expect(JSON.stringify(retryHost.requests[0])).not.toContain(
+    "Unfinished fragment",
+  );
+});
+
+test("retry retains the original request identity through a subsequent tool exchange", async () => {
+  const fixture = await createFixture([
+    { outcome: "unknown", message: "Disconnected" },
+  ]);
+  const interrupted = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "original",
+    "Inspect the opening.",
+  );
+  const host = new ScriptedModelHost({
+    binding,
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "read",
+            name: "setting_read",
+            arguments: { path: "opening.md" },
+          },
+        ],
+      },
+      { outcome: "response", text: "Finished." },
+    ],
+  });
+  const result = await serviceFor(fixture.root, fixture.content, host).resume({
+    packageId: fixture.packageId,
+    sessionId: interrupted.sessionId,
+    requestId: "retry-action",
+  });
+  expect(result.runStatus).toBe("ready");
+  expect(host.requests.map((request) => request.requestId)).toEqual([
+    "original",
+    "original",
+  ]);
+  expect(host.requests[1]?.appended.at(-1)).toMatchObject({
+    kind: "tool",
+    toolCallId: "read",
+  });
+  expect(result.requestPreviews?.map(({ requestId }) => requestId)).toEqual([
+    "original",
+  ]);
+});
+
+test("migration preserves the exact source bytes in a synthetic schema 3 transition", async () => {
+  const fixture = await createFixture([
+    { outcome: "response", text: "First." },
+    { outcome: "response", text: "Second." },
+  ]);
+  const first = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "first",
+    "Discuss.",
+  );
+  const path = join(
+    fixture.root,
+    "setting-improvements",
+    "sessions",
+    `${first.sessionId}.json`,
+  );
+  const old = JSON.parse(await readFile(path, "utf8")) as {
+    schemaVersion: number;
+  };
+  old.schemaVersion = 3;
+  const source = JSON.stringify(old);
+  await writeFile(path, source);
+  const result = await fixture.session.send({
+    packageId: fixture.packageId,
+    requestId: "second",
+    message: "Continue.",
+    continuation: { kind: "continue_context", sessionId: first.sessionId },
+  });
+  expect(result.runStatus).toBe("ready");
+  expect(
+    (
+      await new FileNativeSettingImprovementStore(fixture.root).read(
+        first.sessionId,
+      )
+    ).schemaVersion,
+  ).toBe(4);
+  expect(
+    await readFile(
+      join(
+        fixture.root,
+        "setting-improvements",
+        "sessions",
+        `${first.sessionId}.schema-v3.json`,
+      ),
+      "utf8",
+    ),
+  ).toBe(source);
+});
+
+test("historical schema 3 fixture upgrades without altering its original bytes", async () => {
+  // Captured by the real session service at commit 4f1c8c9, before schema 4 existed.
+  const source = gunzipSync(
+    await readFile(
+      new URL("./fixtures/author-schema3-4f1c8c9.json.gz", import.meta.url),
+    ),
+  ).toString("utf8");
+  const old = JSON.parse(source) as {
+    sessionId: string;
+    schemaVersion: number;
+  };
+  expect(old.schemaVersion).toBe(3);
+  const root = await temporaryRoot("schema3-historical-");
+  const sessions = join(root, "setting-improvements", "sessions");
+  await mkdir(sessions, { recursive: true });
+  await writeFile(join(sessions, `${old.sessionId}.json`), source);
+  const store = new FileNativeSettingImprovementStore(root);
+  const original = await store.read(old.sessionId);
+  await store.save({ ...original, schemaVersion: 4 });
+  const preserved = join(sessions, `${old.sessionId}.schema-v3.json`);
+  expect(await readFile(preserved, "utf8")).toBe(source);
+  const migrated = await store.read(old.sessionId);
+  expect(migrated).toEqual({ ...original, schemaVersion: 4 });
+  await store.save(migrated);
+  expect(await readFile(preserved, "utf8")).toBe(source);
+});
+
+test("cold recovery does not offer retry when native continuation is damaged", async () => {
+  const fixture = await createFixture([
+    { outcome: "response", text: "First." },
+    { outcome: "unknown", message: "Disconnected" },
+  ]);
+  const first = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "first",
+    "Discuss.",
+  );
+  const failed = await fixture.session.send({
+    packageId: fixture.packageId,
+    requestId: "second",
+    message: "Continue.",
+    continuation: { kind: "continue_context", sessionId: first.sessionId },
+  });
+  expect(failed.canRetry).toBe(true);
+  const path = join(
+    fixture.root,
+    "setting-improvements",
+    "sessions",
+    `${first.sessionId}.json`,
+  );
+  const stored = JSON.parse(await readFile(path, "utf8")) as {
+    modelItems: { kind: string; providerState?: unknown }[];
+  };
+  const assistant = stored.modelItems.find(
+    (item) => item.kind === "assistant",
+  )!;
+  assistant.providerState = {
+    protocol: "chat_completions",
+    assistantMessage: { role: "user" },
+  };
+  await writeFile(path, JSON.stringify(stored));
+  const restarted = serviceFor(
+    fixture.root,
+    fixture.content,
+    new ScriptedModelHost({ binding, steps: [] }),
+  );
+  expect(
+    (await restarted.readSession(fixture.packageId, first.sessionId)).canRetry,
+  ).toBe(false);
+  await expect(
+    restarted.resume({
+      packageId: fixture.packageId,
+      sessionId: first.sessionId,
+      requestId: "retry",
+    }),
+  ).rejects.toThrow();
+});
+
+test.each([
+  [
+    "native continuation",
+    new ModelHostContinuationError("damaged continuation"),
+  ],
+  ["model binding", new ModelHostBindingMismatchError("binding changed")],
+  ["context limit", new ModelHostFailureError("maximum context length")],
+  [
+    "output limit",
+    new ModelHostFailureError("output limit", {
+      details: { code: "model_output_limit" },
+    }),
+  ],
+])("does not offer retry for %s failures", async (_label, error) => {
+  const fixture = await createFixture([]);
+  const host: ModelHost = {
+    binding: () => binding,
+    exchange: () => Promise.reject(error),
+  };
+  const session = serviceFor(fixture.root, fixture.content, host);
+  const result = await sendFresh(
+    session,
+    fixture.packageId,
+    "blocked",
+    "Inspect.",
+  );
+  expect(result).toMatchObject({ runStatus: "interrupted", canRetry: false });
+  expect(
+    (
+      await serviceFor(fixture.root, fixture.content, host).readSession(
+        fixture.packageId,
+        result.sessionId,
+      )
+    ).canRetry,
+  ).toBe(false);
+});
+
+test("streamed fragments are not promoted to retry context", async () => {
+  const fixture = await createFixture([]);
+  const host: ModelHost = {
+    binding: () => binding,
+    exchange: (_request, observer) => {
+      observer?.onDelta?.({ kind: "text", text: "Unfinished fragment" });
+      return Promise.reject(
+        new ModelHostOutcomeUnknownError("Stream interrupted"),
+      );
+    },
+  };
+  const failed = await sendFresh(
+    serviceFor(fixture.root, fixture.content, host),
+    fixture.packageId,
+    "stream",
+    "Inspect.",
+  );
+  const retryHost = new ScriptedModelHost({
+    binding,
+    steps: [{ outcome: "response", text: "Finished." }],
+  });
+  const resumed = await serviceFor(
+    fixture.root,
+    fixture.content,
+    retryHost,
+  ).resume({
+    packageId: fixture.packageId,
+    sessionId: failed.sessionId,
+    requestId: "retry",
+  });
+  expect(resumed.messages.map(({ text }) => text)).toEqual([
+    "Inspect.",
+    "Finished.",
+  ]);
+  expect(JSON.stringify(retryHost.requests)).not.toContain(
+    "Unfinished fragment",
+  );
+});
+
+test("an empty response can be resent without another user message", async () => {
+  const fixture = await createFixture([{ outcome: "response", text: "" }]);
+  const failed = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "empty",
+    "Inspect.",
+  );
+  expect(failed).toMatchObject({ runStatus: "interrupted", canRetry: true });
+  const host = new ScriptedModelHost({
+    binding,
+    steps: [{ outcome: "response", text: "Finished." }],
+  });
+  const resumed = await serviceFor(fixture.root, fixture.content, host).resume({
+    packageId: fixture.packageId,
+    sessionId: failed.sessionId,
+    requestId: "retry-empty",
+  });
+  expect(resumed.messages.map(({ text }) => text)).toEqual([
+    "Inspect.",
+    "Finished.",
+  ]);
+});
+
+test("cancelled request ignores a late complete response and can be resent", async () => {
+  const fixture = await createFixture([]);
+  const started = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const scripted = new ScriptedModelHost({
+    binding,
+    steps: [{ outcome: "response", text: "Late response." }],
+  });
+  const host: ModelHost = {
+    binding: () => binding,
+    exchange: async (request, observer) => {
+      started.resolve();
+      await release.promise;
+      return scripted.exchange(request, observer);
+    },
+  };
+  const service = serviceFor(fixture.root, fixture.content, host);
+  const running = sendFresh(service, fixture.packageId, "cancel", "Inspect.");
+  await started.promise;
+  const current = await service.read(fixture.packageId);
+  const cancelling = service.cancel(current!.sessionId);
+  release.resolve();
+  const result = await running;
+  await cancelling;
+  expect(result).toMatchObject({ runStatus: "interrupted", canRetry: true });
+  const retryHost = new ScriptedModelHost({
+    binding,
+    steps: [{ outcome: "response", text: "Finished." }],
+  });
+  const resumed = await serviceFor(
+    fixture.root,
+    fixture.content,
+    retryHost,
+  ).resume({
+    packageId: fixture.packageId,
+    sessionId: result.sessionId,
+    requestId: "retry-cancel",
+  });
+  expect(resumed.messages.map(({ text }) => text)).toEqual([
+    "Inspect.",
+    "Finished.",
+  ]);
+  expect(JSON.stringify(retryHost.requests)).not.toContain("Late response.");
+});
+
+test.each([
+  "chat_completions",
+  "openai_responses",
+  "anthropic_messages",
+] as const)(
+  "%s production stream retries the same frozen request",
+  async (provider) => {
+    const data = (value: unknown) => `data: ${JSON.stringify(value)}\n\n`;
+    const named = (name: string, value: unknown) =>
+      `event: ${name}\n${data(value)}`;
+    const chat = (text: string) =>
+      data({ id: "c1", choices: [{ index: 0, delta: { content: text } }] });
+    const response = (text: string) =>
+      named("response.output_text.delta", {
+        type: "response.output_text.delta",
+        delta: text,
+      });
+    const anthropicStart =
+      named("message_start", {
+        type: "message_start",
+        message: {
+          id: "m1",
+          role: "assistant",
+          model: "test",
+          content: [],
+          usage: { input_tokens: 1, output_tokens: 1 },
+        },
+      }) +
+      named("content_block_start", {
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "text", text: "" },
+      });
+    const anthropic = (text: string) =>
+      named("content_block_delta", {
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "text_delta", text },
+      });
+    const partial =
+      provider === "chat_completions"
+        ? chat("unfinished fragment")
+        : provider === "openai_responses"
+          ? response("unfinished fragment")
+          : anthropicStart + anthropic("unfinished fragment");
+    const complete =
+      provider === "chat_completions"
+        ? chat("Finished.") +
+          data({
+            id: "c1",
+            choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+          }) +
+          "data: [DONE]\n\n"
+        : provider === "openai_responses"
+          ? response("Finished.") +
+            named("response.completed", {
+              type: "response.completed",
+              response: {
+                id: "r1",
+                status: "completed",
+                output: [
+                  {
+                    type: "message",
+                    id: "m1",
+                    role: "assistant",
+                    status: "completed",
+                    content: [{ type: "output_text", text: "Finished." }],
+                  },
+                ],
+              },
+            })
+          : anthropicStart +
+            anthropic("Finished.") +
+            named("content_block_stop", {
+              type: "content_block_stop",
+              index: 0,
+            }) +
+            named("message_delta", {
+              type: "message_delta",
+              delta: { stop_reason: "end_turn", stop_sequence: null },
+              usage: { output_tokens: 3 },
+            }) +
+            named("message_stop", { type: "message_stop" });
+    const bodies: string[] = [];
+    const host = new FileNativeModelHost(
+      {
+        provider,
+        baseUrl: "https://provider.invalid/v1",
+        apiKey: "secret",
+        modelId: "test",
+        contextWindowTokens: 64000,
+        maxOutputTokens: 2000,
+      },
+      (_url, options) => {
+        if (typeof options?.body !== "string")
+          throw new Error("Missing request body");
+        bodies.push(options.body);
+        return Promise.resolve(
+          new Response(bodies.length === 1 ? partial : complete, {
+            headers: { "content-type": "text/event-stream" },
+          }),
+        );
+      },
+    );
+    const root = await temporaryRoot("setting-production-stream-");
+    const content = new ContentWorkspace(root, { locale: () => "en" });
+    const { localId } = await content.createCurrentTreeContentPackage();
+    const failed = await sendFresh(
+      serviceFor(root, content, host),
+      localId,
+      "original",
+      "Inspect.",
+    );
+    expect(failed).toMatchObject({ runStatus: "interrupted", canRetry: true });
+    const resumed = await serviceFor(root, content, host).resume({
+      packageId: localId,
+      sessionId: failed.sessionId,
+      requestId: "retry",
+    });
+    expect(resumed.messages.map(({ text }) => text)).toEqual([
+      "Inspect.",
+      "Finished.",
+    ]);
+    expect(bodies[1]).toBe(bodies[0]);
+    expect(bodies[1]).not.toContain("unfinished fragment");
+  },
+);
 
 test("模型调用达到单条消息上限时暂停，继续时不追加用户消息并沿用冻结请求", async () => {
   const fixture = await createFixture([
@@ -938,6 +1445,44 @@ test("模型调用达到单条消息上限时暂停，继续时不追加用户�
       requestId: "resume-ready",
     }),
   ).rejects.toThrow("Only a paused authoring conversation can be continued");
+});
+
+test("synthetic schema 2 paused state continues without inventing a retry checkpoint", async () => {
+  const fixture = await createFixture([
+    ...Array.from({ length: 64 }, (_, index) => ({
+      outcome: "response" as const,
+      toolCalls: [
+        {
+          id: `read-${index}`,
+          name: "setting_read",
+          arguments: { path: "opening.md" },
+        },
+      ],
+    })),
+    { outcome: "response", text: "Continued." },
+  ]);
+  const paused = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "legacy-paused",
+    "Inspect.",
+  );
+  const store = new FileNativeSettingImprovementStore(fixture.root);
+  const old = await store.read(paused.sessionId);
+  old.schemaVersion = 2;
+  delete old.requests;
+  await store.save(old);
+  const resumed = await serviceFor(
+    fixture.root,
+    fixture.content,
+    fixture.host,
+  ).resume({
+    packageId: fixture.packageId,
+    sessionId: paused.sessionId,
+    requestId: "continue-legacy",
+  });
+  expect(resumed).toMatchObject({ runStatus: "ready", canRetry: false });
+  expect((await store.read(paused.sessionId)).schemaVersion).toBe(2);
 });
 
 test("完整工具响应直接原子发布当前树，并把推理、调用、结果和逐调用 diff 留在历史", async () => {
@@ -1876,11 +2421,15 @@ test("当前树已发布但收据未落盘时，重启确认既有结算而不�
       },
     },
   });
-  const recovered = await serviceFor(
-    root,
-    recoveredContent,
-    new ScriptedModelHost({ binding, steps: [] }),
-  ).readSession(created.localId, failed.sessionId);
+  const resumeHost = new ScriptedModelHost({
+    binding,
+    steps: [{ outcome: "response", text: "Publication confirmed." }],
+  });
+  const recoveryService = serviceFor(root, recoveredContent, resumeHost);
+  const recovered = await recoveryService.readSession(
+    created.localId,
+    failed.sessionId,
+  );
 
   expect(repeatedPublish).toBe(false);
   expect(recovered.turns[0]?.exchanges[0]?.toolCalls[1]).toMatchObject({
@@ -1891,6 +2440,18 @@ test("当前树已发布但收据未落盘时，重启确认既有结算而不�
     },
   });
   expect((await store.read(failed.sessionId)).pendingSettlement).toBeNull();
+  expect(recovered.canRetry).toBe(true);
+  const finished = await recoveryService.resume({
+    packageId: created.localId,
+    sessionId: failed.sessionId,
+    requestId: "retry-after-publication",
+  });
+  expect(finished.runStatus).toBe("ready");
+  expect(repeatedPublish).toBe(false);
+  expect(resumeHost.requests[0]?.appended.at(-1)).toMatchObject({
+    kind: "tool",
+    toolCallId: "write-published-opening",
+  });
 });
 
 test("当前树限制只拒绝越界调用，不回滚同响应中已接受的写入", async () => {

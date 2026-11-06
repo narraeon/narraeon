@@ -1505,6 +1505,9 @@ const settingImprovementEnglishMessages: Record<string, string> = {
   你: "You",
   AI: "AI",
   上一次操作未完成: "The previous operation did not complete",
+  查看详情: "Show details",
+  "完整对话和已经结算的当前树改动都已保留。":
+    "The complete conversation and settled current-tree changes have been preserved.",
   "回车换行，点击发送按钮发送":
     "Enter inserts a new line. Tap the send button to send.",
   "Enter 发送，Shift + Enter 换行":

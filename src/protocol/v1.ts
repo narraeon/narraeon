@@ -580,6 +580,7 @@ export interface V1AuthoringRequestPreview {
 }
 
 export interface V1SettingImprovementView {
+  canRetry?: boolean;
   requestPreviews?: V1AuthoringRequestPreview[];
   sessionId: string;
   packageId: string;

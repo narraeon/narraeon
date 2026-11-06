@@ -144,7 +144,14 @@ interface LegacySettingImprovementSession {
  * the content package current tree is the sole authoring authority.
  */
 export interface StoredSettingImprovementSession {
-  schemaVersion: 2 | 3;
+  schemaVersion: 2 | 3 | 4;
+  /** Last dispatched model request, retained only while its outcome is unresolved. */
+  retryDispatch?: {
+    requestId: string;
+    exchange: number;
+    modelItemCount: number;
+    state: "dispatching" | "retryable" | "blocked";
+  };
   requests?: AuthoringRequestSnapshot[];
   sessionId: string;
   packageId: string;
@@ -329,6 +336,7 @@ export class FileNativeSettingImprovementStore {
   save(session: StoredSettingImprovementSession): Promise<void> {
     return this.#mutate(async () => {
       validateStoredSession(session);
+      await this.#preservePreviousSchema(session);
       await publishJson(this.#path(session.sessionId), session);
       await this.#recordSavedSession(session);
     });
@@ -346,6 +354,7 @@ export class FileNativeSettingImprovementStore {
       validateStoredSession(replacement);
       const current = await this.#read(expected.sessionId);
       if (!isDeepStrictEqual(current, expected)) return false;
+      await this.#preservePreviousSchema(replacement);
       await publishJson(this.#path(replacement.sessionId), replacement);
       await this.#recordSavedSession(replacement);
       return true;
@@ -367,6 +376,11 @@ export class FileNativeSettingImprovementStore {
       await rm(join(this.#sessionsRoot, `${sessionId}.schema-v1.json`), {
         force: true,
       });
+      for (const version of [2, 3])
+        await rm(
+          join(this.#sessionsRoot, `${sessionId}.schema-v${version}.json`),
+          { force: true },
+        );
       await this.#recordDeletedSession(session);
     });
   }
@@ -592,6 +606,32 @@ export class FileNativeSettingImprovementStore {
     return session;
   }
 
+  async #preservePreviousSchema(
+    next: StoredSettingImprovementSession,
+  ): Promise<void> {
+    if (next.schemaVersion !== 4) return;
+    let source: string;
+    try {
+      source = await readFile(this.#path(next.sessionId), "utf8");
+    } catch (error: unknown) {
+      if (isNodeError(error) && error.code === "ENOENT") return;
+      throw error;
+    }
+    const previous = validateStoredSession(JSON.parse(source) as unknown);
+    if (previous.sessionId !== next.sessionId)
+      throw new Error(
+        "Setting-improvement conversation identity does not match its file",
+      );
+    if (previous.schemaVersion === 4) return;
+    await publishImmutableSource(
+      join(
+        this.#sessionsRoot,
+        `${next.sessionId}.schema-v${previous.schemaVersion}.json`,
+      ),
+      source,
+    );
+  }
+
   async #migrateLegacy(
     sessionId: string,
     source: string,
@@ -807,16 +847,32 @@ function validateStoredSession(
         "requests",
         "googleOutcomeUnknown",
         "googleIdentity",
+        "retryDispatch",
       ],
     ) ||
-    (value.schemaVersion !== 2 && value.schemaVersion !== 3) ||
+    (value.schemaVersion !== 2 &&
+      value.schemaVersion !== 3 &&
+      value.schemaVersion !== 4) ||
+    (value.schemaVersion !== 4 && value.retryDispatch !== undefined) ||
     (value.schemaVersion === 2
       ? value.requests !== undefined
-      : !validAuthoringRequests(value.requests, validPromptCompilation, {
-          modelItems: value.modelItems,
-          activeRequestId: value.activeRequestId,
-          completedRequestIds: value.completedRequestIds,
-        })) ||
+      : value.schemaVersion === 4 &&
+          Array.isArray(value.requests) &&
+          value.requests.length === 0 &&
+          value.runStatus === "ready" &&
+          Array.isArray(value.modelItems) &&
+          value.modelItems.length === 0 &&
+          Array.isArray(value.messages) &&
+          value.messages.length === 0 &&
+          value.activeRequestId === null &&
+          Array.isArray(value.completedRequestIds) &&
+          value.completedRequestIds.length === 0
+        ? false
+        : !validAuthoringRequests(value.requests, validPromptCompilation, {
+            modelItems: value.modelItems,
+            activeRequestId: value.activeRequestId,
+            completedRequestIds: value.completedRequestIds,
+          })) ||
     typeof value.sessionId !== "string" ||
     typeof value.packageId !== "string" ||
     !validOptionalTitle(value.contentPackageTitle) ||
@@ -827,6 +883,29 @@ function validateStoredSession(
     typeof value.creationRequestId !== "string" ||
     !validPromptCompilation(value.bootstrap) ||
     !validModelBinding(value.modelBinding) ||
+    (value.retryDispatch !== undefined &&
+      (!isRecord(value.retryDispatch) ||
+        !hasExactKeys(value.retryDispatch, [
+          "requestId",
+          "exchange",
+          "modelItemCount",
+          "state",
+        ]) ||
+        typeof value.retryDispatch.requestId !== "string" ||
+        !validCount(value.retryDispatch.exchange) ||
+        !validCount(value.retryDispatch.modelItemCount) ||
+        !["dispatching", "retryable", "blocked"].includes(
+          String(value.retryDispatch.state),
+        ) ||
+        value.schemaVersion !== 4 ||
+        lastRequestId(value.requests) !== value.retryDispatch.requestId ||
+        (value.runStatus !== "running" && value.runStatus !== "interrupted") ||
+        value.pendingSettlement !== null ||
+        !validCount(value.exchange) ||
+        (value.retryDispatch.exchange !== value.exchange &&
+          value.retryDispatch.exchange !== Number(value.exchange) + 1) ||
+        !Array.isArray(value.modelItems) ||
+        value.retryDispatch.modelItemCount !== value.modelItems.length)) ||
     (value.playPreset !== undefined &&
       !isPlayPresetBinding(value.playPreset)) ||
     !Array.isArray(value.modelItems) ||
@@ -883,6 +962,12 @@ function validateStoredSession(
   )
     throw new Error("Setting-improvement transcript is damaged");
   return structuredClone(value) as unknown as StoredSettingImprovementSession;
+}
+
+function lastRequestId(requests: unknown): unknown {
+  if (!Array.isArray(requests)) return undefined;
+  const last: unknown = requests.at(-1);
+  return isRecord(last) ? last.requestId : undefined;
 }
 
 function migrateLegacySession(

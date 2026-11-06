@@ -2297,6 +2297,25 @@ function providerText(content: unknown): string {
   return JSON.stringify(content) ?? "";
 }
 
+/** Uses the same native payload checks as the production request encoders. */
+export function validAuthoringNativeContinuation(
+  items: readonly ModelHostAppendItem[],
+  provider: ModelHostBinding["provider"],
+): boolean {
+  return items.every((item) => {
+    if (item.kind !== "assistant") return true;
+    const state = item.providerState;
+    if (state?.protocol !== provider) return false;
+    if (state.protocol === "chat_completions")
+      return validChatAssistantMessage(state.assistantMessage);
+    if (state.protocol === "openai_responses")
+      return validResponsesOutput(state.output);
+    if (state.protocol === "anthropic_messages")
+      return validAnthropicContent(state.content);
+    return validGoogleInteractionsContinuation(state.steps);
+  });
+}
+
 function validChatAssistantMessage(value: unknown): value is Record<
   string,
   unknown
