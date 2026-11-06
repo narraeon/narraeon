@@ -2,6 +2,27 @@ import { expect, test } from "vitest";
 
 import { parseV1Envelope, v1Protocol } from "../../src/protocol/v1.ts";
 
+test("message editing accepts only the explicit file policies", () => {
+  const request = {
+    type: "setting-improvement.message.edit",
+    packageId: "package",
+    sessionId: "session",
+    requestId: "request",
+    messageId: "message",
+    message: "Updated",
+    filePolicy: "keep",
+  };
+  expect(parseV1Envelope({ protocol: v1Protocol, request }).request).toEqual(
+    request,
+  );
+  expect(() =>
+    parseV1Envelope({
+      protocol: v1Protocol,
+      request: { ...request, filePolicy: "fresh_context" },
+    }),
+  ).toThrow(/filePolicy/u);
+});
+
 test("设定完善协议显式区分继续历史与全新上下文", () => {
   const fresh = {
     type: "setting-improvement.message",

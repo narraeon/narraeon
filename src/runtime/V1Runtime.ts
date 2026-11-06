@@ -76,6 +76,7 @@ import { FileNativeSettingImprovementStore } from "./setting/FileNativeSettingIm
 import {
   SettingImprovementRollbackError,
   SettingImprovementSession,
+  SettingMessageEditError,
 } from "./setting/SettingImprovementSession.ts";
 import { FileNativeWorldStore } from "./world/FileNativeWorldStore.ts";
 import { WorldDocumentStore } from "./world/WorldDocumentStore.ts";
@@ -628,6 +629,21 @@ export class V1Runtime {
         }
       case "setting-improvement.message":
         return this.#settingImprovements.send(request);
+      case "setting-improvement.message.edit":
+        try {
+          return await this.#settingImprovements.editMessage(request);
+        } catch (error: unknown) {
+          if (error instanceof SettingMessageEditError)
+            throw new V1ProtocolError("invalid_request", error.message, {
+              cause: error,
+              details: {
+                kind: "setting_message_edit",
+                reason: error.reason,
+                paths: error.paths,
+              },
+            });
+          throw error;
+        }
       case "setting-improvement.cancel":
         return this.#settingImprovements.cancel(request.sessionId);
       case "setting-improvement.resume":

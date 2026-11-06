@@ -1506,6 +1506,17 @@ const settingImprovementEnglishMessages: Record<string, string> = {
   AI: "AI",
   上一次操作未完成: "The previous operation did not complete",
   查看详情: "Show details",
+  修改消息: "Edit message",
+  "保存后会替换这条消息及之后的对话。请选择如何处理文件改动。":
+    "Saving replaces this message and the later conversation. Choose how to handle file changes.",
+  保留文件改动并继续: "Keep file changes and continue",
+  撤回文件改动并继续: "Revert file changes and continue",
+  "以下文件后来发生变化，无法撤回：{paths}。文件和对话未改变，修改稿已保留。":
+    "These files changed later and cannot be reverted: {paths}. Files and conversation are unchanged, and your draft is preserved.",
+  "撤回会使内容包无效：{paths}。文件和对话未改变，修改稿已保留。":
+    "Reverting would make the content package invalid: {paths}. Files and conversation are unchanged, and your draft is preserved.",
+  "旧会话的文件改动无法可靠关联到这条消息，不能自动撤回：{paths}。文件和对话未改变，修改稿已保留。":
+    "Older file changes cannot be reliably attributed to this message and cannot be reverted automatically: {paths}. Files and conversation are unchanged, and your draft is preserved.",
   "完整对话和已经结算的当前树改动都已保留。":
     "The complete conversation and settled current-tree changes have been preserved.",
   "回车换行，点击发送按钮发送":

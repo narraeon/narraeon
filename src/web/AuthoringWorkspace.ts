@@ -307,6 +307,36 @@ export class AuthoringWorkspace {
       typeof this.selection === "string" ? this.selection : null;
     await this.settleRequest(valid, () => this.target.send(message, sessionId));
   }
+
+  async editMessage(
+    messageId: string,
+    message: string,
+    filePolicy: "keep" | "revert",
+    requestId: string,
+  ): Promise<void> {
+    if (
+      !this.active ||
+      this.state.applying ||
+      typeof this.selection !== "string" ||
+      this.target.editMessage === undefined
+    )
+      throw new Error("The selected conversation cannot be edited");
+    if (this.state.dirty)
+      throw new Error(uiText("请先保存文件编辑，再继续 AI 设定完善。"));
+    const sessionId = this.selection;
+    await this.settleRequest(
+      this.current(),
+      () =>
+        this.target.editMessage!(
+          sessionId,
+          messageId,
+          message,
+          filePolicy,
+          requestId,
+        ),
+      true,
+    );
+  }
   /** Continues the selected conversation after it paused at its exchange budget. */
   async resume(): Promise<void> {
     if (
@@ -324,10 +354,13 @@ export class AuthoringWorkspace {
   private async settleRequest(
     valid: () => boolean,
     request: () => Promise<V1SettingImprovementView>,
+    acceptedOnRefreshFailure = false,
   ): Promise<void> {
     this.update({ requestFailure: null, notice: "" });
+    let accepted = false;
     try {
       const view = await request();
+      accepted = true;
       if (!valid()) return;
       this.selection = view.sessionId;
       this.update({ view });
@@ -337,6 +370,7 @@ export class AuthoringWorkspace {
     } catch (error: unknown) {
       if (!valid()) return;
       this.update({ requestFailure: errorMessage(error) });
+      if (accepted && acceptedOnRefreshFailure) return;
       throw error;
     }
   }

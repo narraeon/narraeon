@@ -7305,6 +7305,22 @@ summary:focus-visible {
   justify-self: start;
 }
 
+.setting-message-edit {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.setting-message-edit label {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.setting-message-edit textarea {
+  width: 100%;
+  min-height: 7rem;
+  resize: vertical;
+}
+
 .setting-live-trace {
   display: grid;
   gap: 0.3rem;

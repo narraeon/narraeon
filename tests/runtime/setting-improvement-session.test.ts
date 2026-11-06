@@ -58,6 +58,930 @@ const binding: ModelHostBinding = {
   cacheStrategy: "provider_managed",
 };
 
+test("editing a historical message while keeping files replaces the later dialogue and preserves the native prefix", async () => {
+  const fixture = await createFixture([
+    { outcome: "response", text: "First answer." },
+    { outcome: "response", text: "Second answer." },
+    { outcome: "response", text: "Revised answer." },
+  ]);
+  const first = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "first",
+    "First message.",
+  );
+  const second = await fixture.session.send({
+    packageId: fixture.packageId,
+    requestId: "second",
+    message: "Second message.",
+    continuation: { kind: "continue_context", sessionId: first.sessionId },
+  });
+  const files = (
+    await fixture.content.readCurrentTreeContentPackage(fixture.packageId)
+  ).files;
+  const result = await fixture.session.editMessage({
+    packageId: fixture.packageId,
+    sessionId: first.sessionId,
+    requestId: "edit",
+    messageId: second.turns[1]!.user.id,
+    message: "Revised message.",
+    filePolicy: "keep",
+  });
+  expect(result.messages.map(({ text }) => text)).toEqual([
+    "First message.",
+    "First answer.",
+    "Revised message.",
+    "Revised answer.",
+  ]);
+  expect(
+    (await fixture.content.readCurrentTreeContentPackage(fixture.packageId))
+      .files,
+  ).toEqual(files);
+  expect(fixture.host.requests[2]!.appended).toEqual([
+    ...fixture.host.requests[1]!.appended.slice(0, -1),
+    { kind: "user", text: "Revised message." },
+  ]);
+});
+
+test("editing can revert only this conversation's later AI changes, once", async () => {
+  const write = (id: string, contents: string) => ({
+    outcome: "response" as const,
+    toolCalls: [
+      {
+        id: `read-${id}`,
+        name: "setting_read",
+        arguments: { path: "opening.md" },
+      },
+      {
+        id: `write-${id}`,
+        name: "setting_write_file",
+        arguments: { path: "opening.md", contents },
+      },
+    ],
+  });
+  const fixture = await createFixture([
+    write("one", "First edit.\n"),
+    { outcome: "response", text: "First done." },
+    write("two", "Second edit.\n"),
+    { outcome: "response", text: "Second done." },
+    { outcome: "response", text: "Revised." },
+  ]);
+  const original = (
+    await fixture.content.readCurrentTreeContentPackage(fixture.packageId)
+  ).files;
+  const first = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "first",
+    "First.",
+  );
+  await fixture.session.send({
+    packageId: fixture.packageId,
+    requestId: "second",
+    message: "Second.",
+    continuation: { kind: "continue_context", sessionId: first.sessionId },
+  });
+  const current = await fixture.content.readCurrentTreeContentPackage(
+    fixture.packageId,
+  );
+  const manual = {
+    path: "control/blocks/manual.md",
+    contents: "Later manual edit.\n",
+  };
+  await fixture.content.replaceCurrentTreeContentPackage(
+    fixture.packageId,
+    [...current.files, manual],
+    { baseTreeRevision: current.treeRevision },
+  );
+  const input = {
+    packageId: fixture.packageId,
+    sessionId: first.sessionId,
+    requestId: "edit",
+    messageId: first.turns[0]!.user.id,
+    message: "Different.",
+    filePolicy: "revert" as const,
+  };
+  const revised = await fixture.session.editMessage(input);
+  expect(revised.messages.map(({ text }) => text)).toEqual([
+    "Different.",
+    "Revised.",
+  ]);
+  expect(
+    (await fixture.content.readCurrentTreeContentPackage(fixture.packageId))
+      .files,
+  ).toEqual([...original, manual].sort((a, b) => a.path.localeCompare(b.path)));
+  const saved = await new FileNativeSettingImprovementStore(fixture.root).read(
+    first.sessionId,
+  );
+  expect(saved.authorization?.revision).toBe(
+    contentTreeFingerprint(
+      (await fixture.content.readCurrentTreeContentPackage(fixture.packageId))
+        .files,
+    ),
+  );
+  expect(await fixture.session.editMessage(input)).toEqual(revised);
+  await expect(
+    fixture.session.editMessage({ ...input, message: "Different payload." }),
+  ).rejects.toThrow(/already used for different content/u);
+  expect(fixture.host.requests).toHaveLength(5);
+});
+
+test("editing with revert reports every conflicting path and leaves files and dialogue intact", async () => {
+  const fixture = await createFixture([
+    {
+      outcome: "response",
+      toolCalls: [
+        { id: "read", name: "setting_read", arguments: { path: "opening.md" } },
+        {
+          id: "write",
+          name: "setting_write_file",
+          arguments: { path: "opening.md", contents: "AI version.\n" },
+        },
+      ],
+    },
+    { outcome: "response", text: "Done." },
+  ]);
+  const first = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "first",
+    "Edit.",
+  );
+  const current = await fixture.content.readCurrentTreeContentPackage(
+    fixture.packageId,
+  );
+  const manual = current.files.map((file) =>
+    file.path === "opening.md"
+      ? { ...file, contents: "Manual version.\n" }
+      : file,
+  );
+  await fixture.content.replaceCurrentTreeContentPackage(
+    fixture.packageId,
+    manual,
+    { baseTreeRevision: current.treeRevision },
+  );
+  await expect(
+    fixture.session.editMessage({
+      packageId: fixture.packageId,
+      sessionId: first.sessionId,
+      requestId: "edit",
+      messageId: first.turns[0]!.user.id,
+      message: "Revised.",
+      filePolicy: "revert",
+    }),
+  ).rejects.toThrow(/opening\.md/u);
+  expect(
+    (await fixture.content.readCurrentTreeContentPackage(fixture.packageId))
+      .files,
+  ).toEqual(manual);
+  expect(
+    (await fixture.session.readSession(fixture.packageId, first.sessionId))
+      .messages,
+  ).toEqual(first.messages);
+});
+
+test("revert rejects a newly dangling reference from another conversation", async () => {
+  const fixture = await createFixture([
+    {
+      outcome: "response",
+      toolCalls: [
+        {
+          id: "create",
+          name: "setting_create",
+          arguments: {
+            path: "world/notes/created.yaml",
+            ref: "created-note",
+            title: "Created",
+            summary: "Created note",
+            aliases: [],
+            body: "status: active\n",
+          },
+        },
+      ],
+    },
+    { outcome: "response", text: "Created." },
+    {
+      outcome: "response",
+      toolCalls: [
+        {
+          id: "read",
+          name: "setting_read",
+          arguments: { path: "@current-situation" },
+        },
+        {
+          id: "reference",
+          name: "setting_patch",
+          arguments: {
+            document: "@current-situation",
+            op: "add",
+            locator: ["linkedNote"],
+            value: { $ref: "@created-note" },
+          },
+        },
+      ],
+    },
+    { outcome: "response", text: "Linked." },
+  ]);
+  const first = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "first",
+    "Create a note.",
+  );
+  const other = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "other",
+    "Reference the note.",
+  );
+  expect(other.turns[0]?.exchanges[0]?.toolCalls[1]?.result?.isError).toBe(
+    false,
+  );
+  const before = (
+    await fixture.content.readCurrentTreeContentPackage(fixture.packageId)
+  ).files;
+  await expect(
+    fixture.session.editMessage({
+      packageId: fixture.packageId,
+      sessionId: first.sessionId,
+      requestId: "edit",
+      messageId: first.turns[0]!.user.id,
+      message: "Do something else.",
+      filePolicy: "revert",
+    }),
+  ).rejects.toThrow(/invalid|reference/iu);
+  expect(
+    (await fixture.content.readCurrentTreeContentPackage(fixture.packageId))
+      .files,
+  ).toEqual(before);
+  expect(
+    (await fixture.session.readSession(fixture.packageId, first.sessionId))
+      .messages,
+  ).toEqual(first.messages);
+});
+
+test("an edit rejects a conversation that advanced while its model binding was opening", async () => {
+  const fixture = await createFixture([
+    { outcome: "response", text: "First." },
+    {
+      outcome: "response",
+      toolCalls: [
+        {
+          id: "read-later",
+          name: "setting_read",
+          arguments: { path: "opening.md" },
+        },
+        {
+          id: "write-later",
+          name: "setting_write_file",
+          arguments: { path: "opening.md", contents: "Later change.\n" },
+        },
+      ],
+    },
+    { outcome: "response", text: "Later response." },
+  ]);
+  const first = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "first",
+    "Original.",
+  );
+  const started = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const slow = serviceFor(
+    fixture.root,
+    fixture.content,
+    fixture.host,
+    undefined,
+    undefined,
+    async () => {
+      started.resolve();
+      await release.promise;
+      return fixture.host;
+    },
+  );
+  const editing = slow.editMessage({
+    packageId: fixture.packageId,
+    sessionId: first.sessionId,
+    requestId: "edit",
+    messageId: first.turns[0]!.user.id,
+    message: "Revised.",
+    filePolicy: "revert",
+  });
+  await started.promise;
+  const later = await fixture.session.send({
+    packageId: fixture.packageId,
+    requestId: "later",
+    message: "Later.",
+    continuation: { kind: "continue_context", sessionId: first.sessionId },
+  });
+  release.resolve();
+  await expect(editing).rejects.toThrow(/conversation changed/iu);
+  expect(
+    (await slow.readSession(fixture.packageId, first.sessionId)).messages,
+  ).toEqual(later.messages);
+  expect(
+    (
+      await fixture.content.readCurrentTreeContentPackage(fixture.packageId)
+    ).files.find(({ path }) => path === "opening.md")?.contents,
+  ).toBe("Later change.\n");
+});
+
+test("another service cannot edit or send while a live response is in flight", async () => {
+  const fixture = await createFixture([
+    { outcome: "response", text: "First." },
+  ]);
+  const first = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "first",
+    "Original.",
+  );
+  const started = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const scripted = new ScriptedModelHost({
+    binding,
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "late-read",
+            name: "setting_read",
+            arguments: { path: "opening.md" },
+          },
+          {
+            id: "late-write",
+            name: "setting_write_file",
+            arguments: { path: "opening.md", contents: "Live change.\n" },
+          },
+        ],
+      },
+      { outcome: "response", text: "Live answer." },
+    ],
+  });
+  let firstExchange = true;
+  const host: ModelHost = {
+    binding: () => binding,
+    exchange: async (request, observer) => {
+      if (firstExchange) {
+        firstExchange = false;
+        started.resolve();
+        await release.promise;
+      }
+      return scripted.exchange(request, observer);
+    },
+  };
+  const active = serviceFor(fixture.root, fixture.content, host);
+  const other = serviceFor(
+    fixture.root,
+    new ContentWorkspace(fixture.root, { locale: () => "en" }),
+    host,
+  );
+  const running = active.send({
+    packageId: fixture.packageId,
+    requestId: "live",
+    message: "Live.",
+    continuation: { kind: "continue_context", sessionId: first.sessionId },
+  });
+  await started.promise;
+  await expect(
+    other.editMessage({
+      packageId: fixture.packageId,
+      sessionId: first.sessionId,
+      requestId: "edit",
+      messageId: first.turns[0]!.user.id,
+      message: "Revised.",
+      filePolicy: "revert",
+    }),
+  ).rejects.toThrow(/still running/iu);
+  await expect(
+    other.send({
+      packageId: fixture.packageId,
+      requestId: "other",
+      message: "Other.",
+      continuation: { kind: "continue_context", sessionId: first.sessionId },
+    }),
+  ).rejects.toThrow(/still running/iu);
+  release.resolve();
+  const complete = await running;
+  expect(complete.messages.map(({ text }) => text)).toEqual([
+    "Original.",
+    "First.",
+    "Live.",
+    "Live answer.",
+  ]);
+  expect(
+    (
+      await fixture.content.readCurrentTreeContentPackage(fixture.packageId)
+    ).files.find(({ path }) => path === "opening.md")?.contents,
+  ).toBe("Live change.\n");
+});
+
+test("another service cannot recover a running state before live ownership is registered", async () => {
+  const fixture = await createFixture([
+    { outcome: "response", text: "First." },
+  ]);
+  const first = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "first",
+    "Original.",
+  );
+  const host = new ScriptedModelHost({
+    binding,
+    steps: [{ outcome: "response", text: "Finished." }],
+  });
+  const store = new FileNativeSettingImprovementStore(fixture.root);
+  const started = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const save = store.save.bind(store);
+  let pause = true;
+  vi.spyOn(store, "save").mockImplementation(async (session) => {
+    await save(session);
+    if (
+      pause &&
+      session.runStatus === "running" &&
+      session.activeRequestId === "next"
+    ) {
+      pause = false;
+      started.resolve();
+      await release.promise;
+    }
+  });
+  const active = serviceFor(
+    fixture.root,
+    fixture.content,
+    host,
+    undefined,
+    store,
+  );
+  const other = serviceFor(
+    fixture.root,
+    new ContentWorkspace(fixture.root, { locale: () => "en" }),
+    host,
+  );
+  const running = active.send({
+    packageId: fixture.packageId,
+    requestId: "next",
+    message: "Continue.",
+    continuation: { kind: "continue_context", sessionId: first.sessionId },
+  });
+  await started.promise;
+  await expect(
+    other.readSession(fixture.packageId, first.sessionId),
+  ).rejects.toThrow(/running/iu);
+  release.resolve();
+  expect((await running).messages.at(-1)?.text).toBe("Finished.");
+});
+
+test.each(["applied", "apply_outcome_unknown"] as const)(
+  "unattributed legacy %s file changes cannot be automatically reverted",
+  async (outcome) => {
+    const fixture = await createFixture([
+      { outcome: "response", text: "First." },
+      { outcome: "response", text: "Kept." },
+    ]);
+    const first = await sendFresh(
+      fixture.session,
+      fixture.packageId,
+      "first",
+      "Original.",
+    );
+    const store = new FileNativeSettingImprovementStore(fixture.root);
+    const stored = await store.read(first.sessionId);
+    stored.legacyDraft = {
+      outcome,
+      changes: [
+        {
+          path: "opening.md",
+          kind: "modify",
+          before: "Before",
+          after: "After",
+        },
+      ],
+    };
+    await store.save(stored);
+    const service = serviceFor(fixture.root, fixture.content, fixture.host);
+    const before = await fixture.content.readCurrentTreeContentPackage(
+      fixture.packageId,
+    );
+    const input = {
+      packageId: fixture.packageId,
+      sessionId: first.sessionId,
+      requestId: "edit",
+      messageId: first.turns[0]!.user.id,
+      message: "Changed.",
+      filePolicy: "revert" as const,
+    };
+    await expect(service.editMessage(input)).rejects.toMatchObject({
+      reason: "unattributed",
+      paths: ["opening.md"],
+    });
+    expect(
+      (await fixture.content.readCurrentTreeContentPackage(fixture.packageId))
+        .files,
+    ).toEqual(before.files);
+    expect(
+      (await service.readSession(fixture.packageId, first.sessionId)).messages,
+    ).toEqual(first.messages);
+    expect(
+      (await service.editMessage({ ...input, filePolicy: "keep" })).runStatus,
+    ).toBe("ready");
+  },
+);
+
+test.each(["before publication", "after publication"] as const)(
+  "%s a pending edit recovers before a new workspace accesses the package",
+  async (phase) => {
+    const fixture = await createFixture([
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "read",
+            name: "setting_read",
+            arguments: { path: "opening.md" },
+          },
+          {
+            id: "write",
+            name: "setting_write_file",
+            arguments: { path: "opening.md", contents: "AI version.\n" },
+          },
+        ],
+      },
+      { outcome: "response", text: "Done." },
+    ]);
+    const originalFiles = (
+      await fixture.content.readCurrentTreeContentPackage(fixture.packageId)
+    ).files;
+    const first = await sendFresh(
+      fixture.session,
+      fixture.packageId,
+      "first",
+      "Edit.",
+    );
+    const store = new FileNativeSettingImprovementStore(fixture.root);
+    const service = serviceFor(
+      fixture.root,
+      fixture.content,
+      fixture.host,
+      undefined,
+      store,
+    );
+    vi.spyOn(store, "finishPendingEdit").mockImplementationOnce(
+      async (session, lease) => {
+        if (phase === "after publication")
+          await lease.replace(session.pendingEdit!.afterFiles);
+        throw new Error("simulated crash");
+      },
+    );
+    await expect(
+      service.editMessage({
+        packageId: fixture.packageId,
+        sessionId: first.sessionId,
+        requestId: "edit",
+        messageId: first.turns[0]!.user.id,
+        message: "Revised.",
+        filePolicy: "revert",
+      }),
+    ).rejects.toThrow("simulated crash");
+    const coldContent = new ContentWorkspace(fixture.root, {
+      locale: () => "en",
+    });
+    const recoveredTree = await coldContent.readCurrentTreeContentPackage(
+      fixture.packageId,
+    );
+    expect(recoveredTree.files).toEqual(originalFiles);
+    const retryHost = new ScriptedModelHost({
+      binding,
+      steps: [{ outcome: "response", text: "Recovered." }],
+    });
+    const cold = serviceFor(fixture.root, coldContent, retryHost);
+    const recovered = await cold.readSession(
+      fixture.packageId,
+      first.sessionId,
+    );
+    expect(recovered).toMatchObject({
+      runStatus: "interrupted",
+      canRetry: true,
+    });
+    expect(recovered.messages.map(({ text }) => text)).toEqual(["Revised."]);
+    const completed = await cold.resume({
+      packageId: fixture.packageId,
+      sessionId: first.sessionId,
+      requestId: "resume",
+    });
+    expect(completed.messages.map(({ text }) => text)).toEqual([
+      "Revised.",
+      "Recovered.",
+    ]);
+    expect(
+      (await coldContent.readCurrentTreeContentPackage(fixture.packageId))
+        .files,
+    ).toEqual(originalFiles);
+  },
+);
+
+test("a marker left before edit intent is saved is safely cleared", async () => {
+  const fixture = await createFixture([
+    { outcome: "response", text: "First." },
+    { outcome: "response", text: "Revised." },
+  ]);
+  const first = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "first",
+    "Original.",
+  );
+  const store = new FileNativeSettingImprovementStore(fixture.root);
+  const service = serviceFor(
+    fixture.root,
+    fixture.content,
+    fixture.host,
+    undefined,
+    store,
+  );
+  vi.spyOn(store, "save").mockRejectedValueOnce(
+    new Error("crash before intent"),
+  );
+  const input = {
+    packageId: fixture.packageId,
+    sessionId: first.sessionId,
+    requestId: "edit",
+    messageId: first.turns[0]!.user.id,
+    message: "Revised.",
+    filePolicy: "keep" as const,
+  };
+  await expect(service.editMessage(input)).rejects.toThrow(
+    "crash before intent",
+  );
+  const coldContent = new ContentWorkspace(fixture.root, {
+    locale: () => "en",
+  });
+  await expect(
+    coldContent.readCurrentTreeContentPackage(fixture.packageId),
+  ).resolves.toMatchObject({ localId: fixture.packageId });
+  const cold = serviceFor(fixture.root, coldContent, fixture.host);
+  expect(
+    (await cold.readSession(fixture.packageId, first.sessionId)).messages,
+  ).toEqual(first.messages);
+  expect(
+    (await cold.editMessage(input)).messages.map(({ text }) => text),
+  ).toEqual(["Revised.", "Revised."]);
+});
+
+test("status observation recovers a pending edit before reporting its state", async () => {
+  const fixture = await createFixture([
+    { outcome: "response", text: "First." },
+  ]);
+  const first = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "first",
+    "Original.",
+  );
+  const store = new FileNativeSettingImprovementStore(fixture.root);
+  const service = serviceFor(
+    fixture.root,
+    fixture.content,
+    fixture.host,
+    undefined,
+    store,
+  );
+  vi.spyOn(store, "finishPendingEdit").mockRejectedValueOnce(
+    new Error("simulated crash"),
+  );
+  await expect(
+    service.editMessage({
+      packageId: fixture.packageId,
+      sessionId: first.sessionId,
+      requestId: "edit",
+      messageId: first.turns[0]!.user.id,
+      message: "Revised.",
+      filePolicy: "keep",
+    }),
+  ).rejects.toThrow("simulated crash");
+  const cold = serviceFor(
+    fixture.root,
+    new ContentWorkspace(fixture.root, { locale: () => "en" }),
+    fixture.host,
+  );
+  expect(
+    (await cold.status(fixture.packageId, first.sessionId)).selected?.runStatus,
+  ).toBe("interrupted");
+  expect(
+    (await cold.readSession(fixture.packageId, first.sessionId)).messages.map(
+      ({ text }) => text,
+    ),
+  ).toEqual(["Revised."]);
+});
+
+test("historical schema 4 source is preserved exactly when upgrading to schema 5", async () => {
+  // Generated by the original session service at 67f19cc before schema 5 existed.
+  const source = gunzipSync(
+    await readFile(
+      new URL("./fixtures/author-schema4-67f19cc.json.gz", import.meta.url),
+    ),
+  ).toString("utf8");
+  const old = JSON.parse(source) as {
+    sessionId: string;
+    schemaVersion: number;
+  };
+  expect(old.schemaVersion).toBe(4);
+  const root = await temporaryRoot("schema4-historical-");
+  const sessions = join(root, "setting-improvements", "sessions");
+  await mkdir(sessions, { recursive: true });
+  await writeFile(join(sessions, `${old.sessionId}.json`), source);
+  const store = new FileNativeSettingImprovementStore(root);
+  const original = await store.read(old.sessionId);
+  await store.save({ ...original, schemaVersion: 5 });
+  const backup = join(sessions, `${old.sessionId}.schema-v4.json`);
+  expect(await readFile(backup, "utf8")).toBe(source);
+  const migrated = await store.read(old.sessionId);
+  expect(migrated).toEqual({ ...original, schemaVersion: 5 });
+  await store.save(migrated);
+  expect(await readFile(backup, "utf8")).toBe(source);
+});
+
+test("Google edit interrupted before dispatch resumes the proven-undispatched request", async () => {
+  const root = await temporaryRoot("google-edit-predispatch-");
+  const content = new ContentWorkspace(root, { locale: () => "en" });
+  const { localId } = await content.createCurrentTreeContentPackage();
+  const google = googleAuthoringHost([
+    googleText("Initial."),
+    googleText("Revised."),
+  ]);
+  const store = new FileNativeSettingImprovementStore(root);
+  const service = serviceFor(root, content, google.host, undefined, store);
+  const first = await sendFresh(service, localId, "first", "Original.");
+  const finish = store.finishPendingEdit.bind(store);
+  vi.spyOn(store, "finishPendingEdit").mockImplementationOnce(
+    async (session, lease) => {
+      await finish(session, lease);
+      throw new Error("simulated crash before model dispatch");
+    },
+  );
+  await expect(
+    service.editMessage({
+      packageId: localId,
+      sessionId: first.sessionId,
+      requestId: "edit",
+      messageId: first.turns[0]!.user.id,
+      message: "Revised request.",
+      filePolicy: "keep",
+    }),
+  ).rejects.toThrow("simulated crash");
+  const cold = serviceFor(
+    root,
+    new ContentWorkspace(root, { locale: () => "en" }),
+    google.host,
+  );
+  const recovered = await cold.readSession(localId, first.sessionId);
+  expect(recovered.runStatus).toBe("paused");
+  const resumed = await cold.resume({
+    packageId: localId,
+    sessionId: first.sessionId,
+    requestId: "resume",
+  });
+  expect(resumed.messages.map(({ text }) => text)).toEqual([
+    "Revised request.",
+    "Revised.",
+  ]);
+});
+
+test("damaged Google continuation after editing the first message remains isolated from package overview", async () => {
+  const root = await temporaryRoot("google-edit-damaged-");
+  const content = new ContentWorkspace(root, { locale: () => "en" });
+  const { localId } = await content.createCurrentTreeContentPackage();
+  const google = googleAuthoringHost([
+    googleText("Initial."),
+    googleText("Revised."),
+  ]);
+  const service = serviceFor(root, content, google.host);
+  const first = await sendFresh(service, localId, "first", "Original.");
+  await service.editMessage({
+    packageId: localId,
+    sessionId: first.sessionId,
+    requestId: "edit",
+    messageId: first.turns[0]!.user.id,
+    message: "Revised request.",
+    filePolicy: "keep",
+  });
+  const path = join(
+    root,
+    "setting-improvements",
+    "sessions",
+    `${first.sessionId}.json`,
+  );
+  const stored = JSON.parse(await readFile(path, "utf8")) as {
+    modelItems: { kind: string; providerState?: { steps: unknown } }[];
+  };
+  stored.modelItems.find(
+    (item) => item.kind === "assistant",
+  )!.providerState!.steps = [{ type: "function_call", id: 4 }];
+  await writeFile(path, JSON.stringify(stored));
+  const overview = await serviceFor(root, content, google.host).overview(
+    localId,
+  );
+  expect(overview.latest).toBeNull();
+  expect(overview.history[0]?.unavailableReason).toMatch(/damaged/iu);
+});
+
+test("a historical applied schema 1 draft cannot be reverted without message provenance", async () => {
+  // Captured after a real Apply by the historical implementation at ab70bf9.
+  const fixture = JSON.parse(
+    gunzipSync(
+      await readFile(
+        new URL(
+          "./fixtures/author-schema1-applied-ab70bf9.json.gz",
+          import.meta.url,
+        ),
+      ),
+    ).toString("utf8"),
+  ) as { packageId: string; sessionId: string; files: Record<string, string> };
+  const root = await temporaryRoot("schema1-applied-edit-");
+  for (const [path, contents] of Object.entries(fixture.files)) {
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await writeFile(join(root, path), contents);
+  }
+  const content = new ContentWorkspace(root, { locale: () => "en" });
+  const store = new FileNativeSettingImprovementStore(root);
+  const migrated = await store.read(fixture.sessionId);
+  expect(migrated.legacyDraft?.outcome).toBe("applied");
+  const host = new ScriptedModelHost({
+    binding: migrated.modelBinding,
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "later-read",
+            name: "setting_read",
+            arguments: { path: "opening.md" },
+          },
+          {
+            id: "later-write",
+            name: "setting_write_file",
+            arguments: { path: "opening.md", contents: "Later change.\n" },
+          },
+        ],
+      },
+      { outcome: "response", text: "Later." },
+      { outcome: "response", text: "Revised later message." },
+    ],
+  });
+  const service = serviceFor(root, content, host);
+  const before = await content.readCurrentTreeContentPackage(fixture.packageId);
+  const message = migrated.messages.find((entry) => entry.role === "user")!;
+  await expect(
+    service.editMessage({
+      packageId: fixture.packageId,
+      sessionId: fixture.sessionId,
+      requestId: "edit",
+      messageId: message.id,
+      message: "Revised.",
+      filePolicy: "revert",
+    }),
+  ).rejects.toMatchObject({ reason: "unattributed", paths: ["opening.md"] });
+  expect(
+    (await content.readCurrentTreeContentPackage(fixture.packageId)).files,
+  ).toEqual(before.files);
+  const later = await service.send({
+    packageId: fixture.packageId,
+    requestId: "later",
+    message: "Later change.",
+    continuation: { kind: "continue_context", sessionId: fixture.sessionId },
+  });
+  const revised = await service.editMessage({
+    packageId: fixture.packageId,
+    sessionId: fixture.sessionId,
+    requestId: "later-edit",
+    messageId: later.turns.at(-1)!.user.id,
+    message: "Changed later request.",
+    filePolicy: "revert",
+  });
+  expect(revised.messages.at(-1)?.text).toBe("Revised later message.");
+  expect(
+    (await content.readCurrentTreeContentPackage(fixture.packageId)).files,
+  ).toEqual(before.files);
+});
+
+test("a package without a pending edit does not inspect unrelated session files", async () => {
+  const fixture = await createFixture([]);
+  const sessions = join(fixture.root, "setting-improvements", "sessions");
+  await mkdir(sessions, { recursive: true });
+  await writeFile(
+    join(sessions, "setting-00000000-0000-4000-8000-000000000000.json"),
+    "{broken",
+  );
+  await expect(
+    new ContentWorkspace(fixture.root).readCurrentTreeContentPackage(
+      fixture.packageId,
+    ),
+  ).resolves.toMatchObject({ localId: fixture.packageId });
+});
+
 test("Google setting conversation settles ordered mixed calls and continues after restart", async () => {
   const root = await temporaryRoot("google-setting-");
   const content = new ContentWorkspace(root, { locale: () => "en" });
@@ -803,6 +1727,61 @@ test("重整前真实 schema-v2 作者会话保留原生工具历史，下一次
     (await content.readCurrentTreeContentPackage(fixture.packageId)).files,
   ).toEqual(before.files);
   expect(upgraded.requests).toHaveLength(1);
+});
+
+test("a real schema 2 authoring conversation supports editing and preserves its original source", async () => {
+  const fixture = JSON.parse(
+    gunzipSync(
+      await readFile(
+        new URL("./fixtures/pre38-author.json.gz", import.meta.url),
+      ),
+    ).toString("utf8"),
+  ) as {
+    packageId: string;
+    sessionId: string;
+    files: Record<string, string>;
+    stored: Awaited<ReturnType<FileNativeSettingImprovementStore["read"]>>;
+  };
+  const root = await temporaryRoot("pre38-author-edit-");
+  for (const [path, contents] of Object.entries(fixture.files)) {
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await writeFile(join(root, path), contents);
+  }
+  const sourcePath = join(
+    root,
+    "setting-improvements",
+    "sessions",
+    `${fixture.sessionId}.json`,
+  );
+  const source = await readFile(sourcePath, "utf8");
+  const content = new ContentWorkspace(root, { locale: () => "en" });
+  const host = new ScriptedModelHost({
+    binding,
+    steps: [{ outcome: "response", text: "Revised." }],
+  });
+  const result = await serviceFor(root, content, host).editMessage({
+    packageId: fixture.packageId,
+    sessionId: fixture.sessionId,
+    requestId: "edit-old",
+    messageId: fixture.stored.messages[0]!.id,
+    message: "A new opening.",
+    filePolicy: "keep",
+  });
+  expect(result.messages.map(({ text }) => text)).toEqual([
+    "A new opening.",
+    "Revised.",
+  ]);
+  expect(
+    await readFile(
+      join(
+        root,
+        "setting-improvements",
+        "sessions",
+        `${fixture.sessionId}.schema-v2.json`,
+      ),
+      "utf8",
+    ),
+  ).toBe(source);
 });
 
 test("全新上下文创建持久对话，普通回复不产生候选或快照", async () => {
@@ -3212,19 +4191,23 @@ function serviceFor(
   content: ContentWorkspace,
   host: ModelHost,
   playPreset: PlayPresetBinding = builtinDefaultPlayPresetBinding("en"),
+  store?: FileNativeSettingImprovementStore,
+  bindExisting?: (binding: ModelHostBinding) => Promise<ModelHost>,
 ): SettingImprovementSession {
   const compiler = new FileNativePromptCompiler({ locale: "en" });
   return new SettingImprovementSession({
-    store: new FileNativeSettingImprovementStore(root),
+    store: store ?? new FileNativeSettingImprovementStore(root),
     content,
     compiler,
     locale: () => "en",
     bindModelHost: () => Promise.resolve(host),
-    bindExistingModelHost: (frozenBinding) => {
-      if (JSON.stringify(frozenBinding) !== JSON.stringify(host.binding()))
-        throw new Error("Frozen model binding is unavailable");
-      return Promise.resolve(host);
-    },
+    bindExistingModelHost:
+      bindExisting ??
+      ((frozenBinding) => {
+        if (JSON.stringify(frozenBinding) !== JSON.stringify(host.binding()))
+          throw new Error("Frozen model binding is unavailable");
+        return Promise.resolve(host);
+      }),
     bindPlayPreset: () => Promise.resolve(structuredClone(playPreset)),
     preview: (snapshot, modelBinding, frozenPreset) => {
       if (frozenPreset === undefined)

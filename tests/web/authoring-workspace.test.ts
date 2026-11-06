@@ -14,6 +14,7 @@ import {
   worldRevisionTarget,
 } from "../../src/web/AuthoringTarget.ts";
 import { RuntimeRequestError } from "../../src/web/runtimeClient.ts";
+import { setWebLocale } from "../../src/web/i18n.ts";
 
 function fixture(kind: "setting" | "revision") {
   let files: ContentTreeFile[] = [
@@ -167,6 +168,113 @@ function deferred<T>() {
   });
   return { promise, resolve, reject };
 }
+
+test("an acknowledged edit stays accepted when refreshing package files fails", async () => {
+  const f = fixture("setting");
+  await f.workspace.open();
+  const original = f.request.getMockImplementation()!;
+  let acknowledged = false;
+  f.request.mockImplementation(async (input) => {
+    if (input.type === "setting-improvement.message.edit") {
+      acknowledged = true;
+      return f.view("recent");
+    }
+    if (acknowledged && input.type === "setting-improvement.overview")
+      throw new Error("refresh failed");
+    return original(input);
+  });
+  await expect(
+    f.workspace.editMessage("message", "Revised", "keep", "edit-1"),
+  ).resolves.toBeUndefined();
+  expect(f.workspace.getSnapshot().requestFailure).toContain("refresh failed");
+  expect(f.workspace.getSnapshot().view?.sessionId).toBe("recent");
+  f.workspace.close();
+});
+
+test("a late edit response cannot overwrite another selected session", async () => {
+  const f = fixture("setting");
+  await f.workspace.open();
+  const original = f.request.getMockImplementation()!;
+  const waiting = deferred<V1SettingImprovementView>();
+  f.request.mockImplementation((input) =>
+    input.type === "setting-improvement.message.edit"
+      ? waiting.promise
+      : original(input),
+  );
+  const editing = f.workspace.editMessage(
+    "message",
+    "Revised",
+    "keep",
+    "edit-1",
+  );
+  await f.workspace.selectSession("old");
+  waiting.resolve(f.view("recent"));
+  await editing;
+  expect(f.workspace.getSnapshot().view?.sessionId).toBe("old");
+  f.workspace.close();
+});
+
+test("content package overview resolves before reading the file tree", async () => {
+  const gate = deferred<unknown>();
+  const calls: string[] = [];
+  const target = contentPackageTarget(
+    {
+      request: async (input) => {
+        calls.push(input.type);
+        if (input.type === "setting-improvement.overview") return gate.promise;
+        return { files: [], treeRevision: "after-recovery" };
+      },
+    },
+    "target",
+  );
+  const reading = target.read();
+  expect(calls).toEqual(["setting-improvement.overview"]);
+  gate.resolve({ latest: null, history: [] });
+  await reading;
+  expect(calls).toEqual(["setting-improvement.overview", "content.read"]);
+});
+
+test.each([
+  ["zh-CN", "conflict", "文件和对话未改变，修改稿已保留"],
+  [
+    "en",
+    "conflict",
+    "Files and conversation are unchanged, and your draft is preserved",
+  ],
+  ["zh-CN", "invalid_tree", "撤回会使内容包无效"],
+  ["en", "invalid_tree", "Reverting would make the content package invalid"],
+] as const)(
+  "%s explains %s edit rejection and retains the path",
+  async (locale, reason, expected) => {
+    setWebLocale(locale);
+    try {
+      const target = contentPackageTarget(
+        {
+          request: () =>
+            Promise.reject(
+              new RuntimeRequestError("failed", {
+                protocolCode: "invalid_request",
+                details: {
+                  kind: "setting_message_edit",
+                  reason,
+                  paths: ["world/notes/item.yaml"],
+                },
+              }),
+            ),
+        },
+        "target",
+      );
+      await expect(
+        target.editMessage!("session", "message", "draft", "revert", "request"),
+      ).rejects.toThrow(expected);
+      await expect(
+        target.editMessage!("session", "message", "draft", "revert", "request"),
+      ).rejects.toThrow("world/notes/item.yaml");
+    } finally {
+      setWebLocale("zh-CN");
+    }
+  },
+);
 
 test.each(["setting", "revision"] as const)(
   "%s fresh is claimed by observation and late send cannot override history selection",

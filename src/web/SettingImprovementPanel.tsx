@@ -1,4 +1,5 @@
 import { AuthoringPromptPreview } from "./AuthoringPromptPreview.tsx";
+import { createClientId } from "./ClientId.ts";
 import { useConversationComposer } from "./useConversationComposer.ts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -42,6 +43,12 @@ interface SettingImprovementPanelProps {
   contentEditor: ContentTreeEditorProps;
   onPreview?: () => Promise<V1SettingPromptPreview["compilation"] | null>;
   onSend: (message: string) => Promise<void>;
+  onEditMessage?: (
+    messageId: string,
+    message: string,
+    filePolicy: "keep" | "revert",
+    requestId: string,
+  ) => Promise<void>;
   initialMessage?: string;
   onInitialMessageStarted?: () => void;
   onCancel: () => Promise<void>;
@@ -94,6 +101,7 @@ export function SettingImprovementPanel({
   now,
   contentEditor,
   onSend,
+  onEditMessage,
   initialMessage,
   onInitialMessageStarted,
   onPreview,
@@ -113,6 +121,12 @@ export function SettingImprovementPanel({
   revisionActions,
 }: SettingImprovementPanelProps): React.JSX.Element {
   const [message, setMessage] = useState("");
+  const [editing, setEditing] = useState<{
+    sessionId: string;
+    messageId: string;
+    draft: string;
+    requestId: string;
+  } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
   const initialMessageSent = useRef(false);
@@ -133,7 +147,20 @@ export function SettingImprovementPanel({
   const running = view?.runStatus === "running" || submitting;
   const rollbackRunning = rollingBackFile !== null;
   const finishingRevision = revisionActions?.applying === true;
-  const interactionLocked = running || rollbackRunning || finishingRevision;
+  const editBusy = running || rollbackRunning || finishingRevision;
+  const editSubmitDisabled =
+    editBusy ||
+    loading ||
+    hasUnsavedFileDraft ||
+    draftsLocked ||
+    !modelConfigured;
+  const interactionLocked = editBusy || editing !== null;
+  if (
+    editing !== null &&
+    (view?.sessionId !== editing.sessionId ||
+      !view.turns.some((turn) => turn.user.id === editing.messageId))
+  )
+    setEditing(null);
   useEffect(() => {
     onNavigationLockChange?.(
       interactionLocked || hasUnsavedFileDraft || loading,
@@ -188,6 +215,39 @@ export function SettingImprovementPanel({
     }
   };
 
+  const saveEditedMessage = async (
+    filePolicy: "keep" | "revert",
+  ): Promise<void> => {
+    if (
+      editing === null ||
+      onEditMessage === undefined ||
+      editBusy ||
+      loading ||
+      hasUnsavedFileDraft ||
+      draftsLocked ||
+      !modelConfigured ||
+      submittingRef.current ||
+      editing.draft.trim().length === 0
+    )
+      return;
+    submittingRef.current = true;
+    setSubmitting(true);
+    try {
+      await onEditMessage(
+        editing.messageId,
+        editing.draft,
+        filePolicy,
+        editing.requestId,
+      );
+      setEditing(null);
+    } catch {
+      // Keep the draft and request ID for retry after an error.
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
+  };
+
   useEffect(() => {
     if (initialMessage === undefined || initialMessageSent.current || disabled)
       return;
@@ -219,6 +279,8 @@ export function SettingImprovementPanel({
     item: V1SettingImprovementHistoryItem,
   ): Promise<void> => {
     if (
+      (target === "content-package" &&
+        (interactionLocked || hasUnsavedFileDraft || loading)) ||
       item.runStatus === "running" ||
       deletingSessionId !== null ||
       !globalThis.confirm(
@@ -612,6 +674,31 @@ export function SettingImprovementPanel({
                     rollbackableChangeSetIds={rollbackableChangeSetIds}
                     rollingBackFile={rollingBackFile}
                     onRollbackFile={rollbackFile}
+                    editing={
+                      editing?.messageId === turn.user.id ? editing : null
+                    }
+                    editEnabled={
+                      target === "content-package" &&
+                      onEditMessage !== undefined
+                    }
+                    editDisabled={disabled || draftsLocked}
+                    editSaving={editBusy}
+                    onEdit={() =>
+                      setEditing({
+                        sessionId: view.sessionId,
+                        messageId: turn.user.id,
+                        draft: turn.user.text,
+                        requestId: createClientId("setting-edit"),
+                      })
+                    }
+                    onEditDraft={(draft) =>
+                      setEditing((current) =>
+                        current === null ? null : { ...current, draft },
+                      )
+                    }
+                    onCancelEdit={() => setEditing(null)}
+                    onSaveEdit={saveEditedMessage}
+                    editSubmitDisabled={editSubmitDisabled}
                   />
                 ))
               )}
@@ -775,7 +862,13 @@ export function SettingImprovementPanel({
               history={history}
               latestSessionId={latestSessionId}
               selectedSessionId={view?.sessionId ?? null}
-              loading={loading || rollbackRunning || finishingRevision}
+              loading={
+                loading ||
+                rollbackRunning ||
+                finishingRevision ||
+                (target === "content-package" &&
+                  (running || editing !== null || hasUnsavedFileDraft))
+              }
               deletingSessionId={deletingSessionId}
               onSelectSession={async (sessionId) => {
                 await onSelectSession(sessionId);
@@ -1108,6 +1201,15 @@ function SettingConversationTurnView({
   rollbackableChangeSetIds,
   rollingBackFile,
   onRollbackFile,
+  editing,
+  editEnabled,
+  editDisabled,
+  editSaving,
+  editSubmitDisabled,
+  onEdit,
+  onEditDraft,
+  onCancelEdit,
+  onSaveEdit,
 }: {
   turn: V1SettingConversationTurn;
   currentFiles: readonly ContentTreeFile[];
@@ -1115,6 +1217,15 @@ function SettingConversationTurnView({
   rollbackableChangeSetIds: ReadonlySet<string> | undefined;
   rollingBackFile: { changeSetId: string; path: string } | null;
   onRollbackFile: (changeSetId: string, path: string) => Promise<void>;
+  editing: { draft: string } | null;
+  editEnabled: boolean;
+  editDisabled: boolean;
+  editSaving: boolean;
+  editSubmitDisabled: boolean;
+  onEdit: () => void;
+  onEditDraft: (draft: string) => void;
+  onCancelEdit: () => void;
+  onSaveEdit: (policy: "keep" | "revert") => Promise<void>;
 }): React.JSX.Element {
   const traces = turn.exchanges.filter(exchangeHasTrace);
   const traceCount = traces.reduce(
@@ -1129,7 +1240,49 @@ function SettingConversationTurnView({
     <section className="setting-conversation-turn">
       <article className="setting-conversation-message setting-conversation-user">
         <span className="setting-conversation-role">{uiText("你")}</span>
-        <p>{turn.user.text}</p>
+        {editing === null ? (
+          <>
+            <p>{turn.user.text}</p>
+            {editEnabled ? (
+              <button type="button" disabled={editDisabled} onClick={onEdit}>
+                {uiText("修改消息")}
+              </button>
+            ) : null}
+          </>
+        ) : (
+          <div className="setting-message-edit">
+            <label>
+              {uiText("修改消息")}
+              <textarea
+                value={editing.draft}
+                disabled={editSaving}
+                onChange={(event) => onEditDraft(event.target.value)}
+              />
+            </label>
+            <p>
+              {uiText(
+                "保存后会替换这条消息及之后的对话。请选择如何处理文件改动。",
+              )}
+            </p>
+            <button
+              type="button"
+              disabled={editSubmitDisabled || editing.draft.trim().length === 0}
+              onClick={() => void onSaveEdit("keep")}
+            >
+              {uiText("保留文件改动并继续")}
+            </button>
+            <button
+              type="button"
+              disabled={editSubmitDisabled || editing.draft.trim().length === 0}
+              onClick={() => void onSaveEdit("revert")}
+            >
+              {uiText("撤回文件改动并继续")}
+            </button>
+            <button type="button" disabled={editSaving} onClick={onCancelEdit}>
+              {uiText("取消")}
+            </button>
+          </div>
+        )}
       </article>
       {turn.exchanges.map((exchange) =>
         exchange.toolCalls.length === 0 && exchange.text.length > 0 ? (

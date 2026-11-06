@@ -787,6 +787,14 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
           setNotice("");
           return authoringWorkspace.send(message);
         }}
+        onEditMessage={(messageId, message, filePolicy, requestId) =>
+          authoringWorkspace.editMessage(
+            messageId,
+            message,
+            filePolicy,
+            requestId,
+          )
+        }
         onCancel={() => authoringWorkspace.cancel()}
         onResume={() => {
           setNotice("");

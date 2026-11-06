@@ -161,6 +161,21 @@ export class CurrentTreeContentLibrary {
   readonly #beforeCurrentTreeReplace: (() => void | Promise<void>) | undefined;
   #mutationTail: Promise<void> = Promise.resolve();
   #legacyLocksRemoval: Promise<void> | undefined;
+  #beforeLease:
+    | ((
+        localId: string,
+        lease: CurrentTreeContentPackageOperationLease,
+      ) => Promise<void>)
+    | undefined;
+
+  setBeforeLease(
+    hook: (
+      localId: string,
+      lease: CurrentTreeContentPackageOperationLease,
+    ) => Promise<void>,
+  ): void {
+    this.#beforeLease = hook;
+  }
 
   constructor(
     dataRoot: string,
@@ -315,8 +330,6 @@ export class CurrentTreeContentLibrary {
   }
 
   async readPackage(localId: string): Promise<EditableContentPackageDetail> {
-    const snapshot = await this.#readPackageSnapshot(localId);
-    if (snapshot.metadata.schemaVersion === 2) return snapshot.package;
     const lease = await this.acquireOperationLease(localId, { wait: true });
     try {
       await ensureStoredPackageTitle(
@@ -413,7 +426,7 @@ export class CurrentTreeContentLibrary {
           localId,
           title: normalizedTitle,
         });
-        return packageSummary(await this.readPackage(localId));
+        return packageSummary({ ...lease.package, title: normalizedTitle });
       } finally {
         lease.release();
       }
@@ -493,9 +506,11 @@ export class CurrentTreeContentLibrary {
       releaseInProcessPackageLease(packageRoot);
     };
     try {
-      const package_ = (await this.#readPackageSnapshot(localId)).package;
-      return {
-        package: structuredClone(package_),
+      let package_ = (await this.#readPackageSnapshot(localId)).package;
+      const lease: CurrentTreeContentPackageOperationLease = {
+        get package() {
+          return structuredClone(package_);
+        },
         replace: async (files, options = {}) => {
           if (released) throw new CurrentTreeContentPackageBusyError();
           options.signal?.throwIfAborted();
@@ -504,15 +519,18 @@ export class CurrentTreeContentLibrary {
             this.#limits,
           );
           assertGameplayModeUnchanged(package_.files, normalized);
-          return this.#replaceNormalizedCurrentTree(
+          package_ = await this.#replaceNormalizedCurrentTree(
             localId,
             package_.title,
             normalized,
             options.signal,
           );
+          return structuredClone(package_);
         },
         release,
       };
+      await this.#beforeLease?.(localId, lease);
+      return lease;
     } catch (error: unknown) {
       release();
       throw error;

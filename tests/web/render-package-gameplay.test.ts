@@ -13,6 +13,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 import type { Gameplay } from "../../src/protocol/gameplay.ts";
 import type { V1Request } from "../../src/protocol/v1.ts";
+import { emptyAggregatedModelUsage } from "../../src/protocol/modelUsage.ts";
 import { App } from "../../src/web/App.tsx";
 import { PackageGameplaySection } from "../../src/web/PackageGameplaySection.tsx";
 import type { RuntimeClient } from "../../src/web/runtimeClient.ts";
@@ -21,6 +22,74 @@ import { setWebLocale } from "../../src/web/i18n.ts";
 afterEach(() => {
   cleanup();
   setWebLocale("zh-CN");
+});
+
+test("内容包页面可修改历史消息并选择撤回文件改动", async () => {
+  const gameplay: Gameplay = { mode: "interactive-fiction" };
+  const user = {
+    id: "user-1",
+    role: "user" as const,
+    text: "原消息",
+    createdAt: 1,
+  };
+  const view = {
+    sessionId: "session-1",
+    packageId: "package-tabletop",
+    runStatus: "ready",
+    messages: [user],
+    turns: [{ id: "turn-1", user, exchanges: [] }],
+    legacyDraft: null,
+    usage: emptyAggregatedModelUsage(),
+    progress: { exchange: 0, toolCalls: 0, streaming: null, updatedAt: 1 },
+    lastFailure: null,
+  };
+  const request = vi.fn(async (input: V1Request): Promise<unknown> => {
+    await Promise.resolve();
+    if (input.type === "workspace.read")
+      return {
+        preferences: { locale: "zh-CN" },
+        contentPackages: [packageSummary(gameplay)],
+        playPresets: { currentPresetId: "", presets: [] },
+        worlds: [],
+        storageNotices: [],
+        model: {
+          configured: true,
+          activeConnectionId: "model",
+          connections: [],
+          presets: [],
+        },
+      };
+    if (input.type === "setting-improvement.overview")
+      return { latest: view, history: [] };
+    if (input.type === "content.read") return packageDetail(gameplay);
+    if (input.type === "content.scripts.read")
+      return { entries: [], enabled: false };
+    if (input.type === "setting-improvement.message.edit") return view;
+    throw new Error(`unexpected request: ${input.type}`);
+  });
+  render(
+    createElement(App, { client: { request } as unknown as RuntimeClient }),
+  );
+  await screen.findByRole("heading", { name: "世界工作区" });
+  fireEvent.click(screen.getByRole("button", { name: "打开内容包：跑团包" }));
+  fireEvent.click(await screen.findByRole("button", { name: "修改消息" }));
+  fireEvent.change(screen.getByLabelText("修改消息"), {
+    target: { value: "修改稿" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "撤回文件改动并继续" }));
+  await waitFor(() =>
+    expect(
+      request.mock.calls.some(
+        ([input]) =>
+          input.type === "setting-improvement.message.edit" &&
+          input.sessionId === "session-1" &&
+          input.messageId === "user-1" &&
+          input.message === "修改稿" &&
+          input.filePolicy === "revert" &&
+          input.requestId.length > 0,
+      ),
+    ).toBe(true),
+  );
 });
 
 describe("内容包 Gameplay 区块", () => {

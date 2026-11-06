@@ -87,6 +87,13 @@ export interface AuthoringTarget {
     message: string,
     sessionId: string | null,
   ): Promise<V1SettingImprovementView>;
+  editMessage?(
+    sessionId: string,
+    messageId: string,
+    message: string,
+    filePolicy: "keep" | "revert",
+    requestId: string,
+  ): Promise<V1SettingImprovementView>;
   cancel(sessionId: string): Promise<V1SettingImprovementView>;
   resume(sessionId: string): Promise<V1SettingImprovementView>;
   deleteSession(sessionId: string): Promise<AuthoringTargetSnapshot>;
@@ -154,16 +161,14 @@ export function contentPackageTarget(
   id: string,
 ): AuthoringTarget {
   const read = async (): Promise<AuthoringTargetSnapshot> => {
-    const [overview, detail] = await Promise.all([
-      request<V1SettingImprovementOverview>(client, {
-        type: "setting-improvement.overview",
-        packageId: id,
-      }),
-      request<AuthoringPackageDetail>(client, {
-        type: "content.read",
-        packageId: id,
-      }),
-    ]);
+    const overview = await request<V1SettingImprovementOverview>(client, {
+      type: "setting-improvement.overview",
+      packageId: id,
+    });
+    const detail = await request<AuthoringPackageDetail>(client, {
+      type: "content.read",
+      packageId: id,
+    });
     return { ...overview, files: detail.files, packageDetail: detail };
   };
   return {
@@ -185,6 +190,64 @@ export function contentPackageTarget(
         requestId: createClientId("setting-message"),
         continuation: continuation(sessionId),
       }),
+    editMessage: async (
+      sessionId,
+      messageId,
+      message,
+      filePolicy,
+      requestId,
+    ) => {
+      try {
+        return await request(client, {
+          type: "setting-improvement.message.edit",
+          packageId: id,
+          sessionId,
+          messageId,
+          message,
+          filePolicy,
+          requestId,
+        });
+      } catch (error: unknown) {
+        if (
+          error instanceof RuntimeRequestError &&
+          typeof error.details === "object" &&
+          error.details !== null &&
+          "kind" in error.details &&
+          error.details.kind === "setting_message_edit" &&
+          "reason" in error.details &&
+          "paths" in error.details &&
+          Array.isArray(error.details.paths) &&
+          error.details.paths.every((path: unknown) => typeof path === "string")
+        ) {
+          const paths = error.details.paths.join(", ");
+          if (error.details.reason === "conflict")
+            throw new Error(
+              uiText(
+                "以下文件后来发生变化，无法撤回：{paths}。文件和对话未改变，修改稿已保留。",
+                { paths },
+              ),
+              { cause: error },
+            );
+          if (error.details.reason === "invalid_tree")
+            throw new Error(
+              uiText(
+                "撤回会使内容包无效：{paths}。文件和对话未改变，修改稿已保留。",
+                { paths },
+              ),
+              { cause: error },
+            );
+          if (error.details.reason === "unattributed")
+            throw new Error(
+              uiText(
+                "旧会话的文件改动无法可靠关联到这条消息，不能自动撤回：{paths}。文件和对话未改变，修改稿已保留。",
+                { paths },
+              ),
+              { cause: error },
+            );
+        }
+        throw error;
+      }
+    },
     cancel: (sessionId) =>
       request(client, { type: "setting-improvement.cancel", sessionId }),
     resume: (sessionId) =>

@@ -1,5 +1,6 @@
 import { isAbsolute, win32 } from "node:path";
 import { inflateRawSync } from "node:zlib";
+import { FileNativeSettingImprovementStore } from "../setting/FileNativeSettingImprovementStore.ts";
 
 import { portableContentTreePathKey } from "../../protocol/contentTree.ts";
 import {
@@ -112,6 +113,12 @@ export class ContentWorkspace {
       limits: this.#limits,
       ...options.currentTree,
     });
+    const recovery = new FileNativeSettingImprovementStore(dataRoot, {
+      content: this,
+    });
+    this.#currentTreeLibrary.setBeforeLease((id, lease) =>
+      recovery.recoverPendingEdits(id, lease),
+    );
   }
 
   createCurrentTreeContentPackage(gameplay: Gameplay = fictionGameplay) {

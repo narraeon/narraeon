@@ -136,6 +136,15 @@ export type V1Request =
         | { kind: "fresh_context" }
         | { kind: "continue_context"; sessionId: string };
     }
+  | {
+      type: "setting-improvement.message.edit";
+      packageId: string;
+      sessionId: string;
+      requestId: string;
+      messageId: string;
+      message: string;
+      filePolicy: "keep" | "revert";
+    }
   | { type: "setting-improvement.cancel"; sessionId: string }
   | {
       type: "setting-improvement.resume";
@@ -1040,6 +1049,14 @@ const requiredFields: Record<
     message: "string",
     continuation: "object",
   },
+  "setting-improvement.message.edit": {
+    packageId: "string",
+    sessionId: "string",
+    requestId: "string",
+    messageId: "string",
+    message: "string",
+    filePolicy: "string",
+  },
   "setting-improvement.cancel": { sessionId: "string" },
   "setting-improvement.resume": {
     packageId: "string",
@@ -1226,6 +1243,15 @@ function validateRequestFields(request: Record<string, unknown>): void {
         `${String(request.type)}.${field} is invalid`,
       );
   }
+  if (
+    request.type === "setting-improvement.message.edit" &&
+    request.filePolicy !== "keep" &&
+    request.filePolicy !== "revert"
+  )
+    throw new V1ProtocolError(
+      "invalid_request",
+      "setting-improvement.message.edit.filePolicy is invalid",
+    );
   if (
     request.type === "world.story.export" &&
     request.format !== "markdown" &&
@@ -1702,6 +1728,7 @@ const requestTypes = new Set([
   "setting-improvement.session.delete",
   "setting-improvement.rollback",
   "setting-improvement.message",
+  "setting-improvement.message.edit",
   "setting-improvement.cancel",
   "setting-improvement.resume",
   "play.read",

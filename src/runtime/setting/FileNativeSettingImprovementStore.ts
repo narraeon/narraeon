@@ -36,6 +36,7 @@ import {
   withoutDamagedGoogleSteps,
 } from "../authoring/DamagedGoogleContinuation.ts";
 import { ContentWorkspace } from "../content/ContentWorkspace.ts";
+import type { CurrentTreeContentPackageOperationLease } from "../content/CurrentTreeContentLibrary.ts";
 import type { ContentTreeFile } from "../content/ContentTreeFile.ts";
 import { contentTreeFingerprint } from "../content/ContentTreeFingerprint.ts";
 import type {
@@ -144,7 +145,19 @@ interface LegacySettingImprovementSession {
  * the content package current tree is the sole authoring authority.
  */
 export interface StoredSettingImprovementSession {
-  schemaVersion: 2 | 3 | 4;
+  schemaVersion: 2 | 3 | 4 | 5;
+  editReceipts?: {
+    requestId: string;
+    messageId: string;
+    message: string;
+    filePolicy: "keep" | "revert";
+  }[];
+  pendingEdit?: {
+    beforeFingerprint: string;
+    afterFingerprint: string;
+    afterFiles: ContentTreeFile[];
+    next: StoredSettingImprovementSession;
+  };
   /** Last dispatched model request, retained only while its outcome is unresolved. */
   retryDispatch?: {
     requestId: string;
@@ -238,6 +251,10 @@ export class FileNativeSettingImprovementStore {
 
   createId(): string {
     return `setting-${randomUUID()}`;
+  }
+
+  get sessionScope(): string {
+    return this.#sessionsRoot;
   }
 
   recordGoogleHop(
@@ -342,6 +359,79 @@ export class FileNativeSettingImprovementStore {
     });
   }
 
+  async preparePendingEdit(
+    session: StoredSettingImprovementSession,
+  ): Promise<void> {
+    if (session.pendingEdit === undefined)
+      throw new Error("No pending setting conversation edit");
+    await publishJson(this.#pendingEditPath(session.packageId), {
+      schemaVersion: 1,
+      packageId: session.packageId,
+      sessionId: session.sessionId,
+    });
+    await this.save(session);
+  }
+
+  async recoverPendingEdits(
+    packageId: string,
+    lease: CurrentTreeContentPackageOperationLease,
+  ): Promise<void> {
+    const path = this.#pendingEditPath(packageId);
+    let marker: unknown;
+    try {
+      marker = JSON.parse(await readFile(path, "utf8"));
+    } catch (error: unknown) {
+      if (isNodeError(error) && error.code === "ENOENT") return;
+      throw error;
+    }
+    if (
+      !isRecord(marker) ||
+      !hasExactKeys(marker, ["schemaVersion", "packageId", "sessionId"]) ||
+      marker.schemaVersion !== 1 ||
+      marker.packageId !== packageId ||
+      typeof marker.sessionId !== "string"
+    )
+      throw new Error("Pending authoring edit marker is damaged");
+    assertSessionId(marker.sessionId);
+    const raw: unknown = JSON.parse(
+      await readFile(this.#path(marker.sessionId), "utf8"),
+    );
+    const session = validateStoredSession(raw);
+    if (
+      session.sessionId !== marker.sessionId ||
+      session.packageId !== packageId
+    )
+      throw new Error("Pending edit identity does not match its package");
+    if (session.pendingEdit === undefined) {
+      await rm(path, { force: true });
+      return;
+    }
+    await this.finishPendingEdit(session, lease);
+  }
+
+  async finishPendingEdit(
+    session: StoredSettingImprovementSession,
+    lease: CurrentTreeContentPackageOperationLease,
+  ): Promise<StoredSettingImprovementSession> {
+    const pending = session.pendingEdit;
+    if (pending === undefined)
+      throw new Error("No pending setting conversation edit");
+    const fingerprint = contentTreeFingerprint(lease.package.files);
+    if (
+      fingerprint === pending.beforeFingerprint &&
+      fingerprint !== pending.afterFingerprint
+    )
+      await lease.replace(pending.afterFiles);
+    else if (fingerprint !== pending.afterFingerprint)
+      throw new Error(
+        "Cannot recover the conversation edit because the content package changed; no further changes were made",
+      );
+    await publishJson(this.#path(session.sessionId), pending.next);
+    await rm(this.#pendingEditPath(session.packageId), { force: true });
+    await this.#recordSavedSession(pending.next);
+    return structuredClone(pending.next);
+  }
+
   saveIfUnchanged(
     expected: StoredSettingImprovementSession,
     replacement: StoredSettingImprovementSession,
@@ -376,7 +466,7 @@ export class FileNativeSettingImprovementStore {
       await rm(join(this.#sessionsRoot, `${sessionId}.schema-v1.json`), {
         force: true,
       });
-      for (const version of [2, 3])
+      for (const version of [2, 3, 4])
         await rm(
           join(this.#sessionsRoot, `${sessionId}.schema-v${version}.json`),
           { force: true },
@@ -460,7 +550,13 @@ export class FileNativeSettingImprovementStore {
       session.googleIdentity?.sessionId !== sessionId ||
       session.googleIdentity.packageId !== session.packageId ||
       session.googleIdentity.creationRequestId !== session.creationRequestId ||
-      session.requests?.[0]?.requestId !== session.creationRequestId ||
+      (session.requests?.[0]?.requestId !== session.creationRequestId &&
+        !(
+          session.schemaVersion === 5 &&
+          session.editReceipts?.some(
+            (receipt) => receipt.requestId === session.requests?.[0]?.requestId,
+          )
+        )) ||
       !/^package-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(
         session.packageId,
       ) ||
@@ -609,7 +705,7 @@ export class FileNativeSettingImprovementStore {
   async #preservePreviousSchema(
     next: StoredSettingImprovementSession,
   ): Promise<void> {
-    if (next.schemaVersion !== 4) return;
+    if (next.schemaVersion < 4) return;
     let source: string;
     try {
       source = await readFile(this.#path(next.sessionId), "utf8");
@@ -622,7 +718,9 @@ export class FileNativeSettingImprovementStore {
       throw new Error(
         "Setting-improvement conversation identity does not match its file",
       );
-    if (previous.schemaVersion === 4) return;
+    if (previous.schemaVersion === next.schemaVersion) return;
+    if (previous.schemaVersion > next.schemaVersion)
+      throw new Error("Cannot downgrade a setting-improvement conversation");
     await publishImmutableSource(
       join(
         this.#sessionsRoot,
@@ -704,6 +802,16 @@ export class FileNativeSettingImprovementStore {
     assertSessionId(sessionId);
     return join(this.#sessionsRoot, `${sessionId}.json`);
   }
+
+  #pendingEditPath(packageId: string): string {
+    if (
+      !/^package-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(
+        packageId,
+      )
+    )
+      throw new Error("Invalid content package ID");
+    return join(this.#sessionsRoot, ".pending-edits", `${packageId}.json`);
+  }
 }
 
 function compareSummaries(
@@ -773,6 +881,7 @@ export function summarizeStoredSettingImprovementSession(
     exchange: session.exchange,
     toolCalls: session.toolCalls,
     needsRecovery:
+      session.pendingEdit !== undefined ||
       session.pendingSettlement !== null ||
       session.runStatus === "running" ||
       hasPendingToolCalls(session),
@@ -848,25 +957,37 @@ function validateStoredSession(
         "googleOutcomeUnknown",
         "googleIdentity",
         "retryDispatch",
+        "pendingEdit",
+        "editReceipts",
       ],
     ) ||
     (value.schemaVersion !== 2 &&
       value.schemaVersion !== 3 &&
-      value.schemaVersion !== 4) ||
-    (value.schemaVersion !== 4 && value.retryDispatch !== undefined) ||
+      value.schemaVersion !== 4 &&
+      value.schemaVersion !== 5) ||
+    (value.schemaVersion !== 4 &&
+      value.schemaVersion !== 5 &&
+      value.retryDispatch !== undefined) ||
+    (value.schemaVersion !== 5 && value.pendingEdit !== undefined) ||
+    (value.schemaVersion !== 5 && value.editReceipts !== undefined) ||
+    (value.editReceipts !== undefined &&
+      !validEditReceipts(value.editReceipts)) ||
+    (value.pendingEdit !== undefined &&
+      !validPendingEdit(value.pendingEdit, value)) ||
     (value.schemaVersion === 2
       ? value.requests !== undefined
-      : value.schemaVersion === 4 &&
+      : (value.schemaVersion === 4 || value.schemaVersion === 5) &&
           Array.isArray(value.requests) &&
           value.requests.length === 0 &&
-          value.runStatus === "ready" &&
-          Array.isArray(value.modelItems) &&
-          value.modelItems.length === 0 &&
-          Array.isArray(value.messages) &&
-          value.messages.length === 0 &&
-          value.activeRequestId === null &&
-          Array.isArray(value.completedRequestIds) &&
-          value.completedRequestIds.length === 0
+          ((value.schemaVersion === 5 && value.pendingEdit !== undefined) ||
+            (value.runStatus === "ready" &&
+              Array.isArray(value.modelItems) &&
+              value.modelItems.length === 0 &&
+              Array.isArray(value.messages) &&
+              value.messages.length === 0 &&
+              value.activeRequestId === null &&
+              Array.isArray(value.completedRequestIds) &&
+              value.completedRequestIds.length === 0))
         ? false
         : !validAuthoringRequests(value.requests, validPromptCompilation, {
             modelItems: value.modelItems,
@@ -897,7 +1018,7 @@ function validateStoredSession(
         !["dispatching", "retryable", "blocked"].includes(
           String(value.retryDispatch.state),
         ) ||
-        value.schemaVersion !== 4 ||
+        (value.schemaVersion !== 4 && value.schemaVersion !== 5) ||
         lastRequestId(value.requests) !== value.retryDispatch.requestId ||
         (value.runStatus !== "running" && value.runStatus !== "interrupted") ||
         value.pendingSettlement !== null ||
@@ -968,6 +1089,70 @@ function lastRequestId(requests: unknown): unknown {
   if (!Array.isArray(requests)) return undefined;
   const last: unknown = requests.at(-1);
   return isRecord(last) ? last.requestId : undefined;
+}
+
+function validEditReceipts(value: unknown): boolean {
+  if (!Array.isArray(value)) return false;
+  const ids = new Set<string>();
+  return value.every((entry: unknown) => {
+    if (
+      !isRecord(entry) ||
+      !hasExactKeys(entry, [
+        "requestId",
+        "messageId",
+        "message",
+        "filePolicy",
+      ]) ||
+      typeof entry.requestId !== "string" ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(entry.requestId) ||
+      ids.has(entry.requestId) ||
+      typeof entry.messageId !== "string" ||
+      typeof entry.message !== "string" ||
+      entry.message.trim().length === 0 ||
+      entry.message.length > 64 * 1024 ||
+      (entry.filePolicy !== "keep" && entry.filePolicy !== "revert")
+    )
+      return false;
+    ids.add(entry.requestId);
+    return true;
+  });
+}
+
+function validPendingEdit(
+  value: unknown,
+  original: Record<string, unknown>,
+): boolean {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "beforeFingerprint",
+      "afterFingerprint",
+      "afterFiles",
+      "next",
+    ]) ||
+    typeof value.beforeFingerprint !== "string" ||
+    !/^[0-9a-f]{64}$/u.test(value.beforeFingerprint) ||
+    typeof value.afterFingerprint !== "string" ||
+    !/^[0-9a-f]{64}$/u.test(value.afterFingerprint) ||
+    !validContentTreeFiles(value.afterFiles) ||
+    contentTreeFingerprint(value.afterFiles) !== value.afterFingerprint ||
+    !isRecord(value.next) ||
+    value.next.pendingEdit !== undefined ||
+    value.next.schemaVersion !== 5 ||
+    value.next.sessionId !== original.sessionId ||
+    value.next.packageId !== original.packageId ||
+    value.next.creationRequestId !== original.creationRequestId ||
+    value.next.runStatus !== "running" ||
+    value.next.activeRequestId === null ||
+    original.pendingSettlement !== null
+  )
+    return false;
+  try {
+    validateStoredSession(value.next);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function migrateLegacySession(

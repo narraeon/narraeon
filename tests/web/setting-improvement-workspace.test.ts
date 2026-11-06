@@ -23,6 +23,99 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+test.each(["keep", "revert"] as const)(
+  "editing a message can be cancelled or saved with %s file changes",
+  async (policy) => {
+    const onEditMessage = vi.fn(() => Promise.resolve());
+    renderPanel(undefined, { onEditMessage });
+    fireEvent.click(screen.getByRole("button", { name: "修改消息" }));
+    const input = screen.getByLabelText("修改消息");
+    expect((input as HTMLTextAreaElement).value).toBe("修改开场");
+    fireEvent.change(input, { target: { value: "修改后的开场" } });
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(onEditMessage).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "修改消息" }));
+    fireEvent.change(screen.getByLabelText("修改消息"), {
+      target: { value: "修改后的开场" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: policy === "keep" ? "保留文件改动并继续" : "撤回文件改动并继续",
+      }),
+    );
+    await waitFor(() =>
+      expect(onEditMessage).toHaveBeenCalledWith(
+        "user-1",
+        "修改后的开场",
+        policy,
+        expect.any(String),
+      ),
+    );
+  },
+);
+
+test("editing retains its draft and idempotency key after a network failure", async () => {
+  const onEditMessage = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("Network error"))
+    .mockResolvedValueOnce(undefined);
+  renderPanel(undefined, { onEditMessage });
+  fireEvent.click(screen.getByRole("button", { name: "修改消息" }));
+  fireEvent.change(screen.getByLabelText("修改消息"), {
+    target: { value: "未丢失的草稿" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "保留文件改动并继续" }));
+  await waitFor(() => expect(onEditMessage).toHaveBeenCalledTimes(1));
+  expect(screen.getByLabelText<HTMLTextAreaElement>("修改消息").value).toBe(
+    "未丢失的草稿",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "保留文件改动并继续" }));
+  await waitFor(() => expect(onEditMessage).toHaveBeenCalledTimes(2));
+  expect(onEditMessage.mock.calls[0]?.[3]).toBe(
+    onEditMessage.mock.calls[1]?.[3],
+  );
+});
+
+test("world revision does not expose content-package message editing", () => {
+  renderPanel(undefined, {
+    target: "world-revision",
+    onEditMessage: () => Promise.resolve(),
+  });
+  expect(screen.queryByRole("button", { name: "修改消息" })).toBeNull();
+});
+
+test("history selection and deletion remain locked while editing a message", () => {
+  const select = vi.fn(() => Promise.resolve());
+  const remove = vi.fn(() => Promise.resolve());
+  renderPanel(remove, {
+    onEditMessage: () => Promise.resolve(),
+    onSelectSession: select,
+    history: [
+      {
+        sessionId: "old",
+        runStatus: "ready",
+        createdAt: 1,
+        updatedAt: 1,
+        excerpt: "旧会话",
+        turnCount: 1,
+        exchangeCount: 1,
+        toolCallCount: 0,
+        changedFileCount: 0,
+      },
+    ],
+  });
+  fireEvent.click(screen.getByRole("button", { name: "历史" }));
+  fireEvent.click(screen.getByRole("button", { name: "修改消息" }));
+  const selectButton = screen.getByText("旧会话").closest("button")!;
+  expect(selectButton.disabled).toBe(true);
+  fireEvent.click(selectButton);
+  expect(select).not.toHaveBeenCalled();
+  const deleteButton = screen.getByRole("button", { name: /删除对话/u });
+  expect((deleteButton as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(deleteButton);
+  expect(remove).not.toHaveBeenCalled();
+});
+
 test("retry button resumes once and is disabled for unsaved file drafts", async () => {
   const onResume = vi.fn(() => Promise.resolve());
   renderPanel(undefined, { retryable: true, onResume });
@@ -201,6 +294,12 @@ function renderPanel(
     retryable?: boolean;
     unsaved?: boolean;
     onResume?: () => Promise<void>;
+    onEditMessage?: (
+      messageId: string,
+      message: string,
+      filePolicy: "keep" | "revert",
+      requestId: string,
+    ) => Promise<void>;
     onRollbackFile?: (
       sessionId: string,
       changeSetId: string,
@@ -310,6 +409,9 @@ function renderPanel(
         ? {}
         : { onCreateWorld: options.onCreateWorld }),
       onSend: options.onSend ?? (() => Promise.resolve()),
+      ...(options.onEditMessage === undefined
+        ? {}
+        : { onEditMessage: options.onEditMessage }),
       onCancel: () => Promise.resolve(),
       onResume: options.onResume ?? (() => Promise.resolve()),
       onFreshContext: () => undefined,

@@ -1,4 +1,6 @@
 import { authoringRequestPreviews } from "../authoring/AuthoringRequestSnapshot.ts";
+import { readGameplay } from "../../protocol/gameplay.ts";
+import { isDeepStrictEqual } from "node:util";
 import type { AppLocale } from "../../protocol/appPreferences.ts";
 import { emptyAggregatedModelUsage } from "../../protocol/modelUsage.ts";
 import type {
@@ -15,6 +17,7 @@ import {
   type ContentWorkspace,
 } from "../content/ContentWorkspace.ts";
 import type { ContentTreeFile } from "../content/ContentTreeFile.ts";
+import type { CurrentTreeContentPackageOperationLease } from "../content/CurrentTreeContentLibrary.ts";
 import { contentTreeFingerprint } from "../content/ContentTreeFingerprint.ts";
 import { validAuthoringNativeContinuation } from "../model/FileNativeModelAdapters.ts";
 import type {
@@ -72,10 +75,43 @@ interface ActiveTransaction {
 
 class RecoveryWriteConflictError extends Error {}
 
+type SettingConversation = ModelToolConversation<
+  StoredSettingImprovementSession,
+  SettingImprovementView
+>;
+const liveConversations = new Map<string, WeakRef<SettingConversation>>();
+const releaseConversation = new FinalizationRegistry<{
+  scope: string;
+  reference: WeakRef<SettingConversation>;
+}>(({ scope, reference }) => {
+  if (liveConversations.get(scope) === reference)
+    liveConversations.delete(scope);
+});
+
 export class SettingImprovementRollbackError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = "SettingImprovementRollbackError";
+  }
+}
+
+export class SettingMessageEditError extends Error {
+  readonly reason: "conflict" | "invalid_tree" | "unattributed";
+  readonly paths: string[];
+  constructor(
+    reason: "conflict" | "invalid_tree" | "unattributed",
+    paths: string[],
+  ) {
+    super(
+      reason === "conflict"
+        ? `Cannot revert changed files: ${paths.join(", ")}`
+        : reason === "invalid_tree"
+          ? `Reverting would make these files invalid: ${paths.join(", ")}`
+          : `Cannot attribute older file changes to this message: ${paths.join(", ")}`,
+    );
+    this.name = "SettingMessageEditError";
+    this.reason = reason;
+    this.paths = paths;
   }
 }
 
@@ -94,10 +130,10 @@ export class SettingImprovementSession {
     modelBinding: ModelHostBinding,
     playPreset: PlayPresetBinding | undefined,
   ) => PromptPreview;
-  readonly #conversation = new ModelToolConversation<
+  readonly #conversation: ModelToolConversation<
     StoredSettingImprovementSession,
     SettingImprovementView
-  >();
+  >;
   readonly #changed: (id: string, durable: boolean) => void;
   #mutationTail: Promise<void> = Promise.resolve();
 
@@ -122,6 +158,20 @@ export class SettingImprovementSession {
         /* No observers attached. */
       });
     this.#store = input.store;
+    let shared = liveConversations.get(input.store.sessionScope)?.deref();
+    if (shared === undefined) {
+      shared = new ModelToolConversation<
+        StoredSettingImprovementSession,
+        SettingImprovementView
+      >();
+      const reference = new WeakRef(shared);
+      liveConversations.set(input.store.sessionScope, reference);
+      releaseConversation.register(shared, {
+        scope: input.store.sessionScope,
+        reference,
+      });
+    }
+    this.#conversation = shared;
     this.#content = input.content;
     this.#compiler = input.compiler;
     this.#locale = input.locale;
@@ -244,7 +294,13 @@ export class SettingImprovementSession {
       const stored = await this.#store.read(sessionId);
       assertPackage(stored, packageId);
       await this.#recoverIfNeeded(stored);
-      await this.#store.deleteSession(packageId, sessionId);
+      const lease =
+        await this.#content.beginCurrentTreeContentPackageOperation(packageId);
+      try {
+        await this.#store.deleteSession(packageId, sessionId);
+      } finally {
+        lease.release();
+      }
     });
     return this.overview(packageId);
   }
@@ -327,16 +383,16 @@ export class SettingImprovementSession {
         session = await this.#store.read(input.continuation.sessionId);
         assertPackage(session, input.packageId);
       }
-      return this.#startRequest(session, requestId, async (next) => {
+      return this.#startRequest(session, requestId, async (next, lease) => {
         if (next.runStatus === "paused")
           throw new Error(
             "Resume the paused authoring request before sending another message",
           );
-        const { playPreset, bootstrap, preload } = await this.#compileCurrent(
-          input.packageId,
+        const { playPreset, bootstrap, preload } = await this.#compilePackage(
+          lease.package,
           next.modelBinding,
         );
-        next.schemaVersion = 4;
+        if (next.schemaVersion !== 5) next.schemaVersion = 4;
         next.requests ??= [];
         next.requests.push({
           requestId,
@@ -354,6 +410,212 @@ export class SettingImprovementSession {
         if (next.modelBinding.provider === "google_interactions")
           next.googleOutcomeUnknown = false;
       });
+    });
+    return prepared.run ?? this.#view(prepared.session);
+  }
+
+  async editMessage(input: {
+    packageId: string;
+    sessionId: string;
+    requestId: string;
+    messageId: string;
+    message: string;
+    filePolicy: "keep" | "revert";
+  }): Promise<SettingImprovementView> {
+    const message = requiredMessage(input.message);
+    const requestId = requiredRequestId(input.requestId);
+    if (input.filePolicy !== "keep" && input.filePolicy !== "revert")
+      throw new Error("Invalid file policy");
+    const prepared = await this.#mutate(async () => {
+      let session = await this.#store.read(input.sessionId);
+      assertPackage(session, input.packageId);
+      session = await this.#recoverIfNeeded(session);
+      const prior = session.editReceipts?.find(
+        (receipt) => receipt.requestId === requestId,
+      );
+      if (
+        prior !== undefined &&
+        (prior.messageId !== input.messageId ||
+          prior.message !== message ||
+          prior.filePolicy !== input.filePolicy)
+      )
+        throw new Error(
+          "This edit request ID was already used for different content",
+        );
+      if (session.completedRequestIds.includes(requestId)) {
+        if (prior === undefined)
+          throw new Error(
+            "This request ID was already used for another authoring operation",
+          );
+        return { session, run: null };
+      }
+      const running = this.#conversation.running(session.sessionId);
+      if (running !== null) {
+        if (running.requestId !== requestId)
+          throw new Error(
+            "Another message in this setting-improvement conversation is still running",
+          );
+        return { session, run: running.promise };
+      }
+      if (session.googleOutcomeUnknown)
+        throw new Error(
+          "The Google request outcome is unknown; start a fresh model context.",
+        );
+      const host = await this.#bindExistingModelHost(session.modelBinding);
+      if (!equalModelHostBinding(session.modelBinding, host.binding()))
+        throw new Error(
+          "No saved model connection matches this setting-improvement conversation",
+        );
+      const messageIndex = session.messages.findIndex(
+        (entry) => entry.role === "user" && entry.id === input.messageId,
+      );
+      if (messageIndex < 0)
+        throw new Error("The selected authoring message no longer exists");
+      const userIndex = session.messages
+        .slice(0, messageIndex)
+        .filter((entry) => entry.role === "user").length;
+      const itemIndex = session.modelItems
+        .map((item, index) => (item.kind === "user" ? index : -1))
+        .filter((index) => index >= 0)[userIndex];
+      if (
+        itemIndex === undefined ||
+        session.modelItems[itemIndex]?.kind !== "user" ||
+        session.modelItems[itemIndex].text !==
+          session.messages[messageIndex]!.text
+      )
+        throw new Error(
+          "The selected authoring message cannot be matched to the native transcript",
+        );
+      const prefix = session.modelItems.slice(0, itemIndex);
+      if (
+        !validAuthoringNativeContinuation(prefix, session.modelBinding.provider)
+      )
+        throw new Error(
+          "The native continuation before this message is damaged; start a fresh context",
+        );
+      const lease = await this.#content.beginCurrentTreeContentPackageOperation(
+        input.packageId,
+      );
+      try {
+        if (
+          !isDeepStrictEqual(await this.#store.read(session.sessionId), session)
+        )
+          throw new Error(
+            "The authoring conversation changed; reload it before editing",
+          );
+        if (
+          input.filePolicy === "revert" &&
+          session.legacyDraft !== null &&
+          (session.legacyDraft.outcome === "applied" ||
+            session.legacyDraft.outcome === "apply_outcome_unknown") &&
+          session.legacyDraft.changes.length > 0 &&
+          !afterLegacyBoundary(session, itemIndex)
+        )
+          throw new SettingMessageEditError(
+            "unattributed",
+            [
+              ...new Set(session.legacyDraft.changes.map(({ path }) => path)),
+            ].sort(),
+          );
+        const beforeFiles = lease.package.files;
+        const afterFiles =
+          input.filePolicy === "revert"
+            ? revertEditedChanges(
+                beforeFiles,
+                session.modelItems.slice(itemIndex),
+              )
+            : beforeFiles;
+        this.#content.validateCurrentTreeContentPackage(afterFiles);
+        if (input.filePolicy === "revert") {
+          const existingIssues = new Set(
+            this.#content
+              .inspectCurrentTreeContentPackage(beforeFiles)
+              .issues.map((issue) => JSON.stringify(issue)),
+          );
+          const newIssues = this.#content
+            .inspectCurrentTreeContentPackage(afterFiles)
+            .issues.filter(
+              (issue) => !existingIssues.has(JSON.stringify(issue)),
+            );
+          if (newIssues.length > 0)
+            throw new SettingMessageEditError(
+              "invalid_tree",
+              [...new Set(newIssues.map(({ path }) => path))].sort(),
+            );
+        }
+        const { playPreset, bootstrap, preload } = await this.#compilePackage(
+          {
+            ...lease.package,
+            files: afterFiles,
+            gameplay: readGameplay(afterFiles),
+          },
+          session.modelBinding,
+        );
+        const next = structuredClone(session);
+        next.schemaVersion = 5;
+        next.editReceipts = [
+          ...(next.editReceipts ?? []),
+          {
+            requestId,
+            messageId: input.messageId,
+            message,
+            filePolicy: input.filePolicy,
+          },
+        ];
+        delete next.pendingEdit;
+        delete next.retryDispatch;
+        next.modelItems = prefix;
+        next.messages = next.messages.slice(0, messageIndex);
+        next.requests = (next.requests ?? []).filter(
+          (entry) => entry.modelItemStart < itemIndex,
+        );
+        next.requests.push({
+          requestId,
+          modelItemStart: itemIndex,
+          bootstrap,
+          playPreset: structuredClone(playPreset),
+          preload: structuredClone(preload.record),
+        });
+        next.authorization = authoringPreloadAuthorization(
+          null,
+          preload.record,
+        );
+        appendAuthoringUserMessage(next, message, requestId);
+        if (next.modelBinding.provider === "google_interactions")
+          next.googleOutcomeUnknown = false;
+        else
+          next.retryDispatch = {
+            requestId,
+            exchange: next.exchange + 1,
+            modelItemCount: next.modelItems.length,
+            state: "dispatching",
+          };
+        if (
+          next.modelBinding.provider === "google_interactions" &&
+          host.previewAuthoringRequest !== undefined
+        )
+          next.requests.at(-1)!.wireRequest = host.previewAuthoringRequest(
+            authoringExchange(next, requestId),
+          );
+        session.schemaVersion = 5;
+        session.requests ??= [];
+        session.pendingEdit = {
+          beforeFingerprint: contentTreeFingerprint(beforeFiles),
+          afterFingerprint: contentTreeFingerprint(afterFiles),
+          afterFiles: structuredClone(afterFiles),
+          next,
+        };
+        await this.#store.preparePendingEdit(session);
+        this.#changed(input.packageId, true);
+        const committed = await this.#store.finishPendingEdit(session, lease);
+        this.#changed(input.packageId, true);
+        return {
+          session: committed,
+          run: this.#startRun(committed, host, requestId),
+        };
+      } finally {
+        lease.release();
+      }
     });
     return prepared.run ?? this.#view(prepared.session);
   }
@@ -383,7 +645,10 @@ export class SettingImprovementSession {
   async #startRequest(
     stored: StoredSettingImprovementSession,
     requestId: string,
-    prepare: (session: StoredSettingImprovementSession) => Promise<void> | void,
+    prepare: (
+      session: StoredSettingImprovementSession,
+      lease: CurrentTreeContentPackageOperationLease,
+    ) => Promise<void> | void,
   ): Promise<{
     session: StoredSettingImprovementSession;
     run: Promise<SettingImprovementView> | null;
@@ -393,10 +658,15 @@ export class SettingImprovementSession {
       return { session, run: null };
     const running = this.#conversation.running(session.sessionId);
     if (running !== null) {
-      if (running.requestId !== requestId)
+      if (running.requestId !== requestId) {
+        if (session.googleOutcomeUnknown)
+          throw new Error(
+            "The Google request outcome is unknown; start a fresh model context.",
+          );
         throw new Error(
           "Another message in this setting-improvement conversation is still running",
         );
+      }
       return { session, run: running.promise };
     }
     if (session.googleOutcomeUnknown)
@@ -408,18 +678,31 @@ export class SettingImprovementSession {
       throw new Error(
         "No saved model connection matches this setting-improvement conversation",
       );
-    if (session.schemaVersion === 3) session.schemaVersion = 4;
-    await prepare(session);
-    if (
-      session.modelBinding.provider === "google_interactions" &&
-      host.previewAuthoringRequest !== undefined &&
-      session.requests?.at(-1)?.requestId === requestId
-    )
-      session.requests.at(-1)!.wireRequest = host.previewAuthoringRequest(
-        authoringExchange(session, requestId),
-      );
-    await this.#store.save(session);
-    return { session, run: this.#startRun(session, host, requestId) };
+    const lease = await this.#content.beginCurrentTreeContentPackageOperation(
+      session.packageId,
+    );
+    try {
+      if (
+        !isDeepStrictEqual(await this.#store.read(session.sessionId), session)
+      )
+        throw new Error(
+          "The authoring conversation changed; reload it before continuing",
+        );
+      if (session.schemaVersion === 3) session.schemaVersion = 4;
+      await prepare(session, lease);
+      if (
+        session.modelBinding.provider === "google_interactions" &&
+        host.previewAuthoringRequest !== undefined &&
+        session.requests?.at(-1)?.requestId === requestId
+      )
+        session.requests.at(-1)!.wireRequest = host.previewAuthoringRequest(
+          authoringExchange(session, requestId),
+        );
+      await this.#store.save(session);
+      return { session, run: this.#startRun(session, host, requestId) };
+    } finally {
+      lease.release();
+    }
   }
 
   async preview(packageId: string, sessionId?: string) {
@@ -442,10 +725,19 @@ export class SettingImprovementSession {
   }
 
   async #compileCurrent(packageId: string, modelBinding: ModelHostBinding) {
-    const playPreset = await this.#bindPlayPreset();
-    const locale = this.#locale();
     const package_ =
       await this.#content.readCurrentTreeContentPackage(packageId);
+    return this.#compilePackage(package_, modelBinding);
+  }
+
+  async #compilePackage(
+    package_: Awaited<
+      ReturnType<ContentWorkspace["readCurrentTreeContentPackage"]>
+    >,
+    modelBinding: ModelHostBinding,
+  ) {
+    const playPreset = await this.#bindPlayPreset();
+    const locale = this.#locale();
     const preload = this.#preload(
       package_.files,
       modelBinding,
@@ -611,7 +903,8 @@ export class SettingImprovementSession {
       },
       dispatch: {
         request: (next, request) => {
-          if (next.schemaVersion !== 4) return request;
+          if (next.schemaVersion !== 4 && next.schemaVersion !== 5)
+            return request;
           const retry = next.retryDispatch;
           if (retry?.state === "retryable") {
             next.retryDispatch = { ...retry, state: "dispatching" };
@@ -751,9 +1044,55 @@ export class SettingImprovementSession {
     original: StoredSettingImprovementSession,
   ): Promise<StoredSettingImprovementSession> {
     if (this.#conversation.isRunning(original.sessionId)) return original;
+    if (original.pendingEdit !== undefined) {
+      const lease = await this.#content.beginCurrentTreeContentPackageOperation(
+        original.packageId,
+      );
+      lease.release();
+      const recovered = await this.#store.read(original.sessionId);
+      if (recovered.pendingEdit !== undefined)
+        throw new Error(
+          "The pending authoring edit has no valid package recovery marker",
+        );
+      return this.#recoverIfNeeded(recovered);
+    }
     let expected = original;
     const session = structuredClone(original);
     const pendingAssistant = lastPendingAssistant(session);
+    if (
+      session.runStatus === "running" &&
+      session.pendingSettlement === null &&
+      pendingAssistant === null
+    ) {
+      const lease = await this.#content.beginCurrentTreeContentPackageOperation(
+        session.packageId,
+      );
+      let latest: StoredSettingImprovementSession;
+      try {
+        latest = await this.#store.read(session.sessionId);
+        if (this.#conversation.isRunning(session.sessionId)) return latest;
+        if (isDeepStrictEqual(latest, original)) {
+          if (
+            session.modelBinding.provider === "google_interactions" &&
+            session.googleOutcomeUnknown !== false
+          )
+            session.googleOutcomeUnknown = true;
+          markInterruptedAfterRestart(session);
+          if (session.retryDispatch?.state === "dispatching")
+            session.retryDispatch.state =
+              session.modelBinding.provider === "google_interactions"
+                ? "blocked"
+                : "retryable";
+          session.updatedAt = Date.now();
+          if (await this.#store.saveIfUnchanged(original, session))
+            return session;
+          latest = await this.#store.read(session.sessionId);
+        }
+      } finally {
+        lease.release();
+      }
+      return this.#recoverIfNeeded(latest);
+    }
     if (session.pendingSettlement === null && pendingAssistant !== null) {
       this.#finalizeUnconfirmedToolResponse(
         session,
@@ -832,7 +1171,7 @@ export class SettingImprovementSession {
             request !== undefined &&
             session.modelBinding.provider !== "google_interactions"
           ) {
-            session.schemaVersion = 4;
+            if (session.schemaVersion !== 5) session.schemaVersion = 4;
             session.retryDispatch = {
               requestId: request.requestId,
               exchange: session.exchange + 1,
@@ -865,19 +1204,6 @@ export class SettingImprovementSession {
       session.googleOutcomeUnknown = true;
       session.lastFailure =
         "The Google request outcome is unknown; start a fresh model context.";
-      session.updatedAt = Date.now();
-    } else if (session.runStatus === "running") {
-      if (
-        session.modelBinding.provider === "google_interactions" &&
-        session.googleOutcomeUnknown !== false
-      )
-        session.googleOutcomeUnknown = true;
-      markInterruptedAfterRestart(session);
-      if (session.retryDispatch?.state === "dispatching")
-        session.retryDispatch.state =
-          session.modelBinding.provider === "google_interactions"
-            ? "blocked"
-            : "retryable";
       session.updatedAt = Date.now();
     } else {
       return session;
@@ -1175,6 +1501,63 @@ function treeMatchesChangeBefore(
     current !== undefined &&
     current.encoding === undefined &&
     current.contents === expected
+  );
+}
+
+function revertEditedChanges(
+  files: readonly ContentTreeFile[],
+  items: readonly StoredSettingImprovementSession["modelItems"][number][],
+): ContentTreeFile[] {
+  let result = structuredClone([...files]);
+  const conflicts = new Set<string>();
+  const changes = items.flatMap((item) =>
+    item.kind === "tool" && !item.isError ? item.changes : [],
+  );
+  for (const change of changes.reverse()) {
+    if (conflicts.has(change.path)) continue;
+    if (
+      (change.kind === "create" &&
+        (change.before !== null || change.after === null)) ||
+      (change.kind === "delete" &&
+        (change.before === null || change.after !== null)) ||
+      (change.kind === "modify" &&
+        (change.before === null ||
+          change.after === null ||
+          change.before === change.after))
+    ) {
+      conflicts.add(change.path);
+      continue;
+    }
+    const current = result.find((file) => file.path === change.path);
+    const matches =
+      change.after === null
+        ? current === undefined
+        : current !== undefined &&
+          current.encoding === undefined &&
+          current.contents === change.after;
+    if (!matches) {
+      conflicts.add(change.path);
+      continue;
+    }
+    result = restoreChangeBefore(result, change);
+  }
+  if (conflicts.size > 0)
+    throw new SettingMessageEditError("conflict", [...conflicts].sort());
+  return result;
+}
+
+function afterLegacyBoundary(
+  session: StoredSettingImprovementSession,
+  itemIndex: number,
+): boolean {
+  const first = session.requests?.[0];
+  return (
+    first !== undefined &&
+    itemIndex >= first.modelItemStart &&
+    (first.modelItemStart > 0 ||
+      session.editReceipts?.some(
+        (receipt) => receipt.requestId === first.requestId,
+      ) === true)
   );
 }
 
