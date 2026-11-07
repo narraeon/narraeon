@@ -109,6 +109,8 @@ export interface ModelHostRequestConfig {
   maxOutputTokens: number;
   /** Absent in requests frozen before the transcript breakpoint existed. */
   cacheSuffixBreakpoint?: boolean;
+  /** Absent in older snapshots; use the selected connection setting. */
+  supportsAllowedTools?: boolean;
 }
 
 export interface ModelHostExchange {

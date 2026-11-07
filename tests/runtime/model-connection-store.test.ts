@@ -10,6 +10,40 @@ import { V1Runtime } from "../../src/runtime/V1Runtime.ts";
 
 const roots: string[] = [];
 
+test("Responses 工具子集能力按连接保存，旧连接默认开启", async () => {
+  const root = await temporaryRoot();
+  const store = new ModelConnectionStore(root);
+  const input = {
+    name: "Responses",
+    presetId: "openai" as const,
+    provider: "openai_responses" as const,
+    baseUrl: "https://api.openai.com/v1",
+    apiKey: "secret",
+    modelId: "model",
+    contextWindowTokens: 32000,
+    maxOutputTokens: 2000,
+  };
+  const initial = await store.save(input);
+  expect(initial.connections[0]?.supportsAllowedTools).toBe(true);
+  const id = initial.activeConnectionId!;
+  await store.save({ ...input, connectionId: id, supportsAllowedTools: false });
+  const reopened = new ModelConnectionStore(root);
+  expect((await reopened.view()).connections[0]?.supportsAllowedTools).toBe(
+    false,
+  );
+  expect((await reopened.bind()).supportsAllowedTools).toBe(false);
+  const path = join(root, "model-connections-v1.json");
+  const legacy = JSON.parse(await readFile(path, "utf8")) as {
+    connections: { supportsAllowedTools?: boolean }[];
+  };
+  delete legacy.connections[0]!.supportsAllowedTools;
+  await writeFile(path, JSON.stringify(legacy));
+  expect(
+    (await new ModelConnectionStore(root).view()).connections[0]
+      ?.supportsAllowedTools,
+  ).toBe(true);
+});
+
 test("Google Interactions 保存手动模型 ID 并在重载后保留 Provider 默认配置", async () => {
   const root = await temporaryRoot();
   const store = new ModelConnectionStore(root);

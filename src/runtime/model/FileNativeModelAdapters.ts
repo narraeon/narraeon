@@ -82,6 +82,7 @@ export interface FileNativeModelConnection {
    * connections default to on; frozen requests record their own choice.
    */
   cacheSuffixBreakpoint?: boolean;
+  supportsAllowedTools?: boolean;
 }
 
 interface ResolvedFileNativeModelConnection extends Omit<
@@ -92,6 +93,7 @@ interface ResolvedFileNativeModelConnection extends Omit<
   | "thinkingMode"
   | "thinkingBudgetTokens"
   | "cacheSuffixBreakpoint"
+  | "supportsAllowedTools"
 > {
   dialect: ModelProviderDialect;
   reasoningEffort: ModelReasoningEffort;
@@ -99,6 +101,7 @@ interface ResolvedFileNativeModelConnection extends Omit<
   thinkingMode: ModelThinkingMode;
   thinkingBudgetTokens: number | null;
   cacheSuffixBreakpoint: boolean;
+  supportsAllowedTools: boolean;
 }
 
 /** Anthropic allows four cache_control breakpoints per request. */
@@ -117,6 +120,7 @@ function resolveConnection(
     thinkingMode: connection.thinkingMode ?? "provider_default",
     thinkingBudgetTokens: connection.thinkingBudgetTokens ?? null,
     cacheSuffixBreakpoint: connection.cacheSuffixBreakpoint ?? true,
+    supportsAllowedTools: connection.supportsAllowedTools ?? true,
   });
   const issue = modelReasoningPolicyIssue({
     provider: resolved.provider,
@@ -225,6 +229,9 @@ export class FileNativeModelHost implements ModelHost {
     return new FileNativeModelHost(
       {
         ...request.modelConfig,
+        supportsAllowedTools:
+          request.modelConfig.supportsAllowedTools ??
+          this.#connection.supportsAllowedTools,
         // A frozen request without this choice predates the transcript breakpoint.
         cacheSuffixBreakpoint:
           request.modelConfig.cacheSuffixBreakpoint === true,
@@ -1454,11 +1461,19 @@ function responsesRequestBody(
 ): Record<string, unknown> {
   const allowedTools =
     input.allowedTools ?? input.tools.map((tool) => tool.name);
+  const allowedNames = new Set(allowedTools);
+  const toolNames = new Set(input.tools.map((tool) => tool.name));
+  const isProperSubset =
+    allowedNames.size > 0 &&
+    allowedNames.size < toolNames.size &&
+    [...allowedNames].every((name) => toolNames.has(name));
   const toolChoice =
     input.hasFrozenToolPolicy === true && allowedTools.length === 0
       ? "none"
       : input.hasFrozenToolPolicy === true &&
-          input.toolStrategy === "native_allowed_subset"
+          input.toolStrategy === "native_allowed_subset" &&
+          input.connection.supportsAllowedTools &&
+          isProperSubset
         ? {
             type: "allowed_tools",
             mode: "auto",

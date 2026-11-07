@@ -49,6 +49,7 @@ interface StoredModelConnection extends FileNativeModelConnection {
   reasoningSummary: ModelReasoningSummary;
   thinkingMode: ModelThinkingMode;
   thinkingBudgetTokens: number | null;
+  supportsAllowedTools: boolean;
 }
 
 interface ModelConnectionDocument {
@@ -386,6 +387,9 @@ function normalizeSaveInput(
     reasoningSummary,
     thinkingMode,
     thinkingBudgetTokens,
+    supportsAllowedTools: validateSupportsAllowedTools(
+      input.supportsAllowedTools ?? existing?.supportsAllowedTools,
+    ),
     contextWindowTokens: input.contextWindowTokens,
     maxOutputTokens: input.maxOutputTokens,
   };
@@ -473,6 +477,9 @@ function validateStoredConnection(value: unknown): StoredModelConnection {
     reasoningSummary,
     thinkingMode,
     thinkingBudgetTokens,
+    supportsAllowedTools: validateSupportsAllowedTools(
+      value.supportsAllowedTools,
+    ),
     contextWindowTokens: value.contextWindowTokens as number,
     maxOutputTokens: value.maxOutputTokens as number,
   };
@@ -491,6 +498,7 @@ function toView(connection: StoredModelConnection): ModelConnectionView {
     reasoningSummary: connection.reasoningSummary,
     thinkingMode: connection.thinkingMode,
     thinkingBudgetTokens: connection.thinkingBudgetTokens,
+    supportsAllowedTools: connection.supportsAllowedTools,
     contextWindowTokens: connection.contextWindowTokens,
     maxOutputTokens: connection.maxOutputTokens,
     hasApiKey: true,
@@ -510,9 +518,17 @@ function toBinding(
     reasoningSummary: connection.reasoningSummary,
     thinkingMode: connection.thinkingMode,
     thinkingBudgetTokens: connection.thinkingBudgetTokens,
+    supportsAllowedTools: connection.supportsAllowedTools,
     contextWindowTokens: connection.contextWindowTokens,
     maxOutputTokens: connection.maxOutputTokens,
   });
+}
+
+function validateSupportsAllowedTools(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (typeof value !== "boolean")
+    throw new Error("Tool subset capability must be a boolean");
+  return value;
 }
 
 function validateProvider(value: unknown): ModelProviderKind {

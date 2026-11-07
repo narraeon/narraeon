@@ -264,6 +264,7 @@ export interface ModelConnectionView {
   reasoningSummary: ModelReasoningSummary;
   thinkingMode: ModelThinkingMode;
   thinkingBudgetTokens: number | null;
+  supportsAllowedTools: boolean;
   contextWindowTokens: number;
   maxOutputTokens: number;
   hasApiKey: true;
@@ -294,6 +295,7 @@ export interface SaveModelConnectionInput {
   reasoningSummary?: ModelReasoningSummary;
   thinkingMode?: ModelThinkingMode;
   thinkingBudgetTokens?: number | null;
+  supportsAllowedTools?: boolean;
   contextWindowTokens: number;
   maxOutputTokens: number;
 }

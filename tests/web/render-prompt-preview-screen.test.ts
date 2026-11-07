@@ -297,6 +297,7 @@ function modelLibrary() {
         reasoningSummary: "provider_default" as const,
         thinkingMode: "provider_default" as const,
         thinkingBudgetTokens: null,
+        supportsAllowedTools: true,
         contextWindowTokens: 128_000,
         maxOutputTokens: 16_000,
         hasApiKey: true as const,

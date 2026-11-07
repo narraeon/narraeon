@@ -24,6 +24,65 @@ afterEach(() => {
   setWebLocale("zh-CN");
 });
 
+test("Responses 高级选项可编辑保存并用英文显示已保存的值", async () => {
+  setWebLocale("en");
+  const library = modelLibrary();
+  library.connections[0] = {
+    ...library.connections[0]!,
+    provider: "openai_responses",
+    dialect: "standard",
+    supportsAllowedTools: false,
+  };
+  const request = vi.fn((input: V1Request) => {
+    if (input.type === "model.save") {
+      expect(input.connection.supportsAllowedTools).toBe(true);
+      return Promise.resolve({
+        ...library,
+        connections: [
+          { ...library.connections[0]!, supportsAllowedTools: true },
+        ],
+      });
+    }
+    return Promise.resolve(library);
+  });
+  const props = {
+    client: { request } as unknown as RuntimeClient,
+    library,
+    onLibraryChange: vi.fn(),
+    onNotice: vi.fn(),
+    onDirtyChange: vi.fn(),
+  };
+  const view = render(createElement(ModelConnectionScreen, props));
+  fireEvent.click(screen.getByText("Advanced options"));
+  const select = screen.getByLabelText<HTMLSelectElement>(
+    "Supports tool subset selection (allowed_tools)",
+  );
+  expect(select.value).toBe("false");
+  fireEvent.change(select, { target: { value: "true" } });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Save and enable model connection" }),
+  );
+  await waitFor(() => expect(props.onLibraryChange).toHaveBeenCalled());
+  view.unmount();
+  render(
+    createElement(ModelConnectionScreen, {
+      ...props,
+      library: {
+        ...library,
+        connections: [
+          { ...library.connections[0], supportsAllowedTools: true },
+        ],
+      },
+    }),
+  );
+  fireEvent.click(screen.getByText("Advanced options"));
+  expect(
+    screen.getByLabelText<HTMLSelectElement>(
+      "Supports tool subset selection (allowed_tools)",
+    ).value,
+  ).toBe("true");
+});
+
 test("Google 连接在英文界面说明手动模型与未验证状态", () => {
   setWebLocale("en");
   const library = modelLibrary();
@@ -125,6 +184,7 @@ test("模型设置分别保存 Anthropic effort、thinking 模式、预算和返
         reasoningSummary: "none",
         thinkingMode: "enabled",
         thinkingBudgetTokens: 4_096,
+        supportsAllowedTools: true,
         contextWindowTokens: 128_000,
         maxOutputTokens: 16_000,
       },
@@ -360,6 +420,7 @@ function modelLibrary(): ModelConnectionLibraryView {
         reasoningSummary: "provider_default",
         thinkingMode: "provider_default",
         thinkingBudgetTokens: null,
+        supportsAllowedTools: true,
         contextWindowTokens: 128_000,
         maxOutputTokens: 16_000,
         hasApiKey: true,

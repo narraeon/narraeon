@@ -28,6 +28,7 @@ interface ConnectionForm {
   reasoningSummary: ModelReasoningSummary;
   thinkingMode: ModelThinkingMode;
   thinkingBudgetTokens: string;
+  supportsAllowedTools: boolean;
   contextWindowTokens: string;
   maxOutputTokens: string;
 }
@@ -46,6 +47,7 @@ function emptyConnectionForm(): ConnectionForm {
     reasoningSummary: "provider_default",
     thinkingMode: "provider_default",
     thinkingBudgetTokens: "",
+    supportsAllowedTools: true,
     contextWindowTokens: "128000",
     maxOutputTokens: "16000",
   };
@@ -168,6 +170,7 @@ export function ModelConnectionScreen({
           reasoningEffort: form.reasoningEffort,
           reasoningSummary: form.reasoningSummary,
           thinkingMode: form.thinkingMode,
+          supportsAllowedTools: form.supportsAllowedTools,
           thinkingBudgetTokens:
             form.thinkingMode === "enabled"
               ? Number(form.thinkingBudgetTokens)
@@ -531,6 +534,26 @@ export function ModelConnectionScreen({
             </p>
           </details>
 
+          {form.provider === "openai_responses" && (
+            <details className="parameter-help">
+              <summary>{uiText("高级选项")}</summary>
+              <label htmlFor="model-allowed-tools">
+                {uiText("支持工具子集选择（allowed_tools）")}
+              </label>
+              <select
+                id="model-allowed-tools"
+                value={String(form.supportsAllowedTools)}
+                onChange={(event) =>
+                  change({
+                    supportsAllowedTools: event.target.value === "true",
+                  })
+                }
+              >
+                <option value="true">{uiText("是")}</option>
+                <option value="false">{uiText("否")}</option>
+              </select>
+            </details>
+          )}
           <label htmlFor="model-base-url">Base URL</label>
           <input
             id="model-base-url"
@@ -853,6 +876,7 @@ function formFor(connection: ModelConnectionView): ConnectionForm {
     reasoningEffort: connection.reasoningEffort,
     reasoningSummary: connection.reasoningSummary,
     thinkingMode: connection.thinkingMode,
+    supportsAllowedTools: connection.supportsAllowedTools,
     thinkingBudgetTokens:
       connection.thinkingBudgetTokens === null
         ? ""

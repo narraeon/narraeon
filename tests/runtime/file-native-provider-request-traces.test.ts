@@ -439,6 +439,137 @@ test("OpenAI Responses 冻结全集并用 native allowed subset，usage 与 encr
     exchange: 1,
     maxOutputTokens: 2_000,
   };
+  const fullSet = adapter.previewRequest({
+    ...base,
+    appended: [],
+    allowedTools: bootstrap.tools.map(({ name }) => name).reverse(),
+  }).body as { tool_choice: unknown; tools: unknown[] };
+  expect(fullSet.tool_choice).toBe("auto");
+  const fetchWithoutSubset = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ id: "resp-off", status: "completed", output }),
+        { status: 200 },
+      ),
+    )
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          id: "resp-final",
+          status: "completed",
+          output: [
+            {
+              type: "message",
+              role: "assistant",
+              content: [{ type: "output_text", text: "Read complete." }],
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+  const withoutSubset = new FileNativeModelHost(
+    {
+      provider: "openai_responses",
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "secret",
+      modelId: "gpt-test",
+      contextWindowTokens: 32_000,
+      maxOutputTokens: 2_000,
+      supportsAllowedTools: false,
+    },
+    fetchWithoutSubset,
+  );
+  const subset = { ...base, appended: [] };
+  const subsetBody = withoutSubset.previewRequest(subset).body as {
+    tool_choice: unknown;
+    tools: unknown[];
+    prompt_cache_key: string;
+  };
+  expect(subsetBody.tool_choice).toBe("auto");
+  const enabledBody = adapter.previewRequest(subset).body as typeof subsetBody;
+  expect(subsetBody.tools).toEqual(enabledBody.tools);
+  expect(fullSet.tools).toEqual(enabledBody.tools);
+  expect(
+    (
+      withoutSubset.previewRequest({ ...subset, allowedTools: [] })
+        .body as typeof subsetBody
+    ).tools,
+  ).toEqual(enabledBody.tools);
+  expect(subsetBody.prompt_cache_key).toBe(enabledBody.prompt_cache_key);
+  expect(withoutSubset.binding()).toEqual(adapter.binding());
+  const frozen = withoutSubset.freezeRequest(subset);
+  expect(frozen.modelConfig?.supportsAllowedTools).toBe(false);
+  expect(
+    (adapter.previewRequest(frozen).body as typeof subsetBody).tool_choice,
+  ).toBe("auto");
+  const oldConfig = { ...frozen.modelConfig! };
+  delete oldConfig.supportsAllowedTools;
+  const oldRequest = { ...frozen, modelConfig: oldConfig };
+  expect(
+    (withoutSubset.previewRequest(oldRequest).body as typeof subsetBody)
+      .tool_choice,
+  ).toBe("auto");
+  expect(
+    (adapter.previewRequest(oldRequest).body as typeof subsetBody).tool_choice,
+  ).toEqual(enabledBody.tool_choice);
+  expect(
+    (
+      withoutSubset.previewRequest({ ...subset, allowedTools: [] })
+        .body as typeof subsetBody
+    ).tool_choice,
+  ).toBe("none");
+  expect(
+    (
+      withoutSubset.previewRequest({ ...subset, toolStrategy: "runtime_gate" })
+        .body as typeof subsetBody
+    ).tool_choice,
+  ).toBe("auto");
+  expect(
+    (
+      adapter.previewRequest({ ...subset, allowedTools: ["unknown"] })
+        .body as typeof subsetBody
+    ).tool_choice,
+  ).toBe("auto");
+  const offResponse = await withoutSubset.exchange(frozen);
+  expect(
+    JSON.parse(fetchWithoutSubset.mock.calls[0]![1]!.body as string),
+  ).toEqual(withoutSubset.previewRequest(frozen).body);
+  const continuation = {
+    ...frozen,
+    exchange: 2,
+    appended: [
+      {
+        kind: "assistant" as const,
+        text: offResponse.text ?? "",
+        ...(offResponse.providerState === undefined
+          ? {}
+          : { providerState: offResponse.providerState }),
+        toolCalls: offResponse.toolCalls ?? [],
+      },
+      {
+        kind: "tool" as const,
+        toolCallId: "call-private",
+        markdown: "Read result",
+      },
+    ],
+  };
+  expect((await withoutSubset.exchange(continuation)).text).toBe(
+    "Read complete.",
+  );
+  const offContinuation = JSON.parse(
+    fetchWithoutSubset.mock.calls[1]![1]!.body as string,
+  ) as { input: unknown[]; tool_choice: unknown };
+  expect(offContinuation.tool_choice).toBe("auto");
+  expect(offContinuation.input.slice(-(output.length + 1))).toEqual([
+    ...output,
+    {
+      type: "function_call_output",
+      call_id: "call-private",
+      output: "Read result",
+    },
+  ]);
   const first = await adapter.exchange({ ...base, appended: [] });
   expect(first.providerState).toEqual({
     protocol: "openai_responses",

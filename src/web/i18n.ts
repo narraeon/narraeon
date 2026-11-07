@@ -159,6 +159,9 @@ const englishMessages: Record<string, string> = {
   "世界控制 · 高级编辑": "World control \u00b7 Advanced editor",
   当前配置与编译边界: "Current configuration and compilation boundaries",
   参数说明: "Parameter details",
+  高级选项: "Advanced options",
+  "支持工具子集选择（allowed_tools）":
+    "Supports tool subset selection (allowed_tools)",
   创建世界: "Create world",
   完善这份内容包: "Develop this content package",
   返回游玩: "Return to play",

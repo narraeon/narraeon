@@ -1,6 +1,7 @@
 import { FileNativePlayDocuments } from "../../src/runtime/play/PlayDocumentTools.ts";
 import { emptyAggregatedModelUsage } from "../../src/protocol/modelUsage.ts";
 import { FileNativeModelHost } from "../../src/runtime/model/FileNativeModelAdapters.ts";
+import { ModelConnectionStore } from "../../src/runtime/model/ModelConnectionStore.ts";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { archiveStores } from "../support/worldArchiveFixture.ts";
@@ -85,6 +86,181 @@ import {
 } from "./support/google-authoring.ts";
 
 const roots: string[] = [];
+
+test.each(["frozen", "legacy"] as const)(
+  "Responses 冷重试使用%s能力设置",
+  async (kind) => {
+    const connection = {
+      provider: "openai_responses" as const,
+      baseUrl: "https://example.test/v1",
+      apiKey: "secret",
+      modelId: "test",
+      contextWindowTokens: 32000,
+      maxOutputTokens: 2000,
+    };
+    const original = new FileNativeModelHost({
+      ...connection,
+      supportsAllowedTools: true,
+    });
+    const { worlds, worldId } = await createWorld(
+      `responses-retry-${kind}`,
+      undefined,
+      original.binding(),
+    );
+    const initial = await new PlayCallChain(worlds).start({
+      worldId,
+      chainId: `retry-${kind}`,
+      exchangeId: "first",
+      playerText: "Begin.",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: original.binding(),
+      modelHost: {
+        binding: () => original.binding(),
+        freezeRequest: (request) => original.freezeRequest(request),
+        exchange: () => Promise.reject(new ModelHostFailureError("Rejected")),
+      },
+    });
+    expect(initial.canRetry).toBe(true);
+    const saved = (await worlds.playTimeline.readCurrent(worldId))!.value;
+    saved.lastRequest!.allowedTools = ["context_read"];
+    saved.lastRequest!.toolStrategy = "native_allowed_subset";
+    if (kind === "legacy")
+      delete saved.lastRequest!.modelConfig!.supportsAllowedTools;
+    await worlds.playTimeline.persist(saved);
+    const fetch_ = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: "retry",
+          status: "completed",
+          output: [
+            {
+              type: "message",
+              role: "assistant",
+              content: [{ type: "output_text", text: "Retried." }],
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+    const changed = new FileNativeModelHost(
+      { ...connection, supportsAllowedTools: false },
+      fetch_,
+    );
+    const result = await new PlayCallChain(worlds).append({
+      worldId,
+      chainId: initial.chainId,
+      exchangeId: "retry",
+      playerText: "",
+      modelHost: changed,
+    });
+    expect(result.status).toBe("ready");
+    const body = JSON.parse(fetch_.mock.calls[0]![1]!.body as string) as {
+      tool_choice: unknown;
+    };
+    expect(body.tool_choice).toEqual(
+      kind === "legacy"
+        ? "auto"
+        : {
+            type: "allowed_tools",
+            mode: "auto",
+            tools: [{ type: "function", name: "context_read" }],
+          },
+    );
+  },
+);
+
+test("关闭 Responses 子集能力后真实派发仍由 Runtime 拒绝越权工具", async () => {
+  const configRoot = await mkdtemp(join(tmpdir(), "responses-connection-"));
+  roots.push(configRoot);
+  const store = new ModelConnectionStore(configRoot);
+  await store.save({
+    name: "Responses",
+    presetId: "custom",
+    provider: "openai_responses",
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    modelId: "test",
+    contextWindowTokens: 32000,
+    maxOutputTokens: 2000,
+    supportsAllowedTools: false,
+  });
+  const sent: Record<string, unknown>[] = [];
+  const fetch_ = vi.fn<typeof fetch>(async (_url, init) => {
+    sent.push(JSON.parse(init!.body as string) as Record<string, unknown>);
+    const output =
+      sent.length === 1
+        ? [
+            {
+              type: "reasoning",
+              id: "r1",
+              encrypted_content: "cipher",
+              summary: [],
+            },
+            {
+              type: "message",
+              role: "assistant",
+              content: [{ type: "output_text", text: "The door opens." }],
+            },
+          ]
+        : [
+            {
+              type: "function_call",
+              id: `id-${sent.length}`,
+              call_id: `call-${sent.length}`,
+              name: "context_read",
+              arguments: '{"ref":"@current-situation"}',
+            },
+          ];
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({
+          id: `resp-${sent.length}`,
+          status: "completed",
+          output,
+        }),
+        { status: 200 },
+      ),
+    );
+  });
+  const host = new FileNativeModelHost(
+    await new ModelConnectionStore(configRoot).bind(),
+    fetch_,
+  );
+  const { worlds, root, worldId } = await createWorld(
+    "responses-forbidden",
+    undefined,
+    host.binding(),
+  );
+  const artifacts = new FileNativeArtifactStore(root);
+  const view = await new PlayCallChain(
+    worlds,
+    new FileNativePromptCompiler(),
+    artifacts,
+  ).start({
+    worldId,
+    chainId: "responses-forbidden",
+    exchangeId: "first",
+    playerText: "Open.",
+    hostBinding: hostBinding(),
+    playPreset: followupPlayPreset(true),
+    modelBinding: host.binding(),
+    modelHost: host,
+  });
+  expect(sent).toHaveLength(3);
+  expect(sent[1]?.tool_choice).toBe("auto");
+  expect(JSON.stringify(sent[1]?.input)).toContain(
+    '"encrypted_content":"cipher"',
+  );
+  expect(
+    view.events.filter((event) => event.kind === "followup"),
+  ).toMatchObject([
+    { toolCalls: [{ name: "context_read", ok: false }] },
+    { toolCalls: [{ name: "context_read", ok: false }] },
+  ]);
+  expect(await artifacts.readActiveProjection(worldId)).toEqual([]);
+});
 
 test("Google 后置请求使用冻结主链并恢复多个产物", async () => {
   const logRoot = await mkdtemp(join(tmpdir(), "google-followup-log-"));
