@@ -24,8 +24,7 @@ test("普通作者编辑包后置请求后创建世界，经真实 Runtime 派�
     request.on("end", () => {
       requests += 1;
       requestBodies.push(body);
-      const parsed = JSON.parse(body) as { tools?: unknown[] };
-      if (parsed.tools?.length === 2)
+      if (body.includes("PACKAGE BROWSER PROMPT"))
         send(response, {
           tool_calls: [
             {
@@ -310,6 +309,13 @@ test("普通作者编辑包后置请求后创建世界，经真实 Runtime 派�
     await assertPermissions(worldId, false);
     expect(requests).toBe(2);
     expect(requestBodies[1]).toContain("PACKAGE BROWSER PROMPT");
+    const mainTools = (JSON.parse(requestBodies[0]!) as { tools: unknown[] })
+      .tools;
+    const followupTools = (
+      JSON.parse(requestBodies[1]!) as { tools: unknown[] }
+    ).tools;
+    expect(mainTools.length).toBeGreaterThan(2);
+    expect(followupTools).toEqual(mainTools);
     await page.getByRole("button", { name: "阅读设置" }).click();
     await page.getByRole("checkbox", { name: "显示技术信息" }).check();
     await page

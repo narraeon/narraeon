@@ -37,6 +37,8 @@ test("真实世界扩展菜单阻止派发、取消在途、隐藏全部输出�
   let child = await startRuntime();
   let mainCount = 0,
     followupCount = 0;
+  const mainTools: unknown[][] = [];
+  const followupTools: unknown[][] = [];
   const firstMain = Promise.withResolvers<ServerResponse>();
   const firstFollowup = Promise.withResolvers<ServerResponse>();
   let wasCancelled = false;
@@ -48,8 +50,9 @@ test("真实世界扩展菜单阻止派发、取消在途、隐藏全部输出�
     });
     request.on("end", () => {
       responses.push(response);
-      const parsed = JSON.parse(body) as { tools?: unknown[] };
-      if (parsed.tools?.length === 2) {
+      const parsed = JSON.parse(body) as { tools: unknown[] };
+      if (body.includes("Emit one and two.")) {
+        followupTools.push(parsed.tools);
         followupCount++;
         if (followupCount === 1) {
           response.on("close", () => {
@@ -73,6 +76,7 @@ test("真实世界扩展菜单阻止派发、取消在途、隐藏全部输出�
           })),
         });
       } else {
+        mainTools.push(parsed.tools);
         mainCount++;
         if (mainCount === 1) {
           firstMain.resolve(response);
@@ -305,6 +309,9 @@ test("真实世界扩展菜单阻止派发、取消在途、隐藏全部输出�
     await expect(page.getByText("Not set", { exact: true })).toBeVisible();
     expect(mainCount).toBe(4);
     expect(followupCount).toBe(3);
+    expect(mainTools[0]!.length).toBeGreaterThan(2);
+    for (const tools of [...mainTools, ...followupTools])
+      expect(tools).toEqual(mainTools[0]);
     await setChecked(request, false);
     await expect(request).toBeEnabled();
     expect(
