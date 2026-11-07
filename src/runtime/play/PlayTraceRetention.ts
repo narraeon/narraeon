@@ -300,7 +300,7 @@ export function independentContextCopy(
   return context;
 }
 
-function transcriptThroughEvents(
+export function transcriptThroughEvents(
   transcript: readonly ModelHostAppendItem[],
   events: readonly V1PlayCallChainEvent[],
 ): ModelHostAppendItem[] {

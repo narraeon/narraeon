@@ -94,7 +94,7 @@ const messages = {
   serviceStoppedRetryable:
     "The service stopped while the model request was in progress; retry to call the model again.",
   serviceStoppedUnknown:
-    "The service stopped after the model request may have been dispatched; its outcome is unknown. Use a fresh context.",
+    "The service stopped after dispatch; retry from the last settled step.",
   serviceStoppedNoRequest:
     "The service stopped before preparing a model request; use a fresh context.",
   dispatchInterrupted: "The model request was interrupted.",
@@ -139,8 +139,8 @@ export class PlayAdvanceLifecycle<Session extends PlayAdvanceLedger> {
 
   /**
    * Recovers an advance cut off by a process exit. A persisted ending wins;
-   * otherwise Google requests that may have been dispatched cannot be replayed
-   * (ADR-0035), while other recovery follows ADR-0044.
+   * otherwise the player may retry from the last settled step (ADR-0035,
+   * ADR-0044).
    */
   async recoverAbandoned(
     session: Session,
@@ -173,11 +173,7 @@ export class PlayAdvanceLifecycle<Session extends PlayAdvanceLedger> {
       session.status === "running" &&
       (session.lastRequest?.modelConfig?.provider ??
         session.modelBinding?.provider) === "google_interactions";
-    const canRetry =
-      !headMoved &&
-      !playerPhase &&
-      !unknownGoogleDispatch &&
-      session.lastRequest !== null;
+    const canRetry = !headMoved && !playerPhase && session.lastRequest !== null;
     const message = headMoved
       ? messages.serviceStoppedAfterHead
       : playerPhase
@@ -207,25 +203,21 @@ export class PlayAdvanceLifecycle<Session extends PlayAdvanceLedger> {
 
 /**
  * The ending of an exchange that raised an error before its response was
- * settled. Google dispatched outcomes remain unknown and cannot be replayed.
+ * settled. An incomplete response may be retried from its saved request.
  */
 export function dispatchFailureEnding(
   error: unknown,
   streamingEventId: number,
-  googleDispatched = false,
 ): PlayAdvanceEnding {
   const message = errorMessage(error, messages.dispatchInterrupted);
   if (error instanceof ModelHostCancelledError)
     return {
       kind: "cancelled_after_dispatch",
       message,
-      canRetry: !googleDispatched,
+      canRetry: true,
       streamingEventId,
     };
-  const requiresFreshContext = dispatchRequiresFreshContext(
-    error,
-    googleDispatched,
-  );
+  const requiresFreshContext = dispatchRequiresFreshContext(error, false);
   const canRetry =
     !requiresFreshContext &&
     (error instanceof ModelHostFailureError ||

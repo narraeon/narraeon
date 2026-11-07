@@ -42,7 +42,7 @@ export function authoringTargetContract(name: string, create: Factory): void {
       "Change.",
       "Finished.",
     ]);
-    expect(f.requests[1]).toEqual(f.requests[0]);
+    expect(f.requests[1]).toEqual({ ...f.requests[0], requestAttempt: 2 });
   });
   test.each([
     [

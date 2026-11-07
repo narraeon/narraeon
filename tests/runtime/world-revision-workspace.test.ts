@@ -202,7 +202,7 @@ test("Google world revision keeps changes in its epoch and requires rereading af
     expectedRevision: epoch.revision,
   });
   const incompatibleBeforeEpoch = new FileNativeModelHost({
-    provider: "google_interactions",
+    provider: "chat_completions",
     baseUrl: "https://other.invalid/v1beta",
     apiKey: "synthetic",
     modelId: "manual-model",
@@ -216,7 +216,7 @@ test("Google world revision keeps changes in its epoch and requires rereading af
       message: "继续",
       continuation: { kind: "continue_context", sessionId: first.sessionId },
     }),
-  ).rejects.toThrow(/model connection/iu);
+  ).rejects.toThrow(/protocol|context/iu);
   expect(await workspace.active(worldId)).toBeNull();
   expect(await worlds.readWorldRevisionLock(worldId)).toBeNull();
   const next = await service().send({
@@ -262,7 +262,7 @@ test("Google world revision keeps changes in its epoch and requires rereading af
     )?.contents,
   ).toContain("name: 第一位商人");
   const incompatible = new FileNativeModelHost({
-    provider: "google_interactions",
+    provider: "chat_completions",
     baseUrl: "https://other.invalid/v1beta",
     apiKey: "synthetic",
     modelId: "manual-model",
@@ -276,7 +276,7 @@ test("Google world revision keeps changes in its epoch and requires rereading af
       message: "继续",
       continuation: { kind: "continue_context", sessionId: first.sessionId },
     }),
-  ).rejects.toThrow(/model connection/iu);
+  ).rejects.toThrow(/protocol|context/iu);
   expect(sent).toHaveLength(5);
   const secondEpoch = await workspace.active(worldId);
   if (secondEpoch === null) throw new Error("Missing second epoch");
@@ -444,7 +444,7 @@ test.each(["cancel", "disconnect"] as const)(
         message: "继续",
         continuation: { kind: "continue_context", sessionId: first.sessionId },
       }),
-    ).rejects.toThrow(/fresh model context/iu);
+    ).rejects.toThrow(/resume|fresh model context/iu);
     expect(afterRestart.sent).toHaveLength(0);
     const sessionPath = join(
       root,
@@ -465,7 +465,7 @@ test.each(["cancel", "disconnect"] as const)(
         message: "继续",
         continuation: { kind: "continue_context", sessionId: first.sessionId },
       }),
-    ).rejects.toThrow(/fresh model context/iu);
+    ).rejects.toThrow(/resume|fresh model context/iu);
     expect(oldRestart.sent).toHaveLength(0);
   },
 );
@@ -2615,6 +2615,10 @@ test.each([
         unknown
       >;
       stored.schemaVersion = 2;
+      for (const request of stored.requests as Record<string, unknown>[]) {
+        delete request.modelBinding;
+        delete request.retryAttempts;
+      }
       delete stored.retryDispatch;
       delete stored.editReceipts;
       originalLegacy = JSON.stringify(stored);
@@ -3911,4 +3915,90 @@ test("world author candidate preview never opens an epoch or dispatches the prov
   expect(host.requests).toHaveLength(0);
   expect(await workspace.active(worldId)).toBeNull();
   expect(await worlds.readWorldRevisionLock(worldId)).toBeNull();
+});
+
+test("151 cold resume Google revision after published tools", async () => {
+  const { root, worldId, worlds, workspace } = await createdWorld();
+  const source = worldRevisionFiles().find(
+    ({ path }) => path === "state/current-situation.yaml",
+  )!.contents;
+  const transport = googleAuthoringHost([
+    googleTools([
+      {
+        id: "read",
+        name: "world_revision_read",
+        arguments: { path: "state/current-situation.yaml" },
+      },
+      {
+        id: "write",
+        name: "world_revision_write_file",
+        arguments: {
+          path: "state/current-situation.yaml",
+          contents: source.replace("地点: 未设定", "地点: 已发布"),
+        },
+      },
+    ]),
+    interruptedGoogleWrite(
+      "world_revision_write_file",
+      "state/current-situation.yaml",
+    ),
+  ]);
+  const service = (active = transport.host) =>
+    new WorldRevisionSession({
+      store: new FileNativeWorldRevisionStore(root),
+      workspace,
+      worlds,
+      compiler: new FileNativePromptCompiler({ locale: "zh-CN" }),
+      locale: () => "zh-CN",
+      bindModelHost: () => Promise.resolve(active),
+      bindExistingModelHost: () => Promise.resolve(active),
+      bindPlayPreset: () =>
+        Promise.resolve(builtinDefaultPlayPresetBinding("zh-CN")),
+      preview: () => preview,
+    });
+
+  const stopped = await service().send({
+    worldId,
+    requestId: "f151",
+    message: "Edit.",
+    continuation: { kind: "fresh_context" },
+  });
+  expect(stopped).toMatchObject({ runStatus: "interrupted", canRetry: true });
+  const epoch = await workspace.active(worldId);
+  const after = googleAuthoringHost([googleText("Done.")], undefined, {
+    baseUrl: "https://new.invalid/other",
+    modelId: "new-model",
+    maxOutputTokens: 3000,
+  });
+  const next = await service(after.host).resume({
+    worldId,
+    sessionId: stopped.sessionId,
+    requestId: "r151",
+  });
+  expect(next.runStatus).toBe("ready");
+  const previews = next.requestPreviews!;
+  expect(previews).toHaveLength(2);
+  expect(previews[0]!.wireRequest?.endpointPath).not.toEqual(
+    previews[1]!.wireRequest?.endpointPath,
+  );
+  expect(previews[0]!.wireRequest?.body).toMatchObject({
+    model: "manual-model",
+  });
+  expect(previews[1]!.wireRequest?.body).toMatchObject({ model: "new-model" });
+  expect(previews[1]!.wireRequest?.body).toMatchObject({
+    model: after.sent[0]?.model,
+    generation_config: after.sent[0]?.generation_config,
+  });
+  expect(JSON.stringify(previews[1]!.wireRequest?.body)).toContain(
+    "runtime_redacted_provider_step",
+  );
+  expect(after.sent).toHaveLength(1);
+  expect(JSON.stringify(after.sent[0])).toContain('"call_id":"write"');
+  expect(
+    next.turns[0]?.exchanges
+      .flatMap((e) => e.toolCalls)
+      .filter((c) => c.callId === "write"),
+  ).toHaveLength(1);
+  expect((await workspace.active(worldId))?.revision).toBe(epoch!.revision);
+  expect(await worlds.currentHead(worldId)).toBe("genesis");
 });

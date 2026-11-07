@@ -840,7 +840,7 @@ test("Google edit interrupted before dispatch resumes the proven-undispatched re
     google.host,
   );
   const recovered = await cold.readSession(localId, first.sessionId);
-  expect(recovered.runStatus).toBe("paused");
+  expect(recovered.runStatus).toBe("interrupted");
   const resumed = await cold.resume({
     packageId: localId,
     sessionId: first.sessionId,
@@ -1100,7 +1100,7 @@ test("Google setting conversation settles ordered mixed calls and continues afte
     "synthetic-opaque-secret",
   );
   const incompatible = new FileNativeModelHost({
-    provider: "google_interactions",
+    provider: "chat_completions",
     baseUrl: "https://other.invalid/v1beta",
     apiKey: "synthetic",
     modelId: "manual-model",
@@ -1114,7 +1114,7 @@ test("Google setting conversation settles ordered mixed calls and continues afte
       message: "Continue.",
       continuation: { kind: "continue_context", sessionId: first.sessionId },
     }),
-  ).rejects.toThrow(/binding|connection/iu);
+  ).rejects.toThrow(/protocol|context/iu);
   expect(sent).toHaveLength(3);
 });
 
@@ -1541,7 +1541,7 @@ test.each(["truncated", "incomplete"])(
       "Edit.",
     );
     expect(result.runStatus).toBe("interrupted");
-    expect(result.canRetry).toBe(false);
+    expect(result.canRetry).toBe(true);
     expect(
       result.turns[0]?.exchanges.flatMap(({ toolCalls }) => toolCalls) ?? [],
     ).toEqual([]);
@@ -1590,13 +1590,13 @@ test.each(["cancel", "disconnect"] as const)(
             sessionId: first.sessionId,
           },
         }),
-      ).rejects.toThrow(/fresh model context/iu);
+      ).rejects.toThrow(/resume|still running|fresh model context/iu);
       expect(cold.sent).toHaveLength(0);
       await session.cancel(first.sessionId);
     }
     const result = await running;
     expect(result.runStatus).toBe("interrupted");
-    expect(result.canRetry).toBe(false);
+    expect(result.canRetry).toBe(true);
     expect(
       result.turns[1]?.exchanges.flatMap(({ toolCalls }) => toolCalls) ?? [],
     ).toEqual([]);
@@ -1611,7 +1611,7 @@ test.each(["cancel", "disconnect"] as const)(
         message: "Continue.",
         continuation: { kind: "continue_context", sessionId: first.sessionId },
       }),
-    ).rejects.toThrow(/fresh model context/iu);
+    ).rejects.toThrow(/resume|still running|fresh model context/iu);
     expect(afterRestart.sent).toHaveLength(0);
     const sessionPath = join(
       root,
@@ -1632,7 +1632,7 @@ test.each(["cancel", "disconnect"] as const)(
         message: "Continue.",
         continuation: { kind: "continue_context", sessionId: first.sessionId },
       }),
-    ).rejects.toThrow(/fresh model context/iu);
+    ).rejects.toThrow(/resume|still running|fresh model context/iu);
     expect(oldRestart.sent).toHaveLength(0);
   },
 );
@@ -1674,10 +1674,11 @@ test("Google setting cold restart can resume a request proven not dispatched", a
   expect(
     JSON.stringify(restarted.sent[0]).match(/Frozen message\./gu),
   ).toHaveLength(1);
+  const snapshot = (await store.read(first.sessionId)).requests![0]!;
+  expect(snapshot.wireRequest?.googleHops?.length).toBeGreaterThanOrEqual(1);
   expect(
-    (await store.read(first.sessionId)).requests?.[0]?.wireRequest?.googleHops
-      ?.length,
-  ).toBeGreaterThanOrEqual(2);
+    snapshot.retryAttempts?.[0]?.wireRequest?.googleHops?.length,
+  ).toBeGreaterThanOrEqual(1);
 });
 
 test("重整前真实 schema-v2 作者会话保留原生工具历史，下一次发送保存当前编排", async () => {
@@ -1720,7 +1721,7 @@ test("重整前真实 schema-v2 作者会话保留原生工具历史，下一次
   ).toEqual(fixture.stored.modelItems);
   expect(host.requests[0]!.bootstrap).toEqual(candidate);
   const upgraded = await store.read(fixture.sessionId);
-  expect(upgraded.schemaVersion).toBe(4);
+  expect(upgraded.schemaVersion).toBe(6);
   expect(upgraded.bootstrap).toEqual(fixture.stored.bootstrap);
   expect(upgraded.messages.slice(0, fixture.stored.messages.length)).toEqual(
     fixture.stored.messages,
@@ -1842,7 +1843,7 @@ test("全新上下文创建持久对话，普通回复不产生候选或快照",
 
   const store = new FileNativeSettingImprovementStore(fixture.root);
   const stored = await store.read(view.sessionId);
-  expect(stored.schemaVersion).toBe(4);
+  expect(stored.schemaVersion).toBe(6);
   expect(stored).not.toHaveProperty("draft");
   expect(stored).not.toHaveProperty("baseFiles");
   expect(stored).not.toHaveProperty("review");
@@ -1895,7 +1896,11 @@ test("interrupted authoring retries its frozen request after restart without app
     "Changed title",
   );
   const retryHost = new ScriptedModelHost({
-    binding,
+    binding: {
+      ...binding,
+      modelId: "new-model",
+      endpointFingerprint: "new-endpoint",
+    },
     steps: [{ outcome: "response", text: "Finished." }],
   });
   const changedPreset = builtinDefaultPlayPresetBinding("en");
@@ -1916,7 +1921,10 @@ test("interrupted authoring retries its frozen request after restart without app
     "Edit the opening.",
     "Finished.",
   ]);
-  expect(retryHost.requests[0]).toEqual(originalRequest);
+  expect(retryHost.requests[0]).toEqual({
+    ...originalRequest,
+    requestAttempt: 2,
+  });
   expect(JSON.stringify(retryHost.requests[0])).not.toContain(
     "Unfinished fragment",
   );
@@ -1964,6 +1972,7 @@ test("retry retains the original request identity through a subsequent tool exch
   });
   expect(result.requestPreviews?.map(({ requestId }) => requestId)).toEqual([
     "original",
+    "retry-action",
   ]);
 });
 
@@ -1986,8 +1995,13 @@ test("migration preserves the exact source bytes in a synthetic schema 3 transit
   );
   const old = JSON.parse(await readFile(path, "utf8")) as {
     schemaVersion: number;
+    requests: { modelBinding?: unknown; retryAttempts?: unknown }[];
   };
   old.schemaVersion = 3;
+  for (const request of old.requests) {
+    delete request.modelBinding;
+    delete request.retryAttempts;
+  }
   const source = JSON.stringify(old);
   await writeFile(path, source);
   const result = await fixture.session.send({
@@ -2003,7 +2017,7 @@ test("migration preserves the exact source bytes in a synthetic schema 3 transit
         first.sessionId,
       )
     ).schemaVersion,
-  ).toBe(4);
+  ).toBe(6);
   expect(
     await readFile(
       join(
@@ -4501,12 +4515,6 @@ test("inconsistent Google or unknown-outcome checkpoints never grant authoring r
   );
   expect(canRetryAuthoringDispatch(saved)).toBe(true);
   expect(
-    canRetryAuthoringDispatch({
-      ...saved,
-      modelBinding: { ...saved.modelBinding, provider: "google_interactions" },
-    }),
-  ).toBe(false);
-  expect(
     canRetryAuthoringDispatch({ ...saved, googleOutcomeUnknown: true }),
   ).toBe(false);
 });
@@ -4635,7 +4643,8 @@ function serviceFor(
     content,
     compiler,
     locale: () => "en",
-    bindModelHost: () => Promise.resolve(host),
+    bindModelHost: () =>
+      bindExisting ? bindExisting(host.binding()) : Promise.resolve(host),
     bindExistingModelHost:
       bindExisting ??
       ((frozenBinding) => {
@@ -4778,4 +4787,166 @@ test("new author snapshot corruption fails closed and upgrading keeps the old pr
     compilation: saved.bootstrap,
   });
   expect(fixture.host.requests[1]!.bootstrap).toEqual(candidate);
+});
+
+test("151 cold resume Google setting after published tools", async () => {
+  const root = await temporaryRoot("151-setting");
+  const content = new ContentWorkspace(root, { locale: () => "en" });
+  const { localId } = await content.createCurrentTreeContentPackage();
+  const before = googleAuthoringHost([
+    googleTools([
+      {
+        id: "read-151",
+        name: "setting_read",
+        arguments: { path: "opening.md" },
+      },
+      {
+        id: "write-151",
+        name: "setting_write_file",
+        arguments: { path: "opening.md", contents: "Only once." },
+      },
+    ]),
+    interruptedGoogleWrite("setting_write_file", "opening.md"),
+  ]);
+  const stopped = await sendFresh(
+    serviceFor(root, content, before.host),
+    localId,
+    "f151",
+    "Edit.",
+  );
+  expect(stopped).toMatchObject({ runStatus: "interrupted", canRetry: true });
+  const tree = await content.readCurrentTreeContentPackage(localId);
+  const after = googleAuthoringHost([googleText("Done.")], undefined, {
+    baseUrl: "https://new.invalid/other",
+    modelId: "new-model",
+    maxOutputTokens: 3000,
+  });
+  const next = await serviceFor(root, content, after.host).resume({
+    packageId: localId,
+    sessionId: stopped.sessionId,
+    requestId: "r151",
+  });
+  expect(next.runStatus).toBe("ready");
+  const previews = next.requestPreviews!;
+  expect(previews).toHaveLength(2);
+  expect(previews[0]!.wireRequest?.endpointPath).not.toEqual(
+    previews[1]!.wireRequest?.endpointPath,
+  );
+  expect(previews[0]!.wireRequest?.body).toMatchObject({
+    model: "manual-model",
+  });
+  expect(previews[1]!.wireRequest?.body).toMatchObject({ model: "new-model" });
+  expect(previews[1]!.wireRequest?.body).toMatchObject({
+    model: after.sent[0]?.model,
+    generation_config: after.sent[0]?.generation_config,
+  });
+  expect(JSON.stringify(previews[1]!.wireRequest?.body)).toContain(
+    "runtime_redacted_provider_step",
+  );
+  expect(after.sent).toHaveLength(1);
+  expect(JSON.stringify(after.sent[0])).toContain('"call_id":"write-151"');
+  expect(
+    next.turns[0]?.exchanges
+      .flatMap((e) => e.toolCalls)
+      .filter((c) => c.callId === "write-151"),
+  ).toHaveLength(1);
+  expect(
+    (await content.readCurrentTreeContentPackage(localId)).treeRevision,
+  ).toBe(tree.treeRevision);
+});
+
+test("editing the first author message rejects a different protocol before changing files or history", async () => {
+  const fixture = await createFixture([
+    { outcome: "response", text: "Old answer." },
+  ]);
+  const first = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "first-protocol",
+    "Original.",
+  );
+  const before = await fixture.content.readCurrentTreeContentPackage(
+    fixture.packageId,
+  );
+  const nextHost = new ScriptedModelHost({
+    binding: {
+      ...binding,
+      provider: "anthropic_messages",
+      cacheStrategy: "explicit_anthropic_blocks",
+    },
+    steps: [],
+  });
+  const service = serviceFor(fixture.root, fixture.content, nextHost);
+  await expect(
+    service.editMessage({
+      packageId: fixture.packageId,
+      sessionId: first.sessionId,
+      requestId: "edit-protocol",
+      messageId: first.turns[0]!.user.id,
+      message: "Replacement.",
+      filePolicy: "keep",
+    }),
+  ).rejects.toThrow(/protocol|fresh model context/i);
+  expect(
+    (await fixture.content.readCurrentTreeContentPackage(fixture.packageId))
+      .files,
+  ).toEqual(before.files);
+  expect(
+    (await service.readSession(fixture.packageId, first.sessionId)).messages,
+  ).toEqual(first.messages);
+  expect(nextHost.requests).toHaveLength(0);
+});
+
+test("schema 5 source is preserved when the next send records current binding evidence", async () => {
+  const fixture = await createFixture([
+    { outcome: "response", text: "First." },
+    { outcome: "response", text: "Second." },
+  ]);
+  const first = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "first-schema5",
+    "First.",
+  );
+  const path = join(
+    fixture.root,
+    "setting-improvements",
+    "sessions",
+    `${first.sessionId}.json`,
+  );
+  const old = JSON.parse(await readFile(path, "utf8")) as {
+    schemaVersion: number;
+    requests: { modelBinding?: unknown; retryAttempts?: unknown }[];
+  };
+  old.schemaVersion = 5;
+  for (const request of old.requests) {
+    delete request.modelBinding;
+    delete request.retryAttempts;
+  }
+  const source = JSON.stringify(old);
+  await writeFile(path, source);
+  await fixture.session.send({
+    packageId: fixture.packageId,
+    requestId: "second-schema6",
+    message: "Second.",
+    continuation: { kind: "continue_context", sessionId: first.sessionId },
+  });
+  expect(
+    await readFile(
+      join(
+        fixture.root,
+        "setting-improvements",
+        "sessions",
+        `${first.sessionId}.schema-v5.json`,
+      ),
+      "utf8",
+    ),
+  ).toBe(source);
+  expect(
+    (
+      await new FileNativeSettingImprovementStore(fixture.root).read(
+        first.sessionId,
+      )
+    ).schemaVersion,
+  ).toBe(6);
 });

@@ -112,6 +112,11 @@ export function interruptedGoogleWrite(name: string, path: string): unknown[] {
 export function googleAuthoringHost(
   responses: unknown[][],
   failureLog?: AiFailureRecorder,
+  override: {
+    baseUrl?: string;
+    modelId?: string;
+    maxOutputTokens?: number;
+  } = {},
 ) {
   const sent: Record<string, unknown>[] = [];
   const host = new FileNativeModelHost(
@@ -122,6 +127,7 @@ export function googleAuthoringHost(
       modelId: "manual-model",
       contextWindowTokens: 64000,
       maxOutputTokens: 2000,
+      ...override,
     },
     (_url, options) => {
       if (typeof options?.body !== "string")

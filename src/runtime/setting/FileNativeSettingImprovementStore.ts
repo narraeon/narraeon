@@ -145,7 +145,7 @@ interface LegacySettingImprovementSession {
  * the content package current tree is the sole authoring authority.
  */
 export interface StoredSettingImprovementSession {
-  schemaVersion: 2 | 3 | 4 | 5;
+  schemaVersion: 2 | 3 | 4 | 5 | 6;
   editReceipts?: {
     requestId: string;
     messageId: string;
@@ -552,7 +552,7 @@ export class FileNativeSettingImprovementStore {
       session.googleIdentity.creationRequestId !== session.creationRequestId ||
       (session.requests?.[0]?.requestId !== session.creationRequestId &&
         !(
-          session.schemaVersion === 5 &&
+          (session.schemaVersion === 5 || session.schemaVersion === 6) &&
           session.editReceipts?.some(
             (receipt) => receipt.requestId === session.requests?.[0]?.requestId,
           )
@@ -692,13 +692,21 @@ export class FileNativeSettingImprovementStore {
       throw new Error(
         "Setting-improvement conversation identity does not match its file",
       );
-    for (const request of session.requests ?? [])
+    for (const request of session.requests ?? []) {
       if (request.wireRequest !== undefined)
         request.wireRequest = await readGoogleHops(
           join(this.#sessionsRoot, ".google-hops", sessionId),
           request.requestId,
           request.wireRequest,
         );
+      for (const attempt of request.retryAttempts ?? [])
+        if (attempt.wireRequest !== undefined)
+          attempt.wireRequest = await readGoogleHops(
+            join(this.#sessionsRoot, ".google-hops", sessionId),
+            attempt.requestId,
+            attempt.wireRequest,
+          );
+    }
     return session;
   }
 
@@ -964,22 +972,31 @@ function validateStoredSession(
     (value.schemaVersion !== 2 &&
       value.schemaVersion !== 3 &&
       value.schemaVersion !== 4 &&
-      value.schemaVersion !== 5) ||
+      value.schemaVersion !== 5 &&
+      value.schemaVersion !== 6) ||
     (value.schemaVersion !== 4 &&
       value.schemaVersion !== 5 &&
+      value.schemaVersion !== 6 &&
       value.retryDispatch !== undefined) ||
-    (value.schemaVersion !== 5 && value.pendingEdit !== undefined) ||
-    (value.schemaVersion !== 5 && value.editReceipts !== undefined) ||
+    (value.schemaVersion !== 5 &&
+      value.schemaVersion !== 6 &&
+      value.pendingEdit !== undefined) ||
+    (value.schemaVersion !== 5 &&
+      value.schemaVersion !== 6 &&
+      value.editReceipts !== undefined) ||
     (value.editReceipts !== undefined &&
       !validEditReceipts(value.editReceipts)) ||
     (value.pendingEdit !== undefined &&
       !validPendingEdit(value.pendingEdit, value)) ||
     (value.schemaVersion === 2
       ? value.requests !== undefined
-      : (value.schemaVersion === 4 || value.schemaVersion === 5) &&
+      : (value.schemaVersion === 4 ||
+            value.schemaVersion === 5 ||
+            value.schemaVersion === 6) &&
           Array.isArray(value.requests) &&
           value.requests.length === 0 &&
-          ((value.schemaVersion === 5 && value.pendingEdit !== undefined) ||
+          (((value.schemaVersion === 5 || value.schemaVersion === 6) &&
+            value.pendingEdit !== undefined) ||
             (value.runStatus === "ready" &&
               Array.isArray(value.modelItems) &&
               value.modelItems.length === 0 &&
@@ -993,6 +1010,7 @@ function validateStoredSession(
             modelItems: value.modelItems,
             activeRequestId: value.activeRequestId,
             completedRequestIds: value.completedRequestIds,
+            extended: value.schemaVersion === 6,
           })) ||
     typeof value.sessionId !== "string" ||
     typeof value.packageId !== "string" ||
@@ -1018,7 +1036,9 @@ function validateStoredSession(
         !["dispatching", "retryable", "blocked"].includes(
           String(value.retryDispatch.state),
         ) ||
-        (value.schemaVersion !== 4 && value.schemaVersion !== 5) ||
+        (value.schemaVersion !== 4 &&
+          value.schemaVersion !== 5 &&
+          value.schemaVersion !== 6) ||
         lastRequestId(value.requests) !== value.retryDispatch.requestId ||
         (value.runStatus !== "running" && value.runStatus !== "interrupted") ||
         value.pendingSettlement !== null ||
@@ -1138,7 +1158,7 @@ function validPendingEdit(
     contentTreeFingerprint(value.afterFiles) !== value.afterFingerprint ||
     !isRecord(value.next) ||
     value.next.pendingEdit !== undefined ||
-    value.next.schemaVersion !== 5 ||
+    (value.next.schemaVersion !== 5 && value.next.schemaVersion !== 6) ||
     value.next.sessionId !== original.sessionId ||
     value.next.packageId !== original.packageId ||
     value.next.creationRequestId !== original.creationRequestId ||

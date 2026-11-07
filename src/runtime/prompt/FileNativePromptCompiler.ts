@@ -3517,6 +3517,72 @@ function utf8Bytes(value: string): number {
   return new TextEncoder().encode(value).byteLength;
 }
 
+/** Re-encode cache markers and budgets for a new dispatch while retaining frozen prompt text. */
+export function retargetFrozenCompilation(
+  original: PromptCompilation,
+  binding: FileNativePromptInput["modelBinding"],
+): PromptCompilation {
+  const result = structuredClone(original);
+  const strategy =
+    binding.cacheStrategy ??
+    (binding.provider === "anthropic_messages"
+      ? "explicit_anthropic_blocks"
+      : "provider_managed");
+  if (result.budget.outputReserveTokens !== 0)
+    result.budget.outputReserveTokens = binding.maxOutputTokens;
+  result.budget.contextWindowTokens = binding.contextWindowTokens;
+  if (result.cache.strategy === strategy) return result;
+  if (binding.provider === "anthropic_messages") {
+    const blocks: {
+      type: "text";
+      text: string;
+      cache_control?: { type: "ephemeral" };
+    }[] = [];
+    for (const block of result.provider.system ?? []) {
+      delete block.cache_control;
+      blocks.push(block);
+    }
+    for (const message of result.provider.messages) {
+      if (!Array.isArray(message.content)) continue;
+      for (const value of message.content as unknown[]) {
+        if (
+          typeof value !== "object" ||
+          value === null ||
+          !("type" in value) ||
+          value.type !== "text" ||
+          !("text" in value) ||
+          typeof value.text !== "string"
+        )
+          continue;
+        const block = value as {
+          type: "text";
+          text: string;
+          cache_control?: { type: "ephemeral" };
+        };
+        delete block.cache_control;
+        blocks.push(block);
+      }
+    }
+    if (strategy === "explicit_anthropic_blocks" && blocks.length > 0)
+      blocks.at(-1)!.cache_control = { type: "ephemeral" };
+  }
+  result.cache = {
+    ...stableCacheBoundary(
+      cacheStableText(result.logicalMessages, result.provider),
+      result.toolUniverse,
+      result.toolStrategy,
+    ),
+    strategy,
+    breakpoints:
+      strategy === "explicit_anthropic_blocks"
+        ? ["runtime_system", "author_instruction", "world_context"]
+        : strategy === "explicit_cliproxyapi_message"
+          ? ["author_instruction", "world_context"]
+          : [],
+  };
+  return result;
+}
+
 function cacheStableText(
   messages: PromptCompilation["logicalMessages"],
   provider?: PromptCompilation["provider"],

@@ -111,7 +111,7 @@ export type StoredWorldRevisionPendingSettlement =
 export interface StoredWorldRevisionSession {
   /** Discovery-only marker; never saved or sent to a provider. */
   damagedContinuation?: true;
-  schemaVersion: 1 | 2 | 3;
+  schemaVersion: 1 | 2 | 3 | 4;
   editReceipts?: {
     requestId: string;
     messageId: string;
@@ -309,15 +309,20 @@ export class FileNativeWorldRevisionStore {
           const old = validateSession(
             JSON.parse(source.toString("utf8")) as unknown,
           );
-          if (old.schemaVersion === 3 && session.schemaVersion !== 3)
+          if (old.schemaVersion > session.schemaVersion)
             throw new Error(
               "Cannot downgrade a migrated world-revision session",
             );
-          if (old.schemaVersion !== 3) {
+          if (
+            old.schemaVersion <= 2 ||
+            old.schemaVersion !== session.schemaVersion
+          ) {
             const backup = join(
               this.#sessionsRoot,
               ".legacy",
-              `${session.sessionId}.json`,
+              old.schemaVersion <= 2
+                ? `${session.sessionId}.json`
+                : `${session.sessionId}.schema-v${old.schemaVersion}.json`,
             );
             await mkdir(dirname(backup), { recursive: true, mode: 0o700 });
             const temporary = `${backup}.${randomUUID()}.tmp`;
@@ -340,7 +345,7 @@ export class FileNativeWorldRevisionStore {
             } finally {
               await rm(temporary, { force: true });
             }
-            session.schemaVersion = 3;
+            if (session.schemaVersion <= 2) session.schemaVersion = 3;
             validateSession(session);
           }
         }
@@ -499,13 +504,21 @@ export class FileNativeWorldRevisionStore {
       throw new Error(
         "World-revision conversation identity does not match its file",
       );
-    for (const request of session.requests ?? [])
+    for (const request of session.requests ?? []) {
       if (request.wireRequest !== undefined)
         request.wireRequest = await readGoogleHops(
           join(this.#sessionsRoot, ".google-hops", sessionId),
           request.requestId,
           request.wireRequest,
         );
+      for (const attempt of request.retryAttempts ?? [])
+        if (attempt.wireRequest !== undefined)
+          attempt.wireRequest = await readGoogleHops(
+            join(this.#sessionsRoot, ".google-hops", sessionId),
+            attempt.requestId,
+            attempt.wireRequest,
+          );
+    }
     return session;
   }
 
@@ -688,12 +701,15 @@ function validateSession(value: unknown): StoredWorldRevisionSession {
       [
         "requests",
         "googleOutcomeUnknown",
-        ...(value.schemaVersion === 3 ? ["retryDispatch", "editReceipts"] : []),
+        ...(value.schemaVersion === 3 || value.schemaVersion === 4
+          ? ["retryDispatch", "editReceipts"]
+          : []),
       ],
     ) ||
     (value.schemaVersion !== 1 &&
       value.schemaVersion !== 2 &&
-      value.schemaVersion !== 3) ||
+      value.schemaVersion !== 3 &&
+      value.schemaVersion !== 4) ||
     (value.editReceipts !== undefined &&
       !validEditReceipts(value.editReceipts)) ||
     (value.retryDispatch !== undefined &&
@@ -712,7 +728,8 @@ function validateSession(value: unknown): StoredWorldRevisionSession {
         (value.requests.at(-1) as Record<string, unknown>).requestId !==
           value.retryDispatch.requestId ||
         (value.runStatus !== "running" && value.runStatus !== "interrupted") ||
-        (value.retryDispatch.state === "retryable" &&
+        (value.schemaVersion === 3 &&
+          value.retryDispatch.state === "retryable" &&
           (!isRecord(value.modelBinding) ||
             value.modelBinding.provider === "google_interactions")) ||
         value.pendingSettlement !== null ||
@@ -726,12 +743,13 @@ function validateSession(value: unknown): StoredWorldRevisionSession {
         ))) ||
     (value.schemaVersion === 1
       ? value.requests !== undefined
-      : value.schemaVersion === 3 && value.requests === undefined
+      : value.schemaVersion >= 3 && value.requests === undefined
         ? value.retryDispatch !== undefined
         : !validAuthoringRequests(value.requests, validPromptCompilation, {
             modelItems: value.modelItems,
             activeRequestId: value.activeRequestId,
             completedRequestIds: value.completedRequestIds,
+            extended: value.schemaVersion === 4,
           })) ||
     typeof value.sessionId !== "string" ||
     !nonEmptyString(value.worldId) ||

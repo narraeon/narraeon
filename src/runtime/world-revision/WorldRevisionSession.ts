@@ -4,11 +4,15 @@ import {
   revertAuthoringChanges,
 } from "../authoring/AuthoringEditPlan.ts";
 import {
+  assertCompatibleAuthoring,
   canRetryAuthoringDispatch,
   checkpointNextAuthoringDispatch,
   recoverAuthoringDispatch,
 } from "../authoring/AuthoringRetry.ts";
-import { authoringRequestPreviews } from "../authoring/AuthoringRequestSnapshot.ts";
+import {
+  authoringRequestPreviews,
+  authoringActiveBinding,
+} from "../authoring/AuthoringRequestSnapshot.ts";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 
@@ -25,6 +29,7 @@ import type {
 import {
   appendAuthoringUserMessage,
   authoringExchange,
+  recordAuthoringRetryPreview,
   ModelToolConversation,
   rememberAuthoringRequest,
   resumePausedAuthoringConversation,
@@ -36,7 +41,6 @@ import type {
   ModelHostExchange,
   ModelHostToolCall,
 } from "../model/ModelHost.ts";
-import { equalModelHostBinding } from "../model/ModelHost.ts";
 import {
   settingImprovementPromptForBinding,
   type PlayPresetBinding,
@@ -135,9 +139,6 @@ export class WorldRevisionSession {
   readonly #compiler: FileNativePromptCompiler;
   readonly #locale: () => AppLocale;
   readonly #bindModelHost: () => Promise<ModelHost>;
-  readonly #bindExistingModelHost: (
-    binding: ModelHostBinding,
-  ) => Promise<ModelHost>;
   readonly #bindPlayPreset: () => Promise<PlayPresetBinding>;
   readonly #preview: (input: WorldRevisionPreviewInput) => PromptPreview;
   readonly #live: WorldRevisionLiveScope;
@@ -182,7 +183,6 @@ export class WorldRevisionSession {
     this.#compiler = input.compiler;
     this.#locale = input.locale;
     this.#bindModelHost = input.bindModelHost;
-    this.#bindExistingModelHost = input.bindExistingModelHost;
     this.#bindPlayPreset = input.bindPlayPreset;
     this.#preview = input.preview;
   }
@@ -404,7 +404,10 @@ export class WorldRevisionSession {
           throw new Error(
             "The Google request outcome is unknown; start a fresh model context.",
           );
-        if (session.runStatus === "paused")
+        if (
+          session.runStatus === "paused" ||
+          canRetryAuthoringDispatch(session)
+        )
           throw new Error(
             "Resume the paused authoring request before sending another message",
           );
@@ -413,34 +416,29 @@ export class WorldRevisionSession {
         input.worldId,
         session?.sessionId,
       );
-      let host: ModelHost | undefined;
-      if (session !== null) {
-        host = await this.#bindExistingModelHost(session.modelBinding);
-        if (!equalModelHostBinding(session.modelBinding, host.binding()))
-          throw new Error(
-            "No saved model connection matches this world-revision conversation",
-          );
-      }
+      const host = await this.#bindModelHost();
+      if (session !== null)
+        assertCompatibleAuthoring(
+          session.modelBinding,
+          session.modelItems,
+          host,
+        );
       const epoch = await this.#workspace.open(input.worldId);
-      session ??= await this.#create(input.worldId, epoch, requestId);
+      session ??= await this.#create(input.worldId, epoch, requestId, host);
       if (session.epochId !== epoch.epochId) {
         retargetSession(session, epoch, this.#locale());
         await this.#store.saveSession(session);
       }
-      host ??= await this.#bindExistingModelHost(session.modelBinding);
-      if (!equalModelHostBinding(session.modelBinding, host.binding()))
-        throw new Error(
-          "No saved model connection matches this world-revision conversation",
-        );
       const { playPreset, bootstrap, preload } = await this.#compileCurrent(
         input.worldId,
-        session.modelBinding,
+        host.binding(),
       );
-      session.schemaVersion = 3;
+      session.schemaVersion = 4;
       delete session.retryDispatch;
       session.requests ??= [];
       session.requests.push({
         requestId,
+        modelBinding: structuredClone(host.binding()),
         modelItemStart: session.modelItems.length,
         bootstrap,
         playPreset: structuredClone(playPreset),
@@ -466,7 +464,7 @@ export class WorldRevisionSession {
         host.previewAuthoringRequest !== undefined
       )
         session.requests.at(-1)!.wireRequest = host.previewAuthoringRequest(
-          authoringExchange(session, requestId, boundaries),
+          authoringExchange(session, requestId, boundaries, host.binding()),
         );
       await this.#store.saveSession(session);
       return {
@@ -521,12 +519,9 @@ export class WorldRevisionSession {
           "The Google request outcome is unknown; start a fresh model context.",
         );
       await this.#assertNoRunningConversation(input.worldId, session.sessionId);
-      const host = await this.#bindExistingModelHost(session.modelBinding);
-      if (!equalModelHostBinding(session.modelBinding, host.binding()))
-        throw new Error(
-          "No saved model connection matches this world-revision conversation",
-        );
+      const host = await this.#bindModelHost();
       const { tail, next } = planAuthoringEdit(session, edit);
+      assertCompatibleAuthoring(session.modelBinding, next.modelItems, host);
       if (input.filePolicy === "revert") {
         const activeChangeIds = new Set(
           epoch?.changes.map(({ changeSetId }) => changeSetId) ?? [],
@@ -569,10 +564,10 @@ export class WorldRevisionSession {
       };
       const { playPreset, bootstrap, preload } = await this.#compileCurrent(
         input.worldId,
-        session.modelBinding,
+        host.binding(),
         candidate,
       );
-      next.schemaVersion = 3;
+      next.schemaVersion = 4;
       if (
         session.epochId !== epoch.epochId ||
         tail.some(
@@ -589,6 +584,7 @@ export class WorldRevisionSession {
       next.epochId = epoch.epochId;
       next.requests.push({
         requestId,
+        modelBinding: structuredClone(host.binding()),
         modelItemStart: next.modelItems.length,
         bootstrap,
         playPreset: structuredClone(playPreset),
@@ -613,7 +609,7 @@ export class WorldRevisionSession {
         host.previewAuthoringRequest !== undefined
       )
         next.requests.at(-1)!.wireRequest = host.previewAuthoringRequest(
-          authoringExchange(next, requestId, boundaries),
+          authoringExchange(next, requestId, boundaries, host.binding()),
         );
       await this.#workspace.publishEdit({
         worldId: input.worldId,
@@ -664,11 +660,8 @@ export class WorldRevisionSession {
         throw new WorldRevisionWorkspaceError(
           "The paused conversation belongs to a revision that is no longer active; send a new message instead",
         );
-      const host = await this.#bindExistingModelHost(session.modelBinding);
-      if (!equalModelHostBinding(session.modelBinding, host.binding()))
-        throw new Error(
-          "No saved model connection matches this world-revision conversation",
-        );
+      const host = await this.#bindModelHost();
+      assertCompatibleAuthoring(session.modelBinding, session.modelItems, host);
       if (canRetryAuthoringDispatch(session)) {
         session.runStatus = "running";
         session.activeRequestId = session.requests?.at(-1)?.requestId ?? null;
@@ -679,6 +672,8 @@ export class WorldRevisionSession {
         host.binding().provider === "google_interactions"
           ? await this.#validatedEpochBoundaries(session)
           : undefined;
+      session.schemaVersion = 4;
+      recordAuthoringRetryPreview(session, host, requestId, boundaries);
       await this.#store.saveSession(session);
       return {
         session,
@@ -698,17 +693,9 @@ export class WorldRevisionSession {
     const session =
       sessionId === undefined ? null : await this.#store.readSession(sessionId);
     if (session !== null) assertWorld(session, worldId);
-    const host =
-      session === null
-        ? await this.#bindModelHost()
-        : await this.#bindExistingModelHost(session.modelBinding);
-    if (
-      session !== null &&
-      !equalModelHostBinding(session.modelBinding, host.binding())
-    )
-      throw new Error(
-        "No compatible saved model connection matches this authoring conversation",
-      );
+    const host = await this.#bindModelHost();
+    if (session !== null)
+      assertCompatibleAuthoring(session.modelBinding, session.modelItems, host);
     const { bootstrap } = await this.#compileCurrent(worldId, host.binding());
     return bootstrap;
   }
@@ -812,9 +799,9 @@ export class WorldRevisionSession {
     worldId: string,
     epoch: StoredWorldRevisionEpoch,
     creationRequestId: string,
+    host: ModelHost,
   ): Promise<StoredWorldRevisionSession> {
-    const [host, playPreset, worlds, gameplay] = await Promise.all([
-      this.#bindModelHost(),
+    const [playPreset, worlds, gameplay] = await Promise.all([
       this.#bindPlayPreset(),
       this.#worlds.listWorlds(),
       this.#worlds.gameplay(worldId),
@@ -836,7 +823,7 @@ export class WorldRevisionSession {
     });
     const now = Date.now();
     const session: StoredWorldRevisionSession = {
-      schemaVersion: 3,
+      schemaVersion: 4,
       requests: [],
       sessionId: this.#store.createSessionId(),
       worldId,
@@ -889,10 +876,12 @@ export class WorldRevisionSession {
           assistantItemIndex,
           calls,
           activeTransaction,
+          host.binding(),
         );
       },
       view: (next) => this.#view(next),
-      retrySupported: session.schemaVersion === 3,
+      retrySupported:
+        session.schemaVersion === 3 || session.schemaVersion === 4,
       failure: {
         cancelled:
           "The world-revision response was cancelled. Settled worktree changes were retained.",
@@ -942,6 +931,7 @@ export class WorldRevisionSession {
     assistantItemIndex: number,
     calls: readonly ModelHostToolCall[],
     active: ActiveTransaction | null,
+    modelBinding: ModelHostBinding,
   ): Promise<ActiveTransaction> {
     const epoch = await this.#requiredActiveEpoch(session);
     const beforeRevision = epoch.revision;
@@ -960,7 +950,7 @@ export class WorldRevisionSession {
     const transaction =
       active?.revision === beforeRevision
         ? active.transaction
-        : await this.#openTransaction(session, epoch, binding);
+        : await this.#openTransaction(session, epoch, binding, modelBinding);
     const rawResults = transaction.execute(calls);
     const files = transaction.files();
     const afterRevision = contentTreeFingerprint(files);
@@ -998,7 +988,7 @@ export class WorldRevisionSession {
       toolResults,
     });
     finalizeSettlement(session, prepared);
-    if (session.schemaVersion === 3)
+    if (session.schemaVersion === 3 || session.schemaVersion === 4)
       checkpointNextAuthoringDispatch(session, "dispatching");
     session.updatedAt = Date.now();
     await this.#store.saveSession(session);
@@ -1009,6 +999,7 @@ export class WorldRevisionSession {
     session: StoredWorldRevisionSession,
     epoch: StoredWorldRevisionEpoch,
     binding: FileNativePlayBinding,
+    modelBinding: ModelHostBinding = authoringActiveBinding(session),
   ): Promise<WorldRevisionAuthoringTransaction> {
     const maintenance = await this.#worlds.inspectDocumentMaintenance(
       epoch.worldId,
@@ -1027,7 +1018,7 @@ export class WorldRevisionSession {
       preview: (snapshot) =>
         this.#preview({
           snapshot,
-          modelBinding: session.modelBinding,
+          modelBinding,
           playPreset:
             session.requests?.at(-1)?.playPreset ?? session.playPreset,
           binding,
@@ -1086,12 +1077,21 @@ export class WorldRevisionSession {
       session.pendingSettlement === null &&
       session.modelBinding.provider === "google_interactions" &&
       session.runStatus === "interrupted" &&
-      session.googleOutcomeUnknown === undefined &&
+      session.googleOutcomeUnknown !== false &&
+      session.retryDispatch === undefined &&
       (lastItem?.kind === "user" || lastItem?.kind === "tool")
     ) {
-      session.googleOutcomeUnknown = true;
-      session.lastFailure =
-        "The Google request outcome is unknown; start a fresh model context.";
+      if (session.requests?.at(-1) !== undefined) {
+        session.schemaVersion = 4;
+        checkpointNextAuthoringDispatch(session, "retryable");
+        session.googleOutcomeUnknown = false;
+        session.lastFailure =
+          "The previous model response was incomplete; retry from the last settled step.";
+      } else {
+        session.googleOutcomeUnknown = true;
+        session.lastFailure =
+          "The saved request is unavailable; start a fresh model context.";
+      }
       session.updatedAt = Date.now();
       await this.#store.saveSession(session);
       return session;
@@ -1170,20 +1170,25 @@ export class WorldRevisionSession {
     if (session.runStatus !== "running" && !recoveringSettlement)
       return session;
     const requestId = session.activeRequestId;
-    if (
-      settlementPublished &&
-      session.modelBinding.provider !== "google_interactions" &&
-      session.requests?.at(-1) !== undefined
-    ) {
-      session.schemaVersion = 3;
+    if (settlementPublished && session.requests?.at(-1) !== undefined) {
+      session.schemaVersion = 4;
       checkpointNextAuthoringDispatch(session, "retryable");
     }
+    if (
+      session.runStatus === "running" &&
+      session.retryDispatch === undefined &&
+      session.pendingSettlement === null &&
+      session.requests?.at(-1) !== undefined &&
+      (lastItem?.kind === "user" || lastItem?.kind === "tool")
+    )
+      checkpointNextAuthoringDispatch(session, "retryable");
     recoverAuthoringDispatch(session);
-    session.runStatus =
+    if (
       session.modelBinding.provider === "google_interactions" &&
-      session.googleOutcomeUnknown === false
-        ? "paused"
-        : "interrupted";
+      session.retryDispatch?.state === "retryable"
+    )
+      session.googleOutcomeUnknown = false;
+    session.runStatus = "interrupted";
     session.activeRequestId = null;
     if (requestId !== null)
       session.completedRequestIds = rememberAuthoringRequest(

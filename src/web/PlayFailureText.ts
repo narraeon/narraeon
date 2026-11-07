@@ -12,8 +12,7 @@ export const failureText: Record<
   },
   outcome_unknown: {
     title: "模型请求结果未知",
-    description:
-      "模型请求已发出，但结果未知。旧请求不能重发；为避免重复生成，请从全新上下文继续。",
+    description: "模型请求已发出，但结果未知；请查看详情，或从全新上下文继续。",
   },
   context_limit: {
     title: "模型上下文已达上限",
@@ -23,7 +22,7 @@ export const failureText: Record<
   output_limit: {
     title: "模型输出已达上限",
     description:
-      "模型回复达到输出上限，尚未完成。请在模型配置中调高最大输出 Token，保存后从全新上下文继续；原样重发仍使用旧配置。推理也可能占用输出额度。",
+      "模型回复达到输出上限，尚未完成。请在模型配置中调高最大输出 Token 后重试；推理也可能占用输出额度。",
   },
   context_unavailable: {
     title: "模型上下文无法继续",
@@ -53,7 +52,7 @@ export function playFailureDescription(
 ): string {
   return uiText(
     canRetry
-      ? "可以重新发送已保存的请求，不会重复提交玩家原文；请求使用当时冻结的配置。"
+      ? "可以使用当前选中的兼容连接，从本地最后已结算的步骤重新发送，不会重复提交玩家原文。"
       : failureText[kind ?? "other"].description,
   );
 }

@@ -89,3 +89,31 @@ test.each(["request", "exchange", "status", "google"] as const)(
     }
   },
 );
+
+test("schema 3 source is preserved when dispatch evidence upgrades to schema 4", async () => {
+  const root = await mkdtemp(join(tmpdir(), "revision-schema4-"));
+  try {
+    const raw = JSON.parse(await readFile(fixture, "utf8")) as {
+      sessionId: string;
+      schemaVersion: number;
+    };
+    raw.schemaVersion = 3;
+    const source = JSON.stringify(raw);
+    const sessions = join(root, "world-revisions", "sessions");
+    await mkdir(sessions, { recursive: true });
+    await writeFile(join(sessions, `${raw.sessionId}.json`), source);
+    const store = new FileNativeWorldRevisionStore(root);
+    const session = await store.readSession(raw.sessionId);
+    session.schemaVersion = 4;
+    await store.saveSession(session);
+    expect(
+      await readFile(
+        join(sessions, ".legacy", `${raw.sessionId}.schema-v3.json`),
+        "utf8",
+      ),
+    ).toBe(source);
+    expect((await store.readSession(raw.sessionId)).schemaVersion).toBe(4);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

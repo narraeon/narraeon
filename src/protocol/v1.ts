@@ -308,6 +308,15 @@ export type V1Request =
       replacementText: string;
       turnNote?: string;
       continuation: "continue_context" | "fresh_context";
+      requireCompatible?: boolean;
+      sendAfterRevision?: boolean;
+    }
+  | {
+      type: "play.chain.regenerate-narrative";
+      operationId: string;
+      worldId: string;
+      chainId: string;
+      eventId: number;
     }
   | {
       type: "play.chain.start";
@@ -1192,6 +1201,12 @@ const requiredFields: Record<
     replacementText: "string",
     continuation: "string",
   },
+  "play.chain.regenerate-narrative": {
+    operationId: "string",
+    worldId: "string",
+    chainId: "string",
+    eventId: "number",
+  },
   "play.chain.start": {
     worldId: "string",
     chainId: "string",
@@ -1617,6 +1632,24 @@ function validateRequestFields(request: Record<string, unknown>): void {
     throw new V1ProtocolError("invalid_request", "turnNote is invalid");
   if (
     request.type === "play.chain.revise-player" &&
+    request.sendAfterRevision !== undefined &&
+    typeof request.sendAfterRevision !== "boolean"
+  )
+    throw new V1ProtocolError(
+      "invalid_request",
+      "play.chain.revise-player.sendAfterRevision is invalid",
+    );
+  if (
+    request.type === "play.chain.revise-player" &&
+    request.requireCompatible !== undefined &&
+    typeof request.requireCompatible !== "boolean"
+  )
+    throw new V1ProtocolError(
+      "invalid_request",
+      "play.chain.revise-player.requireCompatible is invalid",
+    );
+  if (
+    request.type === "play.chain.revise-player" &&
     request.continuation !== "continue_context" &&
     request.continuation !== "fresh_context"
   )
@@ -1797,6 +1830,7 @@ const requestTypes = new Set([
   "world.revision.discard",
   "world.derive",
   "play.chain.revise-player",
+  "play.chain.regenerate-narrative",
   "play.chain.start",
   "play.chain.append",
   "play.chain.cancel",

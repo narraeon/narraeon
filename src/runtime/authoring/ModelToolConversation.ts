@@ -22,7 +22,10 @@ import type {
 } from "../model/ModelHost.ts";
 import { ModelHostCancelledError } from "../model/ModelHost.ts";
 import { withGoogleHop } from "../model/GoogleRequestPreview.ts";
-import type { PromptCompilation } from "../prompt/FileNativePromptCompiler.ts";
+import {
+  retargetFrozenCompilation,
+  type PromptCompilation,
+} from "../prompt/FileNativePromptCompiler.ts";
 
 const maximumExchangesPerMessage = 64;
 const maximumStreamTailCharacters = 240;
@@ -123,8 +126,12 @@ export function authoringExchange(
   session: ModelToolConversationState,
   requestId: string,
   boundaries?: ModelHostExchange["worldRevisionBoundaries"],
+  binding: ModelHostBinding = session.modelBinding,
 ): ModelHostExchange {
-  const bootstrap = session.requests?.at(-1)?.bootstrap ?? session.bootstrap;
+  const bootstrap = retargetFrozenCompilation(
+    session.requests?.at(-1)?.bootstrap ?? session.bootstrap,
+    binding,
+  );
   return {
     bootstrap,
     toolUniverse: bootstrap.toolUniverse,
@@ -139,8 +146,38 @@ export function authoringExchange(
     operationId: session.sessionId,
     requestAttempt: 1,
     exchange: session.exchange + 1,
-    maxOutputTokens: session.modelBinding.maxOutputTokens,
+    maxOutputTokens: binding.maxOutputTokens,
   };
+}
+
+export function recordAuthoringRetryPreview(
+  session: ModelToolConversationState,
+  host: ModelHost,
+  retryId: string,
+  boundaries?: ModelHostExchange["worldRevisionBoundaries"],
+): void {
+  const snapshot = session.requests?.at(-1);
+  if (snapshot === undefined) return;
+  const request = authoringExchange(
+    session,
+    snapshot.requestId,
+    boundaries,
+    host.binding(),
+  );
+  if (session.retryDispatch !== undefined)
+    request.exchange = session.retryDispatch.exchange;
+  request.requestAttempt = (snapshot.retryAttempts?.length ?? 0) + 2;
+  snapshot.retryAttempts ??= [];
+  if (!snapshot.retryAttempts.some((item) => item.requestId === retryId))
+    snapshot.retryAttempts.push({
+      requestId: retryId,
+      compilation: structuredClone(request.bootstrap),
+      modelBinding: structuredClone(host.binding()),
+      ...(host.binding().provider === "google_interactions" &&
+      host.previewAuthoringRequest !== undefined
+        ? { wireRequest: host.previewAuthoringRequest(request) }
+        : {}),
+    });
 }
 
 /**
@@ -219,9 +256,17 @@ export class ModelToolConversation<
           session,
           input.exchangeRequestId ?? live.requestId,
           input.worldRevisionBoundaries,
+          input.host.binding(),
         );
         if (input.retrySupported)
           request = prepareAuthoringDispatch(session, request);
+        const retryAttempt = session.requests
+          ?.at(-1)
+          ?.retryAttempts?.find((item) => item.requestId === live.requestId);
+        if (retryAttempt !== undefined)
+          request.requestAttempt =
+            (session.requests?.at(-1)?.retryAttempts?.indexOf(retryAttempt) ??
+              0) + 2;
         session.exchange = Math.max(
           session.exchange,
           request.exchange ?? session.exchange + 1,
@@ -241,6 +286,13 @@ export class ModelToolConversation<
             const snapshot = session.requests?.findLast(
               (entry) => entry.requestId === requestId,
             );
+            const retry = snapshot?.retryAttempts?.find(
+              (item) => item.requestId === live.requestId,
+            );
+            if (retry?.wireRequest !== undefined) {
+              retry.wireRequest = withGoogleHop(retry.wireRequest, hop);
+              return input.recordGoogleHop?.(retry.requestId, hop);
+            }
             if (snapshot?.wireRequest === undefined) return;
             snapshot.wireRequest = withGoogleHop(snapshot.wireRequest, hop);
             return input.recordGoogleHop?.(requestId, hop);
@@ -321,6 +373,11 @@ export class ModelToolConversation<
       return input.view(session);
     } catch (error: unknown) {
       failAuthoringDispatch(session, error, phase);
+      if (
+        session.modelBinding.provider === "google_interactions" &&
+        session.retryDispatch?.state === "retryable"
+      )
+        session.googleOutcomeUnknown = false;
       session.runStatus = "interrupted";
       session.activeRequestId = null;
       session.completedRequestIds = rememberRequest(

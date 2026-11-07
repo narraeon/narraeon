@@ -159,15 +159,7 @@ test.each(["frozen", "legacy"] as const)(
     const body = JSON.parse(fetch_.mock.calls[0]![1]!.body as string) as {
       tool_choice: unknown;
     };
-    expect(body.tool_choice).toEqual(
-      kind === "legacy"
-        ? "auto"
-        : {
-            type: "allowed_tools",
-            mode: "auto",
-            tools: [{ type: "function", name: "context_read" }],
-          },
-    );
+    expect(body.tool_choice).toEqual("auto");
   },
 );
 
@@ -651,7 +643,7 @@ test.each([
     body: "server error; key-sentinel",
     firstHop: false,
     kind: "outcome_unknown",
-    canRetry: false,
+    canRetry: true,
   },
   {
     name: "in-progress",
@@ -659,7 +651,7 @@ test.each([
     body: "request is still being processed",
     firstHop: false,
     kind: "outcome_unknown",
-    canRetry: false,
+    canRetry: true,
   },
   {
     name: "later",
@@ -667,7 +659,7 @@ test.each([
     body: "maximum context length exceeded; token-sentinel",
     firstHop: true,
     kind: "outcome_unknown",
-    canRetry: false,
+    canRetry: true,
   },
 ] as const)(
   "Google $name 拒绝在游玩入口保留正确的恢复资格并遮蔽回显",
@@ -2221,7 +2213,7 @@ test.each([
   });
   expect(result).toMatchObject({
     status: "interrupted",
-    canRetry: false,
+    canRetry: true,
     lastFailureKind: "outcome_unknown",
   });
   expect(result.events.some((event) => event.kind === "tool_result")).toBe(
@@ -2233,12 +2225,12 @@ test.each([
   expect(JSON.stringify(after.history)).not.toContain("不完整的故事");
   expect(
     await new PlayCallChain(coldWorlds).inspectWorld(worldId),
-  ).toMatchObject({ status: "interrupted", canRetry: false });
+  ).toMatchObject({ status: "interrupted", canRetry: true });
   expect(dispatches).toBe(1);
 });
 
 test.each(["cancel", "disconnect"])(
-  "Google 派发后%s不允许重放或提交片段",
+  "Google 派发后%s可以重发且不提交片段",
   async (failure) => {
     let dispatches = 0;
     let fetchSignal: AbortSignal | null | undefined;
@@ -2321,7 +2313,7 @@ test.each(["cancel", "disconnect"])(
       expect(fetchSignal?.aborted).toBe(true);
     }
     const result = await running;
-    expect(result).toMatchObject({ status: "interrupted", canRetry: false });
+    expect(result).toMatchObject({ status: "interrupted", canRetry: true });
     if (failure === "disconnect") {
       expect(result.lastFailureKind).toBe("outcome_unknown");
       expect(
@@ -2331,7 +2323,7 @@ test.each(["cancel", "disconnect"])(
     const coldWorlds = new FileNativeWorldStore(root);
     expect(
       await new PlayCallChain(coldWorlds).inspectWorld(worldId),
-    ).toMatchObject({ status: "interrupted", canRetry: false });
+    ).toMatchObject({ status: "interrupted", canRetry: true });
     expect(
       JSON.stringify((await coldWorlds.recoverEndpoint(worldId)).history),
     ).not.toContain("断流片段");
@@ -2655,7 +2647,7 @@ test("Google 工具顺序结算后遇到未完成续接不重放或提交半响�
   });
   expect(result).toMatchObject({
     status: "interrupted",
-    canRetry: false,
+    canRetry: true,
     lastFailureKind: "outcome_unknown",
   });
   expect(
@@ -2675,17 +2667,8 @@ test("Google 工具顺序结算后遇到未完成续接不重放或提交半响�
   const restarted = new PlayCallChain(coldWorlds);
   expect(await restarted.inspectWorld(worldId)).toMatchObject({
     status: "interrupted",
-    canRetry: false,
+    canRetry: true,
   });
-  await expect(
-    restarted.append({
-      worldId,
-      chainId: "google-tool-incomplete",
-      exchangeId: "retry",
-      playerText: "",
-      modelHost: host,
-    }),
-  ).rejects.toThrow();
   expect(requestBodies).toHaveLength(2);
 });
 
@@ -2833,25 +2816,23 @@ test("Google 冷重启仅允许语义绑定不变的凭据更新", async () => {
     modelHost: host,
   });
   const restarted = new PlayCallChain(new FileNativeWorldStore(root));
-  for (const changed of [
-    { baseUrl: "https://other.invalid/v1beta" },
-    { modelId: "other-model" },
-    { maxOutputTokens: 3000 },
-  ]) {
-    await expect(
-      restarted.append({
-        worldId,
-        chainId: "google-binding",
-        exchangeId: "changed",
-        playerText: "继续。",
-        modelHost: new FileNativeModelHost(
-          { ...config, ...changed },
-          transport,
-        ),
-      }),
-    ).rejects.toThrow(/binding|context/i);
-  }
-  expect(credentials).toEqual(["old-secret"]);
+  const changed = await restarted.append({
+    worldId,
+    chainId: "google-binding",
+    exchangeId: "changed",
+    playerText: "继续。",
+    modelHost: new FileNativeModelHost(
+      {
+        ...config,
+        baseUrl: "https://other.invalid/v1beta",
+        modelId: "other-model",
+        maxOutputTokens: 3000,
+      },
+      transport,
+    ),
+  });
+  expect(changed.status).toBe("ready");
+  expect(credentials).toEqual(["old-secret", "old-secret"]);
   expect(
     (
       await restarted.append({
@@ -2866,7 +2847,7 @@ test("Google 冷重启仅允许语义绑定不变的凭据更新", async () => {
       })
     ).status,
   ).toBe("ready");
-  expect(credentials).toEqual(["old-secret", "new-secret"]);
+  expect(credentials).toEqual(["old-secret", "old-secret", "new-secret"]);
 });
 
 test.each(["player", "tool", "completed", "incomplete"])(
@@ -2971,7 +2952,7 @@ test.each(["player", "tool", "completed", "incomplete"])(
     else
       expect(recovered).toMatchObject({
         status: "interrupted",
-        canRetry: phase !== "incomplete",
+        canRetry: true,
       });
     if (phase === "incomplete")
       expect(recovered).toMatchObject({ lastFailureKind: "outcome_unknown" });
@@ -3120,18 +3101,9 @@ test("Google 已派发请求在进程退出后不允许重放", async () => {
   const restarted = new PlayCallChain(restartedWorlds);
   expect(await restarted.inspectWorld(worldId)).toMatchObject({
     status: "interrupted",
-    canRetry: false,
+    canRetry: true,
     lastFailureKind: "outcome_unknown",
   });
-  await expect(
-    restarted.append({
-      worldId,
-      chainId: "google-abandoned",
-      exchangeId: "retry",
-      playerText: "",
-      modelHost: host,
-    }),
-  ).rejects.toThrow();
   expect(dispatches).toBe(1);
   expect(
     (await restartedWorlds.recoverEndpoint(worldId)).history.map(
@@ -9002,7 +8974,7 @@ test.each(["binding", "outcome_unknown", "binding_over_unknown"] as const)(
   },
 );
 
-test("冷恢复重试沿用请求模型快照，下一次发送采用当前配置", async () => {
+test("冷恢复重试与下一次发送均采用当前模型配置", async () => {
   const { worlds, worldId } = await createWorld("request-model-snapshot");
   const connection = {
     provider: "chat_completions" as const,
@@ -9017,6 +8989,7 @@ test("冷恢复重试沿用请求模型快照，下一次发送采用当前配�
   const changed = new FileNativeModelHost({
     ...connection,
     modelId: "changed",
+    dialect: "cliproxyapi",
     reasoningEffort: "low",
     contextWindowTokens: 128000,
     maxOutputTokens: 2048,
@@ -9043,6 +9016,16 @@ test("冷恢复重试沿用请求模型快照，下一次发送采用当前配�
   const scripted = new ScriptedModelHost({
     binding: changed.binding(),
     steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "read-b",
+            name: "context_read",
+            arguments: { ref: "@current-situation" },
+          },
+        ],
+      },
       { outcome: "response", text: "Retried." },
       { outcome: "response", text: "New parameters." },
     ],
@@ -9064,10 +9047,19 @@ test("冷恢复重试沿用请求模型快照，下一次发送采用当前配�
       })
     ).status,
   ).toBe("ready");
-  expect(scripted.requests[0]).toEqual(saved);
-  expect(changed.previewRequest(scripted.requests[0]!)).toEqual(
-    original.previewRequest(saved),
+  expect(scripted.requests[0]?.modelConfig).toMatchObject({
+    modelId: "changed",
+    reasoningEffort: "low",
+    maxOutputTokens: 2048,
+  });
+  expect(scripted.requests[0]?.appended).toEqual(saved.appended);
+  expect(scripted.requests[0]?.bootstrap.cache.strategy).toBe(
+    "explicit_cliproxyapi_message",
   );
+  expect(scripted.requests[1]?.bootstrap.cache.strategy).toBe(
+    "explicit_cliproxyapi_message",
+  );
+  expect(() => changed.previewRequest(scripted.requests[1]!)).not.toThrow();
   const next = await cold.append({
     worldId,
     chainId: initial.chainId,
@@ -9077,7 +9069,7 @@ test("冷恢复重试沿用请求模型快照，下一次发送采用当前配�
   });
   expect(next.status).toBe("ready");
   expect(next.contextWindowTokens).toBe(128000);
-  expect(scripted.requests[1]?.modelConfig).toMatchObject({
+  expect(scripted.requests[2]?.modelConfig).toMatchObject({
     modelId: "changed",
     reasoningEffort: "low",
     maxOutputTokens: 2048,
@@ -13346,4 +13338,322 @@ test("Responses completed without output does not promote tentative text and can
       ({ exactText }) => exactText,
     ),
   ).toContain("Final answer");
+});
+
+test("重启后只重新生成最后叙事并保留已结算工具", async () => {
+  const { worlds, worldId, root } = await createWorld("narrative-only");
+  const initialHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "patch",
+            name: "world_patch",
+            arguments: {
+              target: "@current-situation",
+              edits: [
+                {
+                  op: "replace",
+                  locator: { yaml: ["情况"] },
+                  value: "门已经打开。",
+                },
+              ],
+            },
+          },
+        ],
+      },
+      { outcome: "response", text: "旧叙事。" },
+    ],
+  });
+  const initial = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "narrative-only",
+    exchangeId: "first",
+    playerText: "打开门。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: initialHost,
+  });
+  const narrative = initial.events.findLast(
+    (event) => event.kind === "assistant" && event.responseKind === "narrative",
+  );
+  if (narrative?.kind !== "assistant") throw new Error("Missing narrative");
+  const state = await worlds.readSurface(worldId, "state");
+  const coldWorlds = new FileNativeWorldStore(root);
+  const host = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [{ outcome: "response", text: "新叙事。" }],
+  });
+  const chain = new PlayCallChain(coldWorlds);
+  const archived = vi
+    .spyOn(coldWorlds, "archiveNeedsFreshContext")
+    .mockResolvedValue(true);
+  await expect(
+    chain.regenerateNarrative({
+      operationId: "archive-block",
+      worldId,
+      chainId: initial.chainId,
+      eventId: narrative.id,
+      modelHost: host,
+    }),
+  ).rejects.toThrow(/imported|fresh context/i);
+  expect(await coldWorlds.currentHead(worldId)).toBe(initial.parentHead);
+  expect(
+    (await coldWorlds.playTimeline.readCurrent(worldId))?.value.chainId,
+  ).toBe(initial.chainId);
+  archived.mockRestore();
+  const result = await chain.regenerateNarrative({
+    operationId: "regenerate",
+    worldId,
+    chainId: initial.chainId,
+    eventId: narrative.id,
+    modelHost: host,
+  });
+  expect(result.status).toBe("ready");
+  expect(await coldWorlds.readSurface(worldId, "state")).toEqual(state);
+  expect(host.requests[0]?.appended.some((item) => item.kind === "tool")).toBe(
+    true,
+  );
+  expect(
+    result.events.filter((event) => event.kind === "tool_result"),
+  ).toHaveLength(1);
+  const history = (await coldWorlds.recoverEndpoint(worldId)).history.map(
+    ({ exactText }) => exactText,
+  );
+  expect(history.filter((text) => text === "打开门。")).toHaveLength(1);
+  expect(history).toContain("新叙事。");
+  expect(history).not.toContain("旧叙事。");
+  const repeated = await chain.regenerateNarrative({
+    operationId: "regenerate",
+    worldId,
+    chainId: initial.chainId,
+    eventId: narrative.id,
+    modelHost: host,
+  });
+  expect(repeated.parentHead).toBe(result.parentHead);
+  await expect(
+    chain.regenerateNarrative({
+      operationId: "stale",
+      worldId,
+      chainId: initial.chainId,
+      eventId: narrative.id,
+      modelHost: host,
+    }),
+  ).rejects.toThrow(/stale|unavailable/i);
+  expect(await coldWorlds.currentHead(worldId)).toBe(result.parentHead);
+  expect(host.requests).toHaveLength(1);
+});
+
+test("只重新生成叙事时拒绝工具调用并能在重启后重试", async () => {
+  const { worlds, worldId, root } = await createWorld("narrative-no-tools");
+  const host = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [{ outcome: "response", text: "旧叙事。" }],
+  });
+  const original = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "narrative-no-tools",
+    exchangeId: "first",
+    playerText: "行动。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: host,
+  });
+  const narrative = original.events.findLast(
+    (event) => event.kind === "assistant" && event.responseKind === "narrative",
+  );
+  if (narrative?.kind !== "assistant") throw new Error("Missing narrative");
+  const state = await worlds.readSurface(worldId, "state");
+  const malicious = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "again",
+            name: "world_patch",
+            arguments: {
+              target: "@current-situation",
+              edits: [
+                {
+                  op: "replace",
+                  locator: { yaml: ["情况"] },
+                  value: "不应执行。",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  });
+  const interrupted = await new PlayCallChain(
+    new FileNativeWorldStore(root),
+  ).regenerateNarrative({
+    operationId: "reject-tool",
+    worldId,
+    chainId: original.chainId,
+    eventId: narrative.id,
+    modelHost: malicious,
+  });
+  expect(interrupted).toMatchObject({ status: "interrupted", canRetry: true });
+  expect(await worlds.readSurface(worldId, "state")).toEqual(state);
+  expect(
+    interrupted.events.filter((event) => event.kind === "tool_result"),
+  ).toHaveLength(0);
+  const coldWorlds = new FileNativeWorldStore(root);
+  const retry = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [{ outcome: "response", text: "新叙事。" }],
+  });
+  const finished = await new PlayCallChain(coldWorlds).append({
+    worldId,
+    chainId: interrupted.chainId,
+    exchangeId: "retry",
+    playerText: "",
+    modelHost: retry,
+  });
+  expect(finished.status).toBe("ready");
+  expect(await coldWorlds.readSurface(worldId, "state")).toEqual(state);
+});
+
+test("151 play cold resumes after settled Google tools", async () => {
+  const calls = [
+    {
+      id: "read",
+      name: "context_read",
+      arguments: { ref: "@current-situation" },
+    },
+    {
+      id: "write",
+      name: "world_patch",
+      arguments: {
+        target: "@current-situation",
+        edits: [
+          { op: "replace", locator: { yaml: ["情况"] }, value: "已提交的变化" },
+        ],
+      },
+    },
+    {
+      id: "bad",
+      name: "world_patch",
+      arguments: { target: "@missing", edits: [] },
+    },
+  ];
+  const requestBodies: unknown[] = [];
+  const host = new FileNativeModelHost(
+    {
+      provider: "google_interactions",
+      baseUrl: "https://provider.invalid/v1beta",
+      apiKey: "synthetic-secret",
+      modelId: "manual-model",
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_000,
+    },
+    (_url, options) => {
+      if (typeof options?.body !== "string")
+        throw new Error("Missing request body");
+      requestBodies.push(JSON.parse(options.body) as unknown);
+      const events =
+        requestBodies.length === 1
+          ? [
+              {
+                event_type: "step.start",
+                index: 0,
+                step: { type: "model_output", extension: { order: [3, 1] } },
+              },
+              {
+                event_type: "step.delta",
+                index: 0,
+                delta: { type: "text", text: "诊断文字" },
+              },
+              { event_type: "step.stop", index: 0 },
+              ...calls.flatMap((call, index) => [
+                {
+                  event_type: "step.start",
+                  index: index + 1,
+                  step: {
+                    type: "function_call",
+                    ...call,
+                    extension: { original: index },
+                  },
+                },
+                { event_type: "step.stop", index: index + 1 },
+              ]),
+              {
+                event_type: "interaction.completed",
+                interaction: { status: "requires_action" },
+              },
+            ]
+          : requestBodies.length === 2
+            ? [
+                {
+                  event_type: "step.start",
+                  index: 0,
+                  step: { type: "model_output" },
+                },
+                {
+                  event_type: "step.delta",
+                  index: 0,
+                  delta: { type: "text", text: "UNCOMMITTED_FRAGMENT_151" },
+                },
+              ]
+            : googleText("COMPLETED_151");
+      return Promise.resolve(
+        new Response(
+          events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      );
+    },
+  );
+  const { worlds, worldId, root } = await createWorld(
+    "google-tool-incomplete",
+    undefined,
+    host.binding(),
+  );
+  const result = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "google-tool-incomplete",
+    exchangeId: "first",
+    playerText: "推开门。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: host.binding(),
+    modelHost: host,
+  });
+
+  expect(result).toMatchObject({ status: "interrupted", canRetry: true });
+  const coldWorlds = new FileNativeWorldStore(root);
+  const before = await coldWorlds.readAuthorityHistory(worldId);
+  const resumed = await new PlayCallChain(coldWorlds).append({
+    worldId,
+    chainId: "google-tool-incomplete",
+    exchangeId: "retry",
+    playerText: "",
+    modelHost: host,
+  });
+  expect(resumed).toMatchObject({ status: "ready" });
+  expect(requestBodies).toHaveLength(3);
+  expect(JSON.stringify(requestBodies[2])).toContain('"call_id":"write"');
+  expect(JSON.stringify(requestBodies[2])).not.toContain(
+    "UNCOMMITTED_FRAGMENT_151",
+  );
+  expect(
+    resumed.events.filter(
+      (e) => e.kind === "tool_result" && e.callId === "write",
+    ),
+  ).toHaveLength(1);
+  const after = await coldWorlds.readAuthorityHistory(worldId);
+  expect(after.commits.slice(0, -1).map((c) => c.head)).toEqual(
+    before.commits.map((c) => c.head),
+  );
+  expect(after.commits.at(-1)?.historyAppend[0]?.exactText).toBe(
+    "COMPLETED_151",
+  );
 });

@@ -1104,22 +1104,51 @@ export class V1Runtime {
         };
         const result = await playCall(async () => {
           await this.#worlds.assertWorldRevisionUnlocked(request.worldId);
-          if (request.continuation === "continue_context")
-            return this.#playCallChains.revisePlayer({
-              ...base,
-              continuation: request.continuation,
-            });
-          const { hostBinding, playPreset, modelBinding } =
-            await this.#continuousBinding();
-          return this.#playCallChains.revisePlayer({
-            ...base,
-            continuation: request.continuation,
-            freshContext: { hostBinding, playPreset, modelBinding },
-          });
+          const binding =
+            request.continuation === "fresh_context" ||
+            request.sendAfterRevision === true
+              ? await this.#continuousBinding()
+              : null;
+          const modelHost =
+            binding?.modelHost ??
+            (request.requireCompatible === true
+              ? await this.#modelHost()
+              : undefined);
+          const revision =
+            request.continuation === "continue_context"
+              ? ({
+                  ...base,
+                  continuation: request.continuation,
+                  ...(modelHost === undefined ? {} : { modelHost }),
+                } as const)
+              : ({
+                  ...base,
+                  continuation: request.continuation,
+                  freshContext: {
+                    hostBinding: binding!.hostBinding,
+                    playPreset: binding!.playPreset,
+                    modelBinding: binding!.modelBinding,
+                  },
+                } as const);
+          if (request.sendAfterRevision === true && binding !== null)
+            return this.#playCallChains.reviseAndAppend(
+              revision,
+              binding.modelHost,
+              () => Promise.resolve(binding),
+            );
+          return this.#playCallChains.revisePlayer(revision);
         });
         await this.#reconcileArtifacts(request.worldId);
         return result;
       }
+      case "play.chain.regenerate-narrative":
+        return playCall(async () => {
+          await this.#worlds.assertWorldRevisionUnlocked(request.worldId);
+          return this.#playCallChains.regenerateNarrative({
+            ...request,
+            modelHost: await this.#modelHost(),
+          });
+        });
       case "play.chain.start": {
         await this.#worlds.assertWorldRevisionUnlocked(request.worldId);
         const { modelHost, hostBinding, playPreset, modelBinding } =

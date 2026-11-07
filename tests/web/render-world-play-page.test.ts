@@ -3410,7 +3410,7 @@ describe("世界游玩页面", () => {
     expect(
       await screen.findByText("Alex has opened the door halfway"),
     ).toBeTruthy();
-    expect(screen.getByText(/可以重新发送已保存的请求/u)).toBeTruthy();
+    expect(screen.getByText(/可以使用当前选中的兼容连接/u)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "重新发送" }));
 
     expect(
@@ -3780,7 +3780,7 @@ describe("世界游玩页面", () => {
         return Promise.reject(new Error(`Unexpected request: ${request.type}`));
       }),
     };
-    renderWorld(client);
+    renderWorld(client, undefined, { simulateCombinedRevision: true });
     await screen.findByText("Alex opens the door and lets you go first.");
     expect(
       screen.getByText(
@@ -3880,7 +3880,7 @@ describe("世界游玩页面", () => {
           );
         }),
       };
-      renderWorld(client);
+      renderWorld(client, undefined, { simulateCombinedRevision: true });
       await screen.findByText("Alex opens the door and lets you go first.");
       const regenerate = screen.getByRole<HTMLButtonElement>("button", {
         name: "重新生成",
@@ -3909,18 +3909,14 @@ describe("世界游玩页面", () => {
           type: "play.chain.revise-player",
           continuation: "fresh_context",
           replacementText: originalText,
-          chainId:
-            scenario === "append-protocol-mismatch"
-              ? "continued-regeneration"
-              : "original",
+          chainId: "original",
           eventId: 1,
         }),
       );
       expect(client.request).toHaveBeenCalledWith(
         expect.objectContaining({
-          type: "play.chain.append",
-          chainId: "fresh-regeneration",
-          playerText: "",
+          type: "play.chain.revise-player",
+          sendAfterRevision: true,
         }),
       );
     },
@@ -4006,7 +4002,7 @@ describe("世界游玩页面", () => {
         }),
       };
       const onOpenWorld = vi.fn(() => Promise.resolve());
-      renderWorld(client, onOpenWorld);
+      renderWorld(client, onOpenWorld, { simulateCombinedRevision: true });
       fireEvent.change(await screen.findByLabelText("你的行动"), {
         target: { value: "尚未发送的草稿" },
       });
@@ -4034,11 +4030,6 @@ describe("世界游玩页面", () => {
           replacementText: originalText,
           continuation: "continue_context",
         }),
-        expect.objectContaining({
-          type: "play.chain.append",
-          chainId: "regenerated-chain",
-          playerText: "",
-        }),
       ]);
       if (status === "ready")
         expect(screen.getByText("重新生成的正文")).toBeTruthy();
@@ -4049,7 +4040,7 @@ describe("世界游玩页面", () => {
             client.request.mock.calls.filter(
               ([request]) => request.type === "play.chain.append",
             ),
-          ).toHaveLength(2),
+          ).toHaveLength(1),
         );
         expect(
           client.request.mock.calls
@@ -4123,7 +4114,7 @@ describe("世界游玩页面", () => {
       }),
     };
 
-    renderWorld(client, onOpenWorld);
+    renderWorld(client, onOpenWorld, { simulateCombinedRevision: true });
     await screen.findByText("I signal Alex to open the door.");
     const playerMessage = screen
       .getByText("I signal Alex to open the door.")
@@ -4170,15 +4161,12 @@ describe("世界游玩页面", () => {
       replacementText: "I ask Alex not to open the door yet.",
       continuation: "continue_context",
     });
-    expect(
-      client.request.mock.calls
-        .map(([request]) => request)
-        .find((request) => request.type === "play.chain.append"),
-    ).toMatchObject({
-      worldId: "world-one",
-      chainId: "play-chain-revised",
-      playerText: "",
-    });
+    expect(client.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "play.chain.revise-player",
+        sendAfterRevision: true,
+      }),
+    );
   });
 
   test("修改玩家提交可明确选择把修改稿作为全新上下文保存", async () => {
@@ -4239,7 +4227,7 @@ describe("世界游玩页面", () => {
       }),
     };
 
-    renderWorld(client);
+    renderWorld(client, undefined, { simulateCombinedRevision: true });
     await screen.findByText("I signal Alex to open the door.");
     const playerMessage = screen
       .getByText("I signal Alex to open the door.")
@@ -4277,21 +4265,18 @@ describe("世界游玩页面", () => {
       replacementText: "I ask Alex to wait before opening the door.",
       continuation: "fresh_context",
     });
-    expect(
-      client.request.mock.calls
-        .map(([request]) => request)
-        .find((request) => request.type === "play.chain.append"),
-    ).toMatchObject({
-      worldId: "world-one",
-      chainId: "play-chain-fresh-revision",
-      playerText: "",
-    });
+    expect(client.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "play.chain.revise-player",
+        sendAfterRevision: true,
+      }),
+    );
   });
 });
 
 function renderWorld(
   client: {
-    request(request: V1Request): Promise<unknown>;
+    request: (request: V1Request) => Promise<unknown>;
     observeConversation?: ObserveConversation;
     generate?: (
       request: Extract<
@@ -4308,6 +4293,7 @@ function renderWorld(
     onRenameWorld?: (name: string) => Promise<void>;
     initialReadingPreferences?: AppReadingPreferences;
     modelConfigured?: boolean;
+    simulateCombinedRevision?: boolean;
   } = {},
 ) {
   let receive: Parameters<ObserveConversation>[1] | undefined;
@@ -4349,6 +4335,34 @@ function renderWorld(
         return result;
       }
       const result = await client.request(request);
+      if (
+        options.simulateCombinedRevision &&
+        request.type === "play.chain.revise-player" &&
+        request.sendAfterRevision &&
+        vi.isMockFunction(client.request)
+      ) {
+        const revised = result as {
+          outcome: string;
+          playCallChain: V1PlayCallChainView;
+        };
+        const implementation = vi
+          .mocked(client.request)
+          .getMockImplementation();
+        if (implementation === undefined)
+          throw new Error("Missing test runtime implementation");
+        const continued = await implementation({
+          type: "play.chain.append",
+          worldId: request.worldId,
+          chainId: revised.playCallChain.chainId,
+          exchangeId: "combined",
+          playerText: "",
+        });
+        return {
+          ...revised,
+          playCallChain: continued,
+          sentAfterRevision: true,
+        };
+      }
       if (request.type === "play.chain.cancel") {
         const value = (await client.request({
           type: "play.chain.inspect",
@@ -4369,12 +4383,14 @@ function renderWorld(
       client: observedClient,
       worldId: "world-one",
       worldTitle: "宿舍世界",
-      modelConfigured: true,
       onBack: vi.fn(),
       onConfigureModel: vi.fn(),
       onRenameWorld: options.onRenameWorld ?? vi.fn(() => Promise.resolve()),
       onOpenWorld,
-      ...options,
+      ...(options.initialReadingPreferences === undefined
+        ? {}
+        : { initialReadingPreferences: options.initialReadingPreferences }),
+      modelConfigured: options.modelConfigured ?? true,
     }),
   );
 }

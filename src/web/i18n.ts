@@ -1940,6 +1940,17 @@ const worldPageEnglishMessages: Record<string, string> = {
   "正在创建…": "Creating…",
   创建分叉: "Create fork",
   重新生成: "Regenerate",
+  只重新生成叙事: "Regenerate narrative only",
+  "正在重新生成叙事…": "Regenerating narrative…",
+  "已重新生成叙事。": "Narrative regenerated.",
+  "叙事生成中断；可以重新发送已保存的请求。":
+    "Narrative generation was interrupted; you can retry the saved request.",
+  "可以使用当前选中的兼容连接，从本地最后已结算的步骤重新发送，不会重复提交玩家原文。":
+    "Retry from the last locally settled step using the currently selected compatible connection, without submitting the player message again.",
+  "模型请求已发出，但结果未知；请查看详情，或从全新上下文继续。":
+    "The model request was sent, but its outcome is unknown. Check the details or start a fresh context.",
+  "模型回复达到输出上限，尚未完成。请在模型配置中调高最大输出 Token 后重试；推理也可能占用输出额度。":
+    "The response reached its output limit. Increase the maximum output tokens in model settings before retrying; reasoning may also use output tokens.",
   "正在重新生成…": "Regenerating…",
   "已重新生成；原回复已离开当前时间线":
     "Regenerated; the original reply is no longer on the current timeline",

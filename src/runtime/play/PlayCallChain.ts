@@ -32,6 +32,7 @@ import { PlayCallChainError } from "./PlayCallChainError.ts";
 import {
   preparePlayerRevisionTrace,
   prepareForkTrace,
+  transcriptThroughEvents,
   restorePlayDocuments,
   independentContextCopy,
 } from "./PlayTraceRetention.ts";
@@ -80,11 +81,14 @@ import type {
 import {
   equalModelHostBinding,
   ModelHostCancelledError,
+  ModelHostFailureError,
   ModelHostOutcomeUnknownError,
 } from "../model/ModelHost.ts";
+import { validAuthoringNativeContinuation } from "../model/FileNativeModelAdapters.ts";
 import { validGoogleInteractionsContinuation } from "../model/ProviderExchangeState.ts";
 import {
   FileNativePromptCompiler,
+  retargetFrozenCompilation,
   type FileNativePromptInput,
   type PlayPresetCompilation,
   type PromptCompilation,
@@ -200,6 +204,7 @@ interface PlayCallChainRevisionBaseInput {
   replacementExchangeId: string;
   replacementText: string;
   turnNote?: string;
+  modelHost?: ModelHost;
 }
 
 type PlayCallChainRevisionInput = PlayCallChainRevisionBaseInput &
@@ -253,6 +258,32 @@ interface PlayerRevisionIntent {
   /** Contexts from the edited one onward; a rewind discards them from disk. */
   discardChainIds: string[];
   freshContext?: PlayerRevisionFreshContext;
+}
+
+interface NarrativeRevisionIntent {
+  schemaVersion: 1;
+  kind: "narrative_revision_intent";
+  operationId: string;
+  worldId: string;
+  chainId: string;
+  eventId: number;
+  restoresHead: string;
+}
+
+function isNarrativeRevisionIntent(
+  value: unknown,
+): value is NarrativeRevisionIntent {
+  if (typeof value !== "object" || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    record.schemaVersion === 1 &&
+    record.kind === "narrative_revision_intent" &&
+    typeof record.operationId === "string" &&
+    typeof record.worldId === "string" &&
+    typeof record.chainId === "string" &&
+    Number.isSafeInteger(record.eventId) &&
+    typeof record.restoresHead === "string"
+  );
 }
 
 function isPlayerRevisionIntent(value: unknown): value is PlayerRevisionIntent {
@@ -557,22 +588,19 @@ export class PlayCallChain {
           throw new PlayCallChainError(
             "The current model context cannot continue; use a fresh context.",
           );
-        // Pre-snapshot requests have only a binding fingerprint. Do not invent
-        // their original encoding settings from a newly selected connection.
-        if (
-          session.lastRequest.modelConfig === undefined &&
-          !equalModelHostBinding(
-            session.modelBinding!,
-            input.modelHost.binding(),
-          )
-        )
-          throw new PlayCallChainError(
-            "This older saved request has no model configuration snapshot. Restore its original settings to retry it, or start a fresh context.",
-          );
+        const request = structuredClone(session.lastRequest);
+        delete request.modelConfig;
+        request.maxOutputTokens = input.modelHost.binding().maxOutputTokens;
+        request.bootstrap = retargetFrozenCompilation(
+          request.bootstrap,
+          input.modelHost.binding(),
+        );
+        const currentRequest =
+          input.modelHost.freezeRequest?.(request) ?? request;
         return this.#dispatch(
           session,
           input.modelHost,
-          structuredClone(session.lastRequest),
+          currentRequest,
           session.lastRequestAttempt + 1,
           signal,
           input.observer,
@@ -722,14 +750,23 @@ export class PlayCallChain {
     return { outcome: "cancellation_requested" };
   }
 
-  async #runInvocation(
+  async #runInvocation<
+    Result extends
+      | V1PlayCallChainView
+      | {
+          outcome: "revised";
+          worldId: string;
+          playCallChain: V1PlayCallChainView;
+          sentAfterRevision: true;
+        },
+  >(
     input: {
       worldId: string;
       chainId: string;
       exchangeId: string;
     },
-    run: (signal: AbortSignal) => Promise<V1PlayCallChainView>,
-  ): Promise<V1PlayCallChainView> {
+    run: (signal: AbortSignal) => Promise<Result>,
+  ): Promise<Result> {
     validateIdentity(input.worldId, "world ID");
     validateIdentity(input.chainId, "call-chain ID");
     validateIdentity(input.exchangeId, "exchange ID");
@@ -1198,6 +1235,289 @@ export class PlayCallChain {
     });
   }
 
+  async regenerateNarrative(input: {
+    operationId: string;
+    worldId: string;
+    chainId: string;
+    eventId: number;
+    modelHost: ModelHost;
+  }): Promise<V1PlayCallChainView> {
+    const chainId = derivedChainId(
+      input.chainId,
+      `narrative-revision:${input.operationId}`,
+      input.worldId,
+    );
+    return this.#runInvocation(
+      { worldId: input.worldId, chainId, exchangeId: input.operationId },
+      (signal) => this.#regenerateNarrative(input, chainId, signal),
+    );
+  }
+
+  async #regenerateNarrative(
+    input: {
+      operationId: string;
+      worldId: string;
+      chainId: string;
+      eventId: number;
+      modelHost: ModelHost;
+    },
+    resultChainId: string,
+    signal: AbortSignal,
+  ): Promise<V1PlayCallChainView> {
+    validateIdentity(input.operationId, "narrative revision operation ID");
+    await this.#recoverPlayerRevision(input.worldId);
+    if (await this.#worlds.archiveNeedsFreshContext(input.worldId))
+      throw new PlayCallChainError(
+        "This world was imported from a backup; start a fresh context before continuing.",
+      );
+    const current = await this.#readPersisted(input.worldId);
+    if (current?.chainId === resultChainId) return projectView(current);
+    const source = (
+      await this.#worlds.playTimeline.readContext(input.worldId, input.chainId)
+    )?.value;
+    if (
+      source?.importedFromArchive === true ||
+      source === undefined ||
+      current?.chainId !== input.chainId ||
+      source.status !== "ready"
+    )
+      throw new PlayCallChainError(
+        "The narrative target is stale or unavailable.",
+      );
+    const index = source.events.findIndex(
+      (event) => event.id === input.eventId,
+    );
+    const target = source.events[index];
+    if (
+      target?.kind !== "assistant" ||
+      target.status !== "completed" ||
+      target.responseKind !== "narrative" ||
+      target.committedHead === undefined ||
+      target.committedHead !==
+        (await this.#worlds.currentHead(input.worldId)) ||
+      source.events
+        .slice(index + 1)
+        .some(
+          (event) =>
+            event.kind === "player" ||
+            (event.kind === "assistant" && event.status === "completed"),
+        ) ||
+      source.lastRequest?.exchange !== target.exchange
+    )
+      throw new PlayCallChainError(
+        "The latest narrative or its saved request is unavailable; the timeline was not changed.",
+      );
+    assertSessionModelHostBinding(source, input.modelHost);
+    if (
+      !validAuthoringNativeContinuation(
+        source.lastRequest.appended,
+        input.modelHost.binding().provider,
+      )
+    )
+      throw new PlayCallChainError(
+        "The saved native continuation is incompatible; start a fresh context.",
+      );
+    const savedPrefix = source.lastRequest.appended.filter(
+      (item) => item.kind !== "runtime_notice" || item.notice !== "turn_guide",
+    );
+    if (
+      !isDeepStrictEqual(
+        transcriptThroughEvents(
+          source.transcript,
+          source.events.slice(0, index),
+        ),
+        savedPrefix,
+      )
+    )
+      throw new PlayCallChainError(
+        "The saved narrative request does not match its timeline; no changes were made.",
+      );
+    const restoresHead = playerRevisionRestoresHead(source, index);
+    const intent: NarrativeRevisionIntent = {
+      schemaVersion: 1,
+      kind: "narrative_revision_intent",
+      operationId: input.operationId,
+      worldId: input.worldId,
+      chainId: input.chainId,
+      eventId: input.eventId,
+      restoresHead,
+    };
+    await this.#worlds.operations.withExclusiveWorldStateMutation(
+      input.worldId,
+      async () => {
+        if (
+          (await this.#worlds.currentHead(input.worldId)) !==
+          target.committedHead
+        )
+          throw new PlayCallChainError("The narrative target is stale.");
+        await this.#worlds.writePlayerRevisionIntent(input.worldId, intent);
+        await this.#completeNarrativeRevision(intent);
+      },
+    );
+    return this.#append(
+      {
+        worldId: input.worldId,
+        chainId: resultChainId,
+        exchangeId: input.operationId,
+        playerText: "",
+        modelHost: input.modelHost,
+      },
+      signal,
+    );
+  }
+
+  async #completeNarrativeRevision(
+    intent: NarrativeRevisionIntent,
+  ): Promise<void> {
+    const resultChainId = derivedChainId(
+      intent.chainId,
+      `narrative-revision:${intent.operationId}`,
+      intent.worldId,
+    );
+    const outline = await this.#worlds.playTimeline.readTimelineOutline(
+      intent.worldId,
+    );
+    if (outline?.chainIds.at(-1) !== resultChainId) {
+      const source = (
+        await this.#worlds.playTimeline.readContext(
+          intent.worldId,
+          intent.chainId,
+        )
+      )?.value;
+      const index =
+        source?.events.findIndex((event) => event.id === intent.eventId) ?? -1;
+      if (source === undefined || index < 0 || source.lastRequest === null)
+        throw new PlayCallChainError(
+          "The saved narrative request is unavailable.",
+        );
+      const events = source.events.slice(0, index);
+      const baseline = await this.#worlds.recoverEndpoint(
+        intent.worldId,
+        source.baselineHead,
+      );
+      const selected = await this.#worlds.recoverEndpoint(
+        intent.worldId,
+        intent.restoresHead,
+      );
+      await this.#worlds.rewindPlayerRevision(
+        intent.worldId,
+        intent.restoresHead,
+      );
+      await this.#artifacts?.discardAfterHead(
+        intent.worldId,
+        intent.restoresHead,
+      );
+      const binding = await this.#worlds.bindPlayCallChain(intent.worldId);
+      const trace = prepareForkTrace(source, events).atEndpoint({
+        baseline,
+        selected,
+        binding,
+      });
+      if (source.narrativeOrigin === undefined) delete trace.narrativeOrigin;
+      else trace.narrativeOrigin = structuredClone(source.narrativeOrigin);
+      const request = structuredClone(source.lastRequest);
+      request.operationId = `narrative-only:${intent.operationId}`;
+      const revised: PersistedPlayCallChain = {
+        ...trace,
+        schemaVersion: 3,
+        kind: "play_call_chain",
+        worldId: intent.worldId,
+        chainId: resultChainId,
+        previousContexts: [],
+        previousChainId: source.previousChainId,
+        timelineGeneration: revisionTimelineGeneration(
+          source.timelineGeneration,
+          intent.operationId,
+          intent.worldId,
+          "continue_context",
+        ),
+        parentHead: intent.restoresHead,
+        updatedAt: Date.now(),
+        status: "interrupted",
+        canRetry: true,
+        lastRequest: request,
+        lastRequestAttempt: 0,
+        lastFailure: "Narrative is ready to regenerate.",
+      };
+      await this.#worlds.playTimeline
+        .copyRetainedEncodings(intent.worldId, source.chainId, revised)
+        .catch(() => forgetFollowupPreviews(revised));
+      await this.#worlds.playTimeline.persist(revised);
+    }
+    await this.#worlds.playTimeline.discardContexts(intent.worldId, [
+      intent.chainId,
+    ]);
+    await this.#worlds.playAdvances.discardChain(
+      intent.worldId,
+      intent.chainId,
+    );
+    const activeId = this.#worldChains.get(intent.worldId);
+    if (activeId !== undefined) this.#active.delete(activeId);
+    this.#worldChains.delete(intent.worldId);
+    await this.#worlds.clearPlayerRevisionIntent(intent.worldId);
+  }
+
+  async reviseAndAppend(
+    input: PlayCallChainRevisionInput,
+    modelHost: ModelHost,
+    resolvePrompt: PlayCallChainAppendInput["resolvePrompt"],
+  ): Promise<{
+    outcome: "revised";
+    worldId: string;
+    playCallChain: V1PlayCallChainView;
+    sentAfterRevision: true;
+  }> {
+    const chainId = revisionChainId(
+      input.chainId,
+      input.operationId,
+      input.worldId,
+      input.continuation,
+    );
+    return this.#runInvocation(
+      { worldId: input.worldId, chainId, exchangeId: input.operationId },
+      async (signal) => {
+        const revised = await this.revisePlayer(input);
+        const events = revised.playCallChain.events;
+        const playerIndex = events.findIndex(
+          (event) =>
+            event.kind === "player" &&
+            event.exchangeId === input.replacementExchangeId,
+        );
+        const alreadyCompleted =
+          playerIndex >= 0 &&
+          events
+            .slice(playerIndex + 1)
+            .some(
+              (event) =>
+                event.kind === "assistant" &&
+                event.status === "completed" &&
+                event.responseKind === "narrative",
+            );
+        const continued = alreadyCompleted
+          ? revised.playCallChain
+          : await this.#append(
+              {
+                worldId: input.worldId,
+                chainId: revised.playCallChain.chainId,
+                exchangeId: input.operationId,
+                playerText: "",
+                ...(input.turnNote === undefined
+                  ? {}
+                  : { turnNote: input.turnNote }),
+                modelHost,
+                ...(resolvePrompt === undefined ? {} : { resolvePrompt }),
+              },
+              signal,
+            );
+        return {
+          ...revised,
+          playCallChain: continued,
+          sentAfterRevision: true,
+        };
+      },
+    );
+  }
+
   /**
    * Edit one committed player message as a rewind followed by an ordinary
    * submission (ADR-0044, ADR-0045). The intent is written before the first
@@ -1309,6 +1629,26 @@ export class PlayCallChain {
         "The selected event is not a committed player message.",
       );
 
+    if (
+      input.continuation === "continue_context" &&
+      input.modelHost !== undefined
+    ) {
+      assertSessionModelHostBinding(sourceContext, input.modelHost);
+      const prefix = transcriptThroughEvents(
+        sourceContext.transcript,
+        sourceContext.events.slice(0, eventIndex),
+      );
+      if (
+        !validAuthoringNativeContinuation(
+          prefix,
+          input.modelHost.binding().provider,
+        )
+      )
+        throw new PlayCallChainError(
+          "The saved native continuation is incompatible; switch back or start a fresh context.",
+        );
+    }
+
     const intent: PlayerRevisionIntent = {
       schemaVersion: 1,
       kind: "player_revision_intent",
@@ -1338,6 +1678,10 @@ export class PlayCallChain {
       async () => {
         const intent = await this.#worlds.readPlayerRevisionIntent(worldId);
         if (intent === null) return;
+        if (isNarrativeRevisionIntent(intent) && intent.worldId === worldId) {
+          await this.#completeNarrativeRevision(intent);
+          return;
+        }
         if (!isPlayerRevisionIntent(intent) || intent.worldId !== worldId)
           throw new PlayCallChainError(
             "The interrupted player revision record is invalid.",
@@ -2357,6 +2701,8 @@ export class PlayCallChain {
         session.exchange,
         this.#compiler.locale,
       );
+      if (session.lastRequest !== null)
+        nextRequest.bootstrap = structuredClone(session.lastRequest.bootstrap);
       if (session.lastRequest?.modelConfig !== undefined)
         nextRequest.modelConfig = structuredClone(
           session.lastRequest.modelConfig,
@@ -2502,6 +2848,13 @@ export class PlayCallChain {
           throw new ModelHostCancelledError(
             "The player cancelled the dispatched model request; its response was not committed.",
           );
+        if (
+          request.operationId?.startsWith("narrative-only:") &&
+          (response.toolCalls?.length ?? 0) > 0
+        )
+          throw new ModelHostFailureError(
+            "Narrative regeneration cannot execute tool calls; retry the narrative request.",
+          );
         this.#setInvocationAbortable(session.chainId, false);
         if ((response.toolCalls?.length ?? 0) > 0)
           this.#observeInvocation(session.chainId, "tool", {
@@ -2519,8 +2872,6 @@ export class PlayCallChain {
                 )
               : error,
             event.id,
-            (request.modelConfig?.provider ??
-              session.modelBinding?.provider) === "google_interactions",
           ),
           advance,
           () => this.#notifySnapshot(observer, session),
@@ -2715,11 +3066,15 @@ export class PlayCallChain {
         presentations: frozenFollowupPresentations(session),
         modelHost,
         followups,
-        bootstrap: currentPlayPrompt(session).bootstrap,
+        bootstrap:
+          session.lastRequest?.bootstrap ??
+          currentPlayPrompt(session).bootstrap,
         // Captured once: every followup is dispatched against this exact
         // prefix, so none of them observes another one's prompt or output.
         prefix: structuredClone(session.transcript),
-        toolStrategy: currentPlayPrompt(session).bootstrap.toolStrategy,
+        toolStrategy: (
+          session.lastRequest?.bootstrap ?? currentPlayPrompt(session).bootstrap
+        ).toolStrategy,
         context: {
           // A follow-up produces no world endpoint of its own, so it starts and
           // ends on the settled exchange's head. Reconciliation keeps panels
@@ -3632,7 +3987,7 @@ function assertModelHostBinding(
 }
 
 function assertSessionModelHostBinding(
-  session: PersistedPlayCallChain,
+  session: Pick<PersistedPlayCallChainContext, "modelBinding">,
   modelHost: ModelHost,
 ): void {
   if (session.modelBinding === undefined)
@@ -3643,13 +3998,6 @@ function assertSessionModelHostBinding(
     throw new PlayCallChainError(
       "The selected model protocol differs from this context. Switch back to its original protocol to continue, or start a fresh context.",
       "model_protocol_mismatch",
-    );
-  if (
-    session.modelBinding.provider === "google_interactions" &&
-    !equalModelHostBinding(session.modelBinding, modelHost.binding())
-  )
-    throw new PlayCallChainError(
-      "The selected model connection does not match the frozen Google binding; start a fresh context.",
     );
 }
 

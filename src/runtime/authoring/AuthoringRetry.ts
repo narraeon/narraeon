@@ -1,6 +1,11 @@
 import { validAuthoringNativeContinuation } from "../model/FileNativeModelAdapters.ts";
 import { dispatchRequiresFreshContext } from "../model/DispatchFailure.ts";
-import type { ModelHostExchange } from "../model/ModelHost.ts";
+import type {
+  ModelHost,
+  ModelHostAppendItem,
+  ModelHostBinding,
+  ModelHostExchange,
+} from "../model/ModelHost.ts";
 import type { ModelToolConversationState } from "./ModelToolConversation.ts";
 
 type RetryState = ModelToolConversationState;
@@ -28,10 +33,7 @@ export function checkpointNextAuthoringDispatch(
   state: "dispatching" | "retryable",
 ): void {
   const request = session.requests?.at(-1);
-  if (
-    session.modelBinding.provider !== "google_interactions" &&
-    request !== undefined
-  )
+  if (request !== undefined)
     session.retryDispatch = {
       requestId: request.requestId,
       exchange: session.exchange + 1,
@@ -58,7 +60,6 @@ export function failAuthoringDispatch(
     checkpoint.state === "dispatching" &&
     checkpoint.modelItemCount === session.modelItems.length;
   checkpoint.state =
-    session.modelBinding.provider !== "google_interactions" &&
     (phase === "preparing" || phase === "dispatched" || settledNextRequest) &&
     !dispatchRequiresFreshContext(error, false)
       ? "retryable"
@@ -67,16 +68,12 @@ export function failAuthoringDispatch(
 
 export function recoverAuthoringDispatch(session: RetryState): void {
   if (session.retryDispatch?.state === "dispatching")
-    session.retryDispatch.state =
-      session.modelBinding.provider === "google_interactions"
-        ? "blocked"
-        : "retryable";
+    session.retryDispatch.state = "retryable";
 }
 
 export function canRetryAuthoringDispatch(session: RetryState): boolean {
   return (
     session.runStatus === "interrupted" &&
-    session.modelBinding.provider !== "google_interactions" &&
     session.googleOutcomeUnknown !== true &&
     session.pendingSettlement === null &&
     session.retryDispatch?.state === "retryable" &&
@@ -85,4 +82,18 @@ export function canRetryAuthoringDispatch(session: RetryState): boolean {
       session.modelBinding.provider,
     )
   );
+}
+
+export function assertCompatibleAuthoring(
+  binding: ModelHostBinding,
+  items: readonly ModelHostAppendItem[],
+  host: ModelHost,
+): void {
+  if (
+    binding.provider !== host.binding().provider ||
+    !validAuthoringNativeContinuation(items, host.binding().provider)
+  )
+    throw new Error(
+      "The selected model protocol is incompatible with this conversation; switch back or start a fresh model context.",
+    );
 }

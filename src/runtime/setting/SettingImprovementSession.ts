@@ -4,11 +4,15 @@ import {
   revertAuthoringChanges,
 } from "../authoring/AuthoringEditPlan.ts";
 import {
+  assertCompatibleAuthoring,
   canRetryAuthoringDispatch,
   checkpointNextAuthoringDispatch,
   recoverAuthoringDispatch,
 } from "../authoring/AuthoringRetry.ts";
-import { authoringRequestPreviews } from "../authoring/AuthoringRequestSnapshot.ts";
+import {
+  authoringRequestPreviews,
+  authoringActiveBinding,
+} from "../authoring/AuthoringRequestSnapshot.ts";
 import { readGameplay } from "../../protocol/gameplay.ts";
 import { isDeepStrictEqual } from "node:util";
 import type { AppLocale } from "../../protocol/appPreferences.ts";
@@ -34,7 +38,6 @@ import type {
   ModelHostBinding,
   ModelHostToolCall,
 } from "../model/ModelHost.ts";
-import { equalModelHostBinding } from "../model/ModelHost.ts";
 import {
   settingImprovementPromptForBinding,
   type PlayPresetBinding,
@@ -47,6 +50,7 @@ import { WorldDocumentStore } from "../world/WorldDocumentStore.ts";
 import {
   appendAuthoringUserMessage,
   authoringExchange,
+  recordAuthoringRetryPreview,
   ModelToolConversation,
   rememberAuthoringRequest,
   resumePausedAuthoringConversation,
@@ -125,9 +129,6 @@ export class SettingImprovementSession {
   readonly #compiler: FileNativePromptCompiler;
   readonly #locale: () => AppLocale;
   readonly #bindModelHost: () => Promise<ModelHost>;
-  readonly #bindExistingModelHost: (
-    binding: ModelHostBinding,
-  ) => Promise<ModelHost>;
   readonly #bindPlayPreset: () => Promise<PlayPresetBinding>;
   readonly #preview: (
     snapshot: WorldDocumentStore,
@@ -180,16 +181,6 @@ export class SettingImprovementSession {
     this.#compiler = input.compiler;
     this.#locale = input.locale;
     this.#bindModelHost = input.bindModelHost;
-    this.#bindExistingModelHost =
-      input.bindExistingModelHost ??
-      (async (binding) => {
-        const host = await input.bindModelHost();
-        if (!equalModelHostBinding(binding, host.binding()))
-          throw new Error(
-            "The enabled model connection no longer matches this setting-improvement conversation",
-          );
-        return host;
-      });
     this.#bindPlayPreset = input.bindPlayPreset;
     this.#preview = input.preview;
   }
@@ -377,44 +368,59 @@ export class SettingImprovementSession {
     const requestId = requiredRequestId(input.requestId);
     const prepared = await this.#mutate(async () => {
       let session: StoredSettingImprovementSession;
+      let selectedHost: ModelHost | undefined;
       if (input.continuation.kind === "fresh_context") {
-        session =
-          (await this.#store.findByCreationRequest(
+        const existing = await this.#store.findByCreationRequest(
+          input.packageId,
+          requestId,
+        );
+        if (existing !== null) session = existing;
+        else {
+          selectedHost = await this.#bindModelHost();
+          session = await this.#create(
             input.packageId,
             requestId,
-          )) ?? (await this.#create(input.packageId, requestId));
+            selectedHost,
+          );
+        }
       } else {
         session = await this.#store.read(input.continuation.sessionId);
         assertPackage(session, input.packageId);
       }
-      return this.#startRequest(session, requestId, async (next, lease) => {
-        if (next.runStatus === "paused")
-          throw new Error(
-            "Resume the paused authoring request before sending another message",
+      return this.#startRequest(
+        session,
+        requestId,
+        async (next, lease, host) => {
+          if (next.runStatus === "paused" || canRetryAuthoringDispatch(next))
+            throw new Error(
+              "Resume the paused authoring request before sending another message",
+            );
+          const { playPreset, bootstrap, preload } = await this.#compilePackage(
+            lease.package,
+            host.binding(),
           );
-        const { playPreset, bootstrap, preload } = await this.#compilePackage(
-          lease.package,
-          next.modelBinding,
-        );
-        if (next.schemaVersion !== 5) next.schemaVersion = 4;
-        next.requests ??= [];
-        next.requests.push({
-          requestId,
-          modelItemStart: next.modelItems.length,
-          bootstrap,
-          playPreset: structuredClone(playPreset),
-          preload: structuredClone(preload.record),
-        });
-        next.authorization = authoringPreloadAuthorization(
-          next.authorization,
-          preload.record,
-        );
-        delete next.retryDispatch;
-        appendAuthoringUserMessage(next, message, requestId);
-        checkpointNextAuthoringDispatch(next, "dispatching");
-        if (next.modelBinding.provider === "google_interactions")
-          next.googleOutcomeUnknown = false;
-      });
+          next.schemaVersion = 6;
+          next.requests ??= [];
+          next.requests.push({
+            requestId,
+            modelBinding: structuredClone(host.binding()),
+            modelItemStart: next.modelItems.length,
+            bootstrap,
+            playPreset: structuredClone(playPreset),
+            preload: structuredClone(preload.record),
+          });
+          next.authorization = authoringPreloadAuthorization(
+            next.authorization,
+            preload.record,
+          );
+          delete next.retryDispatch;
+          appendAuthoringUserMessage(next, message, requestId);
+          checkpointNextAuthoringDispatch(next, "dispatching");
+          if (next.modelBinding.provider === "google_interactions")
+            next.googleOutcomeUnknown = false;
+        },
+        selectedHost,
+      );
     });
     return prepared.run ?? this.#view(prepared.session);
   }
@@ -454,12 +460,9 @@ export class SettingImprovementSession {
         throw new Error(
           "The Google request outcome is unknown; start a fresh model context.",
         );
-      const host = await this.#bindExistingModelHost(session.modelBinding);
-      if (!equalModelHostBinding(session.modelBinding, host.binding()))
-        throw new Error(
-          "No saved model connection matches this setting-improvement conversation",
-        );
+      const host = await this.#bindModelHost();
       const { itemIndex, tail, next } = planAuthoringEdit(session, edit);
+      assertCompatibleAuthoring(session.modelBinding, next.modelItems, host);
       const lease = await this.#content.beginCurrentTreeContentPackageOperation(
         input.packageId,
       );
@@ -516,12 +519,13 @@ export class SettingImprovementSession {
             files: afterFiles,
             gameplay: readGameplay(afterFiles),
           },
-          session.modelBinding,
+          host.binding(),
         );
-        next.schemaVersion = 5;
+        next.schemaVersion = 6;
         delete next.pendingEdit;
         next.requests.push({
           requestId,
+          modelBinding: structuredClone(host.binding()),
           modelItemStart: itemIndex,
           bootstrap,
           playPreset: structuredClone(playPreset),
@@ -540,9 +544,9 @@ export class SettingImprovementSession {
           host.previewAuthoringRequest !== undefined
         )
           next.requests.at(-1)!.wireRequest = host.previewAuthoringRequest(
-            authoringExchange(next, requestId),
+            authoringExchange(next, requestId, undefined, host.binding()),
           );
-        session.schemaVersion = 5;
+        session.schemaVersion = 6;
         session.requests ??= [];
         session.pendingEdit = {
           beforeFingerprint: contentTreeFingerprint(beforeFiles),
@@ -593,7 +597,9 @@ export class SettingImprovementSession {
     prepare: (
       session: StoredSettingImprovementSession,
       lease: CurrentTreeContentPackageOperationLease,
+      host: ModelHost,
     ) => Promise<void> | void,
+    selectedHost?: ModelHost,
   ): Promise<{
     session: StoredSettingImprovementSession;
     run: Promise<SettingImprovementView> | null;
@@ -618,11 +624,8 @@ export class SettingImprovementSession {
       throw new Error(
         "The Google request outcome is unknown; start a fresh model context.",
       );
-    const host = await this.#bindExistingModelHost(session.modelBinding);
-    if (!equalModelHostBinding(session.modelBinding, host.binding()))
-      throw new Error(
-        "No saved model connection matches this setting-improvement conversation",
-      );
+    const host = selectedHost ?? (await this.#bindModelHost());
+    assertCompatibleAuthoring(session.modelBinding, session.modelItems, host);
     const lease = await this.#content.beginCurrentTreeContentPackageOperation(
       session.packageId,
     );
@@ -633,15 +636,17 @@ export class SettingImprovementSession {
         throw new Error(
           "The authoring conversation changed; reload it before continuing",
         );
-      if (session.schemaVersion === 3) session.schemaVersion = 4;
-      await prepare(session, lease);
+      if (session.schemaVersion !== 2) session.schemaVersion = 6;
+      await prepare(session, lease, host);
+      if (session.activeRequestId !== requestId)
+        recordAuthoringRetryPreview(session, host, requestId);
       if (
         session.modelBinding.provider === "google_interactions" &&
         host.previewAuthoringRequest !== undefined &&
         session.requests?.at(-1)?.requestId === requestId
       )
         session.requests.at(-1)!.wireRequest = host.previewAuthoringRequest(
-          authoringExchange(session, requestId),
+          authoringExchange(session, requestId, undefined, host.binding()),
         );
       await this.#store.save(session);
       return { session, run: this.#startRun(session, host, requestId) };
@@ -654,17 +659,9 @@ export class SettingImprovementSession {
     const session =
       sessionId === undefined ? null : await this.#store.read(sessionId);
     if (session !== null) assertPackage(session, packageId);
-    const host =
-      session === null
-        ? await this.#bindModelHost()
-        : await this.#bindExistingModelHost(session.modelBinding);
-    if (
-      session !== null &&
-      !equalModelHostBinding(session.modelBinding, host.binding())
-    )
-      throw new Error(
-        "No compatible saved model connection matches this authoring conversation",
-      );
+    const host = await this.#bindModelHost();
+    if (session !== null)
+      assertCompatibleAuthoring(session.modelBinding, session.modelItems, host);
     const { bootstrap } = await this.#compileCurrent(packageId, host.binding());
     return bootstrap;
   }
@@ -759,10 +756,10 @@ export class SettingImprovementSession {
   async #create(
     packageId: string,
     creationRequestId: string,
+    host: ModelHost,
   ): Promise<StoredSettingImprovementSession> {
-    const [package_, host, playPreset] = await Promise.all([
+    const [package_, playPreset] = await Promise.all([
       this.#content.readCurrentTreeContentPackage(packageId),
-      this.#bindModelHost(),
       this.#bindPlayPreset(),
     ]);
     const locale = this.#locale();
@@ -783,7 +780,7 @@ export class SettingImprovementSession {
     const now = Date.now();
     const sessionId = this.#store.createId();
     const session: StoredSettingImprovementSession = {
-      schemaVersion: 4,
+      schemaVersion: 6,
       requests: [],
       sessionId,
       packageId,
@@ -836,6 +833,7 @@ export class SettingImprovementSession {
           assistantItemIndex,
           toolCalls,
           activeTransaction,
+          host.binding(),
         );
       },
       view: (next) => this.#view(next),
@@ -847,7 +845,9 @@ export class SettingImprovementSession {
         interrupted: "The setting-improvement response was interrupted",
       },
       retrySupported:
-        session.schemaVersion === 4 || session.schemaVersion === 5,
+        session.schemaVersion === 4 ||
+        session.schemaVersion === 5 ||
+        session.schemaVersion === 6,
     });
   }
 
@@ -856,6 +856,7 @@ export class SettingImprovementSession {
     assistantItemIndex: number,
     calls: readonly ModelHostToolCall[],
     active: ActiveTransaction | null,
+    modelBinding: ModelHostBinding,
   ): Promise<ActiveTransaction> {
     const lease = await this.#content.beginCurrentTreeContentPackageOperation(
       session.packageId,
@@ -879,6 +880,7 @@ export class SettingImprovementSession {
               session,
               lease.package.files,
               beforeFingerprint,
+              modelBinding,
             );
       const results = transaction.execute(calls);
       const afterFiles = transaction.files();
@@ -906,7 +908,11 @@ export class SettingImprovementSession {
         }
       }
       this.#finalizeSettlement(session, prepared);
-      if (session.schemaVersion === 4 || session.schemaVersion === 5)
+      if (
+        session.schemaVersion === 4 ||
+        session.schemaVersion === 5 ||
+        session.schemaVersion === 6
+      )
         checkpointNextAuthoringDispatch(session, "dispatching");
       session.updatedAt = Date.now();
       await this.#store.save(session);
@@ -920,6 +926,7 @@ export class SettingImprovementSession {
     session: StoredSettingImprovementSession,
     files: readonly ContentTreeFile[],
     revision: string,
+    modelBinding: ModelHostBinding = authoringActiveBinding(session),
   ): SettingAuthoringTransaction {
     return new SettingAuthoringTransaction({
       baseFiles: files,
@@ -931,7 +938,7 @@ export class SettingImprovementSession {
       preview: (snapshot) =>
         this.#preview(
           snapshot,
-          session.modelBinding,
+          modelBinding,
           session.requests?.at(-1)?.playPreset ?? session.playPreset,
         ),
     });
@@ -992,7 +999,22 @@ export class SettingImprovementSession {
           )
             session.googleOutcomeUnknown = true;
           markInterruptedAfterRestart(session);
+          if (
+            session.retryDispatch === undefined &&
+            session.requests?.at(-1) !== undefined &&
+            (session.modelItems.at(-1)?.kind === "user" ||
+              session.modelItems.at(-1)?.kind === "tool")
+          ) {
+            session.schemaVersion = 6;
+            checkpointNextAuthoringDispatch(session, "retryable");
+            session.runStatus = "interrupted";
+          }
           recoverAuthoringDispatch(session);
+          if (
+            session.modelBinding.provider === "google_interactions" &&
+            session.retryDispatch?.state === "retryable"
+          )
+            session.googleOutcomeUnknown = false;
           session.updatedAt = Date.now();
           if (await this.#store.saveIfUnchanged(original, session))
             return session;
@@ -1076,13 +1098,10 @@ export class SettingImprovementSession {
           }
           markInterruptedAfterRestart(session);
           const request = session.requests?.at(-1);
-          if (
-            settled &&
-            request !== undefined &&
-            session.modelBinding.provider !== "google_interactions"
-          ) {
-            if (session.schemaVersion !== 5) session.schemaVersion = 4;
+          if (settled && request !== undefined) {
+            session.schemaVersion = 6;
             checkpointNextAuthoringDispatch(session, "retryable");
+            session.runStatus = "interrupted";
           }
           session.updatedAt = Date.now();
           if (!(await this.#store.saveIfUnchanged(expected, session)))
@@ -1103,16 +1122,22 @@ export class SettingImprovementSession {
     const legacyUnknown =
       session.modelBinding.provider === "google_interactions" &&
       session.runStatus === "interrupted" &&
-      session.googleOutcomeUnknown === undefined &&
+      session.googleOutcomeUnknown !== false &&
+      session.retryDispatch === undefined &&
       (lastItem?.kind === "user" || lastItem?.kind === "tool");
-    if (legacyUnknown) {
+    if (!legacyUnknown) return session;
+    if (session.requests?.at(-1) !== undefined) {
+      session.schemaVersion = 6;
+      checkpointNextAuthoringDispatch(session, "retryable");
+      session.googleOutcomeUnknown = false;
+      session.lastFailure =
+        "The previous model response was incomplete; retry from the last settled step.";
+    } else {
       session.googleOutcomeUnknown = true;
       session.lastFailure =
-        "The Google request outcome is unknown; start a fresh model context.";
-      session.updatedAt = Date.now();
-    } else {
-      return session;
+        "The saved request is unavailable; start a fresh model context.";
     }
+    session.updatedAt = Date.now();
     if (await this.#store.saveIfUnchanged(expected, session)) return session;
     return this.#recoverIfNeeded(await this.#store.read(session.sessionId));
   }
@@ -1234,7 +1259,8 @@ function markInterruptedAfterRestart(
   const requestId = session.activeRequestId;
   session.runStatus =
     session.modelBinding.provider === "google_interactions" &&
-    session.googleOutcomeUnknown === false
+    session.googleOutcomeUnknown === false &&
+    session.retryDispatch === undefined
       ? "paused"
       : "interrupted";
   session.activeRequestId = null;

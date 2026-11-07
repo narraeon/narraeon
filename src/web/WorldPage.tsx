@@ -1114,6 +1114,43 @@ export function WorldPage({
     }
   }
 
+  async function regenerateNarrative(
+    chainId: string,
+    eventId: number,
+  ): Promise<void> {
+    if (
+      world === null ||
+      pending !== null ||
+      activeStatus === "running" ||
+      worldRevisionLocked
+    )
+      return;
+    setPending("play-append");
+    setFeedback({ kind: "status", text: uiText("正在重新生成叙事…") });
+    try {
+      const result = await requestRuntime<V1PlayCallChainView>(client, {
+        type: "play.chain.regenerate-narrative",
+        operationId: createClientId("regenerate-narrative"),
+        worldId: world.worldId,
+        chainId,
+        eventId,
+      });
+      applyPlayCallChain(result);
+      await refreshWorld();
+      setFeedback({
+        kind: result.status === "interrupted" ? "error" : "status",
+        text:
+          result.status === "interrupted"
+            ? uiText("叙事生成中断；可以重新发送已保存的请求。")
+            : uiText("已重新生成叙事。"),
+      });
+    } catch (reason: unknown) {
+      setFeedback({ kind: "error", text: errorMessage(reason) });
+    } finally {
+      setPending(null);
+    }
+  }
+
   async function reviseEditedPlayer(
     chainId: string,
     eventId: number,
@@ -1156,6 +1193,7 @@ export function WorldPage({
         outcome: "revised";
         worldId: string;
         playCallChain: V1PlayCallChainView;
+        sentAfterRevision?: boolean;
       }>(client, {
         type: "play.chain.revise-player",
         operationId: createClientId("revise-player"),
@@ -1166,6 +1204,9 @@ export function WorldPage({
         replacementText: editedText,
         ...turnNoteField(turnNote),
         continuation,
+        requireCompatible:
+          modelConfigured && continuation === "continue_context",
+        sendAfterRevision: modelConfigured,
       });
       revisionAccepted = true;
       // The revised chain is bound to the revision's own head.
@@ -1197,23 +1238,7 @@ export function WorldPage({
         return;
       }
 
-      setPending("play-append");
-      setFeedback({
-        kind: "status",
-        text: regenerate
-          ? uiText("正在重新生成…")
-          : continuation === "fresh_context"
-            ? uiText("修改已保存，正在从全新上下文继续生成…")
-            : uiText("修改已保存，正在从修改稿继续生成…"),
-      });
-      const continued = await requestRuntime<V1PlayCallChainView>(client, {
-        type: "play.chain.append",
-        worldId: world.worldId,
-        chainId: revised.playCallChain.chainId,
-        exchangeId: createClientId("play-exchange"),
-        playerText: "",
-        ...turnNoteField(turnNote),
-      });
+      const continued = revised.playCallChain;
       if (continued.status === "ready") {
         setTurnNote("");
         setTurnNoteOpen(false);
@@ -1645,6 +1670,9 @@ export function WorldPage({
                       editedText,
                       continuation,
                     )
+                  }
+                  onRegenerateNarrative={(chainId, eventId) =>
+                    void regenerateNarrative(chainId, eventId)
                   }
                   onRegeneratePlayer={(
                     chainId,
@@ -2402,6 +2430,7 @@ function PlayTimeline({
   onRestartFrom,
   onEditPlayer,
   onRegeneratePlayer,
+  onRegenerateNarrative,
 }: {
   client: WorldPageClient;
   worldId: string;
@@ -2418,6 +2447,7 @@ function PlayTimeline({
     editedText: string,
     continuation: PlayerRevisionContinuation,
   ) => void;
+  onRegenerateNarrative: (chainId: string, eventId: number) => void;
   onRegeneratePlayer: (
     chainId: string,
     eventId: number,
@@ -2498,6 +2528,12 @@ function PlayTimeline({
                     showTechnicalInfo={showTechnicalInfo}
                     onRestartFrom={onRestartFrom}
                     onEditPlayer={onEditPlayer}
+                    onRegenerateNarrative={
+                      item === latestNarrative
+                        ? () =>
+                            onRegenerateNarrative(item.chainId, item.event.id)
+                        : undefined
+                    }
                     onRegenerate={
                       item === latestNarrative && regeneratePlayer !== undefined
                         ? () =>
@@ -2725,6 +2761,7 @@ function TimelineEvent({
   onRestartFrom,
   onEditPlayer,
   onRegenerate,
+  onRegenerateNarrative,
   presentation,
 }: {
   client: WorldPageClient;
@@ -2745,6 +2782,7 @@ function TimelineEvent({
     continuation: PlayerRevisionContinuation,
   ) => void;
   onRegenerate?: (() => void) | undefined;
+  onRegenerateNarrative?: (() => void) | undefined;
   presentation: "story" | "trace";
 }): React.JSX.Element {
   const [detail, setDetail] = useState<V1PlayCallChainEvent | null>(null);
@@ -3024,6 +3062,16 @@ function TimelineEvent({
             ) : null}
             {event.committedHead === undefined ? null : (
               <span className="history-message-actions">
+                {onRegenerateNarrative === undefined ? null : (
+                  <button
+                    type="button"
+                    className="history-restart-button"
+                    disabled={restartDisabled || freshContextDisabled}
+                    onClick={onRegenerateNarrative}
+                  >
+                    {uiText("只重新生成叙事")}
+                  </button>
+                )}
                 {onRegenerate === undefined ? null : (
                   <button
                     type="button"
