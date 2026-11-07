@@ -296,8 +296,8 @@ ${historyUseGuidance(locale)}`,
     block("facts", {
       category: "policy",
       turnGuide: zh
-        ? "尝试不自动成功，声称不自动成真；正文不改变已裁决的结果。"
-        : "Attempts do not automatically succeed and claims are not automatically true; prose never changes an adjudicated result.",
+        ? "尝试、声称不自动成真，遵守裁决。提到该办的事时，让只读过故事的玩家能说出要做什么、找谁或去哪；若只写了人名地点，补上来意。"
+        : "Attempts may fail; claims may be false. Keep rulings. Known duties: say what to do and who/where; names alone omit why.",
     }),
     block("npc", { category: "policy" }),
     block("save-timing", {

@@ -6143,6 +6143,110 @@ test("工具中间步文本不进入叙事，状态与终态叙事分别推进�
   ).toContain("Alex已经把宿舍门打开。");
 });
 
+test.each(["en", "zh-CN"] as const)(
+  "%s scripted disclosure keeps private state and tool steps separate from the visible story",
+  async (locale) => {
+    // Fixed playback verifies the production projection boundary, not model adherence.
+    const opening = "你推门走进客栈。\n";
+    const secret = "顾伯把暗账藏在井底";
+    const files = worldFiles().map((file) =>
+      file.path === "opening.md"
+        ? { ...file, contents: opening }
+        : file.path === "world/current-situation.yaml"
+          ? {
+              ...file,
+              contents: file.contents.replace(
+                "情况: Alex守在宿舍门边。",
+                `情况: 入夜前，阿芸准备封门。\n交班: 主角进门前已被告知今晚先去东廊账房找顾伯领黄铜钥匙。\n秘密: ${secret}。`,
+              ),
+            }
+          : file,
+    );
+    const { worlds, worldId } = await createWorld(
+      `disclosure-${locale}`,
+      files,
+    );
+    const story =
+      locale === "zh-CN"
+        ? "你放下行李。阿芸扶起门闩，交班时那句话也清楚地浮上来：今晚先到东廊账房找顾伯领黄铜钥匙。廊下的灯还亮着。"
+        : "You put down your luggage. As Ayun lifts the bar, the handover comes back clearly: collect the brass key from Gu in the east-corridor accounts office tonight. The corridor lamp is still lit.";
+    const modelHost = new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [
+        {
+          outcome: "response",
+          text: `Private tool-step note: ${secret}.`,
+          toolCalls: [
+            {
+              id: "door-progress",
+              name: "world_patch",
+              arguments: {
+                target: "@current-situation",
+                edits: [
+                  {
+                    op: "replace",
+                    locator: { yaml: ["情况"] },
+                    value: "阿芸扶起门闩，尚未封门。",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+        { outcome: "response", text: story },
+      ],
+    });
+    const view = await new PlayCallChain(
+      worlds,
+      new FileNativePromptCompiler({ locale }),
+    ).start({
+      worldId,
+      chainId: `disclosure-${locale}`,
+      exchangeId: "arrival",
+      playerText: "我把行李搁下，看了看天色。",
+      hostBinding: hostBinding(),
+      playPreset: builtinDefaultPlayPresetBinding(locale),
+      modelBinding: modelBinding(),
+      modelHost,
+    });
+    expect(view.status).toBe("ready");
+    expect(view.events).toContainEqual(
+      expect.objectContaining({
+        kind: "tool_result",
+        callId: "door-progress",
+        ok: true,
+      }),
+    );
+    expect(
+      modelHost.requests[0]!.bootstrap.logicalMessages.filter(
+        ({ role }) => role === "world_context",
+      )
+        .map(({ markdown }) => markdown)
+        .join("\n"),
+    ).toContain(secret);
+    expect(modelHost.requests[1]!.bootstrap).toEqual(
+      modelHost.requests[0]!.bootstrap,
+    );
+    const endpoint = await worlds.recoverEndpoint(worldId);
+    expect(endpoint.history.map(({ exactText }) => exactText)).toEqual([
+      opening,
+      "我把行李搁下，看了看天色。",
+      story,
+    ]);
+    expect(
+      endpoint.history.map(({ exactText }) => exactText).join("\n"),
+    ).not.toContain(secret);
+    expect(
+      endpoint.state.find(({ path }) => path === "current-situation.yaml")!
+        .contents,
+    ).toContain(secret);
+    expect(
+      endpoint.state.find(({ path }) => path === "current-situation.yaml")!
+        .contents,
+    ).toContain("阿芸扶起门闩，尚未封门");
+  },
+);
+
 test("整理检查点随最终叙事提交，冷启动保留边界并补入跨上下文原文", async () => {
   const { worlds, worldId } = await createWorld("narrative-checkpoint");
   const firstHost = new ScriptedModelHost({

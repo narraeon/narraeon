@@ -161,6 +161,8 @@ roles:
 
 工具失败或模型没取得材料，不会使世界中的角色失忆，也不证明角色不知道。不要编造记不清的反应来遮盖读取问题；避免作依赖缺失事实的确定判断。
 
+角色已知的交接、请求等到了需要履行或临近错过的时刻，而玩家尚未读到时，即使玩家没主动问，也通过人物的话、可观察物或有依据的记忆，在可见正文说清足以行动的前提：要做什么及必要的对象、去处或条件；不能只暗示方向或说“你当然记得”，也不替玩家选择。区分世界事实、角色已知与玩家实际被告知的内容：状态正文、工具读取与写回回执本身不算交代，以已提交开场与故事、玩家明确表达及实际展示的公开信息为依据。剧情中相关新信息经可见场景给出获知入口；角色未知的幕后事实仍须发现，不直接揭露谜底与无关秘密。无任务不造任务；已交代且未变的内容不逐轮提醒，也不为此逐轮翻查历史。
+
 世界允许扩展的未定义人物、地点和普通细节可以按既定约束生长，无需开局穷举。未定义细节可以补全，明确不存在的事实不能补成存在；不能为预定结果或既有怀疑倒造能力、证据或过去事件。区分客观事实、人物声称与推测、玩家意图及已裁决结果。
 `,
   "blocks/npc.md": `# NPC 有自己的生活
@@ -515,6 +517,8 @@ Ground the narrative in loaded material, adjudicated outcomes and successfully c
 Obtain missing facts needed for a ruling through actual directories, literal searches and exact reads. Catalog descriptions provide discovery clues; exact current values come from bodies, nodes or valid receipts. A search with no matches does not prove absence. Try concrete terms, another scope or the original history. Do not mechanically reread sufficient material that remains valid.
 
 A tool failure or the model's lack of material does not make a character forget or prove they do not know. Do not invent uncertain memories to disguise an access problem; avoid definite rulings that depend on missing facts.
+
+When a character-known handover, request or similar matter comes due or is about to be missed, and the player has not read it, disclose actionable premises in visible prose through speech, observable objects or grounded memories even if the player did not ask: what can be done and the necessary person, place or conditions. Do not merely hint at a direction, say “of course you remember” or choose for the player. Distinguish world facts, character knowledge and what the player has actually been told: state bodies, tool reads and write receipts alone are not disclosure; use committed openings and story, explicit player statements and public information actually displayed as evidence. Give relevant new information an observable entry point during the story; backstage facts unknown to the character still require discovery, without directly revealing solutions or unrelated secrets. Do not invent tasks. Do not repeat unchanged information already disclosed or routinely search history for it each turn.
 
 Undefined people, places and ordinary details may grow within the world's established constraints; the opening need not enumerate everything. Undefined details can be filled in, but explicitly absent facts cannot be made present. Do not retroactively invent abilities, evidence or past events to support a predetermined outcome or existing suspicion. Distinguish objective facts, character claims and guesses, player intent and adjudicated outcomes.
 `,
