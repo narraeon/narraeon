@@ -2,7 +2,11 @@ import { describe, expect, test } from "vitest";
 
 import { minimalFileNativeContentScaffold } from "../../src/runtime/content/ContentWorkspace.ts";
 import { defaultPresetHostFiles } from "../../src/shared/default-preset-host.ts";
-import { builtinDefaultPlayPresetBinding } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
+import {
+  builtinDefaultPlayPresetBinding,
+  legacyDefaultPlayPresetFilesForLocale,
+  parsePlayPresetFiles,
+} from "../../src/runtime/play/FileNativePlayPresetStore.ts";
 import { FileNativePlayDocuments } from "../../src/runtime/play/PlayDocumentTools.ts";
 import type { PromptCompilationError } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
 import {
@@ -152,6 +156,49 @@ test.each([
   ])
     expect(preview).toContain(phrase);
 });
+
+test.each([
+  {
+    locale: "en" as const,
+    continuation:
+      "If further reads, adjudication or writes are needed, continue calling tools",
+    finish: "When ready to finish",
+    header: "when writing final prose",
+    obsolete: "Do not reply to this notice; write the prose",
+  },
+  {
+    locale: "zh-CN" as const,
+    continuation: "若还需读取、判定或写回，可继续调用工具",
+    finish: "准备结束时",
+    header: "撰写本轮最终正文时适用",
+    obsolete: "不要回应本提示，直接写正文",
+  },
+])(
+  "$locale: 当前与旧编排允许工具结算后继续",
+  ({ locale, continuation, finish, header, obsolete }) => {
+    const compiler = new FileNativePromptCompiler({ locale });
+    const request = input({ playerInputPlacement: "append" });
+    const current = builtinDefaultPlayPresetBinding(locale);
+    const files = legacyDefaultPlayPresetFilesForLocale(locale);
+    const parsed = parsePlayPresetFiles(files);
+    if (parsed.kind !== "valid") throw parsed.error;
+    const legacy = { ...current, definition: parsed.definition, files };
+    for (const preset of [current, legacy]) {
+      const bootstrap = compiler.compilePlayCallChain(
+        request,
+        preset,
+      ).bootstrap;
+      const text = bootstrap.logicalMessages
+        .map(({ markdown }) => markdown)
+        .join("\n");
+      expect(text).toContain(continuation);
+      expect(text).toContain(finish);
+      expect(text).not.toContain(obsolete);
+      if (bootstrap.turnGuide)
+        expect(bootstrap.turnGuide.text).toContain(header);
+    }
+  },
+);
 
 test("预加载目录索引覆盖分页、嵌套和空目录，句柄可直接用于工具", () => {
   const request = input({ playerInputPlacement: "append" });
@@ -1017,7 +1064,7 @@ context:
       "A response that calls any tool is an intermediate step",
     );
     expect(runtimeSystem).toContain(
-      "present this turn's still-unshown content in a later tool-free response",
+      "present this turn's still-unshown content in nonempty tool-free final prose",
     );
     expect(compiled.budget).toMatchObject({
       estimator: "disabled",

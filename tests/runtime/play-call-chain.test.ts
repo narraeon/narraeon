@@ -12215,6 +12215,134 @@ function numberedFileName(index: number): string {
   return `${String(index).padStart(10, "0")}.json`;
 }
 
+test.each([false, true])(
+  "历史查询中间文本=%s时可写回绑定视图再提交最终正文",
+  async (hasText) => {
+    const files = worldFiles().map((file) =>
+      file.path === "control/player-views.yaml"
+        ? {
+            ...file,
+            contents: `format: narraeon.player-views/v1
+views:
+  - id: status
+    title: 状态
+    items:
+      - id: situation
+        label: 情况
+        select: { document: situation.current, locator: { yaml: [情况] } }
+`,
+          }
+        : file,
+    );
+    const { worlds, worldId } = await createWorld(
+      "settlement-continues",
+      files,
+    );
+    const host = new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [
+        {
+          outcome: "response",
+          ...(hasText ? { text: "I will check what happened." } : {}),
+          toolCalls: [
+            {
+              id: "history",
+              name: "history_search",
+              arguments: { queries: ["铃"] },
+            },
+          ],
+        },
+        {
+          outcome: "response",
+          text: "I will update the view.",
+          toolCalls: [
+            {
+              id: "patch",
+              name: "world_patch",
+              arguments: {
+                target: "@current-situation",
+                edits: [
+                  {
+                    op: "replace",
+                    locator: { yaml: ["情况"] },
+                    value: "Alex打开了门。",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+        { outcome: "response", text: "Alex opens the door." },
+      ],
+    });
+    const result = await new PlayCallChain(worlds).start({
+      worldId,
+      chainId: "settlement-continues",
+      exchangeId: "first",
+      playerText: "我请 Alex 开门。",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: modelBinding(),
+      modelHost: host,
+    });
+    expect(result.status).toBe("ready");
+    expect(
+      result.events.filter((event) => event.kind === "tool_result"),
+    ).toEqual([
+      expect.objectContaining({ callId: "history", ok: true }),
+      expect.objectContaining({ callId: "patch", ok: true }),
+    ]);
+    expect(host.requests).toHaveLength(3);
+    const mechanical = host.requests[1]!.bootstrap.logicalMessages.map(
+      ({ markdown }) => markdown,
+    ).join("\n");
+    expect(mechanical).toContain(
+      "If further reads, adjudication or writes are needed, continue calling tools",
+    );
+    const historyNotice = sent(host.requests[1]!).find(
+      (item) => item.kind === "runtime_notice" && item.notice === "tool_step",
+    );
+    if (hasText) {
+      expect(historyNotice?.kind).toBe("runtime_notice");
+      if (historyNotice?.kind !== "runtime_notice")
+        throw new Error("Expected settlement notice");
+      expect(historyNotice.text).toContain(
+        "If further reads, adjudication or writes are needed, continue calling tools",
+      );
+    } else {
+      expect(historyNotice).toBeUndefined();
+    }
+    const settlement = sent(host.requests[2]!).at(-1);
+    expect(settlement).toMatchObject({
+      kind: "runtime_notice",
+      notice: "tool_step",
+    });
+    if (settlement?.kind !== "runtime_notice")
+      throw new Error("Expected settlement notice");
+    expect(settlement.text).toContain(
+      "If further reads, adjudication or writes are needed, continue calling tools",
+    );
+    const guide = host.requests[2]!.appended.at(-1);
+    expect(guide).toMatchObject({
+      kind: "runtime_notice",
+      notice: "turn_guide",
+    });
+    if (guide?.kind !== "runtime_notice")
+      throw new Error("Expected turn guide");
+    expect(guide.text).toContain("when writing final prose");
+    const endpoint = await worlds.recoverEndpoint(worldId);
+    expect(endpoint.history.map(({ exactText }) => exactText)).toEqual([
+      "门外传来三声短促的铃响。\n",
+      "我请 Alex 开门。",
+      "Alex opens the door.",
+    ]);
+    expect(
+      endpoint.state.find(({ path }) => path === "current-situation.yaml")
+        ?.contents,
+    ).toContain("Alex打开了门。");
+  },
+);
+
 test("本轮提示只作为每次发送的尾部出现，不进入 transcript，也不出现在后续请求的前缀中", async () => {
   const { worlds, worldId } = await createWorld("turn-guide-suffix");
   const modelHost = new ScriptedModelHost({

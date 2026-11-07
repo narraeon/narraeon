@@ -370,12 +370,12 @@ ${historyUseGuidance("en")}`,
     operation: `# Runtime call-chain rules
 
 - A response with no tool calls may contain player-visible story text and finish the current call-chain step.
-- A response that calls any tool is an intermediate step; its text is retained in native continuation and diagnostics without being displayed or committed as final story. After all tool results, use the receipts to present this turn's still-unshown content in a later tool-free response consistent with committed state.
+- A response that calls any tool is an intermediate step; its text is retained in native continuation and diagnostics without being displayed or committed as final story. Tool results settle only those calls; subsequent steps remain in the same player submission. If further reads, adjudication or writes are needed, continue calling tools; do not repeat successful writes. When ready to finish, use the receipts to present this turn's still-unshown content in nonempty tool-free final prose consistent with committed state. Settlement does not expand the narrative scope.
 - Obey only the real tool definitions attached to this request. A tool that is not defined cannot be called.
 - Runtime performs state commits and saves follow-up artifacts. Tool exchanges and internal processing must never appear in player-visible content.`,
     shell: `# Runtime play boundary
 
-A nonempty tool-free response ends the model/tool loop started by the current player submission. A response that calls any tool is an intermediate step; its text has not yet been displayed or committed as final story. After all tool results, use the receipts to present this turn's still-unshown content in a later tool-free response consistent with committed state.
+A nonempty tool-free response ends the model/tool loop started by the current player submission. A response that calls any tool is an intermediate step; its text has not yet been displayed or committed as final story. Tool results settle only those calls; subsequent steps remain in the same player submission. If further reads, adjudication or writes are needed, continue calling tools; do not repeat successful writes. When ready to finish, use the receipts to present this turn's still-unshown content in nonempty tool-free final prose consistent with committed state. Settlement does not expand the narrative scope.
 
 The player's next submission may choose a fresh context; the old model transcript will not enter that request. Fresh contexts replay all committed original player inputs and final narratives after the last effective world_checkpoint, excluding tools, reasoning, and the opening. At the story's origin, the already displayed opening is supplied separately. A checkpoint declaration takes effect only after the subsequent nonempty tool-free final prose successfully commits, including that prose in its boundary; further tool calls may follow registration. Registration neither ends an in-world event nor switches context. Author instructions decide save timing.
 
@@ -401,12 +401,12 @@ ${historyUseGuidance("zh-CN")}`,
     operation: `# Runtime 调用链规则
 
 - 不调用工具的响应可以输出玩家可见故事正文，并结束当前调用链步骤。
-- 只要响应调用了任何工具，它就是中间步；其中的文字保留在原生续传与诊断中，不展示或提交为最终故事。收到全部工具结果后，根据回执在后续无工具响应中呈现本轮尚未展示的内容，并与已提交状态一致。
+- 只要响应调用了任何工具，它就是中间步；其中的文字保留在原生续传与诊断中，不展示或提交为最终故事。工具结果只结算本次调用，后续仍属同一次玩家提交；若还需读取、判定或写回，可继续调用工具，不重复已成功的写入。准备结束时，根据回执用非空无工具最终正文呈现本轮尚未展示的内容，并与已提交状态一致；工具结算不扩大叙事范围。
 - 只服从当前请求的真实工具定义；没有定义的工具不可调用。
 - 状态提交与后置产物保存由 Runtime 执行。工具交换与内部处理过程不得混入玩家可见内容。`,
     shell: `# Runtime 游玩边界
 
-非空且不调用工具的响应会结束本次玩家提交触发的模型／工具循环。只要响应调用了任何工具，它就是工具中间步，其中的文字尚未展示或提交为最终故事。收到全部工具结果后，根据回执在后续无工具响应中呈现本轮尚未展示的内容，并与已提交状态一致。
+非空且不调用工具的响应会结束本次玩家提交触发的模型／工具循环。只要响应调用了任何工具，它就是工具中间步，其中的文字尚未展示或提交为最终故事。工具结果只结算本次调用，后续仍属同一次玩家提交；若还需读取、判定或写回，可继续调用工具，不重复已成功的写入。准备结束时，根据回执用非空无工具最终正文呈现本轮尚未展示的内容，并与已提交状态一致；工具结算不扩大叙事范围。
 
 下一次玩家提交可以选择“全新上下文”；旧模型 transcript 不会进入那个请求。新上下文会补入最近一次已生效 world_checkpoint 之后的全部已提交玩家原文与最终叙事，不含工具、推理和开场白。在故事起点，已展示的开场白另行提供。检查点登记仅在随后非空且无工具调用的最终正文成功提交后生效，边界包含该正文；登记后仍可继续工具调用。登记不结束世界内事件，也不自动切换上下文。具体保存时机由作者提示规定。
 

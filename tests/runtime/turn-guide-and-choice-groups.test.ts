@@ -390,10 +390,10 @@ context:
 
   test("the Runtime header names only the source of the suffix, in both locales", () => {
     expect(turnGuideHeader("zh-CN")).toBe(
-      "[Runtime 本轮提示]\n以下是对这一轮正文的提示，来自预设、世界设定和玩家的临时要求。不要回应本提示，直接写正文。",
+      "[Runtime 本轮提示]\n以下来自预设、世界设定和玩家的临时要求，在撰写本轮最终正文时适用。不要回应本提示。",
     );
     expect(turnGuideHeader("en")).toBe(
-      "[Runtime turn guide]\nThese are notes for this turn's prose, from the preset, the world, and the player's requests for this turn. Do not reply to this notice; write the prose.",
+      "[Runtime turn guide]\nThese notes from the preset, the world and the player's requests for this turn apply when writing final prose. Do not reply to this notice.",
     );
   });
 
