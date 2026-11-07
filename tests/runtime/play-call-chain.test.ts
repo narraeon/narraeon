@@ -6084,7 +6084,7 @@ test("工具中间步文本不进入叙事，状态与终态叙事分别推进�
     .join("\n");
   // The play narrative block enters bootstrap as an ordinary author instruction.
   expect(authorPrompt).toContain(
-    "meaningful silence, solitude, rest and waiting",
+    "Meaningful silence, solitude, rest and waiting",
   );
   expect(
     modelHost.requests[0]?.bootstrap.logicalMessages

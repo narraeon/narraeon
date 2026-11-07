@@ -14,10 +14,14 @@ export const defaultSettingImprovementPromptPath =
 /** Content-package-only paragraphs; a running-world revision omits them. */
 const contentPackageWorldStartZhCN =
   "内容包设定完善定义开场结束处的世界起点，可以包含已有历史、当前状态、持续过程和各人的认知。简单起点足以开玩，普通未定义内容可在游玩中生长；不预写未来必然发生的经历或强制剧情阶段。";
+const contentPackageCorePlayZhCN =
+  "新建内容包或用户要求完善玩法方向时，根据作者意图，用一两句话把本世界的核心体验写进实际由 control/frame.yaml 的 instructions 引用的世界主持块：玩家能亲自做什么，哪些人物关系或局面提供机会。可以多线并存，也可以只是日常相处，不规定必经路线或结局。仅完善已有世界的玩法方向时，只需补或改该块里的一两句；只有作者也要求补足素材，或确有落实该方向所需的缺口，才动相关文档。已有合适段落就沿用；定向修改一个道具不需要顺手重写世界方向。这段写给主持，不复制开场原文、当前事实、谜底或人物秘密；它们仍在相应世界文档与开场中维护。";
 const contentPackageOpeningZhCN =
   "仅在内容包分支检查 opening.md：写玩家当时可感知的具体局面，保留尚待回答的请求与必要原话，不替玩家决定行动、台词或内心。独处、安静和等待也可形成开场。开场与文档停在同一时点，将约束首次行动的结果写给自然所有者，无需复制整篇叙事。";
 const contentPackageWorldStartEn =
   "Content-package setting improvement defines the world where the opening ends, including established history, current state, ongoing processes and individual knowledge. A simple starting point can be playable and ordinary undefined content can grow during play. Do not prewrite inevitable future experiences or mandatory plot stages.";
+const contentPackageCorePlayEn =
+  "When creating a content package or asked to develop its play direction, follow the author's intent and put its core experience in one or two sentences in a world GM block actually referenced by control/frame.yaml instructions: what the player can personally do, and which relationships or situations offer opportunities. Several threads may coexist, or play may consist only of everyday companionship, without mandatory routes or endings. When only developing an existing world's play direction, just add or revise those one or two sentences; change related documents only if the author also asks for more material or an actual gap must be filled to support that direction. Reuse a suitable existing paragraph; a targeted prop edit need not rewrite the world's direction. This paragraph addresses the GM: do not copy opening prose, current facts, solutions or character secrets into it; maintain them in their corresponding world documents and opening.";
 const contentPackageOpeningEn =
   "Inspect opening.md only in the content-package branch. Show a concrete situation the player can perceive, retaining unanswered requests and consequential wording without choosing player action, speech or inner thoughts. Solitude, quiet and waiting can also open a story. Documents and opening stop at the same moment; give outcomes constraining the first action to natural owners without copying the whole narrative.";
 
@@ -28,6 +32,8 @@ export const defaultSettingImprovementPromptZhCN = `# 系统推荐的创作方�
 ## 编辑目标与世界起点
 
 ${contentPackageWorldStartZhCN}
+
+${contentPackageCorePlayZhCN}
 
 运行中世界修订维护当前已经演变的世界，按用户要求调整并保留未受影响的事实、经历与认知，不退回初始取值。明确修订不是世界内事件，不需虚构行动解释它。
 
@@ -69,6 +75,8 @@ Start with the editing target, existing content and the user's goal. Discuss nec
 ## Editing target and world starting point
 
 ${contentPackageWorldStartEn}
+
+${contentPackageCorePlayEn}
 
 Running-world revision maintains the world as it has evolved: apply requested changes while preserving unaffected facts, events and knowledge instead of resetting initial values. Explicit revision is not an in-world event and needs no invented action to explain it.
 
@@ -123,8 +131,16 @@ export function revisionSettingImprovementPromptForLocale(
 ): string {
   const paragraphs =
     locale === "zh-CN"
-      ? [contentPackageWorldStartZhCN, contentPackageOpeningZhCN]
-      : [contentPackageWorldStartEn, contentPackageOpeningEn];
+      ? [
+          contentPackageWorldStartZhCN,
+          contentPackageCorePlayZhCN,
+          contentPackageOpeningZhCN,
+        ]
+      : [
+          contentPackageWorldStartEn,
+          contentPackageCorePlayEn,
+          contentPackageOpeningEn,
+        ];
   return paragraphs.reduce(
     (text, paragraph) => text.replace(`${paragraph}\n\n`, ""),
     defaultSettingImprovementPromptForLocale(locale),

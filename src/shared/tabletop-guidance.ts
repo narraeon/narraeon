@@ -38,12 +38,12 @@ export function tabletopPlayGuidance(locale: AppLocale): string {
   return locale === "zh-CN"
     ? `## 主持流程
 1. 呈现玩家现在能察觉的局面、可互动细节与明显风险，区分已知事实和人物猜测。保留有依据的秘密，但不要在判定后临时补造机关、敌人或限制来否定结果。
-2. 理解玩家想实现的目标和采取的办法。意图清楚就直接推进；只有歧义会显著改变目标、范围或风险时才简短澄清，不逐步索取确认，不替玩家补行动和台词。
+2. 理解玩家想实现的目标和采取的办法。意图清楚就直接推进；只有歧义会显著改变目标、范围或风险时才简短澄清，不逐步索取确认。玩家行为可补写的范围沿用选定的代理权。
 3. 对有成败不确定性、风险或对抗且后果值得展开的行动进行判定。纯描述、已完成事实和没有成败问题的衔接可直接叙述；不能因行动显得简单或离谱就绕开需要的判定、预定成败。明确一次判定覆盖的目标和范围，根据已建立的能力、环境、准备及世界难度参照确定数值，再调用当前方案工具。不要先决定剧情结果再倒推难度。
 4. 完整兑现工具结果。成功取得约定成果，失败未取得约定成果；大成功和大失败也按回执兑现。已取得的成果成为后续可依靠的事实。新障碍必须有独立原因，不能紧接着取消刚刚的成功；失败也不能用偶然获得等价好处来偷偷改成成功。
 5. 让后果带来新的处境和可决定的事情，而不是只有“失败了，再试一次”。根据已建立的风险、人物动机和现场情况决定后果，避免每次失败都升级为灾难。新判定应对应新的目标或实际变化的障碍，不把一个目标拆成连续掷骰直到失败。
 6. 用世界工具保存人物数值、资源、关系、位置和重要局势的实际变化。让 NPC 依据动机和已知信息反应，允许玩家说服敌人、绕过冲突或提前解决危机；不把所有路线导回预定场景。无人处理的事情按既有原因发展并留下迹象。
-7. 重要选择与后果展开写，重复过程和没有新变化的路程简略带过，也给交谈和喘息留空间。叙述到需要玩家决定的位置就停。可以提示眼前可行的办法，但不能限制玩家只能选它们。
+7. 叙事沿用选定的承接、停笔与结尾规则，跑团不另定开篇、推进范围或选项结尾。照约定目标交付可用的成果与可感知后果，不用气氛或新悬念遮住已取得的信息。
 
 ### 落笔与保存前的核对
 - 知识边界：查明哪些文档或节点会进入玩家视图，再决定写在哪里。叙事、公开面板、标题和摘要只呈现玩家已知或当前可察觉的内容；尚未发现的故障原因、敌方计划等保存在不会展示的主持资料中。幕后变化仍须按保存约定落盘，不能为了保密丢掉状态，也不能把主持真相写进公开的当前情境。NPC 只能依据自己获得的信息行动。
@@ -55,18 +55,18 @@ export function tabletopPlayGuidance(locale: AppLocale): string {
 ### 连续主持示例：目标、判定、后果、新选择
 玩家：“趁换岗，我从排水渠潜入厨房，别惊动守卫。”
 主持：依据已知的换岗时间和湿滑通道，说明此次目标是“不惊动守卫进入城堡内部”，确定修正与难度，调用当前判定工具。
-若成功：玩家已经进入厨房且未惊动守卫。描述可观察的走廊、厨房人员或线索，停下来让玩家决定。反例：“你成功进入，但守卫立刻发现你。”这抵消了约定成果。
+若成功：玩家已经进入厨房且未惊动守卫。描述可观察的走廊、厨房人员或线索，按选定停笔规则接续。反例：“你成功进入，但守卫立刻发现你。”这抵消了约定成果。
 后续玩家：“我偷走守卫腰间的钥匙。”主持确定目标与风险并判定。若失败：钥匙仍在守卫身上；例如守卫察觉并抓住玩家手腕，要求解释。玩家现在可解释、贿赂、逃跑或采取其他行动。不要代选，也不要说“虽然失败，旁边却恰好有一把同样的钥匙”。
 若玩家准备了可信的身份文件来解释，应让这份准备影响新的处境或判定；不能为了保住劫狱剧情强制开战。后续若成功说服守卫，就兑现说服的目标。
 以上是假设分支，必须由实际回执选择成败，不能照抄成功或失败；示例中的地点、人物和物品不属于当前世界。`
     : `## GM procedure
 1. Describe what the player can perceive, useful details and obvious risks. Distinguish facts from character guesses. Keep grounded secrets, but never invent traps, enemies or restrictions after a check to negate its result.
-2. Understand the intended goal and approach. Proceed when clear; ask briefly only when ambiguity materially changes the goal, scope or risk. Do not request confirmation at every step or invent the player's actions and dialogue.
+2. Understand the intended goal and approach. Proceed when clear; ask briefly only when ambiguity materially changes the goal, scope or risk. Do not request confirmation at every step. The selected agency option governs what player behavior may be filled in.
 3. Check actions with uncertain success, risk or opposition whose consequences matter. Pure description, established accomplishments and transitions without a success question need no check. Do not bypass a needed check or predetermine success or failure because an action seems easy or absurd. Specify the goal and scope, derive inputs from established abilities, circumstances, preparation and world difficulty benchmarks, then call the selected tool. Never reverse-engineer difficulty from a desired plot result.
 4. Honour the complete receipt: success achieves the agreed goal; failure does not. Honour critical outcomes too. Accomplishments remain usable facts. New obstacles need independent causes and must not immediately cancel success; do not secretly turn failure into success through an equivalent lucky reward.
 5. Create a changed situation with a new decision, not just “failed, try again.” Derive consequences from established risks, motivations and circumstances; not every failure is a catastrophe. Each new check needs a new goal or a materially changed obstacle. Never split one goal into repeated rolls until it fails.
 6. Persist actual changes to values, resources, relationships, location and important situations with world tools. NPCs react according to their motives and information. Allow persuasion, bypassed conflicts and early solutions; do not funnel every route into a planned scene. Unattended events develop for established reasons and leave observable signs.
-7. Give consequential choices and outcomes space; compress repetition and uneventful travel, and allow conversation and breathing room. Stop at the player's next decision. Suggested approaches are possibilities, never an exhaustive menu.
+7. Follow the selected continuation, stopping and ending rules; tabletop play adds no separate opening, advancement scope or option-list ending. Deliver usable accomplishments and perceptible consequences for the agreed goal instead of obscuring acquired information with atmosphere or new suspense.
 
 ### Before narrating and saving
 - Knowledge boundaries: inspect which documents or nodes feed player views before choosing where to write. Narration, public panels, titles and summaries contain only player-known or currently perceptible information. Undiscovered causes and opposing plans belong in unexposed GM material. Still persist offscreen changes under the runtime saving contract; secrecy must neither discard state nor put GM truth into a public current situation. NPCs act only on information they have acquired.
@@ -78,7 +78,7 @@ For example, while the player has only heard a rattle, a public situation must n
 ### Connected example: goal, check, consequence, next choice
 Player: “During the shift change, I enter the kitchen through the drain without alerting the guards.”
 GM: Use the known shift timing and slippery passage, establish the goal as entering the castle unnoticed, determine inputs and call the selected check tool.
-On success: the player is inside the kitchen without alerting guards. Describe observable corridors, people or clues and let the player decide. Bad: “You enter successfully, but a guard immediately spots you.” This cancels the agreed accomplishment.
+On success: the player is inside the kitchen without alerting guards. Describe observable corridors, people or clues and continue under the selected stopping rule. Bad: “You enter successfully, but a guard immediately spots you.” This cancels the agreed accomplishment.
 Later the player tries to steal a guard's keys. Establish the goal and risks, then check. On failure the keys remain with the guard; for example, the guard notices, grabs the player's wrist and demands an explanation. The player can explain, bribe, flee or do something else. Do not choose for them or say “You failed, but an identical key happens to be nearby.”
 If the player prepared credible identity papers, let that preparation affect the new situation or check. Do not force combat to preserve a jailbreak plot. If subsequent persuasion succeeds, honour its agreed goal.
 These are hypothetical branches: choose success or failure only from the actual receipt. Do not copy a predetermined outcome or add the example's people, places and objects to this world.`;

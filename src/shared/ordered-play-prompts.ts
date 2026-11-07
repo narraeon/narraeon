@@ -157,26 +157,27 @@ export function builtinPlayPrompts(locale: AppLocale): BuiltinPlayPrompt[] {
   };
   const styleGuides: Record<string, string> = zh
     ? {
-        intimate:
-          "把这一刻拆开写，触觉先于视觉；对方是否接受由他的性格和处境决定。",
-        noir: "短句，只写看得见的动作和物件，不替角色下判断。",
+        intimate: "写清距离和已有触感；对方是否接受由他的性格和处境决定。",
+        noir: "短句，写可感知的动作、物件与声音，不替角色下判断。",
         wuxia: "用语偏文，不用现代词汇；交手写清出手与应对。",
         horror: "恐惧来自不确定；不替玩家判断危险程度，也不给安全保证。",
-        action: "写清谁在哪、朝哪动、打到没打到、代价是什么；伤势和体力累积。",
-        literary: "说七分留三分，情绪不直接命名，但结果事实写清楚。",
+        action:
+          "写清谁在哪、朝哪动、打到没打到和已成立的代价；伤势和体力按事实累积。",
+        literary:
+          "说七分留三分，情绪不直接命名，结果事实写清楚；意象符合实际时间。",
       }
     : {
         intimate:
-          "Unfold the moment; touch before sight; whether they accept follows their character and situation.",
-        noir: "Short sentences; only observable actions and objects; no judging for characters.",
+          "Show distance and established touch; whether they accept follows their character and situation.",
+        noir: "Short sentences; perceptible actions, objects and sounds; no judging for characters.",
         wuxia:
           "Period diction, no modern vocabulary; make each exchange of blows legible.",
         horror:
           "Fear comes from uncertainty; do not rate the danger for the player or promise safety.",
         action:
-          "Make clear who is where, which way they move, what lands and what it costs; wounds and fatigue accumulate.",
+          "Show positions, movement, what lands and established costs; wounds and fatigue accumulate according to facts.",
         literary:
-          "Say seven parts and leave three; do not name the emotion, but state outcomes clearly.",
+          "Leave emotion unstated but outcomes clear; images must match elapsed time.",
       };
   return [
     {
@@ -225,22 +226,22 @@ ${historyUseGuidance(locale)}`,
       category: "choice",
       group: "person",
       turnGuide: zh
-        ? "以第三人称写玩家角色，已知名字时用名字；玩家原文里的“我”“你”转为第三人称。"
-        : "Third person for the player character, by name when known; “I” and “you” in the player's text become third person.",
+        ? "以第三人称写玩家角色，已知名字时用名字；直接引语保留说话者的人称。"
+        : "Third person for the player character, by name when known; preserve the speaker's person in direct quotations.",
     }),
     block("continue-stage", {
       category: "choice",
       group: "continue",
       turnGuide: zh
-        ? "先把玩家这次的行动和台词演成叙事，再写世界的反应；上一轮已经演过的不重述。"
-        : "Stage the player's action and dialogue as narrative first, then the world's reaction; never restate earlier turns.",
+        ? "本轮有新动作或台词时，在最终正文开头演出；兼有两者须都在首个世界回应前出现，不重演旧输入。"
+        : "Stage this turn's new action and dialogue before the first world response in final prose; never replay old input.",
     }),
     block("continue-advance", {
       category: "choice",
       group: "continue",
       turnGuide: zh
-        ? "玩家原文已经是正文，从它之后的第一件事写起，不复述玩家的话。"
-        : "The player's text is already prose: start from the first thing after it and do not repeat the player's words.",
+        ? "从行动的实际结果或回应起笔，不复述玩家的话；保留尝试与条件。"
+        : "Start from the action's actual result or response; do not repeat the player's words; preserve attempts and conditions.",
     }),
     block("agency-default", {
       category: "choice",
@@ -267,15 +268,15 @@ ${historyUseGuidance(locale)}`,
       category: "choice",
       group: "stop",
       turnGuide: zh
-        ? "对方给出会影响玩家接话的新反馈就停下，即使不是重大决定。"
-        : "Stop as soon as the other person's feedback could change how the player replies, even without a consequential decision.",
+        ? "呈现影响玩家接话的新反馈后停；可略过明确要求跳过的普通反馈，新增关键条件仍交回玩家。"
+        : "Stop after feedback affecting replies; skip ordinary feedback if asked; return new key conditions to the player.",
     }),
     block("stop-scene", {
       category: "choice",
       group: "stop",
       turnGuide: zh
-        ? "推进到当前场景的自然段落再停；只在归玩家的决定或换场景时停。"
-        : "Carry the scene to its natural pause; stop only at a decision that belongs to the player or at a scene change.",
+        ? "接住普通往来，推进到自然段落；在玩家保留的判断、回应或关键决定前停，换场景也停。"
+        : "Carry ordinary exchanges to a natural pause; stop before reserved judgments, replies or key choices, or at a scene change.",
     }),
     // Independent policies: each rule lives in exactly one block.
     block("prose", { category: "policy" }),

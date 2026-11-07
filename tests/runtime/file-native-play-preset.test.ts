@@ -1004,7 +1004,7 @@ extensions:
     expect(previewText).not.toContain("player_input");
     expect(previewText).toContain("Opening already seen by the player");
     expect(previewText).toContain(
-      "meaningful silence, solitude, rest and waiting",
+      "Meaningful silence, solitude, rest and waiting",
     );
     const copied = await runtime.handle({
       type: "play.copy",

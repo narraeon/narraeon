@@ -480,12 +480,12 @@ describe("旧格式文风块库", () => {
     ]);
   });
 
-  test("情感文风要求把动作拆开并让触觉打头，且可以和别的文风叠加", () => {
+  test("情感文风详写已有触感且不凭空添加接触，可以和别的文风叠加", () => {
     const intimate = defaultPresetHostFiles["blocks/style-intimate.md"]!;
     expect(intimate).toContain(
       "Do not skip the process and state only the conclusion",
     );
-    expect(intimate).toContain("Put touch first");
+    expect(intimate).toContain("Without contact");
     expect(intimate).toContain("One action may take three or four lines");
     // Familiar metaphors must return to a concrete location instead of replacing detail.
     expect(intimate).toContain(
