@@ -46,8 +46,8 @@ const schemes: [ResolutionScheme, string][] = [
 ];
 
 /**
- * Play call chains expose the chain's own surface: artifact tools belong to
- * follow-up requests, so the chain universe is the gameplay surface minus them.
+ * Play call chains authorize gameplay tools; the wire universe also includes
+ * the two tools reserved for follow-up requests.
  */
 function playChainToolNames(gameplay: Gameplay): string[] {
   return runtimeToolNamesForGameplay(gameplay).filter(
@@ -102,13 +102,20 @@ describe("per-world tool exposure", () => {
         });
         const expected = playChainToolNames(gameplay);
         const preview = compiler.preview(input, binding());
-        expect(toolNames(preview.playPreset!.toolUniverse)).toEqual(expected);
+        expect(JSON.stringify(preview.compilation.provider)).toContain(
+          "The main call chain may not call artifact_emit or artifact_clear",
+        );
+        expect(toolNames(preview.playPreset!.toolUniverse)).toEqual([
+          ...expected,
+          "artifact_emit",
+          "artifact_clear",
+        ]);
         expect(toolNames(preview.compilation.tools)).toEqual(expected);
         expect(
           toolNames(
             compiler.compilePlayCallChain(input, binding()).toolUniverse,
           ),
-        ).toEqual(expected);
+        ).toEqual([...expected, "artifact_emit", "artifact_clear"]);
       }
     },
   );
@@ -155,9 +162,11 @@ describe("per-world tool exposure", () => {
       },
       binding,
     );
-    expect(toolNames(resumed.toolUniverse)).toEqual(
-      playChainToolNames(tabletop),
-    );
+    expect(toolNames(resumed.toolUniverse)).toEqual([
+      ...playChainToolNames(tabletop),
+      "artifact_emit",
+      "artifact_clear",
+    ]);
     expect(toolNames(resumed.bootstrap.tools)).toEqual(
       playChainToolNames(tabletop),
     );

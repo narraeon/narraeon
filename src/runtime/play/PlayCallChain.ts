@@ -515,7 +515,7 @@ export class PlayCallChain {
     return {
       documents,
       bootstrap,
-      tools: structuredClone(compilation.toolUniverse),
+      tools: structuredClone(compilation.bootstrap.tools),
       followups: structuredClone(compilation.followups ?? []),
     };
   }
@@ -690,7 +690,7 @@ export class PlayCallChain {
             revision: playPreset.revision,
           },
           bootstrap: structuredClone(compilation.bootstrap),
-          tools: structuredClone(compilation.toolUniverse),
+          tools: structuredClone(compilation.bootstrap.tools),
           followups: structuredClone(compilation.followups ?? []),
           playPresetScriptsEnabled: playPreset.scriptsEnabled,
           presetFiles: structuredClone(playPreset.files),
@@ -3096,7 +3096,9 @@ function createRequestWithMaxOutputTokens(
   return {
     bootstrap: structuredClone(currentPlayPrompt(session).bootstrap),
     tools: structuredClone(currentPlayPrompt(session).tools),
-    toolUniverse: structuredClone(currentPlayPrompt(session).tools),
+    toolUniverse: structuredClone(
+      currentPlayPrompt(session).bootstrap.toolUniverse,
+    ),
     allowedTools: currentPlayPrompt(session).tools.map(({ name }) => name),
     toolStrategy: currentPlayPrompt(session).bootstrap.toolStrategy,
     appended: structuredClone([

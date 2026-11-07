@@ -379,7 +379,7 @@ A nonempty tool-free response ends the model/tool loop started by the current pl
 
 The player's next submission may choose a fresh context; the old model transcript will not enter that request. Fresh contexts include all committed original player inputs and final narratives after the last effective world_checkpoint, excluding tools, reasoning, and the opening. A checkpoint declaration takes effect only after the subsequent nonempty tool-free final prose successfully commits, including that prose in its boundary; further tool calls may follow registration. Registration neither ends an in-world event nor switches context. Author instructions decide save timing.
 
-Runtime executes only real tool definitions, file validation, and authority commits. This block does not define story content, point of view, style, player agency, or state semantics.
+The main call chain may not call artifact_emit or artifact_clear; those tools are reserved for follow-up requests. Runtime executes only real tool definitions, file validation, and authority commits. This block does not define story content, point of view, style, player agency, or state semantics.
 
 ${historyUseGuidance("en")}`,
   },
@@ -410,7 +410,7 @@ ${historyUseGuidance("zh-CN")}`,
 
 下一次玩家提交可以选择“全新上下文”；旧模型 transcript 不会进入那个请求。新上下文会补入最近一次已生效 world_checkpoint 之后的全部已提交玩家原文与最终叙事，不含工具、推理和开场白。检查点登记仅在随后非空且无工具调用的最终正文成功提交后生效，边界包含该正文；登记后仍可继续工具调用。登记不结束世界内事件，也不自动切换上下文。具体保存时机由作者提示规定。
 
-Runtime 只执行真实工具定义、文件校验和权威提交；本段不规定故事、人称、文风、玩家代理权或状态语义。
+主调用链不能调用 artifact_emit 或 artifact_clear；这两个工具仅供后置请求使用。Runtime 只执行真实工具定义、文件校验和权威提交；本段不规定故事、人称、文风、玩家代理权或状态语义。
 
 ${historyUseGuidance("zh-CN")}`,
   },
@@ -881,6 +881,17 @@ export class FileNativePromptCompiler {
         : presetCompilation.toolUniverse.filter(({ name }) =>
             playCallChainToolNames.has(name as RegisteredRuntimeToolName),
           );
+    const mainTools = toolUniverse.filter(
+      ({ name }) => !followupToolNames.some((artifact) => artifact === name),
+    );
+    // Freeze one wire declaration set for the main chain and all followups.
+    // Keep the main-chain authorization list separate in `tools`.
+    const sharedToolUniverse = [
+      ...toolUniverse,
+      ...runtimeToolsForNames(followupToolNames, this.#locale).filter(
+        ({ name }) => !toolUniverse.some((tool) => tool.name === name),
+      ),
+    ];
     const initialMessages =
       binding.definition.playPrompts === undefined
         ? playCallChainNarrativeGuidance(
@@ -939,8 +950,8 @@ export class FileNativePromptCompiler {
       ...structuredClone(presetCompilation.bootstrap),
       logicalMessages,
       provider,
-      tools: structuredClone(toolUniverse),
-      toolUniverse: structuredClone(toolUniverse),
+      tools: structuredClone(mainTools),
+      toolUniverse: structuredClone(sharedToolUniverse),
       cache: {
         ...presetCompilation.bootstrap.cache,
         breakpoints:
@@ -962,7 +973,7 @@ export class FileNativePromptCompiler {
               : [],
         ...stableCacheBoundary(
           stableText,
-          toolUniverse,
+          sharedToolUniverse,
           presetCompilation.toolStrategy,
         ),
       },
@@ -970,7 +981,7 @@ export class FileNativePromptCompiler {
     refreshMaintenanceTotals(bootstrap);
     return {
       bootstrap,
-      toolUniverse: structuredClone(toolUniverse),
+      toolUniverse: structuredClone(sharedToolUniverse),
       toolStrategy: presetCompilation.toolStrategy,
       followups: compileFollowups(
         binding,
@@ -1397,12 +1408,12 @@ function followupRuntimeContract(
 
 核心叙事与世界状态已经提交，本次请求不写世界、不产生叙事、不影响已提交的结果。它只发出一次，没有后续往返。
 
-只能提交下面声明的产物；模型选择 output name 并提供 payload，其余字段由 Runtime 固定。`
+本请求只能调用 artifact_emit 和 artifact_clear。只能提交下面声明的产物；模型选择 output name 并提供 payload，其余字段由 Runtime 固定。`
       : `# Runtime follow-up request rules
 
 The core narrative and world state have already been committed. This request does not write the world, produce narrative, or alter committed results. It is dispatched once and has no later round trip.
 
-Only the artifacts declared below may be submitted. The model chooses an output name and supplies its payload; Runtime fixes every other field.`;
+Only artifact_emit and artifact_clear may be called in this request. Only the artifacts declared below may be submitted. The model chooses an output name and supplies its payload; Runtime fixes every other field.`;
 
   return `${header}
 

@@ -207,7 +207,15 @@ async function runOne(
       const request: ModelHostExchange = {
         bootstrap: structuredClone(input.bootstrap),
         tools: structuredClone(followup.tools),
-        toolUniverse: structuredClone(followup.tools),
+        // Old snapshots froze only main-chain tools. Preserve their original
+        // followup wire request rather than inventing a new frozen universe.
+        toolUniverse: structuredClone(
+          followup.allowedTools.every((name) =>
+            input.bootstrap.toolUniverse.some((tool) => tool.name === name),
+          )
+            ? input.bootstrap.toolUniverse
+            : followup.tools,
+        ),
         allowedTools: [...followup.allowedTools],
         toolStrategy: input.toolStrategy,
         // The prompt replaces the previous followup's prompt instead of being

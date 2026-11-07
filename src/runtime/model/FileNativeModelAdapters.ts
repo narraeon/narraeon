@@ -1321,6 +1321,13 @@ function googleRequestBody(
     } else input.push({ type: "user_input", content: text(item.text) });
   }
   const tools = providerToolDefinitions(request);
+  const allowedTools = providerAllowedTools(request);
+  let toolChoice: unknown;
+  if (hasFrozenToolPolicy(request)) {
+    if (allowedTools.length === 0) toolChoice = "none";
+    else if (isProperToolSubset(allowedTools, tools))
+      toolChoice = { allowed_tools: { mode: "auto", tools: allowedTools } };
+  }
   return {
     model: connection.modelId,
     store: false,
@@ -1339,10 +1346,7 @@ function googleRequestBody(
         }),
     generation_config: {
       max_output_tokens: request.maxOutputTokens,
-      ...(hasFrozenToolPolicy(request) &&
-      providerAllowedTools(request).length === 0
-        ? { tool_choice: "none" }
-        : {}),
+      ...(toolChoice === undefined ? {} : { tool_choice: toolChoice }),
     },
   };
 }
@@ -1461,19 +1465,14 @@ function responsesRequestBody(
 ): Record<string, unknown> {
   const allowedTools =
     input.allowedTools ?? input.tools.map((tool) => tool.name);
-  const allowedNames = new Set(allowedTools);
-  const toolNames = new Set(input.tools.map((tool) => tool.name));
-  const isProperSubset =
-    allowedNames.size > 0 &&
-    allowedNames.size < toolNames.size &&
-    [...allowedNames].every((name) => toolNames.has(name));
+
   const toolChoice =
     input.hasFrozenToolPolicy === true && allowedTools.length === 0
       ? "none"
       : input.hasFrozenToolPolicy === true &&
           input.toolStrategy === "native_allowed_subset" &&
           input.connection.supportsAllowedTools &&
-          isProperSubset
+          isProperToolSubset(allowedTools, input.tools)
         ? {
             type: "allowed_tools",
             mode: "auto",
@@ -1508,6 +1507,19 @@ function responsesRequestBody(
     include: ["reasoning.encrypted_content"],
     stream: true,
   });
+}
+
+function isProperToolSubset(
+  allowedTools: readonly string[],
+  tools: readonly { name: string }[],
+): boolean {
+  const allowedNames = new Set(allowedTools);
+  const toolNames = new Set(tools.map((tool) => tool.name));
+  return (
+    allowedNames.size > 0 &&
+    allowedNames.size < toolNames.size &&
+    [...allowedNames].every((name) => toolNames.has(name))
+  );
 }
 
 /**

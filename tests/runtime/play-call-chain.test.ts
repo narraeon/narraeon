@@ -179,7 +179,7 @@ test("关闭 Responses 子集能力后真实派发仍由 Runtime 拒绝越权工
     name: "Responses",
     presetId: "custom",
     provider: "openai_responses",
-    baseUrl: "https://example.test/v1",
+    baseUrl: "https://api.x.ai/v1",
     apiKey: "secret",
     modelId: "test",
     contextWindowTokens: 32000,
@@ -249,7 +249,11 @@ test("关闭 Responses 子集能力后真实派发仍由 Runtime 拒绝越权工
     modelHost: host,
   });
   expect(sent).toHaveLength(3);
+  expect(sent[0]?.tool_choice).toBe("auto");
   expect(sent[1]?.tool_choice).toBe("auto");
+  expect(sent[2]?.tool_choice).toBe("auto");
+  expect(sent[1]?.tools).toEqual(sent[0]?.tools);
+  expect(sent[2]?.tools).toEqual(sent[0]?.tools);
   expect(JSON.stringify(sent[1]?.input)).toContain(
     '"encrypted_content":"cipher"',
   );
@@ -323,12 +327,14 @@ test("Google 后置请求使用冻结主链并恢复多个产物", async () => {
   );
   const previews: unknown[] = [];
   const safePreviews: unknown[] = [];
+  const requests: ModelHostExchange[] = [];
   const observingHost: ModelHost = {
     binding: () => host.binding(),
     freezeRequest: (request) => host.freezeRequest(request),
     previewRequest: (request) => host.previewRequest(request),
     previewAuthoringRequest: (request) => host.previewAuthoringRequest(request),
     exchange: (request, options) => {
+      requests.push(structuredClone(request));
       previews.push(host.previewRequest(request).body);
       safePreviews.push(host.previewAuthoringRequest(request));
       return host.exchange(request, options);
@@ -382,12 +388,40 @@ test("Google 后置请求使用冻结主链并恢复多个产物", async () => {
     '"signature":"synthetic-signature-secret"',
   );
   expect(JSON.stringify(sent[2])).not.toContain('"panel"');
+  expect(sent[1]!.tools).toEqual(sent[0]!.tools);
+  expect(sent[2]!.tools).toEqual(sent[0]!.tools);
+  const mainChoice = (
+    sent[0]!.generation_config as {
+      tool_choice: { allowed_tools: { mode: string; tools: string[] } };
+    }
+  ).tool_choice;
+  expect(mainChoice.allowed_tools.mode).toBe("auto");
+  expect(mainChoice.allowed_tools.tools).not.toContain("artifact_emit");
+  expect(mainChoice.allowed_tools.tools).not.toContain("artifact_clear");
+  const fullNames = requests[0]!.toolUniverse!.map(({ name }) => name);
+  const duplicateFullSet = host.previewRequest({
+    ...requests[0]!,
+    allowedTools: [...fullNames, fullNames[0]!],
+  }).body as { generation_config: Record<string, unknown> };
+  expect(duplicateFullSet.generation_config.tool_choice).toBeUndefined();
+  const duplicateSubset = host.previewRequest({
+    ...requests[0]!,
+    allowedTools: ["artifact_emit", "artifact_emit"],
+  }).body as { generation_config: Record<string, unknown> };
+  expect(duplicateSubset.generation_config.tool_choice).toEqual({
+    allowed_tools: { mode: "auto", tools: ["artifact_emit", "artifact_emit"] },
+  });
   expect(
-    (sent[1]!.tools as { name: string }[]).map((tool) => tool.name),
-  ).toEqual(["artifact_emit", "artifact_clear"]);
+    (sent[1]!.generation_config as Record<string, unknown>).tool_choice,
+  ).toEqual({
+    allowed_tools: { mode: "auto", tools: ["artifact_emit", "artifact_clear"] },
+  });
   expect(
-    (sent[2]!.tools as { name: string }[]).map((tool) => tool.name),
-  ).toEqual(["artifact_emit", "artifact_clear"]);
+    (sent[0]!.tools as { name: string }[]).map((tool) => tool.name),
+  ).toContain("artifact_emit");
+  expect(
+    (sent[0]!.tools as { name: string }[]).map((tool) => tool.name),
+  ).toContain("artifact_clear");
   const projection = await artifacts.readActiveProjection(worldId);
   expect(projection.map(({ output }) => output).sort()).toEqual([
     "options",
@@ -1830,6 +1864,30 @@ test.each([
     modelHost: host,
   });
   expect(scripted.requests).toHaveLength(3);
+  const encoder = new FileNativeModelHost({
+    provider,
+    baseUrl: "https://provider.invalid/v1",
+    apiKey: "secret",
+    modelId: "model",
+    contextWindowTokens: 1_000_000,
+    maxOutputTokens: 8_192,
+  });
+  const bodies = scripted.requests.map(
+    (request) =>
+      encoder.previewRequest(request).body as Record<string, unknown>,
+  );
+  expect(bodies[1]!.tools).toEqual(bodies[0]!.tools);
+  expect(bodies[2]!.tools).toEqual(bodies[0]!.tools);
+  if (provider === "openai_responses") {
+    expect(bodies[0]!.tool_choice).toMatchObject({ type: "allowed_tools" });
+    expect(bodies[1]!.tool_choice).toMatchObject({
+      type: "allowed_tools",
+      tools: [
+        { type: "function", name: "artifact_emit" },
+        { type: "function", name: "artifact_clear" },
+      ],
+    });
+  }
   expect(JSON.stringify(scripted.requests[1])).toContain(
     "opaque-continuation-secret",
   );
@@ -9485,6 +9543,113 @@ test("后置请求的 Provider 派发和增量持续更新同一轮进度", asyn
   expect(dispatch).toBe(3);
 });
 
+test("主链和后置共享声明时仍分别拒绝越权且不改写世界", async () => {
+  const { worlds, root, worldId } = await createWorld(
+    "followup-tool-boundaries",
+    tabletopWorldFiles(),
+  );
+  const artifacts = new FileNativeArtifactStore(root);
+  const scripted = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "bad-main",
+            name: "artifact_emit",
+            arguments: { output: "status_bar", payload: { hp: 0 } },
+          },
+        ],
+      },
+      { outcome: "response", text: "The door opens." },
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "bad-write",
+            name: "world_patch",
+            arguments: {
+              target: "@current-situation",
+              edits: [{ op: "replace_body", markdown: "changed" }],
+            },
+          },
+          { id: "bad-roll", name: "d20_check", arguments: {} },
+          {
+            id: "emit",
+            name: "artifact_emit",
+            arguments: { output: "status_bar", payload: { hp: 9 } },
+          },
+          {
+            id: "clear",
+            name: "artifact_clear",
+            arguments: { output: "status_bar" },
+          },
+        ],
+      },
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "options",
+            name: "artifact_emit",
+            arguments: { output: "options", payload: { first: "Go" } },
+          },
+        ],
+      },
+    ],
+  });
+  let settled: Awaited<ReturnType<typeof worlds.recoverEndpoint>> | undefined;
+  const host: ModelHost = {
+    binding: modelBinding,
+    exchange: async (request, observer) => {
+      if (request.requestId === "status")
+        settled = await worlds.recoverEndpoint(worldId);
+      return scripted.exchange(request, observer);
+    },
+  };
+  const preset = followupPlayPreset();
+  const status = preset.definition.followups.find(({ id }) => id === "status")!;
+  status.artifacts[0]!.invalidation = "explicit_clear";
+  const view = await new PlayCallChain(
+    worlds,
+    new FileNativePromptCompiler(),
+    artifacts,
+  ).start({
+    worldId,
+    chainId: "followup-tool-boundaries",
+    exchangeId: "first",
+    playerText: "Go.",
+    hostBinding: hostBinding(),
+    playPreset: preset,
+    modelBinding: modelBinding(),
+    modelHost: host,
+  });
+  expect(view.events.filter((event) => event.kind === "tool_result")).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ callId: "bad-main", ok: false }),
+    ]),
+  );
+  expect(
+    view.events.filter((event) => event.kind === "followup"),
+  ).toMatchObject([
+    {
+      toolCalls: [
+        { name: "world_patch", ok: false },
+        { name: "d20_check", ok: false },
+        { name: "artifact_emit", ok: true },
+        { name: "artifact_clear", ok: true },
+      ],
+    },
+    { toolCalls: [{ name: "artifact_emit", ok: true }] },
+  ]);
+  expect(await worlds.recoverEndpoint(worldId)).toEqual(settled);
+  expect(await worlds.currentHead(worldId)).toBe(view.parentHead);
+  expect(
+    (await artifacts.readActiveProjection(worldId)).map(({ output }) => output),
+  ).toEqual(["options"]);
+});
+
 test("后置请求在整轮结束后各跑一次，共享同一主链前缀且互不可见", async () => {
   const { worlds, root, worldId } = await createWorld("play-chain-followup");
   const artifacts = new FileNativeArtifactStore(root);
@@ -9569,7 +9734,7 @@ test("后置请求在整轮结束后各跑一次，共享同一主链前缀且�
     "The panel is ready",
   );
 
-  // Follow-ups receive artifact tools only, never main-chain read/write tools.
+  // Follow-ups may execute artifact tools only, never main-chain read/write tools.
   expect(statusRequest.allowedTools).toEqual([
     "artifact_emit",
     "artifact_clear",
@@ -10191,6 +10356,10 @@ test("冻结旧历史工具会话冷启动后继续，不添加新历史工具�
       query: { type: "string" },
     },
   };
+  frozen.tools.push({
+    ...structuredClone(frozen.tools[0]!),
+    name: "context_list",
+  });
   frozen.bootstrap.tools = structuredClone(frozen.tools);
   frozen.bootstrap.toolUniverse = structuredClone(frozen.tools);
   await worlds.playTimeline.persist(frozen);
@@ -10219,6 +10388,7 @@ test("冻结旧历史工具会话冷启动后继续，不添加新历史工具�
         ],
       },
       { outcome: "response", text: "Alex仍收着那封信。" },
+      { outcome: "response", text: "Alex点头。" },
     ],
   });
   const coldWorlds = new FileNativeWorldStore(root);
@@ -10245,6 +10415,23 @@ test("冻结旧历史工具会话冷启动后继续，不添加新历史工具�
   ).toBe(true);
   expect(resumed.requests[0]!.tools.map(({ name }) => name)).not.toContain(
     "history_search",
+  );
+  await new PlayCallChain(coldWorlds).append({
+    worldId,
+    chainId: frozen.chainId,
+    exchangeId: "second-after-upgrade",
+    playerText: "再看看。",
+    modelHost: resumed,
+    resolvePrompt: () =>
+      Promise.resolve({ hostBinding: hostBinding(), playPreset: playPreset() }),
+  });
+  expect(resumed.requests[2]!.tools.map(({ name }) => name)).toContain(
+    "context_list",
+  );
+  expect(resumed.requests[2]!.allowedTools).not.toContain("artifact_emit");
+  expect(resumed.requests[2]!.allowedTools).not.toContain("artifact_clear");
+  expect(resumed.requests[2]!.toolUniverse?.map(({ name }) => name)).toEqual(
+    expect.arrayContaining(["context_list", "artifact_emit", "artifact_clear"]),
   );
 });
 
@@ -12369,6 +12556,105 @@ function cacheReuseRatios(
 }
 
 const cacheReusePercent = (ratio: number) => Math.floor(ratio * 100);
+
+test.each(["legacy", "ordered"] as const)(
+  "Chat Completions %s 实际派发保留各阶段工具全集并隔离 CLIProxy 会话键",
+  async (kind) => {
+    const fetch_ = vi
+      .fn<typeof fetch>()
+      .mockImplementation(() =>
+        Promise.resolve(
+          new Response(
+            'data: {"id":"c1","choices":[{"index":0,"delta":{"content":"Done."}}]}\n\ndata: {"id":"c1","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+            { headers: { "content-type": "text/event-stream" } },
+          ),
+        ),
+      );
+    const host = new FileNativeModelHost(
+      {
+        provider: "chat_completions",
+        dialect: "cliproxyapi",
+        baseUrl: "https://provider.invalid/v1",
+        apiKey: "secret",
+        modelId: "test",
+        contextWindowTokens: 64000,
+        maxOutputTokens: 2000,
+      },
+      fetch_,
+    );
+    const { worlds, root, worldId } = await createWorld(
+      "chat-followup-wire",
+      undefined,
+      host.binding(),
+    );
+    const preset = followupPlayPreset();
+    if (kind === "ordered")
+      preset.definition.playPrompts = structuredClone(
+        builtinDefaultPlayPresetBinding("en").definition.playPrompts!,
+      );
+    const result = await new PlayCallChain(
+      worlds,
+      new FileNativePromptCompiler(),
+      new FileNativeArtifactStore(root),
+    ).start({
+      worldId,
+      chainId: "chat-followup-wire",
+      exchangeId: "first",
+      playerText: "Go.",
+      hostBinding: hostBinding(),
+      playPreset: preset,
+      modelBinding: host.binding(),
+      modelHost: host,
+    });
+    expect(result.status).toBe("ready");
+    const bodies = sentRequestBodies(fetch_);
+    expect(bodies).toHaveLength(3);
+    expect(JSON.stringify(bodies[0]!.messages)).toContain(
+      "The main call chain may not call artifact_emit or artifact_clear",
+    );
+    expect(bodies[1]!.tools).toEqual(bodies[0]!.tools);
+    expect(bodies[2]!.tools).toEqual(bodies[0]!.tools);
+    expect(bodies[1]!.prompt_cache_key).not.toBe(bodies[0]!.prompt_cache_key);
+    expect(bodies[1]!.prompt_cache_key).toBe(bodies[2]!.prompt_cache_key);
+  },
+);
+
+test("缓存复用模拟：两个独立后置请求都复用主请求的工具前缀", async () => {
+  const { host, fetch_ } = cacheSimHost([
+    { text: cacheSimReply() },
+    { text: "Status." },
+    { text: "Options." },
+  ]);
+  const { worlds, root, worldId } = await createWorld(
+    "cache-followups",
+    worldFiles(),
+    host.binding(),
+  );
+  await new PlayCallChain(
+    worlds,
+    new FileNativePromptCompiler(),
+    new FileNativeArtifactStore(root),
+  ).start({
+    worldId,
+    chainId: "cache-followups",
+    exchangeId: "first",
+    playerText: "Open.",
+    hostBinding: hostBinding(),
+    playPreset: followupPlayPreset(),
+    modelBinding: host.binding(),
+    modelHost: host,
+  });
+  const bodies = sentRequestBodies(fetch_);
+  expect(bodies).toHaveLength(3);
+  expect(bodies[1]!.tools).toEqual(bodies[0]!.tools);
+  expect(bodies[2]!.tools).toEqual(bodies[0]!.tools);
+  expect(
+    cacheReusePercent(cacheReuseRatios([bodies[0]!, bodies[1]!])[0]!),
+  ).toBeGreaterThan(0);
+  expect(
+    cacheReusePercent(cacheReuseRatios([bodies[0]!, bodies[2]!])[0]!),
+  ).toBeGreaterThan(0);
+});
 
 test("缓存复用模拟：连续派发复用上一次已发送的对话前缀", async () => {
   const steps: CacheSimStep[] = Array.from({ length: 6 }, () => ({

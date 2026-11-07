@@ -178,8 +178,7 @@ function validGooglePreviewBody(value: unknown): boolean {
       (key) => key === "max_output_tokens" || key === "tool_choice",
     ) ||
     typeof body.generation_config.max_output_tokens !== "number" ||
-    (body.generation_config.tool_choice !== undefined &&
-      body.generation_config.tool_choice !== "none")
+    !validGoogleToolChoice(body.generation_config.tool_choice)
   )
     return false;
   if (!body.input.every(validGooglePreviewItem)) return false;
@@ -197,6 +196,23 @@ function validGooglePreviewBody(value: unknown): boolean {
           typeof tool.description === "string" &&
           isRecord(tool.parameters),
       ))
+  );
+}
+
+function validGoogleToolChoice(value: unknown): boolean {
+  if (value === undefined || value === "none") return true;
+  if (
+    !isRecord(value) ||
+    Object.keys(value).length !== 1 ||
+    !isRecord(value.allowed_tools)
+  )
+    return false;
+  const allowed = value.allowed_tools;
+  return (
+    Object.keys(allowed).every((key) => key === "mode" || key === "tools") &&
+    allowed.mode === "auto" &&
+    Array.isArray(allowed.tools) &&
+    allowed.tools.every((name: unknown) => typeof name === "string")
   );
 }
 

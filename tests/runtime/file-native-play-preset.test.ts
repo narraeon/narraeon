@@ -991,6 +991,8 @@ extensions:
           { name: "world_create" },
           { name: "world_retire" },
           { name: "world_checkpoint" },
+          { name: "artifact_emit" },
+          { name: "artifact_clear" },
         ],
       },
       initialAppend: {

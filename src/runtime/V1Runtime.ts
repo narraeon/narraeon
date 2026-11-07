@@ -795,15 +795,15 @@ export class V1Runtime {
           },
           playPreset,
         );
-        const tools = structuredClone(
-          preview.compilation.toolUniverse ?? preview.compilation.tools,
-        );
+        const tools = structuredClone(preview.compilation.tools);
         return {
           ...preview,
           wireRequest: modelHost.previewRequest({
             bootstrap: structuredClone(preview.compilation),
             tools: structuredClone(tools),
-            toolUniverse: structuredClone(tools),
+            toolUniverse: structuredClone(
+              preview.compilation.toolUniverse ?? tools,
+            ),
             allowedTools: tools.map(({ name }) => name),
             toolStrategy: preview.compilation.toolStrategy,
             appended:
@@ -1256,11 +1256,11 @@ export class V1Runtime {
           },
           playPreset,
         );
-        const tools = preview.compilation.toolUniverse;
+        const tools = preview.compilation.tools;
         const nextEncoding = modelHost.previewRequest({
           bootstrap: preview.compilation,
           tools,
-          toolUniverse: tools,
+          toolUniverse: preview.compilation.toolUniverse,
           allowedTools: tools.map(({ name }) => name),
           toolStrategy: preview.compilation.toolStrategy,
           appended: continueContext ? (live?.transcript ?? []) : [],

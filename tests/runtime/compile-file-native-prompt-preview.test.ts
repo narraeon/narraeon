@@ -2407,7 +2407,11 @@ test("旧会话刷新编译仍保留冻结工具定义，新会话定义只声�
     builtinDefaultPlayPresetBinding(),
   );
   expect(refreshed.toolUniverse).toEqual(legacyTools);
-  expect(refreshed.bootstrap.tools).toEqual(legacyTools);
+  expect(refreshed.bootstrap.tools).toEqual(
+    legacyTools.filter(
+      ({ name }) => name !== "artifact_emit" && name !== "artifact_clear",
+    ),
+  );
   delete request.frozenWorldContext;
   const fresh = compiler.compilePlayCallChain(
     request,
