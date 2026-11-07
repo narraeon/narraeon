@@ -859,6 +859,7 @@ export class SettingImprovementSession {
   ): Promise<ActiveTransaction> {
     const lease = await this.#content.beginCurrentTreeContentPackageOperation(
       session.packageId,
+      { wait: true },
     );
     try {
       const beforeFingerprint = contentTreeFingerprint(lease.package.files);

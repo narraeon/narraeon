@@ -156,8 +156,9 @@ export class ContentWorkspace {
 
   beginCurrentTreeContentPackageOperation(
     localId: string,
+    options: { wait?: boolean } = {},
   ): Promise<CurrentTreeContentPackageOperationLease> {
-    return this.#currentTreeLibrary.acquireOperationLease(localId);
+    return this.#currentTreeLibrary.acquireOperationLease(localId, options);
   }
 
   inspectCurrentTreeContentPackage(files: readonly ContentTreeFile[]) {

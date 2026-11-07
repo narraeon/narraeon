@@ -3242,6 +3242,98 @@ test("完整工具响应和原树指纹落盘后，重启只在该 revision 上�
   expect((await store.read(view.sessionId)).pendingSettlement).toBeNull();
 });
 
+test("tool settlement waits for an overlapping package operation and persists its receipt", async () => {
+  const fixture = await createFixture([]);
+  const started = Promise.withResolvers<void>();
+  const respond = Promise.withResolvers<void>();
+  const settlementAttempted = Promise.withResolvers<void>();
+  const script = new ScriptedModelHost({
+    binding,
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "read",
+            name: "setting_read",
+            arguments: { path: "opening.md" },
+          },
+          {
+            id: "write",
+            name: "setting_write_file",
+            arguments: { path: "opening.md", contents: "Settled change.\n" },
+          },
+        ],
+      },
+      { outcome: "response", text: "Done." },
+    ],
+  });
+  let first = true;
+  const host: ModelHost = {
+    binding: () => binding,
+    exchange: async (request, observer) => {
+      if (first) {
+        first = false;
+        started.resolve();
+        await respond.promise;
+      }
+      return script.exchange(request, observer);
+    },
+  };
+  const session = serviceFor(fixture.root, fixture.content, host);
+  const sending = sendFresh(session, fixture.packageId, "lease-race", "Edit.");
+  await started.promise;
+  const lease = await fixture.content.beginCurrentTreeContentPackageOperation(
+    fixture.packageId,
+  );
+  const begin = fixture.content.beginCurrentTreeContentPackageOperation.bind(
+    fixture.content,
+  );
+  vi.spyOn(
+    fixture.content,
+    "beginCurrentTreeContentPackageOperation",
+  ).mockImplementation((...args) => {
+    settlementAttempted.resolve();
+    return begin(...args);
+  });
+  try {
+    respond.resolve();
+    await settlementAttempted.promise;
+    await new Promise((resolve) => setImmediate(resolve));
+    await lease.replace(
+      lease.package.files.map((file) =>
+        file.path === "opening.md"
+          ? { ...file, contents: "Latest tree.\n" }
+          : file,
+      ),
+    );
+  } finally {
+    lease.release();
+  }
+  const result = await sending;
+  expect(result.runStatus).toBe("ready");
+  expect(result.messages.at(-1)?.text).toBe("Done.");
+  expect(result.turns[0]?.exchanges[0]?.toolCalls[1]).toMatchObject({
+    callId: "write",
+    result: {
+      isError: false,
+      changes: [{ path: "opening.md", before: "Latest tree.\n" }],
+    },
+  });
+  expect(
+    (
+      await fixture.content.readCurrentTreeContentPackage(fixture.packageId)
+    ).files.find(({ path }) => path === "opening.md")?.contents,
+  ).toBe("Settled change.\n");
+  const stored = await new FileNativeSettingImprovementStore(fixture.root).read(
+    result.sessionId,
+  );
+  expect(stored.pendingSettlement).toBeNull();
+  expect(stored.modelItems).toContainEqual(
+    expect.objectContaining({ kind: "tool", toolCallId: "write" }),
+  );
+});
+
 test("发布前中断留下结算意图；重启只重放完整工具响应并补齐收据", async () => {
   const root = await temporaryRoot("narraeon-setting-recovery-");
   let failPublish = true;
