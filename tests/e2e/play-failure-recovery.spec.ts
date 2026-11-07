@@ -4,7 +4,8 @@ import { test } from "../support/isolatedRuntimeTest.ts";
 import type { V1PlayCallChainView, V1Request } from "../../src/protocol/v1.ts";
 
 type ProviderStep =
-  { kind: "reject" | "disconnect" } | { kind: "text"; text: string };
+  | { kind: "reject" | "disconnect" | "context_limit" }
+  | { kind: "text"; text: string };
 let provider: Server;
 let providerUrl = "";
 const steps: ProviderStep[] = [];
@@ -35,14 +36,27 @@ test.beforeAll(async () => {
           ].join(""),
         );
       } else {
-        response.writeHead(step?.kind === "reject" ? 429 : 500, {
-          "content-type": "application/json",
-        });
+        response.writeHead(
+          step?.kind === "reject"
+            ? 429
+            : step?.kind === "context_limit"
+              ? 400
+              : 500,
+          {
+            "content-type": "application/json",
+          },
+        );
         response.end(
           JSON.stringify({
             error: {
-              message: "Fixture rejection before generation",
-              code: "rate_limit_exceeded",
+              message:
+                step?.kind === "context_limit"
+                  ? "Maximum context length exceeded"
+                  : "Fixture rejection before generation",
+              code:
+                step?.kind === "context_limit"
+                  ? "context_length_exceeded"
+                  : "rate_limit_exceeded",
             },
           }),
         );
@@ -67,7 +81,7 @@ test.afterAll(async () => {
 });
 
 for (const locale of ["zh-CN", "en"] as const)
-  test(`${locale}: wrap-up shortcut fills a one-turn request, frozen retry preserves it, and unknown outcome prepares fresh context`, async ({
+  test(`${locale}: wrap-up shortcut and interrupted requests preserve frozen retries`, async ({
     page,
   }) => {
     steps.length = 0;
@@ -277,41 +291,70 @@ for (const locale of ["zh-CN", "en"] as const)
         exact: true,
       })
       .click();
-    const fresh = page.getByRole("button", {
-      name: english ? "Continue with a fresh context" : "从全新上下文继续",
-      exact: true,
-    });
-    await recoveryExpect(fresh).toBeEnabled();
     const unknownCard = page.locator(".call-chain-failure").last();
     await recoveryExpect(unknownCard.locator("strong")).toHaveText(
       english ? "Model request outcome unknown" : "模型请求结果未知",
     );
-    await recoveryExpect(resend).toHaveCount(0);
+    await recoveryExpect(resend).toBeEnabled();
     await recoveryExpect(unknownCard.locator("pre")).toBeHidden();
     const unknown = await runtime<V1PlayCallChainView>(page, {
       type: "play.chain.inspect",
       worldId: created.world.worldId,
     });
     expect(unknown).toMatchObject({
-      canRetry: false,
+      canRetry: true,
       lastFailureKind: "outcome_unknown",
+    });
+    await reopenWorld();
+    await recoveryExpect(resend).toBeEnabled();
+    expect(providerRequests).toHaveLength(3);
+    expect(providerRequests[2]).not.toContain(wrapUp);
+    steps.push({ kind: "text", text: "Alex leads you into the corridor." });
+    await resend.click();
+    await recoveryExpect(
+      page.getByText("Alex leads you into the corridor.", { exact: true }),
+    ).toBeVisible();
+    expect(providerRequests).toHaveLength(4);
+    expect(providerRequests[3]).toBe(providerRequests[2]);
+    await recoveryExpect(
+      page.getByText("I ask what is outside.", { exact: true }),
+    ).toHaveCount(1);
+    const continued = await runtime<V1PlayCallChainView>(page, {
+      type: "play.chain.inspect",
+      worldId: created.world.worldId,
+    });
+    expect(continued.chainId).toBe(unknown.chainId);
+    expect(continued.lastFailure).toBeNull();
+    expect(continued.lastFailureKind).toBeUndefined();
+
+    steps.push({ kind: "context_limit" });
+    await input.fill("I ask about the corridor.");
+    await page
+      .getByRole("button", {
+        name: english ? "Append action" : "追加行动",
+        exact: true,
+      })
+      .click();
+    const fresh = page.getByRole("button", {
+      name: english ? "Continue with a fresh context" : "从全新上下文继续",
+      exact: true,
+    });
+    await recoveryExpect(fresh).toBeEnabled();
+    await recoveryExpect(resend).toHaveCount(0);
+    const blocked = await runtime<V1PlayCallChainView>(page, {
+      type: "play.chain.inspect",
+      worldId: created.world.worldId,
+    });
+    expect(blocked).toMatchObject({
+      canRetry: false,
+      lastFailureKind: "context_limit",
     });
     await reopenWorld();
     await recoveryExpect(fresh).toBeEnabled();
     await fresh.click();
     await recoveryExpect(input).toBeFocused();
-    await recoveryExpect(
-      page.getByText(
-        english
-          ? "The next message starts a fresh context"
-          : "下一条消息将开启全新上下文",
-        { exact: true },
-      ),
-    ).toBeVisible();
-    expect(providerRequests).toHaveLength(3);
-    expect(providerRequests[2]).not.toContain(wrapUp);
     await input.fill("I continue from the current world.");
-    steps.push({ kind: "text", text: "Alex leads you into the corridor." });
+    steps.push({ kind: "text", text: "The corridor opens into a garden." });
     await page
       .getByRole("button", {
         name: english
@@ -321,20 +364,16 @@ for (const locale of ["zh-CN", "en"] as const)
       })
       .click();
     await recoveryExpect(
-      page.getByText("Alex leads you into the corridor.", { exact: true }),
+      page.getByText("The corridor opens into a garden.", { exact: true }),
     ).toBeVisible();
-    expect(providerRequests).toHaveLength(4);
-    expect(providerRequests[3]).not.toBe(providerRequests[2]);
-    await recoveryExpect(
-      page.getByText("I ask what is outside.", { exact: true }),
-    ).toHaveCount(1);
-    const continued = await runtime<V1PlayCallChainView>(page, {
+    const freshChain = await runtime<V1PlayCallChainView>(page, {
       type: "play.chain.inspect",
       worldId: created.world.worldId,
     });
-    expect(continued.chainId).not.toBe(unknown.chainId);
-    expect(continued.lastFailure).toBeNull();
-    expect(continued.lastFailureKind).toBeUndefined();
+    expect(freshChain.chainId).not.toBe(blocked.chainId);
+    await recoveryExpect(
+      page.getByText("I ask about the corridor.", { exact: true }),
+    ).toHaveCount(1);
   });
 
 test("protocol switch is temporary and restored protocol accepts changed model settings", async ({
