@@ -296,8 +296,8 @@ ${historyUseGuidance(locale)}`,
     block("facts", {
       category: "policy",
       turnGuide: zh
-        ? "尝试、声称不自动成真，遵守裁决。提到该办的事时，让只读过故事的玩家能说出要做什么、找谁或去哪；若只写了人名地点，补上来意。"
-        : "Attempts may fail; claims may be false. Keep rulings. Known duties: say what to do and who/where; names alone omit why.",
+        ? "尝试不自动成功，声称不自动成真，遵守裁决。只读过故事的玩家若还不知道眼下要办什么，正文带出一句角色收到的交代：找谁或去哪里做什么。NPC 以为主角早知道时，就写当时听到的话。"
+        : "Keep rulings; attempts and claims are no proof. If a known duty is new to readers, recall who or where and what to do.",
     }),
     block("npc", { category: "policy" }),
     block("save-timing", {

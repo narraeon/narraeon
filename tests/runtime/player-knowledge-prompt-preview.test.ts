@@ -42,7 +42,7 @@ const contracts = {
       "无任务不造任务",
       "已交代且未变的内容不逐轮提醒，也不为此逐轮翻查历史",
     ],
-    tail: "若只写了人名地点，补上来意",
+    tail: "正文带出一句角色收到的交代：找谁或去哪里做什么",
   },
   en: {
     opening: [
@@ -72,7 +72,7 @@ const contracts = {
       "Do not invent tasks",
       "Do not repeat unchanged information already disclosed or routinely search history for it each turn",
     ],
-    tail: "Known duties: say what to do and who/where; names alone omit why",
+    tail: "If a known duty is new to readers, recall who or where and what to do",
   },
 } as const;
 
