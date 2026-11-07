@@ -233,8 +233,8 @@ ${historyUseGuidance(locale)}`,
       category: "choice",
       group: "continue",
       turnGuide: zh
-        ? "本轮有新动作或台词时，在最终正文开头演出；兼有两者须都在首个世界回应前出现，不重演旧输入。"
-        : "Stage this turn's new action and dialogue before the first world response in final prose; never replay old input.",
+        ? "本轮有新动作或台词时，在最终正文开头演出；同次已发起的两者都在首个世界回应前出现，不重演旧输入。"
+        : "Stage newly initiated action and dialogue before the first world response in final prose; no replay of old input.",
     }),
     block("continue-advance", {
       category: "choice",

@@ -362,6 +362,10 @@ test.each(["en", "zh-CN"] as const)(
       expect(preview.compilation.turnGuide?.text ?? "").not.toMatch(
         /触觉先于视觉|touch before sight|只在归玩家的决定|stop only at a decision|“我”“你”转为第三人称|“I” and “you” in the player's text become third person/u,
       );
+      if (name === "continue-stage")
+        expect(preview.compilation.turnGuide?.text).toContain(
+          locale === "zh-CN" ? "同次已发起" : "newly initiated",
+        );
       expect(
         builtinPlayPrompts(locale).find(({ id }) => id === `play.${name}`)
           ?.required,
