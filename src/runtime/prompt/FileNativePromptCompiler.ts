@@ -2719,8 +2719,8 @@ function resolveRecentHistory(
         source: "slot:history:empty",
         markdown:
           locale === "zh-CN"
-            ? `# 最近已提交对话\n\n${renderHistoryInjectionNotice(history.messages.length, [], "recent", locale)}\n（本次没有可注入的非开场白原文：可能只有开场白，或近期材料已在原生对话中。无需为寻找上一条记录例行调用历史检索工具。）`
-            : `# Recent committed conversation\n\n${renderHistoryInjectionNotice(history.messages.length, [], "recent", locale)}\n(No non-opening originals selected for injection: only the opening exists, or recent entries are already in native conversation. Do not call history tools merely to look for a previous message.)`,
+            ? `# 最近已提交对话\n\n${renderHistoryInjectionNotice(history.messages.length, [], "recent", locale)}\n（本次没有可注入的非开场白原文。无需为寻找上一条记录例行调用历史检索工具。）`
+            : `# Recent committed conversation\n\n${renderHistoryInjectionNotice(history.messages.length, [], "recent", locale)}\n(No non-opening originals selected for injection. Do not call history tools merely to look for a previous message.)`,
       });
     coverage.push({
       slot: "history",

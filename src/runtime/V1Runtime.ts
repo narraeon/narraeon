@@ -1247,6 +1247,9 @@ export class V1Runtime {
           : binding;
         const preview = this.#compiler.preview(
           {
+            ...(continueContext && live !== null
+              ? { frozenWorldContext: live.bootstrap }
+              : {}),
             extensionControls: await this.#worlds.extensionControls(
               request.worldId,
               playPreset,

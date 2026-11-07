@@ -5814,7 +5814,7 @@ test("没有 history slot 的首发和原样重试携带开场，后期全新上
         }
       : file,
   );
-  const { worlds, worldId } = await createWorld("opening-no-slot", files);
+  const { worlds, worldId, root } = await createWorld("opening-no-slot", files);
   const modelHost = new ScriptedModelHost({
     binding: modelBinding(),
     steps: [
@@ -5852,6 +5852,35 @@ test("没有 history slot 的首发和原样重试携带开场，后期全新上
       .map(({ markdown }) => markdown)
       .join("\n");
   expect(worldText(0).split("门外传来三声短促的铃响。\n")).toHaveLength(2);
+  const runtime = new V1Runtime({
+    dataRoot: root,
+    configRoot: join(root, "config"),
+  });
+  await runtime.initialize();
+  await runtime.handle({
+    type: "model.save",
+    connection: {
+      name: "Preview",
+      presetId: "custom",
+      provider: "chat_completions",
+      baseUrl: "https://provider.invalid/v1",
+      apiKey: "secret",
+      modelId: "preview",
+      contextWindowTokens: 64000,
+      maxOutputTokens: 8000,
+    },
+  });
+  const reading = (
+    await runtime.handle({ type: "world.play-context.read", worldId })
+  ).result as V1PlayContextReadingView;
+  expect(reading.nextFreshContext?.contextMode).toBe("append");
+  const previewWorld = reading
+    .nextFreshContext!.preview.compilation.logicalMessages.filter(
+      ({ role }) => role === "world_context",
+    )
+    .map(({ markdown }) => markdown)
+    .join("\n");
+  expect(previewWorld.split("门外传来三声短促的铃响。\n")).toHaveLength(2);
   await chains.start({
     worldId,
     chainId: "opening-no-slot-later",
@@ -5863,6 +5892,32 @@ test("没有 history slot 的首发和原样重试携带开场，后期全新上
     modelHost,
   });
   expect(worldText(2)).not.toContain("门外传来三声短促的铃响。");
+  const fork = await chains.deriveWorld({
+    operationId: "opening-fork-origin",
+    sourceWorldId: worldId,
+    sourceHead: "genesis",
+    hostPresetId: "play-chain-host",
+  });
+  const forkHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [{ outcome: "response", text: "The bell fades." }],
+  });
+  await chains.start({
+    worldId: fork.world.worldId,
+    chainId: "opening-fork-first",
+    exchangeId: "fork-first",
+    playerText: "I wait.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: forkHost,
+  });
+  const forkText = forkHost.requests[0]!.bootstrap.logicalMessages.filter(
+    ({ role }) => role === "world_context",
+  )
+    .map(({ markdown }) => markdown)
+    .join("\n");
+  expect(forkText.split("门外传来三声短促的铃响。\n")).toHaveLength(2);
 });
 
 test("工具中间步文本不进入叙事，状态与终态叙事分别推进并可追加上下文", async () => {

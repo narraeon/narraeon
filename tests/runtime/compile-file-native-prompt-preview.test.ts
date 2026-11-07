@@ -62,12 +62,15 @@ test.each([
     expect(later).not.toContain(opening);
     request.world.history = {};
     request.world.additionalMaterials = [];
-    expect(
-      compiler
-        .preview(request, preset)
-        .compilation.logicalMessages.map(({ markdown }) => markdown)
-        .join("\n"),
-    ).not.toContain(label);
+    const empty = compiler
+      .preview(request, preset)
+      .compilation.logicalMessages.map(({ markdown }) => markdown)
+      .join("\n");
+    expect(empty).not.toContain(label);
+    if (historySlot) {
+      expect(empty).not.toContain("only the opening exists");
+      expect(empty).not.toContain("可能只有开场白");
+    }
   },
 );
 
@@ -2268,7 +2271,9 @@ context:
       "这段开场白不能作为 recent history 再注入。",
     );
     expect(worldContext).toContain("Recent committed conversation");
-    expect(worldContext).toContain("only the opening exists");
+    expect(worldContext).toContain(
+      "No non-opening originals selected for injection",
+    );
     expect(worldContext).toContain(
       "Do not call history tools merely to look for a previous message",
     );

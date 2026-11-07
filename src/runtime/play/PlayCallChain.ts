@@ -915,6 +915,7 @@ export class PlayCallChain {
   async currentContinuation(worldId: string): Promise<{
     modelBinding: ModelHostBinding | undefined;
     transcript: ModelHostAppendItem[];
+    bootstrap: PromptCompilation;
   } | null> {
     const session = await this.#worldSession(worldId);
     return session === null
@@ -922,6 +923,7 @@ export class PlayCallChain {
       : {
           modelBinding: session.modelBinding,
           transcript: structuredClone(session.transcript),
+          bootstrap: structuredClone(currentPlayPrompt(session).bootstrap),
         };
   }
 

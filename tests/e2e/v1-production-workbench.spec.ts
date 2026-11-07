@@ -903,6 +903,10 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(toolResult).toContainText("@current-situation write succeeded");
   const firstPlayRequest = providerRequest();
   expect(JSON.stringify(firstPlayRequest)).toContain(
+    "The dormitory door closes behind you. Alex, wearing a dark blue athletic tank top, waits to discuss tonight's training.",
+  );
+  expect(JSON.stringify(firstPlayRequest)).toContain("玩家已经读过的开场白");
+  expect(JSON.stringify(firstPlayRequest)).not.toContain(
     "本次没有可注入的非开场白原文",
   );
   expect(JSON.stringify(firstPlayRequest)).toContain(
