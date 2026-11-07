@@ -1342,6 +1342,7 @@ describe("世界游玩页面", () => {
 
     const composer = screen.getByLabelText<HTMLTextAreaElement>("你的行动");
     expect(composer.rows).toBe(1);
+    composer.style.border = "0";
     Object.defineProperty(composer, "scrollHeight", {
       configurable: true,
       value: 96,

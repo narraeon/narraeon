@@ -2,7 +2,15 @@ import type { AuthoringConversationView } from "./AuthoringTarget.ts";
 import { AuthoringPromptPreview } from "./AuthoringPromptPreview.tsx";
 import { createClientId } from "./ClientId.ts";
 import { useConversationComposer } from "./useConversationComposer.ts";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useAutosizeTextarea } from "./useAutosizeTextarea.ts";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import type { Gameplay, ResolutionScheme } from "../protocol/gameplay.ts";
 import type {
@@ -122,6 +130,7 @@ export function SettingImprovementPanel({
   revisionActions,
 }: SettingImprovementPanelProps): React.JSX.Element {
   const [message, setMessage] = useState("");
+  const { ref: messageTextareaRef } = useAutosizeTextarea(message);
   const [editing, setEditing] = useState<{
     sessionId: string;
     messageId: string;
@@ -145,6 +154,19 @@ export function SettingImprovementPanel({
     path: string;
   } | null>(null);
   const conversationRef = useRef<HTMLElement>(null);
+  const composerRef = useRef<HTMLElement>(null);
+  const [composerHeight, setComposerHeight] = useState(0);
+  useLayoutEffect(() => {
+    const composer = composerRef.current;
+    if (composer === null) return;
+    const publish = (): void =>
+      setComposerHeight(composer.getBoundingClientRect().height);
+    publish();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(publish);
+    observer.observe(composer);
+    return () => observer.disconnect();
+  }, []);
   const running = view?.runStatus === "running" || submitting;
   const rollbackRunning = rollingBackFile !== null;
   const finishingRevision = revisionActions?.applying === true;
@@ -337,6 +359,11 @@ export function SettingImprovementPanel({
     <main
       className="setting-reader-page"
       aria-labelledby="setting-improvement-title"
+      style={
+        {
+          "--setting-composer-height": `${composerHeight}px`,
+        } as React.CSSProperties
+      }
     >
       <div className="setting-reader-shell">
         <nav
@@ -765,7 +792,7 @@ export function SettingImprovementPanel({
           </article>
         </section>
 
-        <footer className="setting-conversation-composer">
+        <footer ref={composerRef} className="setting-conversation-composer">
           <label htmlFor="setting-conversation-input">
             {startingFresh
               ? uiText("用全新上下文给 AI 发消息")
@@ -773,6 +800,7 @@ export function SettingImprovementPanel({
           </label>
           <div className="setting-conversation-composer-row">
             <textarea
+              ref={messageTextareaRef}
               id="setting-conversation-input"
               rows={2}
               value={message}

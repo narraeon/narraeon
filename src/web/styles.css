@@ -7580,7 +7580,8 @@ summary:focus-visible {
   min-height: 100dvh;
   gap: 0.8rem;
   margin: 0 auto;
-  padding: clamp(4.4rem, 8vh, 6rem) clamp(0.35rem, 2vw, 1rem) 12rem;
+  padding: clamp(4.4rem, 8vh, 6rem) clamp(0.35rem, 2vw, 1rem)
+    max(12rem, calc(var(--setting-composer-height, 0px) + 2rem));
 }
 
 .setting-floating-title {

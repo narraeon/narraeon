@@ -17,6 +17,7 @@ import {
   usePlayerViewFoldController,
 } from "./PlayerViewFoldState.ts";
 import { useConversationComposer } from "./useConversationComposer.ts";
+import { useAutosizeTextarea } from "./useAutosizeTextarea.ts";
 import {
   conversationConnectionText,
   type ObserveConversation,
@@ -306,7 +307,8 @@ export function WorldPage({
   );
   const historyEndRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLElement>(null);
-  const composerTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const { ref: composerTextareaAttach, textareaRef: composerTextareaRef } =
+    useAutosizeTextarea(playerText);
   const turnNoteInputRef = useRef<HTMLInputElement>(null);
   const [turnNoteOpen, setTurnNoteOpen] = useState(false);
   const [composerHeight, setComposerHeight] = useState(72);
@@ -572,15 +574,6 @@ export function WorldPage({
       );
     });
   }, [revisionWorkspace]);
-
-  useLayoutEffect(() => {
-    const textarea = composerTextareaRef.current;
-    if (textarea === null) return;
-    textarea.style.height = "0px";
-    const height = Math.min(textarea.scrollHeight, 152);
-    textarea.style.height = `${Math.max(height, 24)}px`;
-    textarea.style.overflowY = textarea.scrollHeight > 152 ? "auto" : "hidden";
-  }, [playerText]);
 
   useLayoutEffect(() => {
     const composer = composerRef.current;
@@ -2052,7 +2045,7 @@ export function WorldPage({
               <label>
                 <span className="visually-hidden">{uiText("你的行动")}</span>
                 <textarea
-                  ref={composerTextareaRef}
+                  ref={composerTextareaAttach}
                   aria-label={uiText("你的行动")}
                   rows={1}
                   placeholder={uiText("接下来，你要做什么？")}
