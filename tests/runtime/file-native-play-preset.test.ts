@@ -1002,7 +1002,7 @@ extensions:
     });
     const previewText = JSON.stringify(preview.result);
     expect(previewText).not.toContain("player_input");
-    expect(previewText).not.toContain("message.genesis.narrator");
+    expect(previewText).toContain("Opening already seen by the player");
     expect(previewText).toContain(
       "meaningful silence, solitude, rest and waiting",
     );

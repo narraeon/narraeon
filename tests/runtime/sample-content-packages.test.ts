@@ -219,7 +219,7 @@ describe.each(appLocales)("ordinary sample content package (%s)", (locale) => {
     const opening = sample.files.find(
       ({ path }) => path === "opening.md",
     )!.contents;
-    expect(bootstrap).not.toContain(opening.trim());
+    expect(bootstrap.split(opening)).toHaveLength(2);
     expect(bootstrap).toContain("@current-situation");
     expect(bootstrap).toContain("@letter-entrusted");
     expect(bootstrap).toContain(

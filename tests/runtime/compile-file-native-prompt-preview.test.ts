@@ -13,6 +13,65 @@ import {
 import { WorldDocumentStore } from "../../src/runtime/world/WorldDocumentStore.ts";
 
 test.each([
+  ["en", false, "already seen by the player"],
+  ["en", true, "already seen by the player"],
+  ["zh-CN", false, "玩家已经读过的开场白"],
+  ["zh-CN", true, "玩家已经读过的开场白"],
+] as const)(
+  "%s first play preview includes the opening with history slot=%s",
+  (locale, historySlot, label) => {
+    const request = input({
+      playerInputPlacement: "append",
+      playerInput: "My action",
+    });
+    const opening = "First line.\n“Exact dialogue.”\n";
+    request.world.history = { "message.genesis.narrator": opening };
+    request.world.additionalMaterials = [
+      { kind: "history_message", message: "message.genesis.narrator" },
+    ];
+    if (historySlot) {
+      const files = snapshotRecord(request);
+      files["control/frame.yaml"] += "  - slot: { kind: history }\n";
+      bindSnapshot(request, files);
+    }
+    const compiler = new FileNativePromptCompiler({ locale });
+    const preset = builtinDefaultPlayPresetBinding(locale);
+    const preview = compiler.preview(request, preset);
+    const text = preview.compilation.logicalMessages
+      .filter(({ role }) => role === "world_context")
+      .map(({ markdown }) => markdown)
+      .join("\n");
+    expect(text.split(opening)).toHaveLength(2);
+    expect(text).toContain(label);
+    expect(text).not.toContain("only the opening exists");
+    expect(text).not.toContain("可能只有开场白");
+    expect(preview.initialAppend?.logical).toEqual({
+      kind: "player",
+      text: "My action",
+    });
+    expect(preview.compilation.provider.preload?.markdown).toContain(opening);
+    expect(preview.compilation.tools.map(({ name }) => name)).toContain(
+      "history_read",
+    );
+
+    request.world.history["message.1.player"] = "Earlier action";
+    const later = compiler
+      .preview(request, preset)
+      .compilation.logicalMessages.map(({ markdown }) => markdown)
+      .join("\n");
+    expect(later).not.toContain(opening);
+    request.world.history = {};
+    request.world.additionalMaterials = [];
+    expect(
+      compiler
+        .preview(request, preset)
+        .compilation.logicalMessages.map(({ markdown }) => markdown)
+        .join("\n"),
+    ).not.toContain(label);
+  },
+);
+
+test.each([
   {
     locale: "zh-CN" as const,
     policy: [
@@ -2434,6 +2493,7 @@ test("生产附加材料选择 genesis 提交时仍排除开场白原文", () =>
   const request = input({ playerInputPlacement: "append" });
   request.world.history = {
     "message.genesis.narrator": "GENESIS-MUST-NOT-BE-REPLAYED",
+    "message.1.player": "An earlier action",
   };
   request.world.additionalMaterials = [
     { kind: "history_commit", commit: "genesis" },

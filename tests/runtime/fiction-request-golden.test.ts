@@ -57,6 +57,8 @@ import {
  * key responses still pending, and mechanics explain recent-history fallback
  * (#128). The 52 chain/preview/authoring digests changed; the 24 preset-free
  * bootstrap digests remain unchanged. These are new compiles, not frozen retries.
+ * First-play opening guidance (#156) changes chain and preview digests;
+ * already frozen requests are not recompiled.
  */
 function digest(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -237,101 +239,101 @@ const expectedDigests: Record<string, string> = {
   "bootstrap/zh-CN/ordered-default/openai_responses/bootstrap":
     "5f7993acb255b7111eb5574e8fb6d9e8506fc21a6a755bb828818f81090013eb",
   "chain/en/legacy-v1/anthropic_messages/append":
-    "9f557558d5bc1f2e982b18410b2dfe0513af158458f5067750198d568a917ffb",
+    "e6e7d00d9ff5b1cbe9e9ad0b5d5d7aad902257ce2e8428516f98ef793adc3e6f",
   "chain/en/legacy-v1/anthropic_messages/bootstrap":
-    "c3adf1b9f887ffa288cd89659cc01ec0408c24e1595fd9ff437b865facd23b6b",
+    "5f35b672721856af7c6b4be82a930f4ca1def46187bb6edcb8a28957021bb9da",
   "chain/en/legacy-v1/chat_completions/append":
-    "323b1f63785c5ddb57545b71fcb186a62ec43dcc7db1f50d0d7678fe0cf74076",
+    "ae0d194d44955d073d8dc405424d8b8589b929821542de8be2946ff94ed417b6",
   "chain/en/legacy-v1/chat_completions/bootstrap":
-    "2ad33fcf54c9913ea5b763d9c5e1c12c804a199ce70440ea7ea5abd56d5469d7",
+    "09a44fa52a8b20fb69a044324a5cfee39d7c730b5b08ac8b6198e8b6838318da",
   "chain/en/legacy-v1/openai_responses/append":
-    "6eed07dfd1820c901dbec2a24313f1e28ffe7d148fabaa231ee8749fc6ae13cc",
+    "733f11c7ddeddf88ddf72c221d9acceecd0b64602b034d3786b3cd267fbdc081",
   "chain/en/legacy-v1/openai_responses/bootstrap":
-    "f4aa6f1069f7a887bca75cb2ef38cfa7796eca833122cfd368b18f7c574378f8",
+    "de6b6657125b66396e45910b955f41c5c66fc0b219a4436ad8c574a038b10ffd",
   "chain/en/ordered-default/anthropic_messages/append":
-    "f8c7341ec57fcc0ece2837cf4639bd06d1f4498d5a126e0dbd5e1ac36d1740d3",
+    "7bbd6b6c15966432fbe538f522ebb9db1aa8f97869d61680f7bc1c8e7a770d42",
   "chain/en/ordered-default/anthropic_messages/bootstrap":
-    "9667402284c3c502b22401b4712fbd4e37ef852be5853320dd063fbde20129fa",
+    "eac3e78eb53a01e5d665a358bc957e05117e1a491a80afd47c04090036e2e847",
   "chain/en/ordered-default/chat_completions/append":
-    "f2123ec5cc92a1be3ffc8cab93235701378022f5402167bce4712403dafcc9d0",
+    "8d82b08ed36b050efc426576c4d6aa28645546a19f55b08fb36793df8f3ad859",
   "chain/en/ordered-default/chat_completions/bootstrap":
-    "84823a42946eee6531132c38470221928ff7cf08db7827a45d37394d7bcd120d",
+    "77a1bedf24f9048f58da24eb44b73d5001a6f499dfef69562b161583d45a64de",
   "chain/en/ordered-default/openai_responses/append":
-    "f8e798902b3f9d2d268113d1ce15eef956fa556cc58f27261b9c1328b5babe54",
+    "9a237ce9fb6901fd005e449eb9220f4e2c78cbdd62af3ba7a86cf6f2263f55fb",
   "chain/en/ordered-default/openai_responses/bootstrap":
-    "705bdb10698699f6e1f81ca09e34148d45878be34a2188a72ab4261a74a00ed5",
+    "e733c0a4fd8939e6a73f23d5cd74f5bb0dd6634609bdb60cf246efb220255098",
   "chain/zh-CN/legacy-v1/anthropic_messages/append":
-    "cc392aa358bd6e5b7f8ffa30b747ed96ffe4f7c953f627bc6ca449d3d2053421",
+    "1b9807ff5f79cba1880a30ad48823a96ceefeb401a492e1b565ec4aa0468be4e",
   "chain/zh-CN/legacy-v1/anthropic_messages/bootstrap":
-    "85637be76d560321c6c0133474c202ffe509adfda3d9381246c6ebe6b090121c",
+    "d2298915ea02aae58e86626fe0d6f462b1b664d4e626a86f5e3b39bb5b996092",
   "chain/zh-CN/legacy-v1/chat_completions/append":
-    "7596d9ad6e387f24486e6b47f9584ba12e4a6bbf860c5badd129e32cb16c2cae",
+    "8e236f50f652713fe3ff27dbb641500b40a6bbf1c300bdc344d6c6b0991f743d",
   "chain/zh-CN/legacy-v1/chat_completions/bootstrap":
-    "803959b9ef8f6a16c1e627419c18e0accf00ec5180ac15d7d3bb01674f6e65c7",
+    "3c801545d8f9c024d53b021d22a1947b320a6945242de6830bfe346ad6278eb2",
   "chain/zh-CN/legacy-v1/openai_responses/append":
-    "780bb96c5f2b6c1a2250d51a49e2f349a3807eb2878409bdc471239b04c06023",
+    "15843ad62e479efde87bf611091f80b850db4694346f25c18b4c0110234078ad",
   "chain/zh-CN/legacy-v1/openai_responses/bootstrap":
-    "3e36732ba6448b5ecc313c4ab8cca86313225126f7e131583ddda5a407f2a096",
+    "8408260e5560d36f9aea67e0da6d34ce42cb9c77bd5da738623750e6232d6ae5",
   "chain/zh-CN/ordered-default/anthropic_messages/append":
-    "4048a4cb77bebe4799484f0449f3e1a6b9da693f07a7ae1e5bbfaadb1d6ee004",
+    "ee0b6e1b1ac4999981b82cacd203970cb42bf1cfa3fa737a073940fd72b9494c",
   "chain/zh-CN/ordered-default/anthropic_messages/bootstrap":
-    "ec094c962468a4a1d0e13b03510ad3cb081cc0c6b13cb11fc619c5e042355af3",
+    "4330d86f12444db579f03ed30841d9f0dfeaa17e9b553b1a74656bb22ef9b14d",
   "chain/zh-CN/ordered-default/chat_completions/append":
-    "6ea61b8ad025ae2f3c93f5dc137f76e34c18c45a6165bb00bab6bf672c257bf8",
+    "aed6d4fe8e39fd239d2b5e8cd264779fc361383f4a7941d751ddf13607f941a1",
   "chain/zh-CN/ordered-default/chat_completions/bootstrap":
-    "4396d0b79fa6b4b573d89eeb4e44fc3bb159ce8ccab868eeca7ec19fa0c8b3a2",
+    "756635d26d42cf44b03298e5bd01d6970818721e3ca7f35c29d5b30feb371adb",
   "chain/zh-CN/ordered-default/openai_responses/append":
-    "b74bd02cb9d5d185c8f9cd50a777f4b3f5da23aea1536ca90bbdc1c6349be09b",
+    "a0fabacefae226716bfc536b0abe77def73da470561ce3d18ba23269aa4107ac",
   "chain/zh-CN/ordered-default/openai_responses/bootstrap":
-    "e92fcca81a9a723b5dfd6f5ef753bbedf24df0c36331ef94f968931c0136a950",
+    "bf25a1f171c43274553beb86c6b4cf84913bb84ad807fb15fb655586dd4edaa1",
   "preview/en/legacy-v1/anthropic_messages/append":
-    "0802deb0b64bfa962b90a1de6f0e78f4a3d29a4e232f1305e3735c4556c450ab",
+    "fe0f80df3dfad33f8c527b769f4bef35e3463028d5daa472eeeed8c5b6fb9da0",
   "preview/en/legacy-v1/anthropic_messages/bootstrap":
-    "79394ebdf19e120f10d9cdbc4787b023abc032e73ff799ae0a8b2738bd53ec8f",
+    "b474465bcb3e90db42addbf965d5e3388b37ba414bc4b25be1ebb8b4687c4a3b",
   "preview/en/legacy-v1/chat_completions/append":
-    "09f2133a3fdeab56f6c934bcd54d5ff6a9482a4ef1cbc5b012635a96a450f74e",
+    "16b2fae17529a2a9714cc08b7b2ae87eb2a1786330bb09d9d5faa959477fd83a",
   "preview/en/legacy-v1/chat_completions/bootstrap":
-    "324b51568a55a132affa0e0f7ea016a5aca80315e47785a8da4ede2ee5dcf4c9",
+    "292349b451c820e2685411fff83d463cd51056b8b51e19e35e2d3e4e13b77903",
   "preview/en/legacy-v1/openai_responses/append":
-    "6df784054097652e32e0b4a12ec338280f06ed000569eef525704dce0c12ae9b",
+    "3348c157f227a2fd22fe6ed9f944123abf053cb215956b10f81b899a560fb790",
   "preview/en/legacy-v1/openai_responses/bootstrap":
-    "2e9b28920597aaa61c62d538697a7d1da690f9a1483316e4bb2a0f9995e40840",
+    "a2b82916410c45b1e98c5097d5cfed8cd819c03a6e8bf3c5e7bbbcd777edebdc",
   "preview/en/ordered-default/anthropic_messages/append":
-    "08514de51c339c0228b15d88856ae4357797d247cb92f93510260667b2033e49",
+    "d24abc64a0b67f841374896be404950497e1b4d8fe03bfb25a61cebeca95c27a",
   "preview/en/ordered-default/anthropic_messages/bootstrap":
-    "d91121f79384a5c190742a08b07156d9f956cbb4c97acc7388d3f95b9bdcaf8b",
+    "cd5838db960a271866b8c571a84a5b777ee5ab39e2569004d61adf79571ad16b",
   "preview/en/ordered-default/chat_completions/append":
-    "48e81c2765f707139dffa8b7c73898201c75eb0c8c299a93bd45b008763a9711",
+    "b0c5f28da75182c80cc4e2c289972d24d73a3e38e320644966397fbe63ae6a43",
   "preview/en/ordered-default/chat_completions/bootstrap":
-    "5a8aa06092324286c78ac267173df9532c7fbcdf53fc8b9e5fb7113fe6bebb88",
+    "7663a087a806d3b1358cccb8805b8b1600e40f6a2c0a99aacb77b75b9d5c1af6",
   "preview/en/ordered-default/openai_responses/append":
-    "55cf926f9978026cb1ca914894870fcb064a62a5e0fb826665adb6162fe7e921",
+    "3107c25711af27008538746c6e3a00a61d61cf73047b88e7b6e4095f155e1d0c",
   "preview/en/ordered-default/openai_responses/bootstrap":
-    "3dec8293d4c92190feaba327774629f9d56e00d0665251550c01d1dceba0d797",
+    "fc55bce6abeda5136e4e6ca4457f50b2c3f9f1efbbb3c0060d1bdbc9048d38ad",
   "preview/zh-CN/legacy-v1/anthropic_messages/append":
-    "55db769b34f26d3ce2e2713a2bfed42969fcc9067f55508a1c43f460b1408c64",
+    "b3cfed58eaaac09592477a5d95f030ed1db76fd1f0bb2a6bfa9b94970df39b37",
   "preview/zh-CN/legacy-v1/anthropic_messages/bootstrap":
-    "2a6d9f84b650751ba7839ac14a8f192faf95b29c375d7b51d292079c8f35be24",
+    "82f6521d1f7c31d8506a0313b4a1b607b6bcfb66086343f923ed0b535819b22f",
   "preview/zh-CN/legacy-v1/chat_completions/append":
-    "47880c6a156c56e0fdd2ba81e734be9c67c7d7c72eae3e11f2df1a2ee6202df8",
+    "812893221293905a33dcbc799a5e00a04a77b2194cbb4eb3de26bc0b884f8aef",
   "preview/zh-CN/legacy-v1/chat_completions/bootstrap":
-    "d184f50d472aae729d2724ce5b53a431f16a070bbb3d322d197700ec85fd0168",
+    "41f7240f281e6b066624008ed37b2807ea54029f2a44d1cb4b468c281284c110",
   "preview/zh-CN/legacy-v1/openai_responses/append":
-    "f606f095d22f1a200c803ad3628203a63aebdf400c1a65f3f005e700a9026c7a",
+    "cd5a6ae59a0049e1fed7b8147a3bf5bd2878f2a31fd0ebd5072f13e9717df017",
   "preview/zh-CN/legacy-v1/openai_responses/bootstrap":
-    "83d0cca4ee376b120614e6b63dc8a32ac6b1a3fdfba554ab0b8f4257d5dfe7f9",
+    "8d5978f788932b69b98ad79f2f5058f6063a54bcc1da1efa559fc2251322d6c5",
   "preview/zh-CN/ordered-default/anthropic_messages/append":
-    "a549a6bb11e67b62f18e3d2ed15dae21d5486dd374da8e45f5f5d67b301e3e4d",
+    "4eee19a291e296293a36a07f4b74033dcd0c9cfe91eb5773628f738502a80d54",
   "preview/zh-CN/ordered-default/anthropic_messages/bootstrap":
-    "893653840f1088e68390f9ea9c54925e1bdeff4461cbb8cc9970342550feebf5",
+    "0c9f99c8bb5c4c0ef42a1f05670b111485b96b23d822f4b067d4de9e4cfb14c0",
   "preview/zh-CN/ordered-default/chat_completions/append":
-    "b1a89755b3c6a2f07ecd0f100d193fe1b2ddaa314792c262023b16d8e09e01ec",
+    "fed7c41461c91a523edb6eb3782b4713fc94fecef17db0fc00f53a2a58a9659f",
   "preview/zh-CN/ordered-default/chat_completions/bootstrap":
-    "604353b141e1339a96fa31af14118068c91a714c5bc2234b61130fd4cbca383b",
+    "b3ee569f1fc335ded1b8db8920474502e02664c08f48d37319252465f5530b5a",
   "preview/zh-CN/ordered-default/openai_responses/append":
-    "2a8247e95b225a36804ccc3b0b4e9a7994b4d7ca68544f79babd18545aa8c2fb",
+    "cd60988622326be28f333fdfef3133b9232af73243be31c40f15c242bd736153",
   "preview/zh-CN/ordered-default/openai_responses/bootstrap":
-    "a7a2382177bc2a6153ac4f0fa96066a47790b1a72ee9d5a8ec900e4ced1ad662",
+    "9f9db844bc42e7bf2d76e522843ec31c37f4e6d20f0258a1e5b1ce1dfe61c33a",
   "revision/en":
     "50ad0466eaf3dcce310650d8ef14c669caf84e2f637aa4221be1a0e81041542f",
   "revision/zh-CN":

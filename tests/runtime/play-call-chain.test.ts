@@ -5802,6 +5802,69 @@ test("协议拒绝无界时间线分页、空游标、非法详情事件与未�
     ).toThrow();
 });
 
+test("没有 history slot 的首发和原样重试携带开场，后期全新上下文不自动注入", async () => {
+  const files = worldFiles().map((file) =>
+    file.path === "control/frame.yaml"
+      ? {
+          ...file,
+          contents: file.contents.replace(
+            "  - slot: { kind: history, recent: 2 }\n",
+            "",
+          ),
+        }
+      : file,
+  );
+  const { worlds, worldId } = await createWorld("opening-no-slot", files);
+  const modelHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      { outcome: "failure", message: "Retryable failure" },
+      { outcome: "response", text: "The door opens." },
+      { outcome: "response", text: "A light appears." },
+    ],
+  });
+  const chains = new PlayCallChain(worlds);
+  const first = await chains.start({
+    worldId,
+    chainId: "opening-no-slot-first",
+    exchangeId: "first",
+    playerText: "I knock.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+  expect(first).toMatchObject({ status: "interrupted", canRetry: true });
+  await chains.append({
+    worldId,
+    chainId: first.chainId,
+    exchangeId: "retry",
+    playerText: "",
+    modelHost,
+  });
+  expect(modelHost.requests[1]!.bootstrap).toEqual(
+    modelHost.requests[0]!.bootstrap,
+  );
+  const worldText = (index: number) =>
+    modelHost.requests[index]!.bootstrap.logicalMessages.filter(
+      ({ role }) => role === "world_context",
+    )
+      .map(({ markdown }) => markdown)
+      .join("\n");
+  expect(worldText(0).split("门外传来三声短促的铃响。\n")).toHaveLength(2);
+  await chains.start({
+    worldId,
+    chainId: "opening-no-slot-later",
+    exchangeId: "later",
+    playerText: "I look up.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost,
+  });
+  expect(worldText(2)).not.toContain("门外传来三声短促的铃响。");
+});
+
 test("工具中间步文本不进入叙事，状态与终态叙事分别推进并可追加上下文", async () => {
   const { worlds, worldId, root } = await createWorld("play-chain");
   const modelHost = new ScriptedModelHost({
@@ -5949,11 +6012,16 @@ test("工具中间步文本不进入叙事，状态与终态叙事分别推进�
       ({ role }) => role === "player_input",
     ),
   ).toBe(false);
-  expect(JSON.stringify(modelHost.requests[0]?.bootstrap)).not.toContain(
-    "门外传来三声短促的铃响。",
-  );
-  expect(JSON.stringify(modelHost.requests[0]?.bootstrap)).toContain(
-    "only the opening exists",
+  const initialWorld = modelHost.requests[0]!.bootstrap.logicalMessages.filter(
+    ({ role }) => role === "world_context",
+  )
+    .map(({ markdown }) => markdown)
+    .join("\n");
+  expect(initialWorld.split("门外传来三声短促的铃响。\n")).toHaveLength(2);
+  expect(initialWorld).toContain("already seen by the player");
+  expect(initialWorld).not.toContain("only the opening exists");
+  expect(modelHost.requests[1]!.bootstrap).toEqual(
+    modelHost.requests[0]!.bootstrap,
   );
   const authorPrompt = modelHost.requests[0]?.bootstrap.logicalMessages
     .filter(({ role }) => role === "author_instruction")
@@ -5980,6 +6048,14 @@ test("工具中间步文本不进入叙事，状态与终态叙事分别推进�
   });
 
   expect(continued).toMatchObject({ status: "ready", parentHead: "commit:5" });
+  expect(
+    modelHost.requests
+      .at(-1)!
+      .bootstrap.logicalMessages.filter(({ role }) => role === "world_context")
+      .map(({ markdown }) => markdown)
+      .join("\n")
+      .split("门外传来三声短促的铃响。\n"),
+  ).toHaveLength(2);
   expect(sent(modelHost.requests.at(-1)!).at(-1)).toEqual({
     kind: "player",
     text: "I walk into the corridor.",
@@ -8214,6 +8290,14 @@ test("修改第一条玩家消息可把修改稿保存为不继承旧续传的�
       .map(({ markdown }) => markdown)
       .join("\n"),
   ).toContain("This bootstrap was compiled for the edited context.");
+  expect(
+    replacementHost.requests[0]!.bootstrap.logicalMessages.filter(
+      ({ role }) => role === "world_context",
+    )
+      .map(({ markdown }) => markdown)
+      .join("\n")
+      .split("门外传来三声短促的铃响。\n"),
+  ).toHaveLength(2);
   expect(
     (await worlds.recoverEndpoint(worldId)).history.map(
       ({ exactText }) => exactText,

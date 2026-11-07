@@ -377,7 +377,7 @@ ${historyUseGuidance("en")}`,
 
 A nonempty tool-free response ends the model/tool loop started by the current player submission. A response that calls any tool is an intermediate step; its text has not yet been displayed or committed as final story. After all tool results, use the receipts to present this turn's still-unshown content in a later tool-free response consistent with committed state.
 
-The player's next submission may choose a fresh context; the old model transcript will not enter that request. Fresh contexts include all committed original player inputs and final narratives after the last effective world_checkpoint, excluding tools, reasoning, and the opening. A checkpoint declaration takes effect only after the subsequent nonempty tool-free final prose successfully commits, including that prose in its boundary; further tool calls may follow registration. Registration neither ends an in-world event nor switches context. Author instructions decide save timing.
+The player's next submission may choose a fresh context; the old model transcript will not enter that request. Fresh contexts replay all committed original player inputs and final narratives after the last effective world_checkpoint, excluding tools, reasoning, and the opening. At the story's origin, the already displayed opening is supplied separately. A checkpoint declaration takes effect only after the subsequent nonempty tool-free final prose successfully commits, including that prose in its boundary; further tool calls may follow registration. Registration neither ends an in-world event nor switches context. Author instructions decide save timing.
 
 The main call chain may not call artifact_emit or artifact_clear; those tools are reserved for follow-up requests. Runtime executes only real tool definitions, file validation, and authority commits. This block does not define story content, point of view, style, player agency, or state semantics.
 
@@ -408,7 +408,7 @@ ${historyUseGuidance("zh-CN")}`,
 
 非空且不调用工具的响应会结束本次玩家提交触发的模型／工具循环。只要响应调用了任何工具，它就是工具中间步，其中的文字尚未展示或提交为最终故事。收到全部工具结果后，根据回执在后续无工具响应中呈现本轮尚未展示的内容，并与已提交状态一致。
 
-下一次玩家提交可以选择“全新上下文”；旧模型 transcript 不会进入那个请求。新上下文会补入最近一次已生效 world_checkpoint 之后的全部已提交玩家原文与最终叙事，不含工具、推理和开场白。检查点登记仅在随后非空且无工具调用的最终正文成功提交后生效，边界包含该正文；登记后仍可继续工具调用。登记不结束世界内事件，也不自动切换上下文。具体保存时机由作者提示规定。
+下一次玩家提交可以选择“全新上下文”；旧模型 transcript 不会进入那个请求。新上下文会补入最近一次已生效 world_checkpoint 之后的全部已提交玩家原文与最终叙事，不含工具、推理和开场白。在故事起点，已展示的开场白另行提供。检查点登记仅在随后非空且无工具调用的最终正文成功提交后生效，边界包含该正文；登记后仍可继续工具调用。登记不结束世界内事件，也不自动切换上下文。具体保存时机由作者提示规定。
 
 主调用链不能调用 artifact_emit 或 artifact_clear；这两个工具仅供后置请求使用。Runtime 只执行真实工具定义、文件校验和权威提交；本段不规定故事、人称、文风、玩家代理权或状态语义。
 
@@ -864,9 +864,8 @@ export class FileNativePromptCompiler {
 
   /**
    * Compile the production play surface. The selected preset contributes its
-   * frozen tool universe and narrative guidance. The genesis opening remains
-   * Authority history for the player-facing record; it is not repeated as
-   * model history in a fresh play context.
+   * frozen tool universe and narrative guidance. At the story's logical
+   * origin, the committed opening is included in the initial world context.
    */
   compilePlayCallChain(
     input: FileNativePromptInput,
@@ -2281,6 +2280,24 @@ function resolveContext(
     ),
   );
   const excluded = new Set(input.world.historyAlreadyAppended ?? []);
+  const opening =
+    input.world.replayHistory === true &&
+    input.playerInputPlacement === "append" &&
+    history.messages.length === 1 &&
+    history.messages[0]?.isOpening &&
+    !excluded.has(history.messages[0].id)
+      ? history.messages[0]
+      : undefined;
+  if (opening !== undefined)
+    selected.push({
+      key: `history_message:${opening.id}`,
+      source: `runtime:opening:${opening.id}`,
+      markdown:
+        (locale === "zh-CN"
+          ? "# 玩家已经读过的开场白\n\n这段已提交的历史原文在玩家首次行动前已经展示，不要重新上演。当前明确的世界状态与修订优先。"
+          : "# Opening already seen by the player\n\nThis committed historical original was shown before the player's first action; do not replay it. Explicit current world state and revisions take precedence.") +
+        `\n\n${renderHistoryMessage(opening, locale)}`,
+    });
   const checkpointEntries =
     input.world.replayHistory === true
       ? checkpointHistory(
@@ -2314,7 +2331,15 @@ function resolveContext(
       resolveCatalog(slot, snapshot, selected, coverage, locale);
     else if (slot.kind === "history" && checkpointEntries.length > 0) continue;
     else if (slot.kind === "history")
-      resolveRecentHistory(slot, history, selected, coverage, locale, excluded);
+      resolveRecentHistory(
+        slot,
+        history,
+        selected,
+        coverage,
+        locale,
+        excluded,
+        opening !== undefined,
+      );
     else if (slot.kind === "additional_materials")
       additionalMaterialsAt ??= {
         selected: selected.length,
@@ -2673,6 +2698,7 @@ function resolveRecentHistory(
   coverage: PromptCompilation["coverage"],
   locale: AppLocale,
   excluded: ReadonlySet<string>,
+  openingIncluded: boolean,
 ): void {
   const recent = Number(slot.recent ?? 2);
   if (!Number.isInteger(recent) || recent < 1 || recent > 32)
@@ -2687,14 +2713,15 @@ function resolveRecentHistory(
   const ordered = history.messages.filter(({ isOpening }) => !isOpening);
   const chosen = ordered.slice(-recent).filter(({ id }) => !excluded.has(id));
   if (chosen.length === 0) {
-    selected.push({
-      key: "history:empty",
-      source: "slot:history:empty",
-      markdown:
-        locale === "zh-CN"
-          ? `# 最近已提交对话\n\n${renderHistoryInjectionNotice(history.messages.length, [], "recent", locale)}\n（本次没有可注入的非开场白原文：可能只有开场白，或近期材料已在原生对话中。无需为寻找上一条记录例行调用历史检索工具。）`
-          : `# Recent committed conversation\n\n${renderHistoryInjectionNotice(history.messages.length, [], "recent", locale)}\n(No non-opening originals selected for injection: only the opening exists, or recent entries are already in native conversation. Do not call history tools merely to look for a previous message.)`,
-    });
+    if (!openingIncluded)
+      selected.push({
+        key: "history:empty",
+        source: "slot:history:empty",
+        markdown:
+          locale === "zh-CN"
+            ? `# 最近已提交对话\n\n${renderHistoryInjectionNotice(history.messages.length, [], "recent", locale)}\n（本次没有可注入的非开场白原文：可能只有开场白，或近期材料已在原生对话中。无需为寻找上一条记录例行调用历史检索工具。）`
+            : `# Recent committed conversation\n\n${renderHistoryInjectionNotice(history.messages.length, [], "recent", locale)}\n(No non-opening originals selected for injection: only the opening exists, or recent entries are already in native conversation. Do not call history tools merely to look for a previous message.)`,
+      });
     coverage.push({
       slot: "history",
       source:
