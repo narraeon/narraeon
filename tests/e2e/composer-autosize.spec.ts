@@ -69,6 +69,13 @@ async function exerciseComposer(page: Page, input: Locator): Promise<void> {
 
   await page.setViewportSize({ width: 1200, height: 800 });
   await input.fill("word ".repeat(42));
+  // Let ResizeObserver process the wide layout before switching back to narrow.
+  await input.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
   const wide = await height(input);
   await page.setViewportSize({ width: 420, height: 800 });
   await expect.poll(() => height(input)).toBeGreaterThan(wide + 10);
