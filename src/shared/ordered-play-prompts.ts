@@ -296,8 +296,8 @@ ${historyUseGuidance(locale)}`,
     block("facts", {
       category: "policy",
       turnGuide: zh
-        ? "尝试不自动成功，声称不自动成真，遵守裁决。只读过故事的玩家若还不知道眼下要办什么，正文带出一句角色收到的交代：找谁或去哪里做什么。NPC 以为主角早知道时，就写当时听到的话。"
-        : "Keep rulings; attempts and claims are no proof. If a known duty is new to readers, recall who or where and what to do.",
+        ? "尝试不自动成功，声称不自动成真，遵守裁决。已有材料明确写出角色曾收到某项交代，且这项交代影响眼下行动时，把玩家尚未读到的必要内容写进正文。其余场景按玩家当前行动自然推进。"
+        : "Keep rulings; attempts and claims are no proof. If a prior instruction is established and matters now, tell what is new.",
     }),
     block("npc", { category: "policy" }),
     block("save-timing", {
