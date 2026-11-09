@@ -12,8 +12,9 @@ test("A 工作台真实保存、独立三产物、正则、JS、导入及下一�
   let names: string[] = [];
   const bodies: string[] = [];
   const provider = createServer((req, res) => {
+    req.setEncoding("utf8");
     let body = "";
-    req.on("data", (chunk) => (body += String(chunk)));
+    req.on("data", (chunk: string) => (body += chunk));
     req.on("end", () => {
       bodies.push(body);
       calls++;

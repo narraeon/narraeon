@@ -17,9 +17,10 @@ test("普通作者编辑包后置请求后创建世界，经真实 Runtime 派�
   let requests = 0;
   const requestBodies: string[] = [];
   const provider = createServer((request, response) => {
+    request.setEncoding("utf8");
     let body = "";
-    request.on("data", (chunk) => {
-      body += String(chunk);
+    request.on("data", (chunk: string) => {
+      body += chunk;
     });
     request.on("end", () => {
       requests += 1;

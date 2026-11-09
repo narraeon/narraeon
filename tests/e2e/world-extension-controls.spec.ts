@@ -44,9 +44,10 @@ test("真实世界扩展菜单阻止派发、取消在途、隐藏全部输出�
   let wasCancelled = false;
   const responses: ServerResponse[] = [];
   const provider = createServer((request, response) => {
+    request.setEncoding("utf8");
     let body = "";
-    request.on("data", (chunk) => {
-      body += String(chunk);
+    request.on("data", (chunk: string) => {
+      body += chunk;
     });
     request.on("end", () => {
       responses.push(response);

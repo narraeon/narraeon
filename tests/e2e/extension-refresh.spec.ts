@@ -19,9 +19,10 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
   let paginationMode = false;
   const requestBodies: string[] = [];
   const provider = createServer((request, response) => {
+    request.setEncoding("utf8");
     let body = "";
-    request.on("data", (chunk) => {
-      body += String(chunk);
+    request.on("data", (chunk: string) => {
+      body += chunk;
     });
     request.on("end", () => {
       requests += 1;
