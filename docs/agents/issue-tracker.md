@@ -1,6 +1,6 @@
 # Issue tracker: GitHub Issues
 
-GitHub Issues is the source of truth for proposed work, specs, implementation progress, blockers, discussion, and acceptance status. Repository Markdown only records durable current contracts that must evolve with the code. Use the `gh` CLI for all tracker operations; infer the repository from `git remote -v`.
+GitHub Issues is the source of truth for proposed work, specs, implementation progress, blockers, discussion, and acceptance status. Repository Markdown only records durable current contracts that must evolve with the code. Use the GitHub repository identified by the Git remote. The command examples below use the GitHub CLI.
 
 ## Conventions
 
@@ -26,7 +26,7 @@ GitHub Issues is the source of truth for proposed work, specs, implementation pr
 
 **PRs as a request surface: no.**
 
-GitHub shares one number space across issues and PRs. Resolve a bare `#42` with `gh pr view 42` and fall back to `gh issue view 42`.
+GitHub shares one number space across issues and PRs. Check the item type when resolving a bare reference such as `#42`.
 
 ## Repository boundary
 
@@ -43,7 +43,7 @@ When asked to publish or fetch an issue, use the repository's GitHub issue track
 
 ## Wayfinding operations
 
-Used by `/wayfinder`. The **map** is a single issue with **child** issues as tickets.
+The **map** is a single issue with **child** issues as tickets.
 
 - **Map**: an issue labelled `wayfinder:map`, holding the Notes / Decisions-so-far / Fog body. Create it with `gh issue create --label wayfinder:map --title "..." --body-file <file>`.
 - **Child ticket**: link it to the map as a sub-issue using the operation above. Labels are `wayfinder:<type>` (`research`/`prototype`/`grilling`/`task`). Once claimed, assign it to the driving developer.
