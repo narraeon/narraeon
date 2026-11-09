@@ -79,7 +79,6 @@ test("普通作者编辑包后置请求后创建世界，经真实 Runtime 派�
     child = spawn(process.execPath, ["dist/node/server/main.js"], {
       env: {
         ...process.env,
-        TMPDIR: "/tmp",
         NARRAEON_PORT: String(reserved.port),
         NARRAEON_DATA_ROOT: join(root, "data"),
         NARRAEON_CONFIG_ROOT: join(root, "config"),

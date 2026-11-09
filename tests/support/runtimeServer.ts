@@ -20,7 +20,6 @@ export class RuntimeServerPool {
           NARRAEON_LOG_ROOT: join(root, "log"),
           NARRAEON_PORT: String(port),
           NODE_ENV: "test",
-          TMPDIR: "/tmp",
         },
         stdio: ["ignore", "pipe", "pipe"],
       },

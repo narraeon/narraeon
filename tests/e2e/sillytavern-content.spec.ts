@@ -1,6 +1,5 @@
 import { deflateSync } from "node:zlib";
 import { expect, test } from "@playwright/test";
-import { mkdir } from "node:fs/promises";
 
 function chunk(type: string, data: Buffer): Buffer {
   const body = Buffer.concat([Buffer.from(type), data]);
@@ -118,10 +117,11 @@ for (const locale of ["zh-CN", "en"] as const)
           () => document.documentElement.scrollWidth <= innerWidth,
         ),
       ).toBe(true);
-      const evidence = "/tmp/narraeon-140-evidence";
-      await mkdir(evidence, { recursive: true });
+
       await page.screenshot({
-        path: `${evidence}/${locale}-${mobile ? "mobile" : "desktop"}-top.png`,
+        path: test
+          .info()
+          .outputPath(`${locale}-${mobile ? "mobile" : "desktop"}-top.png`),
       });
       await dialog
         .getByLabel(locale === "en" ? "Character document" : "角色文档")
@@ -170,7 +170,9 @@ for (const locale of ["zh-CN", "en"] as const)
         dialog.getByText("opening.md", { exact: true }),
       ).toBeVisible();
       await page.screenshot({
-        path: `${evidence}/${locale}-${mobile ? "mobile" : "desktop"}.png`,
+        path: test
+          .info()
+          .outputPath(`${locale}-${mobile ? "mobile" : "desktop"}.png`),
       });
       await page.keyboard.press("Escape");
       await expect(dialog).toHaveCount(0);

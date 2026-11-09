@@ -26,7 +26,7 @@ try {
     await execute(
       npmCommand,
       ["pack", "--silent", "--pack-destination", packageRoot],
-      { cwd: repositoryRoot, env: { ...process.env, TMPDIR: "/tmp" } },
+      { cwd: repositoryRoot },
     );
   }
   const tarballs = (await readdir(packageRoot)).filter((name) =>

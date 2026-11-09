@@ -75,7 +75,6 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
     child = spawn(process.execPath, ["dist/node/server/main.js"], {
       env: {
         ...process.env,
-        TMPDIR: "/tmp",
         NARRAEON_PORT: String(reserved.port),
         NARRAEON_DATA_ROOT: join(root, "data"),
         NARRAEON_CONFIG_ROOT: join(root, "config"),
