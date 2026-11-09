@@ -112,6 +112,62 @@ test("Google 连接允许使用已保存凭据拉取模型并保留手填输入"
   ).toBe(false);
 });
 
+test("Google 手工选择方言、推理等级或兼容预算，均保留独立摘要", async () => {
+  const library = modelLibrary();
+  const requests: V1Request[] = [];
+  const request = (value: V1Request) => {
+    requests.push(value);
+    return Promise.resolve(library);
+  };
+  render(
+    createElement(ModelConnectionScreen, {
+      client: { request } as unknown as RuntimeClient,
+      library,
+      onLibraryChange: vi.fn(),
+      onNotice: vi.fn(),
+      onDirtyChange: vi.fn(),
+    }),
+  );
+  fireEvent.change(screen.getByLabelText("协议适配器"), {
+    target: { value: "google_interactions" },
+  });
+  fireEvent.change(screen.getByLabelText("端点方言"), {
+    target: { value: "cliproxyapi" },
+  });
+  const effort = screen.getByLabelText<HTMLSelectElement>("Effort（推理强度）");
+  const mode =
+    screen.getByLabelText<HTMLSelectElement>("Thinking（兼容预算模式）");
+  const summary = screen.getByLabelText<HTMLSelectElement>("Thinking 返回内容");
+  fireEvent.change(effort, { target: { value: "low" } });
+  fireEvent.change(summary, { target: { value: "auto" } });
+  fireEvent.change(mode, { target: { value: "enabled" } });
+  expect(effort.value).toBe("provider_default");
+  fireEvent.change(screen.getByLabelText("Thinking budget tokens"), {
+    target: { value: "16" },
+  });
+  fireEvent.change(effort, { target: { value: "high" } });
+  expect(mode.value).toBe("provider_default");
+  expect(summary.value).toBe("auto");
+  fireEvent.change(mode, { target: { value: "enabled" } });
+  fireEvent.change(screen.getByLabelText("Thinking budget tokens"), {
+    target: { value: "16" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "保存模型连接并启用" }));
+  await waitFor(() =>
+    expect(requests[0]).toMatchObject({
+      type: "model.save",
+      connection: {
+        provider: "google_interactions",
+        dialect: "cliproxyapi",
+        reasoningEffort: "provider_default",
+        reasoningSummary: "auto",
+        thinkingMode: "enabled",
+        thinkingBudgetTokens: 16,
+      },
+    }),
+  );
+});
+
 test("模型设置分别保存 Anthropic effort、thinking 模式、预算和返回内容", async () => {
   const library = modelLibrary();
   const requests: V1Request[] = [];

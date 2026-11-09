@@ -164,6 +164,99 @@ test("Google 预览使用无状态 Interactions 与原序 System 前缀", () => 
   expect(() => host.previewRequest(request)).toThrow(/invalid appended role/iu);
 });
 
+test.each([
+  { dialect: "standard", settings: {}, expected: {} },
+  {
+    dialect: "standard",
+    settings: { reasoningEffort: "minimal", reasoningSummary: "auto" },
+    expected: { thinking_level: "minimal", thinking_summaries: "auto" },
+  },
+  {
+    dialect: "standard",
+    settings: { thinkingMode: "enabled", thinkingBudgetTokens: 32 },
+    expected: { thinking: { thinking_budget: 32 } },
+  },
+  {
+    dialect: "standard",
+    settings: { thinkingMode: "adaptive" },
+    expected: { thinking: { thinking_budget: -1 } },
+  },
+  {
+    dialect: "cliproxyapi",
+    settings: { thinkingMode: "disabled", reasoningSummary: "none" },
+    expected: { thinking_budget: 0, thinking_summaries: "none" },
+  },
+  {
+    dialect: "cliproxyapi",
+    settings: { thinkingMode: "enabled", thinkingBudgetTokens: 32 },
+    expected: { thinking_budget: 32 },
+  },
+] as const)(
+  "Google $dialect 将 $settings 一致用于预览、诊断和派发",
+  async ({ dialect, settings, expected }) => {
+    const dispatched: Headers[] = [];
+    const bodies: unknown[] = [];
+    const host = new FileNativeModelHost(
+      {
+        provider: "google_interactions",
+        dialect,
+        modelId: "unknown-model",
+        baseUrl: "https://provider.invalid/v1beta",
+        apiKey: "credential",
+        contextWindowTokens: 64000,
+        maxOutputTokens: 2048,
+        ...settings,
+      },
+      (_url, init) => {
+        if (typeof init?.body !== "string")
+          throw new Error("Missing Google body");
+        bodies.push(JSON.parse(init.body));
+        dispatched.push(new Headers(init?.headers));
+        return Promise.resolve(
+          Response.json(
+            {
+              error: {
+                code: 400,
+                message: "model rejected this configuration",
+                status: "INVALID_ARGUMENT",
+              },
+            },
+            { status: 400 },
+          ),
+        );
+      },
+    );
+    expect(host.binding().cacheStrategy).toBe("provider_managed");
+    const request = exchangeFor(
+      "google_interactions",
+      "unknown-model",
+      "provider_managed",
+    );
+    request.operationId = "play";
+    const preview = host.previewRequest(request);
+    expect(isSafeGoogleWireRequest(preview)).toBe(true);
+    const config = (
+      preview.body as { generation_config: Record<string, unknown> }
+    ).generation_config;
+    const { max_output_tokens, ...thinking } = config;
+    expect(max_output_tokens).toBe(2048);
+    expect(thinking).toEqual(expected);
+    await expect(host.exchange(request)).rejects.toThrow();
+    expect(bodies[0]).toEqual(preview.body);
+    expect(dispatched[0]?.get("x-goog-api-key")).toBe("credential");
+    if (dialect === "cliproxyapi") {
+      expect(preview.headerNames).toContain("X-Session-Id");
+      const key = dispatched[0]?.get("X-Session-Id");
+      expect(key).toMatch(/^[0-9a-f]{64}$/u);
+      await expect(
+        host.exchange({ ...request, operationId: "followup" }),
+      ).rejects.toThrow();
+      expect(dispatched[1]?.get("X-Session-Id")).not.toBe(key);
+    } else {
+      expect(dispatched[0]?.has("X-Session-Id")).toBe(false);
+    }
+  },
+);
 test("Google 无状态续接保留各跳正文和原生步骤", async () => {
   const bodies: Record<string, unknown>[] = [];
   const hops: GoogleHopEvidence[] = [];
@@ -2443,6 +2536,7 @@ test.each([
   "chat_completions",
   "openai_responses",
   "anthropic_messages",
+  "google_interactions",
 ] as const)(
   "请求快照保持 %s 的模型与推理参数，正常新请求使用新配置",
   (provider) => {

@@ -1,3 +1,4 @@
+import { isGoogleThinkingLevel } from "../../protocol/modelConnections.ts";
 import type { GoogleHopEvidence, ModelHostWireRequest } from "./ModelHost.ts";
 
 export function withGoogleHop(
@@ -51,7 +52,9 @@ function validWireRequest(value: unknown, allowHops: boolean): boolean {
         record.endpointPath,
       )) &&
     Array.isArray(record.headerNames) &&
-    record.headerNames.length === 3 &&
+    (record.headerNames.length === 3 ||
+      (record.headerNames.length === 4 &&
+        record.headerNames[3] === "X-Session-Id")) &&
     record.headerNames[0] === "Accept" &&
     record.headerNames[1] === "x-goog-api-key" &&
     record.headerNames[2] === "Content-Type" &&
@@ -173,14 +176,7 @@ function validGooglePreviewBody(value: unknown): boolean {
     !isRecord(body.generation_config)
   )
     return false;
-  if (
-    !Object.keys(body.generation_config).every(
-      (key) => key === "max_output_tokens" || key === "tool_choice",
-    ) ||
-    typeof body.generation_config.max_output_tokens !== "number" ||
-    !validGoogleToolChoice(body.generation_config.tool_choice)
-  )
-    return false;
+  if (!validGoogleGenerationConfig(body.generation_config)) return false;
   if (!body.input.every(validGooglePreviewItem)) return false;
   return (
     body.tools === undefined ||
@@ -196,6 +192,54 @@ function validGooglePreviewBody(value: unknown): boolean {
           typeof tool.description === "string" &&
           isRecord(tool.parameters),
       ))
+  );
+}
+
+function validGoogleGenerationConfig(config: Record<string, unknown>): boolean {
+  if (
+    !Object.keys(config).every((key) =>
+      [
+        "max_output_tokens",
+        "tool_choice",
+        "thinking_level",
+        "thinking_summaries",
+        "thinking",
+        "thinking_budget",
+      ].includes(key),
+    )
+  )
+    return false;
+  if (
+    typeof config.max_output_tokens !== "number" ||
+    !validGoogleToolChoice(config.tool_choice)
+  )
+    return false;
+  if (
+    config.thinking_summaries !== undefined &&
+    config.thinking_summaries !== "auto" &&
+    config.thinking_summaries !== "none"
+  )
+    return false;
+  if (
+    config.thinking_level !== undefined &&
+    !isGoogleThinkingLevel(config.thinking_level)
+  )
+    return false;
+  if (config.thinking === undefined && config.thinking_budget === undefined)
+    return true;
+  if (config.thinking_level !== undefined) return false;
+  let budget = config.thinking_budget;
+  if (config.thinking !== undefined) {
+    if (
+      budget !== undefined ||
+      !isRecord(config.thinking) ||
+      Object.keys(config.thinking).length !== 1
+    )
+      return false;
+    budget = config.thinking.thinking_budget;
+  }
+  return (
+    typeof budget === "number" && Number.isSafeInteger(budget) && budget >= -1
   );
 }
 

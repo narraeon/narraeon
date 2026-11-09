@@ -2510,6 +2510,9 @@ const dynamicEnglishMessages: Record<string, string> = {
   协议标准: "Protocol standard",
   "Effort（推理强度）": "Effort (reasoning intensity)",
   "Thinking（思考模式）": "Thinking mode",
+  "Thinking（兼容预算模式）": "Thinking (compatibility budget mode)",
+  "Google 推理强度发送 thinking_level，摘要发送 thinking_summaries。兼容预算模式改用 thinking_budget：adaptive 为 -1，disabled 为 0，手动模式发送填写的整数。具体支持取决于端点和模型。":
+    "Google sends thinking_level for effort and thinking_summaries for summaries. Compatibility budget modes use thinking_budget instead of a level: adaptive sends -1, disabled sends 0, and manual sends the entered integer. Support depends on the endpoint and model.",
   "Thinking 返回内容": "Returned thinking content",
   "Thinking budget tokens": "Thinking budget tokens",
   "手动 token 预算": "Manual token budget",
