@@ -3,6 +3,8 @@ import { useEffect, useMemo, useState } from "react";
 
 import {
   hasCLIProxyThinkingSuffix,
+  isGoogleThinkingLevel,
+  googleThinkingLevels,
   type CopyModelConnectionResult,
   type ModelConnectionLibraryView,
   type ModelConnectionView,
@@ -84,6 +86,7 @@ export function ModelConnectionScreen({
     () => library.presets.find(({ id }) => id === form.presetId),
     [form.presetId, library.presets],
   );
+  const google = form.provider === "google_interactions";
   const credentialsMustBeEntered = form.connectionId === null;
 
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
@@ -358,9 +361,6 @@ export function ModelConnectionScreen({
                 {
                   presetId: "custom",
                   provider: event.target.value as ModelProviderKind,
-                  ...(event.target.value === "google_interactions"
-                    ? { dialect: "standard" as const }
-                    : {}),
                   ...reasoningForProvider(
                     form,
                     event.target.value as ModelProviderKind,
@@ -384,7 +384,6 @@ export function ModelConnectionScreen({
           <label htmlFor="model-dialect">{uiText("端点方言")}</label>
           <select
             id="model-dialect"
-            disabled={form.provider === "google_interactions"}
             value={form.dialect}
             onChange={(event) => {
               const dialect = event.target.value as ModelProviderDialect;
@@ -411,48 +410,69 @@ export function ModelConnectionScreen({
               {uiText("Effort（推理强度）")}
               <select
                 id="model-reasoning-effort"
-                disabled={form.provider === "google_interactions"}
                 value={form.reasoningEffort}
                 onChange={(event) =>
                   change({
                     reasoningEffort: event.target.value as ModelReasoningEffort,
+                    ...(google && event.target.value !== "provider_default"
+                      ? {
+                          thinkingMode: "provider_default",
+                          thinkingBudgetTokens: "",
+                        }
+                      : {}),
                   })
                 }
               >
                 <option value="provider_default">
                   {uiText("Provider 默认")}
                 </option>
-                {form.provider === "anthropic_messages" ? null : (
+                {google ? (
+                  googleThinkingLevels.map((level) => (
+                    <option key={level} value={level}>
+                      {level}
+                    </option>
+                  ))
+                ) : (
                   <>
-                    <option value="none">none</option>
-                    <option value="minimal">minimal</option>
+                    {form.provider === "anthropic_messages" ? null : (
+                      <>
+                        <option value="none">none</option>
+                        <option value="minimal">minimal</option>
+                      </>
+                    )}
+                    <option value="low">low</option>
+                    <option value="medium">medium</option>
+                    <option value="high">high</option>
+                    <option value="xhigh">xhigh</option>
+                    <option value="max">max</option>
                   </>
                 )}
-                <option value="low">low</option>
-                <option value="medium">medium</option>
-                <option value="high">high</option>
-                <option value="xhigh">xhigh</option>
-                <option value="max">max</option>
               </select>
             </label>
             <label htmlFor="model-thinking-mode">
-              {uiText("Thinking（思考模式）")}
+              {uiText(
+                google ? "Thinking（兼容预算模式）" : "Thinking（思考模式）",
+              )}
               <select
                 id="model-thinking-mode"
-                disabled={form.provider !== "anthropic_messages"}
+                disabled={!google && form.provider !== "anthropic_messages"}
                 value={form.thinkingMode}
                 onChange={(event) => {
                   const thinkingMode = event.target.value as ModelThinkingMode;
                   change({
                     thinkingMode,
+                    ...(google && thinkingMode !== "provider_default"
+                      ? { reasoningEffort: "provider_default" }
+                      : {}),
                     thinkingBudgetTokens:
                       thinkingMode === "enabled"
                         ? form.thinkingBudgetTokens ||
                           defaultThinkingBudget(form.maxOutputTokens)
                         : "",
                     reasoningSummary:
-                      thinkingMode === "provider_default" ||
-                      thinkingMode === "disabled"
+                      !google &&
+                      (thinkingMode === "provider_default" ||
+                        thinkingMode === "disabled")
                         ? thinkingMode === "provider_default" &&
                           cliProxySuffixControlsThinking({
                             ...form,
@@ -477,7 +497,6 @@ export function ModelConnectionScreen({
               <select
                 id="model-reasoning-summary"
                 disabled={
-                  form.provider === "google_interactions" ||
                   (form.provider === "chat_completions" &&
                     form.dialect === "standard") ||
                   (form.provider === "anthropic_messages" &&
@@ -507,14 +526,18 @@ export function ModelConnectionScreen({
               </select>
             </label>
           </div>
-          {form.provider === "anthropic_messages" &&
+          {(google || form.provider === "anthropic_messages") &&
           form.thinkingMode === "enabled" ? (
             <label htmlFor="model-thinking-budget">
               {uiText("Thinking budget tokens")}
               <input
                 id="model-thinking-budget"
-                min={1024}
-                max={Math.max(1024, Number(form.maxOutputTokens) - 1)}
+                min={google ? 0 : 1024}
+                max={
+                  google
+                    ? undefined
+                    : Math.max(1024, Number(form.maxOutputTokens) - 1)
+                }
                 required
                 step={1}
                 type="number"
@@ -529,7 +552,9 @@ export function ModelConnectionScreen({
             <summary>{uiText("参数说明")}</summary>
             <p className="field-note">
               {uiText(
-                "Effort 控制整份响应投入；Anthropic Thinking 独立控制思考块，手动预算必须小于最大输出。Thinking 返回内容只进入模型诊断；原生续传块仍会原样保存。",
+                google
+                  ? "Google 推理强度发送 thinking_level，摘要发送 thinking_summaries。兼容预算模式改用 thinking_budget：adaptive 为 -1，disabled 为 0，手动模式发送填写的整数。具体支持取决于端点和模型。"
+                  : "Effort 控制整份响应投入；Anthropic Thinking 独立控制思考块，手动预算必须小于最大输出。Thinking 返回内容只进入模型诊断；原生续传块仍会原样保存。",
               )}
             </p>
           </details>
@@ -919,13 +944,15 @@ function reasoningForProvider(
   | "thinkingBudgetTokens"
 > {
   const reasoningEffort =
-    provider === "google_interactions" ||
+    (provider === "google_interactions" &&
+      !isGoogleThinkingLevel(form.reasoningEffort)) ||
     (provider === "anthropic_messages" &&
       (form.reasoningEffort === "none" || form.reasoningEffort === "minimal"))
       ? "provider_default"
       : form.reasoningEffort;
   const thinkingMode =
-    provider === "anthropic_messages" && form.provider === "anthropic_messages"
+    provider === form.provider &&
+    (provider === "anthropic_messages" || provider === "google_interactions")
       ? form.thinkingMode
       : "provider_default";
   const suffixControlsThinking = cliProxySuffixControlsThinking({
@@ -935,7 +962,6 @@ function reasoningForProvider(
     thinkingMode,
   });
   const reasoningSummary =
-    provider === "google_interactions" ||
     (provider !== "openai_responses" &&
       (form.reasoningSummary === "concise" ||
         form.reasoningSummary === "detailed")) ||

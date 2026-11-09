@@ -71,21 +71,28 @@ test("Google Interactions 保存手动模型 ID 并在重载后保留 Provider �
   });
 });
 
-test("Google 未验证模型的显式推理配置不能伪称受支持", async () => {
-  const store = new ModelConnectionStore(await temporaryRoot());
-  await expect(
-    store.save({
-      name: "Gemini",
-      presetId: "google-interactions",
-      provider: "google_interactions",
-      baseUrl: "https://generativelanguage.googleapis.com/v1beta",
-      apiKey: "synthetic-secret",
-      modelId: "unknown-model",
-      reasoningEffort: "high",
-      contextWindowTokens: 128_000,
-      maxOutputTokens: 4_096,
-    }),
-  ).rejects.toThrow("Google Interactions model capabilities are unverified");
+test("Google 自定义模型可保存推理设置并从磁盘重载", async () => {
+  const root = await temporaryRoot();
+  const store = new ModelConnectionStore(root);
+  const settings = {
+    dialect: "cliproxyapi",
+    reasoningEffort: "high",
+    reasoningSummary: "auto",
+  } as const;
+  await store.save({
+    name: "Gemini",
+    presetId: "custom",
+    provider: "google_interactions",
+    baseUrl: "https://provider.invalid/v1beta",
+    apiKey: "synthetic-secret",
+    modelId: "unknown-model",
+    ...settings,
+    contextWindowTokens: 128_000,
+    maxOutputTokens: 4_096,
+  });
+  await expect(new ModelConnectionStore(root).bind()).resolves.toMatchObject(
+    settings,
+  );
 });
 
 afterEach(async () => {

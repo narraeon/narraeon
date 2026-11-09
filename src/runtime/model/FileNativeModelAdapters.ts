@@ -141,7 +141,10 @@ function modelCacheStrategy(
 ): ModelHostCacheStrategy {
   if (connection.provider === "anthropic_messages")
     return "explicit_anthropic_blocks";
-  if (connection.dialect === "cliproxyapi")
+  if (
+    connection.dialect === "cliproxyapi" &&
+    connection.provider !== "google_interactions"
+  )
     return "explicit_cliproxyapi_message";
   return "provider_managed";
 }
@@ -322,7 +325,7 @@ export class FileNativeModelHost implements ModelHost {
         provider === "anthropic_messages"
           ? ["Accept", "anthropic-version", "x-api-key", "Content-Type"]
           : provider === "google_interactions"
-            ? ["Accept", "x-goog-api-key", "Content-Type"]
+            ? Object.keys(googleRequestHeaders(this.#connection, request))
             : ["Accept", "Authorization", "Content-Type"],
       body: cloneProviderValue(body),
       ...(provider === "google_interactions" && redactContinuation
@@ -498,11 +501,7 @@ export class FileNativeModelHost implements ModelHost {
               url,
               {
                 method: "POST",
-                headers: {
-                  Accept: "text/event-stream",
-                  "x-goog-api-key": this.#connection.apiKey,
-                  "Content-Type": "application/json",
-                },
+                headers: googleRequestHeaders(this.#connection, request),
                 redirect: "error",
                 body:
                   token === undefined
@@ -1177,6 +1176,41 @@ function googleLateSystemSource(request: ModelHostExchange): string {
   return "";
 }
 
+function googleRequestHeaders(
+  connection: ResolvedFileNativeModelConnection,
+  request: ModelHostExchange,
+): Record<string, string> {
+  return {
+    Accept: "text/event-stream",
+    "x-goog-api-key": connection.apiKey,
+    "Content-Type": "application/json",
+    ...(connection.dialect === "cliproxyapi"
+      ? { "X-Session-Id": promptCacheKey(connection, request) }
+      : {}),
+  };
+}
+
+function googleThinkingConfig(
+  connection: ResolvedFileNativeModelConnection,
+): Record<string, unknown> {
+  const config: Record<string, unknown> = {};
+  if (connection.reasoningEffort !== "provider_default")
+    config.thinking_level = connection.reasoningEffort;
+  if (connection.reasoningSummary !== "provider_default")
+    config.thinking_summaries = connection.reasoningSummary;
+  if (connection.thinkingMode !== "provider_default") {
+    const budget =
+      connection.thinkingMode === "adaptive"
+        ? -1
+        : connection.thinkingMode === "disabled"
+          ? 0
+          : connection.thinkingBudgetTokens;
+    if (connection.dialect === "cliproxyapi") config.thinking_budget = budget;
+    else config.thinking = { thinking_budget: budget };
+  }
+  return config;
+}
+
 function googleRequestBody(
   connection: ResolvedFileNativeModelConnection,
   request: ModelHostExchange,
@@ -1346,6 +1380,7 @@ function googleRequestBody(
         }),
     generation_config: {
       max_output_tokens: request.maxOutputTokens,
+      ...googleThinkingConfig(connection),
       ...(toolChoice === undefined ? {} : { tool_choice: toolChoice }),
     },
   };

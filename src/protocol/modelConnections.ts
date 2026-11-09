@@ -25,6 +25,7 @@ export type ModelReasoningSummary =
 
 /**
  * Anthropic exposes thinking as a control independent from output effort.
+ * Google budget modes select the alternative to a categorical thinking level.
  * OpenAI-shaped protocols do not have an equivalent request field, so their
  * only valid value is provider_default.
  */
@@ -43,6 +44,17 @@ export function hasCLIProxyThinkingSuffix(modelId: string): boolean {
   );
 }
 
+export const googleThinkingLevels = [
+  "minimal",
+  "low",
+  "medium",
+  "high",
+] as const;
+
+export function isGoogleThinkingLevel(value: unknown): boolean {
+  return googleThinkingLevels.some((level) => level === value);
+}
+
 /** One validation authority shared by storage and the wire adapter boundary. */
 export function modelReasoningPolicyIssue(input: {
   provider: ModelProviderKind;
@@ -56,16 +68,37 @@ export function modelReasoningPolicyIssue(input: {
 }): string | null {
   const thinking = input.thinking ?? "provider_default";
   const thinkingBudgetTokens = input.thinkingBudgetTokens ?? null;
+  if (
+    input.dialect === "cliproxyapi" &&
+    (input.effort !== "provider_default" || thinking !== "provider_default") &&
+    hasCLIProxyThinkingSuffix(input.modelId)
+  )
+    return "CLIProxyAPI model thinking suffixes override request effort and thinking; use either the model suffix with provider defaults or explicit request fields, not both";
   if (input.provider === "google_interactions") {
-    if (input.dialect !== "standard")
-      return "Google Interactions requires the standard dialect";
     if (
-      input.effort !== "provider_default" ||
-      input.summary !== "provider_default" ||
-      thinking !== "provider_default" ||
-      thinkingBudgetTokens !== null
+      input.effort !== "provider_default" &&
+      !isGoogleThinkingLevel(input.effort)
     )
-      return "Google Interactions model capabilities are unverified; use provider defaults";
+      return "Google thinking level must be minimal, low, medium, or high";
+    if (
+      input.summary !== "provider_default" &&
+      input.summary !== "auto" &&
+      input.summary !== "none"
+    )
+      return "Google thinking summaries must be auto or none";
+    if (input.effort !== "provider_default" && thinking !== "provider_default")
+      return "Choose a Google thinking level or a thinking budget mode";
+    if (thinking === "enabled") {
+      if (
+        thinkingBudgetTokens === null ||
+        !Number.isSafeInteger(thinkingBudgetTokens) ||
+        thinkingBudgetTokens < 0
+      )
+        return "Google manual thinking requires a non-negative integer budget";
+    } else if (thinkingBudgetTokens !== null) {
+      return "A Google thinking budget requires manual budget mode";
+    }
+    return null;
   }
   const thinkingControlledByCLIProxySuffix =
     input.provider === "anthropic_messages" &&
@@ -80,9 +113,9 @@ export function modelReasoningPolicyIssue(input: {
     input.provider !== "anthropic_messages" &&
     thinking !== "provider_default"
   )
-    return "Only Anthropic Messages defines a separate thinking mode; OpenAI-shaped protocols control reasoning through effort";
+    return "OpenAI-shaped protocols control reasoning through effort";
   if (input.provider !== "anthropic_messages" && thinkingBudgetTokens !== null)
-    return "Only Anthropic Messages manual thinking accepts a thinking token budget";
+    return "OpenAI-shaped protocols do not accept a thinking token budget";
   if (thinking === "enabled") {
     if (
       thinkingBudgetTokens === null ||
@@ -116,12 +149,6 @@ export function modelReasoningPolicyIssue(input: {
     input.summary !== "provider_default"
   )
     return "Standard Chat Completions has no reasoning-summary parameter; use provider default or select the CLIProxyAPI dialect";
-  if (
-    input.dialect === "cliproxyapi" &&
-    (input.effort !== "provider_default" || thinking !== "provider_default") &&
-    hasCLIProxyThinkingSuffix(input.modelId)
-  )
-    return "CLIProxyAPI model thinking suffixes override request effort and thinking; use either the model suffix with provider defaults or explicit request fields, not both";
   return null;
 }
 
