@@ -1,4 +1,4 @@
-## Agent skills
+## Repository guide
 
 ### Issue tracker
 
@@ -18,8 +18,6 @@ Before planning or implementing V1, read `GLOSSARY.md`, `docs/product-foundation
 
 ### Workflow
 
-Every bug or change starts as a GitHub issue before any code; commits reference it.
-
-The session talking with the maintainer is the **lead**. It confirms bugs (`diagnosing-bugs`: a loop that goes red on the exact reported symptom), files the issue, grills the plan, and accepts the result. It hands implementation to a new session in its own worktree (model `claude-haiku-5-5`, effort `xhigh`) whose brief is to run `/mattpocock-skills:implement` on the issue. When that session reports back, the lead re-runs the bug's loop, `npm run check` and `npm run test:unit` against the issue's acceptance criteria, merges the branch, and closes the issue with evidence.
-
-A session whose brief says to implement an issue is the **implementer**: it commits on its worktree branch and reports back; merging belongs to the lead.
+1. The **lead** works with the maintainer to define the change. For bugs, reproduce the reported symptom with a repeatable check. Open or identify the GitHub issue before changing code, review the plan against its acceptance criteria, and hand the issue to a separate implementation session.
+2. The **implementer** works in a dedicated Git worktree, references the issue in commits, and reports the branch and verification results to the lead.
+3. The lead checks the result against the issue’s acceptance criteria, repeats the original check for a bug, and runs `npm run check` and `npm run test:unit`. Once the checks pass and the criteria are met, the lead merges the branch and closes the issue with evidence.
