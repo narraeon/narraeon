@@ -83,7 +83,7 @@ test("Responses 高级选项可编辑保存并用英文显示已保存的值", a
   ).toBe("true");
 });
 
-test("Google 连接在英文界面说明手动模型与未验证状态", () => {
+test("Google 连接允许使用已保存凭据拉取模型并保留手填输入", () => {
   setWebLocale("en");
   const library = modelLibrary();
   library.connections[0] = {
@@ -103,15 +103,13 @@ test("Google 连接在英文界面说明手动模型与未验证状态", () => {
     }),
   );
   expect(
-    screen.getByText(
-      /model discovery and service behavior have not been verified/,
-    ),
+    screen.getByText(/Interactions support depends on the selected model/),
   ).toBeTruthy();
   expect(
     screen.getByRole<HTMLButtonElement>("button", {
       name: "Fetch models from endpoint",
     }).disabled,
-  ).toBe(true);
+  ).toBe(false);
 });
 
 test("模型设置分别保存 Anthropic effort、thinking 模式、预算和返回内容", async () => {

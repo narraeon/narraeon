@@ -201,10 +201,6 @@ export class ModelConnectionStore {
   ): Promise<{ models: string[] }> {
     await this.#mutationTail;
     const provider = validateProvider(input.provider);
-    if (provider === "google_interactions")
-      throw new Error(
-        "Google Interactions model discovery is unverified; enter a model ID manually",
-      );
     const baseUrl = normalizeBaseUrl(
       requiredTrimmed(input.baseUrl, "Base URL", 4096),
     );
@@ -225,41 +221,54 @@ export class ModelConnectionStore {
     const url = providerUrl(baseUrl, "models");
     if (provider === "anthropic_messages")
       url.searchParams.set("limit", "1000");
-    const response = await this.#fetch(url, {
-      method: "GET",
-      headers:
-        provider === "anthropic_messages"
-          ? {
-              "anthropic-version": "2023-06-01",
-              "x-api-key": apiKey,
-            }
-          : { Authorization: `Bearer ${apiKey}` },
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!response.ok) throw await providerListError(response);
-    const declaredLength = Number(response.headers.get("content-length"));
-    if (Number.isFinite(declaredLength) && declaredLength > maxModelListBytes)
-      throw new Error("Provider model-list response exceeds the 1 MiB limit");
-    const source = await response.text();
-    if (Buffer.byteLength(source, "utf8") > maxModelListBytes)
-      throw new Error("Provider model-list response exceeds the 1 MiB limit");
-    let payload: unknown;
-    try {
-      payload = JSON.parse(source) as unknown;
-    } catch {
-      throw new Error("Provider model-list response is not valid JSON");
+    const google = provider === "google_interactions";
+    const headers: Record<string, string> = google
+      ? { "x-goog-api-key": apiKey }
+      : provider === "anthropic_messages"
+        ? { "anthropic-version": "2023-06-01", "x-api-key": apiKey }
+        : { Authorization: `Bearer ${apiKey}` };
+    if (google) url.searchParams.set("pageSize", "100");
+    const signal = AbortSignal.timeout(15_000);
+    const ids = new Set<string>();
+    const seenTokens = new Set<string>();
+    for (;;) {
+      const response = await this.#fetch(new URL(url), {
+        method: "GET",
+        headers,
+        signal,
+        ...(google ? { redirect: "error" as const } : {}),
+      });
+      const payload = await readModelListPage(response);
+      const field = google ? "models" : "data";
+      const entries = payload[field];
+      if (!Array.isArray(entries))
+        throw new Error(
+          `Provider model-list response is missing the ${field} array`,
+        );
+      for (const item of entries) {
+        if (!isRecord(item)) continue;
+        const value = google ? item.name : item.id;
+        if (typeof value !== "string") continue;
+        if (google && !value.startsWith("models/")) continue;
+        const id = (google ? value.slice("models/".length) : value).trim();
+        if (id.length > 0 && id.length <= 512) ids.add(id);
+      }
+      if (!google || ids.size >= 2_000 || !payload.nextPageToken) break;
+      const token = payload.nextPageToken;
+      if (typeof token !== "string")
+        throw new Error(
+          "Provider model-list response has an invalid page token",
+        );
+      if (seenTokens.has(token))
+        throw new Error(
+          "Provider model-list response has a repeated page token",
+        );
+      if (seenTokens.size >= 99)
+        throw new Error("Provider model list exceeds the 100-page limit");
+      seenTokens.add(token);
+      url.searchParams.set("pageToken", token);
     }
-    if (!isRecord(payload) || !Array.isArray(payload.data))
-      throw new Error("Provider model-list response is missing the data array");
-    const models = [
-      ...new Set(
-        payload.data.flatMap((item) => {
-          if (!isRecord(item) || typeof item.id !== "string") return [];
-          const id = item.id.trim();
-          return id.length > 0 && id.length <= 512 ? [id] : [];
-        }),
-      ),
-    ]
+    const models = [...ids]
       .sort((left, right) => left.localeCompare(right))
       .slice(0, 2_000);
     if (models.length === 0)
@@ -686,6 +695,27 @@ function providerUrl(baseUrl: string, resource: "models"): URL {
   const path = url.pathname.replace(/\/+$/u, "");
   url.pathname = path.endsWith(suffix) ? path : `${path}${suffix}`;
   return url;
+}
+
+async function readModelListPage(
+  response: Response,
+): Promise<Record<string, unknown>> {
+  if (!response.ok) throw await providerListError(response);
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > maxModelListBytes)
+    throw new Error("Provider model-list response exceeds the 1 MiB limit");
+  const source = await response.text();
+  if (Buffer.byteLength(source, "utf8") > maxModelListBytes)
+    throw new Error("Provider model-list response exceeds the 1 MiB limit");
+  let payload: unknown;
+  try {
+    payload = JSON.parse(source) as unknown;
+  } catch {
+    throw new Error("Provider model-list response is not valid JSON");
+  }
+  if (!isRecord(payload))
+    throw new Error("Provider model-list response must be an object");
+  return payload;
 }
 
 async function providerListError(response: Response): Promise<Error> {

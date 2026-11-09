@@ -610,7 +610,6 @@ export function ModelConnectionScreen({
               className="secondary-button"
               disabled={
                 pending !== null ||
-                form.provider === "google_interactions" ||
                 form.baseUrl.length === 0 ||
                 (credentialsMustBeEntered && form.apiKey.length === 0)
               }
@@ -624,9 +623,7 @@ export function ModelConnectionScreen({
           </div>
           {form.provider === "google_interactions" && (
             <p className="field-note">
-              {uiText(
-                "Google Interactions 的模型枚举与服务行为尚未经真实服务验证，请手动输入模型 ID。",
-              )}
+              {uiText("端点列出的模型能否用于 Interactions，取决于所选模型。")}
             </p>
           )}
           {models.length > 0 && (

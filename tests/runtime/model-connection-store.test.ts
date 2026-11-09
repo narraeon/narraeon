@@ -587,6 +587,76 @@ test("模型列表在协议和端点改变后仍复用已有配置的本机凭�
   expect(fetch_).toHaveBeenCalledTimes(2);
 });
 
+test("Google 模型列表使用已存凭据逐页读取原生资源名", async () => {
+  const fetch_ = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(
+      Response.json({
+        models: [{ name: "models/gemini-b" }],
+        nextPageToken: "next+/=",
+      }),
+    )
+    .mockResolvedValueOnce(
+      Response.json({
+        models: [
+          { name: "models/gemini-a" },
+          { name: "models/gemini-b" },
+          { name: "models/" },
+        ],
+      }),
+    );
+  const store = new ModelConnectionStore(await temporaryRoot(), fetch_);
+  const saved = await store.save({
+    provider: "google_interactions",
+    presetId: "google-interactions",
+    name: "Google",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+    apiKey: "stored-secret",
+    modelId: "manual-model",
+    contextWindowTokens: 128_000,
+    maxOutputTokens: 4096,
+  });
+  await expect(
+    store.listModels({
+      provider: "google_interactions",
+      baseUrl: "https://provider.invalid/v1beta",
+      connectionId: saved.activeConnectionId!,
+    }),
+  ).resolves.toEqual({ models: ["gemini-a", "gemini-b"] });
+  const urls = fetch_.mock.calls.map(([url]) => new URL(String(url)));
+  expect(urls.map((url) => url.pathname)).toEqual([
+    "/v1beta/models",
+    "/v1beta/models",
+  ]);
+  expect(urls.map((url) => url.searchParams.get("pageToken"))).toEqual([
+    null,
+    "next+/=",
+  ]);
+  for (const [, options] of fetch_.mock.calls) {
+    expect(options?.headers).toEqual({ "x-goog-api-key": "stored-secret" });
+  }
+});
+
+test.each([
+  [() => Response.json({ models: [] }), "no usable model IDs"],
+  [
+    () => Response.json({ models: [], nextPageToken: "repeat" }),
+    "repeated page token",
+  ],
+  [() => new Response("key rejected", { status: 403 }), "403 key rejected"],
+])("Google 列表失败时报告端点错误", async (response, message) => {
+  const store = new ModelConnectionStore(await temporaryRoot(), async () =>
+    response(),
+  );
+  await expect(
+    store.listModels({
+      provider: "google_interactions",
+      baseUrl: "https://provider.invalid/v1beta",
+      apiKey: "test-key",
+    }),
+  ).rejects.toThrow(message);
+});
+
 test("编辑已有配置时协议或端点变化均复用本机凭据", async () => {
   const root = await temporaryRoot();
   const store = new ModelConnectionStore(root);
