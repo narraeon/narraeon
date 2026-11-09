@@ -106,3 +106,69 @@ test("refuses a temporary directory inside the worktree", async () => {
     await rm(temp, { recursive: true, force: true });
   }
 });
+
+test("continues with frozen input and appends steps across all hops in order", async () => {
+  const { temp, child } = await run({ SYNTHETIC_CONTINUATION: "complete" });
+  try {
+    assert.equal(child.status, 0, child.stderr);
+    const dir = await archive(temp);
+    const base = await readJson(join(dir, "01-tool-call-request.json"));
+    for (const [prefix, token] of [
+      ["02", "synthetic-token-1"],
+      ["03", "synthetic-token-2"],
+    ]) {
+      const next = await readJson(
+        join(dir, `${prefix}-tool-call-request.json`),
+      );
+      assert.deepEqual(next, { ...base, continuation_token: token });
+    }
+    const intermediate = await readJson(
+      join(dir, "02-tool-call-response.json"),
+    );
+    const terminal = await readJson(join(dir, "03-tool-call-response.json"));
+    const result = await readJson(join(dir, "04-tool-result-request.json"));
+    assert.deepEqual(result.input.slice(1, -1), [
+      ...intermediate.steps,
+      ...terminal.steps,
+    ]);
+    assert.equal(result.continuation_token, undefined);
+    assert.equal(result.input.at(-1).call_id, "test-call");
+    assert.doesNotMatch(child.stdout + child.stderr, /synthetic-token/);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+for (const [mode, message, count] of [
+  ["missing", /missing or invalid continuation token/, 1],
+  ["repeat", /repeated continuation token/, 2],
+  ["endless", /16-hop limit/, 16],
+  ["transport", /outcome unknown/, 2],
+]) {
+  test(`stops and archives evidence on ${mode} continuation`, async () => {
+    const { temp, child } = await run({ SYNTHETIC_CONTINUATION: mode });
+    try {
+      assert.equal(child.status, 1);
+      assert.match(child.stderr, message);
+      const dir = await archive(temp);
+      const files = await readdir(dir);
+      assert.equal(
+        files.filter((name) => name.endsWith("-tool-call-request.json")).length,
+        count,
+      );
+      assert.equal(
+        files.filter((name) => name.endsWith("-meta.json")).length,
+        count,
+      );
+      assert.ok(files.every((name) => name.includes("-tool-call-")));
+      if (mode === "transport")
+        assert.equal(
+          (await readJson(join(dir, "02-tool-call-meta.json"))).outcome,
+          "transport_failure",
+        );
+      assert.doesNotMatch(child.stdout + child.stderr, /synthetic-token/);
+    } finally {
+      await rm(temp, { recursive: true, force: true });
+    }
+  });
+}

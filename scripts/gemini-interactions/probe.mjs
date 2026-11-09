@@ -59,6 +59,27 @@ async function request(label, input, options = {}) {
     input,
     ...options,
   };
+  const seenTokens = new Set();
+  const steps = [];
+  let hopBody = body;
+  for (let hop = 1; ; hop++) {
+    const interaction = await requestHop(label, hopBody);
+    steps.push(...interaction.steps);
+    if (interaction.status !== "requires_continuation")
+      return { ...interaction, steps };
+
+    const token = interaction.continuation_token;
+    if (typeof token !== "string" || !token)
+      throw new Error(`${label}: missing or invalid continuation token`);
+    if (seenTokens.has(token))
+      throw new Error(`${label}: repeated continuation token`);
+    if (hop >= 16) throw new Error(`${label}: exceeded 16-hop limit`);
+    seenTokens.add(token);
+    hopBody = { ...body, continuation_token: token };
+  }
+}
+
+async function requestHop(label, body) {
   const prefix = `${String(++sequence).padStart(2, "0")}-${label}`;
   // Headers are deliberately excluded. Raw bodies may still contain sensitive provider data.
   await writeFile(
@@ -67,6 +88,13 @@ async function request(label, input, options = {}) {
     { mode: 0o600, flag: "wx" },
   );
   let response;
+  let raw;
+  const meta = {
+    timestamp: new Date().toISOString(),
+    endpoint,
+    model,
+    apiRevision: "omitted",
+  };
   try {
     response = await fetch(endpoint, {
       method: "POST",
@@ -75,12 +103,25 @@ async function request(label, input, options = {}) {
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(120_000),
     });
+    raw = await response.text();
   } catch {
+    await writeFile(
+      join(archive, `${prefix}-meta.json`),
+      JSON.stringify(
+        {
+          ...meta,
+          httpStatus: response?.status ?? null,
+          outcome: "transport_failure",
+        },
+        null,
+        2,
+      ),
+      { mode: 0o600, flag: "wx" },
+    );
     throw new Error(
       `${label}: transport failed or timed out; outcome unknown, do not replay automatically`,
     );
   }
-  const raw = await response.text();
   await writeFile(join(archive, `${prefix}-response.json`), raw, {
     mode: 0o600,
     flag: "wx",
@@ -89,10 +130,7 @@ async function request(label, input, options = {}) {
     join(archive, `${prefix}-meta.json`),
     JSON.stringify(
       {
-        timestamp: new Date().toISOString(),
-        endpoint,
-        model,
-        apiRevision: "omitted",
+        ...meta,
         httpStatus: response.status,
       },
       null,
@@ -122,7 +160,12 @@ async function request(label, input, options = {}) {
       `${label}: invalid JSON or non-roundtrippable number; inspect private evidence`,
     );
   }
-  if (!Array.isArray(interaction.steps))
+  if (
+    interaction?.status === "requires_continuation" &&
+    interaction.steps === undefined
+  )
+    interaction.steps = [];
+  if (!Array.isArray(interaction?.steps))
     throw new Error(`${label}: missing steps; inspect private evidence`);
   const statuses = [
     "requires_action",
@@ -139,10 +182,6 @@ async function request(label, input, options = {}) {
   console.log(
     `${label}: HTTP ${response.status}, status=${status}, steps=${interaction.steps.length}`,
   );
-  if (interaction.status === "requires_continuation")
-    throw new Error(
-      `${label}: requires_continuation observed; retain raw token and investigate manually, no automatic replay`,
-    );
   return interaction;
 }
 function expectStatus(response, expected, label) {

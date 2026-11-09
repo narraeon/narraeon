@@ -21,7 +21,28 @@ const steps = [
   [{ type: "model_output", content: [{ type: "text", text: "PINE" }] }],
 ];
 let index = 0;
+let progress = 0;
 globalThis.fetch = async () => {
+  const mode = process.env.SYNTHETIC_CONTINUATION;
+  if (mode && index === 0) {
+    progress++;
+    if (mode === "transport" && progress === 2)
+      throw new Error("synthetic disconnect");
+    if (mode !== "complete" || progress <= 2)
+      return Response.json({
+        status: "requires_continuation",
+        ...(mode === "missing"
+          ? {}
+          : {
+              continuation_token:
+                mode === "repeat"
+                  ? "synthetic-token"
+                  : `synthetic-token-${progress}`,
+            }),
+        ...(progress === 1 ? {} : { steps: [{ ...thought, hop: progress }] }),
+        usage: { total_tokens: progress },
+      });
+  }
   const current = index++;
   if (process.env.SYNTHETIC_UNSAFE_NUMBER) {
     return new Response(
