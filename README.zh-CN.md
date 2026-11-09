@@ -170,8 +170,8 @@ npm ci
 npm run build
 npm run check
 npx playwright install chromium
-TMPDIR=/tmp npm run test
-TMPDIR=/tmp npm run test:package
+npm run test
+npm run test:package
 ```
 
 `npm run test:package` 会生成真实 npm tarball，在仓库外的临时目录安装，再检查发布版 CLI、健康端点、首页和重复启动行为。

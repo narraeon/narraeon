@@ -1,4 +1,3 @@
-import { mkdir } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 import type { V1Request } from "../../src/protocol/v1.ts";
 import type { FileNativePlayPresetLibrary } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
@@ -119,9 +118,11 @@ for (const locale of ["zh-CN", "en"] as const)
       await choose();
       const wizard = page.getByRole("dialog", { name: text.wizard });
       await expect(wizard.getByText("Plain original")).toBeVisible();
-      await mkdir("/tmp/narraeon-141-evidence", { recursive: true });
+
       await page.screenshot({
-        path: `/tmp/narraeon-141-evidence/${locale}-${mobile ? "mobile" : "desktop"}.png`,
+        path: test
+          .info()
+          .outputPath(`${locale}-${mobile ? "mobile" : "desktop"}.png`),
       });
       const bounds = await wizard.boundingBox();
       expect(bounds).not.toBeNull();
@@ -179,15 +180,23 @@ for (const locale of ["zh-CN", "en"] as const)
       await wizard
         .getByRole("checkbox", { name: "Orphan", exact: true })
         .check();
-      await mkdir("/tmp/narraeon-140-evidence", { recursive: true });
+
       await page.screenshot({
-        path: `/tmp/narraeon-140-evidence/preset-${locale}-${mobile ? "mobile" : "desktop"}-detail.png`,
+        path: test
+          .info()
+          .outputPath(
+            `preset-${locale}-${mobile ? "mobile" : "desktop"}-detail.png`,
+          ),
       });
       await wizard
         .getByRole("button", { name: text.preview, exact: true })
         .click();
       await page.screenshot({
-        path: `/tmp/narraeon-140-evidence/preset-${locale}-${mobile ? "mobile" : "desktop"}-result.png`,
+        path: test
+          .info()
+          .outputPath(
+            `preset-${locale}-${mobile ? "mobile" : "desktop"}-result.png`,
+          ),
       });
       await expect(
         wizard.getByText("unsupported_macro", { exact: false }),
@@ -353,7 +362,9 @@ for (const mobile of [false, true]) {
     ).toHaveCount(0);
     expect(await page.evaluate(() => "bad" in window)).toBe(false);
     await page.screenshot({
-      path: `/tmp/narraeon-141-evidence/script-${mobile ? "mobile" : "desktop"}.png`,
+      path: test
+        .info()
+        .outputPath(`script-${mobile ? "mobile" : "desktop"}.png`),
     });
     await wizard.getByRole("button", { name: "Folder / Remote" }).click();
     await expect(wizard.getByText(/未携带源码/)).toContainText(
@@ -369,7 +380,9 @@ for (const mobile of [false, true]) {
     await expect(wizard.getByRole("tooltip")).toContainText("quiet");
     await expect(wizard.getByRole("tooltip")).toContainText("源停用");
     await page.screenshot({
-      path: `/tmp/narraeon-141-evidence/variables-${mobile ? "mobile" : "desktop"}.png`,
+      path: test
+        .info()
+        .outputPath(`variables-${mobile ? "mobile" : "desktop"}.png`),
     });
     const conversion = await runtime<unknown>(page, {
       type: "play.sillytavern.preview",

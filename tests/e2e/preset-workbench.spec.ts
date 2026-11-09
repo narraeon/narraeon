@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { createServer } from "node:http";
-import { mkdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import type { V1Request } from "../../src/protocol/v1.ts";
 import type { FileNativePlayPresetLibrary } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
 
@@ -51,8 +51,7 @@ test("A 工作台真实保存、独立三产物、正则、JS、导入及下一�
   const address = provider.address();
   if (!address || typeof address === "string")
     throw new Error("No fixture port");
-  const evidence = "/tmp/narraeon-issue45-evidence";
-  await mkdir(evidence, { recursive: true });
+
   try {
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.goto("/");
@@ -78,7 +77,10 @@ test("A 工作台真实保存、独立三产物、正则、JS、导入及下一�
       .getByLabel("发送角色", { exact: true })
       .selectOption("assistant");
     await page.getByLabel("合并相邻同角色消息", { exact: true }).check();
-    await page.screenshot({ path: `${evidence}/A-main.png`, fullPage: true });
+    await page.screenshot({
+      path: test.info().outputPath("A-main.png"),
+      fullPage: true,
+    });
     await page
       .getByRole("button", { name: "新增后置请求", exact: true })
       .click();
@@ -207,12 +209,15 @@ test("A 工作台真实保存、独立三产物、正则、JS、导入及下一�
     await expect(
       preview.getByRole("button", { name: "Preview A45" }),
     ).toBeDisabled();
-    await page.screenshot({ path: `${evidence}/A-script.png`, fullPage: true });
+    await page.screenshot({
+      path: test.info().outputPath("A-script.png"),
+      fullPage: true,
+    });
     await page
       .locator(".preset-object-detail")
       .evaluate((el) => (el.scrollTop = 0));
     await page.screenshot({
-      path: `${evidence}/A-outputs.png`,
+      path: test.info().outputPath("A-outputs.png"),
       fullPage: true,
     });
     await page.setViewportSize({ width: 800, height: 900 });
@@ -221,7 +226,10 @@ test("A 工作台真实保存、独立三产物、正则、JS、导入及下一�
         page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
       )
       .toBe(true);
-    await page.screenshot({ path: `${evidence}/A-narrow.png`, fullPage: true });
+    await page.screenshot({
+      path: test.info().outputPath("A-narrow.png"),
+      fullPage: true,
+    });
     await page.setViewportSize({ width: 1440, height: 1000 });
     // Clone a complete request closure and keep its switch independent.
     await page
@@ -359,7 +367,7 @@ test("A 工作台真实保存、独立三产物、正则、JS、导入及下一�
       ]),
     });
     await page.screenshot({
-      path: `${evidence}/A-production-play.png`,
+      path: test.info().outputPath("A-production-play.png"),
       fullPage: true,
     });
   } finally {

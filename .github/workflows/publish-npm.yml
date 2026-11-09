@@ -66,13 +66,9 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Run browser tests
-        env:
-          TMPDIR: /tmp
         run: npm run test:e2e
 
       - name: Test the packed package from outside the repository
-        env:
-          TMPDIR: /tmp
         run: npm run test:package
 
       - name: Build and test the release container

@@ -20,7 +20,6 @@ try {
     ["pack", "--json", "--silent", "--pack-destination", temporaryRoot],
     {
       cwd: repositoryRoot,
-      env: { ...process.env, TMPDIR: "/tmp" },
       maxBuffer: 10 * 1024 * 1024,
     },
   );
@@ -61,7 +60,6 @@ try {
     ["install", "--ignore-scripts", "--no-audit", "--no-fund", archivePath],
     {
       cwd: consumerRoot,
-      env: { ...process.env, TMPDIR: "/tmp" },
       maxBuffer: 10 * 1024 * 1024,
     },
   );
@@ -114,7 +112,6 @@ process.stdout.write("Package imports are blocked\\n");`,
   );
   const help = await execute(npmCommand, ["exec", "--", "narraeon", "--help"], {
     cwd: consumerRoot,
-    env: { ...process.env, TMPDIR: "/tmp" },
   });
   assert(
     help.stdout.includes("narraeon web"),
@@ -127,7 +124,6 @@ process.stdout.write("Package imports are blocked\\n");`,
     NARRAEON_CONFIG_ROOT: join(temporaryRoot, "runtime-config"),
     NARRAEON_DATA_ROOT: join(temporaryRoot, "runtime-data"),
     NARRAEON_LOG_ROOT: join(temporaryRoot, "runtime-log"),
-    TMPDIR: "/tmp",
   };
   child = spawn(
     process.execPath,

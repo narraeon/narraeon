@@ -59,8 +59,8 @@ published artifact to its source commit and workflow run.
    npm run test:unit
    npm run test:release
    npx playwright install chromium
-   TMPDIR=/tmp npm run test:e2e
-   TMPDIR=/tmp npm run test:package
+   npm run test:e2e
+   npm run test:package
    npm run test:container
    npm publish --dry-run --json
    ```

@@ -183,8 +183,8 @@ npm ci
 npm run build
 npm run check
 npx playwright install chromium
-TMPDIR=/tmp npm run test
-TMPDIR=/tmp npm run test:package
+npm run test
+npm run test:package
 ```
 
 `npm run test:package` creates a real npm tarball, installs it in a temporary directory outside the repository, and verifies the packaged CLI, health endpoint, home page, and repeated-start behavior.

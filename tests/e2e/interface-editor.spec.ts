@@ -1,5 +1,4 @@
 import { expect, test, type Page } from "@playwright/test";
-import { mkdir } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { FileNativePlayPresetLibrary } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
 import type { V1Request } from "../../src/protocol/v1.ts";
@@ -128,12 +127,12 @@ test("纯界面编辑、草稿预览和游玩显示不增加模型调用，字�
     await expect(
       preview.getByText("Alex is folding a jersey.", { exact: true }),
     ).toBeVisible();
-    await mkdir("/tmp/narraeon-issue45-evidence", { recursive: true });
+
     await page
       .locator('.interface-extension-preview iframe[title="current_view"]')
       .scrollIntoViewIfNeeded();
     await page.screenshot({
-      path: "/tmp/narraeon-issue45-evidence/A-interface.png",
+      path: test.info().outputPath("A-interface.png"),
       fullPage: true,
     });
     await expect(preview.locator("body")).toHaveCSS(
