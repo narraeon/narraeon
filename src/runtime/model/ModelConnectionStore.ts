@@ -240,21 +240,22 @@ export class ModelConnectionStore {
       });
       const payload = await readModelListPage(response);
       const field = google ? "models" : "data";
-      const entries = payload[field];
+      const entries =
+        google && payload.models === undefined ? [] : payload[field];
       if (!Array.isArray(entries))
         throw new Error(
           `Provider model-list response is missing the ${field} array`,
         );
       for (const item of entries) {
         if (!isRecord(item)) continue;
-        const value = google ? item.name : item.id;
+        const value = google ? googleModelResourceId(item.name) : item.id;
         if (typeof value !== "string") continue;
-        if (google && !value.startsWith("models/")) continue;
-        const id = (google ? value.slice("models/".length) : value).trim();
+        const id = value.trim();
         if (id.length > 0 && id.length <= 512) ids.add(id);
       }
-      if (!google || ids.size >= 2_000 || !payload.nextPageToken) break;
       const token = payload.nextPageToken;
+      if (!google || ids.size >= 2_000 || token === undefined || token === "")
+        break;
       if (typeof token !== "string")
         throw new Error(
           "Provider model-list response has an invalid page token",
@@ -695,6 +696,11 @@ function providerUrl(baseUrl: string, resource: "models"): URL {
   const path = url.pathname.replace(/\/+$/u, "");
   url.pathname = path.endsWith(suffix) ? path : `${path}${suffix}`;
   return url;
+}
+
+function googleModelResourceId(name: unknown): string | undefined {
+  if (typeof name === "string" && name.startsWith("models/"))
+    return name.slice("models/".length);
 }
 
 async function readModelListPage(

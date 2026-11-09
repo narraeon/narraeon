@@ -592,7 +592,6 @@ test("Google 模型列表使用已存凭据逐页读取原生资源名", async (
     .fn<typeof fetch>()
     .mockResolvedValueOnce(
       Response.json({
-        models: [{ name: "models/gemini-b" }],
         nextPageToken: "next+/=",
       }),
     )
@@ -623,7 +622,7 @@ test("Google 模型列表使用已存凭据逐页读取原生资源名", async (
       connectionId: saved.activeConnectionId!,
     }),
   ).resolves.toEqual({ models: ["gemini-a", "gemini-b"] });
-  const urls = fetch_.mock.calls.map(([url]) => new URL(String(url)));
+  const urls = fetch_.mock.calls.map(([url]) => url as URL);
   expect(urls.map((url) => url.pathname)).toEqual([
     "/v1beta/models",
     "/v1beta/models",
@@ -634,6 +633,7 @@ test("Google 模型列表使用已存凭据逐页读取原生资源名", async (
   ]);
   for (const [, options] of fetch_.mock.calls) {
     expect(options?.headers).toEqual({ "x-goog-api-key": "stored-secret" });
+    expect(options?.redirect).toBe("error");
   }
 });
 
@@ -645,8 +645,8 @@ test.each([
   ],
   [() => new Response("key rejected", { status: 403 }), "403 key rejected"],
 ])("Google 列表失败时报告端点错误", async (response, message) => {
-  const store = new ModelConnectionStore(await temporaryRoot(), async () =>
-    response(),
+  const store = new ModelConnectionStore(await temporaryRoot(), () =>
+    Promise.resolve(response()),
   );
   await expect(
     store.listModels({
