@@ -76,6 +76,92 @@ function mapPreset(value: unknown, files: Reference): Fields {
   };
 }
 
+// Provider message content is deliberately open in the frozen compilation codec.
+// Tag opaque values so arbitrary user/provider JSON never becomes a reference.
+function encodeContent(content: unknown, text: Reference): unknown {
+  if (typeof content === "string") return text(content);
+  if (
+    Array.isArray(content) &&
+    content.every(
+      (item: unknown) =>
+        typeof item === "object" &&
+        item !== null &&
+        !Array.isArray(item) &&
+        "type" in item &&
+        item.type === "text" &&
+        "text" in item &&
+        typeof item.text === "string",
+    )
+  )
+    return mapRecords(content, (block) => ({
+      ...block,
+      text: text(block.text),
+    }));
+  return { opaque: content };
+}
+
+function decodeContent(content: unknown, text: Reference): unknown {
+  if (Array.isArray(content))
+    return mapRecords(content, (block) => {
+      if (block.type !== "text")
+        throw new Error("Invalid setting session Provider text block");
+      return { ...block, text: text(block.text) };
+    });
+  if (
+    typeof content === "object" &&
+    content !== null &&
+    "opaque" in content &&
+    Object.keys(content).length === 1
+  )
+    return content.opaque;
+  return text(content);
+}
+
+// Keep the original blocks, joined Markdown and mapped Provider text independent:
+// historical formatting, block order and boundaries all participate in replay.
+function mapCompilation(
+  value: unknown,
+  text: Reference,
+  tools: Reference,
+  content: (value: unknown, text: Reference) => unknown,
+): Fields {
+  const compilation = record(value);
+  const provider = record(compilation.provider);
+  const preload =
+    provider.preload === undefined ? undefined : record(provider.preload);
+  return {
+    ...compilation,
+    logicalMessages: mapRecords(compilation.logicalMessages, (message) => ({
+      ...message,
+      markdown: text(message.markdown),
+      blocks: mapRecords(message.blocks, (block) => ({
+        ...block,
+        markdown: text(block.markdown),
+      })),
+    })),
+    provider: {
+      ...provider,
+      ...(preload === undefined
+        ? {}
+        : { preload: { ...preload, markdown: text(preload.markdown) } }),
+      ...(provider.system === undefined
+        ? {}
+        : {
+            system: mapRecords(provider.system, (block) => ({
+              ...block,
+              text: text(block.text),
+            })),
+          }),
+      messages: mapRecords(provider.messages, (message) => ({
+        ...message,
+        content: content(message.content, text),
+      })),
+    },
+    tools: tools(compilation.tools),
+    toolUniverse: tools(compilation.toolUniverse),
+  };
+}
+
 function writer(kind: string) {
   const entries: unknown[] = [];
   const ids = new Map<string, string>();
@@ -127,8 +213,19 @@ export function encodeSettingSession(
   const compilations = writer("compilation");
   const presets = writer("preset");
   const files = writer("files");
+  const texts = writer("text");
+  const toolLists = writer("tools");
+  // Small strings cost less inline and keep the surrounding JSON readable.
+  const text = (value: unknown) => {
+    if (typeof value !== "string")
+      throw new Error("Invalid setting session snapshot text");
+    return value.length < 256 ? value : { ref: texts.ref(value) };
+  };
   const fields = mapSession(record(session), {
-    compilation: compilations.ref,
+    compilation: (value) =>
+      compilations.ref(
+        mapCompilation(value, text, toolLists.ref, encodeContent),
+      ),
     preset: (value) => presets.ref(mapPreset(value, files.ref)),
   });
   return {
@@ -138,6 +235,8 @@ export function encodeSettingSession(
       compilations: compilations.entries,
       presets: presets.entries,
       files: files.entries,
+      texts: texts.entries,
+      toolLists: toolLists.entries,
     },
   };
 }
@@ -148,13 +247,31 @@ export function decodeSettingSession(value: unknown): unknown {
   if (session.schemaVersion !== 7) return session;
   const { frozen, ...fields } = session;
   const tables = record(frozen);
-  if (Object.keys(tables).length !== 3)
+  if (Object.keys(tables).length !== 5)
     throw new Error("Invalid setting session snapshot tables");
   const compilations = reader("compilation", tables.compilations);
   const presets = reader("preset", tables.presets);
   const files = reader("files", tables.files);
+  const texts = reader("text", tables.texts);
+  const toolLists = reader("tools", tables.toolLists);
+  const text = (value: unknown): string => {
+    if (typeof value === "string") return value;
+    const reference = record(value);
+    if (Object.keys(reference).length !== 1 || !Object.hasOwn(reference, "ref"))
+      throw new Error("Invalid setting session snapshot text reference");
+    const result = texts.get(reference.ref);
+    if (typeof result !== "string")
+      throw new Error("Invalid setting session snapshot text");
+    return result;
+  };
   const expanded = mapSession(fields, {
-    compilation: (id) => structuredClone(compilations.get(id)),
+    compilation: (id) =>
+      mapCompilation(
+        structuredClone(compilations.get(id)),
+        text,
+        (ref) => structuredClone(toolLists.get(ref)),
+        decodeContent,
+      ),
     preset: (id) =>
       mapPreset(structuredClone(presets.get(id)), (ref) =>
         structuredClone(files.get(ref)),
@@ -163,5 +280,7 @@ export function decodeSettingSession(value: unknown): unknown {
   compilations.check();
   presets.check();
   files.check();
+  texts.check();
+  toolLists.check();
   return { ...expanded, schemaVersion: 6 };
 }

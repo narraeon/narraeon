@@ -5214,3 +5214,115 @@ test("a v6 source survives a failed upgrade and cold retry then explicit deletio
   await cold.deleteSession(fixture.packageId, first.sessionId);
   await expect(readFile(backup)).rejects.toMatchObject({ code: "ENOENT" });
 });
+
+test("changing one preloaded file preserves both prompts and stores identical long blocks and tools once", async () => {
+  const fixture = await createFixture([
+    { outcome: "response", text: "A" },
+    { outcome: "response", text: "B" },
+  ]);
+  const first = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "first",
+    "One",
+  );
+  const tree = await fixture.content.readCurrentTreeContentPackage(
+    fixture.packageId,
+  );
+  const marker = "Second version of this world instruction.";
+  await fixture.content.replaceCurrentTreeContentPackage(
+    fixture.packageId,
+    tree.files.map((file) =>
+      file.path === "control/blocks/world.md"
+        ? { ...file, contents: file.contents + "\n" + marker }
+        : file,
+    ),
+    { baseTreeRevision: tree.treeRevision },
+  );
+  await fixture.session.send({
+    packageId: fixture.packageId,
+    requestId: "second",
+    message: "Two",
+    continuation: { kind: "continue_context", sessionId: first.sessionId },
+  });
+  const store = new FileNativeSettingImprovementStore(fixture.root);
+  const frozen = await store.read(first.sessionId);
+  expect(frozen.requests!.map((item) => item.bootstrap)).toEqual(
+    fixture.host.requests.map((item) => item.bootstrap),
+  );
+  const [a, b] = frozen.requests!;
+  expect(JSON.stringify(a!.bootstrap.provider)).not.toContain(marker);
+  expect(JSON.stringify(b!.bootstrap.provider)).toContain(marker);
+  const stable = a!.bootstrap.logicalMessages
+    .flatMap((message) => message.blocks)
+    .find((block) => block.markdown.length >= 256)!.markdown;
+  const disk = JSON.parse(
+    await readFile(
+      join(
+        fixture.root,
+        "setting-improvements",
+        "sessions",
+        first.sessionId + ".json",
+      ),
+      "utf8",
+    ),
+  ) as {
+    frozen: {
+      texts: string[];
+      toolLists: unknown[];
+      compilations: {
+        logicalMessages: { blocks: { markdown: unknown }[] }[];
+      }[];
+    };
+  };
+  const index = disk.frozen.texts.indexOf(stable);
+  expect(index).toBeGreaterThanOrEqual(0);
+  expect(disk.frozen.texts.filter((value) => value === stable)).toHaveLength(1);
+  expect(disk.frozen.toolLists).toHaveLength(1);
+  expect(disk.frozen.compilations).toHaveLength(3);
+  for (const compilation of disk.frozen.compilations) {
+    expect(
+      compilation.logicalMessages
+        .flatMap((message) => message.blocks)
+        .map((block) => block.markdown),
+    ).toContainEqual({ ref: "text/" + index });
+  }
+});
+
+test("compact text references never reinterpret opaque Provider content or literal author text", async () => {
+  const fixture = await createFixture([{ outcome: "response", text: "A" }]);
+  const first = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "first",
+    "One",
+  );
+  const store = new FileNativeSettingImprovementStore(fixture.root);
+  const session = await store.read(first.sessionId);
+  const compilation = session.requests![0]!.bootstrap;
+  compilation.logicalMessages[0]!.markdown = "text/0";
+  compilation.provider.messages = [
+    "text/0",
+    { ref: "text/0" },
+    { opaque: { ref: "text/0" } },
+    ["text/0"],
+    [{ type: "text", text: "text/0", custom: { ref: "text/0" } }],
+    [{ type: "custom", text: "M".repeat(500) }],
+  ].map((content) => ({ role: "system", content }));
+  await store.save(session);
+  expect(await store.read(first.sessionId)).toEqual(session);
+  const path = join(
+    fixture.root,
+    "setting-improvements",
+    "sessions",
+    first.sessionId + ".json",
+  );
+  const raw = JSON.parse(await readFile(path, "utf8")) as {
+    frozen: { compilations: { logicalMessages: { markdown: unknown }[] }[] };
+  };
+  raw.frozen.compilations[0]!.logicalMessages[0]!.markdown = { ref: "tools/0" };
+  await writeFile(path, JSON.stringify(raw));
+  await expect(store.read(first.sessionId)).rejects.toThrow(
+    /snapshot reference type/,
+  );
+});
