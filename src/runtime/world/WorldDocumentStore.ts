@@ -17,6 +17,7 @@ import {
   type Pair,
   type YAMLMap,
 } from "yaml";
+import { parseRestrictedYamlDocument } from "../RestrictedYaml.ts";
 
 /**
  * `content_package` edits a template under `world`; `world_revision` edits a
@@ -2785,30 +2786,11 @@ function parseRestrictedYaml(
   source: string,
   baseOffset: number,
 ): ParsedRestrictedYaml | null {
-  const forbidden = forbiddenYamlRange(source);
-  if (forbidden !== null) {
-    entry.diagnostics.push(
-      diagnostic({
-        code: "yaml_invalid",
-        logicalPath: entry.file.path,
-        range: sourceRange(
-          entry.file.contents,
-          baseOffset + forbidden.start,
-          baseOffset + forbidden.end,
-        ),
-        message:
-          "YAML uses a forbidden tag, anchor, alias, merge, multiple documents, or invalid line break",
-      }),
-    );
-    return null;
-  }
-  const document = parseDocument(source, {
-    schema: "core",
-    uniqueKeys: true,
-    strict: true,
+  const { document, problems } = parseRestrictedYamlDocument(source, {
+    rejectRawControlCharacters: true,
   });
-  if (document.errors.length > 0 || document.warnings.length > 0) {
-    for (const problem of [...document.errors, ...document.warnings])
+  if (problems) {
+    for (const problem of problems)
       entry.diagnostics.push(
         diagnostic({
           code: "yaml_invalid",
@@ -2818,7 +2800,7 @@ function parseRestrictedYaml(
             baseOffset + problem.pos[0],
             baseOffset + problem.pos[1],
           ),
-          message: "YAML is not a safe single-document YAML 1.2 core map",
+          message: problem.message,
         }),
       );
     return null;
@@ -4094,25 +4076,6 @@ function markdownRevisionSection(
     rawEnd,
     level: match.level,
   };
-}
-
-function forbiddenYamlRange(
-  source: string,
-): { start: number; end: number } | null {
-  const nul = source.indexOf("\0");
-  if (nul >= 0) return { start: nul, end: nul + 1 };
-  const carriage = source.indexOf("\r");
-  if (carriage >= 0) return { start: carriage, end: carriage + 1 };
-  for (const pattern of [
-    /(^|\s)[&*!][^\s,\]}]+/mu,
-    /^\s*<<\s*:/mu,
-    /^\.\.\.\s*$/mu,
-  ]) {
-    const match = pattern.exec(source);
-    if (match !== null)
-      return { start: match.index, end: match.index + match[0].length };
-  }
-  return null;
 }
 
 function inspectShape(value: unknown): {

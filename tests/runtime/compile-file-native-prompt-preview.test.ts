@@ -2693,3 +2693,19 @@ test.each(["recent", "additional", "checkpoint"] as const)(
     }
   },
 );
+
+test("提示编译接受显式单文档和含 YAML 指示符的注释，拒绝真正的别名", () => {
+  const compiler = new FileNativePromptCompiler();
+  const request = input();
+  const source = snapshotRecord(request)["control/frame.yaml"];
+  const world = (extra: string) =>
+    worldWithFiles((files) => {
+      files["control/frame.yaml"] = `---\n${source}\n${extra}\n...\n`;
+    });
+  expect(() =>
+    compiler.inspectWorldMaterials(world("# **bold** &foo !note")),
+  ).not.toThrow();
+  expect(() =>
+    compiler.inspectWorldMaterials(world("extra: [*missing]")),
+  ).toThrowError(expect.objectContaining({ code: "unsafe_yaml" }));
+});

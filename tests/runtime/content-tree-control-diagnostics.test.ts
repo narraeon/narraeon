@@ -250,3 +250,24 @@ context:
       "A world instruction must reference an existing Markdown block inside the control directory or carry a single-line turn-guide entry",
     ]);
 });
+
+test("控制文件按 YAML 结构区分字符串、注释和别名", () => {
+  const inspect = (viewTitle: string) =>
+    inspectContentPackageCurrentTree(
+      baseFiles().map((file) =>
+        file.path === "control/player-views.yaml"
+          ? {
+              ...file,
+              contents: `---\nformat: narraeon.player-views/v1\n# *comment\nviews:\n  - id: overview\n    title: ${viewTitle}\n    items: []\n...\n`,
+            }
+          : file,
+      ),
+    ).issues.filter((issue) => issue.path === "control/player-views.yaml");
+  expect(inspect('"请于 **校园祭** 开始前集合。"')).toEqual([]);
+  expect(inspect("[*missing]")).toContainEqual(
+    expect.objectContaining({
+      code: "unsafe_yaml",
+      message: "YAML aliases are not supported",
+    }),
+  );
+});

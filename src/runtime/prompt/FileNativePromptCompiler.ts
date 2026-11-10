@@ -35,7 +35,7 @@ import {
   type TurnGuideLine,
 } from "../../shared/turn-guide.ts";
 import { parseOrderedPlayPrompts } from "../play/OrderedPlayPrompts.ts";
-import { parseDocument } from "yaml";
+import { parseRestrictedYamlDocument } from "../RestrictedYaml.ts";
 import { renderWorldYamlSource } from "../world/WorldYamlRendering.ts";
 export { renderWorldYamlSource } from "../world/WorldYamlRendering.ts";
 import type { HistoryBackground } from "../history/HistoryBackground.ts";
@@ -3462,26 +3462,14 @@ function readYamlRecord(
       "required_slot_missing",
       `${label} is missing`,
     );
-  if (
-    /(^|\s)[&*!][^\s,\]}]+/mu.test(source) ||
-    /^\s*<<\s*:/mu.test(source) ||
-    /^---\s*$/mu.test(source) ||
-    /^\.\.\.\s*$/mu.test(source)
-  )
-    throw new PromptCompilationError(
-      "unsafe_yaml",
-      `${label} uses anchors, aliases, tags, merges, or multi-document syntax forbidden by restricted YAML`,
-    );
-  const document = parseDocument(source, {
-    schema: "core",
-    uniqueKeys: true,
-    strict: true,
+  const { document, problems } = parseRestrictedYamlDocument(source, {
+    rejectRawControlCharacters: false,
   });
-  if (document.errors.length > 0 || document.warnings.length > 0)
+  if (problems)
     throw new PromptCompilationError(
       "unsafe_yaml",
       `${label} is not safe restricted YAML`,
-      [...document.errors, ...document.warnings].map(({ message }) => message),
+      problems.map(({ message, detail }) => detail ?? message),
     );
   const value: unknown = document.toJS({ maxAliasCount: 0 });
   if (!isRecord(value))

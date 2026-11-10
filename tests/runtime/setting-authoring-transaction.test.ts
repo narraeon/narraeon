@@ -1423,3 +1423,51 @@ test("set_metadata 一项也不给时拒绝并说明至少需要一项", () => {
   expect(result).toMatchObject({ isError: true });
   expect(result?.markdown).toContain("title, summary, or aliases");
 });
+
+test("write_file 保留 YAML 字符串中的 Markdown 和语法示例", () => {
+  const tx = createdAlexTransaction();
+  const contents = [
+    "---",
+    "# comment with !tag &anchor *alias",
+    'summary: "请于 **校园祭** 开始前集合。"',
+    "contents: |",
+    "  # 校园活动",
+    "  请于 **校园祭** 开始前集合。",
+    "  <<: 示例",
+    "...",
+  ].join("\n");
+  const [result] = tx.execute([
+    {
+      id: "write-markdown",
+      name: "setting_write_file",
+      arguments: { path: "@alex", contents },
+    },
+  ]);
+  expect(result, result?.markdown).toMatchObject({ isError: false });
+  expect(alexSource(tx)).toContain("请于 **校园祭** 开始前集合。");
+  expect(alexSource(tx)).toContain("<<: 示例");
+});
+
+test.each([
+  ["别名", "list: [*missing]", "aliases"],
+  ["锚点", "list: [&here text]", "anchors"],
+  ["显式标签", "list: [!!str text]", "tags"],
+  ["合并键", "nested: {<<: {key: value}}", "merge keys"],
+  ["多个文档", "one: true\n---\ntwo: true", "single-document"],
+])("write_file 为真实的 YAML %s 返回诊断", (_, contents, message) => {
+  const tx = createdAlexTransaction();
+  const before = alexSource(tx);
+  const [result] = tx.execute([
+    {
+      id: "invalid-write",
+      name: "setting_write_file",
+      arguments: { path: "@alex", contents },
+    },
+  ]);
+  expect(result).toMatchObject({ isError: true, changes: [] });
+  expect(result?.markdown).toContain(
+    "yaml_invalid · world/characters/alex.yaml",
+  );
+  expect(result?.markdown).toContain(message);
+  expect(alexSource(tx)).toBe(before);
+});

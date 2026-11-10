@@ -1,6 +1,6 @@
 import { gameplayPath, readGameplay } from "../../protocol/gameplay.ts";
 import { readPackageFollowups } from "./PackageFollowups.ts";
-import { parseDocument } from "yaml";
+import { parseRestrictedYamlDocument } from "../RestrictedYaml.ts";
 
 import type { ContentTreeFile } from "./ContentTreeFile.ts";
 import {
@@ -559,33 +559,11 @@ function parseRestrictedYaml(
   source: string,
   issues: FileNativeContentIssue[],
 ): Record<string, unknown> | undefined {
-  if (
-    source.includes("\0") ||
-    source.includes("\r") ||
-    /(^|\s)[&*!][^\s,\]}]+/mu.test(source) ||
-    /^\s*<<\s*:/mu.test(source) ||
-    /^\.\.\.\s*$/mu.test(source)
-  ) {
-    issue(
-      issues,
-      "unsafe_yaml",
-      path,
-      "YAML uses a forbidden tag, anchor, alias, merge, multi-document stream, or invalid line break",
-    );
-    return undefined;
-  }
-  const document = parseDocument(source, {
-    schema: "core",
-    uniqueKeys: true,
-    strict: true,
+  const { document, problems } = parseRestrictedYamlDocument(source, {
+    rejectRawControlCharacters: true,
   });
-  if (document.errors.length > 0 || document.warnings.length > 0) {
-    issue(
-      issues,
-      "unsafe_yaml",
-      path,
-      "YAML is not a safe single-document YAML 1.2 core map",
-    );
+  if (problems) {
+    issue(issues, "unsafe_yaml", path, problems[0]!.message);
     return undefined;
   }
   const value: unknown = document.toJS({ maxAliasCount: 0 });
