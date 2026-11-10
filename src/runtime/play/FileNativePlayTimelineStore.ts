@@ -1,3 +1,10 @@
+import type { PlayRequestContext } from "../../protocol/playRequestContext.ts";
+import {
+  captureRequestContext,
+  contextDigest,
+  projectRequestContext,
+  validRequestContextEvidence,
+} from "./PlayRequestContext.ts";
 import { isResolutionReceipt } from "../../protocol/resolution.ts";
 import { isSafeGoogleWireRequest } from "../model/GoogleRequestPreview.ts";
 import { readGoogleHops, writeGoogleHop } from "../model/GoogleHopJournal.ts";
@@ -789,6 +796,29 @@ export class FileNativePlayTimelineStore {
     target: PersistedPlayCallChain,
   ): Promise<void> {
     const sourceRoot = this.#contextRoot(worldId, sourceChainId);
+    for (const event of target.events) {
+      if (event.kind !== "assistant") continue;
+      try {
+        const evidence = await readOptionalJson<unknown>(
+          join(sourceRoot, "request-contexts", numbered(event.id)),
+        );
+        if (
+          validRequestContextEvidence(evidence) &&
+          evidence.exchange === event.exchange &&
+          evidence.attempt === event.attempt &&
+          evidence.transcriptCount <= target.transcript.length &&
+          contextDigest(
+            target.transcript.slice(0, evidence.transcriptCount),
+          ) === evidence.transcriptDigest
+        )
+          await publishImmutableJson(
+            join(targetRoot, "request-contexts", numbered(event.id)),
+            evidence,
+          );
+      } catch {
+        /* Optional diagnostics must not prevent a fork. */
+      }
+    }
     const retainedResponses = new Set(
       target.events.flatMap((event) =>
         event.kind === "assistant"
@@ -1112,6 +1142,122 @@ export class FileNativePlayTimelineStore {
           ? null
           : encodeCursor(pointer),
     };
+  }
+
+  async recordRequestContext(
+    worldId: string,
+    chainId: string,
+    eventId: number,
+    request: ModelHostExchange,
+    transcript: ModelHostAppendItem[],
+    attempt: number,
+  ): Promise<void> {
+    const evidence = captureRequestContext(request, transcript, attempt);
+    if (evidence !== null)
+      await publishImmutableJson(
+        join(
+          this.#contextRoot(worldId, chainId),
+          "request-contexts",
+          numbered(eventId),
+        ),
+        evidence,
+      );
+  }
+
+  async #contextIsReachable(
+    worldId: string,
+    chainId: string,
+  ): Promise<boolean> {
+    let current = (await this.#readTimelineHead(worldId))?.chainId ?? null;
+    const visited = new Set<string>();
+    while (current !== null && !visited.has(current)) {
+      if (current === chainId) return true;
+      visited.add(current);
+      current =
+        (await this.#readContextMetadata(worldId, current))?.index
+          .previousChainId ?? null;
+    }
+    return false;
+  }
+
+  async readRequestContext(
+    worldId: string,
+    chainId: string,
+    eventId: number,
+  ): Promise<PlayRequestContext> {
+    const unavailable: PlayRequestContext = {
+      status: "unavailable",
+      messages: [],
+    };
+    assertIdentity(worldId, "World ID");
+    assertIdentity(chainId, "Call-chain ID");
+    if (!(await this.#contextIsReachable(worldId, chainId))) return unavailable;
+    const event = await this.readDetail(worldId, chainId, eventId);
+    if (event.kind !== "assistant") return unavailable;
+    const context = (await this.readContext(worldId, chainId))?.value;
+    if (context === undefined) return unavailable;
+    const run =
+      context.promptRuns?.findLast((run) => run.firstEventId <= eventId) ??
+      context;
+    const finish = async (
+      result: PlayRequestContext,
+    ): Promise<PlayRequestContext> => {
+      const metadata = await this.#readContextMetadata(worldId, chainId);
+      return metadata !== null &&
+        metadata.state.eventCount >= eventId &&
+        (await this.#contextIsReachable(worldId, chainId))
+        ? result
+        : unavailable;
+    };
+    const incomplete: PlayRequestContext = {
+      status: "incomplete",
+      messages: projectRequestContext(run.bootstrap, []),
+    };
+    const evidence = await readOptionalJson<unknown>(
+      join(
+        this.#contextRoot(worldId, chainId),
+        "request-contexts",
+        numbered(eventId),
+      ),
+    ).catch(() => null);
+    if (!validRequestContextEvidence(evidence)) {
+      const request = context.lastRequest;
+      if (
+        request !== null &&
+        request.exchange === event.exchange &&
+        context.lastRequestAttempt === event.attempt
+      )
+        return finish({
+          status: "available",
+          messages: projectRequestContext(
+            request.bootstrap,
+            request.appended,
+            request.toolUniverse ?? request.tools,
+          ),
+        });
+      return finish(incomplete);
+    }
+    if (
+      evidence.exchange !== event.exchange ||
+      evidence.attempt !== event.attempt ||
+      evidence.transcriptCount > context.transcript.length
+    )
+      return finish(incomplete);
+    const bootstrap = run.bootstrap;
+    const prefix = context.transcript.slice(0, evidence.transcriptCount);
+    if (
+      contextDigest(bootstrap) !== evidence.bootstrapDigest ||
+      contextDigest(bootstrap.toolUniverse) !== evidence.toolsDigest ||
+      contextDigest(prefix) !== evidence.transcriptDigest
+    )
+      return finish(incomplete);
+    return finish({
+      status: "available",
+      messages: projectRequestContext(bootstrap, [
+        ...prefix,
+        ...evidence.suffix,
+      ]),
+    });
   }
 
   async readDetail(

@@ -2177,6 +2177,15 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
   未进入: "Not included",
   本段模型调用详情: "Model-call details for this section",
   本段调用详情: "Call details",
+  当时的上下文: "Context at dispatch",
+  "当时的上下文 · 第 {number} 次调用": "Context at dispatch · Call {number}",
+  上下文加载失败: "Could not load the context",
+  "仅保留当时的提示和初始材料；无法确认完整对话边界及本轮提示。":
+    "Only the saved prompt and initial materials are available; the full conversation boundary and turn suffix cannot be verified.",
+  "当时的上下文不可用（旧记录缺少完整证据或记录已失效）":
+    "Historical context is unavailable (complete evidence was not saved or the record is no longer valid)",
+  "历史逻辑上下文；原生续传载荷已省略。记录表示尝试派发，不保证服务端已收到。":
+    "Historical logical context; native continuation payloads are omitted. This records a dispatch attempt, not confirmed delivery.",
   "材料目录；正文没有因此进入上下文":
     "Material catalog only; the document body did not enter context",
   "来自当前链已结算的 context_read":

@@ -1,3 +1,4 @@
+import { projectRequestContext } from "../../src/runtime/play/PlayRequestContext.ts";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
@@ -608,3 +609,215 @@ context:
     },
   ];
 }
+
+test("historical dispatch contexts keep exact transcript boundaries, suffixes and frozen prompts after later sends and restart", async () => {
+  const { worlds, worldId, root } = await createWorld("dispatch-context");
+  const chains = new PlayCallChain(worlds);
+  const sent: ModelHostExchange[] = [];
+  const host: ModelHost = {
+    binding: modelBinding,
+    exchange(request) {
+      sent.push(structuredClone(request));
+      if (sent.length === 1)
+        return Promise.resolve({
+          text: "Tool-step text",
+          toolCalls: [
+            {
+              id: "read-first",
+              name: "context_read",
+              arguments: { ref: "missing-ref" },
+            },
+          ],
+          providerState: {
+            protocol: "chat_completions",
+            assistantMessage: {
+              role: "assistant",
+              content: "Tool-step text",
+              tool_calls: [
+                {
+                  id: "read-first",
+                  type: "function",
+                  function: {
+                    name: "context_read",
+                    arguments: '{"ref":"missing-ref"}',
+                  },
+                },
+              ],
+              secret_signature: "opaque-secret",
+            },
+          },
+        });
+      return Promise.resolve({
+        text: `Narrative ${sent.length}`,
+        providerState: {
+          protocol: "chat_completions",
+          assistantMessage: {
+            role: "assistant",
+            content: `Narrative ${sent.length}`,
+            secret_signature: "opaque-secret",
+          },
+        },
+      });
+    },
+  };
+  const first = await chains.start({
+    worldId,
+    chainId: "dispatch-context",
+    exchangeId: "first",
+    playerText: "first-player",
+    turnNote: "first-only-note",
+    hostBinding: hostBinding("original-style"),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: host,
+  });
+  const responses = first.events.filter((event) => event.kind === "assistant");
+  expect(responses).toHaveLength(2);
+  await chains.append({
+    worldId,
+    chainId: first.chainId,
+    exchangeId: "second",
+    playerText: "future-player",
+    turnNote: "future-note",
+    resolvePrompt: () =>
+      Promise.resolve({
+        hostBinding: hostBinding("new-style"),
+        playPreset: revisedPlayPreset(),
+      }),
+    modelHost: host,
+  });
+  const store = new FileNativeWorldStore(root).playTimeline;
+  const initial = await store.readRequestContext(
+    worldId,
+    first.chainId,
+    responses[0]!.id,
+  );
+  const later = await store.readRequestContext(
+    worldId,
+    first.chainId,
+    responses[1]!.id,
+  );
+  expect(initial.status).toBe("available");
+  expect(later.status).toBe("available");
+  const initialText = JSON.stringify(initial);
+  expect(initialText).toContain("first-player");
+  expect(initialText).toContain("first-only-note");
+  expect(initial.messages).toEqual(
+    projectRequestContext(sent[0]!.bootstrap, sent[0]!.appended),
+  );
+  for (const excluded of [
+    "Tool-step text",
+    "Narrative 2",
+    "future-player",
+    "future-note",
+    "new-style",
+    "opaque-secret",
+    "providerState",
+  ])
+    expect(initialText).not.toContain(excluded);
+  expect(JSON.stringify(later)).toContain("Tool-step text");
+  expect(JSON.stringify(later)).toContain("read-first");
+  expect(JSON.stringify(later)).not.toContain("Narrative 2");
+  expect(later.messages.at(-1)?.role).toBe("tools");
+  const context = await contextRoot(root, worldId);
+  const records = await readdir(join(context, "request-contexts"));
+  expect(records).toHaveLength(3);
+  for (const record of records) {
+    const evidence = await readFile(
+      join(context, "request-contexts", record),
+      "utf8",
+    );
+    expect(evidence.length).toBeLessThan(2000);
+    expect(evidence).not.toContain("original-style");
+    expect(evidence).not.toContain("opaque-secret");
+  }
+  const runtime = new V1Runtime({
+    dataRoot: root,
+    configRoot: join(root, "config"),
+  });
+  await runtime.initialize();
+  expect(
+    (
+      await runtime.handle({
+        type: "play.timeline.context",
+        worldId,
+        chainId: first.chainId,
+        eventId: responses[0]!.id,
+      })
+    ).result,
+  ).toEqual(initial);
+  const bootstrap = structuredClone(sent[0]!.bootstrap);
+  bootstrap.logicalMessages = [
+    { role: "runtime_system", markdown: "instructions", blocks: [] },
+    { role: "world_context", markdown: "initial-material", blocks: [] },
+    { role: "player_input", markdown: "initial-player", blocks: [] },
+  ];
+  bootstrap.provider.preload = {
+    callId: "initial-read",
+    markdown: "initial-material",
+  };
+  expect(projectRequestContext(bootstrap, []).slice(0, 3)).toEqual([
+    { role: "system · runtime_system", text: "instructions" },
+    { role: "tool · runtime_load_context", text: "initial-material" },
+    { role: "user · player_input", text: "initial-player" },
+  ]);
+  const derived = (
+    await runtime.handle({
+      type: "world.derive",
+      operationId: "derive-dispatch-context",
+      sourceWorldId: worldId,
+      sourceHead: first.parentHead,
+    })
+  ).result as { world: { worldId: string } };
+  const fork = (await store.readCurrent(derived.world.worldId))!.value;
+  expect(
+    await store.readRequestContext(
+      derived.world.worldId,
+      fork.chainId,
+      responses[0]!.id,
+    ),
+  ).toEqual(initial);
+  expect(
+    await store.readRequestContext(
+      derived.world.worldId,
+      fork.chainId,
+      responses[1]!.id,
+    ),
+  ).toEqual(later);
+  expect(
+    JSON.stringify(
+      await store.readRequestContext(
+        derived.world.worldId,
+        fork.chainId,
+        responses[1]!.id,
+      ),
+    ),
+  ).not.toContain("future-player");
+  await rm(join(context, "request-contexts"), { recursive: true });
+  const legacy = await store.readRequestContext(
+    worldId,
+    first.chainId,
+    responses[0]!.id,
+  );
+  expect(
+    await store.readRequestContext(
+      derived.world.worldId,
+      fork.chainId,
+      responses[0]!.id,
+    ),
+  ).toEqual(initial);
+  expect(legacy.status).toBe("incomplete");
+  expect(legacy.messages).toEqual(
+    projectRequestContext(sent[0]!.bootstrap, []),
+  );
+  expect(JSON.stringify(legacy)).not.toContain("future-player");
+  const latest = (await store.readCurrent(worldId))!.value.events.findLast(
+    (event) => event.kind === "assistant",
+  )!;
+  expect(
+    (await store.readRequestContext(worldId, first.chainId, latest.id)).status,
+  ).toBe("available");
+  expect(
+    await store.readRequestContext(worldId, "unreachable-context", 1),
+  ).toEqual({ status: "unavailable", messages: [] });
+});

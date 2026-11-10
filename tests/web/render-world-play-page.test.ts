@@ -354,6 +354,11 @@ describe("世界游玩页面", () => {
     const chain = playChainView("mode-chain", "send", "我推开门。");
     const client = {
       request: vi.fn((request: V1Request): Promise<unknown> => {
+        if (request.type === "play.timeline.context")
+          return Promise.resolve({
+            status: "available",
+            messages: [{ role: "user", text: "historical-context-message" }],
+          });
         if (request.type === "world.read")
           return Promise.resolve(worldView(chain));
         if (request.type === "world.play-decorations.read")
@@ -373,6 +378,7 @@ describe("世界游玩页面", () => {
     expect(within(story).queryByText("AI 响应")).toBeNull();
     expect(within(story).queryByText("全新上下文")).toBeNull();
     expect(within(story).queryByText("本段调用详情")).toBeNull();
+    expect(within(story).queryByText(/当时的上下文/)).toBeNull();
     expect(within(story).queryByText("本上下文已提交的世界变化")).toBeNull();
     expect(within(story).getByRole("separator").textContent).toBe("");
     expect(
@@ -412,8 +418,32 @@ describe("世界游玩页面", () => {
         ([request]) => request.type === "play.timeline.detail",
       ),
     ).toHaveLength(0);
+    expect(
+      client.request.mock.calls.filter(
+        ([request]) => request.type === "play.timeline.context",
+      ),
+    ).toHaveLength(0);
+    const contextSummary =
+      within(story).getByText("当时的上下文 · 第 1 次调用");
+    const contextDetails = contextSummary.closest("details")!;
+    expect(contextDetails.open).toBe(false);
+    contextDetails.open = true;
+    fireEvent(contextDetails, new Event("toggle"));
+    await screen.findByText("historical-context-message");
+    expect(
+      client.request.mock.calls.filter(
+        ([request]) => request.type === "play.timeline.context",
+      ),
+    ).toHaveLength(1);
+    expect(client.request).toHaveBeenCalledWith({
+      type: "play.timeline.context",
+      worldId: "world-one",
+      chainId: chain.chainId,
+      eventId: 4,
+    });
     fireEvent.click(toggle);
     expect(within(story).queryByText("本段调用详情")).toBeNull();
+    expect(within(story).queryByText(/当时的上下文/)).toBeNull();
     expect(screen.getByTitle("panel")).toBeTruthy();
   });
 

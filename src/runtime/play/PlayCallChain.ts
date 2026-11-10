@@ -2813,6 +2813,18 @@ export class PlayCallChain {
             // Optional diagnostics never interrupt a model request or alter its cache key.
           }
         }
+        try {
+          await this.#worlds.playTimeline.recordRequestContext(
+            session.worldId,
+            session.chainId,
+            event.id,
+            request,
+            session.transcript,
+            attempt,
+          );
+        } catch {
+          // Optional historical diagnostics cannot change model dispatch.
+        }
         response = await modelHost.exchange(request, {
           signal,
           diagnosticAttempt: attempt,

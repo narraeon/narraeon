@@ -348,7 +348,7 @@ export type V1Request =
       cursor?: string;
     }
   | {
-      type: "play.timeline.detail";
+      type: "play.timeline.detail" | "play.timeline.context";
       worldId: string;
       chainId: string;
       eventId: number;
@@ -1231,6 +1231,11 @@ const requiredFields: Record<
     chainId: "string",
     eventId: "number",
   },
+  "play.timeline.context": {
+    worldId: "string",
+    chainId: "string",
+    eventId: "number",
+  },
   "world.play-context.read": { worldId: "string" },
   "world.surface.read": { worldId: "string", surface: "string" },
   "world.extensions.read": { worldId: "string" },
@@ -1617,12 +1622,13 @@ function validateRequestFields(request: Record<string, unknown>): void {
       );
   }
   if (
-    request.type === "play.timeline.detail" &&
+    (request.type === "play.timeline.detail" ||
+      request.type === "play.timeline.context") &&
     (!Number.isSafeInteger(request.eventId) || Number(request.eventId) < 1)
   )
     throw new V1ProtocolError(
       "invalid_request",
-      "play.timeline.detail.eventId is invalid",
+      `${request.type}.eventId is invalid`,
     );
   if (
     "turnNote" in request &&
@@ -1837,6 +1843,7 @@ const requestTypes = new Set([
   "play.chain.inspect",
   "play.timeline.page",
   "play.timeline.detail",
+  "play.timeline.context",
   "world.play-context.read",
   "world.surface.read",
   "world.extensions.read",

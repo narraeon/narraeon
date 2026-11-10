@@ -1214,6 +1214,13 @@ export class V1Runtime {
           request.chainId,
           request.eventId,
         );
+      case "play.timeline.context":
+        await this.#worlds.ensureCurrentStorage(request.worldId);
+        return this.#worlds.playTimeline.readRequestContext(
+          request.worldId,
+          request.chainId,
+          request.eventId,
+        );
       case "world.play-context.read": {
         const binding = await this.#worlds.bindPlayCallChain(request.worldId);
         const currentContext = await this.#playCallChains.inspectReading(

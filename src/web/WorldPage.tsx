@@ -1,3 +1,5 @@
+import { PlayRequestContextDetails } from "./PlayRequestContextDetails.tsx";
+import type { PlayRequestContext } from "../protocol/playRequestContext.ts";
 import { RuntimeRequestError } from "./runtimeClient.ts";
 import { turnGuideLineSoftLimit } from "../shared/ordered-play-prompts.ts";
 import { playFailureDescription } from "./PlayFailureText.ts";
@@ -2584,6 +2586,32 @@ function PlayTimeline({
                   </details>
                 </li>
               )}
+              {!showTechnicalInfo
+                ? null
+                : group.items
+                    .filter(
+                      ({ event }) =>
+                        event.kind === "assistant" &&
+                        event.status !== "streaming",
+                    )
+                    .map((item, index) => (
+                      <li
+                        className="world-timeline-trace"
+                        key={`context:${item.chainId}:${item.event.id}`}
+                      >
+                        <PlayRequestContextDetails
+                          worldId={worldId}
+                          chainId={item.chainId}
+                          eventId={item.event.id}
+                          label={uiText("当时的上下文 · 第 {number} 次调用", {
+                            number: index + 1,
+                          })}
+                          load={(request) =>
+                            requestRuntime<PlayRequestContext>(client, request)
+                          }
+                        />
+                      </li>
+                    ))}
             </Fragment>
           );
         }
