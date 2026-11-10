@@ -168,7 +168,9 @@ test("重新生成最新回复追加一次时间线修订，保留原文和旧�
     };
     expect(
       sent.messages.filter(
-        ({ role, content }) => role === "user" && content === originalText,
+        ({ role, content }) =>
+          role === "user" &&
+          content === `<本轮玩家输入>\n${originalText}\n</本轮玩家输入>`,
       ),
     ).toHaveLength(1);
 
@@ -318,7 +320,8 @@ test("导入后无需新回合即可用全新上下文重新生成，并显示�
     expect(
       sent.messages.filter(
         ({ role, content }) =>
-          role === "user" && content === "我推开旅店的大门。",
+          role === "user" &&
+          content === "<本轮玩家输入>\n我推开旅店的大门。\n</本轮玩家输入>",
       ),
     ).toHaveLength(1);
     expect(requests[0]).not.toContain("Alex抬起头，向你点头致意。");

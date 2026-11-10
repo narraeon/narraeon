@@ -233,13 +233,13 @@ for (const locale of ["zh-CN", "en"] as const)
     const wire = JSON.parse(providerRequests[0]!) as {
       messages: { role: string; content: string | null }[];
     };
-    const playerMessage = wire.messages.find(
-      (message) => message.content === "我闭上眼睛睡着了",
-    );
-    expect(playerMessage).toMatchObject({
-      role: "user",
-      content: "我闭上眼睛睡着了",
-    });
+    const inputTag = english ? "current_player_input" : "本轮玩家输入";
+    const playerContent = `<${inputTag}>\n我闭上眼睛睡着了\n</${inputTag}>`;
+    expect(
+      wire.messages.filter(
+        ({ role, content }) => role === "user" && content === playerContent,
+      ),
+    ).toHaveLength(1);
     expect(wire.messages.at(-1)!.content).toContain(
       `${english ? "Player's request for this turn: " : "玩家本轮要求："}${sentNote}`,
     );
