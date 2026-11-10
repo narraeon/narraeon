@@ -11,7 +11,7 @@ import {
   readGameplay,
   type Gameplay,
 } from "../../protocol/gameplay.ts";
-import { isScalar, isSeq, parseDocument, stringify } from "yaml";
+import { isMap, isScalar, isSeq, parseDocument, stringify } from "yaml";
 import { tabletopSchemeReceipt } from "../play/TabletopRules.ts";
 import type { ContentTreeFile } from "../content/ContentTreeFile.ts";
 import { inspectContentPackageCurrentTree } from "../content/FileNativeContentTree.ts";
@@ -1770,9 +1770,23 @@ function containsTechnicalDocumentHeader(
   logicalPath: string,
   source: string,
 ): boolean {
-  if (logicalPath.endsWith(".md"))
-    return /^---\r?\n[\s\S]*?^\$document\s*:/mu.test(source);
-  return /^\s*\$document\s*:/u.test(source);
+  const document = parseStorageHeaderSource(logicalPath, source);
+  if (!isMap(document?.contents)) return false;
+  if (logicalPath.endsWith(".md")) return document.contents.has("$document");
+  const key = document.contents.items[0]?.key;
+  return isScalar(key) && key.value === "$document";
+}
+
+function parseStorageHeaderSource(logicalPath: string, source: string) {
+  if (logicalPath.endsWith(".md")) {
+    const opening = /^---\r?\n/u.exec(source);
+    if (opening === null) return null;
+    const remainder = source.slice(opening[0].length);
+    const end = remainder.search(/^---\r?$/mu);
+    if (end < 0) return null;
+    source = remainder.slice(0, end);
+  }
+  return parseDocument(source, { uniqueKeys: true });
 }
 
 function recoverStoredDocumentId(
@@ -1783,12 +1797,8 @@ function recoverStoredDocumentId(
     ({ path }) => path === logicalPath,
   )?.contents;
   if (source === undefined) return null;
-  const yamlSource = logicalPath.endsWith(".md")
-    ? /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u.exec(source)?.[1]
-    : source;
-  if (yamlSource === undefined) return null;
-  const document = parseDocument(yamlSource, { uniqueKeys: true });
-  if (document.errors.length > 0) return null;
+  const document = parseStorageHeaderSource(logicalPath, source);
+  if (document === null || document.errors.length > 0) return null;
   const id = document.getIn(["$document", "id"]);
   return typeof id === "string" &&
     /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u.test(id)
