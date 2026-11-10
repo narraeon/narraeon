@@ -333,7 +333,7 @@ test("故事模式开关持久化，最新检查点自动预选且取消后只�
   );
   await toggle.check();
   expect((await saved).ok()).toBe(true);
-  await expect(story.locator(".world-timeline-trace")).toHaveCount(1);
+  await expect(story.getByText("本段调用详情", { exact: true })).toHaveCount(1);
   await expect(story.locator(".play-checkpoint-marker")).toHaveText("检查点");
   await expect(
     story.getByRole("button", { name: "下一条消息使用全新上下文" }),
