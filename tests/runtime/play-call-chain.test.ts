@@ -6761,7 +6761,7 @@ test("维护诊断失败不阻断已提交写入、终态叙事或冷恢复", as
   expect(writeReceipt?.kind === "tool" ? writeReceipt.markdown : "").toBe(
     "@current-situation write succeeded",
   );
-  expect(JSON.stringify(sent(host.requests.at(-1)!).at(-1))).toContain(
+  expect(JSON.stringify(sent(host.requests.at(-1)!).at(-1))).not.toContain(
     "maintenance unavailable",
   );
   expect((await new PlayCallChain(worlds).inspectWorld(worldId))?.status).toBe(
@@ -6858,9 +6858,9 @@ test("增长基准与正文写入位置跨重启和分叉保留，摘要修改�
   ]!;
   expect(after.lastBodyWrite).toEqual(first.lastBodyWrite);
   const readPosition = JSON.stringify(sent(host.requests.at(-1)!).at(-1));
-  expect(readPosition).toContain("Body: Context 1 · round 1");
-  expect(readPosition).toContain("Metadata: Context 1 · round 2");
-  expect(readPosition).toContain("World time at write: 午夜");
+  expect(readPosition).not.toContain("Last committed write");
+  expect(readPosition).not.toContain("World time at write");
+  expect(readPosition).toContain("午夜的门边");
   expect(after.lastMetadataWrite).toMatchObject({
     context: 1,
     round: 2,
