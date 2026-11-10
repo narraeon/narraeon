@@ -327,6 +327,23 @@ export function OrderedPlayPromptEditor({
                 >
                   {t("Move down", "下移")}
                 </button>
+                {selected.kind === "user" && (
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={selected.gameplay === "tabletop"}
+                      onChange={(event) =>
+                        update(
+                          withScope(
+                            selected,
+                            event.target.checked ? "tabletop" : undefined,
+                          ),
+                        )
+                      }
+                    />
+                    {t("Tabletop worlds only", "仅跑团世界生效")}
+                  </label>
+                )}
                 {selected.kind !== "world" && (
                   <label>
                     <input
@@ -392,23 +409,6 @@ export function OrderedPlayPromptEditor({
                       <option value="user">User</option>
                       <option value="assistant">Assistant</option>
                     </select>
-                  </label>
-                )}
-                {selected.kind === "user" && (
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={selected.gameplay === "tabletop"}
-                      onChange={(event) =>
-                        update(
-                          withScope(
-                            selected,
-                            event.target.checked ? "tabletop" : undefined,
-                          ),
-                        )
-                      }
-                    />
-                    {t("Tabletop worlds only", "仅跑团世界生效")}
                   </label>
                 )}
                 {selected.kind !== "world" && (
