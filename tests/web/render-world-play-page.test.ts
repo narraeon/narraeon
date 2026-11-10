@@ -57,6 +57,175 @@ afterEach(() => {
 });
 
 describe("世界游玩页面", () => {
+  test.each([
+    { technical: false, summaryOnly: false },
+    { technical: true, summaryOnly: false },
+    { technical: false, summaryOnly: true },
+    { technical: true, summaryOnly: true },
+  ])(
+    "resending hides the old failure immediately and only a new failure alerts, $technical/$summaryOnly",
+    async ({ technical, summaryOnly }) => {
+      let chain = interruptedChainView();
+      let resolveSend!: (value: V1PlayCallChainView) => void;
+      let receive!: Parameters<ObserveConversation>[1];
+      const readView = () => {
+        const full = worldView(chain);
+        if (!summaryOnly) return full;
+        return {
+          ...full,
+          playCallChain: null,
+          playTimeline: {
+            worldId: chain.worldId,
+            generation: "retry-test",
+            activeChainId: chain.chainId,
+            activeStatus: chain.status,
+            activeCanRetry: chain.canRetry,
+            activeLastFailure: chain.lastFailure,
+            items: chain.events.map((event) => ({
+              kind: "event" as const,
+              chainId: chain.chainId,
+              current: true,
+              event,
+            })),
+            nextCursor: null,
+          },
+        };
+      };
+      const request = vi.fn((input: V1Request): Promise<unknown> => {
+        if (input.type === "world.read") return Promise.resolve(readView());
+        if (input.type === "world.play-decorations.read")
+          return Promise.resolve({ artifacts: [], debug: [] });
+        if (input.type === "artifacts.debug") return Promise.resolve([]);
+        if (input.type === "play.chain.append")
+          return new Promise((resolve) => {
+            resolveSend = resolve;
+          });
+        return Promise.reject(new Error(`Unexpected request: ${input.type}`));
+      });
+      renderWorld(
+        {
+          request,
+          observeConversation: (_target, callback) => {
+            receive = callback;
+            return () => {
+              receive = () => Promise.resolve();
+            };
+          },
+        },
+        undefined,
+        {
+          initialReadingPreferences: {
+            ...defaultAppReadingPreferences,
+            showTechnicalInfo: technical,
+          },
+        },
+      );
+      fireEvent.click(await screen.findByRole("button", { name: "重新发送" }));
+      await waitFor(() =>
+        expect(request).toHaveBeenCalledWith(
+          expect.objectContaining({ type: "play.chain.append" }),
+        ),
+      );
+      expect(
+        document.querySelectorAll(".call-chain-failure[role=alert]").length,
+      ).toBe(0);
+      await act(async () => {
+        await receive({ kind: "play", value: structuredClone(chain) }, true);
+      });
+      expect(
+        document.querySelectorAll(".call-chain-failure[role=alert]").length,
+      ).toBe(0);
+      chain = {
+        ...chain,
+        status: "ready",
+        canRetry: false,
+        lastFailure: null,
+        updatedAt: 2,
+        events: [
+          ...chain.events,
+          {
+            id: 4,
+            kind: "assistant",
+            text: "Recovered response",
+            status: "completed",
+            responseKind: "narrative",
+            exchange: 1,
+            attempt: 2,
+          },
+        ],
+      };
+      await act(async () => {
+        resolveSend(chain);
+        await Promise.resolve();
+      });
+      await screen.findByText("Recovered response");
+      expect(
+        document.querySelectorAll(".call-chain-failure[role=alert]").length,
+      ).toBe(0);
+      const composer = screen.getByLabelText("你的行动");
+      fireEvent.change(composer, { target: { value: "next action" } });
+      fireEvent.keyDown(composer, { key: "Enter", code: "Enter" });
+      await waitFor(() =>
+        expect(
+          request.mock.calls.filter(
+            ([input]) => input.type === "play.chain.append",
+          ),
+        ).toHaveLength(2),
+      );
+      chain = {
+        ...chain,
+        status: "interrupted",
+        canRetry: true,
+        lastFailure: "New provider failure",
+        updatedAt: 3,
+        events: [
+          ...chain.events,
+          { id: 5, kind: "failure", message: "New provider failure" },
+        ],
+      };
+      await act(async () => {
+        resolveSend(chain);
+        await Promise.resolve();
+      });
+      await waitFor(() =>
+        expect(
+          document.querySelectorAll(".call-chain-failure[role=alert]").length,
+        ).toBe(1),
+      );
+      const alert = document.querySelector(".call-chain-failure[role=alert]")!;
+      expect(alert.textContent).toContain("New provider failure");
+      expect(alert.textContent).not.toContain(
+        "The Provider stream disconnected midway.",
+      );
+    },
+  );
+
+  test("a rejected resend displays its new rejection instead of the unchanged inspected error", async () => {
+    const chain = interruptedChainView();
+    const client = {
+      request: vi.fn((request: V1Request): Promise<unknown> => {
+        if (request.type === "world.read")
+          return Promise.resolve(worldView(chain));
+        if (request.type === "play.chain.inspect")
+          return Promise.resolve(chain);
+        if (request.type === "play.chain.append")
+          return Promise.reject(new Error("New retry rejected by connection"));
+        if (request.type === "world.play-decorations.read")
+          return Promise.resolve({ artifacts: [], debug: [] });
+        if (request.type === "artifacts.debug") return Promise.resolve([]);
+        return Promise.reject(new Error(`Unexpected request: ${request.type}`));
+      }),
+    };
+    renderWorld(client);
+    fireEvent.click(await screen.findByRole("button", { name: "重新发送" }));
+    await screen.findByText("New retry rejected by connection");
+    const alert = screen.getByRole("alert", { name: "模型调用失败" });
+    expect(alert.textContent).not.toContain(chain.lastFailure);
+    expect(
+      document.querySelectorAll(".call-chain-failure[role=alert]").length,
+    ).toBe(0);
+  });
+
   test("导出只在显式触发时读取，修订锁内可下载两种故事格式", async () => {
     const createObjectURL = vi.fn<(blob: Blob) => string>(
       () => "blob:story-export",
@@ -484,10 +653,15 @@ describe("世界游玩页面", () => {
       await screen.findByRole("heading", { name: "宿舍世界" });
       const story = screen.getByRole("article", { name: "故事时间线" });
       expect(
-        within(story).getByText("The Provider stream disconnected midway."),
-      ).toBeTruthy();
+        within(story).queryByText(
+          "The Provider stream disconnected midway.",
+        ) !== null,
+      ).toBe(showTechnicalInfo);
       expect(within(story).getByText("生成已取消")).toBeTruthy();
-      expect(within(story).getByText("已提交、待修复")).toBeTruthy();
+      expect(within(story).queryByText("已提交、待修复") !== null).toBe(
+        showTechnicalInfo,
+      );
+      expect(story.querySelector(".call-chain-failure[role=alert]")).toBeNull();
       expect(within(story).getAllByText(/辅助面板/u).length).toBeGreaterThan(0);
       expect(within(story).queryAllByLabelText("Token 用量明细")).toHaveLength(
         showTechnicalInfo ? 2 : 0,

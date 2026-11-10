@@ -481,8 +481,22 @@ export async function aggregateResponsesModelStream(
         const details = payload.response.incomplete_details;
         if (isRecord(details)) assertModelOutputComplete(details.reason);
       }
-      throw new ModelHostFailureError(
-        "Responses SSE returned an explicit failure",
+      const response = isRecord(payload.response) ? payload.response : {};
+      const incomplete = isRecord(response.incomplete_details)
+        ? response.incomplete_details
+        : {};
+      throw providerSseFailure(
+        "openai_responses",
+        "Responses",
+        payload.type,
+        payload,
+        response.error ??
+          payload.error ?? { code: payload.code, message: payload.message },
+        {
+          status: response.status,
+          reason: incomplete.reason,
+          requestId: response.request_id,
+        },
       );
     }
   }
@@ -510,11 +524,12 @@ function parseStreamJson(source: string): unknown {
 }
 
 function providerSseFailure(
-  provider: "chat_completions" | "anthropic_messages",
+  provider: "chat_completions" | "anthropic_messages" | "openai_responses",
   label: string,
   eventType: string,
   payload: Record<string, unknown>,
   errorValue: unknown,
+  response: { status?: unknown; reason?: unknown; requestId?: unknown } = {},
 ): ModelHostFailureError {
   const error = isRecord(errorValue) ? errorValue : {};
   const type = boundedNonEmptyString(error.type, 256);
@@ -525,7 +540,10 @@ function providerSseFailure(
     boundedStringOrNumber(errorValue, 4096);
   const requestId =
     boundedNonEmptyString(payload.request_id, 256) ??
-    boundedNonEmptyString(error.request_id, 256);
+    boundedNonEmptyString(error.request_id, 256) ??
+    boundedNonEmptyString(response.requestId, 256);
+  const status = boundedNonEmptyString(response.status, 256);
+  const reason = boundedNonEmptyString(response.reason, 256);
   const identity = [...new Set([type, code].filter(isDefined))].join("/");
   const summary =
     identity !== "" && message !== undefined
@@ -540,13 +558,19 @@ function providerSseFailure(
     ...(code === undefined ? {} : { code }),
     ...(message === undefined ? {} : { message }),
     ...(requestId === undefined ? {} : { requestId }),
+    ...(status === undefined ? {} : { status }),
+    ...(reason === undefined ? {} : { reason }),
   };
   const requestSuffix =
     requestId === undefined ? "" : ` (request_id: ${requestId})`;
+  const terminal =
+    provider === "openai_responses"
+      ? ` (${[eventType, status, reason].filter(isDefined).join("; ")})`
+      : "";
   return new ModelHostFailureError(
     summary === undefined
-      ? `${label} SSE returned an explicit error${requestSuffix}`
-      : `${label} SSE error: ${summary}${requestSuffix}`,
+      ? `${label} SSE returned an explicit error${terminal}${requestSuffix}`
+      : `${label} SSE error: ${summary}${terminal}${requestSuffix}`,
     { details },
   );
 }

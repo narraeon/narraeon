@@ -2,6 +2,7 @@ import { expect, test, vi } from "vitest";
 
 import { FileNativeModelHost } from "../../src/runtime/model/FileNativeModelAdapters.ts";
 import {
+  modelHostFailureRequiresFreshContext,
   ModelHostCancelledError,
   ModelHostOutcomeUnknownError,
   type ModelHostDelta,
@@ -531,6 +532,115 @@ test.each([{}, { signature: "" }])(
     });
   },
 );
+
+test.each([
+  {
+    type: "response.failed",
+    response: {
+      status: "failed",
+      error: {
+        code: "rate_limit_exceeded",
+        message: "Synthetic provider rate limit exceeded",
+      },
+    },
+    request_id: "req-response",
+  },
+  {
+    type: "error",
+    code: "rate_limit_exceeded",
+    message: "Synthetic provider rate limit exceeded",
+    request_id: "req-response",
+  },
+])("Responses SSE retains concrete errors from $type", async (payload) => {
+  const host = modelHost(
+    "openai_responses",
+    vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(sseResponse([namedData(payload.type, payload)])),
+  );
+  const failure = (await host
+    .exchange(exchange("openai_responses"))
+    .catch((error: unknown) => error)) as ModelHostFailureError;
+  expect(failure.name).toBe("ModelHostFailureError");
+  expect(failure.message).toContain("Synthetic provider rate limit exceeded");
+  expect(failure.details).toMatchObject({
+    provider: "openai_responses",
+    eventType: payload.type,
+    code: "rate_limit_exceeded",
+    requestId: "req-response",
+  });
+});
+
+test.each([
+  {
+    type: "response.incomplete",
+    response: {
+      status: "incomplete",
+      incomplete_details: { reason: "content_filter" },
+    },
+  },
+  { type: "response.cancelled", response: { status: "cancelled" } },
+  { type: "response.failed" },
+])(
+  "Responses terminal $type has an honest bounded fallback",
+  async (payload) => {
+    const host = modelHost(
+      "openai_responses",
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(
+          sseResponse([
+            namedData(payload.type, { ...payload, secret: "do-not-project" }),
+          ]),
+        ),
+    );
+    const failure = (await host
+      .exchange(exchange("openai_responses"))
+      .catch((error: unknown) => error)) as ModelHostFailureError;
+    expect(failure.name).toBe("ModelHostFailureError");
+    expect(failure.message).toContain(payload.type);
+    if (payload.type === "response.incomplete")
+      expect(failure.message).toContain("content_filter");
+    expect(JSON.stringify(failure.details)).not.toContain("do-not-project");
+  },
+);
+
+test("Responses truncation still reports output limit, and nested context errors preserve recovery classification", async () => {
+  const outputHost = modelHost(
+    "openai_responses",
+    vi.fn<typeof fetch>().mockResolvedValue(
+      sseResponse([
+        namedData("response.incomplete", {
+          type: "response.incomplete",
+          response: { incomplete_details: { reason: "max_output_tokens" } },
+        }),
+      ]),
+    ),
+  );
+  await expect(
+    outputHost.exchange(exchange("openai_responses")),
+  ).rejects.toMatchObject({ details: { code: "model_output_limit" } });
+  const contextHost = modelHost(
+    "openai_responses",
+    vi.fn<typeof fetch>().mockResolvedValue(
+      sseResponse([
+        namedData("response.failed", {
+          type: "response.failed",
+          response: {
+            error: {
+              code: "context_length_exceeded",
+              message: "Maximum context length exceeded",
+            },
+          },
+        }),
+      ]),
+    ),
+  );
+  const failure = await contextHost
+    .exchange(exchange("openai_responses"))
+    .catch((error: unknown) => error);
+  expect(modelHostFailureRequiresFreshContext(failure)).toBe(true);
+});
 
 test("Anthropic Messages SSE 错误保留 Provider 类型、消息与请求 ID", async () => {
   const host = modelHost(

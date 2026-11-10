@@ -2177,6 +2177,7 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
   未进入: "Not included",
   本段模型调用详情: "Model-call details for this section",
   本段调用详情: "Call details",
+  历史调用错误: "Historical call error",
   当时的上下文: "Context at dispatch",
   "当时的上下文 · 第 {number} 次调用": "Context at dispatch · Call {number}",
   上下文加载失败: "Could not load the context",

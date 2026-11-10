@@ -253,6 +253,12 @@ export function WorldPage({
     string | null
   >(null);
   const [playFailure, setPlayFailure] = useState<string | null>(null);
+  const [supersededFailure, setSupersededFailure] = useState<{
+    worldId: string;
+    chainId: string;
+    eventId: number;
+  } | null>(null);
+  const [retryRejection, setRetryRejection] = useState<string | null>(null);
   const [regenerationFallback, setRegenerationFallback] = useState<{
     worldId: string;
     chainId: string;
@@ -683,7 +689,16 @@ export function WorldPage({
       ? lastActiveEvent.event.failureKind
       : undefined);
   const activeCanRetry = reportedCanRetry;
+  const failureWasSuperseded =
+    supersededFailure?.worldId === worldId &&
+    supersededFailure.chainId === activeChainId &&
+    lastActiveEvent?.kind === "event" &&
+    lastActiveEvent.event.id <= supersededFailure.eventId;
+  const visiblePlayFailure = failureWasSuperseded
+    ? retryRejection
+    : playFailure;
   const activeFailureVisible =
+    !failureWasSuperseded &&
     activeStatus === "interrupted" &&
     lastActiveEvent?.kind === "event" &&
     lastActiveEvent.event.kind === "failure";
@@ -802,6 +817,13 @@ export function WorldPage({
     const startedAt = Date.now();
     cancelledExchangeRef.current = null;
     setPlayFailure(null);
+    setRetryRejection(null);
+    if (activeChainId !== null && lastActiveEvent?.kind === "event")
+      setSupersededFailure({
+        worldId,
+        chainId: activeChainId,
+        eventId: lastActiveEvent.event.id,
+      });
     setPlayProgressNow(startedAt);
     setPlayProgress(createPlayRunProgress(chainId, exchangeId, startedAt));
     setPending(context === "fresh" ? "play-fresh" : "play-append");
@@ -848,6 +870,7 @@ export function WorldPage({
         setPlayFailure(null);
         setFeedback({ kind: "status", text: uiText("模型生成已取消。") });
       } else if (next.status === "interrupted") {
+        setRetryRejection(next.lastFailure ?? playCallFailureMessage(next));
         setPlayFailure(
           playCallFailureMessage(next) ??
             (next.canRetry
@@ -903,6 +926,7 @@ export function WorldPage({
         setPlayFailure(null);
         setFeedback({ kind: "error", text: errorMessage(reason) });
       } else {
+        setRetryRejection(errorMessage(reason));
         setPlayFailure(
           playCallFailureMessage(inspected) ?? errorMessage(reason),
         );
@@ -1645,8 +1669,16 @@ export function WorldPage({
                   worldId={worldId}
                   items={playTimeline.items}
                   liveChain={playCallChain}
+                  activeFailure={
+                    activeFailureVisible && lastActiveEvent?.kind === "event"
+                      ? {
+                          chainId: lastActiveEvent.chainId,
+                          eventId: lastActiveEvent.event.id,
+                        }
+                      : undefined
+                  }
                   failureRecovery={
-                    activeStatus === "interrupted" && activeChainId !== null
+                    activeFailureVisible && activeChainId !== null
                       ? { ...failureRecovery, chainId: activeChainId }
                       : undefined
                   }
@@ -1800,7 +1832,7 @@ export function WorldPage({
             {playObservationFailure === null ? null : (
               <p role="status">{playObservationFailure}</p>
             )}
-            {playFailure === null || activeFailureVisible ? null : (
+            {visiblePlayFailure === null || activeFailureVisible ? null : (
               <div
                 className="play-call-failure"
                 role="alert"
@@ -1810,9 +1842,11 @@ export function WorldPage({
                   failureKind={activeFailureKind}
                   canRetry={failureRecovery.canRetry}
                   message={
-                    playCallChain?.lastFailure ??
-                    playTimeline?.activeLastFailure ??
-                    playFailure
+                    failureWasSuperseded
+                      ? visiblePlayFailure
+                      : (playCallChain?.lastFailure ??
+                        playTimeline?.activeLastFailure ??
+                        visiblePlayFailure)
                   }
                   recovery={failureRecovery}
                 />
@@ -1820,7 +1854,8 @@ export function WorldPage({
             )}
             {!activeCanRetry ||
             activeFailureVisible ||
-            playFailure !== null ? null : (
+            visiblePlayFailure !== null ||
+            failureWasSuperseded ? null : (
               <div className="play-retry-note" role="status">
                 <p>
                   {uiText(
@@ -2414,6 +2449,7 @@ export function WorldPage({
 }
 
 function PlayTimeline({
+  activeFailure,
   liveChain,
   failureRecovery,
   client,
@@ -2431,6 +2467,7 @@ function PlayTimeline({
   worldId: string;
   items: readonly V1PlayTimelineItem[];
   liveChain: V1PlayCallChainView | null;
+  activeFailure?: { chainId: string; eventId: number } | undefined;
   failureRecovery?: (PlayFailureRecovery & { chainId: string }) | undefined;
   restartDisabled: boolean;
   freshContextDisabled: boolean;
@@ -2499,7 +2536,10 @@ function PlayTimeline({
           return (
             <Fragment key={group.key}>
               {group.items.map((item) =>
-                timelineEventBelongsInStory(item.event) ? (
+                timelineEventBelongsInStory(item.event) &&
+                (item.event.kind !== "failure" ||
+                  (activeFailure?.chainId === item.chainId &&
+                    activeFailure.eventId === item.event.id)) ? (
                   <TimelineEvent
                     key={`${item.chainId}:${item.event.id}`}
                     client={client}
@@ -2757,7 +2797,8 @@ function timelineEventHasTrace(event: V1PlayTimelineEventSummary): boolean {
   if (
     event.kind === "tool_call" ||
     event.kind === "tool_result" ||
-    event.kind === "followup"
+    event.kind === "followup" ||
+    event.kind === "failure"
   )
     return true;
   if (event.kind !== "assistant" || event.status === "streaming") return false;
@@ -3274,6 +3315,15 @@ function TimelineEvent({
       </li>
     );
 
+  if (presentation === "trace")
+    return (
+      <li className="call-chain-failure-history">
+        <details>
+          <summary>{uiText("历史调用错误")}</summary>
+          <pre>{event.message}</pre>
+        </details>
+      </li>
+    );
   return (
     <li className="call-chain-failure" role="alert">
       <PlayFailureNotice
