@@ -1993,12 +1993,11 @@ test("migration preserves the exact source bytes in a synthetic schema 3 transit
     "sessions",
     `${first.sessionId}.json`,
   );
-  const old = JSON.parse(await readFile(path, "utf8")) as {
-    schemaVersion: number;
-    requests: { modelBinding?: unknown; retryAttempts?: unknown }[];
-  };
+  const old = await new FileNativeSettingImprovementStore(fixture.root).read(
+    first.sessionId,
+  );
   old.schemaVersion = 3;
-  for (const request of old.requests) {
+  for (const request of old.requests!) {
     delete request.modelBinding;
     delete request.retryAttempts;
   }
@@ -4701,6 +4700,7 @@ test("next author send refreshes rules while retaining bootstrap and native hist
         toolCalls: [],
       },
       { outcome: "response", text: "Second answer", toolCalls: [] },
+      { outcome: "response", text: "Replacement answer" },
     ],
   });
   const session = serviceFor(fixture.root, fixture.content, host, preset);
@@ -4729,7 +4729,7 @@ test("next author send refreshes rules while retaining bootstrap and native hist
   if (parsed.kind !== "valid") throw parsed.error;
   preset.definition = parsed.definition;
   preset.revision = revisionForPlayPresetFiles(preset.files);
-  await session.send({
+  const second = await session.send({
     packageId: fixture.packageId,
     requestId: "rules-second",
     message: "Second",
@@ -4747,6 +4747,31 @@ test("next author send refreshes rules while retaining bootstrap and native hist
   expect((await store.read(first.sessionId)).bootstrap).toEqual(
     before.bootstrap,
   );
+  const frozen = await store.read(first.sessionId);
+  expect(frozen.requests!.map((request) => request.bootstrap)).toEqual(
+    host.requests.map((request) => request.bootstrap),
+  );
+  expect(frozen.requests![1]!.playPreset).toEqual(preset);
+  // Restore the original selection and replace the sole request that used the new rule.
+  await serviceFor(fixture.root, fixture.content, host).editMessage({
+    packageId: fixture.packageId,
+    sessionId: first.sessionId,
+    requestId: "replace-second",
+    messageId: second.turns[1]!.user.id,
+    message: "Replacement",
+    filePolicy: "keep",
+  });
+  const path = join(
+    fixture.root,
+    "setting-improvements",
+    "sessions",
+    first.sessionId + ".json",
+  );
+  const source = await readFile(path, "utf8");
+  expect(source).not.toContain("AUTHOR_RULE_UPDATED");
+  expect(JSON.parse(source)).toMatchObject({
+    frozen: { presets: [expect.anything()] },
+  });
 });
 
 test("new author snapshot corruption fails closed and upgrading keeps the old prompt accessible", async () => {
@@ -4920,12 +4945,11 @@ test("schema 5 source is preserved when the next send records current binding ev
     "sessions",
     `${first.sessionId}.json`,
   );
-  const old = JSON.parse(await readFile(path, "utf8")) as {
-    schemaVersion: number;
-    requests: { modelBinding?: unknown; retryAttempts?: unknown }[];
-  };
+  const old = await new FileNativeSettingImprovementStore(fixture.root).read(
+    first.sessionId,
+  );
   old.schemaVersion = 5;
-  for (const request of old.requests) {
+  for (const request of old.requests!) {
     delete request.modelBinding;
     delete request.retryAttempts;
   }
@@ -5086,4 +5110,107 @@ test("进程在继续发送途中退出不把旧前缀冒充新响应完整保�
       recovery: "continue_partial",
     }),
   ).rejects.toThrow(/no supported text prefix/iu);
+});
+
+test("two author sends share identical frozen data on disk and retain independent request evidence", async () => {
+  const fixture = await createFixture([
+    { outcome: "response", text: "A" },
+    { outcome: "response", text: "B" },
+  ]);
+  const first = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "first",
+    "One",
+  );
+  const path = join(
+    fixture.root,
+    "setting-improvements",
+    "sessions",
+    first.sessionId + ".json",
+  );
+  const bytes = (await readFile(path)).byteLength;
+  const second = await fixture.session.send({
+    packageId: fixture.packageId,
+    requestId: "second",
+    message: "Two",
+    continuation: { kind: "continue_context", sessionId: first.sessionId },
+  });
+  const source = await readFile(path);
+  expect(source.byteLength - bytes).toBeLessThanOrEqual(15_000);
+  const disk = JSON.parse(source.toString()) as {
+    schemaVersion: number;
+    bootstrap: string;
+    requests: { bootstrap: string; playPreset: string }[];
+    frozen: { compilations: unknown[]; presets: unknown[]; files: unknown[] };
+  };
+  expect(disk.schemaVersion).toBe(7);
+  expect(disk.requests[0]!.bootstrap).not.toBe(disk.bootstrap);
+  expect(disk.requests[1]!.bootstrap).toBe(disk.requests[0]!.bootstrap);
+  expect(disk.frozen.compilations).toHaveLength(2);
+  expect(disk.frozen.presets).toHaveLength(1);
+  expect(disk.frozen.files).toHaveLength(1);
+  const cold = serviceFor(fixture.root, fixture.content, fixture.host);
+  expect(
+    (await cold.readSession(fixture.packageId, first.sessionId))
+      .requestPreviews,
+  ).toEqual(second.requestPreviews);
+  const store = new FileNativeSettingImprovementStore(fixture.root);
+  const read = await store.read(first.sessionId);
+  const [a, b] = read.requests!;
+  expect(a!.bootstrap).toEqual(fixture.host.requests[0]!.bootstrap);
+  expect(b!.bootstrap).toEqual(fixture.host.requests[1]!.bootstrap);
+  a!.bootstrap.logicalMessages.splice(0);
+  expect(b!.bootstrap.logicalMessages.length).toBeGreaterThan(0);
+
+  const reference = disk.requests[0]!.bootstrap;
+  for (const invalid of ["preset/0", "compilation/999", "compilation/00", ""]) {
+    disk.requests[0]!.bootstrap = invalid;
+    await writeFile(path, JSON.stringify(disk));
+    await expect(store.read(first.sessionId)).rejects.toThrow(
+      /snapshot reference/,
+    );
+  }
+  disk.requests[0]!.bootstrap = reference;
+  disk.frozen.compilations.push({});
+  await writeFile(path, JSON.stringify(disk));
+  await expect(store.read(first.sessionId)).rejects.toThrow(/Unreferenced/);
+});
+
+test("a v6 source survives a failed upgrade and cold retry then explicit deletion removes its backup", async () => {
+  const fixture = await createFixture([{ outcome: "response", text: "A" }]);
+  const first = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "first",
+    "One",
+  );
+  const store = new FileNativeSettingImprovementStore(fixture.root);
+  const session = await store.read(first.sessionId);
+  const root = join(fixture.root, "setting-improvements", "sessions");
+  const path = join(root, first.sessionId + ".json");
+  const backup = join(root, first.sessionId + ".schema-v6.json");
+  const legacy = JSON.stringify(session, null, 1) + "\n";
+  await writeFile(path, legacy);
+  expect(await store.read(first.sessionId)).toEqual(session);
+  expect(await readFile(path, "utf8")).toBe(legacy);
+  vi.stubEnv("NARRAEON_INTERNAL_TEST_LINK_ERROR_CODE", "EIO");
+  try {
+    await expect(store.save(session)).rejects.toThrow("EIO");
+  } finally {
+    vi.unstubAllEnvs();
+  }
+  expect(await readFile(path, "utf8")).toBe(legacy);
+  await expect(readFile(backup)).rejects.toMatchObject({ code: "ENOENT" });
+  // Simulate an interruption after publishing the exact backup and before replacing the main file.
+  await writeFile(backup, legacy);
+  const cold = new FileNativeSettingImprovementStore(fixture.root);
+  expect(await cold.saveIfUnchanged(session, session)).toBe(true);
+  expect(await cold.read(first.sessionId)).toEqual(session);
+  expect(await readFile(backup, "utf8")).toBe(legacy);
+  expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({
+    schemaVersion: 7,
+  });
+  await cold.deleteSession(fixture.packageId, first.sessionId);
+  await expect(readFile(backup)).rejects.toMatchObject({ code: "ENOENT" });
 });

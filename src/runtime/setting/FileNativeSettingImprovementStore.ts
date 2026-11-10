@@ -1,4 +1,8 @@
 import {
+  decodeSettingSession,
+  encodeSettingSession,
+} from "./SettingSessionDiskCodec.ts";
+import {
   validPartialAuthoringResponse,
   type PartialAuthoringResponse,
 } from "../model/AssistantPrefill.ts";
@@ -358,8 +362,7 @@ export class FileNativeSettingImprovementStore {
   save(session: StoredSettingImprovementSession): Promise<void> {
     return this.#mutate(async () => {
       validateStoredSession(session);
-      await this.#preservePreviousSchema(session);
-      await publishJson(this.#path(session.sessionId), session);
+      await this.#publishSession(session);
       await this.#recordSavedSession(session);
     });
   }
@@ -401,7 +404,7 @@ export class FileNativeSettingImprovementStore {
     const raw: unknown = JSON.parse(
       await readFile(this.#path(marker.sessionId), "utf8"),
     );
-    const session = validateStoredSession(raw);
+    const session = validateStoredSession(decodeSettingSession(raw));
     if (
       session.sessionId !== marker.sessionId ||
       session.packageId !== packageId
@@ -431,7 +434,7 @@ export class FileNativeSettingImprovementStore {
       throw new Error(
         "Cannot recover the conversation edit because the content package changed; no further changes were made",
       );
-    await publishJson(this.#path(session.sessionId), pending.next);
+    await this.#publishSession(pending.next);
     await rm(this.#pendingEditPath(session.packageId), { force: true });
     await this.#recordSavedSession(pending.next);
     return structuredClone(pending.next);
@@ -449,8 +452,7 @@ export class FileNativeSettingImprovementStore {
       validateStoredSession(replacement);
       const current = await this.#read(expected.sessionId);
       if (!isDeepStrictEqual(current, expected)) return false;
-      await this.#preservePreviousSchema(replacement);
-      await publishJson(this.#path(replacement.sessionId), replacement);
+      await this.#publishSession(replacement);
       await this.#recordSavedSession(replacement);
       return true;
     });
@@ -471,7 +473,7 @@ export class FileNativeSettingImprovementStore {
       await rm(join(this.#sessionsRoot, `${sessionId}.schema-v1.json`), {
         force: true,
       });
-      for (const version of [2, 3, 4])
+      for (const version of [2, 3, 4, 5, 6])
         await rm(
           join(this.#sessionsRoot, `${sessionId}.schema-v${version}.json`),
           { force: true },
@@ -533,9 +535,10 @@ export class FileNativeSettingImprovementStore {
       const raw: unknown = JSON.parse(
         await readFile(this.#path(sessionId), "utf8"),
       );
-      const copy = withoutDamagedGoogleSteps(raw);
+      const expanded = decodeSettingSession(raw);
+      const copy = withoutDamagedGoogleSteps(expanded);
       if (copy === null) {
-        if (hasDamagedGoogleSteps(raw))
+        if (hasDamagedGoogleSteps(expanded))
           throw new Error(
             "Cannot safely identify the damaged historical conversation; settlement or identity is unverified",
           );
@@ -692,7 +695,7 @@ export class FileNativeSettingImprovementStore {
     }
     if (isRecord(value) && value.schemaVersion === 1)
       return this.#migrateLegacy(sessionId, source, value);
-    const session = validateStoredSession(value);
+    const session = validateStoredSession(decodeSettingSession(value));
     if (session.sessionId !== sessionId)
       throw new Error(
         "Setting-improvement conversation identity does not match its file",
@@ -715,6 +718,16 @@ export class FileNativeSettingImprovementStore {
     return session;
   }
 
+  async #publishSession(
+    session: StoredSettingImprovementSession,
+  ): Promise<void> {
+    await this.#preservePreviousSchema(session);
+    await publishJson(
+      this.#path(session.sessionId),
+      encodeSettingSession(session),
+    );
+  }
+
   async #preservePreviousSchema(
     next: StoredSettingImprovementSession,
   ): Promise<void> {
@@ -726,19 +739,20 @@ export class FileNativeSettingImprovementStore {
       if (isNodeError(error) && error.code === "ENOENT") return;
       throw error;
     }
-    const previous = validateStoredSession(JSON.parse(source) as unknown);
+    const raw: unknown = JSON.parse(source);
+    const previous = validateStoredSession(decodeSettingSession(raw));
+    const diskVersion =
+      isRecord(raw) && raw.schemaVersion === 7 ? 7 : previous.schemaVersion;
+    const targetVersion = next.schemaVersion === 6 ? 7 : next.schemaVersion;
     if (previous.sessionId !== next.sessionId)
       throw new Error(
         "Setting-improvement conversation identity does not match its file",
       );
-    if (previous.schemaVersion === next.schemaVersion) return;
-    if (previous.schemaVersion > next.schemaVersion)
+    if (diskVersion === targetVersion) return;
+    if (diskVersion > targetVersion)
       throw new Error("Cannot downgrade a setting-improvement conversation");
     await publishImmutableSource(
-      join(
-        this.#sessionsRoot,
-        `${next.sessionId}.schema-v${previous.schemaVersion}.json`,
-      ),
+      join(this.#sessionsRoot, `${next.sessionId}.schema-v${diskVersion}.json`),
       source,
     );
   }
