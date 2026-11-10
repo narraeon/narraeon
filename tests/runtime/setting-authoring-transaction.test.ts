@@ -1042,7 +1042,7 @@ test("设定字面搜索按行分页，同一行的命中不被拆到两页", ()
     {
       id: "page-1",
       name: "setting_search",
-      arguments: { query: "信", limit: 10 },
+      arguments: { query: "信", within: "@bulk-letters", limit: 10 },
     },
   ]);
   const firstLines = lineNumbers(first?.markdown ?? "");
@@ -1053,7 +1053,7 @@ test("设定字面搜索按行分页，同一行的命中不被拆到两页", ()
     {
       id: "page-2",
       name: "setting_search",
-      arguments: { query: "信", limit: 10, cursor },
+      arguments: { query: "信", within: "@bulk-letters", limit: 10, cursor },
     },
   ]);
   const secondLines = lineNumbers(second?.markdown ?? "");

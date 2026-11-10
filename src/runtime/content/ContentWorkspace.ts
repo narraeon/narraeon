@@ -1,3 +1,4 @@
+import { withContinuityScaffold } from "../../shared/continuity-scaffold.ts";
 import { isAbsolute, win32 } from "node:path";
 import { inflateRawSync } from "node:zlib";
 import { FileNativeSettingImprovementStore } from "../setting/FileNativeSettingImprovementStore.ts";
@@ -309,6 +310,12 @@ function defaultContentPackageTitle(
 export function minimalFileNativeContentScaffold(
   locale: AppLocale = defaultAppLocale,
 ): ContentTreeFile[] {
+  return withContinuityScaffold(baseFileNativeContentScaffold(locale), locale);
+}
+
+function baseFileNativeContentScaffold(
+  locale: AppLocale = defaultAppLocale,
+): ContentTreeFile[] {
   if (locale === "zh-CN") {
     return [
       {
@@ -420,6 +427,8 @@ context:
   - slot: { kind: catalog, directory: items, maxEntries: 24, required: false }
   - slot: { kind: catalog, directory: rules, maxEntries: 24, required: false }
   - slot: { kind: catalog, directory: events, maxEntries: 24, required: false }
+  - slot: { kind: catalog, directory: continuity, maxEntries: 3 }
+  - slot: { kind: document, document: "@pending-matters" }
   - slot: { kind: current_situation }
   - slot: { kind: history, recent: 2 }
   - slot: { kind: additional_materials }

@@ -156,6 +156,8 @@ context:
         document: "@current-situation"
         locator: { yaml: [Present] }
       maxEntries: 3
+  - slot: { kind: catalog, directory: continuity, maxEntries: 3 }
+  - slot: { kind: document, document: "@pending-matters" }
   - slot: { kind: current_situation }
   - slot: { kind: additional_materials }
 `,
@@ -170,7 +172,7 @@ Focus on small-town inn life, conversation, and gentle mysteries arising from ob
 
 ## Documents and where changes belong
 
-Keep relationships, opinions, and knowledge in each person's own world/characters/ document, without a shared truth or secret field. Record events that need shared reference in world/events/; link to the account rather than copying it into each character. Lasting changes to places belong in world/locations/. Keep the letter among its owner's important belongings until independent transfer tracking warrants a separate document.
+Maintain the existing relationships, opinions, and knowledge in each person's own character document; for new relationships use @relationships with directional entries and reasons. Keep the existing letter account at @letter-entrusted; new shared past accounts go under stable event keys in @important-events, referencing independent event documents when present. Do not copy accounts into each character. Lasting changes to places belong in world/locations/. Keep the letter among its owner's important belongings until independent transfer tracking warrants a separate document.
 `,
     },
     {

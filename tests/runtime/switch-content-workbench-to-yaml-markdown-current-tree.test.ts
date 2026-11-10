@@ -28,7 +28,7 @@ describe("YAML/Markdown 内容包当前树", () => {
     expect(created).toMatchObject({
       title: "Untitled content package",
       status: "usable",
-      documentCount: 1,
+      documentCount: 4,
       issueCount: 0,
     });
     expect(detail.files.map(({ path }) => path)).toEqual([
@@ -36,6 +36,9 @@ describe("YAML/Markdown 内容包当前树", () => {
       "control/frame.yaml",
       "control/player-views.yaml",
       "opening.md",
+      "world/continuity/important-events.yaml",
+      "world/continuity/pending-matters.yaml",
+      "world/continuity/relationships.yaml",
       "world/current-situation.yaml",
     ]);
     expect(detail.files.every(({ path }) => !path.endsWith(".json"))).toBe(

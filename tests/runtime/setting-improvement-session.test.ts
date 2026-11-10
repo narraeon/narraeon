@@ -3545,7 +3545,7 @@ test("当前树限制只拒绝越界调用，不回滚同响应中已接受的�
   const root = await temporaryRoot("narraeon-setting-limit-rejection-");
   const content = new ContentWorkspace(root, {
     locale: () => "en",
-    limits: { maxFileBytes: 1_024, maxTotalBytes: 8_192 },
+    limits: { maxFileBytes: 4_096, maxTotalBytes: 16_384 },
   });
   const created = await content.createCurrentTreeContentPackage();
   const openingBefore = (
@@ -3573,7 +3573,7 @@ test("当前树限制只拒绝越界调用，不回滚同响应中已接受的�
           {
             id: "oversized-write",
             name: "setting_write_file",
-            arguments: { path: "opening.md", contents: "x".repeat(1_100) },
+            arguments: { path: "opening.md", contents: "x".repeat(4_100) },
           },
         ],
       },

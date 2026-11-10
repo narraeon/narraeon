@@ -156,6 +156,8 @@ context:
         document: "@current-situation"
         locator: { yaml: [在场人物] }
       maxEntries: 3
+  - slot: { kind: catalog, directory: continuity, maxEntries: 3 }
+  - slot: { kind: document, document: "@pending-matters" }
   - slot: { kind: current_situation }
   - slot: { kind: additional_materials }
 `,
@@ -170,7 +172,7 @@ context:
 
 ## 本世界的文档与保存位置
 
-人物之间的关系、各自看法与认知写在各自的 world/characters/ 人物文档中，不设统一真相或秘密字段。需要共同引用的事件经过写在 world/events/，人物通过引用关联，不重复抄写经过。地点的持续变化写回 world/locations/。信件先作为所属人物的重要物品维护，需要独立转移追踪时再建文档。
+现有人物关系、各自看法与认知沿用各自人物文档中的记录；新增关系写入 @relationships，分别记录方向与依据。现有信件托付经过沿用 @letter-entrusted；新增共同往事按稳定事件键写入 @important-events，已有独立事件文档时只作引用，不重复抄写经过。地点的持续变化写回 world/locations/。信件先作为所属人物的重要物品维护，需要独立转移追踪时再建文档。
 `,
     },
     {

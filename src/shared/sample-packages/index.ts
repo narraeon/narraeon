@@ -1,3 +1,4 @@
+import { withContinuityScaffold } from "../continuity-scaffold.ts";
 import type { AppLocale } from "../../protocol/appPreferences.ts";
 import type { ContentTreeFile } from "../../protocol/v1.ts";
 import { rainyInnEnglish } from "./rainy-inn-en.ts";
@@ -15,6 +16,6 @@ export function sampleContentPackageForLocale(
   const sample = locale === "zh-CN" ? rainyInnChinese : rainyInnEnglish;
   return {
     title: sample.title,
-    files: sample.files.map((file) => ({ ...file })),
+    files: withContinuityScaffold(sample.files, locale),
   };
 }

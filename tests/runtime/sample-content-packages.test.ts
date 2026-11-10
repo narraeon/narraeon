@@ -68,7 +68,7 @@ describe.each(appLocales)("ordinary sample content package (%s)", (locale) => {
     });
     expect(original.status).toBe("usable");
     expect(original.issues).toEqual([]);
-    expect(original.files).toHaveLength(10);
+    expect(original.files).toHaveLength(13);
     expect(
       original.documents.filter(({ path }) =>
         path.startsWith("world/characters/"),
