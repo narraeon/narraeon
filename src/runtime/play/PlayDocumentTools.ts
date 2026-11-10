@@ -1,3 +1,4 @@
+import type { AppLocale } from "../../protocol/appPreferences.ts";
 import { createHash } from "node:crypto";
 import type { ResolutionReceipt } from "../../protocol/resolution.ts";
 import type { HistoryBackground } from "../history/HistoryBackground.ts";
@@ -7,9 +8,6 @@ import {
   stateDirectoryHandle,
   parseStateDirectoryHandle,
 } from "../world/StateDirectoryHandles.ts";
-import type { AppLocale } from "../../protocol/appPreferences.ts";
-import type { WorldDocumentMaintenance } from "../../protocol/worldMaintenance.ts";
-import { renderDocumentWritePosition } from "../prompt/WorldMaintenanceReport.ts";
 
 import { stringify } from "yaml";
 import { renderPlayerViewBindings } from "../world/PlayerViewBindings.ts";
@@ -80,30 +78,6 @@ export class FileNativePlayDocuments {
   #committedSnapshot: WorldDocumentStore;
   #reads: WriteAuthorizations;
   #declaredDirectories: string[] = [];
-  #maintenanceWarning: string | undefined;
-
-  get maintenanceWarning(): string | undefined {
-    return this.#maintenanceWarning;
-  }
-
-  bindMaintenanceUnavailable(reason: string, locale: AppLocale): void {
-    this.#maintenance = {};
-    this.#maintenanceLocale = locale;
-    this.#maintenanceWarning = reason;
-  }
-
-  #maintenanceLocale: AppLocale = "en";
-  #maintenance: Readonly<Record<string, WorldDocumentMaintenance>> = {};
-
-  bindMaintenance(
-    facts: Readonly<Record<string, WorldDocumentMaintenance>>,
-    locale: AppLocale = "en",
-  ): void {
-    this.#maintenanceWarning = undefined;
-    this.#maintenance = structuredClone(facts);
-    this.#maintenanceLocale = locale;
-  }
-
   constructor(files: Readonly<Record<string, string>>) {
     this.#candidate = openPlayCandidate({ ...files });
     this.#committedSnapshot = this.#candidate.snapshot;
@@ -277,9 +251,6 @@ export class FileNativePlayDocuments {
         call.arguments,
       );
       authorizeToolRead(this.#reads, this.#candidate.snapshot, result);
-      const ref = result.readAuthorization?.shortRef;
-      if (ref !== undefined && result.markdown !== undefined)
-        result.markdown += `\n\n${this.#maintenanceWarning === undefined ? renderDocumentWritePosition(ref, this.#maintenance[ref], this.#maintenanceLocale) : `${this.#maintenanceLocale === "zh-CN" ? "最近写入位置暂时不可用" : "Last committed write unavailable"}: ${this.#maintenanceWarning}`}`;
       return result;
     }
     if (call.name === "world_patch")

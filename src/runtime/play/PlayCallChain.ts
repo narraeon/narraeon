@@ -513,8 +513,7 @@ export class PlayCallChain {
     },
   ): Promise<FreshContextCompilation> {
     const documents = new FileNativePlayDocuments(binding.files);
-    const documentMaintenance = await this.#bindDocumentMaintenance(
-      documents,
+    const maintenance = await this.#worlds.inspectDocumentMaintenance(
       worldId,
       binding.parentHead,
     );
@@ -537,8 +536,7 @@ export class PlayCallChain {
           history: structuredClone(binding.history),
           historyBackgrounds: structuredClone(binding.historyBackgrounds ?? {}),
           narrativeCheckpoint: binding.narrativeCheckpoint,
-          documentMaintenance,
-          documentMaintenanceUnavailableReason: documents.maintenanceWarning,
+          ...maintenance,
         },
         playerInputPlacement: "append",
         playerInput: input.playerText,
@@ -2713,11 +2711,6 @@ export class PlayCallChain {
     if (stateChanges.length > 0) {
       session.documents.acceptCommittedState();
       mergeChangedDocuments(session, stateChanges);
-      await this.#bindDocumentMaintenance(
-        session.documents,
-        session.worldId,
-        session.parentHead,
-      );
     }
 
     const hasToolCalls = calls.length > 0;
@@ -3232,28 +3225,6 @@ export class PlayCallChain {
     return session;
   }
 
-  async #bindDocumentMaintenance(
-    documents: FileNativePlayDocuments,
-    worldId: string,
-    head: string,
-  ) {
-    const inspection = await this.#worlds.inspectDocumentMaintenance(
-      worldId,
-      head,
-    );
-    if (inspection.documentMaintenanceUnavailableReason === undefined)
-      documents.bindMaintenance(
-        inspection.documentMaintenance,
-        this.#compiler.locale,
-      );
-    else
-      documents.bindMaintenanceUnavailable(
-        inspection.documentMaintenanceUnavailableReason,
-        this.#compiler.locale,
-      );
-    return inspection.documentMaintenance;
-  }
-
   async #hydrateSession(
     persisted: PersistedPlayCallChain,
     advance: PlayAdvanceBase | null,
@@ -3276,11 +3247,6 @@ export class PlayCallChain {
       binding.files,
       persisted,
       persisted.events,
-    );
-    await this.#bindDocumentMaintenance(
-      documents,
-      persisted.worldId,
-      binding.parentHead,
     );
     return {
       ...cloneSharingPromptRuns(persisted),

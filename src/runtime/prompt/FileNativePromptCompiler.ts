@@ -35,7 +35,6 @@ import {
   type TurnGuideLine,
 } from "../../shared/turn-guide.ts";
 import { parseOrderedPlayPrompts } from "../play/OrderedPlayPrompts.ts";
-import { renderDocumentWritePosition } from "./WorldMaintenanceReport.ts";
 import { parseDocument } from "yaml";
 import { renderWorldYamlSource } from "../world/WorldYamlRendering.ts";
 export { renderWorldYamlSource } from "../world/WorldYamlRendering.ts";
@@ -689,35 +688,6 @@ export class FileNativePromptCompiler {
       coverage,
       this.#locale,
     );
-    if (world.documentMaintenanceUnavailableReason !== undefined) {
-      materials.push({
-        key: "runtime:document-write-positions",
-        source: "runtime:document-write-positions",
-        markdown: `${this.#locale === "zh-CN" ? "最近写入位置暂时不可用" : "Last committed write unavailable"}: ${world.documentMaintenanceUnavailableReason}`,
-      });
-    } else if (world.documentMaintenance !== undefined) {
-      const injected = new Set(
-        materials.flatMap(
-          ({ contributions }) =>
-            contributions?.map(({ shortRef }) => shortRef) ?? [],
-        ),
-      );
-      const markdown = [...injected]
-        .map((ref) =>
-          renderDocumentWritePosition(
-            ref,
-            world.documentMaintenance?.[ref],
-            this.#locale,
-          ),
-        )
-        .join("\n\n");
-      if (markdown.length > 0)
-        materials.push({
-          key: "runtime:document-write-positions",
-          source: "runtime:document-write-positions",
-          markdown,
-        });
-    }
     return {
       blocks: materials.map(({ source, markdown }) => ({ source, markdown })),
       coverage,

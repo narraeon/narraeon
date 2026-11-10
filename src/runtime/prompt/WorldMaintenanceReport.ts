@@ -1,4 +1,3 @@
-import { worldWritePositionText } from "../../protocol/worldMaintenance.ts";
 import type {
   WorldDocumentMaintenance,
   WorldPromptMaintenance,
@@ -328,18 +327,6 @@ function positiveBytes(value: unknown): value is number {
 }
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-export function renderDocumentWritePosition(
-  shortRef: string,
-  fact: WorldDocumentMaintenance | undefined,
-  locale: AppLocale,
-): string {
-  if (fact === undefined)
-    return `${locale === "zh-CN" ? "最近写入位置" : "Last committed write"} @${shortRef}: ${locale === "zh-CN" ? "未记录" : "not recorded"}`;
-  return locale === "zh-CN"
-    ? `最近写入位置 @${shortRef}：\n正文：${worldWritePositionText(fact.lastBodyWrite, locale)}\n元信息：${worldWritePositionText(fact.lastMetadataWrite, locale)}`
-    : `Last committed write @${shortRef}:\nBody: ${worldWritePositionText(fact.lastBodyWrite, locale)}\nMetadata: ${worldWritePositionText(fact.lastMetadataWrite, locale)}`;
 }
 
 /**

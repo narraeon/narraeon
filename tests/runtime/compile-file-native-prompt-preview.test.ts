@@ -495,6 +495,58 @@ test("文档软上限只报告 UTF-8 体积，实际注入按去重材料计数"
   });
 });
 
+test.each(["en", "zh-CN"] as const)(
+  "%s bootstrap and context_read omit document write positions while preserving diagnostics",
+  (locale) => {
+    const request = input();
+    const compiler = new FileNativePromptCompiler({ locale });
+    const original = compiler.compileBootstrap(request);
+    request.world.documentMaintenance = {
+      "current-situation": {
+        baselineKind: "document_creation",
+        baselineBytes: 0,
+        lastBodyWrite: null,
+        lastMetadataWrite: null,
+        bodyChangedContexts: 0,
+        metadataChangedContexts: 0,
+      },
+    };
+    for (const reason of [undefined, "ledger unavailable"]) {
+      request.world.documentMaintenanceUnavailableReason = reason;
+      const compiled = compiler.compileBootstrap(request);
+      expect(compiled.logicalMessages).toEqual(original.logicalMessages);
+      expect(compiled.maintenance?.unavailableReason).toBe(reason);
+      expect(
+        compiled.maintenance?.documents.find(
+          ({ shortRef }) => shortRef === "current-situation",
+        )?.baselineKind,
+      ).toBe("document_creation");
+      const documents = new FileNativePlayDocuments(
+        Object.fromEntries(
+          request.world.documentSnapshot.files.map(({ path, contents }) => [
+            path,
+            contents,
+          ]),
+        ),
+      );
+      documents.bindBootstrap(compiled);
+      const read = documents.execute(
+        {
+          id: "read",
+          name: "context_read",
+          arguments: { ref: "@current-situation" },
+        },
+        [],
+      );
+      expect(read.ok).toBe(true);
+      expect(read.markdown).not.toMatch(
+        /Last committed write|最近写入位置|ledger unavailable/u,
+      );
+      expect(read.markdown).toContain("current-situation");
+    }
+  },
+);
+
 test("主持块分别约束玩家代理权、事实裁决与默认叙事视角", () => {
   expect(defaultPresetHostFiles["blocks/agency-default.md"]).toContain(
     "require the player's explicit expression in their text",
