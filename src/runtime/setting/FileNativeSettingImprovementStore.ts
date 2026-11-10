@@ -434,10 +434,16 @@ export class FileNativeSettingImprovementStore {
       throw new Error(
         "Cannot recover the conversation edit because the content package changed; no further changes were made",
       );
-    await this.#publishSession(pending.next);
+    // A valid v6 intent can embed a v5 replacement. Publish it in the current
+    // disk format without inventing any binding, retry checkpoint or evidence.
+    const next =
+      session.schemaVersion === 6 && pending.next.schemaVersion === 5
+        ? { ...pending.next, schemaVersion: 6 as const }
+        : pending.next;
+    await this.#publishSession(next);
     await rm(this.#pendingEditPath(session.packageId), { force: true });
-    await this.#recordSavedSession(pending.next);
-    return structuredClone(pending.next);
+    await this.#recordSavedSession(next);
+    return structuredClone(next);
   }
 
   saveIfUnchanged(

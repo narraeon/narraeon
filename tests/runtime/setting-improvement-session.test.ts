@@ -685,6 +685,65 @@ test.each(["before publication", "after publication"] as const)(
   },
 );
 
+test("a cold legacy v6 edit with a v5 replacement preserves its bytes and original dispatch evidence", async () => {
+  const fixture = await createFixture([
+    { outcome: "response", text: "Old answer" },
+  ]);
+  const first = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "first",
+    "First",
+  );
+  const store = new FileNativeSettingImprovementStore(fixture.root);
+  const service = serviceFor(
+    fixture.root,
+    fixture.content,
+    fixture.host,
+    undefined,
+    store,
+  );
+  vi.spyOn(store, "finishPendingEdit").mockRejectedValueOnce(
+    new Error("simulated crash"),
+  );
+  await expect(
+    service.editMessage({
+      packageId: fixture.packageId,
+      sessionId: first.sessionId,
+      requestId: "edit",
+      messageId: first.turns[0]!.user.id,
+      message: "Replacement",
+      filePolicy: "keep",
+    }),
+  ).rejects.toThrow("simulated crash");
+
+  const intent = await store.read(first.sessionId);
+  const replacement = intent.pendingEdit!.next;
+  replacement.schemaVersion = 5;
+  delete replacement.retryDispatch;
+  for (const request of replacement.requests!) delete request.modelBinding;
+  const source = JSON.stringify(intent, null, 2) + "\n";
+  const root = join(fixture.root, "setting-improvements", "sessions");
+  const path = join(root, first.sessionId + ".json");
+  await writeFile(path, source);
+  const cold = new FileNativeSettingImprovementStore(fixture.root);
+  expect((await cold.read(first.sessionId)).pendingEdit!.next).toEqual(
+    replacement,
+  );
+  await new ContentWorkspace(fixture.root).readCurrentTreeContentPackage(
+    fixture.packageId,
+  );
+  const recovered = await cold.read(first.sessionId);
+  expect(recovered).toEqual({ ...replacement, schemaVersion: 6 });
+  expect(canRetryAuthoringDispatch(recovered)).toBe(false);
+  expect(
+    await readFile(join(root, first.sessionId + ".schema-v6.json"), "utf8"),
+  ).toBe(source);
+  expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({
+    schemaVersion: 7,
+  });
+});
+
 test("a marker left before edit intent is saved is safely cleared", async () => {
   const fixture = await createFixture([
     { outcome: "response", text: "First." },
