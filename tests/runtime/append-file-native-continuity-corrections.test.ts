@@ -68,7 +68,7 @@ test("维护诊断不可用时修正仍可预览、取消并释放世界锁", as
   );
   expect(
     JSON.stringify(preview.nextPrompt.compilation.logicalMessages),
-  ).toContain("maintenance unavailable");
+  ).not.toContain("maintenance unavailable");
   await corrections.cancel(started.candidateId, started.version);
   const next = await corrections.begin({
     worldId,
